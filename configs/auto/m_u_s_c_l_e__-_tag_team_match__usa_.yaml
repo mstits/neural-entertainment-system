@@ -1,0 +1,50 @@
+# AUTO-GENERATED — playability-sweep-derived stub.
+# Hand-tune the reward_weights + ram_mapping for productive training.
+# Hand-crafted profiles in configs/ (mario, zelda, contra, megaman,
+# castlevania, metroid) take precedence over auto-stubs of the same
+# game.
+name: "M.U.S.C.L.E. - Tag Team Match (USA)"
+rom_filename: "M.U.S.C.L.E. - Tag Team Match (USA).nes"
+rom_hashes:
+  - "115c1170578a07f1b8a918e768ee6a36"
+
+cartridge:
+  mapper: 0
+  nes20: false
+  battery: false
+  prg_kb: 16
+  chr_kb: 8
+
+description: >
+  Auto-generated training profile from the playability sweep. Uses the
+  GenericReward signals (motion proxy via RAM-byte churn, survival
+  bonus, time penalty, and auto-detected score-candidate addresses
+  during the warmup window). For best results, replace `reward_weights`
+  with game-specific signals derived from the ROM's RAM map.
+
+reward_weights:
+  # Generic exploration profile. The Rust GenericReward auto-detects
+  # which RAM bytes look like score counters (monotonically increasing
+  # during a warmup window) and rewards positive deltas on those.
+  motion: 0.05
+  survival: 0.01
+  time_penalty: -0.001
+  score: 1.0
+  stuck_steps: 240
+  warmup_steps: 600
+  activity_timeout_steps: 600
+
+# Default action space — covers all 8 buttons + common combos.
+# Trim per-game once you know what controls matter.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["start"]

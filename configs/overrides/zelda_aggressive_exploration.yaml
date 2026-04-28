@@ -1,0 +1,19 @@
+# Example reward-overrides file. Load via the "Load Reward File..." button
+# or pass as --reward-overrides when the CLI gains that flag. Merges on top
+# of configs/zelda.yaml at trainer init; only the keys you include here
+# replace the profile's values.
+#
+# This variant cranks exploration-class signals to encourage agents to
+# push into dungeons + new screens faster, and bumps entropy to prevent
+# policy collapse.
+
+reward_weights:
+  exploration_bonus: 40.0    # was 20 — even more exploration dominance
+  dungeon_enter:    50.0     # was 15 — finding a dungeon is a big deal
+  new_item:         40.0     # was 25 — item pickups carry even more weight
+  item_tier_upgrade: 30.0    # was 15 — upgrading gear matters
+  heart_recovery:   10.0     # was 5
+  magic_key:        50.0     # was 30 — this unlocks every door forever
+
+reinforce:
+  entropy_coef: 0.08         # higher than default (0.05) — keep alive

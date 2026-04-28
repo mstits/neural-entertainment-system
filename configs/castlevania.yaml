@@ -1,0 +1,51 @@
+name: "Castlevania"
+rom_hashes:
+  - ""
+
+description: >
+  Training profile for Castlevania (NES, 1986). Linear side-scroller,
+  whip-based combat, slow jumps. Reward favors forward progress + defeating
+  sub-bosses + collecting hearts (sub-weapon ammo).
+
+ram_mapping:
+  player_x_screen: 0x003F
+  player_x:        0x0040
+  player_y:        0x003E
+  player_health:   0x0044
+  stage_number:    0x0028
+  lives:           0x002A
+  hearts:          0x0045   # sub-weapon ammo
+  # Boss health during boss fights
+  boss_health:     0x04A0
+
+reward_weights:
+  forward_progress: 0.5
+  health_delta:    -1.5
+  heart_collected:  0.5     # sub-weapon ammo is useful later
+  boss_damage:      3.0
+  boss_killed:     50.0
+  stage_cleared:   100.0
+  death_penalty:  -25.0
+  time_penalty:    -0.005
+
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["A"]
+  - ["B"]              # whip
+  - ["right", "B"]
+  - ["up", "B"]        # sub-weapon
+  - ["right", "A"]
+  - ["down"]           # crouch
+  - ["down", "B"]      # crouch-whip
+
+curriculum:
+  stage_1: ["*"]
+  stage_2: ["*"]
+  stage_3: ["*"]
+
+reinforce:
+  enabled: true
+  entropy_coef: 0.015
+  ppo_clip_eps: 0.2

@@ -1,0 +1,79 @@
+.venv/
+nes_core/.venv/
+target/
+__pycache__/
+*.pyc
+*.log
+*.jsonl
+_tonight_backup/
+logs/
+checkpoints/
+checkpoints_*/
+highlights/
+samples/
+# Ignore reports/ contents (CSV/JSON sweep outputs regenerate via
+# scripts/{playability,parity}_sweep.py) but allowlist the small
+# README-linked compatibility summary so clones get the link target.
+reports/*
+!reports/full_library.md
+.DS_Store
+tests/parity/failures/
+
+# =============================================================
+# AI tooling — never tracked, never shipped.
+# Covers Claude Code, Cursor, Copilot, Aider, Gemini, Continue,
+# Codeium, Windsurf, Zed AI, OpenHands, Tabnine, and any
+# convention-named project-instruction file (CLAUDE.md, GEMINI.md,
+# COPILOT.md, AGENTS.md, etc.). If a new tool drops a config
+# directory or a per-project instruction file in the repo root,
+# add it here rather than letting it leak into a public push.
+# =============================================================
+.claude/
+.cursor/
+.cursorrules
+.cursorignore
+.aider*
+.windsurfrules
+.windsurf/
+.continue/
+.codeium*
+.tabnine/
+.openhands/
+.gemini/
+.cody/
+.zed/
+.github/copilot-instructions.md
+.github/instructions/
+agent-skills/
+
+# Per-project AI-assistant instruction files. Not project source.
+CLAUDE.md
+CLAUDE.local.md
+GEMINI.md
+COPILOT.md
+AGENTS.md
+AGENT.md
+AI_INSTRUCTIONS.md
+.aiderules
+
+# Internal session work and dated session recaps. Useful for the
+# original developer's continuity, not for public consumers.
+.archive/
+docs/session_recap_*.md
+
+# NES ROMs are user-supplied. Never ship a ROM.
+roms/
+
+# Public-domain CPU validation artifacts (kevtris nestest + Nintendulator
+# golden trace). Explicitly tracked despite the roms/ + *.log globs above so
+# the nestest test runs on fresh clones without a download step.
+!roms/.test_roms/
+!roms/.test_roms/*
+
+# Library scan output (large, machine-generated, regenerable via
+# scripts/playability_sweep.py and scripts/parity_sweep.py).
+parity_sweep.json
+playability_sweep*.json
+
+third_party/
+tests/parity/mesen_tapes/*.status.txt

@@ -1,0 +1,54 @@
+name: "Contra"
+rom_hashes:
+  - "a70547ac1a4d0f86bdba6b31bf25c8aa"  # Contra (U) — NesDev canonical dump
+
+description: >
+  Training profile for Contra (NES, 1988). Side-scrolling run-and-gun.
+  Reward emphasizes forward progress + enemy kills + weapon pickups. Contra
+  is brutally unforgiving (one-hit deaths), so death_penalty matters a lot
+  and episodes end fast.
+
+ram_mapping:
+  # Player 1
+  player_x:        0x0031   # horizontal position on current screen
+  player_y:        0x0021   # vertical
+  player_state:    0x002C   # 0x00 alive, 0x01 dead, 0x02 dying anim
+  # Scroll / world position (high byte gives which screen)
+  screen_number:   0x0064
+  # Lives, score
+  lives:           0x0032   # remaining lives (starts at 2)
+  score_start:     0x07E2   # 6-digit BCD score
+  score_end:       0x07E7
+  # Weapon (F/S/M/L/B + default)
+  weapon:          0x00AA   # 0=default, 1=M machine-gun, 2=F flame, ...
+
+reward_weights:
+  forward_progress: 0.5     # per unit of screen/x gain
+  score_delta:      0.01    # per score-point (tiny)
+  weapon_upgrade:   5.0     # getting a better weapon
+  enemy_kill:       1.5     # per score-delta tick that corresponds to a kill
+  death_penalty:   -25.0
+  time_penalty:    -0.005
+
+action_space:
+  - []                        # NOOP
+  - ["right"]
+  - ["left"]
+  - ["A"]                     # jump
+  - ["B"]                     # fire
+  - ["right", "B"]            # run-fire
+  - ["right", "A"]            # right-jump
+  - ["right", "A", "B"]       # run-jump-fire
+  - ["up", "B"]               # shoot up
+  - ["down"]                  # prone
+
+curriculum:
+  stage_1: ["*"]
+  stage_2: ["*"]
+  stage_3: ["*"]
+  stage_4: ["*"]
+
+reinforce:
+  enabled: true
+  entropy_coef: 0.02     # higher than default — Contra rewards are sparse
+  ppo_clip_eps: 0.2

@@ -1,0 +1,30 @@
+{
+  "name": "contra_title",
+  "rom": "roms/Contra (USA).nes",
+  "rom_md5": "7bdad8b4a7a56a634c9649d20bd3011b",
+  "frames": 600,
+  "frame_skip": 1,
+  "mode": "golden_hash",
+  "warmup_frames": 10,
+  "tolerance_scanlines_diverged": 0,
+  "tolerance_pixels_per_scanline": 0,
+  "inputs": [
+    {
+      "start_frame": 0,
+      "end_frame": 120,
+      "buttons": 0
+    },
+    {
+      "start_frame": 120,
+      "end_frame": 130,
+      "buttons": 8
+    },
+    {
+      "start_frame": 130,
+      "end_frame": 600,
+      "buttons": 0
+    }
+  ],
+  "notes": "Re-authored 2026-04-23 after reset-warmup restore + lockstep nes-py compensation (reset change reverted due to GUI-visible regression)",
+  "golden_hashes": "contra_title.golden.bin"
+}

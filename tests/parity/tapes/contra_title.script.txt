@@ -1,0 +1,7 @@
+# contra_title — exercises the title-screen scroll-split timing window.
+# Frame 120-130: Start press advances past demo, triggering the
+# horizontal scroll register update whose 1px regression this tape guards.
+
+120 0        # wait for title to settle
+10 8         # Start (bit 3)
+470 0        # observe post-press rendering for 470 more frames

@@ -1,0 +1,20 @@
+{
+  "name": "punchout_idle",
+  "rom": "roms/Punch-Out!! (USA).nes",
+  "rom_md5": "3e4af91097aece830b3039af3f2c0802",
+  "frames": 600,
+  "frame_skip": 1,
+  "mode": "golden_hash",
+  "warmup_frames": 10,
+  "tolerance_scanlines_diverged": 0,
+  "tolerance_pixels_per_scanline": 0,
+  "inputs": [
+    {
+      "start_frame": 0,
+      "end_frame": 600,
+      "buttons": 0
+    }
+  ],
+  "notes": "Idle title-screen regression lock 2026-04-23",
+  "golden_hashes": "punchout_idle.golden.bin"
+}

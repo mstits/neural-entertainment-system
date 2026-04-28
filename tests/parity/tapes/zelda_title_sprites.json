@@ -1,0 +1,85 @@
+{
+  "name": "zelda_title_sprites",
+  "rom": "roms/Legend of Zelda, The (USA) (Rev A).nes",
+  "rom_md5": "f4095791987351be68674a9355b266bc",
+  "frames": 540,
+  "frame_skip": 1,
+  "mode": "golden_hash",
+  "warmup_frames": 10,
+  "tolerance_scanlines_diverged": 0,
+  "tolerance_pixels_per_scanline": 0,
+  "inputs": [
+    {
+      "start_frame": 0,
+      "end_frame": 120,
+      "buttons": 0
+    },
+    {
+      "start_frame": 120,
+      "end_frame": 130,
+      "buttons": 8
+    },
+    {
+      "start_frame": 130,
+      "end_frame": 160,
+      "buttons": 0
+    },
+    {
+      "start_frame": 160,
+      "end_frame": 170,
+      "buttons": 8
+    },
+    {
+      "start_frame": 170,
+      "end_frame": 200,
+      "buttons": 0
+    },
+    {
+      "start_frame": 200,
+      "end_frame": 260,
+      "buttons": 128
+    },
+    {
+      "start_frame": 260,
+      "end_frame": 270,
+      "buttons": 1
+    },
+    {
+      "start_frame": 270,
+      "end_frame": 330,
+      "buttons": 32
+    },
+    {
+      "start_frame": 330,
+      "end_frame": 340,
+      "buttons": 1
+    },
+    {
+      "start_frame": 340,
+      "end_frame": 400,
+      "buttons": 64
+    },
+    {
+      "start_frame": 400,
+      "end_frame": 410,
+      "buttons": 1
+    },
+    {
+      "start_frame": 410,
+      "end_frame": 470,
+      "buttons": 16
+    },
+    {
+      "start_frame": 470,
+      "end_frame": 480,
+      "buttons": 1
+    },
+    {
+      "start_frame": 480,
+      "end_frame": 540,
+      "buttons": 0
+    }
+  ],
+  "notes": "Re-authored 2026-04-23 after reset-warmup restore + lockstep nes-py compensation",
+  "golden_hashes": "zelda_title_sprites.golden.bin"
+}

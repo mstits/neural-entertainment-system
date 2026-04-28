@@ -1,0 +1,36 @@
+# Multidemo override — targeting the "enter dungeon 1, die in room 1-2"
+# plateau. Base zelda.yaml's dungeon_enter=3000 falls through unchanged
+# (keeps population entering dungeons). Everything here is tuned to
+# make GOING DEEPER and SURVIVING inside the dungeon substantially
+# more rewarding than it was with the prior overrides.
+#
+# Key-name correction: the previous version of this file used
+# `*_bonus` suffixes (dungeon_enter_bonus, map_compass_bonus, etc.) on
+# keys the trainer reads without that suffix, so those lines were
+# silently inert for ~1000 generations. Corrected below.
+reward_weights:
+  first_sword: 0            # saturated (sword always present); was 100, no effect
+  exploration_bonus: 100    # was 30 — 2× zelda.yaml default; bigger pull toward
+                            # new rooms, crucial for in-dungeon room coverage
+  enemy_kill: 75            # keep tuned value — drove wall_bump down from -226
+  # dungeon_enter: NOT OVERRIDDEN — zelda.yaml's 3000 still falls through
+  # and remains the strong attractor for getting inside in the first place.
+  triforce_piece: 10000     # was 500 — match zelda.yaml terminal-goal weight
+  map_compass: 400          # was map_compass_bonus (INERT); 2× zelda default
+  new_item: 300             # was new_item_bonus (INERT); 3.75× zelda default
+  item_tier_upgrade: 150    # was item_tier_upgrade_bonus (INERT); 3.75× default
+  magic_key: 1000           # was magic_key_bonus (INERT); 2× zelda default — rare
+  key_collected: 100        # was key_collected_bonus (INERT); 2× zelda default
+  heart_container: 500      # was 100 — rare and survival-critical; 1.7× zelda
+  heart_recovery: 50        # was 10 — 2.5× zelda default; reward picking up hearts
+  rupee_collected: 10       # was rupee_weight (INERT); 2× zelda default
+
+ga_params:
+  mutation_std: 0.02
+  mutation_rate: 0.1
+  elite_fraction: 0.25
+
+reinforce:
+  top_k: 5
+  ppo_clip_eps: 0.2
+  entropy_coef: 0.01

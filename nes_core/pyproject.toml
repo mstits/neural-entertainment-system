@@ -1,0 +1,48 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "nes_core"
+version = "0.1.0"
+description = "Purpose-built NES core for RL training. Drop-in for nes-py with real APU audio."
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.20"]
+
+[tool.maturin]
+# `asm_cpu` is enabled by default on aarch64 — the feature is a no-op
+# on other targets (see `#[cfg(target_arch = "aarch64")]` gates).
+#
+# 2026-04-26 — RESIDUAL BUG CLOSED. Five fixes landed across the
+# session bring ASM CPU + Rust slow path to byte-identical write
+# traces over 200k+ instructions on real SMB:
+#
+#   * Cumulative-cycles MMIO PPU tick (commit 99daf4f): callback ticks
+#     PPU for ALL cycles since last sync, not just current instruction.
+#     Closes SMB's $2002 polling-loop missing-vblank bug.
+#   * NMI rising-edge bail via pending_exit (99daf4f): NEXT macro
+#     polls and exits; Rust services NMI at instruction boundary.
+#   * OAM-DMA-pending bail (3e97a94): mirrors NMI semantics for
+#     STA $4014.
+#   * Slow-path STA $4014 deferred to last cycle of STA $abs (f5677a9):
+#     matches real-HW + ASM DMA-trigger timing; eliminates the 3-cycle
+#     parity flip in dummy_read alignment.
+#   * SET_NZ macro register-clobber fix (this commit): used w1/w2 as
+#     scratch, but CMP $abs,Y handlers had loaded mem-value into w1
+#     and sub-result into w2 — SET_NZ silently corrupted the carry-
+#     flag computation in the subsequent `cmp w3, w1`. THIS WAS THE
+#     ROOT CAUSE OF MARIO FALLING THROUGH THE FLOOR. CMP $9504,Y at
+#     SMB PC=$94EE produced wrong carry, BCS took wrong branch,
+#     ground-tile-buffer write went to the wrong target.
+#
+# Validation:
+#   * tests/asm_vs_slow_smb.rs: ASM-bulk vs slow byte-exact lockstep.
+#   * nes_core/tests/smb_write_trace.rs: per-step RAM-write trace
+#     ASM vs slow byte-identical over 200k nes.step calls.
+#   * Mario walks 306 frames with zero divergence vs nes-py.
+#   * Mesen oracle suite 31/31 pass.
+features = ["python", "asm_cpu", "pyo3/extension-module"]
+module-name = "nes_core"
+manifest-path = "Cargo.toml"

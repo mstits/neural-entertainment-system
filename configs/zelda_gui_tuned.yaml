@@ -1,0 +1,37 @@
+reward_weights:
+  exploration_bonus: 50.0
+  dungeon_enter:   3000.0
+  enemy_kill:        75.0
+  rupee_collected:    5.0
+  heart_container:  300.0
+  heart_recovery:    20.0
+  triforce_piece: 10000.0
+  damage_taken:      -5.0
+  death_penalty:    -30.0
+  new_item:          80.0
+  item_tier_upgrade: 40.0
+  first_sword:        0.0
+  key_collected:     50.0
+  magic_key:        500.0
+  map_compass:      200.0
+  item_used:          3.0
+  item_cycle:         0.5
+  motion:             0.0
+  stagnation:        -0.005
+  stagnation_window: 15
+  wall_bump:         -0.05
+  activity_timeout_steps: 900
+
+ga_params:
+  mutation_std: 0.008
+  mutation_rate: 0.08
+  elite_fraction: 0.3
+  tournament_size: 5
+  stale_gens_before_restart: 15
+  restart_fraction: 0.3
+
+reinforce:
+  top_k: 5
+  ppo_clip_eps: 0.2
+  entropy_coef: 0.02
+  max_steps_per_traj: 1000

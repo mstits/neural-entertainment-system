@@ -1,0 +1,5 @@
+# Ablation: remove exploration reward entirely, keep items + combat.
+# Pair with the no_items ablation to isolate which signal matters more.
+reward_weights:
+  exploration_bonus: 0.0
+  dungeon_enter: 0.0

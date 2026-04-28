@@ -1,0 +1,54 @@
+name: "Mega Man"
+rom_hashes:
+  - ""  # TODO: fill in when a known-good Mega Man 2 dump is used
+
+description: >
+  Training profile for Mega Man 2 (NES, 1988). Non-linear level selection,
+  boss-gated progression. Reward favors boss kills + health preservation +
+  sub-weapon pickups. Assumes the player starts on the stage-select screen
+  with a start state that drops them into a specific stage.
+
+ram_mapping:
+  # Mega Man position
+  player_x:        0x0460   # page byte
+  player_x_sub:    0x0480   # within-page offset
+  player_y:        0x04A0
+  player_health:   0x06C0   # 0x00..0x1C (28 units)
+  boss_health:     0x06C1
+  # Weapon / score
+  weapon_energy:   0x09C0
+  lives:           0x00A8
+
+reward_weights:
+  forward_progress: 0.1
+  health_delta:    -2.0     # lose 1 health unit = -2 reward
+  boss_damage:      5.0     # per unit of boss health lost
+  boss_killed:     75.0
+  death_penalty:  -30.0
+  time_penalty:    -0.002
+
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["A"]            # jump
+  - ["B"]            # fire
+  - ["right", "B"]
+  - ["left", "B"]
+  - ["right", "A"]
+  - ["right", "A", "B"]
+  - ["down"]         # slide (MM3+ only; safe to include)
+  - ["up"]           # ladders
+  # select removed early: sub-weapon cycle only matters once the agent
+  # has defeated a boss and acquired a second weapon. Add it back via
+  # a curriculum-aware action space at that point.
+
+curriculum:
+  stage_1: ["*"]
+  stage_2: ["*"]
+  stage_3: ["*"]
+
+reinforce:
+  enabled: true
+  entropy_coef: 0.015
+  ppo_clip_eps: 0.2

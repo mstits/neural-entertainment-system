@@ -1,0 +1,31 @@
+# Core emulation
+# nes_core is the in-tree Rust NES core, built via maturin (see
+# nes_core/pyproject.toml). No PyPI dep needed — the wheel installs
+# into .venv from the local crate. Python-side helpers live here.
+
+# Neural network + training
+# torch is installed separately in install_macos.sh to ensure MPS support
+numpy>=1.24,<2.0
+scipy>=1.11
+
+# GUI
+PyQt6>=6.6.0
+pyqtgraph>=0.13.3
+
+# Config and utilities
+PyYAML>=6.0
+click>=8.1.0
+rich>=13.7.0
+
+# Metrics and visualization
+matplotlib>=3.8.0
+tensorboard>=2.15.0
+
+# Checkpointing and serialization
+dill>=0.3.7
+
+# Dev tooling
+pytest>=7.4.0
+pytest-cov>=4.1.0
+ruff>=0.1.9
+mypy>=1.7.0

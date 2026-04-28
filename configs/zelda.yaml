@@ -1,0 +1,168 @@
+name: "The Legend of Zelda"
+rom_hashes:
+  - ""  # TODO: fill in with MD5 of a known-good dump
+
+description: >
+  Training profile for The Legend of Zelda (NES, 1986). Zelda is significantly
+  harder than Mario for RL — the game is non-linear, reward signals are
+  extremely sparse (you can wander a whole dungeon without score changing),
+  and the action space effectively includes menu navigation.
+  This profile is a starting point; reward shaping will need heavy iteration.
+
+ram_mapping:
+  # Link's position
+  link_x:          0x0070
+  link_y:          0x0084
+  # Overworld / dungeon location
+  world_map_x:     0x00EB
+  world_map_y:     0x00EC
+  dungeon_level:   0x10
+  # Inventory / stats
+  current_hearts:  0x066F  # current HP (4 bits per heart)
+  max_hearts:      0x066F  # upper 4 bits
+  rupees:          0x066D
+  bombs:           0x0658
+  keys:            0x066E
+  triforce_pieces: 0x0671
+
+reward_weights:
+  # Zelda reward hierarchy, round 4.
+  # Every signal the agent should care about has its own line here. The
+  # relative magnitudes reflect "how much should training care about this
+  # event compared to exploring a new screen (=20)":
+  #
+  #   triforce_piece (50)  >  heart_container (30)  >  new_item (25)  >
+  #   exploration (20)     >  dungeon_enter (15)     >  heart_recovery (5)
+  #                        >  enemy_kill (3) ≈ item_used (3)
+  #                        >  rupee (2)     >  item_cycle (0.5)
+  #                        >  damage (-5)   >  death (-20)
+  #
+  # History:
+  #   r1: motion=0.01 exploration=2  -> motion-reward exploit (300 in 1 cell)
+  #   r2: motion=0.0005 exploration=5 -> population spread to 19 cells but
+  #       elite collapsed to 100% up+A sword-spam.
+  #   r3: motion=0 exploration=20    -> some exploration progress; reward
+  #       palette was too sparse (no reward for hearts, items, coins).
+  #   r4 (current): rich item/heart/coin signals as the user asked for.
+  # Round 5 rebalance (PDF re-read): the old weights had total-available
+  # exploration reward = 128 screens × 20 = 2560, vs triforce total = 8 ×
+  # 50 = 400. Agents optimally ground new screens instead of progressing
+  # through dungeons. Fix: make progress milestones dominate exploration
+  # so the policy gradient pulls toward Triforce rescue, not wandering.
+  #
+  #   new totals (approximate, assuming full game clear):
+  #     exploration  128 × 10  = 1280
+  #     dungeon_enter  9 × 60  =  540
+  #     triforce     8 × 200   = 1600
+  #     boss kills   9 × 80    =  720
+  #     → progress (2860) ≥ exploration (1280). Right attractor.
+  # Round 6 rebalance — aggressive. After 800+ gens plateaued at
+  # best=100 with overworld-only behavior, the old weights weren't
+  # pulling the policy toward the next milestone. New priorities:
+  # wall-bump/stagnation penalties reduced 10× so experimentation
+  # isn't crushed; dungeon_enter × 50 so it's the dominant gradient
+  # once the agent stumbles into a cave; triforce × 50 as the
+  # long-term anchor. first_sword set to 0 — the sword-equipped
+  # start-state means that bonus never fires anyway.
+  exploration_bonus: 50.0    # was 10 — make new screens matter
+  dungeon_enter:   3000.0    # was 60 — THE next-tier gradient
+  enemy_kill:       75.0     # was 25 — make combat worth 1.5× a new screen,
+                             # so agent stops to fight instead of sprinting past
+  rupee_collected:   5.0     # was 2
+  heart_container: 300.0     # was 30 — rare and valuable
+  heart_recovery:   20.0     # was 5
+  triforce_piece: 10000.0    # was 200 — terminal goal
+  damage_taken:     -5.0     # was -8 — less punishing, encourage combat
+  death_penalty:   -30.0     # was -20 — tiny bump
+  new_item:         80.0     # was 25
+  item_tier_upgrade: 40.0    # was 15
+  first_sword:       0.0     # was 100 — start-state already has sword
+  key_collected:    50.0     # was 10
+  magic_key:       500.0     # was 30
+  map_compass:     200.0     # was 8
+  item_used:         3.0
+  item_cycle:        0.5
+  motion:            0.0     # disabled — was exploitable
+  # Anti-stagnation: after `stagnation_window` frames of no motion,
+  # every additional idle frame costs this. First pass at -0.05/window=30
+  # wasn't loud enough — observed workers stuck at start position for
+  # entire episodes (-0.05 × 60 idle steps = only -3 vs exploration
+  # bonus of +20 per new screen that the frozen policy never earned).
+  # Bumped to -0.5/window=15 so 30 frozen steps cost the full new-screen
+  # bonus, forcing the policy gradient to dominate toward movement.
+  stagnation:       -0.5
+  stagnation_window: 15
+  # Activity-based episode cutoff (SethBling's MarI/O trick). If this
+  # many consecutive agent-steps fire no positive reward signal (no
+  # new screen, no kill, no pickup, no heart, no tier upgrade), the
+  # episode ends. At frame_skip=16 this is N × 16 / 60 seconds of
+  # game time. Zelda sword fights can run tens of seconds without a
+  # kill landing, and careful navigation between dungeons can be a
+  # minute+ without a new-screen event, so this is generous. Lowering
+  # it punishes sword-combat episodes; raising it lets stuck genomes
+  # idle forever.
+  activity_timeout_steps: 900   # ≈ 4 min of game time at frame_skip=16
+  # Per-step penalty for holding a directional button while Link's
+  # (x,y) does not change — "running at a wall / cave / bush the
+  # agent cannot enter." Strictly worse than doing nothing, because
+  # doing nothing at least doesn't fake progress. This breaks the
+  # "hold UP against the start-screen cave ledge forever" attractor.
+  wall_bump:        -0.5
+
+action_space:
+  # Start removed: opens an empty inventory menu early game (agent has
+  # only the sword), wastes 1/N of the action budget. Re-add via a
+  # curriculum-aware action space once the agent picks up a second item
+  # (boomerang/bombs).
+  - []                # no-op
+  - ["up"]
+  - ["down"]
+  - ["left"]
+  - ["right"]
+  - ["A"]             # sword
+  - ["B"]             # secondary item
+  - ["up", "A"]
+  - ["down", "A"]
+  - ["left", "A"]
+  - ["right", "A"]
+
+curriculum:
+  # Zelda reward fn emits concrete map_xx_xx IDs from RAM — we don't know
+  # in advance which cell is "near start". "*" matches every recorded
+  # level, so stage_success_rate averages across wherever the agents went.
+  stage_1: ["*"]
+  stage_2: ["*"]
+  stage_3: ["*"]
+  stage_4: ["*"]
+
+reinforce:
+  enabled: true
+  # Raised from 0.01 after round-2 saw policy collapse — the elite genome
+  # picked "up+A" 100% of the time, indicating softmax had gone degenerate.
+  # 0.05 is aggressive but for a 12-action space with sparse rewards we
+  # need it. If even this isn't enough next round, go to 0.1 and/or add
+  # an anti-idle penalty.
+  entropy_coef: 0.05
+  ppo_clip_eps: 0.2
+  # Shorter window per REINFORCE update — keeps the grad signal fresh and
+  # avoids drowning in old trajectories during long episodes.
+  max_steps_per_traj: 1000
+  top_k: 5                    # use more trajectories (was 3); more diverse update
+
+ga_params:
+  # MarI/O-style diversity injection. If the best-seen fitness has not
+  # improved for this many consecutive generations, replace
+  # `restart_fraction` of the population (bottom-ranked only, never
+  # elites) with freshly initialised networks. Elites are preserved so
+  # the current best solution isn't thrown away.
+  stale_gens_before_restart: 10
+  restart_fraction: 0.5
+
+# Per-episode step budget. At frame_skip=16 and 60 fps, N agent-steps
+# corresponds to N × 16 / 60 seconds of in-game time.  Zelda is a
+# long adventure game — a full playthrough takes hours — so we set a
+# very loose cap. The activity_timeout_steps above will kill idle
+# genomes long before this cap kicks in; this exists only to stop
+# a single pathological genome running for days on a locked-up
+# pool. At 36000 this is ~2.7 hours of game time per episode.
+max_episode_steps: 36000

@@ -1,0 +1,4 @@
+# Ablation: motion reward set to zero (vs the 0.0005 residual in round 2).
+# Tests whether any nonzero motion weight is exploitable.
+reward_weights:
+  motion: 0.0

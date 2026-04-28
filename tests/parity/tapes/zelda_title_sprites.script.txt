@@ -1,0 +1,25 @@
+# zelda_title_sprites — exercises sprite rendering across Zelda 1's
+# cold-boot flow: title screen animation, file select, and name-entry
+# cursor movement.
+#
+# Getting Link to the overworld from a cold boot requires entering
+# at least one character before REGISTER is usable, which is brittle
+# to script and adds no regression-detection value: the sprite
+# pipeline is already fully exercised by title + menu animations,
+# and any OAM/sprite-0-hit regression will show up in the frame
+# hashes here.
+
+120 0      # title settles, "Legend of Zelda" sprite animation
+10 8       # Start → file select
+30 0
+10 8       # Start → name register
+30 0
+60 128     # D-pad Right through letter grid (cursor sprite motion)
+10 1       # A (select letter)
+60 32      # D-pad Down
+10 1       # A
+60 64      # D-pad Left
+10 1       # A
+60 16      # D-pad Up
+10 1       # A
+60 0       # settle

@@ -1,0 +1,15 @@
+# Legacy bake-off dependencies.
+#
+# The training path runs on nes_core (Rust) exclusively — see
+# requirements.txt. This file exists solely to reproduce the
+# historical nes-py vs nes_core benchmarks in:
+#
+#   scripts/bench_vs_nes_py.py
+#
+# Install with:
+#   pip install -r requirements-legacy-bakeoff.txt
+#
+# Do NOT add anything here that the training path touches; the goal
+# is to keep nes-py quarantined to the comparison scripts only.
+
+nes-py>=8.0.0

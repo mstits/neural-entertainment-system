@@ -1,0 +1,15 @@
+{
+  "name": "mario_walk_right",
+  "rom": "roms/Mario Bros. (World).nes",
+  "rom_md5": "8d8e0b86dd870302bf4a994e76c55c83",
+  "frames": 600,
+  "frame_skip": 1,
+  "mode": "cross_emulator",
+  "warmup_frames": 10,
+  "tolerance_scanlines_diverged": 0,
+  "tolerance_pixels_per_scanline": 0,
+  "inputs": [
+    {"start_frame": 0, "end_frame": 600, "buttons": 128}
+  ],
+  "notes": "Baseline: hold Right for 600 frames from cold boot. Mario Bros. (World) stays on its attract loop with Right held — no state transitions, so nes_core and nes-py render byte-exact. Warmup 10 skips the initial reset-to-stable-PPU window where both emulators transiently diverge. If this tape fails: palette LUT drifted, core mapper loading broke, or PPU fundamentals regressed. Catches the 2026-04-22 palette-class bugs."
+}

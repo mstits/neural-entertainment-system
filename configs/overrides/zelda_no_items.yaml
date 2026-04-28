@@ -1,0 +1,12 @@
+# Ablation: remove ALL item-related rewards, keep only exploration + combat.
+# Tests whether item rewards are doing any work. If training does worse,
+# they are essential; if roughly the same, exploration is carrying everything.
+reward_weights:
+  new_item: 0.0
+  item_tier_upgrade: 0.0
+  magic_key: 0.0
+  map_compass: 0.0
+  item_used: 0.0
+  item_cycle: 0.0
+  heart_container: 0.0
+  heart_recovery: 0.0

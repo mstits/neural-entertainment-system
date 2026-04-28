@@ -1,0 +1,23 @@
+# Apple Silicon: opt for native CPU features (NEON + Apple-specific ARMv8.5+ extensions).
+# Portable fallback handled by per-target sections; macOS x86 + Linux still build.
+[build]
+rustflags = []
+
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "target-cpu=native",
+    "-C", "link-arg=-undefined",
+    "-C", "link-arg=dynamic_lookup",
+]
+
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "target-cpu=native",
+    "-C", "link-arg=-undefined",
+    "-C", "link-arg=dynamic_lookup",
+]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "target-cpu=native",
+]

@@ -1,0 +1,20 @@
+{
+  "name": "tetris_idle",
+  "rom": "roms/Tetris (USA).nes",
+  "rom_md5": "ec58574d96bee8c8927884ae6e7a2508",
+  "frames": 600,
+  "frame_skip": 1,
+  "mode": "golden_hash",
+  "warmup_frames": 10,
+  "tolerance_scanlines_diverged": 0,
+  "tolerance_pixels_per_scanline": 0,
+  "inputs": [
+    {
+      "start_frame": 0,
+      "end_frame": 600,
+      "buttons": 0
+    }
+  ],
+  "notes": "Idle title-screen regression lock 2026-04-23",
+  "golden_hashes": "tetris_idle.golden.bin"
+}
