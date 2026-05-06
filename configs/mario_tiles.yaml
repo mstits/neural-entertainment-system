@@ -61,9 +61,19 @@ reward_weights:
   # range without symlog pinning.
   forward_progress: 1.0
   score_delta:      0.005
-  death_penalty:    0.0
+  # Death and time penalties were 0.0, which made "stand still and
+  # time out" yield the same expected return as "move right and
+  # die." 391 generations of empirical data confirmed the failure
+  # mode: action 0 (no-op) was selected 50-77% every generation,
+  # policy entropy stayed pinned at ln(8) ≈ 2.08 — the agent never
+  # converged on any structured policy because the reward landscape
+  # had no incentive to take risks. -50 for death + -0.01 per step
+  # break the no-op equilibrium: a 1500-step timeout now costs -15
+  # cumulative + zero forward progress, strictly worse than any
+  # policy that even reaches the first checkpoint (+50 at x=350).
+  death_penalty:    -50.0
   completion_bonus: 2000.0
-  time_penalty:     0.0
+  time_penalty:     -0.01
   # Dense progress checkpoints (per-x-position bonuses defined in
   # nes_core/src/rewards.rs::MarioReward::CHECKPOINTS). Multiplier of
   # 1.0 fires the calibrated values: 50/100/150/250/400/600/1000 at
@@ -105,6 +115,16 @@ reinforce:
   # off only to reproduce the pre-fix behavior.
   freeze_pre_ppo_elite: true
   symlog_rewards: true
+  # Switch the critic loss from MSE to Huber (smooth L1). MSE on
+  # un-normalized GAE returns produced ppo_value_loss ~300-660
+  # across the prior run, which (at value_coef=0.5) sent a
+  # ~150-330 magnitude gradient through the shared trunk every
+  # step while the policy gradient was -0.005. Huber bounds large
+  # errors to linear growth so the critic stops steamrolling the
+  # actor. Combined with value_coef=0.25 below, the value-side
+  # contribution is now in the single-digit range.
+  value_loss: huber
+  value_coef: 0.25
   bc_epochs: 30
   warmup_gens_ga_only: 10
   steps: 10

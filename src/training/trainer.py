@@ -296,6 +296,27 @@ class Trainer:
         self.reinforce_steps: int = rl_cfg.get("steps", 3)
         self.reinforce_gamma: float = rl_cfg.get("gamma", 0.99)
         self.reinforce_grad_clip: float = rl_cfg.get("grad_clip", 1.0)
+        # Coefficient on the value-loss term in PPO's combined loss.
+        # The standard PPO paper uses 0.5 assuming normalized value
+        # targets; our value targets are unnormalized GAE returns
+        # which can span 100s of units, so the value loss dominates
+        # the shared-trunk gradient and washes out the policy signal.
+        # Drop to 0.1-0.25 for unnormalized targets.
+        self.value_coef: float = float(rl_cfg.get("value_coef", 0.5))
+        # Huber (smooth L1) value loss instead of MSE. Bounded gradient
+        # for large value-target outliers — critical when returns are
+        # unnormalized and span [0, 5000+] over a 1500-step trajectory.
+        # MSE on those targets gives loss in the hundreds; Huber bounds
+        # it to the 10s range and keeps the critic from steamrolling
+        # the actor through the shared trunk.
+        self.value_loss_kind: str = str(
+            rl_cfg.get("value_loss", "mse")
+        ).lower()
+        if self.value_loss_kind not in ("mse", "huber", "smooth_l1"):
+            raise ValueError(
+                f"reinforce.value_loss must be 'mse' or 'huber'/'smooth_l1', "
+                f"got {self.value_loss_kind!r}"
+            )
         # GA-only warmup: skip the PPO gradient step for the first N
         # generations so the BC-imitated weights have time to spread
         # through the population via crossover/mutation before PPO's
@@ -2669,12 +2690,25 @@ class Trainer:
                 probs = log_probs_all.exp()
                 entropy = -(probs * log_probs_all).sum(dim=-1).mean()
 
-                # Critic loss: MSE between predicted values and GAE
-                # targets (advantages + baseline = one-step-TD return
-                # estimate). 0.5 coefficient is the PPO standard.
-                value_loss = F.mse_loss(values_pred, value_targets)
+                # Critic loss: predicted V vs GAE target (advantage +
+                # baseline = one-step-TD return). MSE is the textbook
+                # PPO choice but assumes normalized targets — when our
+                # targets span [0, 5000+] (unnormalized symlogged
+                # returns over 1500 steps), MSE produces loss in the
+                # hundreds and the value gradient through the shared
+                # trunk drowns the actor's policy gradient. Smooth-L1
+                # (Huber) is the structural fix: quadratic for small
+                # errors, linear for outliers, bounded gradient.
+                if self.value_loss_kind == "mse":
+                    value_loss = F.mse_loss(values_pred, value_targets)
+                else:
+                    value_loss = F.smooth_l1_loss(values_pred, value_targets)
 
-                loss_traj = policy_loss + 0.5 * value_loss - self.entropy_coef * entropy
+                loss_traj = (
+                    policy_loss
+                    + self.value_coef * value_loss
+                    - self.entropy_coef * entropy
+                )
                 if rnd_loss_term is not None:
                     loss_traj = loss_traj + self.rnd_loss_coef * rnd_loss_term
 
