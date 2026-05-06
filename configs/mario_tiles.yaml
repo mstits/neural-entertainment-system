@@ -97,6 +97,13 @@ reinforce:
   enabled: true
   encoder: smb_tiles
   preserve_elite_diversity: true
+  # Snapshot best's pre-PPO weights and inject into the population
+  # so the GA's next-gen elitism keeps both the post-PPO best AND
+  # the pre-PPO weights. Without this, a fragile winning policy
+  # (e.g. the gen-151 SMB 1-1 clear at fitness 7716) is destroyed
+  # in-place by a single regressive PPO step. Default True; flip
+  # off only to reproduce the pre-fix behavior.
+  freeze_pre_ppo_elite: true
   symlog_rewards: true
   bc_epochs: 30
   warmup_gens_ga_only: 10

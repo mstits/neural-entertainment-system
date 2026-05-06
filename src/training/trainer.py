@@ -377,6 +377,18 @@ class Trainer:
         self.preserve_elite_diversity: bool = bool(
             rl_cfg.get("preserve_elite_diversity", False)
         )
+        # Freeze a pre-PPO snapshot of the top-fitness genome and
+        # inject it into the population so the next generation's GA
+        # elitism keeps BOTH the post-PPO `best` (which PPO may have
+        # regressed) AND the original pre-PPO weights. Without this,
+        # a single bad PPO step on a fragile winning policy permanently
+        # corrupts the elite — observed empirically: SMB tile mode
+        # gen 151 hit fitness 7716 (cleared 1-1) then collapsed to
+        # 1567 in gen 152 because PPO modified the winning weights
+        # in-place and the GA had no fallback.
+        self.freeze_pre_ppo_elite: bool = bool(
+            rl_cfg.get("freeze_pre_ppo_elite", True)
+        )
         # LayerNorm on the trunk FC. Always-on default — cheap and
         # measurably stabilizes the value head when reward magnitudes
         # span orders of magnitude (which they do in this project).
@@ -1432,6 +1444,11 @@ class Trainer:
             elite_idx = [
                 idx for idx, _ in indexed[:top_k] if pop_traj_lens[idx] > 1
             ]
+            # Snapshot best's pre-PPO weights so a regressive update
+            # can't permanently destroy the generation's winning
+            # policy. Re-injected into the weakest population slot
+            # below — keeps both versions alive for the next eval.
+            pre_ppo_snapshot = self._snapshot_pre_ppo_elite(best, elite_idx)
             if elite_idx:
                 try:
                     loss, ppo_stats = self._reinforce_update(
@@ -1469,6 +1486,14 @@ class Trainer:
                         1 if self.preserve_elite_diversity else num_preserved,
                         self.preserve_elite_diversity,
                     )
+                    # Inject the pre-PPO snapshot into the weakest
+                    # population slot so GA elitism keeps it for one
+                    # more gen. If PPO regressed `best`, the next
+                    # eval will re-score the snapshot ≈ pre-PPO
+                    # fitness and the GA will resurface it as elite.
+                    # If PPO improved best, the snapshot drops out
+                    # naturally on the next sort.
+                    self._inject_pre_ppo_snapshot(pre_ppo_snapshot, pop, best)
                 except Exception as exc:
                     # Don't let a bad gradient step kill an overnight run —
                     # the GA alone will still make progress.
@@ -2335,6 +2360,59 @@ class Trainer:
             except Exception as exc:
                 log.warning("Could not write BC cache: %s", exc)
         seed_population_from_weights(self.ga.population, seed, noise_std=0.02)
+
+    def _snapshot_pre_ppo_elite(
+        self, best: Genome, elite_idx: list[int]
+    ) -> Optional[tuple[float, dict]]:
+        """Capture `best.state_dict` before PPO mutates it.
+
+        Returns `(fitness, cloned_state_dict)` or `None` when freezing
+        is disabled / PPO won't run. Tensors are detached and cloned
+        on CPU so they're safe to keep around past the next forward
+        pass that might dirty the live state_dict in place.
+        """
+        if not elite_idx or not self.freeze_pre_ppo_elite:
+            return None
+        return (
+            float(best.fitness),
+            {k: v.detach().cpu().clone() for k, v in best.state_dict.items()},
+        )
+
+    def _inject_pre_ppo_snapshot(
+        self,
+        snapshot: Optional[tuple[float, dict]],
+        pop: list[Genome],
+        best: Genome,
+    ) -> None:
+        """Write a pre-PPO snapshot into the weakest non-best slot.
+
+        After PPO modifies `best.state_dict` in place, the only way
+        the GA can keep the original winning policy across an
+        evolve() call is to have a separate genome holding those
+        same pre-PPO weights. We park the snapshot on the genome
+        with the lowest current fitness — typically a fresh-mutation
+        child that contributes nothing — and assign it the snapshot's
+        original fitness so GA elitism preserves it on the next sort.
+        On the following generation, the snapshot is re-evaluated
+        like any other genome; if PPO regressed `best`, the snapshot
+        re-scores high and resurfaces as elite, otherwise it drops
+        out naturally.
+        """
+        if snapshot is None:
+            return
+        snap_fit, snap_state = snapshot
+        weakest_i = min(range(len(pop)), key=lambda i: pop[i].fitness)
+        if pop[weakest_i] is best:
+            # Population must be size 1 — nowhere to park it. Skip
+            # silently; the GA itself will preserve `best` regardless.
+            return
+        pop[weakest_i].state_dict = snap_state
+        pop[weakest_i].fitness = snap_fit
+        log.info(
+            "  Frozen pre-PPO elite copied to slot %d "
+            "(fitness %.1f preserved for next-gen elitism)",
+            weakest_i, snap_fit,
+        )
 
     def _reinforce_update(
         self,
