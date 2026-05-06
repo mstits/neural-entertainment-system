@@ -818,6 +818,62 @@ impl RewardFunction {
     }
 }
 
+/// Batched dispatch: compute rewards for N (genome, ram, action) triples
+/// in a single PyO3 call. Equivalent to looping
+/// `[fn.compute(ram, action=a) for fn, ram, a in zip(fns, rams, actions)]`
+/// in Python, but eliminates per-call argument-parsing + boundary-
+/// crossing overhead. Saves ~50ms/gen at 16 workers × ~600 steps × 5µs
+/// per call of avoided overhead.
+///
+/// Inputs:
+///   - `reward_fns`: list of RewardFunction objects, one per genome.
+///   - `rams`: list of `bytes` (each 2 KB), parallel to `reward_fns`.
+///   - `actions`: list of u8 action bitmasks, parallel to `reward_fns`.
+///
+/// All three lists must be the same length. Returns a list of
+/// `(reward, done, level_id)` tuples in input order.
+///
+/// Why a free function rather than a method on RewardFunction: each
+/// instance carries its own state, and a method receiver would need
+/// borrow_mut on `self` for the others — awkward in PyO3. Free
+/// function lets us pull `Bound<RewardFunction>` from each list slot
+/// and call its `compute` body directly.
+#[pyfunction]
+fn compute_rewards_batch<'py>(
+    py: Python<'py>,
+    reward_fns: &Bound<'py, pyo3::types::PyList>,
+    rams: &Bound<'py, pyo3::types::PyList>,
+    actions: Vec<u8>,
+) -> PyResult<Vec<(f64, bool, String)>> {
+    let n = reward_fns.len();
+    if rams.len() != n || actions.len() != n {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "compute_rewards_batch: list length mismatch — \
+             reward_fns={}, rams={}, actions={}",
+            n, rams.len(), actions.len(),
+        )));
+    }
+    let _ = py;
+    let mut out: Vec<(f64, bool, String)> = Vec::with_capacity(n);
+    for i in 0..n {
+        let fn_obj = reward_fns.get_item(i)?;
+        let mut fn_borrowed = fn_obj.downcast::<RewardFunction>()?.borrow_mut();
+        let ram_obj = rams.get_item(i)?;
+        let ram_bytes_obj = ram_obj.downcast::<PyBytes>()?;
+        let bytes = ram_bytes_obj.as_bytes();
+        let result = fn_borrowed.inner.compute(bytes, actions[i], true);
+        for (signal, delta) in result.breakdown_delta {
+            *fn_borrowed
+                .breakdown
+                .entry(signal.to_string())
+                .or_insert(0.0) += delta;
+        }
+        out.push((result.reward, result.done, result.level_id));
+    }
+    Ok(out)
+}
+
+
 /// Factory — mirrors `src/utils/reward_functions/__init__.py::build_reward_function`.
 /// Accepts a game profile dict and returns a ready-to-use RewardFunction.
 #[pyfunction]
@@ -1092,6 +1148,7 @@ fn nes_core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DepthTracker>()?;
     m.add_class::<Narrator>()?;
     m.add_function(wrap_pyfunction!(build_reward_function, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_rewards_batch, m)?)?;
     m.add_function(wrap_pyfunction!(rom_info, m)?)?;
     m.add_function(wrap_pyfunction!(supported_mappers, m)?)?;
     m.add("BUTTON_RIGHT", BUTTON_RIGHT)?;

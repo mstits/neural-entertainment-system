@@ -102,7 +102,32 @@ reinforce:
   warmup_gens_ga_only: 10
   steps: 10
   lr: 3.0e-4
-  entropy_coef: 0.005
+  # async_pipeline DISABLED for SMB — the 1-step observation lag (8
+  # NES frames at frame_skip=8 = ~133ms) is too large for frame-perfect
+  # platformer jumps. Empirical: enabled this for 50 gens, depth_leaf
+  # plateaued at 723 (first pit) instead of climbing to 2012 like the
+  # prior runs. The compute pipelining is real but the policy
+  # degradation outweighs it for this game class. Re-evaluate per-game
+  # — Zelda overworld might tolerate the lag fine; Contra likely won't.
+  async_pipeline: false
+  # Tile features are 14k-param MLP; GPU kernel-launch overhead
+  # (~150-300 us per call on MPS) dominates the actual compute
+  # (~14k FLOPS at batch=16). CPU inference avoids the launch
+  # overhead entirely. Toggle to "mps" for A/B comparison.
+  device: cpu
+  # Production fast path: skip per-worker `catch_unwind` wrapping
+  # in the Rust pool. ~0.5-1% throughput. Worker panics may abort
+  # the process — acceptable since SMB ROMs are validated. Disable
+  # (omit or set to true) when running new/uncertified ROMs.
+  panic_isolation: false
+  # Lowered 10x from 0.005 after observing the late-training value-collapse
+  # pattern at gen 130-300: as the value head learned to predict the
+  # agent's typical return on the staircase wall, advantages collapsed to
+  # ~0 and the entropy bonus started actively un-teaching the policy
+  # (entropy crept from 0.32 back up to 1.0+ over 175 gens, average
+  # fitness halved). 0.0005 keeps a token exploration push without
+  # dominating the gradient when advantages are small.
+  entropy_coef: 0.0005
 
 # GA tuning. Tighter mutation_std than pixel profile because tile
 # policies have far fewer weights — same per-weight noise has
@@ -111,9 +136,22 @@ reinforce:
 # more than help.
 ga_params:
   mutation_rate: 0.8
-  mutation_std: 0.005
+  # Lowered 5x from 0.005 after gen 132-300 showed the elite's hard-won
+  # staircase-approach policy decaying under accumulated GA noise. At
+  # mutation_rate=0.8 with std=0.005 on a 14k-param net, ~11k weights
+  # per genome see Gaussian perturbation of magnitude 0.005 per gen.
+  # That's substantial behavioral drift; weak PPO can't outpace it
+  # once advantages shrink. 0.001 keeps GA diversity injection active
+  # without erasing structure.
+  mutation_std: 0.001
   elite_fraction: 0.4
-  stale_gens_before_restart: 0
+  # Re-enabled (was 0) after 175-gen plateau at depth 2586. Restart
+  # fires when the all-time best hasn't improved in 50 gens; injects
+  # 50% fresh genomes (controlled by `restart_fraction`) to break out
+  # of local minima. Originally disabled because the pixel-CNN run
+  # was firing restart on near-clears; in tile mode we're nowhere
+  # near 1-1 clear yet, so restart is the right tool.
+  stale_gens_before_restart: 50
   restart_fraction: 0.5
 
 # Per-episode step budget. Much tighter than pixel profile (600 vs

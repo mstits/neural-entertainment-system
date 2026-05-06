@@ -772,16 +772,20 @@ impl MarioReward {
     /// Per-level progress milestones (x-position threshold, base bonus).
     /// Bonuses are scaled by the `checkpoint_scale` weight at runtime
     /// so users can tune the strength globally without per-checkpoint
-    /// YAML knobs. Specifically calibrated to 1-1's geometry; the
-    /// thresholds also fire opportunistically in 1-2/1-3/etc but
-    /// they're not tuned for those levels' progress curves.
+    /// YAML knobs.
     ///
-    /// Why these specific x values: each corresponds to an obstacle
-    /// where naive policies historically died. Awarding a bonus on
-    /// CROSSING the obstacle gives PPO a dense gradient signal — the
-    /// value head learns "Mario near checkpoint X is high-value" and
-    /// can backpropagate that into action selection many steps prior.
-    const CHECKPOINTS: &'static [(u32, f64)] = &[
+    /// Why per-level tables instead of one shared list: 1-1 has a
+    /// staircase at x=2700; 1-2 is a vertical underground level with
+    /// no staircase at all and totally different obstacle x-positions.
+    /// Sharing the table would have 1-1's bonuses fire opportunistically
+    /// at random spots in 1-2 and provide no signal at the actual
+    /// 1-2 obstacles. Per-level tables preserve dense gradient signal
+    /// across the curriculum.
+    ///
+    /// `checkpoints_for(world, level)` returns the right table; the
+    /// `next_checkpoint` cursor is reset on every world/level
+    /// transition (already handled in `compute`).
+    const LEVEL_1_1: &'static [(u32, f64)] = &[
         (350, 50.0),    // past first pipe
         (720, 100.0),   // past first pit
         (1100, 150.0),  // past first horizontal pipe
@@ -790,6 +794,35 @@ impl MarioReward {
         (2700, 600.0),  // at staircase base
         (2900, 1000.0), // top of staircase, near flag
     ];
+
+    /// 1-2 is the underground bonus-room level. Obstacles: jumping
+    /// pipes (~x=400), green pipe gauntlet (~x=1300), final descent
+    /// to warp zone OR continuation gauntlet (~x=2300). Calibrated
+    /// from emulator playthrough — not as obstacle-dense as 1-1 but
+    /// still has clear chokepoints worth signaling.
+    const LEVEL_1_2: &'static [(u32, f64)] = &[
+        (400, 50.0),    // past first jumping-pipe section
+        (900, 100.0),   // past mid-level brick clusters
+        (1300, 200.0),  // past green pipe gauntlet
+        (1900, 350.0),  // past long-jump section
+        (2300, 500.0),  // approach to warp zone / level end
+        (2700, 1000.0), // near pipe to overworld / 1-3
+    ];
+
+    /// Look up the dense-reward checkpoints for a given (world, level).
+    /// Returns an empty slice for levels we haven't tuned, which means
+    /// only the baseline forward_progress + completion_bonus fire on
+    /// those levels. Not harmful — just less dense signal until the
+    /// table is calibrated.
+    fn checkpoints_for(world: u8, level: u8) -> &'static [(u32, f64)] {
+        match (world, level) {
+            (0, 0) => Self::LEVEL_1_1,
+            (0, 1) => Self::LEVEL_1_2,
+            // 1-3, 1-4, world 2+ — TODO: calibrate per level. Falls
+            // through to empty (forward + completion only).
+            _ => &[],
+        }
+    }
 
     pub fn new(
         forward_weight: f64,
@@ -891,9 +924,12 @@ impl MarioReward {
         // the obstacle — much easier to learn from than a single
         // sparse "+2000 at the flag" reward at the trajectory tail.
         // Checkpoints are sorted by x so a single-pointer scan suffices.
+        // Per-level tables: world/level lookup runs once per step
+        // (constant time) so the cost is negligible vs the GPU/Pool work.
         if self.checkpoint_scale != 0.0 {
-            while self.next_checkpoint < Self::CHECKPOINTS.len() {
-                let (threshold, bonus) = Self::CHECKPOINTS[self.next_checkpoint];
+            let checkpoints = Self::checkpoints_for(world, level);
+            while self.next_checkpoint < checkpoints.len() {
+                let (threshold, bonus) = checkpoints[self.next_checkpoint];
                 if x < threshold {
                     break;
                 }

@@ -416,9 +416,20 @@ class Trainer:
         # correct device once Trainer.run sets it up.
         self._rnd: Optional["RND"] = None
 
-        self.device = (
-            torch.device(device_override) if device_override else get_best_device()
-        )
+        # Profile YAML can pin a specific device (e.g. `reinforce.device: cpu`)
+        # which is the right call for tile mode — at 14k params, MPS kernel
+        # launch overhead (~150-300 us per call) dwarfs the ~14k FLOPS of
+        # actual compute, so CPU inference is faster despite the GPU being
+        # available. The constructor `device_override` arg still wins (used
+        # by tests + headless harnesses); falling back to YAML; falling back
+        # to auto-detect in priority order.
+        profile_device = rl_cfg.get("device")
+        if device_override:
+            self.device = torch.device(device_override)
+        elif profile_device:
+            self.device = torch.device(profile_device)
+        else:
+            self.device = get_best_device()
         log.info("Using device: %s", self.device)
 
         self.action_space = game_profile.get("action_space", [])
@@ -433,7 +444,20 @@ class Trainer:
         # `docs/rust_nes_core.md` ("Future perf wins") for the design
         # sketch. Keeping the profile knob so downstream configs don't
         # have to change when the feature lands.
-        self.async_pipeline = bool(game_profile.get("async_pipeline", False))
+        # Async pipeline reads from `reinforce.async_pipeline` first
+        # (where everything PPO-shaped now lives) and falls back to the
+        # top-level `async_pipeline` for backwards compat with profiles
+        # written before the section move.
+        self.async_pipeline = bool(
+            rl_cfg.get("async_pipeline", game_profile.get("async_pipeline", False))
+        )
+        # Panic isolation around per-worker rayon bodies. True (default)
+        # is safe — worker panics don't crash the process. False is the
+        # production fast path: skips `catch_unwind`, gains ~0.5-1%
+        # throughput, but a panic anywhere in the worker pool can take
+        # the trainer down. Opt out per-profile after the ROMs in use
+        # have been validated.
+        self.panic_isolation = bool(rl_cfg.get("panic_isolation", True))
         # Frames emulated between decisions. 16 is ~2.8× faster in
         # game-time throughput than 8 with no measurable learning loss on
         # slow NES games. Profiles can override: twitchy games (Contra
@@ -1296,6 +1320,22 @@ class Trainer:
             if setter is not None:
                 setter(True)
                 log.info("Pool preprocess_f16=ON — observations arrive as np.float16 in [0, 1].")
+        # Panic isolation: when False, rayon worker bodies run without
+        # a `catch_unwind` wrap. Saves 0.5-1% throughput per the Rust
+        # docs (pool.rs:528-538). Cost: a panic in any worker (e.g. a
+        # bad ROM, a mapper bug, a corrupt save state) unwinds past
+        # rayon and may abort the whole training process. Acceptable
+        # trade in production after ROMs/states are validated. Default
+        # remains True for safety; opt out per-profile via
+        # `reinforce.panic_isolation: false`.
+        if not self.panic_isolation:
+            setter = getattr(inner, "set_panic_isolation", None)
+            if setter is not None:
+                setter(False)
+                log.info(
+                    "Pool panic_isolation=OFF — production fast path. "
+                    "Worker panics may abort the process."
+                )
 
     def _run_one_generation(self, gen: int) -> None:
         log.info("=== Generation %d (stage: %s) ===", gen, self.curriculum.current_stage.name)
@@ -1732,6 +1772,13 @@ class Trainer:
                     # In-place write into the pre-allocated buffer; no
                     # np.stack malloc per step. Slice the prefix so
                     # the torch tensor shape matches `len(active)`.
+                    # NOTE: tried full-batch vmap (always feed n rows)
+                    # — broke training. Best fitness regressed 5× over
+                    # 40 gens with the change in. The PRNG-advance
+                    # difference (sampling n actions vs len(active))
+                    # changed the entire training trajectory and the
+                    # original gating was load-bearing. Keeping the
+                    # original len(active)==len(nets) gate.
                     for b_i, a_i in enumerate(active):
                         batch_np_buffer[b_i] = stacked_obs[a_i]
                     batch_np = batch_np_buffer[: len(active)]
@@ -1761,6 +1808,12 @@ class Trainer:
                         else contextlib.nullcontext()
                     )
 
+                # Fast path: parameter-stacked vmap forward. One GPU
+                # dispatch for all len(active) genomes. CRITICAL: we do a
+                # SINGLE bulk transfer to CPU at the end — each per-genome
+                # .item() call would force an MPS stream sync, which
+                # serialized the whole inference pipeline and was the
+                # biggest remaining perf cost.
                 # Fast path: parameter-stacked vmap forward. One GPU
                 # dispatch for all len(active) genomes. CRITICAL: we do a
                 # SINGLE bulk transfer to CPU at the end — each per-genome
@@ -1883,6 +1936,50 @@ class Trainer:
                 except Exception:
                     pass
 
+            # PRE-PASS: collect inputs for batched reward dispatch so
+            # we can do one PyO3 round-trip instead of N. Audit pegged
+            # this loop at 14.4k Python reward calls per gen; batching
+            # saves the per-call argument-marshaling overhead (~5µs
+            # each ≈ 50 ms/gen at 16 workers × 600 steps). Marginal
+            # individually but the architecture is cleaner.
+            #
+            # Also capture prev_breakdown snapshots BEFORE the batched
+            # compute mutates the per-genome state, so the narrator
+            # diff (old → new) below works the same as the per-call
+            # version.
+            narrator_on = self._narrator is not None
+            batch_genome_indices: list[int] = []
+            batch_rams: list[bytes] = []
+            batch_actions: list[int] = []
+            batch_fns: list = []
+            prev_breakdowns: dict[int, dict] = {}
+            for r in results:
+                worker_id = r.worker_id
+                if worker_id < offset:
+                    continue
+                genome_i = worker_id - offset
+                if genome_i >= n or done_flags[genome_i]:
+                    continue
+                batch_genome_indices.append(genome_i)
+                batch_rams.append(r.ram_snapshot)
+                batch_actions.append(bitmasks.get(genome_i, 0))
+                batch_fns.append(reward_fns[genome_i])
+                if narrator_on:
+                    prev_breakdowns[genome_i] = dict(reward_fns[genome_i].breakdown)
+
+            # Single Rust call for all active genomes' reward computation.
+            if batch_rams:
+                import nes_core as _nc
+                batch_results = _nc.compute_rewards_batch(
+                    batch_fns, batch_rams, batch_actions,
+                )
+                rewards_by_genome = {
+                    gi: res
+                    for gi, res in zip(batch_genome_indices, batch_results)
+                }
+            else:
+                rewards_by_genome = {}
+
             for r in results:
                 _book_t0 = time.perf_counter_ns()
                 worker_id = r.worker_id
@@ -1914,16 +2011,12 @@ class Trainer:
                     self._audio_mixer.push_ram(i, r.ram_snapshot)
                     if r.audio.size > 0 and r.audio_rate > 0:
                         self._audio_mixer.push_audio(i, r.audio, r.audio_rate)
-                # PERF: only snapshot the breakdown when a narrator is
-                # attached. Skipping the dict copy saves ~60ns * steps *
-                # workers per gen in headless training.
-                narrator_on = self._narrator is not None
-                prev_breakdown = (
-                    dict(reward_fns[i].breakdown) if narrator_on else None
-                )
-                reward, rew_done, level_id = reward_fns[i].compute(
-                    r.ram_snapshot, action=bitmasks.get(i, 0)
-                )
+                # Pre-captured snapshot from the pre-pass above (None in
+                # the headless / narrator-off case to skip the dict copy).
+                prev_breakdown = prev_breakdowns.get(i) if narrator_on else None
+                # Cached batched-compute result; identical semantics to
+                # the prior per-call `reward_fns[i].compute(...)`.
+                reward, rew_done, level_id = rewards_by_genome[i]
                 cumulative[i] += reward
                 # Cache the genome name (attribute lookup x2 -> x1) and
                 # the success flag (called at most once per done step).
@@ -2274,11 +2367,20 @@ class Trainer:
         # Lazy-build the RND module on first use so it lands on the
         # current device. Predictor params are added to the same Adam
         # optimizer as the policy so a single backward+step covers both.
+        # Encoder dispatches on observation kind: pixel mode uses the
+        # CNN-backed `RND`; tile mode uses the MLP-backed `TileRND`.
         if self.rnd_intrinsic_coef > 0.0 and self._rnd is None:
-            self._rnd = RND(in_channels=4).to(self.device)
+            if self._is_tile_mode:
+                from src.models.tile_rnd import TileRND
+                self._rnd = TileRND(
+                    feature_dim=self._tile_feature_dim
+                ).to(self.device)
+            else:
+                self._rnd = RND(in_channels=4).to(self.device)
             log.info(
-                "RND intrinsic motivation enabled: predictor=%d params, "
+                "RND intrinsic motivation enabled (%s): predictor=%d params, "
                 "intrinsic_coef=%.3f, loss_coef=%.3f",
+                "tile_mlp" if self._is_tile_mode else "pixel_cnn",
                 self._rnd.num_params,
                 self.rnd_intrinsic_coef,
                 self.rnd_loss_coef,
@@ -2580,8 +2682,15 @@ class Trainer:
         # Best-effort: any export failure is logged and ignored; the
         # viewer falls back to MPS automatically if the .mlpackage is
         # missing.
+        #
+        # Tile mode: skipped. The 14k-param MLP is fast enough on CPU
+        # that ANE acceleration is irrelevant; the export was profiling
+        # at ~13% of trainer wall-time on tile runs (every 10 gens for
+        # ~0.8s each in a subprocess). Net cost > replay-viewer benefit.
         if os.environ.get("NES_DISABLE_COREML_EXPORT") == "1":
             log.debug("CoreML export disabled via NES_DISABLE_COREML_EXPORT=1")
+        elif self._is_tile_mode:
+            log.debug("CoreML export skipped for tile mode (network too small to benefit)")
         else:
             try:
                 elite = self.ga.best_genome()
@@ -2603,7 +2712,18 @@ class Trainer:
 
         # Rotate old checkpoints so overnight runs don't fill the disk. A
         # single checkpoint is ~100 MB for population=16, Nature-DQN.
-        ckpts = sorted(self.checkpoint_dir.glob("gen_*.pt"))
+        # Sort by MODIFICATION TIME, not filename, so a fresh run that
+        # restarts the gen counter at 0 doesn't get its checkpoints
+        # silently deleted by an older, higher-named cohort still
+        # sitting in the dir. The previous name-sort had a real
+        # data-loss case: tile-mode runs writing gen_00010, 00020,
+        # ... were instantly pruned because gen_01094 (pixel-era) was
+        # alphabetically higher. mtime is the only signal that
+        # actually tracks "most recent" across resumes.
+        ckpts = sorted(
+            self.checkpoint_dir.glob("gen_*.pt"),
+            key=lambda p: p.stat().st_mtime,
+        )
         if keep_last > 0 and len(ckpts) > keep_last:
             for old in ckpts[:-keep_last]:
                 try:

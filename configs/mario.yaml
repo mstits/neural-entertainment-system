@@ -80,6 +80,15 @@ action_space:
 reinforce:
   enabled: true
   symlog_rewards: true
+  # async_pipeline DISABLED — the 1-step obs lag breaks SMB
+  # frame-perfect jumps. See mario_tiles.yaml for the empirical
+  # finding (50-gen regression at depth 723).
+  async_pipeline: false
+  # Half-precision observation transfer + skip the GPU /255 kernel.
+  # 28KB → 14KB H→D per worker per step + one fewer Metal kernel
+  # dispatch. ~50-100 ms/gen win at fs=16 16-worker. No policy
+  # impact — purely a numerical-precision change for the H→D path.
+  preprocess_f16: true
   # BC pretraining epochs. The default (8) is fine for short demos
   # but a full-game TAS (~17k frames) benefits from more epochs to
   # entrench the imitated weights deeply enough that subsequent PPO
