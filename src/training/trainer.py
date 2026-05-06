@@ -296,6 +296,24 @@ class Trainer:
         self.reinforce_steps: int = rl_cfg.get("steps", 3)
         self.reinforce_gamma: float = rl_cfg.get("gamma", 0.99)
         self.reinforce_grad_clip: float = rl_cfg.get("grad_clip", 1.0)
+        # Live BC replay: when a genome achieves a successful (level-clear)
+        # episode during training, capture its trajectory and periodically
+        # retrain a fresh policy via supervised behavior cloning on the
+        # accumulated success buffer. Solves the "lucky-clear-then-regress"
+        # plateau where one genome touches the flag at gen 152 and the
+        # population loses the trajectory by gen 180. With BC replay, the
+        # successful trajectory persists in memory and gets re-imitated
+        # every `bc_replay_every_gens` generations, anchoring the policy
+        # to behaviors that actually clear the level.
+        self.bc_replay_enabled: bool = bool(rl_cfg.get("bc_replay_enabled", False))
+        self.bc_replay_every_gens: int = max(1, int(rl_cfg.get("bc_replay_every_gens", 20)))
+        self.bc_replay_epochs: int = max(1, int(rl_cfg.get("bc_replay_epochs", 5)))
+        self.bc_replay_max_buffer: int = max(1, int(rl_cfg.get("bc_replay_max_buffer", 16)))
+        # In-memory buffer of (obs, actions, rewards, length) tuples from
+        # successful episodes. Capped at bc_replay_max_buffer to bound
+        # memory; new successes evict the oldest. Empty until the first
+        # success, after which BC replay actually fires.
+        self._bc_replay_buffer: list[tuple] = []
         # Number of episodes to roll for each genome per generation.
         # 1 (default) = original behavior. Higher values average out the
         # per-episode stochasticity from the policy's action sampling +
@@ -1452,6 +1470,40 @@ class Trainer:
                 # so the rolling success-rate window is unbiased.
                 for success, level_id in zip(successes, level_ids):
                     self.curriculum.record_episode(level_id, success)
+                # Capture successful trajectories to the BC replay buffer.
+                # Done HERE (inside the per-episode loop) rather than after
+                # multi-eval averaging because we need the per-episode
+                # success flag — the mean-fitness aggregation discards
+                # per-episode metadata. Each captured trajectory is the
+                # exact (obs, action) sequence that produced a level
+                # clear, perfect for behavior cloning to imitate.
+                if self.bc_replay_enabled:
+                    for g_i in range(nb):
+                        if not successes[g_i]:
+                            continue
+                        traj_len = int(traj_flat["lens"][g_i])
+                        if traj_len < 2:
+                            continue
+                        # Slice down to actual length to avoid storing
+                        # zero-padded tail data; copy so the in-memory
+                        # buffer survives the next iteration's
+                        # traj_flat reuse.
+                        self._bc_replay_buffer.append((
+                            traj_flat["obs"][g_i, :traj_len].copy(),
+                            traj_flat["actions"][g_i, :traj_len].copy(),
+                            traj_flat["rewards"][g_i, :traj_len].copy(),
+                            float(fitnesses[g_i]),
+                        ))
+                        # FIFO eviction once over capacity.
+                        if len(self._bc_replay_buffer) > self.bc_replay_max_buffer:
+                            self._bc_replay_buffer.pop(0)
+                        log.info(
+                            "  BC replay: captured success trajectory "
+                            "(genome=%d, len=%d, fitness=%.1f, buffer=%d/%d)",
+                            g_i, traj_len, fitnesses[g_i],
+                            len(self._bc_replay_buffer),
+                            self.bc_replay_max_buffer,
+                        )
                 for k, v in batch_bd.items():
                     gen_breakdown[k] = gen_breakdown.get(k, 0.0) + v
 
@@ -1659,6 +1711,17 @@ class Trainer:
         if gen_breakdown:
             top = sorted(gen_breakdown.items(), key=lambda kv: abs(kv[1]), reverse=True)[:6]
             log.info("  reward breakdown: %s", " ".join(f"{k}={v:.1f}" for k, v in top))
+
+        # BC replay: every N gens, train a fresh policy on the success
+        # buffer and inject as a new genome. Keeps "what an actual clear
+        # looks like" anchored in the population even as PPO drifts.
+        if (
+            self.bc_replay_enabled
+            and len(self._bc_replay_buffer) > 0
+            and gen > 0
+            and gen % self.bc_replay_every_gens == 0
+        ):
+            self._run_bc_replay(pop)
 
         self.ga.evolve()
 
@@ -2487,6 +2550,72 @@ class Trainer:
             "  Frozen pre-PPO elite copied to slot %d "
             "(fitness %.1f preserved for next-gen elitism)",
             weakest_i, snap_fit,
+        )
+
+    def _run_bc_replay(self, pop: list[Genome]) -> None:
+        """Train a fresh policy via BC on the success-trajectory buffer
+        and inject it as a new genome.
+
+        Stitches every (obs, actions, rewards) trajectory in the buffer
+        into a single supervised dataset, then runs `pretrain` to fit
+        a fresh network. The result replaces the lowest-fitness slot
+        in the population — the next generation's evaluation gives the
+        BC-trained genome a real fitness, and if it's good (which it
+        should be, since we trained on level-clear trajectories), the
+        GA preserves it as elite.
+        """
+        if not self._bc_replay_buffer:
+            return
+        # Concatenate all buffered trajectories into one big dataset.
+        all_obs = np.concatenate([t[0] for t in self._bc_replay_buffer], axis=0)
+        all_acts = np.concatenate([t[1] for t in self._bc_replay_buffer], axis=0)
+        all_rews = np.concatenate([t[2] for t in self._bc_replay_buffer], axis=0)
+        n = all_obs.shape[0]
+        if n < 16:
+            log.info("  BC replay skipped: only %d state-action pairs (need ≥16)", n)
+            return
+        # Tile-mode obs are int8 in [-128, 127]; cast to float for BC.
+        # Pixel mode is uint8; pretrain handles the /255 normalize.
+        if self._is_tile_mode:
+            states = torch.from_numpy(np.ascontiguousarray(all_obs)).float()
+            normalize_obs = False
+        else:
+            states = torch.from_numpy(np.ascontiguousarray(all_obs))
+            normalize_obs = True
+        actions = torch.from_numpy(all_acts.astype(np.int64))
+        rewards = torch.from_numpy(all_rews.astype(np.float32))
+
+        # Build a fresh network and run a few BC epochs.
+        net = self._make_network()
+        try:
+            loss = pretrain(
+                net,
+                (states, actions, rewards),
+                epochs=self.bc_replay_epochs,
+                batch_size=64,
+                lr=1e-3,
+                device=self.device,
+                use_reward_weighting=True,
+                normalize_obs=normalize_obs,
+            )
+        except Exception as exc:
+            log.warning("  BC replay pretrain failed: %s", exc)
+            return
+
+        # Inject into the weakest non-best slot, mirroring the freeze
+        # snapshot pattern. Fitness is set to the buffer's mean so the
+        # GA gives the new genome a fair shot at elitism for one gen
+        # before re-evaluation.
+        weakest_i = min(range(len(pop)), key=lambda i: pop[i].fitness)
+        avg_buffer_fitness = sum(t[3] for t in self._bc_replay_buffer) / len(self._bc_replay_buffer)
+        pop[weakest_i].state_dict = {
+            k: v.detach().cpu().clone() for k, v in net.state_dict().items()
+        }
+        pop[weakest_i].fitness = float(avg_buffer_fitness)
+        log.info(
+            "  BC replay: trained on %d successful trajectories (%d state-action pairs), "
+            "BC loss %.4f, injected to slot %d (fitness %.1f for next-gen elitism)",
+            len(self._bc_replay_buffer), n, loss, weakest_i, avg_buffer_fitness,
         )
 
     def _reinforce_update(

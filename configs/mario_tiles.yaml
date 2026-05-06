@@ -98,7 +98,15 @@ reward_weights:
   # wins, but mild enough that brief exploration drags don't crush
   # the gradient.
   death_penalty:    -15.0
-  completion_bonus: 100.0
+  # Bumped 100 -> 500 after empirical: gen 152-176 of the canonical-aligned
+  # run had success_rate=0.005 (3 lucky flag touches), but the policy
+  # never consolidated reliable clears. Diagnosis: with completion=100
+  # and forward-to-flag=3160, the clear-vs-die-at-flag fitness delta
+  # was only 100/3260 = 3% — below PPO's noise floor on a stochastic
+  # policy. Bumping to 500 makes a clear worth ~15% over a near-miss,
+  # large enough that the GA reliably selects clearing genomes and
+  # PPO sees a strong gradient on the final approach.
+  completion_bonus: 500.0
   time_penalty:     -0.05
   # Dense progress checkpoints (per-x-position bonuses defined in
   # nes_core/src/rewards.rs::MarioReward::CHECKPOINTS). Multiplier of
@@ -213,6 +221,20 @@ reinforce:
   # at full strength so RND signal is useful from gen 1).
   rnd_intrinsic_coef: 0.1
   rnd_loss_coef: 1.0
+  # Live BC replay. Captures every successful (level-clear) episode
+  # to an in-memory buffer and periodically retrains a fresh policy
+  # via supervised behavior cloning on the buffer. Solves the
+  # observed "lucky-clear-then-regress" plateau (canonical run hit
+  # success_rate=0.005 at gen 152 then drifted back to 0 by gen
+  # 178): without BC replay, a single lucky genome's clearing
+  # trajectory exists for one gen and is washed out by mutation.
+  # With BC replay, the actual (state, action) sequence that led
+  # to a clear is preserved and re-imitated every 20 gens — the
+  # population has a permanent anchor to "what works."
+  bc_replay_enabled: true
+  bc_replay_every_gens: 20
+  bc_replay_epochs: 5
+  bc_replay_max_buffer: 16
 
 # GA tuning. Tighter mutation_std than pixel profile because tile
 # policies have far fewer weights — same per-weight noise has
