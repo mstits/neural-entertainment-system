@@ -187,16 +187,32 @@ reinforce:
   # the process — acceptable since SMB ROMs are validated. Disable
   # (omit or set to true) when running new/uncertified ROMs.
   panic_isolation: false
-  # Restored 10x to 0.005. The 0.0005 floor was set when policy_loss
-  # was ~0.005 (broken-PPO regime where value loss drowned the actor)
-  # — at that scale, even a tiny entropy bonus dominated. With the
-  # structural fixes in place (Huber + value_coef=0.25 + multi-eval),
-  # policy_loss is now 0.05-0.15 magnitude, so entropy bonus at 0.005
-  # is a 5-10% nudge rather than a 100x dominator. We need this for
-  # exploration: stable-but-stuck-at-x=723 was the failure mode of
-  # the over-cautious 0.0005 setting (entropy collapsed to 0.7, agent
-  # stopped exploring past the first pit).
-  entropy_coef: 0.005
+  # 0.001 — calibrated mid-point. The 0.005 setting (last commit)
+  # caused entropy to climb 1.0 -> 1.5 over 30 gens as policy_loss
+  # shrank from 0.12 -> 0.025: with that ratio, the entropy bonus
+  # was actively pulling the policy back toward uniform faster than
+  # PPO could commit. 0.001 is 5-10% the magnitude of policy_loss,
+  # which is the canonical balance.
+  entropy_coef: 0.001
+  # RND (Random Network Distillation, Burda+2018; tile variant via
+  # src/models/tile_rnd.py). Intrinsic bonus for visiting states the
+  # predictor net hasn't seen yet — Pathak's ICM paper demonstrated
+  # this exact mechanism crossing 30% of SMB level 1 with ZERO
+  # extrinsic reward. Our prior 41-gen run plateaued at depth_scalar
+  # = 832 because no extrinsic gradient pulled the policy past the
+  # first stretch (most exploration past 832 dies to Goombas/pipes
+  # → low extrinsic return → PPO learns "don't go past 832"). RND
+  # gives a positive bonus to NEW states regardless of extrinsic
+  # outcome, so even a death-bound trajectory that visits x=900 for
+  # the first time scores well in the predictor's MSE.
+  #
+  # intrinsic_coef=0.1 produces ~0.05-0.5 per-step bonus → ~60-600
+  # cumulative over a 1200-step episode. ~5-50% of typical extrinsic
+  # forward reward, so it's a meaningful nudge but doesn't dominate.
+  # loss_coef=1.0 follows Burda canonical (let the predictor learn
+  # at full strength so RND signal is useful from gen 1).
+  rnd_intrinsic_coef: 0.1
+  rnd_loss_coef: 1.0
 
 # GA tuning. Tighter mutation_std than pixel profile because tile
 # policies have far fewer weights — same per-weight noise has
