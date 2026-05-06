@@ -874,6 +874,38 @@ fn compute_rewards_batch<'py>(
 }
 
 
+/// Native Rust SMB tile-feature extractor — drop-in for the Python
+/// `SMBTileObservation.extract` decoder. Returns a freshly-allocated
+/// numpy `int8` array of shape `(175,)` matching the Python layout
+/// byte-exactly.
+///
+/// Uses the byte-buffer fast path: `ram_bytes` enters PyO3 as a
+/// borrowed `&[u8]` (no copy), `extract` writes into a stack array,
+/// and we hand the array off to numpy via PyArray::from_iter (one
+/// alloc, contiguous memory).
+///
+/// Why expose this: `src/emulation/tile_observations/smb.py` is hot
+/// (~7% wall in tile-mode profiles even after the numpy vectorize).
+/// The Rust port runs the same algorithm without the numpy ufunc
+/// dispatch + interpreter overhead — single-digit microseconds per
+/// call. Opt in from Python via `SMBTileObservation(use_rust=True)`.
+#[pyfunction]
+fn extract_smb_tiles<'py>(
+    py: Python<'py>,
+    ram_bytes: &Bound<'py, PyBytes>,
+) -> PyResult<Bound<'py, numpy::PyArray1<i8>>> {
+    let bytes = ram_bytes.as_bytes();
+    if bytes.len() < 0x0800 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "ram_bytes too short: got {} bytes, need at least 2048",
+            bytes.len(),
+        )));
+    }
+    let out = crate::smb_tile_extract::extract(bytes);
+    Ok(numpy::PyArray1::from_slice_bound(py, &out))
+}
+
+
 /// Factory — mirrors `src/utils/reward_functions/__init__.py::build_reward_function`.
 /// Accepts a game profile dict and returns a ready-to-use RewardFunction.
 #[pyfunction]
@@ -1149,6 +1181,7 @@ fn nes_core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Narrator>()?;
     m.add_function(wrap_pyfunction!(build_reward_function, m)?)?;
     m.add_function(wrap_pyfunction!(compute_rewards_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_smb_tiles, m)?)?;
     m.add_function(wrap_pyfunction!(rom_info, m)?)?;
     m.add_function(wrap_pyfunction!(supported_mappers, m)?)?;
     m.add("BUTTON_RIGHT", BUTTON_RIGHT)?;

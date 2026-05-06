@@ -27,6 +27,7 @@ mod depth_tracker;
 mod narrator;
 pub mod preprocess;
 mod rewards;
+mod smb_tile_extract;
 
 // AArch64 ASM 6502 core — Phase 0 skeleton. Only compiled when the
 // `asm_cpu` feature is enabled AND we're on aarch64. See
