@@ -71,14 +71,20 @@ reward_weights:
   # selects no-op. Multi-eval (commit 1ab09ca) gave us a clean
   # selection signal but couldn't change which target was higher.
   #
-  # New shape: death=-10 + time=-0.1. Standing still 1500 steps
-  # costs -150 (catastrophic); walking and dying at any x>0 nets
-  # at least 0 - 10 - small ≈ -10 (strictly beats stand-still).
-  # Every pixel of forward progress is strictly positive net,
-  # giving PPO a clean unambiguous gradient toward movement.
-  death_penalty:    -10.0
+  # 28 gens of -10/-0.1 data showed the agent committed to a
+  # "reach x=723 reliably" attractor — depth_scalar stuck at 723
+  # for 18+ generations, no exploration past the first pit. The
+  # penalties were structurally correct (no-op was strictly losing)
+  # but too aggressive in magnitude — they crushed the random
+  # exploration that allowed the previous broken-PPO run to
+  # stumble onto the flagpole region (depth=2519+) by lucky
+  # chance. New shape splits the difference: stand-still still
+  # painful (-75 timeout), but any forward progress is positive
+  # and dying-while-exploring costs less so the GA selects for
+  # genomes that explore further before failing.
+  death_penalty:    -5.0
   completion_bonus: 2000.0
-  time_penalty:     -0.1
+  time_penalty:     -0.05
   # Dense progress checkpoints (per-x-position bonuses defined in
   # nes_core/src/rewards.rs::MarioReward::CHECKPOINTS). Multiplier of
   # 1.0 fires the calibrated values: 50/100/150/250/400/600/1000 at
@@ -123,11 +129,16 @@ reinforce:
   # platformer dynamics, single-episode fitness has 5x variance
   # for the SAME elite weights — observed empirically: gen 10
   # best=582, gen 11 best=147 (same frozen genome, different luck).
-  # Mean over 4 episodes cuts the noise to 1/4 at 4x wall-clock.
+  # 2 episodes cuts noise to ~1/2 at only 2x wall-clock. 4 was too
+  # expensive — at 50s/gen the trainer covers fewer wall-clock
+  # generations than the previous (broken) 1-episode runs that hit
+  # depth=2519 by gen 70 wallclock-equivalent ~14min. With 2-ep
+  # we're at ~25s/gen, closer to the gen-throughput budget that
+  # made random exploration in the prior run effective.
   # Trajectory used by PPO is the BEST-fitness episode of each
   # genome — PPO learns from the agent's good runs, not from a
   # randomly-picked one that may have died at frame 5.
-  episodes_per_genome: 4
+  episodes_per_genome: 2
   symlog_rewards: true
   # Switch the critic loss from MSE to Huber (smooth L1). MSE on
   # un-normalized GAE returns produced ppo_value_loss ~300-660
@@ -161,14 +172,16 @@ reinforce:
   # the process — acceptable since SMB ROMs are validated. Disable
   # (omit or set to true) when running new/uncertified ROMs.
   panic_isolation: false
-  # Lowered 10x from 0.005 after observing the late-training value-collapse
-  # pattern at gen 130-300: as the value head learned to predict the
-  # agent's typical return on the staircase wall, advantages collapsed to
-  # ~0 and the entropy bonus started actively un-teaching the policy
-  # (entropy crept from 0.32 back up to 1.0+ over 175 gens, average
-  # fitness halved). 0.0005 keeps a token exploration push without
-  # dominating the gradient when advantages are small.
-  entropy_coef: 0.0005
+  # Restored 10x to 0.005. The 0.0005 floor was set when policy_loss
+  # was ~0.005 (broken-PPO regime where value loss drowned the actor)
+  # — at that scale, even a tiny entropy bonus dominated. With the
+  # structural fixes in place (Huber + value_coef=0.25 + multi-eval),
+  # policy_loss is now 0.05-0.15 magnitude, so entropy bonus at 0.005
+  # is a 5-10% nudge rather than a 100x dominator. We need this for
+  # exploration: stable-but-stuck-at-x=723 was the failure mode of
+  # the over-cautious 0.0005 setting (entropy collapsed to 0.7, agent
+  # stopped exploring past the first pit).
+  entropy_coef: 0.005
 
 # GA tuning. Tighter mutation_std than pixel profile because tile
 # policies have far fewer weights — same per-weight noise has
