@@ -114,6 +114,15 @@ reinforce:
   # in-place by a single regressive PPO step. Default True; flip
   # off only to reproduce the pre-fix behavior.
   freeze_pre_ppo_elite: true
+  # Multi-episode evaluation. With entropy ~0.4 and frame-perfect
+  # platformer dynamics, single-episode fitness has 5x variance
+  # for the SAME elite weights — observed empirically: gen 10
+  # best=582, gen 11 best=147 (same frozen genome, different luck).
+  # Mean over 4 episodes cuts the noise to 1/4 at 4x wall-clock.
+  # Trajectory used by PPO is the BEST-fitness episode of each
+  # genome — PPO learns from the agent's good runs, not from a
+  # randomly-picked one that may have died at frame 5.
+  episodes_per_genome: 4
   symlog_rewards: true
   # Switch the critic loss from MSE to Huber (smooth L1). MSE on
   # un-normalized GAE returns produced ppo_value_loss ~300-660

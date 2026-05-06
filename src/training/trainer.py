@@ -296,6 +296,17 @@ class Trainer:
         self.reinforce_steps: int = rl_cfg.get("steps", 3)
         self.reinforce_gamma: float = rl_cfg.get("gamma", 0.99)
         self.reinforce_grad_clip: float = rl_cfg.get("grad_clip", 1.0)
+        # Number of episodes to roll for each genome per generation.
+        # 1 (default) = original behavior. Higher values average out the
+        # per-episode stochasticity from the policy's action sampling +
+        # the GA selecting genomes on noisy single-episode scores. With
+        # entropy ≈ 0.4 and 8 actions, a single episode's score can
+        # easily 5x for the same weights — observed empirically: gen 10
+        # best=582, gen 11 best=147, both running the SAME elite weights
+        # (the freeze snapshot guarantees this). Mean over N episodes
+        # bounds the variance to σ²/N. For SMB tile mode, 4 episodes
+        # cuts noise to 1/4 at 4× wall-clock; reasonable trade.
+        self.episodes_per_genome: int = max(1, int(rl_cfg.get("episodes_per_genome", 1)))
         # Coefficient on the value-loss term in PPO's combined loss.
         # The standard PPO paper uses 0.5 assuming normalized value
         # targets; our value targets are unnormalized GAE returns
@@ -1396,22 +1407,65 @@ class Trainer:
             if not self._running:
                 return
             batch = pop[batch_start : batch_start + ga_batch_size]
-            fitnesses, successes, level_ids, traj_flat, batch_bd = \
-                self._evaluate_batch(batch)
-            for g, f in zip(batch, fitnesses):
-                g.fitness = f
-            for success, level_id in zip(successes, level_ids):
-                self.curriculum.record_episode(level_id, success)
-            # Copy this batch's flat arrays into the population-wide slot.
-            # Slice by [:len(batch)] in case the last batch is partial.
             nb = len(batch)
-            pop_traj_obs[batch_start:batch_start + nb] = traj_flat["obs"][:nb]
-            pop_traj_actions[batch_start:batch_start + nb] = traj_flat["actions"][:nb]
-            pop_traj_rewards[batch_start:batch_start + nb] = traj_flat["rewards"][:nb]
-            pop_traj_log_probs[batch_start:batch_start + nb] = traj_flat["log_probs"][:nb]
-            pop_traj_lens[batch_start:batch_start + nb] = traj_flat["lens"][:nb]
-            for k, v in batch_bd.items():
-                gen_breakdown[k] = gen_breakdown.get(k, 0.0) + v
+            # Multi-episode evaluation: run `episodes_per_genome` rollouts
+            # and average fitness so the GA selects on expected return,
+            # not single-episode luck. Per-episode trajectory is kept
+            # only for the BEST-fitness episode of each genome, so PPO
+            # trains on the agent's good runs (which actually reach
+            # interesting states) instead of a randomly-picked one.
+            #
+            # `successes` is OR-ed across episodes — any clear counts as
+            # a curriculum success. Curriculum records every episode so
+            # the success-rate window stays calibrated.
+            best_fits = [-float("inf")] * nb
+            sum_fits = [0.0] * nb
+            best_traj_obs = None
+            best_traj_actions = None
+            best_traj_rewards = None
+            best_traj_log_probs = None
+            best_traj_lens = None
+            best_level_ids: list[str] = ["?"] * nb
+            for _ep in range(self.episodes_per_genome):
+                fitnesses, successes, level_ids, traj_flat, batch_bd = \
+                    self._evaluate_batch(batch)
+                for g_i in range(nb):
+                    sum_fits[g_i] += float(fitnesses[g_i])
+                    if fitnesses[g_i] > best_fits[g_i]:
+                        best_fits[g_i] = float(fitnesses[g_i])
+                        best_level_ids[g_i] = level_ids[g_i]
+                        # Lazy-allocate the best-trajectory holders on
+                        # first improvement; per-genome slice copy when
+                        # this episode is the new best.
+                        if best_traj_obs is None:
+                            best_traj_obs = np.zeros_like(traj_flat["obs"])
+                            best_traj_actions = np.zeros_like(traj_flat["actions"])
+                            best_traj_rewards = np.zeros_like(traj_flat["rewards"])
+                            best_traj_log_probs = np.zeros_like(traj_flat["log_probs"])
+                            best_traj_lens = np.zeros_like(traj_flat["lens"])
+                        best_traj_obs[g_i] = traj_flat["obs"][g_i]
+                        best_traj_actions[g_i] = traj_flat["actions"][g_i]
+                        best_traj_rewards[g_i] = traj_flat["rewards"][g_i]
+                        best_traj_log_probs[g_i] = traj_flat["log_probs"][g_i]
+                        best_traj_lens[g_i] = traj_flat["lens"][g_i]
+                # Curriculum tracks every episode regardless of best/avg
+                # so the rolling success-rate window is unbiased.
+                for success, level_id in zip(successes, level_ids):
+                    self.curriculum.record_episode(level_id, success)
+                for k, v in batch_bd.items():
+                    gen_breakdown[k] = gen_breakdown.get(k, 0.0) + v
+
+            # Mean fitness across episodes — the GA selects on this.
+            for g_i, g in enumerate(batch):
+                g.fitness = sum_fits[g_i] / self.episodes_per_genome
+
+            # Copy best-episode trajectories into the population-wide slot.
+            assert best_traj_obs is not None  # always set after first ep
+            pop_traj_obs[batch_start:batch_start + nb] = best_traj_obs[:nb]
+            pop_traj_actions[batch_start:batch_start + nb] = best_traj_actions[:nb]
+            pop_traj_rewards[batch_start:batch_start + nb] = best_traj_rewards[:nb]
+            pop_traj_log_probs[batch_start:batch_start + nb] = best_traj_log_probs[:nb]
+            pop_traj_lens[batch_start:batch_start + nb] = best_traj_lens[:nb]
 
         best = self.ga.best_genome()
         avg = sum(g.fitness for g in pop) / len(pop)
