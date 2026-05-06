@@ -32,7 +32,14 @@ rom_hashes:
 #   a 14k-param network spreads through the population in fewer gens
 #   than 1.7M needs.
 
-frame_skip: 8
+frame_skip: 4
+# 4 (down from 8) is the canonical choice in both uvipen/Super-mario-bros-PPO-pytorch
+# (CNN-based, clears 31/32 levels) and yumouwei/super-mario-bros-reinforcement-learning
+# (RAM-based, clears 1-1 reliably). Frame_skip=8 was originally chosen to halve
+# wall-clock per agent step, but it costs control granularity — a single agent action
+# spans 8 NES frames (~133ms), which is too coarse for the frame-perfect jumps SMB
+# requires past the first pit. Both canonical repos use 4. To preserve the same
+# game-time-per-episode, max_episode_steps is doubled below.
 
 description: >
   Tile-based training profile for Super Mario Bros. (NES, 1985). Uses
@@ -54,11 +61,17 @@ ram_mapping:
   float_state:     0x001D
 
 reward_weights:
-  # Forward progress weight is dropped from 5.0 (pixel profile) to 1.0
-  # because the dense checkpoint signal is now carrying most of the
-  # advantage signal. Total clean run reward = ~3000 forward + 2550
-  # checkpoints + 2000 completion = ~7550. Scale lives in PPO-friendly
-  # range without symlog pinning.
+  # Forward progress weight stays at 1.0 (canonical: gym-super-mario-bros
+  # uses delta_x with no scaling). Death penalty rebalanced to -15 to
+  # match the canonical Kauten reward formula r=v+c+d, which clips to
+  # (-15, 15) per step and uses d=-15 on death. completion_bonus
+  # dropped from 2000 to 100 — the prior 2000 was 40x larger than the
+  # max forward progress reward (3160), so it dominated the value
+  # function whenever achieved and starved the per-step gradient.
+  # Total clean run = ~3160 forward + 2550 checkpoints + 100 completion
+  # - 60 time = ~5750. Forward progress and checkpoints dominate, as
+  # they should — the agent learns the path, the completion is the
+  # cherry on top.
   forward_progress: 1.0
   score_delta:      0.005
   # Death and time penalties were 0.0 (no-op equilibrium); previous
@@ -71,19 +84,21 @@ reward_weights:
   # selects no-op. Multi-eval (commit 1ab09ca) gave us a clean
   # selection signal but couldn't change which target was higher.
   #
-  # 28 gens of -10/-0.1 data showed the agent committed to a
-  # "reach x=723 reliably" attractor — depth_scalar stuck at 723
-  # for 18+ generations, no exploration past the first pit. The
-  # penalties were structurally correct (no-op was strictly losing)
-  # but too aggressive in magnitude — they crushed the random
-  # exploration that allowed the previous broken-PPO run to
-  # stumble onto the flagpole region (depth=2519+) by lucky
-  # chance. New shape splits the difference: stand-still still
-  # painful (-75 timeout), but any forward progress is positive
-  # and dying-while-exploring costs less so the GA selects for
-  # genomes that explore further before failing.
-  death_penalty:    -5.0
-  completion_bonus: 2000.0
+  # death=-15 is the Kauten canonical (gym-super-mario-bros clips
+  # r=v+c+d to (-15, 15) per step and uses d=-15 on death). uvipen's
+  # repo (clears 31/32 levels) uses -50 then divides by 10 = -5, so
+  # both canonical recipes converge on a -5 to -15 effective range.
+  # We pick -15 to match the per-step clip ceiling of the canonical
+  # gym reward — symmetric with the +15 max forward velocity.
+  #
+  # time_penalty=-0.05 substitutes for gym-super-mario-bros's clock
+  # delta term (we don't read the in-game clock, so we synthesize a
+  # constant per-step cost). Over 1200 max steps that's -60 cumulative
+  # — strictly worse than dying at any positive x, so no-op never
+  # wins, but mild enough that brief exploration drags don't crush
+  # the gradient.
+  death_penalty:    -15.0
+  completion_bonus: 100.0
   time_penalty:     -0.05
   # Dense progress checkpoints (per-x-position bonuses defined in
   # nes_core/src/rewards.rs::MarioReward::CHECKPOINTS). Multiplier of
@@ -208,12 +223,13 @@ ga_params:
   stale_gens_before_restart: 50
   restart_fraction: 0.5
 
-# Per-episode step budget. Much tighter than pixel profile (600 vs
-# 36000). Shorter trajectories mean better credit assignment — GAE
-# can actually attribute the "Mario died in pit" signal to the
-# specific bad jump 30 steps prior, instead of spreading it across
-# 1500 steps where the signal becomes noise.
-max_episode_steps: 600
+# Per-episode step budget. Doubled from 600 to 1200 in lockstep with
+# the frame_skip 8→4 change above — this preserves the original
+# 4800-NES-frame (~80 game-second) episode length, just at 2× the
+# decision-point density. Credit assignment over 1200 steps is still
+# tractable (GAE can attribute "Mario died in pit" to the specific
+# bad jump 30-50 steps prior).
+max_episode_steps: 1200
 
 curriculum:
   stage_1: ["1-1"]
