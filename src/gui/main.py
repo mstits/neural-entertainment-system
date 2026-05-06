@@ -32,6 +32,7 @@ from src.gui.metrics_window import MetricsWindow
 from src.gui.play_window import PlayWindow
 from src.gui.replay_window import ReplayWindow
 from src.gui.reward_tuning_window import RewardTuningWindow
+from src.gui.training_dashboard import TrainingDashboardWindow
 
 
 def _run_trainer(
@@ -64,7 +65,7 @@ def _run_trainer(
                 override = yaml.safe_load(_fh) or {}
         except Exception:
             override = {}
-        for section in ("reward_weights", "reinforce", "ga_params"):
+        for section in ("reward_weights", "reinforce", "ga_params", "dreamer"):
             if section in override:
                 merged = dict(profile.get(section, {}))
                 merged.update(override[section])
@@ -76,6 +77,57 @@ def _run_trainer(
         weights["activity_timeout_steps"] = int(config["activity_timeout_steps"])
 
     env_spec = config.get("env_spec", "nes_core:NESEnvironment")
+
+    # Dispatch on training_mode. Default `ga_ppo` keeps the existing
+    # genetic-algorithm + PPO trainer; `dreamer` swaps to the
+    # world-model trainer. The GUI surface (frame_sink, metrics_queue)
+    # is identical so the dashboard works for both. The MainWindow
+    # dropdown can override the profile's value at run time so users
+    # don't need to edit YAML to switch modes.
+    override = str(config.get("trainer_mode_override") or "").strip().lower()
+    if override:
+        training_mode = override
+    else:
+        training_mode = str(profile.get("training_mode", "ga_ppo")).lower()
+    if training_mode == "dreamer":
+        from src.training.dreamer import DreamerTrainer
+        d_trainer = DreamerTrainer(
+            rom_path=config["rom_path"],
+            game_profile=profile,
+            num_instances=config["num_instances"],
+            frame_sink=frame_sink,
+            metrics_queue=metrics_queue,
+            env_spec=env_spec,
+            start_state_path=config.get("start_state_path"),
+            max_episode_steps=int(config.get("max_episode_steps", 100_000)),
+        )
+
+        def _control_listener_dreamer() -> None:
+            while not stop_event.is_set():
+                try:
+                    msg = control_queue.get(timeout=0.25)
+                except queue.Empty:
+                    continue
+                if msg == "stop":
+                    d_trainer.stop()
+                    return
+
+        t = threading.Thread(target=_control_listener_dreamer, daemon=True)
+        t.start()
+        try:
+            d_trainer.run(num_steps=10_000_000)
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).exception(
+                "dreamer trainer crashed with uncaught exception"
+            )
+            if error_holder is not None:
+                error_holder.append(exc)
+            raise
+        finally:
+            stop_event.set()
+        return
+
     trainer = Trainer(
         rom_path=config["rom_path"],
         game_profile=profile,
@@ -146,9 +198,11 @@ class AppController:
         self.main_window.start_state_change_requested.connect(
             self._on_start_state_changed
         )
+        self.main_window.dashboard_requested.connect(self._on_dashboard_request)
 
         self.grid_window: EmulatorGrid | None = None
         self.metrics_window: MetricsWindow | None = None
+        self.dashboard_window: TrainingDashboardWindow | None = None
         self.play_window: PlayWindow | None = None
         self.replay_window: ReplayWindow | None = None
         self.tuning_window: RewardTuningWindow | None = None
@@ -168,6 +222,7 @@ class AppController:
         self._shutdown_deadline: float = 0.0
         self._active_profile_weights: dict = {}
         self._num_instances: int = 0
+        self._dashboard_config: Optional[dict] = None
 
         # Latest frame per worker — written by the trainer thread via
         # `_frame_sink`, read by the grid's QTimer on the main thread.
@@ -273,8 +328,22 @@ class AppController:
 
         metrics_path = Path("./checkpoints") / "metrics.jsonl"
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
-        self.metrics_window = MetricsWindow(metrics_path=str(metrics_path))
-        self.metrics_window.show()
+        # Unified observer view. Replaces the standalone MetricsWindow as
+        # the primary "watch learning happen" surface.
+        rom_label = Path(config.get("rom_path", "")).name or "(no ROM)"
+        profile_label = Path(config.get("profile_path", "")).stem or "-"
+        # Stash so the user can reopen the dashboard mid-run via the
+        # MainWindow button if they accidentally closed it.
+        self._dashboard_config = {
+            "metrics_path": str(metrics_path),
+            "depth_memo_path": str(metrics_path.parent / "depth_memo.jsonl"),
+            "highlights_dir": "highlights",
+            "rom_label": rom_label,
+            "profile_label": profile_label,
+            "instances": num_instances,
+        }
+        self.dashboard_window = TrainingDashboardWindow(**self._dashboard_config)
+        self.dashboard_window.show()
 
         self._stop_event = threading.Event()
         # 1-element mutable slot the trainer thread fills with its
@@ -499,6 +568,25 @@ class AppController:
         self.tuning_window.raise_()
         self.tuning_window.activateWindow()
 
+    def _on_dashboard_request(self) -> None:
+        """Reopen the dashboard if the user closed it mid-run."""
+        if self._dashboard_config is None:
+            return
+        existing = self.dashboard_window
+        if existing is not None:
+            try:
+                existing.show()
+                existing.raise_()
+                existing.activateWindow()
+                return
+            except RuntimeError:
+                # The Qt object was deleted; rebuild below.
+                self.dashboard_window = None
+        self.dashboard_window = TrainingDashboardWindow(**self._dashboard_config)
+        self.dashboard_window.show()
+        self.dashboard_window.raise_()
+        self.dashboard_window.activateWindow()
+
     def _on_start_state_changed(self, path: str) -> None:
         if self.training_thread is None or not self.training_thread.is_alive():
             return
@@ -569,6 +657,9 @@ class AppController:
         if self.metrics_window is not None:
             self.metrics_window.close()
             self.metrics_window = None
+        if self.dashboard_window is not None:
+            self.dashboard_window.close()
+            self.dashboard_window = None
         if self.tuning_window is not None:
             self.tuning_window.close()
             self.tuning_window = None
@@ -641,6 +732,7 @@ class AppController:
         self.narrator_queue = None
         self._latest_frames = []
         self._latest_seq = []
+        self._dashboard_config = None
         _log.info("[finalize_stop] complete — ready for next Start")
 
     def _on_quit_sync(self) -> None:
@@ -676,6 +768,7 @@ class AppController:
         self._stop_event = None
         self.grid_window = None
         self.metrics_window = None
+        self.dashboard_window = None
         self.tuning_window = None
         self.audio_window = None
         self.replay_window = None

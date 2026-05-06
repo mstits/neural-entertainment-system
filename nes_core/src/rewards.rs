@@ -732,6 +732,11 @@ pub struct MarioReward {
     death_penalty: f64,
     completion_bonus: f64,
     time_penalty: f64,
+    /// Multiplier on per-checkpoint bonuses. `0.0` disables the dense
+    /// reward shaping entirely (recovers the prior pure-progress
+    /// behavior). `1.0` is the recommended default for tile-mode
+    /// training, where PPO needs strong intermediate signal to learn.
+    checkpoint_scale: f64,
     prev_x: u32,
     /// Furthest X position reached this episode. Used to gate the
     /// `forward` reward on NEW progress only — backtracking earns 0,
@@ -739,6 +744,11 @@ pub struct MarioReward {
     /// press right out of fear of losing reward" and lets it back up
     /// to time jumps. Reset on level transition + episode start.
     max_x_visited: u32,
+    /// Index of the next checkpoint not yet awarded this episode. We
+    /// only fire each checkpoint once — once Mario has crossed
+    /// `CHECKPOINTS[i].0`, the bonus is added and `next_checkpoint`
+    /// advances. Reset on episode start + level transition.
+    next_checkpoint: usize,
     prev_lives: u8,
     prev_score: u64,
     prev_world: u8,
@@ -759,12 +769,35 @@ impl MarioReward {
     const PLAYER_STATE_DYING: u8 = 0x0B;
     const PLAYER_STATE_DEAD: u8 = 0x06;
 
+    /// Per-level progress milestones (x-position threshold, base bonus).
+    /// Bonuses are scaled by the `checkpoint_scale` weight at runtime
+    /// so users can tune the strength globally without per-checkpoint
+    /// YAML knobs. Specifically calibrated to 1-1's geometry; the
+    /// thresholds also fire opportunistically in 1-2/1-3/etc but
+    /// they're not tuned for those levels' progress curves.
+    ///
+    /// Why these specific x values: each corresponds to an obstacle
+    /// where naive policies historically died. Awarding a bonus on
+    /// CROSSING the obstacle gives PPO a dense gradient signal — the
+    /// value head learns "Mario near checkpoint X is high-value" and
+    /// can backpropagate that into action selection many steps prior.
+    const CHECKPOINTS: &'static [(u32, f64)] = &[
+        (350, 50.0),    // past first pipe
+        (720, 100.0),   // past first pit
+        (1100, 150.0),  // past first horizontal pipe
+        (1640, 250.0),  // past large pit
+        (2100, 400.0),  // past obstacle complex
+        (2700, 600.0),  // at staircase base
+        (2900, 1000.0), // top of staircase, near flag
+    ];
+
     pub fn new(
         forward_weight: f64,
         score_weight: f64,
         death_penalty: f64,
         completion_bonus: f64,
         time_penalty: f64,
+        checkpoint_scale: f64,
     ) -> Self {
         Self {
             forward_weight,
@@ -772,8 +805,10 @@ impl MarioReward {
             death_penalty,
             completion_bonus,
             time_penalty,
+            checkpoint_scale,
             prev_x: 0,
             max_x_visited: 0,
+            next_checkpoint: 0,
             prev_lives: 0,
             prev_score: 0,
             prev_world: 0,
@@ -786,6 +821,7 @@ impl MarioReward {
     pub fn reset(&mut self) {
         self.prev_x = 0;
         self.max_x_visited = 0;
+        self.next_checkpoint = 0;
         self.prev_lives = 0;
         self.prev_score = 0;
         self.prev_world = 0;
@@ -829,6 +865,11 @@ impl MarioReward {
         if world != self.prev_world || level != self.prev_level {
             self.prev_x = x;
             self.max_x_visited = x;
+            // Reset checkpoint cursor on every level transition so the
+            // bonuses re-fire on the new level. Without this, levels
+            // 1-2+ would never produce checkpoint signal because all
+            // were "consumed" during 1-1.
+            self.next_checkpoint = 0;
             self.prev_world = world;
             self.prev_level = level;
         }
@@ -844,6 +885,22 @@ impl MarioReward {
             self.max_x_visited = x;
         }
         self.prev_x = x;
+
+        // Dense progress checkpoints. Each crossing fires once per
+        // episode and gives PPO a strong intermediate value signal at
+        // the obstacle — much easier to learn from than a single
+        // sparse "+2000 at the flag" reward at the trajectory tail.
+        // Checkpoints are sorted by x so a single-pointer scan suffices.
+        if self.checkpoint_scale != 0.0 {
+            while self.next_checkpoint < Self::CHECKPOINTS.len() {
+                let (threshold, bonus) = Self::CHECKPOINTS[self.next_checkpoint];
+                if x < threshold {
+                    break;
+                }
+                acc.add("checkpoint", self.checkpoint_scale * bonus);
+                self.next_checkpoint += 1;
+            }
+        }
 
         acc.add(
             "score",
@@ -1473,6 +1530,9 @@ pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward
             w(weights, "death_penalty", -15.0),
             w(weights, "completion_bonus", 100.0),
             w(weights, "time_penalty", -0.01),
+            // Dense progress checkpoints (default off for back-compat —
+            // tile-mode profiles set 1.0 to enable).
+            w(weights, "checkpoint_scale", 0.0),
         )));
     }
     if name.contains("zelda") {

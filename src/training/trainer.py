@@ -46,6 +46,7 @@ def _make_pool(env_spec: str, **kwargs):
         )
     return RustPool(env_spec=env_spec, **kwargs)
 from src.models.policy_network import PolicyNetwork, get_best_device
+from src.models.rnd import RND
 from src.training.behavior_cloning import build_dataset, pretrain, seed_population_from_weights
 from src.training.curriculum import CurriculumManager, CurriculumStage
 from src.training.genetic_algorithm import GeneticAlgorithm, Genome
@@ -295,6 +296,26 @@ class Trainer:
         self.reinforce_steps: int = rl_cfg.get("steps", 3)
         self.reinforce_gamma: float = rl_cfg.get("gamma", 0.99)
         self.reinforce_grad_clip: float = rl_cfg.get("grad_clip", 1.0)
+        # GA-only warmup: skip the PPO gradient step for the first N
+        # generations so the BC-imitated weights have time to spread
+        # through the population via crossover/mutation before PPO's
+        # noisy advantage signal starts pulling them toward whatever
+        # the reward function thinks is good. Without this, the strong
+        # BC seed gets washed out by the first few PPO updates and the
+        # agent regresses to "random RL" performance — the "started
+        # strong then tanked" pattern. Default 0 = disabled.
+        self.warmup_gens_ga_only: int = int(rl_cfg.get("warmup_gens_ga_only", 0))
+        # BC pretraining epoch count, threadable from YAML so different
+        # games can use different schedules. Constructor still accepts
+        # bc_epochs and YAML overrides it when set. Higher values mean
+        # the BC seed is more entrenched (resistant to PPO drift) but
+        # take longer at startup.
+        self._bc_epochs_yaml: Optional[int] = rl_cfg.get("bc_epochs")
+        if self._bc_epochs_yaml is not None:
+            # YAML wins when present so per-game tuning works without
+            # GUI changes. Constructor's bc_epochs (default 8) is the
+            # fallback when the profile is silent.
+            self.bc_epochs = int(self._bc_epochs_yaml)
         # Cap trajectory length per genome during REINFORCE to bound MPS
         # memory (each step = 4*84*84 uint8; on MPS the float cast triples).
         self.reinforce_max_steps: int = rl_cfg.get("max_steps_per_traj", 1500)
@@ -324,6 +345,76 @@ class Trainer:
         # If the runtime trips on MPS ops, it silently falls back to the
         # per-genome loop (still has the batched transfer win).
         self.vmap_forward: bool = rl_cfg.get("vmap_forward", True)
+        # CNN architecture knobs. Defaults preserve the historical
+        # Nature-DQN encoder so existing checkpoints + benchmarks remain
+        # apples-to-apples; switch to `impala` in the profile for the
+        # bigger ResNet encoder.
+        self.encoder_kind: str = str(rl_cfg.get("encoder", "nature_dqn"))
+        # Tile mode: use a small MLP on RAM-decoded tiles instead of a
+        # CNN on stacked pixels. Dramatically smaller policy parameter
+        # count (14k vs 1.7M) makes GA mutation meaningful and PPO
+        # gradients large enough to actually steer learning. Set
+        # `reinforce.encoder: smb_tiles` (or another tile encoder name)
+        # to enable. Tile mode also implies a different obs shape, so
+        # the trainer's trajectory buffers, frame stacker, and PPO
+        # preprocessing all branch on it.
+        self._is_tile_mode: bool = self.encoder_kind in ("smb_tiles",)
+        self._tile_extractor = None
+        self._tile_feature_dim: int = 0
+        if self._is_tile_mode:
+            from src.emulation.tile_observations import get_extractor
+            self._tile_extractor = get_extractor(self.encoder_kind)
+            self._tile_feature_dim = self._tile_extractor.feature_dim
+            log.info(
+                "Tile mode active: encoder=%s, feature_dim=%d",
+                self.encoder_kind, self._tile_feature_dim,
+            )
+        # Preserve elite diversity: when True, PPO updates only `best`
+        # and leaves the other elites untouched. Default False keeps
+        # the historical elite-clone behavior; tile-mode profiles set
+        # True to prevent the post-PPO clone from collapsing
+        # population diversity to a single policy.
+        self.preserve_elite_diversity: bool = bool(
+            rl_cfg.get("preserve_elite_diversity", False)
+        )
+        # LayerNorm on the trunk FC. Always-on default — cheap and
+        # measurably stabilizes the value head when reward magnitudes
+        # span orders of magnitude (which they do in this project).
+        # Loaded checkpoints that don't have the LN params init at γ=1,
+        # β=0 (PyTorch default) and converge fast.
+        self.use_layernorm: bool = bool(rl_cfg.get("layernorm", True))
+        # Symlog reward transform (sign(r) * log(1+|r|)) applied to the
+        # raw reward stream before GAE/PPO. Compresses the dynamic range
+        # so a 200k-scale exploration reward doesn't drown a 1-scale
+        # score reward in the value loss. Off by default — flipping it
+        # changes existing fitness numerics. New runs on sparse-reward
+        # games (Zelda, Metroid) should opt in.
+        self.symlog_rewards: bool = bool(rl_cfg.get("symlog_rewards", False))
+        # DrQ-style random-shift augmentation applied during the PPO
+        # update only (not at action selection). Pads the 84x84 input
+        # with replicate padding to 88x88, then random-crops back to
+        # 84x84 each gradient step. Off by default — adds a small
+        # amount of compute to the gradient step.
+        self.drq_aug: bool = bool(rl_cfg.get("drq_aug", False))
+        # DrQ pad pixels each side; total padded size = frame + 2*pad.
+        self.drq_pad: int = int(rl_cfg.get("drq_pad", 4))
+        # RND intrinsic motivation (sparse-reward exploration). Two
+        # weights:
+        #   * rnd_intrinsic_coef — bonus added to per-step extrinsic
+        #     reward. Should be small relative to typical extrinsic
+        #     reward magnitudes; the paper recommends ≈1.0 with reward
+        #     normalization, lower without.
+        #   * rnd_loss_coef — weight on the predictor MSE in the PPO
+        #     total loss. Typical 1.0 (single shared optimizer) or
+        #     anything that brings the predictor's grad magnitude into
+        #     range with the policy/value losses.
+        # Setting rnd_intrinsic_coef=0 disables RND entirely (no module
+        # is built and no bonus is added).
+        self.rnd_intrinsic_coef: float = float(rl_cfg.get("rnd_intrinsic_coef", 0.0))
+        self.rnd_loss_coef: float = float(rl_cfg.get("rnd_loss_coef", 1.0))
+        # Built lazily on first PPO step so the RND module lands on the
+        # correct device once Trainer.run sets it up.
+        self._rnd: Optional["RND"] = None
 
         self.device = (
             torch.device(device_override) if device_override else get_best_device()
@@ -443,8 +534,45 @@ class Trainer:
         self._tb_writer = None
         self._tb_enabled = game_profile.get("tensorboard", True)
 
-    def _make_network(self) -> PolicyNetwork:
-        return PolicyNetwork(num_actions=self.num_actions)
+    def _make_network(self):
+        """Construct the policy network appropriate for the configured
+        encoder. Pixel encoders (`nature_dqn`, `impala`) use the CNN-
+        backed `PolicyNetwork`; tile encoders (`smb_tiles`) use the
+        small MLP-backed `TilePolicyNetwork`."""
+        if self._is_tile_mode:
+            from src.models.tile_policy import TilePolicyNetwork
+            return TilePolicyNetwork(
+                num_actions=self.num_actions,
+                feature_dim=self._tile_feature_dim,
+            )
+        return PolicyNetwork(
+            num_actions=self.num_actions,
+            encoder=self.encoder_kind,
+            use_layernorm=self.use_layernorm,
+        )
+
+    def _obs_buffer_shape(self, n: int, max_steps: int) -> tuple[int, ...]:
+        """Per-genome trajectory buffer shape. Pixel mode stores the
+        4-stacked frames as `(n, max_steps, 4, 84, 84)`; tile mode
+        stores feature vectors as `(n, max_steps, feature_dim)`. Both
+        are uint8/int8 to bound memory."""
+        if self._is_tile_mode:
+            return (n, max_steps, self._tile_feature_dim)
+        return (n, max_steps, 4, 84, 84)
+
+    def _obs_buffer_dtype(self):
+        """Per-step obs storage dtype. Tile features are signed (have
+        -1 enemy markers + signed velocities) so int8; pixels are
+        unsigned uint8 (or float16 in the f16 preprocess fast path)."""
+        if self._is_tile_mode:
+            return np.int8
+        return np.float16 if self.preprocess_f16 else np.uint8
+
+    def _step_obs_shape(self) -> tuple[int, ...]:
+        """Single-step obs shape, used for batch buffers."""
+        if self._is_tile_mode:
+            return (self._tile_feature_dim,)
+        return (4, 84, 84)
 
     def _build_curriculum_stages(self, spec: dict) -> list[CurriculumStage]:
         """Parse the YAML curriculum spec. Two formats accepted:
@@ -1180,9 +1308,10 @@ class Trainer:
         pop = self.ga.population
         # Flat trajectory storage: per-population-position slice of the
         # pre-allocated arrays. Indexed by genome index (0..pop_size).
-        pop_obs_dtype = np.float16 if self.preprocess_f16 else np.uint8
+        pop_obs_dtype = self._obs_buffer_dtype()
         pop_traj_obs = np.zeros(
-            (len(pop), self.max_episode_steps, 4, 84, 84), dtype=pop_obs_dtype
+            self._obs_buffer_shape(len(pop), self.max_episode_steps),
+            dtype=pop_obs_dtype,
         )
         pop_traj_actions = np.zeros((len(pop), self.max_episode_steps), dtype=np.int32)
         pop_traj_rewards = np.zeros((len(pop), self.max_episode_steps), dtype=np.float32)
@@ -1240,7 +1369,22 @@ class Trainer:
         # trajectories. Gradient descent pushes the elite toward actions that
         # earned above-average returns; next-gen mutation+crossover build on
         # the improved weights.
-        if self.reinforce_enabled:
+        ppo_stats: dict[str, float] = {}
+        # GA-only warmup: the first `warmup_gens_ga_only` generations
+        # skip the PPO step entirely. Lets a strong BC seed propagate
+        # through the population via crossover before PPO's noisy
+        # advantage signal pulls the elite away from it. Once warmup
+        # ends, PPO resumes normally.
+        in_warmup = (
+            self.warmup_gens_ga_only > 0
+            and self.ga.generation < self.warmup_gens_ga_only
+        )
+        if in_warmup:
+            log.info(
+                "Gen %d in GA-only warmup (%d/%d) — skipping PPO update",
+                gen, self.ga.generation, self.warmup_gens_ga_only,
+            )
+        if self.reinforce_enabled and not in_warmup:
             # Rank by fitness; pick top_k with non-trivial trajectories.
             indexed = list(enumerate(pop))
             indexed.sort(key=lambda ig: ig[1].fitness, reverse=True)
@@ -1250,7 +1394,7 @@ class Trainer:
             ]
             if elite_idx:
                 try:
-                    loss = self._reinforce_update(
+                    loss, ppo_stats = self._reinforce_update(
                         best,
                         pop_traj_obs,
                         pop_traj_actions,
@@ -1265,13 +1409,25 @@ class Trainer:
                     # Copy `best`'s post-update weights into the other
                     # top-ranked genomes the GA will keep. Skip index
                     # 0 (that's `best` itself, already updated).
-                    for idx, _ in indexed[1:num_preserved]:
-                        pop[idx].state_dict = {
-                            k: v.clone() for k, v in best.state_dict.items()
-                        }
+                    #
+                    # When `preserve_elite_diversity` is True, skip
+                    # the clone-overwrite entirely. The other elites
+                    # keep their own structurally-distinct weights —
+                    # crucial for tile mode, where collapsing all 4
+                    # elites onto `best`'s policy after every PPO
+                    # step destroys the diversity GA needs to escape
+                    # local minima. PPO still updates `best`; the
+                    # other elites just don't inherit those updates.
+                    if not self.preserve_elite_diversity:
+                        for idx, _ in indexed[1:num_preserved]:
+                            pop[idx].state_dict = {
+                                k: v.clone() for k, v in best.state_dict.items()
+                            }
                     log.info(
-                        "  REINFORCE loss: %.4f (n=%d, applied to %d elites)",
-                        loss, len(elite_idx), num_preserved,
+                        "  REINFORCE loss: %.4f (n=%d, applied to %d elites, preserve_diversity=%s)",
+                        loss, len(elite_idx),
+                        1 if self.preserve_elite_diversity else num_preserved,
+                        self.preserve_elite_diversity,
                     )
                 except Exception as exc:
                     # Don't let a bad gradient step kill an overnight run —
@@ -1324,6 +1480,27 @@ class Trainer:
         timing_metrics = self._gen_timer.snapshot()
         self._gen_timer.reset()
 
+        # Current all-time depth record key (per game-specific lex order).
+        # Surfaces in the dashboard as a "deepest reached" curve so the
+        # user can watch curriculum progress at a glance even when raw
+        # fitness numbers are noisy across stages.
+        depth_metrics: dict[str, float] = {}
+        try:
+            best_depth = self._depth_tracker.best
+            if best_depth is not None:
+                # Tuple shape varies per game; encode as a single
+                # monotone-increasing scalar by treating elements as
+                # base-256 digits (matches the tracker's lex order).
+                depth_scalar = 0
+                for d in best_depth:
+                    depth_scalar = depth_scalar * 256 + int(d)
+                depth_metrics["depth_scalar"] = float(depth_scalar)
+                # Also surface the last-element (typically the most
+                # actionable axis: x-pos for Mario, room for Zelda).
+                depth_metrics["depth_leaf"] = float(best_depth[-1])
+        except Exception:
+            pass
+
         self._emit_metrics(
             generation=gen,
             best_fitness=best.fitness,
@@ -1333,6 +1510,8 @@ class Trainer:
             episodes=self.curriculum.episodes_in_stage,
             **breakdown_metrics,
             **timing_metrics,
+            **ppo_stats,
+            **depth_metrics,
         )
 
         # Log the breakdown for quick human inspection — which signals
@@ -1409,8 +1588,14 @@ class Trainer:
         for fn in reward_fns:
             fn.reset()
 
-        obs_dtype = np.float16 if self.preprocess_f16 else np.uint8
-        stackers = [FrameStacker(dtype=obs_dtype) for _ in range(n)]
+        obs_dtype = self._obs_buffer_dtype()
+        # Frame stackers are only used in pixel mode. Tile mode
+        # doesn't stack frames — each step's observation is the latest
+        # tile feature vector decoded from current RAM.
+        stackers = (
+            [FrameStacker(dtype=obs_dtype) for _ in range(n)]
+            if not self._is_tile_mode else []
+        )
 
         # Reset every worker via the pool's public surface. Returns
         # StepResult-per-worker sorted by worker_id. The Rust rayon pool
@@ -1423,10 +1608,21 @@ class Trainer:
             except Exception:
                 pass
         init_results = [r for r in all_init if r.worker_id >= offset]
-        stacked_obs: list[np.ndarray] = [
-            stackers[i].reset(r.frame, getattr(r, "preprocessed", None))
-            for i, r in enumerate(init_results)
-        ]
+        # Build per-genome initial observation. Pixel mode resets the
+        # FrameStacker with the first frame; tile mode decodes RAM
+        # directly into a feature vector. The resulting `stacked_obs`
+        # variable is used identically by the rest of the loop below
+        # — only its shape differs.
+        if self._is_tile_mode:
+            stacked_obs: list[np.ndarray] = [
+                self._tile_extractor.extract(r.ram_snapshot)
+                for r in init_results
+            ]
+        else:
+            stacked_obs = [
+                stackers[i].reset(r.frame, getattr(r, "preprocessed", None))
+                for i, r in enumerate(init_results)
+            ]
         # GUI reads frames from the trainer's frame_sink callback directly.
 
         cumulative = [0.0] * n
@@ -1447,7 +1643,7 @@ class Trainer:
         # OOM kills on overnight runs. One pre-alloc per batch cuts
         # allocs to exactly four and lets the per-step writes land as
         # in-place slice assignments.
-        _obs_shape = (n, self.max_episode_steps, 4, 84, 84)
+        _obs_shape = self._obs_buffer_shape(n, self.max_episode_steps)
         traj_obs = np.zeros(_obs_shape, dtype=obs_dtype)
         traj_actions = np.zeros((n, self.max_episode_steps), dtype=np.int32)
         traj_rewards = np.zeros((n, self.max_episode_steps), dtype=np.float32)
@@ -1462,7 +1658,7 @@ class Trainer:
         # ~4,000 small mallocs × pop=16 ≈ 64k mallocs + ~1.8 GB of
         # Numpy allocation churn per generation. One flat buffer
         # reused across the episode costs effectively zero.
-        batch_np_buffer = np.zeros((n, 4, 84, 84), dtype=obs_dtype)
+        batch_np_buffer = np.zeros((n,) + self._step_obs_shape(), dtype=obs_dtype)
         # Per-worker action bitmasks passed to `pool.step_all` every
         # step. Previously rebuilt as `[0] * num_workers` each iteration
         # — PyO3 had to unbox each PyLong and alloc a fresh Rust
@@ -1700,7 +1896,14 @@ class Trainer:
                     # was a no-op idle step.
                     continue
                 i = genome_i
-                stacked_obs[i] = stackers[i].push(r.frame, r.preprocessed)
+                if self._is_tile_mode:
+                    # Tile mode: re-decode the latest RAM snapshot into
+                    # a tile feature vector. No frame stacking — the
+                    # tile grid + scalar state already encodes
+                    # everything the policy needs.
+                    stacked_obs[i] = self._tile_extractor.extract(r.ram_snapshot)
+                else:
+                    stacked_obs[i] = stackers[i].push(r.frame, r.preprocessed)
                 done = r.done
                 # PERF: skip audio mixer push entirely when muted — the
                 # most common state in headless runs.
@@ -1924,6 +2127,13 @@ class Trainer:
             h.update(("+".join(entry) + ",").encode())
         h.update(b"|")
         h.update(f"fs={self.frame_skip}".encode())
+        # Encoder kind is load-bearing: a tile_mlp seed has shape
+        # (175,) input, a nature_dqn seed has shape (4, 84, 84) input.
+        # Loading one into the other crashes with a state_dict shape
+        # mismatch. Including the encoder name in the cache key gives
+        # each architecture its own seed file.
+        h.update(b"|")
+        h.update(f"enc={self.encoder_kind}".encode())
         digest = h.hexdigest()[:12]
         return self.checkpoint_dir / f"bc_seed_{digest}.pt"
 
@@ -1941,11 +2151,38 @@ class Trainer:
         if cache_path is not None and cache_path.exists():
             try:
                 seed = torch.load(str(cache_path), map_location="cpu", weights_only=True)
+                # Validate shapes against a freshly-constructed network
+                # of the current architecture. If they don't match, the
+                # cache is stale (e.g. an older run used a different
+                # encoder) — log and fall through to rebuild rather
+                # than crashing in load_state_dict.
+                probe = self._make_network()
+                missing, unexpected = probe.load_state_dict(seed, strict=False)
+                # Surface unexpected keys as evidence of arch drift but
+                # don't fail the run on them — strict=False already
+                # tolerated them. The actual failure mode this guards
+                # against is `RuntimeError: size mismatch`.
+                if unexpected:
+                    log.warning(
+                        "BC cache had unexpected keys (likely stale): %s — rebuilding",
+                        unexpected[:3],
+                    )
+                    raise RuntimeError("stale BC cache")
                 log.info("Loaded cached BC seed from %s (skipping pretrain)", cache_path)
                 seed_population_from_weights(self.ga.population, seed, noise_std=0.02)
                 return
             except Exception as exc:
-                log.warning("Failed to load BC cache %s (%s); re-pretraining.", cache_path, exc)
+                log.warning(
+                    "Failed to load BC cache %s (%s); re-pretraining.",
+                    cache_path, exc,
+                )
+                # Move the bad cache out of the way so future runs of
+                # the same arch can write a fresh one without us
+                # tripping over this on every restart.
+                try:
+                    cache_path.rename(cache_path.with_suffix(".pt.stale"))
+                except OSError:
+                    pass
 
         reward_fn = self.reward_fn_factory()
         # Pass the trainer's frame_skip so the BC observation distribution
@@ -1967,6 +2204,10 @@ class Trainer:
             action_space=self.action_space,
             frame_skip=self.frame_skip,
             reward_fn=reward_fn,
+            # Tile mode threads the extractor through so BC obs match
+            # what the policy sees at runtime — same RAM-decoded
+            # feature vector, not stacked frames.
+            tile_extractor=self._tile_extractor,
         )
         if states.shape[0] < 16:
             log.warning("BC demo too short (%d pairs); skipping pretrain.", states.shape[0])
@@ -1986,6 +2227,10 @@ class Trainer:
             device=self.device,
             use_reward_weighting=True,
             val_fraction=0.1,
+            # Tile-mode obs are signed int8 in [-128, 127], not pixel
+            # uint8 — skip the /255 normalize so the network sees the
+            # raw feature scale.
+            normalize_obs=not self._is_tile_mode,
         )
         log.info("BC pretrain done; final loss=%.4f; seeding population.", final_loss)
 
@@ -2007,7 +2252,7 @@ class Trainer:
         traj_log_probs: np.ndarray,
         traj_lens: np.ndarray,
         elite_indices: list[int],
-    ) -> float:
+    ) -> tuple[float, dict[str, float]]:
         """Policy-gradient update on the elite's weights using recorded rollouts.
 
         Consumes flat pre-allocated arrays (shapes: `traj_obs` =
@@ -2026,21 +2271,57 @@ class Trainer:
         net.to(self.device)
         net.train()
 
-        optimizer = torch.optim.Adam(net.parameters(), lr=self.reinforce_lr)
+        # Lazy-build the RND module on first use so it lands on the
+        # current device. Predictor params are added to the same Adam
+        # optimizer as the policy so a single backward+step covers both.
+        if self.rnd_intrinsic_coef > 0.0 and self._rnd is None:
+            self._rnd = RND(in_channels=4).to(self.device)
+            log.info(
+                "RND intrinsic motivation enabled: predictor=%d params, "
+                "intrinsic_coef=%.3f, loss_coef=%.3f",
+                self._rnd.num_params,
+                self.rnd_intrinsic_coef,
+                self.rnd_loss_coef,
+            )
+
+        opt_params = list(net.parameters())
+        if self._rnd is not None:
+            opt_params += list(self._rnd.predictor.parameters())
+        optimizer = torch.optim.Adam(opt_params, lr=self.reinforce_lr)
 
         last_loss_scalar = 0.0
+        # Running averages across the inner reinforce_steps loop. Only
+        # the final epoch's stats survive; earlier epochs' values are
+        # overwritten. This matches `last_loss_scalar` semantics — the
+        # dashboard charts the LAST PPO step's stats per generation.
+        ppo_stats_accum: dict[str, float] = {}
         for _ in range(self.reinforce_steps):
             optimizer.zero_grad()
             total_loss = torch.zeros((), device=self.device)
             total_traj_items = 0
+            # Per-component sums (over trajectories in this epoch). At
+            # the end of the epoch we average to give the dashboard a
+            # "what is the agent learning" telemetry per gen.
+            sum_policy_loss = 0.0
+            sum_value_loss = 0.0
+            sum_entropy = 0.0
+            sum_rnd_loss = 0.0
+            sum_rnd_intrinsic = 0.0
 
             for g_idx in elite_indices:
                 traj_len = int(traj_lens[g_idx])
                 if traj_len < 2:
                     continue
                 gamma = self.reinforce_gamma
-                # Flat reward stream for GAE.
+                # Flat reward stream for GAE. Optionally symlog-transformed
+                # (sign(r)*log1p(|r|)) to compress dynamic range — keeps
+                # the critic from being dominated by a single large
+                # exploration reward. Applied to a copy so the original
+                # buffer is untouched (the dashboard still reports raw
+                # reward components).
                 full_r = traj_rewards[g_idx, :traj_len]
+                if self.symlog_rewards:
+                    full_r = np.sign(full_r) * np.log1p(np.abs(full_r))
 
                 # Most recent window for the actual gradient step —
                 # bounded so MPS memory stays sane.
@@ -2054,7 +2335,16 @@ class Trainer:
                     traj_log_probs[g_idx, win_start:traj_len].copy()
                 ).to(self.device).float()
 
-                if self.preprocess_f16:
+                if self._is_tile_mode:
+                    # Tile features are int8 in [-128, 127], small
+                    # signed integers. Cast to float; do NOT divide by
+                    # 255 (that's a pixel-mode normalization). The
+                    # network's first LayerNorm + Linear handle scale.
+                    states_t = (
+                        torch.from_numpy(np.ascontiguousarray(states_np))
+                        .to(self.device).float()
+                    )
+                elif self.preprocess_f16:
                     # fp16 HtoD transfer (half the bytes of fp32, zero
                     # /255 divide). On-device `.float()` promotes back
                     # to fp32 so the PPO forward/backward hits the
@@ -2068,6 +2358,17 @@ class Trainer:
                         torch.from_numpy(np.ascontiguousarray(states_np))
                         .to(self.device).float().div_(255.0)
                     )
+                # DrQ-style random-shift augmentation. Pads each frame
+                # with replicate edges by `drq_pad` pixels then crops
+                # back to the original size at a random offset. The crop
+                # offset is shared across the trajectory so temporal
+                # consistency within a frame stack is preserved (a stack
+                # element shifted vs. its predecessors would teach the
+                # network spurious motion). Tile mode skips this — DrQ
+                # is a pixel-shift augmentation that doesn't apply to
+                # discrete tile grids.
+                if self.drq_aug and not self._is_tile_mode:
+                    states_t = self._random_shift(states_t, pad=self.drq_pad)
                 autocast_ctx = (
                     torch.autocast(device_type="mps", dtype=torch.float16)
                     if self.autocast_enabled and self.device.type == "mps"
@@ -2079,6 +2380,28 @@ class Trainer:
                 log_probs_all = F.log_softmax(logits.float(), dim=-1)
                 log_probs_new = log_probs_all.gather(1, actions.unsqueeze(1)).squeeze(1)
                 values_pred = values_pred.float()
+
+                # RND intrinsic-motivation bonus. Compute per-state
+                # prediction error against the frozen target, mix the
+                # detached error into the reward stream as exploration
+                # bonus, and add the predictor MSE to the loss so the
+                # predictor learns to mimic the target on visited states
+                # (driving the bonus down on familiar inputs over time).
+                rnd_loss_term = None
+                rnd_intrinsic_t = None
+                if self._rnd is not None:
+                    rnd_per_sample = self._rnd(states_t)  # (T,) normalized
+                    # Update obs + reward running stats with the latest
+                    # batch BEFORE detaching, so subsequent batches see
+                    # an up-to-date normalization scale.
+                    self._rnd.update_normalization(
+                        states_t.detach(),
+                        rnd_per_sample.detach(),
+                    )
+                    rnd_intrinsic_t = (
+                        rnd_per_sample.detach() * self.rnd_intrinsic_coef
+                    )
+                    rnd_loss_term = rnd_per_sample.mean()
 
                 # Generalized Advantage Estimation (GAE-λ) using the
                 # critic's value baseline. This replaces the raw
@@ -2095,6 +2418,12 @@ class Trainer:
                     rewards_t = torch.from_numpy(
                         full_r[window_offset:]
                     ).to(self.device).float()
+                    if rnd_intrinsic_t is not None:
+                        # Length match is guaranteed: rnd_intrinsic_t
+                        # has the same T as states_t which was sliced
+                        # from `[win_start:traj_len]`, identical to the
+                        # window applied to `full_r`.
+                        rewards_t = rewards_t + rnd_intrinsic_t
                     T = rewards_t.numel()
                     # Next-state values: shift values_pred by 1 and
                     # repeat the last (bootstrap) — equivalent to
@@ -2166,9 +2495,19 @@ class Trainer:
                 value_loss = F.mse_loss(values_pred, value_targets)
 
                 loss_traj = policy_loss + 0.5 * value_loss - self.entropy_coef * entropy
+                if rnd_loss_term is not None:
+                    loss_traj = loss_traj + self.rnd_loss_coef * rnd_loss_term
 
                 total_loss = total_loss + loss_traj
                 total_traj_items += 1  # count trajectories, not items
+                # Detach + .item() each component so the gradient graph
+                # stays unaffected. Cheap; one host transfer per traj.
+                sum_policy_loss += float(policy_loss.detach().item())
+                sum_value_loss += float(value_loss.detach().item())
+                sum_entropy += float(entropy.detach().item())
+                if rnd_loss_term is not None:
+                    sum_rnd_loss += float(rnd_loss_term.detach().item())
+                    sum_rnd_intrinsic += float(rnd_intrinsic_t.detach().mean().item())
 
             if total_traj_items == 0:
                 break
@@ -2180,10 +2519,21 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(net.parameters(), self.reinforce_grad_clip)
             optimizer.step()
             last_loss_scalar = float(loss.item())
+            ppo_stats_accum = {
+                "ppo_loss": last_loss_scalar,
+                "ppo_policy_loss": sum_policy_loss / total_traj_items,
+                "ppo_value_loss": sum_value_loss / total_traj_items,
+                "ppo_entropy": sum_entropy / total_traj_items,
+            }
+            if self._rnd is not None and total_traj_items > 0:
+                ppo_stats_accum["rnd_loss"] = sum_rnd_loss / total_traj_items
+                ppo_stats_accum["rnd_intrinsic_avg"] = (
+                    sum_rnd_intrinsic / total_traj_items
+                )
 
         # Copy the updated weights back to the genome so the GA keeps them.
         genome.state_dict = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
-        return last_loss_scalar
+        return last_loss_scalar, ppo_stats_accum
 
     def _save_checkpoint(self, gen: int, keep_last: int = 5) -> None:
         # Atomic write: serialize to `<path>.tmp`, fsync, then rename.
@@ -2268,6 +2618,26 @@ class Trainer:
                         shutil.rmtree(mlpath)
                     except OSError:
                         pass
+
+    @staticmethod
+    def _random_shift(states: torch.Tensor, pad: int = 4) -> torch.Tensor:
+        """DrQ random-shift augmentation.
+
+        `states` shape: (T, C, H, W). Pads spatially with replicate
+        boundaries by `pad` on each side, then samples a single random
+        crop offset and applies it across the entire trajectory so the
+        frame-stack channels stay temporally consistent.
+        """
+        if pad <= 0:
+            return states
+        # F.pad on a 4D tensor takes (left, right, top, bottom). Replicate
+        # mode keeps edge intensity rather than introducing a black border
+        # the encoder would learn to special-case.
+        padded = F.pad(states, (pad, pad, pad, pad), mode="replicate")
+        h_off = int(torch.randint(0, 2 * pad + 1, ()).item())
+        w_off = int(torch.randint(0, 2 * pad + 1, ()).item())
+        _, _, h, w = states.shape
+        return padded[:, :, h_off:h_off + h, w_off:w_off + w]
 
     def _emit_metrics(self, **metrics) -> None:
         metrics["timestamp"] = time.time()

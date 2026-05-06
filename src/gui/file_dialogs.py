@@ -71,6 +71,28 @@ def remembered_open(
     return path
 
 
+def remembered_open_many(
+    parent: QWidget,
+    key: str,
+    title: str,
+    file_filter: str,
+    default_dir: Optional[str] = None,
+) -> list[str]:
+    """Multi-file open dialog that remembers its last directory.
+
+    Returns the list of picked paths (empty list on cancel). Useful for
+    BC demos where the trainer's pipeline can ingest multiple recordings
+    at once for richer state coverage. Only the parent directory of the
+    FIRST pick is remembered — assumes batched picks come from the same
+    folder.
+    """
+    start_dir = _resolve_start_dir(key, default_dir)
+    paths, _ = QFileDialog.getOpenFileNames(parent, title, start_dir, file_filter)
+    if paths:
+        _remember(key, paths[0])
+    return list(paths)
+
+
 def remembered_save(
     parent: QWidget,
     key: str,

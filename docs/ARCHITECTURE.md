@@ -294,22 +294,90 @@ state.
 
 ## Training side
 
-### Policy network (`src/models/policy_network.py`)
-Nature-DQN CNN: Conv(32, 8×8, /4) → Conv(64, 4×4, /2) → Conv(64, 3×3, /1) →
-FC(512) → FC(num_actions). Input is 84×84×4 stacked grayscale frames.
-Runs on PyTorch MPS for training and inference.
+The training stack is two-tier: a **universal pixel-CNN path** that works on
+any NES game with no per-game code, and **per-game optimized paths** (currently
+only SMB tile mode) that swap in a smaller architecture + dense reward shaping
+for games we've invested in. The encoder choice is per-profile:
+
+```mermaid
+flowchart LR
+    Profile[Profile YAML<br/>configs/&lt;game&gt;.yaml] -->|reinforce.encoder| Dispatch{Encoder?}
+    Profile -->|training_mode| ModeDispatch{Trainer?}
+    ModeDispatch -->|ga_ppo default| Trainer[Trainer<br/>GA + PPO + GAE]
+    ModeDispatch -->|dreamer| Dreamer[DreamerTrainer<br/>world model + actor/critic]
+    Dispatch -->|nature_dqn / impala| CNN[PolicyNetwork<br/>1.7M params<br/>4×84×84 stacked frames]
+    Dispatch -->|smb_tiles| Tile[TilePolicyNetwork<br/>~14k params<br/>175 RAM-decoded features]
+    CNN -->|forward| Trainer
+    Tile -->|forward| Trainer
+    Trainer -->|metrics.jsonl| Dashboard[TrainingDashboardWindow<br/>fitness · WM losses · replay · recon]
+    Dreamer -->|metrics.jsonl| Dashboard
+```
+
+The two trainer classes (PPO+GA and Dreamer) coexist; profiles pick one via
+`training_mode`. The two encoder paths coexist; profiles pick one via
+`reinforce.encoder`. Both selections are independent — Dreamer can run on
+pixels, PPO+GA can run on tiles, and the GUI dropdown can override either at
+launch time.
+
+### Policy networks
+- **`src/models/policy_network.py`** — Nature-DQN CNN
+  (Conv(32,8×8,/4) → Conv(64,4×4,/2) → Conv(64,3×3,/1) → FC(512) → actor + critic).
+  ~1.7M params at 8 actions. Used by every profile that doesn't opt into a
+  smaller encoder. Optional `encoder=impala` swaps the conv stack for a
+  3-stage IMPALA ResNet (~3.4M params, better representation per param).
+  Orthogonal init with PPO-standard gains, optional `LayerNorm` on the trunk.
+- **`src/models/tile_policy.py`** — small actor-critic MLP
+  (Linear(175,64) → SiLU → LayerNorm → Linear(64,32) → SiLU → actor + critic).
+  ~14k params. Used in tile mode (currently SMB only). Same `forward_ac()`
+  surface as `PolicyNetwork` so the trainer dispatches transparently.
+- **`src/models/world_model.py`** — DreamerV3 stack: encoder, RSSM
+  (deterministic GRU + categorical 32×32 stochastic latent), decoder, reward
+  head, continue head. ~9M params total. KL with per-sample free-nats
+  regularization.
+- **`src/models/dreamer_ac.py`** — Dreamer actor (straight-through categorical
+  sampler) + critic with Polyak EMA target net. Operates on world-model
+  latents, not raw obs.
+- **`src/models/rnd.py`** — Random Network Distillation predictor + frozen
+  target. Optional intrinsic-motivation bonus for sparse-reward games.
+
+### Tile observations (`src/emulation/tile_observations/`)
+RAM-decoded semantic observations as an alternative to raw pixels. Generic
+`TileObservation` Protocol; per-game implementations decode that game's RAM
+layout into a fixed-size feature vector. Currently:
+- **`smb.py`** — SMB-specific 13×13 tile grid centered on Mario plus 6
+  scalars (velocity, on-ground flag, powerup, lives, sub-tile X). Reads
+  `$0500-$069F` (level metatiles) and the 5 enemy slots. 175 features total.
+
+Adding a new game's tile encoder is one new file under
+`tile_observations/<game>.py` and a one-line entry in
+`get_extractor()`. No trainer changes.
 
 ### PPO + GAE (`src/training/trainer.py`)
 Clipped objective, value head shared with the policy trunk, GAE-λ advantage
 estimation over trajectories collected per generation. Runs on the elite
 genome after each GA generation. Bulk numpy arrays are pre-allocated once
-per generation to avoid per-step alloc churn.
+per generation to avoid per-step alloc churn. Supports symlog reward
+transform, DrQ random-shift augmentation (pixel mode only), RND auxiliary
+loss, GA-only warmup gens, and `preserve_elite_diversity` mode that skips
+the post-PPO clone-overwrite so the elite pool keeps structurally-distinct
+weights.
+
+### DreamerV3 trainer (`src/training/dreamer.py`)
+Self-contained alternative to PPO+GA. Selected via `training_mode: dreamer`
+in the profile (or the GUI dropdown). Coordinates data collection through
+the same Rust pool, world-model training on sequence batches from a replay
+buffer (`src/training/replay_buffer.py`), and actor/critic training on
+imagined latent rollouts. Atomic checkpointing every N train steps, auto-
+resume on next launch. Reconstruction visualization is dumped every 10
+steps to `<checkpoint_dir>/dreamer/reconstruction.npy` for the dashboard.
 
 ### Genetic algorithm (`src/training/genetic_algorithm.py`)
 Tournament selection, uniform crossover, Gaussian mutation on PyTorch
-`state_dict`s. Runs once per generation boundary. Genome names (`genome_names.py`)
-persist across mutation and crossover so stream viewers can follow
-specific lineages.
+`state_dict`s. Runs once per generation boundary. Genome names
+(`genome_names.py`) persist across mutation and crossover so stream
+viewers can follow specific lineages. Stale-best restart fires when the
+all-time best hasn't improved in `stale_gens_before_restart` gens (set to
+0 to disable, useful when the elite needs uninterrupted PPO time).
 
 ### Curriculum (`src/training/curriculum.py`)
 Stage progression driven by success rate. Stage transitions can swap the
@@ -321,12 +389,31 @@ for auto-promotion.
 Supervised warm start from a recorded play file. Writes `.state.bin` binary
 snapshots (same `NCST\x01` format) so the trainer can hand the run off
 byte-exact. Used as an optional stage 0 before the GA starts exploring.
+Multi-demo aware: pass a list (or a directory) of `.state.bin`/`.fm2` files
+and the pipeline replays each from a cold-boot env, concatenating the
+(state, action, reward) tuples for richer state coverage. BC seed cache
+key includes encoder name + frame_skip so swapping architectures auto-
+invalidates the cache.
 
 ### Reward functions (`src/utils/reward_functions/__init__.py`)
 Thin Python dispatcher (~40 LOC) that calls `nes_core.build_reward_function`
 with the game profile. All six games implemented in Rust (`rewards.rs`).
 Byte-exact parity with the old Python implementations was verified
-pre-deletion.
+pre-deletion. Mario's reward function ships with **dense progress
+checkpoints** — RAM-readable bonuses fire once each at hand-picked
+x-positions through 1-1 (past first pipe, past first pit, ..., near flag).
+Enable per-profile via `reward_weights.checkpoint_scale: 1.0`; set to 0 to
+disable.
+
+### Training dashboard (`src/gui/training_dashboard.py`)
+Single-pane observer window. Reads `checkpoints/metrics.jsonl` directly
+(no trainer-side queue). Panels: best/avg fitness, reward signal stack,
+PPO learning telemetry (loss/policy/value/entropy), depth + curriculum
+success, world-model losses (Dreamer mode only), recent depth records,
+recent highlight clips, replay-buffer fill, and a live world-model
+reconstruction strip showing original vs. decoded frames. Replaces the
+older standalone `MetricsWindow` as the primary "watch learning happen"
+surface.
 
 ## Audio
 
@@ -355,11 +442,18 @@ only.
 windows.
 
 - `main_window.py` — ROM picker, start state, profile, reward overrides,
-  instance/population/episode knobs, live metrics readout.
+  instance/population/episode knobs, live metrics readout. Trainer
+  dropdown selects `(profile)` / `GA + PPO` / `DreamerV3` and overrides
+  the profile's `training_mode` at launch. Multi-pick BC demo picker
+  (⌘-click) feeds a colon-joined list to the trainer's BC pipeline.
+- `training_dashboard.py` — unified observer view (replaces the older
+  `MetricsWindow` as the primary surface). Five plot panels +
+  side-pane with replay-fill bar, depth records list, highlight clips
+  list, and a live world-model reconstruction strip.
 - `emulator_grid.py` — NxN live frame grid. Pulls from the pool's frame
   callback at 30 fps.
-- `metrics_window.py` — best/avg fitness, per-signal reward breakdown, and
-  per-stage curriculum success curves via pyqtgraph.
+- `metrics_window.py` — legacy three-panel metrics view, still
+  importable but no longer auto-opened on Start.
 - `reward_tuning_window.py` — live sliders for reward weights. Changes
   apply at the next episode boundary.
 - `audio_mixer_window.py` — per-instance mute/solo + master volume.

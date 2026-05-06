@@ -166,3 +166,29 @@ ga_params:
 # a single pathological genome running for days on a locked-up
 # pool. At 36000 this is ~2.7 hours of game time per episode.
 max_episode_steps: 36000
+
+# DreamerV3 trainer settings. Zelda is the harder, more exploration-
+# heavy game so the Dreamer config is tuned for that:
+#   * larger replay (1M) — exploration agent revisits diverse latent
+#     regions over a long run; truncating short would drop dungeon-3
+#     experience while training on dungeon-1 still
+#   * longer warmup (20k) — random actions need more time to find
+#     non-trivial states before the world model starts learning
+#   * higher entropy_coef (1e-3) — keeps the categorical actor from
+#     committing to a single button-mash too early
+#   * shorter imag_horizon (10) — Zelda's reward sparsity means
+#     imagination quality degrades fast; better to have shorter
+#     accurate rollouts than long fantasy ones
+dreamer:
+  replay_capacity: 1000000
+  warmup_steps: 20000
+  batch_size: 16
+  seq_len: 64
+  imag_horizon: 10
+  actor_lr: 8.0e-5
+  critic_lr: 8.0e-5
+  entropy_coef: 1.0e-3
+  latent_kind: categorical
+  stoch_dim: 32
+  stoch_classes: 32
+  checkpoint_every_gens: 50

@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.gui.file_dialogs import remembered_open
+from src.gui.file_dialogs import remembered_open, remembered_open_many
 
 _REPO_ROOT = Path(__file__).parent.parent.parent
 CONFIGS_DIR = _REPO_ROOT / "configs"
@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
     # the trainer rebuilds the worker pool with the new path so future
     # episodes boot into the new state — no Stop / Start dance needed.
     start_state_change_requested = pyqtSignal(str)  # absolute path or "" to clear
+    dashboard_requested = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -173,6 +174,22 @@ class MainWindow(QMainWindow):
         self.profile_dropdown = QComboBox()
         self._populate_profiles()
         profile_row.addWidget(self.profile_dropdown, stretch=1)
+        profile_row.addSpacing(12)
+        # Trainer mode picker. `(profile)` falls through to whatever
+        # the YAML's `training_mode` key says (or `ga_ppo` if absent),
+        # so existing profiles keep their default behavior. Selecting
+        # an explicit value overrides the profile at run time.
+        profile_row.addWidget(QLabel("Trainer:"))
+        self.trainer_mode_dropdown = QComboBox()
+        self.trainer_mode_dropdown.addItem("(profile)", "")
+        self.trainer_mode_dropdown.addItem("GA + PPO", "ga_ppo")
+        self.trainer_mode_dropdown.addItem("DreamerV3", "dreamer")
+        self.trainer_mode_dropdown.setToolTip(
+            "GA + PPO is the classic genetic algorithm + policy gradient "
+            "trainer. DreamerV3 is the experimental world-model trainer "
+            "(better sample efficiency on sparse-reward games like Zelda)."
+        )
+        profile_row.addWidget(self.trainer_mode_dropdown)
         layout.addLayout(profile_row)
 
         # --- Reward overrides (optional) ---
@@ -334,6 +351,15 @@ class MainWindow(QMainWindow):
         self.audio_btn.clicked.connect(self._on_audio_mixer)
         self.audio_btn.setEnabled(False)  # only while training runs
         btn_row.addWidget(self.audio_btn)
+
+        self.dashboard_btn = QPushButton("Dashboard…")
+        self.dashboard_btn.setToolTip(
+            "Reopen the unified training dashboard if it was closed. "
+            "Always opens automatically on Start."
+        )
+        self.dashboard_btn.clicked.connect(self.dashboard_requested.emit)
+        self.dashboard_btn.setEnabled(False)
+        btn_row.addWidget(self.dashboard_btn)
         layout.addLayout(btn_row)
 
         # --- Metrics display ---
@@ -431,10 +457,15 @@ class MainWindow(QMainWindow):
             str(SAMPLES_DIR) if SAMPLES_DIR.exists()
             else (str(Path(self._rom_path).parent) if self._rom_path else str(ROMS_DIR))
         )
-        path = remembered_open(
+        # Multi-select: pass several .fm2 / .state.bin files at once and
+        # the trainer's BC pipeline will replay each from a fresh cold-
+        # boot env, concatenating the (state, action) pairs. Diverse
+        # recordings give the policy much better state coverage than a
+        # single TAS run on a long game.
+        paths = remembered_open_many(
             self,
             key="bc_demo",
-            title="Select behavioral-cloning demo recording",
+            title="Select behavioral-cloning demo recording(s)",
             # Accept both FCEUX movies (.fm2) and our native .state.bin.
             # FM2s are auto-converted on the fly so users don't need the CLI.
             file_filter="Play recording (*.state.bin *.fm2);;"
@@ -443,61 +474,78 @@ class MainWindow(QMainWindow):
             "All files (*)",
             default_dir=default_dir,
         )
-        if not path:
+        if not paths:
             return
 
-        # If the user picked an FCEUX FM2, transparently convert it to
-        # the trainer's native format and keep the converted file next
-        # to the source so they can reuse it without re-converting.
-        if path.lower().endswith(".fm2"):
-            # `scripts/` is not a Python package (no __init__.py), so go
-            # through importlib with the absolute file path.
-            import importlib.util
-            spec = importlib.util.spec_from_file_location(
-                "convert_fm2",
-                str(Path(__file__).parent.parent.parent / "scripts" / "convert_fm2.py"),
-            )
-            mod = importlib.util.module_from_spec(spec)
-            try:
-                spec.loader.exec_module(mod)
-                data = mod.fm2_to_bytes(Path(path))
-            except Exception as exc:
-                QMessageBox.critical(
-                    self,
-                    "FM2 conversion failed",
-                    f"Could not read {Path(path).name}:\n\n{exc}",
-                )
-                return
-            converted = Path(path).with_suffix(".state.bin")
-            try:
-                converted.write_bytes(data)
-            except OSError as exc:
-                QMessageBox.critical(
-                    self,
-                    "Cannot write converted file",
-                    f"Failed to write {converted}:\n\n{exc}",
-                )
-                return
-            QMessageBox.information(
-                self,
-                "FM2 converted",
-                f"Converted {Path(path).name}\n→ {converted.name}\n\n"
-                f"{len(data)} frames (~{len(data)/60:.1f} s of NES time).\n"
-                "Behavioral cloning is now enabled.",
-            )
-            path = str(converted)
-        else:
-            QMessageBox.information(
-                self,
-                "Demo selected",
-                f"{Path(path).name}\n\nBehavioral cloning is now enabled.",
-            )
+        # Convert any .fm2s to .state.bin alongside the source. Collect
+        # the resolved paths (post-conversion for fm2s, unchanged for
+        # native recordings) into a flat list.
+        resolved: list[str] = []
+        for path in paths:
+            if path.lower().endswith(".fm2"):
+                resolved_path = self._convert_fm2(path)
+                if resolved_path is None:
+                    return  # critical error already surfaced via QMessageBox
+                resolved.append(resolved_path)
+            else:
+                resolved.append(path)
 
-        self._bc_demo_path = path
-        self.bc_label.setText(Path(path).name)
+        # The trainer accepts a colon-joined string of paths and splits
+        # them in `_bc_demo_paths()`. Joining here keeps the single
+        # `bc_demo_path` config field unchanged downstream.
+        joined = ":".join(resolved)
+        self._bc_demo_path = joined
+        if len(resolved) == 1:
+            self.bc_label.setText(Path(resolved[0]).name)
+        else:
+            self.bc_label.setText(
+                f"{len(resolved)} files: {', '.join(Path(p).name for p in resolved[:3])}"
+                + ("…" if len(resolved) > 3 else "")
+            )
         self.bc_label.setStyleSheet("font-weight: bold")
         # Picking a demo file implies the user wants BC on.
         self.bc_checkbox.setChecked(True)
+        QMessageBox.information(
+            self,
+            "BC demos selected",
+            f"{len(resolved)} demo file(s) ready for BC pretraining.\n\n"
+            "Behavioral cloning is now enabled. Uncheck "
+            "'Resume from latest checkpoint' on Start so the GA seeds "
+            "from the BC weights instead of an existing checkpoint.",
+        )
+
+    def _convert_fm2(self, path: str) -> str | None:
+        """Convert an FCEUX `.fm2` recording to the trainer's native
+        `.state.bin` format. Writes the converted file alongside the
+        source. Returns the converted path on success, None on error
+        (a QMessageBox is shown to the user)."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "convert_fm2",
+            str(Path(__file__).parent.parent.parent / "scripts" / "convert_fm2.py"),
+        )
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+            data = mod.fm2_to_bytes(Path(path))
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "FM2 conversion failed",
+                f"Could not read {Path(path).name}:\n\n{exc}",
+            )
+            return None
+        converted = Path(path).with_suffix(".state.bin")
+        try:
+            converted.write_bytes(data)
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                "Cannot write converted file",
+                f"Failed to write {converted}:\n\n{exc}",
+            )
+            return None
+        return str(converted)
 
     def _on_clear_bc_demo(self) -> None:
         self._bc_demo_path = ""
@@ -562,6 +610,8 @@ class MainWindow(QMainWindow):
             "reward_overrides_path": self._reward_overrides_path or None,
             "max_episode_steps": int(self.max_ep_spin.value()),
             "activity_timeout_steps": int(self.activity_spin.value()),
+            # Empty string means "use whatever the profile YAML says".
+            "trainer_mode_override": self.trainer_mode_dropdown.currentData() or "",
         }
         self._persist_recents(config)
         self.start_requested.emit(config)
@@ -569,6 +619,7 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(True)
         self.tune_btn.setEnabled(True)
         self.audio_btn.setEnabled(True)
+        self.dashboard_btn.setEnabled(True)
         self._show_status("Starting training…")
 
     def _on_stop(self) -> None:
@@ -577,6 +628,7 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.tune_btn.setEnabled(False)
         self.audio_btn.setEnabled(False)
+        self.dashboard_btn.setEnabled(False)
         self._show_status("Stopping…")
 
     def _on_tune_rewards(self) -> None:
@@ -641,11 +693,24 @@ class MainWindow(QMainWindow):
             self._on_clear_reward_overrides()
 
         bc_path = data.get("bc_demo_path") or ""
-        if bc_path and Path(bc_path).exists():
-            self._bc_demo_path = bc_path
-            self.bc_label.setText(Path(bc_path).name)
-            self.bc_label.setStyleSheet("font-weight: bold")
-            applied = True
+        if bc_path:
+            # Multi-demo path is colon-joined; single is just one path.
+            # Validate every component still exists; if any are gone,
+            # treat the whole thing as invalid (better than partially
+            # restoring a broken set).
+            candidates = bc_path.split(":") if ":" in bc_path else [bc_path]
+            if all(Path(p).exists() for p in candidates):
+                self._bc_demo_path = bc_path
+                if len(candidates) == 1:
+                    self.bc_label.setText(Path(candidates[0]).name)
+                else:
+                    self.bc_label.setText(
+                        f"{len(candidates)} files: "
+                        + ", ".join(Path(p).name for p in candidates[:3])
+                        + ("…" if len(candidates) > 3 else "")
+                    )
+                self.bc_label.setStyleSheet("font-weight: bold")
+                applied = True
 
         profile = data.get("profile")
         if profile:
@@ -666,6 +731,12 @@ class MainWindow(QMainWindow):
             self.max_ep_spin.setValue(int(data["max_episode_steps"]))
         if "activity_timeout_steps" in data:
             self.activity_spin.setValue(int(data["activity_timeout_steps"]))
+        tm = data.get("trainer_mode_override", "")
+        if tm:
+            for i in range(self.trainer_mode_dropdown.count()):
+                if self.trainer_mode_dropdown.itemData(i) == tm:
+                    self.trainer_mode_dropdown.setCurrentIndex(i)
+                    break
 
         return applied
 
@@ -682,6 +753,7 @@ class MainWindow(QMainWindow):
             "bc": config.get("bc_demo_path") is not None,
             "max_episode_steps": config.get("max_episode_steps"),
             "activity_timeout_steps": config.get("activity_timeout_steps"),
+            "trainer_mode_override": config.get("trainer_mode_override", ""),
         })
 
     def update_metrics(self, data: dict) -> None:

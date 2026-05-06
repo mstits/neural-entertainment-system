@@ -3,6 +3,16 @@ rom_hashes:
   # MD5 hashes of known-good Super Mario Bros. ROM dumps
   - "811b027eaf99c2def7b933c5208636de"
 
+# Halved from the 16 default. Frame_skip 8 gives the agent twice the
+# action resolution per game-second — relevant for the staircase
+# obstacle near the flagpole, which requires precise jump timing the
+# 16-frame action chunk can't express. Tradeoff: ~2x slower per-gen
+# wall time. Diagnostic: if Mario clears the staircase at fs=8 but
+# not fs=16, "action timing too coarse" is confirmed and we should
+# build the tile-based encoder. If the plateau holds at fs=8, the
+# bottleneck is the CNN search space, not action resolution.
+frame_skip: 8
+
 description: >
   Training profile for Super Mario Bros. (NES, 1985). Rewards forward progress
   and score increases, penalizes deaths, bonuses for level completion. RAM map
@@ -31,15 +41,20 @@ reward_weights:
   # competing objective. Killing a goomba (+100 game points) is now
   # +0.5 reward — small enough that the agent won't camp for points.
   score_delta:      0.005
-  # Dying must hurt more than any single positive intermediate reward.
-  # -100 is ~7× the per-step forward delta cap, so the agent learns
-  # "don't trade lives for tiny progress wins".
-  death_penalty:    -100.0
+  # MarI/O-inspired: zero death penalty. Dying just ends the episode;
+  # there is no fitness deduction. With death=0 and time_penalty=0,
+  # the GA selection pressure is purely on forward progress + the
+  # activity timeout, which is exactly what carried MarI/O to a 1-1
+  # finish in <50 generations on far weaker hardware.
+  death_penalty:    0.0
   # Completing the level should be the unambiguous north star, larger
   # than any plausible accumulated forward reward on a partial run.
   completion_bonus: 2000.0
-  # Doubled to push toward finishing rather than survival-camping.
-  time_penalty:     -0.02
+  # Zeroed: the per-step penalty was punishing long episodes
+  # uniformly, including ones that made progress. The activity
+  # timeout (set in the GUI) handles stalled genomes cleanly without
+  # taxing healthy ones.
+  time_penalty:     0.0
 
 # Action space: each entry is a list of buttons held simultaneously.
 # The network outputs a distribution over this list.
@@ -53,9 +68,69 @@ action_space:
   - ["left"]
   - ["left", "A"]
 
+# PPO settings. The big knob here is `symlog_rewards`: Mario's
+# `forward_progress` reward accumulates to 5000+ per episode, and
+# without compression the GAE returns reach 10000+. The value-head's
+# `MSE(predicted, returns)` then explodes to ~1e6, drowning the
+# policy gradient (~0.1 scale) by 7+ orders of magnitude — the
+# optimizer effectively only updates the value head. Symlog
+# (`sign(r) * log(1+|r|)`) compresses returns to ~ln(10000) ≈ 9.2
+# so policy and value losses live in the same numerical neighborhood
+# and PPO actually steers the policy.
+reinforce:
+  enabled: true
+  symlog_rewards: true
+  # BC pretraining epochs. The default (8) is fine for short demos
+  # but a full-game TAS (~17k frames) benefits from more epochs to
+  # entrench the imitated weights deeply enough that subsequent PPO
+  # noise can't wash them out.
+  bc_epochs: 30
+  # GA-only warmup: skip PPO for the first N generations so the BC
+  # seed has time to spread through the population before PPO pulls
+  # the elite away from the imitated policy. Without this, BC starts
+  # strong and tanks within ~10 gens as PPO drifts the elite.
+  warmup_gens_ga_only: 25
+
+# NEAT-paper-inspired GA tuning (Stanley & Miikkulainen 2002, §4.1).
+# Their standard regime is high mutation rate + small per-weight
+# perturbation, with the population's diversity protected by
+# speciation. We don't have speciation, so we lean even harder on
+# mutation rate to keep the elite-clone collapse from killing
+# population diversity. Lower per-weight std balances the higher
+# rate so the elite doesn't drift apart on one bad gen.
+ga_params:
+  mutation_rate: 0.8                # was 0.2 default — match NEAT
+  mutation_std: 0.005               # was 0.01 — even smaller so BC-imitated structure isn't destroyed by GA noise across 25-gen warmup
+  elite_fraction: 0.4               # was 0.2 default — preserve more diversity past the elite-clone hack
+  stale_gens_before_restart: 15     # was 10 default — match NEAT's stagnation threshold
+  restart_fraction: 0.5
+
 curriculum:
   stage_1: ["1-1"]
   stage_2: ["1-1", "1-2"]
   stage_3: ["1-1", "1-2", "1-3", "1-4"]
   stage_4: ["1-1", "1-2", "1-3", "1-4", "2-1", "2-2", "2-3", "2-4"]
   stage_5: "full_game"
+
+# DreamerV3 trainer settings (only used when training_mode is `dreamer`,
+# either set here or selected from the GUI dropdown). Mario is the
+# easier game so the Dreamer config stays close to the paper defaults
+# — short warmup, modest replay, standard imagination horizon. The
+# big tunable knobs are at the top:
+#   * latent_kind: `categorical` (V3-proper, 32x32) or `gaussian` (V1/V2)
+#   * imag_horizon: shorter (~10) trains faster; longer captures more
+#     of the level layout at the cost of compounding model error
+#   * actor_lr / critic_lr: paper recommends 8e-5 for Atari-class envs
+dreamer:
+  replay_capacity: 200000
+  warmup_steps: 5000
+  batch_size: 16
+  seq_len: 64
+  imag_horizon: 15
+  actor_lr: 8.0e-5
+  critic_lr: 8.0e-5
+  entropy_coef: 3.0e-4
+  latent_kind: categorical
+  stoch_dim: 32
+  stoch_classes: 32
+  checkpoint_every_gens: 50

@@ -63,8 +63,13 @@ bookkeeping).*
 flowchart TB
     subgraph Python
         GUI["PyQt6 GUI<br/>(src/gui)"]
-        Trainer["Trainer<br/>PyTorch MPS + PPO + GA"]
-        PolicyNet["PolicyNetwork<br/>(Nature-DQN CNN)"]
+        Dashboard["TrainingDashboardWindow<br/>fitness · WM losses · replay · recon"]
+        TrainerSel{"training_mode?"}
+        Trainer["Trainer<br/>PPO + GAE + GA"]
+        DreamerT["DreamerTrainer<br/>world model + actor/critic"]
+        EncSel{"encoder?"}
+        CNN["PolicyNetwork<br/>Nature-DQN / IMPALA<br/>1.7M+ params, 4×84×84"]
+        Tile["TilePolicyNetwork<br/>~14k params, 175 RAM features"]
     end
 
     subgraph Boundary
@@ -77,24 +82,35 @@ flowchart TB
             CPU["6502 CPU<br/>interpreter + asm_cpu (AArch64 ASM)"]
             PPU["PPU<br/>per-pixel + ppu_neon batched"]
             APU["APU<br/>5-channel"]
-            Mappers["Mappers (20+)<br/>NROM, MMC1, MMC3, MMC5, VRC..."]
+            Mappers["Mappers (36)<br/>NROM, MMC1, MMC3, MMC5, VRC..."]
         end
+        Rewards["Reward functions<br/>+ dense progress checkpoints"]
         FrameSink["Frame sink<br/>NEON XRGB->gray->84x84->f16"]
         AudioSink["Audio sink<br/>cpal stereo + pan matrix"]
     end
 
-    GUI --> Trainer
-    Trainer --> PolicyNet
+    GUI --> TrainerSel
+    TrainerSel -->|ga_ppo default| Trainer
+    TrainerSel -->|dreamer| DreamerT
+    Trainer --> EncSel
+    EncSel -->|nature_dqn / impala| CNN
+    EncSel -->|smb_tiles| Tile
     Trainer -->|pool.step_all| PyO3
+    DreamerT -->|pool.step_all| PyO3
     PyO3 --> Pool
     Pool --> Worker
+    Worker --> Rewards
     CPU --> PPU
     CPU --> APU
     CPU --> Mappers
     Worker --> FrameSink
     Worker --> AudioSink
-    FrameSink -->|numpy f16| Trainer
+    FrameSink -->|numpy| Trainer
+    Rewards -->|reward + breakdown| Trainer
+    Rewards -->|RAM| Tile
     AudioSink -->|Core Audio| GUI
+    Trainer -->|metrics.jsonl| Dashboard
+    DreamerT -->|metrics.jsonl| Dashboard
 ```
 
 ## Performance
@@ -173,6 +189,7 @@ The compatibility matrix lives in `reports/full_library.md`. A summary:
 
 ## Features
 
+**Emulator core**
 - Full Rust NES core: 6502 CPU, PPU, APU, 36 mappers, versioned save state
   (`NCST\x01` magic).
 - AArch64 assembly 6502 core behind `asm_cpu`. 99.97% hit rate on real ROMs;
@@ -184,12 +201,42 @@ The compatibility matrix lives in `reports/full_library.md`. A summary:
   profile → rebuild.
 - macOS-native audio via cpal. 5-channel pan matrix, per-channel resampler
   (43653 Hz → 44100 Hz).
-- PyTorch MPS policy networks (Nature-DQN CNN). PPO + GAE trainer, genetic
-  algorithm evolution, behavior cloning warm start, depth-driven curriculum.
-- PyQt6 training monitor: live frame grid, metrics plots, reward tuning
-  sliders, audio mixer with solo per worker, replay and play windows.
-- Core ML export for elite genomes; ANE inference in replay (~8x faster than
-  MPS at batch 1).
+
+**Training stack**
+- **PPO + GAE on top of a genetic algorithm** with optional behavior cloning
+  warm start, depth-driven curriculum, and stale-best restart.
+- **DreamerV3 world-model trainer** as an alternative to PPO+GA (selectable
+  per-profile or via the GUI dropdown). Categorical 32×32 latent, RSSM with
+  GRU + posterior/prior heads, decoder-based reconstruction, λ-returns on
+  imagined rollouts, Polyak-EMA target critic, atomic checkpointing with
+  auto-resume.
+- **Two policy architectures** dispatched by `reinforce.encoder`:
+  - **Nature-DQN CNN** (default) or **IMPALA ResNet** on stacked pixels.
+    Universal — works on any ROM with no per-game code. ~1.7M–3.4M params.
+  - **Tile-based MLP** (currently SMB only). Reads RAM directly into a
+    13×13 semantic tile grid + scalars. ~14k params. The MarI/O recipe
+    modernized — search space shrinks ~120× so PPO gradients become large
+    enough to actually steer the policy.
+- **Dense reward shaping** for SMB. RAM-readable progress checkpoints fire
+  bonuses at every major obstacle through 1-1, giving PPO non-trivial
+  intermediate signal instead of "+2000 once at the flag".
+- **Auxiliary losses & exploration helpers**: RND intrinsic motivation
+  with running-mean/std normalization, DrQ random-shift augmentation
+  (pixel mode), symlog reward transform, GA-only warmup gens, optional
+  elite-diversity preservation.
+- **PyTorch MPS** policy training. **Core ML export** for elite genomes;
+  ANE inference in replay (~8x faster than MPS at batch 1).
+
+**Observability**
+- **TrainingDashboardWindow** — single-pane observer view with best/avg
+  fitness, reward signal stack, PPO learning telemetry, world-model
+  losses, depth + curriculum success, replay-buffer fill, recent depth
+  records, recent highlight clips, and a live world-model reconstruction
+  strip showing original vs. decoded frames.
+- **Live frame grid** for all N workers, **reward-tuning sliders**, an
+  **audio mixer** with per-worker solo, **replay and play windows**, and
+  an **auto-clip highlight recorder** that flushes the last 4 seconds of
+  any worker that triggers a banner event to `highlights/*.mp4`.
 
 ## Testing and validation
 
@@ -241,12 +288,20 @@ What this release **does** ship:
 
 What this release **does not** ship:
 
-- **A trained policy that demonstrably reaches the SMB level 1-1 flag.**
-  The infrastructure runs and BC pretrain works, but converging on a
-  platformer with a 16- or 64-genome population and a single short
-  demo takes more compute and more demo coverage than the defaults
-  provide. This is the next public-facing milestone — see open-research
-  notes in `docs/proposals/`.
+- **A reliably-clearing SMB 1-1 policy.** Pixel-CNN training plateaus at
+  the staircase wall (~x=2700) with occasional level clears (success
+  rate ≈ 0-1%). The new tile-based encoder + dense reward shaping
+  (v0.2.0) is designed to break that ceiling but actual reliability is
+  still being validated. The `mario_tiles` profile is the recommended
+  configuration for this work.
+- **Tile encoders for games other than SMB.** The infrastructure
+  (`src/emulation/tile_observations/`) is generic; each new game needs
+  a per-game RAM decoder (~1 day of NESdev wiki reading). Zelda,
+  Metroid, Contra, Mega Man, and Castlevania still train on the
+  universal pixel-CNN path with no regression.
+- **A converged DreamerV3 policy.** The world-model scaffold is in
+  place and trains end-to-end, but converging it to outperform PPO on
+  these games is a research question we haven't yet validated.
 - **All 794 tested ROMs in the local library boot.** The single
   load-failure (`Yoshi (USA).nes`) is a truncated dump, not an
   emulator bug.
@@ -260,14 +315,17 @@ What this release **does not** ship:
 
 Open near-term roadmap:
 
-- Multi-route SMB demos + larger BC dataset → push for the first
-  demonstrable flag-finding genome.
+- Validate the tile-mode + dense-reward path on SMB. Exit criterion:
+  `success_rate ≥ 0.5` within 50 generations.
+- Tile encoders for the other 5 games (each ~1 day of work).
+- Tune DreamerV3 hyperparameters for sparse-reward games (Zelda,
+  Metroid).
 - Bulk-step CPU interpreter Phase 2 (block-interpreter for 20+ opcodes)
   for an estimated +15-25% per-worker.
 - Mutex → UnsafeCell on the worker pool for an estimated +3-8%.
 - `fs=1` single-env perf parity with LaiNES (currently ~0.7×).
 
-This is **v0.1.0 — pre-release**. Expect the README and docs to be revised
+This is **v0.2.0 — pre-release**. Expect the README and docs to be revised
 as each batch lands.
 
 ## Directory layout
@@ -282,12 +340,19 @@ as each batch lands.
 │   └── SECURITY.md      unsafe audit + FFI boundary notes
 ├── src/               Python trainer + GUI
 │   ├── emulation/       rust_pool_adapter, frame_utils
-│   ├── training/        Trainer, GA, curriculum, BC, narrator, depth
-│   ├── gui/             PyQt6 windows (main, grid, metrics, replay, mixer)
-│   ├── models/          PolicyNetwork + Core ML export
+│   │   └── tile_observations/   per-game RAM-tile decoders (smb.py)
+│   ├── training/        Trainer, DreamerTrainer, GA, curriculum, BC,
+│   │                    narrator, depth, replay_buffer
+│   ├── gui/             PyQt6 windows (main, grid, training_dashboard,
+│   │                    replay, mixer, ...)
+│   ├── models/          PolicyNetwork (CNN), TilePolicyNetwork (MLP),
+│   │                    WorldModel (Dreamer), DreamerActor/Critic, RND,
+│   │                    Core ML export
 │   ├── audio/           Thin façade over nes_core.AudioMixer
 │   └── utils/           Reward factory (dispatches to nes_core)
-├── configs/           Per-game profiles (mario.yaml, zelda.yaml, ...)
+├── configs/           Per-game profiles. mario.yaml is the default
+│                      pixel-CNN profile; mario_tiles.yaml is the
+│                      tile-mode profile.
 ├── docs/              Architecture + proposals
 ├── scripts/           install, pgo_build, benches, training harnesses
 ├── tests/             pytest suites

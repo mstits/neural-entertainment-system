@@ -102,6 +102,7 @@ def build_dataset(
     frame_skip: int = 4,
     max_pairs: int = 20000,
     reward_fn=None,
+    tile_extractor=None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Produce (states, actions, rewards) tensors from a `.state.bin` recording.
 
@@ -165,8 +166,14 @@ def build_dataset(
         # are coherent within a single replay.
         env = NESEnvironment(rom_path=str(rom_path), frame_skip=1)
         first_frame = env.reset()
-        stacker = FrameStacker(stack_size=4)
-        stacker.reset(first_frame)
+        # Pixel mode uses a frame stacker; tile mode decodes RAM
+        # directly via the supplied extractor. Only one is active per
+        # demo replay; the other variable stays at its default.
+        if tile_extractor is None:
+            stacker = FrameStacker(stack_size=4)
+            stacker.reset(first_frame)
+        else:
+            stacker = None
 
         window_actions: list[int] = []
         window_reward = 0.0
@@ -179,9 +186,18 @@ def build_dataset(
                 raw = int(raw_byte)
                 window_actions.append(raw)
                 frame, done = env.step(raw)
-                current_stack = stacker.push(frame)
+                # In pixel mode, push into the stacker each NES frame so
+                # the stack always reflects the latest 4. In tile mode,
+                # we don't precompute per-frame state — we'll decode RAM
+                # at the chunk boundary below since RAM is already
+                # final-state by then.
+                if tile_extractor is None:
+                    current_stack = stacker.push(frame)
+                # Reward function reads RAM regardless of mode.
+                ram_snapshot = env.get_ram_range(0, 2048).tobytes() if (
+                    reward_fn is not None or tile_extractor is not None
+                ) else None
                 if reward_fn is not None:
-                    ram_snapshot = env.get_ram_range(0, 2048).tobytes()
                     r, rew_done, _ = reward_fn.compute(ram_snapshot, action=raw)
                     window_reward += r
                     if rew_done:
@@ -195,7 +211,16 @@ def build_dataset(
                     # label.
                     most_common = Counter(window_actions).most_common(1)[0][0]
                     action_idx = _nearest_action_index(most_common, action_bitmasks)
-                    states.append(current_stack.copy())
+                    if tile_extractor is not None:
+                        # Tile mode: decode the chunk's final RAM state.
+                        # `ram_snapshot` is already the latest because we
+                        # always re-read it for the reward function above
+                        # (or compute it fresh on the boundary).
+                        if ram_snapshot is None:
+                            ram_snapshot = env.get_ram_range(0, 2048).tobytes()
+                        states.append(tile_extractor.extract(ram_snapshot).copy())
+                    else:
+                        states.append(current_stack.copy())
                     actions.append(action_idx)
                     rewards.append(window_reward)
                     window_actions.clear()
@@ -206,7 +231,8 @@ def build_dataset(
                     # Expected during recorded menu/intro: cold reset and
                     # continue. This only happens for broken recordings.
                     env.reset()
-                    stacker.reset(env.get_frame())
+                    if tile_extractor is None:
+                        stacker.reset(env.get_frame())
                     window_actions.clear()
                     window_reward = 0.0
                     if reward_fn is not None:
@@ -221,9 +247,13 @@ def build_dataset(
         "%d total demo bytes",
         len(demo_list), len(states), sum(p.stat().st_size for p in demo_list if p.exists()),
     )
-    states_t = torch.from_numpy(np.stack(states, axis=0)) if states else torch.zeros(
-        (0, 4, 84, 84), dtype=torch.uint8
-    )
+    if states:
+        states_t = torch.from_numpy(np.stack(states, axis=0))
+    elif tile_extractor is not None:
+        # Empty fallback shape matches tile-mode policy input dim.
+        states_t = torch.zeros((0, tile_extractor.feature_dim), dtype=torch.int8)
+    else:
+        states_t = torch.zeros((0, 4, 84, 84), dtype=torch.uint8)
     actions_t = torch.tensor(actions, dtype=torch.long)
     rewards_t = torch.tensor(rewards, dtype=torch.float32)
     return states_t, actions_t, rewards_t
@@ -279,6 +309,12 @@ def pretrain(
     # Default 0.0 keeps backwards-compatible behavior for any caller
     # (and tests) that don't ask for one. Trainer enables it explicitly.
     val_fraction: float = 0.0,
+    # When True (default), divide states by 255 — appropriate for
+    # uint8 pixel observations. Tile-mode states are small signed
+    # ints (-128..127) and need no normalization; the trainer sets
+    # this False for tile policies so the LayerNorm + first Linear
+    # learn the right scale on raw values.
+    normalize_obs: bool = True,
 ) -> float:
     """Supervised cross-entropy pre-training. Returns final TRAIN epoch loss.
 
@@ -333,7 +369,9 @@ def pretrain(
             return float("nan")
         network.eval()
         with torch.no_grad():
-            s = states[val_idx].to(device).float().div_(255.0)
+            s = states[val_idx].to(device).float()
+            if normalize_obs:
+                s = s.div_(255.0)
             a = actions[val_idx].to(device)
             logits = network(s)
             return float(F.cross_entropy(logits, a).item())
@@ -349,7 +387,9 @@ def pretrain(
             # high-variance noise that's worse than dropping the sample.
             if idx.numel() < 2:
                 continue
-            s = states[idx].to(device).float().div_(255.0)
+            s = states[idx].to(device).float()
+            if normalize_obs:
+                s = s.div_(255.0)
             a = actions[idx].to(device)
             logits = network(s)
             if weighted:
