@@ -72,7 +72,17 @@ reward_weights:
   # - 60 time = ~5750. Forward progress and checkpoints dominate, as
   # they should — the agent learns the path, the completion is the
   # cherry on top.
-  forward_progress: 1.0
+  # Bumped 1.0 -> 3.0 after empirical: the user manually bumped this
+  # weight ~3x mid-run last time, and that was the inflection point
+  # where the agent's depth_scalar climbed 832 -> 1264 -> 1735 -> 2608
+  # -> 3161 (flagpole). Without the bump, the canonical 1.0 weight
+  # leaves Mario stuck at first-pit local optima — there isn't enough
+  # gradient differential between "moves a few tiles right" and
+  # "actually pushes through obstacles" for PPO to commit to the
+  # latter. 3.0 multiplies the per-step forward signal so the
+  # advantage on long-progress episodes dominates the death penalty
+  # and time cost combined.
+  forward_progress: 3.0
   score_delta:      0.005
   # Death and time penalties were 0.0 (no-op equilibrium); previous
   # rev set them to -50 and -0.01. That fix introduced a NEW failure:
