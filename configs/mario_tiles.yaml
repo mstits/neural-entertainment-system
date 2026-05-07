@@ -41,6 +41,17 @@ frame_skip: 4
 # requires past the first pit. Both canonical repos use 4. To preserve the same
 # game-time-per-episode, max_episode_steps is doubled below.
 
+# Stack the last 4 tile feature vectors into the policy input.
+# Universal in canonical SMB-RL recipes — yumouwei explicitly reports
+# n_stack=1 FAILS to clear 1-1, n_stack≥2 succeeds. Our observation
+# already includes vel_x/vel_y/on_ground scalars (giving Mario's
+# first-derivative motion), but the tile grid encodes static
+# enemy/block positions only — stacking adds the temporal context
+# needed to see "Goomba moving toward me" vs "Goomba stationary."
+# Policy input dim grows 175 -> 700; network params 14k -> ~50k.
+# Negligible memory and compute cost.
+tile_stack: 4
+
 description: >
   Tile-based training profile for Super Mario Bros. (NES, 1985). Uses
   RAM-decoded tile observations with a small MLP policy. Designed to

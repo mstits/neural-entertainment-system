@@ -103,6 +103,7 @@ def build_dataset(
     max_pairs: int = 20000,
     reward_fn=None,
     tile_extractor=None,
+    tile_stack_size: int = 1,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Produce (states, actions, rewards) tensors from a `.state.bin` recording.
 
@@ -166,9 +167,24 @@ def build_dataset(
         # are coherent within a single replay.
         env = NESEnvironment(rom_path=str(rom_path), frame_skip=1)
         first_frame = env.reset()
+        # Tracks whether the most recent emulator step ended an episode,
+        # so the next sampled state re-seeds the tile stacker fresh
+        # instead of carrying stale frames across the boundary.
+        last_was_done = False
         # Pixel mode uses a frame stacker; tile mode decodes RAM
         # directly via the supplied extractor. Only one is active per
         # demo replay; the other variable stays at its default.
+        # Per-demo state for tile stacking. tile_stacker is None when
+        # tile_stack_size <= 1 (matches the runtime "no stacking" path);
+        # otherwise we maintain a rolling window over per-decision RAM
+        # extracts so BC dataset states match the runtime policy input.
+        tile_stacker = None
+        if tile_extractor is not None and tile_stack_size > 1:
+            from src.emulation.tile_observations.stacker import TileFrameStacker
+            tile_stacker = TileFrameStacker(
+                stack_size=tile_stack_size,
+                feature_dim=tile_extractor.feature_dim,
+            )
         if tile_extractor is None:
             stacker = FrameStacker(stack_size=4)
             stacker.reset(first_frame)
@@ -218,7 +234,21 @@ def build_dataset(
                         # (or compute it fresh on the boundary).
                         if ram_snapshot is None:
                             ram_snapshot = env.get_ram_range(0, 2048).tobytes()
-                        states.append(tile_extractor.extract(ram_snapshot).copy())
+                        raw_feat = tile_extractor.extract(ram_snapshot)
+                        if tile_stacker is None:
+                            states.append(raw_feat.copy())
+                        else:
+                            # First decision in this episode primes the
+                            # stack with the initial state repeated
+                            # tile_stack_size times; subsequent decisions
+                            # advance the ring by one. Mirrors what the
+                            # runtime trainer does on env.reset → step.
+                            if not states or last_was_done:
+                                stacked = tile_stacker.reset(raw_feat)
+                            else:
+                                stacked = tile_stacker.push(raw_feat)
+                            states.append(stacked.copy())
+                            last_was_done = False
                     else:
                         states.append(current_stack.copy())
                     actions.append(action_idx)
@@ -233,6 +263,7 @@ def build_dataset(
                     env.reset()
                     if tile_extractor is None:
                         stacker.reset(env.get_frame())
+                    last_was_done = True
                     window_actions.clear()
                     window_reward = 0.0
                     if reward_fn is not None:

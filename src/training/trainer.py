@@ -35,6 +35,7 @@ import torch.nn.functional as F
 import yaml
 
 from src.emulation.frame_utils import FrameStacker
+from src.emulation.tile_observations.stacker import TileFrameStacker
 from src.emulation.rust_pool_adapter import RustPool, StepResult
 
 
@@ -411,13 +412,24 @@ class Trainer:
         self._is_tile_mode: bool = self.encoder_kind in ("smb_tiles",)
         self._tile_extractor = None
         self._tile_feature_dim: int = 0
+        # Frame stacking for tile-mode observations. Default 1 (off) keeps
+        # the historical single-frame behavior; mario_tiles.yaml opts in
+        # to 4 because both canonical SMB-RL recipes (uvipen, yumouwei)
+        # use 4-frame stacks and yumouwei explicitly reports stack=1
+        # FAILS to clear 1-1. Pixel mode is unaffected — it has its own
+        # 4-channel CNN frame stack via FrameStacker.
+        self._tile_stack_size: int = max(1, int(game_profile.get("tile_stack", 1)))
+        self._tile_raw_feature_dim: int = 0
         if self._is_tile_mode:
             from src.emulation.tile_observations import get_extractor
             self._tile_extractor = get_extractor(self.encoder_kind)
-            self._tile_feature_dim = self._tile_extractor.feature_dim
+            self._tile_raw_feature_dim = self._tile_extractor.feature_dim
+            self._tile_feature_dim = self._tile_raw_feature_dim * self._tile_stack_size
             log.info(
-                "Tile mode active: encoder=%s, feature_dim=%d",
-                self.encoder_kind, self._tile_feature_dim,
+                "Tile mode active: encoder=%s, raw_feature_dim=%d, stack=%d, "
+                "policy_input_dim=%d",
+                self.encoder_kind, self._tile_raw_feature_dim,
+                self._tile_stack_size, self._tile_feature_dim,
             )
         # Preserve elite diversity: when True, PPO updates only `best`
         # and leaves the other elites untouched. Default False keeps
@@ -1792,13 +1804,23 @@ class Trainer:
             fn.reset()
 
         obs_dtype = self._obs_buffer_dtype()
-        # Frame stackers are only used in pixel mode. Tile mode
-        # doesn't stack frames — each step's observation is the latest
-        # tile feature vector decoded from current RAM.
-        stackers = (
-            [FrameStacker(dtype=obs_dtype) for _ in range(n)]
-            if not self._is_tile_mode else []
-        )
+        # Frame stackers — pixel mode uses the CNN-style FrameStacker
+        # over (84,84) frames; tile mode uses TileFrameStacker over the
+        # flat 175-feature vector when tile_stack > 1, else a no-op
+        # path that just returns the raw extractor output. Either way,
+        # stackers[i] is per-genome state isolated to that worker.
+        if self._is_tile_mode:
+            tile_stackers = (
+                [
+                    TileFrameStacker(self._tile_stack_size, self._tile_raw_feature_dim)
+                    for _ in range(n)
+                ]
+                if self._tile_stack_size > 1 else []
+            )
+            stackers = []
+        else:
+            stackers = [FrameStacker(dtype=obs_dtype) for _ in range(n)]
+            tile_stackers = []
 
         # Reset every worker via the pool's public surface. Returns
         # StepResult-per-worker sorted by worker_id. The Rust rayon pool
@@ -1817,10 +1839,21 @@ class Trainer:
         # variable is used identically by the rest of the loop below
         # — only its shape differs.
         if self._is_tile_mode:
-            stacked_obs: list[np.ndarray] = [
-                self._tile_extractor.extract(r.ram_snapshot)
-                for r in init_results
+            # Decode each worker's initial RAM into raw features, then
+            # (if stacking enabled) seed the per-worker stacker so the
+            # first observation already has all N slots filled with the
+            # initial state. Avoids "stale data from prior episode" in
+            # the early frames of the new episode.
+            raw_feats = [
+                self._tile_extractor.extract(r.ram_snapshot) for r in init_results
             ]
+            if self._tile_stack_size > 1:
+                stacked_obs: list[np.ndarray] = [
+                    tile_stackers[i].reset(raw_feats[i]).copy()
+                    for i in range(len(init_results))
+                ]
+            else:
+                stacked_obs = raw_feats
         else:
             stacked_obs = [
                 stackers[i].reset(r.frame, getattr(r, "preprocessed", None))
@@ -2158,10 +2191,16 @@ class Trainer:
                 i = genome_i
                 if self._is_tile_mode:
                     # Tile mode: re-decode the latest RAM snapshot into
-                    # a tile feature vector. No frame stacking — the
-                    # tile grid + scalar state already encodes
-                    # everything the policy needs.
-                    stacked_obs[i] = self._tile_extractor.extract(r.ram_snapshot)
+                    # a tile feature vector. With tile_stack > 1, push
+                    # the new frame onto the per-worker ring buffer and
+                    # return the oldest→newest concatenation; with
+                    # tile_stack == 1, return the raw single-frame
+                    # extraction unchanged.
+                    raw = self._tile_extractor.extract(r.ram_snapshot)
+                    if self._tile_stack_size > 1:
+                        stacked_obs[i] = tile_stackers[i].push(raw).copy()
+                    else:
+                        stacked_obs[i] = raw
                 else:
                     stacked_obs[i] = stackers[i].push(r.frame, r.preprocessed)
                 done = r.done
@@ -2390,6 +2429,11 @@ class Trainer:
         # each architecture its own seed file.
         h.update(b"|")
         h.update(f"enc={self.encoder_kind}".encode())
+        # Tile stack size is load-bearing: a stack=1 seed has shape
+        # (175,) input, a stack=4 seed has shape (700,). Loading one
+        # into the other crashes with a state_dict shape mismatch.
+        h.update(b"|")
+        h.update(f"tilestack={self._tile_stack_size}".encode())
         digest = h.hexdigest()[:12]
         return self.checkpoint_dir / f"bc_seed_{digest}.pt"
 
@@ -2464,6 +2508,7 @@ class Trainer:
             # what the policy sees at runtime — same RAM-decoded
             # feature vector, not stacked frames.
             tile_extractor=self._tile_extractor,
+            tile_stack_size=self._tile_stack_size,
         )
         if states.shape[0] < 16:
             log.warning("BC demo too short (%d pairs); skipping pretrain.", states.shape[0])
