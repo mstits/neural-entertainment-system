@@ -2359,15 +2359,42 @@ class Trainer:
         spec = self.bc_demo_path
         if isinstance(spec, (list, tuple)):
             paths = [Path(p) for p in spec]
-        elif isinstance(spec, str) and ":" in spec and not Path(spec).exists():
-            paths = [Path(p) for p in spec.split(":") if p]
+        elif isinstance(spec, str) and ":" in spec:
+            # Colon-separated multi-demo spec from the GUI. The earlier
+            # implementation called `Path(spec).exists()` to disambiguate
+            # "single path that happens to contain ':'" from "joined
+            # multi-demo list" — but on macOS that calls os.stat on the
+            # full string, which raises ENAMETOOLONG (errno 63) at ~1024
+            # chars. With 30+ demo files joined, the string easily
+            # exceeds that. Guard the existence check by length first,
+            # AND swallow the OSError defensively so an exotic FS error
+            # never crashes BC seeding.
+            looks_single = len(spec) < 1000
+            if looks_single:
+                try:
+                    looks_single = Path(spec).exists()
+                except OSError:
+                    looks_single = False
+            if looks_single:
+                paths = [Path(spec)]
+            else:
+                paths = [Path(p) for p in spec.split(":") if p]
         else:
             p = Path(spec)
             if p.is_dir():
                 paths = sorted(p.glob("*.state.bin"))
             else:
                 paths = [p]
-        return [p for p in paths if p.exists()]
+        # Filter to existing paths. Wrap `.exists()` defensively in case
+        # any individual path is also too long for some reason.
+        out: list[Path] = []
+        for p in paths:
+            try:
+                if p.exists():
+                    out.append(p)
+            except OSError:
+                log.warning("BC demo path skipped (stat failed): %s", p)
+        return out
 
     def _bc_seed_cache_path(self) -> Optional[Path]:
         """Return the on-disk cache path for the BC seed tied to the
