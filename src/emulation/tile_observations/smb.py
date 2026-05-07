@@ -81,7 +81,7 @@ class SMBTileObservation:
     ~10× faster on the same workload.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, use_rust: bool = True) -> None:
         # Pre-compute the (dx, dy) offset grids once; reused on every
         # extract() call. Center cell (Mario) is at (_MARIO_GX, _MARIO_GY).
         dx_grid, dy_grid = np.meshgrid(
@@ -92,6 +92,20 @@ class SMBTileObservation:
         # match the original Python loop (`out[dy*W + dx]`).
         self._dx_flat = dx_grid.flatten()
         self._dy_flat = dy_grid.flatten()
+        # Optional native dispatch: nes_core.extract_smb_tiles is byte-
+        # exact with the Python numpy path (parity-tested across 2000
+        # randomized RAM snapshots in tests/test_smb_tile_extract_parity.py)
+        # but ~55x faster. Available when the abi3 wheel is built —
+        # falls back to the numpy path on import failure so dev environments
+        # without the Rust binary still work.
+        self._extract_rust = None
+        if use_rust:
+            try:
+                import nes_core
+                if hasattr(nes_core, "extract_smb_tiles"):
+                    self._extract_rust = nes_core.extract_smb_tiles
+            except ImportError:
+                pass
 
     @property
     def feature_dim(self) -> int:
@@ -105,6 +119,8 @@ class SMBTileObservation:
         cells (above the level ceiling or off the right edge) are
         reported as empty so the agent treats them as passable.
         """
+        if self._extract_rust is not None:
+            return self._extract_rust(ram_bytes)
         ram = np.frombuffer(ram_bytes, dtype=np.uint8)
         out = np.zeros(FEATURE_DIM, dtype=np.int8)
 
