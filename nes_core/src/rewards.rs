@@ -737,6 +737,24 @@ pub struct MarioReward {
     /// behavior). `1.0` is the recommended default for tile-mode
     /// training, where PPO needs strong intermediate signal to learn.
     checkpoint_scale: f64,
+    /// Per-step bonus when Mario is airborne AND moving right. Targets
+    /// the "needs to learn jumping" failure mode observed at
+    /// depth_scalar=1275 (first pipe before staircase) where the
+    /// policy converged on "run right on flat ground" but couldn't
+    /// commit to the run+jump action sequence required to clear
+    /// pipes. `forward_weight * vel_x` rewards horizontal speed only;
+    /// `air_bonus_weight` adds a vertical signal so PPO sees positive
+    /// gradient on action 4 (right+A+B = run-jump-right).
+    ///
+    /// Gating on vel_x>0 is critical — otherwise the agent learns to
+    /// jump in place (action 5 = "A") for free reward without
+    /// progressing. With the gate, the bonus only fires when Mario
+    /// is genuinely jumping while running forward.
+    ///
+    /// 0.0 disables. Suggested values: 0.5 to 1.0. Higher than
+    /// forward_weight × Mario's max speed (~30) would dominate the
+    /// per-step gradient and over-bias toward jumping.
+    air_bonus_weight: f64,
     prev_x: u32,
     /// Furthest X position reached this episode. Used to gate the
     /// `forward` reward on NEW progress only — backtracking earns 0,
@@ -790,23 +808,18 @@ impl MarioReward {
         (720, 100.0),   // past first pit
         (1100, 150.0),  // past first horizontal pipe
         (1640, 250.0),  // past large pit
-        // Dense intermediate signals 1850-2600. Without these, an
-        // agent stuck at e.g. depth 1980 has no checkpoint reward
-        // anywhere in [1640, 2100] — PPO sees zero gradient on the
-        // hardest stretch of the level (post-pipe → staircase) and
-        // can't differentiate "made it 100px further" from "didn't
-        // move." Bonus values stay small (40-150) so they don't
-        // dominate the existing milestone bonuses but do provide
-        // a clear monotone reward gradient.
-        (1850, 80.0),   // mid-section after large pit
-        (2000, 120.0),  // approach to obstacle complex
-        (2100, 400.0),  // past obstacle complex (original)
-        (2200, 60.0),   // post-complex breather
-        (2400, 100.0),  // approach to staircase base
-        (2600, 150.0),  // staircase ramp begin
-        (2700, 600.0),  // at staircase base (original)
+        (2100, 400.0),  // past obstacle complex
+        (2700, 600.0),  // at staircase base
         (2900, 1000.0), // top of staircase, near flag
     ];
+    // Note: a previous revision (commit 770d258) added 5 dense
+    // intermediate checkpoints at 1850/2000/2200/2400/2600 to give
+    // PPO gradient on the staircase region. After 117 gens the agent
+    // never advanced past depth=1275 — it never reached the dense
+    // zone, but the original close-by checkpoints (720, 1100) may
+    // have been acting as comfortable local-max attractors with the
+    // weakened forward_progress=2.3 signal. Reverted to the original
+    // 7-checkpoint table that the flag-reaching run was using.
 
     /// 1-2 is the underground bonus-room level. Obstacles: jumping
     /// pipes (~x=400), green pipe gauntlet (~x=1300), final descent
@@ -844,6 +857,7 @@ impl MarioReward {
         completion_bonus: f64,
         time_penalty: f64,
         checkpoint_scale: f64,
+        air_bonus_weight: f64,
     ) -> Self {
         Self {
             forward_weight,
@@ -852,6 +866,7 @@ impl MarioReward {
             completion_bonus,
             time_penalty,
             checkpoint_scale,
+            air_bonus_weight,
             prev_x: 0,
             max_x_visited: 0,
             next_checkpoint: 0,
@@ -931,6 +946,19 @@ impl MarioReward {
             self.max_x_visited = x;
         }
         self.prev_x = x;
+
+        // Air bonus: reward Mario for being airborne while moving right.
+        // RAM[$001D] (float_state) is 0 when on ground, nonzero when in
+        // air. RAM[$0057] is signed Mario X velocity. The gate ensures
+        // we only pay for productive jumps (running through pipes,
+        // clearing pits) — not stationary jumping in place.
+        if self.air_bonus_weight != 0.0 {
+            let on_ground = ram[Self::RAM_FLOAT_STATE] == 0;
+            let vel_x = ram[0x0057] as i8 as i32;
+            if !on_ground && vel_x > 0 {
+                acc.add("air", self.air_bonus_weight);
+            }
+        }
 
         // Dense progress checkpoints. Each crossing fires once per
         // episode and gives PPO a strong intermediate value signal at
@@ -1582,6 +1610,12 @@ pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward
             // Dense progress checkpoints (default off for back-compat —
             // tile-mode profiles set 1.0 to enable).
             w(weights, "checkpoint_scale", 0.0),
+            // Air bonus: per-step reward when airborne AND vel_x>0.
+            // 0.0 (default) preserves existing behavior. tile-mode
+            // profiles can opt in (~0.5-1.0) to give PPO direct
+            // gradient on jump-while-running, addressing the
+            // observed "stuck before staircase" failure mode.
+            w(weights, "air_bonus", 0.0),
         )));
     }
     if name.contains("zelda") {
