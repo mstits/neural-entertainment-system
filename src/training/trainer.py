@@ -92,7 +92,13 @@ def _safe_sample_from_logits(
 
     sampled = torch.multinomial(probs, 1).squeeze(-1)
     chosen_lp = log_probs_all.gather(1, sampled.unsqueeze(1)).squeeze(1)
-    return sampled, chosen_lp
+    # Returning the full log-probs tensor (in addition to the chosen
+    # action's log-prob) lets callers implement sticky-action overrides
+    # while keeping PPO's importance ratio correct: when sticky replaces
+    # the sampled action with the previous one, we need the log-prob of
+    # the OVERRIDDEN action under the CURRENT policy distribution, not
+    # the sampled-action's log-prob.
+    return sampled, chosen_lp, log_probs_all
 
 
 class Trainer:
@@ -296,6 +302,32 @@ class Trainer:
         self.reinforce_steps: int = rl_cfg.get("steps", 3)
         self.reinforce_gamma: float = rl_cfg.get("gamma", 0.99)
         self.reinforce_grad_clip: float = rl_cfg.get("grad_clip", 1.0)
+        # Sticky-action probability. Each agent step, with this
+        # probability, the emulator executes the previous step's action
+        # instead of the policy's freshly-sampled one. Mirrors the
+        # standard "sticky actions" mechanism from Machado et al. 2018
+        # for Atari and gym-super-mario-bros's optional stochastic
+        # action repeat.
+        #
+        # Why we need it: SMB jumps require holding A for ~30 NES
+        # frames to reach max height. With frame_skip=4 and 8 actions,
+        # the policy makes a fresh decision every 4 NES frames; if it
+        # picks an A-action then a non-A-action on the next decision,
+        # A is RELEASED 4 frames into the jump and Mario falls early.
+        # At entropy ~1.5, the chance of picking A-actions for 7
+        # consecutive decisions (needed for a full jump arc) is low,
+        # so most jump attempts get cut short. Sticky actions
+        # smooth this out by encouraging temporal coherence: once
+        # the policy commits to an A-action, there's a 25% chance
+        # the next 4-frame window keeps holding A even if the policy
+        # tried to release.
+        #
+        # When the override fires, the recorded log_prob in
+        # `log_probs_old` is the log-probability of the OVERRIDDEN
+        # action under the current policy (not the sampled action),
+        # so PPO's importance-ratio computation stays consistent
+        # with what the env actually executed. 0.0 disables.
+        self.sticky_action_prob: float = float(rl_cfg.get("sticky_action_prob", 0.0))
         # Live BC replay: when a genome achieves a successful (level-clear)
         # episode during training, capture its trajectory and periodically
         # retrain a fresh policy via supervised behavior cloning on the
@@ -715,6 +747,48 @@ class Trainer:
         # built once in _build_bitmask_table() during __init__ and never
         # changes after that.
         return self._bitmask_table[action_idx]
+
+    def _apply_sampled_actions(
+        self,
+        active: list[int],
+        sampled_cpu: np.ndarray,
+        lp_cpu: np.ndarray,
+        log_probs_all_cpu: np.ndarray,
+        actions: list[int],
+        log_probs_old: list[float],
+        last_action_per_genome: list[int],
+        step: int,
+    ) -> None:
+        """Write sampled (or sticky-overridden) actions into per-genome
+        slots, recording the corresponding log-prob under the current
+        policy.
+
+        Sticky-action override: with probability `sticky_action_prob`,
+        replace the freshly sampled action with the previous step's
+        executed action. Smooths the policy's action sequences so jumps
+        get held for full duration instead of being released mid-arc by
+        random action transitions. Skipped on step 0 because there's no
+        meaningful "last action" yet (we'd just stick to NOOP).
+        """
+        sticky = self.sticky_action_prob
+        roll_sticky = sticky > 0 and step > 0
+        rng_vals = (
+            np.random.random(len(active)) if roll_sticky else None
+        )
+        for batch_idx, genome_idx in enumerate(active):
+            if roll_sticky and rng_vals[batch_idx] < sticky:
+                # Override with last-executed action; record its
+                # log-prob under the current policy distribution so
+                # PPO's importance ratio stays consistent with what
+                # the env actually executes.
+                a = last_action_per_genome[genome_idx]
+                lp = float(log_probs_all_cpu[batch_idx, a])
+            else:
+                a = int(sampled_cpu[batch_idx])
+                lp = float(lp_cpu[batch_idx])
+            actions[genome_idx] = a
+            log_probs_old[genome_idx] = lp
+            last_action_per_genome[genome_idx] = a
 
     def _build_bitmask_table(self) -> tuple[int, ...]:
         from src.emulation.frame_utils import (
@@ -1812,6 +1886,13 @@ class Trainer:
             [FrameStacker(dtype=obs_dtype) for _ in range(n)]
             if not self._is_tile_mode else []
         )
+        # Sticky-action state: per-genome record of the most-recently
+        # executed action. Initialized to 0 (NOOP) at episode start so
+        # the very first step can never roll into a "stick to NOOP"
+        # state — even if sticky fires, it'd repeat NOOP which is a
+        # safe default. After each step this is updated to whatever
+        # action the env actually executed (post-sticky-override).
+        last_action_per_genome: list[int] = [0] * n
 
         # Reset every worker via the pool's public surface. Returns
         # StepResult-per-worker sorted by worker_id. The Rust rayon pool
@@ -2013,12 +2094,14 @@ class Trainer:
                             stacked_params, stacked_buffers, x
                         )  # (N, 1, num_actions)
                         stacked_logits = stacked_logits.squeeze(1).float()
-                        sampled, chosen_lp = _safe_sample_from_logits(stacked_logits)
+                        sampled, chosen_lp, log_probs_all = _safe_sample_from_logits(stacked_logits)
                     sampled_cpu = sampled.cpu().numpy()
                     lp_cpu = chosen_lp.cpu().numpy()
-                    for batch_idx, genome_idx in enumerate(active):
-                        actions[genome_idx] = int(sampled_cpu[batch_idx])
-                        log_probs_old[genome_idx] = float(lp_cpu[batch_idx])
+                    log_probs_all_cpu = log_probs_all.cpu().numpy()
+                    self._apply_sampled_actions(
+                        active, sampled_cpu, lp_cpu, log_probs_all_cpu,
+                        actions, log_probs_old, last_action_per_genome, step,
+                    )
                     used_vmap = True
 
                 if not used_vmap:
@@ -2031,12 +2114,14 @@ class Trainer:
                         # Concat on device, sample once via the defensive
                         # helper, transfer once.
                         cat_logits = torch.cat(per_row_logits, dim=0).float()
-                        sampled, chosen_lp = _safe_sample_from_logits(cat_logits)
+                        sampled, chosen_lp, log_probs_all = _safe_sample_from_logits(cat_logits)
                     sampled_cpu = sampled.cpu().numpy()
                     lp_cpu = chosen_lp.cpu().numpy()
-                    for batch_idx, genome_idx in enumerate(active):
-                        actions[genome_idx] = int(sampled_cpu[batch_idx])
-                        log_probs_old[genome_idx] = float(lp_cpu[batch_idx])
+                    log_probs_all_cpu = log_probs_all.cpu().numpy()
+                    self._apply_sampled_actions(
+                        active, sampled_cpu, lp_cpu, log_probs_all_cpu,
+                        actions, log_probs_old, last_action_per_genome, step,
+                    )
                 self._gen_timer.add(
                     "forward", time.perf_counter_ns() - _forward_t0
                 )

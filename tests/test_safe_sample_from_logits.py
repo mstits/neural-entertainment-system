@@ -35,7 +35,7 @@ def test_healthy_logits_round_trip_without_warning(caplog):
     _seed()
     logits = torch.tensor([[1.0, 2.0, 0.5, 0.1]], dtype=torch.float32)
     with caplog.at_level("WARNING"):
-        sampled, lp = _safe_sample_from_logits(logits)
+        sampled, lp, _ = _safe_sample_from_logits(logits)
     assert sampled.shape == (1,)
     assert lp.shape == (1,)
     assert int(sampled.item()) in {0, 1, 2, 3}
@@ -48,7 +48,7 @@ def test_nan_logits_recover_with_warning(caplog):
     logits = torch.tensor([[float("nan"), float("nan"), float("nan")]],
                           dtype=torch.float32)
     with caplog.at_level("WARNING"):
-        sampled, lp = _safe_sample_from_logits(logits)
+        sampled, lp, _ = _safe_sample_from_logits(logits)
     assert int(sampled.item()) in {0, 1, 2}
     assert math.isfinite(lp.item())
 
@@ -56,7 +56,7 @@ def test_nan_logits_recover_with_warning(caplog):
 def test_posinf_logits_do_not_crash():
     _seed()
     logits = torch.tensor([[float("inf"), 0.0, 0.0]], dtype=torch.float32)
-    sampled, lp = _safe_sample_from_logits(logits)
+    sampled, lp, _ = _safe_sample_from_logits(logits)
     # +Inf in one column should bias toward that action without
     # crashing or producing NaN log-probs.
     assert int(sampled.item()) in {0, 1, 2}
@@ -66,7 +66,7 @@ def test_posinf_logits_do_not_crash():
 def test_neginf_logits_do_not_crash():
     _seed()
     logits = torch.tensor([[float("-inf"), 0.0, 0.0]], dtype=torch.float32)
-    sampled, lp = _safe_sample_from_logits(logits)
+    sampled, lp, _ = _safe_sample_from_logits(logits)
     # -Inf should mass on one of the other two actions.
     assert int(sampled.item()) in {1, 2}
     assert math.isfinite(lp.item())
@@ -78,7 +78,7 @@ def test_all_zero_logits_sample_uniformly():
     # Run many trials to confirm we sample across actions.
     seen = set()
     for _ in range(200):
-        sampled, _ = _safe_sample_from_logits(logits)
+        sampled, _, _ = _safe_sample_from_logits(logits)
         seen.add(int(sampled.item()))
     assert seen == {0, 1, 2, 3}, f"expected all 4 actions, saw {seen}"
 
@@ -96,7 +96,7 @@ def test_mixed_rows_do_not_taint_healthy_rows():
         ],
         dtype=torch.float32,
     )
-    sampled, lp = _safe_sample_from_logits(logits)
+    sampled, lp, _ = _safe_sample_from_logits(logits)
     assert sampled.shape == (3,)
     assert all(math.isfinite(x) for x in lp.tolist())
     # The strongly-biased row 2 should land on action 0 the vast
@@ -104,7 +104,7 @@ def test_mixed_rows_do_not_taint_healthy_rows():
     # the whole batch with uniform.
     hits = 0
     for _ in range(50):
-        s2, _ = _safe_sample_from_logits(logits)
+        s2, _, _ = _safe_sample_from_logits(logits)
         if int(s2[2].item()) == 0:
             hits += 1
     assert hits >= 35, f"expected biased row to pick action 0 most of the time, got {hits}/50"
@@ -117,6 +117,6 @@ def test_no_exception_under_repeated_pathological_input():
     _seed()
     logits = torch.full((4, 8), float("nan"), dtype=torch.float32)
     for _ in range(1000):
-        sampled, lp = _safe_sample_from_logits(logits)
+        sampled, lp, _ = _safe_sample_from_logits(logits)
         assert sampled.shape == (4,)
         assert torch.isfinite(lp).all()

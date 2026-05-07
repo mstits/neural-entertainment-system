@@ -246,6 +246,19 @@ reinforce:
   # at full strength so RND signal is useful from gen 1).
   rnd_intrinsic_coef: 0.1
   rnd_loss_coef: 1.0
+  # Sticky actions (Machado et al. 2018): each step, 25% chance the
+  # emulator repeats the previous action instead of executing the
+  # policy's freshly-sampled one. Targets the observed jump-cutoff
+  # failure: SMB jumps need ~30 NES frames of A held, but at
+  # frame_skip=4 + entropy 1.5, the policy oscillates between
+  # A-actions and non-A-actions, releasing A mid-jump and falling
+  # short. Sticky 0.25 means once Mario commits to action 4
+  # (run-jump-right), there's a 25% chance the next decision keeps
+  # holding A even if the policy tried to release. Documented to
+  # help platformers; the recorded log-prob in the trajectory is
+  # the OVERRIDDEN action's log-prob under the current policy so
+  # PPO's importance ratio stays exact.
+  sticky_action_prob: 0.25
   # Live BC replay. Captures every successful (level-clear) episode
   # to an in-memory buffer and periodically retrains a fresh policy
   # via supervised behavior cloning on the buffer. Solves the
