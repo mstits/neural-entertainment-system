@@ -108,6 +108,24 @@ reward_weights:
   # ahead." Combined with sticky_action_prob=0.5 (also bumped),
   # full-arc jumps complete ~13% of the time vs ~4% before.
   air_bonus:        1.5
+  # Death-cause differentiation. Currently every death (pit, enemy,
+  # crush, etc.) collapses to the same -15 penalty. PPO learns
+  # "trajectory was bad" without knowing WHY. Adding cause-specific
+  # extra penalties gives sharper gradient signal:
+  #
+  # pit_fall_extra: -15 → falling in a pit costs -30 total. Teaches
+  #   the policy to commit to jumps EARLIER on approach to gaps,
+  #   the dominant failure mode at depth 2009 (pre-staircase).
+  # enemy_death_extra: -10 → enemy contact while small costs -25
+  #   total. Teaches "stomp on top, don't run into."
+  #
+  # The detection (in nes_core::MarioReward::compute) reads RAM at
+  # the death frame: pit fall = airborne + Y>200; enemy = active
+  # enemy slot within 16px of Mario in both X and Y. Both conditions
+  # can fire if Mario fell on top of an enemy at the screen bottom
+  # (rare); penalties stack. Either 0.0 disables that channel.
+  pit_fall_extra:    -15.0
+  enemy_death_extra: -10.0
   score_delta:      0.005
   # Death and time penalties were 0.0 (no-op equilibrium); previous
   # rev set them to -50 and -0.01. That fix introduced a NEW failure:

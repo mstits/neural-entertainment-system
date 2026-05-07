@@ -755,6 +755,25 @@ pub struct MarioReward {
     /// forward_weight × Mario's max speed (~30) would dominate the
     /// per-step gradient and over-bias toward jumping.
     air_bonus_weight: f64,
+    /// Death-cause differentiation. The base `death_penalty` always
+    /// fires on death; these add an EXTRA penalty depending on HOW
+    /// Mario died, giving PPO a sharper gradient than a single
+    /// undifferentiated -15:
+    ///
+    /// * `pit_fall_extra`: triggered when Mario was airborne with
+    ///   Y > 200 at the moment of death (he was falling through a
+    ///   pit). Suggested -15 to -30. Teaches the policy to commit
+    ///   to jumps EARLIER on approach to gaps.
+    /// * `enemy_death_extra`: triggered when an active enemy is
+    ///   within 1 tile of Mario at the moment of death. Teaches
+    ///   the policy that enemy contact while small is dangerous
+    ///   (vs. jumping ON top of an enemy, which DOESN'T fire this
+    ///   penalty because the contact frame typically has the enemy
+    ///   already despawned/transitioning).
+    ///
+    /// Both 0.0 = backward compat (single death penalty as before).
+    pit_fall_extra: f64,
+    enemy_death_extra: f64,
     prev_x: u32,
     /// Furthest X position reached this episode. Used to gate the
     /// `forward` reward on NEW progress only — backtracking earns 0,
@@ -858,6 +877,8 @@ impl MarioReward {
         time_penalty: f64,
         checkpoint_scale: f64,
         air_bonus_weight: f64,
+        pit_fall_extra: f64,
+        enemy_death_extra: f64,
     ) -> Self {
         Self {
             forward_weight,
@@ -867,6 +888,8 @@ impl MarioReward {
             time_penalty,
             checkpoint_scale,
             air_bonus_weight,
+            pit_fall_extra,
+            enemy_death_extra,
             prev_x: 0,
             max_x_visited: 0,
             next_checkpoint: 0,
@@ -992,6 +1015,52 @@ impl MarioReward {
                 || lives < self.prev_lives)
         {
             acc.add("death", self.death_penalty);
+            // Differentiate cause-of-death so PPO sees a sharper
+            // gradient on each failure mode. Detection runs at the
+            // moment of death state-transition (per-step compute is
+            // edge-triggered by `!self.died`), so we read fresh RAM.
+            //
+            // Pit fall: Mario's screen-Y > 200 means he's well below
+            // the normal jump arc — he was airborne and falling. The
+            // floor of an SMB screen is ~Y=224; by the time the death
+            // animation starts he's cleared visible level geometry.
+            // Combined with !on_ground we know it wasn't an enemy
+            // touching him on solid floor.
+            if self.pit_fall_extra != 0.0 {
+                let mario_y = ram[0x00CE] as u32;
+                let on_ground = ram[0x001D] == 0;
+                if mario_y > 200 && !on_ground {
+                    acc.add("pit_fall", self.pit_fall_extra);
+                }
+            }
+            // Enemy contact: scan the 5 enemy slots; if any active
+            // enemy is within 1 tile (16 px) of Mario in both X and
+            // Y, attribute the death to enemy contact. Computing
+            // world-X for both Mario and enemy via the page+low
+            // pair to handle screen wraps.
+            if self.enemy_death_extra != 0.0 {
+                let mario_x_world: i32 =
+                    ((ram[0x006D] as i32) << 8) | (ram[0x0086] as i32);
+                let mario_y_screen: i32 = ram[0x00CE] as i32;
+                let mut enemy_nearby = false;
+                for slot in 0..5 {
+                    if ram[0x000F + slot] == 0 {
+                        continue; // slot inactive
+                    }
+                    let ex_world: i32 = ((ram[0x006E + slot] as i32) << 8)
+                        | (ram[0x0087 + slot] as i32);
+                    let ey_screen: i32 = ram[0x00CF + slot] as i32;
+                    let dx = (ex_world - mario_x_world).abs();
+                    let dy = (ey_screen - mario_y_screen).abs();
+                    if dx <= 16 && dy <= 16 {
+                        enemy_nearby = true;
+                        break;
+                    }
+                }
+                if enemy_nearby {
+                    acc.add("enemy_death", self.enemy_death_extra);
+                }
+            }
             self.died = true;
             done = true;
         }
@@ -1616,6 +1685,13 @@ pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward
             // gradient on jump-while-running, addressing the
             // observed "stuck before staircase" failure mode.
             w(weights, "air_bonus", 0.0),
+            // Death-cause differentiation (both default 0 = back-
+            // compat). Negative values strengthen the death signal
+            // for the specific failure mode; e.g. pit_fall_extra
+            // -15 doubles the penalty for falling vs running into
+            // an enemy, teaching PPO to commit to jumps earlier.
+            w(weights, "pit_fall_extra", 0.0),
+            w(weights, "enemy_death_extra", 0.0),
         )));
     }
     if name.contains("zelda") {
