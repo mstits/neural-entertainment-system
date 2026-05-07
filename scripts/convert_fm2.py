@@ -1,21 +1,28 @@
 """
-Convert one or more FCEUX `.fm2` movie files into the project's
-`.state.bin` format (one byte per NES frame, controller-1 bitmask).
+Convert one or more FCEUX movie files (.fm2 or .fm3) into the
+project's `.state.bin` format (one byte per NES frame, controller-1
+bitmask).
 
 Usage:
     python scripts/convert_fm2.py input.fm2                  # → input.state.bin
-    python scripts/convert_fm2.py a.fm2 b.fm2 -o combined.state.bin   # concat
-    python scripts/convert_fm2.py a.fm2 b.fm2                # → a_b.state.bin
+    python scripts/convert_fm2.py input.fm3                  # → input.state.bin
+    python scripts/convert_fm2.py a.fm2 b.fm3 -o combined.state.bin   # concat (mixed types ok)
     python scripts/convert_fm2.py --stitch *.state.bin -o long.state.bin
 
-FM2 format (TASVideos / FCEUX): plaintext. Header lines begin with
-non-pipe characters; frame lines look like
+Both FM2 and FM3 (TASVideos / FCEUX) are plaintext with identical
+INPUT-FRAME format:
 
     |<cmd>|<pad1 buttons>|<pad2 buttons>|<fds>|
 
 where each pad-buttons field is 8 characters in RLDUTSBA order. `.` is
 "not pressed", any other character is "pressed". We read controller-1
 (pad1), drop the rest.
+
+FM3 differs from FM2 only by adding optional auxiliary sections
+(embedded base64 savestates, subtitles, comment lines). None of those
+auxiliary sections start with `|`, so the input-line filter we already
+use ("only lines beginning with |") naturally skips them. The same
+parser handles both formats transparently.
 
 The produced byte order matches `src/emulation/frame_utils.py`:
     0x80=Right 0x40=Left 0x20=Down 0x10=Up 0x08=Start 0x04=Select 0x02=B 0x01=A
@@ -32,15 +39,20 @@ from pathlib import Path
 _FM2_BIT_AT_POS = (0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01)  # R L D U T S B A
 
 
-def fm2_to_bytes(fm2_path: Path) -> bytes:
-    """Parse an FM2 file and return a byte sequence of controller-1
-    bitmasks, one byte per NES frame."""
+def fceux_movie_to_bytes(movie_path: Path) -> bytes:
+    """Parse an FCEUX `.fm2` or `.fm3` movie file and return a byte
+    sequence of controller-1 bitmasks, one byte per NES frame.
+
+    FM2 and FM3 share the same input-frame line format; the only
+    difference is FM3's optional auxiliary sections (savestates,
+    subtitles) which our `startswith("|")` filter naturally skips.
+    """
     out = bytearray()
-    with open(fm2_path, "r", errors="replace") as f:
+    with open(movie_path, "r", errors="replace") as f:
         for raw in f:
             line = raw.rstrip("\r\n")
             if not line.startswith("|"):
-                continue  # header / metadata line
+                continue  # header / metadata / savestate / subtitle line
             parts = line.split("|")
             # parts is ["", <cmd>, <pad1>, <pad2?>, <fds?>, ""]
             if len(parts) < 3:
@@ -57,6 +69,11 @@ def fm2_to_bytes(fm2_path: Path) -> bytes:
     return bytes(out)
 
 
+# Backward-compat alias. Existing callers (e.g. GUI _convert_fm2)
+# imported `fm2_to_bytes`; keep it working unchanged.
+fm2_to_bytes = fceux_movie_to_bytes
+
+
 def stitch(paths: list[Path]) -> bytes:
     """Concatenate one or more `.state.bin` files in order. Trivial —
     the format has no per-file header, so raw concatenation is correct.
@@ -70,7 +87,7 @@ def stitch(paths: list[Path]) -> bytes:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("inputs", nargs="+", help=".fm2 files (or .state.bin files with --stitch)")
+    ap.add_argument("inputs", nargs="+", help=".fm2 / .fm3 files (or .state.bin files with --stitch)")
     ap.add_argument("-o", "--output", type=Path, default=None,
                     help="Output .state.bin path. Defaults to <first-input>.state.bin")
     ap.add_argument("--stitch", action="store_true",
