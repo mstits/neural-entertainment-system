@@ -82,7 +82,7 @@ reward_weights:
   # latter. 3.0 multiplies the per-step forward signal so the
   # advantage on long-progress episodes dominates the death penalty
   # and time cost combined.
-  forward_progress: 3.0
+  forward_progress: 2.3
   score_delta:      0.005
   # Death and time penalties were 0.0 (no-op equilibrium); previous
   # rev set them to -50 and -0.01. That fix introduced a NEW failure:
