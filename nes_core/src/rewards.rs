@@ -790,8 +790,21 @@ impl MarioReward {
         (720, 100.0),   // past first pit
         (1100, 150.0),  // past first horizontal pipe
         (1640, 250.0),  // past large pit
-        (2100, 400.0),  // past obstacle complex
-        (2700, 600.0),  // at staircase base
+        // Dense intermediate signals 1850-2600. Without these, an
+        // agent stuck at e.g. depth 1980 has no checkpoint reward
+        // anywhere in [1640, 2100] — PPO sees zero gradient on the
+        // hardest stretch of the level (post-pipe → staircase) and
+        // can't differentiate "made it 100px further" from "didn't
+        // move." Bonus values stay small (40-150) so they don't
+        // dominate the existing milestone bonuses but do provide
+        // a clear monotone reward gradient.
+        (1850, 80.0),   // mid-section after large pit
+        (2000, 120.0),  // approach to obstacle complex
+        (2100, 400.0),  // past obstacle complex (original)
+        (2200, 60.0),   // post-complex breather
+        (2400, 100.0),  // approach to staircase base
+        (2600, 150.0),  // staircase ramp begin
+        (2700, 600.0),  // at staircase base (original)
         (2900, 1000.0), // top of staircase, near flag
     ];
 

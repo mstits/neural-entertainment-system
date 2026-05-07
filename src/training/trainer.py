@@ -311,9 +311,19 @@ class Trainer:
         self.bc_replay_max_buffer: int = max(1, int(rl_cfg.get("bc_replay_max_buffer", 16)))
         # In-memory buffer of (obs, actions, rewards, length) tuples from
         # successful episodes. Capped at bc_replay_max_buffer to bound
-        # memory; new successes evict the oldest. Empty until the first
-        # success, after which BC replay actually fires.
+        # memory; new successes evict the oldest.
+        #
+        # Persisted to disk at `checkpoints/bc_success_cache.npz` after
+        # every new capture so a successful clear is never lost across
+        # restarts. On trainer init, if that cache exists, we re-hydrate
+        # the in-memory buffer from it — turning the BC replay system
+        # into a permanent "remember every clear we've ever seen"
+        # anchor instead of a per-session-ephemeral one. Critical given
+        # how rare clears are: a 1-in-200-episode success that took 8
+        # hours of training to discover should not vanish on restart.
         self._bc_replay_buffer: list[tuple] = []
+        self._bc_success_cache_path: Path = self.checkpoint_dir / "bc_success_cache.npz"
+        self._load_bc_success_cache()
         # Number of episodes to roll for each genome per generation.
         # 1 (default) = original behavior. Higher values average out the
         # per-episode stochasticity from the policy's action sampling +
@@ -1504,6 +1514,9 @@ class Trainer:
                             len(self._bc_replay_buffer),
                             self.bc_replay_max_buffer,
                         )
+                        # Immediately persist to disk so a clear never
+                        # gets lost across crashes/restarts/Ctrl-C.
+                        self._save_bc_success_cache()
                 for k, v in batch_bd.items():
                     gen_breakdown[k] = gen_breakdown.get(k, 0.0) + v
 
@@ -2551,6 +2564,60 @@ class Trainer:
             "(fitness %.1f preserved for next-gen elitism)",
             weakest_i, snap_fit,
         )
+
+    def _save_bc_success_cache(self) -> None:
+        """Persist the BC replay buffer to a single .npz on disk.
+
+        Called every time a new success is captured. Atomic-write via
+        tmp + rename so a Ctrl-C mid-save can never leave a half-written
+        file. The encoded format is a flat dict where each trajectory is
+        stored as four arrays prefixed by index:
+            traj_{i}_obs, traj_{i}_actions, traj_{i}_rewards, traj_{i}_fitness
+        """
+        if not self._bc_replay_buffer:
+            return
+        try:
+            data: dict = {}
+            for i, (obs, acts, rews, fit) in enumerate(self._bc_replay_buffer):
+                data[f"traj_{i}_obs"] = obs
+                data[f"traj_{i}_actions"] = acts
+                data[f"traj_{i}_rewards"] = rews
+                data[f"traj_{i}_fitness"] = np.array([fit], dtype=np.float32)
+            data["count"] = np.array([len(self._bc_replay_buffer)], dtype=np.int32)
+            tmp = self._bc_success_cache_path.with_suffix(".npz.tmp")
+            np.savez_compressed(str(tmp), **data)
+            tmp.replace(self._bc_success_cache_path)
+        except Exception as exc:
+            log.warning("BC success cache save failed: %s", exc)
+
+    def _load_bc_success_cache(self) -> None:
+        """Re-hydrate `_bc_replay_buffer` from disk on trainer init.
+
+        Silent no-op when no cache exists. On format mismatch (e.g., an
+        older cache from a different observation shape) we log and skip
+        rather than crashing, so the cache file format can evolve
+        without bricking the trainer.
+        """
+        if not self._bc_success_cache_path.exists():
+            return
+        try:
+            arr = np.load(str(self._bc_success_cache_path), allow_pickle=False)
+            count = int(arr["count"][0])
+            for i in range(count):
+                obs = arr[f"traj_{i}_obs"]
+                acts = arr[f"traj_{i}_actions"]
+                rews = arr[f"traj_{i}_rewards"]
+                fit = float(arr[f"traj_{i}_fitness"][0])
+                self._bc_replay_buffer.append((obs, acts, rews, fit))
+            log.info(
+                "BC success cache loaded: %d trajectories from %s",
+                count, self._bc_success_cache_path,
+            )
+        except Exception as exc:
+            log.warning(
+                "BC success cache load failed (%s); starting with empty buffer",
+                exc,
+            )
 
     def _run_bc_replay(self, pop: list[Genome]) -> None:
         """Train a fresh policy via BC on the success-trajectory buffer
