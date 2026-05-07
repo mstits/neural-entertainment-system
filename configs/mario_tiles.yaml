@@ -97,7 +97,17 @@ reward_weights:
   # to the +50 first-checkpoint bonus, large enough that PPO
   # commits to jump-actions but small enough that it doesn't
   # dominate forward progress.
-  air_bonus:        0.5
+  # Bumped 0.5 -> 1.5 after the gen 88 data showed Mario consistently
+  # reaching depth 2009 (just before the staircase) but never the
+  # 3161 flagpole region. Diagnosis: at 0.5/frame, jumping nets +15
+  # over a 30-frame arc while running on ground nets +225 forward —
+  # so the policy correctly chose running, hit the pit, died. At
+  # 1.5/frame, jumping nets +45 air + 135 forward = 180; still less
+  # than 225 for ground-running but close enough that the death-
+  # avoidance term tips the gradient toward "jump when obstacle
+  # ahead." Combined with sticky_action_prob=0.5 (also bumped),
+  # full-arc jumps complete ~13% of the time vs ~4% before.
+  air_bonus:        1.5
   score_delta:      0.005
   # Death and time penalties were 0.0 (no-op equilibrium); previous
   # rev set them to -50 and -0.01. That fix introduced a NEW failure:
@@ -258,7 +268,14 @@ reinforce:
   # help platformers; the recorded log-prob in the trajectory is
   # the OVERRIDDEN action's log-prob under the current policy so
   # PPO's importance ratio stays exact.
-  sticky_action_prob: 0.25
+  # Bumped 0.25 -> 0.5 after empirical: at 0.25 the math says full-
+  # jump-arcs complete ~3.7% of the time (need 7 consecutive action-4
+  # decisions for ~30 frames of A held; effective repeat rate 0.625
+  # gives 0.625^7). At 0.5 effective repeat rate climbs to 0.75 →
+  # 0.75^7 ≈ 13% — 3.5x more completed jumps. 0.5 is also the upper
+  # bound used in the canonical Machado et al. paper for Atari, so
+  # not unprecedented.
+  sticky_action_prob: 0.5
   # Live BC replay. Captures every successful (level-clear) episode
   # to an in-memory buffer and periodically retrains a fresh policy
   # via supervised behavior cloning on the buffer. Solves the
