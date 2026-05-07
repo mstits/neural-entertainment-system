@@ -297,8 +297,8 @@ class MainWindow(QMainWindow):
         bc_btn = QPushButton("Choose Demo…")
         bc_btn.setToolTip(
             "Pick a longer .state.bin playthrough recording to imitate.\n"
-            "FCEUX/TASVideos .fm2 and .fm3 files are auto-converted on the\n"
-            "fly; see samples/README.md for sources."
+            "FCEUX .fm2 / .fm3 and BizHawk .bk2 files are auto-converted\n"
+            "on the fly; see samples/README.md for sources."
         )
         bc_btn.clicked.connect(self._on_pick_bc_demo)
         bc_row.addWidget(bc_btn)
@@ -466,14 +466,14 @@ class MainWindow(QMainWindow):
             self,
             key="bc_demo",
             title="Select behavioral-cloning demo recording(s)",
-            # Accept both FCEUX movies (.fm2 / .fm3) and our native
-            # .state.bin. FCEUX movies are auto-converted on the fly so
-            # users don't need the CLI. FM3 differs from FM2 only by
-            # adding optional auxiliary sections (savestates, subtitles)
-            # that our parser naturally skips — the input-frame format
-            # is identical.
-            file_filter="Play recording (*.state.bin *.fm2 *.fm3);;"
+            # Accept FCEUX movies (.fm2 / .fm3), BizHawk movies (.bk2),
+            # and our native .state.bin. FCEUX/BizHawk movies are auto-
+            # converted on the fly so users don't need the CLI. BK2 is
+            # a ZIP container — we read `Input Log.txt` from it and
+            # parse its (different from FM2) UDLRSsBA pad order.
+            file_filter="Play recording (*.state.bin *.fm2 *.fm3 *.bk2);;"
             "FCEUX movie (*.fm2 *.fm3);;"
+            "BizHawk movie (*.bk2);;"
             "Native play recording (*.state.bin);;"
             "All files (*)",
             default_dir=default_dir,
@@ -481,15 +481,16 @@ class MainWindow(QMainWindow):
         if not paths:
             return
 
-        # Convert any FCEUX movies (.fm2 / .fm3) to .state.bin alongside
-        # the source. Collect the resolved paths (post-conversion for
-        # FCEUX movies, unchanged for native recordings) into a flat
-        # list.
+        # Convert any movie file (.fm2 / .fm3 / .bk2) to .state.bin
+        # alongside the source. Collect the resolved paths (post-
+        # conversion for movies, unchanged for native recordings)
+        # into a flat list.
         resolved: list[str] = []
         for path in paths:
             lower = path.lower()
-            if lower.endswith(".fm2") or lower.endswith(".fm3"):
-                resolved_path = self._convert_fceux_movie(path)
+            if (lower.endswith(".fm2") or lower.endswith(".fm3")
+                    or lower.endswith(".bk2")):
+                resolved_path = self._convert_movie(path)
                 if resolved_path is None:
                     return  # critical error already surfaced via QMessageBox
                 resolved.append(resolved_path)
@@ -520,16 +521,17 @@ class MainWindow(QMainWindow):
             "from the BC weights instead of an existing checkpoint.",
         )
 
-    def _convert_fceux_movie(self, path: str) -> str | None:
-        """Convert an FCEUX movie (.fm2 or .fm3) to the trainer's
-        native `.state.bin` format. Writes the converted file alongside
-        the source. Returns the converted path on success, None on error
-        (a QMessageBox is shown to the user).
+    def _convert_movie(self, path: str) -> str | None:
+        """Convert any supported movie format (.fm2, .fm3, .bk2) to the
+        trainer's native `.state.bin` format. Writes the converted file
+        alongside the source. Returns the converted path on success,
+        None on error (a QMessageBox is shown to the user).
 
-        The underlying parser is format-agnostic — both FM2 and FM3
-        share identical input-frame syntax, and FM3's auxiliary
-        sections (embedded savestates, subtitles) are naturally
-        ignored by the parser's "lines starting with |" filter.
+        Dispatches via `movie_to_bytes` which picks the right parser
+        per extension: FCEUX text format for .fm2/.fm3 (FM3 differs
+        only by auxiliary sections naturally filtered out by the
+        startswith("|") rule); BizHawk ZIP-container parser for .bk2
+        (different `UDLRSsBA` pad order vs FM2's RLDUTSBA).
         """
         import importlib.util
         spec = importlib.util.spec_from_file_location(
@@ -539,11 +541,11 @@ class MainWindow(QMainWindow):
         mod = importlib.util.module_from_spec(spec)
         try:
             spec.loader.exec_module(mod)
-            data = mod.fceux_movie_to_bytes(Path(path))
+            data = mod.movie_to_bytes(Path(path))
         except Exception as exc:
             QMessageBox.critical(
                 self,
-                "FCEUX movie conversion failed",
+                "Movie conversion failed",
                 f"Could not read {Path(path).name}:\n\n{exc}",
             )
             return None
@@ -559,10 +561,11 @@ class MainWindow(QMainWindow):
             return None
         return str(converted)
 
-    # Backward-compat alias — earlier code paths called this method by
-    # the FM2-specific name. New callers should use the format-agnostic
-    # `_convert_fceux_movie`.
-    _convert_fm2 = _convert_fceux_movie
+    # Backward-compat aliases — earlier code paths used the FM2-specific
+    # name; the FCEUX-only intermediate name was added when FM3 support
+    # landed. New callers should use the format-agnostic `_convert_movie`.
+    _convert_fm2 = _convert_movie
+    _convert_fceux_movie = _convert_movie
 
     def _on_clear_bc_demo(self) -> None:
         self._bc_demo_path = ""
