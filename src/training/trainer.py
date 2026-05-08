@@ -1542,9 +1542,11 @@ class Trainer:
             # trains on the agent's good runs (which actually reach
             # interesting states) instead of a randomly-picked one.
             #
-            # `successes` is OR-ed across episodes — any clear counts as
-            # a curriculum success. Curriculum records every episode so
-            # the success-rate window stays calibrated.
+            # The curriculum records EVERY episode individually (not OR-ed
+            # across) so the rolling success-rate window over all episodes
+            # remains unbiased — multi-eval doesn't artificially inflate
+            # apparent skill by treating "1 success in N tries" as a
+            # success at the genome level.
             best_fits = [-float("inf")] * nb
             sum_fits = [0.0] * nb
             best_traj_obs = None
@@ -1552,7 +1554,6 @@ class Trainer:
             best_traj_rewards = None
             best_traj_log_probs = None
             best_traj_lens = None
-            best_level_ids: list[str] = ["?"] * nb
             for _ep in range(self.episodes_per_genome):
                 fitnesses, successes, level_ids, traj_flat, batch_bd = \
                     self._evaluate_batch(batch)
@@ -1560,7 +1561,6 @@ class Trainer:
                     sum_fits[g_i] += float(fitnesses[g_i])
                     if fitnesses[g_i] > best_fits[g_i]:
                         best_fits[g_i] = float(fitnesses[g_i])
-                        best_level_ids[g_i] = level_ids[g_i]
                         # Lazy-allocate the best-trajectory holders on
                         # first improvement; per-genome slice copy when
                         # this episode is the new best.
@@ -2344,13 +2344,20 @@ class Trainer:
                     if narrator_on:
                         from src.training.narrator import NarratorEvent
                         caption = f"🏁 {genome_name}: {depth_record['caption']}"
+                        # Use time.monotonic() to match the narrator's own
+                        # event timestamps (line 124 in narrator.py). Mixing
+                        # wall-clock time.time() with monotonic produced
+                        # inconsistent ordering metadata across the event
+                        # stream; the difference is invisible most of the
+                        # time but breaks any downstream consumer that
+                        # treats timestamps as comparable.
                         self._narrator._events.append(NarratorEvent(
                             worker_id=worker_id,
                             genome_name=genome_name,
                             kind="depth_record",
                             caption=caption,
                             first_ever=True,  # always treat as banner-worthy
-                            timestamp=time.time(),
+                            timestamp=time.monotonic(),
                         ))
                     # Queue a save-state RPC for after this gen's step
                     # loop completes. Can't do it inline: SaveStateCommand
@@ -2552,7 +2559,23 @@ class Trainer:
         h.update(b"|")
         h.update(f"enc={self.encoder_kind}".encode())
         digest = h.hexdigest()[:12]
-        return self.checkpoint_dir / f"bc_seed_{digest}.pt"
+        current_path = self.checkpoint_dir / f"bc_seed_{digest}.pt"
+        # Garbage-collect stale seeds from prior config combinations.
+        # Each (demos, ROM, action_space, frame_skip, encoder, ...) tuple
+        # produces a distinct hash and a distinct file; the previous
+        # combo's file is never useful again. Without this, every config
+        # change leaves a 60-200 KB corpse in checkpoints/. Cleanup is
+        # best-effort: any unlink failure is logged but doesn't abort.
+        try:
+            for stale in self.checkpoint_dir.glob("bc_seed_*.pt"):
+                if stale != current_path:
+                    try:
+                        stale.unlink()
+                    except OSError as exc:
+                        log.debug("could not prune stale BC seed %s: %s", stale, exc)
+        except OSError:
+            pass
+        return current_path
 
     def _behavior_clone_seed(self) -> None:
         """Build a BC dataset from the demo, pre-train a net, seed the pop.

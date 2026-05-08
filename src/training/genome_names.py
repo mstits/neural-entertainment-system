@@ -99,11 +99,13 @@ class GenomeNamer:
             return name
         # Pool drained — synthesise unique names by round-robin with
         # numeric suffix. Keeps names readable ("Brutus-2") even after
-        # thousands of generations.
+        # thousands of generations. Numbering starts at -2 because the
+        # FIRST occurrence of each name was the original pop-from-pool
+        # (no suffix); the second occurrence is the first synthesised.
         idx = self._used_count % len(_NAME_POOL)
-        suffix = (self._used_count // len(_NAME_POOL)) + 1
+        cycle = self._used_count // len(_NAME_POOL)  # 1, 2, 3, ...
         self._used_count += 1
-        return f"{_NAME_POOL[idx]}-{suffix + 1}"
+        return f"{_NAME_POOL[idx]}-{cycle + 1}"
 
     def __len__(self) -> int:
         return self._used_count
