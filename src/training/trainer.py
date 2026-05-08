@@ -2615,7 +2615,7 @@ class Trainer:
         demos = self._bc_demo_paths()
         log.info("Behavioral cloning from %d demo(s): %s",
                  len(demos), ", ".join(p.name for p in demos))
-        states, actions, rewards = build_dataset(
+        states, actions, rewards, demo_boundaries = build_dataset(
             rom_path=self.rom_path,
             demo_path=demos if len(demos) != 1 else demos[0],
             action_space=self.action_space,
@@ -2648,6 +2648,9 @@ class Trainer:
             # uint8 — skip the /255 normalize so the network sees the
             # raw feature scale.
             normalize_obs=not self._is_tile_mode,
+            # Per-demo boundaries so AWR weights don't leak rewards
+            # backwards across demo breaks (multi-demo BC bug).
+            episode_boundaries=demo_boundaries,
         )
         log.info("BC pretrain done; final loss=%.4f; seeding population.", final_loss)
 
@@ -2833,9 +2836,17 @@ class Trainer:
         if not self._bc_replay_buffer:
             return
         # Concatenate all buffered trajectories into one big dataset.
+        # Track per-trajectory start indices so AWR weighting resets
+        # its discounted-return accumulator at episode boundaries
+        # instead of leaking returns backwards across them.
         all_obs = np.concatenate([t[0] for t in self._bc_replay_buffer], axis=0)
         all_acts = np.concatenate([t[1] for t in self._bc_replay_buffer], axis=0)
         all_rews = np.concatenate([t[2] for t in self._bc_replay_buffer], axis=0)
+        episode_boundaries: list[int] = []
+        running = 0
+        for t in self._bc_replay_buffer[:-1]:  # last one's "end" isn't a boundary
+            running += len(t[1])
+            episode_boundaries.append(running)
         n = all_obs.shape[0]
         if n < 16:
             log.info("  BC replay skipped: only %d state-action pairs (need ≥16)", n)
@@ -2863,6 +2874,7 @@ class Trainer:
                 device=self.device,
                 use_reward_weighting=True,
                 normalize_obs=normalize_obs,
+                episode_boundaries=episode_boundaries,
             )
         except Exception as exc:
             log.warning("  BC replay pretrain failed: %s", exc)

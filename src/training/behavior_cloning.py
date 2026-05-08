@@ -103,7 +103,7 @@ def build_dataset(
     max_pairs: int = 20000,
     reward_fn=None,
     tile_extractor=None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[int]]:
     """Produce (states, actions, rewards) tensors from a `.state.bin` recording.
 
     states:  (N, 4, 84, 84) uint8 — ready for division by 255 at train time
@@ -147,10 +147,23 @@ def build_dataset(
     states: list[np.ndarray] = []
     actions: list[int] = []
     rewards: list[float] = []
+    # Track per-demo boundaries so AWR weighting knows where each
+    # trajectory starts. Used downstream by pretrain to reset the
+    # discounted-return walk at episode breaks instead of leaking
+    # rewards backwards across demos. demo_starts[i] = index of the
+    # first sample contributed by demo i; demo 0 starts at 0
+    # (omitted from the boundary list since 0 isn't a "boundary").
+    demo_boundaries: list[int] = []
 
     from collections import Counter
 
     for demo_idx, single_demo in enumerate(demo_list):
+        # Record boundary BEFORE this demo's contributions are added.
+        # First demo starts at index 0 — not a boundary. Subsequent
+        # demos start at len(states) at the moment they begin
+        # appending, which is the demo break point.
+        if demo_idx > 0 and len(states) > 0:
+            demo_boundaries.append(len(states))
         demo_bytes = single_demo.read_bytes()
         if not demo_bytes:
             log.warning("BC demo %s is empty; skipping.", single_demo)
@@ -256,7 +269,7 @@ def build_dataset(
         states_t = torch.zeros((0, 4, 84, 84), dtype=torch.uint8)
     actions_t = torch.tensor(actions, dtype=torch.long)
     rewards_t = torch.tensor(rewards, dtype=torch.float32)
-    return states_t, actions_t, rewards_t
+    return states_t, actions_t, rewards_t, demo_boundaries
 
 
 def _compute_return_weights(
@@ -264,6 +277,7 @@ def _compute_return_weights(
     gamma: float = 0.99,
     awr_beta: float = 1.0,
     weight_clip: tuple[float, float] = (0.1, 10.0),
+    episode_boundaries: Optional[list[int]] = None,
 ) -> torch.Tensor:
     """Turn a per-step reward tensor into a per-sample imitation weight.
 
@@ -276,14 +290,35 @@ def _compute_return_weights(
     The result is strictly positive — we never flip the sign of the
     cross-entropy loss. Bad moments in the demo get down-weighted but
     still contribute; good moments are amplified.
+
+    `episode_boundaries`: list of indices where each new episode STARTS
+    (the first one is implicitly 0). Without this, the discounted-return
+    walk leaks future-episode rewards backwards across boundaries — at
+    the end of episode A, returns get gamma-weighted into the start of
+    episode B's rewards, even though they're disjoint trajectories.
+    Pass this when the rewards tensor concatenates multiple episodes
+    (e.g. BC replay buffer with multiple successful trajectories, or
+    multi-demo BC datasets). When None, treats the whole tensor as a
+    single trajectory.
     """
     n = rewards.numel()
     if n == 0:
         return rewards.clone()
+    # Build the set of indices where running must reset to 0 (just
+    # before each fresh episode's tail-end position).
+    boundary_set = set()
+    if episode_boundaries:
+        for b in episode_boundaries:
+            if 0 < b <= n:
+                boundary_set.add(int(b))
     # Discounted return, walked backwards in numpy (cheap for ≤ 20k steps).
     returns = torch.zeros_like(rewards)
     running = 0.0
     for t in range(n - 1, -1, -1):
+        # If t+1 is the start of a new episode, the future at t belongs
+        # to a DIFFERENT trajectory and doesn't apply — reset.
+        if (t + 1) in boundary_set:
+            running = 0.0
         running = float(rewards[t].item()) + gamma * running
         returns[t] = running
     mean = returns.mean()
@@ -315,6 +350,15 @@ def pretrain(
     # this False for tile policies so the LayerNorm + first Linear
     # learn the right scale on raw values.
     normalize_obs: bool = True,
+    # When the dataset concatenates multiple disjoint trajectories
+    # (multi-demo BC, BC replay buffer with N successful episodes),
+    # pass the indices where each new trajectory STARTS — the
+    # discounted-return computation will reset its accumulator at
+    # those boundaries instead of leaking returns backwards across
+    # episode breaks. Without this, AWR weights at the tail of one
+    # episode are gamma-weighted into the start of the next,
+    # producing systematically wrong sample weights.
+    episode_boundaries: Optional[list[int]] = None,
 ) -> float:
     """Supervised cross-entropy pre-training. Returns final TRAIN epoch loss.
 
@@ -351,7 +395,9 @@ def pretrain(
 
     weighted = use_reward_weighting and rewards is not None and rewards.numel() == n
     if weighted:
-        sample_weights = _compute_return_weights(rewards).to(device)
+        sample_weights = _compute_return_weights(
+            rewards, episode_boundaries=episode_boundaries,
+        ).to(device)
         log.info(
             "BC weighted-imitation enabled: reward range=[%.2f, %.2f], "
             "weight range=[%.3f, %.3f]",
