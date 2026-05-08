@@ -363,18 +363,20 @@ reinforce:
 # more than help.
 ga_params:
   mutation_rate: 0.8
-  # 2026-05-08: switched to adaptive_mutation_scale=true. Audit found
-  # that fixed-noise mutation_std=0.001 hit the actor head (init std
-  # ≈0.00177, gain=0.01) at 0.56σ per mutation event but the trunk
-  # (init std ≈0.107, gain=√2) at only 0.009σ — a 62× imbalance. With
-  # mutation_rate=0.8 every gen, that scrambles the actor while
-  # leaving the trunk nearly untouched. Adaptive scaling makes
-  # mutation_std interpret as a FRACTION of each tensor's own std,
-  # so all layers see equal relative pressure. Bumped 0.001 → 0.05
-  # to compensate for the new semantic (now: 0.05σ per mutation
-  # event, layer-uniform; previously: 0.001 absolute units).
-  mutation_std: 0.05
-  adaptive_mutation_scale: true
+  # 2026-05-08: REVERTED adaptive_mutation_scale to false. The
+  # earlier hypothesis (actor head scrambled by fixed 0.001 noise)
+  # missed the elite-preservation mechanic: elites carry forward
+  # UNCHANGED each gen, so mutation only ever touches children. The
+  # actor head wasn't actually being scrambled in surviving genomes.
+  # Switching to per-tensor std scaling at mutation_std=0.05 gave
+  # the trunk 5× MORE noise than before (0.107 × 0.05 = 0.00535 vs
+  # the previous 0.001 absolute), eroding the trunk's hard-won
+  # feature representation faster than PPO could relearn it. Result:
+  # 137-gen run plateau'd at depth 2746 with zero clears, peak
+  # fitness frozen at gen 10. Reverted to the working fixed-noise
+  # configuration that produced the clear-finding run.
+  mutation_std: 0.001
+  adaptive_mutation_scale: false
   elite_fraction: 0.4
   # Re-enabled (was 0) after 175-gen plateau at depth 2586. Restart
   # fires when the all-time best hasn't improved in 50 gens; injects
