@@ -171,14 +171,21 @@ reward_weights:
   checkpoint_scale: 1.0
 
 action_space:
+  # Reduced from 8 to 6 actions for SMB 1-1: dropped `left` and
+  # `left+A`. SMB 1-1 has no left-required moments — every random
+  # sample of those actions was wasted exploration, contributing
+  # 25% of the entropy ceiling for zero useful behavior. With 6
+  # actions, max entropy = ln(6) ≈ 1.79 (vs ln(8) ≈ 2.08), so the
+  # uniform-random failure mode is naturally tighter and the
+  # network's actor head has 25% fewer outputs to keep meaningful.
+  # If a future curriculum stage needs left-movement (e.g. World 2
+  # has bidirectional levels), reintroduce them then.
   - []                      # no-op
   - ["right"]
   - ["right", "A"]          # jump right
   - ["right", "B"]          # run right
   - ["right", "A", "B"]     # run-jump right
   - ["A"]                   # stationary jump
-  - ["left"]
-  - ["left", "A"]
 
 # PPO settings tuned for the 14k-param tile policy. Most knobs are
 # stronger than the pixel profile because gradient signal is
@@ -331,8 +338,16 @@ ga_params:
   # of local minima. Originally disabled because the pixel-CNN run
   # was firing restart on near-clears; in tile mode we're nowhere
   # near 1-1 clear yet, so restart is the right tool.
-  stale_gens_before_restart: 50
-  restart_fraction: 0.5
+  #
+  # Tightened 50 → 15 + restart_fraction 0.5 → 0.6 after the
+  # depth=2595 plateau at gen 30-124 of the death-cause run: with
+  # the old 50-gen window, best fitness oscillating ±10% kept
+  # resetting the staleness counter so restart never fired even
+  # though the population was structurally stuck. 15 gens forces
+  # the GA to acknowledge stagnation faster; 60% restart fraction
+  # injects more fresh diversity per fire.
+  stale_gens_before_restart: 15
+  restart_fraction: 0.6
 
 # Per-episode step budget. Doubled from 600 to 1200 in lockstep with
 # the frame_skip 8→4 change above — this preserves the original
