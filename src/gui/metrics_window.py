@@ -115,6 +115,15 @@ class MetricsWindow(QMainWindow):
         self._avg.clear()
         self._success.clear()
         self._reward_signals.clear()
+        # Per-signal x-axis: each signal gets the SUBSET of generation
+        # numbers where its reward fired. Old code stored only y-values
+        # and tried to pad-prepend zeros to align with the full gen
+        # axis — that worked for signals that started late but produced
+        # silently wrong plots when a signal STOPPED firing mid-run
+        # (the missing entries are at the END not the start; prepending
+        # shifts the visible data and gens 50-99 would display gens
+        # 0-49's signal).
+        signal_gens: dict[str, list[int]] = {}
 
         with open(self.metrics_path, "r") as f:
             for line in f:
@@ -122,22 +131,24 @@ class MetricsWindow(QMainWindow):
                     m = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                self._generations.append(m.get("generation", 0))
+                gen = int(m.get("generation", 0))
+                self._generations.append(gen)
                 self._best.append(m.get("best_fitness", 0.0))
                 self._avg.append(m.get("avg_fitness", 0.0))
                 self._success.append(m.get("success_rate", 0.0))
                 # Collect every reward_* key so new signals added to
-                # the reward function surface automatically.
+                # the reward function surface automatically. Track gen
+                # alongside each value so the plot uses the actual
+                # generation number for x even when the signal is
+                # missing on some gens.
                 for k, v in m.items():
                     if isinstance(k, str) and k.startswith("reward_"):
                         signal = k[len("reward_"):]
                         self._reward_signals.setdefault(signal, []).append(float(v))
-
-        # Pad missing rows so short curves align on x-axis.
-        n = len(self._generations)
-        for sig, values in self._reward_signals.items():
-            if len(values) < n:
-                values[:0] = [0.0] * (n - len(values))
+                        signal_gens.setdefault(signal, []).append(gen)
+        # Stash for the per-signal plot below; same indexing as
+        # `_reward_signals` so the loop pairs (xs, ys) correctly.
+        self._signal_gens = signal_gens
 
         self.best_curve.setData(self._generations, self._best)
         self.avg_curve.setData(self._generations, self._avg)
@@ -154,11 +165,15 @@ class MetricsWindow(QMainWindow):
         for signal, values in total_abs:
             color = _SIGNAL_COLORS.get(signal, "#aaaaaa")
             curve = self._signal_curves.get(signal)
+            # Use the per-signal gen list (only the gens this signal
+            # actually fired) so the x and y arrays always align —
+            # even when the signal has gaps mid-run.
+            xs = self._signal_gens.get(signal, self._generations)
             if curve is None:
                 curve = self.signal_plot.plot(
-                    self._generations, values,
+                    xs, values,
                     pen=pg.mkPen(color, width=2), name=signal,
                 )
                 self._signal_curves[signal] = curve
             else:
-                curve.setData(self._generations, values)
+                curve.setData(xs, values)
