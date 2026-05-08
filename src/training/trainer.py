@@ -3075,13 +3075,33 @@ class Trainer:
                         # window applied to `full_r`.
                         rewards_t = rewards_t + rnd_intrinsic_t
                     T = rewards_t.numel()
-                    # Next-state values: shift values_pred by 1 and
-                    # repeat the last (bootstrap) — equivalent to
-                    # V(s_{T+1}) ≈ V(s_T) for truncated tails.
+                    # Next-state values: shift values_pred by 1 to
+                    # produce V(s_{t+1}). For the LAST timestep:
+                    #   * If the episode ended naturally (death,
+                    #     level-clear) — i.e. traj_len < max_steps —
+                    #     V(s_{T+1}) = 0 (no future after terminal).
+                    #   * Otherwise (truncated by max_steps), bootstrap
+                    #     with V(s_T) so the GAE return uses the
+                    #     critic's estimate of "what comes next."
+                    #
+                    # The previous unconditional bootstrap was a major
+                    # learning bug: at death, true delta_T = r_T - V(s_T),
+                    # but bootstrap gives r_T + (γ-1)·V(s_T). With γ=0.99
+                    # the death signal was muted ~100× — the policy
+                    # could not learn to avoid pits/enemies because the
+                    # gradient at terminal states was dominated by the
+                    # value-bootstrap, not the death penalty.
                     values_next = torch.empty_like(values_pred)
                     if T > 1:
                         values_next[:-1] = values_pred[1:]
-                    values_next[-1] = values_pred[-1]  # bootstrap
+                    traj_len_full = int(traj_lens[g_idx])
+                    terminated_naturally = (
+                        traj_len_full < self.max_episode_steps
+                    )
+                    if terminated_naturally:
+                        values_next[-1] = 0.0  # no future after terminal
+                    else:
+                        values_next[-1] = values_pred[-1]  # bootstrap for truncation
                     gae_lambda = 0.95  # standard PPO default
                     deltas = rewards_t + gamma * values_next - values_pred
                     # GAE recurrence runs CPU-side: each iteration's
