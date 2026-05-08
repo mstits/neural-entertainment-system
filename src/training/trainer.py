@@ -2696,7 +2696,12 @@ class Trainer:
                 data[f"traj_{i}_rewards"] = rews
                 data[f"traj_{i}_fitness"] = np.array([fit], dtype=np.float32)
             data["count"] = np.array([len(self._bc_replay_buffer)], dtype=np.int32)
-            tmp = self._bc_success_cache_path.with_suffix(".npz.tmp")
+            # np.savez_compressed appends '.npz' to the filename if it
+            # doesn't already end in '.npz' — so a temp path ending in
+            # '.tmp' would write to <name>.tmp.npz on disk, breaking
+            # the atomic-rename pattern. Anchor the temp path with .npz
+            # itself so numpy writes to the literal path we name.
+            tmp = self._bc_success_cache_path.with_suffix(".tmp.npz")
             np.savez_compressed(str(tmp), **data)
             tmp.replace(self._bc_success_cache_path)
         except Exception as exc:
