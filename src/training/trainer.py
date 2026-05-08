@@ -371,7 +371,11 @@ class Trainer:
         # hours of training to discover should not vanish on restart.
         self._bc_replay_buffer: list[tuple] = []
         self._bc_success_cache_path: Path = self.checkpoint_dir / "bc_success_cache.npz"
-        self._load_bc_success_cache()
+        # NOTE: deferred — the load needs `self.num_actions` and
+        # `self._obs_buffer_shape()` for schema validation, both of
+        # which aren't set yet. Calling here and then a cache existing
+        # on disk would AttributeError. Triggered later in __init__
+        # once num_actions and the obs-shape helpers are available.
         # Number of episodes to roll for each genome per generation.
         # 1 (default) = original behavior. Higher values average out the
         # per-episode stochasticity from the policy's action sampling +
@@ -555,6 +559,11 @@ class Trainer:
         self.action_space = game_profile.get("action_space", [])
         self.num_actions = len(self.action_space)
         self._bitmask_table = self._build_bitmask_table()
+        # Deferred from earlier in __init__: now that num_actions is
+        # set and the _obs_buffer_shape helper is bound, it's safe to
+        # rehydrate the persistent BC success cache (which validates
+        # cache_version + num_actions + obs_shape before loading).
+        self._load_bc_success_cache()
         # Reserved: when a future rewrite of _evaluate_batch actually
         # overlaps GPU inference for action_{t+1} with worker
         # emulation of action_t (which requires action_{t+1} to be
