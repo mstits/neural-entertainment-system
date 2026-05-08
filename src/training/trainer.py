@@ -798,11 +798,18 @@ class Trainer:
         """
         sticky = self.sticky_action_prob
         roll_sticky = sticky > 0 and step > 0
-        rng_vals = (
-            np.random.random(len(active)) if roll_sticky else None
-        )
+        # Single shared RNG draw per step — every genome in the batch
+        # faces the SAME stickiness decision this step. Without this,
+        # `np.random.random(len(active))` gave each genome a private
+        # coin flip, so genome A might be free-to-act while genome B
+        # was forced to stick. Across N genomes evaluated against the
+        # same fitness signal, the one that drew fewer sticky moments
+        # had an unfair sampling advantage — GA selection then ranks
+        # genomes by stickiness luck instead of policy quality. Fix
+        # the source: one decision per step, applied uniformly.
+        sticky_this_step = roll_sticky and (np.random.random() < sticky)
         for batch_idx, genome_idx in enumerate(active):
-            if roll_sticky and rng_vals[batch_idx] < sticky:
+            if sticky_this_step:
                 # Override with last-executed action; record its
                 # log-prob under the current policy distribution so
                 # PPO's importance ratio stays consistent with what
