@@ -81,6 +81,18 @@ class GeneticAlgorithm:
         stale_gens_before_restart: int = 0,
         restart_fraction: float = 0.5,
         fitness_improvement_epsilon: float = 1e-6,
+        # Per-layer adaptive mutation scaling. When True, the mutation
+        # noise applied to each parameter tensor is scaled by that
+        # tensor's running standard deviation, so a layer with weights
+        # ~ N(0, 0.002) and one with weights ~ N(0, 0.1) both receive
+        # mutation pressure proportional to their natural scale. Without
+        # this, a fixed `mutation_std=0.001` over-perturbs the actor
+        # head (init std ~0.002 → 0.5σ noise per mutation event) while
+        # barely touching the trunk (init std ~0.1 → 0.01σ). Default
+        # False = previous fixed-noise behaviour. NEAT, Deep Neuro-
+        # evolution, and CMA-ES all do some form of per-parameter
+        # scaling; this is the simplest version (per-tensor).
+        adaptive_mutation_scale: bool = False,
         seed: Optional[int] = None,
     ) -> None:
         self.population_size = population_size
@@ -89,6 +101,7 @@ class GeneticAlgorithm:
         self.mutation_std = mutation_std
         self.elite_fraction = elite_fraction
         self.tournament_size = tournament_size
+        self.adaptive_mutation_scale = bool(adaptive_mutation_scale)
         self.stale_gens_before_restart = int(stale_gens_before_restart)
         self.restart_fraction = float(restart_fraction)
         self.fitness_improvement_epsilon = float(fitness_improvement_epsilon)
@@ -158,7 +171,12 @@ class GeneticAlgorithm:
 
         while len(new_population) < self.population_size:
             parent_a = self._tournament_select()
-            parent_b = self._tournament_select()
+            # Exclude parent_a so b can't be the same genome instance.
+            # See `_tournament_select` for why this matters when several
+            # population slots share state — without it, crossover
+            # collapses to "child = parent_a" and mutation is the only
+            # source of new variation.
+            parent_b = self._tournament_select(exclude=parent_a)
             child_state = self._crossover(parent_a.state_dict, parent_b.state_dict)
             child_state = self._mutate(child_state)
             new_population.append(Genome(
@@ -203,11 +221,25 @@ class GeneticAlgorithm:
         self.population = new_population
         self.generation += 1
 
-    def _tournament_select(self) -> Genome:
+    def _tournament_select(self, exclude: Optional[Genome] = None) -> Genome:
         """Pick K random genomes, return the fittest. K is clamped to the
-        current population size so tiny populations still work."""
+        current population size so tiny populations still work.
+
+        `exclude` lets the caller pass a parent already chosen for
+        crossover so the second pick returns a different genome —
+        important when several population slots hold IDENTICAL state
+        dicts (the `preserve_elite_diversity=False` path clones `best`
+        into the top-N slots). Picking the same clone twice would
+        otherwise make crossover return parent_a unchanged (the per-
+        parameter coin-flip is meaningless when both parents agree on
+        every weight), injecting zero diversity.
+        """
         k = min(self.tournament_size, len(self.population))
         candidates = random.sample(self.population, k)
+        if exclude is not None:
+            non_excluded = [g for g in candidates if g is not exclude]
+            if non_excluded:
+                candidates = non_excluded
         return max(candidates, key=lambda g: g.fitness)
 
     def _crossover(self, parent_a: dict, parent_b: dict) -> dict:
@@ -236,6 +268,14 @@ class GeneticAlgorithm:
                 # REINFORCE carries forward the full state_dict, so
                 # within a few generations all genomes have it.
                 b_val = parent_b.get(key, tensor)
+                # If parent_b's tensor diverges in shape (e.g., one parent
+                # was built with bias=True after the other was saved
+                # without it), torch.where would crash. Fall back to
+                # parent_a's tensor — same logic as the missing-key path
+                # above. Reconciles within a few generations as the elite
+                # propagates the new shape.
+                if b_val.shape != tensor.shape:
+                    b_val = tensor
                 mask = torch.rand_like(tensor) < 0.5
                 child[key] = torch.where(mask, tensor, b_val)
             else:
@@ -264,7 +304,19 @@ class GeneticAlgorithm:
                 mutated[key] = tensor.clone()
                 continue
             mask = (torch.rand_like(tensor) < self.mutation_rate).to(tensor.dtype)
-            noise = torch.randn_like(tensor) * self.mutation_std * mask
+            if self.adaptive_mutation_scale:
+                # Scale noise by this tensor's natural std so the policy
+                # head (orthogonal init gain=0.01) and the trunk (gain=√2)
+                # both receive mutation noise proportional to their
+                # weight magnitude. Numerics: clamp the std lower bound
+                # so an all-zero tensor (e.g. freshly-init bias=0) gets
+                # SOME noise instead of zero — without that, mutation
+                # becomes a no-op for that tensor forever.
+                with torch.no_grad():
+                    scale = tensor.std().clamp(min=1e-3)
+                noise = torch.randn_like(tensor) * self.mutation_std * scale * mask
+            else:
+                noise = torch.randn_like(tensor) * self.mutation_std * mask
             mutated[key] = tensor + noise
         return mutated
 
@@ -288,6 +340,22 @@ class GeneticAlgorithm:
                 for g in self.population
             ],
             "next_genome_id": self._next_genome_id,
+            # Persist the namer counter so cycle suffixes ("Brutus-2",
+            # "Brutus-3", ...) don't collide on resume after the pool
+            # of unique base names has been exhausted. Without this,
+            # a long-running session that loops the name pool produces
+            # duplicate names across checkpoint boundaries.
+            "namer_used_count": getattr(self._namer, "_used_count", 0),
+            # Stale-restart counters — without these the restart heuristic
+            # would re-trigger on the very next generation after resume
+            # because best_fitness_seen reset to -inf and any "improvement"
+            # arrives within the first eval, but gens_since_improvement
+            # also reset to 0, which means stale_gens_before_restart can
+            # be over-counted when the source run was already deep in a
+            # plateau.
+            "best_fitness_seen": float(self._best_fitness_seen)
+                if self._best_fitness_seen != float("-inf") else None,
+            "gens_since_improvement": int(self._gens_since_improvement),
         }, path)
 
     def load_checkpoint(self, path: str) -> None:
@@ -297,6 +365,14 @@ class GeneticAlgorithm:
         data = torch.load(path, map_location="cpu", weights_only=False)
         self.generation = data["generation"]
         self._next_genome_id = data["next_genome_id"]
+        # Restore the namer's progress through the cycle counter (see
+        # save_checkpoint). Older checkpoints without this key just
+        # restart at zero, which is the prior behavior.
+        self._namer._used_count = int(data.get("namer_used_count", 0))
+        # Restore stale-restart counters (see save_checkpoint).
+        bfs = data.get("best_fitness_seen")
+        self._best_fitness_seen = float(bfs) if bfs is not None else float("-inf")
+        self._gens_since_improvement = int(data.get("gens_since_improvement", 0))
         self.population = [
             Genome(
                 genome_id=g["genome_id"],

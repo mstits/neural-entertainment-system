@@ -10,9 +10,11 @@ to a regime where:
   policy actually moves between updates instead of being lost in
   noise.
 
-So this network is intentionally tiny — `Linear → SiLU → LayerNorm`
-twice, then split actor + critic heads. ~14k params total at the
-default 64/32 hidden widths, vs 1.7M for the pixel CNN.
+So this network is intentionally tiny — `Linear → LayerNorm → SiLU`
+twice (pre-activation norm; bounds the linear output before the
+nonlinearity to prevent variance blowup in a 14k-param net), then
+split actor + critic heads. ~14k params total at the default 64/32
+hidden widths, vs 1.7M for the pixel CNN.
 
 Same `forward()` / `forward_ac()` / `act()` / `save()` / `load()`
 surface as `PolicyNetwork` so the trainer can dispatch on encoder

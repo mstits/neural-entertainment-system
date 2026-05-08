@@ -674,6 +674,6 @@ impl Nes {
     }
 
     pub fn game_pad_2(&mut self) -> &mut GamePad {
-        &mut self.input.game_pad_1
+        &mut self.input.game_pad_2
     }
 }

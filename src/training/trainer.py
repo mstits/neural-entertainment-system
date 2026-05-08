@@ -624,6 +624,7 @@ class Trainer:
             tournament_size=ga_params.get("tournament_size", 5),
             stale_gens_before_restart=int(ga_params.get("stale_gens_before_restart", 10)),
             restart_fraction=float(ga_params.get("restart_fraction", 0.5)),
+            adaptive_mutation_scale=bool(ga_params.get("adaptive_mutation_scale", False)),
             # Thread the trainer-level seed into the GA so tournament
             # selection, mutation noise, and crossover masks are
             # reproducible. Without this, --seed only set the global
@@ -1730,6 +1731,14 @@ class Trainer:
                             pop[idx].state_dict = {
                                 k: v.clone() for k, v in best.state_dict.items()
                             }
+                            # Fitness must move with the state_dict; the
+                            # genome now contains best's exact weights so
+                            # its true fitness == best.fitness. Without
+                            # this, GA's next sort uses the genome's
+                            # stale (pre-overwrite) score, which can
+                            # demote the freshly-cloned elite below
+                            # rank-1 and break the elitism guarantee.
+                            pop[idx].fitness = best.fitness
                     log.info(
                         "  REINFORCE loss: %.4f (n=%d, applied to %d elites, preserve_diversity=%s)",
                         loss, len(elite_idx),
@@ -2773,8 +2782,19 @@ class Trainer:
             # the atomic-rename pattern. Anchor the temp path with .npz
             # itself so numpy writes to the literal path we name.
             tmp = self._bc_success_cache_path.with_suffix(".tmp.npz")
-            np.savez_compressed(str(tmp), **data)
-            tmp.replace(self._bc_success_cache_path)
+            try:
+                np.savez_compressed(str(tmp), **data)
+                tmp.replace(self._bc_success_cache_path)
+            except Exception:
+                # Clean up the partial tmp file so it doesn't accumulate
+                # across crashes — np.savez_compressed leaves a half-
+                # written .npz on disk if the process dies mid-write.
+                if tmp.exists():
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
+                raise
         except Exception as exc:
             log.warning("BC success cache save failed: %s", exc)
 

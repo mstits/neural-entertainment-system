@@ -107,6 +107,19 @@ class RustPool:
             if pp.dtype == np.uint8 and pp.shape == (84, 168):
                 # Zero-copy reinterpret from the Rust fallback uint8 array
                 pp = pp.view(np.float16).reshape((84, 84))
+            elif pp.shape != (84, 84) or pp.dtype not in (np.float16, np.uint8):
+                # Fail loud at the adapter boundary on malformed slots.
+                # A worker crash returning a weird shape would otherwise
+                # propagate into the CNN as an opaque "expected (4, 84,
+                # 84), got (X, Y, Z)" deep in the forward pass.
+                # Accept either dtype on the (84,84) shape — uint8 is
+                # the legacy/non-preprocess-f16 path; float16 is the
+                # preprocess-f16 path. Both are valid live formats.
+                raise ValueError(
+                    f"worker {i}: unexpected preprocessed shape/dtype "
+                    f"{pp.shape}/{pp.dtype}; expected (84,84)/{{float16,uint8}} "
+                    f"or (84,168)/uint8 fallback"
+                )
             audio = self.drain_audio(i)
             results.append(StepResult(
                 worker_id=i,

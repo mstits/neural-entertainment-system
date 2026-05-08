@@ -54,7 +54,11 @@ impl<'a> AudioSinkI16<'a> {
 
 impl AudioSink for AudioSinkI16<'_> {
     fn write_sample(&mut self, sample: f32) {
-        let sample = (sample * 32768.0) as i16;
+        // Clamp before cast: an `as i16` from an f32 outside [-32768, 32767]
+        // saturates on AArch64 but is technically platform-defined for
+        // non-finite inputs. Clamp to [-1, 1] then scale to the i16 range
+        // (32767, not 32768, so +1.0 maps to i16::MAX without overflow).
+        let sample = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
         self.buffer[self.buffer_pos] = (sample, sample);
         self.buffer_pos += 1;
     }
@@ -80,7 +84,10 @@ impl<'a> AudioSinkU16<'a> {
 
 impl AudioSink for AudioSinkU16<'_> {
     fn write_sample(&mut self, sample: f32) {
-        let sample = ((sample * 32768.0) + 32768.0) as u16;
+        // Clamp before cast (see AudioSinkI16). Mid-point biases u16 so
+        // 0.0 → 0x8000, ±1.0 → endpoints.
+        let scaled = (sample.clamp(-1.0, 1.0) * 32767.0) + 32768.0;
+        let sample = scaled.clamp(0.0, u16::MAX as f32) as u16;
         self.buffer[self.buffer_pos] = (sample, sample);
         self.buffer_pos += 1;
     }

@@ -449,7 +449,14 @@ impl Apu {
             status |= 0x40;
         }
 
-        if self.dmc.irq_flag {
+        // $4015 bit 7 must reflect the asserted DMC interrupt, not
+        // the IRQ-enable bit set by $4010. Reading irq_flag here made
+        // bit 7 read high any time DMC IRQ was enabled (regardless of
+        // whether the sample had actually completed), causing games
+        // that probe $4015 for IRQ source — Bill & Ted's, sword
+        // pickup in some titles, Crash 'n' the Boys — to mis-route
+        // their interrupt service routines.
+        if self.dmc.irq_pending {
             status |= 0x80;
         }
 
@@ -694,7 +701,12 @@ impl Pulse {
     }
 
     fn write_control(&mut self, value: u8) {
-        self.duty_mode = value >> 7;
+        // Duty cycle is the TOP TWO bits of $4000/$4004 (D7-D6) — a
+        // 2-bit selector into DUTY_CYCLE_TABLE's 4 entries (12.5%,
+        // 25%, 50%, 75%-inverted). The previous `value >> 7` captured
+        // only the high bit, collapsing modes {0,1} → 0 and {2,3} → 1
+        // so half the duty waveforms were never produced.
+        self.duty_mode = (value >> 6) & 0x03;
         self.length_counter.enabled = (value & 0x20) == 0;
         self.envelope.loop_flag = !self.length_counter.enabled;
         self.envelope.enabled = (value & 0x10) == 0;
@@ -1004,9 +1016,12 @@ impl Dmc {
     fn step_timer(&mut self, mapper: &mut MapperEnum) -> u8 {
         let mut cpu_stall_cycles = 0;
         if self.enable_flag {
-            if self.irq_flag {
-                self.irq_pending = true;
-            }
+            // DMC interrupt fires when the bytes-remaining counter
+            // reaches zero AND the loop flag is clear — handled inside
+            // step_reader at the moment current_length hits 0. The
+            // previous code asserted irq_pending on every tick when
+            // both enable+irq_flag were set, which made $4015 bit 7
+            // permanently high for any ROM that enabled DMC IRQ.
             cpu_stall_cycles = self.step_reader(mapper);
             if self.tick_value == 0 {
                 self.tick_value = self.tick_period;
@@ -1030,8 +1045,15 @@ impl Dmc {
                 self.current_address = 0x8000;
             }
             self.current_length -= 1;
-            if self.current_length == 0 && self.loop_flag {
-                self.restart();
+            if self.current_length == 0 {
+                if self.loop_flag {
+                    self.restart();
+                } else if self.irq_flag {
+                    // Sample finished without looping — assert the IRQ
+                    // line. Stays asserted until cleared by a write to
+                    // $4015 (write_status sets irq_pending = false).
+                    self.irq_pending = true;
+                }
             }
         }
 

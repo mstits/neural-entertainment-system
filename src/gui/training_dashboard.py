@@ -43,13 +43,29 @@ from PyQt6.QtWidgets import (
 )
 
 
-# Per-signal colors. Falls back to gray for unknown signals so a new
-# reward shaper added to a profile still renders without code changes.
+# Per-signal colors. Named entries are stable across runs; unknown
+# signals get a deterministic color derived from the signal name (hash
+# → HSV rotation) so every reward shaper renders in its own color
+# without anyone having to extend this dict.
 _SIGNAL_COLORS = {
+    # Mario
+    "forward":           "#8bc34a",
+    "air":               "#03a9f4",
+    "checkpoint":        "#ffeb3b",
+    "completion":        "#ffd700",
+    "score":             "#ff5252",
+    "death":             "#3f0000",
+    "pit_fall":          "#bf360c",
+    "enemy_death":       "#d84315",
+    "survival":          "#26a69a",
+    "jump_clear":        "#7e57c2",
+    "time_penalty":      "#555555",
+    # Zelda
     "exploration":       "#4caf50",
     "dungeon_enter":     "#00bcd4",
     "new_item":          "#ff9800",
-    "item_tier_upgrade": "#ffc107",
+    "first_sword":       "#ffeb3b",
+    "weapon_upgrade":    "#ffc107",
     "magic_key":         "#e91e63",
     "map":               "#9c27b0",
     "compass":           "#673ab7",
@@ -61,13 +77,37 @@ _SIGNAL_COLORS = {
     "item_used":         "#03a9f4",
     "item_cycle":        "#9e9e9e",
     "motion":            "#607d8b",
-    "time_penalty":      "#555555",
+    "wall_bump":         "#795548",
+    "stagnation":        "#5d4037",
     "damage":            "#bf360c",
-    "death":             "#3f0000",
-    "forward_progress":  "#8bc34a",
-    "score":             "#ff5252",
+    # Other games
+    "boss_killed":       "#ff1744",
+    "stage_cleared":     "#00e676",
     "y_progress":        "#9ccc65",
 }
+
+
+def _color_for_signal(signal: str) -> str:
+    """Stable color for any signal name, including unknown ones.
+
+    Known signals come from the curated palette above. Unknowns get a
+    hue rotated by the signal-name hash through a golden-ratio step so
+    adjacent unknown signals don't collide. Saturation/value held
+    constant so colors look like they belong to the same family.
+    """
+    if signal in _SIGNAL_COLORS:
+        return _SIGNAL_COLORS[signal]
+    # Stable hash → hue. Python's str hash is salted across runs, so
+    # use a content-based fold instead so the same signal renders the
+    # same color across sessions.
+    h = 0
+    for ch in signal:
+        h = (h * 131 + ord(ch)) & 0xFFFFFFFF
+    hue = (h * 0.61803398875) % 1.0  # golden-ratio rotation
+    # HSV → RGB at S=0.65, V=0.85.
+    import colorsys
+    r, g, b = colorsys.hsv_to_rgb(hue, 0.65, 0.85)
+    return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
 
 
 def _fmt_elapsed(seconds: float) -> str:
@@ -147,6 +187,10 @@ class TrainingDashboardWindow(QMainWindow):
         self._wm_reward: list[float] = []
         self._wm_continue: list[float] = []
         self._reward_signals: dict[str, list[float]] = {}
+        # Per-signal generation tracking — each signal gets the SUBSET of
+        # generation numbers where its reward fired, so plotting stays
+        # aligned even when a signal stops firing mid-run.
+        self._signal_gens: dict[str, list[int]] = {}
         self._signal_curves: dict[str, pg.PlotDataItem] = {}
 
         self._depth_seen: set[str] = set()
@@ -164,6 +208,14 @@ class TrainingDashboardWindow(QMainWindow):
             if self._timer is not None:
                 self._timer.stop()
         except Exception:
+            pass
+        # Drop the sigResized connection so the curric_plot's right
+        # viewbox doesn't try to fire into us after we're destroyed.
+        try:
+            sig = getattr(self, "_curric_resized_signal", None)
+            if sig is not None:
+                sig.disconnect(self._sync_success_vb)
+        except (TypeError, RuntimeError):
             pass
         super().closeEvent(event)
 
@@ -332,7 +384,11 @@ class TrainingDashboardWindow(QMainWindow):
         )
         self._success_vb.addItem(self.success_curve)
         # Keep the right viewbox glued to the main plot's geometry.
-        self.curric_plot.getViewBox().sigResized.connect(self._sync_success_vb)
+        # Stash the signal so closeEvent can disconnect — without that,
+        # closing and reopening the dashboard accumulates connections to
+        # destroyed widgets, which raise RuntimeError on the next emit.
+        self._curric_resized_signal = self.curric_plot.getViewBox().sigResized
+        self._curric_resized_signal.connect(self._sync_success_vb)
         grid.addWidget(self.curric_plot, 1, 1)
 
         # World-model losses panel. Only meaningful in Dreamer training
@@ -518,6 +574,7 @@ class TrainingDashboardWindow(QMainWindow):
         self._wm_reward.clear()
         self._wm_continue.clear()
         self._reward_signals.clear()
+        self._signal_gens.clear()
         self._latest_metric: dict = {}
 
         try:
@@ -556,14 +613,17 @@ class TrainingDashboardWindow(QMainWindow):
                         if isinstance(k, str) and k.startswith("reward_"):
                             sig = k[len("reward_"):]
                             self._reward_signals.setdefault(sig, []).append(float(v))
+                            # Per-signal x-axis tracking. Without this, the
+                            # later "pad-prepend zeros" logic silently
+                            # misaligned signals that STOPPED firing mid-run
+                            # (the missing samples are at the END, not the
+                            # start; prepending zeros shifts visible data
+                            # rightward by N gens).
+                            self._signal_gens.setdefault(sig, []).append(
+                                int(m.get("generation", 0))
+                            )
         except OSError:
             return
-
-        # Pad short signal series so x-axis aligns.
-        n = len(self._gens)
-        for sig, vals in self._reward_signals.items():
-            if len(vals) < n:
-                vals[:0] = [0.0] * (n - len(vals))
 
         # Repaint plots.
         self.best_curve.setData(self._gens, self._best)
@@ -588,16 +648,17 @@ class TrainingDashboardWindow(QMainWindow):
             reverse=True,
         )
         for sig, vals in ordered:
-            color = _SIGNAL_COLORS.get(sig, "#bdbdbd")
+            color = _color_for_signal(sig)
             curve = self._signal_curves.get(sig)
+            xs = self._signal_gens.get(sig, self._gens)
             if curve is None:
                 curve = self.signal_plot.plot(
-                    self._gens, vals,
+                    xs, vals,
                     pen=pg.mkPen(color, width=2), name=sig,
                 )
                 self._signal_curves[sig] = curve
             else:
-                curve.setData(self._gens, vals)
+                curve.setData(xs, vals)
 
     def _reload_depth_memo(self) -> None:
         if not self.depth_memo_path.exists():

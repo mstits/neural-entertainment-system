@@ -748,6 +748,12 @@ class AppController:
             except Exception:
                 pass
             self.metrics_timer = None
+        if self.narrator_timer is not None:
+            try:
+                self.narrator_timer.stop()
+            except Exception:
+                pass
+            self.narrator_timer = None
         if self._stop_event is not None:
             self._stop_event.set()
         if self.control_queue is not None:

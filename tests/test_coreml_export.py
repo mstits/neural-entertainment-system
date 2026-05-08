@@ -26,10 +26,18 @@ def test_coreml_export_and_inference(tmp_path):
 
     assert result.exists()
     loader = CoreMLPolicy(result)
-    # Deterministic inference: argmax should be in range
-    action = loader.act(torch.zeros(4, 84, 84), deterministic=True)
-    assert 0 <= action < 8
+    # Deterministic inference: argmax must be REPEATABLE (same input →
+    # same output). The old `0 <= action < 8` bar passed even if the
+    # exporter wired sampling instead of argmax. Take 5 samples and
+    # require they all match.
+    obs = torch.zeros(4, 84, 84)
+    actions_det = [loader.act(obs, deterministic=True) for _ in range(5)]
+    assert all(0 <= a < 8 for a in actions_det)
+    assert len(set(actions_det)) == 1, (
+        f"deterministic mode must be repeatable; got {actions_det}"
+    )
 
-    # Stochastic inference: same range
-    action = loader.act(torch.zeros(4, 84, 84), deterministic=False)
+    # Stochastic inference: same range. Don't require diversity (a
+    # near-deterministic distribution can produce identical samples).
+    action = loader.act(obs, deterministic=False)
     assert 0 <= action < 8

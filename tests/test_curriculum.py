@@ -34,6 +34,8 @@ def test_sample_level_returns_active_level() -> None:
 
 
 def test_record_and_stage_success_rate() -> None:
+    import pytest
+
     cm = CurriculumManager(stages=_stages())
     for _ in range(10):
         cm.record_episode("1-1", True)
@@ -41,8 +43,10 @@ def test_record_and_stage_success_rate() -> None:
 
     for _ in range(10):
         cm.record_episode("1-1", False)
-    # half-and-half window
-    assert 0.0 < cm.stage_success_rate() <= 0.5
+    # 10 successes + 10 failures in the window → exactly 0.5. The old
+    # `0.0 < x <= 0.5` was overly permissive — it passed even if the
+    # sliding-window math degenerated to ~0.0.
+    assert cm.stage_success_rate() == pytest.approx(0.5)
 
 
 def test_advance_when_threshold_met() -> None:

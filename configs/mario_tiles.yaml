@@ -108,6 +108,22 @@ reward_weights:
   # ahead." Combined with sticky_action_prob=0.5 (also bumped),
   # full-arc jumps complete ~13% of the time vs ~4% before.
   air_bonus:        1.5
+  # 2026-05-07: more carrot, less stick. Periodic survival bonus
+  # (+300 every 150 trainer steps = 600 NES frames ≈ 10 s of game
+  # time at fs=4) gives PPO a steady positive gradient for "stay
+  # alive long enough to attempt the hard maneuver". Complements
+  # the once-per-episode checkpoint signals — survival reward
+  # accumulates while the agent is figuring out what to do.
+  survival_bonus:        300.0
+  survival_block_steps:  150
+  # Pit-clear bonus: detects airborne→ground transitions where Mario
+  # covered ≥16 X-units (1 tile) of forward progress during the air
+  # period. Each successful jump-over-anything (pit, Goomba, pipe)
+  # fires +50. Positive counterpart to pit_fall_extra; with the
+  # latter zeroed (below) this is a pure carrot for the exact
+  # behavior we want to encourage at the obstacle complex.
+  jump_clear_bonus:      50.0
+  jump_clear_min_dx:     16
   # Death-cause differentiation. pit_fall_extra stays — pits are
   # the dominant failure mode at the staircase plateau and the
   # extra signal is independent (no other channel rewards
@@ -117,7 +133,12 @@ reward_weights:
   # triggers death_penalty (-15). The extra was double-counting
   # the negative side without giving PPO any new information
   # beyond what score+death already provided.
-  pit_fall_extra:    -15.0
+  # 2026-05-07: zeroed (was -15). Pit fear was contributing to the
+  # depth-1956 → depth-2760 wall pattern: agents stopped jumping
+  # because every failed jump compounded the penalty. Replaced
+  # with the positive jump_clear_bonus (above) — same intent,
+  # opposite gradient direction.
+  pit_fall_extra:    0.0
   score_delta:      0.005
   # Death and time penalties were 0.0 (no-op equilibrium); previous
   # rev set them to -50 and -0.01. That fix introduced a NEW failure:
@@ -142,16 +163,25 @@ reward_weights:
   # — strictly worse than dying at any positive x, so no-op never
   # wins, but mild enough that brief exploration drags don't crush
   # the gradient.
-  death_penalty:    -15.0
-  # Bumped 100 -> 500 after empirical: gen 152-176 of the canonical-aligned
-  # run had success_rate=0.005 (3 lucky flag touches), but the policy
-  # never consolidated reliable clears. Diagnosis: with completion=100
-  # and forward-to-flag=3160, the clear-vs-die-at-flag fitness delta
-  # was only 100/3260 = 3% — below PPO's noise floor on a stochastic
-  # policy. Bumping to 500 makes a clear worth ~15% over a near-miss,
-  # large enough that the GA reliably selects clearing genomes and
-  # PPO sees a strong gradient on the final approach.
-  completion_bonus: 500.0
+  # 2026-05-07: zeroed. Hypothesis from gen 6+ stall at depth 2760:
+  # the death penalty is suppressing the risk-taking required to
+  # learn stair-jumps. Forward progress already differentiates
+  # "died at x=10" from "died at x=2700" — agents that die early
+  # earn nothing — so the additional -15 just punishes attempts to
+  # commit. Combined with jump_clear_bonus (above) this flips the
+  # balance to pure positive reinforcement on productive jumping.
+  death_penalty:    0.0
+  # 2026-05-08: Bumped 500 -> 2000. Run 153-465 reached depth 3161
+  # (flag area) reliably but only ~3 clears in the last 50 gens
+  # (success_rate=0.005). Diagnosis: by the time Mario reaches the
+  # staircase his accumulated trajectory reward is ~5000-6000, so
+  # +500 for the flag touch is only ~8-10% — still below PPO's
+  # noise floor for the specific final-stretch action pattern.
+  # +2000 makes it ~30-40% jump vs near-miss, putting the gradient
+  # above the noise. Risk: 1-1 becomes a stronger attractor that
+  # resists curriculum advancement to 1-2; mitigated by curriculum
+  # advance threshold being a separate signal.
+  completion_bonus: 2000.0
   # time_penalty REMOVED (was -0.05). The reasoning: "running out
   # of time" was already implicitly penalized — episodes that
   # don't reach the flag forfeit the +500 completion bonus AND
@@ -333,14 +363,18 @@ reinforce:
 # more than help.
 ga_params:
   mutation_rate: 0.8
-  # Lowered 5x from 0.005 after gen 132-300 showed the elite's hard-won
-  # staircase-approach policy decaying under accumulated GA noise. At
-  # mutation_rate=0.8 with std=0.005 on a 14k-param net, ~11k weights
-  # per genome see Gaussian perturbation of magnitude 0.005 per gen.
-  # That's substantial behavioral drift; weak PPO can't outpace it
-  # once advantages shrink. 0.001 keeps GA diversity injection active
-  # without erasing structure.
-  mutation_std: 0.001
+  # 2026-05-08: switched to adaptive_mutation_scale=true. Audit found
+  # that fixed-noise mutation_std=0.001 hit the actor head (init std
+  # ≈0.00177, gain=0.01) at 0.56σ per mutation event but the trunk
+  # (init std ≈0.107, gain=√2) at only 0.009σ — a 62× imbalance. With
+  # mutation_rate=0.8 every gen, that scrambles the actor while
+  # leaving the trunk nearly untouched. Adaptive scaling makes
+  # mutation_std interpret as a FRACTION of each tensor's own std,
+  # so all layers see equal relative pressure. Bumped 0.001 → 0.05
+  # to compensate for the new semantic (now: 0.05σ per mutation
+  # event, layer-uniform; previously: 0.001 absolute units).
+  mutation_std: 0.05
+  adaptive_mutation_scale: true
   elite_fraction: 0.4
   # Re-enabled (was 0) after 175-gen plateau at depth 2586. Restart
   # fires when the all-time best hasn't improved in 50 gens; injects

@@ -422,10 +422,18 @@ impl NESEnvironment {
         } else if raw.len() >= 4 && &raw[..4] == b"NCST" {
             // Known prefix but unknown version byte — surface a clear
             // error instead of letting bincode eat the version byte.
+            // Bound-check the version byte access: a 4-byte blob with
+            // NCST prefix has no version byte at all, but the message
+            // formerly accessed raw[4] unconditionally and panicked.
+            let got = if raw.len() > STATE_MAGIC.len() - 1 {
+                format!("{:#04x}", raw[STATE_MAGIC.len() - 1])
+            } else {
+                "<missing>".to_string()
+            };
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "load_state: unsupported NCST version byte {:#04x} (this build expects {:#04x})",
-                raw[4],
-                STATE_MAGIC[4]
+                "load_state: unsupported NCST version byte {} (this build expects {:#04x})",
+                got,
+                STATE_MAGIC[STATE_MAGIC.len() - 1]
             )));
         } else {
             // No magic at all — this is a legacy pre-versioning blob
@@ -441,6 +449,13 @@ impl NESEnvironment {
             ))
         })?;
         self.nes.apply_state(&state);
+        // The cycle anchor was tied to the PREVIOUS Nes instance's
+        // CPU clock. After a state load the CPU clock effectively
+        // jumps; clear the anchor so the next advance_one_frame
+        // recomputes target = current_cycles + CPU_CYCLES_PER_FRAME
+        // rather than chasing a stale offset that could undershoot
+        // or overshoot by a full frame.
+        self.frame_cycle_target = None;
         self.audio.drain();
         self.done = false;
         Ok(())

@@ -215,6 +215,7 @@ def _try_ffmpeg_subprocess(
         "-preset", "veryfast", "-crf", "23",
         str(out_path),
     ]
+    proc: subprocess.Popen | None = None
     try:
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE,
@@ -233,4 +234,14 @@ def _try_ffmpeg_subprocess(
     except Exception as exc:
         log.warning("ffmpeg subprocess error: %s", exc)
         return False
+    finally:
+        # If we bailed early (broken pipe, timeout, frame iteration
+        # raised), the ffmpeg child can be left running. Kill it so it
+        # doesn't accumulate as a zombie across long training sessions.
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+                proc.wait(timeout=2)
+            except Exception:
+                pass
     return out_path.exists() and out_path.stat().st_size > 0

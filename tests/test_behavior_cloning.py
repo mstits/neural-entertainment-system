@@ -71,9 +71,11 @@ def test_pretrain_reduces_loss_on_separable_data() -> None:
         lr=1e-3,
         device=torch.device("cpu"),
     )
-    # Random classifier over 3 classes: -log(1/3) ≈ 1.0986. We should be
-    # meaningfully below that after just 3 epochs on this trivial task.
-    assert final_loss < 1.0
+    # Random classifier over 3 classes: -log(1/3) ≈ 1.0986. We want
+    # meaningfully below that — the prior `< 1.0` bar passed at 0.99,
+    # which is barely-better-than-random and would let a regression
+    # through. Halved the threshold for a sharper signal.
+    assert final_loss < 0.5
 
 
 def test_seed_population_from_weights_copies_elite() -> None:

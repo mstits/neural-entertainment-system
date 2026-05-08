@@ -198,6 +198,12 @@ class CurriculumManager:
         if self.stage_success_rate() < self.regression_threshold:
             self.current_stage_idx -= 1
             self.episodes_in_stage = 0
+            # Same invariant as maybe_advance: clear within-stage history
+            # so the regressed stage's success rate is computed only from
+            # episodes recorded after re-entering it. Without this, a
+            # second-attempt regress threshold check would still see the
+            # FIRST attempt's history mixed in.
+            self._init_history_for_stage()
             return True
 
         return False

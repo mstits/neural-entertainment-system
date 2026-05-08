@@ -654,8 +654,16 @@ class DreamerTrainer:
         entropies = torch.stack(entropy_seq, dim=1)
 
         # Predict reward + continue along the imagined trajectory.
+        # The reward head was trained on symlog(reward) targets (see
+        # _train_step at line ~586), so its output lives in compressed
+        # space. Lambda-return computation expects rewards in the
+        # SAME scale as the critic value head, which targets raw
+        # discounted returns; without symexp the critic learns a
+        # compressed-scale value that under-weights every imagined
+        # transition.
         flat_lat = latents.view(-1, latents.size(-1))
-        rewards_pred = self.wm.reward_head(flat_lat).view(B * L, H)
+        rewards_symlog = self.wm.reward_head(flat_lat).view(B * L, H)
+        rewards_pred = torch.sign(rewards_symlog) * torch.expm1(rewards_symlog.abs())
         continue_logits = self.wm.continue_head(flat_lat).view(B * L, H)
         continues_pred = torch.sigmoid(continue_logits)
 

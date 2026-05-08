@@ -68,6 +68,11 @@ def main() -> int:
 
     target = args.target_x
     last_logged_x = -1
+    # Pre-init in case demo_bytes is empty: the for-else trailer below
+    # references both `frame_idx` and `x`, which would NameError if the
+    # loop never executed.
+    frame_idx = -1
+    x = world_x(env)
     for frame_idx, raw in enumerate(demo_bytes):
         if frame_idx >= args.max_frames:
             break

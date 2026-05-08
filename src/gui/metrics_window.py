@@ -18,26 +18,10 @@ from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
 
 # Deterministic colors per reward signal so plots stay consistent across
 # refreshes. Color palette chosen for dark backgrounds.
-_SIGNAL_COLORS = {
-    "exploration":       "#4caf50",  # green — primary signal
-    "dungeon_enter":     "#00bcd4",  # cyan
-    "new_item":          "#ff9800",  # orange
-    "item_tier_upgrade": "#ffc107",  # amber
-    "magic_key":         "#e91e63",  # pink
-    "map":               "#9c27b0",  # purple
-    "compass":           "#673ab7",  # deep purple
-    "heart_container":   "#f44336",  # red
-    "heart_recovery":    "#ff5722",  # deep orange
-    "triforce":          "#ffd700",  # gold
-    "rupee":             "#cddc39",  # lime
-    "enemy_kill":        "#2196f3",  # blue
-    "item_used":         "#03a9f4",  # light blue
-    "item_cycle":        "#9e9e9e",  # gray
-    "motion":            "#607d8b",  # blue gray
-    "time_penalty":      "#555555",  # dark gray
-    "damage":            "#bf360c",  # dark red
-    "death":             "#3f0000",  # darker red
-}
+# Re-use the dashboard's color resolver so this window matches the
+# palette in the main dashboard. Pulling the function avoids drifting
+# two parallel dicts.
+from src.gui.training_dashboard import _color_for_signal as _color_for_signal
 
 
 class MetricsWindow(QMainWindow):
@@ -163,7 +147,7 @@ class MetricsWindow(QMainWindow):
             reverse=True,
         )
         for signal, values in total_abs:
-            color = _SIGNAL_COLORS.get(signal, "#aaaaaa")
+            color = _color_for_signal(signal)
             curve = self._signal_curves.get(signal)
             # Use the per-signal gen list (only the gens this signal
             # actually fired) so the x and y arrays always align —

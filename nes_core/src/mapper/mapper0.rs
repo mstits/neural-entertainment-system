@@ -37,7 +37,11 @@ impl Mapper for Mapper0 {
         if address < 0x6000 {
             0
         } else if address < 0x8000 {
-            self.cartridge.prg_ram[(address & 0x1FFF) as usize]
+            if self.cartridge.prg_ram.is_empty() {
+                return 0;
+            }
+            let idx = (address & 0x1FFF) as usize % self.cartridge.prg_ram.len();
+            self.cartridge.prg_ram[idx]
         } else if self.cartridge.prg_rom.len() > PRG_ROM_BANK_SIZE as usize {
             self.cartridge.prg_rom[(address & 0x7FFF) as usize]
         } else {
@@ -84,7 +88,11 @@ impl Mapper for Mapper0 {
     }
 
     fn chr_read_byte(&mut self, address: u16) -> u8 {
-        self.cartridge.chr[address as usize]
+        let chr = &self.cartridge.chr;
+        if chr.is_empty() {
+            return 0;
+        }
+        chr[(address as usize) & (chr.len() - 1)]
     }
 
     fn chr_static_ptr(&self) -> Option<*const u8> {
@@ -98,7 +106,12 @@ impl Mapper for Mapper0 {
     }
 
     fn chr_write_byte(&mut self, address: u16, value: u8) {
-        self.cartridge.chr[address as usize] = value;
+        let chr = &mut self.cartridge.chr;
+        if chr.is_empty() {
+            return;
+        }
+        let mask = chr.len() - 1;
+        chr[(address as usize) & mask] = value;
     }
 
     fn mirroring(&self) -> Mirroring {

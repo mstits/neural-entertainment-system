@@ -49,8 +49,19 @@ def test_nan_logits_recover_with_warning(caplog):
                           dtype=torch.float32)
     with caplog.at_level("WARNING"):
         sampled, lp, _ = _safe_sample_from_logits(logits)
+    # NaN logits get nan_to_num'd to 0.0 before sampling, so the
+    # uniform-fallback branch (which would emit a warning) does NOT
+    # fire — the function recovers transparently. Sampled action must
+    # still be valid and log-prob finite.
     assert int(sampled.item()) in {0, 1, 2}
     assert math.isfinite(lp.item())
+    # Verify the recovered distribution is approximately uniform —
+    # if the function had ignored the NaN sanitisation and produced
+    # garbage, log-prob would be very negative or non-finite.
+    expected_uniform_lp = float(torch.log(torch.tensor(1.0 / 3.0)))
+    assert abs(lp.item() - expected_uniform_lp) < 0.5, (
+        f"NaN recovery should yield ~uniform distribution; lp={lp.item()}"
+    )
 
 
 def test_posinf_logits_do_not_crash():

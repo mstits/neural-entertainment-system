@@ -774,6 +774,36 @@ pub struct MarioReward {
     /// Both 0.0 = backward compat (single death penalty as before).
     pit_fall_extra: f64,
     enemy_death_extra: f64,
+    /// Periodic "still alive" bonus. Fires +`survival_bonus` once
+    /// every `survival_block_steps` compute() calls. Both 0 disables
+    /// (back-compat default). Useful for breaking plateaus where the
+    /// agent needs gradient on "stay alive long enough to attempt the
+    /// hard maneuver" — episodes that die early earn nothing, episodes
+    /// that survive past the first 150 steps get +300, etc. Stacks
+    /// across blocks: surviving 600 steps earns 4× the bonus.
+    survival_bonus: f64,
+    survival_block_steps: u32,
+    /// Counts compute() calls within the current episode. Reset in
+    /// reset() (between episodes) but NOT on level transition — the
+    /// "still alive" signal is genuinely about episode duration, and
+    /// resetting would make level transitions briefly erase the
+    /// progress credit.
+    step_count: u32,
+    /// Bonus fired ONCE per successful jump landing where Mario covered
+    /// `jump_clear_min_dx` X-units of forward progress while airborne.
+    /// Approximates "cleared a pit / hopped a Goomba" without needing
+    /// per-tile pit detection: any productive jump-and-land pattern
+    /// fires it. Designed as positive-reinforcement counterpart to
+    /// pit_fall_extra (which the same scheme PUNISHES). Set both:
+    /// pit_fall_extra=0 + jump_clear_bonus>0 = pure carrot.
+    jump_clear_bonus: f64,
+    jump_clear_min_dx: u32,
+    /// Was Mario on the ground at the previous compute() call. Used to
+    /// detect ground→air and air→ground transitions for the bonus.
+    prev_on_ground: bool,
+    /// X-position at the moment Mario left the ground. Difference vs
+    /// current x at landing-time = horizontal distance covered in air.
+    air_start_x: u32,
     prev_x: u32,
     /// Furthest X position reached this episode. Used to gate the
     /// `forward` reward on NEW progress only — backtracking earns 0,
@@ -827,18 +857,42 @@ impl MarioReward {
         (720, 100.0),   // past first pit
         (1100, 150.0),  // past first horizontal pipe
         (1640, 250.0),  // past large pit
+        // 2026-05-07 — bridge the 1640→2100 dead zone. The
+        // population pinned at depth ≈1956 for 50+ gens because no
+        // dense signal exists between the large-pit reward and the
+        // obstacle-complex reward. A genome that crosses 1640 has
+        // 460 units of "blind walking" before the next reinforcement,
+        // and any death in that zone (the pipe-cluster + Goombas at
+        // ~1700-1900) wipes the gradient. Two thin intermediates fill
+        // the gap.
+        (1800, 175.0),  // past pipe-cluster + Goomba lane
+        (1980, 300.0),  // approach to obstacle complex
         (2100, 400.0),  // past obstacle complex
         (2700, 600.0),  // at staircase base
-        (2900, 1000.0), // top of staircase, near flag
+        // 2026-05-08 — boost top-of-staircase from 1000 -> 2000.
+        // Run gen 117-465 plateau'd at depth 3161 with only ~3
+        // clears in last 50 gens. Doubling this checkpoint makes
+        // "reach the staircase top" a much stronger attractor and
+        // tightens the gradient on the multi-jump motor pattern
+        // separating staircase-base (2700) from flagpole (3160).
+        (2900, 2000.0),  // top of staircase, near flag
+        // 2026-05-08 — new beyond-flag checkpoint. Mario at x>=3000
+        // has cleared the flagpole (flag is at x≈2960; agent slides
+        // off pole onto castle area at x=3050+). Firing +1500 here
+        // gives the policy a final terminal landmark that's distinct
+        // from the +2000 staircase-top reward, so the policy gets
+        // gradient on the last 200 X-units (the actual flag-touch
+        // motor pattern) rather than only on reaching-the-staircase.
+        (3000, 1500.0),
     ];
     // Note: a previous revision (commit 770d258) added 5 dense
-    // intermediate checkpoints at 1850/2000/2200/2400/2600 to give
-    // PPO gradient on the staircase region. After 117 gens the agent
-    // never advanced past depth=1275 — it never reached the dense
-    // zone, but the original close-by checkpoints (720, 1100) may
-    // have been acting as comfortable local-max attractors with the
-    // weakened forward_progress=2.3 signal. Reverted to the original
-    // 7-checkpoint table that the flag-reaching run was using.
+    // intermediate checkpoints at 1850/2000/2200/2400/2600 — the
+    // population stalled at depth=1275 long before the dense zone.
+    // The current 2-checkpoint addition is narrower: only the
+    // bridge between known-reachable depth (1956) and the next
+    // existing milestone (2100). If the agent never reaches 1800
+    // anyway, the new checkpoints don't change anything; if it
+    // does, they should pull it past the obstacle complex.
 
     /// 1-2 is the underground bonus-room level. Obstacles: jumping
     /// pipes (~x=400), green pipe gauntlet (~x=1300), final descent
@@ -879,6 +933,10 @@ impl MarioReward {
         air_bonus_weight: f64,
         pit_fall_extra: f64,
         enemy_death_extra: f64,
+        survival_bonus: f64,
+        survival_block_steps: u32,
+        jump_clear_bonus: f64,
+        jump_clear_min_dx: u32,
     ) -> Self {
         Self {
             forward_weight,
@@ -890,6 +948,15 @@ impl MarioReward {
             air_bonus_weight,
             pit_fall_extra,
             enemy_death_extra,
+            survival_bonus,
+            // Guard against zero (would div-by-zero on the modulo);
+            // 1 means "fire every step" — degenerate but valid.
+            survival_block_steps: survival_block_steps.max(1),
+            step_count: 0,
+            jump_clear_bonus,
+            jump_clear_min_dx,
+            prev_on_ground: true,
+            air_start_x: 0,
             prev_x: 0,
             max_x_visited: 0,
             next_checkpoint: 0,
@@ -903,6 +970,9 @@ impl MarioReward {
         }
     }
     pub fn reset(&mut self) {
+        self.step_count = 0;
+        self.prev_on_ground = true;
+        self.air_start_x = 0;
         self.prev_x = 0;
         self.max_x_visited = 0;
         self.next_checkpoint = 0;
@@ -975,12 +1045,43 @@ impl MarioReward {
         // air. RAM[$0057] is signed Mario X velocity. The gate ensures
         // we only pay for productive jumps (running through pipes,
         // clearing pits) — not stationary jumping in place.
+        let on_ground = ram[Self::RAM_FLOAT_STATE] == 0;
         if self.air_bonus_weight != 0.0 {
-            let on_ground = ram[Self::RAM_FLOAT_STATE] == 0;
             let vel_x = ram[0x0057] as i8 as i32;
             if !on_ground && vel_x > 0 {
                 acc.add("air", self.air_bonus_weight);
             }
+        }
+
+        // Jump-clear bonus: fires once per successful airborne arc that
+        // covered at least `jump_clear_min_dx` of forward progress.
+        // Detect transitions: ground → air (record air_start_x), and
+        // air → ground (compare current x to air_start_x). Approximates
+        // "cleared an obstacle" without needing tile-level pit detection.
+        if self.jump_clear_bonus != 0.0 {
+            if self.prev_on_ground && !on_ground {
+                // Just left the ground — record where the jump started.
+                self.air_start_x = x;
+            } else if !self.prev_on_ground && on_ground {
+                // Just landed — credit if we covered enough horizontal
+                // distance during the air period. saturating_sub guards
+                // against backward-jump landings (rare but possible if
+                // Mario hits a wall mid-air and lands further left).
+                let dx = x.saturating_sub(self.air_start_x);
+                if dx >= self.jump_clear_min_dx {
+                    acc.add("jump_clear", self.jump_clear_bonus);
+                }
+            }
+        }
+        self.prev_on_ground = on_ground;
+
+        // Periodic survival bonus. Increment first, then check the
+        // boundary so step 150 (not step 0) gets the first credit.
+        self.step_count = self.step_count.wrapping_add(1);
+        if self.survival_bonus != 0.0
+            && self.step_count.is_multiple_of(self.survival_block_steps)
+        {
+            acc.add("survival", self.survival_bonus);
         }
 
         // Dense progress checkpoints. Each crossing fires once per
@@ -1692,6 +1793,13 @@ pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward
             // an enemy, teaching PPO to commit to jumps earlier.
             w(weights, "pit_fall_extra", 0.0),
             w(weights, "enemy_death_extra", 0.0),
+            // Periodic survival bonus — defaults disabled.
+            w(weights, "survival_bonus", 0.0),
+            w(weights, "survival_block_steps", 150.0) as u32,
+            // Jump-clear bonus — defaults disabled. Fires when Mario
+            // lands at least min_dx X-units past the takeoff point.
+            w(weights, "jump_clear_bonus", 0.0),
+            w(weights, "jump_clear_min_dx", 16.0) as u32,
         )));
     }
     if name.contains("zelda") {

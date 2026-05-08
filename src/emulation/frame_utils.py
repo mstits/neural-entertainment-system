@@ -84,7 +84,12 @@ def stack_frames(frames, stack_size: int = 4, target_size: int = 84) -> np.ndarr
     if not lst:
         return np.zeros((stack_size, target_size, target_size), dtype=np.uint8)
     if len(lst) < stack_size:
-        pad = [lst[0]] * (stack_size - len(lst))
+        # Each pad slot must be its own array — `[lst[0]] * N` would
+        # create N references to the same buffer, so any later in-place
+        # mutation of one slot would propagate to all of them. np.stack
+        # itself copies, but the intermediate list is also handed back
+        # for inspection in some call sites.
+        pad = [lst[0].copy() for _ in range(stack_size - len(lst))]
         lst = pad + lst
     else:
         lst = lst[-stack_size:]

@@ -102,7 +102,28 @@ class ReplayWindow(QMainWindow):
             frame_skip=4,
             start_state_path=start_state_path,
         )
+        # Track init success so an exception below releases the env we
+        # just opened. Without this guard, a checkpoint with a bad
+        # action-space arch (or any other init failure) leaks the
+        # emulator handle until Python GC eventually runs.
+        try:
+            self._init_replay_state(
+                profile_path, checkpoint_path, rom_path, start_state_path,
+            )
+        except Exception:
+            try:
+                self.env.close()
+            except Exception:
+                pass
+            raise
 
+    def _init_replay_state(
+        self,
+        profile_path: str,
+        checkpoint_path: str,
+        rom_path: str,
+        start_state_path: Optional[str],
+    ) -> None:
         # Load checkpoint + find the fittest genome.
         # Prefer weights_only=True (safe — pickle restricted to tensors +
         # primitive containers) so a malicious .pt cannot execute code on
@@ -354,7 +375,10 @@ class ReplayWindow(QMainWindow):
             if not path:
                 self.record_btn.setChecked(False)
                 return
-            self._recorder = VideoWriter(path, fps=30)
+            # The QTimer drives the emulator at _TARGET_FPS; matching the
+            # writer's fps avoids 2× playback speed (writer claimed 30 while
+            # frames arrived at 60).
+            self._recorder = VideoWriter(path, fps=_TARGET_FPS)
             self.record_btn.setText("Stop Recording")
             self.status_label.setText(f"Recording to {Path(path).name}")
         else:

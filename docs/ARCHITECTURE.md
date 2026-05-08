@@ -319,6 +319,45 @@ The two trainer classes (PPO+GA and Dreamer) coexist; profiles pick one via
 pixels, PPO+GA can run on tiles, and the GUI dropdown can override either at
 launch time.
 
+### Knowledge inheritance — one PPO+GA generation
+
+```mermaid
+flowchart TD
+    GenStart[Generation N start] --> Eval[Evaluate every genome × episodes_per_genome]
+    Eval --> Score["Per-genome:<br/>fitness = mean(episode rewards)<br/>best_traj = trajectory of best episode"]
+    Score --> Snapshot["Snapshot pre-PPO elite<br/>(best.fitness, best.state_dict.clone())"]
+    Score --> PPO["PPO update on top-K elites<br/>using their best_traj"]
+    PPO --> WriteBack["Write updated weights →<br/>best.state_dict (in-place)"]
+    WriteBack --> Diversity{preserve_elite_diversity?}
+    Diversity -- false --> Clone["Clone best.state_dict +<br/>best.fitness into top-N elite slots"]
+    Diversity -- true --> Keep[Keep other elites' diverse weights]
+    Clone --> Inject
+    Keep --> Inject
+    Inject["Inject pre-PPO snapshot into<br/>weakest non-best slot<br/>(survives if PPO regressed best)"] --> Evolve["ga.evolve()"]
+    Evolve --> Carry["Carry top-K elites unchanged"]
+    Evolve --> Children["Fill rest via tournament select +<br/>crossover (with exclude=) +<br/>mutation (adaptive scale)"]
+    Carry --> NextGen[Generation N+1]
+    Children --> NextGen
+    NextGen --> StaleCheck{stale_gens<br/>before_restart<br/>exceeded?}
+    StaleCheck -- yes --> Restart["Replace bottom restart_fraction<br/>with fresh-init genomes"]
+    StaleCheck -- no --> GenStart
+    Restart --> GenStart
+
+    BCBuf["BC replay buffer<br/>(persisted to bc_success_cache.npz)"] -. successful trajs .-> PPO
+    Eval -. on success .-> BCBuf
+```
+
+The two key channels by which knowledge flows generation-to-generation:
+1. **GA elitism** — top-K genomes carry forward unchanged (post-PPO version).
+2. **PPO gradient** — best.state_dict gets a gradient step using the best
+   episode trajectory; new weights propagate to other elite slots iff
+   `preserve_elite_diversity=False`.
+
+The pre-PPO snapshot is the safety net: if PPO regresses `best`, the
+snapshot's fitness on next-gen re-evaluation should rank it back into
+the elite cut, restoring the pre-update policy. If PPO improved `best`,
+the snapshot drops out naturally on the next sort.
+
 ### Policy networks
 - **`src/models/policy_network.py`** — Nature-DQN CNN
   (Conv(32,8×8,/4) → Conv(64,4×4,/2) → Conv(64,3×3,/1) → FC(512) → actor + critic).
@@ -327,9 +366,16 @@ launch time.
   3-stage IMPALA ResNet (~3.4M params, better representation per param).
   Orthogonal init with PPO-standard gains, optional `LayerNorm` on the trunk.
 - **`src/models/tile_policy.py`** — small actor-critic MLP
-  (Linear(175,64) → SiLU → LayerNorm → Linear(64,32) → SiLU → actor + critic).
+  (Linear(175,64) → LayerNorm → SiLU → Linear(64,32) → LayerNorm → SiLU →
+  actor + critic). Pre-activation norm bounds the linear output before
+  the nonlinearity to prevent variance blowup in a 14k-param net.
   ~14k params. Used in tile mode (currently SMB only). Same `forward_ac()`
   surface as `PolicyNetwork` so the trainer dispatches transparently.
+  Init gains span 100×: trunk = √2 (orthogonal, ReLU/SiLU-tuned), actor
+  head = 0.01 (near-uniform initial policy), critic head = 1.0. This
+  gain heterogeneity is the reason `adaptive_mutation_scale` (see GA
+  section) matters: a fixed mutation noise hits the actor 60×+ harder
+  than the trunk relative to weight magnitude.
 - **`src/models/world_model.py`** — DreamerV3 stack: encoder, RSSM
   (deterministic GRU + categorical 32×32 stochastic latent), decoder, reward
   head, continue head. ~9M params total. KL with per-sample free-nats
@@ -379,6 +425,46 @@ viewers can follow specific lineages. Stale-best restart fires when the
 all-time best hasn't improved in `stale_gens_before_restart` gens (set to
 0 to disable, useful when the elite needs uninterrupted PPO time).
 
+**Adaptive mutation scaling** (`adaptive_mutation_scale: true` in
+`ga_params`) scales noise by each tensor's running std so a layer
+initialised with gain 0.01 (actor logits) and one with gain √2 (trunk)
+both receive mutation pressure proportional to their natural weight
+magnitude. With fixed-noise mutation, a single `mutation_std` either
+scrambles the small-gain head or under-perturbs the trunk; the policy
+network's PPO-paper init gains span ~100×, making one knob unable to
+fit both. Adaptive mode interprets `mutation_std` as a *fraction of
+each tensor's own std*, layer-uniform.
+
+**Crossover with cloned parents.** When `preserve_elite_diversity=False`
+(trainer-side) clones `best.state_dict` into multiple population slots,
+tournament selection can pick the same elite twice. Per-element coin
+flips on identical tensors yield no variation, collapsing crossover to
+"child = parent_a unchanged" and leaving mutation as the only diversity
+source. `_tournament_select(exclude=parent_a)` deduplicates the second
+pick to prevent this.
+
+```mermaid
+flowchart TD
+    Start[Generation N] --> Eval[Evaluate population]
+    Eval --> Sort[Sort by fitness]
+    Sort --> Elite["Carry top-K elites unchanged<br/>(elite_fraction)"]
+    Sort --> NonElite[Bottom (pop_size - K)]
+    NonElite --> TS1["parent_a = tournament_select()"]
+    TS1 --> TS2["parent_b = tournament_select(exclude=parent_a)"]
+    TS2 --> CO[Crossover: per-param coin flip]
+    CO --> Mut{adaptive_mutation_scale?}
+    Mut -- yes --> AdMut[noise = randn × mutation_std × tensor.std]
+    Mut -- no --> FixMut[noise = randn × mutation_std]
+    AdMut --> Child[Child genome]
+    FixMut --> Child
+    Elite --> NextGen[Generation N+1]
+    Child --> NextGen
+    NextGen --> Stale{stale_gens<br/>exceeded?}
+    Stale -- yes --> Restart[Replace bottom restart_fraction<br/>with fresh-init genomes]
+    Stale -- no --> Eval
+    Restart --> Eval
+```
+
 ### Curriculum (`src/training/curriculum.py`)
 Stage progression driven by success rate. Stage transitions can swap the
 start state so stage 2 drops agents into Dungeon 1, stage 3 into Dungeon 2,
@@ -399,11 +485,29 @@ invalidates the cache.
 Thin Python dispatcher (~40 LOC) that calls `nes_core.build_reward_function`
 with the game profile. All six games implemented in Rust (`rewards.rs`).
 Byte-exact parity with the old Python implementations was verified
-pre-deletion. Mario's reward function ships with **dense progress
-checkpoints** — RAM-readable bonuses fire once each at hand-picked
-x-positions through 1-1 (past first pipe, past first pit, ..., near flag).
-Enable per-profile via `reward_weights.checkpoint_scale: 1.0`; set to 0 to
-disable.
+pre-deletion. Mario's reward function ships with several positive-
+reinforcement signals stacked on top of basic forward progress:
+
+| Signal | Mechanism | Default | Purpose |
+|---|---|---|---|
+| `forward` | Δmax_x_visited × forward_weight | always on | Backtrack-free progress reward |
+| `checkpoint` | Per-x-position lookup; once per episode each | per-profile | Dense gradient at known obstacles |
+| `air` | Per-step bonus when airborne AND vel_x>0 | per-profile | Direct gradient on jump-while-running |
+| `jump_clear` | Fires once per airborne→ground transition with ≥`min_dx` X-units forward in air | per-profile | Positive reward for productive jumps (pits, Goombas) |
+| `survival` | Fires +bonus every `block_steps` compute() calls | per-profile | Steady drip for "stay alive long enough to attempt the maneuver" |
+| `score` | Δgame_score × score_weight | always on | Tied to in-game score progression |
+| `completion` | One-shot on flag-touch | always on | Sparse but huge reward for level clear |
+| `death` | One-shot on player-state DYING/DEAD | always on | Optional negative — set to 0 for carrot-only |
+| `pit_fall_extra` | Adds to `death` when Mario was airborne with Y>200 | per-profile | Death-cause differentiation |
+| `time_penalty` | Constant per-step | per-profile | Implicit timeout pressure |
+
+Mario's `LEVEL_1_1` checkpoints are calibrated to bridge known plateau
+zones — e.g. the 1640→2100 dead zone (added 1800/+175, 1980/+300) and
+the staircase→flag zone (boosted 2900 from 1000→2000, added 3000/+1500).
+Each addition was driven by a specific observed plateau in training.
+
+Enable per-profile via `reward_weights.checkpoint_scale: 1.0`; set to 0
+to disable dense checkpoints.
 
 ### Training dashboard (`src/gui/training_dashboard.py`)
 Single-pane observer window. Reads `checkpoints/metrics.jsonl` directly

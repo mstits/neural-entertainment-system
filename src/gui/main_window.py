@@ -50,7 +50,17 @@ def _load_recents() -> dict:
     try:
         with open(RECENTS_PATH, "r") as f:
             return json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        # Surface corruption — a partially-written recents file from a
+        # crash silently dropping the user's last-session config is
+        # confusing. Log so they at least know why the form is empty.
+        import logging
+        logging.getLogger(__name__).warning(
+            "Recents file %s unreadable (%s); starting with empty defaults.",
+            RECENTS_PATH, exc,
+        )
         return {}
 
 

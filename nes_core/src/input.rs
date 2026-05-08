@@ -91,6 +91,13 @@ impl StrobeState {
 pub struct Input {
     pub game_pad_1: GamePad,
     pub game_pad_2: GamePad,
+    /// Last value written to $4016 bit 0. Real hardware latches the
+    /// shift register on the high→low strobe transition. Resetting on
+    /// every write would re-latch button A on any 0-write that follows
+    /// another 0-write. NOT serialized — strobe is transient (resets
+    /// to 0 on apply_state), and adding it to the State struct would
+    /// break bincode compatibility with already-saved state.bin files.
+    last_strobe: u8,
 }
 
 #[derive(Copy, Clone, Deserialize, Serialize)]
@@ -114,6 +121,13 @@ impl Input {
     pub fn apply_state(&mut self, state: &State) {
         self.game_pad_1 = state.game_pad_1;
         self.game_pad_2 = state.game_pad_2;
+        // Reset to "no recent strobe" on state load so the next $4016
+        // write triggers the latch path normally. If the loaded state
+        // happened to be mid-strobe, this loses 1-2 cycles of state,
+        // which is an acceptable rounding given the alternative is
+        // breaking every saved state.bin from before this field
+        // existed.
+        self.last_strobe = 0;
     }
 
     fn reset_strobe_states(&mut self) {
@@ -133,9 +147,20 @@ impl Memory for Input {
         }
     }
 
-    fn write_byte(&mut self, address: u16, _value: u8) {
+    fn write_byte(&mut self, address: u16, value: u8) {
         if address == 0x4016 {
-            self.reset_strobe_states();
+            let new_strobe = value & 1;
+            // Latch the shift register at the strobe-falling edge
+            // (1→0). While strobe is high, real hardware reloads
+            // continuously — we model this by also resetting on
+            // strobe=1 so the immediate next read returns A. The
+            // bug fixed here is the spurious reset on a 0-strobe
+            // write that would have re-latched A even though the
+            // shift register was supposed to be advancing.
+            if new_strobe == 1 || self.last_strobe == 1 {
+                self.reset_strobe_states();
+            }
+            self.last_strobe = new_strobe;
         }
     }
 }

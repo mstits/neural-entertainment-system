@@ -63,13 +63,26 @@ impl Mapper for Mapper2 {
     fn prg_peek_byte(&self, address: u16) -> u8 {
         if address < 0x6000 {
             0
+        } else if address < 0x8000 {
+            // UxROM does not officially have SRAM, but a handful of carts
+            // (and homebrew) use $6000-$7FFF as work RAM. Pass through if
+            // the cartridge declared PRG-RAM, otherwise return open bus.
+            if self.cartridge.prg_ram.is_empty() {
+                0
+            } else {
+                let idx = (address & 0x1FFF) as usize % self.cartridge.prg_ram.len();
+                self.cartridge.prg_ram[idx]
+            }
         } else {
             self.read_prg_rom(address)
         }
     }
 
     fn prg_write_byte(&mut self, address: u16, value: u8) {
-        if address >= 0x8000 {
+        if (0x6000..0x8000).contains(&address) && !self.cartridge.prg_ram.is_empty() {
+            let idx = (address & 0x1FFF) as usize % self.cartridge.prg_ram.len();
+            self.cartridge.prg_ram[idx] = value;
+        } else if address >= 0x8000 {
             self.switchable_bank =
                 ((value as usize) % (self.cartridge.prg_rom_num_banks) as usize) as u8;
             self.rebuild_asm_window();

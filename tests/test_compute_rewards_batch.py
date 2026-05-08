@@ -79,13 +79,16 @@ def test_batched_updates_per_genome_state() -> None:
 
 
 def test_batched_validates_length_mismatch() -> None:
+    import pytest
+
     fns = [nes_core.build_reward_function(_profile())]
     fns[0].reset()
-    try:
+    # Use pytest.raises so an unrelated ValueError (e.g., from a deeper
+    # validation path) doesn't quietly satisfy the test. Match on the
+    # message so we know we caught THE length-mismatch error, not some
+    # other pre-condition failure.
+    with pytest.raises(ValueError, match="(?i)length|count|mismatch|size"):
         nes_core.compute_rewards_batch(fns, [b"\x00" * 2048] * 2, [0])
-    except ValueError:
-        return
-    raise AssertionError("expected ValueError on length mismatch")
 
 
 def test_batched_handles_empty_input() -> None:

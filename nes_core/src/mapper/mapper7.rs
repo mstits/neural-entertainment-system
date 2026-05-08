@@ -46,15 +46,25 @@ impl Mapper7 {
 
 impl Mapper for Mapper7 {
     fn prg_peek_byte(&self, address: u16) -> u8 {
-        if address < 0x8000 {
+        if address < 0x6000 {
             0
+        } else if address < 0x8000 {
+            if self.cartridge.prg_ram.is_empty() {
+                0
+            } else {
+                let idx = (address & 0x1FFF) as usize % self.cartridge.prg_ram.len();
+                self.cartridge.prg_ram[idx]
+            }
         } else {
             self.read_prg_rom(address)
         }
     }
 
     fn prg_write_byte(&mut self, address: u16, value: u8) {
-        if address >= 0x8000 {
+        if (0x6000..0x8000).contains(&address) && !self.cartridge.prg_ram.is_empty() {
+            let idx = (address & 0x1FFF) as usize % self.cartridge.prg_ram.len();
+            self.cartridge.prg_ram[idx] = value;
+        } else if address >= 0x8000 {
             self.prg_rom_bank = value & 0x07;
             self.cartridge.mirroring = if value & 0x10 == 0 {
                 Mirroring::OneScreenLower

@@ -60,6 +60,9 @@ impl Mapper for Mapper3 {
     }
 
     fn chr_read_byte(&mut self, address: u16) -> u8 {
+        if self.cartridge.chr.is_empty() {
+            return 0;
+        }
         let rom_addr = self.chr_address(self.chr_bank, address);
         self.cartridge.chr[rom_addr]
     }
