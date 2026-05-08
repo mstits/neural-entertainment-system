@@ -798,18 +798,22 @@ class Trainer:
         """
         sticky = self.sticky_action_prob
         roll_sticky = sticky > 0 and step > 0
-        # Single shared RNG draw per step — every genome in the batch
-        # faces the SAME stickiness decision this step. Without this,
-        # `np.random.random(len(active))` gave each genome a private
-        # coin flip, so genome A might be free-to-act while genome B
-        # was forced to stick. Across N genomes evaluated against the
-        # same fitness signal, the one that drew fewer sticky moments
-        # had an unfair sampling advantage — GA selection then ranks
-        # genomes by stickiness luck instead of policy quality. Fix
-        # the source: one decision per step, applied uniformly.
-        sticky_this_step = roll_sticky and (np.random.random() < sticky)
+        # Per-genome RNG draw. Originally argued this was "unfair" (genome
+        # A free while genome B forced to stick), and the fix landed in
+        # cb509b0. Reverted because the run regressed: depth pinned at
+        # 1887 for 32 gens with the synced version, vs prior runs
+        # reaching 2596+ by gen 5. Theory: in GA selection,
+        # action-stickiness variance ACROSS genomes is exploration —
+        # outlier-lucky genomes occasionally breakthrough walls and
+        # become elites. Synchronizing it removed that source of
+        # behavioral diversity and the population converged on safe
+        # strategies. The "fairness" framing was correct in isolation
+        # but missed the GA dynamics that actually use the variance.
+        rng_vals = (
+            np.random.random(len(active)) if roll_sticky else None
+        )
         for batch_idx, genome_idx in enumerate(active):
-            if sticky_this_step:
+            if roll_sticky and rng_vals[batch_idx] < sticky:
                 # Override with last-executed action; record its
                 # log-prob under the current policy distribution so
                 # PPO's importance ratio stays consistent with what
