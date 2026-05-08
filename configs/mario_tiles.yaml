@@ -108,24 +108,16 @@ reward_weights:
   # ahead." Combined with sticky_action_prob=0.5 (also bumped),
   # full-arc jumps complete ~13% of the time vs ~4% before.
   air_bonus:        1.5
-  # Death-cause differentiation. Currently every death (pit, enemy,
-  # crush, etc.) collapses to the same -15 penalty. PPO learns
-  # "trajectory was bad" without knowing WHY. Adding cause-specific
-  # extra penalties gives sharper gradient signal:
-  #
-  # pit_fall_extra: -15 → falling in a pit costs -30 total. Teaches
-  #   the policy to commit to jumps EARLIER on approach to gaps,
-  #   the dominant failure mode at depth 2009 (pre-staircase).
-  # enemy_death_extra: -10 → enemy contact while small costs -25
-  #   total. Teaches "stomp on top, don't run into."
-  #
-  # The detection (in nes_core::MarioReward::compute) reads RAM at
-  # the death frame: pit fall = airborne + Y>200; enemy = active
-  # enemy slot within 16px of Mario in both X and Y. Both conditions
-  # can fire if Mario fell on top of an enemy at the screen bottom
-  # (rare); penalties stack. Either 0.0 disables that channel.
+  # Death-cause differentiation. pit_fall_extra stays — pits are
+  # the dominant failure mode at the staircase plateau and the
+  # extra signal is independent (no other channel rewards
+  # "successfully avoided falling"). enemy_death_extra REMOVED —
+  # enemy interactions are already differentially scored: killing
+  # a Goomba bumps RAM score (+score_delta * 100), dying to one
+  # triggers death_penalty (-15). The extra was double-counting
+  # the negative side without giving PPO any new information
+  # beyond what score+death already provided.
   pit_fall_extra:    -15.0
-  enemy_death_extra: -10.0
   score_delta:      0.005
   # Death and time penalties were 0.0 (no-op equilibrium); previous
   # rev set them to -50 and -0.01. That fix introduced a NEW failure:
@@ -160,7 +152,25 @@ reward_weights:
   # large enough that the GA reliably selects clearing genomes and
   # PPO sees a strong gradient on the final approach.
   completion_bonus: 500.0
-  time_penalty:     -0.05
+  # time_penalty REMOVED (was -0.05). The reasoning: "running out
+  # of time" was already implicitly penalized — episodes that
+  # don't reach the flag forfeit the +500 completion bonus AND
+  # any unreached checkpoints, which is far larger than -60 of
+  # accumulated time penalty over 1200 steps. The constant per-
+  # step cost was just adding noise to the gradient, competing
+  # with forward_progress and pulling the value function toward
+  # negative values everywhere.
+  #
+  # KNOWN RISK: removing time_penalty resurrects the no-op
+  # equilibrium that bit us in the first session — standing
+  # still goes from -60 net to 0 net, while walking-and-dying-
+  # at-x=10 goes from +14.5 to +15. Differential is now 15
+  # instead of 75. We're betting that pit_fall_extra + checkpoint
+  # bonuses + forward_progress * 3.0 together produce a strong
+  # enough "move right" gradient that no-op doesn't reassert.
+  # If avg_fitness collapses below 500 in the next 50 gens,
+  # this assumption is wrong and we restore time_penalty.
+  time_penalty:     0.0
   # Dense progress checkpoints (per-x-position bonuses defined in
   # nes_core/src/rewards.rs::MarioReward::CHECKPOINTS). Multiplier of
   # 1.0 fires the calibrated values: 50/100/150/250/400/600/1000 at
