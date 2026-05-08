@@ -3415,11 +3415,18 @@ def load_game_profile(path: str) -> dict:
 
 
 def find_latest_checkpoint(checkpoint_dir: str | Path) -> Optional[Path]:
-    """Return the newest gen_*.pt in `checkpoint_dir`, or None if empty."""
+    """Return the newest gen_*.pt in `checkpoint_dir`, or None if empty.
+
+    Sorts by mtime so a manually-copied or misnamed file (e.g.
+    `gen_archive.pt` from a different run) doesn't lexicographically
+    sort past the actual newest checkpoint and get picked as the
+    resume target. The cleanup code in `_save_checkpoint` already
+    uses mtime; this function now matches.
+    """
     d = Path(checkpoint_dir)
     if not d.exists():
         return None
-    ckpts = sorted(d.glob("gen_*.pt"))
+    ckpts = sorted(d.glob("gen_*.pt"), key=lambda p: p.stat().st_mtime)
     return ckpts[-1] if ckpts else None
 
 
