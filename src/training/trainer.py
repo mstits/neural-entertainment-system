@@ -202,28 +202,44 @@ class Trainer:
                 )
 
         # Memory safety: trajectory obs buffers are pre-allocated at
-        # (num_instances, max_episode_steps, 4, 84, 84). At 16 workers
-        # and max_episode_steps=937000 that's 423 GB of VSZ per buffer,
-        # and TWO buffers coexist (pop-wide in _run_one_generation +
-        # per-batch inside _evaluate_batch) — so a naive cap of 8 GB
-        # still peaks at ~17 GB resident mid-generation. Keep each
-        # buffer ≤ 2 GB so the two-buffer peak stays under 5 GB.
-        # REINFORCE only looks at the last reinforce_max_steps (default
-        # 1500) of each trajectory, so anything past ~2000 steps of
-        # recording is dead weight anyway.
+        # (num_instances, max_episode_steps, *obs_shape). At 16 workers
+        # and max_episode_steps=937000 that's 423 GB of VSZ per buffer
+        # in pixel mode, and TWO buffers coexist (pop-wide in
+        # _run_one_generation + per-batch inside _evaluate_batch) — so
+        # a naive cap of 8 GB still peaks at ~17 GB resident mid-gen.
+        # Keep each buffer ≤ 2 GB so the two-buffer peak stays under 5 GB.
+        #
+        # The per-step size depends on encoder. We peek at the profile
+        # here (before the rl_cfg pull at line ~300) so the clamp uses
+        # the RIGHT obs size: pixel mode = 4×84×84×float16 (56448
+        # bytes), tile mode = feature_dim × int8 (175 bytes for SMB).
+        # Without this guard, every tile-mode run with max_episode_steps
+        # > ~1188 was being silently clamped down by 322× over-estimate
+        # of buffer size, costing learning signal at the trajectory tail
+        # — caught while bug-hunting the persistent BC cache failure.
         _TRAJ_OBS_BUDGET_BYTES = 2 * 1024 ** 3
-        _bytes_per_step = num_instances * 4 * 84 * 84 * 2  # float16 worst case
+        _enc = (game_profile.get("reinforce") or {}).get("encoder", "")
+        if str(_enc).startswith("smb_tile") or _enc == "tile":
+            # Tile mode: int8 features, ~175 dim for SMB. Worst case 256
+            # to leave headroom for future games with larger tile grids.
+            _bytes_per_step = num_instances * 256 * 1
+            _shape_desc = "feature_dim × int8"
+        else:
+            # Pixel mode: 4-channel grayscale stack at 84×84, float16
+            # when preprocess_f16 is on (the worst case for memory).
+            _bytes_per_step = num_instances * 4 * 84 * 84 * 2
+            _shape_desc = "4×84×84 × float16"
         _safe_max = max(1024, _TRAJ_OBS_BUDGET_BYTES // _bytes_per_step)
         if self.max_episode_steps > _safe_max:
             log.warning(
                 "max_episode_steps=%d requires %.1f GB per trajectory obs "
-                "buffer (%d workers × 4×84×84 × float16). Clamping to %d "
-                "to keep per-buffer memory ≤ %.0f GB; REINFORCE only uses "
-                "the last reinforce_max_steps (default 1500) of each "
-                "trajectory, so this does not change learning signal.",
+                "buffer (%d workers × %s). Clamping to %d to keep per-buffer "
+                "memory ≤ %.0f GB; REINFORCE only uses the last "
+                "reinforce_max_steps (default 1500) of each trajectory, so "
+                "this does not change learning signal.",
                 self.max_episode_steps,
-                num_instances * self.max_episode_steps * 4 * 84 * 84 * 2 / 1e9,
-                num_instances, _safe_max,
+                num_instances * self.max_episode_steps * _bytes_per_step / num_instances / 1e9,
+                num_instances, _shape_desc, _safe_max,
                 _TRAJ_OBS_BUDGET_BYTES / 1e9,
             )
             self.max_episode_steps = int(_safe_max)
@@ -2696,6 +2712,15 @@ class Trainer:
                 data[f"traj_{i}_rewards"] = rews
                 data[f"traj_{i}_fitness"] = np.array([fit], dtype=np.float32)
             data["count"] = np.array([len(self._bc_replay_buffer)], dtype=np.int32)
+            # Schema metadata so the load path can validate that the
+            # cache is compatible with the current trainer configuration
+            # before injecting potentially-stale trajectories. Version
+            # 1 = "carries num_actions + obs_shape." Bump on any
+            # backward-incompatible format change.
+            data["cache_version"] = np.array([1], dtype=np.int32)
+            data["num_actions"] = np.array([self.num_actions], dtype=np.int32)
+            obs_shape_tuple = self._obs_buffer_shape(1, 1)[2:]
+            data["obs_shape"] = np.array(obs_shape_tuple, dtype=np.int64)
             # np.savez_compressed appends '.npz' to the filename if it
             # doesn't already end in '.npz' — so a temp path ending in
             # '.tmp' would write to <name>.tmp.npz on disk, breaking
@@ -2720,6 +2745,41 @@ class Trainer:
         try:
             arr = np.load(str(self._bc_success_cache_path), allow_pickle=False)
             count = int(arr["count"][0])
+            # Schema validation: a cache from a previous run with a
+            # DIFFERENT action space or observation feature_dim would
+            # produce trajectories whose action indices are invalid
+            # against the current policy network (e.g. cache has
+            # action=7 from an 8-action run, current run has 6 actions
+            # → BC pretrain trains policy to predict an output index
+            # that no longer exists, silently corrupting training).
+            # `cache_version` was added to the save format below; old
+            # caches without it lack the shape metadata and we skip
+            # them defensively rather than load-and-crash later.
+            cache_version = int(arr.get("cache_version", np.array([0]))[0])
+            if cache_version < 1:
+                log.warning(
+                    "BC success cache lacks schema version (legacy save). "
+                    "Skipping load — will rebuild on next clear."
+                )
+                return
+            saved_num_actions = int(arr["num_actions"][0])
+            saved_obs_shape = tuple(arr["obs_shape"].tolist())
+            cur_obs_shape = self._obs_buffer_shape(1, 1)[2:]
+            if saved_num_actions != self.num_actions:
+                log.warning(
+                    "BC success cache action_space mismatch (saved=%d, "
+                    "current=%d) — skipping load. Trajectories from a "
+                    "different action layout would corrupt BC training.",
+                    saved_num_actions, self.num_actions,
+                )
+                return
+            if saved_obs_shape != cur_obs_shape:
+                log.warning(
+                    "BC success cache obs shape mismatch (saved=%s, "
+                    "current=%s) — skipping load.",
+                    saved_obs_shape, cur_obs_shape,
+                )
+                return
             for i in range(count):
                 obs = arr[f"traj_{i}_obs"]
                 acts = arr[f"traj_{i}_actions"]
@@ -2727,8 +2787,10 @@ class Trainer:
                 fit = float(arr[f"traj_{i}_fitness"][0])
                 self._bc_replay_buffer.append((obs, acts, rews, fit))
             log.info(
-                "BC success cache loaded: %d trajectories from %s",
-                count, self._bc_success_cache_path,
+                "BC success cache loaded: %d trajectories (num_actions=%d, "
+                "obs_shape=%s) from %s",
+                count, saved_num_actions, saved_obs_shape,
+                self._bc_success_cache_path,
             )
         except Exception as exc:
             log.warning(
