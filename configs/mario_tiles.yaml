@@ -339,15 +339,19 @@ ga_params:
   # was firing restart on near-clears; in tile mode we're nowhere
   # near 1-1 clear yet, so restart is the right tool.
   #
-  # Tightened 50 → 15 + restart_fraction 0.5 → 0.6 after the
-  # depth=2595 plateau at gen 30-124 of the death-cause run: with
-  # the old 50-gen window, best fitness oscillating ±10% kept
-  # resetting the staleness counter so restart never fired even
-  # though the population was structurally stuck. 15 gens forces
-  # the GA to acknowledge stagnation faster; 60% restart fraction
-  # injects more fresh diversity per fire.
-  stale_gens_before_restart: 15
-  restart_fraction: 0.6
+  # Reverted from a brief experiment with 15-gen window + 60%
+  # restart_fraction. The reasoning was sound (population stuck;
+  # need diversity injection) but the IMPLEMENTATION is wrong:
+  # GA's evolve() reseeds restarted genomes from
+  # network_factory() — random init, NOT from the BC seed or any
+  # successful-trajectory cache. Firing restart frequently would
+  # have replaced 60% of 32 genomes with random weights every 15
+  # gens, repeatedly thrashing the population. Real fix would be
+  # to reseed from BC weights or the success cache, not pure
+  # random; that's a code change in genetic_algorithm.py, not a
+  # YAML tweak. Reverting until that's properly designed.
+  stale_gens_before_restart: 50
+  restart_fraction: 0.5
 
 # Per-episode step budget. Doubled from 600 to 1200 in lockstep with
 # the frame_skip 8→4 change above — this preserves the original
