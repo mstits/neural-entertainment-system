@@ -131,10 +131,28 @@ impl Worker {
 
     fn reset(&mut self) {
         if let Some(snap) = &self.start_state_snapshot {
-            if let Ok(state) = bincode::deserialize::<crate::nes::State>(snap) {
-                self.nes.apply_state(&state);
-            } else {
-                self.nes.reset();
+            match bincode::deserialize::<crate::nes::State>(snap) {
+                Ok(state) => self.nes.apply_state(&state),
+                Err(e) => {
+                    // Cached snapshot bytes are corrupted somehow.
+                    // Falling back to a cold reset is correct behavior
+                    // (better than panicking), but we MUST surface the
+                    // failure — without this, training silently runs
+                    // every episode from the title screen and looks
+                    // exactly like "policy isn't moving" to the
+                    // trainer, which is impossible to diagnose without
+                    // peering at frames. Log and clear the cached
+                    // snapshot so subsequent resets don't keep paying
+                    // the deserialization cost on a known-bad blob.
+                    eprintln!(
+                        "[nes_core::Pool] Worker::reset: cached start-state \
+                         snapshot deserialization failed ({}); cold-reset and \
+                         clearing cached snapshot.",
+                        e
+                    );
+                    self.start_state_snapshot = None;
+                    self.nes.reset();
+                }
             }
         } else {
             self.nes.reset();
