@@ -1643,10 +1643,21 @@ class Trainer:
             len(raw_fits),
         )
         try:
-            counts = np.bincount(
-                pop_traj_actions[:, :pop_traj_lens.max() if pop_traj_lens.size else 0].ravel(),
-                minlength=self.num_actions,
-            )
+            # Per-genome length-aware concatenation. The pop_traj_actions
+            # buffer is pre-allocated zero-init at (n, max_episode_steps);
+            # any genome that died before the max length has its tail
+            # filled with zeros. The previous slice `[:, :max_len]` was
+            # counting those zeros as legitimate action-0 (NOOP)
+            # selections, which made the histogram report 60-70% noop
+            # when actual policy distributions were much more diverse.
+            # Now we only ravel the prefix [0:traj_lens[i]] of each
+            # genome's row.
+            real_actions = np.concatenate([
+                pop_traj_actions[i, :int(pop_traj_lens[i])]
+                for i in range(len(pop_traj_lens))
+                if int(pop_traj_lens[i]) > 0
+            ]) if pop_traj_lens.size and int(pop_traj_lens.max()) > 0 else np.array([], dtype=pop_traj_actions.dtype)
+            counts = np.bincount(real_actions, minlength=self.num_actions)
             total = int(counts.sum()) or 1
             hist = ", ".join(
                 f"{i}:{c}({100.0*c/total:.1f}%)"
