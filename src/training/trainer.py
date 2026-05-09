@@ -695,6 +695,105 @@ class Trainer:
         self._tb_writer = None
         self._tb_enabled = game_profile.get("tensorboard", True)
 
+    def _archive_previous_run(self) -> None:
+        """Snapshot the previous run's state into `runs/<timestamp>/`.
+
+        Triggered at the top of `run()` before any file is truncated.
+        Captures: metrics.jsonl (pre-truncation), curriculum.json,
+        bc_success_cache.npz, the most recent gen_*.pt checkpoint,
+        run.log, and a copy of the active game profile YAML so the
+        archive is self-describing.
+
+        No-op when the metrics file is empty or missing — first run
+        of a fresh checkpoint dir has nothing to archive. Errors are
+        logged but never propagate; the archive is best-effort and
+        must not block training startup.
+        """
+        try:
+            metrics = self._metrics_path
+            if not metrics.exists() or metrics.stat().st_size == 0:
+                return
+            from datetime import datetime
+            import shutil
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            archive = self.checkpoint_dir / "runs" / ts
+            archive.mkdir(parents=True, exist_ok=True)
+            # Move the metrics file (don't copy — saves IO and ensures
+            # the next run starts with a fresh empty file).
+            shutil.move(str(metrics), str(archive / "metrics.jsonl"))
+            # Copy (not move) the rest — they're either still in use or
+            # the user might want them in checkpoint_dir for resume.
+            for src_name in ("curriculum.json", "bc_success_cache.npz", "run.log"):
+                src = self.checkpoint_dir / src_name
+                if src.exists():
+                    try:
+                        shutil.copy2(str(src), str(archive / src_name))
+                    except Exception:
+                        pass
+            # Latest gen checkpoint (numerically highest gen_NNNNN.pt).
+            gens = sorted(self.checkpoint_dir.glob("gen_*.pt"))
+            if gens:
+                try:
+                    shutil.copy2(str(gens[-1]), str(archive / gens[-1].name))
+                except Exception:
+                    pass
+            # Snapshot the active game profile so the archive is self-
+            # describing — we know exactly which YAML produced these
+            # metrics. The Trainer doesn't have a YAML path field, so
+            # serialize the dict back to YAML.
+            try:
+                import yaml as _yaml
+                with open(archive / "game_profile.yaml", "w") as f:
+                    _yaml.safe_dump(self.game_profile, f, sort_keys=False)
+            except Exception:
+                pass
+            log.info(
+                "[archive] previous run snapshotted to %s "
+                "(metrics + curriculum + bc cache + latest checkpoint + profile)",
+                archive,
+            )
+        except Exception as exc:
+            # Never block startup on archive failure.
+            log.warning("[archive] failed to archive previous run: %s", exc)
+
+    def _attach_run_file_logger(self) -> None:
+        """Add a FileHandler so log.info / log.warning hit disk.
+
+        Without this, `log.info(...)` lands only on stderr — the moment
+        the launching terminal closes (or the GUI is run from a
+        click-launched binary), the entire log stream is gone and
+        post-hoc forensic analysis becomes impossible. The file lives
+        at `<checkpoint_dir>/run.log` and is moved into the run-
+        archive on the next Start by `_archive_previous_run`.
+        """
+        try:
+            import logging as _logging
+            run_log = self.checkpoint_dir / "run.log"
+            # Truncate by opening in 'w' mode; the previous run's log
+            # was just moved into the archive directory.
+            with open(run_log, "w") as _f:
+                _f.write("")
+            # Detach any prior FileHandler we attached on a previous
+            # Start (idempotent across stop/start cycles in one
+            # process — without this the handlers stack up).
+            root = _logging.getLogger()
+            for h in list(root.handlers):
+                if getattr(h, "_nes_run_handler", False):
+                    root.removeHandler(h)
+                    try:
+                        h.close()
+                    except Exception:
+                        pass
+            handler = _logging.FileHandler(str(run_log), mode="a")
+            handler.setLevel(_logging.INFO)
+            handler.setFormatter(_logging.Formatter(
+                "%(asctime)s %(levelname)s %(name)s: %(message)s"
+            ))
+            handler._nes_run_handler = True  # tag for the cleanup path above
+            root.addHandler(handler)
+        except Exception as exc:
+            log.warning("[archive] failed to attach run.log handler: %s", exc)
+
     def _make_network(self):
         """Construct the policy network appropriate for the configured
         encoder. Pixel encoders (`nature_dqn`, `impala`) use the CNN-
@@ -869,9 +968,23 @@ class Trainer:
             _t0 = now
 
         self._running = True
-        # Fresh metrics log per run — otherwise plots stack prior sessions.
+        # Auto-archive previous run before truncating the metrics log.
+        # Without this, every Start silently nukes the prior session's
+        # data (we lost a 466-gen overnight run this way). Snapshot
+        # everything that could be useful for post-hoc analysis into
+        # `runs/<timestamp>/` — metrics, curriculum, BC success cache,
+        # the latest checkpoint snapshot, and the current YAML profile
+        # so we can later answer "what config produced these numbers".
+        self._archive_previous_run()
         self._metrics_path.write_text("")
-        _stage("metrics log reset")
+        # Persistent Python log: every log.info / log.warning that
+        # would have only hit stderr now ALSO lands in
+        # `<checkpoint_dir>/run.log` for forensic analysis after a
+        # crash. The file is truncated per run start (matching the
+        # metrics log lifecycle); the auto-archive above moved the
+        # previous one into the runs/<ts>/ snapshot.
+        self._attach_run_file_logger()
+        _stage("metrics log reset + previous run archived")
 
         # Spin up the audio mixer (emits song changes derived from per-step
         # RAM snapshots; no-op when sounddevice is missing or mode=mute).
