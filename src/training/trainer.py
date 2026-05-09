@@ -2478,7 +2478,7 @@ class Trainer:
                 # of NOOP emulation across the rest of the episode.
                 # Cleared automatically on next reset_all.
                 if done_flags[i]:
-                    pool.set_worker_done(i, True)
+                    self.pool.set_worker_done(i, True)
                 self._gen_timer.add(
                     "bookkeeping", time.perf_counter_ns() - _book_t0
                 )
