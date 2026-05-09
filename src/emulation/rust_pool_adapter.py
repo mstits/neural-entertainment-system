@@ -167,6 +167,22 @@ class RustPool:
             return
         self._inner.set_worker_pace(worker_id, bool(on))
 
+    def peek_max_x_per_worker(self) -> Optional[list[int]]:
+        """Peak SMB world-x position seen during the most recent
+        step_all call, per worker. Returns None if the underlying
+        nes_core build doesn't expose the method (older binary).
+
+        Used by the trainer to override the reward function's x
+        view, capturing transient mid-frame_skip peaks that the
+        final-frame-only RAM read would miss.
+        """
+        if self._inner is None:
+            return None
+        try:
+            return list(self._inner.peek_max_x_per_worker())
+        except AttributeError:
+            return None
+
     def drain_audio(self, worker_id: int) -> np.ndarray:
         if self._inner is None:
             return np.zeros(0, dtype=np.int16)

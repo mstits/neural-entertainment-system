@@ -105,6 +105,18 @@ struct Worker {
     // that the cycle-lock fix closed for Play-window / parity. See
     // `python.rs::advance_one_frame` for the rationale.
     frame_cycle_target: Option<usize>,
+    /// Peak SMB world-x position seen during the most recent
+    /// `step()` call. Computed inside the frame_skip loop so we
+    /// capture transient peaks that a final-frame-only RAM read
+    /// would miss (Mario could reach x=1810 mid-jump and end the
+    /// step at x=1700 after a death-fall, with the reward function
+    /// otherwise seeing only 1700 and never crediting the 1810
+    /// crossing toward checkpoint or max_x_visited). The trainer
+    /// reads this via `peek_max_x_per_worker` and overrides the
+    /// reward function's x-position view. SMB-specific addresses
+    /// hard-coded; harmless for other games (always reports the
+    /// final-frame x there).
+    last_max_x: u32,
 }
 
 impl Worker {
@@ -126,6 +138,7 @@ impl Worker {
             dead: false,
             gray_scratch: vec![0u8; FRAME_PIXELS],
             frame_cycle_target: None,
+            last_max_x: 0,
         }
     }
 
@@ -191,11 +204,27 @@ impl Worker {
 
     fn step(&mut self, action: u8, frame_skip: u32) -> bool {
         self.apply_buttons(action);
+        // Reset peak tracker. Read x BEFORE the first frame so the
+        // baseline includes the entry state (otherwise a step that
+        // moves Mario backward would report last_max_x=0 instead of
+        // pre-step x).
+        let initial_ram = self.nes.system_ram();
+        self.last_max_x = 256 * initial_ram[0x006D] as u32 + initial_ram[0x0086] as u32;
         let use_skip = !self.realtime_pace;
         for i in 0..frame_skip {
             let is_last = i + 1 == frame_skip;
             self.nes.set_skip_render(use_skip && !is_last);
             self.advance_one_frame();
+            // Sample SMB x position after each frame. Cheap read —
+            // 2 RAM bytes — vs the cost of the NES frame just run.
+            // For non-SMB games this still fires but the values are
+            // meaningless; the trainer only consults it when running
+            // a Mario reward profile.
+            let ram = self.nes.system_ram();
+            let x = 256 * ram[0x006D] as u32 + ram[0x0086] as u32;
+            if x > self.last_max_x {
+                self.last_max_x = x;
+            }
         }
         self.nes.set_skip_render(false);
         if self.realtime_pace {
@@ -965,6 +994,30 @@ impl Pool {
         if let Some(flag) = self.worker_done.get(worker_id) {
             flag.store(done, std::sync::atomic::Ordering::Release);
         }
+    }
+
+    /// Peak SMB world-x reached during the most recent `step_all`
+    /// call, per worker. The trainer overrides the reward function's
+    /// x view with this value so transient mid-frame_skip peaks
+    /// (e.g. Mario reaches x=1810 mid-jump then dies and ends the
+    /// step at x=1700) get credited toward `max_x_visited` and
+    /// checkpoint detection. Reading is sequential on the Python
+    /// thread after `step_all` completes — rayon's join introduces
+    /// the memory barrier we need so writes from the worker threads
+    /// are visible.
+    fn peek_max_x_per_worker(&self) -> Vec<u32> {
+        self.workers
+            .iter()
+            .map(|cell| {
+                // Safety: caller is the Python trainer thread,
+                // which serializes with `step_all`/`reset_all` (both
+                // join their rayon tasks before returning). No other
+                // mutator runs between those returning and this
+                // read.
+                let w = unsafe { &*cell.0.get() };
+                w.last_max_x
+            })
+            .collect()
     }
 
     /// Toggle IEEE 754 half-precision emission on the preprocess path.

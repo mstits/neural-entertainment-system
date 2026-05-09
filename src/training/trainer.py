@@ -596,6 +596,13 @@ class Trainer:
             raise ValueError("Game profile must define a non-empty action_space")
 
         profile_name = str(game_profile.get("name", "")).lower()
+        # SMB-only flag for the peak-x patching path in
+        # _evaluate_batch. Detected from the profile name so any
+        # Mario-derived profile (mario_tiles, mario_pixel, mario_smb1,
+        # …) opts in. Reward function dispatch is independent — the
+        # patching is just a no-op if x bytes happen to be game-
+        # specific noise on a non-SMB ROM.
+        self._is_smb_profile: bool = "mario" in profile_name or "smb" in profile_name
         rom_basename = Path(rom_path).stem.lower() if rom_path else ""
         if profile_name and rom_basename:
             profile_tokens = [t for t in profile_name.replace(".", " ").split() if t]
@@ -2287,6 +2294,46 @@ class Trainer:
             # Single Rust call for all active genomes' reward computation.
             if batch_rams:
                 import nes_core as _nc
+                # SMB peak-x tracking: the worker advanced frame_skip
+                # NES frames inside one step_all call, but only the
+                # final frame's RAM made it back to Python. A Mario
+                # who reached x=1810 mid-jump and then died at x=1700
+                # would silently lose the credit for crossing 1800
+                # because compute() reads x from the final-frame RAM.
+                # Pool now tracks peak x during the frame_skip window;
+                # we read it here and overwrite the x bytes in the
+                # RAM copies so MarioReward sees the peak. Cheap
+                # (60 KB of byte-level copy across 30 workers per
+                # step), and only relevant for SMB — for other games
+                # the peak equals the final-frame x anyway.
+                if self._is_smb_profile and self.pool is not None:
+                    try:
+                        max_xs = self.pool.peek_max_x_per_worker()
+                    except Exception:
+                        max_xs = None
+                    if max_xs is not None:
+                        patched_rams = []
+                        for ram, gi in zip(batch_rams, batch_genome_indices):
+                            # genome_i → worker_id == genome_i + offset.
+                            # offset is 0 today (see comment ~line 2305).
+                            wid = gi + offset
+                            if wid < len(max_xs):
+                                mx = int(max_xs[wid])
+                                # Only patch when the peak is strictly
+                                # higher than the final-frame x — no
+                                # point burning a copy when nothing
+                                # would change.
+                                final_x = (
+                                    256 * ram[0x006D] + ram[0x0086]
+                                )
+                                if mx > final_x:
+                                    ba = bytearray(ram)
+                                    ba[0x006D] = (mx >> 8) & 0xFF
+                                    ba[0x0086] = mx & 0xFF
+                                    patched_rams.append(bytes(ba))
+                                    continue
+                            patched_rams.append(ram)
+                        batch_rams = patched_rams
                 batch_results = _nc.compute_rewards_batch(
                     batch_fns, batch_rams, batch_actions,
                 )
