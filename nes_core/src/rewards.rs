@@ -869,6 +869,19 @@ impl MarioReward {
         (1980, 300.0),  // approach to obstacle complex
         (2100, 400.0),  // past obstacle complex
         (2700, 600.0),  // at staircase base
+        // 2026-05-09 — bridge the 2700→2900 staircase dead zone.
+        // Same mechanism that broke the 1640→2100 wall: with no
+        // dense signal across the multi-jump staircase, PPO has
+        // nothing to gradient-descent on. Empirical evidence: 142-
+        // gen run pinned at depth=2753 (one tile past 2700) for
+        // 127 consecutive generations. A genome that crosses 2700
+        // gets +600 once, then 199 units of reward silence until
+        // 2900 — and the boosted +2000 at the top is unreachable
+        // without solving the staircase jump pattern PPO can't
+        // signal-find. +800 at 2820 (≈halfway up the staircase)
+        // turns "make ANY progress on the staircase" into a
+        // gradient-detectable event.
+        (2820, 800.0),
         // 2026-05-08 — boost top-of-staircase from 1000 -> 2000.
         // Run gen 117-465 plateau'd at depth 3161 with only ~3
         // clears in last 50 gens. Doubling this checkpoint makes
