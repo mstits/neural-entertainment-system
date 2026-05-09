@@ -555,6 +555,14 @@ pub struct Pool {
     /// stays `true` so existing behaviour is preserved unless the
     /// trainer explicitly opts in via `set_panic_isolation(False)`.
     panic_isolation: std::sync::atomic::AtomicBool,
+    /// Per-worker "episode done" mask. The trainer sets this once a
+    /// genome's episode terminates so subsequent `step_all` calls
+    /// short-circuit that worker — no NES emulation, no preprocess
+    /// kernel, just the cached final state. With 30 workers and a
+    /// genome that dies at step 50 of 1500, this saves ~5800 NES
+    /// frames of dead-time emulation per episode. Cleared on
+    /// `reset_all` so the next episode starts everyone fresh.
+    worker_done: Vec<std::sync::atomic::AtomicBool>,
 }
 
 #[pymethods]
@@ -612,6 +620,9 @@ impl Pool {
             workers.push(WorkerCell::new(worker));
         }
 
+        let worker_done = (0..num_workers)
+            .map(|_| std::sync::atomic::AtomicBool::new(false))
+            .collect();
         let pool = Self {
             workers,
             num_workers,
@@ -619,6 +630,7 @@ impl Pool {
             headless: std::sync::atomic::AtomicBool::new(false),
             preprocess_f16: std::sync::atomic::AtomicBool::new(false),
             panic_isolation: std::sync::atomic::AtomicBool::new(true),
+            worker_done,
         };
 
         if let Some(p) = start_state_path {
@@ -640,6 +652,12 @@ impl Pool {
         let panic_isolation = self
             .panic_isolation
             .load(std::sync::atomic::Ordering::Acquire);
+        // Clear the per-worker done mask so the next episode starts
+        // with everyone active. Without this, a worker that finished
+        // last episode would short-circuit forever.
+        for done in &self.worker_done {
+            done.store(false, std::sync::atomic::Ordering::Release);
+        }
         py.allow_threads(|| {
             // SAFETY: rayon's `par_iter().enumerate()` gives each task
             // a unique index; no two tasks touch the same worker cell.
@@ -747,6 +765,26 @@ impl Pool {
                             vec![0u8; FRAME_PIXELS * 3],
                             vec![0u8; pp_byte_len],
                             vec![0u8; RAM_SIZE],
+                            true,
+                        );
+                    }
+                    // Trainer-flagged episode-done short-circuit. Skip
+                    // the entire step (no Nes::step, no preprocess) —
+                    // the worker's prior frame and RAM stay untouched
+                    // and we return them as-is. The trainer is going
+                    // to ignore this slot anyway (see done_flags in
+                    // _evaluate_batch); the saved work is the ~4×
+                    // frame_skip NES cycles per remaining-step that
+                    // would otherwise burn on this dead worker.
+                    if self.worker_done[idx]
+                        .load(std::sync::atomic::Ordering::Acquire)
+                    {
+                        let ram_bytes: Vec<u8> =
+                            w.nes.system_ram().as_ref().to_vec();
+                        return (
+                            Vec::new(),
+                            vec![0u8; pp_byte_len],
+                            ram_bytes,
                             true,
                         );
                     }
@@ -912,6 +950,21 @@ impl Pool {
     fn set_headless(&self, on: bool) {
         self.headless
             .store(on, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Mark a worker as episode-done so subsequent `step_all` calls
+    /// skip its NES emulation and preprocess kernel. The worker's
+    /// previous frame and RAM are returned unchanged. Cleared
+    /// automatically on `reset_all`. Idempotent — set on the same
+    /// worker twice in a row is a no-op.
+    ///
+    /// Out-of-range indices are silently ignored (matches the
+    /// trainer's "best effort" pattern for late-binding done
+    /// genomes from a closing episode loop).
+    fn set_worker_done(&self, worker_id: usize, done: bool) {
+        if let Some(flag) = self.worker_done.get(worker_id) {
+            flag.store(done, std::sync::atomic::Ordering::Release);
+        }
     }
 
     /// Toggle IEEE 754 half-precision emission on the preprocess path.

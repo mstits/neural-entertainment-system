@@ -2425,6 +2425,13 @@ class Trainer:
                     # call is non-trivial for some reward fns; don't
                     # repeat it).
                     success_flags[i] = ep_success or reward_fns[i].episode_success()
+                # Tell the Rust pool to short-circuit this worker on
+                # subsequent step_all calls. Without this, a worker
+                # that died at step 50 of 1500 burns ~5800 NES frames
+                # of NOOP emulation across the rest of the episode.
+                # Cleared automatically on next reset_all.
+                if done_flags[i]:
+                    pool.set_worker_done(i, True)
                 self._gen_timer.add(
                     "bookkeeping", time.perf_counter_ns() - _book_t0
                 )

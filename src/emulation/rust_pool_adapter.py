@@ -132,6 +132,23 @@ class RustPool:
             ))
         return results
 
+    def set_worker_done(self, worker_id: int, done: bool) -> None:
+        """Mark a worker as episode-done so subsequent step_all calls
+        skip its NES emulation. Cleared automatically on the next
+        reset_all. Trainer should call this once a genome's episode
+        terminates so we don't burn frame_skip × remaining-steps NES
+        cycles on dead workers.
+        """
+        if self._inner is None:
+            return
+        try:
+            self._inner.set_worker_done(int(worker_id), bool(done))
+        except AttributeError:
+            # Older nes_core build without the method — silently
+            # no-op so Python doesn't crash if someone runs against
+            # a stale install.
+            pass
+
     def save_worker_state(
         self, worker_id: int, timeout: float = 5.0,
     ) -> Optional[bytes]:
