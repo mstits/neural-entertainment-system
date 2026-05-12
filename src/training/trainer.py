@@ -51,6 +51,7 @@ from src.training.behavior_cloning import build_dataset, pretrain, seed_populati
 from src.training.curriculum import CurriculumManager, CurriculumStage
 from src.training.gae import gae as _gae
 from src.training.genetic_algorithm import GeneticAlgorithm, Genome
+from src.training.metrics_sink import MetricsSink
 from src.utils.reward_functions import build_reward_function
 
 
@@ -736,13 +737,17 @@ class Trainer:
         # RPCs. Drained at gen boundary (off the hot step path).
         self._pending_state_snapshots: list[tuple[int, tuple, str]] = []
 
-        # Metrics log
+        # Metrics fan-out: JSONL on disk + GUI queue + lazy TensorBoard.
+        # The path is kept on `self` because `_archive_previous_run`
+        # needs to stat + move it before the sink would have a chance
+        # to truncate it.
         self._metrics_path = self.checkpoint_dir / "metrics.jsonl"
-
-        # TensorBoard writer (lazy-init so tests that don't care don't
-        # import torch.utils.tensorboard transitively and slow down.)
-        self._tb_writer = None
-        self._tb_enabled = game_profile.get("tensorboard", True)
+        self._metrics_sink = MetricsSink(
+            metrics_path=self._metrics_path,
+            tb_log_dir=self.checkpoint_dir / "tb",
+            queue=self._metrics_queue,
+            tb_enabled=game_profile.get("tensorboard", True),
+        )
 
     def _archive_previous_run(self) -> None:
         """Snapshot the previous run's state into `runs/<timestamp>/`.
@@ -1041,7 +1046,7 @@ class Trainer:
         # the latest checkpoint snapshot, and the current YAML profile
         # so we can later answer "what config produced these numbers".
         self._archive_previous_run()
-        self._metrics_path.write_text("")
+        self._metrics_sink.truncate()
         # Persistent Python log: every log.info / log.warning that
         # would have only hit stderr now ALSO lands in
         # `<checkpoint_dir>/run.log` for forensic analysis after a
@@ -1196,17 +1201,11 @@ class Trainer:
             self._frame_sink = None
             if self._audio_mixer is not None:
                 self._audio_mixer.stop()
-            # Flush + close the TensorBoard writer if one was opened.
-            # Without this, the last few generations of scalars buffered
+            # Flush + close the TensorBoard writer if one was opened —
+            # without it the last few generations of scalars buffered
             # in the writer never hit disk and the TB UI shows a
             # truncated tail.
-            if self._tb_writer is not None:
-                try:
-                    self._tb_writer.flush()
-                    self._tb_writer.close()
-                except Exception:
-                    pass
-                self._tb_writer = None
+            self._metrics_sink.close()
             self._save_checkpoint(self.ga.generation)
             # Final cycle sweep so any post-shutdown refs the caller
             # clears next (pool=None already done above) actually
@@ -3610,34 +3609,7 @@ class Trainer:
         return padded[:, :, h_off:h_off + h, w_off:w_off + w]
 
     def _emit_metrics(self, **metrics) -> None:
-        metrics["timestamp"] = time.time()
-        with open(self._metrics_path, "a") as f:
-            f.write(json.dumps(metrics) + "\n")
-        if self._metrics_queue is not None:
-            try:
-                self._metrics_queue.put_nowait(metrics)
-            except Exception:
-                pass  # queue full — drop this update
-
-        # TensorBoard (optional, lazy init so import cost is only paid when
-        # actually used and never during tests or headless CI runs that
-        # don't care about rich plots).
-        if self._tb_enabled:
-            if self._tb_writer is None:
-                try:
-                    from torch.utils.tensorboard import SummaryWriter
-                    self._tb_writer = SummaryWriter(log_dir=str(self.checkpoint_dir / "tb"))
-                except Exception as exc:
-                    log.debug("TensorBoard unavailable, disabling: %s", exc)
-                    self._tb_enabled = False
-                    return
-            gen = metrics.get("generation", 0)
-            for k, v in metrics.items():
-                if isinstance(v, (int, float)) and k not in ("generation", "timestamp"):
-                    try:
-                        self._tb_writer.add_scalar(k, float(v), gen)
-                    except Exception:
-                        pass
+        self._metrics_sink.emit(**metrics)
 
     def stop(self) -> None:
         self._running = False
