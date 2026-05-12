@@ -52,6 +52,13 @@ from src.training.bc_seed_cache import (
     resolve_bc_demo_paths,
 )
 from src.training.behavior_cloning import build_dataset, pretrain, seed_population_from_weights
+from src.training.checkpointing import (
+    archive_previous_run,
+    find_latest_checkpoint as _find_latest_checkpoint,
+    maybe_export_elite_to_coreml,
+    rotate_old_checkpoints,
+    save_checkpoint_atomic,
+)
 from src.training.curriculum import CurriculumManager, CurriculumStage
 from src.training.gae import gae as _gae
 from src.training.genetic_algorithm import GeneticAlgorithm, Genome
@@ -754,65 +761,11 @@ class Trainer:
         )
 
     def _archive_previous_run(self) -> None:
-        """Snapshot the previous run's state into `runs/<timestamp>/`.
-
-        Triggered at the top of `run()` before any file is truncated.
-        Captures: metrics.jsonl (pre-truncation), curriculum.json,
-        bc_success_cache.npz, the most recent gen_*.pt checkpoint,
-        run.log, and a copy of the active game profile YAML so the
-        archive is self-describing.
-
-        No-op when the metrics file is empty or missing — first run
-        of a fresh checkpoint dir has nothing to archive. Errors are
-        logged but never propagate; the archive is best-effort and
-        must not block training startup.
-        """
-        try:
-            metrics = self._metrics_path
-            if not metrics.exists() or metrics.stat().st_size == 0:
-                return
-            from datetime import datetime
-            import shutil
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            archive = self.checkpoint_dir / "runs" / ts
-            archive.mkdir(parents=True, exist_ok=True)
-            # Move the metrics file (don't copy — saves IO and ensures
-            # the next run starts with a fresh empty file).
-            shutil.move(str(metrics), str(archive / "metrics.jsonl"))
-            # Copy (not move) the rest — they're either still in use or
-            # the user might want them in checkpoint_dir for resume.
-            for src_name in ("curriculum.json", "bc_success_cache.npz", "run.log"):
-                src = self.checkpoint_dir / src_name
-                if src.exists():
-                    try:
-                        shutil.copy2(str(src), str(archive / src_name))
-                    except Exception:
-                        pass
-            # Latest gen checkpoint (numerically highest gen_NNNNN.pt).
-            gens = sorted(self.checkpoint_dir.glob("gen_*.pt"))
-            if gens:
-                try:
-                    shutil.copy2(str(gens[-1]), str(archive / gens[-1].name))
-                except Exception:
-                    pass
-            # Snapshot the active game profile so the archive is self-
-            # describing — we know exactly which YAML produced these
-            # metrics. The Trainer doesn't have a YAML path field, so
-            # serialize the dict back to YAML.
-            try:
-                import yaml as _yaml
-                with open(archive / "game_profile.yaml", "w") as f:
-                    _yaml.safe_dump(self.game_profile, f, sort_keys=False)
-            except Exception:
-                pass
-            log.info(
-                "[archive] previous run snapshotted to %s "
-                "(metrics + curriculum + bc cache + latest checkpoint + profile)",
-                archive,
-            )
-        except Exception as exc:
-            # Never block startup on archive failure.
-            log.warning("[archive] failed to archive previous run: %s", exc)
+        archive_previous_run(
+            checkpoint_dir=self.checkpoint_dir,
+            metrics_path=self._metrics_path,
+            game_profile=self.game_profile,
+        )
 
     def _attach_run_file_logger(self) -> None:
         """Add a FileHandler so log.info / log.warning hit disk.
@@ -3395,106 +3348,22 @@ class Trainer:
         return last_loss_scalar, ppo_stats_accum
 
     def _save_checkpoint(self, gen: int, keep_last: int = 5) -> None:
-        # Atomic write: serialize to `<path>.tmp`, fsync, then rename.
-        # A torch.save directly to `path` that's interrupted mid-write
-        # (Ctrl-C, OOM, power loss) leaves a truncated unpickleable
-        # file and the next resume crashes. Rename is atomic on POSIX,
-        # so either the old or the new checkpoint is visible — never
-        # a half-written one.
-        import os
         path = self.checkpoint_dir / f"gen_{gen:05d}.pt"
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        self.ga.save_checkpoint(str(tmp_path))
-        try:
-            fd = os.open(str(tmp_path), os.O_RDONLY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-        except OSError:
-            # fsync is best-effort — on some filesystems it errors out,
-            # but the rename alone still gives us a consistent file.
-            pass
-        os.replace(str(tmp_path), str(path))
-
-        curr_path = self.checkpoint_dir / "curriculum.json"
-        curr_tmp = curr_path.with_suffix(curr_path.suffix + ".tmp")
-        with open(curr_tmp, "w") as f:
-            json.dump(self.curriculum.state_dict(), f)
-            f.flush()
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                pass
-        os.replace(str(curr_tmp), str(curr_path))
-
-        log.info("Saved checkpoint: %s", path)
-
-        # Also export the elite genome's policy to a Core ML .mlpackage
-        # alongside the checkpoint. The replay viewer prefers CoreML/ANE
-        # at batch=1 — 8× faster than PyTorch MPS per
-        # scripts/bench_coreml_ane.py. Exporting here (once per
-        # checkpoint) amortizes the ~100ms JIT+convert cost out of the
-        # interactive replay-launch path; the viewer now just loads.
-        # Best-effort: any export failure is logged and ignored; the
-        # viewer falls back to MPS automatically if the .mlpackage is
-        # missing.
-        #
-        # Tile mode: skipped. The 14k-param MLP is fast enough on CPU
-        # that ANE acceleration is irrelevant; the export was profiling
-        # at ~13% of trainer wall-time on tile runs (every 10 gens for
-        # ~0.8s each in a subprocess). Net cost > replay-viewer benefit.
-        if os.environ.get("NES_DISABLE_COREML_EXPORT") == "1":
-            log.debug("CoreML export disabled via NES_DISABLE_COREML_EXPORT=1")
-        elif self._is_tile_mode:
-            log.debug("CoreML export skipped for tile mode (network too small to benefit)")
-        else:
-            try:
-                elite = self.ga.best_genome()
-                if elite is not None and elite.state_dict is not None:
-                    from src.models.coreml_export import maybe_export
-                    net = self._make_network()
-                    net.load_state_dict(elite.state_dict, strict=False)
-                    mlpath = path.with_suffix(".mlpackage")
-                    maybe_export(
-                        net,
-                        str(mlpath),
-                        num_actions=len(self.action_space),
-                    )
-                    del net
-                    import gc as _gc
-                    _gc.collect()
-            except Exception as exc:
-                log.debug("checkpoint CoreML export skipped: %s", exc)
-
-        # Rotate old checkpoints so overnight runs don't fill the disk. A
-        # single checkpoint is ~100 MB for population=16, Nature-DQN.
-        # Sort by MODIFICATION TIME, not filename, so a fresh run that
-        # restarts the gen counter at 0 doesn't get its checkpoints
-        # silently deleted by an older, higher-named cohort still
-        # sitting in the dir. The previous name-sort had a real
-        # data-loss case: tile-mode runs writing gen_00010, 00020,
-        # ... were instantly pruned because gen_01094 (pixel-era) was
-        # alphabetically higher. mtime is the only signal that
-        # actually tracks "most recent" across resumes.
-        ckpts = sorted(
-            self.checkpoint_dir.glob("gen_*.pt"),
-            key=lambda p: p.stat().st_mtime,
+        save_checkpoint_atomic(
+            path=path,
+            ga=self.ga,
+            curriculum=self.curriculum,
+            checkpoint_dir=self.checkpoint_dir,
         )
-        if keep_last > 0 and len(ckpts) > keep_last:
-            for old in ckpts[:-keep_last]:
-                try:
-                    old.unlink()
-                except OSError:
-                    pass
-                # Remove the paired .mlpackage too, if present.
-                mlpath = old.with_suffix(".mlpackage")
-                if mlpath.exists():
-                    import shutil
-                    try:
-                        shutil.rmtree(mlpath)
-                    except OSError:
-                        pass
+        log.info("Saved checkpoint: %s", path)
+        maybe_export_elite_to_coreml(
+            checkpoint_path=path,
+            ga=self.ga,
+            make_network=self._make_network,
+            num_actions=len(self.action_space),
+            is_tile_mode=self._is_tile_mode,
+        )
+        rotate_old_checkpoints(self.checkpoint_dir, keep_last=keep_last)
 
     @staticmethod
     def _random_shift(states: torch.Tensor, pad: int = 4) -> torch.Tensor:
@@ -3528,20 +3397,9 @@ def load_game_profile(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def find_latest_checkpoint(checkpoint_dir: str | Path) -> Optional[Path]:
-    """Return the newest gen_*.pt in `checkpoint_dir`, or None if empty.
-
-    Sorts by mtime so a manually-copied or misnamed file (e.g.
-    `gen_archive.pt` from a different run) doesn't lexicographically
-    sort past the actual newest checkpoint and get picked as the
-    resume target. The cleanup code in `_save_checkpoint` already
-    uses mtime; this function now matches.
-    """
-    d = Path(checkpoint_dir)
-    if not d.exists():
-        return None
-    ckpts = sorted(d.glob("gen_*.pt"), key=lambda p: p.stat().st_mtime)
-    return ckpts[-1] if ckpts else None
+# Re-export so existing `from src.training.trainer import find_latest_checkpoint`
+# call sites in scripts/, GUI, and tests keep working without churn.
+find_latest_checkpoint = _find_latest_checkpoint
 
 
 def main() -> None:
