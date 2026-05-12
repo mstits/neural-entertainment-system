@@ -47,6 +47,10 @@ def _make_pool(env_spec: str, **kwargs):
     return RustPool(env_spec=env_spec, **kwargs)
 from src.models.policy_network import PolicyNetwork, get_best_device
 from src.models.rnd import RND
+from src.training.bc_seed_cache import (
+    bc_seed_cache_path as _bc_seed_cache_path_for,
+    resolve_bc_demo_paths,
+)
 from src.training.behavior_cloning import build_dataset, pretrain, seed_population_from_weights
 from src.training.curriculum import CurriculumManager, CurriculumStage
 from src.training.gae import gae as _gae
@@ -2734,114 +2738,18 @@ class Trainer:
         return cumulative, success_flags, level_ids, traj_flat, batch_breakdown
 
     def _bc_demo_paths(self) -> list[Path]:
-        """Resolve `self.bc_demo_path` to a concrete list of demo files.
-
-        Accepts:
-          * a single .state.bin path
-          * a directory — every `*.state.bin` inside (sorted by name)
-          * a colon-separated string of paths
-          * already a list/tuple of paths
-
-        Multi-demo BC is the only way to give the policy enough state
-        coverage to matter on a long game like Zelda. A single 5-min
-        recording is ~1k (state, action) pairs; six varied playthroughs
-        is ~10k, which lets the network generalise instead of memorise.
-        """
-        if not self.bc_demo_path:
-            return []
-        paths: list[Path] = []
-        spec = self.bc_demo_path
-        if isinstance(spec, (list, tuple)):
-            paths = [Path(p) for p in spec]
-        elif isinstance(spec, str) and ":" in spec:
-            # Colon-separated multi-demo spec from the GUI. The earlier
-            # implementation called `Path(spec).exists()` to disambiguate
-            # "single path that happens to contain ':'" from "joined
-            # multi-demo list" — but on macOS that calls os.stat on the
-            # full string, which raises ENAMETOOLONG (errno 63) at ~1024
-            # chars. With 30+ demo files joined, the string easily
-            # exceeds that. Guard the existence check by length first,
-            # AND swallow the OSError defensively so an exotic FS error
-            # never crashes BC seeding.
-            looks_single = len(spec) < 1000
-            if looks_single:
-                try:
-                    looks_single = Path(spec).exists()
-                except OSError:
-                    looks_single = False
-            if looks_single:
-                paths = [Path(spec)]
-            else:
-                paths = [Path(p) for p in spec.split(":") if p]
-        else:
-            p = Path(spec)
-            if p.is_dir():
-                paths = sorted(p.glob("*.state.bin"))
-            else:
-                paths = [p]
-        # Filter to existing paths. Wrap `.exists()` defensively in case
-        # any individual path is also too long for some reason.
-        out: list[Path] = []
-        for p in paths:
-            try:
-                if p.exists():
-                    out.append(p)
-            except OSError:
-                log.warning("BC demo path skipped (stat failed): %s", p)
-        return out
+        return resolve_bc_demo_paths(self.bc_demo_path)
 
     def _bc_seed_cache_path(self) -> Optional[Path]:
-        """Return the on-disk cache path for the BC seed tied to the
-        current (demo file contents, ROM, game name, action space,
-        frame_skip). Hashes ALL demos when more than one is configured
-        so a single demo being added/replaced invalidates the cache.
-
-        frame_skip is load-bearing: a seed trained at frame_skip=4
-        produces a different observation distribution than one trained
-        at frame_skip=16 — re-using the wrong seed silently warm-starts
-        the policy on the wrong distribution.
-        """
-        demos = self._bc_demo_paths()
-        if not demos:
-            return None
-        import hashlib
-        h = hashlib.sha1()
-        for demo in demos:
-            h.update(demo.read_bytes())
-            h.update(b"||")
-        h.update(str(self.rom_path).encode())
-        h.update(b"|")
-        h.update(self.game_profile.get("name", "unknown").encode())
-        h.update(b"|")
-        for entry in self.action_space:
-            h.update(("+".join(entry) + ",").encode())
-        h.update(b"|")
-        h.update(f"fs={self.frame_skip}".encode())
-        # Encoder kind is load-bearing: a tile_mlp seed has shape
-        # (175,) input, a nature_dqn seed has shape (4, 84, 84) input.
-        # Loading one into the other crashes with a state_dict shape
-        # mismatch. Including the encoder name in the cache key gives
-        # each architecture its own seed file.
-        h.update(b"|")
-        h.update(f"enc={self.encoder_kind}".encode())
-        digest = h.hexdigest()[:12]
-        current_path = self.checkpoint_dir / f"bc_seed_{digest}.pt"
-        # Garbage-collect stale seeds from prior config combinations.
-        # Each (demos, ROM, action_space, frame_skip, encoder, ...) tuple
-        # produces a distinct hash and a distinct file; the previous
-        # combo's file is never useful again. Without this, every config
-        # change leaves a 60-200 KB corpse in checkpoints/. Cleanup is
-        # best-effort: any unlink failure is logged but doesn't abort.
-        try:
-            for stale in self.checkpoint_dir.glob("bc_seed_*.pt"):
-                if stale != current_path:
-                    try:
-                        stale.unlink()
-                    except OSError as exc:
-                        log.debug("could not prune stale BC seed %s: %s", stale, exc)
-        except OSError:
-            pass
-        return current_path
+        return _bc_seed_cache_path_for(
+            demos=self._bc_demo_paths(),
+            rom_path=self.rom_path,
+            game_name=self.game_profile.get("name", "unknown"),
+            action_space=self.action_space,
+            frame_skip=self.frame_skip,
+            encoder_kind=self.encoder_kind,
+            checkpoint_dir=self.checkpoint_dir,
+        )
 
     def _behavior_clone_seed(self) -> None:
         """Build a BC dataset from the demo, pre-train a net, seed the pop.
