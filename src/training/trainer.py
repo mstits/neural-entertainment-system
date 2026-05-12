@@ -2014,11 +2014,24 @@ class Trainer:
     ) -> tuple[list[float], list[bool], list[str], dict, dict]:
         """Run one episode per genome in parallel. Unused workers idle.
 
-        Returns (fitnesses, successes, level_ids, trajectories) where
-        trajectories[i] is a list of (state_uint8, action_idx, reward) tuples
-        for genome i. Trajectories are used downstream for the REINFORCE
-        gradient update on the generation's best genome.
+        Returns `(fitnesses, successes, level_ids, traj_flat, batch_breakdown)`
+        where `traj_flat` is the flat ndarray bundle PPO/REINFORCE consumes.
+
+        Three phases — grep `=== PHASE` to jump between them:
+          1. SETUP  — build per-genome nets (+ optional vmap stacked-fn),
+                      reward fns, frame stackers; reset all workers; pre-
+                      allocate per-genome trajectory storage; optionally
+                      start the async-pipeline step executor.
+          2. STEP LOOP — per-step forward → action dispatch → pool.step_all
+                         → reward+depth bookkeeping → trajectory write.
+                         Runs up to `max_episode_steps` or until every
+                         genome is done.
+          3. FINALIZE — drain the async executor, fold per-genome reward
+                        breakdowns into the batch-level dict, drive the
+                        audio mixer's intensity by z-scored fitness, and
+                        bundle the trajectory arrays for the return.
         """
+        # === PHASE 1: SETUP ===
         assert self.pool is not None
         n = len(genomes)
 
@@ -2199,6 +2212,7 @@ class Trainer:
                 max_workers=1, thread_name_prefix="step-pipe"
             )
 
+        # === PHASE 2: STEP LOOP ===
         import gc as _step_gc
         for step in range(self.max_episode_steps):
             if not self._running:
@@ -2632,6 +2646,7 @@ class Trainer:
                     "bookkeeping", time.perf_counter_ns() - _book_t0
                 )
 
+        # === PHASE 3: FINALIZE ===
         # Async pipeline drain: the final iter's step_all submission
         # is still in flight (no subsequent iter pulled it). Wait for
         # it so the Rust pool state settles, but skip the Python-side
