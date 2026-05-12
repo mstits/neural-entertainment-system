@@ -76,6 +76,43 @@ def test_checkpoint_scale_zero_disables() -> None:
     assert "checkpoint" not in bd or bd["checkpoint"] == 0.0
 
 
+def test_staircase_bridge_at_x2820() -> None:
+    """The 2820 entry bridges the 2700→2900 dead zone where SMB 1-1
+    training plateaus on the staircase. Pin the exact checkpoint
+    deltas so a future "cleanup pass" can't silently delete the
+    entry that took 127 stalled generations to discover.
+
+    `breakdown` accumulates across every checkpoint crossed this
+    episode, so we measure deltas between samples to isolate the
+    contribution of each individual crossing.
+    """
+    r = nes_core.build_reward_function(_profile())
+    r.reset()
+    r.compute(_ram_with_x(0))           # initialize prev_x
+
+    # Walk past all the pre-staircase checkpoints so the running
+    # total settles before we measure the staircase segment.
+    r.compute(_ram_with_x(2700))
+    baseline = dict(r.breakdown).get("checkpoint", 0.0)
+
+    # 2820: mid-staircase bridge (the load-bearing entry from 2026-05-09).
+    r.compute(_ram_with_x(2820))
+    after_2820 = dict(r.breakdown).get("checkpoint", 0.0)
+    assert after_2820 - baseline == 800.0, (
+        "2820 staircase bridge missing — dead-zone fix from 2026-05-09 regressed"
+    )
+
+    # 2900: top of staircase.
+    r.compute(_ram_with_x(2900))
+    after_2900 = dict(r.breakdown).get("checkpoint", 0.0)
+    assert after_2900 - after_2820 == 2000.0
+
+    # 3000: beyond-flag.
+    r.compute(_ram_with_x(3000))
+    after_3000 = dict(r.breakdown).get("checkpoint", 0.0)
+    assert after_3000 - after_2900 == 1500.0
+
+
 def test_reset_re_arms_checkpoints() -> None:
     """`reset()` should re-arm all checkpoints so a new episode can
     earn the bonuses again."""

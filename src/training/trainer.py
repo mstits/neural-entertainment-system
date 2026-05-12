@@ -34,7 +34,7 @@ import torch
 import torch.nn.functional as F
 import yaml
 
-from src.emulation.frame_utils import FrameStacker
+from src.emulation.frame_utils import FrameStacker, TileFeatureStacker
 from src.emulation.rust_pool_adapter import RustPool, StepResult
 
 
@@ -513,6 +513,35 @@ class Trainer:
         self.freeze_pre_ppo_elite: bool = bool(
             rl_cfg.get("freeze_pre_ppo_elite", True)
         )
+        # Pure-PPO mode short-circuits the GA: evolve() clones the
+        # post-PPO elite into every slot, which silently overwrites
+        # any state_dict the pre-PPO snapshot or BC-replay injection
+        # parked on the weakest slot earlier in the gen. Force both
+        # safety nets off and warn once if the user explicitly opted
+        # in — the only honest pure-PPO recipe is "PPO is the only
+        # update source" (uvipen/yumouwei). Without this guard, a
+        # canonical-profile run reads `freeze_pre_ppo_elite: true`
+        # and `preserve_elite_diversity: true` from YAML and silently
+        # ignores both.
+        _pure_ppo_active = (
+            str(rl_cfg.get("trainer_mode", "ga_ppo")).lower() == "pure_ppo"
+        )
+        if _pure_ppo_active:
+            if rl_cfg.get("freeze_pre_ppo_elite") is True:
+                log.warning(
+                    "freeze_pre_ppo_elite=true is a no-op under "
+                    "trainer_mode=pure_ppo (evolve() clones the elite "
+                    "into every slot, overwriting the snapshot). "
+                    "Disabling."
+                )
+            if rl_cfg.get("preserve_elite_diversity") is True:
+                log.warning(
+                    "preserve_elite_diversity=true is a no-op under "
+                    "trainer_mode=pure_ppo (evolve() flattens diversity "
+                    "every generation). Disabling."
+                )
+            self.freeze_pre_ppo_elite = False
+            self.preserve_elite_diversity = False
         # LayerNorm on the trunk FC. Always-on default — cheap and
         # measurably stabilizes the value head when reward magnitudes
         # span orders of magnitude (which they do in this project).
@@ -964,9 +993,25 @@ class Trainer:
             "start": BUTTON_START, "select": BUTTON_SELECT,
         }
         table = []
-        for buttons in self.action_space:
+        for idx, buttons in enumerate(self.action_space):
+            # A bare string here (e.g. YAML `- right+A` instead of
+            # `- [right, A]`) iterates char-by-char and the inner
+            # lookup explodes with `KeyError: 'r'`. Catch it with a
+            # useful message — this exact bug bit the canonical
+            # profile (commit d76c4ab).
+            if isinstance(buttons, str):
+                raise ValueError(
+                    f"action_space[{idx}] is a string ({buttons!r}); "
+                    f"each entry must be a list of button names "
+                    f"(or [] for NOOP). Example: [\"right\", \"A\"]."
+                )
             bitmask = 0
             for b in buttons:
+                if b not in name_to_bit:
+                    raise ValueError(
+                        f"action_space[{idx}] references unknown button "
+                        f"{b!r}; valid names: {sorted(name_to_bit.keys())}"
+                    )
                 bitmask |= name_to_bit[b]
             table.append(bitmask)
         return tuple(table)
@@ -2079,7 +2124,6 @@ class Trainer:
         # for sparse RAM observations). When `tile_frame_stack == 1`
         # the tile stacker still wraps the feature vector but adds no
         # temporal context, matching the prior no-stack behavior.
-        from src.emulation.frame_utils import TileFeatureStacker
         if self._is_tile_mode:
             base_dim = self._tile_extractor.feature_dim
             stackers = []
@@ -3096,6 +3140,13 @@ class Trainer:
         GA preserves it as elite.
         """
         if not self._bc_replay_buffer:
+            return
+        # Pure-PPO evolve() clones the elite into every slot every gen
+        # — the BC-trained genome we'd park on the weakest slot would
+        # be wiped out at the next .evolve() before its fitness ever
+        # gets evaluated. Skip the work; the success buffer keeps
+        # accumulating for any future ga_ppo mode switch.
+        if self.ga.pure_ppo_mode:
             return
         # Concatenate all buffered trajectories into one big dataset.
         # Track per-trajectory start indices so AWR weighting resets

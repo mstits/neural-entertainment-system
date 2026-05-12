@@ -163,6 +163,58 @@ def test_best_genome_returns_highest_fitness() -> None:
     assert best.fitness == 99.0
 
 
+def test_pure_ppo_mode_clones_elite_into_all_slots() -> None:
+    """pure_ppo evolve() must broadcast the elite's exact state_dict
+    to every slot, preserve the elite's name, set parent_ids to (elite,),
+    bump the generation counter, and propagate the elite's fitness to
+    every clone."""
+    ga = GeneticAlgorithm(
+        population_size=4,
+        network_factory=_factory,
+        pure_ppo_mode=True,
+        seed=11,
+    )
+    ga.initialize()
+    # Distinguish each slot so we can prove every post-evolve genome
+    # ended up holding the elite's weights (not its own pre-evolve
+    # state).
+    for i, g in enumerate(ga.population):
+        for k in g.state_dict:
+            g.state_dict[k] = torch.full_like(g.state_dict[k], float(i + 1))
+    # Slot 1 is the elite — verify the broadcast picks the highest-
+    # fitness slot regardless of its index.
+    ga.population[0].fitness = 1.0
+    ga.population[1].fitness = 100.0
+    ga.population[2].fitness = 5.0
+    ga.population[3].fitness = -50.0
+    elite_before = ga.population[1]
+    elite_name = elite_before.name
+    elite_id = elite_before.genome_id
+    # Expected weights = full of 2.0 (slot 1 was filled with i+1=2).
+    expected = {k: torch.full_like(v, 2.0) for k, v in elite_before.state_dict.items()}
+
+    ga.evolve()
+
+    assert ga.generation == 1
+    assert len(ga.population) == 4
+    for slot, g in enumerate(ga.population):
+        for k, v in expected.items():
+            assert torch.allclose(g.state_dict[k], v), (
+                f"slot {slot} did not receive the elite's weights for {k}"
+            )
+        assert g.parent_ids == (elite_id,), f"slot {slot} parent_ids wrong"
+        assert g.name == elite_name, f"slot {slot} dropped elite name"
+        assert g.fitness == 100.0, f"slot {slot} fitness not propagated"
+        assert g.generation == 1
+
+
+def test_pure_ppo_mode_off_by_default() -> None:
+    """Default GA construction must not enable pure_ppo mode — any
+    non-canonical profile would otherwise silently lose mutation."""
+    ga = GeneticAlgorithm(population_size=2, network_factory=_factory)
+    assert ga.pure_ppo_mode is False
+
+
 def test_save_load_round_trip(tmp_path) -> None:
     ga = GeneticAlgorithm(population_size=4, network_factory=_factory, seed=5)
     ga.initialize()

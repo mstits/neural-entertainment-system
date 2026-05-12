@@ -178,10 +178,20 @@ class TileFeatureStacker:
         self._filled = 0
 
     def _flatten_oldest_to_newest(self) -> np.ndarray:
-        n = self.stack_size
-        for i in range(n):
-            src = self._ring[(self._head + i) % n]
-            self._out[i * self.feature_dim:(i + 1) * self.feature_dim] = src
+        # Oldest→newest = ring rotated so head sits at position 0,
+        # then flattened. np.concatenate emits a single C-level memcpy
+        # into _out (one allocation reused across calls) instead of
+        # the prior stack_size Python iterations with per-slot slice
+        # writes. Matters during BC pretrain where this fires once
+        # per emitted (state, action) sample on 100k+-sample demos.
+        head = self._head
+        self._out[: (self.stack_size - head) * self.feature_dim] = (
+            self._ring[head:].reshape(-1)
+        )
+        if head:
+            self._out[(self.stack_size - head) * self.feature_dim:] = (
+                self._ring[:head].reshape(-1)
+            )
         return self._out
 
     def reset(self, features: np.ndarray) -> np.ndarray:

@@ -191,10 +191,14 @@ class GeneticAlgorithm:
                     # policy persists across generations", so showing
                     # the same name makes the GUI semantics match.
                     name=best.name,
+                    # Every clone holds an identical state_dict, so
+                    # every slot's "true" fitness == best.fitness.
+                    # Keeping the invariant intact across the whole
+                    # population (not just slot 0) means any future
+                    # consumer that sorts by fitness before the next
+                    # eval sees a consistent score.
+                    fitness=best.fitness,
                 ))
-            # Preserve the elite's fitness on the first slot so the
-            # next generation's elitism path sees a meaningful score.
-            new_population[0].fitness = best.fitness
             self.population = new_population
             self.generation += 1
             return

@@ -55,9 +55,14 @@ reinforce:
   # Pure PPO — no GA mutation/crossover. All workers run the same
   # policy each generation; PPO is the only source of weight change.
   # Matches the canonical uvipen/yumouwei recipe exactly.
+  #
+  # `preserve_elite_diversity` and `freeze_pre_ppo_elite` are GA
+  # safety nets and have no effect here: evolve() clones the
+  # post-PPO elite into every slot every gen, so both the diversity
+  # spread and the parked snapshot get wiped before they're ever
+  # consulted. The trainer warns and disables both if they're set
+  # alongside trainer_mode=pure_ppo.
   trainer_mode: pure_ppo
-  preserve_elite_diversity: true
-  freeze_pre_ppo_elite: true
   # GA-only warmup: skipped in pure_ppo mode (the "GA" is a no-op
   # broadcast layer there) — PPO starts updating from gen 0.
   warmup_gens_ga_only: 0
