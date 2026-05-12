@@ -644,6 +644,13 @@ class Trainer:
             stale_gens_before_restart=int(ga_params.get("stale_gens_before_restart", 10)),
             restart_fraction=float(ga_params.get("restart_fraction", 0.5)),
             adaptive_mutation_scale=bool(ga_params.get("adaptive_mutation_scale", False)),
+            # Pure-PPO mode: skip GA mutation/crossover, sync all
+            # genomes to the post-PPO elite each generation. Reads
+            # `reinforce.trainer_mode` so it's set at the same scope
+            # as the rest of the PPO knobs (encoder, frame_stack, etc.).
+            pure_ppo_mode=(
+                str(rl_cfg.get("trainer_mode", "ga_ppo")).lower() == "pure_ppo"
+            ),
             # Thread the trainer-level seed into the GA so tournament
             # selection, mutation noise, and crossover masks are
             # reproducible. Without this, --seed only set the global

@@ -52,13 +52,15 @@ reinforce:
   # action timing for jumps and enemy avoidance. yumouwei (2022)
   # empirically proves stack=1 fails to clear 1-1, stack=4 succeeds.
   tile_frame_stack: 4
+  # Pure PPO — no GA mutation/crossover. All workers run the same
+  # policy each generation; PPO is the only source of weight change.
+  # Matches the canonical uvipen/yumouwei recipe exactly.
+  trainer_mode: pure_ppo
   preserve_elite_diversity: true
   freeze_pre_ppo_elite: true
-  # GA-only warmup: a few generations of pure GA to spread the BC
-  # seed through the population before PPO starts steering. Matches
-  # what worked in our pre-shaped-reward runs (~10 gens is enough
-  # for a 14k-param net).
-  warmup_gens_ga_only: 10
+  # GA-only warmup: skipped in pure_ppo mode (the "GA" is a no-op
+  # broadcast layer there) — PPO starts updating from gen 0.
+  warmup_gens_ga_only: 0
 
 # Canonical reward — gym-super-mario-bros default `r = v + c + d`.
 # All weights kept small and clipped so no single component

@@ -93,6 +93,15 @@ class GeneticAlgorithm:
         # evolution, and CMA-ES all do some form of per-parameter
         # scaling; this is the simplest version (per-tensor).
         adaptive_mutation_scale: bool = False,
+        # Pure-PPO mode: skip mutation and crossover entirely; every
+        # generation clones the post-PPO elite's weights into every
+        # population slot. The "GA" becomes a no-op sync layer — all
+        # workers run the same policy each generation, the PPO update
+        # is the only source of weight change, and the existing
+        # multi-worker rollout infrastructure provides the parallel
+        # environments PPO expects. Matches uvipen/yumouwei's published
+        # recipe end-to-end. Default False = original GA+PPO hybrid.
+        pure_ppo_mode: bool = False,
         seed: Optional[int] = None,
     ) -> None:
         self.population_size = population_size
@@ -102,6 +111,7 @@ class GeneticAlgorithm:
         self.elite_fraction = elite_fraction
         self.tournament_size = tournament_size
         self.adaptive_mutation_scale = bool(adaptive_mutation_scale)
+        self.pure_ppo_mode = bool(pure_ppo_mode)
         self.stale_gens_before_restart = int(stale_gens_before_restart)
         self.restart_fraction = float(restart_fraction)
         self.fitness_improvement_epsilon = float(fitness_improvement_epsilon)
@@ -161,6 +171,33 @@ class GeneticAlgorithm:
             self._gens_since_improvement = 0
         else:
             self._gens_since_improvement += 1
+
+        # Pure-PPO mode: no mutation, no crossover, no stale restart.
+        # Clone the post-PPO elite's state_dict into every population
+        # slot so every worker next generation runs the same policy.
+        # The PPO update happened upstream (in the trainer's
+        # `_reinforce_update`) before evolve() was called; this just
+        # broadcasts those updated weights to the whole "population".
+        if self.pure_ppo_mode:
+            best = self.population[0]
+            new_population = []
+            for _ in range(self.population_size):
+                new_population.append(Genome(
+                    genome_id=self._new_genome_id(),
+                    state_dict={k: v.clone() for k, v in best.state_dict.items()},
+                    generation=self.generation + 1,
+                    parent_ids=(best.genome_id,),
+                    # Preserve the elite's name — pure PPO is "one
+                    # policy persists across generations", so showing
+                    # the same name makes the GUI semantics match.
+                    name=best.name,
+                ))
+            # Preserve the elite's fitness on the first slot so the
+            # next generation's elitism path sees a meaningful score.
+            new_population[0].fitness = best.fitness
+            self.population = new_population
+            self.generation += 1
+            return
 
         # Elitism: top N survive
         num_elite = max(1, int(self.elite_fraction * self.population_size))
