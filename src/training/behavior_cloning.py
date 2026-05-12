@@ -103,6 +103,7 @@ def build_dataset(
     max_pairs: int = 20000,
     reward_fn=None,
     tile_extractor=None,
+    tile_frame_stack: int = 1,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[int]]:
     """Produce (states, actions, rewards) tensors from a `.state.bin` recording.
 
@@ -180,13 +181,31 @@ def build_dataset(
         env = NESEnvironment(rom_path=str(rom_path), frame_skip=1)
         first_frame = env.reset()
         # Pixel mode uses a frame stacker; tile mode decodes RAM
-        # directly via the supplied extractor. Only one is active per
-        # demo replay; the other variable stays at its default.
+        # directly via the supplied extractor AND (when tile_frame_stack>1)
+        # also stacks the decoded feature vectors so BC obs match the
+        # shape the runtime policy expects. Without this, BC samples
+        # are 175-dim while the network's first Linear layer takes
+        # 700-dim (4×175), and `pretrain` crashes with the obvious
+        # mat-mul shape mismatch.
         if tile_extractor is None:
             stacker = FrameStacker(stack_size=4)
             stacker.reset(first_frame)
+            tile_stacker = None
         else:
             stacker = None
+            if tile_frame_stack > 1:
+                from src.emulation.frame_utils import TileFeatureStacker
+                tile_stacker = TileFeatureStacker(
+                    stack_size=tile_frame_stack,
+                    feature_dim=tile_extractor.feature_dim,
+                )
+                # Seed the stack with the first observation so the
+                # first frame_skip chunk doesn't emit a stack full of
+                # zeros — matches the trainer's reset-time semantics.
+                initial_ram = env.get_ram_range(0, 2048).tobytes()
+                tile_stacker.reset(tile_extractor.extract(initial_ram))
+            else:
+                tile_stacker = None
 
         window_actions: list[int] = []
         window_reward = 0.0
@@ -231,7 +250,14 @@ def build_dataset(
                         # (or compute it fresh on the boundary).
                         if ram_snapshot is None:
                             ram_snapshot = env.get_ram_range(0, 2048).tobytes()
-                        states.append(tile_extractor.extract(ram_snapshot).copy())
+                        raw_feat = tile_extractor.extract(ram_snapshot)
+                        if tile_stacker is not None:
+                            # Push into the per-demo stacker so emitted
+                            # samples have the same temporal-stacked
+                            # layout the runtime policy receives.
+                            states.append(tile_stacker.push(raw_feat).copy())
+                        else:
+                            states.append(raw_feat.copy())
                     else:
                         states.append(current_stack.copy())
                     actions.append(action_idx)
@@ -246,6 +272,12 @@ def build_dataset(
                     env.reset()
                     if tile_extractor is None:
                         stacker.reset(env.get_frame())
+                    elif tile_stacker is not None:
+                        # Reseed the tile stacker so post-reset frames
+                        # don't carry pre-reset state in the temporal
+                        # window.
+                        post_reset_ram = env.get_ram_range(0, 2048).tobytes()
+                        tile_stacker.reset(tile_extractor.extract(post_reset_ram))
                     window_actions.clear()
                     window_reward = 0.0
                     if reward_fn is not None:
@@ -263,8 +295,11 @@ def build_dataset(
     if states:
         states_t = torch.from_numpy(np.stack(states, axis=0))
     elif tile_extractor is not None:
-        # Empty fallback shape matches tile-mode policy input dim.
-        states_t = torch.zeros((0, tile_extractor.feature_dim), dtype=torch.int8)
+        # Empty fallback shape matches tile-mode policy input dim,
+        # including the frame-stack multiplier so the downstream
+        # MLP-init code reads the right total feature width.
+        empty_dim = tile_extractor.feature_dim * max(1, tile_frame_stack)
+        states_t = torch.zeros((0, empty_dim), dtype=torch.int8)
     else:
         states_t = torch.zeros((0, 4, 84, 84), dtype=torch.uint8)
     actions_t = torch.tensor(actions, dtype=torch.long)

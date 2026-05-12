@@ -2868,8 +2868,14 @@ class Trainer:
             reward_fn=reward_fn,
             # Tile mode threads the extractor through so BC obs match
             # what the policy sees at runtime — same RAM-decoded
-            # feature vector, not stacked frames.
+            # feature vector. Also thread the frame-stack size so BC
+            # emits stacked features when the policy expects them
+            # (without this, BC samples are 175-dim while the net
+            # expects 700-dim and pretrain crashes on the mat-mul).
             tile_extractor=self._tile_extractor,
+            tile_frame_stack=(
+                self._tile_frame_stack if self._is_tile_mode else 1
+            ),
         )
         if states.shape[0] < 16:
             log.warning("BC demo too short (%d pairs); skipping pretrain.", states.shape[0])
