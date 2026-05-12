@@ -49,6 +49,7 @@ from src.models.policy_network import PolicyNetwork, get_best_device
 from src.models.rnd import RND
 from src.training.behavior_cloning import build_dataset, pretrain, seed_population_from_weights
 from src.training.curriculum import CurriculumManager, CurriculumStage
+from src.training.gae import gae as _gae
 from src.training.genetic_algorithm import GeneticAlgorithm, Genome
 from src.utils.reward_functions import build_reward_function
 
@@ -3378,83 +3379,26 @@ class Trainer:
                     )
                     rnd_loss_term = rnd_per_sample.mean()
 
-                # Generalized Advantage Estimation (GAE-λ) using the
-                # critic's value baseline. This replaces the raw
-                # (G - mean)/std normalization that was mathematically
-                # invalid under PPO clipping (high-variance advantages
-                # cause the clip to suppress learning signal).
-                # Bootstrap: the final state's value is approximated
-                # by the critic's prediction (truncated-episode case
-                # — most training trajectories hit max_steps without
-                # a natural done). For naturally-terminated episodes
-                # this slightly over-weights the tail but converges
-                # well in practice.
-                with torch.no_grad():
-                    rewards_t = torch.from_numpy(
-                        full_r[window_offset:]
-                    ).to(self.device).float()
-                    if rnd_intrinsic_t is not None:
-                        # Length match is guaranteed: rnd_intrinsic_t
-                        # has the same T as states_t which was sliced
-                        # from `[win_start:traj_len]`, identical to the
-                        # window applied to `full_r`.
-                        rewards_t = rewards_t + rnd_intrinsic_t
-                    T = rewards_t.numel()
-                    # Next-state values: shift values_pred by 1 to
-                    # produce V(s_{t+1}). For the LAST timestep:
-                    #   * If the episode ended naturally (death,
-                    #     level-clear) — i.e. traj_len < max_steps —
-                    #     V(s_{T+1}) = 0 (no future after terminal).
-                    #   * Otherwise (truncated by max_steps), bootstrap
-                    #     with V(s_T) so the GAE return uses the
-                    #     critic's estimate of "what comes next."
-                    #
-                    # The previous unconditional bootstrap was a major
-                    # learning bug: at death, true delta_T = r_T - V(s_T),
-                    # but bootstrap gives r_T + (γ-1)·V(s_T). With γ=0.99
-                    # the death signal was muted ~100× — the policy
-                    # could not learn to avoid pits/enemies because the
-                    # gradient at terminal states was dominated by the
-                    # value-bootstrap, not the death penalty.
-                    values_next = torch.empty_like(values_pred)
-                    if T > 1:
-                        values_next[:-1] = values_pred[1:]
-                    traj_len_full = int(traj_lens[g_idx])
-                    terminated_naturally = (
-                        traj_len_full < self.max_episode_steps
-                    )
-                    if terminated_naturally:
-                        values_next[-1] = 0.0  # no future after terminal
-                    else:
-                        values_next[-1] = values_pred[-1]  # bootstrap for truncation
-                    gae_lambda = 0.95  # standard PPO default
-                    deltas = rewards_t + gamma * values_next - values_pred
-                    # GAE recurrence runs CPU-side: each iteration's
-                    # `advantages[t] = python_scalar` setitem on an MPS
-                    # tensor would otherwise trigger
-                    # `THPVariable_setitem → fill_scalar_mps`, which
-                    # creates a fresh MPSGraph cached graph PER CALL. The
-                    # graphs accumulate ~5 MB each and the cache key
-                    # mis-hits because the index `t` rotates them out;
-                    # measured at >150 MB/s leak in 16-worker training
-                    # (rounds went from ~1 min to ~20 min as RSS climbed
-                    # past 30 GB). Computing the running sum on a
-                    # numpy view, then a single `torch.from_numpy().to()`
-                    # transfer for `advantages` keeps the MPS-side tensor
-                    # alloc to one per trajectory.
-                    deltas_np = deltas.detach().cpu().numpy()
-                    advantages_np = np.empty_like(deltas_np)
-                    running_adv = 0.0
-                    for t in range(T - 1, -1, -1):
-                        running_adv = float(deltas_np[t]) + gamma * gae_lambda * running_adv
-                        advantages_np[t] = running_adv
-                    advantages = torch.from_numpy(advantages_np).to(self.device)
-                    # Targets for the critic: advantage + baseline =
-                    # the discounted return estimate. Learn V toward this.
-                    value_targets = advantages + values_pred.detach()
-                    # Normalize advantages (standard PPO practice).
-                    if advantages.numel() > 1:
-                        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-6)
+                # GAE-λ over the critic's value baseline — see
+                # `src/training/gae.py` for the truncation-vs-natural-
+                # termination bootstrap discussion and the load-bearing
+                # MPSGraph-leak workaround.
+                rewards_t = torch.from_numpy(
+                    full_r[window_offset:]
+                ).to(self.device).float()
+                if rnd_intrinsic_t is not None:
+                    # Length match is guaranteed: rnd_intrinsic_t has
+                    # the same T as states_t which was sliced from
+                    # `[win_start:traj_len]`, identical to the window
+                    # applied to `full_r`.
+                    rewards_t = rewards_t + rnd_intrinsic_t
+                advantages, value_targets = _gae(
+                    rewards=rewards_t,
+                    values_pred=values_pred,
+                    traj_len_full=int(traj_lens[g_idx]),
+                    max_episode_steps=self.max_episode_steps,
+                    gamma=gamma,
+                )
 
                 # Per-trajectory MEAN (not sum) so a 1500-step elite
                 # doesn't dominate the gradient over a 50-step elite.
