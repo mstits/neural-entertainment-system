@@ -100,14 +100,15 @@ action_space:
   # SIMPLE_MOVEMENT (Kauten gym-super-mario-bros canonical 7-action
   # set). yumouwei uses this. We previously experimented with 6
   # actions (dropped left and left+A) — that's an ablation, not the
-  # canonical.
-  - NOOP
-  - right
-  - right+A
-  - right+B
-  - right+A+B
-  - A
-  - left
+  # canonical. Format mirrors mario_tiles.yaml: each action is a
+  # list of button names (or empty list for NOOP).
+  - []                      # NOOP
+  - ["right"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["right", "A", "B"]
+  - ["A"]
+  - ["left"]
 
 curriculum:
   stages:

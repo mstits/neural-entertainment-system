@@ -294,24 +294,44 @@ state.
 
 ## Training side
 
-The training stack is two-tier: a **universal pixel-CNN path** that works on
-any NES game with no per-game code, and **per-game optimized paths** (currently
-only SMB tile mode) that swap in a smaller architecture + dense reward shaping
-for games we've invested in. The encoder choice is per-profile:
+Three independent axes of training configuration, all per-profile:
+
+1. **Encoder** (`reinforce.encoder`): pixel CNN vs. tile MLP
+2. **Trainer mode** (`reinforce.trainer_mode`): `pure_ppo` vs. `ga_ppo`
+3. **Top-level trainer class** (`training_mode`): PPO/GA stack vs. Dreamer
 
 ```mermaid
 flowchart LR
     Profile[Profile YAML<br/>configs/&lt;game&gt;.yaml] -->|reinforce.encoder| Dispatch{Encoder?}
-    Profile -->|training_mode| ModeDispatch{Trainer?}
-    ModeDispatch -->|ga_ppo default| Trainer[Trainer<br/>GA + PPO + GAE]
-    ModeDispatch -->|dreamer| Dreamer[DreamerTrainer<br/>world model + actor/critic]
+    Profile -->|reinforce.trainer_mode| ModeFlag{Trainer mode?}
+    Profile -->|training_mode| TopLevel{Top-level trainer?}
+    TopLevel -->|ga_ppo default| Trainer[Trainer<br/>PPO + GAE + optional GA]
+    TopLevel -->|dreamer| Dreamer[DreamerTrainer<br/>world model + actor/critic]
+    ModeFlag -->|pure_ppo| PurePPO[GA = no-op sync;<br/>single policy continuously updated]
+    ModeFlag -->|ga_ppo default| GAPPO[GA mutation + crossover<br/>around PPO-updated elite]
     Dispatch -->|nature_dqn / impala| CNN[PolicyNetwork<br/>1.7M params<br/>4×84×84 stacked frames]
-    Dispatch -->|smb_tiles| Tile[TilePolicyNetwork<br/>~14k params<br/>175 RAM-decoded features]
+    Dispatch -->|smb_tiles| Tile["TilePolicyNetwork<br/>~14k params<br/>tile_frame_stack × 175<br/>RAM-decoded features"]
     CNN -->|forward| Trainer
     Tile -->|forward| Trainer
+    PurePPO -.applies to.-> Trainer
+    GAPPO -.applies to.-> Trainer
     Trainer -->|metrics.jsonl| Dashboard[TrainingDashboardWindow<br/>fitness · WM losses · replay · recon]
     Dreamer -->|metrics.jsonl| Dashboard
 ```
+
+**Canonical SMB recipes documented in the literature** (uvipen 2020 pixel CNN
+clears 31/32 levels; yumouwei 2022 RAM-grid MLP clears 1-1 in 10M steps; both
+detailed in `reference_canonical_smb_ppo_configs` memory file). Two profile
+variants ship for empirical comparison:
+
+- **`configs/mario_canonical.yaml`** — tile MLP + `tile_frame_stack: 4` +
+  `trainer_mode: pure_ppo` + canonical `r = v + c + d` reward
+  (forward_progress=1.0, completion_bonus=50, death_penalty=-15, no
+  shaping). Reproduces yumouwei's recipe end-to-end. Baseline for "does
+  our trainer match the literature".
+- **`configs/mario_tiles.yaml`** — same encoder, GA+PPO hybrid, shaped
+  reward (survival/jump_clear/checkpoint bonuses). Experimental tuning
+  surface; A/B against the canonical when testing reward-shaping ideas.
 
 The two trainer classes (PPO+GA and Dreamer) coexist; profiles pick one via
 `training_mode`. The two encoder paths coexist; profiles pick one via
