@@ -473,13 +473,25 @@ class Trainer:
         self._is_tile_mode: bool = self.encoder_kind in ("smb_tiles",)
         self._tile_extractor = None
         self._tile_feature_dim: int = 0
+        # Frame stacking for tile observations. yumouwei (2022) showed
+        # empirically that stack=1 fails to clear SMB 1-1 while stack=4
+        # succeeds — point-in-time RAM features lack temporal context
+        # for jump timing and enemy avoidance. Reads `reinforce.tile_frame_stack`
+        # with default 4 (the canonical yumouwei value). Set to 1 in
+        # the YAML to disable stacking.
+        self._tile_frame_stack: int = int(
+            rl_cfg.get("tile_frame_stack", 4 if self._is_tile_mode else 1)
+        )
         if self._is_tile_mode:
             from src.emulation.tile_observations import get_extractor
             self._tile_extractor = get_extractor(self.encoder_kind)
-            self._tile_feature_dim = self._tile_extractor.feature_dim
+            base_dim = self._tile_extractor.feature_dim
+            self._tile_feature_dim = base_dim * max(1, self._tile_frame_stack)
             log.info(
-                "Tile mode active: encoder=%s, feature_dim=%d",
-                self.encoder_kind, self._tile_feature_dim,
+                "Tile mode active: encoder=%s, base_feature_dim=%d, "
+                "frame_stack=%d, total_feature_dim=%d",
+                self.encoder_kind, base_dim,
+                self._tile_frame_stack, self._tile_feature_dim,
             )
         # Preserve elite diversity: when True, PPO updates only `best`
         # and leaves the other elites untouched. Default False keeps
@@ -2055,13 +2067,24 @@ class Trainer:
             fn.reset()
 
         obs_dtype = self._obs_buffer_dtype()
-        # Frame stackers are only used in pixel mode. Tile mode
-        # doesn't stack frames — each step's observation is the latest
-        # tile feature vector decoded from current RAM.
-        stackers = (
-            [FrameStacker(dtype=obs_dtype) for _ in range(n)]
-            if not self._is_tile_mode else []
-        )
+        # Frame stackers — pixel mode uses the 84×84 grayscale stacker,
+        # tile mode uses the 1D feature-vector stacker (yumouwei recipe
+        # for sparse RAM observations). When `tile_frame_stack == 1`
+        # the tile stacker still wraps the feature vector but adds no
+        # temporal context, matching the prior no-stack behavior.
+        from src.emulation.frame_utils import TileFeatureStacker
+        if self._is_tile_mode:
+            base_dim = self._tile_extractor.feature_dim
+            stackers = []
+            tile_stackers = [
+                TileFeatureStacker(
+                    stack_size=self._tile_frame_stack,
+                    feature_dim=base_dim,
+                ) for _ in range(n)
+            ]
+        else:
+            stackers = [FrameStacker(dtype=obs_dtype) for _ in range(n)]
+            tile_stackers = []
         # Sticky-action state: per-genome record of the most-recently
         # executed action. Initialized to 0 (NOOP) at episode start so
         # the very first step can never roll into a "stick to NOOP"
@@ -2088,8 +2111,10 @@ class Trainer:
         # — only its shape differs.
         if self._is_tile_mode:
             stacked_obs: list[np.ndarray] = [
-                self._tile_extractor.extract(r.ram_snapshot)
-                for r in init_results
+                tile_stackers[i].reset(
+                    self._tile_extractor.extract(r.ram_snapshot)
+                )
+                for i, r in enumerate(init_results)
             ]
         else:
             stacked_obs = [
@@ -2471,11 +2496,14 @@ class Trainer:
                     continue
                 i = genome_i
                 if self._is_tile_mode:
-                    # Tile mode: re-decode the latest RAM snapshot into
-                    # a tile feature vector. No frame stacking — the
-                    # tile grid + scalar state already encodes
-                    # everything the policy needs.
-                    stacked_obs[i] = self._tile_extractor.extract(r.ram_snapshot)
+                    # Tile mode: re-decode RAM into a tile feature vector,
+                    # then push through the per-genome TileFeatureStacker
+                    # so the policy sees a temporal stack (yumouwei recipe).
+                    # When tile_frame_stack=1 this collapses to a single
+                    # frame and the policy gets the same point-in-time
+                    # vector as the pre-stack code did.
+                    raw = self._tile_extractor.extract(r.ram_snapshot)
+                    stacked_obs[i] = tile_stackers[i].push(raw)
                 else:
                     stacked_obs[i] = stackers[i].push(r.frame, r.preprocessed)
                 done = r.done

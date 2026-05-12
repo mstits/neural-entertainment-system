@@ -143,3 +143,60 @@ class FrameStacker:
         if self._filled < self.stack_size:
             self._filled += 1
         return self._view_oldest_to_newest()
+
+
+class TileFeatureStacker:
+    """Rolling stack of tile-mode feature vectors for one environment.
+
+    Tile-mode observations are 1-D feature vectors (e.g. SMB's 175-dim
+    grid+scalars). Without stacking, the policy sees only the
+    instantaneous state — no temporal information, no derivative of
+    motion. yumouwei (2022) demonstrated empirically that stack=1
+    fails to clear SMB 1-1 while stack=2 or stack=4 succeeds, even
+    though our scalar features already include vel_x. Frame stacking
+    captures longer-horizon temporal context (enemy motion, jump
+    arcs) that point-in-time scalars don't.
+
+    Output shape: (stack_size * feature_dim,) — a flat concatenation
+    of [oldest, ..., newest] feature vectors. The MLP consumes the
+    flat vector unchanged; its first Linear layer learns the temporal
+    convolution implicitly.
+    """
+
+    def __init__(
+        self,
+        stack_size: int = 4,
+        feature_dim: int = 175,
+        dtype: np.dtype = np.int8,
+    ) -> None:
+        self.stack_size = stack_size
+        self.feature_dim = feature_dim
+        self.dtype = np.dtype(dtype)
+        self._ring = np.zeros((stack_size, feature_dim), dtype=self.dtype)
+        self._out = np.zeros((stack_size * feature_dim,), dtype=self.dtype)
+        self._head = 0
+        self._filled = 0
+
+    def _flatten_oldest_to_newest(self) -> np.ndarray:
+        n = self.stack_size
+        for i in range(n):
+            src = self._ring[(self._head + i) % n]
+            self._out[i * self.feature_dim:(i + 1) * self.feature_dim] = src
+        return self._out
+
+    def reset(self, features: np.ndarray) -> np.ndarray:
+        """Fill the ring with the initial features (so stack[0..N-1] all
+        equal the first observation). Matches FrameStacker.reset
+        semantics — no zero-padding leaks at episode start."""
+        for i in range(self.stack_size):
+            self._ring[i] = features
+        self._head = 0
+        self._filled = self.stack_size
+        return self._flatten_oldest_to_newest()
+
+    def push(self, features: np.ndarray) -> np.ndarray:
+        self._ring[self._head] = features
+        self._head = (self._head + 1) % self.stack_size
+        if self._filled < self.stack_size:
+            self._filled += 1
+        return self._flatten_oldest_to_newest()
