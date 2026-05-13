@@ -282,6 +282,8 @@ class Trainer:
                 )
                 start_state_path = None
         self.start_state_path = start_state_path
+        # bc_demo_path: explicit ctor arg from GUI/CLI; the YAML fallback
+        # is applied later once `rl_cfg` is defined (see below).
         self.bc_demo_path = bc_demo_path
         self.bc_epochs = bc_epochs
         self.seed = seed
@@ -325,6 +327,14 @@ class Trainer:
 
         # Hybrid GA + policy-gradient knobs (overridable from the profile).
         rl_cfg = game_profile.get("reinforce", {})
+        # YAML fallback for bc_demo_path. Done HERE (after rl_cfg
+        # exists) so a profile can self-declare its demo without
+        # requiring the GUI's file-picker or the CLI's --bc-demo
+        # flag — canonical needs a demo seed to escape the "policy
+        # never commits, can't learn from anything" trap. Explicit
+        # ctor arg still wins.
+        if not self.bc_demo_path:
+            self.bc_demo_path = rl_cfg.get("bc_demo_path")
         self.reinforce_enabled: bool = rl_cfg.get("enabled", True)
         self.reinforce_top_k: int = rl_cfg.get("top_k", 3)
         self.reinforce_lr: float = rl_cfg.get("lr", 1e-4)
@@ -370,6 +380,22 @@ class Trainer:
         self.bc_replay_every_gens: int = max(1, int(rl_cfg.get("bc_replay_every_gens", 20)))
         self.bc_replay_epochs: int = max(1, int(rl_cfg.get("bc_replay_epochs", 5)))
         self.bc_replay_max_buffer: int = max(1, int(rl_cfg.get("bc_replay_max_buffer", 16)))
+        # How many of the most recent buffered trajectories actually feed
+        # BC training. Buffer storage stays at max_buffer for archival
+        # (a successful clear that took 8 h to discover should not be
+        # discarded just because BC training prefers fresher data), but
+        # `_run_bc_replay` trains only on the latest train_window entries.
+        # Diagnosis 2026-05-12: training on all 16 buffer entries
+        # aggregates clears from 16 different source genomes across the
+        # run's history. The resulting action labels averaged ~uniform
+        # across the 6-action space (14-18% each vs uniform=16.67%), so
+        # BC loss plateaued at 1.68 ≈ ln(6)=1.79 (random baseline) and
+        # the BC-injected genome failed to reproduce any single clear.
+        # Restricting training to 3 recent trajectories gives BC a
+        # coherent single-or-few-policy target it can actually fit.
+        self.bc_replay_train_window: int = max(
+            1, int(rl_cfg.get("bc_replay_train_window", 3))
+        )
         # In-memory buffer of (obs, actions, rewards, length) tuples from
         # successful episodes. Capped at bc_replay_max_buffer to bound
         # memory; new successes evict the oldest.
@@ -383,6 +409,13 @@ class Trainer:
         # how rare clears are: a 1-in-200-episode success that took 8
         # hours of training to discover should not vanish on restart.
         self._bc_replay_buffer: list[tuple] = []
+        # Track buffer size at the end of the previous gen so we can fire
+        # BC replay IMMEDIATELY on the next gen if a new clear was
+        # captured this gen — instead of waiting up to bc_replay_every_gens
+        # for the modulo trigger. Modulo timing alone gives PPO 1..N gens
+        # to drift the policy AWAY from the freshly-discovered clear
+        # before BC anchors it; immediate anchoring eliminates that gap.
+        self._last_bc_buffer_size: int = 0
         self._bc_success_cache_path: Path = self.checkpoint_dir / "bc_success_cache.npz"
         # NOTE: deferred — the load needs `self.num_actions` and
         # `self._obs_buffer_shape()` for schema validation, both of
@@ -593,6 +626,12 @@ class Trainer:
         # Built lazily on first PPO step so the RND module lands on the
         # correct device once Trainer.run sets it up.
         self._rnd: Optional["RND"] = None
+
+        # Persistent PPO network and optimizer to maintain Adam's momentum
+        # state across generations. Recreating them every gen resets the
+        # learning rate adaptation and destroys "relearning" capability.
+        self._ppo_net: Optional["PolicyNetwork"] = None
+        self._ppo_optimizer: Optional[torch.optim.Optimizer] = None
 
         # Profile YAML can pin a specific device (e.g. `reinforce.device: cpu`)
         # which is the right call for tile mode — at 14k params, MPS kernel
@@ -1749,20 +1788,26 @@ class Trainer:
                         # Slice down to actual length to avoid storing
                         # zero-padded tail data; copy so the in-memory
                         # buffer survives the next iteration's
-                        # traj_flat reuse.
+                        # traj_flat reuse. The 5th tuple element is
+                        # the SOURCE genome_id — diagnostics-only for
+                        # now (BC training currently picks by recency
+                        # not by id), but it makes the buffer's
+                        # provenance inspectable post-hoc.
                         self._bc_replay_buffer.append((
                             traj_flat["obs"][g_i, :traj_len].copy(),
                             traj_flat["actions"][g_i, :traj_len].copy(),
                             traj_flat["rewards"][g_i, :traj_len].copy(),
                             float(fitnesses[g_i]),
+                            int(batch[g_i].genome_id),
                         ))
                         # FIFO eviction once over capacity.
                         if len(self._bc_replay_buffer) > self.bc_replay_max_buffer:
                             self._bc_replay_buffer.pop(0)
                         log.info(
                             "  BC replay: captured success trajectory "
-                            "(genome=%d, len=%d, fitness=%.1f, buffer=%d/%d)",
-                            g_i, traj_len, fitnesses[g_i],
+                            "(genome_id=%d, slot=%d, len=%d, fitness=%.1f, buffer=%d/%d)",
+                            int(batch[g_i].genome_id), g_i, traj_len,
+                            fitnesses[g_i],
                             len(self._bc_replay_buffer),
                             self.bc_replay_max_buffer,
                         )
@@ -1996,16 +2041,28 @@ class Trainer:
             top = sorted(gen_breakdown.items(), key=lambda kv: abs(kv[1]), reverse=True)[:6]
             log.info("  reward breakdown: %s", " ".join(f"{k}={v:.1f}" for k, v in top))
 
-        # BC replay: every N gens, train a fresh policy on the success
-        # buffer and inject as a new genome. Keeps "what an actual clear
-        # looks like" anchored in the population even as PPO drifts.
+        # BC replay triggers on EITHER:
+        #   * a new trajectory was captured this gen (buffer grew) — fire
+        #     immediately so PPO doesn't drift the policy away from the
+        #     freshly-discovered clear before BC can anchor it
+        #   * the modulo schedule (every bc_replay_every_gens) — keeps
+        #     anchoring active even on stable gens with no new clears,
+        #     resampling the latest train_window trajectory
+        cur_bc_buf = len(self._bc_replay_buffer)
+        new_capture_this_gen = cur_bc_buf > self._last_bc_buffer_size
+        modulo_fire = gen > 0 and gen % self.bc_replay_every_gens == 0
         if (
             self.bc_replay_enabled
-            and len(self._bc_replay_buffer) > 0
-            and gen > 0
-            and gen % self.bc_replay_every_gens == 0
+            and cur_bc_buf > 0
+            and (new_capture_this_gen or modulo_fire)
         ):
+            if new_capture_this_gen:
+                log.info(
+                    "  BC replay: triggered immediately (buffer grew %d -> %d this gen)",
+                    self._last_bc_buffer_size, cur_bc_buf,
+                )
             self._run_bc_replay(pop)
+        self._last_bc_buffer_size = len(self._bc_replay_buffer)
 
         self.ga.evolve()
 
@@ -2550,8 +2607,18 @@ class Trainer:
                 genome_name = (
                     genomes[i].name if i < len(genomes) else f"worker-{worker_id}"
                 )
+                # `r.done` is the env-side done flag (Mario fell off the
+                # bottom, hardware game-over screen). `rew_done` is the
+                # reward function's done — fires on completion bonus,
+                # death-state RAM read, or lives drop. For SMB-style
+                # successes, completion fires via rew_done only; gating
+                # ep_success on r.done alone misses every flag-touch and
+                # the success counter (which drives BC capture + curriculum
+                # promotion + narrator events) silently stays at zero.
                 ep_success = (
-                    reward_fns[i].episode_success() if bool(r.done) else False
+                    reward_fns[i].episode_success()
+                    if (bool(r.done) or rew_done)
+                    else False
                 )
                 if narrator_on:
                     self._narrator.observe(
@@ -2900,18 +2967,26 @@ class Trainer:
             return
         try:
             data: dict = {}
-            for i, (obs, acts, rews, fit) in enumerate(self._bc_replay_buffer):
+            for i, entry in enumerate(self._bc_replay_buffer):
+                # Backward compat: 4-tuple entries (no genome_id) still
+                # appear when loading old caches into a buffer that
+                # never re-recorded them. Normalize on write so v2 cache
+                # always carries genome_id.
+                obs, acts, rews, fit = entry[:4]
+                gid = int(entry[4]) if len(entry) > 4 else -1
                 data[f"traj_{i}_obs"] = obs
                 data[f"traj_{i}_actions"] = acts
                 data[f"traj_{i}_rewards"] = rews
                 data[f"traj_{i}_fitness"] = np.array([fit], dtype=np.float32)
+                data[f"traj_{i}_genome_id"] = np.array([gid], dtype=np.int32)
             data["count"] = np.array([len(self._bc_replay_buffer)], dtype=np.int32)
             # Schema metadata so the load path can validate that the
             # cache is compatible with the current trainer configuration
-            # before injecting potentially-stale trajectories. Version
-            # 1 = "carries num_actions + obs_shape." Bump on any
-            # backward-incompatible format change.
-            data["cache_version"] = np.array([1], dtype=np.int32)
+            # before injecting potentially-stale trajectories. Bump
+            # cache_version on any backward-incompatible format change.
+            # v1 = obs+actions+rewards+fitness + num_actions+obs_shape.
+            # v2 = adds traj_{i}_genome_id (sentinel -1 means unknown).
+            data["cache_version"] = np.array([2], dtype=np.int32)
             data["num_actions"] = np.array([self.num_actions], dtype=np.int32)
             obs_shape_tuple = self._obs_buffer_shape(1, 1)[2:]
             data["obs_shape"] = np.array(obs_shape_tuple, dtype=np.int64)
@@ -2967,6 +3042,10 @@ class Trainer:
                     "Skipping load — will rebuild on next clear."
                 )
                 return
+            # v1 → v2 added per-trajectory genome_id. v1 caches load fine
+            # with sentinel -1; the buffer will start emitting v2 once new
+            # clears arrive.
+            cache_has_genome_id = cache_version >= 2
             saved_num_actions = int(arr["num_actions"][0])
             saved_obs_shape = tuple(arr["obs_shape"].tolist())
             cur_obs_shape = self._obs_buffer_shape(1, 1)[2:]
@@ -2990,7 +3069,11 @@ class Trainer:
                 acts = arr[f"traj_{i}_actions"]
                 rews = arr[f"traj_{i}_rewards"]
                 fit = float(arr[f"traj_{i}_fitness"][0])
-                self._bc_replay_buffer.append((obs, acts, rews, fit))
+                gid = (
+                    int(arr[f"traj_{i}_genome_id"][0])
+                    if cache_has_genome_id else -1
+                )
+                self._bc_replay_buffer.append((obs, acts, rews, fit, gid))
             log.info(
                 "BC success cache loaded: %d trajectories (num_actions=%d, "
                 "obs_shape=%s) from %s",
@@ -3017,23 +3100,42 @@ class Trainer:
         """
         if not self._bc_replay_buffer:
             return
-        # Pure-PPO evolve() clones the elite into every slot every gen
-        # — the BC-trained genome we'd park on the weakest slot would
-        # be wiped out at the next .evolve() before its fitness ever
-        # gets evaluated. Skip the work; the success buffer keeps
-        # accumulating for any future ga_ppo mode switch.
-        if self.ga.pure_ppo_mode:
-            return
-        # Concatenate all buffered trajectories into one big dataset.
-        # Track per-trajectory start indices so AWR weighting resets
-        # its discounted-return accumulator at episode boundaries
-        # instead of leaking returns backwards across them.
-        all_obs = np.concatenate([t[0] for t in self._bc_replay_buffer], axis=0)
-        all_acts = np.concatenate([t[1] for t in self._bc_replay_buffer], axis=0)
-        all_rews = np.concatenate([t[2] for t in self._bc_replay_buffer], axis=0)
+        # In pure_ppo mode evolve() clones the highest-fitness slot to
+        # every other slot — which is exactly what we WANT for BC if the
+        # BC-trained network's claimed fitness beats the post-PPO elite's.
+        # An earlier version of this code skipped BC replay entirely under
+        # pure_ppo on the reasoning that "the weakest-slot injection would
+        # be wiped" — wrong, because the injected fitness lifts the slot
+        # to the top of the sort, then evolve() broadcasts it. Keeping
+        # BC replay active in both modes; the success-buffer is the
+        # mechanism we rely on to anchor clears across PPO drift.
+        # Train BC only on the most-recent `bc_replay_train_window`
+        # trajectories — the buffer itself archives more for safety,
+        # but BC needs a COHERENT single-policy target. Aggregating
+        # across all 16 buffer slots (each from a different gen's
+        # elite) produced near-uniform action labels and BC loss
+        # plateau'd at the random-policy entropy floor. See the
+        # bc_replay_train_window comment in __init__.
+        train_set = self._bc_replay_buffer[-self.bc_replay_train_window:]
+        gids_used = [int(t[4]) if len(t) > 4 else -1 for t in train_set]
+        fits_used = [float(t[3]) for t in train_set]
+        log.info(
+            "  BC replay: training on %d/%d buffered trajectories "
+            "(genome_ids=%s, fitnesses=%s)",
+            len(train_set), len(self._bc_replay_buffer),
+            gids_used,
+            [f"{f:.0f}" for f in fits_used],
+        )
+        # Concatenate the selected trajectories. Track per-trajectory
+        # start indices so AWR weighting resets its discounted-return
+        # accumulator at episode boundaries instead of leaking returns
+        # backwards across them.
+        all_obs = np.concatenate([t[0] for t in train_set], axis=0)
+        all_acts = np.concatenate([t[1] for t in train_set], axis=0)
+        all_rews = np.concatenate([t[2] for t in train_set], axis=0)
         episode_boundaries: list[int] = []
         running = 0
-        for t in self._bc_replay_buffer[:-1]:  # last one's "end" isn't a boundary
+        for t in train_set[:-1]:  # last one's "end" isn't a boundary
             running += len(t[1])
             episode_boundaries.append(running)
         n = all_obs.shape[0]
@@ -3070,20 +3172,38 @@ class Trainer:
             return
 
         # Inject into the weakest non-best slot, mirroring the freeze
-        # snapshot pattern. Fitness is set to the buffer's mean so the
-        # GA gives the new genome a fair shot at elitism for one gen
-        # before re-evaluation.
+        # snapshot pattern. Fitness is set to the train-set's mean
+        # (not the whole buffer's) so the GA's first-gen evaluation
+        # picks a number anchored to the policy that BC actually
+        # fit, not to old/unrelated successes still archived in the
+        # buffer.
         weakest_i = min(range(len(pop)), key=lambda i: pop[i].fitness)
-        avg_buffer_fitness = sum(t[3] for t in self._bc_replay_buffer) / len(self._bc_replay_buffer)
+        avg_train_fitness = sum(t[3] for t in train_set) / len(train_set)
         pop[weakest_i].state_dict = {
             k: v.detach().cpu().clone() for k, v in net.state_dict().items()
         }
-        pop[weakest_i].fitness = float(avg_buffer_fitness)
+        pop[weakest_i].fitness = float(avg_train_fitness)
         log.info(
-            "  BC replay: trained on %d successful trajectories (%d state-action pairs), "
+            "  BC replay: trained on %d trajectories (%d state-action pairs), "
             "BC loss %.4f, injected to slot %d (fitness %.1f for next-gen elitism)",
-            len(self._bc_replay_buffer), n, loss, weakest_i, avg_buffer_fitness,
+            len(train_set), n, loss, weakest_i, avg_train_fitness,
         )
+        # Reset the persistent Adam optimizer. The next _reinforce_update
+        # will load the BC-injected genome's state_dict into self._ppo_net,
+        # but the optimizer's accumulated m/v moments are tied to the
+        # previous policy's gradient history. Applying that stale momentum
+        # to freshly-trained BC weights pulls them right back toward the
+        # pre-BC policy — undoing the anchor. Clearing _ppo_optimizer
+        # forces a fresh build with zero moments, so Adam learns
+        # parameter-specific learning rates against the new policy from
+        # step 1 instead of fighting it.
+        if self._ppo_optimizer is not None:
+            self._ppo_optimizer = None
+            log.info(
+                "  BC replay: cleared persistent Adam optimizer "
+                "(fresh momentum on next PPO update so BC weights "
+                "aren't pulled back to the pre-BC policy)"
+            )
 
     def _reinforce_update(
         self,
@@ -3106,11 +3226,14 @@ class Trainer:
         Uses PPO's clipped surrogate with entropy bonus when
         `ppo_clip_eps > 0`; vanilla REINFORCE when clip=0.
         """
-        net = self._make_network()
+        if self._ppo_net is None:
+            self._ppo_net = self._make_network()
+            self._ppo_net.to(self.device)
+
+        net = self._ppo_net
         # See trainer.py:424 for the strict=False rationale (backward compat
         # with checkpoints that predate the value_head).
         net.load_state_dict(genome.state_dict, strict=False)
-        net.to(self.device)
         net.train()
 
         # Lazy-build the RND module on first use so it lands on the
@@ -3135,10 +3258,13 @@ class Trainer:
                 self.rnd_loss_coef,
             )
 
-        opt_params = list(net.parameters())
-        if self._rnd is not None:
-            opt_params += list(self._rnd.predictor.parameters())
-        optimizer = torch.optim.Adam(opt_params, lr=self.reinforce_lr)
+        if self._ppo_optimizer is None:
+            opt_params = list(net.parameters())
+            if self._rnd is not None:
+                opt_params += list(self._rnd.predictor.parameters())
+            self._ppo_optimizer = torch.optim.Adam(opt_params, lr=self.reinforce_lr)
+
+        optimizer = self._ppo_optimizer
 
         last_loss_scalar = 0.0
         # Running averages across the inner reinforce_steps loop. Only

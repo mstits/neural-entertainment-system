@@ -295,12 +295,24 @@ reinforce:
   # the process — acceptable since SMB ROMs are validated. Disable
   # (omit or set to true) when running new/uncertified ROMs.
   panic_isolation: false
-  # 0.001 — calibrated mid-point. The 0.005 setting (last commit)
-  # caused entropy to climb 1.0 -> 1.5 over 30 gens as policy_loss
-  # shrank from 0.12 -> 0.025: with that ratio, the entropy bonus
-  # was actively pulling the policy back toward uniform faster than
-  # PPO could commit. 0.001 is 5-10% the magnitude of policy_loss,
-  # which is the canonical balance.
+  # 0.001 — restored 2026-05-12 after a brief experiment with 0.0
+  # collapsed the entire 30-genome population to a single
+  # deterministic policy within one generation (all 30 fitnesses
+  # byte-identical, GA mutation/crossover producing no behavioral
+  # diversity). With sticky_action_prob also 0, the policy at
+  # entropy=0 sampled near-argmax → identical trajectories across
+  # the population → degenerate GA. Diagnosis below stands (BC
+  # buffer labels are still mostly uniform across actions) but
+  # entropy_coef is NOT the right lever to fix it — the lever is
+  # selective trajectory admission to the BC buffer, which is a
+  # code change for a follow-up. For now keep the canonical 0.001.
+  #
+  # Inspection of the BC success buffer showed action distribution
+  # at 14.7/15.8/17.5/18.1/16.3/17.6% across the 6 actions
+  # (uniform = 16.67%). The "clears" the buffer collected were
+  # near-random-walk lottery wins from MIXED-source policies, not
+  # policy-driven clears. BC loss stayed at ~1.68 vs ln(6)=1.79
+  # random baseline.
   entropy_coef: 0.001
   # RND (Random Network Distillation, Burda+2018; tile variant via
   # src/models/tile_rnd.py). Intrinsic bonus for visiting states the
@@ -333,13 +345,17 @@ reinforce:
   # help platformers; the recorded log-prob in the trajectory is
   # the OVERRIDDEN action's log-prob under the current policy so
   # PPO's importance ratio stays exact.
-  # Bumped 0.25 -> 0.5 after empirical: at 0.25 the math says full-
-  # jump-arcs complete ~3.7% of the time (need 7 consecutive action-4
-  # decisions for ~30 frames of A held; effective repeat rate 0.625
-  # gives 0.625^7). At 0.5 effective repeat rate climbs to 0.75 →
-  # 0.75^7 ≈ 13% — 3.5x more completed jumps. 0.5 is also the upper
-  # bound used in the canonical Machado et al. paper for Atari, so
-  # not unprecedented.
+  # 0.5 — restored 2026-05-12. Brief experiment with 0.0 collapsed
+  # the entire 30-genome population to byte-identical fitness across
+  # all slots — sticky-action turns out to be a hidden GA-exploration
+  # mechanism, not just a jump-completion helper. Removing it left
+  # mutation-on-weights as the only diversity source, and with the
+  # 14k-param MLP at mutation_std=0.001, child genomes produced
+  # identical argmax action sequences as the elite. Per-step sticky
+  # RNG was the variance amplifier the GA was relying on. BC label
+  # corruption (the original reason for dropping this) is real but
+  # comes mostly from MIXED-source trajectory aggregation in the
+  # buffer, not from sticky overrides; that fix is in code, not YAML.
   sticky_action_prob: 0.5
   # Live BC replay. Captures every successful (level-clear) episode
   # to an in-memory buffer and periodically retrains a fresh policy
@@ -405,7 +421,20 @@ ga_params:
 # decision-point density. Credit assignment over 1200 steps is still
 # tractable (GAE can attribute "Mario died in pit" to the specific
 # bad jump 30-50 steps prior).
-max_episode_steps: 1200
+#
+# 2026-05-12: bumped 1200 → 2400. Empirical observation: at 1200 ×
+# fs=4 = 4800 NES frames = ~200 in-game seconds, the trainer was
+# truncating episodes at the HALFWAY point of SMB 1-1's 400-second
+# in-game clock. Mario was being reset mid-level on truncation, not
+# on death or timer. The agent intermittently reached the flagpole
+# (gens 168 / 198 / 228 / 305 cleared with fitness 12k-13k) but
+# success_rate was capped at 0.005 — a chunk of the population was
+# losing wall-clock to the cap rather than to genuine failure.
+# 2400 = full clock budget; cost is 2× wall-clock per gen. GAE
+# truncation bootstrap already handles non-terminal cutoffs
+# correctly so this is a "remove an artificial constraint" change,
+# not a reshape of the gradient.
+max_episode_steps: 2400
 
 curriculum:
   stage_1: ["1-1"]

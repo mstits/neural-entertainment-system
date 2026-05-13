@@ -144,6 +144,16 @@ class FrameStacker:
             self._filled += 1
         return self._view_oldest_to_newest()
 
+    def get(self) -> np.ndarray:
+        """Return the current oldest→newest view without mutating the ring.
+
+        Used by behavior-cloning's build_dataset to snapshot the state
+        BEFORE a frame_skip chunk runs (the correct decision-point state
+        for the (s_t, a_t) supervised pair). `_out` is returned by
+        reference; callers that need an independent buffer must `.copy()`.
+        """
+        return self._view_oldest_to_newest()
+
 
 class TileFeatureStacker:
     """Rolling stack of tile-mode feature vectors for one environment.
@@ -209,4 +219,10 @@ class TileFeatureStacker:
         self._head = (self._head + 1) % self.stack_size
         if self._filled < self.stack_size:
             self._filled += 1
+        return self._flatten_oldest_to_newest()
+
+    def get(self) -> np.ndarray:
+        """Return the current flat oldest→newest view without mutating
+        the ring. Mirrors FrameStacker.get(); see there for the rationale.
+        """
         return self._flatten_oldest_to_newest()

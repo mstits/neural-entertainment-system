@@ -191,6 +191,7 @@ def build_dataset(
             stacker = FrameStacker(stack_size=4)
             stacker.reset(first_frame)
             tile_stacker = None
+            last_state = stacker.get().copy()
         else:
             stacker = None
             if tile_frame_stack > 1:
@@ -204,8 +205,11 @@ def build_dataset(
                 # zeros — matches the trainer's reset-time semantics.
                 initial_ram = env.get_ram_range(0, 2048).tobytes()
                 tile_stacker.reset(tile_extractor.extract(initial_ram))
+                last_state = tile_stacker.get().copy()
             else:
                 tile_stacker = None
+                initial_ram = env.get_ram_range(0, 2048).tobytes()
+                last_state = tile_extractor.extract(initial_ram).copy()
 
         window_actions: list[int] = []
         window_reward = 0.0
@@ -243,6 +247,14 @@ def build_dataset(
                     # label.
                     most_common = Counter(window_actions).most_common(1)[0][0]
                     action_idx = _nearest_action_index(most_common, action_bitmasks)
+                    
+                    # Append the state that STARTED this chunk
+                    states.append(last_state)
+                    actions.append(action_idx)
+                    rewards.append(window_reward)
+
+                    # Now compute and snapshot the state that ENDS this chunk
+                    # (which will become the start state for the NEXT chunk).
                     if tile_extractor is not None:
                         # Tile mode: decode the chunk's final RAM state.
                         # `ram_snapshot` is already the latest because we
@@ -255,13 +267,12 @@ def build_dataset(
                             # Push into the per-demo stacker so emitted
                             # samples have the same temporal-stacked
                             # layout the runtime policy receives.
-                            states.append(tile_stacker.push(raw_feat).copy())
+                            last_state = tile_stacker.push(raw_feat).copy()
                         else:
-                            states.append(raw_feat.copy())
+                            last_state = raw_feat.copy()
                     else:
-                        states.append(current_stack.copy())
-                    actions.append(action_idx)
-                    rewards.append(window_reward)
+                        last_state = current_stack.copy()
+
                     window_actions.clear()
                     window_reward = 0.0
                     if len(states) >= max_pairs:
@@ -272,12 +283,17 @@ def build_dataset(
                     env.reset()
                     if tile_extractor is None:
                         stacker.reset(env.get_frame())
+                        last_state = stacker.get().copy()
                     elif tile_stacker is not None:
                         # Reseed the tile stacker so post-reset frames
                         # don't carry pre-reset state in the temporal
                         # window.
                         post_reset_ram = env.get_ram_range(0, 2048).tobytes()
                         tile_stacker.reset(tile_extractor.extract(post_reset_ram))
+                        last_state = tile_stacker.get().copy()
+                    else:
+                        post_reset_ram = env.get_ram_range(0, 2048).tobytes()
+                        last_state = tile_extractor.extract(post_reset_ram).copy()
                     window_actions.clear()
                     window_reward = 0.0
                     if reward_fn is not None:

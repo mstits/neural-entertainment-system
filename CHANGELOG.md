@@ -150,6 +150,59 @@ Total: 28 new tests; full suite is now 309 tests.
   doesn't match the current encoder. The shape-mismatch is caught,
   the cache file renamed to `*.pt.stale`, and BC pretraining is
   re-run cleanly.
+- BC dataset off-by-one alignment in `build_dataset`: each emitted
+  pair was `(state_AFTER_chunk, action_DURING_chunk)`, which is one
+  frame_skip chunk ahead of what the runtime policy sees at decision
+  time. The network was being trained to predict actions for states
+  one chunk in the future. Fixed by maintaining a `last_state`
+  buffer; emitted pairs are now `(state_BEFORE_chunk,
+  action_DURING_chunk)`. Required adding `.get()` methods to
+  `FrameStacker` and `TileFeatureStacker` so the chunk-start state
+  can be sampled without mutating the ring buffer.
+- Persistent PPO Adam optimizer's accumulated `m`/`v` moments are
+  now cleared whenever BC replay injects a fresh policy into the
+  population (`_run_bc_replay` sets `self._ppo_optimizer = None`).
+  Without this, the optimizer's stale momentum from the pre-BC
+  policy's gradients pulls the freshly-injected BC weights back
+  toward the pre-BC policy on the very next PPO update, undoing
+  the anchor.
+
+### BC anchor pipeline
+
+End-to-end overhaul of the BC replay → injection → anchor path. All
+four mechanisms now fire correctly in cascade when a clear is
+captured (verified empirically: capture → trigger → train → reset
+fires in <1 s).
+
+- **Immediate trigger on new capture.** Previously BC replay only
+  fired on `gen % bc_replay_every_gens == 0` (default every 20
+  gens). A clear captured at gen 5 waited 15 gens before being
+  anchored — during which PPO could drift the population away from
+  the clear-finding policy. The trainer now tracks
+  `_last_bc_buffer_size` across gens and fires BC immediately when
+  the buffer grows, AND on the modulo schedule. Emits
+  `BC replay: triggered immediately (buffer grew N -> M this gen)`.
+- **Single-trajectory training.** New `bc_replay_train_window`
+  knob (default 3, canonical uses 1) caps how many of the most
+  recent buffered trajectories actually feed BC. Aggregating
+  across multiple trajectories from different source genomes
+  produced near-uniform action labels (e.g. 14-18% per action
+  across 6 actions vs uniform=16.67%) because different policies
+  jumped at slightly different frames over the same states. BC
+  cross-entropy on contradictory labels splits the difference into
+  a low-confidence near-uniform distribution. `train_window=1`
+  gives the network a single coherent set of (state, action)
+  labels per state.
+- **Source `genome_id` tagging.** Each captured trajectory now
+  carries the `genome_id` it came from (5-tuple instead of 4-tuple).
+  Diagnostics-only for now — BC selection is by recency — but
+  makes the buffer's provenance inspectable post-hoc. Cache format
+  bumped to v2 with backward-compat for v1 caches (loaded with
+  sentinel `genome_id=-1`).
+- **`bc_demo_path` YAML fallback.** Profiles can now self-declare
+  their BC demo via `reinforce.bc_demo_path`. Explicit ctor arg
+  (GUI file-picker, CLI `--bc-demo`) still wins; falls through to
+  YAML when no path is passed.
 
 ## [0.1.0] — pre-release
 

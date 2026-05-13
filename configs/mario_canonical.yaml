@@ -66,6 +66,44 @@ reinforce:
   # GA-only warmup: skipped in pure_ppo mode (the "GA" is a no-op
   # broadcast layer there) — PPO starts updating from gen 0.
   warmup_gens_ga_only: 0
+  # BC anchor (2026-05-12). The canonical recipe finds 1-1 clears
+  # ~4× faster than the shaped-reward profile, but loses them within
+  # 5-10 gens to PPO drift (single clear at gen 33, then 100 gens
+  # with no further clears). BC replay captures successful trajectories
+  # and re-trains a fresh policy on the latest 3 — in pure_ppo mode
+  # the BC-trained genome enters the sort with its train-set's mean
+  # fitness; if that beats the post-PPO elite, evolve() broadcasts
+  # the BC policy to the whole population. Mechanism is "lock in
+  # any clear we find" rather than "let PPO drift away from it."
+  bc_replay_enabled: true
+  bc_replay_every_gens: 20
+  bc_replay_epochs: 5
+  bc_replay_max_buffer: 16
+  # 1 (not 3) so BC trains on a single coherent successful trajectory.
+  # Earlier reasoning was "3 recent gives a less-noisy anchor"; that
+  # works if all 3 come from similar policies, but in practice the
+  # window aggregates clears from different gens with different
+  # action timings around the same states (e.g. one jumped at frame
+  # 100, another at frame 105 over the same pit). Cross-entropy on
+  # contradictory labels forces the network to split the difference
+  # → uniform-ish output → BC anchor is no anchor. Single trajectory
+  # gives the network exactly one set of (state, action) labels per
+  # state, which it CAN actually fit.
+  bc_replay_train_window: 1
+  # BC demo seed: DISABLED 2026-05-12 late evening. Tested with 5
+  # demos (TAS speedrun + multiple route variants), aligned state-
+  # action pairing, 30 epochs of pretrain. Result was catastrophic:
+  # gen 0 fitness range -15 to +11 (vs ~500-1500 from cold-random
+  # init). Diagnosis: TAS demos are too frame-perfect — the BC
+  # network memorized demo-specific (state, action) mappings, and
+  # any timing drift at runtime (stochastic sampling + sticky off
+  # = jitter) turns a learned jump into a faceplant in the first
+  # pit. Multi-demo aggregation also produced state-distribution
+  # mismatch (BIG/FIRE Mario states in demos vs small-Mario start
+  # in training). Conclusion: BC from TAS-style demos is the wrong
+  # tool for cold-start priors on this MLP. Cold random is faster
+  # and more reliable. Keeping bc_replay_* knobs so any clears that
+  # PPO finds organically still anchor through the buffer.
 
 # Canonical reward — gym-super-mario-bros default `r = v + c + d`.
 # All weights kept small and clipped so no single component

@@ -501,6 +501,45 @@ and the pipeline replays each from a cold-boot env, concatenating the
 key includes encoder name + frame_skip so swapping architectures auto-
 invalidates the cache.
 
+State-action alignment in `build_dataset` matches the runtime decision-
+point convention: each emitted pair is `(state_BEFORE_chunk,
+action_DURING_chunk)`. The state recorded is the network's input AT
+the decision boundary (start of the next frame_skip window), paired
+with the action the demo's player chose for that window. This requires
+`FrameStacker.get()` / `TileFeatureStacker.get()` to sample the
+chunk-start state without mutating the ring buffer.
+
+### BC anchor — preserving rare clears across PPO drift
+The trainer maintains an in-memory `_bc_replay_buffer` of successful
+trajectories captured during evaluation. When a clear lands, the
+trajectory (obs, actions, rewards, fitness, `genome_id`) goes into the
+buffer (FIFO, capped at `bc_replay_max_buffer`). BC replay then trains
+a fresh network on the buffer's most recent `bc_replay_train_window`
+entries (default 3; canonical SMB uses 1 for single-trajectory
+coherence) and injects the trained network into the weakest population
+slot at the captured fitness — high enough that GA elitism picks it
+up as the next elite, or in pure-PPO mode that `evolve()` broadcasts
+it to every slot.
+
+Trigger logic fires BC replay on either condition:
+1. **Immediate** — `_last_bc_buffer_size` is tracked across generations;
+   if the buffer grew this gen (new clear captured), BC fires at the
+   end of the same generation rather than waiting for the modulo
+   schedule. Closes the "PPO drifts away from the clear before the
+   anchor lands" window.
+2. **Modulo** — every `bc_replay_every_gens` generations (default 20)
+   the latest buffered trajectory is re-anchored, refreshing the
+   inject against any policy drift since the last fire.
+
+After injection, the persistent Adam optimizer is cleared
+(`self._ppo_optimizer = None`). The next PPO update rebuilds Adam from
+zero moments, so the optimizer's stale `m`/`v` state from the pre-BC
+policy's gradients can't pull the freshly-injected BC weights back
+toward the failing policy. This matters most in pure-PPO mode where
+`evolve()` broadcasts the BC-injected slot to every slot — without
+the optimizer reset, the very next PPO update on the new universal
+elite would apply pre-BC momentum to post-BC parameters.
+
 ### Reward functions (`src/utils/reward_functions/__init__.py`)
 Thin Python dispatcher (~40 LOC) that calls `nes_core.build_reward_function`
 with the game profile. All six games implemented in Rust (`rewards.rs`).
