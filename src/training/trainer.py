@@ -3927,6 +3927,26 @@ class Trainer:
                 float(ep_returns[active_in_iter].max())
                 if n_in_progress else 0.0
             )
+            # Aggregate per-env reward breakdown into `reward_<key>` metrics
+            # the dashboard's reward-signal-stack panel reads. Sum each
+            # breakdown component across all 30 envs' reward fns for this
+            # iter, normalize per-env so the magnitudes are comparable to
+            # the ga_ppo path's breakdown emission.
+            reward_breakdown_emit: dict[str, float] = {}
+            try:
+                for rfn in reward_fns:
+                    for k, v in dict(rfn.breakdown).items():
+                        reward_breakdown_emit[f"reward_{k}"] = (
+                            reward_breakdown_emit.get(f"reward_{k}", 0.0) + float(v)
+                        )
+                for k in list(reward_breakdown_emit):
+                    reward_breakdown_emit[k] /= max(1, num_envs)
+            except Exception:
+                pass
+            # PPO metric keys MUST be `ppo_*` (not `vanilla_ppo_*`) to
+            # match the dashboard's panel-config lookup. The ga_ppo path
+            # emits with these exact names; the chart uses them
+            # uniformly across both modes.
             self._emit_metrics(
                 generation=it,
                 best_fitness=max(best_completed, best_in_progress),
@@ -3936,12 +3956,13 @@ class Trainer:
                 stage=self.curriculum.current_stage.name,
                 success_rate=self.curriculum.stage_success_rate(),
                 episodes=n_complete,
-                vanilla_ppo_loss=last_loss,
-                vanilla_ppo_policy_loss=last_policy_loss,
-                vanilla_ppo_value_loss=last_value_loss,
-                vanilla_ppo_entropy=last_entropy,
+                ppo_loss=last_loss,
+                ppo_policy_loss=last_policy_loss,
+                ppo_value_loss=last_value_loss,
+                ppo_entropy=last_entropy,
                 vanilla_ppo_in_progress=n_in_progress,
                 vanilla_ppo_clears=n_clears_this_iter,
+                **reward_breakdown_emit,
             )
 
             # Clear per-iteration episode-completion buffer so the next
