@@ -1037,6 +1037,13 @@ impl MarioReward {
             // 1-2+ would never produce checkpoint signal because all
             // were "consumed" during 1-1.
             self.next_checkpoint = 0;
+            // Re-arm the completion bonus for the new level so the
+            // flag-touch at the end of 1-2, 1-3, ... each fires the
+            // +completion reward. Without this, only the very first
+            // level's clear would pay out. Paired with the dropping
+            // of `done = true` on completion below — the agent now
+            // plays continuously through multiple levels per episode.
+            self.completed = false;
             self.prev_world = world;
             self.prev_level = level;
         }
@@ -1184,7 +1191,12 @@ impl MarioReward {
         if !self.completed && float_state == 3 {
             acc.add("completion", self.completion_bonus);
             self.completed = true;
-            done = true;
+            // DON'T fire done — let the SMB cutscene play through and
+            // the next level load naturally. Episode continues across
+            // levels; level-change detection above re-arms `completed`
+            // so the next level's flagpole touch fires its own bonus.
+            // Episode only ends on actual Mario death (player_state
+            // DYING/DEAD or lives drop, handled above).
         }
 
         acc.add("time_penalty", self.time_penalty);

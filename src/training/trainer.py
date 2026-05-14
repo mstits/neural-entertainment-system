@@ -3615,6 +3615,13 @@ class Trainer:
         # causes re-firing done on every step" bug — that path inflated
         # completed_eps to 1000+ per iter and mean_len to 3-5.
         active_in_iter = np.ones(num_envs, dtype=bool)
+        # Count per-env flag-touches across the iter. Each time the
+        # reward fn's `completion` breakdown key grows, an SMB level
+        # was cleared by that env. Tracks last-seen value per env so
+        # we can diff per-step. Quantitative confirmation of clears
+        # alongside the visual GUI signal.
+        prev_completion_total = np.zeros(num_envs, dtype=np.float32)
+        n_clears_this_iter = 0
 
         # Initial reset.
         init_results = self.pool.reset_all()
@@ -3699,6 +3706,21 @@ class Trainer:
                         done_buf[t, i] = done
                         ep_returns[i] += reward
                         ep_lengths[i] += 1
+                        # Detect a completion bonus firing on this step
+                        # by diffing the reward fn's cumulative
+                        # `completion` breakdown against the last seen
+                        # value. A positive delta = the agent touched a
+                        # flagpole this step (or a level was cleared by
+                        # whatever other completion mechanism applies).
+                        try:
+                            cur_comp = float(
+                                dict(reward_fns[i].breakdown).get("completion", 0.0)
+                            )
+                            if cur_comp > prev_completion_total[i] + 1e-6:
+                                n_clears_this_iter += 1
+                            prev_completion_total[i] = cur_comp
+                        except Exception:
+                            pass
 
                         if done:
                             completed_returns.append(float(ep_returns[i]))
@@ -3889,9 +3911,10 @@ class Trainer:
             log.info(
                 "[vanilla_ppo] iter %d: completed_eps=%d  mean_return=%.1f  "
                 "mean_len=%.1f  in_progress=%d  ip_return=%.1f  ip_len=%.1f  "
-                "loss=%.4f  policy=%.4f  value=%.4f  entropy=%.4f",
+                "clears=%d  loss=%.4f  policy=%.4f  value=%.4f  entropy=%.4f",
                 it, n_complete, mean_ep_return, mean_ep_length,
                 n_in_progress, mean_inprogress_return, mean_inprogress_length,
+                n_clears_this_iter,
                 last_loss, last_policy_loss, last_value_loss, last_entropy,
             )
             # best_fitness uses the larger of completed-max and in-progress-max
@@ -3918,6 +3941,7 @@ class Trainer:
                 vanilla_ppo_value_loss=last_value_loss,
                 vanilla_ppo_entropy=last_entropy,
                 vanilla_ppo_in_progress=n_in_progress,
+                vanilla_ppo_clears=n_clears_this_iter,
             )
 
             # Clear per-iteration episode-completion buffer so the next
@@ -3943,6 +3967,11 @@ class Trainer:
             # calls from this iter are cleared automatically by reset_all
             # (per the rust pool's contract).
             active_in_iter[:] = True
+            # Clear per-iter clear-counter + per-env completion-baseline.
+            # Reward fns were just reset() above, so their `completion`
+            # breakdowns are back to 0 — match that here.
+            prev_completion_total[:] = 0
+            n_clears_this_iter = 0
             if self._is_tile_mode:
                 stacked_obs = [
                     tile_stackers[i].reset(self._tile_extractor.extract(r.ram_snapshot))
