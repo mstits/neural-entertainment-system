@@ -3604,6 +3604,17 @@ class Trainer:
         ep_lengths = np.zeros(num_envs, dtype=np.int32)
         completed_returns: list[float] = []
         completed_lengths: list[int] = []
+        # Per-iter "still active" mask: True until that env hits done.
+        # Once an env is done for this iter we (a) stop processing
+        # reward_fn results from it (the rust pool keeps stepping the
+        # worker until reset_all but its post-death frames are garbage
+        # for our policy gradient), (b) tell the pool to short-circuit
+        # the worker via set_worker_done so it stops eating CPU, and
+        # (c) zero-pad the rollout buffer so GAE sees done=True for
+        # all subsequent steps. Resolves the "inline reward_fn.reset()
+        # causes re-firing done on every step" bug — that path inflated
+        # completed_eps to 1000+ per iter and mean_len to 3-5.
+        active_in_iter = np.ones(num_envs, dtype=bool)
 
         # Initial reset.
         init_results = self.pool.reset_all()
@@ -3669,7 +3680,18 @@ class Trainer:
                             pass
 
                     # Process each env's result, compute reward, advance stacker.
+                    # Envs already done in this iter contribute zero reward
+                    # and done=True (frozen) — GAE will mask them and the
+                    # rollout buffer carries valid post-done padding.
                     for i, r in enumerate(step_results):
+                        if not active_in_iter[i]:
+                            # Already done this iter; keep the rollout
+                            # buffer's done flag set so GAE doesn't
+                            # bootstrap across the boundary. Zero reward
+                            # (nothing earned in this "dead" step).
+                            reward_buf[t, i] = 0.0
+                            done_buf[t, i] = True
+                            continue
                         ram = r.ram_snapshot
                         reward, rew_done, _ = reward_fns[i].compute(ram, action=int(step_actions[i]))
                         done = bool(r.done) or bool(rew_done)
@@ -3683,24 +3705,37 @@ class Trainer:
                             completed_lengths.append(int(ep_lengths[i]))
                             ep_returns[i] = 0.0
                             ep_lengths[i] = 0
-                            # Reset reward fn for the next episode; the
-                            # pool itself doesn't auto-reset workers, so
-                            # we'll do a pool-wide reset_all at the end
-                            # of this rollout (any extra steps this env
-                            # contributes post-done don't bootstrap into
-                            # the next episode because done_buf masks
-                            # them out in GAE).
-                            reward_fns[i].reset()
+                            # Mark this env inactive for the rest of the
+                            # iter. DO NOT reset the reward fn inline —
+                            # that was the bug (post-death player_state
+                            # in RAM persists, reward fn's `died` flag
+                            # gets cleared by reset(), next compute() re-
+                            # fires done immediately, loop). Instead:
+                            #   * tell the pool to short-circuit this
+                            #     worker (saves CPU)
+                            #   * skip future processing for this env
+                            #   * iter-boundary reset_all + reward_fn
+                            #     reset prepares cleanly for next iter
+                            active_in_iter[i] = False
+                            try:
+                                self.pool.set_worker_done(i, True)
+                            except Exception:
+                                pass
 
                         # Advance stacker with the post-step frame/RAM.
-                        if self._is_tile_mode:
-                            stacked_obs[i] = tile_stackers[i].push(
-                                self._tile_extractor.extract(ram)
-                            )
-                        else:
-                            stacked_obs[i] = stackers[i].push(
-                                r.frame, getattr(r, "preprocessed", None)
-                            )
+                        # Only when still active — once done, stacker
+                        # state is frozen (its current contents represent
+                        # the final pre-done observation; no point
+                        # contaminating it with post-death garbage).
+                        if active_in_iter[i]:
+                            if self._is_tile_mode:
+                                stacked_obs[i] = tile_stackers[i].push(
+                                    self._tile_extractor.extract(ram)
+                                )
+                            else:
+                                stacked_obs[i] = stackers[i].push(
+                                    r.frame, getattr(r, "preprocessed", None)
+                                )
 
                 # Bootstrap V(s_T) from the final observation per env.
                 final_batch_np = np.stack(stacked_obs, axis=0)
@@ -3838,18 +3873,43 @@ class Trainer:
                 float(np.mean(completed_lengths)) if completed_lengths else 0.0
             )
             n_complete = len(completed_returns)
+            # Also surface in-progress (still-alive) episodes' partial
+            # returns + lengths — once the policy gets good enough to
+            # survive past rollout_steps, n_complete drops to 0 and the
+            # "completed-only" mean_return reads as 0.0 which looks like
+            # a regression. The in-progress numbers reflect actual
+            # ongoing reward accumulation.
+            n_in_progress = int(active_in_iter.sum())
+            mean_inprogress_return = (
+                float(ep_returns[active_in_iter].mean()) if n_in_progress else 0.0
+            )
+            mean_inprogress_length = (
+                float(ep_lengths[active_in_iter].mean()) if n_in_progress else 0.0
+            )
             log.info(
                 "[vanilla_ppo] iter %d: completed_eps=%d  mean_return=%.1f  "
-                "mean_len=%.1f  loss=%.4f  policy=%.4f  value=%.4f  entropy=%.4f",
+                "mean_len=%.1f  in_progress=%d  ip_return=%.1f  ip_len=%.1f  "
+                "loss=%.4f  policy=%.4f  value=%.4f  entropy=%.4f",
                 it, n_complete, mean_ep_return, mean_ep_length,
+                n_in_progress, mean_inprogress_return, mean_inprogress_length,
                 last_loss, last_policy_loss, last_value_loss, last_entropy,
+            )
+            # best_fitness uses the larger of completed-max and in-progress-max
+            # so the dashboard reflects real progress when episodes are
+            # outlasting rollout_steps.
+            best_completed = (
+                float(max(completed_returns)) if completed_returns else 0.0
+            )
+            best_in_progress = (
+                float(ep_returns[active_in_iter].max())
+                if n_in_progress else 0.0
             )
             self._emit_metrics(
                 generation=it,
-                best_fitness=(
-                    float(max(completed_returns)) if completed_returns else 0.0
+                best_fitness=max(best_completed, best_in_progress),
+                avg_fitness=(
+                    mean_ep_return if n_complete else mean_inprogress_return
                 ),
-                avg_fitness=mean_ep_return,
                 stage=self.curriculum.current_stage.name,
                 success_rate=self.curriculum.stage_success_rate(),
                 episodes=n_complete,
@@ -3857,6 +3917,7 @@ class Trainer:
                 vanilla_ppo_policy_loss=last_policy_loss,
                 vanilla_ppo_value_loss=last_value_loss,
                 vanilla_ppo_entropy=last_entropy,
+                vanilla_ppo_in_progress=n_in_progress,
             )
 
             # Clear per-iteration episode-completion buffer so the next
@@ -3878,6 +3939,10 @@ class Trainer:
                 fn.reset()
             ep_returns[:] = 0
             ep_lengths[:] = 0
+            # Re-arm every env for the next iter. `set_worker_done(i, True)`
+            # calls from this iter are cleared automatically by reset_all
+            # (per the rust pool's contract).
+            active_in_iter[:] = True
             if self._is_tile_mode:
                 stacked_obs = [
                     tile_stackers[i].reset(self._tile_extractor.extract(r.ram_snapshot))
