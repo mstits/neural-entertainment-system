@@ -26,6 +26,37 @@ from typing import Any, Optional
 log = logging.getLogger(__name__)
 
 
+# The canonical metric schema every trainer mode must emit. Any panel
+# in `src/gui/training_dashboard.py` reads from this set; a mode that
+# omits a key silently breaks the panel that reads it. We enforce the
+# contract via a once-per-session warning at emit time so a future
+# trainer mode (DreamerV3, RecurrentTilePolicy, RLHF, etc.) can't ship
+# with broken dashboard panels.
+#
+# REQUIRED — every emission must include these. Missing → warn.
+# OPTIONAL — mode-specific extras. Dashboard tolerates missing
+# (charts NaN); no warning emitted.
+DASHBOARD_REQUIRED_KEYS: frozenset[str] = frozenset({
+    "generation",
+    "best_fitness",
+    "avg_fitness",
+    "ppo_loss",
+    "ppo_policy_loss",
+    "ppo_value_loss",
+    "ppo_entropy",
+})
+
+# Optional keys the dashboard charts when present. Documented here so
+# new trainer modes know what data their mode-specific panels can
+# consume. Not enforced.
+DASHBOARD_OPTIONAL_KEYS: frozenset[str] = frozenset({
+    "stage", "success_rate", "episodes",
+    "depth_scalar", "depth_leaf",
+    "rnd_loss", "rnd_intrinsic_avg",
+    "wm_total", "wm_recon", "wm_kl", "wm_reward", "wm_continue",
+})
+
+
 class MetricsSink:
     """JSONL + queue + optional TensorBoard fan-out for trainer metrics.
 
@@ -48,6 +79,10 @@ class MetricsSink:
         # Built lazily on first emit() so headless / test runs that
         # never write metrics don't import torch.utils.tensorboard.
         self._tb_writer: Optional[Any] = None
+        # Track which canonical keys we've already warned about so the
+        # warning is once-per-session per key (not once-per-gen — that
+        # would spam the log thousands of times).
+        self._warned_missing: set[str] = set()
 
     def truncate(self) -> None:
         """Empty the metrics file (called at the start of a fresh run)."""
@@ -68,7 +103,28 @@ class MetricsSink:
             self._tb_writer = None
 
     def emit(self, **metrics: Any) -> None:
-        """Append one generation's scalars to JSONL, GUI queue, and TB."""
+        """Append one generation's scalars to JSONL, GUI queue, and TB.
+
+        Validates against `DASHBOARD_REQUIRED_KEYS` and warns once per
+        missing key per session. Any panel in the dashboard reading a
+        canonical key (PPO telemetry, reward signal stack, fitness
+        plots) silently breaks if a trainer mode forgets to emit it;
+        the warning ensures the regression surfaces immediately
+        instead of "graph is empty, no idea why."
+        """
+        # Schema check (once-per-session per key — log warning if a
+        # required canonical key is missing from this emission).
+        for required in DASHBOARD_REQUIRED_KEYS:
+            if required not in metrics and required not in self._warned_missing:
+                self._warned_missing.add(required)
+                log.warning(
+                    "MetricsSink: emission missing required key %r "
+                    "— a dashboard panel will chart NaN. Trainer mode "
+                    "is likely missing it from its _emit_metrics call. "
+                    "Canonical schema: %s",
+                    required,
+                    sorted(DASHBOARD_REQUIRED_KEYS),
+                )
         metrics["timestamp"] = time.time()
         with open(self.metrics_path, "a") as f:
             f.write(json.dumps(metrics) + "\n")
