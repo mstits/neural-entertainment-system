@@ -509,6 +509,35 @@ with the action the demo's player chose for that window. This requires
 `FrameStacker.get()` / `TileFeatureStacker.get()` to sample the
 chunk-start state without mutating the ring buffer.
 
+### Vanilla PPO mode — single policy, N rollout envs
+Activated via `reinforce.trainer_mode: vanilla_ppo`. Bypasses the
+GA loop entirely; the 30 workers in `RustPool` become parallel
+rollout collectors for ONE shared `_ppo_net`. Per iteration:
+
+1. `pool.reset_all()` — every env starts a fresh episode
+2. **Rollout collection**: for `rollout_steps` (default 512) ticks,
+   stack the 30 envs' observations into one batch, run the policy's
+   actor+critic forward, sample actions, step the pool, record
+   `(obs, action, reward, value, log_prob, done)` for each (env, step).
+3. **Bootstrap V(s_T)** from the final observation per env.
+4. **GAE-λ backward sweep** per env, masking across done boundaries.
+5. **Global advantage normalization** across the full
+   (rollout_steps × num_envs) batch — preserves relative magnitude
+   between trajectories that the per-trajectory normalization in
+   `_reinforce_update` does not.
+6. **K-epoch PPO update**: flatten, shuffle, minibatch SGD over
+   the rollout with PPO's clipped surrogate + Huber value loss +
+   entropy bonus. Default 10 epochs × 60 minibatches each = 600
+   gradient steps per iteration.
+7. Checkpoint every 10 iters to `vanilla_ppo_iter_NNNNN.pt`.
+
+The match-to-literature reason for this mode: yumouwei's
+super-mario-bros-reinforcement-learning and uvipen's
+super-mario-bros-PPO-pytorch both converge on SMB 1-1 using
+exactly this shape. The GA-PPO hybrid (`ga_ppo`, `pure_ppo`) mixes
+data from 30 different policies into PPO's gradient and breaks
+the stable-policy-across-updates assumption; vanilla PPO doesn't.
+
 ### BC anchor — preserving rare clears across PPO drift
 The trainer maintains an in-memory `_bc_replay_buffer` of successful
 trajectories captured during evaluation. When a clear lands, the

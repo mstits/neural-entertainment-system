@@ -371,6 +371,14 @@ reinforce:
   bc_replay_every_gens: 20
   bc_replay_epochs: 5
   bc_replay_max_buffer: 16
+  # 1 (not 3 default) so BC trains on a single coherent trajectory.
+  # Aggregating multiple clears from different gens with slightly
+  # different jump timings over similar states forces the network
+  # to predict a low-confidence near-uniform mix. Single trajectory
+  # gives BC one set of (state, action) labels per state that the
+  # network CAN actually fit. Same fix as mario_canonical.yaml;
+  # tested 2026-05-12.
+  bc_replay_train_window: 1
 
 # GA tuning. Tighter mutation_std than pixel profile because tile
 # policies have far fewer weights — same per-weight noise has

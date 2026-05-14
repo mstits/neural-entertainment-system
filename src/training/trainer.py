@@ -588,6 +588,32 @@ class Trainer:
                 )
             self.freeze_pre_ppo_elite = False
             self.preserve_elite_diversity = False
+        # vanilla_ppo: the literature recipe (yumouwei/uvipen) —
+        # ONE policy network, N parallel envs, batched GAE, K-epoch
+        # PPO. NO GA, NO BC injection, NO population. The existing
+        # ga_ppo / pure_ppo modes treat 30 envs as a "population of
+        # policies" with mutation/crossover/elite-broadcast, which
+        # mixes data from many policies into PPO's gradient and breaks
+        # PPO's stable-policy-across-updates assumption. Empirical:
+        # after 2+ days of incrementally fixing the hybrid we have
+        # ~1 lucky-walk clear per ~80 gens on canonical / mario_tiles;
+        # vanilla PPO is what actually converges on SMB 1-1 in the
+        # published recipes. This mode reuses the same parallel-env
+        # pool but as N rollout collectors for a single policy.
+        self.vanilla_ppo_mode: bool = (
+            str(rl_cfg.get("trainer_mode", "ga_ppo")).lower() == "vanilla_ppo"
+        )
+        # Rollout length per PPO iteration (per env). 512 × 30 envs =
+        # 15,360 timesteps per update — comparable to OpenAI baselines'
+        # default n_steps=128 × num_envs=8 = 1024 but scaled to our
+        # 30-env pool for more gradient stability.
+        self.rollout_steps: int = int(rl_cfg.get("rollout_steps", 512))
+        # PPO minibatch size for the K-epoch SGD pass over the rollout.
+        # 256 is a round number; full batch (rollout_steps * num_envs)
+        # is too large for MPS memory on a 1.7M-param CNN.
+        self.ppo_minibatch_size: int = int(rl_cfg.get("ppo_minibatch_size", 256))
+        # GAE-λ. 0.95 is the canonical PPO value (Schulman+2017).
+        self.gae_lambda: float = float(rl_cfg.get("gae_lambda", 0.95))
         # LayerNorm on the trunk FC. Always-on default — cheap and
         # measurably stabilizes the value head when reward magnitudes
         # span orders of magnitude (which they do in this project).
@@ -1144,6 +1170,15 @@ class Trainer:
         self.pool.reset_all()
         _stage("reset_all (first frames published)")
         log.info("[startup] ready — beginning training")
+
+        # Vanilla PPO dispatch: bypass the GA loop entirely. Single
+        # policy network, N parallel envs as rollout collectors,
+        # batched GAE, K-epoch PPO update. Matches yumouwei/uvipen's
+        # literature recipe (the only PPO setup that empirically
+        # converges on SMB 1-1 in our compute budget).
+        if self.vanilla_ppo_mode:
+            self._run_vanilla_ppo(num_iters=num_generations)
+            return
 
         try:
             import gc as _gc
@@ -3487,6 +3522,389 @@ class Trainer:
         # Copy the updated weights back to the genome so the GA keeps them.
         genome.state_dict = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
         return last_loss_scalar, ppo_stats_accum
+
+    def _run_vanilla_ppo(self, num_iters: int) -> None:
+        """Vanilla PPO with N parallel envs — the literature recipe.
+
+        Single policy network, N envs collecting parallel rollouts of
+        fixed length, batched GAE across all envs, K-epoch minibatched
+        PPO update on the aggregated data. No GA, no population, no
+        BC injection. Matches yumouwei/uvipen.
+
+        Why a separate path from `_run_one_generation`: the GA modes
+        treat the 30 workers as a population of 30 DIFFERENT policies
+        whose data gets mixed into PPO's gradient — that mix violates
+        PPO's "stable policy across updates" assumption and is the
+        empirical reason ga_ppo and pure_ppo plateaued in our 2-day
+        investigation. Here all 30 workers run the SAME policy and
+        their data is one big homogeneous batch.
+
+        Iteration shape:
+          1. Reset all envs (fresh episode boundary for the batch)
+          2. Rollout: for rollout_steps × num_envs steps, forward the
+             single policy and step all envs in parallel; record
+             (obs, action, reward, value, log_prob, done) for each
+             (env, step).
+          3. Bootstrap V(s_T) from the final observation per env.
+          4. GAE-λ sweep backward per env, masking across done boundaries.
+          5. Globally normalize advantages across the (env × step) batch.
+          6. K epochs of minibatched PPO update on the flattened data.
+          7. Periodic checkpoint + metrics emission.
+        """
+        assert self.pool is not None
+        num_envs = self.num_instances
+        rollout_steps = self.rollout_steps
+
+        # Persistent net + optimizer (same machinery the GA-mode PPO
+        # update uses; reused so the existing fix infrastructure
+        # — Adam state, lr, etc. — applies uniformly).
+        if self._ppo_net is None:
+            self._ppo_net = self._make_network()
+            self._ppo_net.to(self.device)
+        net = self._ppo_net
+        if self._ppo_optimizer is None:
+            self._ppo_optimizer = torch.optim.Adam(
+                net.parameters(), lr=self.reinforce_lr
+            )
+        optimizer = self._ppo_optimizer
+
+        # Per-env reward functions and stackers.
+        reward_fns = [self.reward_fn_factory() for _ in range(num_envs)]
+        for fn in reward_fns:
+            fn.reset()
+        if self._is_tile_mode:
+            base_dim = self._tile_extractor.feature_dim
+            tile_stackers = [
+                TileFeatureStacker(
+                    stack_size=self._tile_frame_stack, feature_dim=base_dim,
+                )
+                for _ in range(num_envs)
+            ]
+            stackers: list = []
+        else:
+            obs_dtype = self._obs_buffer_dtype()
+            stackers = [FrameStacker(dtype=obs_dtype) for _ in range(num_envs)]
+            tile_stackers = []
+
+        obs_shape = self._step_obs_shape()
+        obs_dtype = self._obs_buffer_dtype()
+
+        # Per-iter rollout buffers — pre-allocated, reused across iters.
+        # Shape: (rollout_steps, num_envs, *obs_shape) for observations.
+        obs_buf = np.zeros((rollout_steps, num_envs) + obs_shape, dtype=obs_dtype)
+        action_buf = np.zeros((rollout_steps, num_envs), dtype=np.int32)
+        reward_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
+        value_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
+        log_prob_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
+        done_buf = np.zeros((rollout_steps, num_envs), dtype=np.bool_)
+        step_actions = np.zeros(self.pool.num_workers, dtype=np.uint8)
+
+        # Per-env episode tracking (for metrics: mean episode reward / length).
+        ep_returns = np.zeros(num_envs, dtype=np.float32)
+        ep_lengths = np.zeros(num_envs, dtype=np.int32)
+        completed_returns: list[float] = []
+        completed_lengths: list[int] = []
+
+        # Initial reset.
+        init_results = self.pool.reset_all()
+        if self._frame_sink is not None:
+            try:
+                self._frame_sink(init_results)
+            except Exception:
+                pass
+        if self._is_tile_mode:
+            stacked_obs: list[np.ndarray] = [
+                tile_stackers[i].reset(self._tile_extractor.extract(r.ram_snapshot))
+                for i, r in enumerate(init_results)
+            ]
+        else:
+            stacked_obs = [
+                stackers[i].reset(r.frame, getattr(r, "preprocessed", None))
+                for i, r in enumerate(init_results)
+            ]
+
+        for it in range(num_iters):
+            if not self._running:
+                break
+
+            # ============== ROLLOUT COLLECTION ==============
+            net.eval()
+            with torch.no_grad():
+                for t in range(rollout_steps):
+                    if not self._running:
+                        break
+                    # Pack current observations into a batch tensor.
+                    batch_np = np.stack(stacked_obs, axis=0)
+                    obs_buf[t] = batch_np
+                    batch_t = (
+                        torch.from_numpy(batch_np)
+                        .to(self.device).float()
+                    )
+                    if not self._is_tile_mode:
+                        batch_t = batch_t.div_(255.0)
+
+                    # Single forward pass: actor + critic.
+                    logits, values = net.forward_ac(batch_t)
+                    log_probs_all = F.log_softmax(logits.float(), dim=-1)
+                    probs = log_probs_all.exp()
+                    actions = torch.multinomial(probs, num_samples=1).squeeze(-1)
+                    log_probs_taken = log_probs_all.gather(
+                        1, actions.unsqueeze(1)
+                    ).squeeze(1)
+
+                    actions_np = actions.cpu().numpy().astype(np.int32)
+                    action_buf[t] = actions_np
+                    value_buf[t] = values.cpu().numpy()
+                    log_prob_buf[t] = log_probs_taken.cpu().numpy()
+
+                    # Apply actions to envs.
+                    step_actions[:] = 0
+                    for i in range(num_envs):
+                        step_actions[i] = self._action_to_bitmask(int(actions_np[i]))
+                    step_results = self.pool.step_all(step_actions)
+                    if self._frame_sink is not None:
+                        try:
+                            self._frame_sink(step_results)
+                        except Exception:
+                            pass
+
+                    # Process each env's result, compute reward, advance stacker.
+                    for i, r in enumerate(step_results):
+                        ram = r.ram_snapshot
+                        reward, rew_done, _ = reward_fns[i].compute(ram, action=int(step_actions[i]))
+                        done = bool(r.done) or bool(rew_done)
+                        reward_buf[t, i] = reward
+                        done_buf[t, i] = done
+                        ep_returns[i] += reward
+                        ep_lengths[i] += 1
+
+                        if done:
+                            completed_returns.append(float(ep_returns[i]))
+                            completed_lengths.append(int(ep_lengths[i]))
+                            ep_returns[i] = 0.0
+                            ep_lengths[i] = 0
+                            # Reset reward fn for the next episode; the
+                            # pool itself doesn't auto-reset workers, so
+                            # we'll do a pool-wide reset_all at the end
+                            # of this rollout (any extra steps this env
+                            # contributes post-done don't bootstrap into
+                            # the next episode because done_buf masks
+                            # them out in GAE).
+                            reward_fns[i].reset()
+
+                        # Advance stacker with the post-step frame/RAM.
+                        if self._is_tile_mode:
+                            stacked_obs[i] = tile_stackers[i].push(
+                                self._tile_extractor.extract(ram)
+                            )
+                        else:
+                            stacked_obs[i] = stackers[i].push(
+                                r.frame, getattr(r, "preprocessed", None)
+                            )
+
+                # Bootstrap V(s_T) from the final observation per env.
+                final_batch_np = np.stack(stacked_obs, axis=0)
+                final_batch_t = (
+                    torch.from_numpy(final_batch_np)
+                    .to(self.device).float()
+                )
+                if not self._is_tile_mode:
+                    final_batch_t = final_batch_t.div_(255.0)
+                _, final_values = net.forward_ac(final_batch_t)
+                final_values_np = final_values.cpu().numpy()
+
+            # ============== GAE-λ BACKWARD SWEEP ==============
+            advantages = np.zeros_like(reward_buf)
+            gae_running = np.zeros(num_envs, dtype=np.float32)
+            for t in reversed(range(rollout_steps)):
+                if t == rollout_steps - 1:
+                    next_value = final_values_np
+                else:
+                    next_value = value_buf[t + 1]
+                # Mask: when an env was done at step t, its NEXT value
+                # contribution is 0 (no future after terminal) AND the
+                # running GAE accumulator resets to break the episode
+                # boundary. Both gates use the same mask.
+                not_done = (~done_buf[t]).astype(np.float32)
+                delta = (
+                    reward_buf[t]
+                    + self.reinforce_gamma * next_value * not_done
+                    - value_buf[t]
+                )
+                gae_running = (
+                    delta
+                    + self.reinforce_gamma * self.gae_lambda * gae_running * not_done
+                )
+                advantages[t] = gae_running
+            value_targets = advantages + value_buf
+
+            # Global advantage normalization across the entire (env × step)
+            # batch. This is the canonical PPO advantage normalization
+            # — preserves magnitude information between trajectories,
+            # unlike per-trajectory z-scoring which would erase the
+            # "this env had a high-return episode" signal.
+            adv_mean = float(advantages.mean())
+            adv_std = float(advantages.std()) + 1e-8
+            advantages_norm = (advantages - adv_mean) / adv_std
+
+            # ============== K-EPOCH PPO UPDATE ==============
+            # Flatten (rollout_steps, num_envs, ...) → (rollout_steps * num_envs, ...)
+            total_n = rollout_steps * num_envs
+            obs_flat = obs_buf.reshape((total_n,) + obs_shape)
+            action_flat = action_buf.reshape(-1)
+            log_prob_old_flat = log_prob_buf.reshape(-1)
+            adv_flat = advantages_norm.reshape(-1)
+            target_flat = value_targets.reshape(-1)
+
+            net.train()
+            last_policy_loss = 0.0
+            last_value_loss = 0.0
+            last_entropy = 0.0
+            last_loss = 0.0
+            mb_size = max(1, self.ppo_minibatch_size)
+            for epoch in range(self.reinforce_steps):
+                perm = np.random.permutation(total_n)
+                for mb_start in range(0, total_n, mb_size):
+                    mb_end = min(mb_start + mb_size, total_n)
+                    mb_idx = perm[mb_start:mb_end]
+                    if mb_idx.size < 2:
+                        continue
+
+                    states_t = torch.from_numpy(
+                        np.ascontiguousarray(obs_flat[mb_idx])
+                    ).to(self.device).float()
+                    if not self._is_tile_mode:
+                        states_t = states_t.div_(255.0)
+                    actions_t = torch.from_numpy(
+                        action_flat[mb_idx].astype(np.int64)
+                    ).to(self.device)
+                    log_probs_old_t = torch.from_numpy(
+                        log_prob_old_flat[mb_idx]
+                    ).to(self.device).float()
+                    adv_t = torch.from_numpy(
+                        adv_flat[mb_idx]
+                    ).to(self.device).float()
+                    target_t = torch.from_numpy(
+                        target_flat[mb_idx]
+                    ).to(self.device).float()
+
+                    logits, values_pred = net.forward_ac(states_t)
+                    log_probs_all = F.log_softmax(logits.float(), dim=-1)
+                    log_probs_new = log_probs_all.gather(
+                        1, actions_t.unsqueeze(1)
+                    ).squeeze(1)
+                    values_pred = values_pred.float()
+
+                    # PPO clipped surrogate.
+                    ratio = torch.exp(log_probs_new - log_probs_old_t)
+                    clip = self.ppo_clip_eps if self.ppo_clip_eps > 0 else 0.2
+                    clipped = torch.clamp(ratio, 1.0 - clip, 1.0 + clip)
+                    policy_obj = torch.min(ratio * adv_t, clipped * adv_t)
+                    policy_loss = -policy_obj.mean()
+
+                    # Entropy bonus.
+                    probs = log_probs_all.exp()
+                    entropy = -(probs * log_probs_all).sum(dim=-1).mean()
+
+                    # Value loss.
+                    if self.value_loss_kind == "mse":
+                        value_loss = F.mse_loss(values_pred, target_t)
+                    else:
+                        value_loss = F.smooth_l1_loss(values_pred, target_t)
+
+                    loss = (
+                        policy_loss
+                        + self.value_coef * value_loss
+                        - self.entropy_coef * entropy
+                    )
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(
+                        net.parameters(), self.reinforce_grad_clip
+                    )
+                    optimizer.step()
+
+                    last_policy_loss = float(policy_loss.detach().item())
+                    last_value_loss = float(value_loss.detach().item())
+                    last_entropy = float(entropy.detach().item())
+                    last_loss = float(loss.detach().item())
+
+            # ============== LOGGING + METRICS ==============
+            mean_ep_return = (
+                float(np.mean(completed_returns)) if completed_returns else 0.0
+            )
+            mean_ep_length = (
+                float(np.mean(completed_lengths)) if completed_lengths else 0.0
+            )
+            n_complete = len(completed_returns)
+            log.info(
+                "[vanilla_ppo] iter %d: completed_eps=%d  mean_return=%.1f  "
+                "mean_len=%.1f  loss=%.4f  policy=%.4f  value=%.4f  entropy=%.4f",
+                it, n_complete, mean_ep_return, mean_ep_length,
+                last_loss, last_policy_loss, last_value_loss, last_entropy,
+            )
+            self._emit_metrics(
+                generation=it,
+                best_fitness=(
+                    float(max(completed_returns)) if completed_returns else 0.0
+                ),
+                avg_fitness=mean_ep_return,
+                stage=self.curriculum.current_stage.name,
+                success_rate=self.curriculum.stage_success_rate(),
+                episodes=n_complete,
+                vanilla_ppo_loss=last_loss,
+                vanilla_ppo_policy_loss=last_policy_loss,
+                vanilla_ppo_value_loss=last_value_loss,
+                vanilla_ppo_entropy=last_entropy,
+            )
+
+            # Clear per-iteration episode-completion buffer so the next
+            # iter reports against fresh episode data only.
+            completed_returns.clear()
+            completed_lengths.clear()
+
+            # Reset the entire env pool between iterations: every iter
+            # starts from N fresh cold-boot episodes. Avoids workers
+            # idling in a post-done state when our reward-fn / stacker
+            # logic doesn't match the rust pool's auto-step semantics.
+            init_results = self.pool.reset_all()
+            if self._frame_sink is not None:
+                try:
+                    self._frame_sink(init_results)
+                except Exception:
+                    pass
+            for fn in reward_fns:
+                fn.reset()
+            ep_returns[:] = 0
+            ep_lengths[:] = 0
+            if self._is_tile_mode:
+                stacked_obs = [
+                    tile_stackers[i].reset(self._tile_extractor.extract(r.ram_snapshot))
+                    for i, r in enumerate(init_results)
+                ]
+            else:
+                stacked_obs = [
+                    stackers[i].reset(r.frame, getattr(r, "preprocessed", None))
+                    for i, r in enumerate(init_results)
+                ]
+
+            # Checkpoint every 10 iters. No GA to save — just the policy
+            # network's state_dict (plus iter counter for resume).
+            if it > 0 and it % 10 == 0:
+                ckpt_path = self.checkpoint_dir / f"vanilla_ppo_iter_{it:05d}.pt"
+                try:
+                    torch.save({
+                        "iter": it,
+                        "net_state_dict": {
+                            k: v.detach().cpu()
+                            for k, v in net.state_dict().items()
+                        },
+                        "optimizer_state_dict": optimizer.state_dict(),
+                    }, str(ckpt_path))
+                    log.info("[vanilla_ppo] saved checkpoint: %s", ckpt_path)
+                except Exception as exc:
+                    log.warning("[vanilla_ppo] checkpoint save failed: %s", exc)
 
     def _save_checkpoint(self, gen: int, keep_last: int = 5) -> None:
         path = self.checkpoint_dir / f"gen_{gen:05d}.pt"

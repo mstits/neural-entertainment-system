@@ -167,6 +167,47 @@ Total: 28 new tests; full suite is now 309 tests.
   toward the pre-BC policy on the very next PPO update, undoing
   the anchor.
 
+### Vanilla PPO trainer mode
+
+Third trainer mode alongside `ga_ppo` (default) and `pure_ppo`. Matches
+the literature recipe that empirically clears SMB 1-1 — yumouwei's
+super-mario-bros-reinforcement-learning and uvipen's
+super-mario-bros-PPO-pytorch both use this shape: **single policy
+network, N parallel envs as rollout collectors, batched GAE,
+K-epoch PPO update**. No GA. No population-of-policies. No BC
+injection.
+
+Why a third mode rather than tuning the existing ones: a 2-day
+investigation of GA-PPO hybrid + BC anchor on canonical and
+mario_tiles produced ~1 lucky-walk clear per 80-100 gens but
+never a *committed-policy* clear. Empirical diagnosis: GA-style
+data mixing (30 workers running 30 different policies, results
+folded into PPO's gradient) violates PPO's stable-policy-across-
+updates assumption. The literature recipes don't have this problem
+because they don't have a GA on top.
+
+Activated by setting `reinforce.trainer_mode: vanilla_ppo` in a
+profile. `run()` dispatches to `_run_vanilla_ppo()` BEFORE entering
+the GA loop. The new method:
+
+- Reuses the existing parallel-env pool (`RustPool`) — same 30
+  workers, just as N rollout collectors for ONE shared policy
+- Per iteration: fresh `reset_all()` → rollout for `rollout_steps`
+  per env → bootstrap V(s_T) → GAE-λ backward sweep with done-mask
+  → global advantage normalization across the (env × step) batch
+  → K-epoch minibatched PPO update
+- Persistent `_ppo_net` + `_ppo_optimizer` (same machinery the
+  GA-mode PPO update uses; reused so the Adam-state fix applies)
+- Checkpoint every 10 iters as `vanilla_ppo_iter_NNNNN.pt`
+
+New YAML knobs: `rollout_steps` (default 512), `ppo_minibatch_size`
+(default 256), `gae_lambda` (default 0.95).
+
+New profile `mario_vanilla_ppo.yaml`: yumouwei's canonical
+hyperparameters (lr=3e-4, γ=0.9, λ=0.95, clip=0.2, K=10,
+value_coef=0.5, entropy_coef=0.01) pinned via tests so they
+don't drift.
+
 ### BC anchor pipeline
 
 End-to-end overhaul of the BC replay → injection → anchor path. All
