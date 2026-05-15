@@ -511,25 +511,49 @@ chunk-start state without mutating the ring buffer.
 
 ### Vanilla PPO mode — single policy, N rollout envs
 Activated via `reinforce.trainer_mode: vanilla_ppo`. Bypasses the
-GA loop entirely; the 30 workers in `RustPool` become parallel
-rollout collectors for ONE shared `_ppo_net`. Per iteration:
+GA loop entirely; the N workers in `RustPool` (default 30, configurable
+via GUI) become parallel rollout collectors for ONE shared `_ppo_net`.
+Per iteration:
 
-1. `pool.reset_all()` — every env starts a fresh episode
-2. **Rollout collection**: for `rollout_steps` (default 512) ticks,
-   stack the 30 envs' observations into one batch, run the policy's
+1. **Iter-boundary reset**: `pool.reset_all()` cold-boots every env.
+   If the SMB curriculum is past stage 0, ALL envs then load
+   `current_stage_state` via `pool.load_worker_state(i, blob)`,
+   followed by a no-op `step_all` to flush fresh post-restore frames
+   into init_results for stacker re-seeding.
+2. **Rollout collection**: for `rollout_steps` (default 1024) ticks,
+   stack the N envs' observations into one batch, run the policy's
    actor+critic forward, sample actions, step the pool, record
    `(obs, action, reward, value, log_prob, done)` for each (env, step).
-3. **Bootstrap V(s_T)** from the final observation per env.
-4. **GAE-λ backward sweep** per env, masking across done boundaries.
-5. **Global advantage normalization** across the full
-   (rollout_steps × num_envs) batch — preserves relative magnitude
-   between trajectories that the per-trajectory normalization in
-   `_reinforce_update` does not.
-6. **K-epoch PPO update**: flatten, shuffle, minibatch SGD over
+   When `done` fires for env `i`, mark `active_in_iter[i] = False` and
+   call `pool.set_worker_done(i, True)` to short-circuit emulation.
+3. **Mid-rollout curriculum capture**: on each step, if any env's
+   area-byte `wl_packed > cur_anchor + 1` (skipping the cutscene
+   transition byte) AND `smb_pending_capture is None` (first detection
+   wins per stage), snapshot that worker's state via
+   `pool.save_worker_state(i)`. The first-detection-only gate is
+   critical — without it the variable gets overwritten each step and
+   the saved state ends up being Mario's mid-level death position
+   instead of level-entry spawn.
+4. **Bootstrap V(s_T)** from the final observation per env.
+5. **GAE-λ backward sweep** per env, masking across done boundaries.
+6. **Global advantage normalization** across the full
+   (rollout_steps × num_envs) batch.
+7. **K-epoch PPO update**: flatten, shuffle, minibatch SGD over
    the rollout with PPO's clipped surrogate + Huber value loss +
    entropy bonus. Default 10 epochs × 60 minibatches each = 600
    gradient steps per iteration.
-7. Checkpoint every 10 iters to `vanilla_ppo_iter_NNNNN.pt`.
+8. **Curriculum advance**: if `smb_pending_capture is not None` AND
+   `n_past_stage > 0`, persist the captured state to
+   `checkpoints/smb_curriculum/stage_NN.state` + sidecar
+   `stage_NN.meta.json` (anchor byte). Bump `smb_curriculum_stage`.
+   All subsequent iters warm-start from the new state until the
+   next advance fires.
+9. Checkpoint every 10 iters to `vanilla_ppo_iter_NNNNN.pt`.
+10. **Auto-resume on startup**: scan checkpoint_dir for the highest
+    `vanilla_ppo_iter_*.pt`, load `net.state_dict` + Adam state.
+    Load all `smb_curriculum/stage_NN.state` files; anchor byte read
+    from sidecar JSON (or auto-derived for legacy files without one
+    by briefly loading the state and peeking ram[$075F]/[$0760]).
 
 The match-to-literature reason for this mode: yumouwei's
 super-mario-bros-reinforcement-learning and uvipen's
@@ -537,6 +561,45 @@ super-mario-bros-PPO-pytorch both converge on SMB 1-1 using
 exactly this shape. The GA-PPO hybrid (`ga_ppo`, `pure_ppo`) mixes
 data from 30 different policies into PPO's gradient and breaks
 the stable-policy-across-updates assumption; vanilla PPO doesn't.
+
+#### Save-state curriculum — whole-pool level progression
+
+```mermaid
+flowchart TD
+    A[Stage 0: anchor area-byte = 0<br/>All N envs cold-boot 1-1] --> B[Rollout 1024 steps]
+    B --> C{Any env's area-byte<br/>> cur_anchor + 1?}
+    C -- No --> D[Same stage next iter]
+    D --> B
+    C -- Yes (first detection) --> E[Capture state from that env]
+    E --> F[Save to stage_NN.state + sidecar<br/>Bump curriculum_stage]
+    F --> G[Stage N: anchor = captured byte<br/>All envs warm-start from saved state]
+    G --> B
+```
+
+Why each gate matters:
+- `byte > cur_anchor + 1` (not just `> cur_anchor`): SMB's `$0760` is
+  internal area index; the value transiently bumps to a CUTSCENE byte
+  (typically anchor+1) when Mario touches the flag, BEFORE the new
+  level's gameplay-area byte takes hold. Capturing at the cutscene
+  byte saved a mid-cutscene state where Mario's controls are inert,
+  loading 30 envs from it ends in game-over rather than level entry.
+- `smb_pending_capture is None` (first-detection-only): without this,
+  the variable overwrites every step Mario is past the anchor, and
+  the iter-end value is Mario at the LAST mid-level position (e.g.,
+  about to die) instead of FIRST level-entry spawn (x=0).
+- Anchor stored in sidecar JSON (`stage_NN.meta.json`): on restart,
+  in-memory anchors must be reconstructed exactly or the capture
+  gate degrades (sentinel `-1` made `byte > -1 + 1 = byte > 0` true
+  for any non-cold-boot byte, including the cutscene transition,
+  which is how stage 1→2 incorrectly promoted to anchor=1 in early
+  testing).
+
+The corresponding Rust dep: `pool.load_worker_state` MUST reset
+`w.frame_cycle_target = None` after `apply_state`, else the cached
+cycle target from before load is below the loaded state's `nes.cycles`
+and `advance_one_frame`'s while loops skip — NES never ticks, PPU
+never re-renders the loaded state, screen freezes. Fixed in
+`nes_core/src/pool.rs` 2026-05-14.
 
 ### BC anchor — preserving rare clears across PPO drift
 The trainer maintains an in-memory `_bc_replay_buffer` of successful

@@ -60,7 +60,7 @@ def test_vanilla_ppo_yaml_has_canonical_hyperparams() -> None:
     assert rl["value_coef"] == 0.5
     assert rl["entropy_coef"] == 0.01
     assert rl["grad_clip"] == 0.5
-    assert rl["rollout_steps"] == 512
+    assert rl["rollout_steps"] == 1024
     assert rl["steps"] == 10            # K epochs of PPO per iteration
     assert rl["ppo_minibatch_size"] == 256
 

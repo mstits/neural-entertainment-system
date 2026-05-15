@@ -3568,10 +3568,162 @@ class Trainer:
             )
         optimizer = self._ppo_optimizer
 
+        # Vanilla-PPO-specific auto-resume. The GA-path resume at
+        # trainer.run() loads `gen_*.pt` (GA checkpoints) and is a no-
+        # op for our `vanilla_ppo_iter_*.pt` format — so without this
+        # block, a GUI restart of a vanilla_ppo run would silently
+        # start from random weights even with the "Resume" checkbox
+        # ticked. Scan for the latest vanilla_ppo_iter_*.pt and load
+        # net + optimizer state on top of the fresh-built ones.
+        try:
+            latest_ckpts = sorted(
+                self.checkpoint_dir.glob("vanilla_ppo_iter_*.pt"),
+                key=lambda p: int(p.stem.rsplit("_", 1)[-1]),
+            )
+            if latest_ckpts:
+                latest = latest_ckpts[-1]
+                state = torch.load(str(latest), map_location=self.device)
+                if isinstance(state, dict) and "net_state_dict" in state:
+                    net.load_state_dict(state["net_state_dict"], strict=False)
+                    try:
+                        optimizer.load_state_dict(state["optimizer_state_dict"])
+                    except Exception as exc:
+                        log.warning(
+                            "[vanilla_ppo] optimizer state load failed "
+                            "(continuing with fresh Adam state): %s", exc,
+                        )
+                    log.info(
+                        "[vanilla_ppo] RESUMED net + optimizer from %s "
+                        "(saved at iter %d)",
+                        latest, int(state.get("iter", -1)),
+                    )
+        except Exception as exc:
+            log.warning(
+                "[vanilla_ppo] auto-resume scan failed (starting fresh): %s",
+                exc,
+            )
+
         # Per-env reward functions and stackers.
         reward_fns = [self.reward_fn_factory() for _ in range(num_envs)]
         for fn in reward_fns:
             fn.reset()
+
+        # SMB multi-level "save-state curriculum".
+        #
+        # Background: vanilla_ppo's iter boundary unconditionally cold-
+        # boots every env back to 1-1 via pool.reset_all(). Even when
+        # the reward fn permits the episode to continue past the 1-1
+        # flagpole (so SMB's level-transition cutscene advances the
+        # game to 1-2 naturally), that 1-2 state never persists into
+        # subsequent rollouts — the next iter's reset_all snaps every
+        # worker back to 1-1 cold boot. Empirically (iter 150-250
+        # multi-level run) Mario clears 1-1 ~70% of the time but the
+        # policy never trains a single 1-2 frame.
+        #
+        # Fix: the moment ANY env's RAM shows W1-L2 mid-rollout,
+        # snapshot the worker state and persist it to disk as
+        # `world1-2_spawn.state`. On every iter boundary, AFTER the
+        # cold-boot reset_all, restore half the env pool from that
+        # save state. Half the population trains 1-1 from cold boot,
+        # half trains 1-2 from the captured spawn. Both data streams
+        # feed the same PPO update.
+        #
+        # This is the canonical "save-state curriculum" recipe used
+        # in NES RL when natural-progression exploration burden is
+        # prohibitive (clearing 1-1 + surviving cutscene + playing
+        # an unseen level is a multi-stage exploration problem; the
+        # save state collapses it to two single-stage problems that
+        # the same policy network can learn in parallel).
+        # SMB curriculum: whole-pool level progression.
+        #
+        # Stage gating: at every iter boundary, all 30 envs start
+        # together at the current stage's anchor area-byte. Once the
+        # pool *consistently* clears the current stage (>=80% of envs
+        # reach the NEXT area byte for `consec_iters` consecutive
+        # iters), capture a save state from one of those envs at the
+        # next level and advance the stage. Then ALL future iter
+        # resets warm-start from that state. Continue until the game
+        # is finished.
+        #
+        # Why area bytes instead of "level N+1": SMB's $0760 byte is
+        # an internal area index, not displayed level. byte=0 is 1-1
+        # main; byte=2 is 1-2 underground main; byte=5 is 1-3 etc.
+        # The curriculum advances on byte changes (any time an env's
+        # max-byte exceeds the current stage anchor, we count it as
+        # "made progress past the stage").
+        smb_curriculum_anchors: list[int] = [0]  # area-byte for each stage
+        smb_curriculum_states: list[Optional[bytes]] = [None]  # save state per stage
+        smb_curriculum_stage = 0  # index into anchors
+        smb_stage_clear_history: list[int] = []  # rolling: clears past current anchor
+        # `smb_pending_capture` is updated mid-rollout the moment an
+        # env transitions to area-byte > current_anchor while alive.
+        # If the advance threshold is met at iter boundary, this is
+        # what we promote — guarantees the captured state is from a
+        # LIVING env at level entry, not a dead env's frozen state.
+        smb_pending_capture: Optional[tuple[int, bytes]] = None
+        SMB_ADVANCE_PCT = 0.60  # 60% of pool must clear past current stage
+        SMB_ADVANCE_CONSEC = 3  # ...for this many consecutive iters
+        # Load any previously-saved curriculum states from disk so a
+        # restart resumes the curriculum mid-game instead of starting
+        # over from 1-1. Anchor byte is stored in a sidecar JSON so the
+        # capture gate (`byte > anchor + 1`) doesn't degrade on reload.
+        smb_curriculum_dir = self.checkpoint_dir / "smb_curriculum"
+        smb_curriculum_dir.mkdir(parents=True, exist_ok=True)
+        for n in range(1, 32):
+            stage_path = smb_curriculum_dir / f"stage_{n:02d}.state"
+            meta_path = smb_curriculum_dir / f"stage_{n:02d}.meta.json"
+            if not stage_path.exists():
+                break
+            try:
+                blob = stage_path.read_bytes()
+                # Read the anchor byte from the sidecar metadata. If
+                # absent (state written before this fix), fall back to
+                # reading ram[$0760] from the save state by briefly
+                # loading it into worker 0. Pool exists at this point.
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text())
+                    anchor = int(meta["anchor"])
+                else:
+                    # Legacy state without sidecar: derive anchor by
+                    # peeking at the saved RAM. Load into worker 0,
+                    # read byte, then re-reset so we don't pollute the
+                    # cold-boot initial state for the actual run.
+                    self.pool.load_worker_state(0, blob)
+                    peek = self.pool.step_all(
+                        np.zeros(self.pool.num_workers, dtype=np.uint8)
+                    )
+                    ram = peek[0][2]
+                    anchor = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)
+                    log.info(
+                        "[vanilla_ppo] derived anchor=%d for legacy "
+                        "stage_%02d.state (no sidecar); writing it now.",
+                        anchor, n,
+                    )
+                    meta_path.write_text(json.dumps({"anchor": anchor}))
+                    # Reset before continuing setup.
+                    self.pool.reset_all()
+                smb_curriculum_states.append(blob)
+                smb_curriculum_anchors.append(anchor)
+                smb_curriculum_stage = n
+            except Exception as e:
+                log.warning(
+                    "[vanilla_ppo] failed to load stage_%02d: %s", n, e,
+                )
+                break
+        if smb_curriculum_stage > 0:
+            log.info(
+                "[vanilla_ppo] curriculum resumed at stage %d (%d save "
+                "states loaded from %s)",
+                smb_curriculum_stage, smb_curriculum_stage,
+                smb_curriculum_dir,
+            )
+        else:
+            log.info(
+                "[vanilla_ppo] curriculum starting fresh at stage 0 "
+                "(all envs train 1-1; advance when >=%.0f%% clear past "
+                "area-byte 0 for %d consecutive iters)",
+                SMB_ADVANCE_PCT * 100, SMB_ADVANCE_CONSEC,
+            )
         if self._is_tile_mode:
             base_dim = self._tile_extractor.feature_dim
             tile_stackers = [
@@ -3622,6 +3774,14 @@ class Trainer:
         # alongside the visual GUI signal.
         prev_completion_total = np.zeros(num_envs, dtype=np.float32)
         n_clears_this_iter = 0
+        # Per-env max world+level reached this iter, packed as
+        # world*16+level so a single uint8 max comparator works
+        # ordinally (W=0 L=0 → 0; W=0 L=1 → 1; W=1 L=0 → 16; ...).
+        # SMB world byte is at $075F (0=World 1), level at $0760
+        # (0=Level 1, 1=Level 2, ...). Initialized to zero (= W1-L1)
+        # which is the reset spawn for every env.
+        max_world_level_packed = np.zeros(num_envs, dtype=np.uint8)
+        end_world_level_packed = np.zeros(num_envs, dtype=np.uint8)
 
         # Initial reset.
         init_results = self.pool.reset_all()
@@ -3700,6 +3860,45 @@ class Trainer:
                             done_buf[t, i] = True
                             continue
                         ram = r.ram_snapshot
+                        # Pack world+level for ordinal max tracking. The
+                        # game's world/level bytes are zero-indexed; we
+                        # display as 1-indexed "W-L" at log time.
+                        wl_packed = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)
+                        if wl_packed > max_world_level_packed[i]:
+                            max_world_level_packed[i] = wl_packed
+                        end_world_level_packed[i] = wl_packed
+                        # Mid-rollout curriculum capture: FIRST detection
+                        # wins per stage. Two key gates:
+                        #
+                        #   1. `smb_pending_capture is None` — only the
+                        #      first qualifying frame is snapshot. Without
+                        #      this, the variable gets overwritten on
+                        #      every step where Mario is past the anchor,
+                        #      and we end up with the LAST mid-level
+                        #      state (Mario at x=200 about to die) instead
+                        #      of the FIRST level-entry state (Mario at
+                        #      x=0 at the new level's spawn).
+                        #
+                        #   2. `wl_packed > cur_anchor + 1` — skip the
+                        #      transient cutscene transition byte (which
+                        #      sits between current level and next).
+                        #      For stage 0 (anchor=0), this requires
+                        #      byte >= 2 = real 1-2 underground gameplay.
+                        cur_anchor = (
+                            smb_curriculum_anchors[smb_curriculum_stage]
+                            if smb_curriculum_stage < len(smb_curriculum_anchors)
+                            else 0
+                        )
+                        if (smb_pending_capture is None
+                                and wl_packed > cur_anchor + 1):
+                            try:
+                                blob = self.pool.save_worker_state(i)
+                                if blob is not None:
+                                    smb_pending_capture = (
+                                        int(wl_packed), bytes(blob),
+                                    )
+                            except Exception:
+                                pass
                         reward, rew_done, _ = reward_fns[i].compute(ram, action=int(step_actions[i]))
                         done = bool(r.done) or bool(rew_done)
                         reward_buf[t, i] = reward
@@ -3908,6 +4107,107 @@ class Trainer:
             mean_inprogress_length = (
                 float(ep_lengths[active_in_iter].mean()) if n_in_progress else 0.0
             )
+            # World/level distribution — answer "did agents reach 1-2?".
+            # Count envs whose MAX W-L this iter == each unique value.
+            # SMB's $0760 byte is an INTERNAL AREA INDEX, not the
+            # displayed level number. Verified empirically (screenshots
+            # at /tmp/level_check on 2026-05-14): byte=0 -> "1-1",
+            # byte=1 is a transient transition state (status bar already
+            # shows next level but visuals are still the previous
+            # level's cutscene), byte=2 -> "1-2" underground gameplay.
+            # Higher byte values correspond to 1-2 sub-areas, then 1-3,
+            # then 1-4. Map honestly so the user can read the column at
+            # a glance instead of trusting a naive `byte+1` offset that
+            # over-reports progress by one level.
+            def _byte_to_label(byte_val: int) -> str:
+                w = (byte_val >> 4) + 1  # world byte is at upper nibble
+                area = byte_val & 0x0F
+                # Within world 1 (and structurally similar elsewhere):
+                #   area 0 = 1-1
+                #   area 1 = transition (status bar already says "1-2"
+                #            but Mario is mid-cutscene; few frames)
+                #   area 2 = 1-2 underground main
+                #   area 5 = 1-3 overworld (post-1-2-clear)
+                #   area 6 = 1-4 castle
+                # If Mario never clears 1-2, areas 3-4 are unseen.
+                # Map to displayed level via the canonical SMB area
+                # table — fall back to "byte=N" for unknown values
+                # so we don't silently mislabel.
+                AREA_TO_LEVEL = {0: "1", 1: "1->2", 2: "2", 5: "3", 6: "4"}
+                lvl = AREA_TO_LEVEL.get(area, f"area{area}")
+                return f"{w}-{lvl}"
+
+            def _fmt_wl_dist(packed: np.ndarray) -> str:
+                unique, counts = np.unique(packed, return_counts=True)
+                return " ".join(
+                    f"{_byte_to_label(int(v))}={int(c)}"
+                    for v, c in zip(unique, counts)
+                )
+            max_wl_str = _fmt_wl_dist(max_world_level_packed)
+            end_wl_str = _fmt_wl_dist(end_world_level_packed)
+
+            # Stage-advance detection. Count envs whose max-area-byte
+            # this iter exceeds the current stage's anchor byte. If
+            # >= SMB_ADVANCE_PCT for SMB_ADVANCE_CONSEC consecutive
+            # iters, capture the next stage's save state from one of
+            # those envs and bump the curriculum.
+            current_anchor = (
+                smb_curriculum_anchors[smb_curriculum_stage]
+                if smb_curriculum_stage < len(smb_curriculum_anchors)
+                else 0
+            )
+            # Per user's design: advance as soon as ANY env has reached
+            # past the current stage and we have a capture in hand. No
+            # consecutive-iter threshold — first detection wins.
+            # Count envs in REAL gameplay area (skip the transient
+            # cutscene-transition byte by requiring > current_anchor + 1).
+            n_past_stage = int(
+                (max_world_level_packed > current_anchor + 1).sum()
+            )
+            should_advance = (
+                smb_pending_capture is not None
+                and n_past_stage > 0
+            )
+            log.info(
+                "[vanilla_ppo] curriculum diag: n_past=%d/%d, "
+                "pending_capture=%s, should_advance=%s",
+                n_past_stage, num_envs,
+                "set" if smb_pending_capture is not None else "None",
+                should_advance,
+            )
+            if should_advance and smb_pending_capture is not None:
+                # Use the mid-rollout capture: a LIVING env's state
+                # taken the moment it first crossed into the next
+                # area-byte. The previous design used end-of-iter
+                # candidates which were already dead/frozen.
+                new_anchor, blob = smb_pending_capture
+                new_stage = smb_curriculum_stage + 1
+                stage_path = smb_curriculum_dir / (
+                    f"stage_{new_stage:02d}.state"
+                )
+                stage_path.write_bytes(blob)
+                # Persist anchor in sidecar so the capture gate works
+                # correctly after a restart.
+                meta_path = smb_curriculum_dir / (
+                    f"stage_{new_stage:02d}.meta.json"
+                )
+                meta_path.write_text(json.dumps({"anchor": int(new_anchor)}))
+                while len(smb_curriculum_anchors) <= new_stage:
+                    smb_curriculum_anchors.append(0)
+                    smb_curriculum_states.append(None)
+                smb_curriculum_anchors[new_stage] = new_anchor
+                smb_curriculum_states[new_stage] = blob
+                smb_curriculum_stage = new_stage
+                smb_stage_clear_history = []
+                smb_pending_capture = None  # reset for the next stage
+                log.info(
+                    "[vanilla_ppo] *** CURRICULUM ADVANCE *** "
+                    "stage %d -> %d: anchor area-byte=%d (mid-rollout "
+                    "capture from alive env). Next iter, all %d envs "
+                    "warm-start from %s.",
+                    new_stage - 1, new_stage, new_anchor, num_envs,
+                    stage_path,
+                )
             log.info(
                 "[vanilla_ppo] iter %d: completed_eps=%d  mean_return=%.1f  "
                 "mean_len=%.1f  in_progress=%d  ip_return=%.1f  ip_len=%.1f  "
@@ -3916,6 +4216,14 @@ class Trainer:
                 n_in_progress, mean_inprogress_return, mean_inprogress_length,
                 n_clears_this_iter,
                 last_loss, last_policy_loss, last_value_loss, last_entropy,
+            )
+            log.info(
+                "[vanilla_ppo] iter %d: max-W-L: %s  |  end-W-L: %s  "
+                "|  curriculum stage=%d (anchor area=%d, %d/%d envs "
+                "past stage this iter)",
+                it, max_wl_str, end_wl_str,
+                smb_curriculum_stage, current_anchor,
+                n_past_stage, num_envs,
             )
             # best_fitness uses the larger of completed-max and in-progress-max
             # so the dashboard reflects real progress when episodes are
@@ -3980,6 +4288,35 @@ class Trainer:
                     self._frame_sink(init_results)
                 except Exception:
                     pass
+            # SMB whole-pool curriculum warm-start: if the curriculum
+            # is past stage 0, restore EVERY env from the current
+            # stage's save state. The policy then sees N envs starting
+            # at the same level — focused training on that level — and
+            # once they clear it consistently, the stage advances and
+            # all envs warm-start at the next level next iter.
+            current_stage_state = (
+                smb_curriculum_states[smb_curriculum_stage]
+                if smb_curriculum_stage < len(smb_curriculum_states)
+                else None
+            )
+            if current_stage_state is not None:
+                for i in range(num_envs):
+                    try:
+                        self.pool.load_worker_state(i, current_stage_state)
+                    except Exception as e:
+                        log.warning(
+                            "[vanilla_ppo] stage warm-start env %d failed: %s",
+                            i, e,
+                        )
+                # Re-step with a no-op to flush post-restore frames
+                # into init_results for the stacker re-seed below.
+                noop_actions = np.zeros(self.pool.num_workers, dtype=np.uint8)
+                init_results = self.pool.step_all(noop_actions)
+                if self._frame_sink is not None:
+                    try:
+                        self._frame_sink(init_results)
+                    except Exception:
+                        pass
             for fn in reward_fns:
                 fn.reset()
             ep_returns[:] = 0
@@ -3988,6 +4325,13 @@ class Trainer:
             # calls from this iter are cleared automatically by reset_all
             # (per the rust pool's contract).
             active_in_iter[:] = True
+            # Reset per-iter world/level trackers. After the warm-start
+            # block above, half the envs are at W1-L2 and half at W1-L1
+            # — but neither has stepped yet, so initial position == max
+            # position for this iter. The first rollout step will
+            # update these from the post-restore RAM.
+            max_world_level_packed[:] = 0
+            end_world_level_packed[:] = 0
             # Clear per-iter clear-counter + per-env completion-baseline.
             # Reward fns were just reset() above, so their `completion`
             # breakdowns are back to 0 — match that here.

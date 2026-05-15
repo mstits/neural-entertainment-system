@@ -16,6 +16,40 @@ trainer scaffold, and a per-game tile-based optimization path for SMB. The
 default behavior of every existing profile is preserved; new capabilities
 are opt-in via profile YAML or the new GUI dropdowns.
 
+### Added (2026-05-14 / 2026-05-15)
+
+**SMB whole-pool save-state curriculum (`src/training/trainer.py`)**
+- `_run_vanilla_ppo` now auto-detects when the pool reaches a new SMB
+  area-byte and snapshots the worker state via `pool.save_worker_state`.
+- All envs warm-start from the captured state every iter via
+  `pool.load_worker_state`. Stage advances are persisted to
+  `checkpoints/smb_curriculum/stage_NN.state` + sidecar
+  `stage_NN.meta.json` (anchor byte) so restarts resume mid-curriculum.
+- Per-iter telemetry: `max-W-L: 1-1=N 1-2=M ...  |  end-W-L: ...
+  | curriculum stage=N (anchor area=N, N/N envs past stage)`.
+- `rollout_steps` raised from 512 to 1024 so the natural 1-1 → cutscene
+  → 1-2 transit (≈400 RL steps) fits within a single rollout.
+
+**Vanilla PPO auto-resume on startup**
+- Scans `checkpoint_dir` for the highest-numbered
+  `vanilla_ppo_iter_*.pt` and loads `net.state_dict` + Adam state on
+  startup. Previously only the GA-mode `gen_*.pt` checkpoints were
+  honored by `trainer.run(resume_from=...)`.
+
+### Fixed (2026-05-14)
+
+**`nes_core::Pool::load_worker_state` PPU/cycle re-sync bug**
+- After `apply_state` restored the NES state, `frame_cycle_target` was
+  left at its pre-load value (typically ~30k from cold-boot), while the
+  loaded state's `nes.cycles` was orders of magnitude larger. The next
+  `advance_one_frame` computed `target = stale + 29781` < `nes.cycles`,
+  so BOTH `while cycles < target` loops were immediately false, the NES
+  never ticked, and the screen showed the previous frame indefinitely.
+- Fix: `w.frame_cycle_target = None` in `load_worker_state` (matches
+  what `reset()` already does). Save-state curriculum was structurally
+  blocked on this — RAM restored correctly but the game couldn't
+  advance from the loaded state.
+
 ### Added
 
 **Training dashboard (`src/gui/training_dashboard.py`)**

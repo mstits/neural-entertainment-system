@@ -49,10 +49,15 @@ reinforce:
   trainer_mode: vanilla_ppo
 
   # === ROLLOUT KNOBS ===
-  # Per-env rollout length. 512 × 30 envs = 15,360 timesteps per
-  # PPO update. Comparable to OpenAI baselines' default (128 ×
-  # 8 = 1,024) scaled to our 30-env pool.
-  rollout_steps: 512
+  # Per-env rollout length. 1024 × 30 envs = 30,720 timesteps per
+  # PPO update. Bumped from 512 so the natural 1-1 → 1-2 transition
+  # fits inside a single rollout: empirically Mario touches the flag
+  # around step 380, the cutscene runs ~150 steps, 1-2 gameplay
+  # starts at step ~590, leaving 430+ steps of actual 1-2 frames
+  # per iter for the policy to train on. With rollout_steps=512 the
+  # rollout boundary cut off 30 steps BEFORE the 1-2 byte-flip and
+  # the policy never saw a single 1-2 frame.
+  rollout_steps: 1024
   # K-epoch SGD over the rollout. 10 is the canonical PPO value;
   # too few = under-fitting the rollout, too many = policy drifts
   # too far from data and clipping engages on every sample.

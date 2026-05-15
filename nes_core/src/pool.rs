@@ -1158,6 +1158,20 @@ impl Pool {
         let w = unsafe { worker_mut(&self.workers[worker_id]) };
         w.nes.apply_state(&state);
         w.audio.clear();
+        // CRITICAL: clear frame_cycle_target. Without this, the next
+        // `advance_one_frame` computes `target = stale_value + 29781`
+        // where stale_value was set by the worker's previous frame
+        // (typically ~30k from cold-boot reset). The loaded state's
+        // `nes.cycles` is far larger (millions), so `cycles >> target`
+        // and BOTH `while cycles < target` loops are immediately false
+        // — the NES never ticks, PPU never renders, and the worker
+        // appears frozen forever from the trainer's perspective. The
+        // existing `reset()` method clears this for the same reason
+        // (line ~175). Without this fix, save-state-based curriculum
+        // (load_worker_state into mid-game state) is structurally
+        // broken: RAM reads return the saved values but the screen
+        // shows cold-boot pixels and the game can't advance.
+        w.frame_cycle_target = None;
         Ok(())
     }
 
