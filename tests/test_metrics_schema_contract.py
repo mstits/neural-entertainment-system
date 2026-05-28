@@ -57,8 +57,11 @@ def test_vanilla_ppo_path_emits_required_keys() -> None:
     )
     for required in DASHBOARD_REQUIRED_KEYS:
         if required == "generation":
-            assert "generation=it" in block, (
-                "_run_vanilla_ppo must emit `generation=it`"
+            # generation is emitted as the resume-safe ABSOLUTE iter
+            # (`global_it = it + iter_offset`) so the dashboard x-axis
+            # stays continuous across a resume.
+            assert "generation=global_it" in block, (
+                "_run_vanilla_ppo must emit `generation=global_it`"
             )
             continue
         assert f"{required}=" in block, (

@@ -23,6 +23,7 @@ import argparse
 import contextlib
 import json
 import logging
+import math
 import queue as _queue
 import threading
 import time
@@ -3551,6 +3552,15 @@ class Trainer:
             )
         optimizer = self._ppo_optimizer
 
+        # Absolute iteration offset for resume-safe checkpoint naming.
+        # The loop counter `it` always restarts at 0, so without an
+        # offset a resumed run rewrites vanilla_ppo_iter_00010.pt,
+        # _00020.pt, … on top of the prior run's same-named files —
+        # which is how a collapsed resume silently destroyed a good
+        # run's checkpoints. Continue numbering from the resumed iter
+        # so checkpoints BEFORE the resume point are never overwritten.
+        iter_offset = 0
+
         # Vanilla-PPO-specific auto-resume. The GA-path resume at
         # trainer.run() loads `gen_*.pt` (GA checkpoints) and is a no-
         # op for our `vanilla_ppo_iter_*.pt` format — so without this
@@ -3575,10 +3585,12 @@ class Trainer:
                             "[vanilla_ppo] optimizer state load failed "
                             "(continuing with fresh Adam state): %s", exc,
                         )
+                    iter_offset = int(state.get("iter", 0) or 0)
                     log.info(
                         "[vanilla_ppo] RESUMED net + optimizer from %s "
-                        "(saved at iter %d)",
-                        latest, int(state.get("iter", -1)),
+                        "(saved at iter %d; continuing checkpoint "
+                        "numbering from there)",
+                        latest, iter_offset,
                     )
         except Exception as exc:
             log.warning(
@@ -3644,8 +3656,36 @@ class Trainer:
         # what we promote — guarantees the captured state is from a
         # LIVING env at level entry, not a dead env's frozen state.
         smb_pending_capture: Optional[tuple[int, bytes]] = None
-        SMB_ADVANCE_PCT = 0.60  # 60% of pool must clear past current stage
+        SMB_ADVANCE_PCT = 0.60  # 60% of current-stage envs must clear past it
         SMB_ADVANCE_CONSEC = 3  # ...for this many consecutive iters
+        # Consecutive iters the current stage has met the advance pct.
+        smb_consec_above_pct = 0
+        # Mixed-stage warm-start: fraction of the pool that warm-starts
+        # at the CURRENT (hardest) stage each iter; the rest spread over
+        # earlier stages down to cold-boot stage 0. Whole-pool warm-start
+        # (frac=1.0) lands every env on a level it may not reliably play,
+        # so a single hard stage yields uniform failure that the entropy
+        # bonus turns into policy collapse. Keeping a spread preserves
+        # earlier-level competence and keeps advantages informative.
+        SMB_CURRENT_STAGE_FRAC = 0.6
+        # Which curriculum stage each env is warm-started to this iter,
+        # and that env's stage-start observation (for mid-rollout auto-
+        # reset re-seeding). Populated at the iter-boundary warm-start.
+        env_stage = np.zeros(num_envs, dtype=int)
+        stage_seed_results: list = [None] * num_envs
+        # Anti-collapse guard state. The failure mode that ate the last
+        # run was an entropy melt: ppo_entropy climbing toward the
+        # uniform-random max (ln num_actions) while fitness flatlined,
+        # never recovering. Detect it by ENTROPY (stage-independent,
+        # unlike fitness which legitimately drops on a harder stage) and
+        # roll back to the last healthy snapshot + reset the optimizer.
+        _entropy_max = math.log(max(2, len(self.action_space)))
+        SMB_ENTROPY_COLLAPSE_FRAC = 0.90  # entropy above this frac of max = melting
+        SMB_ENTROPY_HEALTHY_FRAC = 0.75   # snapshot only when entropy below this
+        SMB_COLLAPSE_PATIENCE = 5         # consecutive melting iters before rollback
+        best_net_snapshot: Optional[dict] = None
+        best_snapshot_fitness = float("-inf")
+        collapse_strikes = 0
         # Load any previously-saved curriculum states from disk so a
         # restart resumes the curriculum mid-game instead of starting
         # over from 1-1. Anchor byte is stored in a sidecar JSON so the
@@ -3784,17 +3824,15 @@ class Trainer:
                 for i, r in enumerate(init_results)
             ]
 
-        # Stage-start observation for mid-rollout auto-reset re-seeding.
-        # Set at the iter-boundary warm-start (all envs restore to the
-        # same curriculum state, so one post-restore frame seeds them
-        # all). None while at stage 0 / before the first warm-start —
-        # in that window auto-reset falls back to freeze-on-done since
-        # there is no clean stage observation to re-seed from.
-        stage_seed_result = None
+        # `env_stage` / `stage_seed_results` (initialized above) are
+        # populated at each iter-boundary warm-start. The initial reset
+        # above is a cold boot (all envs at stage 0), so they stay at
+        # their defaults (stage 0, no seed) for iteration 0.
 
         for it in range(num_iters):
             if not self._running:
                 break
+            global_it = it + iter_offset
 
             # ============== ROLLOUT COLLECTION ==============
             net.eval()
@@ -3948,10 +3986,13 @@ class Trainer:
                             # If we're at stage 0 (no warm-state), fall
                             # back to the old freeze-until-iter-boundary
                             # behavior — there's no per-env cold-boot
-                            # reset API in the pool.
+                            # reset API in the pool. With mixed-stage
+                            # warm-start, each env reloads ITS OWN stage
+                            # (env_stage[i]), not the global current one.
+                            env_k = int(env_stage[i])
                             current_stage_state_inline = (
-                                smb_curriculum_states[smb_curriculum_stage]
-                                if smb_curriculum_stage < len(smb_curriculum_states)
+                                smb_curriculum_states[env_k]
+                                if 0 < env_k < len(smb_curriculum_states)
                                 else None
                             )
                             if current_stage_state_inline is not None:
@@ -3973,18 +4014,19 @@ class Trainer:
                                     # while the env is at level start).
                                     # Seeding makes the first post-reset
                                     # obs identical to a fresh episode's.
-                                    if stage_seed_result is not None:
+                                    seed_i = stage_seed_results[i]
+                                    if seed_i is not None:
                                         if self._is_tile_mode:
                                             stacked_obs[i] = tile_stackers[i].reset(
                                                 self._tile_extractor.extract(
-                                                    stage_seed_result.ram_snapshot
+                                                    seed_i.ram_snapshot
                                                 )
                                             )
                                         else:
                                             stacked_obs[i] = stackers[i].reset(
-                                                stage_seed_result.frame,
+                                                seed_i.frame,
                                                 getattr(
-                                                    stage_seed_result,
+                                                    seed_i,
                                                     "preprocessed", None,
                                                 ),
                                             )
@@ -4205,22 +4247,37 @@ class Trainer:
                 if smb_curriculum_stage < len(smb_curriculum_anchors)
                 else 0
             )
-            # Per user's design: advance as soon as ANY env has reached
-            # past the current stage and we have a capture in hand. No
-            # consecutive-iter threshold — first detection wins. Counts
-            # match the capture gate (`byte > current_anchor`, NOT +1)
-            # so the diag/log reflect what actually fires capture.
-            n_past_stage = int(
-                (max_world_level_packed > current_anchor).sum()
-            )
+            # Gated advance: only promote the curriculum when the envs
+            # ASSIGNED to the current stage RELIABLY clear past it —
+            # >= SMB_ADVANCE_PCT of them past the anchor for
+            # SMB_ADVANCE_CONSEC consecutive iters. The previous
+            # "first env past anchor advances the whole pool" gate
+            # advanced onto stages the policy couldn't play, producing
+            # uniform failure → entropy melt → permanent collapse
+            # (root-caused from the iter_02700 run). Measuring the
+            # fraction among current-stage envs (not the whole mixed
+            # pool) is the correct denominator now that earlier-stage
+            # envs are intentionally present.
+            at_current = (env_stage == smb_curriculum_stage)
+            n_at_current = int(at_current.sum())
+            past_mask = (max_world_level_packed > current_anchor)
+            n_past_stage = int(past_mask.sum())
+            n_past_current = int((past_mask & at_current).sum())
+            frac_past = n_past_current / max(1, n_at_current)
+            if frac_past >= SMB_ADVANCE_PCT:
+                smb_consec_above_pct += 1
+            else:
+                smb_consec_above_pct = 0
             should_advance = (
                 smb_pending_capture is not None
-                and n_past_stage > 0
+                and smb_consec_above_pct >= SMB_ADVANCE_CONSEC
             )
             log.info(
-                "[vanilla_ppo] curriculum diag: n_past=%d/%d, "
+                "[vanilla_ppo] curriculum diag: stage=%d, current-stage "
+                "envs past anchor=%d/%d (%.0f%%), consec>=pct=%d/%d, "
                 "pending_capture=%s, should_advance=%s",
-                n_past_stage, num_envs,
+                smb_curriculum_stage, n_past_current, n_at_current,
+                frac_past * 100, smb_consec_above_pct, SMB_ADVANCE_CONSEC,
                 "set" if smb_pending_capture is not None else "None",
                 should_advance,
             )
@@ -4248,6 +4305,7 @@ class Trainer:
                 smb_curriculum_states[new_stage] = blob
                 smb_curriculum_stage = new_stage
                 smb_stage_clear_history = []
+                smb_consec_above_pct = 0  # new stage must re-earn advance
                 smb_pending_capture = None  # reset for the next stage
                 log.info(
                     "[vanilla_ppo] *** CURRICULUM ADVANCE *** "
@@ -4317,7 +4375,7 @@ class Trainer:
                 vppo_success_rate = n_clears_this_iter / max(1, num_envs)
             vppo_success_rate = min(1.0, float(vppo_success_rate))
             self._emit_metrics(
-                generation=it,
+                generation=global_it,
                 best_fitness=max(best_completed, best_in_progress),
                 avg_fitness=(
                     mean_ep_return if n_complete else mean_inprogress_return
@@ -4334,6 +4392,49 @@ class Trainer:
                 **reward_breakdown_emit,
             )
 
+            # ============== ANTI-COLLAPSE GUARD ==============
+            # Snapshot the policy while it's healthy (low entropy +
+            # improving fitness); roll back if it melts (entropy near
+            # the uniform-random max for several iters running). Entropy
+            # is the right trigger because it's stage-independent —
+            # fitness legitimately drops when the curriculum reaches a
+            # harder stage, but a healthy policy keeps entropy moderate;
+            # only a genuine collapse drives entropy toward ln(A).
+            iter_fitness = (
+                mean_ep_return if n_complete else mean_inprogress_return
+            )
+            if (last_entropy < SMB_ENTROPY_HEALTHY_FRAC * _entropy_max
+                    and iter_fitness > best_snapshot_fitness):
+                best_snapshot_fitness = iter_fitness
+                best_net_snapshot = {
+                    k: v.detach().cpu().clone()
+                    for k, v in net.state_dict().items()
+                }
+                collapse_strikes = 0
+            elif last_entropy > SMB_ENTROPY_COLLAPSE_FRAC * _entropy_max:
+                collapse_strikes += 1
+                if (collapse_strikes >= SMB_COLLAPSE_PATIENCE
+                        and best_net_snapshot is not None):
+                    net.load_state_dict(best_net_snapshot)
+                    # The melted Adam moments would re-melt the restored
+                    # weights immediately; start fresh.
+                    self._ppo_optimizer = torch.optim.Adam(
+                        net.parameters(), lr=self.reinforce_lr
+                    )
+                    optimizer = self._ppo_optimizer
+                    collapse_strikes = 0
+                    log.warning(
+                        "[vanilla_ppo] *** ANTI-COLLAPSE ROLLBACK *** "
+                        "entropy %.3f > %.0f%% of max (%.3f) for %d iters; "
+                        "restored best snapshot (fitness %.1f) + reset "
+                        "optimizer.",
+                        last_entropy, SMB_ENTROPY_COLLAPSE_FRAC * 100,
+                        _entropy_max, SMB_COLLAPSE_PATIENCE,
+                        best_snapshot_fitness,
+                    )
+            else:
+                collapse_strikes = 0
+
             # Clear per-iteration episode-completion buffer so the next
             # iter reports against fresh episode data only.
             completed_returns.clear()
@@ -4349,44 +4450,67 @@ class Trainer:
                     self._frame_sink(init_results)
                 except Exception:
                     pass
-            # SMB whole-pool curriculum warm-start: if the curriculum
-            # is past stage 0, restore EVERY env from the current
-            # stage's save state. The policy then sees N envs starting
-            # at the same level — focused training on that level — and
-            # once they clear it consistently, the stage advances and
-            # all envs warm-start at the next level next iter.
-            current_stage_state = (
-                smb_curriculum_states[smb_curriculum_stage]
-                if smb_curriculum_stage < len(smb_curriculum_states)
-                else None
-            )
-            if current_stage_state is not None:
+            # SMB mixed-stage curriculum warm-start. Past stage 0, keep
+            # a majority of envs (SMB_CURRENT_STAGE_FRAC) at the current
+            # (hardest) stage for focused training, and spread the rest
+            # across earlier stages down to cold-boot stage 0. Whole-pool
+            # warm-start landed every env on a level it might not play,
+            # so a single hard stage produced uniform failure that the
+            # entropy bonus turned into policy collapse; the spread keeps
+            # earlier levels fresh and advantages informative.
+            env_stage[:] = 0
+            stage_seed_results = [None] * num_envs
+            if smb_curriculum_stage > 0:
+                n_current = max(
+                    1, int(round(num_envs * SMB_CURRENT_STAGE_FRAC))
+                )
+                env_stage[:n_current] = smb_curriculum_stage
+                # Round-robin the remaining envs over earlier stages
+                # [0 .. current-1] for even coverage.
+                for j, i in enumerate(range(n_current, num_envs)):
+                    env_stage[i] = j % smb_curriculum_stage
+                any_warm = False
                 for i in range(num_envs):
-                    try:
-                        self.pool.load_worker_state(i, current_stage_state)
-                    except Exception as e:
-                        log.warning(
-                            "[vanilla_ppo] stage warm-start env %d failed: %s",
-                            i, e,
-                        )
-                # Re-step with a no-op to flush post-restore frames
-                # into init_results for the stacker re-seed below.
-                noop_actions = np.zeros(self.pool.num_workers, dtype=np.uint8)
-                init_results = self.pool.step_all(noop_actions)
-                if self._frame_sink is not None:
-                    try:
-                        self._frame_sink(init_results)
-                    except Exception:
-                        pass
-                # All envs restored to the same stage state, so any
-                # post-restore frame is the canonical stage-start
-                # observation. Hold onto one to re-seed the stacker on
-                # mid-rollout auto-reset during the upcoming iter.
-                stage_seed_result = init_results[0]
-            else:
-                # Stage 0 cold boot — no warm-start state, so no clean
-                # stage-start frame; auto-reset stays in freeze mode.
-                stage_seed_result = None
+                    k = int(env_stage[i])
+                    if k > 0 and smb_curriculum_states[k] is not None:
+                        try:
+                            self.pool.load_worker_state(
+                                i, smb_curriculum_states[k]
+                            )
+                            any_warm = True
+                        except Exception as e:
+                            log.warning(
+                                "[vanilla_ppo] warm-start env %d stage "
+                                "%d failed: %s — cold boot.", i, k, e,
+                            )
+                            env_stage[i] = 0
+                if any_warm:
+                    # Re-step a no-op to flush post-restore frames into
+                    # init_results (stage-0 envs just advance one frame).
+                    noop_actions = np.zeros(
+                        self.pool.num_workers, dtype=np.uint8
+                    )
+                    init_results = self.pool.step_all(noop_actions)
+                    if self._frame_sink is not None:
+                        try:
+                            self._frame_sink(init_results)
+                        except Exception:
+                            pass
+                # Per-env stage-start observation for mid-rollout auto-
+                # reset re-seeding. Only warm-started (stage>0) envs get
+                # a seed; cold stage-0 envs keep None (auto-reset freezes
+                # them, as there's no per-env cold-boot reset).
+                stage_seed_results = [
+                    init_results[i] if int(env_stage[i]) > 0 else None
+                    for i in range(num_envs)
+                ]
+                _dist: dict = {}
+                for k in env_stage.tolist():
+                    _dist[k] = _dist.get(k, 0) + 1
+                log.info(
+                    "[vanilla_ppo] mixed warm-start stage distribution "
+                    "(stage:count): %s", dict(sorted(_dist.items())),
+                )
             for fn in reward_fns:
                 fn.reset()
             ep_returns[:] = 0
@@ -4419,12 +4543,17 @@ class Trainer:
                 ]
 
             # Checkpoint every 10 iters. No GA to save — just the policy
-            # network's state_dict (plus iter counter for resume).
+            # network's state_dict (plus the ABSOLUTE iter counter for
+            # resume). Filenames use global_it so a resumed run never
+            # overwrites checkpoints saved before the resume point.
             if it > 0 and it % 10 == 0:
-                ckpt_path = self.checkpoint_dir / f"vanilla_ppo_iter_{it:05d}.pt"
+                ckpt_path = (
+                    self.checkpoint_dir
+                    / f"vanilla_ppo_iter_{global_it:05d}.pt"
+                )
                 try:
                     torch.save({
-                        "iter": it,
+                        "iter": global_it,
                         "net_state_dict": {
                             k: v.detach().cpu()
                             for k, v in net.state_dict().items()
