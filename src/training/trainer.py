@@ -62,6 +62,7 @@ from src.training.checkpointing import (
 from src.training.curriculum import CurriculumManager, CurriculumStage
 from src.training.gae import gae as _gae
 from src.training.genetic_algorithm import GeneticAlgorithm, Genome
+from src.training.ppo import batched_gae, ppo_losses
 from src.training.metrics_sink import MetricsSink
 from src.utils.reward_functions import build_reward_function
 
@@ -4001,29 +4002,16 @@ class Trainer:
                 final_values_np = final_values.cpu().numpy()
 
             # ============== GAE-λ BACKWARD SWEEP ==============
-            advantages = np.zeros_like(reward_buf)
-            gae_running = np.zeros(num_envs, dtype=np.float32)
-            for t in reversed(range(rollout_steps)):
-                if t == rollout_steps - 1:
-                    next_value = final_values_np
-                else:
-                    next_value = value_buf[t + 1]
-                # Mask: when an env was done at step t, its NEXT value
-                # contribution is 0 (no future after terminal) AND the
-                # running GAE accumulator resets to break the episode
-                # boundary. Both gates use the same mask.
-                not_done = (~done_buf[t]).astype(np.float32)
-                delta = (
-                    reward_buf[t]
-                    + self.reinforce_gamma * next_value * not_done
-                    - value_buf[t]
-                )
-                gae_running = (
-                    delta
-                    + self.reinforce_gamma * self.gae_lambda * gae_running * not_done
-                )
-                advantages[t] = gae_running
-            value_targets = advantages + value_buf
+            # Batched, per-step-done-masked GAE (src/training/ppo.py).
+            # A done at step t zeroes both the bootstrapped next-value
+            # and the running accumulator, breaking the episode
+            # boundary so advantage never leaks across death/clear —
+            # required now that auto-reset gives multiple dones per env
+            # per rollout.
+            advantages, value_targets = batched_gae(
+                reward_buf, value_buf, done_buf, final_values_np,
+                self.reinforce_gamma, self.gae_lambda,
+            )
 
             # Global advantage normalization across the entire (env × step)
             # batch. This is the canonical PPO advantage normalization
@@ -4076,33 +4064,17 @@ class Trainer:
                     ).to(self.device).float()
 
                     logits, values_pred = net.forward_ac(states_t)
-                    log_probs_all = F.log_softmax(logits.float(), dim=-1)
-                    log_probs_new = log_probs_all.gather(
-                        1, actions_t.unsqueeze(1)
-                    ).squeeze(1)
-                    values_pred = values_pred.float()
-
-                    # PPO clipped surrogate.
-                    ratio = torch.exp(log_probs_new - log_probs_old_t)
-                    clip = self.ppo_clip_eps if self.ppo_clip_eps > 0 else 0.2
-                    clipped = torch.clamp(ratio, 1.0 - clip, 1.0 + clip)
-                    policy_obj = torch.min(ratio * adv_t, clipped * adv_t)
-                    policy_loss = -policy_obj.mean()
-
-                    # Entropy bonus.
-                    probs = log_probs_all.exp()
-                    entropy = -(probs * log_probs_all).sum(dim=-1).mean()
-
-                    # Value loss.
-                    if self.value_loss_kind == "mse":
-                        value_loss = F.mse_loss(values_pred, target_t)
-                    else:
-                        value_loss = F.smooth_l1_loss(values_pred, target_t)
-
-                    loss = (
-                        policy_loss
-                        + self.value_coef * value_loss
-                        - self.entropy_coef * entropy
+                    # PPO clipped-surrogate + value + entropy loss
+                    # (src/training/ppo.py). Forward pass and optimizer
+                    # step stay here; the pure loss math is shared so
+                    # the Phase 1 RND intrinsic term has one plug point.
+                    loss, policy_loss, value_loss, entropy = ppo_losses(
+                        logits, values_pred, actions_t, log_probs_old_t,
+                        adv_t, target_t,
+                        clip_eps=self.ppo_clip_eps,
+                        value_coef=self.value_coef,
+                        entropy_coef=self.entropy_coef,
+                        value_loss_kind=self.value_loss_kind,
                     )
 
                     optimizer.zero_grad()
