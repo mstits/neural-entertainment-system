@@ -3691,10 +3691,21 @@ class Trainer:
         # what we promote — guarantees the captured state is from a
         # LIVING env at level entry, not a dead env's frozen state.
         smb_pending_capture: Optional[tuple[int, bytes]] = None
-        SMB_ADVANCE_PCT = 0.60  # 60% of current-stage envs must clear past it
-        SMB_ADVANCE_CONSEC = 3  # ...for this many consecutive iters
-        # Consecutive iters the current stage has met the advance pct.
-        smb_consec_above_pct = 0
+        # Advance when the ROLLING-MEAN fraction of current-stage envs
+        # clearing past the anchor reaches SMB_ADVANCE_PCT over the last
+        # SMB_ADVANCE_WINDOW iters. A rolling mean (not "N consecutive
+        # iters >= pct") is deliberate: the per-iter clear fraction is
+        # noisy (observed oscillating 35-55% even after the agent has
+        # mastered the level), so a consecutive-all-above gate almost
+        # never fires and the curriculum stalls despite real mastery.
+        # The mean smooths that variance. 0.5 is a clear majority; the
+        # mixed-stage warm-start keeps ~40% of envs on earlier stages so
+        # advancing at 50% reliability is safe (the gated+mixed+anti-
+        # collapse trio replaced the original eager "first env" advance
+        # that caused the entropy-melt collapse).
+        SMB_ADVANCE_PCT = 0.50
+        SMB_ADVANCE_WINDOW = 5
+        smb_pastfrac_history: list[float] = []  # recent per-iter clear fractions
         # Mixed-stage warm-start: fraction of the pool that warm-starts
         # at the CURRENT (hardest) stage each iter; the rest spread over
         # earlier stages down to cold-boot stage 0. Whole-pool warm-start
@@ -3778,9 +3789,9 @@ class Trainer:
         else:
             log.info(
                 "[vanilla_ppo] curriculum starting fresh at stage 0 "
-                "(all envs train 1-1; advance when >=%.0f%% clear past "
-                "area-byte 0 for %d consecutive iters)",
-                SMB_ADVANCE_PCT * 100, SMB_ADVANCE_CONSEC,
+                "(all envs train 1-1; advance when rolling-mean clear "
+                "fraction over %d iters >= %.0f%%)",
+                SMB_ADVANCE_WINDOW, SMB_ADVANCE_PCT * 100,
             )
         if self._is_tile_mode:
             base_dim = self._tile_extractor.feature_dim
@@ -4302,10 +4313,10 @@ class Trainer:
             end_wl_str = _fmt_wl_dist(end_world_level_packed)
 
             # Stage-advance detection. Count envs whose max-area-byte
-            # this iter exceeds the current stage's anchor byte. If
-            # >= SMB_ADVANCE_PCT for SMB_ADVANCE_CONSEC consecutive
-            # iters, capture the next stage's save state from one of
-            # those envs and bump the curriculum.
+            # this iter exceeds the current stage's anchor byte. If the
+            # rolling-mean fraction reaches SMB_ADVANCE_PCT over
+            # SMB_ADVANCE_WINDOW iters, capture the next stage's save
+            # state from one of those envs and bump the curriculum.
             current_anchor = (
                 smb_curriculum_anchors[smb_curriculum_stage]
                 if smb_curriculum_stage < len(smb_curriculum_anchors)
@@ -4313,8 +4324,8 @@ class Trainer:
             )
             # Gated advance: only promote the curriculum when the envs
             # ASSIGNED to the current stage RELIABLY clear past it —
-            # >= SMB_ADVANCE_PCT of them past the anchor for
-            # SMB_ADVANCE_CONSEC consecutive iters. The previous
+            # rolling-mean clear fraction >= SMB_ADVANCE_PCT over
+            # SMB_ADVANCE_WINDOW iters. The previous
             # "first env past anchor advances the whole pool" gate
             # advanced onto stages the policy couldn't play, producing
             # uniform failure → entropy melt → permanent collapse
@@ -4328,20 +4339,22 @@ class Trainer:
             n_past_stage = int(past_mask.sum())
             n_past_current = int((past_mask & at_current).sum())
             frac_past = n_past_current / max(1, n_at_current)
-            if frac_past >= SMB_ADVANCE_PCT:
-                smb_consec_above_pct += 1
-            else:
-                smb_consec_above_pct = 0
+            smb_pastfrac_history.append(frac_past)
+            if len(smb_pastfrac_history) > SMB_ADVANCE_WINDOW:
+                smb_pastfrac_history.pop(0)
+            rolling_mean = sum(smb_pastfrac_history) / len(smb_pastfrac_history)
             should_advance = (
                 smb_pending_capture is not None
-                and smb_consec_above_pct >= SMB_ADVANCE_CONSEC
+                and len(smb_pastfrac_history) >= SMB_ADVANCE_WINDOW
+                and rolling_mean >= SMB_ADVANCE_PCT
             )
             log.info(
                 "[vanilla_ppo] curriculum diag: stage=%d, current-stage "
-                "envs past anchor=%d/%d (%.0f%%), consec>=pct=%d/%d, "
-                "pending_capture=%s, should_advance=%s",
+                "envs past anchor=%d/%d (%.0f%%), rolling-mean(%d)=%.0f%% "
+                "(need %.0f%%), pending_capture=%s, should_advance=%s",
                 smb_curriculum_stage, n_past_current, n_at_current,
-                frac_past * 100, smb_consec_above_pct, SMB_ADVANCE_CONSEC,
+                frac_past * 100, SMB_ADVANCE_WINDOW, rolling_mean * 100,
+                SMB_ADVANCE_PCT * 100,
                 "set" if smb_pending_capture is not None else "None",
                 should_advance,
             )
@@ -4369,7 +4382,7 @@ class Trainer:
                 smb_curriculum_states[new_stage] = blob
                 smb_curriculum_stage = new_stage
                 smb_stage_clear_history = []
-                smb_consec_above_pct = 0  # new stage must re-earn advance
+                smb_pastfrac_history = []  # new stage must re-earn advance
                 smb_pending_capture = None  # reset for the next stage
                 log.info(
                     "[vanilla_ppo] *** CURRICULUM ADVANCE *** "
