@@ -64,6 +64,13 @@ def test_vanilla_ppo_two_iters_end_to_end() -> None:
 
         trainer.run(num_generations=2, resume_from=None)
 
+        # If the profile enables RND (rnd_intrinsic_coef > 0), the module
+        # must have been built and exercised on the rollout path.
+        if profile["reinforce"].get("rnd_intrinsic_coef", 0.0) > 0.0:
+            assert trainer._rnd is not None, (
+                "rnd_intrinsic_coef > 0 but RND module was never built"
+            )
+
     # The full rollout -> GAE -> PPO update -> metrics path must have
     # emitted at least one iteration's metrics with the PPO loss keys.
     emitted = []

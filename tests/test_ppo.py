@@ -13,7 +13,11 @@ import math
 import numpy as np
 import torch
 
-from src.training.ppo import batched_gae, ppo_losses
+from src.training.ppo import (
+    batched_gae,
+    fold_intrinsic_into_rewards,
+    ppo_losses,
+)
 
 
 def _reference_gae(reward_buf, value_buf, done_buf, final_values, gamma, lam):
@@ -80,6 +84,26 @@ def test_batched_gae_done_breaks_boundary() -> None:
     assert adv_cut[0, 0] == 0.0
     assert adv_cut[1, 0] == 0.0
     assert adv_cut[2, 0] == 0.0  # reward at t=3 is after the t=2 boundary
+
+
+def test_fold_intrinsic_adds_on_live_steps() -> None:
+    reward = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    intrinsic = np.array([[0.5, 0.5], [0.5, 0.5]], dtype=np.float32)
+    done = np.zeros((2, 2), dtype=bool)
+    out = fold_intrinsic_into_rewards(reward, intrinsic, done)
+    np.testing.assert_allclose(out, reward + 0.5)
+    # Must be a new array, not a mutation of reward_buf.
+    assert out is not reward
+    np.testing.assert_allclose(reward, [[1.0, 2.0], [3.0, 4.0]])
+
+
+def test_fold_intrinsic_zeroed_on_done_steps() -> None:
+    reward = np.zeros((2, 2), dtype=np.float32)
+    intrinsic = np.ones((2, 2), dtype=np.float32)
+    done = np.array([[False, True], [True, False]], dtype=bool)
+    out = fold_intrinsic_into_rewards(reward, intrinsic, done)
+    # done steps get no intrinsic; live steps get it.
+    np.testing.assert_allclose(out, [[1.0, 0.0], [0.0, 1.0]])
 
 
 def _toy_inputs(batch=8, num_actions=4, seed=0):

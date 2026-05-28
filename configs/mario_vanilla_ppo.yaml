@@ -79,6 +79,23 @@ reinforce:
   # scale; Huber is the structural fix.
   value_loss: huber
 
+  # === RND INTRINSIC EXPLORATION (Burda 2018) ===
+  # Canonical no-shaping SMB-PPO is exploration-limited: measured over
+  # 80 iters the policy entropy pins at ~95% of ln(num_actions) and
+  # settles on a single safe-failing behavior (walk right, die at the
+  # first pit) with zero clears. RND's per-state novelty bonus keeps
+  # advantages alive past that wall — exactly the "policy converges on
+  # a safe-failing strategy because beyond-the-cliff is unrewarded
+  # unknown territory" case it was designed for.
+  #
+  # intrinsic_coef scales the (normalized, ~unit-std) novelty bonus
+  # folded into the per-step reward before GAE. loss_coef weights the
+  # predictor MSE in the PPO loss. Set intrinsic_coef: 0.0 to run the
+  # pure-canonical baseline arm of an A/B. Starting value 0.5 — tune
+  # via the baseline-vs-RND comparison.
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0
+
   # === DISABLE EVERYTHING ELSE ===
   # All the GA / BC / population machinery is dead code in this
   # mode but set explicitly so a future reader doesn't think these

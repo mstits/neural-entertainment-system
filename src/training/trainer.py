@@ -63,7 +63,7 @@ from src.training.checkpointing import (
 from src.training.curriculum import CurriculumManager, CurriculumStage
 from src.training.gae import gae as _gae
 from src.training.genetic_algorithm import GeneticAlgorithm, Genome
-from src.training.ppo import batched_gae, ppo_losses
+from src.training.ppo import batched_gae, fold_intrinsic_into_rewards, ppo_losses
 from src.training.metrics_sink import MetricsSink
 from src.utils.reward_functions import build_reward_function
 
@@ -3546,9 +3546,34 @@ class Trainer:
             self._ppo_net = self._make_network()
             self._ppo_net.to(self.device)
         net = self._ppo_net
+        # RND intrinsic exploration (opt-in via reinforce.rnd_intrinsic_coef).
+        # Same module + knobs the GA path uses; lazily built so it lands
+        # on the current device. Predictor params train in the same Adam
+        # optimizer as the policy. Canonical SMB-PPO is exploration-
+        # limited (entropy pins near ln(A), policy settles on a single
+        # safe-failing behavior); RND's novelty bonus keeps advantages
+        # alive past that wall.
+        if self.rnd_intrinsic_coef > 0.0 and self._rnd is None:
+            if self._is_tile_mode:
+                from src.models.tile_rnd import TileRND
+                self._rnd = TileRND(
+                    feature_dim=self._tile_feature_dim
+                ).to(self.device)
+            else:
+                self._rnd = RND(in_channels=4).to(self.device)
+            log.info(
+                "[vanilla_ppo] RND enabled (%s): predictor=%d params, "
+                "intrinsic_coef=%.3f, loss_coef=%.3f",
+                "tile_mlp" if self._is_tile_mode else "pixel_cnn",
+                self._rnd.num_params, self.rnd_intrinsic_coef,
+                self.rnd_loss_coef,
+            )
         if self._ppo_optimizer is None:
+            opt_params = list(net.parameters())
+            if self._rnd is not None:
+                opt_params += list(self._rnd.predictor.parameters())
             self._ppo_optimizer = torch.optim.Adam(
-                net.parameters(), lr=self.reinforce_lr
+                opt_params, lr=self.reinforce_lr
             )
         optimizer = self._ppo_optimizer
 
@@ -4089,6 +4114,34 @@ class Trainer:
                 _, final_values = net.forward_ac(final_batch_t)
                 final_values_np = final_values.cpu().numpy()
 
+            # ============== RND INTRINSIC REWARD ==============
+            # Fold the per-state novelty bonus into the reward stream
+            # BEFORE GAE so it bootstraps like any reward (single-stream
+            # RND). Computed once on the full rollout obs with the
+            # current predictor (no grad); the predictor is then trained
+            # in the update below, driving the bonus down on familiar
+            # states. Zeroed on done/padded steps by the fold helper.
+            rnd_intrinsic_mean = 0.0
+            if self._rnd is not None:
+                with torch.no_grad():
+                    rnd_obs_t = (
+                        torch.from_numpy(
+                            obs_buf.reshape((rollout_steps * num_envs,) + obs_shape)
+                        ).to(self.device).float()
+                    )
+                    if not self._is_tile_mode:
+                        rnd_obs_t = rnd_obs_t.div_(255.0)
+                    intrinsic_t = self._rnd(rnd_obs_t)
+                    self._rnd.update_normalization(rnd_obs_t, intrinsic_t)
+                    intrinsic_np = (
+                        intrinsic_t.cpu().numpy().astype(np.float32)
+                        * self.rnd_intrinsic_coef
+                    ).reshape(rollout_steps, num_envs)
+                rnd_intrinsic_mean = float(intrinsic_np.mean())
+                reward_buf = fold_intrinsic_into_rewards(
+                    reward_buf, intrinsic_np, done_buf
+                )
+
             # ============== GAE-λ BACKWARD SWEEP ==============
             # Batched, per-step-done-masked GAE (src/training/ppo.py).
             # A done at step t zeroes both the bootstrapped next-value
@@ -4124,6 +4177,7 @@ class Trainer:
             last_value_loss = 0.0
             last_entropy = 0.0
             last_loss = 0.0
+            last_rnd_loss = 0.0
             mb_size = max(1, self.ppo_minibatch_size)
             for epoch in range(self.reinforce_steps):
                 perm = np.random.permutation(total_n)
@@ -4164,6 +4218,14 @@ class Trainer:
                         entropy_coef=self.entropy_coef,
                         value_loss_kind=self.value_loss_kind,
                     )
+                    # RND predictor loss: train the predictor to mimic
+                    # the frozen target on visited states (its params are
+                    # in this optimizer). Forward with grad here, unlike
+                    # the no-grad intrinsic-reward pass above.
+                    if self._rnd is not None:
+                        rnd_loss = self._rnd(states_t).mean()
+                        loss = loss + self.rnd_loss_coef * rnd_loss
+                        last_rnd_loss = float(rnd_loss.detach().item())
 
                     optimizer.zero_grad()
                     loss.backward()
@@ -4389,6 +4451,8 @@ class Trainer:
                 ppo_entropy=last_entropy,
                 vanilla_ppo_in_progress=n_in_progress,
                 vanilla_ppo_clears=n_clears_this_iter,
+                vanilla_ppo_rnd_loss=last_rnd_loss,
+                vanilla_ppo_intrinsic_mean=rnd_intrinsic_mean,
                 **reward_breakdown_emit,
             )
 

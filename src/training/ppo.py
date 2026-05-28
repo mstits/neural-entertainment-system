@@ -69,6 +69,31 @@ def batched_gae(
     return advantages, value_targets
 
 
+def fold_intrinsic_into_rewards(
+    reward_buf: np.ndarray,
+    intrinsic: np.ndarray,
+    done_buf: np.ndarray,
+) -> np.ndarray:
+    """Add per-step intrinsic (RND) reward to the extrinsic rewards.
+
+    Args:
+        reward_buf: (T, N) extrinsic rewards.
+        intrinsic:  (T, N) intrinsic exploration bonus (already scaled
+                    by the intrinsic coefficient).
+        done_buf:   (T, N) bool — terminal/padded steps.
+
+    Returns a NEW (T, N) array. Intrinsic is zeroed on `done` steps so
+    no fake reward lands on the post-terminal padding that GAE masks
+    (those steps carry reward 0 by construction; adding novelty there
+    would inject advantage on dead transitions). The single-stream
+    formulation — intrinsic folded into the reward before GAE so it
+    flows through bootstrapping like any reward — is the simple, robust
+    RND variant; a separate intrinsic value head is a later refinement.
+    """
+    mask = (~done_buf).astype(reward_buf.dtype)
+    return reward_buf + intrinsic * mask
+
+
 def ppo_losses(
     logits: torch.Tensor,
     values_pred: torch.Tensor,
