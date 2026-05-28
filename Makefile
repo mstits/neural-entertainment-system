@@ -1,5 +1,5 @@
 .PHONY: help test smoke parity bench bench-hot bench-scaling bench-phases bench-all \
-        build build-pgo build-pgo-apply selftest clean
+        build build-pgo build-pgo-apply selftest clean train eval scoreboard
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -8,6 +8,14 @@ help:
 	@echo "    make build             - build nes_core (release, no PGO)"
 	@echo "    make build-pgo         - build + instrument + rebuild with PGO (~3 min; +81% throughput)"
 	@echo "    make build-pgo-apply   - reapply cached PGO profile (~15 s; use after small nes_core edits)"
+	@echo ""
+	@echo "  Train (Phase 0 onward — see docs/proposals/unified_learning_thesis.md):"
+	@echo "    make train GAME=mario  - headless training for the named game (mario, contra,"
+	@echo "                             megaman, castlevania, zelda, metroid)"
+	@echo "                             Per-game checkpoints land in checkpoints/<game_slug>/"
+	@echo "    make eval GAME=mario   - load latest checkpoint, run N eval episodes, report"
+	@echo "                             clear rate + furthest stage reached"
+	@echo "    make scoreboard        - print a one-line summary per game (training progress)"
 	@echo ""
 	@echo "  Test:"
 	@echo "    make test              - pytest suite"
@@ -24,6 +32,19 @@ help:
 	@echo ""
 	@echo "  Maint:"
 	@echo "    make clean             - remove cached artifacts"
+
+# Default game arg for `make train` / `make eval`. Override:
+#   make train GAME=zelda
+GAME ?= mario
+
+train:
+	. .venv/bin/activate && python scripts/train_game.py --game $(GAME)
+
+eval:
+	. .venv/bin/activate && python scripts/eval_game.py --game $(GAME)
+
+scoreboard:
+	. .venv/bin/activate && python scripts/scoreboard.py
 
 test:
 	. .venv/bin/activate && pytest tests/ -q --timeout=120

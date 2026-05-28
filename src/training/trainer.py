@@ -152,7 +152,16 @@ class Trainer:
         self.game_profile = game_profile
         self.num_instances = num_instances
         self.population_size = population_size
-        self.checkpoint_dir = Path(checkpoint_dir)
+        # Per-game checkpoint directory. If the caller passes the
+        # default `./checkpoints`, append the profile's slug as a
+        # subdirectory so each game gets its own subtree (mario,
+        # zelda, contra, etc. don't share artifacts). Explicit
+        # overrides (test fixtures, debug runs) are honored verbatim.
+        # See docs/proposals/unified_learning_thesis.md §5.
+        from src.training.profile_utils import derive_checkpoint_dir
+        self.checkpoint_dir = derive_checkpoint_dir(
+            checkpoint_dir, game_profile.get("name"),
+        )
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         # Profile override wins. Lets zelda.yaml ship with a far larger
         # episode budget (hours of game time) without baking it into
@@ -1010,39 +1019,12 @@ class Trainer:
             last_action_per_genome[genome_idx] = a
 
     def _build_bitmask_table(self) -> tuple[int, ...]:
-        from src.emulation.frame_utils import (
-            BUTTON_A, BUTTON_B, BUTTON_DOWN, BUTTON_LEFT, BUTTON_NOOP,
-            BUTTON_RIGHT, BUTTON_SELECT, BUTTON_START, BUTTON_UP,
-        )
-        name_to_bit = {
-            "NOOP": BUTTON_NOOP, "A": BUTTON_A, "B": BUTTON_B,
-            "up": BUTTON_UP, "down": BUTTON_DOWN,
-            "left": BUTTON_LEFT, "right": BUTTON_RIGHT,
-            "start": BUTTON_START, "select": BUTTON_SELECT,
-        }
-        table = []
-        for idx, buttons in enumerate(self.action_space):
-            # A bare string here (e.g. YAML `- right+A` instead of
-            # `- [right, A]`) iterates char-by-char and the inner
-            # lookup explodes with `KeyError: 'r'`. Catch it with a
-            # useful message — this exact bug bit the canonical
-            # profile (commit d76c4ab).
-            if isinstance(buttons, str):
-                raise ValueError(
-                    f"action_space[{idx}] is a string ({buttons!r}); "
-                    f"each entry must be a list of button names "
-                    f"(or [] for NOOP). Example: [\"right\", \"A\"]."
-                )
-            bitmask = 0
-            for b in buttons:
-                if b not in name_to_bit:
-                    raise ValueError(
-                        f"action_space[{idx}] references unknown button "
-                        f"{b!r}; valid names: {sorted(name_to_bit.keys())}"
-                    )
-                bitmask |= name_to_bit[b]
-            table.append(bitmask)
-        return tuple(table)
+        # Conversion lives in profile_utils so the trainer hot path and
+        # the headless eval/launch scripts share exactly one mapping.
+        # The string-entry / unknown-button guards (this exact bug bit
+        # the canonical profile in commit d76c4ab) moved there too.
+        from src.training.profile_utils import action_space_to_bitmasks
+        return action_space_to_bitmasks(self.action_space)
 
 
     def run(self, num_generations: int = 1000, resume_from: str | None = None) -> None:
@@ -3868,29 +3850,43 @@ class Trainer:
                             max_world_level_packed[i] = wl_packed
                         end_world_level_packed[i] = wl_packed
                         # Mid-rollout curriculum capture: FIRST detection
-                        # wins per stage. Two key gates:
+                        # per stage wins (no overwrites), capture on ANY
+                        # byte strictly greater than the current anchor.
                         #
-                        #   1. `smb_pending_capture is None` — only the
-                        #      first qualifying frame is snapshot. Without
-                        #      this, the variable gets overwritten on
-                        #      every step where Mario is past the anchor,
-                        #      and we end up with the LAST mid-level
-                        #      state (Mario at x=200 about to die) instead
-                        #      of the FIRST level-entry state (Mario at
-                        #      x=0 at the new level's spawn).
+                        # Previously this required `byte > cur_anchor + 1`
+                        # to skip the cutscene transition byte between
+                        # 1-1 and 1-2 (sequence 0 → 1 → 2). But NOT every
+                        # level transition has a cutscene byte: 1-2 → 1-3
+                        # goes directly from byte=2 to byte=3 with no
+                        # intermediate. The `+1` skip prevented the
+                        # curriculum from ever capturing 1-3 — agents
+                        # were reaching byte=3 (real 1-3 gameplay per
+                        # GUI observation) but the gate required byte=4+,
+                        # leaving the curriculum stuck at stage 1.
                         #
-                        #   2. `wl_packed > cur_anchor + 1` — skip the
-                        #      transient cutscene transition byte (which
-                        #      sits between current level and next).
-                        #      For stage 0 (anchor=0), this requires
-                        #      byte >= 2 = real 1-2 underground gameplay.
+                        # Cost of the looser gate: the rare 1-1→1-2-like
+                        # transition may capture the brief cutscene byte
+                        # first. That's acceptable — loading from a mid-
+                        # cutscene state still plays out naturally
+                        # post-restore (cutscene is autopiloted by the
+                        # game engine, agent inputs ignored) and Mario
+                        # lands in the new level within ~30 RL steps.
                         cur_anchor = (
                             smb_curriculum_anchors[smb_curriculum_stage]
                             if smb_curriculum_stage < len(smb_curriculum_anchors)
                             else 0
                         )
+                        # Also gate on lives >= 1 (= 2 in-game lives).
+                        # Without this gate, if Mario crosses into the
+                        # next level on his LAST life, the captured save
+                        # state has lives=0 and every warm-start has
+                        # only one attempt before in-game game-over. With
+                        # auto-reset on death (below) this still works
+                        # but wastes the ~15-step in-game GAME OVER
+                        # screen between attempts.
                         if (smb_pending_capture is None
-                                and wl_packed > cur_anchor + 1):
+                                and wl_packed > cur_anchor
+                                and int(ram[0x075A]) >= 1):
                             try:
                                 blob = self.pool.save_worker_state(i)
                                 if blob is not None:
@@ -3926,22 +3922,57 @@ class Trainer:
                             completed_lengths.append(int(ep_lengths[i]))
                             ep_returns[i] = 0.0
                             ep_lengths[i] = 0
-                            # Mark this env inactive for the rest of the
-                            # iter. DO NOT reset the reward fn inline —
-                            # that was the bug (post-death player_state
-                            # in RAM persists, reward fn's `died` flag
-                            # gets cleared by reset(), next compute() re-
-                            # fires done immediately, loop). Instead:
-                            #   * tell the pool to short-circuit this
-                            #     worker (saves CPU)
-                            #   * skip future processing for this env
-                            #   * iter-boundary reset_all + reward_fn
-                            #     reset prepares cleanly for next iter
-                            active_in_iter[i] = False
-                            try:
-                                self.pool.set_worker_done(i, True)
-                            except Exception:
-                                pass
+                            # AUTO-RESET on death within a rollout. If the
+                            # curriculum has a warm-start state for the
+                            # current stage, immediately reload it so this
+                            # env gets another attempt at the level within
+                            # the same rollout. Each rollout now contains
+                            # 5-6 attempts per env instead of 1. Standard
+                            # PPO baseline behavior — done is just an
+                            # episode boundary in GAE, the rollout buffer
+                            # accumulates multi-episode data naturally.
+                            #
+                            # If we're at stage 0 (no warm-state), fall
+                            # back to the old freeze-until-iter-boundary
+                            # behavior — there's no per-env cold-boot
+                            # reset API in the pool.
+                            current_stage_state_inline = (
+                                smb_curriculum_states[smb_curriculum_stage]
+                                if smb_curriculum_stage < len(smb_curriculum_states)
+                                else None
+                            )
+                            if current_stage_state_inline is not None:
+                                try:
+                                    self.pool.load_worker_state(
+                                        i, current_stage_state_inline,
+                                    )
+                                    reward_fns[i].reset()
+                                    # Stacker keeps the last 4 frames of
+                                    # the death moment in its history;
+                                    # they'll be pushed out over the next
+                                    # ~stack_size steps as fresh post-
+                                    # restore frames come in. Suboptimal
+                                    # but acceptable cost (a few wasted
+                                    # action samples per reset).
+                                except Exception as e:
+                                    log.warning(
+                                        "[vanilla_ppo] auto-reset env %d "
+                                        "failed: %s — falling back to "
+                                        "freeze-on-done.", i, e,
+                                    )
+                                    active_in_iter[i] = False
+                                    try:
+                                        self.pool.set_worker_done(i, True)
+                                    except Exception:
+                                        pass
+                            else:
+                                # Stage 0: no warm-state, freeze and wait
+                                # for the iter-boundary reset_all.
+                                active_in_iter[i] = False
+                                try:
+                                    self.pool.set_worker_done(i, True)
+                                except Exception:
+                                    pass
 
                         # Advance stacker with the post-step frame/RAM.
                         # Only when still active — once done, stacker
@@ -4158,11 +4189,11 @@ class Trainer:
             )
             # Per user's design: advance as soon as ANY env has reached
             # past the current stage and we have a capture in hand. No
-            # consecutive-iter threshold — first detection wins.
-            # Count envs in REAL gameplay area (skip the transient
-            # cutscene-transition byte by requiring > current_anchor + 1).
+            # consecutive-iter threshold — first detection wins. Counts
+            # match the capture gate (`byte > current_anchor`, NOT +1)
+            # so the diag/log reflect what actually fires capture.
             n_past_stage = int(
-                (max_world_level_packed > current_anchor + 1).sum()
+                (max_world_level_packed > current_anchor).sum()
             )
             should_advance = (
                 smb_pending_capture is not None
