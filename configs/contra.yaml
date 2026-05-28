@@ -1,4 +1,8 @@
 name: "Contra"
+# Live stage-1 gameplay state (scripts/capture_start_state.py). Without
+# it the emulator cold-boots to the title-screen demo, which ignores
+# input — training there gives zero learning signal.
+start_state_path: "roms/Contra (USA)_start.state.bin"
 rom_hashes:
   - "a70547ac1a4d0f86bdba6b31bf25c8aa"  # Contra (U) — NesDev canonical dump
 

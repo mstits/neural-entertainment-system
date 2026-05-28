@@ -1,4 +1,8 @@
 name: "Metroid"
+# Live start-room gameplay state (scripts/capture_start_state.py).
+# Without it the emulator cold-boots to the title-screen demo, which
+# ignores input — training there gives zero learning signal.
+start_state_path: "roms/Metroid (USA)_start.state.bin"
 rom_hashes:
   - ""
 

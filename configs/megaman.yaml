@@ -1,4 +1,8 @@
 name: "Mega Man"
+# Live in-stage gameplay state (scripts/capture_start_state.py). Without
+# it the emulator cold-boots to the title-screen demo, which ignores
+# input — training there gives zero learning signal.
+start_state_path: "roms/Mega Man (USA)_start.state.bin"
 rom_hashes:
   - ""  # TODO: fill in when a known-good Mega Man 2 dump is used
 
