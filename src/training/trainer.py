@@ -292,6 +292,19 @@ class Trainer:
                     start_state_path,
                 )
                 start_state_path = None
+        if not start_state_path:
+            # No start state => the emulator cold-boots to the title
+            # screen. For these NES games the title screen auto-plays an
+            # attract-mode DEMO that ignores controller input, so every
+            # env runs the identical scripted sequence and the policy
+            # gets zero learning signal. This silently wasted whole runs
+            # (operMode never leaves 0; entropy pins at ln(num_actions)).
+            log.warning(
+                "NO start_state_path — training will cold-boot to the "
+                "title screen, where the attract-mode demo IGNORES agent "
+                "input. The policy cannot learn from this. Set "
+                "start_state_path in the profile to a live-gameplay state.",
+            )
         self.start_state_path = start_state_path
         # bc_demo_path: explicit ctor arg from GUI/CLI; the YAML fallback
         # is applied later once `rl_cfg` is defined (see below).

@@ -24,6 +24,15 @@ description: >
 frame_skip: 4
 max_episode_steps: 2400
 
+# CRITICAL: without a start state the emulator cold-boots to the TITLE
+# SCREEN, where the attract-mode demo auto-plays 1-1 and IGNORES all
+# controller input. Training there means every env runs the identical
+# scripted demo (operMode stays 0), the agent never controls Mario, and
+# the policy gets zero learning signal — entropy pins at ln(num_actions)
+# and "progress" is just the demo walking into the first pit. This state
+# drops the agent into live 1-1 gameplay (operMode 1) so inputs matter.
+start_state_path: "roms/Super Mario Bros. (World)_start.state.bin"
+
 ram_mapping:
   x_position_page: 0x006D
   x_position_low:  0x0086

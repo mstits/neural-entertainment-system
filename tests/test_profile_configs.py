@@ -66,3 +66,28 @@ def test_profile_yaml_loads_and_action_space_is_list_of_lists(profile_path: Path
                 f"{profile_path.name}: action_space[{idx}][{j}] "
                 f"must be a button-name string, got {btn!r}"
             )
+
+
+def test_vanilla_ppo_profile_declares_existing_start_state() -> None:
+    """Regression guard: the vanilla_ppo SMB profile MUST declare a
+    start_state_path pointing to a real file.
+
+    Without it the emulator cold-boots to the title screen, where the
+    attract-mode demo auto-plays and IGNORES controller input — every
+    env runs the identical scripted sequence, the agent never controls
+    Mario, and the policy gets zero learning signal. This silently
+    wasted entire training runs (it presented as "PPO won't learn /
+    entropy pinned at max"). Pin the start state so it can't regress.
+    """
+    profile_path = CONFIG_DIR / "mario_vanilla_ppo.yaml"
+    with profile_path.open() as fh:
+        data = yaml.safe_load(fh)
+    ssp = data.get("start_state_path")
+    assert ssp, (
+        "mario_vanilla_ppo.yaml must declare start_state_path — without "
+        "it training cold-boots to the title-screen demo (inputs ignored)."
+    )
+    assert (Path(__file__).resolve().parents[1] / ssp).exists(), (
+        f"start_state_path {ssp!r} does not exist; training would fall "
+        f"back to the title-screen demo."
+    )

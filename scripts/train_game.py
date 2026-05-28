@@ -134,6 +134,30 @@ def main() -> int:
     if not Path(rom_path).exists():
         raise SystemExit(f"ROM file missing: {rom_path}")
 
+    # Start state resolution. Without one, the emulator cold-boots to
+    # the title screen and trains on the attract-mode demo (inputs
+    # ignored). Prefer the profile's value; fall back to the canonical
+    # `<rom>_start.state.bin` sidecar if present. Fail loud if neither
+    # resolves — silent title-screen training looks like "the agent
+    # won't learn" and wastes entire runs.
+    start_state = profile.get("start_state_path")
+    if not start_state:
+        sidecar = Path(rom_path).with_name(Path(rom_path).stem + "_start.state.bin")
+        if sidecar.exists():
+            start_state = str(sidecar)
+            log = logging.getLogger("train_game")
+            log.warning(
+                "[launcher] profile has no start_state_path; using sidecar %s",
+                sidecar,
+            )
+    if not start_state or not Path(str(start_state)).exists():
+        raise SystemExit(
+            f"No start state for game={args.game!r} (profile + sidecar both "
+            f"missing). Training would cold-boot to the title-screen demo "
+            f"where inputs are ignored. Provide start_state_path in the "
+            f"profile or place a '<rom>_start.state.bin' next to the ROM."
+        )
+
     num_instances = args.num_envs or int(
         profile.get("reinforce", {}).get("num_envs", 60)
     )
@@ -155,7 +179,7 @@ def main() -> int:
         game_profile=profile,
         num_instances=num_instances,
         population_size=num_instances,  # vanilla_ppo doesn't use a population
-        start_state_path=profile.get("start_state_path"),
+        start_state_path=start_state,
         env_spec=profile.get("env_spec", "nes_core"),
         max_episode_steps=int(profile.get("max_episode_steps", 1000)),
     )
