@@ -93,7 +93,25 @@ def eval_one_game(
 
     state = torch.load(str(ckpt), map_location="cpu")
     net = TilePolicyNetwork(num_actions=len(bitmasks), feature_dim=stacked_dim)
-    net.load_state_dict(state["net_state_dict"], strict=False)
+    # Load non-strict so older checkpoints with extra aux heads still
+    # load, but FAIL LOUD if core weights are missing — a silent
+    # partial load would eval a half-random policy and still print
+    # status "ok", which is worse than an error.
+    load_res = net.load_state_dict(state["net_state_dict"], strict=False)
+    if load_res.missing_keys:
+        return {
+            "game": game,
+            "status": "checkpoint_mismatch",
+            "checkpoint": str(ckpt),
+            "missing_keys": list(load_res.missing_keys),
+            "unexpected_keys": list(load_res.unexpected_keys),
+            "detail": (
+                "checkpoint does not provide all network weights for "
+                f"TilePolicyNetwork(num_actions={len(bitmasks)}, "
+                f"feature_dim={stacked_dim}); refusing to eval a "
+                "partially-initialized policy."
+            ),
+        }
     net.eval()
 
     start_state = profile.get("start_state_path") or (

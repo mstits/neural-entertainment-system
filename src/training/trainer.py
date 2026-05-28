@@ -3784,6 +3784,14 @@ class Trainer:
                 for i, r in enumerate(init_results)
             ]
 
+        # Stage-start observation for mid-rollout auto-reset re-seeding.
+        # Set at the iter-boundary warm-start (all envs restore to the
+        # same curriculum state, so one post-restore frame seeds them
+        # all). None while at stage 0 / before the first warm-start —
+        # in that window auto-reset falls back to freeze-on-done since
+        # there is no clean stage observation to re-seed from.
+        stage_seed_result = None
+
         for it in range(num_iters):
             if not self._running:
                 break
@@ -3918,6 +3926,10 @@ class Trainer:
                         except Exception:
                             pass
 
+                        # Set True when an auto-reset re-seeds the
+                        # stacker this step, so the post-step push below
+                        # is skipped (the seed already IS the new obs).
+                        reseeded = False
                         if done:
                             completed_returns.append(float(ep_returns[i]))
                             completed_lengths.append(int(ep_lengths[i]))
@@ -3948,13 +3960,45 @@ class Trainer:
                                         i, current_stage_state_inline,
                                     )
                                     reward_fns[i].reset()
-                                    # Stacker keeps the last 4 frames of
-                                    # the death moment in its history;
-                                    # they'll be pushed out over the next
-                                    # ~stack_size steps as fresh post-
-                                    # restore frames come in. Suboptimal
-                                    # but acceptable cost (a few wasted
-                                    # action samples per reset).
+                                    # Re-seed the stacker from the
+                                    # canonical stage-start observation
+                                    # captured at the iter-boundary
+                                    # warm-start. load_worker_state
+                                    # restores RAM but produces no frame
+                                    # until the next step_all, so pushing
+                                    # the pre-reset death frame here would
+                                    # desync the observation from the
+                                    # restored env (the policy would pick
+                                    # the next action from a death frame
+                                    # while the env is at level start).
+                                    # Seeding makes the first post-reset
+                                    # obs identical to a fresh episode's.
+                                    if stage_seed_result is not None:
+                                        if self._is_tile_mode:
+                                            stacked_obs[i] = tile_stackers[i].reset(
+                                                self._tile_extractor.extract(
+                                                    stage_seed_result.ram_snapshot
+                                                )
+                                            )
+                                        else:
+                                            stacked_obs[i] = stackers[i].reset(
+                                                stage_seed_result.frame,
+                                                getattr(
+                                                    stage_seed_result,
+                                                    "preprocessed", None,
+                                                ),
+                                            )
+                                        reseeded = True
+                                    else:
+                                        # No stage-start seed yet (it=0
+                                        # on resume, before the first
+                                        # warm-start). Freeze rather than
+                                        # re-seed from a stale frame.
+                                        active_in_iter[i] = False
+                                        try:
+                                            self.pool.set_worker_done(i, True)
+                                        except Exception:
+                                            pass
                                 except Exception as e:
                                     log.warning(
                                         "[vanilla_ppo] auto-reset env %d "
@@ -3976,11 +4020,13 @@ class Trainer:
                                     pass
 
                         # Advance stacker with the post-step frame/RAM.
-                        # Only when still active — once done, stacker
-                        # state is frozen (its current contents represent
-                        # the final pre-done observation; no point
-                        # contaminating it with post-death garbage).
-                        if active_in_iter[i]:
+                        # Only when still active and NOT just re-seeded by
+                        # an auto-reset (the seed already is the new obs;
+                        # pushing the pre-reset death frame on top would
+                        # re-introduce the desync). Once done+frozen, the
+                        # stacker's contents represent the final pre-done
+                        # observation — no point contaminating it.
+                        if active_in_iter[i] and not reseeded:
                             if self._is_tile_mode:
                                 stacked_obs[i] = tile_stackers[i].push(
                                     self._tile_extractor.extract(ram)
@@ -4258,6 +4304,18 @@ class Trainer:
             # match the dashboard's panel-config lookup. The ga_ppo path
             # emits with these exact names; the chart uses them
             # uniformly across both modes.
+            # vanilla_ppo never feeds the GA-oriented CurriculumManager,
+            # so its stage_success_rate() is permanently 0.0 — which
+            # reads on the dashboard as "never clears" even when the
+            # agent is clearing the level repeatedly. Derive the
+            # displayed success_rate from the real per-iter clear
+            # counter instead: fraction of completed episodes that
+            # cleared (or per-env when episodes outlast the rollout).
+            if n_complete > 0:
+                vppo_success_rate = n_clears_this_iter / n_complete
+            else:
+                vppo_success_rate = n_clears_this_iter / max(1, num_envs)
+            vppo_success_rate = min(1.0, float(vppo_success_rate))
             self._emit_metrics(
                 generation=it,
                 best_fitness=max(best_completed, best_in_progress),
@@ -4265,7 +4323,7 @@ class Trainer:
                     mean_ep_return if n_complete else mean_inprogress_return
                 ),
                 stage=self.curriculum.current_stage.name,
-                success_rate=self.curriculum.stage_success_rate(),
+                success_rate=vppo_success_rate,
                 episodes=n_complete,
                 ppo_loss=last_loss,
                 ppo_policy_loss=last_policy_loss,
@@ -4320,6 +4378,15 @@ class Trainer:
                         self._frame_sink(init_results)
                     except Exception:
                         pass
+                # All envs restored to the same stage state, so any
+                # post-restore frame is the canonical stage-start
+                # observation. Hold onto one to re-seed the stacker on
+                # mid-rollout auto-reset during the upcoming iter.
+                stage_seed_result = init_results[0]
+            else:
+                # Stage 0 cold boot — no warm-start state, so no clean
+                # stage-start frame; auto-reset stays in freeze mode.
+                stage_seed_result = None
             for fn in reward_fns:
                 fn.reset()
             ep_returns[:] = 0

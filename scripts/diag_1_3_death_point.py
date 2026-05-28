@@ -27,9 +27,14 @@ from nes_core import Pool
 from src.models.tile_policy import TilePolicyNetwork
 from src.emulation.tile_observations import get_extractor
 from src.emulation.frame_utils import TileFeatureStacker
+from src.training.profile_utils import derive_checkpoint_dir
 
 OUT_DIR = Path("/tmp/death_diag")
 OUT_DIR.mkdir(exist_ok=True)
+
+# Per-game checkpoint subtree — artifacts moved here from the flat
+# ./checkpoints once per-game dirs landed (Phase 0).
+CKPT_DIR = derive_checkpoint_dir("./checkpoints", "Super Mario Bros.")
 
 ACTIONS = [0x00, 0x80, 0x81, 0x82, 0x83, 0x01, 0x40]
 ACTION_NAMES = ["NOOP", "RIGHT", "RIGHT+A", "RIGHT+B", "RIGHT+A+B", "A", "LEFT"]
@@ -37,7 +42,7 @@ ACTION_NAMES = ["NOOP", "RIGHT", "RIGHT+A", "RIGHT+B", "RIGHT+A+B", "A", "LEFT"]
 
 def find_latest_ckpt() -> Path:
     ckpts = sorted(
-        Path("checkpoints").glob("vanilla_ppo_iter_*.pt"),
+        CKPT_DIR.glob("vanilla_ppo_iter_*.pt"),
         key=lambda p: int(p.stem.rsplit("_", 1)[-1]),
     )
     if not ckpts:
@@ -59,7 +64,7 @@ def run_one(run_id: int) -> None:
     )
     pool.reset_all()
 
-    stage_path = Path("checkpoints/smb_curriculum/stage_02.state")
+    stage_path = CKPT_DIR / "smb_curriculum" / "stage_02.state"
     blob = stage_path.read_bytes()
     pool.load_worker_state(0, blob)
 
