@@ -110,6 +110,59 @@ def action_space_to_bitmasks(action_space: list) -> tuple[int, ...]:
     return tuple(table)
 
 
+def validate_profile(profile: dict) -> list[str]:
+    """Validate a game profile's load-bearing fields; return a list of
+    human-readable problems (empty list == valid).
+
+    Lightweight schema check (no external dep) for the keys the trainer
+    and launcher actually depend on, so a malformed YAML fails at load
+    with a clear message instead of crashing mid-run or — worse —
+    training silently on bad config. Unknown/extra keys are allowed
+    (profiles carry game-specific extensions by design).
+    """
+    problems: list[str] = []
+    if not isinstance(profile, dict):
+        return ["profile root is not a mapping"]
+
+    name = profile.get("name")
+    if not isinstance(name, str) or not name.strip():
+        problems.append("name: must be a non-empty string")
+
+    action_space = profile.get("action_space")
+    if action_space is not None:
+        try:
+            action_space_to_bitmasks(action_space)
+        except (ValueError, TypeError) as e:
+            problems.append(f"action_space: {e}")
+
+    rw = profile.get("reward_weights")
+    if rw is not None and not isinstance(rw, dict):
+        problems.append("reward_weights: must be a mapping")
+
+    rl = profile.get("reinforce")
+    if rl is not None:
+        if not isinstance(rl, dict):
+            problems.append("reinforce: must be a mapping")
+        else:
+            enc = rl.get("encoder")
+            if enc is not None and not isinstance(enc, str):
+                problems.append("reinforce.encoder: must be a string")
+            # Hyperparameters, when present, must be numeric — a stray
+            # quote ("3e-4" vs 3e-4) otherwise blows up at optimizer build.
+            for k in (
+                "lr", "gamma", "gae_lambda", "ppo_clip_eps", "value_coef",
+                "entropy_coef", "grad_clip", "rnd_intrinsic_coef",
+                "rnd_loss_coef", "rollout_steps", "steps", "ppo_minibatch_size",
+                "tile_frame_stack",
+            ):
+                if k in rl and not isinstance(rl[k], (int, float)):
+                    problems.append(
+                        f"reinforce.{k}: must be a number, got "
+                        f"{type(rl[k]).__name__} ({rl[k]!r})"
+                    )
+    return problems
+
+
 def resolve_encoder(profile: dict) -> tuple[Any, int, int]:
     """Resolve a profile's observation encoder from `reinforce.encoder`.
 

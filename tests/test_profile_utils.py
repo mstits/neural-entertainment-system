@@ -12,6 +12,7 @@ from src.training.profile_utils import (
     derive_checkpoint_dir,
     profile_slug,
     resolve_encoder,
+    validate_profile,
 )
 
 
@@ -139,3 +140,53 @@ def test_resolve_encoder_default_stack_size() -> None:
 def test_resolve_encoder_missing_encoder_raises() -> None:
     with pytest.raises(ValueError, match="no reinforce.encoder"):
         resolve_encoder({"reinforce": {}})
+
+
+def test_validate_profile_accepts_well_formed() -> None:
+    good = {
+        "name": "Super Mario Bros.",
+        "action_space": [[], ["right"], ["right", "A"]],
+        "reward_weights": {"forward_progress": 1.0},
+        "reinforce": {"encoder": "smb_tiles", "lr": 3.0e-4, "gamma": 0.9},
+    }
+    assert validate_profile(good) == []
+
+
+def test_validate_profile_flags_each_problem() -> None:
+    bad = {
+        "name": "",                       # empty name
+        "action_space": [[], "right+A"],  # bare-string entry
+        "reward_weights": [1, 2],         # not a mapping
+        "reinforce": {
+            "encoder": 123,               # not a string
+            "lr": "3e-4",                 # quoted number
+        },
+    }
+    problems = validate_profile(bad)
+    joined = " | ".join(problems)
+    assert "name" in joined
+    assert "action_space" in joined
+    assert "reward_weights" in joined
+    assert "reinforce.encoder" in joined
+    assert "reinforce.lr" in joined
+
+
+def test_validate_profile_allows_extra_keys() -> None:
+    # Profiles carry game-specific extensions; unknown keys are fine.
+    p = {"name": "X", "curriculum": {"stages": []}, "some_game_specific": 7}
+    assert validate_profile(p) == []
+
+
+def test_real_profiles_validate() -> None:
+    # Every shipped STANDALONE profile must pass validation. Overlay
+    # profiles (merged onto a base at load time, e.g. *_overrides /
+    # *_tuned) legitimately omit `name` and are out of scope — they're
+    # identified by the absence of a `name` key.
+    import yaml
+    cfg = Path(__file__).resolve().parents[1] / "configs"
+    for prof in cfg.glob("*.yaml"):
+        with prof.open() as fh:
+            data = yaml.safe_load(fh)
+        if not (isinstance(data, dict) and data.get("name")):
+            continue  # overlay/partial, not a standalone profile
+        assert validate_profile(data) == [], f"{prof.name}: {validate_profile(data)}"

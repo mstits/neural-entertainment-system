@@ -797,6 +797,11 @@ class Trainer:
         # In-process GUI frame sink. Invoked with the list[StepResult]
         # after every step_all. None in headless mode.
         self._frame_sink = frame_sink
+        # Set once if the frame sink ever raises, so we warn a single
+        # time instead of either spamming or (the old behavior) silently
+        # swallowing every failure and losing the GUI live-view with no
+        # signal that anything broke.
+        self._frame_sink_warned = False
         self._metrics_queue = metrics_queue
         self._reward_queue = reward_queue  # live reward-weight updates
         self._audio_queue = audio_queue    # GUI -> trainer: mixer mode/volume
@@ -2208,11 +2213,7 @@ class Trainer:
         # returns all workers' results in one PyO3 call per generation.
         offset = self._ga_worker_offset()
         all_init = self.pool.reset_all()
-        if self._frame_sink is not None:
-            try:
-                self._frame_sink(all_init)
-            except Exception:
-                pass
+        self._emit_frame_sink(all_init)
         init_results = [r for r in all_init if r.worker_id >= offset]
         # Build per-genome initial observation. Pixel mode resets the
         # FrameStacker with the first frame; tile mode decodes RAM
@@ -2503,11 +2504,7 @@ class Trainer:
             self._gen_timer.add(
                 "emulation_wait", time.perf_counter_ns() - _wait_t0
             )
-            if self._frame_sink is not None:
-                try:
-                    self._frame_sink(results)
-                except Exception:
-                    pass
+            self._emit_frame_sink(results)
 
             # PRE-PASS: collect inputs for batched reward dispatch so
             # we can do one PyO3 round-trip instead of N. Audit pegged
@@ -3846,11 +3843,7 @@ class Trainer:
 
         # Initial reset.
         init_results = self.pool.reset_all()
-        if self._frame_sink is not None:
-            try:
-                self._frame_sink(init_results)
-            except Exception:
-                pass
+        self._emit_frame_sink(init_results)
         if self._is_tile_mode:
             stacked_obs: list[np.ndarray] = [
                 tile_stackers[i].reset(self._tile_extractor.extract(r.ram_snapshot))
@@ -3907,11 +3900,7 @@ class Trainer:
                     for i in range(num_envs):
                         step_actions[i] = self._action_to_bitmask(int(actions_np[i]))
                     step_results = self.pool.step_all(step_actions)
-                    if self._frame_sink is not None:
-                        try:
-                            self._frame_sink(step_results)
-                        except Exception:
-                            pass
+                    self._emit_frame_sink(step_results)
 
                     # Process each env's result, compute reward, advance stacker.
                     # Envs already done in this iter contribute zero reward
@@ -4522,11 +4511,7 @@ class Trainer:
             # idling in a post-done state when our reward-fn / stacker
             # logic doesn't match the rust pool's auto-step semantics.
             init_results = self.pool.reset_all()
-            if self._frame_sink is not None:
-                try:
-                    self._frame_sink(init_results)
-                except Exception:
-                    pass
+            self._emit_frame_sink(init_results)
             # SMB mixed-stage curriculum warm-start. Past stage 0, keep
             # a majority of envs (SMB_CURRENT_STAGE_FRAC) at the current
             # (hardest) stage for focused training, and spread the rest
@@ -4568,11 +4553,7 @@ class Trainer:
                         self.pool.num_workers, dtype=np.uint8
                     )
                     init_results = self.pool.step_all(noop_actions)
-                    if self._frame_sink is not None:
-                        try:
-                            self._frame_sink(init_results)
-                        except Exception:
-                            pass
+                    self._emit_frame_sink(init_results)
                 # Per-env stage-start observation for mid-rollout auto-
                 # reset re-seeding. Only warm-started (stage>0) envs get
                 # a seed; cold stage-0 envs keep None (auto-reset freezes
@@ -4681,6 +4662,26 @@ class Trainer:
 
     def _emit_metrics(self, **metrics) -> None:
         self._metrics_sink.emit(**metrics)
+
+    def _emit_frame_sink(self, results) -> None:
+        """Push step results to the optional frame sink (GUI live-view).
+
+        No-op in headless mode. If the sink raises, warn ONCE and keep
+        training — a broken GUI sink shouldn't kill the run, but it also
+        shouldn't vanish silently (the old `except: pass` lost the live
+        view with zero signal).
+        """
+        if self._frame_sink is None:
+            return
+        try:
+            self._frame_sink(results)
+        except Exception as e:
+            if not self._frame_sink_warned:
+                self._frame_sink_warned = True
+                log.warning(
+                    "frame_sink raised (%s); suppressing further frame-sink "
+                    "errors this run. GUI live-view may be stale.", e,
+                )
 
     def stop(self) -> None:
         self._running = False

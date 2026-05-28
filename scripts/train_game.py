@@ -122,6 +122,14 @@ def main() -> int:
     with open(profile_path) as f:
         profile = yaml.safe_load(f)
 
+    # Fail fast on a malformed profile rather than crashing mid-run.
+    from src.training.profile_utils import validate_profile
+    _problems = validate_profile(profile)
+    if _problems:
+        raise SystemExit(
+            f"invalid profile {profile_path}:\n  - " + "\n  - ".join(_problems)
+        )
+
     # ROM resolution priority: --rom > profile rom_path > per-game default.
     rom_path = args.rom or profile.get("rom_path") or DEFAULT_ROMS.get(
         (args.game or "").lower().strip()

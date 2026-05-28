@@ -63,6 +63,7 @@ def eval_one_game(
     rom_path: str,
     n_episodes: int,
     max_steps: int,
+    stage: Optional[int] = None,
 ) -> dict:
     """Run N episodes; return a dict of eval stats."""
     with open(profile_path) as f:
@@ -122,6 +123,24 @@ def eval_one_game(
         start_state_path=str(start_state) if Path(str(start_state)).exists() else None,
     )
 
+    # Optional curriculum-stage warm-start. By default eval boots from
+    # the profile start state (live level-1 gameplay), so it only
+    # measures the FIRST stage. A curriculum-trained policy spends most
+    # of its training on later stages; pass --stage N to load
+    # smb_curriculum/stage_NN.state and measure that stage instead.
+    stage_blob: Optional[bytes] = None
+    if stage is not None:
+        stage_path = ckpt_dir / "smb_curriculum" / f"stage_{stage:02d}.state"
+        if not stage_path.exists():
+            pool.shutdown()
+            return {
+                "game": game,
+                "status": "no_such_stage",
+                "stage": stage,
+                "detail": f"{stage_path} not found",
+            }
+        stage_blob = stage_path.read_bytes()
+
     stacker = TileFeatureStacker(stack_size=stack_size, feature_dim=feature_dim)
     # The reward function is the SAME Rust object the trainer uses, so
     # the eval's notion of "cleared" (episode_success) and "return"
@@ -136,6 +155,12 @@ def eval_one_game(
 
     for ep in range(n_episodes):
         pool.reset_all()
+        if stage_blob is not None:
+            # Warm-start into the curriculum stage. load_worker_state
+            # restores RAM but produces no frame until the next step,
+            # so the noop step below flushes the post-restore frame for
+            # the stacker seed (same pattern the trainer uses).
+            pool.load_worker_state(0, stage_blob)
         reward_fn.reset()
         init = pool.step_all(np.zeros(1, dtype=np.uint8))
         obs = stacker.reset(extractor.extract(init[0][2]))
@@ -177,6 +202,7 @@ def eval_one_game(
         "game": game,
         "status": "ok",
         "checkpoint": str(ckpt),
+        "stage": stage if stage is not None else "start",
         "n_episodes": n_episodes,
         "mean_return": float(np.mean(returns)) if returns else 0.0,
         "mean_length": float(np.mean(lengths)) if lengths else 0.0,
@@ -200,6 +226,10 @@ def main() -> int:
     parser.add_argument("--rom", type=str, default=None)
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--max-steps", type=int, default=1500)
+    parser.add_argument("--stage", type=int, default=None,
+                        help="Curriculum stage to warm-start each episode "
+                             "from (smb_curriculum/stage_NN.state). Default: "
+                             "boot from the profile start state (first stage).")
     args = parser.parse_args()
 
     profile_path = resolve_profile_path(args.game, args.profile)
@@ -213,7 +243,7 @@ def main() -> int:
 
     result = eval_one_game(
         args.game, profile_path, rom_path,
-        args.episodes, args.max_steps,
+        args.episodes, args.max_steps, stage=args.stage,
     )
     print(json.dumps(result, indent=2))
     return 0
