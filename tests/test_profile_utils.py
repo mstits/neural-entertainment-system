@@ -160,6 +160,7 @@ def test_validate_profile_flags_each_problem() -> None:
         "reinforce": {
             "encoder": 123,               # not a string
             "lr": "3e-4",                 # quoted number
+            "gamma": True,                # bool (int subclass) — must reject
         },
     }
     problems = validate_profile(bad)
@@ -169,6 +170,7 @@ def test_validate_profile_flags_each_problem() -> None:
     assert "reward_weights" in joined
     assert "reinforce.encoder" in joined
     assert "reinforce.lr" in joined
+    assert "reinforce.gamma" in joined   # bool rejected
 
 
 def test_validate_profile_allows_extra_keys() -> None:

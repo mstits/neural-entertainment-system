@@ -155,7 +155,11 @@ def validate_profile(profile: dict) -> list[str]:
                 "rnd_loss_coef", "rollout_steps", "steps", "ppo_minibatch_size",
                 "tile_frame_stack",
             ):
-                if k in rl and not isinstance(rl[k], (int, float)):
+                # bool is an int subclass — reject it explicitly so a
+                # YAML `lr: true` is caught here, not at optimizer build.
+                if k in rl and (
+                    isinstance(rl[k], bool) or not isinstance(rl[k], (int, float))
+                ):
                     problems.append(
                         f"reinforce.{k}: must be a number, got "
                         f"{type(rl[k]).__name__} ({rl[k]!r})"

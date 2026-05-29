@@ -97,6 +97,35 @@ def test_trainer_reads_vanilla_ppo_mode_flag() -> None:
     assert str(rl_g.get("trainer_mode", "ga_ppo")).lower() == "ga_ppo"
 
 
+def test_build_ppo_optimizer_keeps_rnd_predictor() -> None:
+    """Regression guard: _build_ppo_optimizer (the single source the
+    initial build AND the anti-collapse rollback rebuild both use) must
+    include the RND predictor params. A prior hand-rolled rollback
+    rebuilt over net.parameters() only, silently dropping the predictor
+    so it never trained again after a collapse-recovery."""
+    import torch.nn as nn
+    from src.training.trainer import Trainer
+    from src.models.tile_rnd import TileRND
+
+    t = Trainer.__new__(Trainer)  # no env/pool boot
+    t.reinforce_lr = 3.0e-4
+    net = nn.Linear(8, 4)
+    net_params = sum(p.numel() for p in net.parameters())
+
+    # No RND: optimizer owns exactly the net.
+    t._rnd = None
+    opt = t._build_ppo_optimizer(net)
+    owned = sum(p.numel() for g in opt.param_groups for p in g["params"])
+    assert owned == net_params
+
+    # With RND: optimizer owns net + predictor (target is frozen/excluded).
+    t._rnd = TileRND(feature_dim=8)
+    opt2 = t._build_ppo_optimizer(net)
+    owned2 = sum(p.numel() for g in opt2.param_groups for p in g["params"])
+    assert owned2 == net_params + t._rnd.num_params
+    assert owned2 > owned
+
+
 def test_vanilla_ppo_dispatch_branch_in_run() -> None:
     """The `run()` method must dispatch to `_run_vanilla_ppo` and
     return before the GA loop when vanilla_ppo_mode is True. Guard

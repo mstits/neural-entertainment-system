@@ -1179,7 +1179,14 @@ class Trainer:
         # literature recipe (the only PPO setup that empirically
         # converges on SMB 1-1 in our compute budget).
         if self.vanilla_ppo_mode:
-            self._run_vanilla_ppo(num_iters=num_generations)
+            # try/finally so a Stop, an exhausted iter budget, or an
+            # uncaught exception all still release the pool / audio
+            # thread / TB writer. Without it the GUI leaked a full pool
+            # + a live daemon thread on every Start→Stop→Start.
+            try:
+                self._run_vanilla_ppo(num_iters=num_generations)
+            finally:
+                self._teardown()
             return
 
         try:
@@ -3288,10 +3295,7 @@ class Trainer:
             )
 
         if self._ppo_optimizer is None:
-            opt_params = list(net.parameters())
-            if self._rnd is not None:
-                opt_params += list(self._rnd.predictor.parameters())
-            self._ppo_optimizer = torch.optim.Adam(opt_params, lr=self.reinforce_lr)
+            self._ppo_optimizer = self._build_ppo_optimizer(net)
 
         optimizer = self._ppo_optimizer
 
@@ -3579,12 +3583,7 @@ class Trainer:
                 self.rnd_loss_coef,
             )
         if self._ppo_optimizer is None:
-            opt_params = list(net.parameters())
-            if self._rnd is not None:
-                opt_params += list(self._rnd.predictor.parameters())
-            self._ppo_optimizer = torch.optim.Adam(
-                opt_params, lr=self.reinforce_lr
-            )
+            self._ppo_optimizer = self._build_ppo_optimizer(net)
         optimizer = self._ppo_optimizer
 
         # Absolute iteration offset for resume-safe checkpoint naming.
@@ -4192,31 +4191,42 @@ class Trainer:
             last_loss = 0.0
             last_rnd_loss = 0.0
             mb_size = max(1, self.ppo_minibatch_size)
+            # Build the full-rollout tensors ONCE per iter and index them
+            # with a torch permutation inside the minibatch loop, instead
+            # of rebuilding 5 tensors from numpy (cast + host-copy) for
+            # every one of ~K*total_n/mb minibatches. The four scalar
+            # vectors are tiny; the obs tensor is materialized up front
+            # only for tile mode (~170 MB float32) — for the pixel path
+            # that would be multi-GB, so pixel obs stays per-minibatch.
+            actions_all = torch.from_numpy(
+                action_flat.astype(np.int64)
+            ).to(self.device)
+            log_probs_old_all = torch.from_numpy(log_prob_old_flat).to(self.device).float()
+            adv_all = torch.from_numpy(adv_flat).to(self.device).float()
+            target_all = torch.from_numpy(target_flat).to(self.device).float()
+            obs_all = (
+                torch.from_numpy(obs_flat).to(self.device).float()
+                if self._is_tile_mode else None
+            )
             for epoch in range(self.reinforce_steps):
                 perm = np.random.permutation(total_n)
                 for mb_start in range(0, total_n, mb_size):
                     mb_end = min(mb_start + mb_size, total_n)
-                    mb_idx = perm[mb_start:mb_end]
-                    if mb_idx.size < 2:
+                    mb_np = perm[mb_start:mb_end]
+                    if mb_np.size < 2:
                         continue
+                    mb_idx = torch.from_numpy(mb_np).to(self.device)
 
-                    states_t = torch.from_numpy(
-                        np.ascontiguousarray(obs_flat[mb_idx])
-                    ).to(self.device).float()
-                    if not self._is_tile_mode:
-                        states_t = states_t.div_(255.0)
-                    actions_t = torch.from_numpy(
-                        action_flat[mb_idx].astype(np.int64)
-                    ).to(self.device)
-                    log_probs_old_t = torch.from_numpy(
-                        log_prob_old_flat[mb_idx]
-                    ).to(self.device).float()
-                    adv_t = torch.from_numpy(
-                        adv_flat[mb_idx]
-                    ).to(self.device).float()
-                    target_t = torch.from_numpy(
-                        target_flat[mb_idx]
-                    ).to(self.device).float()
+                    if obs_all is not None:
+                        states_t = obs_all[mb_idx]
+                    else:
+                        states_t = torch.from_numpy(
+                            np.ascontiguousarray(obs_flat[mb_np])
+                        ).to(self.device).float().div_(255.0)
+                    actions_t = actions_all[mb_idx]
+                    log_probs_old_t = log_probs_old_all[mb_idx]
+                    adv_t = adv_all[mb_idx]
+                    target_t = target_all[mb_idx]
 
                     logits, values_pred = net.forward_ac(states_t)
                     # PPO clipped-surrogate + value + entropy loss
@@ -4368,13 +4378,20 @@ class Trainer:
                 stage_path = smb_curriculum_dir / (
                     f"stage_{new_stage:02d}.state"
                 )
-                stage_path.write_bytes(blob)
+                # Atomic write (tmp + replace): a crash mid-write would
+                # otherwise leave a truncated .state that the resume
+                # loader reads and chokes on, breaking curriculum resume.
+                _tmp_stage = stage_path.with_suffix(".state.tmp")
+                _tmp_stage.write_bytes(blob)
+                _tmp_stage.replace(stage_path)
                 # Persist anchor in sidecar so the capture gate works
                 # correctly after a restart.
                 meta_path = smb_curriculum_dir / (
                     f"stage_{new_stage:02d}.meta.json"
                 )
-                meta_path.write_text(json.dumps({"anchor": int(new_anchor)}))
+                _tmp_meta = meta_path.with_suffix(".json.tmp")
+                _tmp_meta.write_text(json.dumps({"anchor": int(new_anchor)}))
+                _tmp_meta.replace(meta_path)
                 while len(smb_curriculum_anchors) <= new_stage:
                     smb_curriculum_anchors.append(0)
                     smb_curriculum_states.append(None)
@@ -4496,10 +4513,10 @@ class Trainer:
                         and best_net_snapshot is not None):
                     net.load_state_dict(best_net_snapshot)
                     # The melted Adam moments would re-melt the restored
-                    # weights immediately; start fresh.
-                    self._ppo_optimizer = torch.optim.Adam(
-                        net.parameters(), lr=self.reinforce_lr
-                    )
+                    # weights immediately; start fresh. Use the shared
+                    # builder so the RND predictor stays in the optimizer
+                    # (a hand-rolled rebuild silently dropped it).
+                    self._ppo_optimizer = self._build_ppo_optimizer(net)
                     optimizer = self._ppo_optimizer
                     collapse_strikes = 0
                     log.warning(
@@ -4675,6 +4692,54 @@ class Trainer:
 
     def _emit_metrics(self, **metrics) -> None:
         self._metrics_sink.emit(**metrics)
+
+    def _build_ppo_optimizer(self, net) -> "torch.optim.Optimizer":
+        """Build the PPO Adam over the policy net + (when RND is enabled)
+        the RND predictor. SINGLE source of truth so the three build
+        sites — initial GA-path build, initial vanilla build, and the
+        anti-collapse rollback rebuild — can never drift. They did: the
+        rollback rebuilt over net.parameters() only, silently dropping
+        the RND predictor from the optimizer (predictor then never
+        trained again and accumulated grads unbounded)."""
+        params = list(net.parameters())
+        if self._rnd is not None:
+            params += list(self._rnd.predictor.parameters())
+        return torch.optim.Adam(params, lr=self.reinforce_lr)
+
+    def _teardown(self) -> None:
+        """Shared run() cleanup: stop the audio drainer, shut down the
+        pool, break the frame_sink reference cycle, stop the mixer, and
+        flush+close the metrics writer. Called from BOTH trainer modes'
+        finally. vanilla_ppo used to `return` before the GA path's
+        finally and so skipped all of this — leaking the pool's native
+        buffers, a live daemon thread, the audio stream, and the TB tail
+        on every GUI Start→Stop (the exact ~17 GB retention cycle the GA
+        path already guards). Best-effort: each step is independently
+        guarded so one failure can't strand the rest."""
+        import gc as _gc
+        try:
+            self._stop_audio_drainer()
+        except Exception as exc:
+            log.warning("audio drainer stop failed: %s", exc)
+        if self.pool:
+            try:
+                self.pool.shutdown()
+            except Exception as exc:
+                log.warning("pool shutdown failed: %s", exc)
+        self.pool = None
+        # Drop the GUI callback so the AppController ↔ Trainer cycle
+        # releases the pool buffers without waiting for the cycle GC.
+        self._frame_sink = None
+        if self._audio_mixer is not None:
+            try:
+                self._audio_mixer.stop()
+            except Exception:
+                pass
+        try:
+            self._metrics_sink.close()
+        except Exception:
+            pass
+        _gc.collect()
 
     def _emit_frame_sink(self, results) -> None:
         """Push step results to the optional frame sink (GUI live-view).
