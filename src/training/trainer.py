@@ -1806,6 +1806,21 @@ class Trainer:
             if setter is not None:
                 setter(True)
                 log.info("Pool preprocess_f16=ON — observations arrive as np.float16 in [0, 1].")
+        # Headless: when there's no GUI frame sink, nobody reads the full
+        # 256x240x3 RGB frame — the policy uses RAM (tile) or the 84x84
+        # `preprocessed` (pixel). Skip rendering/allocating the RGB frame
+        # per worker per step. Measured ~2% on step_all and removes the
+        # per-worker RGB alloc; preprocessed is unaffected. Headless mode
+        # returns a 1x1x3 dummy frame, so only enable it when no sink
+        # needs real frames.
+        if self._frame_sink is None:
+            setter = getattr(inner, "set_headless", None)
+            if setter is not None:
+                setter(True)
+                log.info(
+                    "Pool headless=ON (no frame sink) — skipping RGB frame "
+                    "render; policy obs (RAM / preprocessed) unaffected."
+                )
         # Panic isolation: when False, rayon worker bodies run without
         # a `catch_unwind` wrap. Saves 0.5-1% throughput per the Rust
         # docs (pool.rs:528-538). Cost: a panic in any worker (e.g. a
@@ -3961,6 +3976,7 @@ class Trainer:
             if not self._running:
                 break
             global_it = it + iter_offset
+            _iter_t0 = time.perf_counter()
             # Apply any GUI audio-mode pace change here (trainer thread,
             # between rollouts) rather than from the drainer thread.
             self._drain_pending_pace()
@@ -4569,6 +4585,19 @@ class Trainer:
             else:
                 vppo_success_rate = n_clears_this_iter / max(1, num_envs)
             vppo_success_rate = min(1.0, float(vppo_success_rate))
+            # Throughput: env-steps/s, NES frames/s (× frame_skip), and
+            # realtime multiple (vs the NES's 60 fps). Makes the M4's
+            # utilization visible and turns "weekend per game" from a
+            # guess into an estimate (samples-to-target / samples_per_sec).
+            _iter_dt = max(1e-6, time.perf_counter() - _iter_t0)
+            samples_per_sec = (rollout_steps * num_envs) / _iter_dt
+            nes_fps = samples_per_sec * self.frame_skip
+            realtime_x = nes_fps / 60.0
+            log.info(
+                "[vanilla_ppo] iter %d throughput: %.0f env-steps/s | "
+                "%.0f NES-fps | %.0fx realtime | %.2f s/iter",
+                global_it, samples_per_sec, nes_fps, realtime_x, _iter_dt,
+            )
             self._emit_metrics(
                 generation=global_it,
                 best_fitness=max(best_completed, best_in_progress),
@@ -4586,6 +4615,8 @@ class Trainer:
                 vanilla_ppo_clears=n_clears_this_iter,
                 vanilla_ppo_rnd_loss=last_rnd_loss,
                 vanilla_ppo_intrinsic_mean=rnd_intrinsic_mean,
+                vanilla_ppo_samples_per_sec=samples_per_sec,
+                vanilla_ppo_realtime_x=realtime_x,
                 **reward_breakdown_emit,
             )
 
