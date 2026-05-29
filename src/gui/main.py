@@ -25,6 +25,13 @@ import yaml
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
+# Repo root on sys.path so `import src...` resolves when this file is run
+# directly (`python src/gui/main.py` / `make gui`) — running a script puts
+# only its own directory on the path, not the repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from src.gui.audio_mixer_window import AudioMixerWindow
 from src.gui.emulator_grid import EmulatorGrid
 from src.gui.main_window import MainWindow
