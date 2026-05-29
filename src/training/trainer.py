@@ -814,6 +814,15 @@ class Trainer:
         # boundaries, which can be minutes apart. See _start_audio_drainer.
         self._audio_drainer_stop: Optional[threading.Event] = None
         self._audio_drainer_thread: Optional[threading.Thread] = None
+        # The audio-drainer thread records the latest requested mixer
+        # mode here; the TRAINER thread applies the worker-pace change
+        # (a pool mutation) at a safe point between step_all calls. The
+        # pace call must NOT run on the drainer thread: set_worker_pace
+        # mints &mut Worker, and step_all releases the GIL during its
+        # rayon dispatch, so an off-thread pace change could alias a
+        # worker mid-step (the Pool's documented "never overlap with
+        # step_all" invariant). GUI-only path; None in headless.
+        self._pending_pace_mode: Optional[str] = None
         self._narrator_queue = narrator_queue
         # Narrator instance: detects "first dungeon entry", combo kills,
         # deaths, new items, triforce — anything worth captioning. Seeded
@@ -1467,10 +1476,23 @@ class Trainer:
             if not isinstance(upd, dict):
                 continue
             if "mode" in upd:
+                # Mixer mode is mixer-local state (safe off-thread). The
+                # pool worker-pace change is NOT — defer it to the
+                # trainer thread via _pending_pace_mode (see __init__).
                 self._audio_mixer.set_mode(upd["mode"])
-                self._apply_pace_for_mode(upd["mode"])
+                self._pending_pace_mode = upd["mode"]
             if "volume" in upd:
                 self._audio_mixer.set_volume(upd["volume"])
+
+    def _drain_pending_pace(self) -> None:
+        """Apply a pending audio-mode worker-pace change. MUST be called
+        from the trainer thread between step_all calls (where it has
+        exclusive pool access), never from the audio-drainer thread."""
+        mode = self._pending_pace_mode
+        if mode is None:
+            return
+        self._pending_pace_mode = None
+        self._apply_pace_for_mode(mode)
 
     def _apply_pace_for_mode(self, mode: str) -> None:
         """Toggle realtime pacing on workers based on the audio
@@ -1750,6 +1772,9 @@ class Trainer:
     def _run_one_generation(self, gen: int) -> None:
         log.info("=== Generation %d (stage: %s) ===", gen, self.curriculum.current_stage.name)
         self._drain_reward_updates()
+        # Apply any pending GUI audio-mode worker-pace change on the
+        # trainer thread (the drainer thread only records it).
+        self._drain_pending_pace()
         # Audio-mixer updates are drained by a dedicated daemon thread
         # (see _start_audio_drainer) so mute/solo/volume apply within
         # ~50 ms instead of once per generation.
@@ -3878,6 +3903,9 @@ class Trainer:
             if not self._running:
                 break
             global_it = it + iter_offset
+            # Apply any GUI audio-mode pace change here (trainer thread,
+            # between rollouts) rather than from the drainer thread.
+            self._drain_pending_pace()
 
             # ============== ROLLOUT COLLECTION ==============
             net.eval()
