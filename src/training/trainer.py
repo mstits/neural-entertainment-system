@@ -1435,6 +1435,41 @@ class Trainer:
         except Exception as exc:
             log.debug("tracemalloc stats failed: %s", exc)
 
+    def _respawn_pool(self, start_state_path: Optional[str]) -> bool:
+        """Rebuild the worker pool with a new start state, exception-safe.
+
+        Builds + starts the NEW pool BEFORE shutting down the old one, so
+        a build failure (bad ROM / corrupt start state / OOM spinning up
+        N workers) leaves the existing pool intact and training
+        continues, instead of stranding `self.pool` as a dead/half-built
+        reference. Returns True on success (pool swapped, old shut down,
+        knobs reapplied); False on failure (current pool untouched)."""
+        try:
+            new_pool = _make_pool(
+                env_spec=self.env_spec,
+                rom_path=self.rom_path,
+                num_workers=self.num_instances,
+                frame_skip=self.frame_skip,
+                start_state_path=start_state_path,
+                seed=self.seed,
+            )
+            new_pool.start()
+        except Exception as exc:
+            log.error(
+                "pool respawn (start_state=%s) failed: %s; keeping the "
+                "current pool + start state.", start_state_path, exc,
+            )
+            return False
+        old = self.pool
+        self.pool = new_pool
+        if old is not None:
+            try:
+                old.shutdown()
+            except Exception as exc:
+                log.warning("old pool shutdown after respawn failed: %s", exc)
+        self._apply_pool_knobs()
+        return True
+
     def _maybe_rebuild_pool_for_stage(self) -> None:
         """If the active curriculum stage specifies a per-stage start state
         different from the pool's current state, tear down and respawn the
@@ -1450,16 +1485,7 @@ class Trainer:
             "Curriculum stage %s specifies start_state=%s, rebuilding pool",
             self.curriculum.current_stage.name, stage_state,
         )
-        pool.shutdown()
-        self.pool = _make_pool(
-            env_spec=self.env_spec,
-            rom_path=self.rom_path,
-            num_workers=self.num_instances,
-            start_state_path=stage_state,
-            seed=self.seed,
-        )
-        self.pool.start()
-        self._apply_pool_knobs()
+        self._respawn_pool(stage_state)
 
     def _drain_audio_updates(self) -> None:
         """Apply any audio-mixer control messages waiting on the GUI
@@ -1740,19 +1766,15 @@ class Trainer:
             "Start-state swap: %s -> %s; rebuilding pool.",
             self.start_state_path, new_path_str,
         )
-        self.start_state_path = new_path_str
-        if self.pool is not None:
-            self.pool.shutdown()
-            self.pool = _make_pool(
-                env_spec=self.env_spec,
-                rom_path=self.rom_path,
-                num_workers=self.num_instances,
-                frame_skip=self.frame_skip,
-                start_state_path=self.start_state_path,
-                seed=self.seed,
-            )
-            self.pool.start()
-            self._apply_pool_knobs()
+        if self.pool is None:
+            # No live pool yet — just record; the next build uses it.
+            self.start_state_path = new_path_str
+            return
+        # Commit the new start state only if the respawn actually
+        # succeeds, so a failed swap leaves pool + start_state_path
+        # consistent at the old (working) values.
+        if self._respawn_pool(new_path_str):
+            self.start_state_path = new_path_str
 
     def _apply_pool_knobs(self) -> None:
         """Push trainer-side configuration onto the freshly-started pool.
