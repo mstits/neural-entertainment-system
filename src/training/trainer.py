@@ -3730,6 +3730,26 @@ class Trainer:
                 exc,
             )
 
+        # Reproducibility manifest: ROM + start state + seed + git commit
+        # + pinned hyperparameters, written to the checkpoint dir. With
+        # the code at that commit and the run's metrics.jsonl, the result
+        # is reproducible/citable. Best-effort — never block training.
+        try:
+            from src.training.run_manifest import write_run_manifest
+            mpath = write_run_manifest(
+                self.checkpoint_dir,
+                game=self.game_profile.get("name"),
+                rom_path=self.rom_path,
+                start_state_path=self.start_state_path,
+                seed=self.seed,
+                profile=self.game_profile,
+                num_envs=num_envs,
+                frame_skip=self.frame_skip,
+            )
+            log.info("[vanilla_ppo] wrote run manifest: %s", mpath)
+        except Exception as exc:
+            log.warning("[vanilla_ppo] run manifest write failed: %s", exc)
+
         # Per-env reward functions and stackers.
         reward_fns = [self.reward_fn_factory() for _ in range(num_envs)]
         for fn in reward_fns:
