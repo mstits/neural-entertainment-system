@@ -543,6 +543,16 @@ class Trainer:
         self._is_tile_mode: bool = self.encoder_kind in ("smb_tiles",)
         self._tile_extractor = None
         self._tile_feature_dim: int = 0
+        # The vanilla_ppo save-state curriculum is built around SMB's
+        # area-byte progression ($075F world / $0760 area), so it ONLY
+        # applies to Super Mario Bros. Other games (Contra, etc.) run
+        # vanilla_ppo as plain single-stage PPO from their start state —
+        # without this gate the capture/advance logic would read garbage
+        # from their RAM at those addresses and fabricate bogus stages.
+        # A generalized per-game curriculum is future work.
+        self._smb_curriculum_active: bool = (
+            "mario" in str(game_profile.get("name", "")).lower()
+        )
         # Frame stacking for tile observations. yumouwei (2022) showed
         # empirically that stack=1 fails to clear SMB 1-1 while stack=4
         # succeeds — point-in-time RAM features lack temporal context
@@ -3810,7 +3820,11 @@ class Trainer:
         # capture gate (`byte > anchor + 1`) doesn't degrade on reload.
         smb_curriculum_dir = self.checkpoint_dir / "smb_curriculum"
         smb_curriculum_dir.mkdir(parents=True, exist_ok=True)
-        for n in range(1, 32):
+        # Non-Mario games skip the SMB area-byte curriculum entirely
+        # (stage stays 0 -> no warm-start, no capture, no advance): plain
+        # single-stage vanilla PPO from the profile start state.
+        _curr_range = range(1, 32) if self._smb_curriculum_active else range(0)
+        for n in _curr_range:
             stage_path = smb_curriculum_dir / f"stage_{n:02d}.state"
             meta_path = smb_curriculum_dir / f"stage_{n:02d}.meta.json"
             if not stage_path.exists():
@@ -4049,7 +4063,8 @@ class Trainer:
                         # auto-reset on death (below) this still works
                         # but wastes the ~15-step in-game GAME OVER
                         # screen between attempts.
-                        if (smb_pending_capture is None
+                        if (self._smb_curriculum_active
+                                and smb_pending_capture is None
                                 and wl_packed > cur_anchor
                                 and int(ram[0x075A]) >= 1):
                             try:
@@ -4442,16 +4457,17 @@ class Trainer:
                 and len(smb_pastfrac_history) >= SMB_ADVANCE_WINDOW
                 and rolling_mean >= SMB_ADVANCE_PCT
             )
-            log.info(
-                "[vanilla_ppo] curriculum diag: stage=%d, current-stage "
-                "envs past anchor=%d/%d (%.0f%%), rolling-mean(%d)=%.0f%% "
-                "(need %.0f%%), pending_capture=%s, should_advance=%s",
-                smb_curriculum_stage, n_past_current, n_at_current,
-                frac_past * 100, SMB_ADVANCE_WINDOW, rolling_mean * 100,
-                SMB_ADVANCE_PCT * 100,
-                "set" if smb_pending_capture is not None else "None",
-                should_advance,
-            )
+            if self._smb_curriculum_active:
+                log.info(
+                    "[vanilla_ppo] curriculum diag: stage=%d, current-stage "
+                    "envs past anchor=%d/%d (%.0f%%), rolling-mean(%d)=%.0f%% "
+                    "(need %.0f%%), pending_capture=%s, should_advance=%s",
+                    smb_curriculum_stage, n_past_current, n_at_current,
+                    frac_past * 100, SMB_ADVANCE_WINDOW, rolling_mean * 100,
+                    SMB_ADVANCE_PCT * 100,
+                    "set" if smb_pending_capture is not None else "None",
+                    should_advance,
+                )
             if should_advance and smb_pending_capture is not None:
                 # Use the mid-rollout capture: a LIVING env's state
                 # taken the moment it first crossed into the next
@@ -4502,14 +4518,15 @@ class Trainer:
                 n_clears_this_iter,
                 last_loss, last_policy_loss, last_value_loss, last_entropy,
             )
-            log.info(
-                "[vanilla_ppo] iter %d: max-W-L: %s  |  end-W-L: %s  "
-                "|  curriculum stage=%d (anchor area=%d, %d/%d envs "
-                "past stage this iter)",
-                it, max_wl_str, end_wl_str,
-                smb_curriculum_stage, current_anchor,
-                n_past_stage, num_envs,
-            )
+            if self._smb_curriculum_active:
+                log.info(
+                    "[vanilla_ppo] iter %d: max-W-L: %s  |  end-W-L: %s  "
+                    "|  curriculum stage=%d (anchor area=%d, %d/%d envs "
+                    "past stage this iter)",
+                    it, max_wl_str, end_wl_str,
+                    smb_curriculum_stage, current_anchor,
+                    n_past_stage, num_envs,
+                )
             # best_fitness uses the larger of completed-max and in-progress-max
             # so the dashboard reflects real progress when episodes are
             # outlasting rollout_steps.
