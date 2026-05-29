@@ -63,7 +63,7 @@ reinforce:
   # start state. RND drives exploration.
   trainer_mode: vanilla_ppo
   encoder: nature_dqn
-  device: cpu            # "mps" if CPU collection is the bottleneck
+  device: mps            # CNN ~4.7x faster on MPS than CPU (benched)
   rollout_steps: 1024
   steps: 10
   ppo_minibatch_size: 256

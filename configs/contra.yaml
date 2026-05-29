@@ -67,7 +67,7 @@ reinforce:
   # curriculum is gated off for non-Mario games (the trainer detects
   # this by name); Contra trains single-stage from its start state.
   encoder: nature_dqn
-  device: cpu            # switch to "mps" for the CNN if CPU collection is the bottleneck
+  device: mps            # CNN is ~4.7x faster on MPS than CPU (benched); switch to cpu if MPS misbehaves
 
   # === ROLLOUT ===
   rollout_steps: 1024
