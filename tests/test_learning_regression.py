@@ -130,3 +130,85 @@ def test_ppo_loss_shape_and_finiteness():
     assert first.grad is not None and torch.isfinite(first.grad).all()
     assert last.grad is not None and torch.isfinite(last.grad).all()
     optim.step()
+
+
+# --- Real-loop learning guard ----------------------------------------------
+# The tests above prove gradients flow on synthetic data. This one runs the
+# ACTUAL vanilla_ppo loop on the REAL SMB ROM for a handful of iters and
+# asserts the agent both (1) DIVERGES across envs and (2) DROPS entropy.
+# It exists because of a real outage: training silently ran on the title-
+# screen attract-mode demo (no start state), where every env played the
+# same scripted sequence, inputs were ignored, and entropy stayed pinned at
+# ln(num_actions) — the whole code-correctness suite stayed green while the
+# agent learned nothing. This guard would have failed loudly. It also
+# catches the curriculum-collapse (entropy melts back up) and any future
+# regression that breaks env control or gradient signal end-to-end.
+
+from pathlib import Path  # noqa: E402
+
+_ROOT = Path(__file__).resolve().parent.parent
+_SMB_ROM = _ROOT / "roms" / "Super Mario Bros. (World).nes"
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(180)
+@pytest.mark.skipif(
+    not _SMB_ROM.exists(),
+    reason="real-loop learning guard needs the SMB ROM",
+)
+def test_vanilla_ppo_actually_learns_on_real_smb():
+    """Run real vanilla_ppo on SMB ~20 iters; assert it controls the game
+    and learns. Catches the title-screen-demo / collapse / no-signal class
+    of bugs that pure code-correctness tests cannot see."""
+    import queue
+    import tempfile
+
+    import yaml
+
+    from src.training.trainer import Trainer
+
+    with open(_ROOT / "configs" / "mario_vanilla_ppo.yaml") as fh:
+        profile = yaml.safe_load(fh)
+    # Shrink for a ~30s run while keeping the real recipe (start state,
+    # RND, curriculum gating all intact).
+    profile["reinforce"]["rollout_steps"] = 256
+    profile["reinforce"]["steps"] = 4
+    profile["reinforce"]["ppo_minibatch_size"] = 128
+
+    q: queue.Queue = queue.Queue()
+    with tempfile.TemporaryDirectory(prefix="learn_guard_") as tmp:
+        trainer = Trainer(
+            rom_path=str(_SMB_ROM),
+            game_profile=profile,
+            num_instances=12,
+            population_size=12,
+            checkpoint_dir=tmp,                       # isolated, no resume
+            start_state_path=profile.get("start_state_path"),
+            env_spec="nes_core",
+            max_episode_steps=2400,
+            metrics_queue=q,
+        )
+        trainer.run(num_generations=20, resume_from=None)
+
+    rows = []
+    while not q.empty():
+        rows.append(q.get_nowait())
+    assert len(rows) >= 10, f"expected >=10 iters of metrics, got {len(rows)}"
+
+    entropies = [float(r["ppo_entropy"]) for r in rows]
+    spreads = [float(r["best_fitness"]) - float(r["avg_fitness"]) for r in rows]
+
+    # (1) Envs must DIVERGE. Under the title-screen-demo bug every env ran
+    # the identical scripted sequence so best_fitness == avg_fitness for
+    # all iters (spread 0). Healthy training spreads by 100s.
+    assert max(spreads) > 1.0, (
+        f"envs never diverged (max best-avg spread={max(spreads):.2f}); the "
+        "agent likely isn't controlling the game — e.g. training on the "
+        "title-screen demo (missing/!broken start state)."
+    )
+    # (2) Entropy must DROP. A learning policy commits; the demo bug and the
+    # curriculum-collapse both leave entropy pinned near ln(num_actions).
+    assert min(entropies[-5:]) < entropies[0] - 0.1, (
+        f"entropy did not drop (start={entropies[0]:.3f}, "
+        f"min-last-5={min(entropies[-5:]):.3f}); the policy isn't learning."
+    )

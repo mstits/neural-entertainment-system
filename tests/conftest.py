@@ -24,3 +24,8 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "soak: long-running stability test — excluded by default."
     )
+    config.addinivalue_line(
+        "markers",
+        "slow: slow test (real-emulator runs / soak). Opt out with "
+        "`-m 'not slow'` for the fast inner loop.",
+    )

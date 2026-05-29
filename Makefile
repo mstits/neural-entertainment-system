@@ -1,5 +1,6 @@
 .PHONY: help test smoke parity bench bench-hot bench-scaling bench-phases bench-all \
-        build build-pgo build-pgo-apply selftest clean train eval scoreboard
+        build build-pgo build-pgo-apply selftest clean train eval scoreboard \
+        test-fast selftest-learning
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -18,7 +19,9 @@ help:
 	@echo "    make scoreboard        - print a one-line summary per game (training progress)"
 	@echo ""
 	@echo "  Test:"
-	@echo "    make test              - pytest suite"
+	@echo "    make test              - pytest suite (incl. slow real-emulator guards)"
+	@echo "    make test-fast         - pytest suite minus slow tests (fast inner loop)"
+	@echo "    make selftest-learning - real-loop guard: vanilla_ppo learns SMB (~25s)"
 	@echo "    make smoke             - 60-second full-stack CLI checks"
 	@echo "    make selftest          - GUI widget construction (headless)"
 	@echo "    make parity            - nes_core vs nes-py diff harness (under 2 min)"
@@ -48,6 +51,12 @@ scoreboard:
 
 test:
 	. .venv/bin/activate && pytest tests/ -q --timeout=120
+
+test-fast:
+	. .venv/bin/activate && pytest tests/ -q -m "not slow" --timeout=120
+
+selftest-learning:
+	. .venv/bin/activate && pytest tests/test_learning_regression.py -q -m slow --timeout=180 -s
 
 smoke:
 	. .venv/bin/activate && bash scripts/smoke.sh
