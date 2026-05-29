@@ -702,6 +702,9 @@ class Trainer:
         self.action_space = game_profile.get("action_space", [])
         self.num_actions = len(self.action_space)
         self._bitmask_table = self._build_bitmask_table()
+        # uint8 lookup table for vectorized action->bitmask gather in the
+        # rollout hot loop (avoids a per-env Python loop every step).
+        self._bitmask_lut = np.array(self._bitmask_table, dtype=np.uint8)
         # Deferred from earlier in __init__: now that num_actions is
         # set and the _obs_buffer_shape helper is bound, it's safe to
         # rehydrate the persistent BC success cache (which validates
@@ -3432,6 +3435,7 @@ class Trainer:
                     traj_len_full=int(traj_lens[g_idx]),
                     max_episode_steps=self.max_episode_steps,
                     gamma=gamma,
+                    gae_lambda=self.gae_lambda,
                 )
 
                 # Per-trajectory MEAN (not sum) so a 1500-step elite
@@ -3881,11 +3885,14 @@ class Trainer:
                 for t in range(rollout_steps):
                     if not self._running:
                         break
-                    # Pack current observations into a batch tensor.
-                    batch_np = np.stack(stacked_obs, axis=0)
-                    obs_buf[t] = batch_np
+                    # Pack current observations straight into the
+                    # preallocated rollout slot (no intermediate array),
+                    # then build the policy-input tensor from that slot.
+                    # `.float()` copies, so obs_buf[t] keeps the raw obs
+                    # for the update phase.
+                    np.stack(stacked_obs, axis=0, out=obs_buf[t])
                     batch_t = (
-                        torch.from_numpy(batch_np)
+                        torch.from_numpy(obs_buf[t])
                         .to(self.device).float()
                     )
                     if not self._is_tile_mode:
@@ -3905,10 +3912,12 @@ class Trainer:
                     value_buf[t] = values.cpu().numpy()
                     log_prob_buf[t] = log_probs_taken.cpu().numpy()
 
-                    # Apply actions to envs.
+                    # Apply actions to envs. Vectorized bitmask gather
+                    # (one numpy LUT lookup) replaces a per-env Python
+                    # loop of ~num_envs int-unbox + table lookups, ×1024
+                    # steps/iter.
                     step_actions[:] = 0
-                    for i in range(num_envs):
-                        step_actions[i] = self._action_to_bitmask(int(actions_np[i]))
+                    step_actions[:num_envs] = self._bitmask_lut[actions_np]
                     step_results = self.pool.step_all(step_actions)
                     self._emit_frame_sink(step_results)
 
@@ -3992,8 +4001,11 @@ class Trainer:
                         # flagpole this step (or a level was cleared by
                         # whatever other completion mechanism applies).
                         try:
+                            # `.breakdown` is already a dict — read the
+                            # key directly instead of copying it into a
+                            # new dict every live-env step.
                             cur_comp = float(
-                                dict(reward_fns[i].breakdown).get("completion", 0.0)
+                                reward_fns[i].breakdown.get("completion", 0.0)
                             )
                             if cur_comp > prev_completion_total[i] + 1e-6:
                                 n_clears_this_iter += 1
