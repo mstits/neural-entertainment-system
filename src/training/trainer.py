@@ -1628,6 +1628,28 @@ class Trainer:
                 "auto-curriculum: frontier bootstrap %s -> %s (depth key=%s)",
                 prev, deepest_path.name, deepest_key,
             )
+        # Rotate old depth snapshots — keep the most recent N by mtime so
+        # the dir doesn't grow unbounded over a long run (one file is
+        # written per new depth record). Keep-newest preserves the active
+        # frontier state (just promoted above, the newest); guard it
+        # explicitly too so it can never be unlinked while in use.
+        try:
+            snaps = sorted(
+                self._auto_curriculum_dir.glob("depth_*.state.bin"),
+                key=lambda p: p.stat().st_mtime,
+            )
+            _keep = 30
+            if len(snaps) > _keep:
+                active = str(self.start_state_path or "")
+                for old in snaps[:-_keep]:
+                    if str(old) == active:
+                        continue
+                    try:
+                        old.unlink()
+                    except OSError:
+                        pass
+        except Exception:
+            pass
         return written
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -41,7 +42,11 @@ class DepthTracker:
     def __init__(self, game: str, memo_path: Optional[Path] = None) -> None:
         self.game = game
         self._inner = nes_core.DepthTracker(game)
-        self._history: list[dict] = []
+        # Bounded ring — the durable record is the memo JSONL
+        # (_append_memo); this in-memory copy only backs the optional
+        # dump(). An unbounded list grew for the whole run with no
+        # eviction (dump() is rarely/never called), so cap it.
+        self._history: deque = deque(maxlen=2000)
         self._memo_path = memo_path
         self._disabled_memo: bool = False
 
