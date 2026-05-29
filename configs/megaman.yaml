@@ -1,10 +1,19 @@
 name: "Mega Man"
-# Live in-stage gameplay state (scripts/capture_start_state.py). Without
-# it the emulator cold-boots to the title-screen demo, which ignores
-# input — training there gives zero learning signal.
-start_state_path: "roms/Mega Man (USA)_start.state.bin"
+# NOTE: the reward fn + RAM map are calibrated for Mega Man 2 (health
+# $06C0, lives $00A8), and DEFAULT_ROMS now points at the MM2 ROM. A
+# valid in-stage MM2 start state still needs capturing: the generic
+# capture_start_state masher can't navigate MM2's title "START GAME vs
+# PASSWORD" menu + stage-select, so this needs a game-specific capture
+# (or a manual one). Until then the launcher fails loud rather than
+# training on a wrong/absent state — which is correct.
+start_state_path: "roms/Mega Man 2 (USA)_start.state.bin"
 rom_hashes:
   - ""  # TODO: fill in when a known-good Mega Man 2 dump is used
+
+# Action platformer — needs responsive control (frame_skip 4, not the
+# trainer's default 16). The start state drops into a robot-master stage.
+frame_skip: 4
+max_episode_steps: 2000
 
 description: >
   Training profile for Mega Man 2 (NES, 1988). Non-linear level selection,
@@ -54,5 +63,24 @@ curriculum:
 
 reinforce:
   enabled: true
-  entropy_coef: 0.015
+  # === UNIFIED vanilla_ppo (Phase 2 — pixel-CNN path, same as Contra) ===
+  # No RAM tile decoder for Mega Man, so the universal pixel encoder:
+  # 4-stacked 84x84 grayscale -> Nature DQN CNN -> actor/critic. SMB
+  # area-byte curriculum is gated off (non-Mario); single-stage PPO
+  # from the start state (a robot-master stage). RND drives exploration.
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: cpu            # "mps" if CPU collection is the bottleneck
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
   ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.015
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0

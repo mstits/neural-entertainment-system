@@ -55,8 +55,10 @@ DEFAULT_ROMS: dict[str, str] = {
     "mario": "roms/Super Mario Bros. (World).nes",
     "smb": "roms/Super Mario Bros. (World).nes",
     "contra": "roms/Contra (USA).nes",
-    "megaman": "roms/Mega Man (USA).nes",
-    "mega_man": "roms/Mega Man (USA).nes",
+    # Mega Man 2 — the reward fn + profile RAM map are calibrated for
+    # MM2 ($06C0 health, $00A8 lives); the MM1 ROM mismatches them.
+    "megaman": "roms/Mega Man 2 (USA).nes",
+    "mega_man": "roms/Mega Man 2 (USA).nes",
     "castlevania": "roms/Castlevania (USA).nes",
     "zelda": "roms/Legend of Zelda, The (USA) (Rev A).nes",
     "metroid": "roms/Metroid (USA).nes",

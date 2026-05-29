@@ -6,6 +6,11 @@ start_state_path: "roms/Castlevania (USA)_start.state.bin"
 rom_hashes:
   - ""
 
+# Action platformer — needs responsive control (frame_skip 4, not the
+# trainer's default 16). Start state drops into Stage 01 gameplay.
+frame_skip: 4
+max_episode_steps: 2000
+
 description: >
   Training profile for Castlevania (NES, 1986). Linear side-scroller,
   whip-based combat, slow jumps. Reward favors forward progress + defeating
@@ -51,5 +56,24 @@ curriculum:
 
 reinforce:
   enabled: true
-  entropy_coef: 0.015
+  # === UNIFIED vanilla_ppo (Phase 2 — pixel-CNN path, same as Contra) ===
+  # No RAM tile decoder, so the universal pixel encoder: 4-stacked
+  # 84x84 grayscale -> Nature DQN CNN -> actor/critic. SMB area-byte
+  # curriculum gated off (non-Mario); single-stage PPO from the Stage 01
+  # start state. RND drives exploration.
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: cpu            # "mps" if CPU collection is the bottleneck
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
   ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.015
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0
