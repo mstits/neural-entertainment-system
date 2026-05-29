@@ -77,3 +77,4 @@ playability_sweep*.json
 
 third_party/
 tests/parity/mesen_tapes/*.status.txt
+demos/
