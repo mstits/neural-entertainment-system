@@ -423,9 +423,9 @@ metric:
   externally.
 - **Web service / hosted demo.** Local executable + working
   checkpoints. Nothing more.
-- **AI attribution.** No commits, PRs, code comments, docs,
-  README, or any other artifact attributing this work to AI, LLM,
-  Claude, Anthropic, etc.
+- **Tooling attribution.** No commits, PRs, code comments, docs,
+  README, or any other artifact attributing this work to external
+  tooling of any kind. The project is presented as the author's own.
 - **A generic-purpose RL library.** This is a specific project
   with a specific thesis (beat 6 NES games). Code is organized for
   that. If others want a general-purpose RL library, they should
