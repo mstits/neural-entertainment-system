@@ -1,0 +1,102 @@
+name: "Contra Screen9"
+# EXPERIMENT: warm-start all envs AT the screen-9 wall (captured from the
+# banked policy's furthest point) so the agent practices the hard part
+# directly, instead of replaying screens 0-8 every episode. Tests whether
+# the screen-9 wall is passable with focused practice (max_screen > 9) or
+# genuinely too hard for this policy class. The screen_progress reward
+# already incentivizes new max screens from the warm-start.
+start_state_path: "checkpoints/contra/curriculum/screen9.state"
+rom_hashes:
+  - "a70547ac1a4d0f86bdba6b31bf25c8aa"  # Contra (U) — NesDev canonical dump
+
+# Action game — needs responsive control, so frame_skip 4 (NOT the
+# trainer's default 16, which is far too coarse to dodge bullets).
+frame_skip: 4
+max_episode_steps: 2000
+
+description: >
+  Training profile for Contra (NES, 1988). Side-scrolling run-and-gun.
+  Reward emphasizes forward progress + enemy kills + weapon pickups. Contra
+  is brutally unforgiving (one-hit deaths), so death_penalty matters a lot
+  and episodes end fast.
+
+ram_mapping:
+  # Player 1
+  player_x:        0x0031   # horizontal position on current screen
+  player_y:        0x0021   # vertical
+  player_state:    0x002C   # 0x00 alive, 0x01 dead, 0x02 dying anim
+  # Scroll / world position (high byte gives which screen)
+  screen_number:   0x0064
+  # Lives, score
+  lives:           0x0032   # remaining lives (starts at 2)
+  score_start:     0x07E2   # 6-digit BCD score
+  score_end:       0x07E7
+  # Weapon (F/S/M/L/B + default)
+  weapon:          0x00AA   # 0=default, 1=M machine-gun, 2=F flame, ...
+
+reward_weights:
+  # PROGRESS must dominate. The prior weights made score_delta ~71x
+  # larger than forward (score-farm fixed point: stand and shoot for
+  # points instead of advancing). Rebalanced so advancing the stage is
+  # the gradient the policy climbs.
+  forward_progress: 2.0     # per unit of screen/x gain (was 0.5)
+  score_delta:      0.0005  # minor flavor only (was 0.01 — caused 71x dominance)
+  screen_progress_bonus: 30.0  # milestone on each NEW max screen (gated; can't be farmed)
+  completion_bonus: 2000.0  # terminal stage-1 clear reward (fires at clear_screen)
+  # clear_screen: <unset → disabled>. Read vanilla_ppo_max_screen off a
+  # run to find the real stage-1-end screen, then set it to arm the win.
+  weapon_upgrade:   5.0     # getting a better weapon
+  enemy_kill:       1.5     # NOTE: not wired into ContraReward (score_delta is the kill proxy)
+  death_penalty:   -25.0
+  time_penalty:    -0.005
+
+action_space:
+  - []                        # NOOP
+  - ["right"]
+  - ["left"]
+  - ["A"]                     # jump
+  - ["B"]                     # fire
+  - ["right", "B"]            # run-fire
+  - ["right", "A"]            # right-jump
+  - ["right", "A", "B"]       # run-jump-fire
+  - ["up", "B"]               # shoot up
+  - ["down"]                  # prone
+
+curriculum:
+  stage_1: ["*"]
+  stage_2: ["*"]
+  stage_3: ["*"]
+  stage_4: ["*"]
+
+reinforce:
+  enabled: true
+  # === UNIFIED vanilla_ppo (Phase 2 — first non-SMB game on the stack) ===
+  trainer_mode: vanilla_ppo
+  # Contra has no RAM tile decoder (only SMB does), so it uses the
+  # universal pixel CNN path: 4-stacked 84x84 grayscale frames -> Nature
+  # DQN encoder -> actor/critic heads. The SMB area-byte save-state
+  # curriculum is gated off for non-Mario games (the trainer detects
+  # this by name); Contra trains single-stage from its start state.
+  encoder: nature_dqn
+  device: mps            # CNN is ~4.7x faster on MPS than CPU (benched); switch to cpu if MPS misbehaves
+
+  # === ROLLOUT ===
+  rollout_steps: 1024
+  steps: 10              # K PPO epochs / iter
+  ppo_minibatch_size: 256
+
+  # === PPO HYPERPARAMETERS ===
+  lr: 2.5e-4
+  gamma: 0.99            # Contra is denser/longer-horizon than SMB
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02     # higher than default — Contra rewards are sparse
+  grad_clip: 0.5
+  value_loss: huber
+
+  # === RND INTRINSIC EXPLORATION ===
+  # Contra is one-hit-death + sparse-reward — exactly the hard-exploration
+  # regime RND targets. Set rnd_intrinsic_coef: 0.0 for a pure baseline.
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0
