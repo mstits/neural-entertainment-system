@@ -4004,6 +4004,11 @@ class Trainer:
         # above is a cold boot (all envs at stage 0), so they stay at
         # their defaults (stage 0, no seed) for iteration 0.
 
+        # Narrator: only active when a GUI passed a caption queue. In
+        # headless training it stays None and the per-step observe below
+        # is skipped entirely — zero overhead on the winning path.
+        narrator_on = self._narrator is not None
+
         for it in range(num_iters):
             if not self._running:
                 break
@@ -4134,6 +4139,11 @@ class Trainer:
                                     )
                             except Exception:
                                 pass
+                        # Snapshot the cumulative reward breakdown BEFORE
+                        # compute so the narrator can diff it against the
+                        # post-step breakdown to caption new events (death,
+                        # item, clear). GUI-only; None in headless.
+                        prev_bd = dict(reward_fns[i].breakdown) if narrator_on else None
                         reward, rew_done, level_id = reward_fns[i].compute(ram, action=int(step_actions[i]))
                         # screen_XX reward games (Contra) expose progress
                         # via the level_id. Track the per-iter pool max so
@@ -4148,6 +4158,27 @@ class Trainer:
                             except ValueError:
                                 pass
                         done = bool(r.done) or bool(rew_done)
+                        # Caption new events for the live stream. Per-env
+                        # (one policy across N envs); the narrator's
+                        # min-event-gap rate-limits so the grid doesn't spam.
+                        if narrator_on:
+                            # Pass the COMBINED done: SMB/Contra deaths and
+                            # clears fire via the reward fn (rew_done), not
+                            # the env-side r.done — so the narrator's
+                            # death/success captions need both, or it stays
+                            # silent for non-Zelda games.
+                            _ep_done = bool(r.done) or bool(rew_done)
+                            self._narrator.observe(
+                                worker_id=i,
+                                genome_name=f"agent-{i}",
+                                prev_breakdown=prev_bd,
+                                new_breakdown=reward_fns[i].breakdown,
+                                done=_ep_done,
+                                success=(
+                                    reward_fns[i].episode_success()
+                                    if _ep_done else False
+                                ),
+                            )
                         reward_buf[t, i] = reward
                         done_buf[t, i] = done
                         ep_returns[i] += reward
@@ -4699,6 +4730,14 @@ class Trainer:
                 **timing_metrics,
                 **reward_breakdown_emit,
             )
+
+            # Drain the narrator events accumulated this iter onto the
+            # GUI caption queue so the live stream is narrated (captions
+            # + gold milestone banners). Non-blocking; GUI-only — in
+            # headless training narrator_on is False and this is skipped.
+            if narrator_on and self._narrator_queue is not None:
+                from src.training.narrator import push_events_to_queue
+                push_events_to_queue(self._narrator.drain(), self._narrator_queue)
 
             # ============== ANTI-COLLAPSE GUARD ==============
             # Snapshot the policy while it's healthy (low entropy +

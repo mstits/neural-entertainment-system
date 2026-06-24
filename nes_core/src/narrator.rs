@@ -49,6 +49,12 @@ const SIGNAL_TO_EVENT: &[(&str, EventKind)] = &[
     ("triforce_piece", EventKind::Triforce),
     ("key_collected", EventKind::Key),
     ("map_compass", EventKind::MapCompass),
+    // Platformer level clear: the `completion` bonus fires once when the
+    // agent touches the flagpole / beats the stage. Caption it live as a
+    // Success ("CLEARS the stage!") — the most watchable stream moment.
+    // The done-path Success only fires on episode-end-with-success, which
+    // for SMB (episodes continue across levels, end on death) rarely hits.
+    ("completion", EventKind::Success),
 ];
 
 /// One detected event. Caller decorates with a caption on the Python
