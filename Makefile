@@ -1,6 +1,6 @@
 .PHONY: help test smoke parity bench bench-hot bench-scaling bench-phases bench-all \
         build build-pgo build-pgo-apply selftest clean train eval scoreboard \
-        test-fast selftest-learning demo
+        test-fast selftest-learning demo gui
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -17,6 +17,7 @@ help:
 	@echo "    make eval GAME=mario   - load latest checkpoint, run N eval episodes, report"
 	@echo "                             clear rate + furthest stage reached"
 	@echo "    make demo GAME=mario   - play the best checkpoint + record demos/<game>.gif"
+	@echo "    make gui               - launch the desktop GUI (pick ROM + profile, watch live)"
 	@echo "    make scoreboard        - mission-control: progress across all six games"
 	@echo ""
 	@echo "  Test:"
@@ -49,6 +50,9 @@ eval:
 
 demo:
 	. .venv/bin/activate && python scripts/demo_game.py --game $(GAME)
+
+gui:
+	. .venv/bin/activate && python src/gui/main.py
 
 scoreboard:
 	. .venv/bin/activate && python scripts/scoreboard.py
