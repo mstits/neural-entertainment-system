@@ -1821,6 +1821,18 @@ class Trainer:
                     "Pool headless=ON (no frame sink) — skipping RGB frame "
                     "render; policy obs (RAM / preprocessed) unaffected."
                 )
+        # Tile-encoder games read `ram_snapshot`, never the 84x84
+        # `preprocessed` obs, so the per-worker gray+resize kernel is
+        # pure wasted CPU in headless training (60 workers x 1024
+        # steps/iter). Skip it for tile mode; pixel paths still get it.
+        if self._is_tile_mode and self._frame_sink is None:
+            setter = getattr(inner, "set_skip_preprocess", None)
+            if setter is not None:
+                setter(True)
+                log.info(
+                    "Pool skip_preprocess=ON (tile mode) — skipping the 84x84 "
+                    "gray+resize kernel; policy reads RAM (ram_snapshot)."
+                )
         # Panic isolation: when False, rayon worker bodies run without
         # a `catch_unwind` wrap. Saves 0.5-1% throughput per the Rust
         # docs (pool.rs:528-538). Cost: a panic in any worker (e.g. a

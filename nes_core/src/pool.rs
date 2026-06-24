@@ -569,6 +569,15 @@ pub struct Pool {
     /// semantics (uint8 → fp16-rounded normalized floats), so the
     /// caller opts in via `set_preprocess_f16(true)`.
     preprocess_f16: std::sync::atomic::AtomicBool,
+    /// When true, skip the 84×84 grayscale+resize preprocess entirely
+    /// in headless mode. Tile-encoder games (e.g. SMB tile mode) read
+    /// only `ram_snapshot` and never consume `preprocessed`, so the
+    /// per-worker gray+resize kernel is pure wasted CPU. With it off the
+    /// preprocess runs every step (60 workers × 1024 steps/iter). The
+    /// caller opts in via `set_skip_preprocess(true)` only when the
+    /// policy reads RAM, not pixels. `preprocessed` is then returned as
+    /// a zero buffer of the expected length (the trainer ignores it).
+    skip_preprocess: std::sync::atomic::AtomicBool,
     /// When true (default), every worker closure in `step_all` /
     /// `reset_all` is wrapped in `catch_unwind(AssertUnwindSafe(...))`
     /// so a panic in one worker marks that worker dead without taking
@@ -658,6 +667,7 @@ impl Pool {
             frame_skip: frame_skip.max(1),
             headless: std::sync::atomic::AtomicBool::new(false),
             preprocess_f16: std::sync::atomic::AtomicBool::new(false),
+            skip_preprocess: std::sync::atomic::AtomicBool::new(false),
             panic_isolation: std::sync::atomic::AtomicBool::new(true),
             worker_done,
         };
@@ -759,6 +769,7 @@ impl Pool {
         let pp_dim = crate::preprocess::PP_SIZE;
         let headless = self.headless.load(std::sync::atomic::Ordering::Acquire);
         let f16_mode = self.preprocess_f16.load(std::sync::atomic::Ordering::Acquire);
+        let skip_preprocess = self.skip_preprocess.load(std::sync::atomic::Ordering::Acquire);
         // Load the panic-isolation flag once outside the rayon closure.
         // Acquire pairs with the Release store in `set_panic_isolation`.
         let panic_isolation = self
@@ -827,22 +838,29 @@ impl Pool {
                         let mut preprocessed = vec![0u8; pp_byte_len];
                         let Worker { gray_scratch, video_buf, nes, .. } = &mut *w;
                         let rgb: Vec<u8> = if headless {
-                            xrgb_to_gray(video_buf, gray_scratch);
-                            if f16_mode {
-                                let out_u16 = unsafe {
-                                    std::slice::from_raw_parts_mut(
-                                        preprocessed.as_mut_ptr() as *mut u16,
-                                        pp_dim * pp_dim,
-                                    )
-                                };
-                                crate::preprocess::resize_gray_to_f16_norm(
-                                    gray_scratch, out_u16,
-                                );
+                            // Tile-encoder games read `ram_snapshot`, not
+                            // `preprocessed`, so skip the gray+resize kernel
+                            // entirely — `preprocessed` stays a zero buffer.
+                            if !skip_preprocess {
+                                xrgb_to_gray(video_buf, gray_scratch);
+                                if f16_mode {
+                                    let out_u16 = unsafe {
+                                        std::slice::from_raw_parts_mut(
+                                            preprocessed.as_mut_ptr() as *mut u16,
+                                            pp_dim * pp_dim,
+                                        )
+                                    };
+                                    crate::preprocess::resize_gray_to_f16_norm(
+                                        gray_scratch, out_u16,
+                                    );
+                                } else {
+                                    crate::preprocess::resize_area_into(
+                                        gray_scratch, 240, 256, &mut preprocessed,
+                                        crate::preprocess::PP_SIZE,
+                                    );
+                                }
                             } else {
-                                crate::preprocess::resize_area_into(
-                                    gray_scratch, 240, 256, &mut preprocessed,
-                                    crate::preprocess::PP_SIZE,
-                                );
+                                let _ = (&video_buf, &gray_scratch);
                             }
                             Vec::new()
                         } else {
@@ -1029,6 +1047,16 @@ impl Pool {
     /// training runs.
     fn set_preprocess_f16(&self, on: bool) {
         self.preprocess_f16
+            .store(on, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Skip the 84×84 grayscale+resize preprocess in headless mode.
+    /// Set true for tile-encoder games whose policy reads `ram_snapshot`
+    /// and never consumes `preprocessed` — the kernel is wasted CPU
+    /// otherwise (60 workers × 1024 steps/iter). `preprocessed` is then
+    /// returned as a zero buffer of the expected length.
+    fn set_skip_preprocess(&self, on: bool) {
+        self.skip_preprocess
             .store(on, std::sync::atomic::Ordering::Release);
     }
 
