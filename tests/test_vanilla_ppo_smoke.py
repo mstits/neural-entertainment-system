@@ -85,3 +85,15 @@ def test_vanilla_ppo_two_iters_end_to_end() -> None:
     import math
     assert math.isfinite(last["ppo_entropy"])
     assert 0.0 <= last["ppo_entropy"] <= math.log(len(profile["action_space"])) + 1e-3
+
+    # Tier-0 per-section timing telemetry: the active vanilla_ppo path
+    # must emit timing_* so perf regressions are visible (the path had
+    # zero timing before). Always emitted regardless of game, so this is
+    # a stable game-agnostic guard.
+    timed = [m for m in emitted if "timing_emulation_ms" in m]
+    assert timed, "vanilla_ppo emitted no timing_* telemetry"
+    t = timed[-1]
+    for k in ("timing_emulation_ms", "timing_rollout_forward_ms",
+              "timing_gae_ms", "timing_update_ms"):
+        assert k in t, f"missing timing key {k}"
+        assert math.isfinite(t[k]) and t[k] >= 0.0, f"invalid {k}={t.get(k)}"
