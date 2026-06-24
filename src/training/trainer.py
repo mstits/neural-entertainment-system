@@ -541,6 +541,23 @@ class Trainer:
         # the trainer's trajectory buffers, frame stacker, and PPO
         # preprocessing all branch on it.
         self._is_tile_mode: bool = self.encoder_kind in ("smb_tiles",)
+        # Opt-in recurrent (GRU) tile policy for the vanilla_ppo path —
+        # the SMB-past-1-2 lever (memory over the trajectory). Only valid
+        # with the tile encoder; the proven feedforward path is untouched
+        # when this is off. Wired in _run_vanilla_ppo (rollout threads the
+        # hidden state, the update replays sequences with truncated BPTT).
+        self._recurrent: bool = (
+            bool(rl_cfg.get("recurrent", False)) and self._is_tile_mode
+        )
+        # Envs per BPTT minibatch on the recurrent path. Each minibatch
+        # replays this many full env trajectories through the GRU, so the
+        # gradient batch is env_mb sequences. The per-sample
+        # ppo_minibatch_size doesn't map to sequence minibatches (it
+        # underflows to 1 env when rollout_steps > it), so recurrence gets
+        # its own env-count knob.
+        self.recurrent_env_minibatch: int = int(
+            rl_cfg.get("recurrent_env_minibatch", 8)
+        )
         self._tile_extractor = None
         self._tile_feature_dim: int = 0
         # The vanilla_ppo save-state curriculum is built around SMB's
@@ -927,6 +944,12 @@ class Trainer:
         backed `PolicyNetwork`; tile encoders (`smb_tiles`) use the
         small MLP-backed `TilePolicyNetwork`."""
         if self._is_tile_mode:
+            if self._recurrent:
+                from src.models.tile_policy import TileRecurrentPolicyNetwork
+                return TileRecurrentPolicyNetwork(
+                    num_actions=self.num_actions,
+                    feature_dim=self._tile_feature_dim,
+                )
             from src.models.tile_policy import TilePolicyNetwork
             return TilePolicyNetwork(
                 num_actions=self.num_actions,
@@ -3631,6 +3654,84 @@ class Trainer:
         genome.state_dict = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
         return last_loss_scalar, ppo_stats_accum
 
+    def _recurrent_ppo_update(
+        self, net, optimizer, obs_buf, action_buf, log_prob_buf,
+        advantages_norm, value_targets, done_buf, num_envs, rollout_steps,
+    ) -> tuple[float, float, float, float, float]:
+        """K-epoch PPO update for the recurrent (GRU) tile policy.
+
+        The stateless update shuffles (T×N) samples randomly; a recurrent
+        policy cannot — the hidden state must flow in time order. So we
+        minibatch over ENVS (columns), replay each env's full T-step
+        trajectory through `forward_ac_recurrent` (truncated BPTT), and
+        reset the hidden state on every `done` using the SAME `done_buf`
+        the rollout used — so the replayed hidden trajectory matches the
+        one that produced the actions. Returns the last
+        (policy_loss, value_loss, entropy, total_loss, rnd_loss).
+        """
+        dev = self.device
+        obs_seq = torch.from_numpy(obs_buf).to(dev).float()              # (T,N,feat)
+        done_seq = torch.from_numpy(done_buf.astype(np.float32)).to(dev)  # (T,N)
+        act_seq = torch.from_numpy(action_buf.astype(np.int64)).to(dev)   # (T,N)
+        logp_old_seq = torch.from_numpy(log_prob_buf).to(dev).float()     # (T,N)
+        adv_seq = torch.from_numpy(advantages_norm).to(dev).float()       # (T,N)
+        tgt_seq = torch.from_numpy(value_targets).to(dev).float()         # (T,N)
+        feat = obs_seq.shape[-1]
+        # Envs per minibatch = gradient batch of env_mb full trajectories,
+        # each replayed in full through the GRU (the rollout_steps-step
+        # unroll graph is retained for backward). Dedicated env-count knob
+        # (see recurrent_env_minibatch); clamped to the env count.
+        env_mb = max(1, min(num_envs, int(self.recurrent_env_minibatch)))
+        lp = lv = le = ll = lr = 0.0
+        for _epoch in range(self.reinforce_steps):
+            env_perm = np.random.permutation(num_envs)
+            for s in range(0, num_envs, env_mb):
+                envs = env_perm[s:s + env_mb]
+                if envs.size < 1:
+                    continue
+                envs_t = torch.from_numpy(envs).to(dev)
+                h = net.initial_hidden(int(envs.size), dev)
+                logits_steps, value_steps = [], []
+                for t in range(rollout_steps):
+                    ot = obs_seq[t].index_select(0, envs_t)        # (mb,feat)
+                    lg, v, h_next = net.forward_ac_recurrent(ot, h)
+                    logits_steps.append(lg)
+                    value_steps.append(v)
+                    # Reset hidden for envs whose episode ended at step t
+                    # (mirrors the rollout's done-mask exactly).
+                    keep = (1.0 - done_seq[t].index_select(0, envs_t)).unsqueeze(-1)
+                    h = h_next * keep
+                # Flatten time-major (matches the *_seq.index_select(1).reshape).
+                logits_b = torch.cat(logits_steps, dim=0)          # (T*mb, A)
+                values_b = torch.cat(value_steps, dim=0)           # (T*mb,)
+                act_b = act_seq.index_select(1, envs_t).reshape(-1)
+                logp_old_b = logp_old_seq.index_select(1, envs_t).reshape(-1)
+                adv_b = adv_seq.index_select(1, envs_t).reshape(-1)
+                tgt_b = tgt_seq.index_select(1, envs_t).reshape(-1)
+                loss, policy_loss, value_loss, entropy = ppo_losses(
+                    logits_b, values_b, act_b, logp_old_b, adv_b, tgt_b,
+                    clip_eps=self.ppo_clip_eps,
+                    value_coef=self.value_coef,
+                    entropy_coef=self.entropy_coef,
+                    value_loss_kind=self.value_loss_kind,
+                )
+                if self._rnd is not None:
+                    states_b = obs_seq.index_select(1, envs_t).reshape(-1, feat)
+                    rnd_loss = self._rnd(states_b).mean()
+                    loss = loss + self.rnd_loss_coef * rnd_loss
+                    lr = float(rnd_loss.detach().item())
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    net.parameters(), self.reinforce_grad_clip
+                )
+                optimizer.step()
+                lp = float(policy_loss.detach().item())
+                lv = float(value_loss.detach().item())
+                le = float(entropy.detach().item())
+                ll = float(loss.detach().item())
+        return lp, lv, le, ll, lr
+
     def _run_vanilla_ppo(self, num_iters: int) -> None:
         """Vanilla PPO with N parallel envs — the literature recipe.
 
@@ -4023,6 +4124,13 @@ class Trainer:
 
             # ============== ROLLOUT COLLECTION ==============
             net.eval()
+            # Recurrent: GRU hidden state threaded across rollout steps,
+            # reset per env on each episode boundary (done). None for the
+            # feedforward path (left fully unchanged).
+            h_rollout = (
+                net.initial_hidden(num_envs, self.device)
+                if self._recurrent else None
+            )
             with torch.no_grad():
                 for t in range(rollout_steps):
                     if not self._running:
@@ -4042,7 +4150,12 @@ class Trainer:
 
                     # Single forward pass: actor + critic.
                     _fwd_t0 = time.perf_counter_ns()
-                    logits, values = net.forward_ac(batch_t)
+                    if self._recurrent:
+                        logits, values, h_rollout_next = net.forward_ac_recurrent(
+                            batch_t, h_rollout
+                        )
+                    else:
+                        logits, values = net.forward_ac(batch_t)
                     log_probs_all = F.log_softmax(logits.float(), dim=-1)
                     probs = log_probs_all.exp()
                     actions = torch.multinomial(probs, num_samples=1).squeeze(-1)
@@ -4316,6 +4429,17 @@ class Trainer:
                                     r.frame, getattr(r, "preprocessed", None)
                                 )
 
+                    # Recurrent: reset the GRU hidden state for envs that
+                    # ended an episode this step (done-mask), so neither
+                    # the next rollout step nor the update-replay carries
+                    # hidden state across an episode boundary. Uses the
+                    # SAME done_buf the replay uses, so the two match.
+                    if self._recurrent:
+                        done_mask_t = torch.from_numpy(
+                            done_buf[t].astype(np.float32)
+                        ).to(self.device).unsqueeze(-1)
+                        h_rollout = h_rollout_next * (1.0 - done_mask_t)
+
                 # Bootstrap V(s_T) from the final observation per env.
                 final_batch_np = np.stack(stacked_obs, axis=0)
                 final_batch_t = (
@@ -4324,7 +4448,12 @@ class Trainer:
                 )
                 if not self._is_tile_mode:
                     final_batch_t = final_batch_t.div_(255.0)
-                _, final_values = net.forward_ac(final_batch_t)
+                if self._recurrent:
+                    _, final_values, _ = net.forward_ac_recurrent(
+                        final_batch_t, h_rollout
+                    )
+                else:
+                    _, final_values = net.forward_ac(final_batch_t)
                 final_values_np = final_values.cpu().numpy()
 
             # ============== RND INTRINSIC REWARD ==============
@@ -4409,10 +4538,20 @@ class Trainer:
             target_all = torch.from_numpy(target_flat).to(self.device).float()
             obs_all = (
                 torch.from_numpy(obs_flat).to(self.device).float()
-                if self._is_tile_mode else None
+                if (self._is_tile_mode and not self._recurrent) else None
             )
             _upd_t0 = time.perf_counter_ns()
-            for epoch in range(self.reinforce_steps):
+            if self._recurrent:
+                # Recurrent sequence-BPTT update. The feedforward epoch
+                # loop below is skipped (its range is zeroed when
+                # recurrent) so the proven path stays byte-for-byte intact.
+                (last_policy_loss, last_value_loss, last_entropy,
+                 last_loss, last_rnd_loss) = self._recurrent_ppo_update(
+                    net, optimizer, obs_buf, action_buf, log_prob_buf,
+                    advantages_norm, value_targets, done_buf,
+                    num_envs, rollout_steps,
+                )
+            for epoch in range(0 if self._recurrent else self.reinforce_steps):
                 perm = np.random.permutation(total_n)
                 for mb_start in range(0, total_n, mb_size):
                     mb_end = min(mb_start + mb_size, total_n)
