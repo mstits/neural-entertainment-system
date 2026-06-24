@@ -50,8 +50,11 @@ from train_game import DEFAULT_PROFILES, DEFAULT_ROMS, resolve_profile_path  # n
 
 
 def find_latest_checkpoint(ckpt_dir: Path) -> Optional[Path]:
+    # vanilla_ppo saves vanilla_ppo_iter_*.pt; the GA path saves
+    # gen_*.pt. Support both so eval/demo work regardless of trainer mode.
     cks = sorted(
-        ckpt_dir.glob("vanilla_ppo_iter_*.pt"),
+        list(ckpt_dir.glob("vanilla_ppo_iter_*.pt"))
+        + list(ckpt_dir.glob("gen_*.pt")),
         key=lambda p: int(p.stem.rsplit("_", 1)[-1]),
     )
     return cks[-1] if cks else None
@@ -64,12 +67,16 @@ def eval_one_game(
     n_episodes: int,
     max_steps: int,
     stage: Optional[int] = None,
+    checkpoint: Optional[Path] = None,
 ) -> dict:
     """Run N episodes; return a dict of eval stats."""
     with open(profile_path) as f:
         profile = yaml.safe_load(f)
     ckpt_dir = derive_checkpoint_dir("./checkpoints", profile.get("name"))
-    ckpt = find_latest_checkpoint(ckpt_dir)
+    # --checkpoint pins a specific checkpoint (e.g. a peak-mastery iter)
+    # instead of the latest; the latest may have moved on to a harder
+    # curriculum stage and lost the earlier stage's greedy behavior.
+    ckpt = checkpoint if checkpoint is not None else find_latest_checkpoint(ckpt_dir)
     if ckpt is None:
         return {
             "game": game,
@@ -93,6 +100,15 @@ def eval_one_game(
     stack_size = stacked_dim // feature_dim
 
     state = torch.load(str(ckpt), map_location="cpu")
+    # GA checkpoints store a population (list of genome dicts) rather
+    # than a single net_state_dict. Eval the best-fitness genome — its
+    # greedy (argmax) clear is the test for a real, reproducible winner.
+    if "net_state_dict" not in state and "population" in state:
+        pop = state["population"]
+        best = max(pop, key=lambda g: g.get("fitness", float("-inf")))
+        print(f"[eval] GA checkpoint: best genome '{best.get('name')}' "
+              f"fitness={best.get('fitness')} (pop={len(pop)})")
+        state = {"net_state_dict": best["state_dict"]}
     net = TilePolicyNetwork(num_actions=len(bitmasks), feature_dim=stacked_dim)
     # Load non-strict so older checkpoints with extra aux heads still
     # load, but FAIL LOUD if core weights are missing — a silent
@@ -230,6 +246,9 @@ def main() -> int:
                         help="Curriculum stage to warm-start each episode "
                              "from (smb_curriculum/stage_NN.state). Default: "
                              "boot from the profile start state (first stage).")
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Pin a specific checkpoint .pt to eval instead "
+                             "of the latest (e.g. a peak-mastery iter).")
     args = parser.parse_args()
 
     profile_path = resolve_profile_path(args.game, args.profile)
@@ -244,6 +263,7 @@ def main() -> int:
     result = eval_one_game(
         args.game, profile_path, rom_path,
         args.episodes, args.max_steps, stage=args.stage,
+        checkpoint=Path(args.checkpoint) if args.checkpoint else None,
     )
     print(json.dumps(result, indent=2))
     return 0

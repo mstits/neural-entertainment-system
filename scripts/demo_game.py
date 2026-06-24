@@ -45,11 +45,12 @@ def _is_tile(profile: dict) -> bool:
 
 
 def demo(game: str, profile_path: Path, rom_path: str, max_steps: int,
-         out_dir: Path, fps: int, stride: int) -> dict:
+         out_dir: Path, fps: int, stride: int,
+         checkpoint: Optional[Path] = None) -> dict:
     with open(profile_path) as f:
         profile = yaml.safe_load(f)
     ckpt_dir = derive_checkpoint_dir("./checkpoints", profile.get("name"))
-    ckpt = find_latest_checkpoint(ckpt_dir)
+    ckpt = checkpoint if checkpoint is not None else find_latest_checkpoint(ckpt_dir)
     if ckpt is None:
         return {"game": game, "status": "no_checkpoint", "ckpt_dir": str(ckpt_dir)}
 
@@ -110,8 +111,12 @@ def demo(game: str, profile_path: Path, rom_path: str, max_steps: int,
     pool.shutdown()
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    it = int(Path(ckpt).stem.rsplit("_", 1)[-1])
-    gif_path = out_dir / f"{game}_iter{it:05d}.gif"
+    # GIF name uses the checkpoint's trailing iter number when present;
+    # fall back to the checkpoint stem for arbitrarily-named ckpts
+    # (e.g. a pinned --checkpoint winner file).
+    tail = Path(ckpt).stem.rsplit("_", 1)[-1]
+    label = f"iter{int(tail):05d}" if tail.isdigit() else Path(ckpt).stem
+    gif_path = out_dir / f"{game}_{label}.gif"
     try:
         import imageio.v2 as imageio
         sub = frames[::max(1, stride)]
@@ -136,6 +141,8 @@ def main() -> int:
     p.add_argument("--out", default="demos")
     p.add_argument("--fps", type=int, default=30)
     p.add_argument("--stride", type=int, default=2, help="keep every Nth frame in the gif")
+    p.add_argument("--checkpoint", default=None,
+                   help="Pin a specific checkpoint .pt instead of the latest.")
     args = p.parse_args()
 
     profile_path = resolve_profile_path(args.game, args.profile)
@@ -143,7 +150,8 @@ def main() -> int:
     if not rom or not Path(rom).exists():
         print(f"no ROM for {args.game!r}: {rom}", file=sys.stderr)
         return 1
-    res = demo(args.game, profile_path, rom, args.max_steps, Path(args.out), args.fps, args.stride)
+    res = demo(args.game, profile_path, rom, args.max_steps, Path(args.out), args.fps, args.stride,
+               checkpoint=Path(args.checkpoint) if args.checkpoint else None)
     import json
     print(json.dumps(res, indent=2))
     return 0 if res.get("status") == "ok" else 1

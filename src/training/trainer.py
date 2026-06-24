@@ -3997,6 +3997,9 @@ class Trainer:
                 break
             global_it = it + iter_offset
             _iter_t0 = time.perf_counter()
+            # Per-iter pool-max screen for screen_XX reward games (Contra).
+            # Surfaces progress in metrics even before a stage-end is known.
+            iter_max_screen = 0
             # Apply any GUI audio-mode pace change here (trainer thread,
             # between rollouts) rather than from the drainer thread.
             self._drain_pending_pace()
@@ -4021,6 +4024,7 @@ class Trainer:
                         batch_t = batch_t.div_(255.0)
 
                     # Single forward pass: actor + critic.
+                    _fwd_t0 = time.perf_counter_ns()
                     logits, values = net.forward_ac(batch_t)
                     log_probs_all = F.log_softmax(logits.float(), dim=-1)
                     probs = log_probs_all.exp()
@@ -4033,6 +4037,9 @@ class Trainer:
                     action_buf[t] = actions_np
                     value_buf[t] = values.cpu().numpy()
                     log_prob_buf[t] = log_probs_taken.cpu().numpy()
+                    self._gen_timer.add(
+                        "rollout_forward", time.perf_counter_ns() - _fwd_t0
+                    )
 
                     # Apply actions to envs. Vectorized bitmask gather
                     # (one numpy LUT lookup) replaces a per-env Python
@@ -4040,7 +4047,11 @@ class Trainer:
                     # steps/iter.
                     step_actions[:] = 0
                     step_actions[:num_envs] = self._bitmask_lut[actions_np]
+                    _emu_t0 = time.perf_counter_ns()
                     step_results = self.pool.step_all(step_actions)
+                    self._gen_timer.add(
+                        "emulation", time.perf_counter_ns() - _emu_t0
+                    )
                     self._emit_frame_sink(step_results)
 
                     # Process each env's result, compute reward, advance stacker.
@@ -4111,7 +4122,19 @@ class Trainer:
                                     )
                             except Exception:
                                 pass
-                        reward, rew_done, _ = reward_fns[i].compute(ram, action=int(step_actions[i]))
+                        reward, rew_done, level_id = reward_fns[i].compute(ram, action=int(step_actions[i]))
+                        # screen_XX reward games (Contra) expose progress
+                        # via the level_id. Track the per-iter pool max so
+                        # advancement is visible in metrics, and so the
+                        # real stage-1-end screen can be read off a run to
+                        # arm ContraReward's clear_screen threshold.
+                        if level_id[:7] == "screen_":
+                            try:
+                                _sc = int(level_id[7:], 16)
+                                if _sc > iter_max_screen:
+                                    iter_max_screen = _sc
+                            except ValueError:
+                                pass
                         done = bool(r.done) or bool(rew_done)
                         reward_buf[t, i] = reward
                         done_buf[t, i] = done
@@ -4296,10 +4319,12 @@ class Trainer:
             # boundary so advantage never leaks across death/clear —
             # required now that auto-reset gives multiple dones per env
             # per rollout.
+            _gae_t0 = time.perf_counter_ns()
             advantages, value_targets = batched_gae(
                 reward_buf, value_buf, done_buf, final_values_np,
                 self.reinforce_gamma, self.gae_lambda,
             )
+            self._gen_timer.add("gae", time.perf_counter_ns() - _gae_t0)
 
             # Global advantage normalization across the entire (env × step)
             # batch. This is the canonical PPO advantage normalization
@@ -4343,6 +4368,7 @@ class Trainer:
                 torch.from_numpy(obs_flat).to(self.device).float()
                 if self._is_tile_mode else None
             )
+            _upd_t0 = time.perf_counter_ns()
             for epoch in range(self.reinforce_steps):
                 perm = np.random.permutation(total_n)
                 for mb_start in range(0, total_n, mb_size):
@@ -4396,6 +4422,7 @@ class Trainer:
                     last_value_loss = float(value_loss.detach().item())
                     last_entropy = float(entropy.detach().item())
                     last_loss = float(loss.detach().item())
+            self._gen_timer.add("update", time.perf_counter_ns() - _upd_t0)
 
             # ============== LOGGING + METRICS ==============
             mean_ep_return = (
@@ -4618,6 +4645,25 @@ class Trainer:
                 "%.0f NES-fps | %.0fx realtime | %.2f s/iter",
                 global_it, samples_per_sec, nes_fps, realtime_x, _iter_dt,
             )
+            # Per-section timing (rollout_forward / emulation / gae /
+            # update) so the active pixel path stops flying blind: a
+            # regression shows up as `jq '.timing_*' metrics.jsonl`.
+            timing_metrics = self._gen_timer.snapshot()
+            self._gen_timer.reset()
+            # Progress telemetry so every run is interpretable: Contra's
+            # max screen reached, and SMB's max area-byte + real
+            # curriculum stage (the `stage` field below is the GA
+            # curriculum, which reads "default" on the vanilla path).
+            progress_metrics: dict[str, float] = {}
+            if iter_max_screen > 0:
+                progress_metrics["vanilla_ppo_max_screen"] = int(iter_max_screen)
+            if self._smb_curriculum_active:
+                progress_metrics["vanilla_ppo_max_world_level"] = int(
+                    max_world_level_packed.max()
+                )
+                progress_metrics["vanilla_ppo_curriculum_stage"] = int(
+                    smb_curriculum_stage
+                )
             self._emit_metrics(
                 generation=global_it,
                 best_fitness=max(best_completed, best_in_progress),
@@ -4637,6 +4683,8 @@ class Trainer:
                 vanilla_ppo_intrinsic_mean=rnd_intrinsic_mean,
                 vanilla_ppo_samples_per_sec=samples_per_sec,
                 vanilla_ppo_realtime_x=realtime_x,
+                **progress_metrics,
+                **timing_metrics,
                 **reward_breakdown_emit,
             )
 

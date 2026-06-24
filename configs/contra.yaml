@@ -32,10 +32,18 @@ ram_mapping:
   weapon:          0x00AA   # 0=default, 1=M machine-gun, 2=F flame, ...
 
 reward_weights:
-  forward_progress: 0.5     # per unit of screen/x gain
-  score_delta:      0.01    # per score-point (tiny)
+  # PROGRESS must dominate. The prior weights made score_delta ~71x
+  # larger than forward (score-farm fixed point: stand and shoot for
+  # points instead of advancing). Rebalanced so advancing the stage is
+  # the gradient the policy climbs.
+  forward_progress: 2.0     # per unit of screen/x gain (was 0.5)
+  score_delta:      0.0005  # minor flavor only (was 0.01 — caused 71x dominance)
+  screen_progress_bonus: 30.0  # milestone on each NEW max screen (gated; can't be farmed)
+  completion_bonus: 2000.0  # terminal stage-1 clear reward (fires at clear_screen)
+  # clear_screen: <unset → disabled>. Read vanilla_ppo_max_screen off a
+  # run to find the real stage-1-end screen, then set it to arm the win.
   weapon_upgrade:   5.0     # getting a better weapon
-  enemy_kill:       1.5     # per score-delta tick that corresponds to a kill
+  enemy_kill:       1.5     # NOTE: not wired into ContraReward (score_delta is the kill proxy)
   death_penalty:   -25.0
   time_penalty:    -0.005
 

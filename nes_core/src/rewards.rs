@@ -1226,11 +1226,18 @@ pub struct ContraReward {
     weapon_upgrade_bonus: f64,
     death_penalty: f64,
     time_penalty: f64,
+    screen_progress_bonus: f64,
+    completion_bonus: f64,
+    // Stage-1-end screen number that counts as a clear. 255 = disabled
+    // (must be measured from a telemetry run before it can fire).
+    clear_screen: u8,
     prev_x: u8,
     prev_screen: u8,
     prev_score: u64,
     prev_weapon: u8,
     prev_lives: u8,
+    max_screen: u8,
+    completed: bool,
     died: bool,
     first_step: bool,
 }
@@ -1251,6 +1258,9 @@ impl ContraReward {
         weapon_upgrade_bonus: f64,
         death_penalty: f64,
         time_penalty: f64,
+        screen_progress_bonus: f64,
+        completion_bonus: f64,
+        clear_screen: u8,
     ) -> Self {
         Self {
             forward_weight,
@@ -1258,11 +1268,16 @@ impl ContraReward {
             weapon_upgrade_bonus,
             death_penalty,
             time_penalty,
+            screen_progress_bonus,
+            completion_bonus,
+            clear_screen,
             prev_x: 0,
             prev_screen: 0,
             prev_score: 0,
             prev_weapon: 0,
             prev_lives: 0,
+            max_screen: 0,
+            completed: false,
             died: false,
             first_step: true,
         }
@@ -1273,6 +1288,8 @@ impl ContraReward {
         self.prev_score = 0;
         self.prev_weapon = 0;
         self.prev_lives = 0;
+        self.max_screen = 0;
+        self.completed = false;
         self.died = false;
         self.first_step = true;
     }
@@ -1297,6 +1314,7 @@ impl ContraReward {
             self.prev_score = score;
             self.prev_weapon = weapon;
             self.prev_lives = lives;
+            self.max_screen = screen;
             self.first_step = false;
         }
 
@@ -1309,6 +1327,27 @@ impl ContraReward {
         acc.add("forward", self.forward_weight * forward);
         self.prev_x = x;
         self.prev_screen = screen;
+
+        // Milestone bonus on each new max screen reached. Gated to the
+        // high-water mark so it rewards genuine progress, not pacing
+        // back and forth across a screen boundary. Also surfaces as
+        // `reward_screen_progress` in metrics for progress telemetry.
+        if screen > self.max_screen {
+            acc.add(
+                "screen_progress",
+                self.screen_progress_bonus * (screen - self.max_screen) as f64,
+            );
+            self.max_screen = screen;
+        }
+
+        // Terminal win signal. `clear_screen == 255` (default) means
+        // "disabled" — the real stage-1-end screen must be measured from
+        // a telemetry run before this can fire. Drives `episode_success`
+        // and the trainer's `completion`-keyed clears counter.
+        if !self.completed && self.clear_screen != 255 && screen >= self.clear_screen {
+            acc.add("completion", self.completion_bonus);
+            self.completed = true;
+        }
 
         let score_delta = (score as i64 - self.prev_score as i64).max(0) as f64;
         acc.add("score", self.score_weight * score_delta);
@@ -1336,7 +1375,7 @@ impl ContraReward {
         }
     }
     pub fn episode_success(&self) -> bool {
-        false
+        self.completed && !self.died
     }
 }
 
@@ -1861,6 +1900,9 @@ pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward
             w(weights, "weapon_upgrade", 5.0),
             w(weights, "death_penalty", -25.0),
             w(weights, "time_penalty", -0.005),
+            w(weights, "screen_progress_bonus", 0.0),
+            w(weights, "completion_bonus", 0.0),
+            w(weights, "clear_screen", 255.0) as u8,
         )));
     }
     if name.contains("mega man") || name.contains("megaman") {
@@ -1974,6 +2016,71 @@ mod tests {
         let o3 = r.compute(&ram, 0, false);
         assert!((o3.reward - 8.0).abs() < 1.0,
                 "should reward only new progress beyond max (=8), got {}", o3.reward);
+    }
+
+    #[test]
+    fn contra_progress_and_completion_signals() {
+        // Isolate the new screen_progress + completion signals by zeroing
+        // forward/score/time so only the milestone terms contribute.
+        let mut weights = HashMap::new();
+        weights.insert("forward_progress".to_string(), 0.0);
+        weights.insert("score_delta".to_string(), 0.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        weights.insert("death_penalty".to_string(), 0.0);
+        weights.insert("screen_progress_bonus".to_string(), 10.0);
+        weights.insert("completion_bonus".to_string(), 100.0);
+        weights.insert("clear_screen".to_string(), 5.0);
+        let mut r = build_reward("contra", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0032] = 3; // lives (avoid spurious death)
+
+        // First step seeds prev/max at screen 0.
+        ram[0x0064] = 0;
+        let _ = r.compute(&ram, 0, false);
+        assert!(!r.episode_success());
+
+        // Advance one screen → screen_progress fires (+10), no completion.
+        ram[0x0064] = 1;
+        let o1 = r.compute(&ram, 0, false);
+        assert!((o1.reward - 10.0).abs() < 1e-6,
+                "new max screen should reward +10, got {}", o1.reward);
+        assert!(!r.episode_success());
+
+        // Backtrack → no new max, zero progress reward (can't be farmed).
+        ram[0x0064] = 0;
+        let o2 = r.compute(&ram, 0, false);
+        assert!(o2.reward.abs() < 1e-6, "backtrack should not reward, got {}", o2.reward);
+
+        // Reach the clear screen → progress for the 1→5 jump (+40) plus
+        // completion (+100); episode_success flips true.
+        ram[0x0064] = 5;
+        let o3 = r.compute(&ram, 0, false);
+        assert!((o3.reward - 140.0).abs() < 1e-6,
+                "clear should reward progress+completion = 140, got {}", o3.reward);
+        assert!(r.episode_success(),
+                "episode_success must be true after reaching clear_screen");
+
+        // Completion fires once only.
+        let o4 = r.compute(&ram, 0, false);
+        assert!(o4.reward.abs() < 1e-6, "completion must not re-fire, got {}", o4.reward);
+    }
+
+    #[test]
+    fn contra_completion_disabled_by_default() {
+        // With no clear_screen weight set, the sentinel (255) keeps the
+        // completion/win signal off so it can never falsely fire before
+        // the real stage-end screen is measured.
+        let weights = HashMap::new();
+        let mut r = build_reward("contra", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0032] = 3;
+        let _ = r.compute(&ram, 0, false);
+        for s in 1u8..=254 {
+            ram[0x0064] = s;
+            let _ = r.compute(&ram, 0, false);
+            assert!(!r.episode_success(),
+                    "completion must stay disabled at screen {} when clear_screen unset", s);
+        }
     }
 
     #[test]
