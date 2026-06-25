@@ -907,14 +907,27 @@ impl MarioReward {
     // anyway, the new checkpoints don't change anything; if it
     // does, they should pull it past the obstacle complex.
 
-    /// 1-2 is the underground bonus-room level. Obstacles: jumping
-    /// pipes (~x=400), green pipe gauntlet (~x=1300), final descent
-    /// to warp zone OR continuation gauntlet (~x=2300). Calibrated
-    /// from emulator playthrough — not as obstacle-dense as 1-1 but
-    /// still has clear chokepoints worth signaling.
+    /// 1-2 UNDERGROUND MAIN (area byte 2). The long underground half of
+    /// 1-2. Obstacles: jumping pipes (~x=400), green pipe gauntlet
+    /// (~x=1300), final descent to warp zone OR continuation gauntlet
+    /// (~x=2300). Calibrated from emulator playthrough — not as
+    /// obstacle-dense as 1-1 but still has clear chokepoints worth
+    /// signaling. Mapped to area byte 2 (see `checkpoints_for`).
     const LEVEL_1_2: &'static [(u32, f64)] = &[
         (400, 50.0),    // past first jumping-pipe section
         (900, 100.0),   // past mid-level brick clusters
+        // 2026-06-25 — split the 900→1300 reward gap. Standard dead-zone
+        // bridge (cf. 1-1's 1640→2100 / 2700→2900): a 400-unit reward-
+        // silent span gets a thin intermediate so crossing it is
+        // gradient-detectable. NOTE: an A/B warm-started directly in the
+        // underground showed it is learnable WITHOUT this bridge — both
+        // the dense and no-shaping arms reach x~980 trivially, so the
+        // greedy 1-1 policy's x~980 stall was a replay artifact, not a
+        // training wall. The real binding stall is later: both arms
+        // plateaued at ~2435/2618, inside the 2300→2700 gap. This 1150
+        // entry is harmless density; the data-motivated future bridge is
+        // ~2500 (see follow-up).
+        (1150, 150.0),  // splits the 900→1300 gap (harmless density)
         (1300, 200.0),  // past green pipe gauntlet
         (1900, 350.0),  // past long-jump section
         (2300, 500.0),  // approach to warp zone / level end
@@ -927,11 +940,29 @@ impl MarioReward {
     /// those levels. Not harmful — just less dense signal until the
     /// table is calibrated.
     fn checkpoints_for(world: u8, level: u8) -> &'static [(u32, f64)] {
+        // NOTE: `level` here is the raw AREA byte ($0760), NOT the
+        // displayed level number ($075C). A single displayed level can
+        // span multiple area bytes. Verified empirically by replaying a
+        // 1-1-clearing policy and logging ($075F, $075C, $0760):
+        //   area 0 = 1-1 (full level, x up to ~3266)
+        //   area 1 = 1-2 ENTRANCE (short above-ground bit, ~125 steps)
+        //   area 2 = 1-2 UNDERGROUND MAIN (the long pipe-gauntlet half)
+        //   area 3 = 1-3
+        // The 1-2 obstacle ladder (LEVEL_1_2: pipes at 400, gauntlet at
+        // 1300, warp at 2300) describes the UNDERGROUND, so it belongs on
+        // area 2 — NOT area 1. It was previously mis-wired to area 1 (the
+        // brief entrance), which left the underground main — where the
+        // policy demonstrably stalls at x~980 — with ZERO dense signal,
+        // and fired the underground bonuses on the wrong geometry.
         match (world, level) {
             (0, 0) => Self::LEVEL_1_1,
-            (0, 1) => Self::LEVEL_1_2,
-            // 1-3, 1-4, world 2+ — TODO: calibrate per level. Falls
-            // through to empty (forward + completion only).
+            // area 1 = 1-2 entrance: short and easy; no dense table
+            // needed (forward + completion carry it).
+            (0, 1) => &[],
+            (0, 2) => Self::LEVEL_1_2,
+            // area 3 = 1-3, world 2+ — not yet calibrated (no replay
+            // data past the area-2 wall). Falls through to forward +
+            // completion only.
             _ => &[],
         }
     }
@@ -2016,6 +2047,152 @@ mod tests {
         let o3 = r.compute(&ram, 0, false);
         assert!((o3.reward - 8.0).abs() < 1.0,
                 "should reward only new progress beyond max (=8), got {}", o3.reward);
+    }
+
+    #[test]
+    fn smb_checkpoint_tables_aligned_to_area_bytes() {
+        // Regression guard for the area-byte misalignment fixed
+        // 2026-06-25. `checkpoints_for` keys off the raw AREA byte
+        // ($0760), verified by replaying a 1-1-clearing policy:
+        //   area 0 = 1-1, area 1 = 1-2 ENTRANCE (short), area 2 = 1-2
+        //   UNDERGROUND MAIN (the obstacle ladder's real home).
+        // The underground ladder MUST live on area 2, not the entrance
+        // (area 1) — the bug left the underground (where the policy
+        // stalls at x~980) with zero dense signal.
+        assert_eq!(MarioReward::checkpoints_for(0, 0), MarioReward::LEVEL_1_1);
+        assert!(
+            MarioReward::checkpoints_for(0, 1).is_empty(),
+            "area byte 1 (1-2 entrance) must carry no dense table"
+        );
+        assert_eq!(
+            MarioReward::checkpoints_for(0, 2),
+            MarioReward::LEVEL_1_2,
+            "area byte 2 (1-2 underground main) must carry the obstacle ladder"
+        );
+        assert!(!MarioReward::checkpoints_for(0, 2).is_empty());
+    }
+
+    #[test]
+    fn smb_dense_checkpoint_fires_in_underground_not_entrance() {
+        // End-to-end through compute(): the dense 1-2 ladder fires in the
+        // underground main (area byte 2) and stays silent in the brief
+        // entrance (area byte 1). x is packed ($006D<<8 | $0086); the
+        // first checkpoint is x=400 (=0x190).
+        let mut weights = HashMap::new();
+        weights.insert("checkpoint_scale".to_string(), 1.0);
+        weights.insert("forward_progress".to_string(), 0.0); // isolate checkpoint
+        weights.insert("time_penalty".to_string(), 0.0);
+
+        // Underground main (area byte 2): crossing x=400 fires +50.
+        let mut r = build_reward("mario", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x075F] = 0;
+        ram[0x0760] = 2; // world 1, area byte 2 (underground main)
+        ram[0x006D] = 0;
+        ram[0x0086] = 0x10; // x=16, before first checkpoint
+        let _ = r.compute(&ram, 0, false); // seed first_step
+        ram[0x006D] = 1;
+        ram[0x0086] = 0x90; // x=0x190=400 -> crosses checkpoint[0]
+        let under = r.compute(&ram, 0, false);
+
+        // Entrance (area byte 1): same crossing fires nothing.
+        let mut r2 = build_reward("mario", &weights).unwrap();
+        let mut ram2 = zram();
+        ram2[0x075F] = 0;
+        ram2[0x0760] = 1; // world 1, area byte 1 (entrance)
+        ram2[0x006D] = 0;
+        ram2[0x0086] = 0x10;
+        let _ = r2.compute(&ram2, 0, false);
+        ram2[0x006D] = 1;
+        ram2[0x0086] = 0x90; // x=400
+        let entrance = r2.compute(&ram2, 0, false);
+
+        assert!(
+            under.reward - entrance.reward >= 49.0,
+            "underground (area 2) must fire the ~+50 dense checkpoint that \
+             the entrance (area 1) does not: underground={} entrance={}",
+            under.reward,
+            entrance.reward
+        );
+    }
+
+    #[test]
+    fn smb_checkpoint_cursor_resets_on_area_transition() {
+        // THE mechanism the area-byte fix depends on in real play: the
+        // agent enters 1-2 at area byte 1 (empty table), then transitions
+        // mid-episode to area byte 2 (the underground ladder). The
+        // checkpoint cursor MUST reset on that 1->2 transition for the
+        // LEVEL_1_2 ladder to ever fire. The other tests seed a single
+        // area byte, so this transition-reset path was untested — and
+        // deleting the reset clause would silently break the fix while
+        // they still pass. This crosses the transition within ONE reward
+        // instance and asserts the ladder fires only after it.
+        let mut weights = HashMap::new();
+        weights.insert("checkpoint_scale".to_string(), 1.0);
+        weights.insert("forward_progress".to_string(), 0.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        let mut r = build_reward("mario", &weights).unwrap();
+        let mut ram = zram();
+
+        // Enter at area byte 1 (1-2 entrance), low x → seed first_step.
+        ram[0x075F] = 0;
+        ram[0x0760] = 1;
+        ram[0x006D] = 0;
+        ram[0x0086] = 0x10;
+        let _ = r.compute(&ram, 0, false);
+        // Cross x=400 in the entrance: empty table → nothing fires.
+        ram[0x006D] = 1;
+        ram[0x0086] = 0x90;
+        let in_entrance = r.compute(&ram, 0, false);
+        assert!(
+            in_entrance.reward.abs() < 1e-6,
+            "entrance (area 1) must fire no checkpoint, got {}",
+            in_entrance.reward
+        );
+        // Transition to area byte 2 (underground), x resets low. This is
+        // the world/level change that must reset the cursor.
+        ram[0x0760] = 2;
+        ram[0x006D] = 0;
+        ram[0x0086] = 0x10;
+        let _ = r.compute(&ram, 0, false);
+        // Now cross x=400 in the underground: the ladder's first
+        // checkpoint must fire (+50) — proving the cursor reset.
+        ram[0x006D] = 1;
+        ram[0x0086] = 0x90;
+        let after_transition = r.compute(&ram, 0, false);
+        assert!(
+            (after_transition.reward - 50.0).abs() < 1e-6,
+            "after the 1->2 area transition the underground ladder must \
+             re-fire from x=400 (+50); cursor reset failed if this is 0. \
+             got {}",
+            after_transition.reward
+        );
+    }
+
+    #[test]
+    fn smb_checkpoint_tables_strictly_ascending() {
+        // The compute() checkpoint loop is a single forward cursor that
+        // breaks on the first threshold above x — correctness REQUIRES
+        // each table be strictly ascending. Guards hand-inserted entries
+        // (e.g. the 1150 bridge) against a future ordering typo.
+        for (name, table) in [
+            ("LEVEL_1_1", MarioReward::LEVEL_1_1),
+            ("LEVEL_1_2", MarioReward::LEVEL_1_2),
+        ] {
+            for w in table.windows(2) {
+                assert!(
+                    w[0].0 < w[1].0,
+                    "{name} checkpoint thresholds must be strictly \
+                     ascending; found {} then {}",
+                    w[0].0,
+                    w[1].0
+                );
+            }
+        }
+        // Unmapped areas must stay empty (forward + completion only):
+        // area byte 3 = 1-3 (deliberately uncalibrated) and world 2+.
+        assert!(MarioReward::checkpoints_for(0, 3).is_empty());
+        assert!(MarioReward::checkpoints_for(1, 0).is_empty());
     }
 
     #[test]

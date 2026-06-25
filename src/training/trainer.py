@@ -567,8 +567,15 @@ class Trainer:
         # without this gate the capture/advance logic would read garbage
         # from their RAM at those addresses and fabricate bogus stages.
         # A generalized per-game curriculum is future work.
+        # Name-gated (reward dispatch also substring-matches "mario", so
+        # the name must keep it), but with an explicit off-switch:
+        # `reinforce.smb_curriculum: false` runs single-stage from the
+        # profile's start_state without the capture/advance machinery.
+        # Used to warm-start directly at a specific area byte (e.g. the
+        # 1-2 underground main) for a clean, curriculum-free measurement.
         self._smb_curriculum_active: bool = (
             "mario" in str(game_profile.get("name", "")).lower()
+            and bool(rl_cfg.get("smb_curriculum", True))
         )
         # Frame stacking for tile observations. yumouwei (2022) showed
         # empirically that stack=1 fails to clear SMB 1-1 while stack=4
@@ -4085,6 +4092,13 @@ class Trainer:
         # which is the reset spawn for every env.
         max_world_level_packed = np.zeros(num_envs, dtype=np.uint8)
         end_world_level_packed = np.zeros(num_envs, dtype=np.uint8)
+        # Per-env furthest forward x reached this iter (page<<8 | low).
+        # Independent of the reward, so it measures real progress within
+        # a level/area even when the packed world-level byte doesn't move
+        # — e.g. distinguishing "stalled at x~980 in the 1-2 underground"
+        # from "pushed past it" without the dense-checkpoint reward (which
+        # would otherwise inflate the return and confound the comparison).
+        max_x_reached = np.zeros(num_envs, dtype=np.int32)
 
         # Initial reset.
         init_results = self.pool.reset_all()
@@ -4205,6 +4219,9 @@ class Trainer:
                         if wl_packed > max_world_level_packed[i]:
                             max_world_level_packed[i] = wl_packed
                         end_world_level_packed[i] = wl_packed
+                        x_pos = (int(ram[0x006D]) << 8) | int(ram[0x0086])
+                        if x_pos > max_x_reached[i]:
+                            max_x_reached[i] = x_pos
                         # Mid-rollout curriculum capture: FIRST detection
                         # per stage wins (no overwrites), capture on ANY
                         # byte strictly greater than the current anchor.
@@ -4839,10 +4856,16 @@ class Trainer:
             progress_metrics: dict[str, float] = {}
             if iter_max_screen > 0:
                 progress_metrics["vanilla_ppo_max_screen"] = int(iter_max_screen)
-            if self._smb_curriculum_active:
+            # SMB progress proxies are gated by GAME (the $075F/$0760/x
+            # RAM bytes are only meaningful for Mario), NOT by the
+            # curriculum flag — a curriculum-off SMB run (e.g. a fixed
+            # area-warm-start A/B) still wants these.
+            if "mario" in str(self.game_profile.get("name", "")).lower():
                 progress_metrics["vanilla_ppo_max_world_level"] = int(
                     max_world_level_packed.max()
                 )
+                progress_metrics["vanilla_ppo_max_x"] = int(max_x_reached.max())
+            if self._smb_curriculum_active:
                 progress_metrics["vanilla_ppo_curriculum_stage"] = int(
                     smb_curriculum_stage
                 )
