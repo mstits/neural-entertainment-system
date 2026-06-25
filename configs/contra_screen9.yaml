@@ -91,7 +91,10 @@ reinforce:
   gae_lambda: 0.95
   ppo_clip_eps: 0.2
   value_coef: 0.5
-  entropy_coef: 0.02     # higher than default — Contra rewards are sparse
+  entropy_coef: 0.01     # was 0.02 — too high: entropy stuck at ~2.2 (96% of
+                         # max for 10 actions), so the policy never committed
+                         # and regressed off the screen-9 advances it found.
+                         # 0.01 matches the proven SMB value (which commits).
   grad_clip: 0.5
   value_loss: huber
 
