@@ -39,9 +39,15 @@ reward_weights:
   # larger than forward (score-farm fixed point: stand and shoot for
   # points instead of advancing). Rebalanced so advancing the stage is
   # the gradient the policy climbs.
-  forward_progress: 2.0     # per unit of screen/x gain (was 0.5)
-  score_delta:      0.0005  # minor flavor only (was 0.01 — caused 71x dominance)
-  screen_progress_bonus: 30.0  # milestone on each NEW max screen (gated; can't be farmed)
+  # ADVANCEMENT-SHAPING (2026-06-25): the screen-9 warm-start agent
+  # score-farmed at the wall instead of advancing (farming kills was an
+  # easier reward than pushing past the obstacle). Remove the farm
+  # entirely (score_delta=0) and make the MAX-GATED screen_progress the
+  # dominant reward (fires only on a new max screen, so it can't be
+  # farmed). Now advancing is the only real reward path.
+  forward_progress: 2.0     # per unit of screen/x gain (within-screen guidance)
+  score_delta:      0.0     # was 0.0005 — REMOVED: killing enemies must not pay
+  screen_progress_bonus: 100.0  # was 30 — dominant, max-gated reward for a NEW screen
   completion_bonus: 2000.0  # terminal stage-1 clear reward (fires at clear_screen)
   # clear_screen: <unset → disabled>. Read vanilla_ppo_max_screen off a
   # run to find the real stage-1-end screen, then set it to arm the win.
