@@ -217,9 +217,14 @@ The compatibility matrix lives in `reports/full_library.md`. A summary:
     13×13 semantic tile grid + scalars. ~14k params. The MarI/O recipe
     modernized — search space shrinks ~120× so PPO gradients become large
     enough to actually steer the policy.
-- **Dense reward shaping** for SMB. RAM-readable progress checkpoints fire
-  bonuses at every major obstacle through 1-1, giving PPO non-trivial
-  intermediate signal instead of "+2000 once at the flag".
+- **Dense reward shaping** for SMB. Per-level RAM-readable progress
+  checkpoints (keyed to the area byte) fire bonuses at each obstacle,
+  giving PPO non-trivial intermediate signal instead of "+2000 once at
+  the flag". Trained agents clear SMB **World 1-1, 1-2 and 1-3 greedily
+  by pure self-play** (no human demos); 1-4 is reachable but not yet
+  consolidated. See [docs/smb_world1_training.md](docs/smb_world1_training.md)
+  for results, techniques (area-byte mapping, seed-transfer, entropy-decay
+  consolidation), and the honest 1-4 ceiling.
 - **Auxiliary losses & exploration helpers**: RND intrinsic motivation
   with running-mean/std normalization, DrQ random-shift augmentation
   (pixel mode), symlog reward transform, GA-only warmup gens, optional
