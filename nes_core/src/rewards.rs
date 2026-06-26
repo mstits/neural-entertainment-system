@@ -961,16 +961,34 @@ impl MarioReward {
     const LEVEL_1_4: &'static [(u32, f64)] = &[
         (300, 60.0),
         (700, 110.0),
-        (1100, 170.0),
-        (1500, 260.0),
-        // 2026-06-25 — bridges at the observed stalls: the peak policy
-        // (pre-collapse) plateaued modally ~1590 (in the 1500→1900 gap)
-        // and maxed ~2231 (in the 1900→2300 gap). Split both dead zones.
-        (1700, 320.0),
-        (1900, 400.0),
-        (2100, 520.0),
-        (2300, 650.0),
-        (2560, 1200.0),  // approach to the axe / level end
+        // 2026-06-26 — DENSE ramp through the x814→994 platform-hop.
+        // Trajectory investigation: x814 is a jump-UP onto an elevated
+        // platform-hop section (the furthest env hops platforms at
+        // y~80-112; the collapsed policy stays at the bottom y~176,
+        // oscillating against the step, never jumping). The 700→1100 gap
+        // had NO dense reward, so the high-variance jump path competed
+        // against the safe-stall with zero reinforcement → risk-aversion
+        // collapse to x814. Dense, increasing checkpoints through the
+        // platform-hop reward each successful hop so attempting the path
+        // beats stalling.
+        (840, 250.0),
+        (920, 350.0),
+        (1000, 450.0),
+        (1100, 550.0),
+        (1300, 700.0),
+        (1500, 850.0),
+        (1700, 1000.0),
+        (1900, 1200.0),
+        (2100, 1450.0),
+        (2300, 1700.0),
+        // 2026-06-26 — densify the final Bowser-bridge (2430→2560). The
+        // agent reaches the bridge approach (~x2430) regularly but only
+        // crosses into world 2 ~10% of iters; dense reward across the
+        // bridge reinforces each step of the rare crossing to raise the
+        // rate (toward consolidation).
+        (2430, 1900.0),  // bridge approach (reached regularly)
+        (2500, 2150.0),  // mid-bridge
+        (2560, 2400.0),  // the axe / world-2 crossing
     ];
 
     /// Look up the dense-reward checkpoints for a given (world, level).
