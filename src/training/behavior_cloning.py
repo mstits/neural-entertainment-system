@@ -104,6 +104,7 @@ def build_dataset(
     reward_fn=None,
     tile_extractor=None,
     tile_frame_stack: int = 1,
+    start_state_path: str | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[int]]:
     """Produce (states, actions, rewards) tensors from a `.state.bin` recording.
 
@@ -176,9 +177,17 @@ def build_dataset(
         if reward_fn is not None:
             reward_fn.reset()
 
-        # Each demo gets its own cold-boot env so (state, action) pairs
-        # are coherent within a single replay.
-        env = NESEnvironment(rom_path=str(rom_path), frame_skip=1)
+        # Each demo gets its own env so (state, action) pairs are coherent
+        # within a single replay. Cold-boot by default; with
+        # start_state_path the demo is replayed from that save-state (the
+        # tape must have been RECORDED from the same state, e.g. a focused
+        # 1-4 demo recorded warm-started at stage_1_4) so the actions land
+        # on the geometry they were taken under. reset() restores to the
+        # start state when one is set (verified), matching the recorder.
+        env = NESEnvironment(rom_path=str(rom_path), frame_skip=1,
+                             start_state_path=start_state_path) \
+            if start_state_path else \
+            NESEnvironment(rom_path=str(rom_path), frame_skip=1)
         first_frame = env.reset()
         # Pixel mode uses a frame stacker; tile mode decodes RAM
         # directly via the supplied extractor AND (when tile_frame_stack>1)

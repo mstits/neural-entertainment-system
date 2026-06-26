@@ -38,6 +38,10 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="output checkpoint path")
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--frame-skip", type=int, default=4)
+    ap.add_argument("--start-state", default=None,
+                    help="warm-start save-state the demo was recorded from "
+                         "(e.g. a stage_1_4.state for a focused 1-4 demo); "
+                         "BC replays the tape from this state, not cold-boot")
     args = ap.parse_args()
 
     profile = yaml.safe_load(open(args.profile))
@@ -56,6 +60,7 @@ def main() -> None:
         reward_fn=reward_fn,
         tile_extractor=extractor if is_tile else None,
         tile_frame_stack=tile_frame_stack,
+        start_state_path=args.start_state,
     )
     print(f"BC dataset: {states.shape[0]} pairs, shape={tuple(states.shape)}, "
           f"demo total reward={float(rewards.sum()):.1f}, boundaries={boundaries}")

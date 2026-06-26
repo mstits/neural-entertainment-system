@@ -102,13 +102,24 @@ _DISPLAY_SCALE = 3
 class PlayWindow(QMainWindow):
     """Single emulator instance, keyboard-driven, records action sequence."""
 
-    def __init__(self, rom_path: str, parent=None) -> None:
+    def __init__(self, rom_path: str, parent=None, start_state_path: str | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"NES — Play: {Path(rom_path).name}")
+        title = f"NES — Play: {Path(rom_path).name}"
+        if start_state_path:
+            title += f"  [warm-start: {Path(start_state_path).name}]"
+        self.setWindowTitle(title)
 
-        # frame_skip=1 so one user keypress per frame.
-        self.env = _NESEnvironment(rom_path=rom_path, frame_skip=1)
+        # frame_skip=1 so one user keypress per frame. With a
+        # start_state_path the env boots at that save-state (e.g. drop
+        # straight into 1-4 to record a focused demo of just that level);
+        # reset() restores to it rather than cold-booting (verified).
+        if start_state_path:
+            self.env = _NESEnvironment(rom_path=rom_path, frame_skip=1,
+                                       start_state_path=start_state_path)
+        else:
+            self.env = _NESEnvironment(rom_path=rom_path, frame_skip=1)
         self.env.reset()
+        self._start_state_path = start_state_path
         # nes_core.NESEnvironment is a PyO3 pyclass and does NOT accept
         # arbitrary attribute assignment — trying to set `self.env.rom_path`
         # raises AttributeError, which silently killed PlayWindow
