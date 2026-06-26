@@ -5027,6 +5027,11 @@ class Trainer:
             # update these from the post-restore RAM.
             max_world_level_packed[:] = 0
             end_world_level_packed[:] = 0
+            # Per-iter reset (was missing): without this, vanilla_ppo_max_x
+            # is a cumulative running max that preserves an old peak even
+            # after the policy regresses/collapses — which masked a 1-4
+            # collapse (metric held at 2432 while the policy fell to 814).
+            max_x_reached[:] = 0
             # Clear per-iter clear-counter + per-env completion-baseline.
             # Reward fns were just reset() above, so their `completion`
             # breakdowns are back to 0 — match that here.

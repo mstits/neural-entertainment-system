@@ -934,6 +934,45 @@ impl MarioReward {
         (2700, 1000.0), // near pipe to overworld / 1-3
     ];
 
+    /// 1-3 (area byte 3). The above-ground floating-platform level. Ladder
+    /// is APPROXIMATE — evenly-spaced with the dead-zone-bridge principle
+    /// (no >450px reward-silent span) rather than per-obstacle calibrated,
+    /// since no 1-3-clearing policy exists yet to map the real chokepoints.
+    /// Refine from a clearing replay once available. Mapped to area byte 3.
+    const LEVEL_1_3: &'static [(u32, f64)] = &[
+        (250, 50.0),
+        (600, 90.0),
+        (1000, 140.0),
+        (1400, 220.0),
+        (1800, 340.0),
+        // 2026-06-25 — bridge the 1800→2200 gap: the seed policy's
+        // stochastic reach plateaued at x~1872 here (just past 1800),
+        // so split the dead zone to make progress past it detectable.
+        (2000, 420.0),
+        (2200, 520.0),
+        (2560, 900.0),  // approach to flagpole / level end
+    ];
+
+    /// 1-4 (area byte 4 — the castle: lava pits, firebars, the bridge/
+    /// axe at the end). APPROXIMATE evenly-spaced ladder with the
+    /// dead-zone-bridge principle; refine from a clearing replay. Mapped
+    /// to area byte 4 (confirmed empirically: a 1-3-clearing policy
+    /// transitions to displaylvl 3 / area byte 4 = 1-4).
+    const LEVEL_1_4: &'static [(u32, f64)] = &[
+        (300, 60.0),
+        (700, 110.0),
+        (1100, 170.0),
+        (1500, 260.0),
+        // 2026-06-25 — bridges at the observed stalls: the peak policy
+        // (pre-collapse) plateaued modally ~1590 (in the 1500→1900 gap)
+        // and maxed ~2231 (in the 1900→2300 gap). Split both dead zones.
+        (1700, 320.0),
+        (1900, 400.0),
+        (2100, 520.0),
+        (2300, 650.0),
+        (2560, 1200.0),  // approach to the axe / level end
+    ];
+
     /// Look up the dense-reward checkpoints for a given (world, level).
     /// Returns an empty slice for levels we haven't tuned, which means
     /// only the baseline forward_progress + completion_bonus fire on
@@ -960,8 +999,9 @@ impl MarioReward {
             // needed (forward + completion carry it).
             (0, 1) => &[],
             (0, 2) => Self::LEVEL_1_2,
-            // area 3 = 1-3, world 2+ — not yet calibrated (no replay
-            // data past the area-2 wall). Falls through to forward +
+            (0, 3) => Self::LEVEL_1_3,
+            (0, 4) => Self::LEVEL_1_4,
+            // world 2+ — not yet calibrated. Falls through to forward +
             // completion only.
             _ => &[],
         }
@@ -2178,6 +2218,8 @@ mod tests {
         for (name, table) in [
             ("LEVEL_1_1", MarioReward::LEVEL_1_1),
             ("LEVEL_1_2", MarioReward::LEVEL_1_2),
+            ("LEVEL_1_3", MarioReward::LEVEL_1_3),
+            ("LEVEL_1_4", MarioReward::LEVEL_1_4),
         ] {
             for w in table.windows(2) {
                 assert!(
@@ -2189,9 +2231,10 @@ mod tests {
                 );
             }
         }
-        // Unmapped areas must stay empty (forward + completion only):
-        // area byte 3 = 1-3 (deliberately uncalibrated) and world 2+.
-        assert!(MarioReward::checkpoints_for(0, 3).is_empty());
+        // World 1 levels 1-3 (area 3) and 1-4 (area 4) are calibrated;
+        // world 2+ remains uncalibrated -> empty (forward + completion).
+        assert_eq!(MarioReward::checkpoints_for(0, 3), MarioReward::LEVEL_1_3);
+        assert_eq!(MarioReward::checkpoints_for(0, 4), MarioReward::LEVEL_1_4);
         assert!(MarioReward::checkpoints_for(1, 0).is_empty());
     }
 
