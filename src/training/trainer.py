@@ -728,6 +728,10 @@ class Trainer:
         # keeps the "what have I already explored" novelty memory instead
         # of re-rewarding every visited state as maximally novel.
         self._pending_rnd_state: Optional[dict] = None
+        # Go-Explore archive — opt-in via reinforce.go_explore.enabled and
+        # built per-run in _run_vanilla_ppo only when the SMB curriculum is
+        # off (mutually exclusive). Stays None otherwise; exposed for tests.
+        self._go_explore = None
 
         # Persistent PPO network and optimizer to maintain Adam's momentum
         # state across generations. Recreating them every gen resets the
@@ -4151,6 +4155,81 @@ class Trainer:
         # would otherwise inflate the return and confound the comparison).
         max_x_reached = np.zeros(num_envs, dtype=np.int32)
 
+        # ============== GO-EXPLORE ARCHIVE (opt-in, generic) ==============
+        # First-return-then-explore (Ecoffet et al. 2021): a game-agnostic
+        # alternative to the SMB-hardcoded save-state curriculum. Built ONLY
+        # when the curriculum is OFF — the two are mutually exclusive
+        # exploration mechanisms that share the same warm-start/auto-reset
+        # plumbing, which go_explore reuses when the curriculum is absent. All
+        # hooks below are None-guarded, so with go_explore.enabled=false
+        # (default) this is entirely inert.
+        _ge_cfg = dict(
+            (self.game_profile.get("reinforce", {}) or {}).get("go_explore", {})
+            or {}
+        )
+        go_explore_on = (
+            bool(_ge_cfg.get("enabled", False)) and not self._smb_curriculum_active
+        )
+        go_explore_archive = None
+        go_explore_save_every = max(1, int(_ge_cfg.get("save_every", 10)))
+        # Per-env frontier-cell blob each env was returned to this iter.
+        env_return_state: list = [None] * num_envs
+
+        def _ge_score(_i: int) -> float:  # replaced below when enabled
+            return 0.0
+
+        if go_explore_on:
+            from src.training.go_explore import (
+                GoExploreArchive, ram_bytes_cell, ram_downsample_cell,
+            )
+            _cell_cfg = dict(_ge_cfg.get("cell", {}) or {})
+            _cell_type = str(_cell_cfg.get("type", "ram_downsample"))
+            if _cell_type == "ram_bytes":
+                _addrs = [
+                    int(a) for a in _cell_cfg.get(
+                        "addresses", [0x075F, 0x0760, 0x006D]
+                    )
+                ]
+                cell_fn = ram_bytes_cell(
+                    _addrs, bucket=int(_cell_cfg.get("bucket", 1))
+                )
+            else:
+                cell_fn = ram_downsample_cell(
+                    stride=int(_cell_cfg.get("stride", 64)),
+                    bucket=int(_cell_cfg.get("bucket", 16)),
+                )
+            go_explore_archive = GoExploreArchive(
+                cell_fn, seed=int(_ge_cfg.get("seed", self.seed) or 0)
+            )
+            self._go_explore = go_explore_archive
+            _ge_path = self.checkpoint_dir / "go_explore" / "archive.pkl"
+            if _ge_path.exists():
+                try:
+                    go_explore_archive.load(_ge_path)
+                    log.info(
+                        "[vanilla_ppo] go_explore: resumed archive (%d cells)",
+                        len(go_explore_archive),
+                    )
+                except Exception as e:
+                    log.warning("[vanilla_ppo] go_explore reload failed: %s", e)
+            _score_kind = str(_ge_cfg.get("score", "auto"))
+            _is_mario = "mario" in str(self.game_profile.get("name", "")).lower()
+            _use_max_x = _score_kind == "max_x" or (
+                _score_kind == "auto" and _is_mario
+            )
+
+            def _ge_score(_i: int) -> float:  # noqa: F811
+                return (
+                    float(max_x_reached[_i]) if _use_max_x
+                    else float(ep_returns[_i])
+                )
+
+            log.info(
+                "[vanilla_ppo] go_explore ENABLED: cell=%s, score=%s "
+                "(SMB curriculum OFF)",
+                _cell_type, "max_x" if _use_max_x else "ep_return",
+            )
+
         # Initial reset.
         init_results = self.pool.reset_all()
         self._emit_frame_sink(init_results)
@@ -4389,6 +4468,35 @@ class Trainer:
                             prev_completion_total[i] = cur_comp
                         except Exception:
                             pass
+
+                        # ===== GO-EXPLORE RECORD =====
+                        # Discretize this state into a cell and remember the
+                        # best-known way to reach it. Bound cost by only
+                        # paying for pool.save_worker_state on a NEW cell or a
+                        # strict improvement (peek the archive first). Skip
+                        # death states — they make useless return targets.
+                        if go_explore_archive is not None and not done:
+                            _gk = go_explore_archive.cell_fn(ram)
+                            _gc = go_explore_archive.cells.get(_gk)
+                            _gs = _ge_score(i)
+                            _gsteps = int(ep_lengths[i])
+                            _dom = (
+                                _gc is None
+                                or _gs > _gc.best_score + 1e-9
+                                or (abs(_gs - _gc.best_score) <= 1e-9
+                                    and _gsteps < _gc.best_steps)
+                            )
+                            if _dom:
+                                try:
+                                    _blob = self.pool.save_worker_state(i)
+                                except Exception:
+                                    _blob = None
+                                if _blob is not None:
+                                    go_explore_archive.record(
+                                        ram, _blob, _gs, _gsteps
+                                    )
+                            else:
+                                go_explore_archive.record(ram, None, _gs, _gsteps)
 
                         # Set True when an auto-reset re-seeds the
                         # stacker this step, so the post-step push below
@@ -4966,6 +5074,12 @@ class Trainer:
                     max_world_level_packed.max()
                 )
                 progress_metrics["vanilla_ppo_max_x"] = int(max_x_reached.max())
+            if go_explore_archive is not None:
+                _ges = go_explore_archive.stats()
+                progress_metrics["go_explore_cells"] = _ges["cells"]
+                progress_metrics["go_explore_frontier"] = _ges["frontier"]
+                progress_metrics["go_explore_best_score"] = _ges["best_score"]
+                progress_metrics["go_explore_records"] = _ges["records"]
             if self._smb_curriculum_active:
                 progress_metrics["vanilla_ppo_curriculum_stage"] = int(
                     smb_curriculum_stage
@@ -5066,6 +5180,7 @@ class Trainer:
             # earlier levels fresh and advantages informative.
             env_stage[:] = 0
             stage_seed_results = [None] * num_envs
+            env_return_state = [None] * num_envs
             if smb_curriculum_stage > 0:
                 n_current = max(
                     1, int(round(num_envs * SMB_CURRENT_STAGE_FRAC))
@@ -5113,6 +5228,37 @@ class Trainer:
                     "[vanilla_ppo] mixed warm-start stage distribution "
                     "(stage:count): %s", dict(sorted(_dist.items())),
                 )
+            elif go_explore_archive is not None and len(go_explore_archive) > 0:
+                # ===== GO-EXPLORE RETURN (iter boundary) =====
+                # Warm-start each env from a frontier cell the archive picks
+                # (weighted toward under-explored cells) instead of leaving
+                # every env at cold boot. Reuses the curriculum's no-op flush
+                # + the stacked_obs rebuild below, so there is zero extra
+                # re-seed bookkeeping and no desync risk.
+                _states = go_explore_archive.select_return_states(num_envs)
+                _any_return = False
+                for i in range(num_envs):
+                    _blob = _states[i]
+                    if _blob is not None:
+                        try:
+                            self.pool.load_worker_state(i, _blob)
+                            env_return_state[i] = _blob
+                            _any_return = True
+                        except Exception as e:
+                            log.warning(
+                                "[vanilla_ppo] go_explore return env %d "
+                                "failed: %s — cold boot.", i, e,
+                            )
+                if _any_return:
+                    noop_actions = np.zeros(
+                        self.pool.num_workers, dtype=np.uint8
+                    )
+                    init_results = self.pool.step_all(noop_actions)
+                    self._emit_frame_sink(init_results)
+                stage_seed_results = [
+                    init_results[i] if env_return_state[i] is not None else None
+                    for i in range(num_envs)
+                ]
             for fn in reward_fns:
                 fn.reset()
             ep_returns[:] = 0
@@ -5206,6 +5352,20 @@ class Trainer:
                     )
                 except Exception as exc:
                     log.warning("[vanilla_ppo] winner retention failed: %s", exc)
+
+                # Persist the Go-Explore archive so returns continue across
+                # restarts instead of re-exploring from scratch.
+                if (go_explore_archive is not None
+                        and it % go_explore_save_every == 0):
+                    try:
+                        go_explore_archive.save(
+                            self.checkpoint_dir / "go_explore" / "archive.pkl"
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            "[vanilla_ppo] go_explore archive save failed: %s",
+                            exc,
+                        )
 
     def _save_checkpoint(self, gen: int, keep_last: int = 5) -> None:
         path = self.checkpoint_dir / f"gen_{gen:05d}.pt"
