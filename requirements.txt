@@ -27,5 +27,10 @@ dill>=0.3.7
 # Dev tooling
 pytest>=7.4.0
 pytest-cov>=4.1.0
+# pytest-timeout backs the `--timeout` used by every `make test*` target;
+# pytest-qt backs the GUI UAT tests. Without these a fresh clone's first
+# quality signal (`make test`) errors on an unrecognized argument.
+pytest-timeout>=2.1.0
+pytest-qt>=4.2.0
 ruff>=0.1.9
 mypy>=1.7.0
