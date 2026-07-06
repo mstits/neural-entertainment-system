@@ -763,18 +763,27 @@ impl Pulse {
     }
 
     fn set_timer_period_from_sweep(&mut self) {
-        let delta = self.timer_period >> self.sweep.shift_count;
-        if self.sweep.negate {
+        // Real hardware only writes the new period when the shift count is
+        // non-zero AND the computed target period stays within the 11-bit
+        // range (<= 0x7FF). When the target would overflow 0x7FF the
+        // channel is muted but the period register is left UNCHANGED. The
+        // target is computed in a wide signed type so the u16
+        // `timer_period` can never under/overflow (the old unchecked
+        // `+= delta` / `-= delta + 1` could wrap on large periods).
+        if self.sweep.shift_count == 0 {
+            return;
+        }
+        let delta = (self.timer_period >> self.sweep.shift_count) as i32;
+        let target = if self.sweep.negate {
             match self.negation_type {
-                SweepNegationType::OnesComplement => {
-                    self.timer_period -= delta + 1;
-                }
-                SweepNegationType::TwosComplement => {
-                    self.timer_period -= delta;
-                }
+                SweepNegationType::OnesComplement => self.timer_period as i32 - delta - 1,
+                SweepNegationType::TwosComplement => self.timer_period as i32 - delta,
             }
         } else {
-            self.timer_period += delta;
+            self.timer_period as i32 + delta
+        };
+        if (0..=0x7FF).contains(&target) {
+            self.timer_period = target as u16;
         }
     }
 
@@ -1174,7 +1183,11 @@ impl LowPassFilter {
 
 impl Filter for LowPassFilter {
     fn step(&mut self, sample: f32) -> f32 {
-        self.last_out = (sample - self.last_out) * self.k;
+        // One-pole low-pass: pull the running output a fraction `k` of the
+        // way toward the new sample. The accumulator term (`last_out +=`)
+        // is essential — without it (`last_out = (sample - last_out) * k`)
+        // the response inverts into a high-pass.
+        self.last_out += (sample - self.last_out) * self.k;
 
         self.last_out
     }
@@ -1263,6 +1276,69 @@ mod frame_irq_tests {
         assert!(
             apu.frame_counter.irq_pending,
             "writing $4017 with bit 6 clear must leave the frame IRQ flag set"
+        );
+    }
+}
+
+#[cfg(test)]
+mod sweep_lowpass_tests {
+    use super::*;
+
+    #[test]
+    fn sweep_overflow_does_not_corrupt_period() {
+        // Additive sweep whose target exceeds the 11-bit range (0x7FF):
+        // hardware mutes the channel but leaves the period register
+        // untouched. The old unchecked `+= delta` could wrap the u16.
+        let mut p = Pulse::new(SweepNegationType::OnesComplement);
+        p.timer_period = 0x7F0;
+        p.sweep.negate = false;
+        p.sweep.shift_count = 1; // delta = 0x7F0 >> 1 = 0x3F8
+        // target = 0x7F0 + 0x3F8 = 0xBE8 > 0x7FF -> must NOT be written.
+        p.set_timer_period_from_sweep();
+        assert_eq!(
+            p.timer_period, 0x7F0,
+            "period must be unchanged when the sweep target exceeds 0x7FF"
+        );
+
+        // shift_count == 0 never updates the period.
+        let before = p.timer_period;
+        p.sweep.shift_count = 0;
+        p.set_timer_period_from_sweep();
+        assert_eq!(
+            p.timer_period, before,
+            "shift_count 0 must never update the period"
+        );
+
+        // An in-range additive target IS written.
+        p.timer_period = 0x100;
+        p.sweep.shift_count = 2; // delta = 0x40, target = 0x140 <= 0x7FF
+        p.set_timer_period_from_sweep();
+        assert_eq!(
+            p.timer_period, 0x140,
+            "in-range additive sweep should update the period"
+        );
+    }
+
+    #[test]
+    fn low_pass_filter_converges_to_dc_input() {
+        // A one-pole low-pass fed a constant (DC/step) input must converge
+        // TOWARD the input. The buggy `(sample - last_out) * k` form is a
+        // high-pass: it settles at k/(1+k)*input (0.2 here), not 1.0.
+        let mut lp = LowPassFilter::new(0.25);
+        let mut y = 0.0;
+        for _ in 0..500 {
+            y = lp.step(1.0);
+        }
+        assert!(
+            (y - 1.0).abs() < 1e-3,
+            "low-pass should converge to the DC input 1.0, got {}",
+            y
+        );
+        // It must track toward the input, never away from it.
+        assert!(
+            y > 0.5,
+            "output must move toward the input, not away from it, got {}",
+            y
         );
     }
 }

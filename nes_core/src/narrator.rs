@@ -46,9 +46,13 @@ const SIGNAL_TO_EVENT: &[(&str, EventKind)] = &[
     ("dungeon_enter", EventKind::DungeonEnter),
     ("new_item", EventKind::NewItem),
     ("heart_container", EventKind::HeartContainer),
-    ("triforce_piece", EventKind::Triforce),
+    // ZeldaReward emits "triforce", "map", and "compass" (see
+    // rewards.rs) — the old "triforce_piece"/"map_compass" keys never
+    // matched, so those events could never fire.
+    ("triforce", EventKind::Triforce),
     ("key_collected", EventKind::Key),
-    ("map_compass", EventKind::MapCompass),
+    ("map", EventKind::MapCompass),
+    ("compass", EventKind::MapCompass),
     // Platformer level clear: the `completion` bonus fires once when the
     // agent touches the flagpole / beats the stage. Caption it live as a
     // Success ("CLEARS the stage!") — the most watchable stream moment.
@@ -199,6 +203,26 @@ impl Narrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zelda_reward_keys_map_to_events() {
+        // The breakdown keys ZeldaReward actually emits must resolve to
+        // their narrator events. Before the fix the table listened for
+        // "triforce_piece"/"map_compass", so none of these fired.
+        let mut n = Narrator::new(0.0);
+
+        let tri = n.observe(0, 0.0, &[("triforce", 0.0)], &[("triforce", 1.0)], false, false);
+        assert_eq!(tri.len(), 1);
+        assert_eq!(tri[0].kind, EventKind::Triforce);
+
+        let map = n.observe(1, 0.0, &[("map", 0.0)], &[("map", 1.0)], false, false);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map[0].kind, EventKind::MapCompass);
+
+        let compass = n.observe(2, 0.0, &[("compass", 0.0)], &[("compass", 1.0)], false, false);
+        assert_eq!(compass.len(), 1);
+        assert_eq!(compass[0].kind, EventKind::MapCompass);
+    }
 
     #[test]
     fn delta_increase_emits() {

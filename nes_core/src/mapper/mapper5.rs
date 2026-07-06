@@ -279,6 +279,27 @@ impl Mapper5 {
 }
 
 impl Mapper for Mapper5 {
+    fn prg_read_byte(&mut self, address: u16) -> u8 {
+        // $5204 has a read side effect: the CPU reads the scanline-IRQ
+        // status (bit 7 = IRQ pending, bit 6 = in-frame) and that read
+        // ACKNOWLEDGES the IRQ, clearing the pending flag. Without this
+        // the flag latches forever and, once the IRQ first fires, MMC5
+        // games (Castlevania III, …) storm the CPU and lock up. All
+        // other addresses have no side effect and defer to the peek.
+        if address == 0x5204 {
+            let mut v = 0;
+            if self.irq_pending {
+                v |= 0x80;
+            }
+            if self.in_frame {
+                v |= 0x40;
+            }
+            self.irq_pending = false;
+            return v;
+        }
+        self.prg_peek_byte(address)
+    }
+
     fn prg_peek_byte(&self, address: u16) -> u8 {
         match address {
             0x5C00..=0x5FFF => {
@@ -592,5 +613,61 @@ impl Mapper for Mapper5 {
             }
             _ => panic!("Invalid mapper state enum variant for MMC5"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_cartridge() -> Cartridge {
+        Cartridge {
+            mapper: 5,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: 2,
+            prg_rom: vec![0u8; 32 * 1024],
+            chr_num_banks: 1,
+            chr: vec![0u8; 8 * 1024],
+            prg_ram: Vec::new(),
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    #[test]
+    fn reading_5204_acknowledges_scanline_irq() {
+        let mut m = Mapper5::new(test_cartridge());
+        m.irq_pending = true;
+        m.in_frame = true;
+
+        // The read reports pending (bit 7) + in-frame (bit 6)...
+        let status = m.prg_read_byte(0x5204);
+        assert_eq!(status & 0x80, 0x80, "bit 7 must report pending IRQ");
+        assert_eq!(status & 0x40, 0x40, "bit 6 must report in-frame");
+
+        // ...and clears the pending flag as a read side effect so the
+        // IRQ line de-asserts (no storm).
+        assert!(
+            !m.irq_pending,
+            "reading $5204 must acknowledge (clear) the pending IRQ"
+        );
+        assert!(!m.irq_pending(), "irq line must de-assert after ack");
+
+        // A subsequent read no longer reports a pending IRQ.
+        let status2 = m.prg_read_byte(0x5204);
+        assert_eq!(status2 & 0x80, 0, "IRQ pending must stay cleared after ack");
+    }
+
+    #[test]
+    fn peek_5204_has_no_side_effect() {
+        // The immutable peek (used by inspectors) must NOT clear the flag.
+        let mut m = Mapper5::new(test_cartridge());
+        m.irq_pending = true;
+        let status = m.prg_peek_byte(0x5204);
+        assert_eq!(status & 0x80, 0x80);
+        assert!(m.irq_pending, "peek must be side-effect free");
     }
 }

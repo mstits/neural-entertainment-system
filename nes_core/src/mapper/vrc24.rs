@@ -138,6 +138,20 @@ impl Vrc24 {
         (self.cartridge.chr.len() / CHR_BANK).max(1)
     }
 
+    // Resolve the effective 1 KB CHR bank for a slot, honoring the
+    // VRC2a wiring quirk: on the VRC2a board (mapper 22) the low bit of
+    // each CHR select register is NOT connected to the cartridge, so
+    // software writes `bank * 2` and the hardware selects `value >> 1`.
+    // VRC2b / VRC4 (mappers 21/23/25) wire the low bit normally.
+    fn chr_bank_index(&self, slot: usize) -> usize {
+        let raw = self.chr_banks[slot] as usize;
+        let bank = match self.board {
+            VrcBoard::M22 => raw >> 1,
+            _ => raw,
+        };
+        bank % self.chr_bank_count()
+    }
+
     fn prg_offset_for(&self, bank: u8) -> usize {
         (bank as usize % self.prg_bank_count()) * PRG_BANK
     }
@@ -320,13 +334,13 @@ impl Mapper for Vrc24 {
 
     fn chr_read_byte(&mut self, address: u16) -> u8 {
         let slot = ((address >> 10) & 0x07) as usize;
-        let bank = self.chr_banks[slot] as usize % self.chr_bank_count();
+        let bank = self.chr_bank_index(slot);
         self.cartridge.chr[bank * CHR_BANK | (address as usize & 0x3FF)]
     }
 
     fn chr_write_byte(&mut self, address: u16, value: u8) {
         let slot = ((address >> 10) & 0x07) as usize;
-        let bank = self.chr_banks[slot] as usize % self.chr_bank_count();
+        let bank = self.chr_bank_index(slot);
         let off = bank * CHR_BANK | (address as usize & 0x3FF);
         if off < self.cartridge.chr.len() {
             self.cartridge.chr[off] = value;
@@ -492,3 +506,54 @@ forward_vrc!(Mapper21, VrcBoard::M21);
 forward_vrc!(Mapper22, VrcBoard::M22);
 forward_vrc!(Mapper23, VrcBoard::M23);
 forward_vrc!(Mapper25, VrcBoard::M25);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // CHR filled so that byte 0 of 1 KB bank `b` equals `b`, letting a
+    // read prove which physical bank a slot resolved to.
+    fn test_cartridge() -> Cartridge {
+        let mut chr = vec![0u8; 32 * CHR_BANK]; // 32 KB = 32 1 KB banks
+        for b in 0..32usize {
+            chr[b * CHR_BANK] = b as u8;
+        }
+        Cartridge {
+            mapper: 22,
+            sub_mapper: 0,
+            mirroring: Mirroring::Vertical,
+            default_mirroring: Mirroring::Vertical,
+            prg_rom_num_banks: 2,
+            prg_rom: vec![0u8; 32 * 1024],
+            chr_num_banks: 4,
+            chr,
+            prg_ram: Vec::new(),
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    #[test]
+    fn vrc2a_chr_bank_low_bit_ignored() {
+        // VRC2a (mapper 22): register holds bank*2, effective bank = value>>1.
+        let mut m = Vrc24::new(test_cartridge(), VrcBoard::M22);
+        m.chr_banks[0] = 6;
+        // Reading slot 0 ($0000-$03FF) must resolve to physical bank 3.
+        assert_eq!(m.chr_read_byte(0x0000), 3, "VRC2a must select value>>1");
+    }
+
+    #[test]
+    fn vrc2b_vrc4_chr_bank_unshifted() {
+        // Other boards wire the low bit normally: bank == raw register.
+        for board in [VrcBoard::M21, VrcBoard::M23, VrcBoard::M25] {
+            let mut m = Vrc24::new(test_cartridge(), board);
+            m.chr_banks[0] = 6;
+            assert_eq!(
+                m.chr_read_byte(0x0000),
+                6,
+                "non-VRC2a boards must not shift the CHR bank"
+            );
+        }
+    }
+}

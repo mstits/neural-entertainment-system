@@ -349,6 +349,7 @@ pub struct ZeldaReward {
     visited: HashSet<(u8, u8)>,
     dungeons_entered: HashSet<u8>,
     prev_hearts_byte: u8,
+    prev_partial_hearts: u8,
     prev_rupees: u8,
     prev_triforce: u8,
     prev_link_x: u8,
@@ -375,6 +376,10 @@ impl ZeldaReward {
     const RAM_MAP_X: usize = 0x00EB;
     const RAM_MAP_Y: usize = 0x00EC;
     const RAM_HEARTS: usize = 0x066F;
+    // Fill level of Link's current (topmost, partially-filled) heart.
+    // Nonzero means Link still has a fraction of a heart left even when
+    // the full-heart nibble of $066F already reads 0.
+    const RAM_PARTIAL_HEARTS: usize = 0x0670;
     const RAM_RUPEES: usize = 0x066D;
     const RAM_TRIFORCE: usize = 0x0671;
     const RAM_DUNGEON_LEVEL: usize = 0x10;
@@ -443,6 +448,7 @@ impl ZeldaReward {
             visited: HashSet::new(),
             dungeons_entered: HashSet::new(),
             prev_hearts_byte: 0,
+            prev_partial_hearts: 0,
             prev_rupees: 0,
             prev_triforce: 0,
             prev_link_x: 0,
@@ -468,6 +474,7 @@ impl ZeldaReward {
         self.visited.clear();
         self.dungeons_entered.clear();
         self.prev_hearts_byte = 0;
+        self.prev_partial_hearts = 0;
         self.prev_rupees = 0;
         self.prev_triforce = 0;
         self.prev_link_x = 0;
@@ -498,6 +505,7 @@ impl ZeldaReward {
     pub fn compute(&mut self, ram: &[u8], action: u8, want_breakdown: bool) -> RewardOutput {
         let map_cell = (ram[Self::RAM_MAP_X], ram[Self::RAM_MAP_Y]);
         let hearts_byte = ram[Self::RAM_HEARTS];
+        let partial_hearts = ram[Self::RAM_PARTIAL_HEARTS];
         let rupees = ram[Self::RAM_RUPEES];
         let triforce_bits = ram[Self::RAM_TRIFORCE];
         let link_x = ram[Self::RAM_LINK_X];
@@ -519,6 +527,7 @@ impl ZeldaReward {
 
         if self.first_step {
             self.prev_hearts_byte = hearts_byte;
+            self.prev_partial_hearts = partial_hearts;
             self.prev_rupees = rupees;
             self.prev_triforce = triforce_bits;
             self.prev_link_x = link_x;
@@ -613,11 +622,21 @@ impl ZeldaReward {
         }
         self.prev_hearts_byte = hearts_byte;
 
-        if curr_cur == 0 && prev_cur > 0 {
+        // Link is dead only when BOTH the full-heart nibble ($066F low
+        // nibble) AND the partial-heart byte ($0670) reach zero. A
+        // remaining half heart (partial_hearts != 0) means Link is still
+        // alive even though the full-heart nibble already reads 0, so it
+        // must not trigger the death penalty / episode end. The previous
+        // partial value is tracked so the *actual* death — which lands one
+        // or more steps after the full-heart nibble first hits 0 — is
+        // still detected (by then prev_cur is already 0).
+        let was_alive = prev_cur > 0 || self.prev_partial_hearts > 0;
+        if was_alive && curr_cur == 0 && partial_hearts == 0 {
             acc.add("death", self.death_penalty);
             self.died = true;
             done = true;
         }
+        self.prev_partial_hearts = partial_hearts;
 
         if !self.first_sword_awarded && sword != 0 {
             acc.add("first_sword", self.first_sword_bonus);
@@ -1098,6 +1117,26 @@ impl MarioReward {
         score
     }
 
+    /// Map the internal SMB area byte (`$0760`) to the displayed level
+    /// label (e.g. "1-2"). `$0760` is an internal area *index*, not a
+    /// 0-indexed level number: several area indices collapse onto a single
+    /// displayed level and the numbering is non-contiguous, so the naive
+    /// `area + 1` mislabels every level from the underground onward — the
+    /// underground lives at area byte 2, which `+1` wrongly reports as
+    /// "1-3". This mirrors the empirically-verified `AREA_TO_LEVEL` table
+    /// the Python trainer uses so Rust and Python telemetry agree.
+    fn level_label(world: u8, area: u8) -> String {
+        let world_num = world as u16 + 1;
+        match area {
+            0 => format!("{}-1", world_num),
+            1 => format!("{}-1->2", world_num),
+            2 => format!("{}-2", world_num),
+            5 => format!("{}-3", world_num),
+            6 => format!("{}-4", world_num),
+            other => format!("{}-area{}", world_num, other),
+        }
+    }
+
     pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
         let x = Self::read_x(ram);
         let score = Self::read_score(ram);
@@ -1290,7 +1329,7 @@ impl MarioReward {
 
         acc.add("time_penalty", self.time_penalty);
 
-        let level_id = format!("{}-{}", world as u16 + 1, level as u16 + 1);
+        let level_id = Self::level_label(world, level);
         RewardOutput {
             reward: acc.total,
             done,
@@ -2405,6 +2444,52 @@ mod tests {
         let o3 = r.compute(&ram, 0, false);
         assert!((o3.reward - 16.0).abs() < 1.0,
                 "should reward only NEW progress (=16), got {}", o3.reward);
+    }
+
+    #[test]
+    fn mario_level_id_maps_area_byte_to_displayed_level() {
+        // $0760 is an internal AREA index, not a 0-indexed level. The
+        // underground level sits at area byte 2 and must read "1-2"; the
+        // old `area + 1` reported it as "1-3", over-counting the
+        // curriculum by one level from the underground onward.
+        let weights: HashMap<String, f64> = HashMap::new();
+        let label_for = |area: u8| -> String {
+            let mut r = build_reward("mario", &weights).unwrap();
+            let mut ram = zram();
+            ram[0x075F] = 0; // world byte 0 -> "1-..."
+            ram[0x0760] = area; // internal area index
+            r.compute(&ram, 0, false).level_id
+        };
+        assert_eq!(label_for(0), "1-1");
+        assert_eq!(label_for(1), "1-1->2");
+        assert_eq!(label_for(2), "1-2");
+        assert_eq!(label_for(5), "1-3");
+        assert_eq!(label_for(6), "1-4");
+    }
+
+    #[test]
+    fn zelda_half_heart_is_not_death() {
+        // Full-heart nibble 0 with a nonzero partial-heart byte ($0670)
+        // means Link still has a sliver of health — not a death. Only when
+        // the partial byte also reaches 0 is Link actually dead.
+        let weights = HashMap::new();
+        let mut r = build_reward("zelda", &weights).unwrap();
+        let mut ram = zram();
+        // Anchor: 3 max containers, 1 full heart, no partial.
+        ram[0x066F] = 0x31; // high nibble = max = 3, low nibble = full = 1
+        ram[0x0670] = 0x00;
+        let _ = r.compute(&ram, 0, false);
+
+        // Lose the last full heart but keep half a heart -> still alive.
+        ram[0x066F] = 0x30; // full = 0
+        ram[0x0670] = 0x80; // half heart remaining
+        let o1 = r.compute(&ram, 0, false);
+        assert!(!o1.done, "half heart remaining must not be declared death");
+
+        // Lose the final half heart -> now dead.
+        ram[0x0670] = 0x00;
+        let o2 = r.compute(&ram, 0, false);
+        assert!(o2.done, "zero full and zero partial hearts must be death");
     }
 
     #[test]
