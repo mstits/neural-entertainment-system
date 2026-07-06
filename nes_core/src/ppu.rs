@@ -1097,7 +1097,24 @@ impl Ppu {
 
         let size = self.regs.ppu_ctrl.sprite_size();
 
-        let mut row = self.scanline - sprite.y as u16;
+        let height: u16 = match size {
+            SpriteSize::Size8x8 => 8,
+            SpriteSize::Size8x16 => 16,
+        };
+        // Guard the row: `self.scanline - sprite.y` underflows when
+        // scanline < sprite.y (e.g. the pre-render scanline with stale
+        // secondary OAM), and the flip subtraction below then produces a
+        // pattern address far outside CHR space that read_chr_byte would
+        // dereference unmasked via a raw pointer (out-of-bounds read). Real
+        // evaluated sprites always have row in [0, height), so this early
+        // return never fires for them — rendering stays byte-identical.
+        let mut row = match self.scanline.checked_sub(sprite.y as u16) {
+            Some(r) if r < height => r,
+            _ => {
+                self.sprite_attribute_latches[sprite_index] = SpriteAttributes(0xFF);
+                return;
+            }
+        };
         let pattern_addr = match size {
             SpriteSize::Size8x8 => {
                 if sprite.flip_vertically() {
@@ -1128,6 +1145,10 @@ impl Ppu {
                 table + (tile_index as u16) * 16 + row
             }
         };
+        // Defensive: constrain the fetch to CHR space ($0000-$1FFF) so a
+        // malformed address can never index past the cached CHR pointer. The
+        // row guard above keeps this in range for real sprites (no-op there).
+        let pattern_addr = pattern_addr & 0x1FFF;
 
         // Sprite pattern fetch is in CHR space; use cached pointer.
         let mut pattern_lo = self.read_chr_byte(mapper, pattern_addr);

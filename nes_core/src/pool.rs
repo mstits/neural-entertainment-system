@@ -864,8 +864,11 @@ impl Pool {
                             }
                             Vec::new()
                         } else {
-                            let mut rgb: Vec<u8> = Vec::with_capacity(FRAME_PIXELS * 3);
-                            unsafe { rgb.set_len(FRAME_PIXELS * 3); }
+                            // vec![0u8; N], not with_capacity + set_len: a
+                            // reference to uninitialized memory is UB even for
+                            // u8. xrgb_to_rgb fully overwrites it below, so the
+                            // zero-init is free in practice.
+                            let mut rgb: Vec<u8> = vec![0u8; FRAME_PIXELS * 3];
                             xrgb_to_rgb(video_buf, &mut rgb);
                             if f16_mode {
                                 let out_u16 = unsafe {
@@ -1392,8 +1395,9 @@ impl Pool {
                     // demote the worker so collect_results never
                     // propagates a panic to Python.
                     let res = catch_unwind(AssertUnwindSafe(|| {
-                        let mut rgb: Vec<u8> = Vec::with_capacity(FRAME_PIXELS * 3);
-                        unsafe { rgb.set_len(FRAME_PIXELS * 3); }
+                        // vec![0u8; N], not with_capacity + set_len (UB on the
+                        // uninitialized &mut slice); xrgb_to_rgb overwrites it.
+                        let mut rgb: Vec<u8> = vec![0u8; FRAME_PIXELS * 3];
                         xrgb_to_rgb(&w.video_buf, &mut rgb);
                         let mut preprocessed = vec![0u8; pp_byte_len];
                         let Worker { gray_scratch, nes, .. } = &mut *w;
