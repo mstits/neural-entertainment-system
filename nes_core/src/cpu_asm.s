@@ -174,7 +174,10 @@
 // gives A + ~M + C = A - M - (1-C) per 6502 SBC spec).
 //
 // Reads w20 (A) and w24 (P byte). Writes w20 + N/Z/V/C bits of w24.
-// Clobbers w2, w3, w4, w5, w6, w7, w10.
+// Clobbers w2, w3, w4, w5, w6, w10, w11. The V temp lives on w11 (NOT
+// w7) so the indexed ADC/SBC callers' page-cross flag in w7 survives the
+// macro — otherwise abs,X / abs,Y / (zp),Y charged the extra cycle on
+// signed overflow instead of a real page cross.
 // ============================================================================
 .macro ADC_CORE mop
     and     w2, w20, #0xFF              // A (clean 8-bit)
@@ -184,10 +187,10 @@
     lsr     w5, w4, #8
     and     w5, w5, #1                  // new C = bit 8
     eor     w6, w2, \mop                // A ^ M
-    eor     w7, w2, w4                  // A ^ result
-    bic     w7, w7, w6                  // (A ^ result) & ~(A ^ M)
-    tst     w7, #0x80
-    cset    w7, ne                      // V = 1 if bit 7 set
+    eor     w11, w2, w4                 // A ^ result  (V temp on w11, NOT w7)
+    bic     w11, w11, w6                // (A ^ result) & ~(A ^ M)
+    tst     w11, #0x80
+    cset    w11, ne                     // V = 1 if bit 7 set
     and     w20, w4, #0xFF              // A = result
     mov     w10, #0xC3                  // N|V|Z|C mask
     bic     w24, w24, w10
@@ -197,7 +200,7 @@
     cmp     w20, #0
     cset    w10, eq
     orr     w24, w24, w10, lsl #P_BIT_Z
-    orr     w24, w24, w7, lsl #P_BIT_V
+    orr     w24, w24, w11, lsl #P_BIT_V
     orr     w24, w24, w5, lsl #P_BIT_C
 .endm
 
