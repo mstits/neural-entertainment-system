@@ -1,0 +1,74 @@
+name: "Tetris"
+# TODO (user): supply your legally-owned dump as roms/Tetris (USA).nes, fill in
+# rom_hashes below (see `make setup-check`), and capture a LIVE gameplay start
+# state PAST the A-TYPE menu with a piece actively falling:
+#   python scripts/capture_start_state.py --game tetris
+# A title/menu start state ignores input -> zero learning signal.
+start_state_path: "roms/Tetris (USA)_start.state.bin"
+rom_hashes: []   # e.g. ["<md5 of your Tetris (USA) dump>"]
+
+# Puzzle, not frame-perfect, but horizontal placement needs tap granularity
+# (DAS auto-shifts after ~16 held frames). frame_skip 2 keeps taps precise.
+frame_skip: 2
+max_episode_steps: 4000     # good play survives long; top-out ends the episode
+
+description: >
+  Training profile for NES Tetris (Nintendo). Reward = big per-line-clear
+  bonus + score delta + optional board shaping (aggregate height / holes),
+  terminal top-out penalty. Success = clear line_goal lines or level up.
+
+# RAM (nes_core/src/rewards.rs TetrisReward). Score/lines are LITTLE-ENDIAN
+# packed BCD; game-over is $0058 != 0; board is $0400 (20x10, empty = 0xEF).
+# The EMPTY_CELL sentinel is only used by the opt-in board_shaping.
+ram_mapping:
+  score_start: 0x0053
+  score_end:   0x0055
+  lines:       0x0050
+  level:       0x0044
+  game_over:   0x0058
+  board_start: 0x0400
+  board_end:   0x04C7
+
+reward_weights:
+  line_clear_bonus: 100.0
+  score_delta:      0.1
+  top_out_penalty: -50.0
+  height_penalty:  -0.5
+  hole_penalty:    -2.0
+  survival_weight:  0.01
+  time_penalty:    -0.001
+  line_goal:        10
+  # board_shaping: the height/hole inductive bias that makes Tetris learnable.
+  # 1.0 = ON (recommended once the 0xEF empty-cell sentinel is verified);
+  # 0.0 = OFF (ablation, or if the sentinel is wrong on your dump).
+  board_shaping:    1.0
+
+action_space:
+  - []            # noop (let the piece fall)
+  - ["left"]
+  - ["right"]
+  - ["down"]      # soft drop
+  - ["A"]         # rotate clockwise
+  - ["B"]         # rotate counter-clockwise
+
+curriculum:
+  stage_1: ["*"]
+
+reinforce:
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn     # pixel CNN (a RAM board-tensor encoder is a follow-up)
+  device: mps
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.5   # sparse reward -> RND helps
+  rnd_loss_coef: 1.0

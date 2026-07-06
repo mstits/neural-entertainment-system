@@ -1,0 +1,69 @@
+name: "Bubble Bobble"
+# TODO (user): supply roms/Bubble Bobble (USA).nes, fill in rom_hashes (see
+# `make setup-check`), and capture a LIVE round-1 gameplay start state past the
+# title: python scripts/capture_start_state.py --game bubble_bobble
+# The pool passes ONE P1 controller bitmask per worker; 2P co-op is out of scope.
+start_state_path: "roms/Bubble Bobble (USA)_start.state.bin"
+rom_hashes: []   # e.g. ["<md5 of your Bubble Bobble (USA) dump>"]
+
+frame_skip: 4          # action platformer; same responsiveness class as Contra
+max_episode_steps: 2000
+
+description: >
+  Training profile for NES Bubble Bobble (single-screen clear-all-enemies
+  arcade). Reward = big round-clear bonus (= all enemies defeated -> $0401
+  increments) + score delta (per-enemy proxy) + optional enemy-count
+  shaping. Episode ends on first life loss. Success = round(s) cleared.
+
+# RAM (nes_core/src/rewards.rs BubbleBobbleReward). Round $0401 increments on a
+# screen clear; lives $002E; score $0445..$044A digit-per-byte. No enemy-count
+# or game-over byte is documented — enemy-count shaping stays disabled
+# (enemy_count_addr: 0) and the episode ends on first life loss.
+ram_mapping:
+  round:       0x0401
+  lives:       0x002E
+  score_start: 0x0445
+  score_end:   0x044A
+  # enemy_count: UNKNOWN — find via RAM-watch, then set enemy_count_addr below.
+
+reward_weights:
+  round_clear_bonus: 200.0
+  score_delta:       0.05
+  death_penalty:    -25.0
+  survival_weight:   0.01
+  time_penalty:     -0.002
+  round_goal:        1
+  enemy_defeat:      10.0
+  enemy_count_addr:  0        # 0 = DISABLED until a verified enemy-count addr
+
+action_space:
+  - []                 # noop
+  - ["left"]
+  - ["right"]
+  - ["A"]              # jump   (VERIFY A/B roles on your ROM — some ports swap)
+  - ["B"]              # blow / fire bubble
+  - ["left", "B"]
+  - ["right", "B"]
+  - ["A", "B"]         # jump + fire
+
+curriculum:
+  stage_1: ["*"]
+
+reinforce:
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: mps
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.5   # single-screen exploration -> RND helps
+  rnd_loss_coef: 1.0

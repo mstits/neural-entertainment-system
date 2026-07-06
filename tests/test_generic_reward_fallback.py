@@ -11,7 +11,8 @@ from src.utils.reward_functions import build_reward_function
 
 def test_unknown_game_builds_generic_reward() -> None:
     # Before the fallback fix this raised ValueError("no reward function ...").
-    rf = build_reward_function({"name": "bubble bobble", "reward_weights": {}})
+    # (galaga/pac-man have no bespoke reward -> generic fallback.)
+    rf = build_reward_function({"name": "galaga", "reward_weights": {}})
     assert rf is not None
     ram = bytes(2048)
     reward, done, level_id = rf.compute(ram, action=0)
@@ -19,11 +20,15 @@ def test_unknown_game_builds_generic_reward() -> None:
     assert isinstance(done, bool)
 
 
-def test_tetris_builds_generic_reward() -> None:
-    rf = build_reward_function({"name": "tetris", "reward_weights": {}})
-    ram = bytes(2048)
-    reward, done, level_id = rf.compute(ram, action=0)
-    assert isinstance(reward, float)
+def test_axis_free_games_build_bespoke_rewards() -> None:
+    # Tetris + Bubble Bobble now dispatch to their own axis-free rewards
+    # (with real win predicates), not the meaningless generic fallback.
+    for name in ("tetris", "bubble bobble"):
+        rf = build_reward_function({"name": name, "reward_weights": {}})
+        ram = bytes(2048)
+        reward, done, level_id = rf.compute(ram, action=0)
+        assert isinstance(reward, float)
+        assert isinstance(done, bool)
 
 
 def test_generic_reward_weights_are_configurable() -> None:

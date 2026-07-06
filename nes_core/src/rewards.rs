@@ -44,6 +44,8 @@ pub enum Reward {
     MegaMan(MegaManReward),
     Castlevania(CastlevaniaReward),
     Metroid(MetroidReward),
+    Tetris(TetrisReward),
+    BubbleBobble(BubbleBobbleReward),
     /// Fallback for any ROM without a hand-crafted reward function.
     /// Uses generic progress signals: RAM churn as motion proxy,
     /// survival-per-step, time penalty, and auto-detected score
@@ -63,6 +65,8 @@ impl Reward {
             Reward::MegaMan(r) => r.reset(),
             Reward::Castlevania(r) => r.reset(),
             Reward::Metroid(r) => r.reset(),
+            Reward::Tetris(r) => r.reset(),
+            Reward::BubbleBobble(r) => r.reset(),
             Reward::Generic(r) => r.reset(),
         }
     }
@@ -75,6 +79,8 @@ impl Reward {
             Reward::MegaMan(r) => r.compute(ram, action, want_breakdown),
             Reward::Castlevania(r) => r.compute(ram, action, want_breakdown),
             Reward::Metroid(r) => r.compute(ram, action, want_breakdown),
+            Reward::Tetris(r) => r.compute(ram, action, want_breakdown),
+            Reward::BubbleBobble(r) => r.compute(ram, action, want_breakdown),
             Reward::Generic(r) => r.compute(ram, action, want_breakdown),
         }
     }
@@ -87,6 +93,8 @@ impl Reward {
             Reward::MegaMan(r) => r.episode_success(),
             Reward::Castlevania(r) => r.episode_success(),
             Reward::Metroid(r) => r.episode_success(),
+            Reward::Tetris(r) => r.episode_success(),
+            Reward::BubbleBobble(r) => r.episode_success(),
             Reward::Generic(r) => r.episode_success(),
         }
     }
@@ -1976,6 +1984,364 @@ impl MetroidReward {
 // ============================================================
 
 /// Convenience: weight lookup with default fallback.
+// ============================================================
+// Tetris (NES, Nintendo) — puzzle, axis-free
+// ============================================================
+
+#[derive(Clone)]
+pub struct TetrisReward {
+    line_clear_bonus: f64,
+    score_weight: f64,
+    top_out_penalty: f64,
+    height_penalty: f64,
+    hole_penalty: f64,
+    survival_weight: f64,
+    time_penalty: f64,
+    line_goal: u32,
+    board_shaping: f64,
+    prev_lines: u32,
+    prev_score: u64,
+    start_level: u8,
+    prev_level: u8,
+    max_lines: u32,
+    prev_agg_height: i32,
+    prev_holes: i32,
+    goal_reached: bool,
+    topped_out: bool,
+    first_step: bool,
+}
+
+impl TetrisReward {
+    const RAM_SCORE: [usize; 3] = [0x0053, 0x0054, 0x0055];
+    const RAM_LINES: [usize; 2] = [0x0050, 0x0051];
+    const RAM_LEVEL: usize = 0x0044;
+    const RAM_GAME_OVER: usize = 0x0058;
+    const RAM_BOARD: usize = 0x0400;
+    const BOARD_ROWS: usize = 20;
+    const BOARD_COLS: usize = 10;
+    /// Empty-cell sentinel on the $0400 playfield. Widely cited as 0xEF;
+    /// VERIFY against a live RAM dump. Only used by the OPT-IN board
+    /// shaping (board_shaping != 0), so a wrong value cannot break the
+    /// core line/score/top-out signals.
+    const EMPTY_CELL: u8 = 0xEF;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        line_clear_bonus: f64,
+        score_weight: f64,
+        top_out_penalty: f64,
+        height_penalty: f64,
+        hole_penalty: f64,
+        survival_weight: f64,
+        time_penalty: f64,
+        line_goal: u32,
+        board_shaping: f64,
+    ) -> Self {
+        Self {
+            line_clear_bonus,
+            score_weight,
+            top_out_penalty,
+            height_penalty,
+            hole_penalty,
+            survival_weight,
+            time_penalty,
+            line_goal,
+            board_shaping,
+            prev_lines: 0,
+            prev_score: 0,
+            start_level: 0,
+            prev_level: 0,
+            max_lines: 0,
+            prev_agg_height: 0,
+            prev_holes: 0,
+            goal_reached: false,
+            topped_out: false,
+            first_step: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.prev_lines = 0;
+        self.prev_score = 0;
+        self.start_level = 0;
+        self.prev_level = 0;
+        self.max_lines = 0;
+        self.prev_agg_height = 0;
+        self.prev_holes = 0;
+        self.goal_reached = false;
+        self.topped_out = false;
+        self.first_step = true;
+    }
+
+    /// Little-endian packed BCD: addrs[0] is least significant, 2 BCD
+    /// digits/byte. NES Tetris score/lines use this — do NOT reuse
+    /// MarioReward's big-endian decode.
+    fn read_bcd(ram: &[u8], addrs: &[usize]) -> u64 {
+        let (mut val, mut mul) = (0u64, 1u64);
+        for &a in addrs {
+            let b = ram[a];
+            val += ((b & 0x0F) as u64 + (b >> 4) as u64 * 10) * mul;
+            mul *= 100;
+        }
+        val
+    }
+
+    /// Aggregate column height + buried holes (Dellacherie features).
+    fn board_potential(ram: &[u8]) -> (i32, i32) {
+        let (mut agg_h, mut holes) = (0i32, 0i32);
+        for c in 0..Self::BOARD_COLS {
+            let mut top: Option<usize> = None;
+            for r in 0..Self::BOARD_ROWS {
+                let filled = ram[Self::RAM_BOARD + r * Self::BOARD_COLS + c]
+                    != Self::EMPTY_CELL;
+                if filled && top.is_none() {
+                    top = Some(r);
+                }
+                if !filled && top.is_some() {
+                    holes += 1;
+                }
+            }
+            if let Some(t) = top {
+                agg_h += (Self::BOARD_ROWS - t) as i32;
+            }
+        }
+        (agg_h, holes)
+    }
+
+    pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
+        let lines = Self::read_bcd(ram, &Self::RAM_LINES) as u32;
+        let score = Self::read_bcd(ram, &Self::RAM_SCORE);
+        let level = ram[Self::RAM_LEVEL];
+        let game_over = ram[Self::RAM_GAME_OVER];
+
+        if self.first_step {
+            self.prev_lines = lines;
+            self.prev_score = score;
+            self.start_level = level;
+            self.prev_level = level;
+            self.max_lines = lines;
+            if self.board_shaping != 0.0 {
+                let (h, holes) = Self::board_potential(ram);
+                self.prev_agg_height = h;
+                self.prev_holes = holes;
+            }
+            self.first_step = false;
+        }
+
+        let mut acc = RewardAccum::new(want_breakdown);
+        let mut done = false;
+
+        // Line clear — the dominant signal.
+        let dl = lines.saturating_sub(self.prev_lines);
+        if dl > 0 {
+            acc.add("lines", self.line_clear_bonus * dl as f64);
+            self.max_lines = self.max_lines.max(lines);
+        }
+        self.prev_lines = lines;
+
+        // Score delta captures the multi-line (Tetris/40-100-300-1200 x
+        // level) premium on top of the flat per-line bonus.
+        acc.add(
+            "score",
+            self.score_weight * (score as i64 - self.prev_score as i64).max(0) as f64,
+        );
+        self.prev_score = score;
+
+        // Board shaping (opt-in via board_shaping != 0): penalize INCREASES
+        // only, so a line clear (which lowers the stack) never double-counts.
+        if self.board_shaping != 0.0 {
+            let (h, holes) = Self::board_potential(ram);
+            let dh = (h - self.prev_agg_height).max(0) as f64;
+            let dholes = (holes - self.prev_holes).max(0) as f64;
+            acc.add("height", self.board_shaping * self.height_penalty * dh);
+            acc.add("holes", self.board_shaping * self.hole_penalty * dholes);
+            self.prev_agg_height = h;
+            self.prev_holes = holes;
+        }
+
+        acc.add("survival", self.survival_weight);
+        acc.add("time_penalty", self.time_penalty);
+
+        // Success = reached the line goal OR leveled up (no "beat the game").
+        if self.max_lines >= self.line_goal || level > self.start_level {
+            self.goal_reached = true;
+        }
+        self.prev_level = level;
+
+        // Top-out ends the episode (one-shot penalty).
+        if !self.topped_out && game_over != 0 {
+            acc.add("top_out", self.top_out_penalty);
+            self.topped_out = true;
+            done = true;
+        }
+
+        RewardOutput {
+            reward: acc.total,
+            done,
+            level_id: format!("level_{:02}", level),
+            breakdown_delta: acc.breakdown,
+        }
+    }
+
+    pub fn episode_success(&self) -> bool {
+        self.goal_reached
+    }
+}
+
+// ============================================================
+// Bubble Bobble (NES) — single-screen clear-all-enemies arcade
+// ============================================================
+
+#[derive(Clone)]
+pub struct BubbleBobbleReward {
+    round_clear_bonus: f64,
+    score_weight: f64,
+    enemy_defeat_bonus: f64,
+    death_penalty: f64,
+    survival_weight: f64,
+    time_penalty: f64,
+    round_goal: u8,
+    /// 0 = DISABLED. The NES Bubble Bobble RAM map documents no enemy-count
+    /// byte, so per-enemy shaping is off until a verified address is set
+    /// (the core loop keys off round-increment = "all enemies defeated").
+    enemy_count_addr: usize,
+    prev_round: u8,
+    start_round: u8,
+    prev_lives: u8,
+    prev_score: u64,
+    prev_enemy_count: u8,
+    rounds_cleared: u32,
+    died: bool,
+    first_step: bool,
+}
+
+impl BubbleBobbleReward {
+    const RAM_ROUND: usize = 0x0401;
+    const RAM_LIVES: usize = 0x002E;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        round_clear_bonus: f64,
+        score_weight: f64,
+        enemy_defeat_bonus: f64,
+        death_penalty: f64,
+        survival_weight: f64,
+        time_penalty: f64,
+        round_goal: u8,
+        enemy_count_addr: usize,
+    ) -> Self {
+        Self {
+            round_clear_bonus,
+            score_weight,
+            enemy_defeat_bonus,
+            death_penalty,
+            survival_weight,
+            time_penalty,
+            round_goal,
+            enemy_count_addr,
+            prev_round: 0,
+            start_round: 0,
+            prev_lives: 0,
+            prev_score: 0,
+            prev_enemy_count: 0,
+            rounds_cleared: 0,
+            died: false,
+            first_step: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.prev_round = 0;
+        self.start_round = 0;
+        self.prev_lives = 0;
+        self.prev_score = 0;
+        self.prev_enemy_count = 0;
+        self.rounds_cleared = 0;
+        self.died = false;
+        self.first_step = true;
+    }
+
+    /// $0445 (millions) .. $044A (tens), digit-per-byte big-endian; returns
+    /// the true score / 10 (units are always 0). Monotonic — fine as a delta.
+    fn read_score(ram: &[u8]) -> u64 {
+        let mut s = 0u64;
+        for a in 0x0445..=0x044A {
+            s = s * 10 + ram[a] as u64;
+        }
+        s
+    }
+
+    pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
+        let round = ram[Self::RAM_ROUND];
+        let lives = ram[Self::RAM_LIVES];
+        let score = Self::read_score(ram);
+
+        if self.first_step {
+            self.prev_round = round;
+            self.start_round = round;
+            self.prev_lives = lives;
+            self.prev_score = score;
+            if self.enemy_count_addr != 0 {
+                self.prev_enemy_count = ram[self.enemy_count_addr];
+            }
+            self.first_step = false;
+        }
+
+        let mut acc = RewardAccum::new(want_breakdown);
+        let mut done = false;
+
+        // Round clear = all enemies defeated ($0401 increments on screen clear).
+        if round > self.prev_round {
+            let adv = (round - self.prev_round) as f64;
+            acc.add("round_clear", self.round_clear_bonus * adv);
+            self.rounds_cleared += (round - self.prev_round) as u32;
+        }
+        self.prev_round = round;
+
+        // Score delta — per-enemy-defeat + item proxy.
+        acc.add(
+            "score",
+            self.score_weight * (score as i64 - self.prev_score as i64).max(0) as f64,
+        );
+        self.prev_score = score;
+
+        // Optional enemy-defeat shaping (gated on a verified address).
+        if self.enemy_count_addr != 0 {
+            let c = ram[self.enemy_count_addr];
+            if c < self.prev_enemy_count {
+                acc.add(
+                    "enemy_defeat",
+                    self.enemy_defeat_bonus * (self.prev_enemy_count - c) as f64,
+                );
+            }
+            self.prev_enemy_count = c;
+        }
+
+        acc.add("survival", self.survival_weight);
+        acc.add("time_penalty", self.time_penalty);
+
+        // First life loss ends the episode (repo single-life convention; no
+        // dedicated game-over byte is documented for this ROM).
+        if !self.died && lives < self.prev_lives {
+            acc.add("death", self.death_penalty);
+            self.died = true;
+            done = true;
+        }
+        self.prev_lives = lives;
+
+        RewardOutput {
+            reward: acc.total,
+            done,
+            level_id: format!("round_{:02}", round),
+            breakdown_delta: acc.breakdown,
+        }
+    }
+
+    pub fn episode_success(&self) -> bool {
+        self.rounds_cleared >= self.round_goal as u32
+    }
+}
+
 fn w(weights: &HashMap<String, f64>, key: &str, default: f64) -> f64 {
     weights.get(key).copied().unwrap_or(default)
 }
@@ -2088,6 +2454,35 @@ pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward
             w(weights, "time_penalty", -0.002),
         )));
     }
+    if name.contains("tetris") {
+        return Some(Reward::Tetris(TetrisReward::new(
+            w(weights, "line_clear_bonus", 100.0),
+            w(weights, "score_delta", 0.1),
+            w(weights, "top_out_penalty", -50.0),
+            w(weights, "height_penalty", -0.5),
+            w(weights, "hole_penalty", -2.0),
+            w(weights, "survival_weight", 0.01),
+            w(weights, "time_penalty", -0.001),
+            w(weights, "line_goal", 10.0) as u32,
+            // Board shaping (aggregate height / holes) is opt-in like Mario's
+            // checkpoint_scale — 0.0 disables it (and its unverified
+            // EMPTY_CELL sentinel). Profiles set 1.0 to enable.
+            w(weights, "board_shaping", 0.0),
+        )));
+    }
+    if name.contains("bubble bobble") || name.contains("bubblebobble") {
+        return Some(Reward::BubbleBobble(BubbleBobbleReward::new(
+            w(weights, "round_clear_bonus", 200.0),
+            w(weights, "score_delta", 0.05),
+            w(weights, "enemy_defeat", 10.0),
+            w(weights, "death_penalty", -25.0),
+            w(weights, "survival_weight", 0.01),
+            w(weights, "time_penalty", -0.002),
+            w(weights, "round_goal", 1.0) as u8,
+            // 0 = enemy-count shaping DISABLED until a verified address exists.
+            w(weights, "enemy_count_addr", 0.0) as usize,
+        )));
+    }
     // Fallback for any ROM without a hand-authored reward. Uses generic,
     // axis-free progress signals (RAM-churn motion proxy, survival,
     // auto-detected monotonic score bytes, stuck detection) so a
@@ -2152,11 +2547,11 @@ mod tests {
         // A game with no hand-authored reward must still construct a
         // working reward (the generic fallback), not None.
         assert!(
-            matches!(build_reward("tetris", &weights), Some(Reward::Generic(_))),
+            matches!(build_reward("galaga", &weights), Some(Reward::Generic(_))),
             "unknown game must fall back to GenericReward"
         );
         assert!(
-            matches!(build_reward("bubble bobble", &weights), Some(Reward::Generic(_))),
+            matches!(build_reward("pac-man", &weights), Some(Reward::Generic(_))),
             "unknown game must fall back to GenericReward"
         );
         // Named games still dispatch to their specific reward.
@@ -2168,12 +2563,21 @@ mod tests {
             build_reward("contra", &weights),
             Some(Reward::Contra(_))
         ));
+        // Tetris + Bubble Bobble now have bespoke axis-free rewards.
+        assert!(matches!(
+            build_reward("tetris", &weights),
+            Some(Reward::Tetris(_))
+        ));
+        assert!(matches!(
+            build_reward("bubble bobble", &weights),
+            Some(Reward::BubbleBobble(_))
+        ));
     }
 
     #[test]
     fn generic_reward_computes_without_panicking_on_arbitrary_ram() {
         let weights = HashMap::new();
-        let mut r = build_reward("tetris", &weights).unwrap();
+        let mut r = build_reward("galaga", &weights).unwrap();
         let mut ram = zram();
         // A few steps with changing RAM must produce finite rewards.
         for i in 0..8u8 {
@@ -2181,6 +2585,94 @@ mod tests {
             let out = r.compute(&ram, 0, true);
             assert!(out.reward.is_finite());
         }
+    }
+
+    #[test]
+    fn tetris_line_clear_and_topout() {
+        let mut weights = HashMap::new();
+        weights.insert("board_shaping".to_string(), 0.0);
+        weights.insert("score_delta".to_string(), 0.0);
+        weights.insert("survival_weight".to_string(), 0.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        let mut r = build_reward("tetris", &weights).unwrap();
+        let mut ram = zram();
+        let _ = r.compute(&ram, 0, false); // first_step seed (lines=0)
+        ram[0x0050] = 0x01; // BCD 1 line cleared
+        let o1 = r.compute(&ram, 0, false);
+        assert!((o1.reward - 100.0).abs() < 1e-6); // line_clear_bonus
+        assert!(!r.episode_success());
+        ram[0x0058] = 0x01; // top-out flag set
+        let o2 = r.compute(&ram, 0, false);
+        assert!(o2.done && (o2.reward + 50.0).abs() < 1e-6); // -50 once
+        let o3 = r.compute(&ram, 0, false); // penalty must not re-fire
+        assert!(o3.reward.abs() < 1e-6);
+    }
+
+    #[test]
+    fn tetris_success_latches_at_line_goal() {
+        let mut weights = HashMap::new();
+        weights.insert("line_goal".to_string(), 3.0);
+        let mut r = build_reward("tetris", &weights).unwrap();
+        let mut ram = zram();
+        let _ = r.compute(&ram, 0, false);
+        ram[0x0050] = 0x03; // BCD 3 lines
+        let _ = r.compute(&ram, 0, false);
+        assert!(r.episode_success());
+    }
+
+    #[test]
+    fn tetris_holes_counted_under_surface() {
+        // Col 0: filled top cell, empty beneath = holes; EMPTY=0xEF.
+        let mut ram = zram();
+        for i in 0x0400..0x04C8 {
+            ram[i] = 0xEF;
+        }
+        ram[0x0400] = 0x7B; // col 0, row 0 filled
+        let (h, holes) = TetrisReward::board_potential(&ram);
+        assert_eq!(holes, 19); // rows 1..19 empty under the top
+        assert_eq!(h, 20); // column height = 20 - 0
+    }
+
+    #[test]
+    fn bubble_bobble_round_clear_and_death() {
+        let mut weights = HashMap::new();
+        weights.insert("score_delta".to_string(), 0.0);
+        weights.insert("survival_weight".to_string(), 0.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        let mut r = build_reward("bubble bobble", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0401] = 1; // round 1
+        ram[0x002E] = 3; // 3 lives
+        let _ = r.compute(&ram, 0, false); // seed
+        assert!(!r.episode_success());
+        ram[0x0401] = 2; // cleared round 1 -> round 2
+        let o1 = r.compute(&ram, 0, false);
+        assert!((o1.reward - 200.0).abs() < 1e-6);
+        assert!(r.episode_success()); // rounds_cleared >= round_goal(1)
+        ram[0x002E] = 2; // lost a life
+        let o2 = r.compute(&ram, 0, false);
+        assert!(o2.done && (o2.reward + 25.0).abs() < 1e-6);
+        let o3 = r.compute(&ram, 0, false); // death penalty must not re-fire
+        assert!(o3.reward.abs() < 1e-6);
+    }
+
+    #[test]
+    fn bubble_bobble_optional_enemy_shaping() {
+        let mut weights = HashMap::new();
+        weights.insert("enemy_count_addr".to_string(), 0x0300 as f64);
+        weights.insert("enemy_defeat".to_string(), 10.0);
+        weights.insert("score_delta".to_string(), 0.0);
+        weights.insert("survival_weight".to_string(), 0.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        let mut r = build_reward("bubble bobble", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0401] = 1;
+        ram[0x002E] = 3;
+        ram[0x0300] = 5; // 5 enemies
+        let _ = r.compute(&ram, 0, false);
+        ram[0x0300] = 3; // 2 defeated
+        let o = r.compute(&ram, 0, false);
+        assert!((o.reward - 20.0).abs() < 1e-6); // 2 * enemy_defeat
     }
 
     #[test]
