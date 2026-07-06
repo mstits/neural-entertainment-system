@@ -3866,6 +3866,10 @@ class Trainer:
                         # RND builds lazily on the first update (after this
                         # resume block); stash and apply at build time.
                         self._pending_rnd_state = state["rnd_state_dict"]
+                    if "anticollapse" in state:
+                        # Anti-collapse locals init after this block; stash
+                        # and restore them there.
+                        self._pending_anticollapse = state["anticollapse"]
                     log.info(
                         "[vanilla_ppo] RESUMED net + optimizer from %s "
                         "(saved at iter %d; continuing checkpoint "
@@ -3997,6 +4001,18 @@ class Trainer:
         best_net_snapshot: Optional[dict] = None
         best_snapshot_fitness = float("-inf")
         collapse_strikes = 0
+        # Restore the anti-collapse rollback baseline from a resumed
+        # checkpoint so a post-restart entropy melt can still be rolled
+        # back, instead of measuring collapse against -inf until a new
+        # healthy snapshot re-forms.
+        _ac = getattr(self, "_pending_anticollapse", None)
+        if _ac:
+            best_net_snapshot = _ac.get("best_net_snapshot") or None
+            best_snapshot_fitness = float(
+                _ac.get("best_snapshot_fitness", float("-inf"))
+            )
+            collapse_strikes = int(_ac.get("collapse_strikes", 0))
+            self._pending_anticollapse = None
         # Load any previously-saved curriculum states from disk so a
         # restart resumes the curriculum mid-game instead of starting
         # over from 1-1. Anchor byte is stored in a sidecar JSON so the
@@ -5158,6 +5174,16 @@ class Trainer:
                         _ckpt_payload["rnd_state_dict"] = {
                             k: v.detach().cpu()
                             for k, v in self._rnd.state_dict().items()
+                        }
+                    # Persist the anti-collapse rollback baseline (best-ever
+                    # healthy snapshot + its fitness + strike count) so a
+                    # resumed run keeps its collapse-recovery memory. The
+                    # snapshot is already cpu-cloned at capture time.
+                    if best_net_snapshot is not None:
+                        _ckpt_payload["anticollapse"] = {
+                            "best_net_snapshot": best_net_snapshot,
+                            "best_snapshot_fitness": float(best_snapshot_fitness),
+                            "collapse_strikes": int(collapse_strikes),
                         }
                     torch.save(_ckpt_payload, str(ckpt_path))
                     log.info("[vanilla_ppo] saved checkpoint: %s", ckpt_path)

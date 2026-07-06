@@ -1658,6 +1658,10 @@ pub struct CastlevaniaReward {
     prev_lives: u8,
     died: bool,
     first_step: bool,
+    /// Latched true only on the real game-completion event — killing the
+    /// final-block (Dracula) boss. episode_success reads this, so a
+    /// mid-game block clear no longer counts as "beat Castlevania".
+    completed: bool,
 }
 
 impl CastlevaniaReward {
@@ -1699,6 +1703,7 @@ impl CastlevaniaReward {
             prev_lives: 0,
             died: false,
             first_step: true,
+            completed: false,
         }
     }
     pub fn reset(&mut self) {
@@ -1712,6 +1717,7 @@ impl CastlevaniaReward {
         self.prev_lives = 0;
         self.died = false;
         self.first_step = true;
+        self.completed = false;
     }
 
     pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
@@ -1779,6 +1785,17 @@ impl CastlevaniaReward {
         }
         if boss == 0 && self.prev_boss > 0 {
             acc.add("boss_killed", self.boss_killed_bonus);
+            // Dracula is the final boss, in the last block (stage 18).
+            // Killing a boss on the final stage is the real
+            // game-completion event — latch it and end the episode. A
+            // boss-kill on any earlier block is only stage progress, NOT
+            // a game win. If the $0028 stage encoding differs, this simply
+            // never fires — strictly safer than the old predicate, which
+            // reported "beat Castlevania" on merely clearing block 1.
+            if stage >= 18 {
+                self.completed = true;
+                done = true;
+            }
         }
         self.prev_boss = boss;
 
@@ -1804,7 +1821,10 @@ impl CastlevaniaReward {
         }
     }
     pub fn episode_success(&self) -> bool {
-        self.prev_stage > 0 && !self.died
+        // Beating Castlevania = defeating Dracula (final-block boss),
+        // latched in compute() — not merely clearing a block or spawning
+        // past block 0 under a warm-start.
+        self.completed && !self.died
     }
 }
 
@@ -2089,6 +2109,41 @@ mod tests {
     use super::*;
     fn zram() -> Vec<u8> {
         vec![0u8; 2048]
+    }
+
+    #[test]
+    fn castlevania_win_only_on_final_block_boss() {
+        let weights = HashMap::new();
+        // A boss-kill on an EARLY block must NOT count as beating the game.
+        let mut r = build_reward("castlevania", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0044] = 16; // player health (alive)
+        ram[0x002A] = 3; // lives (alive)
+        ram[0x0028] = 1; // stage = block 1
+        ram[0x04A0] = 100; // boss health
+        r.compute(&ram, 0, false); // first step baselines prev_boss=100
+        ram[0x04A0] = 0; // block-1 boss killed
+        r.compute(&ram, 0, false);
+        assert!(
+            !r.episode_success(),
+            "clearing block 1 must NOT count as beating Castlevania"
+        );
+
+        // A boss-kill on the FINAL block (Dracula, stage 18) IS the win.
+        let mut r2 = build_reward("castlevania", &weights).unwrap();
+        let mut ram2 = zram();
+        ram2[0x0044] = 16;
+        ram2[0x002A] = 3;
+        ram2[0x0028] = 18; // final block
+        ram2[0x04A0] = 100;
+        r2.compute(&ram2, 0, false);
+        ram2[0x04A0] = 0; // Dracula killed
+        let out = r2.compute(&ram2, 0, false);
+        assert!(
+            r2.episode_success(),
+            "defeating Dracula on the final block must be a win"
+        );
+        assert!(out.done, "the game-completion event ends the episode");
     }
 
     #[test]
