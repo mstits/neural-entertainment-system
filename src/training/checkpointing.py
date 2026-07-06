@@ -19,12 +19,23 @@ that restarts the gen counter at 0 must not have its checkpoints
 pruned by older, higher-named cohorts (real data-loss case —
 tile-mode runs writing gen_00010 were being deleted because a
 pixel-era gen_01094 was alphabetically higher).
+
+Winner retention (the "watch it win" path): a curriculum run can
+self-collapse (greedy clear rate 0.88 -> 0.00), leaving only failing
+checkpoints under normal rotation. `save_winner` pins the best-ever
+policy into `winners/best.pt` (with a self-describing sidecar), and
+that subtree is deliberately excluded from rotation so a later
+collapse can never prune the one checkpoint that actually wins.
+`find_playable_checkpoint` prefers that winner, so demo/eval always
+play a real win rather than whatever the latest (possibly drifted)
+checkpoint happens to be.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import shutil
 from datetime import datetime
@@ -33,6 +44,13 @@ from typing import Any, Callable, Optional
 
 
 log = logging.getLogger(__name__)
+
+# Subdirectory (under a per-game checkpoint dir) that holds the
+# best-ever policy. Kept out of the gen_*.pt / vanilla_ppo_iter_*.pt
+# rotation namespace on purpose — see rotate_old_checkpoints.
+WINNERS_SUBDIR = "winners"
+_WINNER_FILENAME = "best.pt"
+_WINNER_META_FILENAME = "best.json"
 
 
 def save_checkpoint_atomic(
@@ -129,8 +147,15 @@ def rotate_old_checkpoints(checkpoint_dir: Path, keep_last: int) -> None:
     """
     if keep_last <= 0:
         return
+    # `winners/best.pt` is a retained best-ever policy — never a rotation
+    # candidate. The glob is non-recursive so it can't reach into
+    # winners/ today, but filter defensively so a future naming change
+    # can't accidentally prune the one checkpoint that wins.
     ckpts = sorted(
-        Path(checkpoint_dir).glob("gen_*.pt"),
+        (
+            p for p in Path(checkpoint_dir).glob("gen_*.pt")
+            if WINNERS_SUBDIR not in p.parts
+        ),
         key=lambda p: p.stat().st_mtime,
     )
     if len(ckpts) <= keep_last:
@@ -223,3 +248,273 @@ def archive_previous_run(
     except Exception as exc:
         log.warning("[archive] failed to archive previous run: %s", exc)
         return None
+
+
+# --------------------------------------------------------------------------- #
+# Winner retention + playable-checkpoint selection
+# --------------------------------------------------------------------------- #
+
+
+def _fsync_best_effort(path: Path) -> None:
+    """fsync a just-written file, swallowing filesystems that refuse."""
+    try:
+        fd = os.open(str(path), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
+def _git_sha() -> Optional[str]:
+    """Best-effort short git SHA of the working tree, or None.
+
+    Purely for self-describing winner sidecars ("which code produced this
+    win"). Never raises — a detached/absent git is fine.
+    """
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        sha = out.stdout.strip()
+        return sha or None
+    except Exception:
+        return None
+
+
+def winner_paths(out_dir: str | Path) -> tuple[Path, Path]:
+    """Return `(best.pt, best.json)` paths under `<out_dir>/winners/`.
+
+    Neither is guaranteed to exist — callers check. `out_dir` is a
+    per-game checkpoint directory (e.g. `checkpoints/super_mario_bros`).
+    """
+    wdir = Path(out_dir) / WINNERS_SUBDIR
+    return wdir / _WINNER_FILENAME, wdir / _WINNER_META_FILENAME
+
+
+def load_winner_meta(out_dir: str | Path) -> Optional[dict]:
+    """Return the retained winner's sidecar metadata dict, or None.
+
+    Returns None when no winner has been saved or the sidecar is
+    unreadable/corrupt (treated as "no recorded metric" so the next
+    save_winner overwrites rather than refusing forever).
+    """
+    _, meta_path = winner_paths(out_dir)
+    if not meta_path.exists():
+        return None
+    try:
+        return json.loads(meta_path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def save_winner(
+    net_state: dict,
+    game: str,
+    metric_value: float,
+    out_dir: str | Path,
+    *,
+    metric_name: str = "clear_rate",
+    source_iter: Optional[int] = None,
+) -> bool:
+    """Pin `net_state` as the game's best-ever policy — only if it wins by more.
+
+    Writes `<out_dir>/winners/best.pt` (a `{"net_state_dict": ...}` blob
+    that loads identically to a `vanilla_ppo_iter_*.pt` checkpoint) plus a
+    `best.json` sidecar (game, metric name+value, source iter, git SHA,
+    timestamp) — but ONLY when `metric_value` strictly beats the stored
+    best. This is what keeps the flagship "watch it win" path pointed at a
+    real win even after a curriculum run self-collapses.
+
+    Returns True if a new winner was written, False if the existing winner
+    was as-good-or-better (or `metric_value` is not a finite number — a NaN
+    from a degenerate eval must never dislodge a real win).
+
+    Excluded from rotation by construction: the file lives in `winners/`,
+    which `rotate_old_checkpoints` skips. Atomic tmp+fsync+rename for both
+    files so an interrupted save leaves the previous winner intact.
+    """
+    try:
+        metric_value = float(metric_value)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(metric_value):
+        return False
+
+    prev = load_winner_meta(out_dir)
+    if prev is not None:
+        try:
+            prev_val = float(prev.get("metric_value", float("-inf")))
+        except (TypeError, ValueError):
+            prev_val = float("-inf")  # corrupt value → allow overwrite
+        if prev_val >= metric_value:
+            return False
+
+    import torch
+
+    best_path, meta_path = winner_paths(out_dir)
+    best_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Detach + CPU so the winner is portable and never pins a device
+    # tensor (mirrors the trainer's own vanilla_ppo checkpoint format).
+    cpu_state = {
+        k: (v.detach().cpu() if hasattr(v, "detach") else v)
+        for k, v in net_state.items()
+    }
+    tmp_pt = best_path.with_suffix(best_path.suffix + ".tmp")
+    torch.save(
+        {
+            "net_state_dict": cpu_state,
+            "iter": source_iter,
+            "metric_name": metric_name,
+            "metric_value": metric_value,
+        },
+        str(tmp_pt),
+    )
+    _fsync_best_effort(tmp_pt)
+    os.replace(str(tmp_pt), str(best_path))
+
+    # Sidecar last: it is the source of truth for "what metric best.pt
+    # holds", so it must never claim a value the .pt doesn't back.
+    meta = {
+        "game": game,
+        "metric_name": metric_name,
+        "metric_value": metric_value,
+        "source_iter": source_iter,
+        "git_sha": _git_sha(),
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    tmp_json = meta_path.with_suffix(meta_path.suffix + ".tmp")
+    with open(tmp_json, "w") as f:
+        json.dump(meta, f, indent=2)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
+    os.replace(str(tmp_json), str(meta_path))
+
+    log.info(
+        "[winner] %s new best %s=%.4f (iter %s) -> %s",
+        game, metric_name, metric_value, source_iter, best_path,
+    )
+    return True
+
+
+def load_winner(game: str, out_dir: str | Path) -> Optional[dict]:
+    """Return the retained winner checkpoint blob, or None if absent/unreadable.
+
+    The blob is the same shape as a `vanilla_ppo_iter_*.pt` checkpoint
+    (`{"net_state_dict": ..., "iter": ..., "metric_value": ...}`), so a
+    caller loads its weights via `blob["net_state_dict"]`.
+    """
+    best_path, _ = winner_paths(out_dir)
+    if not best_path.exists():
+        return None
+    try:
+        import torch
+
+        return torch.load(str(best_path), map_location="cpu")
+    except Exception as exc:  # corrupt/partial file — don't crash the caller
+        log.warning("[winner] failed to load %s: %s", best_path, exc)
+        return None
+
+
+def _iter_num(p: Path) -> int:
+    """Trailing integer of a `*_NNNNN.pt` stem, or -1 if unparseable."""
+    try:
+        return int(p.stem.rsplit("_", 1)[-1])
+    except (ValueError, IndexError):
+        return -1
+
+
+def find_latest_trained_checkpoint(checkpoint_dir: str | Path) -> Optional[Path]:
+    """Newest trained-policy checkpoint in `checkpoint_dir`, or None.
+
+    Prefers the highest-numbered `vanilla_ppo_iter_*.pt` (the current
+    PPO/tile format), falling back to the newest `gen_*.pt` by mtime for
+    legacy GA runs. This is the "latest" that demo/eval mean when a user
+    passes `--latest` and the plain resume default.
+    """
+    d = Path(checkpoint_dir)
+    if not d.exists():
+        return None
+    vppo = sorted(d.glob("vanilla_ppo_iter_*.pt"), key=_iter_num)
+    if vppo:
+        return vppo[-1]
+    return find_latest_checkpoint(d)
+
+
+def _best_from_eval_log(checkpoint_dir: Path) -> Optional[Path]:
+    """Highest-clear_rate checkpoint recorded in `eval.jsonl`, or None.
+
+    Scans the per-game eval log for the row with the greatest `clear_rate`
+    whose `checkpoint` file still exists on disk (ties broken by newest
+    timestamp). Returns None when the log is missing, holds only error
+    rows, or nothing ever cleared (clear_rate 0.0) — in which case a stale
+    early iter is no more "playable" than the latest, so the caller should
+    fall through to the freshest checkpoint instead of pinning it.
+    """
+    log_path = Path(checkpoint_dir) / "eval.jsonl"
+    if not log_path.exists():
+        return None
+    best_ckpt: Optional[Path] = None
+    best_key: Optional[tuple[float, float]] = None
+    try:
+        for line in log_path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            cr, ckpt = row.get("clear_rate"), row.get("checkpoint")
+            if cr is None or ckpt is None:
+                continue
+            try:
+                cr = float(cr)
+            except (TypeError, ValueError):
+                continue
+            p = Path(ckpt)
+            if not p.exists():
+                continue
+            key = (cr, float(row.get("timestamp", 0.0) or 0.0))
+            if best_key is None or key > best_key:
+                best_key, best_ckpt = key, p
+    except OSError:
+        return None
+    if best_ckpt is not None and best_key is not None and best_key[0] > 0.0:
+        return best_ckpt
+    return None
+
+
+def find_playable_checkpoint(
+    game: str, checkpoint_dir: str | Path
+) -> Optional[Path]:
+    """Pick the checkpoint most likely to actually WIN, for demo/eval.
+
+    Preference order:
+      1. `winners/best.pt` — the retained best-ever policy (never rotated).
+      2. The highest-`clear_rate` checkpoint from `eval.jsonl` history
+         (only when something actually cleared).
+      3. The latest trained checkpoint (freshest weights).
+
+    Returns None only when the directory holds no usable checkpoint at all.
+    `game` is accepted for symmetry/logging with the rest of the winner
+    API; selection is driven entirely by `checkpoint_dir`.
+    """
+    d = Path(checkpoint_dir)
+    best_path, _ = winner_paths(d)
+    if best_path.exists():
+        return best_path
+    from_eval = _best_from_eval_log(d)
+    if from_eval is not None:
+        return from_eval
+    return find_latest_trained_checkpoint(d)

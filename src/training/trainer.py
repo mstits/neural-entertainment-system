@@ -59,6 +59,7 @@ from src.training.checkpointing import (
     maybe_export_elite_to_coreml,
     rotate_old_checkpoints,
     save_checkpoint_atomic,
+    save_winner,
 )
 from src.training.curriculum import CurriculumManager, CurriculumStage
 from src.training.gae import gae as _gae
@@ -5162,6 +5163,23 @@ class Trainer:
                     log.info("[vanilla_ppo] saved checkpoint: %s", ckpt_path)
                 except Exception as exc:
                     log.warning("[vanilla_ppo] checkpoint save failed: %s", exc)
+
+                # Retain the best-ever policy by clear rate under winners/
+                # (excluded from rotation). This is what keeps `make demo`/
+                # `make eval` pointed at a real win even if the curriculum
+                # run later self-collapses. save_winner only overwrites when
+                # this iter's clear rate strictly beats the stored best.
+                try:
+                    save_winner(
+                        {k: v.detach().cpu() for k, v in net.state_dict().items()},
+                        game=str(self.game_profile.get("name", "game")),
+                        metric_value=float(vppo_success_rate),
+                        out_dir=self.checkpoint_dir,
+                        metric_name="clear_rate",
+                        source_iter=global_it,
+                    )
+                except Exception as exc:
+                    log.warning("[vanilla_ppo] winner retention failed: %s", exc)
 
     def _save_checkpoint(self, gen: int, keep_last: int = 5) -> None:
         path = self.checkpoint_dir / f"gen_{gen:05d}.pt"

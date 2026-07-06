@@ -52,16 +52,84 @@ BUCKET_CEILING = {
 }
 
 
+# Exact command that regenerates + refreshes the committed baseline.
+# Surfaced verbatim in every loud-failure message below so a developer
+# who hits an absent/empty net can fix it without hunting for the recipe.
+REGEN_CMD = "python scripts/parity_sweep.py --frames 120 --out parity_sweep.json"
+
+
 def _load_sweep() -> list[dict]:
-    return json.loads(SWEEP_PATH.read_text())
+    """Parse the committed sweep baseline. Never raises: any problem
+    (missing file, blank file, malformed JSON, non-list payload) yields
+    an empty list so pytest collection can't crash. The loud-failure
+    guard `test_parity_sweep_baseline_present` turns an empty result
+    into a clear, actionable test failure instead of a silent inert net."""
+    try:
+        data = json.loads(SWEEP_PATH.read_text())
+    except (OSError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
 
 
 # Filter to ROMs that have a real diff number (i.e. nes-py could test them).
-_ALL = _load_sweep() if SWEEP_PATH.exists() else []
+_ALL = _load_sweep()
 COMPARABLE = [
     r for r in _ALL
-    if r.get("bucket") in BUCKET_CEILING and "diff" in r
+    if isinstance(r, dict) and r.get("bucket") in BUCKET_CEILING and "diff" in r
 ]
+
+
+@pytest.mark.parity
+def test_parity_sweep_baseline_present() -> None:
+    """The library-wide 794-ROM regression net is only REAL if its
+    baseline (`parity_sweep.json`) is committed and populated.
+
+    Without it, the parametrized bucket test below collects an EMPTY
+    parameter set — pytest silently skips it and the suite goes green
+    while covering zero ROMs. That inert net is worse than no net: it
+    reads as protection that isn't there. This guard converts every
+    way the baseline can be missing or useless into a loud, actionable
+    failure carrying the exact regeneration command."""
+    if not SWEEP_PATH.exists():
+        # Absent baseline is the EXPECTED state on a fresh clone: the sweep
+        # is derived from the user's local ROM library (never shipped), so
+        # it cannot be committed. Skip LOUDLY (visible with `-rs`) rather
+        # than fail — a red `make test` on every clone is its own defect —
+        # but make the inactive net impossible to miss. A baseline that is
+        # PRESENT-but-broken still fails below (that is a real regression).
+        pytest.skip(
+            f"parity library net INACTIVE: {SWEEP_PATH} not present. It is "
+            f"derived from your local ROM library and cannot ship, so this is "
+            f"expected on a fresh clone. Activate the library-wide regression "
+            f"net (recommended once your ROMs are in place):\n    {REGEN_CMD}"
+        )
+    raw = SWEEP_PATH.read_text().strip()
+    if not raw:
+        pytest.fail(
+            f"parity baseline EMPTY: {SWEEP_PATH} is a blank / zero-byte "
+            f"file, so the net covers ZERO ROMs. Regenerate + commit it:\n"
+            f"    {REGEN_CMD}"
+        )
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        pytest.fail(
+            f"parity baseline UNPARSEABLE: {SWEEP_PATH} is not valid JSON "
+            f"({exc}). Regenerate + commit it:\n    {REGEN_CMD}"
+        )
+    if not isinstance(data, list) or not data:
+        pytest.fail(
+            f"parity baseline has NO ENTRIES: {SWEEP_PATH} parsed to an "
+            f"empty or non-list sweep, so the net covers ZERO ROMs. "
+            f"Regenerate + commit it:\n    {REGEN_CMD}"
+        )
+    if not COMPARABLE:
+        pytest.fail(
+            f"parity baseline has {len(data)} rows but NONE are comparable "
+            f"(each needs a 'bucket' in {sorted(BUCKET_CEILING)} and a "
+            f"'diff' field). The bucket regression test would cover zero "
+            f"ROMs. Regenerate + commit it:\n    {REGEN_CMD}"
+        )
 
 
 @pytest.fixture(autouse=True)

@@ -1,6 +1,6 @@
 .PHONY: help test smoke parity bench bench-hot bench-scaling bench-phases bench-all \
         build build-pgo build-pgo-apply selftest clean train eval scoreboard \
-        test-fast selftest-learning demo gui
+        test-fast selftest-learning demo gui setup-check setup-game
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -11,6 +11,9 @@ help:
 	@echo "    make build-pgo-apply   - reapply cached PGO profile (~15 s; use after small nes_core edits)"
 	@echo ""
 	@echo "  Train (Phase 0 onward — see docs/proposals/unified_learning_thesis.md):"
+	@echo "    make setup-check       - verify venv + nes_core + torch MPS, and list which"
+	@echo "                             per-game ROMs are present with their exact filenames"
+	@echo "    make setup-game GAME=x - validate/hash a game's ROM and capture its start-state"
 	@echo "    make train GAME=mario  - headless training for the named game (mario, contra,"
 	@echo "                             megaman, castlevania, zelda, metroid)"
 	@echo "                             Per-game checkpoints land in checkpoints/<game_slug>/"
@@ -41,6 +44,12 @@ help:
 # Default game arg for `make train` / `make eval`. Override:
 #   make train GAME=zelda
 GAME ?= mario
+
+setup-check:
+	. .venv/bin/activate && python scripts/train_game.py --setup-check
+
+setup-game:
+	. .venv/bin/activate && python scripts/train_game.py --setup-game --game $(GAME)
 
 train:
 	. .venv/bin/activate && python scripts/train_game.py --game $(GAME)

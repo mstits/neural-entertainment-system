@@ -1,11 +1,11 @@
 """Per-run reproducibility manifest.
 
 Each training run writes a `run_manifest.json` into its checkpoint dir
-capturing exactly what's needed to reproduce it: ROM + start state,
-seed, the git commit of the code, and the load-bearing hyperparameters.
-Combined with the code at that commit and the metrics.jsonl the run
-emits, a result becomes reproducible and citable rather than "it worked
-on my machine that one time."
+capturing exactly what's needed to reproduce it: ROM + its MD5, start
+state, seed, the git commit of the code, and the load-bearing
+hyperparameters. Combined with the code at that commit and the
+metrics.jsonl the run emits, a result becomes reproducible and citable
+rather than "it worked on my machine that one time."
 
 Kept deliberately small — provenance + config only. The achieved
 results live in metrics.jsonl / eval.jsonl (the scoreboard joins them).
@@ -49,13 +49,22 @@ def write_run_manifest(
     profile: dict,
     num_envs: int,
     frame_skip: int,
+    rom_md5: Optional[str] = None,
     created_at: Optional[float] = None,
 ) -> Path:
-    """Write `<checkpoint_dir>/run_manifest.json` atomically; return its path."""
+    """Write `<checkpoint_dir>/run_manifest.json` atomically; return its path.
+
+    `seed` and `rom_md5` are the two provenance fields that make a run
+    reproducible: the seed pins every RNG, and the MD5 pins the exact ROM
+    dump (a re-dumped/patched ROM shifts RAM addresses and silently breaks
+    reward functions). Both are recorded verbatim; a caller that leaves
+    them as ``None`` records ``null`` (still a valid, if weaker, manifest).
+    """
     rl = profile.get("reinforce", {}) or {}
     manifest = {
         "game": game,
         "rom_path": str(rom_path),
+        "rom_md5": rom_md5,
         "start_state_path": str(start_state_path) if start_state_path else None,
         "seed": seed,
         "git_commit": _git_commit(),

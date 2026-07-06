@@ -1184,7 +1184,32 @@ impl Pool {
         // SAFETY: called sequentially from Python — never overlaps with
         // an in-flight step_all/reset_all rayon dispatch.
         let w = unsafe { worker_mut(&self.workers[worker_id]) };
-        w.nes.apply_state(&state);
+        // Guard apply_state: a bincode-valid but mapper-mismatched or
+        // invariant-violating state (e.g. a stale auto-curriculum snapshot
+        // after a profile swap) panics ("Invalid mapper state enum
+        // variant"). Without catch_unwind that panic crosses the PyO3
+        // boundary as an uncatchable PanicException and takes down the
+        // entire training run. Mirror load_start_state: return a catchable
+        // PyValueError so the trainer can degrade this worker to a cold
+        // boot instead of the whole overnight run dying.
+        let res = catch_unwind(AssertUnwindSafe(|| {
+            w.nes.apply_state(&state);
+        }));
+        if let Err(panic_payload) = res {
+            let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "load_worker_state: state is not compatible with the current \
+                 ROM's mapper — apply_state panicked: {msg}. This usually \
+                 means a stale/mismatched curriculum state; the trainer falls \
+                 back to a cold boot for this worker."
+            )));
+        }
         w.audio.clear();
         // CRITICAL: clear frame_cycle_target. Without this, the next
         // `advance_one_frame` computes `target = stale_value + 29781`
