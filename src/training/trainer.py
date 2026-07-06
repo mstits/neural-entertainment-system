@@ -4074,6 +4074,13 @@ class Trainer:
         value_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
         log_prob_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
         done_buf = np.zeros((rollout_steps, num_envs), dtype=np.bool_)
+        # Per-step validity mask: True only where an env actually executed
+        # that step (including its death step). Post-done frozen-padding
+        # slots stay False and are excluded from advantage normalization
+        # and the PPO update — otherwise, for non-curriculum games where
+        # envs freeze after the first death, a large fraction of the batch
+        # is spurious (advantage = -V(stale), value_target = 0) padding.
+        valid_buf = np.zeros((rollout_steps, num_envs), dtype=np.bool_)
         step_actions = np.zeros(self.pool.num_workers, dtype=np.uint8)
 
         # Per-env episode tracking (for metrics: mean episode reward / length).
@@ -4160,6 +4167,9 @@ class Trainer:
                 net.initial_hidden(num_envs, self.device)
                 if self._recurrent else None
             )
+            # Buffers are reused across iters; reset the validity mask so a
+            # slot is only counted valid if this iter's rollout wrote it.
+            valid_buf[:] = False
             with torch.no_grad():
                 for t in range(rollout_steps):
                     if not self._running:
@@ -4329,6 +4339,7 @@ class Trainer:
                             )
                         reward_buf[t, i] = reward
                         done_buf[t, i] = done
+                        valid_buf[t, i] = True  # real executed step (incl. death)
                         ep_returns[i] += reward
                         ep_lengths[i] += 1
                         # Detect a completion bonus firing on this step
@@ -4549,8 +4560,16 @@ class Trainer:
             # — preserves magnitude information between trajectories,
             # unlike per-trajectory z-scoring which would erase the
             # "this env had a high-return episode" signal.
-            adv_mean = float(advantages.mean())
-            adv_std = float(advantages.std()) + 1e-8
+            # Normalize over VALID steps only. Post-done frozen padding
+            # carries advantage = -V(stale); including it would skew the
+            # batch mean/std (and it is excluded from the minibatch below).
+            valid_flat = valid_buf.reshape(-1)
+            _valid_adv = advantages.reshape(-1)[valid_flat]
+            if _valid_adv.size > 1:
+                adv_mean = float(_valid_adv.mean())
+                adv_std = float(_valid_adv.std()) + 1e-8
+            else:
+                adv_mean, adv_std = 0.0, 1.0
             advantages_norm = (advantages - adv_mean) / adv_std
 
             # ============== K-EPOCH PPO UPDATE ==============
@@ -4561,6 +4580,8 @@ class Trainer:
             log_prob_old_flat = log_prob_buf.reshape(-1)
             adv_flat = advantages_norm.reshape(-1)
             target_flat = value_targets.reshape(-1)
+            # Only real (valid) steps are trained on — drop frozen padding.
+            valid_indices = np.where(valid_flat)[0]
 
             net.train()
             last_policy_loss = 0.0
@@ -4607,9 +4628,10 @@ class Trainer:
                     num_envs, rollout_steps,
                 )
             for epoch in range(0 if self._recurrent else self.reinforce_steps):
-                perm = np.random.permutation(total_n)
-                for mb_start in range(0, total_n, mb_size):
-                    mb_end = min(mb_start + mb_size, total_n)
+                perm = np.random.permutation(valid_indices)
+                n_valid = perm.shape[0]
+                for mb_start in range(0, n_valid, mb_size):
+                    mb_end = min(mb_start + mb_size, n_valid)
                     mb_np = perm[mb_start:mb_end]
                     if mb_np.size < 2:
                         continue

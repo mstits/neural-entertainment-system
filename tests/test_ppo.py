@@ -181,3 +181,29 @@ def test_ppo_losses_mse_vs_huber_differ_on_large_residual() -> None:
     assert float(vl_mse) > float(vl_huber)
     assert math.isclose(float(vl_mse), 100.0, rel_tol=1e-5)      # 10^2
     assert math.isclose(float(vl_huber), 9.5, rel_tol=1e-5)      # |10| - 0.5
+
+
+def test_frozen_padding_step_gets_negative_value_advantage() -> None:
+    """A post-done frozen-padding step (reward 0, done True, stale value)
+    gets advantage = -V(stale) and value_target 0 from batched_gae. This
+    is exactly why the vanilla_ppo update must exclude such steps via the
+    validity mask — otherwise they inject spurious gradient and skew the
+    advantage normalization for games whose envs freeze after death."""
+    import numpy as np
+    from src.training.ppo import batched_gae
+
+    T, N = 3, 1
+    reward = np.zeros((T, N), dtype=np.float32)
+    reward[0, 0] = 1.0                       # real step earns reward
+    # step 0 real, step 1 death (real terminal), step 2 frozen padding.
+    value = np.array([[0.5], [0.6], [0.7]], dtype=np.float32)
+    done = np.array([[False], [True], [True]], dtype=np.bool_)
+    final_values = np.zeros(N, dtype=np.float32)
+
+    adv, tgt = batched_gae(
+        reward, value, done, final_values, gamma=0.99, gae_lambda=0.95
+    )
+    # Frozen padding step t=2: reward 0, done -> not_done 0 -> advantage
+    # = 0 - V(stale) = -0.7, value_target = advantage + V = 0.
+    assert np.isclose(adv[2, 0], -0.7, atol=1e-6)
+    assert np.isclose(tgt[2, 0], 0.0, atol=1e-6)
