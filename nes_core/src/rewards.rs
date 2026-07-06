@@ -2029,7 +2029,20 @@ pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward
             w(weights, "time_penalty", -0.002),
         )));
     }
-    None
+    // Fallback for any ROM without a hand-authored reward. Uses generic,
+    // axis-free progress signals (RAM-churn motion proxy, survival,
+    // auto-detected monotonic score bytes, stuck detection) so a
+    // brand-new game — Tetris, Bubble Bobble, anything in the library —
+    // constructs a working reward instead of returning None (which the
+    // Python layer turned into a hard ValueError at trainer build).
+    Some(Reward::Generic(GenericReward::new(
+        w(weights, "motion_weight", 0.01),
+        w(weights, "survival_weight", 0.01),
+        w(weights, "time_penalty", -0.001),
+        w(weights, "score_weight", 0.1),
+        w(weights, "stuck_steps", 240.0) as usize,
+        w(weights, "warmup_steps", 60.0) as usize,
+    )))
 }
 
 #[cfg(test)]
@@ -2037,6 +2050,43 @@ mod tests {
     use super::*;
     fn zram() -> Vec<u8> {
         vec![0u8; 2048]
+    }
+
+    #[test]
+    fn build_reward_falls_back_to_generic_for_unknown_game() {
+        let weights = HashMap::new();
+        // A game with no hand-authored reward must still construct a
+        // working reward (the generic fallback), not None.
+        assert!(
+            matches!(build_reward("tetris", &weights), Some(Reward::Generic(_))),
+            "unknown game must fall back to GenericReward"
+        );
+        assert!(
+            matches!(build_reward("bubble bobble", &weights), Some(Reward::Generic(_))),
+            "unknown game must fall back to GenericReward"
+        );
+        // Named games still dispatch to their specific reward.
+        assert!(matches!(
+            build_reward("super mario bros", &weights),
+            Some(Reward::Mario(_))
+        ));
+        assert!(matches!(
+            build_reward("contra", &weights),
+            Some(Reward::Contra(_))
+        ));
+    }
+
+    #[test]
+    fn generic_reward_computes_without_panicking_on_arbitrary_ram() {
+        let weights = HashMap::new();
+        let mut r = build_reward("tetris", &weights).unwrap();
+        let mut ram = zram();
+        // A few steps with changing RAM must produce finite rewards.
+        for i in 0..8u8 {
+            ram[0x0040] = i.wrapping_mul(17);
+            let out = r.compute(&ram, 0, true);
+            assert!(out.reward.is_finite());
+        }
     }
 
     #[test]

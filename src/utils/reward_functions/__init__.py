@@ -14,8 +14,10 @@ Parity verified via `scripts/test_rewards_parity.py` on 500-step random-
 RAM sequences per game. The Rust hot path is ~8.6x faster than the
 Python it replaced.
 
-Games currently supported: Zelda, Mario, Contra, Mega Man, Castlevania,
-Metroid (substring match on `profile["name"]`).
+Games with hand-authored rewards: Zelda, Mario, Contra, Mega Man,
+Castlevania, Metroid (substring match on `profile["name"]`). Any other
+game falls back to a generic axis-free reward (RAM-churn motion,
+survival, auto-detected score bytes) so it can train out of the box.
 """
 
 from __future__ import annotations
@@ -40,9 +42,9 @@ __all__ = ["RewardFunction", "build_reward_function"]
 
 def build_reward_function(game_profile: dict) -> RewardFunction:
     """Factory — maps profile["name"] (case-insensitive substring) to
-    a concrete `nes_core.RewardFunction`. Raises `ImportError` if the
-    Rust wheel isn't available, `ValueError` if the game isn't one
-    of the supported ones."""
+    a concrete `nes_core.RewardFunction`, falling back to the generic
+    reward for any game without a hand-authored one. Raises `ImportError`
+    if the Rust wheel isn't available."""
     import nes_core
 
     return nes_core.build_reward_function(game_profile)
