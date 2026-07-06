@@ -121,14 +121,24 @@ class TileRND(nn.Module):
         return norm.clamp(-self.obs_clip, self.obs_clip)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        """Returns per-sample squared MSE, normalized by the running
-        std of the bonus. Shape `(B,)`."""
+        """Returns the **raw** per-sample squared MSE, shape `(B,)`.
+
+        Mirrors `RND.forward`: the bonus normalization is applied
+        separately via `normalize_bonus()` so `update_normalization()`
+        receives the raw error rather than a self-referential
+        `err / std`.
+        """
         normalized = self._normalize_obs(obs)
         with torch.no_grad():
             target_feat = self.target(normalized)
         pred_feat = self.predictor(normalized)
-        per_sample_err = ((pred_feat - target_feat) ** 2).mean(dim=-1)
-        return per_sample_err / self.reward_rms.std.detach()
+        return ((pred_feat - target_feat) ** 2).mean(dim=-1)
+
+    def normalize_bonus(self, per_sample_err: torch.Tensor) -> torch.Tensor:
+        """Scale a raw per-sample error into the intrinsic-reward bonus
+        by the running std of the bonus. Detached. Call BEFORE
+        `update_normalization()`."""
+        return (per_sample_err / self.reward_rms.std).detach()
 
     def update_normalization(
         self,
@@ -138,7 +148,8 @@ class TileRND(nn.Module):
         """Push the latest batch into the running-stats buffers.
 
         `obs` shape: `(N, feature_dim)` — flatten any leading time/batch
-        dims before calling. `intrinsic_err` shape: `(N,)`.
+        dims before calling. `intrinsic_err` shape: `(N,)` — the **raw**
+        per-sample error from `forward()`, not the normalized bonus.
         """
         obs_flat = obs.reshape(-1, obs.shape[-1])
         self.obs_rms.update(obs_flat)

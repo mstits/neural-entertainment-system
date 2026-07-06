@@ -710,6 +710,11 @@ class Trainer:
         # Built lazily on first PPO step so the RND module lands on the
         # correct device once Trainer.run sets it up.
         self._rnd: Optional["RND"] = None
+        # RND state (predictor weights + obs/reward running stats) read
+        # from a resumed checkpoint. Applied at lazy-build time so resume
+        # keeps the "what have I already explored" novelty memory instead
+        # of re-rewarding every visited state as maximally novel.
+        self._pending_rnd_state: Optional[dict] = None
 
         # Persistent PPO network and optimizer to maintain Adam's momentum
         # state across generations. Recreating them every gen resets the
@@ -3432,6 +3437,7 @@ class Trainer:
                 self.rnd_intrinsic_coef,
                 self.rnd_loss_coef,
             )
+            self._apply_pending_rnd_state()
 
         if self._ppo_optimizer is None:
             self._ppo_optimizer = self._build_ppo_optimizer(net)
@@ -3539,18 +3545,22 @@ class Trainer:
                 rnd_loss_term = None
                 rnd_intrinsic_t = None
                 if self._rnd is not None:
-                    rnd_per_sample = self._rnd(states_t)  # (T,) normalized
-                    # Update obs + reward running stats with the latest
-                    # batch BEFORE detaching, so subsequent batches see
-                    # an up-to-date normalization scale.
+                    rnd_per_sample = self._rnd(states_t)  # (T,) raw per-sample MSE
+                    # Bonus = raw error / running std (detached). Compute
+                    # BEFORE update_normalization so the divisor reflects
+                    # prior batches, not the current one.
+                    rnd_intrinsic_t = (
+                        self._rnd.normalize_bonus(rnd_per_sample)
+                        * self.rnd_intrinsic_coef
+                    )
+                    # Feed the RAW error (not the normalized bonus) to the
+                    # running stats so reward_rms tracks the true error
+                    # scale instead of err/std (self-referential).
                     self._rnd.update_normalization(
                         states_t.detach(),
                         rnd_per_sample.detach(),
                     )
-                    rnd_intrinsic_t = (
-                        rnd_per_sample.detach() * self.rnd_intrinsic_coef
-                    )
-                    rnd_loss_term = rnd_per_sample.mean()
+                    rnd_loss_term = rnd_per_sample.mean()  # raw MSE — trains predictor
 
                 # GAE-λ over the critic's value baseline — see
                 # `src/training/gae.py` for the truncation-vs-natural-
@@ -3800,6 +3810,7 @@ class Trainer:
                 self._rnd.num_params, self.rnd_intrinsic_coef,
                 self.rnd_loss_coef,
             )
+            self._apply_pending_rnd_state()
         if self._ppo_optimizer is None:
             self._ppo_optimizer = self._build_ppo_optimizer(net)
         optimizer = self._ppo_optimizer
@@ -3838,6 +3849,10 @@ class Trainer:
                             "(continuing with fresh Adam state): %s", exc,
                         )
                     iter_offset = int(state.get("iter", 0) or 0)
+                    if "rnd_state_dict" in state:
+                        # RND builds lazily on the first update (after this
+                        # resume block); stash and apply at build time.
+                        self._pending_rnd_state = state["rnd_state_dict"]
                     log.info(
                         "[vanilla_ppo] RESUMED net + optimizer from %s "
                         "(saved at iter %d; continuing checkpoint "
@@ -4159,7 +4174,10 @@ class Trainer:
                         torch.from_numpy(obs_buf[t])
                         .to(self.device).float()
                     )
-                    if not self._is_tile_mode:
+                    # /255 only for uint8 pixel obs. With preprocess_f16 the
+                    # pool already delivers float16 in [0,1] (the GA path
+                    # gates the same way) — dividing again scales obs by 255x.
+                    if not self._is_tile_mode and not self.preprocess_f16:
                         batch_t = batch_t.div_(255.0)
 
                     # Single forward pass: actor + critic.
@@ -4369,6 +4387,14 @@ class Trainer:
                                         i, current_stage_state_inline,
                                     )
                                     reward_fns[i].reset()
+                                    # reset() zeroes the cumulative
+                                    # `completion` breakdown, so re-arm the
+                                    # clear detector too — otherwise the
+                                    # stale (higher) prev value makes every
+                                    # post-reset clear fail the diff at
+                                    # ~4333 and success_rate under-reports
+                                    # by up to ~5-6x at curriculum stage>=1.
+                                    prev_completion_total[i] = 0.0
                                     # Re-seed the stacker from the
                                     # canonical stage-start observation
                                     # captured at the iter-boundary
@@ -4463,7 +4489,7 @@ class Trainer:
                     torch.from_numpy(final_batch_np)
                     .to(self.device).float()
                 )
-                if not self._is_tile_mode:
+                if not self._is_tile_mode and not self.preprocess_f16:
                     final_batch_t = final_batch_t.div_(255.0)
                 if self._recurrent:
                     _, final_values, _ = net.forward_ac_recurrent(
@@ -4488,12 +4514,15 @@ class Trainer:
                             obs_buf.reshape((rollout_steps * num_envs,) + obs_shape)
                         ).to(self.device).float()
                     )
-                    if not self._is_tile_mode:
+                    if not self._is_tile_mode and not self.preprocess_f16:
                         rnd_obs_t = rnd_obs_t.div_(255.0)
-                    intrinsic_t = self._rnd(rnd_obs_t)
-                    self._rnd.update_normalization(rnd_obs_t, intrinsic_t)
+                    intrinsic_raw = self._rnd(rnd_obs_t)  # raw per-sample MSE
+                    bonus_t = self._rnd.normalize_bonus(intrinsic_raw)
+                    # Update running stats with the RAW error, not the
+                    # normalized bonus (avoids the reward_rms self-loop).
+                    self._rnd.update_normalization(rnd_obs_t, intrinsic_raw)
                     intrinsic_np = (
-                        intrinsic_t.cpu().numpy().astype(np.float32)
+                        bonus_t.cpu().numpy().astype(np.float32)
                         * self.rnd_intrinsic_coef
                     ).reshape(rollout_steps, num_envs)
                 rnd_intrinsic_mean = float(intrinsic_np.mean())
@@ -4582,7 +4611,11 @@ class Trainer:
                     else:
                         states_t = torch.from_numpy(
                             np.ascontiguousarray(obs_flat[mb_np])
-                        ).to(self.device).float().div_(255.0)
+                        ).to(self.device).float()
+                        # Pixel path: /255 only when the pool delivered
+                        # uint8; preprocess_f16 obs are already [0,1].
+                        if not self.preprocess_f16:
+                            states_t = states_t.div_(255.0)
                     actions_t = actions_all[mb_idx]
                     log_probs_old_t = log_probs_old_all[mb_idx]
                     adv_t = adv_all[mb_idx]
@@ -5058,14 +5091,23 @@ class Trainer:
                     / f"vanilla_ppo_iter_{global_it:05d}.pt"
                 )
                 try:
-                    torch.save({
+                    _ckpt_payload = {
                         "iter": global_it,
                         "net_state_dict": {
                             k: v.detach().cpu()
                             for k, v in net.state_dict().items()
                         },
                         "optimizer_state_dict": optimizer.state_dict(),
-                    }, str(ckpt_path))
+                    }
+                    # Persist RND (predictor weights + obs/reward running
+                    # stats) so resume keeps the novelty memory instead of
+                    # re-rewarding every already-explored state.
+                    if self._rnd is not None:
+                        _ckpt_payload["rnd_state_dict"] = {
+                            k: v.detach().cpu()
+                            for k, v in self._rnd.state_dict().items()
+                        }
+                    torch.save(_ckpt_payload, str(ckpt_path))
                     log.info("[vanilla_ppo] saved checkpoint: %s", ckpt_path)
                 except Exception as exc:
                     log.warning("[vanilla_ppo] checkpoint save failed: %s", exc)
@@ -5110,6 +5152,25 @@ class Trainer:
 
     def _emit_metrics(self, **metrics) -> None:
         self._metrics_sink.emit(**metrics)
+
+    def _apply_pending_rnd_state(self) -> None:
+        """Load RND state stashed from a resumed checkpoint into the
+        freshly-built module. RND builds lazily on the first update —
+        after resume runs — so the state can't be applied at load time.
+        No-op when nothing is pending. Called right after each lazy build."""
+        if self._pending_rnd_state is None or self._rnd is None:
+            return
+        try:
+            self._rnd.load_state_dict(self._pending_rnd_state, strict=False)
+            log.info(
+                "[vanilla_ppo] restored RND state (predictor + normalization) "
+                "from checkpoint — novelty memory preserved across resume"
+            )
+        except Exception as exc:
+            log.warning(
+                "[vanilla_ppo] RND state restore failed (fresh init): %s", exc
+            )
+        self._pending_rnd_state = None
 
     def _build_ppo_optimizer(self, net) -> "torch.optim.Optimizer":
         """Build the PPO Adam over the policy net + (when RND is enabled)

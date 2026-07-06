@@ -160,23 +160,32 @@ class RND(nn.Module):
         return norm.clamp(-self.obs_clip, self.obs_clip)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        """Returns the **normalized** per-sample MSE, shape `(B,)`.
+        """Returns the **raw** per-sample MSE, shape `(B,)`.
 
-        Normalization order: obs is normalized before going into both
-        target and predictor. The raw squared error is then divided by
-        the running std of the bonus so its scale stays stable as the
-        predictor improves. Both running stats can be updated by the
-        caller via `update_normalization()`.
+        obs is normalized (running mean/std, clipped) before going into
+        both target and predictor; the returned value is the raw squared
+        prediction error. The caller reduces it with `.mean()` for the
+        predictor loss and passes it to `normalize_bonus()` for the
+        intrinsic-reward signal. Keeping the bonus normalization OUT of
+        forward() is deliberate: `update_normalization()` must be fed the
+        raw error, otherwise `reward_rms` would track `err / std` — a
+        self-referential loop that mis-scales the bonus.
         """
         normalized = self._normalize_obs(obs)
         with torch.no_grad():
             target_feat = self.target(normalized)
         pred_feat = self.predictor(normalized)
-        per_sample_err = ((pred_feat - target_feat) ** 2).mean(dim=-1)
-        # Divide by reward running std so the bonus's scale doesn't
-        # collapse to zero as the predictor gets better. Detach the
-        # divisor — it's a stat, not a gradient path.
-        return per_sample_err / self.reward_rms.std.detach()
+        return ((pred_feat - target_feat) ** 2).mean(dim=-1)
+
+    def normalize_bonus(self, per_sample_err: torch.Tensor) -> torch.Tensor:
+        """Scale a raw per-sample error into the intrinsic-reward bonus.
+
+        Divides by the running std of the bonus so its scale stays
+        stable as the predictor improves. Detached — this is reward, not
+        a gradient path. Call BEFORE `update_normalization()` so the
+        divisor reflects prior batches, not the current one.
+        """
+        return (per_sample_err / self.reward_rms.std).detach()
 
     def update_normalization(
         self,
@@ -186,8 +195,9 @@ class RND(nn.Module):
         """Update running stats with the latest batch.
 
         Trainer should call this once per gradient step with the
-        unnormalized obs and the per-sample error returned from
-        `forward()`. Cheap (Welford increment); no perf concern.
+        unnormalized obs and the **raw** per-sample error returned from
+        `forward()` (not the normalized bonus). Cheap (Welford
+        increment); no perf concern.
         """
         # Flatten the leading time/batch dims so RunningMeanStd sees
         # `(N, *obs_shape)`.

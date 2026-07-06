@@ -505,7 +505,12 @@ impl Apu {
         self.frame_counter.divider_count = FrameCounter::DIVIDER_COUNT_RELOAD_VALUE;
 
         self.frame_counter.interrupt_inhibit_flag = value & 0x40 != 0;
-        self.frame_counter.irq_pending = false;
+        // Hardware clears the frame-interrupt flag only when the
+        // inhibit bit (bit 6) is set; a write with bit 6 clear leaves
+        // a pending frame IRQ asserted.
+        if self.frame_counter.interrupt_inhibit_flag {
+            self.frame_counter.irq_pending = false;
+        }
 
         if self.frame_counter.mode == FrameCounterMode::FiveStep {
             self.step_length_counter();
@@ -528,8 +533,12 @@ impl Default for Apu {
 impl Memory for Apu {
     fn read_byte(&mut self, address: u16) -> u8 {
         if address == 0x4015 {
+            // Build the status byte FIRST (bit 6 reflects the pending
+            // frame IRQ), then clear the frame IRQ flag as the read
+            // side effect. Clearing before reading made bit 6 read 0.
+            let status = self.read_status();
             self.frame_counter.irq_pending = false;
-            self.read_status()
+            status
         } else {
             0
         }
@@ -1193,5 +1202,67 @@ impl Filter for HighPassFilter {
         self.last_in = sample;
 
         self.last_out
+    }
+}
+
+#[cfg(test)]
+mod frame_irq_tests {
+    use super::*;
+
+    // Reading $4015 must report the frame-interrupt flag (bit 6) that
+    // was asserted BEFORE the read, then clear it as the documented
+    // read side effect. Previously the flag was cleared before the
+    // status byte was built, so bit 6 could never read as 1.
+    #[test]
+    fn read_4015_reports_frame_irq_then_clears_it() {
+        let mut apu = Apu::new();
+        apu.frame_counter.irq_pending = true;
+
+        let first = apu.read_byte(0x4015);
+        assert_eq!(first & 0x40, 0x40, "bit 6 must reflect the pending frame IRQ on read");
+        assert!(
+            !apu.frame_counter.irq_pending,
+            "reading $4015 clears the frame IRQ flag"
+        );
+
+        let second = apu.read_byte(0x4015);
+        assert_eq!(second & 0x40, 0x00, "flag stays clear on the next read");
+    }
+
+    // Reading $4015 clears the frame IRQ but must NOT clear the DMC
+    // interrupt flag (bit 7) — only a $4015 write does that.
+    #[test]
+    fn read_4015_preserves_dmc_irq() {
+        let mut apu = Apu::new();
+        apu.dmc.irq_pending = true;
+
+        let status = apu.read_byte(0x4015);
+        assert_eq!(status & 0x80, 0x80, "bit 7 reflects the DMC IRQ");
+        assert!(
+            apu.dmc.irq_pending,
+            "reading $4015 must not clear the DMC IRQ flag"
+        );
+    }
+
+    // Writing $4017 clears the frame-interrupt flag only when the
+    // interrupt-inhibit bit (bit 6) is set; with bit 6 clear the flag
+    // is left untouched.
+    #[test]
+    fn write_4017_clears_frame_irq_only_when_inhibit_set() {
+        let mut apu = Apu::new();
+
+        apu.frame_counter.irq_pending = true;
+        apu.write_byte(0x4017, 0x40);
+        assert!(
+            !apu.frame_counter.irq_pending,
+            "writing $4017 with bit 6 set clears the frame IRQ"
+        );
+
+        apu.frame_counter.irq_pending = true;
+        apu.write_byte(0x4017, 0x00);
+        assert!(
+            apu.frame_counter.irq_pending,
+            "writing $4017 with bit 6 clear must leave the frame IRQ flag set"
+        );
     }
 }

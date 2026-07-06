@@ -60,6 +60,30 @@ def test_normalization_stabilizes_error_scale() -> None:
     assert all(0.0 <= v < 100.0 for v in errs)
 
 
+def test_forward_returns_raw_error_independent_of_reward_rms() -> None:
+    """forward() returns the RAW per-sample MSE; the bonus normalization
+    is a separate step. Baking it into forward() made reward_rms track
+    the already-normalized error (self-referential)."""
+    torch.manual_seed(0)
+    rnd = TileRND(feature_dim=175)
+    x = torch.randn(8, 175)
+    err_before = rnd(x)
+    rnd.reward_rms.var.fill_(100.0)  # std ≈ 10
+    err_after = rnd(x)
+    assert torch.allclose(err_before, err_after, atol=1e-5), (
+        "forward() must be independent of reward_rms — it returns the raw error"
+    )
+
+
+def test_normalize_bonus_divides_by_reward_std() -> None:
+    rnd = TileRND(feature_dim=175)
+    x = torch.randn(8, 175)
+    raw = rnd(x)
+    rnd.reward_rms.var.fill_(4.0)  # std ≈ 2
+    bonus = rnd.normalize_bonus(raw)
+    assert torch.allclose(bonus, raw.detach() / rnd.reward_rms.std, atol=1e-5)
+
+
 def test_state_dict_roundtrip() -> None:
     rnd = TileRND(feature_dim=175)
     x = torch.randn(4, 175)
