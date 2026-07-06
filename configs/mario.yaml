@@ -79,6 +79,9 @@ action_space:
 # and PPO actually steers the policy.
 reinforce:
   enabled: true
+  # Legacy GA recipe — pinned explicitly so the vanilla_ppo default flip
+  # does not change this configuration.
+  trainer_mode: ga_ppo
   symlog_rewards: true
   # async_pipeline DISABLED — the 1-step obs lag breaks SMB
   # frame-perfect jumps. See mario_tiles.yaml for the empirical

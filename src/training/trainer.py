@@ -628,7 +628,7 @@ class Trainer:
         # and `preserve_elite_diversity: true` from YAML and silently
         # ignores both.
         _pure_ppo_active = (
-            str(rl_cfg.get("trainer_mode", "ga_ppo")).lower() == "pure_ppo"
+            str(rl_cfg.get("trainer_mode", "vanilla_ppo")).lower() == "pure_ppo"
         )
         if _pure_ppo_active:
             if rl_cfg.get("freeze_pre_ppo_elite") is True:
@@ -658,9 +658,21 @@ class Trainer:
         # vanilla PPO is what actually converges on SMB 1-1 in the
         # published recipes. This mode reuses the same parallel-env
         # pool but as N rollout collectors for a single policy.
-        self.vanilla_ppo_mode: bool = (
-            str(rl_cfg.get("trainer_mode", "ga_ppo")).lower() == "vanilla_ppo"
-        )
+        # Default to vanilla_ppo — the supported, documented path that
+        # actually converges. The legacy GA hybrid (ga_ppo / pure_ppo) is
+        # now opt-in per profile and warned about loudly below, so
+        # `make train GAME=<x>` never silently runs the plateaued path
+        # (the two intentional GA recipes, mario_tiles + mario, pin
+        # trainer_mode: ga_ppo explicitly).
+        _trainer_mode = str(rl_cfg.get("trainer_mode", "vanilla_ppo")).lower()
+        self.vanilla_ppo_mode: bool = (_trainer_mode == "vanilla_ppo")
+        if _trainer_mode in ("ga_ppo", "pure_ppo"):
+            log.warning(
+                "trainer_mode=%s is the LEGACY GA path (plateaus on most "
+                "games); the supported path is trainer_mode=vanilla_ppo. "
+                "Set it explicitly in the game profile to silence this.",
+                _trainer_mode,
+            )
         # Rollout length per PPO iteration (per env). 512 × 30 envs =
         # 15,360 timesteps per update — comparable to OpenAI baselines'
         # default n_steps=128 × num_envs=8 = 1024 but scaled to our
@@ -822,7 +834,7 @@ class Trainer:
             # `reinforce.trainer_mode` so it's set at the same scope
             # as the rest of the PPO knobs (encoder, frame_stack, etc.).
             pure_ppo_mode=(
-                str(rl_cfg.get("trainer_mode", "ga_ppo")).lower() == "pure_ppo"
+                str(rl_cfg.get("trainer_mode", "vanilla_ppo")).lower() == "pure_ppo"
             ),
             # Thread the trainer-level seed into the GA so tournament
             # selection, mutation noise, and crossover masks are

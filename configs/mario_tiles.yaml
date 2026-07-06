@@ -239,6 +239,9 @@ action_space:
 #   * warmup is shorter (10 gens) — small population converges fast
 reinforce:
   enabled: true
+  # Legacy GA recipe (elite-diversity MarI/O path) — pinned explicitly so
+  # the vanilla_ppo default flip does not change this proven configuration.
+  trainer_mode: ga_ppo
   encoder: smb_tiles
   preserve_elite_diversity: true
   # Snapshot best's pre-PPO weights and inject into the population
