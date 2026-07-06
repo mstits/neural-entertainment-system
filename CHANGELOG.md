@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 In this changelog, **NES** refers to this project (Neural Entertainment
 System). The original Nintendo Entertainment System hardware is named in full.
 
+## [Unreleased]
+
+Onboarding + documentation-accuracy pass. Makes the "clone → install → train a
+game → reproduce a win" story correct for a first-time user. No runtime code
+changes in this pass — README and changelog only.
+
+### Changed
+
+- **README rewritten for a new user.** Adds a crisp "What this is", a
+  requirements section, and an end-to-end **Train a game** walkthrough
+  (`roms/` → `scripts/capture_start_state.py` → `make train GAME=<name>` →
+  `make eval GAME=<name>` → `make scoreboard`, plus the GUI for watching live),
+  using only commands that exist in the `Makefile` and `scripts/`.
+- **Relabelled the default trainer as `vanilla_ppo`** throughout the README and
+  architecture diagram; the GA-based modes (`ga_ppo`, `pure_ppo`) are now
+  described as legacy, matching what `scripts/train_game.py` actually launches.
+- **Replaced the contradictory SMB status** with a single honest "What actually
+  works today" section: world-1 training produces greedy clears of 1-1/1-2/1-3
+  via the save-state curriculum; 1-4 and full autonomous 8-4 remain unsolved;
+  Contra learns but does not yet clear; the other games are scaffolded. Notes
+  that no pre-trained checkpoints ship (they are gitignored).
+- Removed the fresh-clone install step that ran a smoke script hard-wired to a
+  gitignored ROM; the documented post-install check is now `make test`, which
+  needs no ROM.
+
 ## [0.2.0] — pre-release
 
 Major training-stack expansion. Three independent but complementary
