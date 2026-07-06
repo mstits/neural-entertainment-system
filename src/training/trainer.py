@@ -4568,6 +4568,15 @@ class Trainer:
             last_entropy = 0.0
             last_loss = 0.0
             last_rnd_loss = 0.0
+            # Hold the final minibatch's loss tensors and convert to Python
+            # floats ONCE after the update loop, instead of .item()-syncing
+            # the MPS stream on every minibatch (only the last is logged).
+            # Each .item() drains the GPU queue, serializing CPU-side
+            # minibatch prep against GPU compute — costliest for the tiny
+            # tile MLP. None-guarded so the recurrent path (which skips this
+            # loop and sets last_* itself) is unaffected.
+            _last_policy_t = _last_value_t = _last_entropy_t = None
+            _last_loss_t = _last_rnd_t = None
             mb_size = max(1, self.ppo_minibatch_size)
             # Build the full-rollout tensors ONCE per iter and index them
             # with a torch permutation inside the minibatch loop, instead
@@ -4641,7 +4650,7 @@ class Trainer:
                     if self._rnd is not None:
                         rnd_loss = self._rnd(states_t).mean()
                         loss = loss + self.rnd_loss_coef * rnd_loss
-                        last_rnd_loss = float(rnd_loss.detach().item())
+                        _last_rnd_t = rnd_loss.detach()
 
                     optimizer.zero_grad()
                     loss.backward()
@@ -4650,10 +4659,18 @@ class Trainer:
                     )
                     optimizer.step()
 
-                    last_policy_loss = float(policy_loss.detach().item())
-                    last_value_loss = float(value_loss.detach().item())
-                    last_entropy = float(entropy.detach().item())
-                    last_loss = float(loss.detach().item())
+                    _last_policy_t = policy_loss.detach()
+                    _last_value_t = value_loss.detach()
+                    _last_entropy_t = entropy.detach()
+                    _last_loss_t = loss.detach()
+            # Single MPS sync for the final minibatch's scalars.
+            if _last_policy_t is not None:
+                last_policy_loss = float(_last_policy_t.item())
+                last_value_loss = float(_last_value_t.item())
+                last_entropy = float(_last_entropy_t.item())
+                last_loss = float(_last_loss_t.item())
+            if _last_rnd_t is not None:
+                last_rnd_loss = float(_last_rnd_t.item())
             self._gen_timer.add("update", time.perf_counter_ns() - _upd_t0)
 
             # ============== LOGGING + METRICS ==============
