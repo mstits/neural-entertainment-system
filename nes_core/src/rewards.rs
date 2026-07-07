@@ -1166,6 +1166,7 @@ impl MarioReward {
         let mut done = false;
 
         if world != self.prev_world || level != self.prev_level {
+            let world_incremented = world > self.prev_world;
             self.prev_x = x;
             self.max_x_visited = x;
             // Reset checkpoint cursor on every level transition so the
@@ -1173,13 +1174,29 @@ impl MarioReward {
             // 1-2+ would never produce checkpoint signal because all
             // were "consumed" during 1-1.
             self.next_checkpoint = 0;
-            // Re-arm the completion bonus for the new level so the
-            // flag-touch at the end of 1-2, 1-3, ... each fires the
-            // +completion reward. Without this, only the very first
-            // level's clear would pay out. Paired with the dropping
-            // of `done = true` on completion below — the agent now
-            // plays continuously through multiple levels per episode.
-            self.completed = false;
+            if world_incremented {
+                // Castle-clear credit: a world-byte increment means Mario
+                // beat the world's castle (x-4). SMB castles end with the
+                // axe/Bowser walk, NOT a flagpole, so float_state never
+                // reaches 3 and the flagpole predicate below can never
+                // credit an x-4 clear. Fire the same completion bonus here
+                // and KEEP the latch set so episode_success credits beating
+                // the castle. Within-world level changes (x-1 -> x-2 ...)
+                // are unaffected — the working 1-1/1-2/1-3 recipe never
+                // increments the world byte. (F52.)
+                if !self.completed {
+                    acc.add("completion", self.completion_bonus);
+                }
+                self.completed = true;
+            } else {
+                // Re-arm the completion bonus for the new level so the
+                // flag-touch at the end of 1-2, 1-3, ... each fires the
+                // +completion reward. Without this, only the very first
+                // level's clear would pay out. Paired with the dropping
+                // of `done = true` on completion below — the agent now
+                // plays continuously through multiple levels per episode.
+                self.completed = false;
+            }
             self.prev_world = world;
             self.prev_level = level;
         }
@@ -2994,6 +3011,62 @@ mod tests {
         let o3 = r.compute(&ram, 0, false);
         assert!((o3.reward - 16.0).abs() < 1.0,
                 "should reward only NEW progress (=16), got {}", o3.reward);
+    }
+
+    #[test]
+    fn mario_castle_clear_credits_completion_on_world_increment() {
+        // F52: SMB castles (x-4) end with the axe/Bowser walk, not a
+        // flagpole, so float_state never reaches 3. Beating 1-4 increments
+        // the world byte ($075F); that transition must credit completion and
+        // count as success (the flagpole predicate alone never could).
+        let mut weights: HashMap<String, f64> = HashMap::new();
+        weights.insert("completion_bonus".to_string(), 1000.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        let mut r = build_reward("mario", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x075A] = 3; // lives (avoid the death path)
+        ram[0x075F] = 0; // world byte 0 => world 1
+        ram[0x0760] = 6; // area 6 => 1-4 castle
+        let _ = r.compute(&ram, 0, false); // first step seeds prev_world=0
+        assert!(!r.episode_success(), "castle not cleared yet");
+        // Beat the castle: world byte increments to 1 (world 2), area 0 (2-1).
+        ram[0x075F] = 1;
+        ram[0x0760] = 0;
+        let o = r.compute(&ram, 0, false);
+        assert!(
+            o.reward > 500.0,
+            "castle clear must fire the completion bonus, got {}",
+            o.reward
+        );
+        assert!(
+            r.episode_success(),
+            "beating a castle (world-byte increment) must count as success"
+        );
+    }
+
+    #[test]
+    fn mario_within_world_level_change_still_re_arms() {
+        // Guard the F52 change: a within-world level change (1-1 -> 1-2, world
+        // byte unchanged) must STILL re-arm completed=false so each flagpole
+        // clear re-fires — the working 1-1/1-2/1-3 recipe must be untouched.
+        let weights: HashMap<String, f64> = HashMap::new();
+        let mut r = build_reward("mario", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x075A] = 3;
+        ram[0x075F] = 0; // world 1 throughout
+        ram[0x0760] = 0; // 1-1
+        let _ = r.compute(&ram, 0, false);
+        ram[0x001D] = 3; // flagpole slide -> completion latches
+        let _ = r.compute(&ram, 0, false);
+        assert!(r.episode_success(), "flagpole clear latches success");
+        // Advance to 1-2 (area 2), world byte unchanged -> must re-arm.
+        ram[0x001D] = 0;
+        ram[0x0760] = 2;
+        let _ = r.compute(&ram, 0, false);
+        assert!(
+            !r.episode_success(),
+            "within-world level change must re-arm completed (not latch)"
+        );
     }
 
     #[test]
