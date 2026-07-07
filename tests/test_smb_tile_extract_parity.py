@@ -74,6 +74,34 @@ def test_mario_with_enemies(py_extractor: SMBTileObservation) -> None:
     assert np.array_equal(py_extractor.extract(ram), _rust_extract(ram))
 
 
+def test_left_of_world_origin_is_empty_not_phantom(
+    py_extractor: SMBTileObservation,
+) -> None:
+    """Cells left of world x=0 must be empty, not a phantom page-1 tile.
+
+    Audit F63: the validity mask checked world_px_y >= 0 but not
+    world_px_x >= 0, so for Mario near the left edge the floor-mod
+    (Python) / rem_euclid (Rust) wrapped a negative world_px_x into a
+    valid-looking page-1 sub-tile — reporting phantom terrain. We fill
+    page-1 tile RAM densely so any wrap would surface as solid, then
+    assert the leftmost grid column is empty.
+    """
+    ram = bytearray(2048)
+    ram[0x006D] = 0   # x_page = 0
+    ram[0x0086] = 8   # x_low = 8 -> mario_x_world = 8; left cells are < 0
+    ram[0x00CE] = 96  # y
+    for i in range(13 * 16):          # fill page-1 region densely
+        ram[0x0500 + 13 * 16 + i] = 0x42
+    ram = bytes(ram)
+    py = py_extractor.extract(ram)
+    rust = _rust_extract(ram)
+    assert np.array_equal(py, rust), "Rust/Python must still agree at the left edge"
+    grid = np.asarray(py[:169]).reshape(13, 13)
+    assert (grid[:, 0] == 0).all(), (
+        "leftmost column (world_px_x < 0) must be empty, not phantom page-1 solid"
+    )
+
+
 def test_mario_at_page_boundary(py_extractor: SMBTileObservation) -> None:
     """Mario at x=255 (last col of page 0) — grid wraps into page 1."""
     ram = bytearray(2048)

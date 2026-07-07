@@ -144,7 +144,8 @@ class SMBTileObservation:
         # Validity mask: a cell maps to a real tile-RAM byte only when
         # all of these hold (matches the original `_tile_at` branching).
         valid = (
-            (world_px_y >= 0)
+            (world_px_x >= 0)  # left of world origin: floor-mod would wrap
+            & (world_px_y >= 0)  # a negative x into a phantom page-1 tile
             & (sub_y >= 0) & (sub_y < 13)
             & (sub_x >= 0) & (sub_x < 16)
         )

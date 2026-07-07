@@ -94,8 +94,10 @@ pub fn extract(ram: &[u8]) -> [i8; FEATURE_DIM] {
         let world_px_x = mario_x_world + dx * TILE_SIZE;
         let world_px_y = mario_y_screen + dy * TILE_SIZE;
 
-        // Same validity logic as `_tile_at` in the Python version.
-        if world_px_y < 0 {
+        // Same validity logic as `_tile_at` in the Python version. Left of
+        // world origin (world_px_x < 0) must be invalid: rem_euclid below
+        // would otherwise wrap a negative x into a phantom page-1 tile.
+        if world_px_x < 0 || world_px_y < 0 {
             continue;
         }
         let sub_y = (world_px_y - 32).div_euclid(TILE_SIZE);
