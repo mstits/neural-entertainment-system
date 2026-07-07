@@ -5170,6 +5170,16 @@ class Trainer:
             # logic doesn't match the rust pool's auto-step semantics.
             init_results = self.pool.reset_all()
             self._emit_frame_sink(init_results)
+            # reset_all revives dead workers; a still-nonzero count means a
+            # worker keeps re-panicking (a bad ROM/state edge). Log it loudly
+            # so an overnight run never silently trains on a dead cohort.
+            _ndead = getattr(self.pool, "num_dead", 0)
+            if _ndead:
+                log.warning(
+                    "[vanilla_ppo] %d worker(s) failed to revive after reset "
+                    "— they emit zero-frames into PPO; check for a bad ROM/state.",
+                    _ndead,
+                )
             # SMB mixed-stage curriculum warm-start. Past stage 0, keep
             # a majority of envs (SMB_CURRENT_STAGE_FRAC) at the current
             # (hardest) stage for focused training, and spread the rest

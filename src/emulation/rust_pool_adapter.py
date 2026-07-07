@@ -65,6 +65,18 @@ class RustPool:
         self._inner = None
 
     @property
+    def num_dead(self) -> int:
+        """Workers currently marked dead (panicked, not yet revived).
+        reset_all revives them each iter, so a persistently-nonzero value
+        flags a worker that keeps re-panicking."""
+        if self._inner is None:
+            return 0
+        try:
+            return int(self._inner.num_dead)
+        except Exception:
+            return 0
+
+    @property
     def ga_worker_offset(self) -> int:
         return 0
 

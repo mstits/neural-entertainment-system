@@ -702,9 +702,14 @@ impl Pool {
             // a unique index; no two tasks touch the same worker cell.
             self.workers.par_iter().enumerate().for_each(|(idx, cell)| {
                 let w = unsafe { worker_mut(cell) };
-                if w.dead {
-                    return;
-                }
+                // A dead worker (panicked on a prior step/reset) gets a chance
+                // to REVIVE here: clearing the flag and resetting to the clean
+                // start state recovers from a transient / corrupt-state panic.
+                // If reset panics again it is re-marked dead below. Without
+                // this, a single edge-case panic left the env emitting
+                // zero-frames + done=false into PPO for the rest of the run,
+                // silently poisoning the policy on a permanently-dead cohort.
+                w.dead = false;
                 let res: Result<(), Box<dyn std::any::Any + Send>> = if panic_isolation {
                     catch_unwind(AssertUnwindSafe(|| w.reset()))
                 } else {
@@ -1234,6 +1239,22 @@ impl Pool {
     #[getter]
     fn num_workers(&self) -> usize {
         self.num_workers
+    }
+
+    /// Count of workers currently marked dead (panicked and not yet
+    /// revived). `reset_all` attempts to revive them each iteration, so a
+    /// persistently-nonzero value flags a worker that keeps re-panicking —
+    /// the trainer can log/act on it instead of training on a dead cohort.
+    #[getter]
+    fn num_dead(&self) -> usize {
+        let mut n = 0;
+        for cell in &self.workers {
+            // Sequential getter — never overlaps step_all/reset_all.
+            if unsafe { worker_mut(cell).dead } {
+                n += 1;
+            }
+        }
+        n
     }
 
     #[getter]
