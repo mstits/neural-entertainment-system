@@ -47,6 +47,36 @@ def test_checkpoint_round_trip(tmp_path: Path) -> None:
     assert torch.allclose(out_before, out_after)
 
 
+def test_load_rejects_arch_version_mismatch(tmp_path: Path) -> None:
+    """A checkpoint from an incompatible architecture must fail loud, not
+    silently load a mismatched net. (Audit F62.)"""
+    import pytest
+    net = PolicyNetwork(num_actions=7)
+    ckpt = tmp_path / "net.pt"
+    net.save(ckpt)
+    data = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+    data["arch_version"] = PolicyNetwork.ARCH_VERSION + 99
+    torch.save(data, str(ckpt))
+    with pytest.raises(ValueError, match="arch_version"):
+        PolicyNetwork.load(ckpt)
+
+
+def test_load_rejects_missing_parameters(tmp_path: Path) -> None:
+    """A checkpoint missing required params would load a partly-random net;
+    load() must refuse rather than return a broken policy. (Audit F62.)"""
+    import pytest
+    net = PolicyNetwork(num_actions=7)
+    ckpt = tmp_path / "net.pt"
+    net.save(ckpt)
+    data = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+    # Drop a parameter the architecture requires.
+    victim = next(k for k in data["state_dict"] if k.endswith("weight"))
+    del data["state_dict"][victim]
+    torch.save(data, str(ckpt))
+    with pytest.raises(ValueError, match="missing"):
+        PolicyNetwork.load(ckpt)
+
+
 def test_runs_on_mps_if_available() -> None:
     device = get_best_device()
     net = PolicyNetwork(num_actions=8).to(device)

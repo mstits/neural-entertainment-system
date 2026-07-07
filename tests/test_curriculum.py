@@ -114,3 +114,31 @@ def test_sample_biases_toward_harder_levels() -> None:
     for _ in range(500):
         counts[cm.sample_level()] += 1
     assert counts["1-2"] > counts["1-1"]
+
+
+def test_under_sampled_concrete_level_blocks_advance() -> None:
+    """A stage must not advance on a hard concrete level it has barely
+    sampled — under-sampled required levels count as 0.0, not skipped.
+    (Audit F19.)"""
+    stages = [
+        CurriculumStage(
+            name="s1", levels=["easy", "hard"],
+            advance_threshold=0.8, min_episodes=10,
+        ),
+        CurriculumStage(
+            name="s2", levels=["done"],
+            advance_threshold=0.8, min_episodes=10,
+        ),
+    ]
+    cm = CurriculumManager(stages=stages)
+    for _ in range(15):
+        cm.record_episode("easy", True)   # well-sampled, 100%
+    for _ in range(3):
+        cm.record_episode("hard", True)   # under-sampled (<10), would-be 100%
+    # 'hard' counts as 0.0 (not skipped) -> (1.0 + 0.0) / 2 = 0.5 < 0.8.
+    assert cm.stage_success_rate() == pytest.approx(0.5)
+    assert cm.maybe_advance() is False
+    for _ in range(10):
+        cm.record_episode("hard", True)   # now well-sampled
+    assert cm.stage_success_rate() == pytest.approx(1.0)
+    assert cm.maybe_advance() is True

@@ -269,11 +269,38 @@ class PolicyNetwork(nn.Module):
             encoder=data.get("encoder", "nature_dqn"),
             use_layernorm=data.get("use_layernorm", False),
         )
+        import logging as _log
+        _logger = _log.getLogger(__name__)
+        # arch_version guard: the ARCH_VERSION rustdoc promises a hard failure
+        # on a major mismatch instead of silently loading an incompatible net.
+        ckpt_arch = data.get("arch_version")
+        if ckpt_arch is not None and ckpt_arch != cls.ARCH_VERSION:
+            raise ValueError(
+                f"checkpoint {path} has arch_version {ckpt_arch}, but this "
+                f"PolicyNetwork is ARCH_VERSION {cls.ARCH_VERSION} — the "
+                f"architecture is incompatible. Re-train or migrate the checkpoint."
+            )
+        if ckpt_arch is None:
+            _logger.warning(
+                "checkpoint %s predates arch_version; loading as legacy "
+                "ARCH_VERSION %d — verify it behaves as expected.",
+                path, cls.ARCH_VERSION,
+            )
         sd = cls._migrate_legacy_state_dict(data["state_dict"])
         missing, unexpected = net.load_state_dict(sd, strict=False)
+        # Missing keys mean the checkpoint doesn't supply parameters this
+        # architecture requires — those tensors keep their random init, so the
+        # "loaded" policy is partly untrained. Refuse rather than silently
+        # deploy a broken net (winner-retention loads through here).
+        if missing:
+            raise ValueError(
+                f"checkpoint {path} is missing {len(missing)} required "
+                f"parameter(s) after legacy migration: {missing}. Loading it "
+                f"would leave those weights randomly initialized; refusing to "
+                f"return a partial policy."
+            )
         if unexpected:
-            import logging as _log
-            _log.getLogger(__name__).warning(
+            _logger.warning(
                 "unexpected keys in checkpoint %s: %s", path, unexpected,
             )
         return net

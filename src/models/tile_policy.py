@@ -140,10 +140,30 @@ class TilePolicyNetwork(nn.Module):
             hidden_dim=data.get("hidden_dim", 64),
             trunk_dim=data.get("trunk_dim", 32),
         )
+        import logging as _log
+        _logger = _log.getLogger(__name__)
+        ckpt_arch = data.get("arch_version")
+        if ckpt_arch is not None and ckpt_arch != cls.ARCH_VERSION:
+            raise ValueError(
+                f"checkpoint {path} has arch_version {ckpt_arch}, but this "
+                f"TilePolicyNetwork is ARCH_VERSION {cls.ARCH_VERSION} — the "
+                f"architecture is incompatible. Re-train or migrate the checkpoint."
+            )
+        if ckpt_arch is None:
+            _logger.warning(
+                "checkpoint %s predates arch_version; loading as legacy "
+                "ARCH_VERSION %d — verify it behaves as expected.",
+                path, cls.ARCH_VERSION,
+            )
         missing, unexpected = net.load_state_dict(data["state_dict"], strict=False)
+        if missing:
+            raise ValueError(
+                f"checkpoint {path} is missing {len(missing)} required "
+                f"parameter(s): {missing}. Loading it would leave those weights "
+                f"randomly initialized; refusing to return a partial policy."
+            )
         if unexpected:
-            import logging as _log
-            _log.getLogger(__name__).warning(
+            _logger.warning(
                 "unexpected keys in checkpoint %s: %s", path, unexpected,
             )
         return net

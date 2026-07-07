@@ -154,13 +154,33 @@ class CurriculumManager:
         stage's abstract labels.
         """
         rates = []
-        levels_to_check: list[str] = []
+        concrete_levels: list[str] = []
+        wildcard_levels: list[str] = []
         for level in self.current_stage.levels:
             if level == "*":
-                levels_to_check.extend(self._stage_success_history.keys())
+                wildcard_levels.extend(self._stage_success_history.keys())
             else:
-                levels_to_check.append(level)
-        for level in levels_to_check:
+                concrete_levels.append(level)
+        # Dedup, preserving order; a concretely-listed level takes precedence
+        # over the same label surfaced via "*" so it's never counted twice.
+        concrete_levels = list(dict.fromkeys(concrete_levels))
+        wildcard_only = [
+            lv for lv in dict.fromkeys(wildcard_levels)
+            if lv not in concrete_levels
+        ]
+        for level in concrete_levels:
+            history = self._stage_success_history.get(level, deque())
+            if len(history) >= 10:
+                rates.append(sum(history) / len(history))
+            else:
+                # An explicitly-required level that is under-sampled counts as
+                # 0.0 rather than being skipped — otherwise the stage could
+                # advance on a hard level it's only played 0-for-5 on, because
+                # that level was silently dropped from the average.
+                rates.append(0.0)
+        for level in wildcard_only:
+            # Incidental RAM-derived labels surfaced by "*": count only once
+            # sampled, so a level that just appeared doesn't spuriously block.
             history = self._stage_success_history.get(level, deque())
             if len(history) >= 10:
                 rates.append(sum(history) / len(history))
