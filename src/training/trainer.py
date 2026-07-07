@@ -5363,19 +5363,18 @@ class Trainer:
                 except Exception as exc:
                     log.warning("[vanilla_ppo] winner retention failed: %s", exc)
 
-                # Persist the Go-Explore archive so returns continue across
-                # restarts instead of re-exploring from scratch.
-                if (go_explore_archive is not None
-                        and it % go_explore_save_every == 0):
-                    try:
-                        go_explore_archive.save(
-                            self.checkpoint_dir / "go_explore" / "archive.pkl"
-                        )
-                    except Exception as exc:
-                        log.warning(
-                            "[vanilla_ppo] go_explore archive save failed: %s",
-                            exc,
-                        )
+            # Persist the Go-Explore archive on its OWN cadence (dedented out
+            # of the 10-iter checkpoint block above) so save_every actually
+            # takes effect instead of being masked by lcm(10, save_every).
+            if go_explore_archive is not None and it % go_explore_save_every == 0:
+                try:
+                    go_explore_archive.save(
+                        self.checkpoint_dir / "go_explore" / "archive.pkl"
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "[vanilla_ppo] go_explore archive save failed: %s", exc
+                    )
 
     def _save_checkpoint(self, gen: int, keep_last: int = 5) -> None:
         path = self.checkpoint_dir / f"gen_{gen:05d}.pt"
