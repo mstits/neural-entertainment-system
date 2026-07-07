@@ -463,10 +463,33 @@ impl Nes {
             return;
         }
 
-        // ON even cycles read from CPU RAM.
+        // ON even cycles read the source byte. Route the fetch through
+        // the SAME full CPU bus dispatch a normal read uses (RAM mirror
+        // < $2000, PPU/APU/input MMIO, mapper PRG-RAM/ROM >= $4020) so a
+        // game DMAing sprites out of PRG-RAM ($6000-$7FFF) or a static
+        // PRG-ROM table transfers the correct bytes — the OAM DMA unit
+        // drives the real CPU read line on hardware, it does not read
+        // internal RAM directly. The common case (page $02 → internal
+        // RAM) stays byte-identical: `SystemBus::read_byte` dispatches
+        // $0000-$1FFF straight to `Ram::read_byte` with the same mirror
+        // mask. This changes only WHICH byte is fetched for source pages
+        // >= $20; it does NOT change the read/write cadence, so the DMA
+        // stall length (513/514 CPU cycles) is unaffected.
         if self.cycles.is_multiple_of(2) {
             let addr = ((self.oam_dma.page as u16) << 8) | (self.oam_dma.count & 0xFF);
-            self.oam_dma.data = self.ram.read_byte(addr);
+            let data = {
+                let mut bus = SystemBus::new(
+                    &mut self.ram,
+                    &mut self.mapper,
+                    &mut self.ppu,
+                    &mut self.apu,
+                    &mut self.oam_dma,
+                    &mut self.input,
+                    &self.cheats,
+                );
+                bus.read_byte(addr)
+            };
+            self.oam_dma.data = data;
         }
         // ON odd cycles write to PPU OAMDATA.
         else {
@@ -675,5 +698,195 @@ impl Nes {
 
     pub fn game_pad_2(&mut self) -> &mut GamePad {
         &mut self.input.game_pad_2
+    }
+}
+
+#[cfg(test)]
+mod oam_dma_bus_tests {
+    use super::*;
+    use crate::cartridge::Cartridge;
+
+    const OAMADDR_ADDRESS: u16 = 0x2003;
+
+    struct NullSinks;
+    impl VideoSink for NullSinks {
+        fn write_frame(&mut self, _: &[u8]) {}
+        fn frame_written(&self) -> bool {
+            false
+        }
+        fn pixel_size(&self) -> usize {
+            4
+        }
+    }
+    impl AudioSink for NullSinks {
+        fn write_sample(&mut self, _: f32) {}
+        fn samples_written(&self) -> usize {
+            0
+        }
+    }
+
+    /// Synthetic 32 KB NROM (mapper 0) iNES 1.0 ROM. `flags8 = 0` →
+    /// `max(1, 0)` = one 8 KB PRG-RAM bank at $6000-$7FFF (see
+    /// `cartridge.rs` PRG-RAM sizing). Reset vector points at $C000.
+    fn build_nrom_with_prg_ram() -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 32 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // PRG = 2 × 16 KB = 32 KB
+        rom.push(0); // CHR = 0 (CHR-RAM)
+        rom.push(0); // flags6: mapper 0 low nibble, H-mirror
+        rom.push(0); // flags7: mapper 0 high nibble (iNES 1.0)
+        rom.extend_from_slice(&[0u8; 8]); // bytes 8..=15 (flags8=0 → 8 KB PRG-RAM)
+        let mut prg = vec![0u8; 32 * 1024];
+        let n = prg.len();
+        prg[n - 4] = 0x00; // reset vector low  → $C000
+        prg[n - 3] = 0xC0; // reset vector high → $C000
+        rom.extend(prg);
+        rom
+    }
+
+    fn build_nes() -> Nes {
+        let rom = build_nrom_with_prg_ram();
+        let cart = Cartridge::load(&mut std::io::Cursor::new(rom))
+            .expect("synthetic NROM should parse");
+        Nes::new(cart)
+    }
+
+    /// Drive an OAM DMA (started via a $4014 write) to completion by
+    /// ticking the whole machine, then read the 256 OAM bytes back.
+    /// Returns the OAM contents at indices 0..256.
+    fn run_dma_and_read_oam(nes: &mut Nes, page: u8) -> Vec<u8> {
+        // STA $4014 = `page` (plus OAMADDR = 0 so the transfer lands at
+        // OAM[0..256]) through the real bus — exactly the CPU path.
+        {
+            let mut bus = SystemBus::new(
+                &mut nes.ram,
+                &mut nes.mapper,
+                &mut nes.ppu,
+                &mut nes.apu,
+                &mut nes.oam_dma,
+                &mut nes.input,
+                &nes.cheats,
+            );
+            bus.write_byte(OAMADDR_ADDRESS, 0x00);
+            bus.write_byte(crate::system_bus::OAMDMA_ADDRESS, page);
+        }
+        assert!(nes.oam_dma.active, "$4014 write must arm OAM DMA");
+
+        // A DMA is 513/514 CPU cycles; cap generously and assert it ends.
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        let mut ticks = 0;
+        while nes.oam_dma.active {
+            nes.tick(&mut v, &mut a);
+            ticks += 1;
+            assert!(ticks < 1024, "OAM DMA never completed");
+        }
+
+        // Read OAM back via $2004. Park the PPU on the post-render
+        // scanline (240 > VISIBLE_END_SCANLINE) so `read_oam_byte`
+        // returns the true byte instead of the $FF sprite-eval value.
+        nes.ppu.scanline = 240;
+        let mut out = vec![0u8; 256];
+        let mut bus = SystemBus::new(
+            &mut nes.ram,
+            &mut nes.mapper,
+            &mut nes.ppu,
+            &mut nes.apu,
+            &mut nes.oam_dma,
+            &mut nes.input,
+            &nes.cheats,
+        );
+        for (i, slot) in out.iter_mut().enumerate() {
+            bus.write_byte(OAMADDR_ADDRESS, i as u8);
+            *slot = bus.read_byte(OAMDATA_ADDRESS);
+        }
+        out
+    }
+
+    /// F66: DMA from a PRG-RAM source page ($6000-$7FFF) must copy the
+    /// PRG-RAM contents into OAM. The pre-fix code masked the source
+    /// address into the 2 KB internal RAM ($6000 & 0x07FF = $0000), so
+    /// it would have copied the poisoned RAM byte instead.
+    #[test]
+    fn oam_dma_from_prg_ram_page_transfers_prg_ram() {
+        let mut nes = build_nes();
+        nes.reset();
+
+        // Poison ALL internal RAM: the buggy masked-read path folds page
+        // $60 into $0000-$00FF, so it would yield 0xAA everywhere.
+        for a in 0u16..0x0800 {
+            nes.ram.write_byte(a, 0xAA);
+        }
+        // Fill PRG-RAM $6000-$60FF with a position-dependent pattern.
+        for i in 0u16..256 {
+            nes.mapper.prg_write_byte(0x6000 + i, (i as u8) ^ 0x5A);
+        }
+
+        let oam = run_dma_and_read_oam(&mut nes, 0x60);
+
+        for i in 0..256 {
+            let expected = (i as u8) ^ 0x5A;
+            assert_eq!(
+                oam[i], expected,
+                "OAM[{i}] = {:#04X}, expected PRG-RAM byte {:#04X} (got the \
+                 masked-RAM value {:#04X} instead? = bus routing broken)",
+                oam[i], expected, 0xAAu8,
+            );
+        }
+    }
+
+    /// CRITICAL regression guard: the overwhelmingly common case is a
+    /// DMA from internal RAM (SMB DMAs $0200 every frame). Routing the
+    /// fetch through the bus MUST leave this byte-identical.
+    #[test]
+    fn oam_dma_from_internal_ram_page_unchanged() {
+        let mut nes = build_nes();
+        nes.reset();
+
+        // Distinct data in the $0200 page; different filler elsewhere so
+        // a wrong mask would be caught.
+        for a in 0u16..0x0800 {
+            nes.ram.write_byte(a, 0x33);
+        }
+        for i in 0u16..256 {
+            nes.ram.write_byte(0x0200 + i, i as u8);
+        }
+
+        let oam = run_dma_and_read_oam(&mut nes, 0x02);
+
+        for i in 0..256 {
+            assert_eq!(
+                oam[i], i as u8,
+                "OAM[{i}] = {:#04X}, expected internal-RAM byte {:#04X}",
+                oam[i], i as u8,
+            );
+        }
+    }
+
+    /// The internal-RAM mirror (pages $08-$1F alias $00-$07) must still
+    /// resolve through the bus: page $0A ($0A00) mirrors to $0200.
+    #[test]
+    fn oam_dma_from_mirrored_ram_page_resolves_mirror() {
+        let mut nes = build_nes();
+        nes.reset();
+
+        for a in 0u16..0x0800 {
+            nes.ram.write_byte(a, 0x00);
+        }
+        // Write the pattern at the canonical $0200 page.
+        for i in 0u16..256 {
+            nes.ram.write_byte(0x0200 + i, (i as u8).wrapping_add(7));
+        }
+
+        // DMA from page $0A ($0A00) — mirrors to $0200 in 2 KB RAM.
+        let oam = run_dma_and_read_oam(&mut nes, 0x0A);
+
+        for i in 0..256 {
+            assert_eq!(
+                oam[i],
+                (i as u8).wrapping_add(7),
+                "OAM[{i}] from mirrored page $0A did not resolve to $0200",
+            );
+        }
     }
 }
