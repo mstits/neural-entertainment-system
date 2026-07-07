@@ -15,7 +15,10 @@ one, for debugging current training progress.
 
 Works for both policy families: tile-encoder games (SMB) use the MLP +
 RAM-decoded obs; pixel games (Contra/Castlevania/Mega Man) use the CNN +
-84x84 preprocessed obs.
+84x84 preprocessed obs. Tile checkpoints are further dispatched between
+the stateless MLP and the recurrent GRU policy (whose hidden state is
+threaded through the rollout) so a recurrent-trained agent can actually
+be watched instead of silently misloading into the MLP.
 
 GIF (not MP4) so it works without ffmpeg; downsampled to keep it small.
 """
@@ -39,7 +42,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from nes_core import Pool  # noqa: E402
 from src.emulation.frame_utils import FrameStacker, TileFeatureStacker  # noqa: E402
 from src.models.policy_network import PolicyNetwork  # noqa: E402
-from src.models.tile_policy import TilePolicyNetwork  # noqa: E402
+from src.models.tile_policy import build_tile_policy_from_checkpoint  # noqa: E402
 from src.utils.reward_functions import build_reward_function  # noqa: E402
 from src.training.profile_utils import (  # noqa: E402
     action_space_to_bitmasks, derive_checkpoint_dir, resolve_encoder,
@@ -87,23 +90,32 @@ def demo(game: str, profile_path: Path, rom_path: str, max_steps: int,
 
     bitmasks = action_space_to_bitmasks(profile["action_space"])
     tile = _is_tile(profile)
+    state = torch.load(str(ckpt), map_location="cpu")
+    is_recurrent = False
     if tile:
         extractor, feat_dim, stacked = resolve_encoder(profile)
         stacker = TileFeatureStacker(stack_size=stacked // feat_dim, feature_dim=feat_dim)
-        net = TilePolicyNetwork(num_actions=len(bitmasks), feature_dim=stacked)
+        # Dispatch on the checkpoint's architecture family: a recurrent
+        # (tile_gru) checkpoint loads into the recurrent policy and threads
+        # a GRU hidden state through the rollout below; the stateless MLP
+        # otherwise. Building the wrong one silently misloads (non-empty
+        # missing set) and plays a half-random policy.
+        net, is_recurrent = build_tile_policy_from_checkpoint(
+            state, num_actions=len(bitmasks), feature_dim=stacked,
+        )
     else:
         stacker = FrameStacker(stack_size=4, target_size=84)
         net = PolicyNetwork(
             num_actions=len(bitmasks),
             encoder=(profile.get("reinforce", {}) or {}).get("encoder", "nature_dqn"),
         )
-    state = torch.load(str(ckpt), map_location="cpu")
     # Same fail-loud contract as eval: load non-strict so extra aux heads
     # are tolerated, but refuse to demo a policy missing core weights —
     # a silently half-random policy would "look broken" and misreport.
     load_res = net.load_state_dict(state["net_state_dict"], strict=False)
     if load_res.missing_keys:
         return {"game": game, "status": "checkpoint_mismatch",
+                "recurrent": bool(is_recurrent),
                 "missing_keys": list(load_res.missing_keys), "checkpoint": str(ckpt)}
     net.eval()
 
@@ -120,6 +132,9 @@ def demo(game: str, profile_path: Path, rom_path: str, max_steps: int,
     else:
         obs = stacker.reset(init[0][0], init[0][1])
 
+    # Single episode: seed the GRU hidden state once for the recurrent
+    # policy; the loop breaks on clear/death so no mid-episode reset.
+    hidden = net.initial_hidden(1, torch.device("cpu")) if is_recurrent else None
     frames = [np.asarray(init[0][0], dtype=np.uint8)]
     cleared = False
     max_byte = 0
@@ -129,7 +144,10 @@ def demo(game: str, profile_path: Path, rom_path: str, max_steps: int,
         if not tile:
             x = x.div_(255.0)
         with torch.no_grad():
-            logits, _ = net.forward_ac(x)
+            if is_recurrent:
+                logits, _, hidden = net.forward_ac_recurrent(x, hidden)
+            else:
+                logits, _ = net.forward_ac(x)
             a = int(torch.argmax(logits[0]).item())
         r = pool.step_all(np.array([bitmasks[a]], dtype=np.uint8))
         ram = r[0][2]
@@ -157,6 +175,7 @@ def demo(game: str, profile_path: Path, rom_path: str, max_steps: int,
 
     return {
         "game": game, "status": "ok", "checkpoint": str(ckpt),
+        "recurrent": bool(is_recurrent),
         "cleared": cleared, "steps": step + 1, "max_byte_seen": int(max_byte),
         "frames": len(frames), "gif": wrote,
     }

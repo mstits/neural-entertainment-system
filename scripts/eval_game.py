@@ -15,6 +15,12 @@ profile, and runs N eval episodes (deterministic seed). Reports:
     stage")
   - mean episode return + length
 
+Dispatches on the checkpoint's architecture family: a recurrent
+(tile_gru) checkpoint is loaded into the recurrent policy and its GRU
+hidden state is threaded through the step loop (reset on episode
+boundaries), so a recurrent-trained agent is actually scored instead of
+silently misloading into the stateless net.
+
 Output is a single JSON line on stdout and a row appended to
 `checkpoints/<game_slug>/eval.jsonl` for later scoreboarding.
 """
@@ -37,7 +43,7 @@ sys.path.insert(0, str(ROOT))
 
 from nes_core import Pool  # noqa: E402
 from src.emulation.frame_utils import TileFeatureStacker  # noqa: E402
-from src.models.tile_policy import TilePolicyNetwork  # noqa: E402
+from src.models.tile_policy import build_tile_policy_from_checkpoint  # noqa: E402
 from src.utils.reward_functions import build_reward_function  # noqa: E402
 from src.training.profile_utils import (  # noqa: E402
     action_space_to_bitmasks, derive_checkpoint_dir, resolve_encoder,
@@ -117,7 +123,15 @@ def eval_one_game(
     stack_size = stacked_dim // feature_dim
 
     state = torch.load(str(ckpt), map_location="cpu")
-    net = TilePolicyNetwork(num_actions=len(bitmasks), feature_dim=stacked_dim)
+    # Dispatch on the checkpoint's architecture family. A recurrent
+    # (tile_gru) checkpoint MUST load into the recurrent policy and have
+    # its GRU hidden state threaded through the step loop below; loading
+    # it into the stateless net would leave a non-empty `missing` set
+    # (the GRU weights) and eval a half-random policy.
+    net, is_recurrent = build_tile_policy_from_checkpoint(
+        state, num_actions=len(bitmasks), feature_dim=stacked_dim,
+    )
+    net_kind = type(net).__name__
     # Load non-strict so older checkpoints with extra aux heads still
     # load, but FAIL LOUD if core weights are missing — a silent
     # partial load would eval a half-random policy and still print
@@ -128,11 +142,12 @@ def eval_one_game(
             "game": game,
             "status": "checkpoint_mismatch",
             "checkpoint": str(ckpt),
+            "recurrent": bool(is_recurrent),
             "missing_keys": list(load_res.missing_keys),
             "unexpected_keys": list(load_res.unexpected_keys),
             "detail": (
                 "checkpoint does not provide all network weights for "
-                f"TilePolicyNetwork(num_actions={len(bitmasks)}, "
+                f"{net_kind}(num_actions={len(bitmasks)}, "
                 f"feature_dim={stacked_dim}); refusing to eval a "
                 "partially-initialized policy."
             ),
@@ -172,6 +187,7 @@ def eval_one_game(
     # heuristic to drift out of sync.
     reward_fn = build_reward_function(profile)
 
+    device = torch.device("cpu")
     returns: list[float] = []
     lengths: list[int] = []
     max_bytes: list[int] = []
@@ -188,6 +204,9 @@ def eval_one_game(
         reward_fn.reset()
         init = pool.step_all(np.zeros(1, dtype=np.uint8))
         obs = stacker.reset(extractor.extract(init[0][2]))
+        # Fresh hidden state per episode — the GRU must not carry memory
+        # across episode boundaries.
+        hidden = net.initial_hidden(1, device) if is_recurrent else None
         ep_return = 0.0
         ep_max_byte = 0
         ep_cleared = False
@@ -195,7 +214,10 @@ def eval_one_game(
         for step in range(max_steps):
             x = torch.from_numpy(obs[None, :]).float()
             with torch.no_grad():
-                logits, _ = net.forward_ac(x)
+                if is_recurrent:
+                    logits, _, hidden = net.forward_ac_recurrent(x, hidden)
+                else:
+                    logits, _ = net.forward_ac(x)
                 action_idx = int(torch.argmax(logits[0]).item())
             bitmask = bitmasks[action_idx]
             r = pool.step_all(np.array([bitmask], dtype=np.uint8))
@@ -226,6 +248,7 @@ def eval_one_game(
         "game": game,
         "status": "ok",
         "checkpoint": str(ckpt),
+        "recurrent": bool(is_recurrent),
         "stage": stage if stage is not None else "start",
         "n_episodes": n_episodes,
         "mean_return": float(np.mean(returns)) if returns else 0.0,

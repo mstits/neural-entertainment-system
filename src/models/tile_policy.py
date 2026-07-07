@@ -204,9 +204,19 @@ class TileRecurrentPolicyNetwork(nn.Module):
     On `done`: caller resets the hidden state for that worker via
     `net.initial_hidden(1, device)` and replaces row `i` of the batch
     hidden with the zero state.
+
+    Save/load mirror `TilePolicyNetwork` (a `kind:"tile_gru"` tag + the
+    F62 `arch_version` guard) so a recurrent-trained checkpoint can be
+    round-tripped, evaluated, and demoed instead of silently misloading
+    into the stateless policy.
     """
 
     ARCH_VERSION = 1
+
+    # Class-level latch so the stateless-fallback warning below fires at
+    # most once per process (a mis-wired eval/demo loop would otherwise
+    # spam it every step).
+    _stateless_fallback_warned = False
 
     def __init__(
         self,
@@ -281,11 +291,175 @@ class TileRecurrentPolicyNetwork(nn.Module):
     # state. Initializes a fresh hidden each call — equivalent to
     # `TilePolicyNetwork.forward_ac` but goes through one GRU step.
     # Use only for unit tests / sanity checks; the trainer's hot path
-    # MUST use `forward_ac_recurrent` to get the recurrence benefit.
+    # and the eval/demo loops MUST use `forward_ac_recurrent` to get the
+    # recurrence benefit.
     def forward_ac(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # Emit a one-time warning: resetting the hidden state every call
+        # degrades a recurrent policy to a stateless one, so a caller that
+        # lands here has silently thrown away the memory the GRU exists to
+        # carry. Warn instead of failing (this path is a legitimate
+        # sanity-check surface) but make the degradation visible.
+        if not TileRecurrentPolicyNetwork._stateless_fallback_warned:
+            TileRecurrentPolicyNetwork._stateless_fallback_warned = True
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "TileRecurrentPolicyNetwork.forward_ac() called: the GRU "
+                "hidden state is reset every step, degrading this recurrent "
+                "policy to a stateless one. Thread a hidden state through "
+                "forward_ac_recurrent() (see initial_hidden) for correct "
+                "behavior. (This warning fires once.)"
+            )
         h = self.initial_hidden(x.size(0), x.device)
         logits, value, _ = self.forward_ac_recurrent(x, h)
         return logits, value
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.forward_ac(x)[0]
+
+    # ----- persistence -------------------------------------------------
+
+    def save(self, path: str | Path) -> None:
+        """Serialize with a `kind:"tile_gru"` tag + `arch_version` so the
+        loader can dispatch on architecture family and reject a
+        mismatched checkpoint (mirrors `TilePolicyNetwork.save`)."""
+        torch.save({
+            "arch_version": self.ARCH_VERSION,
+            "kind": "tile_gru",
+            "num_actions": self.num_actions,
+            "feature_dim": self.feature_dim,
+            "hidden_dim": self.hidden_dim,
+            "gru_dim": self.gru_dim,
+            "state_dict": self.state_dict(),
+        }, str(path))
+
+    @classmethod
+    def load(
+        cls,
+        path: str | Path,
+        map_location: str | torch.device = "cpu",
+    ) -> "TileRecurrentPolicyNetwork":
+        """Load a `save()`-format recurrent checkpoint.
+
+        Mirrors the F62 guard on `TilePolicyNetwork.load`: refuses a
+        checkpoint whose `arch_version` mismatches, warns on a legacy
+        (arch_version-less) checkpoint, and refuses a partial load
+        (missing weights). Additionally refuses a stateless (`tile_mlp`)
+        checkpoint so a caller that grabbed the wrong file fails loud
+        instead of misloading a shape-incompatible policy.
+        """
+        data = torch.load(str(path), map_location=map_location, weights_only=False)
+        kind = data.get("kind")
+        if kind is not None and kind != "tile_gru":
+            raise ValueError(
+                f"checkpoint {path} has kind {kind!r}, not 'tile_gru' — load it "
+                f"with the matching policy class (e.g. TilePolicyNetwork.load "
+                f"for a 'tile_mlp' checkpoint)."
+            )
+        net = cls(
+            num_actions=data["num_actions"],
+            feature_dim=data.get("feature_dim", 175),
+            hidden_dim=data.get("hidden_dim", 64),
+            gru_dim=data.get("gru_dim", 32),
+        )
+        import logging as _log
+        _logger = _log.getLogger(__name__)
+        ckpt_arch = data.get("arch_version")
+        if ckpt_arch is not None and ckpt_arch != cls.ARCH_VERSION:
+            raise ValueError(
+                f"checkpoint {path} has arch_version {ckpt_arch}, but this "
+                f"TileRecurrentPolicyNetwork is ARCH_VERSION {cls.ARCH_VERSION} — "
+                f"the architecture is incompatible. Re-train or migrate the checkpoint."
+            )
+        if ckpt_arch is None:
+            _logger.warning(
+                "checkpoint %s predates arch_version; loading as legacy "
+                "ARCH_VERSION %d — verify it behaves as expected.",
+                path, cls.ARCH_VERSION,
+            )
+        missing, unexpected = net.load_state_dict(data["state_dict"], strict=False)
+        if missing:
+            raise ValueError(
+                f"checkpoint {path} is missing {len(missing)} required "
+                f"parameter(s): {missing}. Loading it would leave those weights "
+                f"randomly initialized; refusing to return a partial policy."
+            )
+        if unexpected:
+            _logger.warning(
+                "unexpected keys in checkpoint %s: %s", path, unexpected,
+            )
+        return net
+
+
+# ----- checkpoint dispatch --------------------------------------------
+#
+# Trainer and winner checkpoints (`vanilla_ppo_iter_*.pt`,
+# `winners/best.pt`) store only the raw policy `net_state_dict` with no
+# `kind` tag (see trainer.py / checkpointing.save_winner), so eval/demo
+# cannot tell a recurrent policy from a stateless one by metadata alone.
+# These helpers recover the architecture family structurally — the
+# recurrent policy is the only one with GRU weights — so the scripts load
+# a recurrent-trained checkpoint into the recurrent policy (and thread its
+# hidden state) instead of silently misloading into the MLP.
+
+_GRU_STATE_PREFIX = "gru."
+
+
+def state_dict_is_recurrent(state_dict) -> bool:
+    """True if a raw policy `state_dict` came from the recurrent tile
+    policy, detected by the presence of GRU weights (e.g.
+    `gru.weight_ih`)."""
+    try:
+        keys = state_dict.keys()
+    except AttributeError:
+        keys = state_dict
+    return any(str(k).startswith(_GRU_STATE_PREFIX) for k in keys)
+
+
+def checkpoint_is_recurrent(checkpoint) -> bool:
+    """True if a loaded checkpoint holds a recurrent tile policy.
+
+    Prefers an explicit ``kind: "tile_gru"`` tag (written by
+    `TileRecurrentPolicyNetwork.save`); otherwise falls back to
+    structural GRU-weight detection over the raw ``net_state_dict`` (or
+    ``state_dict``, or a bare state_dict passed directly) — which is how
+    the trainer/winner checkpoints must be classified since they carry no
+    kind field.
+    """
+    if not isinstance(checkpoint, dict):
+        return False
+    if checkpoint.get("kind") == "tile_gru":
+        return True
+    sd = checkpoint.get("net_state_dict")
+    if sd is None:
+        sd = checkpoint.get("state_dict")
+    if sd is None:
+        sd = checkpoint  # a bare state_dict was passed directly
+    return state_dict_is_recurrent(sd)
+
+
+def build_tile_policy_from_checkpoint(
+    checkpoint,
+    *,
+    num_actions: int,
+    feature_dim: int,
+) -> tuple[nn.Module, bool]:
+    """Construct the tile policy whose architecture matches `checkpoint`.
+
+    Returns ``(net, is_recurrent)``. This is the single dispatch point the
+    eval and demo scripts share so a recurrent-trained checkpoint is
+    loaded into `TileRecurrentPolicyNetwork` (and its hidden state threaded
+    through the rollout) instead of silently misloading into the stateless
+    `TilePolicyNetwork` (which would leave a non-empty `missing` set and
+    eval/demo a half-random policy).
+    """
+    if checkpoint_is_recurrent(checkpoint):
+        return (
+            TileRecurrentPolicyNetwork(
+                num_actions=num_actions, feature_dim=feature_dim
+            ),
+            True,
+        )
+    return (
+        TilePolicyNetwork(num_actions=num_actions, feature_dim=feature_dim),
+        False,
+    )
