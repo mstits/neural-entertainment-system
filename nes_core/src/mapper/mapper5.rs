@@ -153,62 +153,73 @@ impl Mapper5 {
 
     // Resolve an 8 KB slot (0..4 for $6000/$8000/$A000/$C000/$E000)
     // into a physical (is_ram, offset) pair. `is_ram` means PRG RAM.
+    //
+    // PRG banking per $5100 mode (nesdev "MMC5 § PRG mode"). Bank
+    // registers hold an 8 KB bank number; when a window is wider than
+    // 8 KB the low address bits pick the sub-bank and the register's
+    // low bits are ignored (16 KB masks bit 0, 32 KB masks bits 0-1):
+    //   mode 0: $8000-$FFFF = one 32 KB bank from $5117 (always ROM)
+    //   mode 1: $8000-$BFFF = 16 KB from $5115; $C000-$FFFF = 16 KB from $5117
+    //   mode 2: $8000-$BFFF = 16 KB from $5115; $C000-$DFFF = 8 KB from $5116;
+    //           $E000-$FFFF = 8 KB from $5117
+    //   mode 3: four independent 8 KB banks ($5114/$5115/$5116/$5117)
+    // For $5114-$5116 bit 7 selects ROM (1) vs PRG-RAM (0); $5117 is
+    // always ROM. $6000-$7FFF is always PRG-RAM in every mode, selected
+    // by $5113 — handled before the mode match.
     fn resolve_prg_slot(&self, slot: usize) -> (bool, usize) {
-        // Per slot, `prg_banks[slot]` is 8 bit: top bit = ROM select
-        // (1 = ROM), lower 7 bits = bank number. $6000 defaults to RAM.
-        // $E000 is always ROM.
-        let raw = self.prg_banks[slot];
-        let (is_ram, bank_idx) = if slot == 4 {
-            (false, raw as usize)
-        } else if slot == 0 {
-            // $6000 is always RAM; bits 0-3 select the RAM bank.
-            (true, (raw & 0x0F) as usize)
-        } else {
-            let is_rom = raw & 0x80 != 0;
-            (!is_rom, (raw & 0x7F) as usize)
+        let rom_banks = self.prg_rom_bank_count_8k();
+        let ram_banks = (self.prg_ram.len() / BANK_8K).max(1);
+
+        // $6000-$7FFF: always PRG-RAM, resolved before the mode match.
+        if slot == 0 {
+            let bank = (self.prg_banks[0] as usize) & 0x07;
+            return (true, (bank % ram_banks) * BANK_8K);
+        }
+
+        // Decode a $5114-$5117 register plus a resolved 8 KB bank index
+        // into (is_ram, byte-offset), honouring the ROM/RAM select bit
+        // unless the window is fixed ROM ($5117 / mode-0 / mode-1 upper).
+        let decode = |reg: u8, force_rom: bool, bank8: usize| -> (bool, usize) {
+            if !force_rom && (reg & 0x80 == 0) {
+                (true, (bank8 % ram_banks) * BANK_8K)
+            } else {
+                (false, (bank8 % rom_banks) * BANK_8K)
+            }
         };
 
         match self.prg_mode {
-            // Mode 3: all 8 KB banks.
-            3 => {
-                if is_ram {
-                    let off = bank_idx * BANK_8K;
-                    (true, off)
-                } else {
-                    let off = (bank_idx % self.prg_rom_bank_count_8k()) * BANK_8K;
-                    (false, off)
-                }
-            }
-            // Mode 2: $8000-$BFFF is 16 KB ($5115), $C000-$DFFF + $E000-$FFFF 8 KB each.
-            2 => {
-                if slot == 2 {
-                    let bank16 = bank_idx & !1;
-                    let off = (bank16 % self.prg_rom_bank_count_8k()) * BANK_8K;
-                    (is_ram, off)
-                } else if slot == 1 {
-                    let bank16 = (self.prg_banks[2] as usize & !1) & 0x7F;
-                    let off = (bank16 % self.prg_rom_bank_count_8k()) * BANK_8K + BANK_8K;
-                    (false, off)
-                } else {
-                    let off = (bank_idx % self.prg_rom_bank_count_8k()) * BANK_8K;
-                    (is_ram, off)
-                }
-            }
-            // Mode 1: 16 KB + 16 KB — $5115 controls $8000-$BFFF, $5117 controls $C000-$FFFF.
-            1 => {
-                let bank16 = bank_idx & !1;
-                let off = if slot == 1 || slot == 3 {
-                    (bank16 % self.prg_rom_bank_count_8k()) * BANK_8K
-                } else {
-                    (bank16 % self.prg_rom_bank_count_8k()) * BANK_8K + BANK_8K
-                };
-                (is_ram, off)
-            }
-            // Mode 0: 32 KB switchable via $5117.
+            // Mode 0: single 32 KB bank from $5117, always ROM. slot 1..4
+            // map to the four 8 KB sub-banks of the aligned 32 KB block.
             0 => {
-                let bank32 = (self.prg_banks[4] as usize) & !3;
-                let off = (bank32 % self.prg_rom_bank_count_8k()) * BANK_8K + slot.saturating_sub(1) * BANK_8K;
-                (false, off)
+                let base32 = ((self.prg_banks[4] as usize) & 0x7F) & !0x03;
+                decode(self.prg_banks[4], true, base32 + (slot - 1))
+            }
+            // Mode 1: 16 KB + 16 KB. $8000/$A000 from $5115 (ROM/RAM),
+            // $C000/$E000 from $5117 (always ROM).
+            1 => {
+                let (reg, force_rom) = if slot <= 2 {
+                    (self.prg_banks[2], false) // $5115
+                } else {
+                    (self.prg_banks[4], true) // $5117
+                };
+                let base16 = ((reg as usize) & 0x7F) & !0x01;
+                let half = if slot == 1 || slot == 3 { 0 } else { 1 };
+                decode(reg, force_rom, base16 + half)
+            }
+            // Mode 2: 16 KB ($5115) + 8 KB ($5116) + 8 KB ($5117, ROM).
+            2 => match slot {
+                1 | 2 => {
+                    let base16 = ((self.prg_banks[2] as usize) & 0x7F) & !0x01;
+                    let half = if slot == 1 { 0 } else { 1 };
+                    decode(self.prg_banks[2], false, base16 + half)
+                }
+                3 => decode(self.prg_banks[3], false, (self.prg_banks[3] as usize) & 0x7F),
+                _ => decode(self.prg_banks[4], true, (self.prg_banks[4] as usize) & 0x7F),
+            },
+            // Mode 3: four independent 8 KB banks; $5117 ($E000) is ROM.
+            3 => {
+                let reg = self.prg_banks[slot];
+                decode(reg, slot == 4, (reg as usize) & 0x7F)
             }
             _ => (false, 0),
         }
@@ -231,44 +242,36 @@ impl Mapper5 {
     }
 
     fn chr_bank_for_ppu_addr(&self, address: u16) -> u16 {
-        // Resolve 1 KB CHR slot. In 1 KB mode, each 1 KB window is
-        // independently selected. In 2/4/8 KB modes, we index into
-        // the table that would have been written for the "matching"
-        // mode-boundary register.
+        // Resolve a 1 KB CHR slot (0..7 across $0000-$1FFF) into a physical
+        // 1 KB bank. Per $5101 the CHR window size is 8/4/2/1 KB (modes
+        // 0/1/2/3). Each window is controlled by the bank register at its
+        // high boundary (odd index): mode 0 → $5127, mode 1 → $5123/$5127,
+        // mode 2 → $5121/$5123/$5125/$5127, mode 3 → $5120..$5127. The
+        // register value is in window-size units, so the physical 1 KB
+        // bank is `bank * (window / 1 KB) + sub`, with the $5130 upper
+        // bits folded into `bank` before the multiply.
         let slot = ((address >> 10) & 0x07) as usize;
-        let table = if self.last_chr_write_sprite {
-            &self.chr_bank_sprite[..]
-        } else {
-            &self.chr_bank_bg[..]
-        };
         let upper = (self.chr_upper_bits as u16) << 8;
-        match self.chr_mode {
-            3 => {
-                if self.last_chr_write_sprite {
-                    self.chr_bank_sprite[slot] | upper
-                } else {
-                    self.chr_bank_bg[slot & 3] | upper
-                }
-            }
-            2 => {
-                // 2 KB windows: slots 0-1 share one bank base, 2-3 next, etc.
-                let base_slot = slot & !1;
-                let bank = table.get(base_slot).copied().unwrap_or(0);
-                ((bank & !1) | ((slot & 1) as u16)) | upper
-            }
-            1 => {
-                // 4 KB windows.
-                let base_slot = slot & !3;
-                let bank = table.get(base_slot).copied().unwrap_or(0);
-                ((bank & !3) | ((slot & 3) as u16)) | upper
-            }
-            0 => {
-                // 8 KB window — single bank for all of $0000-$1FFF.
-                let bank = table.first().copied().unwrap_or(0);
-                ((bank & !7) | ((slot & 7) as u16)) | upper
-            }
-            _ => 0,
-        }
+        let subcount: usize = match self.chr_mode {
+            0 => 8, // 8 KB window
+            1 => 4, // 4 KB window
+            2 => 2, // 2 KB window
+            _ => 1, // 1 KB window
+        };
+        let sub = (slot & (subcount - 1)) as u16;
+        let bank = if self.last_chr_write_sprite {
+            // "A" set ($5120-$5127): 8 registers; the boundary register
+            // for a window is at index `slot | (subcount - 1)`.
+            self.chr_bank_sprite[slot | (subcount - 1)]
+        } else {
+            // "B" set ($5128-$512B): 4 registers, mirrored across both
+            // pattern tables in 8x16 background mode.
+            let idx = ((slot & 3) | ((subcount - 1) & 3)).min(3);
+            self.chr_bank_bg[idx]
+        };
+        (bank | upper)
+            .wrapping_mul(subcount as u16)
+            .wrapping_add(sub)
     }
 
     fn prg_ram_writable(&self) -> bool {
@@ -280,12 +283,12 @@ impl Mapper5 {
 
 impl Mapper for Mapper5 {
     fn prg_read_byte(&mut self, address: u16) -> u8 {
-        // $5204 has a read side effect: the CPU reads the scanline-IRQ
-        // status (bit 7 = IRQ pending, bit 6 = in-frame) and that read
-        // ACKNOWLEDGES the IRQ, clearing the pending flag. Without this
-        // the flag latches forever and, once the IRQ first fires, MMC5
-        // games (Castlevania III, …) storm the CPU and lock up. All
-        // other addresses have no side effect and defer to the peek.
+        // Reading the scanline-IRQ status register ($5204) returns the
+        // pending + in-frame flags AND acknowledges (clears) the pending
+        // IRQ latch. This is how MMC5 titles de-assert the IRQ line from
+        // their handler; without it the level-sensitive line would stay
+        // asserted and storm. `prg_peek_byte` (debugger/side-effect-free)
+        // reports the same bits but does not clear.
         if address == 0x5204 {
             let mut v = 0;
             if self.irq_pending {
@@ -507,24 +510,41 @@ impl Mapper for Mapper5 {
     }
 
     fn on_scanline_tick(&mut self) {
-        // Simple scanline counter: increments on each visible / pre-render
-        // scanline. When it equals irq_compare and IRQs are enabled, set
-        // the pending flag. Canonical MMC5 clears in_frame on pre-render
-        // line and resets counter; we approximate by wrapping at 241.
-        self.scanline_counter = self.scanline_counter.wrapping_add(1);
-        if self.scanline_counter >= 241 {
+        // MMC5 scanline IRQ counter. It advances once per rendered
+        // scanline while "in frame"; when it reaches the target in $5203
+        // the pending latch (status bit 7 of $5204) is set — independent
+        // of the enable bit ($5204 bit 7), which only gates the asserted
+        // IRQ line (see `irq_pending`). Reading $5204 clears the latch.
+        //
+        // NOTE: on real hardware the MMC5 clocks this counter on every
+        // rendered scanline at a fixed dot, detected from PPU fetches and
+        // wholly independent of pattern-table selection. Here the *timing*
+        // of the call is still gated by the PPU's MMC3-style A12 heuristic
+        // (see ppu.rs) — making the hook fire on every rendered scanline
+        // regardless of that heuristic is the PPU-side half of this fix
+        // and lives outside this file. The counter/latch model below is
+        // correct for whatever cadence the PPU delivers.
+        if self.scanline_counter >= 240 {
+            // Past the rendered region: leave the in-frame window and
+            // reset the counter for the next frame.
             self.scanline_counter = 0;
             self.in_frame = false;
-        } else {
-            self.in_frame = true;
+            return;
         }
-        if self.irq_enable && self.scanline_counter == self.irq_compare {
+        self.scanline_counter = self.scanline_counter.wrapping_add(1);
+        self.in_frame = true;
+        // Compare against $5203. Target 0 never matches here (the counter
+        // is 1..=240 on this path), which mirrors the "disabled" target.
+        if self.scanline_counter == self.irq_compare {
             self.irq_pending = true;
         }
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        // The IRQ line is asserted only while the pending latch is set and
+        // scanline IRQs are enabled ($5204 bit 7). It de-asserts when the
+        // handler reads $5204 (clears the latch) or clears the enable bit.
+        self.irq_pending && self.irq_enable
     }
 
     fn tick_audio(&mut self) {
@@ -620,16 +640,19 @@ impl Mapper for Mapper5 {
 mod tests {
     use super::*;
 
-    fn test_cartridge() -> Cartridge {
+    // A bare cartridge with `prg16` 16 KB PRG banks and `chr8` 8 KB CHR
+    // banks (both zero-filled — the banking tests inspect resolved bank
+    // *indices*, not payload bytes).
+    fn test_cart(prg16: u8, chr8: u8) -> Cartridge {
         Cartridge {
             mapper: 5,
             sub_mapper: 0,
-            mirroring: Mirroring::Horizontal,
-            default_mirroring: Mirroring::Horizontal,
-            prg_rom_num_banks: 2,
-            prg_rom: vec![0u8; 32 * 1024],
-            chr_num_banks: 1,
-            chr: vec![0u8; 8 * 1024],
+            mirroring: Mirroring::Vertical,
+            default_mirroring: Mirroring::Vertical,
+            prg_rom_num_banks: prg16,
+            prg_rom: vec![0u8; prg16 as usize * 16 * 1024],
+            chr_num_banks: chr8,
+            chr: vec![0u8; chr8 as usize * 8 * 1024],
             prg_ram: Vec::new(),
             is_battery_backed: false,
             is_nes20: false,
@@ -637,37 +660,232 @@ mod tests {
         }
     }
 
+    // 256 KB PRG (32 × 8 KB banks, indices 0-31), 64 KB CHR (64 × 1 KB
+    // banks, indices 0-63), 64 KB PRG-RAM (8 × 8 KB banks).
+    fn mk() -> Mapper5 {
+        Mapper5::new(test_cart(16, 8))
+    }
+
+    // resolve_prg_slot as (is_ram, 8 KB bank index).
+    fn prg(m: &Mapper5, slot: usize) -> (bool, usize) {
+        let (is_ram, off) = m.resolve_prg_slot(slot);
+        (is_ram, off / BANK_8K)
+    }
+
+    fn chr(m: &Mapper5, slot: usize) -> u16 {
+        m.chr_bank_for_ppu_addr((slot as u16) << 10)
+    }
+
+    // ---- F37: PRG banking modes ------------------------------------
+
     #[test]
-    fn reading_5204_acknowledges_scanline_irq() {
-        let mut m = Mapper5::new(test_cartridge());
-        m.irq_pending = true;
-        m.in_frame = true;
-
-        // The read reports pending (bit 7) + in-frame (bit 6)...
-        let status = m.prg_read_byte(0x5204);
-        assert_eq!(status & 0x80, 0x80, "bit 7 must report pending IRQ");
-        assert_eq!(status & 0x40, 0x40, "bit 6 must report in-frame");
-
-        // ...and clears the pending flag as a read side effect so the
-        // IRQ line de-asserts (no storm).
-        assert!(
-            !m.irq_pending,
-            "reading $5204 must acknowledge (clear) the pending IRQ"
-        );
-        assert!(!m.irq_pending(), "irq line must de-assert after ack");
-
-        // A subsequent read no longer reports a pending IRQ.
-        let status2 = m.prg_read_byte(0x5204);
-        assert_eq!(status2 & 0x80, 0, "IRQ pending must stay cleared after ack");
+    fn prg_mode3_four_independent_8k_banks() {
+        let mut m = mk();
+        m.prg_mode = 3;
+        // $5114=ROM b1, $5115=ROM b2, $5116=ROM b3, $5117=b4 (always ROM).
+        m.prg_banks = [0, 0x81, 0x82, 0x83, 0x04];
+        assert_eq!(prg(&m, 1), (false, 1));
+        assert_eq!(prg(&m, 2), (false, 2));
+        assert_eq!(prg(&m, 3), (false, 3));
+        assert_eq!(prg(&m, 4), (false, 4));
+        // $5114 with bit7 clear selects PRG-RAM.
+        m.prg_banks[1] = 0x02;
+        assert_eq!(prg(&m, 1), (true, 2));
     }
 
     #[test]
-    fn peek_5204_has_no_side_effect() {
-        // The immutable peek (used by inspectors) must NOT clear the flag.
-        let mut m = Mapper5::new(test_cartridge());
-        m.irq_pending = true;
-        let status = m.prg_peek_byte(0x5204);
-        assert_eq!(status & 0x80, 0x80);
-        assert!(m.irq_pending, "peek must be side-effect free");
+    fn prg_mode2_16k_plus_8k_plus_8k_not_swapped() {
+        let mut m = mk();
+        m.prg_mode = 2;
+        // $5115 = ROM bank 8 (16 KB → 8 KB banks 8,9), $5116 = ROM b6,
+        // $5117 = b7 (always ROM). Regression: the old code put the high
+        // half at $8000 and the low half at $A000.
+        m.prg_banks = [0, 0, 0x88, 0x86, 0x07];
+        assert_eq!(prg(&m, 1), (false, 8)); // $8000 = low half
+        assert_eq!(prg(&m, 2), (false, 9)); // $A000 = high half
+        assert_eq!(prg(&m, 3), (false, 6)); // $C000 = $5116
+        assert_eq!(prg(&m, 4), (false, 7)); // $E000 = $5117
+    }
+
+    #[test]
+    fn prg_mode1_two_16k_windows_from_pair_registers() {
+        let mut m = mk();
+        m.prg_mode = 1;
+        // $8000/$A000 from $5115 (bank 8 → 8,9); $C000/$E000 from $5117
+        // (bank 12 → 12,13). Regression: the old code read each slot's
+        // own register instead of the pair register.
+        m.prg_banks = [0, 0xFF, 0x88, 0xFF, 0x0C];
+        assert_eq!(prg(&m, 1), (false, 8));
+        assert_eq!(prg(&m, 2), (false, 9));
+        assert_eq!(prg(&m, 3), (false, 12));
+        assert_eq!(prg(&m, 4), (false, 13));
+    }
+
+    #[test]
+    fn prg_mode0_single_32k_bank_from_5117() {
+        let mut m = mk();
+        m.prg_mode = 0;
+        // $5117 = bank 12 (32 KB aligned → 8 KB banks 12,13,14,15). The
+        // low two bits are ignored, so 0x0E resolves the same.
+        m.prg_banks = [0, 0, 0, 0, 0x0E];
+        assert_eq!(prg(&m, 1), (false, 12));
+        assert_eq!(prg(&m, 2), (false, 13));
+        assert_eq!(prg(&m, 3), (false, 14));
+        assert_eq!(prg(&m, 4), (false, 15));
+    }
+
+    #[test]
+    fn prg_6000_is_ram_in_every_mode() {
+        // $6000-$7FFF is always PRG-RAM (bank from $5113), resolved
+        // before the mode match. Regression: modes 0/1 previously
+        // returned ROM or the wrong RAM offset here.
+        for mode in 0u8..=3 {
+            let mut m = mk();
+            m.prg_mode = mode;
+            m.prg_banks[0] = 3; // $5113 → RAM bank 3
+            assert_eq!(prg(&m, 0), (true, 3), "mode {mode}");
+        }
+    }
+
+    // ---- F38: CHR banking modes ------------------------------------
+
+    #[test]
+    fn chr_mode3_1k_windows() {
+        let mut m = mk();
+        m.chr_mode = 3;
+        m.last_chr_write_sprite = true;
+        m.chr_bank_sprite = [10, 11, 12, 13, 14, 15, 16, 17];
+        for s in 0..8 {
+            assert_eq!(chr(&m, s), 10 + s as u16);
+        }
+    }
+
+    #[test]
+    fn chr_mode2_2k_windows_read_odd_boundary_and_scale() {
+        let mut m = mk();
+        m.chr_mode = 2;
+        m.last_chr_write_sprite = true;
+        // Only the odd boundary registers ($5121/$5123/$5125/$5127)
+        // matter; the even ones (99) must be ignored.
+        m.chr_bank_sprite = [99, 4, 99, 5, 99, 6, 99, 7];
+        // bank = reg*2 + (slot & 1).
+        assert_eq!(chr(&m, 0), 8);
+        assert_eq!(chr(&m, 1), 9);
+        assert_eq!(chr(&m, 2), 10);
+        assert_eq!(chr(&m, 3), 11);
+        assert_eq!(chr(&m, 6), 14);
+        assert_eq!(chr(&m, 7), 15);
+    }
+
+    #[test]
+    fn chr_mode1_4k_windows_read_odd_boundary_and_scale() {
+        let mut m = mk();
+        m.chr_mode = 1;
+        m.last_chr_write_sprite = true;
+        // $5123 (idx 3) drives $0000-$0FFF, $5127 (idx 7) drives $1000-$1FFF.
+        m.chr_bank_sprite = [0, 0, 0, 3, 0, 0, 0, 5];
+        // bank = reg*4 + (slot & 3).
+        assert_eq!(chr(&m, 0), 12);
+        assert_eq!(chr(&m, 3), 15);
+        assert_eq!(chr(&m, 4), 20);
+        assert_eq!(chr(&m, 7), 23);
+    }
+
+    #[test]
+    fn chr_mode0_8k_window_reads_5127_and_scales() {
+        let mut m = mk();
+        m.chr_mode = 0;
+        m.last_chr_write_sprite = true;
+        // Only $5127 (idx 7) drives the whole 8 KB window.
+        m.chr_bank_sprite = [0, 0, 0, 0, 0, 0, 0, 3];
+        // bank = reg*8 + (slot & 7).
+        assert_eq!(chr(&m, 0), 24);
+        assert_eq!(chr(&m, 4), 28);
+        assert_eq!(chr(&m, 7), 31);
+    }
+
+    #[test]
+    fn chr_upper_bits_applied_before_the_multiply() {
+        let mut m = mk();
+        m.chr_mode = 0; // 8 KB → ×8
+        m.last_chr_write_sprite = true;
+        m.chr_bank_sprite = [0; 8];
+        m.chr_upper_bits = 1; // adds 0x100 to the *window* bank number
+        // Correct: (0 | 0x100) * 8 = 0x800; NOT (0*8) | 0x100 = 0x100.
+        assert_eq!(chr(&m, 0), 0x800);
+        assert_eq!(chr(&m, 7), 0x807);
+    }
+
+    #[test]
+    fn chr_bg_table_mirrors_across_both_pattern_tables() {
+        let mut m = mk();
+        m.chr_mode = 3; // 1 KB
+        m.last_chr_write_sprite = false; // use the "B" set
+        m.chr_bank_bg = [40, 41, 42, 43];
+        assert_eq!(chr(&m, 0), 40);
+        assert_eq!(chr(&m, 3), 43);
+        // $1000-$1FFF mirrors the 4-entry B set (no out-of-bounds).
+        assert_eq!(chr(&m, 4), 40);
+        assert_eq!(chr(&m, 7), 43);
+    }
+
+    // ---- F36: scanline IRQ counter / latch model -------------------
+
+    #[test]
+    fn irq_latch_set_on_match_line_gated_by_enable() {
+        let mut m = mk();
+        m.irq_compare = 5;
+        m.irq_enable = false;
+        for _ in 0..4 {
+            m.on_scanline_tick(); // counter 1..4
+        }
+        assert!(!m.irq_pending, "latch not set before match");
+        m.on_scanline_tick(); // counter == 5 → latch
+        assert!(m.irq_pending, "latch set on match");
+        assert!(!m.irq_pending(), "line stays low while disabled");
+        m.irq_enable = true;
+        assert!(m.irq_pending(), "line asserts once enabled");
+    }
+
+    #[test]
+    fn reading_5204_acknowledges_pending_irq() {
+        let mut m = mk();
+        m.irq_compare = 3;
+        m.irq_enable = true;
+        for _ in 0..3 {
+            m.on_scanline_tick();
+        }
+        assert!(m.irq_pending());
+        let status = m.prg_read_byte(0x5204);
+        assert_eq!(status & 0x80, 0x80, "status reports pending");
+        assert!(!m.irq_pending, "read clears the latch");
+        assert!(!m.irq_pending(), "line de-asserts after ack");
+    }
+
+    #[test]
+    fn peeking_5204_does_not_clear_pending() {
+        let mut m = mk();
+        m.irq_compare = 2;
+        m.irq_enable = true;
+        m.on_scanline_tick();
+        m.on_scanline_tick();
+        assert!(m.irq_pending);
+        let _ = m.prg_peek_byte(0x5204); // side-effect-free
+        assert!(m.irq_pending, "peek must not acknowledge");
+    }
+
+    #[test]
+    fn in_frame_and_counter_reset_past_render_region() {
+        let mut m = mk();
+        m.irq_compare = 0; // never matches on the increment path
+        for _ in 0..240 {
+            m.on_scanline_tick();
+        }
+        assert_eq!(m.scanline_counter, 240);
+        assert!(m.in_frame);
+        assert!(!m.irq_pending, "target 0 never latches");
+        m.on_scanline_tick(); // >= 240 → reset
+        assert_eq!(m.scanline_counter, 0);
+        assert!(!m.in_frame);
     }
 }

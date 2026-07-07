@@ -428,15 +428,20 @@ impl Cpu {
         let instr = match self.instruction {
             Some(instr) => instr,
             None => {
-                // Unknown / illegal opcode. Treat as a 2-cycle NOP so
-                // games that execute garbage bytes during boot/crashes
-                // don't take the emulator down. The ASM path has the
-                // same policy — dispatch table's Lunimpl returns to
-                // Rust, and if Rust's OPCODES[x] is None we end up
-                // here.
+                // Defensive fallback. Every one of the 256 opcodes now
+                // has a real `Instruction` entry (all 12 KIL/JAM slots
+                // and the unstable LAS/TAS/AHX/SHX/SHY stores are
+                // modeled), so this arm is unreachable in normal
+                // operation. Should it ever be hit, consume the opcode
+                // byte and — crucially — poll interrupts so a pending
+                // NMI/IRQ is serviced at this instruction boundary
+                // rather than being silently deferred by one whole
+                // instruction (the pre-fix behavior returned `true`
+                // without polling, delaying interrupt delivery).
                 self.regs.pc = self.regs.pc.wrapping_add(1);
                 self.cycle = 0;
                 self.opcode = 0;
+                self.poll_interrupts();
                 return true;
             }
         };
