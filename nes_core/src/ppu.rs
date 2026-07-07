@@ -838,13 +838,13 @@ impl Ppu {
             show_sprites_left8: self.regs.ppu_mask.contains(PpuMask::SHOW_SPRITES_LEFT_8),
         };
         // Master-disable path: when neither background nor sprites are
-        // being rendered, the per-pixel path calls `clear_pixel` which
-        // writes 0x0F (NES black). Mirror that here rather than
-        // falling through to the kernel (which would emit
-        // palette_ram[0] = universal-background, a different value).
+        // being rendered, the per-pixel path calls `clear_pixel`, which
+        // outputs the $3F00 backdrop color (hardware forced-blank behavior,
+        // Mesen-validated). Mirror that here.
         if !cfg.show_bg && !cfg.show_sprites {
+            let backdrop = self.mem.palette_ram.read_byte(0x3F00) & 0x3F;
             for px in self.batched_scanline_buf.iter_mut() {
-                *px = 0x0F;
+                *px = backdrop;
             }
             let y = self.scanline as usize;
             let row_start = y * SCREEN_WIDTH;
@@ -1314,7 +1314,11 @@ impl Ppu {
         }
         let x = self.scanline_cycle() - 1;
         let y = self.scanline;
-        self.frame_buffer[(y as usize * SCREEN_WIDTH) + x as usize] = 0x0F;
+        // Real hardware (and the LaiNES/Mesen oracle) outputs the backdrop
+        // color at palette_ram[$3F00] during forced blank, not a hardcoded
+        // NES black. Mask to 6 bits like write_pixel. (Mesen-validated.)
+        let backdrop = self.mem.palette_ram.read_byte(0x3F00) & 0x3F;
+        self.frame_buffer[(y as usize * SCREEN_WIDTH) + x as usize] = backdrop;
     }
 
     #[inline(always)]
@@ -2351,7 +2355,11 @@ impl Sprite {
         Sprite {
             y: oam_bytes[0],
             tile_index: oam_bytes[1],
-            attributes: SpriteAttributes(oam_bytes[2]),
+            // OAM attribute bits 2-4 are unimplemented on real hardware and
+            // always read back 0. Mask them off (0xE3) so a real sprite's
+            // attribute can never collide with the 0xFF empty-slot sentinel
+            // used by fetch_sprite_tile and both render paths. (Mesen-validated.)
+            attributes: SpriteAttributes(oam_bytes[2] & 0xE3),
             x: oam_bytes[3],
         }
     }
@@ -2482,6 +2490,84 @@ mod predict_nmi_tests {
         assert!(
             predicted_cpu_cycles - actual <= 1,
             "over-predicted by {} CPU cycles", predicted_cpu_cycles - actual
+        );
+    }
+}
+
+#[cfg(test)]
+mod sprite_and_blank_tests {
+    use super::*;
+    use crate::cartridge::Cartridge;
+    use crate::mapper::MapperEnum;
+
+    /// Minimal NROM cart (32 KB PRG, 8 KB CHR of zeros) so the mapper
+    /// can back CHR reads.
+    fn nrom_mapper() -> MapperEnum {
+        let mut rom = Vec::new();
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // 32 KB PRG
+        rom.push(1); // 8 KB CHR
+        rom.extend_from_slice(&[0u8; 10]);
+        rom.extend(vec![0u8; 32 * 1024]);
+        rom.extend(vec![0u8; 8 * 1024]);
+        let cart = Cartridge::load(&mut std::io::Cursor::new(rom)).unwrap();
+        MapperEnum::from_cartridge(cart)
+    }
+
+    // An out-of-range sprite row (scanline < sprite.y) must not underflow
+    // into an out-of-bounds CHR fetch; the guard marks the slot inactive.
+    #[test]
+    fn fetch_sprite_tile_guards_underflow_row() {
+        let mut ppu = Ppu::new();
+        let mut mapper = nrom_mapper();
+        ppu.oam.secondary[0] = 200; // y
+        ppu.oam.secondary[1] = 0x00;
+        ppu.oam.secondary[2] = 0x00;
+        ppu.oam.secondary[3] = 0x00;
+        ppu.oam.secondary_write_index = 4;
+        ppu.scanline = 10; // above the sprite's y
+        ppu.fetch_sprite_tile(&mut mapper, 0);
+        assert_eq!(
+            ppu.sprite_attribute_latches[0].0, 0xFF,
+            "out-of-range sprite row must mark the slot inactive, not fetch OOB"
+        );
+    }
+
+    // A real sprite whose raw OAM attribute byte is 0xFF must still render:
+    // bits 2-4 are unimplemented (read 0), so masking to 0xE3 keeps it
+    // distinct from the 0xFF empty-slot sentinel.
+    #[test]
+    fn sprite_with_raw_attribute_0xff_is_not_dropped() {
+        let mut ppu = Ppu::new();
+        let mut mapper = nrom_mapper();
+        ppu.oam.secondary[0] = 8; // y (scanline 10 -> row 2)
+        ppu.oam.secondary[1] = 0x01;
+        ppu.oam.secondary[2] = 0xFF; // raw attribute
+        ppu.oam.secondary[3] = 40;
+        ppu.oam.secondary_write_index = 4;
+        ppu.scanline = 10;
+        ppu.fetch_sprite_tile(&mut mapper, 0);
+        assert_eq!(
+            ppu.sprite_attribute_latches[0].0, 0xE3,
+            "raw 0xFF attribute must be masked to 0xE3, not dropped as the empty sentinel"
+        );
+    }
+
+    // Forced blank outputs the palette_ram[$3F00] backdrop, not 0x0F.
+    #[test]
+    fn clear_pixel_uses_backdrop_color() {
+        let mut ppu = Ppu::new();
+        ppu.mem.palette_ram.write_byte(0x3F00, 0x21);
+        ppu.skip_render = false;
+        ppu.scanline = 5;
+        ppu.scanline_start_cycle = 0;
+        ppu.cycles = 4; // scanline_cycle() = 4 -> x = 3
+        ppu.clear_pixel();
+        let x = (ppu.scanline_cycle() - 1) as usize;
+        let y = ppu.scanline as usize;
+        assert_eq!(
+            ppu.frame_buffer[y * SCREEN_WIDTH + x], 0x21,
+            "forced-blank pixel must use the $3F00 backdrop color"
         );
     }
 }
