@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -163,7 +164,12 @@ def demo(game: str, profile_path: Path, rom_path: str, max_steps: int,
     pool.shutdown()
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    it = int(Path(ckpt).stem.rsplit("_", 1)[-1]) if "_" in Path(ckpt).stem else 0
+    # Iteration number for the GIF filename. Checkpoints are named
+    # gen_00181 / vanilla_ppo_iter_00060 / smb_1-1_greedy_clear_iter70 —
+    # extract the trailing run of digits (handles an "iter70" suffix with
+    # no separating underscore); fall back to 0 when there is none.
+    _m = re.search(r"(\d+)\D*$", Path(ckpt).stem)
+    it = int(_m.group(1)) if _m else 0
     gif_path = out_dir / f"{game}_iter{it:05d}.gif"
     try:
         import imageio.v2 as imageio
