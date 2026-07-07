@@ -489,6 +489,30 @@ class AppController:
         widget.raise_()
         widget.activateWindow()
 
+    def _report_window_error(self, title: str, subject: str, exc: Exception) -> None:
+        """Surface a window-open failure (bad ROM, corrupt checkpoint,
+        missing profile) as a clear dialog instead of letting the
+        exception escape the Qt slot — an uncaught slot exception aborts
+        the whole app on PyQt6."""
+        import logging as _logging
+        _logging.getLogger(__name__).exception("%s (%s)", title, subject)
+        try:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self.main_window,
+                title,
+                f"{subject}\n\n{type(exc).__name__}: {exc}",
+            )
+        except Exception:
+            # No display / dialog unavailable — fall back to the main
+            # window status line so the failure is still visible.
+            try:
+                self.main_window._show_status(
+                    f"{title}: {type(exc).__name__}: {str(exc)[:160]}"
+                )
+            except Exception:
+                pass
+
     def _on_play(self, rom_path: str) -> None:
         existing = self.play_window
         if existing is not None:
@@ -498,7 +522,16 @@ class AppController:
             except Exception:
                 pass
             self.play_window = None
-        self.play_window = PlayWindow(rom_path=rom_path)
+        # PlayWindow's constructor loads + resets the ROM; a missing or
+        # corrupt file raises here. Contain it so the app survives.
+        try:
+            self.play_window = PlayWindow(rom_path=rom_path)
+        except Exception as exc:
+            self.play_window = None
+            self._report_window_error(
+                "Cannot open Play window", Path(rom_path).name or rom_path, exc
+            )
+            return
         self.play_window.show()
         self.play_window.raise_()
         self.play_window.activateWindow()
@@ -624,12 +657,25 @@ class AppController:
             except RuntimeError:
                 pass
             self.replay_window = None
-        self.replay_window = ReplayWindow(
-            rom_path=config["rom_path"],
-            profile_path=config["profile_path"],
-            checkpoint_path=config["checkpoint_path"],
-            start_state_path=config.get("start_state_path"),
-        )
+        # ReplayWindow loads the profile YAML, opens the ROM, and
+        # torch.loads the checkpoint — any of which can raise on a
+        # missing/corrupt file or an arch mismatch. Contain it so a bad
+        # pick shows a dialog instead of taking the app down.
+        try:
+            self.replay_window = ReplayWindow(
+                rom_path=config["rom_path"],
+                profile_path=config["profile_path"],
+                checkpoint_path=config["checkpoint_path"],
+                start_state_path=config.get("start_state_path"),
+            )
+        except Exception as exc:
+            self.replay_window = None
+            subject = (
+                Path(config.get("checkpoint_path", "")).name
+                or config.get("rom_path", "")
+            )
+            self._report_window_error("Cannot open Replay window", subject, exc)
+            return
         self.replay_window.show()
         self.replay_window.raise_()
         self.replay_window.activateWindow()
@@ -817,7 +863,18 @@ def main() -> int:
     )
     parser.parse_known_args()
 
-    controller = AppController()
+    # QApplication construction (inside AppController) fails hard on a
+    # machine with no window server and no offscreen platform plugin.
+    # Turn the raw Qt abort into an actionable message + clean exit code.
+    try:
+        controller = AppController()
+    except Exception as exc:
+        logging.getLogger(__name__).error(
+            "Failed to start the GUI (%s: %s). On a headless machine, run "
+            "with QT_QPA_PLATFORM=offscreen.",
+            type(exc).__name__, exc,
+        )
+        return 1
     controller.env_spec = "nes_core:NESEnvironment"
     return controller.run()
 

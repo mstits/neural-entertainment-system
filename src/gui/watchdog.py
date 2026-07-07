@@ -47,7 +47,19 @@ class Watchdog:
     def start(self) -> Optional[Path]:
         if self._thread is not None:
             return self._sample_path
-        self._log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            # Log dir unavailable (permission denied, path is a file,
+            # read-only FS). The watchdog is best-effort instrumentation —
+            # degrade to a no-op instead of raising into the GUI's Start
+            # path and aborting the run.
+            import logging
+            logging.getLogger(__name__).warning(
+                "watchdog: cannot create log dir %s (%s); sampling disabled.",
+                self._log_dir, exc,
+            )
+            return None
         stamp = time.strftime("%Y%m%d-%H%M%S")
         self._sample_path = self._log_dir / f"watchdog-{stamp}.jsonl"
         self._stack_path = self._log_dir / f"watchdog-{stamp}.stacks.txt"
@@ -68,25 +80,32 @@ class Watchdog:
     def _run(self) -> None:
         start_ts = time.time()
         while not self._stop.is_set():
-            sample = self._sample(start_ts)
+            # Whole-iteration guard: this runs on a daemon thread, and an
+            # unhandled exception here would silently kill sampling (and
+            # spew a traceback to stderr). Swallow anything unexpected and
+            # keep the cadence going.
             try:
-                assert self._sample_path is not None
-                with self._sample_path.open("a") as fh:
-                    fh.write(json.dumps(sample) + "\n")
+                sample = self._sample(start_ts)
+                try:
+                    assert self._sample_path is not None
+                    with self._sample_path.open("a") as fh:
+                        fh.write(json.dumps(sample) + "\n")
+                except Exception:
+                    pass
+                rss = int(sample.get("rss_mb", 0))
+                growth = rss - self._last_rss_mb if self._last_rss_mb else 0
+                crossed = rss >= self._threshold_mb
+                big_jump = growth >= self._growth_mb and self._last_rss_mb > 0
+                if crossed or big_jump:
+                    self._dump_stacks(
+                        reason="threshold" if crossed else "growth",
+                        rss=rss,
+                        growth=growth,
+                    )
+                if rss:
+                    self._last_rss_mb = rss
             except Exception:
                 pass
-            rss = int(sample.get("rss_mb", 0))
-            growth = rss - self._last_rss_mb if self._last_rss_mb else 0
-            crossed = rss >= self._threshold_mb
-            big_jump = growth >= self._growth_mb and self._last_rss_mb > 0
-            if crossed or big_jump:
-                self._dump_stacks(
-                    reason="threshold" if crossed else "growth",
-                    rss=rss,
-                    growth=growth,
-                )
-            if rss:
-                self._last_rss_mb = rss
             self._stop.wait(self._interval)
 
     def _sample(self, start_ts: float) -> dict:

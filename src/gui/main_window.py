@@ -582,15 +582,28 @@ class MainWindow(QMainWindow):
         self.bc_label.setText("(will reuse start-state if no file picked)")
         self.bc_label.setStyleSheet("font-style: italic; color: palette(placeholder-text)")
 
-    def _on_play(self) -> None:
+    def _rom_ready(self) -> bool:
+        """True iff a ROM is selected and still present on disk. Shows a
+        status message and returns False otherwise, so callers can bail
+        before handing a missing path to a window or the trainer."""
         if not self._rom_path:
             self._show_status("Choose a ROM first.")
+            return False
+        if not Path(self._rom_path).exists():
+            self._show_status(
+                f"ROM no longer exists: {Path(self._rom_path).name}. "
+                "Choose it again."
+            )
+            return False
+        return True
+
+    def _on_play(self) -> None:
+        if not self._rom_ready():
             return
         self.play_requested.emit(self._rom_path)
 
     def _on_replay(self) -> None:
-        if not self._rom_path:
-            self._show_status("Choose a ROM first.")
+        if not self._rom_ready():
             return
         profile_path = self.profile_dropdown.currentData()
         if not profile_path:
@@ -613,8 +626,7 @@ class MainWindow(QMainWindow):
         })
 
     def _on_start(self) -> None:
-        if not self._rom_path:
-            self._show_status("Choose a ROM first.")
+        if not self._rom_ready():
             return
 
         profile_path = self.profile_dropdown.currentData()

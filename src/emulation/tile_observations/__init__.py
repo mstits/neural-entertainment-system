@@ -71,7 +71,10 @@ def get_extractor(name: str) -> TileObservation:
     if name == "smb_tiles":
         from src.emulation.tile_observations.smb import SMBTileObservation
         return SMBTileObservation()
+    if name == "tetris_board":
+        from src.emulation.tile_observations.tetris import TetrisBoardObservation
+        return TetrisBoardObservation()
     raise ValueError(
         f"unknown tile encoder {name!r}; "
-        "expected one of: smb_tiles"
+        "expected one of: smb_tiles, tetris_board"
     )

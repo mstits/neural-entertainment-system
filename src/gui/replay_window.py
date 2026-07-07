@@ -304,7 +304,25 @@ class ReplayWindow(QMainWindow):
     def _tick(self) -> None:
         if self._paused:
             return
+        # This runs from a QTimer slot; an uncaught exception here aborts
+        # the app on PyQt6. Contain any inference/emulator failure, stop
+        # the loop, and report it in the status bar.
+        try:
+            self._tick_step()
+        except Exception as exc:
+            self._timer.stop()
+            self._paused = True
+            import logging as _logging
+            _logging.getLogger(__name__).exception("replay step failed")
+            try:
+                self.status_label.setText(
+                    f"replay error: {type(exc).__name__}: {exc}"
+                )
+                self.pause_btn.setText("Error — Resume resets")
+            except Exception:
+                pass
 
+    def _tick_step(self) -> None:
         obs = self._stacker.push(self.env.get_frame())
         # Prefer Core ML / ANE — 8× faster than PyTorch MPS at batch=1
         # on M4 Max. Falls back to MPS if compilation failed.
@@ -377,8 +395,22 @@ class ReplayWindow(QMainWindow):
                 return
             # The QTimer drives the emulator at _TARGET_FPS; matching the
             # writer's fps avoids 2× playback speed (writer claimed 30 while
-            # frames arrived at 60).
-            self._recorder = VideoWriter(path, fps=_TARGET_FPS)
+            # frames arrived at 60). A missing codec / unwritable path
+            # raises here — surface it instead of crashing the window.
+            try:
+                self._recorder = VideoWriter(path, fps=_TARGET_FPS)
+            except Exception as exc:
+                self._recorder = None
+                # Re-enters this handler with checked=False, which resets
+                # the button label; set the status afterward so it sticks.
+                self.record_btn.setChecked(False)
+                try:
+                    self.status_label.setText(
+                        f"Recording failed: {type(exc).__name__}: {exc}"
+                    )
+                except Exception:
+                    pass
+                return
             self.record_btn.setText("Stop Recording")
             self.status_label.setText(f"Recording to {Path(path).name}")
         else:
@@ -397,7 +429,21 @@ class ReplayWindow(QMainWindow):
         self.pause_btn.setText("Resume" if self._paused else "Pause")
 
     def _reset_episode(self) -> None:
-        first_frame = self.env.reset()
+        try:
+            first_frame = self.env.reset()
+        except Exception as exc:
+            # A reset failure (e.g. bad start-state) must not crash the
+            # window from a button click. Report and leave it paused.
+            self._paused = True
+            import logging as _logging
+            _logging.getLogger(__name__).exception("replay episode reset failed")
+            try:
+                self.status_label.setText(
+                    f"reset failed: {type(exc).__name__}: {exc}"
+                )
+            except Exception:
+                pass
+            return
         self._stacker.reset(first_frame)
         self._step_count = 0
         self._paused = False
@@ -405,8 +451,20 @@ class ReplayWindow(QMainWindow):
         self._paint(first_frame)
 
     def closeEvent(self, event) -> None:
-        self._timer.stop()
+        # Teardown must never raise out of closeEvent — that would abort
+        # the app on window close. Guard each step independently.
+        try:
+            self._timer.stop()
+        except Exception:
+            pass
         if self._recorder is not None:
-            self._recorder.close()
-        self.env.close()
+            try:
+                self._recorder.close()
+            except Exception:
+                pass
+            self._recorder = None
+        try:
+            self.env.close()
+        except Exception:
+            pass
         super().closeEvent(event)

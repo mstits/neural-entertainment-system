@@ -2238,7 +2238,10 @@ impl BubbleBobbleReward {
             survival_weight,
             time_penalty,
             round_goal,
-            enemy_count_addr,
+            // Clamp to valid 2 KB RAM range: a misconfigured out-of-range
+            // address is treated as disabled (0) rather than panicking on
+            // `ram[addr]` in compute().
+            enemy_count_addr: if enemy_count_addr < 2048 { enemy_count_addr } else { 0 },
             prev_round: 0,
             start_round: 0,
             prev_lives: 0,

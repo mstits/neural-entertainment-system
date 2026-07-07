@@ -195,31 +195,52 @@ class PlayWindow(QMainWindow):
     def _tick(self) -> None:
         if self._paused:
             return
-        frame, done = self.env.step(self._current_mask)
+        # Contain emulator-step failures: this runs from a QTimer slot, and
+        # an uncaught exception here aborts the whole app on PyQt6. Stop the
+        # loop and surface the error instead of crashing the Play window.
+        try:
+            frame, done = self.env.step(self._current_mask)
+        except Exception as exc:
+            self._timer.stop()
+            self._paused = True
+            import logging as _logging
+            _logging.getLogger(__name__).exception("play emulator step failed")
+            try:
+                self.status_label.setText(
+                    f"emulator error: {type(exc).__name__}: {exc}"
+                )
+            except Exception:
+                pass
+            return
         self._dbg_last_mask = getattr(self, "_dbg_last_mask", -1)
         # Every-frame mask + RAM dump to /tmp/playwindow_trace.txt — used
         # to verify GUI ↔ headless parity. Replay the dumped masks
         # through a fresh NESEnvironment headlessly and compare RAM at
         # the same frame index. Any divergence pins a real GUI-vs-Pool
         # parity bug. The file is overwritten per Play-window session
-        # (truncated on first frame).
+        # (truncated on first frame). Trace I/O is best-effort — a
+        # non-writable /tmp must never take down the window.
         if not hasattr(self, "_trace_fh"):
-            self._trace_fh = open("/tmp/playwindow_trace.txt", "w")
-            self._trace_fh.write(
-                "# frame mask $10 $11 $84 $70 $86 $CE $1D $657 $770 $772\n"
-            )
-        try:
-            r = self.env.get_ram_range(0, 0x800)
-            self._trace_fh.write(
-                f"{len(self._recorded):>6d} {self._current_mask:02X} "
-                f"{r[0x10]:02X} {r[0x11]:02X} {r[0x84]:02X} {r[0x70]:02X} "
-                f"{r[0x86]:02X} {r[0xCE]:02X} {r[0x1D]:02X} {r[0x657]:02X} "
-                f"{r[0x770]:02X} {r[0x772]:02X}\n"
-            )
-            if len(self._recorded) % 60 == 0:
-                self._trace_fh.flush()
-        except Exception:
-            pass
+            try:
+                self._trace_fh = open("/tmp/playwindow_trace.txt", "w")
+                self._trace_fh.write(
+                    "# frame mask $10 $11 $84 $70 $86 $CE $1D $657 $770 $772\n"
+                )
+            except OSError:
+                self._trace_fh = None
+        if self._trace_fh is not None:
+            try:
+                r = self.env.get_ram_range(0, 0x800)
+                self._trace_fh.write(
+                    f"{len(self._recorded):>6d} {self._current_mask:02X} "
+                    f"{r[0x10]:02X} {r[0x11]:02X} {r[0x84]:02X} {r[0x70]:02X} "
+                    f"{r[0x86]:02X} {r[0xCE]:02X} {r[0x1D]:02X} {r[0x657]:02X} "
+                    f"{r[0x770]:02X} {r[0x772]:02X}\n"
+                )
+                if len(self._recorded) % 60 == 0:
+                    self._trace_fh.flush()
+            except Exception:
+                pass
         if self._current_mask != self._dbg_last_mask and self._current_mask != 0:
             try:
                 r = self.env.get_ram_range(0, 0x800)
@@ -332,14 +353,23 @@ class PlayWindow(QMainWindow):
         else:
             data = bytes(self._recorded)
         tmp = path + ".tmp"
-        with open(tmp, "wb") as f:
-            f.write(data)
-            f.flush()
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp, path)
+        except OSError as exc:
+            self.status_label.setText(f"save failed: {exc!s}")
             try:
-                os.fsync(f.fileno())
+                if os.path.exists(tmp):
+                    os.remove(tmp)
             except OSError:
                 pass
-        os.replace(tmp, path)
+            return
         self.status_label.setText(
             f"saved: {Path(path).name} ({len(data)} frames)"
         )
@@ -372,14 +402,23 @@ class PlayWindow(QMainWindow):
         import os
         data = bytes(self._recorded)
         tmp = path + ".tmp"
-        with open(tmp, "wb") as f:
-            f.write(data)
-            f.flush()
+        try:
+            with open(tmp, "wb") as f:
+                f.write(data)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp, path)
+        except OSError as exc:
+            self.status_label.setText(f"save failed: {exc!s}")
             try:
-                os.fsync(f.fileno())
+                if os.path.exists(tmp):
+                    os.remove(tmp)
             except OSError:
                 pass
-        os.replace(tmp, path)
+            return
         self.status_label.setText(
             f"saved BC tape: {Path(path).name} ({len(data)} frames)"
         )
@@ -417,6 +456,21 @@ class PlayWindow(QMainWindow):
                 if len(self._recorded) > getattr(self, "_saved_at_len", 0):
                     event.ignore()
                     return
-        self._timer.stop()
-        self.env.close()
+        # Teardown must never raise out of closeEvent — that would abort
+        # the app on window close. Each step is independently guarded.
+        try:
+            self._timer.stop()
+        except Exception:
+            pass
+        trace_fh = getattr(self, "_trace_fh", None)
+        if trace_fh is not None:
+            try:
+                trace_fh.close()
+            except Exception:
+                pass
+            self._trace_fh = None
+        try:
+            self.env.close()
+        except Exception:
+            pass
         super().closeEvent(event)
