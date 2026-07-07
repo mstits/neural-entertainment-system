@@ -6,6 +6,14 @@ pub trait VideoSink {
     fn write_frame(&mut self, frame_buffer: &[u8]);
     fn frame_written(&self) -> bool;
     fn pixel_size(&self) -> usize;
+
+    /// Set the PPUMASK color-emphasis bits (`0..=7`; bit 0 = red,
+    /// bit 1 = green, bit 2 = blue) to apply on the next `write_frame`.
+    /// Default no-op — only sinks that own the emphasis LUT honor it.
+    /// Emphasis `0` (the reset default) yields byte-identical output to
+    /// the base palette, so sinks that ignore this stay correct for the
+    /// overwhelmingly common no-emphasis case.
+    fn set_emphasis(&mut self, _emphasis: u8) {}
 }
 
 impl<S: VideoSink + ?Sized> VideoSink for Box<S> {
@@ -19,6 +27,10 @@ impl<S: VideoSink + ?Sized> VideoSink for Box<S> {
 
     fn pixel_size(&self) -> usize {
         (**self).pixel_size()
+    }
+
+    fn set_emphasis(&mut self, emphasis: u8) {
+        (**self).set_emphasis(emphasis);
     }
 }
 
@@ -119,6 +131,10 @@ impl VideoSink for WebVideoSink<'_> {
 pub struct Xrgb8888VideoSink<'a> {
     buffer: &'a mut [u32],
     frame_written: bool,
+    /// Color-emphasis selector (0..=7) for the current frame. Selects
+    /// the 64-entry slice of `XRGB8888_EMPHASIS_PALETTE`. 0 == base
+    /// palette (byte-identical to the historical output).
+    emphasis: u8,
 }
 
 impl<'a> Xrgb8888VideoSink<'a> {
@@ -126,20 +142,26 @@ impl<'a> Xrgb8888VideoSink<'a> {
         Xrgb8888VideoSink {
             buffer,
             frame_written: false,
+            emphasis: 0,
         }
     }
 }
 
 impl VideoSink for Xrgb8888VideoSink<'_> {
     fn write_frame(&mut self, frame_buffer: &[u8]) {
+        // Select the emphasis slice. For emphasis 0 these 64 entries are
+        // byte-identical to XRGB8888_PALETTE, so the default path is
+        // unchanged; non-zero slices are the tinted/dimmed variants.
+        let palette = &XRGB8888_EMPHASIS_PALETTE
+            [(self.emphasis as usize & 0x07) * 64..(self.emphasis as usize & 0x07) * 64 + 64];
         #[cfg(target_arch = "aarch64")]
         {
-            unsafe { xrgb8888_write_neon(frame_buffer, self.buffer) };
+            unsafe { xrgb8888_write_neon(frame_buffer, self.buffer, palette.as_ptr()) };
         }
         #[cfg(not(target_arch = "aarch64"))]
         {
             for (i, palette_index) in frame_buffer.iter().enumerate() {
-                self.buffer[i] = XRGB8888_PALETTE[*palette_index as usize];
+                self.buffer[i] = palette[*palette_index as usize];
             }
         }
         self.frame_written = true;
@@ -152,17 +174,24 @@ impl VideoSink for Xrgb8888VideoSink<'_> {
     fn pixel_size(&self) -> usize {
         mem::size_of::<u32>()
     }
+
+    fn set_emphasis(&mut self, emphasis: u8) {
+        self.emphasis = emphasis & 0x07;
+    }
 }
 
+/// `palette` must point at a run of at least 64 valid `u32` entries
+/// (one 64-color emphasis slice of `XRGB8888_EMPHASIS_PALETTE`, or the
+/// base `XRGB8888_PALETTE`). Every index in `frame_buffer` is a 6-bit
+/// value (0..=63), so all lookups land inside that run.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-unsafe fn xrgb8888_write_neon(frame_buffer: &[u8], buffer: &mut [u32]) {
+unsafe fn xrgb8888_write_neon(frame_buffer: &[u8], buffer: &mut [u32], palette: *const u32) {
     use core::arch::aarch64::*;
     let n = frame_buffer.len().min(buffer.len());
     let full = n & !15;
     let src = frame_buffer.as_ptr();
     let dst = buffer.as_mut_ptr();
-    let palette = XRGB8888_PALETTE.as_ptr();
     // Gather 16 bytes of palette indices, expand 4x into 4 NEON u32x4
     // vectors by looking up each index in the palette, store.
     let mut i = 0usize;
@@ -222,6 +251,56 @@ pub static XRGB8888_PALETTE: &[u32] = &[
     0x000000,
 ];
 
+/// 512-entry XRGB8888 palette covering all 8 color-emphasis
+/// combinations, indexed `emphasis * 64 + palette_index`. Emphasis
+/// bit 0 = red, bit 1 = green, bit 2 = blue (matching PPUMASK bits
+/// 5/6/7 shifted down). Each active emphasis bit attenuates the two
+/// channels it does *not* emphasize; the attenuation is multiplicative,
+/// so a single bit tints the picture toward that color while all three
+/// bits dim every channel (the "pause dim" / fade effect). Slice
+/// `[0..64]` is byte-identical to `XRGB8888_PALETTE`, keeping the
+/// no-emphasis render path unchanged.
+///
+/// The attenuation factor (~0.746) is the Blargg-measured value cited
+/// on the NESdev wiki. There is no exact RGB reference to match here:
+/// nes-py/LaiNES omits emphasis entirely, and Mesen decodes through a
+/// different base palette + NTSC filter, so the LUT is validated
+/// structurally (see the unit tests) rather than by pixel-diff.
+pub static XRGB8888_EMPHASIS_PALETTE: Lazy<[u32; 512]> = Lazy::new(|| {
+    const ATTEN: f64 = 0.746;
+    let mut lut = [0u32; 512];
+    for emphasis in 0..8usize {
+        let mut rf = 1.0f64;
+        let mut gf = 1.0f64;
+        let mut bf = 1.0f64;
+        if emphasis & 0x01 != 0 {
+            gf *= ATTEN;
+            bf *= ATTEN;
+        }
+        if emphasis & 0x02 != 0 {
+            rf *= ATTEN;
+            bf *= ATTEN;
+        }
+        if emphasis & 0x04 != 0 {
+            rf *= ATTEN;
+            gf *= ATTEN;
+        }
+        for idx in 0..64usize {
+            let color = XRGB8888_PALETTE[idx];
+            let r = (color >> 16) & 0xFF;
+            let g = (color >> 8) & 0xFF;
+            let b = color & 0xFF;
+            // factor == 1.0 for the non-emphasized channels leaves the
+            // byte exact, so emphasis 0 reproduces XRGB8888_PALETTE.
+            let r = ((r as f64 * rf).round() as u32).min(0xFF);
+            let g = ((g as f64 * gf).round() as u32).min(0xFF);
+            let b = ((b as f64 * bf).round() as u32).min(0xFF);
+            lut[emphasis * 64 + idx] = (r << 16) | (g << 8) | b;
+        }
+    }
+    lut
+});
+
 static XRGB1555_PALETTE: Lazy<[u16; 64]> = Lazy::new(|| {
     let mut palette = [0; 64];
     for n in 0..64 {
@@ -257,3 +336,113 @@ static WEB_PALETTE: Lazy<[u32; 64]> = Lazy::new(|| {
     }
     palette
 });
+
+#[cfg(test)]
+mod emphasis_tests {
+    use super::*;
+
+    fn channels(px: u32) -> (u32, u32, u32) {
+        ((px >> 16) & 0xFF, (px >> 8) & 0xFF, px & 0xFF)
+    }
+
+    #[test]
+    fn emphasis_zero_slice_is_byte_identical_to_base_palette() {
+        for idx in 0..64 {
+            assert_eq!(
+                XRGB8888_EMPHASIS_PALETTE[idx], XRGB8888_PALETTE[idx],
+                "emphasis-0 entry {idx} diverged from base palette"
+            );
+        }
+    }
+
+    #[test]
+    fn default_sink_write_matches_base_palette() {
+        // A sink with no set_emphasis call must reproduce the historical
+        // full-color output exactly (parity-critical default path).
+        let frame: Vec<u8> = (0..256u32).map(|i| (i % 64) as u8).collect();
+        let mut out = vec![0u32; frame.len()];
+        {
+            let mut sink = Xrgb8888VideoSink::new(&mut out);
+            sink.write_frame(&frame);
+        }
+        for (i, &idx) in frame.iter().enumerate() {
+            assert_eq!(out[i], XRGB8888_PALETTE[idx as usize]);
+        }
+    }
+
+    #[test]
+    fn red_emphasis_preserves_red_and_dims_green_blue() {
+        // emphasis bit 0 (red) leaves R untouched, attenuates G and B.
+        for idx in 0..64 {
+            let base = XRGB8888_PALETTE[idx];
+            let emp = XRGB8888_EMPHASIS_PALETTE[64 + idx];
+            let (br, bg, bb) = channels(base);
+            let (er, eg, eb) = channels(emp);
+            assert_eq!(er, br, "red channel changed under red emphasis (idx {idx})");
+            assert!(eg <= bg, "green not attenuated under red emphasis (idx {idx})");
+            assert!(eb <= bb, "blue not attenuated under red emphasis (idx {idx})");
+            // Non-zero channels must actually drop (not just stay equal).
+            if bg > 3 {
+                assert!(eg < bg, "green unchanged for a bright color (idx {idx})");
+            }
+        }
+    }
+
+    #[test]
+    fn green_and_blue_emphasis_target_correct_channels() {
+        for idx in 0..64 {
+            let base = XRGB8888_PALETTE[idx];
+            let (br, bg, bb) = channels(base);
+            // green emphasis (bit 1) → slice 2
+            let (gr, gg, gb) = channels(XRGB8888_EMPHASIS_PALETTE[2 * 64 + idx]);
+            assert_eq!(gg, bg, "green channel changed under green emphasis (idx {idx})");
+            assert!(gr <= br && gb <= bb);
+            // blue emphasis (bit 2) → slice 4
+            let (b2r, b2g, b2b) = channels(XRGB8888_EMPHASIS_PALETTE[4 * 64 + idx]);
+            assert_eq!(b2b, bb, "blue channel changed under blue emphasis (idx {idx})");
+            assert!(b2r <= br && b2g <= bg);
+        }
+    }
+
+    #[test]
+    fn all_emphasis_dims_every_channel() {
+        // All three bits set → each channel attenuated by the two others
+        // (the darkening / fade case). No channel may exceed base.
+        for idx in 0..64 {
+            let base = XRGB8888_PALETTE[idx];
+            let emp = XRGB8888_EMPHASIS_PALETTE[7 * 64 + idx];
+            let (br, bg, bb) = channels(base);
+            let (er, eg, eb) = channels(emp);
+            assert!(er <= br && eg <= bg && eb <= bb, "idx {idx} not dimmed");
+            if br > 3 {
+                assert!(er < br, "red not dimmed for bright color (idx {idx})");
+            }
+        }
+    }
+
+    #[test]
+    fn sink_honors_set_emphasis() {
+        let frame = vec![0x30u8; 8]; // a bright grey-column entry
+        let mut out = vec![0u32; frame.len()];
+        {
+            let mut sink = Xrgb8888VideoSink::new(&mut out);
+            sink.set_emphasis(0b111); // all emphasis
+            sink.write_frame(&frame);
+        }
+        assert_eq!(out[0], XRGB8888_EMPHASIS_PALETTE[7 * 64 + 0x30]);
+        assert_ne!(out[0], XRGB8888_PALETTE[0x30]);
+    }
+
+    #[test]
+    fn set_emphasis_masks_to_three_bits() {
+        // Only the low 3 bits select a slice; stray high bits are ignored.
+        let frame = vec![0x21u8; 4];
+        let mut out = vec![0u32; frame.len()];
+        {
+            let mut sink = Xrgb8888VideoSink::new(&mut out);
+            sink.set_emphasis(0xFF);
+            sink.write_frame(&frame);
+        }
+        assert_eq!(out[0], XRGB8888_EMPHASIS_PALETTE[7 * 64 + 0x21]);
+    }
+}

@@ -239,6 +239,15 @@ pub struct Ppu {
     /// frames). Refreshed in `write_ppu_mask` (only place PPUMASK
     /// changes — via $2001 MMIO write).
     ppu_mask_cache: u8,
+
+    /// Per-pixel palette-index AND mask for the PPUMASK greyscale bit
+    /// (bit 0). `0x3F` when greyscale is off (identity — the full 6-bit
+    /// index passes through); `0x30` when on (restricts selection to
+    /// the grey column $00/$10/$20/$30, matching real PPU behavior).
+    /// Applied at the frame-buffer write in `render_pixel` and the
+    /// batched scanline copy. Refreshed alongside `ppu_mask_cache`, so
+    /// the default (greyscale off) path stays byte-identical.
+    grey_mask: u8,
 }
 
 // SAFETY: chr_cache_ptr aliases memory owned by the same Nes that
@@ -353,6 +362,7 @@ impl Ppu {
             batched_invalidation_broad: false,
             chr_cache_ptr: core::ptr::null(),
             ppu_mask_cache: 0,
+            grey_mask: 0x3F,
         }
     }
 
@@ -380,6 +390,9 @@ impl Ppu {
         if m.contains(PpuMask::SHOW_BACKGROUND_LEFT_8) { packed |= 0b0100; }
         if m.contains(PpuMask::SHOW_SPRITES_LEFT_8)    { packed |= 0b1000; }
         self.ppu_mask_cache = packed;
+        // Greyscale (bit 0): AND every output palette index with 0x30
+        // to collapse it onto the grey column; identity mask otherwise.
+        self.grey_mask = if m.contains(PpuMask::GREYSCALE) { 0x30 } else { 0x3F };
     }
 
     #[inline(always)] fn cached_show_bg(&self) -> bool         { self.ppu_mask_cache & 0b0001 != 0 }
@@ -524,6 +537,7 @@ impl Ppu {
         self.regs.ppu_status = PpuStatus::RESET_VALUE;
         self.ppu_data_read_buffer = 0;
         self.ppu_mask_cache = 0;
+        self.grey_mask = 0x3F;
     }
 
     pub fn initialize_nestest(&mut self) {
@@ -916,6 +930,17 @@ impl Ppu {
             );
         }
 
+        // Greyscale (PPUMASK bit 0): restrict every rendered pixel to
+        // the grey column, mirroring the per-pixel `render_pixel` path
+        // so Verify-mode comparison and Replace-mode output both match.
+        // No-op when off (grey_mask == 0x3F) → batched output stays
+        // byte-identical by default.
+        if self.grey_mask != 0x3F {
+            for px in self.batched_scanline_buf.iter_mut() {
+                *px &= self.grey_mask;
+            }
+        }
+
         let row_start = y * SCREEN_WIDTH;
         let row_end = row_start + SCREEN_WIDTH;
 
@@ -1303,7 +1328,9 @@ impl Ppu {
             }
         };
 
-        self.frame_buffer[(y as usize * SCREEN_WIDTH) + x as usize] = color & 0x3F;
+        // `grey_mask` is 0x3F normally (identity on the 6-bit index) and
+        // 0x30 when PPUMASK greyscale is on (collapses to the grey column).
+        self.frame_buffer[(y as usize * SCREEN_WIDTH) + x as usize] = color & self.grey_mask;
     }
 
     // Set pixel to black.
@@ -1738,6 +1765,13 @@ impl Ppu {
             // per scanline transition (262×/frame) instead of once
             // per PPU tick (89342×/frame).
             if self.scanline > PRE_RENDER_SCANLINE {
+                // Color-emphasis (PPUMASK bits 5-7): carry the 3 bits
+                // alongside the frame buffer so the sink can tint via
+                // its 512-entry LUT. bit5=red→0x01, bit6=green→0x02,
+                // bit7=blue→0x04. Emphasis 0 is the byte-identical
+                // default path.
+                let emphasis = (self.regs.ppu_mask.bits() >> 5) & 0x07;
+                video_frame_sink.set_emphasis(emphasis);
                 video_frame_sink.write_frame(&self.frame_buffer);
                 self.scanline = VISIBLE_START_SCANLINE;
                 self.frame += 1;
@@ -2569,5 +2603,162 @@ mod sprite_and_blank_tests {
             ppu.frame_buffer[y * SCREEN_WIDTH + x], 0x21,
             "forced-blank pixel must use the $3F00 backdrop color"
         );
+    }
+}
+
+#[cfg(test)]
+mod greyscale_tests {
+    use super::*;
+
+    #[test]
+    fn grey_mask_identity_when_off() {
+        let mut p = Ppu::new();
+        p.regs.ppu_mask = PpuMask::NONE;
+        p.refresh_ppu_mask_cache();
+        assert_eq!(p.grey_mask, 0x3F);
+        // Every 6-bit palette index passes through unchanged: the
+        // default render path is byte-identical to pre-greyscale code.
+        for idx in 0u8..64 {
+            assert_eq!(idx & p.grey_mask, idx);
+        }
+    }
+
+    #[test]
+    fn grey_mask_collapses_to_grey_column_when_on() {
+        let mut p = Ppu::new();
+        p.regs.ppu_mask = PpuMask::GREYSCALE;
+        p.refresh_ppu_mask_cache();
+        assert_eq!(p.grey_mask, 0x30);
+        // Masking with 0x30 restricts every index to the four grey
+        // entries $00/$10/$20/$30 (NES greyscale behavior).
+        for idx in 0u8..64 {
+            let masked = idx & p.grey_mask;
+            assert!(
+                matches!(masked, 0x00 | 0x10 | 0x20 | 0x30),
+                "index {idx:#04x} masked to {masked:#04x}, not a grey-column entry"
+            );
+        }
+        // Canonical spot-checks: a color keeps only its luminance column.
+        assert_eq!(0x21 & p.grey_mask, 0x20);
+        assert_eq!(0x0F & p.grey_mask, 0x00);
+        assert_eq!(0x3D & p.grey_mask, 0x30);
+    }
+
+    #[test]
+    fn greyscale_bit_does_not_disturb_show_bits() {
+        // Greyscale must not perturb the packed show/left8 cache used by
+        // the per-pixel hot path.
+        let mut p = Ppu::new();
+        p.regs.ppu_mask = PpuMask::GREYSCALE
+            | PpuMask::SHOW_BACKGROUND
+            | PpuMask::SHOW_SPRITES;
+        p.refresh_ppu_mask_cache();
+        assert!(p.cached_show_bg());
+        assert!(p.cached_show_sprites());
+        assert!(!p.cached_show_bg_left8());
+        assert!(!p.cached_show_sprites_left8());
+        assert_eq!(p.grey_mask, 0x30);
+    }
+
+    #[test]
+    fn reset_restores_identity_mask() {
+        let mut p = Ppu::new();
+        p.regs.ppu_mask = PpuMask::GREYSCALE;
+        p.refresh_ppu_mask_cache();
+        assert_eq!(p.grey_mask, 0x30);
+        p.reset();
+        assert_eq!(p.grey_mask, 0x3F);
+    }
+
+    #[test]
+    fn apply_state_recomputes_mask() {
+        let mut p = Ppu::new();
+        p.regs.ppu_mask = PpuMask::GREYSCALE;
+        let state = p.get_state();
+        let mut q = Ppu::new();
+        assert_eq!(q.grey_mask, 0x3F);
+        q.apply_state(&state);
+        assert_eq!(q.grey_mask, 0x30, "grey_mask must be rebuilt from restored PPUMASK");
+    }
+
+    #[test]
+    fn emphasis_bits_extract_from_high_ppumask_bits() {
+        // Mirror of the extraction the write_frame path performs:
+        // bit5→red(0x01), bit6→green(0x02), bit7→blue(0x04).
+        let extract = |m: PpuMask| (m.bits() >> 5) & 0x07;
+        assert_eq!(extract(PpuMask::NONE), 0);
+        assert_eq!(extract(PpuMask::EMPHASIZE_RED), 0b001);
+        assert_eq!(extract(PpuMask::EMPHASIZE_GREEN), 0b010);
+        assert_eq!(extract(PpuMask::EMPHASIZE_BLUE), 0b100);
+        assert_eq!(
+            extract(
+                PpuMask::EMPHASIZE_RED
+                    | PpuMask::EMPHASIZE_GREEN
+                    | PpuMask::EMPHASIZE_BLUE
+            ),
+            0b111
+        );
+        // Rendering/greyscale bits must not leak into the emphasis value.
+        assert_eq!(
+            extract(PpuMask::GREYSCALE | PpuMask::SHOW_BACKGROUND),
+            0
+        );
+    }
+
+    /// End-to-end: drive a full frame through `tick` with emphasis bits
+    /// set in PPUMASK and confirm the value reaches the sink via
+    /// `set_emphasis` right before `write_frame`.
+    #[test]
+    fn emphasis_reaches_sink_through_full_frame_tick() {
+        use crate::cartridge::Cartridge;
+        use crate::mapper::MapperEnum;
+        use crate::sink::VideoSink;
+
+        struct CaptureSink {
+            emphasis: u8,
+            frames: u32,
+        }
+        impl VideoSink for CaptureSink {
+            fn write_frame(&mut self, _: &[u8]) {
+                self.frames += 1;
+            }
+            fn frame_written(&self) -> bool {
+                false
+            }
+            fn pixel_size(&self) -> usize {
+                4
+            }
+            fn set_emphasis(&mut self, emphasis: u8) {
+                self.emphasis = emphasis;
+            }
+        }
+
+        // Minimal NROM cart (same shape as the vblank helper test).
+        let mut rom = Vec::new();
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2);
+        rom.push(1);
+        rom.extend_from_slice(&[0u8; 10]);
+        rom.extend(vec![0u8; 32 * 1024]);
+        rom.extend(vec![0u8; 8 * 1024]);
+        let cart = Cartridge::load(&mut std::io::Cursor::new(rom)).unwrap();
+        let mut mapper = MapperEnum::from_cartridge(cart);
+
+        let mut ppu = Ppu::new();
+        // Blue + red emphasis, rendering disabled (keeps timing plain).
+        ppu.regs.ppu_mask = PpuMask::EMPHASIZE_RED | PpuMask::EMPHASIZE_BLUE;
+        ppu.refresh_ppu_mask_cache();
+
+        let mut sink = CaptureSink { emphasis: 0xAA, frames: 0 };
+        // One full frame is 262*341 PPU ticks; step generously past it.
+        for _ in 0..(263 * 341) {
+            ppu.tick(&mut mapper, &mut sink);
+            if sink.frames > 0 {
+                break;
+            }
+        }
+        assert_eq!(sink.frames, 1, "exactly one frame should have emitted");
+        // bit5 (red) → 0x01, bit7 (blue) → 0x04 ⇒ 0b101.
+        assert_eq!(sink.emphasis, 0b101, "emphasis bits must reach the sink");
     }
 }
