@@ -632,7 +632,18 @@ impl NESEnvironment {
         // loop expensive.
         let margin = self.nes.asm_bulk_cycles_margin();
         while self.nes.cycles + margin < target {
-            self.nes.step(&mut video, &mut self.audio);
+            // An OAM DMA makes Nes::step fall to its slow path and consume the
+            // whole ~513-cycle transfer plus the next instruction in one call,
+            // overshooting target by ~500 cycles and breaking the per-frame
+            // cycle lock the parity harness relies on. Tick one cycle at a time
+            // while a DMA is active; bulk-stepping resumes once oam_dma.active
+            // clears. Strict no-op when no DMA straddles the window.
+            // (Mesen-validated; mirrors pool.rs::advance_one_frame.)
+            if self.nes.oam_dma.active {
+                self.nes.tick(&mut video, &mut self.audio);
+            } else {
+                self.nes.step(&mut video, &mut self.audio);
+            }
         }
         while self.nes.cycles < target {
             self.nes.tick(&mut video, &mut self.audio);

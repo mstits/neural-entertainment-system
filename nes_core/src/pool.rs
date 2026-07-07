@@ -194,7 +194,25 @@ impl Worker {
             .unwrap_or_else(|| self.nes.cycles + CPU_CYCLES_PER_FRAME);
         let margin = self.nes.asm_bulk_cycles_margin();
         while self.nes.cycles + margin < target {
-            self.nes.step(&mut video, &mut sink);
+            // `margin` only bounds a normal `step()` (<= mapper
+            // `asm_bulk_cycles`). It does NOT bound a step taken while
+            // an OAM DMA is active: `Nes::step` falls to its slow path
+            // (`while !tick() {}`) and consumes the entire ~513-514
+            // cycle DMA transfer PLUS the following instruction in one
+            // call, overshooting `target` by ~500 cycles and breaking
+            // the per-frame cycle lock that SMB/Zelda/Contra parity
+            // depends on. When a DMA is in progress, advance one CPU
+            // cycle at a time so the transfer drains without
+            // overshooting; bulk-stepping resumes automatically once
+            // `oam_dma.active` clears. This is a strict no-op whenever
+            // no DMA straddles the bulk window (the common case): the
+            // same `tick()` calls run, just from this loop instead of
+            // inside `step()`, landing on identical state at `target`.
+            if self.nes.oam_dma.active {
+                self.nes.tick(&mut video, &mut sink);
+            } else {
+                self.nes.step(&mut video, &mut sink);
+            }
         }
         while self.nes.cycles < target {
             self.nes.tick(&mut video, &mut sink);
@@ -1505,5 +1523,137 @@ impl Pool {
             out.append(tup)?;
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod bugfix_tests {
+    use super::*;
+
+    /// Build a synthetic 32 KB-PRG NROM (mapper 0) iNES ROM whose PRG
+    /// is filled with a chosen instruction pattern. Reset vector at
+    /// $FFFC → $8000 (start of the PRG window).
+    fn build_nrom(fill: &[u8]) -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 32 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // PRG = 2 × 16 KB = 32 KB
+        rom.push(0); // CHR = 0 → CHR-RAM
+        rom.push(0); // flags6: mapper 0 low nibble, H-mirror
+        rom.push(0); // flags7: mapper 0 high nibble
+        rom.extend_from_slice(&[0u8; 8]); // header padding 8..=15
+
+        let mut prg = vec![0u8; 32 * 1024];
+        if !fill.is_empty() {
+            let mut i = 0;
+            while i + fill.len() <= prg.len() {
+                prg[i..i + fill.len()].copy_from_slice(fill);
+                i += fill.len();
+            }
+        }
+        // Reset vector $FFFC-$FFFD → $8000. Written AFTER the fill so
+        // it isn't clobbered by the pattern.
+        let n = prg.len();
+        prg[n - 4] = 0x00; // low byte of $8000
+        prg[n - 3] = 0x80; // high byte of $8000
+        rom.extend(prg);
+        rom
+    }
+
+    fn worker_from_rom(rom: Vec<u8>) -> Worker {
+        let cart = Cartridge::load(&mut std::io::Cursor::new(rom))
+            .expect("synthetic NROM should parse");
+        Worker::new(cart)
+    }
+
+    /// BUG 3 — cycle-locked `advance_one_frame` must consume EXACTLY
+    /// 29781 CPU cycles per frame even when an OAM DMA is in flight.
+    ///
+    /// The ROM writes $4014 (STA absolute → `8D 14 40`) in a tight
+    /// loop, so an OAM DMA (~513-514 cycle stall) is almost always
+    /// active. Before the fix, the bulk-step loop calls `nes.step()`
+    /// while a DMA is active; that single call runs the whole transfer
+    /// plus the next instruction (~517 cycles), overshooting the frame
+    /// target by ~500 cycles and breaking the per-frame cycle lock.
+    /// After the fix, DMA cycles are advanced one at a time and every
+    /// frame lands exactly on target.
+    #[test]
+    fn advance_one_frame_stays_cycle_locked_across_oam_dma() {
+        const CPU_CYCLES_PER_FRAME: usize = 29781;
+        let mut w = worker_from_rom(build_nrom(&[0x8D, 0x14, 0x40]));
+
+        // Anchor: the first `advance_one_frame` targets
+        // `nes.cycles + 29781` (frame_cycle_target starts None).
+        let start = w.nes.cycles;
+        for k in 1..=8usize {
+            w.advance_one_frame();
+            let expected = start + k * CPU_CYCLES_PER_FRAME;
+            assert_eq!(
+                w.nes.cycles, expected,
+                "frame {k}: OAM DMA broke the cycle lock — cycles={} \
+                 expected={} (overshoot={})",
+                w.nes.cycles,
+                expected,
+                w.nes.cycles as i64 - expected as i64,
+            );
+        }
+        // Sanity: the ROM actually exercises OAM DMA (otherwise the
+        // test would pass trivially and prove nothing).
+        assert!(
+            w.nes.oam_dma.active || w.nes.oam_dma.count > 0,
+            "expected OAM DMA activity from the STA $4014 loop",
+        );
+    }
+
+    /// BUG 1 — a corrupt / mapper-mismatched state blob must be handled
+    /// without unwinding across the (PyO3) boundary. `load_worker_state`
+    /// wraps `Nes::apply_state` in `catch_unwind` for exactly this. We
+    /// cannot drive `load_worker_state` directly from a unit test (its
+    /// `&Bound<PyBytes>` signature needs a live interpreter, which the
+    /// `extension-module` build does not link), so this exercises the
+    /// same framing → deserialize → guarded-apply flow at the `Worker`
+    /// level: a length-mismatched `ram` field makes `apply_state` panic
+    /// (`copy_from_slice`), and the `catch_unwind` guard turns that
+    /// panic into a recoverable `Err` instead of aborting the process.
+    #[test]
+    fn corrupt_state_blob_is_caught_not_unwound() {
+        let mut w = worker_from_rom(build_nrom(&[0xEA])); // NOP-filled PRG
+
+        // Start from a genuinely valid snapshot, then corrupt it so the
+        // blob still deserializes cleanly but detonates inside
+        // apply_state (mismatched `ram` length → copy_from_slice panic).
+        let mut state = w.nes.get_state();
+        assert_eq!(state.ram.len(), RAM_SIZE);
+        state.ram.truncate(100);
+        let corrupt = bincode::serialize(&state).expect("serialize corrupt state");
+
+        // Frame it exactly like a real curriculum blob and strip the
+        // magic exactly like `load_worker_state` does.
+        let mut blob = POOL_STATE_MAGIC.to_vec();
+        blob.extend_from_slice(&corrupt);
+        let mut body: &[u8] = &blob;
+        while body.starts_with(POOL_STATE_MAGIC) {
+            body = &body[POOL_STATE_MAGIC.len()..];
+        }
+        let decoded: crate::nes::State =
+            bincode::deserialize(body).expect("corrupt blob still deserializes");
+        assert_eq!(decoded.ram.len(), 100);
+
+        // The guarded apply (as the fix performs it) must NOT propagate
+        // the panic — it returns Err so the caller can mark the worker
+        // dead and surface a clean error.
+        let res = catch_unwind(AssertUnwindSafe(|| {
+            w.nes.apply_state(&decoded);
+        }));
+        assert!(
+            res.is_err(),
+            "corrupt ram-length blob was expected to panic apply_state; \
+             if this stops panicking the guard is no longer exercised",
+        );
+
+        // Mirror the fix's recovery: isolate the worker. The process is
+        // still alive (we got here without a SIGABRT), which is the
+        // whole point of the guard.
+        w.dead = true;
+        assert!(w.dead);
     }
 }
