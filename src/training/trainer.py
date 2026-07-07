@@ -4647,6 +4647,17 @@ class Trainer:
                     _, final_values = net.forward_ac(final_batch_t)
                 final_values_np = final_values.cpu().numpy()
 
+            # Stop pressed mid-rollout: the rollout loop broke early, so the
+            # buffer is only partially filled (valid_buf is sparse). Running
+            # the RND/GAE/PPO update on that truncated rollout would corrupt
+            # the policy with a bad gradient step and pollute the optimizer
+            # state — the net a user keeps after Stop would be worse than the
+            # one before. Bail out of the iter loop before the update. A
+            # completed rollout is unaffected (_running stays True); final
+            # teardown after the loop still runs.
+            if not self._running:
+                break
+
             # ============== RND INTRINSIC REWARD ==============
             # Fold the per-state novelty bonus into the reward stream
             # BEFORE GAE so it bootstraps like any reward (single-stream
