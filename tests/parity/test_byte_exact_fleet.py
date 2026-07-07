@@ -47,7 +47,13 @@ BYTE_EXACT_ROMS = [
     "Castlequest (USA).nes",
     "Clash at Demonhead (USA).nes",
     "Dr. Mario (Japan, USA) (Rev A).nes",
-    "Dragon Warrior III (USA).nes",
+    # "Dragon Warrior III (USA).nes" — retired to the Mesen-lockstep oracle
+    # (test_mesen_lockstep.py). It's a 512 KB SUROM board; nes-py (LaiNES)
+    # mishandles SUROM PRG-A18 banking and can only reach the low 256 KB, so
+    # it byte-matched our old, equally-wrong mapper. The MMC1 SUROM fix moves
+    # nes_core toward Mesen ground truth (569→370 bytes/frame) while nes-py
+    # stays at 569 and executes illegal opcodes on this ROM — so matching
+    # nes-py here meant matching an inaccurate reference. Validated on Mesen.
     "Final Fantasy (USA).nes",
     "Godzilla 2 - War of the Monsters (USA).nes",
     "Golf Grand Slam (USA).nes",

@@ -84,6 +84,13 @@ CASES = [
     ("Punch-Out!! (USA).nes",                            8),  # MMC2
     ("DuckTales (USA).nes",                             18),
     ("Final Fantasy (USA).nes",                          2),
+    # MMC1 SUROM 512 KB (PRG-A18 from CHR bank bit 4), Mesen-validated:
+    # measured max divergence vs Mesen at 120 idle frames on the shipping
+    # (asm-on) build — DW3=370, DW4=5. DW3's residual is a pre-existing
+    # non-banking CPU/PPU accuracy gap (boot seeds from uninit RAM $06F0),
+    # not reachable by mapper work; ceilings carry headroom.
+    ("Dragon Warrior III (USA).nes",                   380),  # SUROM 512KB
+    ("Dragon Warrior IV (USA).nes",                     12),  # SUROM 512KB
     ("Tetris (USA).nes",                                12),
     ("Excitebike (Japan, USA).nes",                     18),
     ("Ice Climber.nes",                                 20),

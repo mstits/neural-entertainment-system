@@ -26,7 +26,10 @@ REPO = Path(__file__).resolve().parents[2]
 LONG_SOAK_BYTE_EXACT_ROMS = [
     "Bad Street Brawler (USA).nes",
     "BreakThru (USA).nes",
-    "Dragon Warrior III (USA).nes",
+    # "Dragon Warrior III (USA).nes" — retired to the Mesen-lockstep oracle
+    # (test_mesen_lockstep.py). 512 KB SUROM; nes-py mishandles PRG-A18 so it
+    # byte-matched our old wrong mapper. The SUROM fix moves nes_core toward
+    # Mesen ground truth while nes-py stays wrong — see test_byte_exact_fleet.
     "Final Fantasy (USA).nes",
     "Godzilla 2 - War of the Monsters (USA).nes",
     "Kid Kool and the Quest for the Seven Wonder Herbs (USA).nes",

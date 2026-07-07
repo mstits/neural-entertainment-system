@@ -149,19 +149,48 @@ impl Mapper1 {
         }
     }
 
+    /// SUROM/SXROM boards carry 512 KiB of PRG ROM — one more bank bit
+    /// than the MMC1's 4-bit `prg_bank` register can express. That fifth
+    /// bit (PRG A18, the high 256 KiB "block" select) is supplied by
+    /// bit 4 of the CHR bank 0 register. On these boards CHR is 8 KiB
+    /// RAM, so CHR bit 4 is otherwise unused and free for PRG banking.
+    ///
+    /// On standard boards (<= 256 KiB PRG) CHR bit 4 is a genuine CHR
+    /// bank line and MUST NOT bleed into PRG addressing, so this
+    /// returns 0 there.
+    fn prg_a18(&self) -> u8 {
+        if self.cartridge.prg_rom.len() > 256 * 1024 {
+            self.regs.chr_bank_0 & 0x10
+        } else {
+            0
+        }
+    }
+
     fn prg_rom_bank_first(&self) -> u8 {
+        let a18 = self.prg_a18();
         match self.prg_rom_mode() {
-            PrgRomMode::Switch32Kb => self.regs.prg_bank & 0xFE,
-            PrgRomMode::FixFirstBank => 0,
-            PrgRomMode::FixLastBank => self.regs.prg_bank,
+            PrgRomMode::Switch32Kb => (self.regs.prg_bank & 0xFE) | a18,
+            PrgRomMode::FixFirstBank => a18,
+            PrgRomMode::FixLastBank => self.regs.prg_bank | a18,
         }
     }
 
     fn prg_rom_bank_last(&self) -> u8 {
+        let a18 = self.prg_a18();
         match self.prg_rom_mode() {
-            PrgRomMode::Switch32Kb => (self.regs.prg_bank & 0xFE) | 0x01,
-            PrgRomMode::FixFirstBank => self.regs.prg_bank,
-            PrgRomMode::FixLastBank => self.cartridge.prg_rom_num_banks - 1,
+            PrgRomMode::Switch32Kb => (self.regs.prg_bank & 0xFE) | 0x01 | a18,
+            PrgRomMode::FixFirstBank => self.regs.prg_bank | a18,
+            PrgRomMode::FixLastBank => {
+                if self.cartridge.prg_rom.len() > 256 * 1024 {
+                    // The fixed bank tracks A18: it is the LAST 16 KiB
+                    // bank *within the currently-selected 256 KiB block*
+                    // (0x0F inside the block), not the last bank of the
+                    // whole 512 KiB ROM.
+                    0x0F | a18
+                } else {
+                    self.cartridge.prg_rom_num_banks - 1
+                }
+            }
         }
     }
 
