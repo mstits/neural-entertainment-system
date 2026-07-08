@@ -1764,8 +1764,17 @@ impl CastlevaniaReward {
     const RAM_PLAYER_HEALTH: usize = 0x0044;
     const RAM_STAGE: usize = 0x0028;
     const RAM_LIVES: usize = 0x002A;
-    const RAM_HEARTS: usize = 0x0045;
-    const RAM_BOSS_HEALTH: usize = 0x04A0;
+    // Sub-weapon ammo (hearts). Was 0x0045, which is actually Simon's real HP
+    // (emulator-verified: $0045 reads 64 = full health at the start, $0071
+    // reads 5 = starting hearts). The old value made the "heart" bonus fire
+    // on HP changes, not heart pickups.
+    const RAM_HEARTS: usize = 0x0071;
+    // Boss/Dracula health. Was 0x04A0, which is emulator-verified DEAD (reads
+    // 0 constantly), so the final-block win could NEVER fire. $01A9 is the
+    // boss-health slot (Data Crystal + tasvideos; reads 64 idle). Researched,
+    // not yet Dracula-fight-verified — but strictly better than a dead byte,
+    // and the stage>=18 gate below prevents any false early win.
+    const RAM_BOSS_HEALTH: usize = 0x01A9;
     const RAM_X_SCREEN: usize = 0x003F;
     const RAM_X: usize = 0x0040;
 
@@ -1932,17 +1941,20 @@ impl CastlevaniaReward {
 pub struct MetroidReward {
     exploration_bonus: f64,
     missile_weight: f64,
-    _energy_tank_bonus: f64,
-    new_item_bonus: f64,
-    _boss_damage_weight: f64,
-    _boss_killed_bonus: f64,
+    energy_tank_bonus: f64, // was _energy_tank_bonus — now the filled-tank milestone
+    _new_item_bonus: f64,   // item flags live in WRAM (unreachable) — see note below
+    mb_hit_weight: f64,     // was _boss_damage_weight — per Mother-Brain hit
+    win_bonus: f64,         // was _boss_killed_bonus — terminal (MB dead + escaped)
     health_delta_weight: f64,
     death_penalty: f64,
     time_penalty: f64,
     visited: HashSet<(u8, u8)>,
     prev_missiles: u8,
     prev_health_total: u32,
-    prev_item_flags: u8,
+    prev_tanks: u8,
+    prev_mb_hits: u8,
+    mb_defeated: bool,
+    won: bool,
     died: bool,
     first_step: bool,
 }
@@ -1953,7 +1965,16 @@ impl MetroidReward {
     const RAM_MISSILES: usize = 0x0109;
     const RAM_ROOM: usize = 0x0050;
     const RAM_AREA: usize = 0x0074;
-    const RAM_ITEM_FLAGS: usize = 0x006A;
+    // Win chain, using only get_ram-accessible bytes (item/equipment flags
+    // live in cartridge WRAM $6000-$7FFF, which the 2 KB RAM snapshot cannot
+    // reach — the old predicate read $006A, an unrelated zero-page byte that
+    // is always noise). Verified reachable on this emulator; the fight/ending
+    // VALUES are from the disassembly + Data Crystal, NOT yet fight-verified.
+    const RAM_MB_STATE: usize = 0x0098; // Mother Brain state machine
+    const RAM_MB_HITS: usize = 0x0099; // MB hit counter; dies at 32 hits
+    const RAM_ENDING_MSG: usize = 0x007A; // "write ending message" flag
+    const RAM_CREDITS: usize = 0x007B; // credits-rolling flag (post-escape)
+    const MB_DEATH_HITS: u8 = 32;
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -1970,17 +1991,20 @@ impl MetroidReward {
         Self {
             exploration_bonus,
             missile_weight,
-            _energy_tank_bonus: energy_tank_bonus,
-            new_item_bonus,
-            _boss_damage_weight: boss_damage_weight,
-            _boss_killed_bonus: boss_killed_bonus,
+            energy_tank_bonus,
+            _new_item_bonus: new_item_bonus,
+            mb_hit_weight: boss_damage_weight,
+            win_bonus: boss_killed_bonus,
             health_delta_weight,
             death_penalty,
             time_penalty,
             visited: HashSet::new(),
             prev_missiles: 0,
             prev_health_total: 0,
-            prev_item_flags: 0,
+            prev_tanks: 0,
+            prev_mb_hits: 0,
+            mb_defeated: false,
+            won: false,
             died: false,
             first_step: true,
         }
@@ -1989,9 +2013,18 @@ impl MetroidReward {
         self.visited.clear();
         self.prev_missiles = 0;
         self.prev_health_total = 0;
-        self.prev_item_flags = 0;
+        self.prev_tanks = 0;
+        self.prev_mb_hits = 0;
+        self.mb_defeated = false;
+        self.won = false;
         self.died = false;
         self.first_step = true;
+    }
+
+    /// Filled energy-tank count = high nibble of the health hi-byte (BCD
+    /// hundreds). Accessible without WRAM; a good progress milestone.
+    fn filled_tanks(ram: &[u8]) -> u8 {
+        ram[Self::RAM_HEALTH_TENS] >> 4
     }
 
     fn health_total(ram: &[u8]) -> u32 {
@@ -2004,13 +2037,15 @@ impl MetroidReward {
         let area = ram[Self::RAM_AREA];
         let room = ram[Self::RAM_ROOM];
         let missiles = ram[Self::RAM_MISSILES];
-        let item_flags = ram[Self::RAM_ITEM_FLAGS];
+        let tanks = Self::filled_tanks(ram);
+        let mb_hits = ram[Self::RAM_MB_HITS];
         let health_total = Self::health_total(ram);
 
         if self.first_step {
             self.prev_missiles = missiles;
             self.prev_health_total = health_total;
-            self.prev_item_flags = item_flags;
+            self.prev_tanks = tanks;
+            self.prev_mb_hits = mb_hits;
             self.visited.insert((area, room));
             self.first_step = false;
         }
@@ -2032,11 +2067,36 @@ impl MetroidReward {
         }
         self.prev_missiles = missiles;
 
-        let new_bits = (item_flags & !self.prev_item_flags).count_ones() as f64;
-        if new_bits > 0.0 {
-            acc.add("new_item", self.new_item_bonus * new_bits);
+        // Filled-energy-tank milestone (accessible proxy for major progress).
+        if tanks > self.prev_tanks {
+            acc.add("energy_tank", self.energy_tank_bonus * (tanks - self.prev_tanks) as f64);
         }
-        self.prev_item_flags = item_flags;
+        self.prev_tanks = tanks;
+
+        // Mother Brain fight: reward each new hit, and latch mb_defeated at 32
+        // hits (she dies then) or once the state machine enters the death
+        // chain (>=3, but NOT 8 = fight-init). prev_mb_hits guards the reset
+        // between rooms where the counter clears.
+        if mb_hits > self.prev_mb_hits {
+            acc.add("mb_hit", self.mb_hit_weight * (mb_hits - self.prev_mb_hits) as f64);
+        }
+        self.prev_mb_hits = mb_hits;
+        let mb_state = ram[Self::RAM_MB_STATE];
+        if !self.mb_defeated
+            && (mb_hits >= Self::MB_DEATH_HITS || (mb_state >= 3 && mb_state <= 7))
+        {
+            self.mb_defeated = true;
+        }
+
+        // Terminal WIN: the ending fires (credits rolling / ending message),
+        // which only happens after escaping Zebes post-MB-death. Gate on
+        // mb_defeated to make it airtight. Ends the episode.
+        let ending = ram[Self::RAM_ENDING_MSG] == 1 || ram[Self::RAM_CREDITS] == 1;
+        if !self.won && self.mb_defeated && ending {
+            acc.add("win", self.win_bonus);
+            self.won = true;
+            done = true;
+        }
 
         if health_total < self.prev_health_total {
             acc.add(
@@ -2063,7 +2123,12 @@ impl MetroidReward {
         }
     }
     pub fn episode_success(&self) -> bool {
-        self.prev_item_flags.count_ones() >= 8 && !self.died
+        // WIN = Mother Brain defeated AND escaped (ending fired), latched in
+        // `won`. The old predicate (item_flags.count_ones() >= 8) read $006A —
+        // an unrelated zero-page byte (the real item flags are in unreachable
+        // WRAM), so it fired on noise. This is the accessible, correct chain;
+        // the fight/ending values are researched but not yet fight-verified.
+        self.won && !self.died
     }
 }
 
@@ -2544,10 +2609,10 @@ pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward
         return Some(Reward::Metroid(MetroidReward::new(
             w(weights, "exploration_bonus", 8.0),
             w(weights, "missile_collected", 3.0),
-            w(weights, "energy_tank", 20.0),
-            w(weights, "new_item", 30.0),
-            w(weights, "boss_damage", 2.0),
-            w(weights, "boss_killed", 60.0),
+            w(weights, "energy_tank", 200.0),   // filled-tank milestone (accessible)
+            w(weights, "new_item", 30.0),       // unused: item flags are WRAM-only
+            w(weights, "boss_damage", 20.0),    // per Mother-Brain hit
+            w(weights, "boss_killed", 5000.0),  // TERMINAL win (MB dead + escaped)
             w(weights, "health_delta", -1.0),
             w(weights, "death_penalty", -25.0),
             w(weights, "time_penalty", -0.002),
@@ -2614,9 +2679,9 @@ mod tests {
         ram[0x0044] = 16; // player health (alive)
         ram[0x002A] = 3; // lives (alive)
         ram[0x0028] = 1; // stage = block 1
-        ram[0x04A0] = 100; // boss health
+        ram[0x01A9] = 100; // boss health (real slot)
         r.compute(&ram, 0, false); // first step baselines prev_boss=100
-        ram[0x04A0] = 0; // block-1 boss killed
+        ram[0x01A9] = 0; // block-1 boss killed
         r.compute(&ram, 0, false);
         assert!(
             !r.episode_success(),
@@ -2629,9 +2694,9 @@ mod tests {
         ram2[0x0044] = 16;
         ram2[0x002A] = 3;
         ram2[0x0028] = 18; // final block
-        ram2[0x04A0] = 100;
+        ram2[0x01A9] = 100;
         r2.compute(&ram2, 0, false);
-        ram2[0x04A0] = 0; // Dracula killed
+        ram2[0x01A9] = 0; // Dracula killed
         let out = r2.compute(&ram2, 0, false);
         assert!(
             r2.episode_success(),
@@ -2787,6 +2852,44 @@ mod tests {
         ram[0x00EB] = 8;
         let o2 = r.compute(&ram, 0, false);
         assert!(o2.reward > o1.reward, "new cell should reward more");
+    }
+
+    #[test]
+    fn metroid_win_requires_mb_defeat_and_escape_not_item_flags() {
+        // Old bug: success = item_flags($006A).count_ones() >= 8 — read a
+        // garbage zero-page byte. New: Mother Brain defeated + ending fired.
+        let weights = HashMap::new();
+        let mut r = build_reward("metroid", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0107] = 0x30; // health hi (3 tanks / 0 tens) — alive
+        ram[0x0106] = 0x00;
+        let _ = r.compute(&ram, 0, false); // anchor
+        // Random noise in $006A must NOT win (the old bug).
+        ram[0x006A] = 0xFF;
+        let _ = r.compute(&ram, 0, false);
+        assert!(!r.episode_success(), "item-flag noise must not be a win");
+        // Mother Brain takes 32 hits -> defeated, but no escape yet.
+        ram[0x0099] = 32;
+        let _ = r.compute(&ram, 0, false);
+        assert!(!r.episode_success(), "MB dead but not escaped is not a win yet");
+        // Ending fires (credits) after escape -> win.
+        ram[0x007B] = 1;
+        let o = r.compute(&ram, 0, false);
+        assert!(r.episode_success() && o.done, "MB defeated + ending = win");
+    }
+
+    #[test]
+    fn metroid_ending_without_mb_defeat_does_not_win() {
+        // Guard: the ending flags must be gated on MB actually being defeated
+        // (a stray flag can't shortcut the win).
+        let weights = HashMap::new();
+        let mut r = build_reward("metroid", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0107] = 0x30;
+        let _ = r.compute(&ram, 0, false);
+        ram[0x007B] = 1; // ending flag but MB never defeated
+        let _ = r.compute(&ram, 0, false);
+        assert!(!r.episode_success(), "ending without MB defeat is not a win");
     }
 
     #[test]
