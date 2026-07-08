@@ -152,26 +152,36 @@ impl Cartridge {
                 // their true size. Exponent-multiplier case (high nibble
                 // == 0xF): the low byte is `EEEEEEMM`, and the size in
                 // bytes is 2^E * (M*2 + 1) (not a bank multiple).
+                // Hard sanity cap: the largest real NES ROM is a few MB. This
+                // bounds the exponent-multiplier form BEFORE the payload vec is
+                // allocated — otherwise a crafted/corrupt 16-byte header with a
+                // large exponent (e.g. 2^60) computes a valid (non-overflowing)
+                // usize, and vec![0u8; that] aborts the whole process with an
+                // uncatchable OOM SIGABRT (one bad dump kills a library scan).
+                const MAX_ROM_BYTES: usize = 64 * 1024 * 1024;
                 let nes20_size =
                     |lo: u8, hi: u8, bank_size: usize| -> Result<usize, LoadError> {
-                        if hi == 0x0F {
+                        let size = if hi == 0x0F {
                             let exponent = (lo >> 2) as u32;
                             let multiplier = (lo & 0x03) as usize;
-                            // checked_shl guards absurd exponents; checked_mul
-                            // guards the multiplier overflowing usize.
                             (1usize)
                                 .checked_shl(exponent)
                                 .and_then(|base| base.checked_mul(multiplier * 2 + 1))
                                 .ok_or_else(|| {
                                     LoadError::FormatError(
-                                        "NES 2.0 exponent-multiplier ROM size overflows"
-                                            .into(),
+                                        "NES 2.0 exponent-multiplier ROM size overflows".into(),
                                     )
-                                })
+                                })?
                         } else {
                             let banks = lo as usize | ((hi as usize) << 8);
-                            Ok(banks * bank_size)
+                            banks * bank_size
+                        };
+                        if size > MAX_ROM_BYTES {
+                            return Err(LoadError::FormatError(
+                                "NES 2.0 ROM size exceeds the 64 MB sanity cap".into(),
+                            ));
                         }
+                        Ok(size)
                     };
                 let prg_rom_size =
                     nes20_size(prg_rom_num_banks_lo, prg_hi, PRG_ROM_BANK_SIZE as usize)?;

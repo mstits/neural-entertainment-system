@@ -239,10 +239,17 @@ impl GenericReward {
         // covers most NES score displays without false-positiving
         // animation counters that flap up/down.
         if !self.score_frozen && self.steps >= self.warmup_steps {
+            // A per-frame timer / animation counter increments on (almost)
+            // every step (up ~= steps) — an idle agent then farms it as "score"
+            // (measured: 96.8% of an idle episode's reward). A real score
+            // display increments SPORADICALLY (on kills/pickups), so require
+            // the byte to rise on well under half the observed steps. This
+            // frequency guard excludes monotonic frame counters.
+            let max_up = ((self.steps / 2).max(3)) as u32;
             for i in 0..limit {
                 let up = self.byte_increased[i];
                 let down = self.byte_decreased[i];
-                if up >= 3 && up >= down.saturating_mul(4) {
+                if up >= 3 && up >= down.saturating_mul(4) && up <= max_up {
                     self.score_candidates.insert(i);
                 }
             }
@@ -287,11 +294,13 @@ impl GenericReward {
     }
 
     pub fn episode_success(&self) -> bool {
-        // No built-in notion of "success" without game-specific
-        // knowledge. Report positive cumulative reward as a
-        // best-effort proxy — good enough for curriculum auto-promotion
-        // until a hand-crafted reward takes over.
-        self.total > 0.0
+        // The generic fallback has NO game-specific notion of winning, so it
+        // must NOT claim success. The old `total > 0.0` was trivially true
+        // (the survival term 0.01 alone beats the time penalty 0.001), so it
+        // reported "success" at step 1 for any game — poisoning the narrator,
+        // the BC-success cache, and curriculum auto-promotion with non-wins.
+        // A real win needs a hand-authored reward; until then, never succeed.
+        false
     }
 }
 
@@ -918,7 +927,9 @@ pub struct MarioReward {
     prev_score: u64,
     prev_world: u8,
     prev_level: u8,
+    prev_display_level: u8,
     completed: bool,
+    won: bool,
     died: bool,
     first_step: bool,
 }
@@ -930,6 +941,11 @@ impl MarioReward {
     const RAM_PLAYER_STATE: usize = 0x000E;
     const RAM_WORLD: usize = 0x075F;
     const RAM_LEVEL: usize = 0x0760;
+    /// Displayed level-within-world (0-3): x-1=0 .. x-4=3. Emulator-verified.
+    /// The robust "was in an x-4 castle" signal — warps come from x-2 (=1),
+    /// so a world increment with prev_display_level==3 is a real castle clear.
+    const RAM_DISPLAY_LEVEL: usize = 0x075C;
+    const DISPLAY_LEVEL_CASTLE: u8 = 3; // x-4
     const RAM_FLOAT_STATE: usize = 0x001D;
     const PLAYER_STATE_DYING: u8 = 0x0B;
     const PLAYER_STATE_DEAD: u8 = 0x06;
@@ -1164,7 +1180,9 @@ impl MarioReward {
             prev_score: 0,
             prev_world: 0,
             prev_level: 0,
+            prev_display_level: 0,
             completed: false,
+            won: false,
             died: false,
             first_step: true,
         }
@@ -1180,7 +1198,9 @@ impl MarioReward {
         self.prev_score = 0;
         self.prev_world = 0;
         self.prev_level = 0;
+        self.prev_display_level = 0;
         self.completed = false;
+        self.won = false;
         self.died = false;
         self.first_step = true;
     }
@@ -1222,6 +1242,7 @@ impl MarioReward {
         let lives = ram[Self::RAM_LIVES];
         let world = ram[Self::RAM_WORLD];
         let level = ram[Self::RAM_LEVEL];
+        let display_level = ram[Self::RAM_DISPLAY_LEVEL];
 
         if self.first_step {
             self.prev_x = x;
@@ -1230,6 +1251,7 @@ impl MarioReward {
             self.prev_lives = lives;
             self.prev_world = world;
             self.prev_level = level;
+            self.prev_display_level = display_level;
             self.first_step = false;
         }
 
@@ -1245,31 +1267,30 @@ impl MarioReward {
             // 1-2+ would never produce checkpoint signal because all
             // were "consumed" during 1-1.
             self.next_checkpoint = 0;
-            if world_incremented {
-                // Castle-clear credit: a world-byte increment means Mario
-                // beat the world's castle (x-4). SMB castles end with the
-                // axe/Bowser walk, NOT a flagpole, so float_state never
-                // reaches 3 and the flagpole predicate below can never
-                // credit an x-4 clear. Fire the same completion bonus here
-                // and KEEP the latch set so episode_success credits beating
-                // the castle. Within-world level changes (x-1 -> x-2 ...)
-                // are unaffected — the working 1-1/1-2/1-3 recipe never
-                // increments the world byte. (F52.)
-                if !self.completed {
+            // A LEGITIMATE castle clear = the world byte incremented AND Mario
+            // was in an x-4 castle (display level $075C == 3). SMB castles end
+            // with the axe/Bowser walk (no flagpole), so float_state never
+            // reaches 3 and the flagpole predicate below can't credit it. But
+            // a raw world-byte rise ALSO happens on warp-zone pipes (1-2's
+            // warp jumps to 2-1/3-1/4-1), which must NOT count as beating a
+            // castle — warps leave from x-2 ($075C==1), so gating on the
+            // previous display level distinguishes them. (F52; the earlier
+            // fix credited every world rise, wrongly rewarding warps.)
+            if world_incremented && self.prev_display_level == Self::DISPLAY_LEVEL_CASTLE {
+                if !self.won {
                     acc.add("completion", self.completion_bonus);
                 }
-                self.completed = true;
-            } else {
-                // Re-arm the completion bonus for the new level so the
-                // flag-touch at the end of 1-2, 1-3, ... each fires the
-                // +completion reward. Without this, only the very first
-                // level's clear would pay out. Paired with the dropping
-                // of `done = true` on completion below — the agent now
-                // plays continuously through multiple levels per episode.
-                self.completed = false;
+                self.won = true; // durable success latch (survives the reset below)
             }
+            // Always re-arm the flagpole-completion latch on ANY level change
+            // so the next level's flag-touch fires its own bonus. Without this,
+            // only the first level's clear would pay out. (Castle clears set
+            // `won` above and still re-arm here, so the NEXT world's x-1
+            // flagpole is not suppressed — the previous fix left it latched.)
+            self.completed = false;
             self.prev_world = world;
             self.prev_level = level;
+            self.prev_display_level = display_level;
         }
         // Reward NEW forward progress only — the delta between current x
         // and the furthest x reached this episode. Backtracking yields 0
@@ -1435,7 +1456,11 @@ impl MarioReward {
     }
 
     pub fn episode_success(&self) -> bool {
-        self.completed && !self.died
+        // Success = touched a flagpole (`completed`, re-armed per level) OR
+        // beat a castle (`won`, a durable latch). `won` survives the per-level
+        // re-arm of `completed`, so a mid-episode castle clear still counts
+        // even after the agent walks into the next world.
+        (self.completed || self.won) && !self.died
     }
 }
 
@@ -1721,7 +1746,17 @@ impl MegaManReward {
         }
     }
     pub fn episode_success(&self) -> bool {
-        self.boss_killed && !self.died
+        // NOT the game win. `boss_killed` latches on ANY single boss-HP meter
+        // ($06C1) hitting 0 — one Robot Master, or even a stage mini-boss that
+        // shares the meter — so it fired on the first kill, wildly overstating
+        // "beat Mega Man" (which needs all 6 Masters + Wily). Return false
+        // until a verified all-Masters ($009A mask) + Wily predicate exists;
+        // `boss_killed` remains a shaping signal. NOTE also an unresolved
+        // ROM mismatch: this reads MM2 addresses ($06C0/$06C1) while the
+        // configured ROM is Mega Man 1 (health=$006A) — resolve before wiring
+        // a real win. (Deliberately conservative: a false "win" poisons
+        // curriculum/eval; a missing one only forgoes a bonus.)
+        false
     }
 }
 
@@ -1891,13 +1926,15 @@ impl CastlevaniaReward {
         if boss == 0 && self.prev_boss > 0 {
             acc.add("boss_killed", self.boss_killed_bonus);
             // Dracula is the final boss, in the last block (stage 18).
-            // Killing a boss on the final stage is the real
-            // game-completion event — latch it and end the episode. A
-            // boss-kill on any earlier block is only stage progress, NOT
-            // a game win. If the $0028 stage encoding differs, this simply
-            // never fires — strictly safer than the old predicate, which
-            // reported "beat Castlevania" on merely clearing block 1.
-            if stage >= 18 {
+            // Killing a boss on the final block is the real game-completion
+            // event — latch it and end the episode. A boss-kill on any earlier
+            // block is only stage progress, NOT a game win. $0028 is
+            // 0-INDEXED (emulator-verified: block 1 reads 0), so Castlevania's
+            // 18th block (Dracula) reads 17 — the old `>= 18` gate could NEVER
+            // fire (a confirmed false-negative). Researched, not yet
+            // Dracula-fight-verified, but strictly better than a dead gate.
+            const FINAL_BLOCK: u8 = 17; // block 18, 0-indexed
+            if stage >= FINAL_BLOCK {
                 self.completed = true;
                 done = true;
             }
@@ -2418,11 +2455,19 @@ impl BubbleBobbleReward {
     }
 
     /// $0445 (millions) .. $044A (tens), digit-per-byte big-endian; returns
-    /// the true score / 10 (units are always 0). Monotonic — fine as a delta.
+    /// the true score / 10 (units are always 0). These are HUD TILE bytes, and
+    /// a blank cell reads as a non-digit tile (0x27), NOT 0 — summed raw that
+    /// makes a true score of 0 read ~3,999,990, and HUD tile transitions
+    /// produce huge farmable deltas (measured +216k in one step). Clamp each
+    /// byte to a real digit; treat any non-digit tile as 0. (Address/tile map
+    /// unverified — if the real digit tiles are offset this reads 0, which is
+    /// safe: no reward rather than garbage. Prefer score_delta small until
+    /// verified against a live score.)
     fn read_score(ram: &[u8]) -> u64 {
         let mut s = 0u64;
         for a in 0x0445..=0x044A {
-            s = s * 10 + ram[a] as u64;
+            let d = ram[a] as u64;
+            s = s * 10 + if d <= 9 { d } else { 0 };
         }
         s
     }
@@ -2674,26 +2719,28 @@ mod tests {
     fn castlevania_win_only_on_final_block_boss() {
         let weights = HashMap::new();
         // A boss-kill on an EARLY block must NOT count as beating the game.
+        // $0028 is 0-indexed (block 1 reads 0); the final block (Dracula) = 17.
+        // A boss-kill on an earlier block (16 = block 17) must NOT win.
         let mut r = build_reward("castlevania", &weights).unwrap();
         let mut ram = zram();
         ram[0x0044] = 16; // player health (alive)
         ram[0x002A] = 3; // lives (alive)
-        ram[0x0028] = 1; // stage = block 1
+        ram[0x0028] = 16; // block 17 (one before the final) — NOT a win
         ram[0x01A9] = 100; // boss health (real slot)
         r.compute(&ram, 0, false); // first step baselines prev_boss=100
-        ram[0x01A9] = 0; // block-1 boss killed
+        ram[0x01A9] = 0; // a boss killed on block 17
         r.compute(&ram, 0, false);
         assert!(
             !r.episode_success(),
-            "clearing block 1 must NOT count as beating Castlevania"
+            "a boss-kill before the final block must NOT beat Castlevania"
         );
 
-        // A boss-kill on the FINAL block (Dracula, stage 18) IS the win.
+        // A boss-kill on the FINAL block (Dracula, $0028 == 17) IS the win.
         let mut r2 = build_reward("castlevania", &weights).unwrap();
         let mut ram2 = zram();
         ram2[0x0044] = 16;
         ram2[0x002A] = 3;
-        ram2[0x0028] = 18; // final block
+        ram2[0x0028] = 17; // final block (block 18, 0-indexed) = Dracula
         ram2[0x01A9] = 100;
         r2.compute(&ram2, 0, false);
         ram2[0x01A9] = 0; // Dracula killed
@@ -3258,12 +3305,12 @@ mod tests {
         let mut ram = zram();
         ram[0x075A] = 3; // lives (avoid the death path)
         ram[0x075F] = 0; // world byte 0 => world 1
-        ram[0x0760] = 6; // area 6 => 1-4 castle
-        let _ = r.compute(&ram, 0, false); // first step seeds prev_world=0
+        ram[0x075C] = 3; // display level 3 => x-4 castle (emulator-verified)
+        let _ = r.compute(&ram, 0, false); // first step seeds prev state
         assert!(!r.episode_success(), "castle not cleared yet");
-        // Beat the castle: world byte increments to 1 (world 2), area 0 (2-1).
+        // Beat the castle: world byte increments to 1 (world 2), level resets 0.
         ram[0x075F] = 1;
-        ram[0x0760] = 0;
+        ram[0x075C] = 0;
         let o = r.compute(&ram, 0, false);
         assert!(
             o.reward > 500.0,
@@ -3272,8 +3319,31 @@ mod tests {
         );
         assert!(
             r.episode_success(),
-            "beating a castle (world-byte increment) must count as success"
+            "beating a castle (world++ from x-4) must count as success"
         );
+    }
+
+    #[test]
+    fn mario_warp_pipe_world_jump_is_not_a_castle_clear() {
+        // F52 regression: a warp-zone pipe (1-2, display level 1) jumps the
+        // world byte WITHOUT beating a castle. It must NOT fire completion or
+        // count as success (the earlier fix wrongly credited every world rise).
+        let mut weights: HashMap<String, f64> = HashMap::new();
+        weights.insert("completion_bonus".to_string(), 1000.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        weights.insert("forward_progress".to_string(), 0.0);
+        let mut r = build_reward("mario", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x075A] = 3;
+        ram[0x075F] = 0; // world 1
+        ram[0x075C] = 1; // display level 1 => x-2 (the warp-zone level)
+        let _ = r.compute(&ram, 0, false);
+        // Warp: world jumps to 3 (world 4), from x-2 — NOT a castle clear.
+        ram[0x075F] = 3;
+        ram[0x075C] = 0;
+        let o = r.compute(&ram, 0, false);
+        assert!(o.reward < 500.0, "a warp must not fire the completion bonus, got {}", o.reward);
+        assert!(!r.episode_success(), "a warp-zone world jump is not a win");
     }
 
     #[test]
