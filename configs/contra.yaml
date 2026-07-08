@@ -18,14 +18,22 @@ description: >
   and episodes end fast.
 
 ram_mapping:
-  # Player 1
-  player_x:        0x0031   # horizontal position on current screen
+  # Player 1 (addresses emulator-verified during the win-verification pass)
+  player_x:        0x0334   # on-screen sprite X. WAS 0x0031, which is the
+                            # game-completion COUNT (constant 0 all stage-1) —
+                            # a confirmed mislabel that read dead weight.
   player_y:        0x0021   # vertical
-  player_state:    0x002C   # 0x00 alive, 0x01 dead, 0x02 dying anim
-  # Scroll / world position (high byte gives which screen)
+  player_state:    0x0090   # 0=falling, 1=normal, 2=dead. WAS 0x002C (the
+                            # game-mode byte, not the player state).
+  # Scroll / world position. NOTE $0064 is a within-stage SCREEN counter that
+  # RESETS to 0 each stage — a progress proxy, NOT a clear signal. The real
+  # per-stage clear is a positive delta of current_level ($0030) and/or the
+  # boss-defeated flag ($003B 0->1); $0031 is the whole-game completion count.
   screen_number:   0x0064
+  current_level:   0x0030   # stage index 0-7; increments on a real stage clear
+  boss_defeated:   0x003B   # 0->1 when the current stage boss dies
   # Lives, score
-  lives:           0x0032   # remaining lives (starts at 2)
+  lives:           0x0032   # remaining lives (starts at 2; 0 = last life)
   score_start:     0x07E2   # 6-digit BCD score
   score_end:       0x07E7
   # Weapon (F/S/M/L/B + default)

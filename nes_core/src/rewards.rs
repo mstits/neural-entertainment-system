@@ -791,7 +791,10 @@ impl ZeldaReward {
         }
         // Terminal: Ganon dead (the monotonic $0672 flag) or the ending theme
         // playing (Zelda rescued). Fire the jackpot once and end the episode.
-        if !self.won && (ganon_defeated_byte != 0 || (song & Self::SONG_ENDING) != 0) {
+        // `song` is a one-hot active-track byte, so test the ending track by
+        // EQUALITY (not a bit-AND): the Level-9 ($20) and Ganon-fight ($02)
+        // tracks are distinct values that must never satisfy the win.
+        if !self.won && (ganon_defeated_byte != 0 || song == Self::SONG_ENDING) {
             acc.add("win", self.win_bonus);
             self.won = true;
             done = true;
@@ -1751,11 +1754,15 @@ impl MegaManReward {
         // shares the meter — so it fired on the first kill, wildly overstating
         // "beat Mega Man" (which needs all 6 Masters + Wily). Return false
         // until a verified all-Masters ($009A mask) + Wily predicate exists;
-        // `boss_killed` remains a shaping signal. NOTE also an unresolved
-        // ROM mismatch: this reads MM2 addresses ($06C0/$06C1) while the
-        // configured ROM is Mega Man 1 (health=$006A) — resolve before wiring
-        // a real win. (Deliberately conservative: a false "win" poisons
-        // curriculum/eval; a missing one only forgoes a bonus.)
+        // `boss_killed` remains a shaping signal. The addresses ($06C0 health,
+        // $06C1 boss, $00A8 lives) are the Mega Man 2 map, which is CORRECT:
+        // DEFAULT_ROMS maps `megaman` -> Mega Man 2 (USA).nes. (An empirical
+        // pass on Mega Man 1 found these dead — MM1 uses $006A/$00A6/$06C1 —
+        // but the default pipeline is MM2; supporting MM1 would need a
+        // ROM-hash-gated address map, not overwriting these.) There is no
+        // reliable all-Robot-Masters flag reachable in RAM, so keeping this
+        // false is correct — a false "win" poisons curriculum/eval; a missing
+        // one only forgoes a bonus.
         false
     }
 }
@@ -1926,15 +1933,17 @@ impl CastlevaniaReward {
         if boss == 0 && self.prev_boss > 0 {
             acc.add("boss_killed", self.boss_killed_bonus);
             // Dracula is the final boss, in the last block (stage 18).
-            // Killing a boss on the final block is the real game-completion
-            // event — latch it and end the episode. A boss-kill on any earlier
-            // block is only stage progress, NOT a game win. $0028 is
-            // 0-INDEXED (emulator-verified: block 1 reads 0), so Castlevania's
-            // 18th block (Dracula) reads 17 — the old `>= 18` gate could NEVER
-            // fire (a confirmed false-negative). Researched, not yet
-            // Dracula-fight-verified, but strictly better than a dead gate.
-            const FINAL_BLOCK: u8 = 17; // block 18, 0-indexed
-            if stage >= FINAL_BLOCK {
+            // Killing the boss on Dracula's stage is the game-completion
+            // event; a boss-kill on any earlier stage is only progress. The
+            // stage index $0028 is an internal stage counter (0x00-0x15 = 22
+            // internal stages, NOT the 18 displayed blocks). Dracula's stage
+            // is 0x12 (18) — proven by the game's own code: LoadStage indexes a
+            // 22-entry StageDataTable and the ending is a special-case
+            // `cmp #$12`. (An earlier pass used `>= 17` from a wrong
+            // "0-indexed block 18 = 17" inference; that only caught Dracula by
+            // luck. Not yet fight-verified live — no reachable Dracula state.)
+            const DRACULA_STAGE: u8 = 0x12;
+            if stage == DRACULA_STAGE {
                 self.completed = true;
                 done = true;
             }
@@ -2719,28 +2728,29 @@ mod tests {
     fn castlevania_win_only_on_final_block_boss() {
         let weights = HashMap::new();
         // A boss-kill on an EARLY block must NOT count as beating the game.
-        // $0028 is 0-indexed (block 1 reads 0); the final block (Dracula) = 17.
-        // A boss-kill on an earlier block (16 = block 17) must NOT win.
+        // Dracula's internal stage $0028 is 0x12 (18) per the game's
+        // StageDataTable. A boss-kill on any earlier stage (0x11 = 17) must
+        // NOT count as beating the game.
         let mut r = build_reward("castlevania", &weights).unwrap();
         let mut ram = zram();
         ram[0x0044] = 16; // player health (alive)
         ram[0x002A] = 3; // lives (alive)
-        ram[0x0028] = 16; // block 17 (one before the final) — NOT a win
+        ram[0x0028] = 0x11; // stage 17 (one before Dracula) — NOT a win
         ram[0x01A9] = 100; // boss health (real slot)
         r.compute(&ram, 0, false); // first step baselines prev_boss=100
-        ram[0x01A9] = 0; // a boss killed on block 17
+        ram[0x01A9] = 0; // a boss killed on stage 17
         r.compute(&ram, 0, false);
         assert!(
             !r.episode_success(),
-            "a boss-kill before the final block must NOT beat Castlevania"
+            "a boss-kill before Dracula's stage must NOT beat Castlevania"
         );
 
-        // A boss-kill on the FINAL block (Dracula, $0028 == 17) IS the win.
+        // A boss-kill on DRACULA'S stage ($0028 == 0x12) IS the win.
         let mut r2 = build_reward("castlevania", &weights).unwrap();
         let mut ram2 = zram();
         ram2[0x0044] = 16;
         ram2[0x002A] = 3;
-        ram2[0x0028] = 17; // final block (block 18, 0-indexed) = Dracula
+        ram2[0x0028] = 0x12; // Dracula's internal stage (18)
         ram2[0x01A9] = 100;
         r2.compute(&ram2, 0, false);
         ram2[0x01A9] = 0; // Dracula killed
