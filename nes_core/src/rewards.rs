@@ -353,7 +353,17 @@ pub struct ZeldaReward {
     item_used_bonus: f64,
     item_cycle_bonus: f64,
     activity_timeout_steps: usize,
+    // Win-chain milestone weights (progress-to-Ganon must dominate the
+    // exploration bonus so the motion/explore local optimum can't win).
+    all_fragments_bonus: f64,
+    level9_enter_bonus: f64,
+    ganon_reached_bonus: f64,
+    win_bonus: f64,
     // State
+    won: bool,
+    all_fragments_awarded: bool,
+    level9_entered: bool,
+    ganon_reached: bool,
     visited: HashSet<(u8, u8)>,
     dungeons_entered: HashSet<u8>,
     prev_hearts_byte: u8,
@@ -391,6 +401,19 @@ impl ZeldaReward {
     const RAM_RUPEES: usize = 0x066D;
     const RAM_TRIFORCE: usize = 0x0671;
     const RAM_DUNGEON_LEVEL: usize = 0x10;
+    // Win chain (aldonunez disassembly + empirically verified against the
+    // captured zelda_*.state.bin on this emulator):
+    //   $0672 LastBossDefeated — 0 while Ganon lives, set to 1 the instant
+    //     his death fanfare ends. Monotonic 0->1; the ONE reliable "game
+    //     effectively won" flag (rescuing Zelda after is a scripted walk).
+    //   $0609 Song — one-hot active track: 0x10=Ending theme (Zelda rescued
+    //     / credits), 0x02=Ganon-fight theme (reached the final boss).
+    // $0671==0xFF (all 8 fragments) only opens Level 9 — a MILESTONE, not a
+    // win; the old episode_success() wrongly treated it as victory.
+    const RAM_GANON_DEFEATED: usize = 0x0672;
+    const RAM_SONG: usize = 0x0609;
+    const SONG_ENDING: u8 = 0x10;
+    const SONG_GANON: u8 = 0x02;
     const RAM_KILL_COUNT: usize = 0x0627;
     const RAM_INVENTORY_START: usize = 0x0657;
     const RAM_B_ITEM: usize = 0x0656;
@@ -428,6 +451,10 @@ impl ZeldaReward {
         item_used_bonus: f64,
         item_cycle_bonus: f64,
         activity_timeout_steps: usize,
+        all_fragments_bonus: f64,
+        level9_enter_bonus: f64,
+        ganon_reached_bonus: f64,
+        win_bonus: f64,
     ) -> Self {
         Self {
             exploration_bonus,
@@ -453,6 +480,14 @@ impl ZeldaReward {
             item_used_bonus,
             item_cycle_bonus,
             activity_timeout_steps,
+            all_fragments_bonus,
+            level9_enter_bonus,
+            ganon_reached_bonus,
+            win_bonus,
+            won: false,
+            all_fragments_awarded: false,
+            level9_entered: false,
+            ganon_reached: false,
             visited: HashSet::new(),
             dungeons_entered: HashSet::new(),
             prev_hearts_byte: 0,
@@ -499,6 +534,10 @@ impl ZeldaReward {
         self.prev_magic_key = 0;
         self.prev_map_bits = 0;
         self.prev_compass_bits = 0;
+        self.won = false;
+        self.all_fragments_awarded = false;
+        self.level9_entered = false;
+        self.ganon_reached = false;
         self.died = false;
         self.first_step = true;
     }
@@ -721,6 +760,34 @@ impl ZeldaReward {
         }
         self.prev_triforce = triforce_bits;
 
+        // Win-chain milestones (each fires ONCE) so progress toward Ganon is
+        // the dominant attractor over exploration. Ordered by lateness:
+        //   all 8 fragments ($0671==0xFF, Level 9 openable) -> +all_fragments
+        //   entered Level 9 ($0010==9)                      -> +level9_enter
+        //   reached the Ganon fight (song 0x02)             -> +ganon_reached
+        //   Ganon defeated ($0672!=0) / ending song (0x10)  -> +win_bonus, WIN
+        let ganon_defeated_byte = ram[Self::RAM_GANON_DEFEATED];
+        let song = ram[Self::RAM_SONG];
+        if !self.all_fragments_awarded && triforce_bits == 0xFF {
+            acc.add("all_fragments", self.all_fragments_bonus);
+            self.all_fragments_awarded = true;
+        }
+        if !self.level9_entered && dungeon_level == 9 {
+            acc.add("level9_enter", self.level9_enter_bonus);
+            self.level9_entered = true;
+        }
+        if !self.ganon_reached && (song & Self::SONG_GANON) != 0 {
+            acc.add("ganon_reached", self.ganon_reached_bonus);
+            self.ganon_reached = true;
+        }
+        // Terminal: Ganon dead (the monotonic $0672 flag) or the ending theme
+        // playing (Zelda rescued). Fire the jackpot once and end the episode.
+        if !self.won && (ganon_defeated_byte != 0 || (song & Self::SONG_ENDING) != 0) {
+            acc.add("win", self.win_bonus);
+            self.won = true;
+            done = true;
+        }
+
         acc.add("time_penalty", self.time_penalty);
 
         if self.activity_timeout_steps > 0 {
@@ -744,7 +811,11 @@ impl ZeldaReward {
     }
 
     pub fn episode_success(&self) -> bool {
-        self.prev_triforce.count_ones() == 8 && !self.died
+        // WIN = Ganon defeated ($0672) / Zelda rescued (ending song), latched
+        // in `won`. The old predicate (all 8 fragments collected) declared
+        // victory ~3 dungeons + the final boss too early — collecting every
+        // fragment only OPENS Level 9; it is not winning the game.
+        self.won && !self.died
     }
 }
 
@@ -2425,6 +2496,14 @@ pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward
             w(weights, "item_used", 3.0),
             w(weights, "item_cycle", 0.5),
             w(weights, "activity_timeout_steps", 120.0) as usize,
+            // Win-chain milestones. Defaults dwarf the exploration bonus
+            // (128 screens x 50 = 6400) so reaching Ganon strictly dominates
+            // map-wandering: all-fragments 3000, Level-9 entry 5000, Ganon
+            // fight 5000, the win 20000. Tunable per profile.
+            w(weights, "all_fragments", 3000.0),
+            w(weights, "level9_enter", 5000.0),
+            w(weights, "ganon_reached", 5000.0),
+            w(weights, "win_bonus", 20000.0),
         )));
     }
     if name.contains("contra") {
@@ -2708,6 +2787,56 @@ mod tests {
         ram[0x00EB] = 8;
         let o2 = r.compute(&ram, 0, false);
         assert!(o2.reward > o1.reward, "new cell should reward more");
+    }
+
+    #[test]
+    fn zelda_win_only_on_ganon_defeated_not_all_fragments() {
+        // The bug this guards: collecting all 8 Triforce fragments only OPENS
+        // Level 9 — it is NOT winning. Victory requires Ganon defeated ($0672).
+        let weights = HashMap::new();
+        let mut r = build_reward("zelda", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x066F] = 0x33; // 3 max / 3 current hearts (alive)
+        ram[0x0670] = 0xFF;
+        let _ = r.compute(&ram, 0, false); // first-step anchor
+        // All 8 fragments collected, but Ganon still alive.
+        ram[0x0671] = 0xFF;
+        let o1 = r.compute(&ram, 0, false);
+        assert!(!r.episode_success(), "all fragments != win (Level 9 not beaten)");
+        assert!(!o1.done, "all-fragments milestone must not end the episode");
+        // Now Ganon defeated.
+        ram[0x0672] = 1;
+        let o2 = r.compute(&ram, 0, false);
+        assert!(r.episode_success(), "Ganon defeated ($0672) is the win");
+        assert!(o2.done, "the win must end the episode");
+        assert!(o2.reward > 1000.0, "win jackpot should fire, got {}", o2.reward);
+    }
+
+    #[test]
+    fn zelda_ending_song_also_counts_as_win() {
+        let weights = HashMap::new();
+        let mut r = build_reward("zelda", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x066F] = 0x33;
+        ram[0x0670] = 0xFF;
+        let _ = r.compute(&ram, 0, false);
+        ram[0x0609] = 0x10; // ending theme = Zelda rescued
+        let o = r.compute(&ram, 0, false);
+        assert!(r.episode_success() && o.done, "ending song is a win");
+    }
+
+    #[test]
+    fn zelda_win_bonus_fires_once() {
+        let weights = HashMap::new();
+        let mut r = build_reward("zelda", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x066F] = 0x33;
+        ram[0x0670] = 0xFF;
+        let _ = r.compute(&ram, 0, false);
+        ram[0x0672] = 1;
+        let o1 = r.compute(&ram, 0, false);
+        let o2 = r.compute(&ram, 0, false); // win latched — no second jackpot
+        assert!(o1.reward > o2.reward + 1000.0, "win bonus must not re-fire");
     }
 
     #[test]

@@ -2,6 +2,13 @@ name: "The Legend of Zelda"
 rom_hashes:
   - ""  # TODO: fill in with MD5 of a known-good dump
 
+# Live overworld start (past the title screen, controllable) — without this
+# Zelda cold-boots to the title demo and trains on ignored inputs (the
+# start-state demo bug). Verified loadable on this emulator: level=0
+# (overworld), game-mode=5 (normal play), sword=0 (canonical: grab it in the
+# first cave). Swap to a sword/dungeon-entrance state for reverse curriculum.
+start_state_path: "roms/zelda_start2.state.bin"
+
 description: >
   Training profile for The Legend of Zelda (NES, 1986). Zelda is significantly
   harder than Mario for RL — the game is non-linear, reward signals are
@@ -23,7 +30,10 @@ ram_mapping:
   rupees:          0x066D
   bombs:           0x0658
   keys:            0x066E
-  triforce_pieces: 0x0671
+  triforce_pieces: 0x0671  # bitfield, 1 bit/fragment; 0xFF = all 8 (opens L9)
+  # Win chain (disassembly + emulator-verified): the REAL victory signals.
+  ganon_defeated:  0x0672  # 0->1 when Ganon dies — THE win flag
+  song:            0x0609  # active track: 0x10=ending (rescued), 0x02=Ganon fight
 
 reward_weights:
   # Zelda reward hierarchy, round 4.
@@ -71,7 +81,13 @@ reward_weights:
   rupee_collected:   5.0     # was 2
   heart_container: 300.0     # was 30 — rare and valuable
   heart_recovery:   20.0     # was 5
-  triforce_piece: 10000.0    # was 200 — terminal goal
+  triforce_piece: 10000.0    # per-fragment (8 total = 80000) — MILESTONE, not win
+  # Win chain — must strictly dominate the 8x10000 fragment economy so the
+  # agent is driven to actually BEAT Ganon, not just farm fragments.
+  all_fragments:  20000.0    # one-time: all 8 collected -> Level 9 openable
+  level9_enter:   30000.0    # one-time: entered Ganon's dungeon ($0010==9)
+  ganon_reached:  30000.0    # one-time: Ganon fight begins (song 0x02)
+  win_bonus:     100000.0    # TERMINAL jackpot: Ganon dead / Zelda rescued
   damage_taken:     -5.0     # was -8 — less punishing, encourage combat
   death_penalty:   -30.0     # was -20 — tiny bump
   new_item:         80.0     # was 25
