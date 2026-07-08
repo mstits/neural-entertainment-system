@@ -2,12 +2,13 @@ name: "The Legend of Zelda"
 rom_hashes:
   - ""  # TODO: fill in with MD5 of a known-good dump
 
-# Live overworld start (past the title screen, controllable) — without this
-# Zelda cold-boots to the title demo and trains on ignored inputs (the
-# start-state demo bug). Verified loadable on this emulator: level=0
-# (overworld), game-mode=5 (normal play), sword=0 (canonical: grab it in the
-# first cave). Swap to a sword/dungeon-entrance state for reverse curriculum.
-start_state_path: "roms/zelda_start2.state.bin"
+# Live overworld start (past the title, CONTROLLABLE) — without this Zelda
+# cold-boots to the title demo and trains on ignored inputs (the start-state
+# demo bug). Verified on this emulator: loads in 0.06s, game-mode=5 (normal
+# play), and Link MOVES under input (x 80->127). NOTE: zelda_start2.state.bin
+# was frozen (Link stuck, no milestone could fire) — do not use it. Swap to a
+# sword/dungeon-entrance state for reverse curriculum.
+start_state_path: "roms/zelda_start_ctrl.state.bin"
 
 description: >
   Training profile for The Legend of Zelda (NES, 1986). Zelda is significantly

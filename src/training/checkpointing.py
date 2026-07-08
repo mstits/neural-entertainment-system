@@ -485,7 +485,18 @@ def _best_from_eval_log(checkpoint_dir: Path) -> Optional[Path]:
             p = Path(ckpt)
             if not p.exists():
                 continue
-            key = (cr, float(row.get("timestamp", 0.0) or 0.0))
+            # Timestamps are written as ISO strings (save_winner uses
+            # datetime.isoformat()), so float(ts) raises ValueError — which is
+            # NOT caught by the surrounding `except OSError` and crashed
+            # make demo/eval's latest-checkpoint fallback. Coerce defensively;
+            # clear_rate is the primary ordering key, so a 0.0 tiebreak on an
+            # unparseable timestamp is harmless.
+            ts_raw = row.get("timestamp", 0.0)
+            try:
+                ts = float(ts_raw)
+            except (TypeError, ValueError):
+                ts = 0.0
+            key = (cr, ts)
             if best_key is None or key > best_key:
                 best_key, best_ckpt = key, p
     except OSError:

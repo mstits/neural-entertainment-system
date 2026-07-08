@@ -142,3 +142,30 @@ def test_under_sampled_concrete_level_blocks_advance() -> None:
         cm.record_episode("hard", True)   # now well-sampled
     assert cm.stage_success_rate() == pytest.approx(1.0)
     assert cm.maybe_advance() is True
+
+
+def test_strong_under_sampled_agent_does_not_regress() -> None:
+    """F19 regress fix: a strong agent whose concrete levels are merely
+    UNDER-sampled must NOT be dragged to 0.0 and regressed spuriously (the
+    0.0-injection is advance-only)."""
+    stages = [
+        CurriculumStage(name="s1", levels=["a"], advance_threshold=0.8, min_episodes=5),
+        CurriculumStage(
+            name="s2", levels=["hard1", "hard2"],
+            advance_threshold=0.8, min_episodes=5,
+        ),
+    ]
+    cm = CurriculumManager(stages=stages, regression_threshold=0.3)
+    # Force to stage 2.
+    for _ in range(10):
+        cm.record_episode("a", True)
+    assert cm.maybe_advance() is True
+    # On stage 2: perfect but under-sampled (< 10 episodes each).
+    for _ in range(4):
+        cm.record_episode("hard1", True)
+        cm.record_episode("hard2", True)
+    # Advance gate treats under-sampled as 0.0 -> won't advance yet.
+    assert cm.stage_success_rate() == pytest.approx(0.0)
+    # Regress gate skips under-sampled -> sees 1.0 -> must NOT regress.
+    assert cm.stage_success_rate(undersampled_as_zero=False) == pytest.approx(1.0)
+    assert cm.maybe_regress() is False

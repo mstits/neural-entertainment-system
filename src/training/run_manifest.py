@@ -69,7 +69,7 @@ def write_run_manifest(
         "seed": seed,
         "git_commit": _git_commit(),
         "created_at": created_at if created_at is not None else time.time(),
-        "trainer_mode": rl.get("trainer_mode", "ga_ppo"),
+        "trainer_mode": rl.get("trainer_mode", "vanilla_ppo"),
         "encoder": rl.get("encoder", "nature_dqn"),
         "device": rl.get("device"),
         "num_envs": int(num_envs),

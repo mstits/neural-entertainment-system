@@ -140,7 +140,7 @@ class CurriculumManager:
         self._stage_success_history[level].append(success)
         self.episodes_in_stage += 1
 
-    def stage_success_rate(self) -> float:
+    def stage_success_rate(self, undersampled_as_zero: bool = True) -> float:
         """Average success rate across all levels in the current stage.
 
         Reads from `_stage_success_history` (within-stage only) so a
@@ -152,6 +152,14 @@ class CurriculumManager:
         the CURRENT stage — useful for games where the reward fn emits
         concrete RAM-derived level names that don't line up with the
         stage's abstract labels.
+
+        `undersampled_as_zero` controls how an explicitly-required concrete
+        level with < 10 within-stage episodes is scored. For the ADVANCE gate
+        it is True (an under-sampled hard level counts as 0.0, so the stage
+        can't advance on levels it hasn't really played). For the REGRESS gate
+        it MUST be False (skip under-sampled levels): otherwise a strong agent
+        whose concrete levels are merely under-sampled scores 0.0 and regresses
+        spuriously — thrashing between stages and never reaching later worlds.
         """
         rates = []
         concrete_levels: list[str] = []
@@ -172,11 +180,11 @@ class CurriculumManager:
             history = self._stage_success_history.get(level, deque())
             if len(history) >= 10:
                 rates.append(sum(history) / len(history))
-            else:
-                # An explicitly-required level that is under-sampled counts as
-                # 0.0 rather than being skipped — otherwise the stage could
-                # advance on a hard level it's only played 0-for-5 on, because
-                # that level was silently dropped from the average.
+            elif undersampled_as_zero:
+                # ADVANCE gate: an under-sampled required level counts as 0.0
+                # (don't advance on a hard level played only 0-for-5). For the
+                # REGRESS gate this is skipped, so a strong-but-under-sampled
+                # agent isn't dragged to 0.0 and regressed spuriously.
                 rates.append(0.0)
         for level in wildcard_only:
             # Incidental RAM-derived labels surfaced by "*": count only once
@@ -184,7 +192,14 @@ class CurriculumManager:
             history = self._stage_success_history.get(level, deque())
             if len(history) >= 10:
                 rates.append(sum(history) / len(history))
-        return sum(rates) / len(rates) if rates else 0.0
+        if rates:
+            return sum(rates) / len(rates)
+        # No level has enough data. Return the "don't transition" default for
+        # each gate: 0.0 blocks ADVANCE (need evidence to advance), 1.0 blocks
+        # REGRESS (no evidence of failure -> don't drop back). Without the
+        # mode-aware default, an all-under-sampled stage returned 0.0 and
+        # regressed a strong agent anyway.
+        return 0.0 if undersampled_as_zero else 1.0
 
     def maybe_advance(self) -> bool:
         """
@@ -215,7 +230,10 @@ class CurriculumManager:
         if self.episodes_in_stage < self.current_stage.min_episodes:
             return False
 
-        if self.stage_success_rate() < self.regression_threshold:
+        # Regress only on genuinely poor performance on SAMPLED levels — do
+        # NOT treat under-sampled levels as 0.0 here (that would regress a
+        # strong agent whose levels are merely under-sampled; see F19).
+        if self.stage_success_rate(undersampled_as_zero=False) < self.regression_threshold:
             self.current_stage_idx -= 1
             self.episodes_in_stage = 0
             # Same invariant as maybe_advance: clear within-stage history
