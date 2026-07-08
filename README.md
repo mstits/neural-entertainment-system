@@ -212,15 +212,24 @@ you train them with the flow above).
 - **Super Mario Bros., world 1 — trains and produces greedy clears of 1-1, 1-2,
   and 1-3** via the save-state curriculum + dense-reward tile encoder. Decaying
   the entropy coefficient consolidates a stochastic clear into a deployable
-  greedy one. **Not yet solved:** 1-4 (the autonomous ceiling reached so far)
-  and full autonomous progression through 8-4.
-- **Contra — learns** (return climbs, entropy falls under the pixel-CNN + RND
-  recipe) but **does not yet clear** stage 1. Value-loss tuning is the open
-  lever.
-- **Mega Man 2, Castlevania, Zelda, Metroid — scaffolded.** Each has a profile,
-  a reward function, and a canonical ROM/start-state path, and trains on the
-  universal pixel-CNN path without regressions, but none has a demonstrated
-  clear yet.
+  greedy one. **1-4 (the Bowser castle): the boss fight itself is solved** — a
+  Go-Explore-trained policy crosses 1-4 → world 2 (beats Bowser, touches the
+  axe) reliably from mid-1-4, and the win predicate is verified live on real
+  clears. The open work is the early x700→x1000 platform-hop (the true
+  bottleneck) and consolidating a single greedy 1-1→1-4 chain; full autonomous
+  progression to 8-4 remains a research goal.
+- **16 games have hand-authored reward functions with real win predicates** —
+  Mario, Contra, Castlevania, Mega Man, Metroid, Zelda, Tetris, Bubble Bobble,
+  Punch-Out, Kung Fu, Gradius, Excitebike, Ghosts'n Goblins, DuckTales, Kid
+  Icarus, Double Dragon. Every reward's RAM addresses are validated against the
+  live emulator (drive the game, diff RAM); `episode_success()` is a genuine
+  win (stage/match/floor/round clear or game beaten), never a "positive
+  cumulative reward" proxy. **Win RAM verified live** (reached the event on the
+  emulator) for SMB, Punch-Out, and Kung Fu; the rest key on reachable RAM with
+  the final-boss values cross-sourced (labeled in-code) until an agent or a
+  near-boss save-state reaches those endgames. **These make the games trainable
+  and measurable — none but SMB world 1 has a demonstrated clear yet; winning
+  the rest is a matter of training compute, not missing code.**
 - **DreamerV3 world-model trainer — scaffolded and trains end-to-end**, but has
   not been converged to outperform PPO on these games; it is a research path,
   not a shipping result.
@@ -228,7 +237,26 @@ you train them with the flow above).
 The emulator itself is the mature layer: byte-exact CPU (nestest), 146 parity
 tapes green, ~99.9% library boot compatibility, and a differential fuzz of the
 ASM core against the pure-Rust reference with zero divergence over 240M+
-instructions.
+instructions. Recent fidelity fixes (MMC5/MMC1-SUROM/MMC3 banking, PPU
+forced-blank backdrop + color-emphasis, OAM-DMA bus routing) were validated
+against Mesen as the ground-truth oracle, and the whole change set was put
+through an adversarial regression review.
+
+### Game readiness
+
+| Game | Reward + win predicate | Start state | Win RAM |
+|---|---|---|---|
+| Super Mario Bros. | ✅ flagpole + castle (world-byte) | ✅ | **verified-live** |
+| Punch-Out!! | ✅ match-id KO/TKO latch | ✅ | **verified-live** |
+| Kung Fu | ✅ floor-clear + Sylvia | ✅ | **verified-live** |
+| Contra | ✅ per-stage clear ($0030/$003B) | ✅ | cross-sourced |
+| Castlevania | ✅ Dracula (final block) | ✅ | cross-sourced |
+| Metroid | ✅ Mother Brain + escape | ✅ | reachable RAM |
+| Zelda | ✅ Ganon / ending song | ✅ | reachable RAM |
+| Mega Man (2) | ✅ shaping (no all-Masters flag) | ✅ | n/a (no game-win flag) |
+| Tetris / Bubble Bobble | ✅ line-goal / round-clear | ⚠ capture | cross-sourced |
+| Gradius / Excitebike / Ghosts'n Goblins / DuckTales / Kid Icarus | ✅ stage/track/level clear | ✅ | live-validated addrs |
+| Double Dragon | ✅ mission-clear | ⚠ capture | cross-sourced |
 
 ## Architecture
 
@@ -238,7 +266,7 @@ flowchart TB
         GUI["PyQt6 GUI<br/>(src/gui)"]
         Dashboard["TrainingDashboardWindow<br/>fitness · WM losses · replay · recon"]
         TrainerSel{"training_mode?"}
-        Trainer["Trainer<br/>vanilla_ppo (default)<br/>· GA modes legacy"]
+        Trainer["Trainer<br/>vanilla_ppo (default)<br/>+ save-state curriculum<br/>+ Go-Explore (opt-in)<br/>· GA modes legacy"]
         DreamerT["DreamerTrainer<br/>world model + actor/critic"]
         EncSel{"encoder?"}
         CNN["PolicyNetwork<br/>Nature-DQN / IMPALA<br/>1.7M+ params, 4×84×84"]
@@ -257,7 +285,7 @@ flowchart TB
             APU["APU<br/>5-channel"]
             Mappers["Mappers (36)<br/>NROM, MMC1, MMC3, MMC5, VRC..."]
         end
-        Rewards["Reward functions<br/>+ dense progress checkpoints"]
+        Rewards["Reward functions (16 games)<br/>dense progress + real win predicate<br/>RAM validated live"]
         FrameSink["Frame sink<br/>NEON XRGB->gray->84x84->f16"]
         AudioSink["Audio sink<br/>cpal stereo + pan matrix"]
     end
@@ -293,6 +321,63 @@ algorithm with a population of policies — are **legacy**: a two-day
 investigation found that folding data from many distinct policies into one PPO
 gradient violates PPO's stable-policy assumption and never produced a committed
 clear. They remain selectable via `reinforce.trainer_mode` for comparison.
+
+### Training loop (vanilla_ppo)
+
+One shared policy; N parallel NES envs are rollout collectors. Two optional,
+mutually-exclusive exploration aids sit on top: the **SMB save-state
+curriculum** (warm-start the pool at progressively later captured states) and
+**Go-Explore** (archive the furthest-reached cells as save-states, return to the
+frontier, then explore onward — the lever that cracked the SMB 1-4 Bowser fight).
+
+```mermaid
+flowchart LR
+    Reset["reset_all()<br/>(+ curriculum / Go-Explore<br/>warm-start)"] --> Rollout
+    subgraph Rollout["Rollout (rollout_steps × N envs, no_grad)"]
+        Step["pool.step_all(actions)"] --> Obs["obs + RAM + done"]
+        Obs --> Reward["reward_fn.compute(ram)<br/>shaping + episode_success"]
+        Reward --> Buf["obs / action / reward /<br/>value / done buffers"]
+        Buf --> Step
+    end
+    Rollout --> Stop{"stopped<br/>mid-rollout?"}
+    Stop -->|yes| Reset
+    Stop -->|no| RND["RND intrinsic<br/>fold novelty into reward"]
+    RND --> GAE["batched GAE-λ<br/>(per-env done-masked)"]
+    GAE --> PPO["PPO K-epoch update<br/>clip + Huber value + entropy"]
+    PPO --> Record["Go-Explore RECORD<br/>(save new/improved cells)"]
+    Record --> Metrics["metrics.jsonl<br/>+ anti-collapse guard"]
+    Metrics --> Ckpt{"checkpoint<br/>cadence?"}
+    Ckpt -->|yes| Winner["retain winner<br/>(best clear_rate → winners/)"]
+    Ckpt -->|no| Reset
+    Winner --> Reset
+```
+
+### Reward and win-predicate flow
+
+Every game's reward reads the worker's RAM snapshot and emits (a) dense shaping
+that must be dominated by (b) a **real `episode_success()` win predicate** on
+validated RAM — never a "positive cumulative reward" proxy. `episode_success`
+feeds curriculum promotion, winner retention, and the eval/demo "did it win?"
+verdict, so a wrong predicate silently corrupts all three (the bug class this
+project hunts).
+
+```mermaid
+flowchart TB
+    RAM["2 KB RAM snapshot<br/>(per step)"] --> Build{"build_reward<br/>name.contains(...)"}
+    Build -->|"16 games"| Bespoke["Bespoke reward<br/>(Mario, Contra, Zelda,<br/>Punch-Out, Kung Fu, …)"]
+    Build -->|"else"| Generic["GenericReward<br/>(motion/survival/score-hunt)"]
+    Bespoke --> Shape["Dense shaping<br/>forward progress · items ·<br/>health/death · milestones"]
+    Bespoke --> Win["episode_success()<br/>REAL win: stage/boss/round clear"]
+    Generic --> Shape
+    Generic --> NoWin["episode_success() = false<br/>(no game-specific win)"]
+    Win --> Verify{"RAM verified?"}
+    Verify -->|"reached the event live"| VL["verified-live<br/>(SMB, Punch-Out, Kung Fu)"]
+    Verify -->|"boss unreachable"| XS["cross-sourced<br/>(disasm + Data Crystal, labeled)"]
+    Shape --> Trainer["Trainer"]
+    Win --> Curriculum["curriculum promotion"]
+    Win --> WinnerRet["winner retention"]
+    Win --> Eval["eval / demo verdict"]
+```
 
 ## Performance
 

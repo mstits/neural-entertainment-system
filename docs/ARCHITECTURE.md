@@ -110,8 +110,13 @@ trainer step via `pool.step_all(actions)`.
   in a callback and receive frames without copying through Python.
 
 ### Training-side helpers (still in Rust)
-- `rewards.rs` — per-game reward functions (Mario, Zelda, Contra, Mega Man,
-  Castlevania, Metroid). Dispatch via `build_reward_function(profile)`.
+- `rewards.rs` — per-game reward functions for 16 games (Mario, Zelda, Contra,
+  Mega Man, Castlevania, Metroid, Tetris, Bubble Bobble, Punch-Out, Kung Fu,
+  Gradius, Excitebike, Ghosts'n Goblins, DuckTales, Kid Icarus, Double Dragon),
+  each with dense shaping + a real `episode_success()` win predicate over
+  RAM validated live against the emulator; a `GenericReward` fallback covers
+  any other ROM. Dispatch via `build_reward` (name.contains) /
+  `build_reward_function(profile)`.
 - `narrator.rs` — RAM-delta event detection (first dungeon entry,
   triforce pickup, depth record, etc.).
 - `depth_tracker.rs` — per-genome deepest-RAM-key record for

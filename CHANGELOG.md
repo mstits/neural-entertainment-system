@@ -10,9 +10,43 @@ System). The original Nintendo Entertainment System hardware is named in full.
 
 ## [Unreleased]
 
-Onboarding + documentation-accuracy pass. Makes the "clone → install → train a
-game → reproduce a win" story correct for a first-time user. No runtime code
-changes in this pass — README and changelog only.
+Product-hardening + cross-game reward program. The tool went from "trains SMB"
+to installable, crash-safe, and reward-complete across 16 games, with every
+emulator-fidelity and win-predicate change validated against a ground-truth
+oracle (Mesen) or reached live on the emulator, and the whole change set put
+through an adversarial regression review.
+
+### Added
+
+- **Bespoke reward functions with real win predicates for 16 games** (was ~6):
+  added Tetris, Bubble Bobble, Punch-Out, Kung Fu, Gradius, Excitebike,
+  Ghosts'n Goblins, DuckTales, Kid Icarus, Double Dragon. Every RAM address is
+  validated live on the emulator; `episode_success()` is a genuine win
+  (stage/match/floor/round clear or game beaten), never a cumulative-reward
+  proxy. Win RAM is **verified-live** for SMB, Punch-Out, and Kung Fu.
+- **Go-Explore** (first-return-then-explore) wired into `vanilla_ppo` (opt-in,
+  mutually exclusive with the SMB curriculum) — the lever that cracked the
+  SMB 1-4 Bowser fight (policy crosses 1-4 → world 2 reliably from mid-1-4).
+- **Live win-predicate test** that drives the real game to a real win and
+  asserts `episode_success()` fires — the structural fix for self-referential
+  tests that let win bugs hide behind synthetic RAM.
+- Winner retention, seeded + ROM-MD5 run manifests, crash-safe `catch_unwind`
+  on state load, dead-worker revival, and per-game `configs/*.yaml`.
+
+### Fixed
+
+- **Emulator fidelity (Mesen-validated):** MMC5 PRG/CHR banking, MMC1 SUROM
+  512 KB PRG-A18, MMC3 A12 scanline-IRQ, PPU forced-blank backdrop + OAM mask,
+  PPU greyscale/color-emphasis, OAM-DMA bus routing, cartridge NES 2.0/archaic
+  robustness (crafted headers no longer abort the process), ASM ADC/SBC
+  page-cross cycle cost. Parity stays byte-exact (146 tapes); Dragon Warrior
+  III/IV migrated to the Mesen-lockstep oracle where nes-py is the inaccurate party.
+- **Win-predicate bugs** found by adversarial review + win-verification: Zelda
+  (declared victory 3 dungeons early), Metroid (read a garbage byte), Castlevania
+  (dead boss address, then a stage-index off-by-one), SMB castle-clear (credited
+  warp pipes), MegaMan (any single boss), GenericReward (`total > 0` always true;
+  frame-counter score exploit), Bubble Bobble (HUD-tile score exploit), curriculum
+  (under-sampling regressed strong agents), demo GIF crash on winner checkpoints.
 
 ### Changed
 
