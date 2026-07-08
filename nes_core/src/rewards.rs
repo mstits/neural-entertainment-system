@@ -46,6 +46,14 @@ pub enum Reward {
     Metroid(MetroidReward),
     Tetris(TetrisReward),
     BubbleBobble(BubbleBobbleReward),
+    PunchOut(PunchOutReward),
+    KungFu(KungFuReward),
+    Gradius(GradiusReward),
+    Excitebike(ExcitebikeReward),
+    Ghosts(GhostsReward),
+    DuckTales(DuckTalesReward),
+    KidIcarus(KidIcarusReward),
+    DoubleDragon(DoubleDragonReward),
     /// Fallback for any ROM without a hand-crafted reward function.
     /// Uses generic progress signals: RAM churn as motion proxy,
     /// survival-per-step, time penalty, and auto-detected score
@@ -67,6 +75,14 @@ impl Reward {
             Reward::Metroid(r) => r.reset(),
             Reward::Tetris(r) => r.reset(),
             Reward::BubbleBobble(r) => r.reset(),
+            Reward::PunchOut(r) => r.reset(),
+            Reward::KungFu(r) => r.reset(),
+            Reward::Gradius(r) => r.reset(),
+            Reward::Excitebike(r) => r.reset(),
+            Reward::Ghosts(r) => r.reset(),
+            Reward::DuckTales(r) => r.reset(),
+            Reward::KidIcarus(r) => r.reset(),
+            Reward::DoubleDragon(r) => r.reset(),
             Reward::Generic(r) => r.reset(),
         }
     }
@@ -81,6 +97,14 @@ impl Reward {
             Reward::Metroid(r) => r.compute(ram, action, want_breakdown),
             Reward::Tetris(r) => r.compute(ram, action, want_breakdown),
             Reward::BubbleBobble(r) => r.compute(ram, action, want_breakdown),
+            Reward::PunchOut(r) => r.compute(ram, action, want_breakdown),
+            Reward::KungFu(r) => r.compute(ram, action, want_breakdown),
+            Reward::Gradius(r) => r.compute(ram, action, want_breakdown),
+            Reward::Excitebike(r) => r.compute(ram, action, want_breakdown),
+            Reward::Ghosts(r) => r.compute(ram, action, want_breakdown),
+            Reward::DuckTales(r) => r.compute(ram, action, want_breakdown),
+            Reward::KidIcarus(r) => r.compute(ram, action, want_breakdown),
+            Reward::DoubleDragon(r) => r.compute(ram, action, want_breakdown),
             Reward::Generic(r) => r.compute(ram, action, want_breakdown),
         }
     }
@@ -95,6 +119,14 @@ impl Reward {
             Reward::Metroid(r) => r.episode_success(),
             Reward::Tetris(r) => r.episode_success(),
             Reward::BubbleBobble(r) => r.episode_success(),
+            Reward::PunchOut(r) => r.episode_success(),
+            Reward::KungFu(r) => r.episode_success(),
+            Reward::Gradius(r) => r.episode_success(),
+            Reward::Excitebike(r) => r.episode_success(),
+            Reward::Ghosts(r) => r.episode_success(),
+            Reward::DuckTales(r) => r.episode_success(),
+            Reward::KidIcarus(r) => r.episode_success(),
+            Reward::DoubleDragon(r) => r.episode_success(),
             Reward::Generic(r) => r.episode_success(),
         }
     }
@@ -2552,6 +2584,1737 @@ impl BubbleBobbleReward {
     }
 }
 
+// ============================================================
+// Punch-Out!! (NES, Nintendo) — boxing, single-bout KO/TKO
+// ============================================================
+//
+// All addresses VERIFIED-LIVE on the Mike Tyson's Punch-Out!! (Japan, USA)
+// (Rev A) dump (md5 c119a5a9…, mapper 9 / MMC2) from the captured Glass Joe
+// opening-bell state, driving the emulator with real inputs:
+//   $0398 opponent HP  — 0..0x60; drops on every LANDED Mac punch, REFILLS
+//                        (increase) when a downed opponent gets back up.
+//                        Mirror at $0399 tracks it 1:1.
+//   $0392 Little Mac HP — 0..0x60; drops when Mac is hit. Mirror at $0391.
+//   $03D1 opponent-down flag — rises 0->1 the frame the OPPONENT is knocked
+//                        down (opp-specific: stayed 0 while Mac was down).
+//   $03D0 Mac-down flag — rises 0->1 the frame LITTLE MAC is knocked down.
+//   $0342 stars — banked star punches (earned by clean counters).
+//   $0001 win latch — 0 all through the bout AND during a loss; goes nonzero
+//                        ONLY at the winning KO/TKO (0 even on a NON-final
+//                        knockdown), so it is a never-false-positive win flag.
+//   $000A losses — career loss counter; increments the frame Mac is TKO'd.
+// Damage is counted on HP DECREASES only, so a get-up refill (an increase)
+// never scores and the between-knockdown bounce can't be farmed. The win and
+// loss are keyed off dedicated latches, never off HP==0 (which occurs on
+// every ordinary knockdown), so the milestone strictly dominates shaping.
+
+#[derive(Clone)]
+pub struct PunchOutReward {
+    // Weights
+    opp_damage: f64,
+    knockdown_bonus: f64,
+    star_bonus: f64,
+    mac_damage: f64,
+    mac_knockdown: f64,
+    win_bonus: f64,
+    loss_penalty: f64,
+    time_penalty: f64,
+    // State
+    prev_opp_hp: i32,
+    prev_mac_hp: i32,
+    prev_opp_down: u8,
+    prev_mac_down: u8,
+    prev_stars: u8,
+    start_matchid: u8,
+    start_losses: u8,
+    won: bool,
+    lost: bool,
+    first_step: bool,
+}
+
+impl PunchOutReward {
+    const RAM_OPP_HP: usize = 0x0398; // opponent current health (0..0x60); mirror $0399
+    const RAM_MAC_HP: usize = 0x0392; // Little Mac current health (0..0x60); mirror $0391
+    const RAM_OPP_DOWN: usize = 0x03D1; // opponent knocked-down flag (0 up / !=0 down)
+    const RAM_MAC_DOWN: usize = 0x03D0; // Little Mac knocked-down flag
+    const RAM_STARS: usize = 0x0342; // banked star punches
+    const RAM_MATCH_ID: usize = 0x0001; // win latch: 0 during bout, !=0 at the winning KO/TKO
+    const RAM_LOSSES: usize = 0x000A; // career loss counter (increments on a Mac TKO)
+    const RAM_OPP_ID: usize = 0x0002; // opponent index (Glass Joe = 0) — for level_id only
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        opp_damage: f64,
+        knockdown_bonus: f64,
+        star_bonus: f64,
+        mac_damage: f64,
+        mac_knockdown: f64,
+        win_bonus: f64,
+        loss_penalty: f64,
+        time_penalty: f64,
+    ) -> Self {
+        Self {
+            opp_damage,
+            knockdown_bonus,
+            star_bonus,
+            mac_damage,
+            mac_knockdown,
+            win_bonus,
+            loss_penalty,
+            time_penalty,
+            prev_opp_hp: 0,
+            prev_mac_hp: 0,
+            prev_opp_down: 0,
+            prev_mac_down: 0,
+            prev_stars: 0,
+            start_matchid: 0,
+            start_losses: 0,
+            won: false,
+            lost: false,
+            first_step: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.prev_opp_hp = 0;
+        self.prev_mac_hp = 0;
+        self.prev_opp_down = 0;
+        self.prev_mac_down = 0;
+        self.prev_stars = 0;
+        self.start_matchid = 0;
+        self.start_losses = 0;
+        self.won = false;
+        self.lost = false;
+        self.first_step = true;
+    }
+
+    pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
+        let opp_hp = ram[Self::RAM_OPP_HP] as i32;
+        let mac_hp = ram[Self::RAM_MAC_HP] as i32;
+        let opp_down = ram[Self::RAM_OPP_DOWN];
+        let mac_down = ram[Self::RAM_MAC_DOWN];
+        let stars = ram[Self::RAM_STARS];
+        let matchid = ram[Self::RAM_MATCH_ID];
+        let losses = ram[Self::RAM_LOSSES];
+
+        if self.first_step {
+            self.prev_opp_hp = opp_hp;
+            self.prev_mac_hp = mac_hp;
+            self.prev_opp_down = opp_down;
+            self.prev_mac_down = mac_down;
+            self.prev_stars = stars;
+            self.start_matchid = matchid;
+            self.start_losses = losses;
+            self.first_step = false;
+        }
+
+        let mut acc = RewardAccum::new(want_breakdown);
+        let mut done = false;
+
+        // Opponent damage — the dense signal. Reward HP DECREASES only, so a
+        // downed opponent's get-up refill (an increase) never scores.
+        let opp_dmg = (self.prev_opp_hp - opp_hp).max(0) as f64;
+        acc.add("opp_damage", self.opp_damage * opp_dmg);
+        self.prev_opp_hp = opp_hp;
+
+        // Knockdown dealt — rising edge of the opponent-down flag (fires once
+        // per knockdown even though the flag stays set through the count).
+        if self.prev_opp_down == 0 && opp_down != 0 {
+            acc.add("knockdown", self.knockdown_bonus);
+        }
+        self.prev_opp_down = opp_down;
+
+        // Star banked (clean counter) — reward increments.
+        if stars > self.prev_stars {
+            acc.add("star", self.star_bonus * (stars - self.prev_stars) as f64);
+        }
+        self.prev_stars = stars;
+
+        // Damage taken — Mac HP decreases only (dodging avoids this penalty).
+        let mac_dmg = (self.prev_mac_hp - mac_hp).max(0) as f64;
+        acc.add("mac_damage", self.mac_damage * mac_dmg);
+        self.prev_mac_hp = mac_hp;
+
+        // Knockdown taken — rising edge of the Mac-down flag.
+        if self.prev_mac_down == 0 && mac_down != 0 {
+            acc.add("mac_knockdown", self.mac_knockdown);
+        }
+        self.prev_mac_down = mac_down;
+
+        acc.add("time_penalty", self.time_penalty);
+
+        // WIN — the match-id latch goes nonzero at the winning KO/TKO. It is 0
+        // through the whole bout (including non-final knockdowns) and 0 during a
+        // loss, so this can only mark a real match win. Latch + end the episode.
+        if !self.won && matchid > self.start_matchid {
+            acc.add("win", self.win_bonus);
+            self.won = true;
+            done = true;
+        }
+
+        // LOSE — the career loss counter increments when Mac is TKO'd.
+        if !self.lost && losses > self.start_losses {
+            acc.add("loss", self.loss_penalty);
+            self.lost = true;
+            done = true;
+        }
+
+        RewardOutput {
+            reward: acc.total,
+            done,
+            level_id: format!("opp_{:02}", ram[Self::RAM_OPP_ID]),
+            breakdown_delta: acc.breakdown,
+        }
+    }
+
+    pub fn episode_success(&self) -> bool {
+        self.won
+    }
+}
+
+// ============================================================
+// Kung Fu (NES, 1985 — Nintendo's port of Irem's "Kung-Fu Master" /
+// Famicom "Spartan X"). Side-scrolling beat-'em-up: Thomas ascends the
+// Devil's Temple one floor at a time, defeating each floor's boss (which
+// increments the floor byte $0058 and opens the door up) to rescue Sylvia
+// on the 5th floor. RAM verified live on this ROM (see configs/kung-fu.yaml).
+// ============================================================
+
+#[derive(Clone)]
+pub struct KungFuReward {
+    forward_progress: f64,
+    score_weight: f64,
+    floor_clear_bonus: f64,
+    game_clear_bonus: f64,
+    /// Opt-in boss-HP shaping (default 0 = disabled). $04A5 is cross-sourced
+    /// as the boss/enemy-energy byte but was never seen behaving as boss HP in
+    /// live play (it idles at 0x30 and only hits 0 on the death reset), so it
+    /// stays off until verified — mirrors Tetris board_shaping / BubbleBobble
+    /// enemy_count_addr. When enabled it is guarded against the death-frame
+    /// reset so 0x30->0 can never pay out as boss damage.
+    boss_damage: f64,
+    health_penalty: f64,
+    death_penalty: f64,
+    time_penalty: f64,
+    survival_weight: f64,
+    floor_goal: u8,
+    game_clear_floor: u8,
+
+    // Dynamic state.
+    start_floor: u8,
+    prev_floor: u8,
+    floors_cleared: u32,
+    max_world_x: u32,
+    prev_score: u64,
+    prev_health: u8,
+    prev_lives: u8,
+    prev_boss_hp: u8,
+    died: bool,
+    game_cleared: bool,
+    first_step: bool,
+}
+
+impl KungFuReward {
+    const RAM_FLOOR: usize = 0x0058;    // current floor: 0=1F .. 4=5F; +1 per floor clear
+    const RAM_LIVES: usize = 0x005C;    // remaining lives (boots at 3)
+    const RAM_HEALTH: usize = 0x04A6;   // player energy bar; drains + damage; underflows 0->255 at death
+    const RAM_BOSS_HP: usize = 0x04A5;  // cross-sourced boss/enemy energy (opt-in shaping only)
+    const RAM_PX_HI: usize = 0x0081;    // player world-X high byte
+    const RAM_PX_LO: usize = 0x0090;    // player world-X low byte
+    /// Score bytes: ONE DECIMAL DIGIT PER BYTE, big-endian ($0531 most
+    /// significant). One Gripper KO = +100 pts = +1 on $0534 (hundreds);
+    /// read_score() returns score/10 (the ones digit is always 0).
+    const RAM_SCORE: [usize; 5] = [0x0531, 0x0532, 0x0533, 0x0534, 0x0535];
+    /// The energy bar tops out near 0x30; a single-step loss can never exceed a
+    /// full bar. Capping the counted drop (and excluding the 0xFF underflow
+    /// sentinel) keeps the death/respawn reset from paying out as "damage".
+    const HEALTH_DROP_CAP: u8 = 64;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        forward_progress: f64,
+        score_weight: f64,
+        floor_clear_bonus: f64,
+        game_clear_bonus: f64,
+        boss_damage: f64,
+        health_penalty: f64,
+        death_penalty: f64,
+        time_penalty: f64,
+        survival_weight: f64,
+        floor_goal: u8,
+        game_clear_floor: u8,
+    ) -> Self {
+        Self {
+            forward_progress,
+            score_weight,
+            floor_clear_bonus,
+            game_clear_bonus,
+            boss_damage,
+            health_penalty,
+            death_penalty,
+            time_penalty,
+            survival_weight,
+            floor_goal,
+            game_clear_floor,
+            start_floor: 0,
+            prev_floor: 0,
+            floors_cleared: 0,
+            max_world_x: 0,
+            prev_score: 0,
+            prev_health: 0,
+            prev_lives: 0,
+            prev_boss_hp: 0,
+            died: false,
+            game_cleared: false,
+            first_step: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.start_floor = 0;
+        self.prev_floor = 0;
+        self.floors_cleared = 0;
+        self.max_world_x = 0;
+        self.prev_score = 0;
+        self.prev_health = 0;
+        self.prev_lives = 0;
+        self.prev_boss_hp = 0;
+        self.died = false;
+        self.game_cleared = false;
+        self.first_step = true;
+    }
+
+    fn world_x(ram: &[u8]) -> u32 {
+        ram[Self::RAM_PX_HI] as u32 * 256 + ram[Self::RAM_PX_LO] as u32
+    }
+
+    /// Big-endian digit-per-byte decode of the 5 score bytes. Each byte holds
+    /// one decimal digit (0-9); any non-digit (a glitch/uninitialised frame)
+    /// reads as 0 so a corrupt frame yields no reward rather than garbage.
+    /// Returns score/10 (the ones digit is always 0 and not stored), which is
+    /// monotonic — a digit rollover never makes it decrease.
+    fn read_score(ram: &[u8]) -> u64 {
+        let mut s = 0u64;
+        for &a in Self::RAM_SCORE.iter() {
+            let d = ram[a] as u64;
+            s = s * 10 + if d <= 9 { d } else { 0 };
+        }
+        s
+    }
+
+    pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
+        let floor = ram[Self::RAM_FLOOR];
+        let lives = ram[Self::RAM_LIVES];
+        let health = ram[Self::RAM_HEALTH];
+        let boss_hp = ram[Self::RAM_BOSS_HP];
+        let wx = Self::world_x(ram);
+        let score = Self::read_score(ram);
+
+        if self.first_step {
+            self.start_floor = floor;
+            self.prev_floor = floor;
+            self.max_world_x = wx;
+            self.prev_score = score;
+            self.prev_health = health;
+            self.prev_lives = lives;
+            self.prev_boss_hp = boss_hp;
+            self.first_step = false;
+        }
+
+        let mut acc = RewardAccum::new(want_breakdown);
+        let mut done = false;
+
+        let floor_advanced = floor > self.prev_floor;
+
+        // Forward progress: reward only a NEW maximum world-X, so pacing back
+        // and forth can't farm it. Skipped on the floor-advance step (world-X
+        // resets to the left edge of the next floor).
+        if !floor_advanced && wx > self.max_world_x {
+            acc.add("forward", self.forward_progress * (wx - self.max_world_x) as f64);
+            self.max_world_x = wx;
+        }
+
+        // Score delta = enemies hit/defeated (Grippers, knife-throwers, ...).
+        // Positive only; read_score is monotonic so a digit rollover never
+        // pays negative.
+        acc.add(
+            "score",
+            self.score_weight * (score as i64 - self.prev_score as i64).max(0) as f64,
+        );
+        self.prev_score = score;
+
+        // Floor clear ($0058 increments) = that floor's boss defeated + door to
+        // the next floor. The dominant milestone: floor_clear_bonus dwarfs a
+        // whole floor's forward+score shaping, so clearing strictly beats
+        // camping. Terminal game_clear when the top floor is reached (Sylvia).
+        if floor_advanced {
+            let adv = (floor - self.prev_floor) as u32;
+            acc.add("floor_clear", self.floor_clear_bonus * adv as f64);
+            self.floors_cleared += adv;
+            self.max_world_x = 0; // earn progress from scratch on the new floor
+            if !self.game_cleared && floor >= self.game_clear_floor {
+                acc.add("game_clear", self.game_clear_bonus);
+                self.game_cleared = true;
+                done = true;
+            }
+        }
+        self.prev_floor = floor;
+
+        // Optional boss-HP shaping (opt-in; $04A5 unverified). Skipped on the
+        // death step (lives just dropped) so the 0x30->0 reset can't be
+        // mistaken for boss damage.
+        if self.boss_damage != 0.0 && lives >= self.prev_lives && boss_hp < self.prev_boss_hp {
+            acc.add(
+                "boss_damage",
+                self.boss_damage * (self.prev_boss_hp - boss_hp) as f64,
+            );
+        }
+        self.prev_boss_hp = boss_hp;
+
+        // Damage / drain penalty on the energy bar ($04A6), decreases only.
+        // The bar underflows 0->255 at death (an INCREASE -> excluded by the
+        // `<` test) and refills on a new life/floor; excluding the 0xFF
+        // sentinel and capping the per-step drop keeps those resets from
+        // paying out as spurious damage.
+        if health < self.prev_health
+            && self.prev_health != 0xFF
+            && (self.prev_health - health) <= Self::HEALTH_DROP_CAP
+        {
+            acc.add(
+                "health",
+                self.health_penalty * (self.prev_health - health) as f64,
+            );
+        }
+        self.prev_health = health;
+
+        acc.add("survival", self.survival_weight);
+        acc.add("time_penalty", self.time_penalty);
+
+        // First life lost ends the episode (one-shot death penalty).
+        if !self.died && lives < self.prev_lives {
+            acc.add("death", self.death_penalty);
+            self.died = true;
+            done = true;
+        }
+        self.prev_lives = lives;
+
+        RewardOutput {
+            reward: acc.total,
+            done,
+            level_id: format!("floor_{:02}", floor),
+            breakdown_delta: acc.breakdown,
+        }
+    }
+
+    /// A REAL win: cleared at least `floor_goal` floors (each clear = a floor
+    /// boss defeated, i.e. $0058 incremented). Default goal 1 = clear the first
+    /// floor; raise to 4 to require reaching the 5th floor, and pair with
+    /// game_clear_floor for the full Sylvia rescue.
+    pub fn episode_success(&self) -> bool {
+        self.floors_cleared >= self.floor_goal as u32
+    }
+}
+
+// ============================================================
+// Gradius (NES) — horizontal auto-scrolling shoot-'em-up
+// ============================================================
+
+/// Reward for Gradius (Konami, 1986). The stage scrolls automatically, so the
+/// ship's on-screen X is NOT stage progress — staying alive IS progress (the
+/// world advances past the ship while it lives). The dominant dense signal is
+/// therefore SURVIVAL, layered with the game's signature power-up mechanic
+/// (collect capsules -> advance the meter -> spend for Speed/Missile/Double/
+/// Laser/Option/Shield) and, on top, a stage-clear (Big-Core boss defeated)
+/// milestone that strictly dominates everything else.
+///
+/// Empirically VERIFIED-LIVE on this emulator from the repo start-state
+/// (`roms/Gradius (USA)_start.state.bin`):
+///   * $00A4 player X — RIGHT raises it (0x50->0x77), LEFT lowers it (->0x29).
+///   * $00A5 player Y — DOWN raises it (0x60->0x87), UP lowers it (->0x39).
+///   * $0020 lives — starts 3, decremented to 2 on a collision death.
+///   * $0100 status — 1 while alive, flips to 2 during the death/explosion
+///     animation (leads the $0020 decrement by ~120 frames).
+/// Power-up bytes ($0040 Speed / $0041 Missile / $0042 meter selector /
+/// $0044 Weapon / $0045 Options / $0046 Shield) are the datacrystal RAM-map
+/// values, cross-checked against fresh-ship base == 0; scripted play could not
+/// grab a capsule to delta-verify them live, so they feed INCREASE-only shaping
+/// (a wrong address is a no-op, never a farmable bonus).
+///
+/// Stage number: undocumented on datacrystal, and every stable-looking zero-page
+/// candidate ($0004/$000A/$001E/$002A/$002B/$0037 == 1 at stage 1) proved to
+/// change mid-stage under live probing, so NO byte is trustworthy as the stage
+/// index yet. `stage_addr` is therefore DISABLED by default (0): the stage-clear
+/// win stays conservatively unreachable — never a false positive — until the
+/// real byte is read off a genuine stage-1->2 transition and set in the profile.
+/// This mirrors Contra's `clear_screen == 255` sentinel.
+#[derive(Clone)]
+pub struct GradiusReward {
+    survival_weight: f64,
+    powerup_bonus: f64,
+    capsule_bonus: f64,
+    stage_clear_bonus: f64,
+    death_penalty: f64,
+    time_penalty: f64,
+    /// Address of the current-stage byte. 0 == DISABLED (the never-false-
+    /// positive default): with no verified stage byte, the stage-clear win
+    /// cannot fire. Set to the real address (verified from a live stage
+    /// transition) to enable Big-Core-defeated win detection.
+    stage_addr: usize,
+    prev_lives: u8,
+    prev_power: i32,
+    prev_sel: u8,
+    max_stage: u8,
+    stages_cleared: u32,
+    died: bool,
+    first_step: bool,
+}
+
+impl GradiusReward {
+    const RAM_LIVES: usize = 0x0020;
+    const RAM_STATUS: usize = 0x0100;
+    const RAM_SPEED: usize = 0x0040;
+    const RAM_MISSILE: usize = 0x0041;
+    const RAM_SEL: usize = 0x0042;
+    const RAM_WEAPON: usize = 0x0044;
+    const RAM_OPTIONS: usize = 0x0045;
+    const RAM_SHIELD: usize = 0x0046;
+    /// $0100 == this value means the Vic Viper is dead/exploding.
+    const DEAD_STATUS: u8 = 0x02;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        survival_weight: f64,
+        powerup_bonus: f64,
+        capsule_bonus: f64,
+        stage_clear_bonus: f64,
+        death_penalty: f64,
+        time_penalty: f64,
+        stage_addr: usize,
+    ) -> Self {
+        Self {
+            survival_weight,
+            powerup_bonus,
+            capsule_bonus,
+            stage_clear_bonus,
+            death_penalty,
+            time_penalty,
+            // Clamp to valid 2 KB RAM range: an out-of-range address is treated
+            // as DISABLED (0) rather than panicking on `ram[addr]` in compute().
+            stage_addr: if stage_addr < 2048 { stage_addr } else { 0 },
+            prev_lives: 0,
+            prev_power: 0,
+            prev_sel: 0,
+            max_stage: 0,
+            stages_cleared: 0,
+            died: false,
+            first_step: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.prev_lives = 0;
+        self.prev_power = 0;
+        self.prev_sel = 0;
+        self.max_stage = 0;
+        self.stages_cleared = 0;
+        self.died = false;
+        self.first_step = true;
+    }
+
+    /// Composite "power level" = sum of the applied upgrades. Increases only
+    /// when the ship actually gets stronger (spend a capsule); resets to 0 on
+    /// death. Weapon is a mode (0=Normal,1=Laser,2=Double), so it contributes a
+    /// flat +1 once armed rather than its raw value.
+    fn power_level(ram: &[u8]) -> i32 {
+        ram[Self::RAM_SPEED] as i32
+            + ram[Self::RAM_MISSILE] as i32
+            + ram[Self::RAM_OPTIONS] as i32
+            + ram[Self::RAM_SHIELD] as i32
+            + if ram[Self::RAM_WEAPON] != 0 { 1 } else { 0 }
+    }
+
+    pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
+        let lives = ram[Self::RAM_LIVES];
+        let status = ram[Self::RAM_STATUS];
+        let sel = ram[Self::RAM_SEL];
+        let power = Self::power_level(ram);
+        // stage_addr == 0 => stage detection DISABLED (win unreachable).
+        let stage = if self.stage_addr != 0 {
+            ram[self.stage_addr]
+        } else {
+            0
+        };
+
+        if self.first_step {
+            self.prev_lives = lives;
+            self.prev_sel = sel;
+            self.prev_power = power;
+            self.max_stage = stage;
+            self.first_step = false;
+        }
+
+        let mut acc = RewardAccum::new(want_breakdown);
+        let mut done = false;
+
+        // SURVIVAL — the dominant dense signal: every alive step is the stage
+        // scrolling forward past the ship.
+        acc.add("survival", self.survival_weight);
+        acc.add("time_penalty", self.time_penalty);
+
+        // Capsule pickup: the power-up meter selector ($0042) advances by 1 each
+        // time a capsule is collected. Reward positive deltas only, so spending
+        // the meter (reset to 0) and the death-reset never subtract.
+        if sel > self.prev_sel {
+            acc.add("capsule", self.capsule_bonus * (sel - self.prev_sel) as f64);
+        }
+        self.prev_sel = sel;
+
+        // Power-up applied: composite Speed/Missile/Double-or-Laser/Options/
+        // Shield level went up (a capsule was spent). Increase-only, so the
+        // death-reset to 0 costs nothing (death is penalized once, below).
+        let dpow = (power - self.prev_power).max(0) as f64;
+        if dpow > 0.0 {
+            acc.add("powerup", self.powerup_bonus * dpow);
+        }
+        self.prev_power = power;
+
+        // STAGE CLEAR (THE win = Big-Core boss defeated -> next stage loads).
+        // Fires only on a strict increase of a real stage byte, which cannot
+        // happen mid-stage — so with a correctly-set `stage_addr` it is never a
+        // false positive, and with the default (0) it simply never fires.
+        if self.stage_addr != 0 && stage > self.max_stage {
+            acc.add(
+                "stage_clear",
+                self.stage_clear_bonus * (stage - self.max_stage) as f64,
+            );
+            self.stages_cleared += (stage - self.max_stage) as u32;
+            self.max_stage = stage;
+        }
+
+        // Death: the ship exploded ($0100 -> dead state) or a life was lost.
+        // First death ends the episode (single-life convention, as Contra /
+        // Bubble Bobble). Losing a life wipes all power-ups — captured here as
+        // the episode simply ending.
+        if !self.died && (status == Self::DEAD_STATUS || lives < self.prev_lives) {
+            acc.add("death", self.death_penalty);
+            self.died = true;
+            done = true;
+        }
+        self.prev_lives = lives;
+
+        RewardOutput {
+            reward: acc.total,
+            done,
+            level_id: format!("stage_{:02}", 1 + self.stages_cleared),
+            breakdown_delta: acc.breakdown,
+        }
+    }
+
+    pub fn episode_success(&self) -> bool {
+        // A REAL win = at least one genuine stage transition (Big Core beaten).
+        // Never `total > 0`. With `stage_addr` disabled this is always false.
+        self.stages_cleared >= 1
+    }
+}
+
+// ============================================================
+// Excitebike (NES, Nintendo) — solo time-trial (Selection A / Design A).
+// No enemies, no health, no time limit. The bike races a fixed track;
+// the ONLY way the race ends is by crossing the FINISH LINE (verified
+// live: idling forever never times out, the clock just wraps 0-59).
+// Win = finish the track. Turbo (B) is faster but overheats the engine,
+// which stalls the bike until it cools.
+// ============================================================
+
+#[derive(Clone)]
+pub struct ExcitebikeReward {
+    // Weights
+    forward_progress: f64,
+    section_bonus: f64,
+    speed_bonus: f64,
+    crash_penalty: f64,
+    overheat_penalty: f64,
+    completion_bonus: f64,
+    time_penalty: f64,
+    // State
+    prev_section_dist: i32,
+    prev_section: u8,
+    start_section: u8,
+    prev_bike_status: u8,
+    prev_temp: u8,
+    finished: bool,
+    first_step: bool,
+}
+
+impl ExcitebikeReward {
+    /// Section index 0..3. VERIFIED-LIVE: increments by exactly 1 at every
+    /// track-section boundary (when RAM_SECTION_DIST resets 129->~2), climbs
+    /// 0->1->2->3, then resets to 0 as the race restarts. Reaching the final
+    /// section == the finish line has been crossed.
+    const RAM_SECTION: usize = 0x03A4;
+    /// Distance within the current section, 0..~129, RESETS to ~0 at each
+    /// section boundary. VERIFIED-LIVE: advances only while moving forward
+    /// (stays put under NOOP). Used for dense forward-motion shaping via its
+    /// positive delta; the reset discontinuity is absorbed by `max(0, .)`.
+    const RAM_SECTION_DIST: usize = 0x00ED;
+    /// Bike speed 0..48 (A tops at 47, turbo B at 48). VERIFIED-LIVE.
+    const RAM_SPEED: usize = 0x00F3;
+    /// Engine temperature. VERIFIED-LIVE: starts at 8, climbs ~1/20f while
+    /// holding turbo (B), cools fast otherwise; at 32 the engine OVERHEATS
+    /// and speed collapses to ~1 until it cools. (datacrystal lists 0x03E3
+    /// for this, but on the Japan/USA dump 0x03E3 stays 0 — 0x03B6 is the
+    /// real gauge, confirmed by a sustained-turbo overheat/stall/cooldown run.)
+    const RAM_TEMP: usize = 0x03B6;
+    /// Bike status: 0 = racing normally, 2 = crash/tumble, 4 = remounting
+    /// after an overheat stall. VERIFIED-LIVE. Crash penalty fires on the
+    /// edge into 2 only (overheat is penalized separately, so the 4 state is
+    /// not double-counted).
+    const RAM_BIKE_STATUS: usize = 0x00F2;
+
+    /// Final section index: crossing into it == the finish line. VERIFIED-LIVE
+    /// as the terminal section (never observed as 4; the race resets after).
+    const FINAL_SECTION: u8 = 3;
+    /// Temperature at which the engine overheats and stalls. VERIFIED-LIVE.
+    const OVERHEAT_THRESHOLD: u8 = 32;
+    /// Bike-status value for a crash/tumble. VERIFIED-LIVE.
+    const CRASH_STATUS: u8 = 2;
+    /// Top speed, for normalizing the speed shaping term. VERIFIED-LIVE.
+    const MAX_SPEED: f64 = 48.0;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        forward_progress: f64,
+        section_bonus: f64,
+        speed_bonus: f64,
+        crash_penalty: f64,
+        overheat_penalty: f64,
+        completion_bonus: f64,
+        time_penalty: f64,
+    ) -> Self {
+        Self {
+            forward_progress,
+            section_bonus,
+            speed_bonus,
+            crash_penalty,
+            overheat_penalty,
+            completion_bonus,
+            time_penalty,
+            prev_section_dist: 0,
+            prev_section: 0,
+            start_section: 0,
+            prev_bike_status: 0,
+            prev_temp: 0,
+            finished: false,
+            first_step: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.prev_section_dist = 0;
+        self.prev_section = 0;
+        self.start_section = 0;
+        self.prev_bike_status = 0;
+        self.prev_temp = 0;
+        self.finished = false;
+        self.first_step = true;
+    }
+
+    pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
+        let section = ram[Self::RAM_SECTION];
+        let section_dist = ram[Self::RAM_SECTION_DIST] as i32;
+        let speed = ram[Self::RAM_SPEED];
+        let temp = ram[Self::RAM_TEMP];
+        let bike_status = ram[Self::RAM_BIKE_STATUS];
+
+        if self.first_step {
+            self.prev_section_dist = section_dist;
+            self.prev_section = section;
+            self.start_section = section;
+            self.prev_bike_status = bike_status;
+            self.prev_temp = temp;
+            self.first_step = false;
+        }
+
+        let mut acc = RewardAccum::new(want_breakdown);
+        let mut done = false;
+
+        // Dense forward motion. Only POSITIVE deltas count, so a section
+        // boundary (section_dist 129 -> ~2) contributes 0 rather than a
+        // spurious negative — the boundary is rewarded by section_bonus.
+        let dd = (section_dist - self.prev_section_dist).max(0) as f64;
+        acc.add("forward", self.forward_progress * dd);
+        self.prev_section_dist = section_dist;
+
+        // Section milestone — a chunk of the track completed.
+        if section > self.prev_section {
+            acc.add("section", self.section_bonus);
+        }
+
+        // Small throttle-holding shaping, normalized to <= speed_bonus/step.
+        acc.add("speed", self.speed_bonus * (speed as f64 / Self::MAX_SPEED));
+
+        // Crash: one-shot on the edge into a tumble (prev != 2 && now == 2).
+        if self.prev_bike_status != Self::CRASH_STATUS && bike_status == Self::CRASH_STATUS {
+            acc.add("crash", self.crash_penalty);
+        }
+        self.prev_bike_status = bike_status;
+
+        // Overheat: one-shot on crossing the overheat threshold (which stalls
+        // the bike). Recoverable (it cools when turbo is released), so it is a
+        // penalty, not a terminal.
+        if self.prev_temp < Self::OVERHEAT_THRESHOLD && temp >= Self::OVERHEAT_THRESHOLD {
+            acc.add("overheat", self.overheat_penalty);
+        }
+        self.prev_temp = temp;
+
+        acc.add("time_penalty", self.time_penalty);
+
+        // Completion = crossing the finish line. VERIFIED-LIVE: the section
+        // index reaching FINAL_SECTION fires the instant the bike crosses the
+        // line (still at speed), the race then stops and resets. Guarded by
+        // `section > start_section` so a corrupt start-state already at the
+        // final section can never false-positive. Terminal + one-shot.
+        if !self.finished && section >= Self::FINAL_SECTION && section > self.start_section {
+            acc.add("completion", self.completion_bonus);
+            self.finished = true;
+            done = true;
+        }
+        self.prev_section = section;
+
+        RewardOutput {
+            reward: acc.total,
+            done,
+            level_id: format!("section_{}", section),
+            breakdown_delta: acc.breakdown,
+        }
+    }
+
+    pub fn episode_success(&self) -> bool {
+        self.finished
+    }
+}
+
+// ============================================================
+// Ghosts'n Goblins (NES, Capcom/Micronics) — brutal side-scroll
+// action platformer. Arthur runs right through a stage, throwing
+// weapons; 2-hit armor (armored -> underwear -> death), instant
+// pits/water, a stage timer, and multiple lives. Win = clear a
+// stage (the infamous must-loop-twice true ending is out of reach
+// for a per-stage trainer, so a stage clear is the practical win).
+// ============================================================
+
+#[derive(Clone)]
+pub struct GhostsReward {
+    // Weights
+    forward_weight: f64,
+    kill_weight: f64,
+    armor_loss_penalty: f64,
+    death_penalty: f64,
+    stage_clear_bonus: f64,
+    survival_weight: f64,
+    time_penalty: f64,
+    // Win config
+    clear_min_progress: i32,
+    reset_threshold: i32,
+    stage_addr: usize,
+    score_addr: usize,
+    // State
+    prev_lives: u8,
+    prev_armor: u8,
+    prev_score: u8,
+    start_stage: u8,
+    max_stage: u8,
+    max_world_x: i32,
+    prev_world_x: i32,
+    cleared: bool,
+    died: bool,
+    first_step: bool,
+}
+
+impl GhostsReward {
+    // VERIFIED-LIVE on this ROM (emulator, from the shipped Stage-1 start
+    // state). See notes in configs/ghosts-n-goblins.yaml.
+    /// Player-1 lives. Reads 2 in the start state; decrements by 1 on each
+    /// death (VERIFIED 2->1). Cross-sourced: the Ghosts'n Goblins Game Genie
+    /// "infinite lives P1" code targets $0715 (P2 is $0716).
+    const RAM_LIVES: usize = 0x0715;
+    /// Game/player mode. 0x08 while in ACTIVE gameplay; 0x0A on the title,
+    /// during the death sequence, and the attract demo's non-play frames
+    /// (VERIFIED: 8 during play, flips to 0x0A on death). Used as a hard
+    /// "we are really playing" gate so no clear can be reported off a menu,
+    /// banner, or death frame.
+    const RAM_MODE: usize = 0x0028;
+    /// Armor flag: 1 = armored (Arthur in his knight suit, can survive one
+    /// hit), 0 = underwear (next hit kills). VERIFIED: holds 1 until the
+    /// exact frame Arthur's sprite turns from silver to red on his first
+    /// hit, then holds 0 (matches the game's two-hit health model).
+    const RAM_ARMOR: usize = 0x0585;
+    /// Horizontal world / camera position, signed 16-bit little-endian.
+    /// VERIFIED to respond to horizontal input (holding LEFT at spawn drives
+    /// it to 0xFFF8 = -8; RIGHT increases it). Near 0 at the stage start.
+    /// The exact per-stage scale is NOT verified (the opening is too hard to
+    /// traverse under scripted play), so it drives dense shaping + the
+    /// conservative Path-B win, both tunable, never a hard-coded milestone.
+    const RAM_SCROLL_LO: usize = 0x005D;
+    const RAM_SCROLL_HI: usize = 0x005E;
+    /// $0028 value that means "active gameplay".
+    const MODE_PLAY: u8 = 0x08;
+    /// Plausibility clamp for the optional stage-byte win path: a real stage
+    /// clear advances the index by 1 (sometimes 2 across an area split), never
+    /// by a large jump — a large jump means the wrong byte was configured.
+    const MAX_STAGE_JUMP: u8 = 2;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        forward_weight: f64,
+        kill_weight: f64,
+        armor_loss_penalty: f64,
+        death_penalty: f64,
+        stage_clear_bonus: f64,
+        survival_weight: f64,
+        time_penalty: f64,
+        clear_min_progress: i32,
+        reset_threshold: i32,
+        stage_addr: usize,
+        score_addr: usize,
+    ) -> Self {
+        Self {
+            forward_weight,
+            kill_weight,
+            armor_loss_penalty,
+            death_penalty,
+            stage_clear_bonus,
+            survival_weight,
+            time_penalty,
+            clear_min_progress,
+            reset_threshold,
+            // Clamp optional addresses to the 2 KB RAM range: a misconfigured
+            // out-of-range address is treated as disabled (0), never a panic
+            // on `ram[addr]` in compute() (mirrors BubbleBobble).
+            stage_addr: if stage_addr < 2048 { stage_addr } else { 0 },
+            score_addr: if score_addr < 2048 { score_addr } else { 0 },
+            prev_lives: 0,
+            prev_armor: 0,
+            prev_score: 0,
+            start_stage: 0,
+            max_stage: 0,
+            max_world_x: 0,
+            prev_world_x: 0,
+            cleared: false,
+            died: false,
+            first_step: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.prev_lives = 0;
+        self.prev_armor = 0;
+        self.prev_score = 0;
+        self.start_stage = 0;
+        self.max_stage = 0;
+        self.max_world_x = 0;
+        self.prev_world_x = 0;
+        self.cleared = false;
+        self.died = false;
+        self.first_step = true;
+    }
+
+    /// Signed 16-bit world/camera x from $005D (lo) / $005E (hi). Near spawn
+    /// the value is a small negative (Arthur nudged against the left edge), so
+    /// it is decoded as signed and callers clamp to >= 0 for progress.
+    fn world_x(ram: &[u8]) -> i32 {
+        let raw = ram[Self::RAM_SCROLL_LO] as i32 | ((ram[Self::RAM_SCROLL_HI] as i32) << 8);
+        if raw >= 0x8000 { raw - 0x10000 } else { raw }
+    }
+
+    pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
+        let lives = ram[Self::RAM_LIVES];
+        let armor = ram[Self::RAM_ARMOR];
+        let mode = ram[Self::RAM_MODE];
+        let wx = Self::world_x(ram).max(0);
+        let stage = if self.stage_addr != 0 { ram[self.stage_addr] } else { 0 };
+        let score = if self.score_addr != 0 { ram[self.score_addr] } else { 0 };
+
+        if self.first_step {
+            self.prev_lives = lives;
+            self.prev_armor = armor;
+            self.prev_score = score;
+            self.start_stage = stage;
+            self.max_stage = stage;
+            self.max_world_x = wx;
+            self.prev_world_x = wx;
+            self.first_step = false;
+        }
+
+        let mut acc = RewardAccum::new(want_breakdown);
+        let mut done = false;
+
+        // Death = first life lost (VERIFIED: $0715 decrements on death). Ends
+        // the episode (single-life convention, like Contra/Castlevania). The
+        // death frame contributes ONLY the death penalty and wipes the
+        // progress tracker, so the respawn's scroll-reset can never be
+        // mistaken for a stage clear (Path B below).
+        if !self.died && lives < self.prev_lives {
+            acc.add("death", self.death_penalty);
+            self.died = true;
+            done = true;
+            self.max_world_x = 0;
+        }
+        self.prev_lives = lives;
+
+        if !self.died {
+            // Forward progress — backtrack-safe: reward only NEW furthest
+            // world-x (retreating to time a jump costs nothing), mirroring
+            // MarioReward / CastlevaniaReward's max_progress_visited.
+            let dprog = (wx - self.max_world_x).max(0);
+            acc.add("forward", self.forward_weight * dprog as f64);
+
+            // Kills / score proxy — OPT-IN (score_addr != 0). No clean score
+            // byte was isolated on this ROM (the HUD score lives in a tile
+            // buffer, not a single BCD byte), so this is disabled by default;
+            // when a verified byte is supplied, positive deltas only, so a
+            // display wrap can never pay negative or farm.
+            if self.score_addr != 0 {
+                let ds = (score as i32 - self.prev_score as i32).max(0);
+                acc.add("kills", self.kill_weight * ds as f64);
+            }
+
+            // Armor loss (armored 1 -> underwear 0): one-shot penalty per
+            // transition (the 1->0 edge fires once; staying underwear does
+            // not re-charge).
+            if armor < self.prev_armor {
+                acc.add("armor_loss", self.armor_loss_penalty);
+            }
+
+            acc.add("survival", self.survival_weight);
+            acc.add("time_penalty", self.time_penalty);
+
+            // Stage clear — the dominant terminal signal. Two conservative,
+            // never-false-positive paths, both gated on active gameplay:
+            if !self.cleared && mode == Self::MODE_PLAY {
+                // Path A (opt-in via a VERIFIED stage byte, stage_addr != 0):
+                // a strict, small increment of the stage index. Disabled by
+                // default because no stage byte is verified on this ROM yet.
+                let path_a = self.stage_addr != 0
+                    && stage > self.start_stage
+                    && stage <= self.start_stage.saturating_add(Self::MAX_STAGE_JUMP)
+                    && stage > self.max_stage;
+                // Path B (verified-address-only, default): the "area/stage
+                // reload" signature — deep forward progress (>= clear_min_
+                // progress) followed by world-x collapsing to ~0 (< reset_
+                // threshold) while STILL alive and in active play. Traversing
+                // a whole area then seeing the next one load at x~0 is a real
+                // clear; a death cannot trigger it (death drops a life, wipes
+                // max_world_x, and ends the episode above). The thresholds are
+                // tunable — set clear_min_progress very high to disable Path B
+                // if a stage byte (Path A) is verified and preferred.
+                let path_b = self.max_world_x >= self.clear_min_progress
+                    && wx < self.reset_threshold;
+                if path_a || path_b {
+                    acc.add("stage_clear", self.stage_clear_bonus);
+                    self.cleared = true;
+                    done = true;
+                    if stage > self.max_stage {
+                        self.max_stage = stage;
+                    }
+                }
+            }
+
+            if wx > self.max_world_x {
+                self.max_world_x = wx;
+            }
+        }
+
+        self.prev_armor = armor;
+        self.prev_score = score;
+        self.prev_world_x = wx;
+
+        RewardOutput {
+            reward: acc.total,
+            done,
+            level_id: format!("stage_{:02x}_x{}", self.max_stage, self.max_world_x),
+            breakdown_delta: acc.breakdown,
+        }
+    }
+
+    pub fn episode_success(&self) -> bool {
+        // A real stage clear (latched in compute), and not a death. Never
+        // `total > 0` — a positive-reward episode that merely inched forward
+        // or lost armor without clearing is NOT a win.
+        self.cleared && !self.died
+    }
+}
+
+#[derive(Clone)]
+pub struct DuckTalesReward {
+    forward_progress: f64,
+    treasure_weight: f64,
+    level_clear_bonus: f64,
+    damage_penalty: f64,
+    death_penalty: f64,
+    survival_weight: f64,
+    time_penalty: f64,
+    /// Single-step money jump (in dollars) that identifies a boss's main
+    /// treasure ($1,000,000) versus the largest gem (a $50,000 red diamond).
+    win_treasure_value: u64,
+    level_goal: u32,
+    prev_x: u8,
+    prev_money: u64,
+    prev_hp: u8,
+    levels_cleared: u32,
+    cleared: bool,
+    died: bool,
+    first_step: bool,
+}
+
+impl DuckTalesReward {
+    // Screen-relative X ($0008): RIGHT increments, LEFT decrements; wraps on
+    // scroll. VERIFIED-LIVE. Weak local forward-progress nudge (non-linear game).
+    const RAM_X: usize = 0x0008;
+    // Hit points = the HUD hearts ($00DD): 3 at the Amazon start, rock-stable,
+    // and equal to the on-screen heart count. VERIFIED-LIVE (value = hearts).
+    const RAM_HP: usize = 0x00DD;
+    // Current level index ($00F6): 0=Amazon 1=Transylvania 2=African Mines
+    // 3=Himalayas 4=Moon. VERIFIED-LIVE (=0 in the Amazon; persists in play).
+    const RAM_LEVEL: usize = 0x00F6;
+    // Money HUD digit field: 7 tiles $0324..=$032A, most-significant first.
+    // VERIFIED-LIVE ($0 -> $2000 on a gem, updated atomically in one frame).
+    const RAM_MONEY: usize = 0x0324;
+    const MONEY_LEN: usize = 7;
+    // Reject screen-wrap / level-transition jumps in the X progress term.
+    const MAX_FORWARD_DX: i32 = 32;
+    // Cap the money-shaping delta at the largest single gem ($50,000 red
+    // diamond) so a treasure pickup never swamps the level-clear bonus.
+    const TREASURE_CAP: u64 = 50_000;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        forward_progress: f64,
+        treasure_weight: f64,
+        level_clear_bonus: f64,
+        damage_penalty: f64,
+        death_penalty: f64,
+        survival_weight: f64,
+        time_penalty: f64,
+        win_treasure_value: u64,
+        level_goal: u32,
+    ) -> Self {
+        Self {
+            forward_progress,
+            treasure_weight,
+            level_clear_bonus,
+            damage_penalty,
+            death_penalty,
+            survival_weight,
+            time_penalty,
+            win_treasure_value,
+            level_goal,
+            prev_x: 0,
+            prev_money: 0,
+            prev_hp: 0,
+            levels_cleared: 0,
+            cleared: false,
+            died: false,
+            first_step: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.prev_x = 0;
+        self.prev_money = 0;
+        self.prev_hp = 0;
+        self.levels_cleared = 0;
+        self.cleared = false;
+        self.died = false;
+        self.first_step = true;
+    }
+
+    /// Money read from the 7-tile HUD digit field $0324..=$032A (verified
+    /// live: $0 -> $2000 on a gem pickup, updated atomically in one frame).
+    /// Digit tiles are the raw values 0-9; blank/leading tiles are 0x24 (36)
+    /// and any non-digit is treated as 0. Max display is $9,999,999.
+    fn read_money(ram: &[u8]) -> u64 {
+        let mut v = 0u64;
+        for a in Self::RAM_MONEY..(Self::RAM_MONEY + Self::MONEY_LEN) {
+            let t = ram[a];
+            v = v * 10 + if t <= 9 { t as u64 } else { 0 };
+        }
+        v
+    }
+
+    pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
+        let x = ram[Self::RAM_X];
+        let hp = ram[Self::RAM_HP];
+        let level = ram[Self::RAM_LEVEL];
+        let money = Self::read_money(ram);
+
+        if self.first_step {
+            self.prev_x = x;
+            self.prev_money = money;
+            self.prev_hp = hp;
+            self.first_step = false;
+        }
+
+        let mut acc = RewardAccum::new(want_breakdown);
+        let mut done = false;
+
+        // Forward progress: reward only small rightward screen-X deltas.
+        // $0008 is screen-relative and wraps on scroll, so a large jump
+        // (wrap / level transition) is ignored; the game is non-linear so
+        // this is a weak local nudge, not the main signal.
+        let dx = x as i32 - self.prev_x as i32;
+        if dx > 0 && dx <= Self::MAX_FORWARD_DX {
+            acc.add("forward", self.forward_progress * dx as f64);
+        }
+        self.prev_x = x;
+
+        // Treasure / money — positive deltas only, capped for shaping.
+        let dm = money.saturating_sub(self.prev_money);
+        if dm > 0 {
+            let shaped = dm.min(Self::TREASURE_CAP) as f64;
+            acc.add("treasure", self.treasure_weight * shaped);
+
+            // Level clear = the boss's main treasure ($1,000,000) claimed in
+            // a single pickup. The biggest gem is a $50,000 red diamond, so a
+            // single-step jump this large can ONLY be a main treasure — i.e.
+            // the level's boss was defeated. Per-step (not cumulative), so
+            // gem-farming can never reach it. Latched once per episode.
+            if !self.cleared && dm >= self.win_treasure_value {
+                acc.add("level_clear", self.level_clear_bonus);
+                self.levels_cleared += 1;
+                self.cleared = true;
+                done = true;
+            }
+        }
+        self.prev_money = money;
+
+        // Damage / death via HP ($00DD = the HUD hearts). A drop is damage;
+        // reaching 0 from a positive value is death (single-life episode
+        // convention). Skipped on the clear frame so a return-to-map screen
+        // transition can never stack a spurious death onto a win.
+        if !self.cleared {
+            if !self.died && self.prev_hp > 0 && hp == 0 {
+                acc.add("death", self.death_penalty);
+                self.died = true;
+                done = true;
+            } else {
+                let dhp = self.prev_hp as i32 - hp as i32;
+                if dhp > 0 {
+                    acc.add("damage", self.damage_penalty * dhp as f64);
+                }
+            }
+        }
+        self.prev_hp = hp;
+
+        acc.add("survival", self.survival_weight);
+        acc.add("time_penalty", self.time_penalty);
+
+        RewardOutput {
+            reward: acc.total,
+            done,
+            level_id: format!("level_{:02}", level),
+            breakdown_delta: acc.breakdown,
+        }
+    }
+
+    pub fn episode_success(&self) -> bool {
+        self.levels_cleared >= self.level_goal
+    }
+}
+
+// ============================================================
+// Kid Icarus (NES, Nintendo, 1986) — vertical-scroll platformer
+// ============================================================
+
+#[derive(Clone)]
+pub struct KidIcarusReward {
+    // Weights
+    score_weight: f64,
+    health_delta_weight: f64,
+    stage_cleared_bonus: f64,
+    boss_damage_weight: f64,
+    boss_killed_bonus: f64,
+    death_penalty: f64,
+    time_penalty: f64,
+    // Opt-in vertical-climb shaping (like Tetris `board_shaping` /
+    // BubbleBobble `enemy_count_addr`). DISABLED by default: no verified
+    // vertical-scroll accumulator exists on this ROM. When enabled it
+    // rewards positive deltas of the byte at `altitude_addr` (must be a
+    // monotonic climb counter where larger = higher). altitude_addr == 0
+    // (default) turns it off and its unverified address can never break
+    // the core score/health/stage/boss signals.
+    altitude_weight: f64,
+    altitude_addr: usize,
+    // State
+    prev_score: u64,
+    prev_health: u8,
+    prev_stage: u8,
+    start_stage: u8,
+    prev_boss: u8,
+    prev_altitude: i32,
+    cleared_any: bool,
+    boss_killed: bool,
+    died: bool,
+    first_step: bool,
+}
+
+impl KidIcarusReward {
+    // VERIFIED-LIVE on this ROM from the Stage-1 start state:
+    //   $00A6 reads 7 at spawn and decrements 7->6->..->0 as Pit takes
+    //   damage ($0728 invincibility jumps to 127 and counts down on each
+    //   hit); it reaches 0 on death (fall off the bottom or HP depleted).
+    const RAM_HEALTH: usize = 0x00A6;
+    // Score: 3-byte LITTLE-ENDIAN BINARY (NOT BCD). VERIFIED-LIVE: a kill
+    // advanced $0131 0->100->200, then it wrapped to 44 with a carry of 1
+    // into $0132 (= 300 total). Increases on enemy kills / heart pickups.
+    const RAM_SCORE: [usize; 3] = [0x0131, 0x0132, 0x0133];
+    // Stage index for vertical-scrolling levels (Data Crystal). VERIFIED
+    // STABLE: held 0 across 300k+ frames of play and did NOT change on
+    // death, so a strict increase beyond the episode's start stage is an
+    // unambiguous stage clear (never a false positive). The 0->1 increment
+    // itself is cross-sourced, not reached under blind play.
+    const RAM_STAGE: usize = 0x0130;
+    // Fortress boss health (Data Crystal). Reads 0 at Stage-1 spawn, so the
+    // >0 -> 0 kill event can never latch from the start state.
+    const RAM_BOSS: usize = 0x006B;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        score_weight: f64,
+        health_delta_weight: f64,
+        stage_cleared_bonus: f64,
+        boss_damage_weight: f64,
+        boss_killed_bonus: f64,
+        death_penalty: f64,
+        time_penalty: f64,
+        altitude_weight: f64,
+        altitude_addr: usize,
+    ) -> Self {
+        Self {
+            score_weight,
+            health_delta_weight,
+            stage_cleared_bonus,
+            boss_damage_weight,
+            boss_killed_bonus,
+            death_penalty,
+            time_penalty,
+            altitude_weight,
+            // Clamp to the 2 KB RAM range: an out-of-range address is treated
+            // as disabled (0) rather than panicking on ram[addr] in compute().
+            altitude_addr: if altitude_addr < 2048 { altitude_addr } else { 0 },
+            prev_score: 0,
+            prev_health: 7,
+            prev_stage: 0,
+            start_stage: 0,
+            prev_boss: 0,
+            prev_altitude: 0,
+            cleared_any: false,
+            boss_killed: false,
+            died: false,
+            first_step: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.prev_score = 0;
+        self.prev_health = 7;
+        self.prev_stage = 0;
+        self.start_stage = 0;
+        self.prev_boss = 0;
+        self.prev_altitude = 0;
+        self.cleared_any = false;
+        self.boss_killed = false;
+        self.died = false;
+        self.first_step = true;
+    }
+
+    /// Score is little-endian BINARY: addrs[0] least significant.
+    fn read_score(ram: &[u8]) -> u64 {
+        let mut val: u64 = 0;
+        for (i, &a) in Self::RAM_SCORE.iter().enumerate() {
+            val += (ram[a] as u64) << (8 * i as u64);
+        }
+        val
+    }
+
+    pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
+        let score = Self::read_score(ram);
+        let health = ram[Self::RAM_HEALTH];
+        let stage = ram[Self::RAM_STAGE];
+        let boss = ram[Self::RAM_BOSS];
+        let altitude = if self.altitude_addr != 0 {
+            ram[self.altitude_addr] as i32
+        } else {
+            0
+        };
+
+        if self.first_step {
+            self.prev_score = score;
+            self.prev_health = health;
+            self.prev_stage = stage;
+            self.start_stage = stage;
+            self.prev_boss = boss;
+            self.prev_altitude = altitude;
+            self.first_step = false;
+        }
+
+        let mut acc = RewardAccum::new(want_breakdown);
+        let mut done = false;
+
+        // Combat / heart progress (kills climbing the tower). VERIFIED-LIVE.
+        let score_delta = (score as i64 - self.prev_score as i64).max(0) as f64;
+        acc.add("score", self.score_weight * score_delta);
+        self.prev_score = score;
+
+        // Opt-in vertical-climb shaping (disabled unless altitude_addr set).
+        if self.altitude_addr != 0 {
+            let dz = (altitude - self.prev_altitude).max(0) as f64;
+            acc.add("altitude", self.altitude_weight * dz);
+            self.prev_altitude = altitude;
+        }
+
+        // Damage penalty (HP lost). VERIFIED-LIVE.
+        if health < self.prev_health {
+            acc.add(
+                "health_delta",
+                self.health_delta_weight * (self.prev_health - health) as f64,
+            );
+        }
+        self.prev_health = health;
+
+        // Stage clear — the dominant vertical-progress milestone. $0130 only
+        // increases on a real stage advance (verified stable otherwise), so
+        // each increment is a cleared sub-stage; the latch requires advancing
+        // strictly beyond the episode's start stage (safe under warm-starts).
+        if stage > self.prev_stage {
+            acc.add(
+                "stage_cleared",
+                self.stage_cleared_bonus * (stage - self.prev_stage) as f64,
+            );
+            if stage > self.start_stage {
+                self.cleared_any = true;
+            }
+        }
+        self.prev_stage = stage;
+
+        // Fortress boss. boss_damage is dense per HP removed; boss_killed
+        // latches the fortress clear. Gated on prev_boss > 0 so a spawn-time
+        // 0 (no boss loaded) can never count as a kill.
+        if boss < self.prev_boss && self.prev_boss > 0 {
+            acc.add(
+                "boss_damage",
+                self.boss_damage_weight * (self.prev_boss - boss) as f64,
+            );
+        }
+        if boss == 0 && self.prev_boss > 0 {
+            acc.add("boss_killed", self.boss_killed_bonus);
+            self.boss_killed = true;
+        }
+        self.prev_boss = boss;
+
+        // Death: HP depleted OR fell off the bottom of the vertical scroll —
+        // both drive $00A6 to 0 (VERIFIED-LIVE for HP depletion). One-shot.
+        if !self.died && health == 0 {
+            acc.add("death", self.death_penalty);
+            self.died = true;
+            done = true;
+        }
+
+        acc.add("time_penalty", self.time_penalty);
+
+        RewardOutput {
+            reward: acc.total,
+            done,
+            level_id: format!("stage_{:02x}", stage),
+            breakdown_delta: acc.breakdown,
+        }
+    }
+
+    pub fn episode_success(&self) -> bool {
+        // A real Kid Icarus win = clearing a stage ($0130 advanced beyond the
+        // episode's start stage) OR defeating a fortress boss ($006B >0 -> 0).
+        // Both are gated so they can NEVER latch from the start state, and the
+        // stage byte is verified stable (no drift, no change on death), so
+        // neither path can false-positive.
+        self.cleared_any || self.boss_killed
+    }
+}
+
+// ============================================================
+// Double Dragon (NES, Technos/Tradewest, 1988) — beat-'em-up, mission-clear win
+// ============================================================
+//
+// All addresses VERIFIED-LIVE on the Double Dragon (USA) dump (md5 79aa8195…,
+// MMC1 / mapper 1) from the mashed Mode-A 1P Mission-1 start (title sequence
+// NOOP~120, SELECT~6, NOOP~20, START~8, NOOP~1000 — the generic masher fails;
+// SELECT arms the mode menu, START alone at the title does nothing), driving
+// the emulator with real inputs:
+//   $03B4 player health — 64 full; ROCK-STEADY during safe walking, drops ONLY
+//                         in combat, hits 0 exactly at death, and drives the
+//                         on-screen bar tiles at $0469+. Cross-sourced:
+//                         GameHacking "player energy" = address 948 = $03B4.
+//   $0043 lives         — starts 2 (Mode A). Counts DOWN per death 2->1->0
+//                         (each respawn refills health to 64, x to 72); the
+//                         death AT zero wraps 0->255 = GAME OVER. Cross-sourced:
+//                         retro data.json addr 67, GameFAQs "$0043".
+//   $005A player x       — 72 start; +RIGHT / -LEFT; saturates ~234 at a
+//                         camera-locked enemy gate (mirror $037E).
+//   $0042 heart-progress — rises per ENEMY DEFEATED (0 while passive, 1..2 as
+//                         kills land); fills a heart then bumps $0040. The
+//                         camera stays locked until the wave is cleared, so
+//                         this is the dense, NON-FARMABLE gate-progression key.
+//   $0040 hearts        — heart count / move unlock; bumps when $0042 fills.
+//                         Cross-sourced: GG "Start With All Hearts 0040:07".
+//   $0044-$0046 score   — little-endian; rises only when a strike lands.
+//                         Cross-sourced: retro data.json addr 68 type <d3.
+//   $0030 mission/scene  — VERIFIED constant (=1) through ALL of Mission 1 incl.
+//   [win key]             combat + two deaths; transitions 0->1 at Mission-1
+//                         start. Its INCREMENT could not be observed (clearing
+//                         Mission 1 needs real combat, out of a scripted probe's
+//                         reach), so the mission-CLEAR increment is cross-
+//                         sourced-by-structure. episode_success keys on an
+//                         INCREASE of this byte — it never false-positives on
+//                         score/motion/damage, and if $0030 is not the counter
+//                         the win simply never fires (safe under-trigger). Made
+//                         a parameter (mission_addr) so a verified address can
+//                         replace it without a recompile.
+//   $03B2 coarse-scroll  — advances in steps as the world scrolls (opt-in
+//                         cross-section progress, section_scale; default off
+//                         because it jitters under the combat-lock).
+// Health is counted on DECREASES only (respawn/section refills never score);
+// forward progress is a per-section high-water (knockback/backtracking can't be
+// farmed); each life lost is penalized but only GAME OVER ends the episode; and
+// the mission-clear bonus dominates every shaping term.
+
+#[derive(Clone)]
+pub struct DoubleDragonReward {
+    // Weights
+    forward_weight: f64,
+    enemy_defeat: f64,
+    heart_earned: f64,
+    score_weight: f64,
+    health_penalty: f64,
+    death_penalty: f64,
+    mission_clear_bonus: f64,
+    time_penalty: f64,
+    section_scale: f64,
+    mission_addr: usize,
+    // State
+    prev_hp: i32,
+    prev_lives: u8,
+    prev_hprog: u8,
+    prev_hearts: u8,
+    prev_score: u64,
+    max_x: i32,
+    prev_section: i32,
+    start_mission: u8,
+    mission_cleared: bool,
+    game_over: bool,
+    first_step: bool,
+}
+
+impl DoubleDragonReward {
+    const RAM_HEALTH: usize = 0x03B4; // player life bar, 0..64 (VERIFIED-LIVE + GameHacking addr 948)
+    const RAM_LIVES: usize = 0x0043; // lives; 2 start, counts down, 0->255 = game over
+    const RAM_PLAYER_X: usize = 0x005A; // player screen-x, 72 start (mirror $037E)
+    const RAM_HEART_PROGRESS: usize = 0x0042; // rises per enemy defeated
+    const RAM_HEARTS: usize = 0x0040; // heart count (move unlock)
+    const RAM_SCORE: [usize; 3] = [0x0044, 0x0045, 0x0046]; // little-endian score
+    const RAM_SCROLL_COARSE: usize = 0x03B2; // coarse world-scroll / screen column
+    const GAME_OVER_MIN: u8 = 200; // lives wraps to 255 on the death at 0 life
+    const SECTION_RESET_DX: i32 = 48; // x drop this big = section reload / respawn
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        forward_weight: f64,
+        enemy_defeat: f64,
+        heart_earned: f64,
+        score_weight: f64,
+        health_penalty: f64,
+        death_penalty: f64,
+        mission_clear_bonus: f64,
+        time_penalty: f64,
+        mission_addr: usize,
+        section_scale: f64,
+    ) -> Self {
+        Self {
+            forward_weight,
+            enemy_defeat,
+            heart_earned,
+            score_weight,
+            health_penalty,
+            death_penalty,
+            mission_clear_bonus,
+            time_penalty,
+            section_scale,
+            mission_addr,
+            prev_hp: 0,
+            prev_lives: 0,
+            prev_hprog: 0,
+            prev_hearts: 0,
+            prev_score: 0,
+            max_x: 0,
+            prev_section: 0,
+            start_mission: 0,
+            mission_cleared: false,
+            game_over: false,
+            first_step: true,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.prev_hp = 0;
+        self.prev_lives = 0;
+        self.prev_hprog = 0;
+        self.prev_hearts = 0;
+        self.prev_score = 0;
+        self.max_x = 0;
+        self.prev_section = 0;
+        self.start_mission = 0;
+        self.mission_cleared = false;
+        self.game_over = false;
+        self.first_step = true;
+    }
+
+    /// Little-endian score at $0044-$0046. Only positive deltas are used (a
+    /// strike-landed counter), so the exact encoding is not load-bearing.
+    fn read_score(ram: &[u8]) -> u64 {
+        (ram[Self::RAM_SCORE[0]] as u64)
+            + ((ram[Self::RAM_SCORE[1]] as u64) << 8)
+            + ((ram[Self::RAM_SCORE[2]] as u64) << 16)
+    }
+
+    pub fn compute(&mut self, ram: &[u8], _action: u8, want_breakdown: bool) -> RewardOutput {
+        let hp = ram[Self::RAM_HEALTH] as i32;
+        let lives = ram[Self::RAM_LIVES];
+        let x = ram[Self::RAM_PLAYER_X] as i32;
+        let hprog = ram[Self::RAM_HEART_PROGRESS];
+        let hearts = ram[Self::RAM_HEARTS];
+        let score = Self::read_score(ram);
+        let section = ram[Self::RAM_SCROLL_COARSE] as i32;
+        let mission = if self.mission_addr < ram.len() {
+            ram[self.mission_addr]
+        } else {
+            0
+        };
+
+        if self.first_step {
+            self.prev_hp = hp;
+            self.prev_lives = lives;
+            self.prev_hprog = hprog;
+            self.prev_hearts = hearts;
+            self.prev_score = score;
+            self.max_x = x;
+            self.prev_section = section;
+            self.start_mission = mission;
+            self.first_step = false;
+        }
+
+        let mut acc = RewardAccum::new(want_breakdown);
+        let mut done = false;
+
+        // Forward progress: reward new rightward high-water. A big backward jump
+        // (x drops past SECTION_RESET_DX) is a section reload / respawn, so reset
+        // the water there; small knockback never resets it, so backtracking and
+        // getting-hit-bounces can't be farmed.
+        if x + Self::SECTION_RESET_DX < self.max_x {
+            self.max_x = x;
+        }
+        let fwd = (x - self.max_x).max(0) as f64;
+        acc.add("forward", self.forward_weight * fwd);
+        if x > self.max_x {
+            self.max_x = x;
+        }
+
+        // Enemies defeated — heart-progress ($0042) rises per enemy killed and
+        // the camera stays locked until the wave is cleared, so this is the
+        // dense, NON-FARMABLE gate-progression signal. Reward INCREASES only
+        // (the fill-to-heart reset is a decrease and is ignored; the heart bump
+        // is captured below).
+        let dkill = hprog.saturating_sub(self.prev_hprog);
+        if dkill > 0 {
+            acc.add("enemy_defeat", self.enemy_defeat * dkill as f64);
+        }
+        self.prev_hprog = hprog;
+
+        // Heart earned ($0040) — a full heart-progress cycle unlocks a move.
+        if hearts > self.prev_hearts {
+            acc.add(
+                "heart_earned",
+                self.heart_earned * (hearts - self.prev_hearts) as f64,
+            );
+        }
+        self.prev_hearts = hearts;
+
+        // Score delta — minor shaping; only rises when a strike lands.
+        acc.add(
+            "score",
+            self.score_weight * (score as i64 - self.prev_score as i64).max(0) as f64,
+        );
+        self.prev_score = score;
+
+        // Health lost ($03B4) — penalize DECREASES only, so the respawn/section
+        // refill (an increase) never scores.
+        let dmg = (self.prev_hp - hp).max(0) as f64;
+        acc.add("health_loss", self.health_penalty * dmg);
+        self.prev_hp = hp;
+
+        // Optional cross-section coarse-scroll progress ($03B2), high-water. OFF
+        // by default (section_scale 0) because the byte jitters under the
+        // combat-lock; a verified screen-high byte can arm it later.
+        if self.section_scale != 0.0 {
+            if section + Self::SECTION_RESET_DX < self.prev_section {
+                self.prev_section = section;
+            }
+            let ds = (section - self.prev_section).max(0) as f64;
+            acc.add("section", self.section_scale * ds);
+            if section > self.prev_section {
+                self.prev_section = section;
+            }
+        }
+
+        acc.add("time_penalty", self.time_penalty);
+
+        // Death / game-over. Lives ($0043) start at 2 and count DOWN per death
+        // (2->1->0), respawning each time; the death AT zero wraps 0->255 = GAME
+        // OVER. Penalize each life lost; end the episode only on game over. A
+        // legitimate extra-life pickup (lives increases but stays < 200) is
+        // neither a death nor a game over.
+        let life_lost = lives < self.prev_lives;
+        let game_over = lives >= Self::GAME_OVER_MIN && self.prev_lives < Self::GAME_OVER_MIN;
+        if life_lost || game_over {
+            acc.add("death", self.death_penalty);
+        }
+        if game_over && !self.game_over {
+            self.game_over = true;
+            done = true;
+        }
+        self.prev_lives = lives;
+
+        // WIN — mission cleared. The mission/scene counter ($0030) is stable
+        // through an entire mission (verified constant across combat + deaths),
+        // so an INCREASE marks a real mission clear and never false-positives on
+        // score / motion / damage. Latch + end the episode. Guarded to lives <
+        // GAME_OVER_MIN so a game-over frame can never masquerade as a clear.
+        if !self.mission_cleared && mission > self.start_mission && lives < Self::GAME_OVER_MIN {
+            acc.add("mission_clear", self.mission_clear_bonus);
+            self.mission_cleared = true;
+            done = true;
+        }
+
+        RewardOutput {
+            reward: acc.total,
+            done,
+            level_id: format!("mission_{:02}", mission),
+            breakdown_delta: acc.breakdown,
+        }
+    }
+
+    pub fn episode_success(&self) -> bool {
+        self.mission_cleared
+    }
+}
+
 fn w(weights: &HashMap<String, f64>, key: &str, default: f64) -> f64 {
     weights.get(key).copied().unwrap_or(default)
 }
@@ -2701,6 +4464,163 @@ pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward
             w(weights, "enemy_count_addr", 0.0) as usize,
         )));
     }
+    // "punch-out" only (NOT bare "punch"): the library also ships "Power Punch
+    // II", whose RAM layout differs — it must fall through to Generic.
+    if name.contains("punch-out") || name.contains("punch out") || name.contains("punchout") {
+        return Some(Reward::PunchOut(PunchOutReward::new(
+            w(weights, "opp_damage", 0.5), // per opp-HP unit lost (landed punches)
+            w(weights, "knockdown_bonus", 25.0), // each opponent knockdown
+            w(weights, "star_bonus", 2.0), // each star banked (clean counter)
+            w(weights, "mac_damage", -0.3), // per Mac-HP unit lost
+            w(weights, "mac_knockdown", -20.0), // each knockdown Mac takes
+            w(weights, "win_bonus", 500.0), // TERMINAL: match won (dominates shaping)
+            w(weights, "loss_penalty", -50.0), // TERMINAL: Mac TKO'd (losses++)
+            w(weights, "time_penalty", -0.002),
+        )));
+    }
+    if name.contains("kung fu") {
+        return Some(Reward::KungFu(KungFuReward::new(
+            w(weights, "forward_progress", 0.05),
+            w(weights, "score_delta", 0.05),
+            w(weights, "floor_clear_bonus", 500.0),
+            w(weights, "game_clear_bonus", 5000.0),
+            // Boss-HP shaping OFF by default: $04A5 is cross-sourced but was
+            // never seen behaving as boss HP in live play (idles at 0x30, only
+            // 0 on the death reset). Set >0 once verified to add per-hit boss
+            // shaping (guarded against the death-frame reset in compute()).
+            w(weights, "boss_damage", 0.0),
+            w(weights, "health_penalty", -0.05),
+            w(weights, "death_penalty", -25.0),
+            w(weights, "time_penalty", -0.005),
+            w(weights, "survival_weight", 0.01),
+            // floors_cleared >= floor_goal == a real stage-clear win (default
+            // 1 = clear Floor 1). game_clear_floor = the $0058 value that means
+            // the game is beaten / Sylvia rescued (terminal jackpot).
+            w(weights, "floor_goal", 1.0) as u8,
+            w(weights, "game_clear_floor", 5.0) as u8,
+        )));
+    }
+    if name.contains("gradius") {
+        return Some(Reward::Gradius(GradiusReward::new(
+            // SURVIVAL is the dense progress signal for an auto-scroller; over a
+            // full 2500-step episode it tops out near 0.05*2500 = 125, so the
+            // stage-clear win (1000) strictly dominates it and the power-ups.
+            w(weights, "survival_weight", 0.05),
+            w(weights, "powerup_bonus", 5.0),
+            w(weights, "capsule_bonus", 2.0),
+            w(weights, "stage_clear_bonus", 1000.0),
+            w(weights, "death_penalty", -25.0),
+            w(weights, "time_penalty", -0.002),
+            // 0 = stage-clear WIN detection DISABLED (never-false-positive
+            // default): Gradius's stage-number byte is undocumented and no
+            // empirical candidate proved stable mid-stage, so the win stays
+            // unreachable until the real address is verified off a live
+            // stage-1->2 transition and set here (as Contra's clear_screen).
+            w(weights, "stage_addr", 0.0) as usize,
+        )));
+    }
+    if name.contains("excitebike") || name.contains("excite bike") {
+        return Some(Reward::Excitebike(ExcitebikeReward::new(
+            // Per unit of within-section distance (0x00ED). A full clean race
+            // accrues ~265 distance total, so at 1.0 the shaping sum stays well
+            // under the completion bonus.
+            w(weights, "forward_progress", 1.0),
+            // Milestone each time a track section is completed (0x03A4 +1);
+            // ~3 fire per race.
+            w(weights, "section_bonus", 25.0),
+            // Small throttle-holding shaping, <= this per step (normalized).
+            w(weights, "speed_bonus", 0.02),
+            // One-shot on a crash/tumble (0x00F2 -> 2).
+            w(weights, "crash_penalty", -8.0),
+            // One-shot on the engine overheating and stalling (0x03B6 >= 32).
+            w(weights, "overheat_penalty", -5.0),
+            // TERMINAL: crossing the finish line (0x03A4 reaches the final
+            // section). Dominates the entire shaping sum (~365) so finishing
+            // strictly beats forever-accruing distance; there is no time limit
+            // and the episode ends here, so laps cannot be farmed.
+            w(weights, "completion_bonus", 1000.0),
+            w(weights, "time_penalty", -0.005),
+        )));
+    }
+    if name.contains("ghosts") {
+        return Some(Reward::Ghosts(GhostsReward::new(
+            w(weights, "forward_progress", 0.05),
+            w(weights, "kill_weight", 0.05),
+            w(weights, "armor_hit_penalty", -8.0),
+            w(weights, "death_penalty", -25.0),
+            w(weights, "stage_cleared", 500.0),
+            w(weights, "survival_weight", 0.01),
+            w(weights, "time_penalty", -0.005),
+            // Path-B "area reload" win: deep world-x then a collapse to ~0.
+            // clear_min_progress must be tuned to a real Stage-1 length once a
+            // stage transition is reachable; keep it above spawn noise so it
+            // can never false-fire. Set very high to disable Path B.
+            w(weights, "clear_min_progress", 1500.0) as i32,
+            w(weights, "reset_threshold", 200.0) as i32,
+            // 0 = optional VERIFIED-stage-byte win path DISABLED (no stage byte
+            // is verified on this ROM yet). 0 = score/kill shaping DISABLED (no
+            // clean score byte isolated). Set to a verified address to enable.
+            w(weights, "stage_addr", 0.0) as usize,
+            w(weights, "score_addr", 0.0) as usize,
+        )));
+    }
+    if name.contains("ducktales") {
+        return Some(Reward::DuckTales(DuckTalesReward::new(
+            w(weights, "forward_progress", 0.01),
+            w(weights, "treasure_weight", 0.0005),
+            // Dominant win: a level boss's $1,000,000 main treasure = a clear.
+            w(weights, "level_clear_bonus", 2000.0),
+            w(weights, "damage_penalty", -5.0),
+            w(weights, "death_penalty", -25.0),
+            w(weights, "survival_weight", 0.01),
+            w(weights, "time_penalty", -0.001),
+            // Single-step money jump marking a boss's main treasure
+            // ($1,000,000) vs the largest gem (a $50,000 red diamond).
+            w(weights, "win_treasure_value", 500000.0) as u64,
+            w(weights, "level_goal", 1.0) as u32,
+        )));
+    }
+    if name.contains("kid icarus") {
+        return Some(Reward::KidIcarus(KidIcarusReward::new(
+            w(weights, "score_delta", 0.02),
+            w(weights, "health_delta", -3.0),
+            w(weights, "stage_cleared", 300.0),
+            w(weights, "boss_damage", 5.0),
+            w(weights, "boss_killed", 500.0),
+            w(weights, "death_penalty", -25.0),
+            w(weights, "time_penalty", -0.005),
+            // Opt-in vertical-climb shaping. DISABLED by default (weight 0 /
+            // addr 0): no verified vertical-scroll accumulator exists on this
+            // ROM (Pit's on-screen Y lives in OAM; blind play never scrolled
+            // the camera to expose a monotonic altitude byte). Set both to
+            // enable once a climb byte (larger = higher) is verified.
+            w(weights, "altitude_weight", 0.0),
+            w(weights, "altitude_addr", 0.0) as usize,
+        )));
+    }
+    // Base Double Dragon only. The library also ships "Battletoads-Double
+    // Dragon", "Double Dragon II", and "Double Dragon III" — different RAM maps
+    // — so exclude them (they fall through to Generic until authored).
+    if name.contains("double dragon")
+        && !name.contains("battletoads")
+        && !name.contains(" ii")
+    {
+        return Some(Reward::DoubleDragon(DoubleDragonReward::new(
+            w(weights, "forward_progress", 0.5), // per new-ground px (per-section high-water)
+            w(weights, "enemy_defeat", 25.0),    // per enemy killed ($0042 rise) — dense gate signal
+            w(weights, "heart_earned", 15.0),    // per heart / move unlock ($0040 rise)
+            w(weights, "score_delta", 0.01),     // tiny strike-landed shaping ($0044-46)
+            w(weights, "health_penalty", -0.2),  // per life-bar unit lost ($03B4 drop)
+            w(weights, "death_penalty", -30.0),  // per life lost + on game over
+            w(weights, "mission_clear", 2000.0), // TERMINAL win — dominates all shaping
+            w(weights, "time_penalty", -0.01),
+            // 0x0030 best-effort mission/scene counter (win key). Replace with a
+            // verified address post assisted Mission-1 clear; no recompile needed.
+            w(weights, "mission_addr", 48.0) as usize,
+            // Opt-in coarse-scroll ($03B2) cross-section progress; 0 = disabled.
+            w(weights, "section_scale", 0.0),
+        )));
+    }
     // Fallback for any ROM without a hand-authored reward. Uses generic,
     // axis-free progress signals (RAM-churn motion proxy, survival,
     // auto-detected monotonic score bytes, stuck detection) so a
@@ -2761,6 +4681,735 @@ mod tests {
         );
         assert!(out.done, "the game-completion event ends the episode");
     }
+
+#[test]
+    fn punchout_win_only_on_match_id_latch() {
+        // A knockdown is NOT a win: only the match-id latch ($0001) going
+        // 0 -> nonzero (the winning KO/TKO) counts as beating the opponent.
+        let weights = HashMap::new();
+        let mut r = build_reward("punch-out", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0398] = 0x60; // opponent full HP
+        ram[0x0392] = 0x60; // Little Mac full HP
+        ram[0x0001] = 0; // match-id latch clear
+        ram[0x000A] = 0; // no losses
+        r.compute(&ram, 0, false); // seed baselines
+
+        // Non-final opponent knockdown: opp HP hits 0 and the down-flag rises,
+        // but the match-id latch is still 0 -> must NOT be a win.
+        ram[0x0398] = 0;
+        ram[0x03D1] = 1; // opponent-down flag
+        let kd = r.compute(&ram, 0, false);
+        assert!(!kd.done, "a knockdown mid-bout must not end the episode");
+        assert!(
+            !r.episode_success(),
+            "knocking the opponent down is not yet a match win"
+        );
+
+        // The winning KO/TKO: the match-id latch goes 0 -> nonzero.
+        ram[0x0001] = 1;
+        let win = r.compute(&ram, 0, false);
+        assert!(win.done, "the match-win latch ends the episode");
+        assert!(
+            r.episode_success(),
+            "match-id latch 0->nonzero is the real win"
+        );
+    }
+
+    #[test]
+    fn punchout_loss_is_never_success() {
+        // The career loss counter ($000A) incrementing (Mac TKO'd) ends the
+        // episode as a LOSS, never a success.
+        let weights = HashMap::new();
+        let mut r = build_reward("punch-out", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0398] = 0x60;
+        ram[0x0392] = 0x60;
+        r.compute(&ram, 0, false);
+        ram[0x000A] = 1; // Mac is TKO'd
+        let out = r.compute(&ram, 0, false);
+        assert!(out.done, "a loss ends the episode");
+        assert!(!r.episode_success(), "a loss is never a success");
+    }
+
+    #[test]
+    fn punchout_opp_damage_knockdown_and_refill() {
+        let mut weights = HashMap::new();
+        weights.insert("opp_damage".to_string(), 1.0);
+        weights.insert("knockdown_bonus".to_string(), 10.0);
+        weights.insert("mac_damage".to_string(), 0.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        let mut r = build_reward("punch-out", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0398] = 0x60; // opp HP 96
+        ram[0x0392] = 0x60; // Mac HP 96
+        r.compute(&ram, 0, false); // seed
+
+        // Land punches: opp HP 96 -> 91 = 5 damage.
+        ram[0x0398] = 0x5B;
+        let o1 = r.compute(&ram, 0, false);
+        assert!((o1.reward - 5.0).abs() < 1e-6, "5 HP lost * 1.0 = 5.0");
+
+        // Knock the opponent down: opp HP 91 -> 0 (91 damage) + rising-edge
+        // knockdown bonus (10).
+        ram[0x0398] = 0;
+        ram[0x03D1] = 1;
+        let o2 = r.compute(&ram, 0, false);
+        assert!((o2.reward - (91.0 + 10.0)).abs() < 1e-6);
+
+        // Opponent gets up: HP refills (an INCREASE — must not score) and the
+        // down-flag clears (must not re-fire the knockdown bonus).
+        ram[0x0398] = 0x60;
+        ram[0x03D1] = 0;
+        let o3 = r.compute(&ram, 0, false);
+        assert!(
+            o3.reward.abs() < 1e-6,
+            "a get-up HP refill and flag reset must score nothing"
+        );
+    }
+
+#[test]
+fn kung_fu_floor_clear_is_the_win() {
+    // Floor clear ($0058 increments) is BOTH the dominant reward and the real
+    // win; camping/score can never trip episode_success.
+    let mut weights = HashMap::new();
+    weights.insert("survival_weight".to_string(), 0.0);
+    weights.insert("time_penalty".to_string(), 0.0);
+    weights.insert("health_penalty".to_string(), 0.0);
+    weights.insert("score_delta".to_string(), 0.0);
+    weights.insert("forward_progress".to_string(), 0.0);
+    let mut r = build_reward("kung fu", &weights).unwrap();
+    let mut ram = vec![0u8; 2048];
+    ram[0x0058] = 0; // floor 1
+    ram[0x005C] = 3; // 3 lives
+    ram[0x04A6] = 48; // full energy
+    let _ = r.compute(&ram, 0, false); // seed
+    assert!(!r.episode_success(), "no clear yet -> not a win");
+
+    // Clear floor 1 -> floor byte increments to 1.
+    ram[0x0058] = 1;
+    let o1 = r.compute(&ram, 0, false);
+    assert!(
+        (o1.reward - 500.0).abs() < 1e-6,
+        "a floor clear pays floor_clear_bonus"
+    );
+    assert!(
+        r.episode_success(),
+        "one floor cleared == a real stage-clear win"
+    );
+    assert!(!o1.done, "an intermediate floor clear does not end the episode");
+}
+
+#[test]
+fn kung_fu_game_clear_is_terminal_and_dominates() {
+    // Synthetic: IF the floor byte reaches game_clear_floor (5th-floor boss
+    // beaten), the terminal jackpot fires and dominates score/motion.
+    let weights = HashMap::new(); // defaults: floor_clear 500, game_clear 5000, floor 5
+    let mut r = build_reward("kung fu", &weights).unwrap();
+    let mut ram = vec![0u8; 2048];
+    ram[0x0058] = 4; // on the 5th/top floor
+    ram[0x005C] = 3;
+    ram[0x04A6] = 48;
+    let _ = r.compute(&ram, 0, false); // seed
+    ram[0x0058] = 5; // final boss beaten -> Sylvia rescued
+    let o = r.compute(&ram, 0, false);
+    assert!(o.done, "reaching the top floor ends the episode");
+    assert!(o.reward > 5000.0, "game_clear jackpot dominates (>> score/motion)");
+    assert!(r.episode_success());
+}
+
+#[test]
+fn kung_fu_no_false_win_on_death_and_no_underflow_reward() {
+    // Deaths must NOT increment floors_cleared, and the energy-bar underflow
+    // (0->255) must pay no spurious reward.
+    let mut weights = HashMap::new();
+    weights.insert("survival_weight".to_string(), 0.0);
+    weights.insert("time_penalty".to_string(), 0.0);
+    weights.insert("forward_progress".to_string(), 0.0);
+    weights.insert("score_delta".to_string(), 0.0);
+    weights.insert("health_penalty".to_string(), -1.0);
+    let mut r = build_reward("kung fu", &weights).unwrap();
+    let mut ram = vec![0u8; 2048];
+    ram[0x0058] = 0;
+    ram[0x005C] = 3;
+    ram[0x04A6] = 5;
+    let _ = r.compute(&ram, 0, false); // seed
+    // Take one point of damage -> health_penalty * 1.
+    ram[0x04A6] = 4;
+    let od = r.compute(&ram, 0, false);
+    assert!(
+        (od.reward + 1.0).abs() < 1e-6,
+        "1 energy lost -> health_penalty*1"
+    );
+    // Energy underflows 0->255 at death; that is an INCREASE -> no reward.
+    ram[0x04A6] = 0xFF;
+    let ou = r.compute(&ram, 0, false);
+    assert!(ou.reward.abs() < 1e-6, "the 0->255 underflow must not pay out");
+    // Life lost -> one-shot death penalty + done; floor never advanced.
+    ram[0x005C] = 2;
+    let ox = r.compute(&ram, 0, false);
+    assert!(
+        ox.done && (ox.reward + 25.0).abs() < 1e-6,
+        "death: -25 once, ends the episode"
+    );
+    let oy = r.compute(&ram, 0, false); // penalty must not re-fire
+    assert!(oy.reward.abs() < 1e-6);
+    assert!(!r.episode_success(), "dying is never a win");
+}
+
+#[test]
+fn kung_fu_forward_progress_rewards_only_new_ground() {
+    // Forward reward fires on a NEW max world-X only; retreating (needed to
+    // dodge) earns nothing, so it can't be farmed by pacing.
+    let mut weights = HashMap::new();
+    weights.insert("survival_weight".to_string(), 0.0);
+    weights.insert("time_penalty".to_string(), 0.0);
+    weights.insert("health_penalty".to_string(), 0.0);
+    weights.insert("score_delta".to_string(), 0.0);
+    weights.insert("forward_progress".to_string(), 1.0);
+    let mut r = build_reward("kung fu", &weights).unwrap();
+    let mut ram = vec![0u8; 2048];
+    ram[0x005C] = 3;
+    ram[0x04A6] = 48;
+    ram[0x0081] = 0;
+    ram[0x0090] = 10; // world_x = 10
+    let _ = r.compute(&ram, 0, false); // seed max_world_x = 10
+    ram[0x0090] = 30; // advance to 30 -> +20 new ground
+    let o1 = r.compute(&ram, 0, false);
+    assert!(
+        (o1.reward - 20.0).abs() < 1e-6,
+        "new ground pays forward_progress * dx"
+    );
+    ram[0x0090] = 20; // retreat -> not a new max -> nothing
+    let o2 = r.compute(&ram, 0, false);
+    assert!(o2.reward.abs() < 1e-6, "retreating earns nothing (non-farmable)");
+}
+
+// --- Gradius ------------------------------------------------------------
+    fn gradius_ram_alive() -> Vec<u8> {
+        let mut ram = zram();
+        ram[0x0020] = 3; // lives
+        ram[0x0100] = 1; // status = alive
+        ram
+    }
+
+    #[test]
+    fn gradius_win_only_on_real_stage_transition() {
+        // With a stage byte configured, the win fires ONLY when that byte
+        // strictly increases (Big Core beaten -> next stage loads). Use an
+        // arbitrary safe address (0x0300) as the stand-in stage byte.
+        let mut weights = HashMap::new();
+        weights.insert("stage_addr".to_string(), 0x0300 as f64);
+        let mut r = build_reward("gradius", &weights).unwrap();
+        let mut ram = gradius_ram_alive();
+        ram[0x0300] = 1; // stage 1 at baseline
+        r.compute(&ram, 0, false); // first step: start_stage = max_stage = 1
+        // Surviving in-stage (no stage change) is NOT a win, even though the
+        // survival term makes the running total positive.
+        let out = r.compute(&ram, 0, false);
+        assert!(out.reward > 0.0, "survival should net positive per step");
+        assert!(
+            !r.episode_success(),
+            "staying alive in a stage must NOT count as clearing it"
+        );
+        // Stage byte 1 -> 2: a genuine stage clear.
+        ram[0x0300] = 2;
+        let out = r.compute(&ram, 0, true);
+        assert!(
+            out.breakdown_delta.iter().any(|(k, v)| *k == "stage_clear" && *v >= 1000.0),
+            "stage transition must pay the dominant stage_clear bonus"
+        );
+        assert!(
+            r.episode_success(),
+            "a real stage transition IS a Gradius win"
+        );
+    }
+
+    #[test]
+    fn gradius_no_false_win_when_stage_addr_disabled() {
+        // Default profile => stage_addr disabled (0). Even a run that stays
+        // alive for many steps (total >> 0) must never report success.
+        let weights = HashMap::new();
+        let mut r = build_reward("gradius", &weights).unwrap();
+        let ram = gradius_ram_alive();
+        let mut total = 0.0;
+        for _ in 0..50 {
+            total += r.compute(&ram, 0, false).reward;
+        }
+        assert!(total > 0.0, "survival accrues positive reward");
+        assert!(
+            !r.episode_success(),
+            "episode_success must never be the `total > 0` proxy"
+        );
+    }
+
+    #[test]
+    fn gradius_death_penalizes_and_ends_episode() {
+        let weights = HashMap::new();
+        let mut r = build_reward("gradius", &weights).unwrap();
+        let mut ram = gradius_ram_alive();
+        r.compute(&ram, 0, false); // baseline: 3 lives, alive
+        // Lose a life (3 -> 2): first death ends the episode with a penalty.
+        ram[0x0020] = 2;
+        let out = r.compute(&ram, 0, true);
+        assert!(out.done, "losing a life ends the episode");
+        assert!(
+            out.breakdown_delta.iter().any(|(k, v)| *k == "death" && *v < 0.0),
+            "death must apply a negative penalty"
+        );
+        assert!(!r.episode_success(), "dying is not a win");
+    }
+
+    #[test]
+    fn gradius_rewards_power_up_collection() {
+        let weights = HashMap::new();
+        let mut r = build_reward("gradius", &weights).unwrap();
+        let mut ram = gradius_ram_alive();
+        r.compute(&ram, 0, false); // baseline: no upgrades
+        // Spend a capsule for a Speed-up ($0040: 0 -> 1) => powerup reward.
+        ram[0x0040] = 1;
+        let out = r.compute(&ram, 0, true);
+        assert!(
+            out.breakdown_delta.iter().any(|(k, v)| *k == "powerup" && *v > 0.0),
+            "applying a power-up must be rewarded"
+        );
+        // The death-reset of that upgrade ($0040 -> 0) must NOT be a penalty.
+        ram[0x0040] = 0;
+        let out = r.compute(&ram, 0, true);
+        assert!(
+            !out.breakdown_delta.iter().any(|(k, _)| *k == "powerup"),
+            "losing power-ups (a decrease) must not add or subtract powerup reward"
+        );
+    }
+
+#[test]
+    fn excitebike_dispatches_and_wins_only_on_finish() {
+        let weights = HashMap::new();
+        assert!(matches!(
+            build_reward("excitebike", &weights),
+            Some(Reward::Excitebike(_))
+        ));
+
+        let mut r = build_reward("excitebike", &weights).unwrap();
+        let mut ram = zram();
+        // Start-state baseline: section 0, at the line.
+        ram[0x03A4] = 0; // section index
+        ram[0x00ED] = 0; // section distance
+        ram[0x03B6] = 8; // engine temp (cold)
+        let _ = r.compute(&ram, 0, false); // first_step seeds baselines
+
+        // Race sections 1 then 2 — NOT a win, no terminal.
+        for sec in 1u8..=2 {
+            ram[0x03A4] = sec;
+            ram[0x00ED] = 5;
+            let out = r.compute(&ram, 0, false);
+            assert!(!out.done, "mid-track section boundary must not end the episode");
+            assert!(
+                !r.episode_success(),
+                "reaching section {sec} is NOT finishing the track"
+            );
+        }
+
+        // Cross into the final section (0x03A4 == 3) == finish line crossed.
+        ram[0x03A4] = 3;
+        let out = r.compute(&ram, 0, true);
+        assert!(out.done, "crossing the finish line must end the episode");
+        assert!(
+            r.episode_success(),
+            "reaching the final section is a real win (finished the track)"
+        );
+        assert!(
+            out.breakdown_delta.iter().any(|(k, v)| *k == "completion" && *v >= 1000.0),
+            "the completion bonus must fire and dominate"
+        );
+
+        // Terminal + one-shot: staying at the finish must not re-fire.
+        let out2 = r.compute(&ram, 0, false);
+        assert!(!out2.done && out2.reward.abs() < 1.0);
+    }
+
+    #[test]
+    fn excitebike_shaping_forward_crash_and_no_false_win() {
+        let mut weights = HashMap::new();
+        weights.insert("forward_progress".to_string(), 1.0);
+        weights.insert("section_bonus".to_string(), 0.0);
+        weights.insert("speed_bonus".to_string(), 0.0);
+        weights.insert("crash_penalty".to_string(), -8.0);
+        weights.insert("overheat_penalty".to_string(), 0.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        let mut r = build_reward("excitebike", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x00ED] = 10; // section distance baseline
+        let _ = r.compute(&ram, 0, false); // seed
+
+        // Forward motion: +10 units of distance -> +10 reward.
+        ram[0x00ED] = 20;
+        let o1 = r.compute(&ram, 0, false);
+        assert!((o1.reward - 10.0).abs() < 1e-6);
+
+        // A section reset (129 -> 2) must NOT produce a negative forward term.
+        ram[0x00ED] = 129;
+        let _ = r.compute(&ram, 0, false);
+        ram[0x00ED] = 2;
+        let o2 = r.compute(&ram, 0, false);
+        assert!(o2.reward.abs() < 1e-6, "section reset must clamp to 0, not go negative");
+
+        // Crash edge (0 -> 2) fires once; holding 2 does not re-penalize.
+        ram[0x00F2] = 2;
+        let o3 = r.compute(&ram, 0, false);
+        assert!((o3.reward + 8.0).abs() < 1e-6);
+        let o4 = r.compute(&ram, 0, false);
+        assert!(o4.reward.abs() < 1e-6, "a held crash status must not re-fire the penalty");
+
+        // Never reached the final section -> not a win.
+        assert!(!r.episode_success());
+    }
+
+// Place inside the existing `#[cfg(test)] mod tests { ... }` block in
+// nes_core/src/rewards.rs (reuses that module's `zram()` -> vec![0u8; 2048]).
+
+    fn gng_set_wx(ram: &mut [u8], wx: i32) {
+        let v = (wx as i64 & 0xFFFF) as u16;
+        ram[0x005D] = (v & 0xFF) as u8;
+        ram[0x005E] = (v >> 8) as u8;
+    }
+
+    #[test]
+    fn ghosts_win_on_area_reload_after_deep_progress() {
+        // Path B: deep world-x, then a collapse to ~0 while alive & playing =
+        // the next area/stage loaded = a real clear. Uses only verified bytes.
+        let mut r = GhostsReward::new(
+            0.05, 0.05, -8.0, -25.0, 500.0, 0.01, -0.005, 1000, 200, 0, 0,
+        );
+        let mut ram = zram();
+        ram[0x0028] = 0x08; // mode = active gameplay
+        ram[0x0715] = 2; // lives
+        ram[0x0585] = 1; // armored
+        gng_set_wx(&mut ram, 0);
+        r.compute(&ram, 0, false); // first step baselines
+
+        for x in (100..=1200).step_by(100) {
+            gng_set_wx(&mut ram, x);
+            r.compute(&ram, 0, false);
+        }
+        assert!(!r.episode_success(), "must not win merely by advancing");
+
+        gng_set_wx(&mut ram, 0); // area reload: scroll collapses
+        let out = r.compute(&ram, 0, false);
+        assert!(out.done, "clear must end the episode");
+        assert!(r.episode_success(), "deep progress + reload = stage clear");
+        assert!(
+            out.reward > 400.0,
+            "stage_clear_bonus must dominate (got {})",
+            out.reward
+        );
+    }
+
+    #[test]
+    fn ghosts_no_win_on_death_respawn() {
+        // Dying deep in a stage then respawning (scroll back to 0) must NOT be
+        // read as a clear: the life-loss ends the episode and wipes progress.
+        let mut r = GhostsReward::new(
+            0.05, 0.05, -8.0, -25.0, 500.0, 0.01, -0.005, 1000, 200, 0, 0,
+        );
+        let mut ram = zram();
+        ram[0x0028] = 0x08;
+        ram[0x0715] = 2;
+        ram[0x0585] = 1;
+        gng_set_wx(&mut ram, 0);
+        r.compute(&ram, 0, false);
+        for x in (100..=1200).step_by(100) {
+            gng_set_wx(&mut ram, x);
+            r.compute(&ram, 0, false);
+        }
+        ram[0x0715] = 1; // died
+        gng_set_wx(&mut ram, 0); // respawn scroll reset (same frame)
+        let out = r.compute(&ram, 0, false);
+        assert!(out.done, "death ends the episode");
+        assert!(!r.episode_success(), "death is never a win");
+        assert!(out.reward < 0.0, "death frame must be net-negative");
+    }
+
+    #[test]
+    fn ghosts_armor_loss_penalized_once() {
+        // Path B disabled (huge clear_min_progress); survival/time zeroed so
+        // the reward on the transition is exactly the armor penalty.
+        let mut r = GhostsReward::new(
+            0.05, 0.05, -8.0, -25.0, 500.0, 0.0, 0.0, 1_000_000, 200, 0, 0,
+        );
+        let mut ram = zram();
+        ram[0x0028] = 0x08;
+        ram[0x0715] = 2;
+        ram[0x0585] = 1; // armored
+        gng_set_wx(&mut ram, 0);
+        r.compute(&ram, 0, false);
+
+        ram[0x0585] = 0; // armored -> underwear
+        let out = r.compute(&ram, 0, false);
+        assert!((out.reward - (-8.0)).abs() < 1e-9, "one-shot armor penalty");
+
+        let out2 = r.compute(&ram, 0, false); // stays underwear
+        assert!(out2.reward.abs() < 1e-9, "no repeat armor penalty");
+        assert!(!r.episode_success());
+    }
+
+// Paste into the `mod tests` block in nes_core/src/rewards.rs (it already has
+// `use super::*;`). Verifies the win predicate + the damage shaping term on
+// synthetic RAM.
+
+/// Write the 7-tile HUD money field $0324-$032A (MSB first, digit tiles 0-9).
+fn dt_set_money(ram: &mut [u8], dollars: u64) {
+    let s = format!("{:07}", dollars.min(9_999_999));
+    for (i, c) in s.bytes().enumerate() {
+        ram[0x0324 + i] = c - b'0';
+    }
+}
+
+#[test]
+fn ducktales_level_clear_only_on_main_treasure() {
+    let weights = HashMap::new();
+    let mut r = build_reward("DuckTales (USA)", &weights).unwrap();
+    let mut ram = vec![0u8; 2048];
+    ram[0x00DD] = 3; // alive, so HP never ends the episode here
+    dt_set_money(&mut ram, 0);
+    r.compute(&ram, 0, false); // first step baselines money = 0
+
+    // A $50,000 red diamond (the largest gem) is NOT a level clear.
+    dt_set_money(&mut ram, 50_000);
+    let out = r.compute(&ram, 0, false);
+    assert!(!r.episode_success(), "a $50k gem must NOT clear a level");
+    assert!(!out.done, "a gem pickup does not end the episode");
+
+    // The boss's $1,000,000 main treasure, claimed in one pickup, IS the clear.
+    dt_set_money(&mut ram, 1_050_000); // +1,000,000 single-step jump
+    let out = r.compute(&ram, 0, false);
+    assert!(r.episode_success(), "the $1,000,000 main treasure = level clear");
+    assert!(out.done, "clearing a level ends the episode");
+}
+
+#[test]
+fn ducktales_cumulative_gems_never_win() {
+    // Gems that SUM past the threshold must not win: each single-step delta
+    // stays at/below the $50k red-diamond cap.
+    let weights = HashMap::new();
+    let mut r = build_reward("ducktales", &weights).unwrap();
+    let mut ram = vec![0u8; 2048];
+    ram[0x00DD] = 3;
+    r.compute(&ram, 0, false);
+    let mut total = 0u64;
+    for _ in 0..40 {
+        total += 50_000; // a red diamond each step -> $2,000,000 cumulative
+        dt_set_money(&mut ram, total);
+        let out = r.compute(&ram, 0, false);
+        assert!(!out.done, "gem-by-gem farming must never end the episode");
+    }
+    assert!(!r.episode_success(), "cumulative gem money is NOT a level clear");
+}
+
+#[test]
+fn ducktales_damage_penalty_and_death() {
+    let weights = HashMap::new();
+    let mut r = build_reward("ducktales", &weights).unwrap();
+    let mut ram = vec![0u8; 2048];
+    ram[0x00DD] = 3;
+    r.compute(&ram, 0, false); // baseline hp = 3
+
+    ram[0x00DD] = 2; // took a hit
+    let out = r.compute(&ram, 0, false);
+    assert!(out.reward < 0.0, "losing a heart must be penalized");
+    assert!(!r.episode_success(), "a hit is not a win");
+
+    ram[0x00DD] = 0; // out of hearts -> death
+    let out2 = r.compute(&ram, 0, false);
+    assert!(out2.done, "HP reaching 0 ends the episode");
+    assert!(!r.episode_success(), "dying is not a win");
+}
+
+#[test]
+    fn kid_icarus_win_only_on_stage_clear_or_boss() {
+        let weights = HashMap::new();
+        // Stage clear: $0130 advancing beyond the episode's start stage wins.
+        let mut r = build_reward("kid icarus", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x00A6] = 7; // alive
+        ram[0x0130] = 0; // start stage
+        r.compute(&ram, 0, false); // baseline start_stage = 0
+        assert!(!r.episode_success(), "no win at the start of a stage");
+        ram[0x0130] = 1; // reached the next sub-stage
+        let out = r.compute(&ram, 0, false);
+        assert!(r.episode_success(), "advancing the stage index is a stage clear");
+        assert!(out.reward > 100.0, "the stage-clear milestone dominates score/motion");
+
+        // Death alone is NOT a win, and ends the episode.
+        let mut r2 = build_reward("kid icarus", &weights).unwrap();
+        let mut ram2 = zram();
+        ram2[0x00A6] = 7;
+        ram2[0x0130] = 0;
+        r2.compute(&ram2, 0, false);
+        ram2[0x00A6] = 0; // fell off the bottom / HP depleted
+        let out2 = r2.compute(&ram2, 0, false);
+        assert!(out2.done, "hp==0 ends the episode");
+        assert!(!r2.episode_success(), "dying is never a win");
+
+        // Fortress boss defeat ($006B >0 -> 0) wins; a spawn-time 0 does not.
+        let mut r3 = build_reward("kid icarus", &weights).unwrap();
+        let mut ram3 = zram();
+        ram3[0x00A6] = 7;
+        ram3[0x0130] = 3;
+        ram3[0x006B] = 0; // boss=0 at spawn
+        r3.compute(&ram3, 0, false);
+        assert!(!r3.episode_success(), "boss=0 at spawn must not count as a kill");
+        ram3[0x006B] = 40; // boss appears
+        r3.compute(&ram3, 0, false);
+        ram3[0x006B] = 0; // boss defeated
+        r3.compute(&ram3, 0, false);
+        assert!(r3.episode_success(), "defeating a fortress boss is a real win");
+
+        // Pure score farming (no stage advance) is never a win.
+        let mut r4 = build_reward("kid icarus", &weights).unwrap();
+        let mut ram4 = zram();
+        ram4[0x00A6] = 7;
+        ram4[0x0130] = 0;
+        r4.compute(&ram4, 0, false);
+        ram4[0x0131] = 250; // farmed kills, no stage advance
+        r4.compute(&ram4, 0, false);
+        assert!(!r4.episode_success(), "score farming is not a win");
+    }
+
+    #[test]
+    fn kid_icarus_score_and_damage_shaping() {
+        let mut weights = HashMap::new();
+        weights.insert("score_delta".to_string(), 0.1);
+        weights.insert("health_delta".to_string(), -2.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        let mut r = build_reward("kid icarus", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x00A6] = 7;
+        ram[0x0131] = 0;
+        ram[0x0132] = 0;
+        ram[0x0133] = 0;
+        r.compute(&ram, 0, false); // baseline
+        // Score is little-endian BINARY: 300 => lo 44 + mid 1*256.
+        ram[0x0131] = 100; // +100 for a kill
+        let out = r.compute(&ram, 0, false);
+        assert!((out.reward - 10.0).abs() < 1e-9, "score +100 * 0.1 = +10");
+        ram[0x00A6] = 6; // damage 7 -> 6
+        let out2 = r.compute(&ram, 0, false);
+        assert!((out2.reward - (-2.0)).abs() < 1e-9, "losing 1 HP * -2.0 = -2");
+    }
+
+// Drop into `mod tests` (uses the existing zram()). Mirrors the punchout tests.
+
+#[test]
+fn double_dragon_win_only_on_mission_increment() {
+    // Killing enemies and walking right is NOT a mission clear — only the
+    // mission/scene counter ($0030) INCREASING above its start value is.
+    let weights = HashMap::new();
+    let mut r = build_reward("double dragon", &weights).unwrap();
+    let mut ram = zram();
+    ram[0x03B4] = 64; // full health
+    ram[0x0043] = 2; // 2 lives
+    ram[0x005A] = 72; // start x
+    ram[0x0030] = 1; // mission 1
+    r.compute(&ram, 0, false); // seed baselines
+
+    ram[0x0042] = 3; // 3 enemies defeated
+    ram[0x005A] = 200; // walked right
+    let mid = r.compute(&ram, 0, false);
+    assert!(!mid.done, "combat / forward progress must not end the episode");
+    assert!(!r.episode_success(), "killing enemies is not a mission clear");
+
+    ram[0x0030] = 2; // mission counter 1 -> 2: the real clear
+    let win = r.compute(&ram, 0, false);
+    assert!(win.done, "a mission increment ends the episode");
+    assert!(r.episode_success(), "mission 1->2 is the real win");
+}
+
+#[test]
+fn double_dragon_game_over_only_on_wrap_never_success() {
+    // Lives count DOWN per death (respawn each) and only the 0->255 wrap is
+    // game over; game over is never a success.
+    let weights = HashMap::new();
+    let mut r = build_reward("double dragon", &weights).unwrap();
+    let mut ram = zram();
+    ram[0x03B4] = 64;
+    ram[0x0043] = 2;
+    ram[0x0030] = 1;
+    r.compute(&ram, 0, false); // seed lives=2
+
+    ram[0x0043] = 1; // 2 -> 1: penalized, NOT done (respawns)
+    let d1 = r.compute(&ram, 0, false);
+    assert!(!d1.done, "losing one of several lives must not end the episode");
+    assert!(d1.reward < 0.0, "a lost life is penalized");
+
+    ram[0x0043] = 0; // 1 -> 0: still alive on the last life
+    let d2 = r.compute(&ram, 0, false);
+    assert!(!d2.done, "the last life is still in play");
+
+    ram[0x0043] = 255; // 0 -> 255 (death at zero): GAME OVER
+    let go = r.compute(&ram, 0, false);
+    assert!(go.done, "the 0->255 wrap is game over");
+    assert!(!r.episode_success(), "game over is never a mission clear");
+}
+
+#[test]
+fn double_dragon_enemy_defeat_and_health_are_delta_gated() {
+    // enemy_defeat scores $0042 INCREASES; the fill-to-heart reset (a decrease)
+    // must not score, and the health refill on that frame must not penalize.
+    let mut weights = HashMap::new();
+    weights.insert("forward_progress".to_string(), 0.0);
+    weights.insert("time_penalty".to_string(), 0.0);
+    weights.insert("enemy_defeat".to_string(), 25.0);
+    weights.insert("health_penalty".to_string(), -1.0);
+    let mut r = build_reward("double dragon", &weights).unwrap();
+    let mut ram = zram();
+    ram[0x03B4] = 64;
+    ram[0x0043] = 2;
+    ram[0x0030] = 1;
+    r.compute(&ram, 0, false); // seed
+
+    ram[0x0042] = 2; // 2 kills (+50)
+    ram[0x03B4] = 54; // took 10 damage (-10)
+    let o1 = r.compute(&ram, 0, false);
+    assert!((o1.reward - (50.0 - 10.0)).abs() < 1e-6, "2 kills*25 - 10 dmg = 40");
+
+    ram[0x0042] = 0; // heart fills: $0042 resets 2->0 (decrease, must not score)
+    ram[0x0040] = 1; // a heart earned
+    ram[0x03B4] = 64; // health refills (increase, no penalty)
+    let o2 = r.compute(&ram, 0, false);
+    assert!(o2.reward >= 0.0, "a heart-fill reset must never produce a penalty");
+    assert!(!o2.done);
+}
+
+#[test]
+fn double_dragon_forward_is_high_water_not_farmable() {
+    let mut weights = HashMap::new();
+    weights.insert("forward_progress".to_string(), 1.0);
+    weights.insert("time_penalty".to_string(), 0.0);
+    let mut r = build_reward("double dragon", &weights).unwrap();
+    let mut ram = zram();
+    ram[0x03B4] = 64;
+    ram[0x0043] = 2;
+    ram[0x0030] = 1;
+    ram[0x005A] = 72;
+    r.compute(&ram, 0, false); // seed max_x=72
+
+    ram[0x005A] = 120; // +48 new ground
+    let a = r.compute(&ram, 0, false);
+    assert!((a.reward - 48.0).abs() < 1e-6, "advancing 48 px earns 48");
+
+    ram[0x005A] = 100; // small knockback — no reward, no high-water reset
+    let b = r.compute(&ram, 0, false);
+    assert!(b.reward.abs() < 1e-6, "backtracking earns nothing");
+
+    ram[0x005A] = 120; // re-cover ground — still nothing (high-water)
+    let c = r.compute(&ram, 0, false);
+    assert!(c.reward.abs() < 1e-6, "re-covering ground can't be farmed");
+
+    ram[0x005A] = 130; // new ground beyond the high-water
+    let d = r.compute(&ram, 0, false);
+    assert!((d.reward - 10.0).abs() < 1e-6, "only new ground scores");
+}
 
     #[test]
     fn build_reward_falls_back_to_generic_for_unknown_game() {

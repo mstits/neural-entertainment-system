@@ -1,0 +1,121 @@
+name: "Punch-Out"
+# Assigned dump: Mike Tyson's Punch-Out!! (Japan, USA) (Rev A), mapper 9 (MMC2).
+# The generic masher does NOT reach live gameplay on this dump (long intro +
+# ring walk), and a cold boot lands on the attract demo (inputs ignored -> the
+# start-state-demo bug), so a captured Glass Joe opening-bell save state is
+# REQUIRED. It was captured live on this exact ROM (opp HP $0398=0x60, Mac HP
+# $0392=0x60, throw_ok $00BC=1, punches-to-star $0347=20 => Glass Joe, round
+# $0006=1, match-id $0001=0, losses $000A=0).
+start_state_path: "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A)_start.state.bin"
+rom_hashes:
+  - "c119a5a9b0e2959ad5d11562f9f4ce55"  # Mike Tyson's Punch-Out!! (Japan, USA)
+                                        # (Rev A) — mapper 9 (MMC2). The USA /
+                                        # Mr. Dream dump (3e4af910…) shares these
+                                        # exact core RAM offsets, so the same
+                                        # bespoke reward works on it too.
+
+# Boxing needs responsive dodges/counters (a telegraphed jab lands in a few
+# frames), so frame_skip 4 (NOT the trainer default 16, far too coarse to dodge
+# a punch or counter an open guard). The knocked-down flags stay set for
+# seconds, so fs4 never misses a knockdown rising edge.
+frame_skip: 4
+# A Glass Joe KO usually comes in well under a minute, but a bout can run a full
+# 3 rounds to a decision. 2500 steps @ fs4 = 10000 frames (~166 s) covers a slow
+# multi-round bout plus the win/lose transition.
+max_episode_steps: 2500
+
+description: >
+  Training profile for Mike Tyson's Punch-Out!! (NES). Boot state is the Glass
+  Joe bout (Minor Circuit fight 1), the canonical first-win target. Little Mac
+  dodges (LEFT/RIGHT), ducks (DOWN), and throws body blows (A/B) or face jabs
+  (UP+A / UP+B); the star uppercut (press START with a star) is intentionally
+  EXCLUDED from the action space because START also PAUSES the fight — an
+  unguarded pause is a degenerate absorbing action for PPO. The bespoke
+  PunchOutReward (nes_core/src/rewards.rs) drives opponent-health damage +
+  knockdowns and penalizes taking damage / getting knocked down; the real win
+  is the winning KO/TKO (match-id latch $0001 goes nonzero), which strictly
+  dominates all shaping.
+
+# All addresses VERIFIED-LIVE against nes_core on this (Rev A) dump from the
+# captured Glass Joe start state (Data Crystal + TASVideos MTPO RAM maps
+# corroborate the labels).
+#   Data Crystal: https://datacrystal.tcrf.net/wiki/Mike_Tyson's_Punch-Out!!/RAM_map
+#   TASVideos:    https://tasvideos.org/GameResources/NES/MikeTysonsPunchout/RamMap
+ram_mapping:
+  opp_health:   0x0398   # VERIFIED opponent HP 0..0x60; drops on every landed
+                         # Mac punch, refills when a downed opponent gets up.
+                         # Mirror at 0x0399.
+  mac_health:   0x0392   # VERIFIED Little Mac HP 0..0x60; drops when hit.
+                         # Mirror at 0x0391.
+  opp_down:     0x03D1   # VERIFIED opponent knocked-down flag; 0->1 on an
+                         # opponent knockdown (opp-specific). Knockdown signal.
+  mac_down:     0x03D0   # VERIFIED Little Mac knocked-down flag; 0->1 when Mac
+                         # is floored.
+  stars:        0x0342   # banked star punches (clean counters). Minor shaping.
+  match_id:     0x0001   # VERIFIED WIN LATCH: 0 through the whole bout AND
+                         # during a loss (0 even on a non-final knockdown), goes
+                         # nonzero ONLY at the winning KO/TKO. THE win.
+  losses:       0x000A   # VERIFIED career loss counter; 0->1 when Mac is TKO'd.
+                         # THE lose terminal.
+  opp_type_id:  0x0002   # VERIFIED opponent index (Glass Joe = 0). level_id only.
+  round:        0x0006   # VERIFIED current round (starts 1).
+  throw_ok:     0x00BC   # VERIFIED 1 = Mac can punch (live), 0 = down / between.
+  punches_to_star: 0x0347 # VERIFIED 20 (0x14) == Glass Joe (opponent fingerprint).
+
+# Keys consumed by build_reward's `name.contains("punch-out")` arm. Opponent
+# damage is dense; the knockdown bonus and (dominant) win bonus drive the win.
+reward_weights:
+  opp_damage:       0.5    # per opp_health (0x0398) unit LOST (landed punches)
+  knockdown_bonus: 25.0    # each opponent knockdown (0x03D1 rising edge)
+  star_bonus:       2.0    # each star banked (0x0342 increment)
+  mac_damage:      -0.3    # per mac_health (0x0392) unit lost
+  mac_knockdown:  -20.0    # each Mac knockdown (0x03D0 rising edge)
+  win_bonus:      500.0    # TERMINAL: match-id (0x0001) latches nonzero. THE win.
+  loss_penalty:   -50.0    # TERMINAL: losses (0x000A) increments (Mac TKO'd)
+  time_penalty:  -0.002
+
+action_space:
+  # Discrete boxing moveset. START (star uppercut) OMITTED on purpose: it
+  # doubles as PAUSE, and an unguarded pause freezes RAM into a degenerate
+  # absorbing state for PPO.
+  - []                      # NOOP (wait / read the opponent)
+  - ["A"]                   # right body blow
+  - ["B"]                   # left body blow
+  - ["up", "A"]             # right face jab (high — the knockdown punch)
+  - ["up", "B"]             # left face jab (high)
+  - ["left"]                # dodge left
+  - ["right"]               # dodge right
+  - ["down"]                # duck / block
+
+curriculum:
+  stage_1: ["*"]            # single bout (Glass Joe); the SMB area-byte
+                            # save-state curriculum is gated off for non-Mario
+                            # games by the trainer.
+
+reinforce:
+  enabled: true
+  # Unified vanilla_ppo (universal pixel-CNN path, same as Contra/MM): no RAM
+  # tile decoder for Punch-Out -> Nature-DQN encoder over 4-stacked 84x84
+  # grayscale frames -> actor/critic heads. Single-stage PPO from Glass Joe.
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: mps
+
+  rollout_steps: 1024
+  steps: 10                 # K PPO epochs / iter
+  ppo_minibatch_size: 256
+
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02        # landing the first counter needs dodge+punch
+                            # timing, easy to collapse to NOOP — keep it up
+  grad_clip: 0.5
+  value_loss: huber
+
+  # Discovering the dodge->open-guard->counter loop is a hard-exploration
+  # problem, so RND helps. 0.0 = pure baseline.
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0

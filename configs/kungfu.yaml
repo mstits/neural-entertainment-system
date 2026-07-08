@@ -1,0 +1,146 @@
+name: "Kung Fu"
+# Live Floor-1 gameplay start state. It loads at the "1-PLAYER 1-FLOOR"
+# intro banner (game_mode $0051 == 1, Thomas briefly frozen); control is
+# handed over ~40 frames later when $0051 flips to 2 and grippers spawn.
+# VERIFIED real gameplay (not the attract demo): from this state, LEFT/RIGHT
+# move Thomas and B lands attacks — driving LEFT+B / RIGHT+B raised the score
+# 0 -> 50 (a Gripper KO = +100 pts) within ~400 frames. WITHOUT a start state
+# the emulator cold-boots to the TITLE MENU (1/2-PLAYER GAME A/B); if START
+# is not pressed cleanly on the menu the ROM auto-plays its ATTRACT DEMO
+# (mode 2, Thomas auto-walks to the wall and times out, inputs ignored) —
+# training on that gives zero signal (the start-state-demo bug).
+start_state_path: "roms/Kung Fu (Japan, USA)_start.state.bin"
+rom_hashes:
+  - "27e5c62c6c169896bf80bafb6595ceb8"  # Kung Fu (Japan, USA) — mapper 0 NROM, 32K PRG / 8K CHR
+
+# Precise beat-'em-up: frame-accurate punch/kick + dodge timing against
+# grippers, knife throwers, and floor bosses. frame_skip 4 like Contra /
+# Castlevania, NOT the trainer default 16 (too coarse to time an attack
+# against a lunging enemy).
+frame_skip: 4
+max_episode_steps: 2000
+
+description: >
+  Training profile for Kung Fu (NES, 1985 — Nintendo's port of Irem's
+  Kung-Fu Master / Famicom "Spartan X"). Thomas ascends the Devil's Temple
+  one floor at a time: fight across a floor, defeat the floor boss (which
+  opens the door and increments the floor byte $0058), and repeat for 5
+  floors to rescue Sylvia. Bespoke KungFuReward (nes_core/src/rewards.rs):
+  dense forward progress (world-X) + score delta (enemy KOs) + a dominant
+  per-floor-clear bonus (= boss defeated) + terminal game-clear jackpot;
+  penalties on energy-bar damage and death. Success = floors_cleared >=
+  floor_goal (default 1 = clear the first floor, a real stage-clear win).
+
+# ---------------------------------------------------------------------------
+# RAM MAP — empirically probed LIVE on THIS ROM/emulator (frame_skip 1-4),
+# driving the game past the title menu into Floor-1 play. Status legend:
+#   VERIFIED-LIVE = I drove it and watched the expected change;
+#   CROSS-SOURCED = from the design brief / datacrystal, not moved live here;
+#   DEBUNKED-LIVE = datacrystal label that did NOT hold on this ROM.
+# ---------------------------------------------------------------------------
+ram_mapping:
+  # VERIFIED-LIVE — current floor (0 = 1F ... 4 = 5F). Read 0 across 3000+
+  # frames of Floor-1 play INCLUDING every death/respawn (lives 3->2->1->0);
+  # it never false-increments. Increment-on-clear (0->1->2->3->4 at door
+  # entries) is CROSS-SOURCED (design brief live pass + datacrystal). This is
+  # the win substrate and it can only rise on a real floor clear.
+  current_floor: 0x0058
+  # VERIFIED-LIVE — remaining lives. Boots at 3; decrements 3->2->1->0 as the
+  # energy bar empties. Death / episode-end signal.
+  lives:         0x005C
+  # VERIFIED-LIVE — player ENERGY/VITALITY bar (~0x30 full). Drains slowly
+  # over time (~1 per 47 frames while advancing) and FAST while a gripper has
+  # you grabbed (~1 per 6 frames); at 0 it UNDERFLOWS to 255 for the death
+  # animation, then a life is lost and it refills. Health + urgency signal.
+  # (datacrystal mislabels it "Energy, max $4D".)
+  health:        0x04A6
+  # VERIFIED-LIVE (16-bit) — player world-X = player_x_hi*256 + player_x_lo.
+  # Climbs monotonically 1 -> ~2020 across Floor 1 and saturates at the right
+  # wall; resets to ~1 on respawn / new floor. Dense forward-progress signal.
+  player_x_lo:   0x0090
+  player_x_hi:   0x0081
+  # VERIFIED-LIVE — score, ONE DECIMAL DIGIT PER BYTE, big-endian ($0531 most
+  # significant .. $0535 least). Each byte reads a raw digit 0-9. One Gripper
+  # KO = +100 pts = +1 on the $0534 (hundreds) digit; confirmed the $0534
+  # 9->0 rollover carries into $0533 (thousands). read_score() returns
+  # score/10 (the ones digit is always 0). The "did the agent fight" signal.
+  score_hi:      0x0531
+  score_lo:      0x0535
+  # CROSS-SOURCED (design brief) — boss / enemy energy. Idled at 0x30 in all
+  # live probes and only hit 0 on the death reset (no boss was reached via
+  # scripted play), so it drives an OPT-IN shaping term that DEFAULTS OFF.
+  boss_energy:   0x04A5
+  # VERIFIED-LIVE — game mode: 0 = title/pre-game, 1 = floor-intro banner
+  # (Thomas frozen), 2 = active play. Not read by the reward; documents the
+  # start-state phase and the demo-vs-real distinction.
+  game_mode:     0x0051
+  # DEBUNKED-LIVE on this ROM (documented so nobody re-adds them):
+  #   $04AF ("enemy energy" per datacrystal) — stayed 0 the entire time; NOT
+  #         the boss (the brief's $04A5 is used instead).
+  #   $0056 ("defeat count" per datacrystal) — never changed on a KO; NOT a
+  #         defeat counter here. Enemy KOs are tracked via the score delta.
+
+# ---------------------------------------------------------------------------
+# REWARD WEIGHTS — consumed by KungFuReward (build_reward substring "kung fu").
+# The per-floor-clear bonus (500) dwarfs a whole floor's forward shaping
+# (~2020 * 0.05 ~= 101) and score (~tens), so clearing strictly dominates
+# camping/score-farming — no farmable local optimum.
+# ---------------------------------------------------------------------------
+reward_weights:
+  forward_progress:  0.05    # per NEW-max world-X unit (non-farmable; pacing earns nothing)
+  score_delta:       0.05    # per positive score delta (enemy KOs); ~+0.5 per Gripper
+  floor_clear_bonus: 500.0   # per $0058 increment = floor boss defeated = THE milestone
+  game_clear_bonus:  5000.0  # terminal jackpot when the top floor is reached (Sylvia)
+  boss_damage:       0.0     # OPT-IN boss-HP shaping on $04A5; 0 = DISABLED until verified
+  health_penalty:   -0.05    # per energy unit lost (damage/drain; guarded vs the 0xFF underflow)
+  death_penalty:   -25.0     # one-shot on the first life lost (ends the episode)
+  time_penalty:    -0.005    # mild anti-stall (the energy bar already time-pressures)
+  survival_weight:  0.01     # small per-step alive bonus
+  floor_goal:       1        # floors to clear for episode_success (a real stage-clear win)
+  game_clear_floor: 5        # $0058 value that = game beaten / Sylvia rescued (terminal)
+
+# Kung Fu controls: A = JUMP, B = ATTACK (punch when still / kick when moving;
+# Down+B = low attack vs crawling knife-throwers & snakes; A+B = jump kick).
+# NO select/start (START = PAUSE). Button LABELS are documentation only — the
+# pixel-CNN learns each button's effect from frames.
+action_space:
+  - []                    # NOOP
+  - ["right"]             # advance toward the boss
+  - ["left"]              # retreat / reposition
+  - ["B"]                 # attack (punch/kick)
+  - ["right", "B"]        # advance-attack
+  - ["left", "B"]         # retreat-attack
+  - ["A"]                 # jump
+  - ["right", "A"]        # jump forward (over grabbers)
+  - ["left", "A"]         # jump back
+  - ["A", "B"]            # jump kick
+  - ["down"]              # crouch / duck (dodge high attacks)
+  - ["down", "B"]         # low attack (hits crawling knife-throwers & snakes)
+
+curriculum:
+  floor_1: ["*"]
+  floor_2: ["*"]
+  floor_3: ["*"]
+  floor_4: ["*"]
+  floor_5: ["*"]
+
+reinforce:
+  # Unified vanilla_ppo pixel-CNN path (same as Contra / Mega Man / Gradius).
+  # No RAM tile decoder for Kung Fu -> universal 4x84x84 grayscale -> Nature
+  # DQN CNN -> actor/critic. SMB area-byte curriculum is gated Mario-only.
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: mps
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02        # combat + dodge timing benefits from exploration
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.5   # sparse floor-clear reward -> RND aids exploration
+  rnd_loss_coef: 1.0

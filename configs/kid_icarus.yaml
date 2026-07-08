@@ -1,0 +1,172 @@
+name: "Kid Icarus"
+# Live Stage 1-1 (Underworld) gameplay state. WITHOUT it the emulator
+# cold-boots to the title screen, whose attract-mode demo auto-plays and
+# ignores controller input — training there gives zero learning signal
+# (the start-state-demo bug). VERIFIED-LIVE: this state loads into the
+# vertical Underworld climb (Pit bottom-left, score HUD "000000", orange
+# lava-brick walls); health $00A6 reads 7; holding RIGHT vs LEFT diverges
+# RAM (Pit's X $0026 moves 88->214 on RIGHT, stable on NOOP — real
+# gameplay, not the demo). Rendered-frame and RAM checks both pass.
+start_state_path: "roms/Kid Icarus (USA, Europe)_start.state.bin"
+rom_hashes:
+  - "d464e3e3877a759b8053210baaebc890"  # Kid Icarus (USA, Europe), mapper 1 (MMC1/CHR-RAM)
+
+# Vertical-scrolling action platformer: precise jumps + arrow timing +
+# instant-death fall off the bottom of the auto-scrolling screen. frame_skip
+# 4 like Metroid/Contra/Castlevania/Mega Man/GnG, NOT the trainer default 16
+# (too coarse to time platform hops / ladder mounts).
+frame_skip: 4
+max_episode_steps: 2500
+
+description: >
+  Training profile for Kid Icarus (NES, 1986). Pit climbs UPWARD through
+  the Underworld (Stages 1-1..1-3, then a horizontal fortress 1-4). The
+  camera scrolls up only and never back down: fall off the bottom of the
+  screen = instant death. Reward is the bespoke KidIcarusReward
+  (nes_core/src/rewards.rs): score-delta (kills/hearts) + a dominant
+  stage-clear milestone + fortress-boss defeat, with damage/death
+  penalties and an anti-stall time penalty. Vertical progress has no
+  clean RAM byte (Pit's on-screen Y lives in OAM; blind play never
+  scrolled the camera to expose a monotonic altitude counter), so the
+  design leans on the VERIFIED game-state bytes below rather than a
+  position delta; an OPT-IN altitude term (altitude_addr, default 0 =
+  off) is wired for the day a scroll accumulator is confirmed.
+
+# ---------------------------------------------------------------------------
+# RAM MAP. Sources: Data Crystal (datacrystal.tcrf.net/wiki/Kid_Icarus/RAM_map)
+# cross-checked against a live differential scan on THIS ROM from the
+# Stage-1 start state (frame_skip 1). Confidence is honest.
+#
+# nes_core.get_ram()/the reward snapshot expose the 2 KB system RAM
+# ($0000-$07FF). Every address below is in that range, so all are reachable.
+# ---------------------------------------------------------------------------
+ram_mapping:
+  # --- VERIFIED-LIVE on this ROM (used by the reward) ---
+  health:        0x00A6   # Pit HP. Reads 7 at spawn; decrements 7->6->..->0 as Pit is
+                          #   hit; 0 => death. [VERIFIED-LIVE: full 7->0 bleed-down + hits]
+  score_lo:      0x0131   # Score, 3-byte LITTLE-ENDIAN BINARY (NOT BCD): value =
+  score_mid:     0x0132   #   lo + mid*256 + hi*65536. A kill drove lo 0->100->200 then
+  score_hi:      0x0133   #   wrapped to 44 carrying 1 into mid (= 300). [VERIFIED-LIVE]
+  invincibility: 0x0728   # I-frames after a hit: jumps to 127 on damage, counts down each
+                          #   frame. Confirms every damage event. [VERIFIED-LIVE]
+  player_x:      0x0026   # Pit on-screen X: 88 idle, ->214 holding RIGHT. Horizontal only
+                          #   (this is a VERTICAL game), so NOT used as progress. [VERIFIED-LIVE]
+  # --- Data Crystal-documented, reachable, VERIFIED STABLE but transition not
+  #     reached under blind play (win predicate keys on these conservatively) ---
+  stage_index:   0x0130   # Stage index (vertical-scrolling levels). Held 0 across 300k+
+                          #   frames under every policy AND did not change on death, so a
+                          #   STRICT increase beyond the episode's start value is an
+                          #   unambiguous stage clear (never a false positive). The 0->1
+                          #   increment is cross-sourced; blind play never cleared 1-1.
+                          #   [VERIFIED-STABLE; increment cross-sourced]
+  boss_health:   0x006B   # Current fortress-boss HP (Data Crystal). Reads 0 at spawn and
+                          #   stayed 0 under every policy, so the >0->0 kill event can never
+                          #   latch from the start state. [VERIFIED zero-at-spawn/stable;
+                          #   fight not reached]
+  # --- Data Crystal-documented, reachable, NOT exercised here (medium/low conf) ---
+  health_containers: 0x00AA # Life-bar upgrades; Data Crystal end-game check is >= 4. [medium]
+  strength:        0x0152   # Arrow strength / end-game check >= 4. [medium]
+  hearts_lo:       0x014A   # Heart currency (shop money), 0x014A..0x014B. [low]
+  hearts_hi:       0x014B
+  hammers:         0x014F   # Hammers held. [low]
+  feathers:        0x0150   # Feathers held (break fall). [low]
+  eggplant_status: 0x006F   # 0=normal, 1=eggplant'd (Eggplant Wizard). [low]
+
+# ---------------------------------------------------------------------------
+# REWARD WEIGHTS — consumed by the bespoke KidIcarusReward. The stage-clear
+# (300) and fortress-boss (500) milestones DOMINATE score: blind play that
+# only farms kills nets NEGATIVE (time penalty + damage swamp a few kills),
+# so there is no farmable positive local optimum — only real vertical
+# progress (stage clears) flips an episode positive. Empirically confirmed:
+# a 48000-frame blind run scored -86 total and never latched success.
+# ---------------------------------------------------------------------------
+reward_weights:
+  score_delta:    0.02     # binary delta on 0x0131-33 (kills/hearts). VERIFIED
+  health_delta:  -3.0      # per HP lost (0x00A6 down). VERIFIED
+  stage_cleared:  300.0    # TERMINAL milestone: 0x0130 strict increase = cleared a sub-stage
+  boss_damage:    5.0      # per point of fortress-boss HP removed (0x006B down)
+  boss_killed:    500.0    # fortress clear: 0x006B >0 -> 0
+  death_penalty: -25.0     # 0x00A6 hits 0 (HP depleted OR fell off the bottom)
+  time_penalty:  -0.005    # anti-stall; makes kill-farming at the bottom net-negative
+  # OPT-IN vertical-climb shaping. DISABLED (both 0): no verified vertical-
+  # scroll accumulator exists on this ROM. Set altitude_addr to a monotonic
+  # climb byte (larger = higher) and altitude_weight > 0 to enable; while
+  # altitude_addr == 0 the unverified address can never affect the reward.
+  altitude_weight: 0.0
+  altitude_addr:   0
+
+# Kid Icarus controls: A = JUMP, B = SHOOT arrow (forward, in facing dir).
+# UP/DOWN mount + climb ladders and enter doors. NO start (PAUSES the game)
+# and NO select.
+action_space:
+  - []                     # noop
+  - ["right"]
+  - ["left"]
+  - ["A"]                  # jump
+  - ["B"]                  # shoot arrow
+  - ["right", "A"]         # running jump right
+  - ["left", "A"]          # running jump left
+  - ["right", "B"]         # advance + shoot
+  - ["left", "B"]          # retreat + shoot
+  - ["up"]                 # climb ladder up / enter door
+  - ["down"]               # climb ladder down / crouch
+
+curriculum:
+  # Kid Icarus has no SMB-style area-byte save-state curriculum; the trainer
+  # gates that machinery to Mario only. Single-stage from the start state.
+  stage_1: ["*"]
+
+reinforce:
+  enabled: true
+  # === UNIFIED vanilla_ppo (pixel-CNN path, same as Metroid/Contra/GnG) ===
+  # No RAM tile decoder for Kid Icarus, so the universal pixel encoder:
+  # 4-stacked 84x84 grayscale -> Nature-DQN CNN -> actor/critic. SMB
+  # area-byte curriculum is gated off (non-Mario). RND drives exploration
+  # (vertical climb is a sparse-reward, punishing hard-exploration regime).
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: mps
+  rollout_steps: 1024
+  steps: 10                # K PPO epochs / iter
+  ppo_minibatch_size: 256
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.03       # exploration-heavy vertical climb — keep entropy high
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.5  # intrinsic novelty drives "climb somewhere new"
+  rnd_loss_coef: 1.0
+
+# ===========================================================================
+# START-STATE CAPTURE PLAN (the GENERIC masher works — no special recipe)
+# ===========================================================================
+# Kid Icarus boots: animated title -> "PUSH START" -> gameplay begins
+# IMMEDIATELY in Stage 1-1 (no file/stage/difficulty select). The generic
+# scripts/capture_start_state.py handles this out of the box:
+#
+#     python scripts/capture_start_state.py \
+#         --game kid-icarus \
+#         --rom "roms/Kid Icarus (USA, Europe).nes"
+#
+# It pulses START (with NOOP gaps) until its RIGHT-vs-LEFT / growth probe
+# detects live control, settles, re-confirms, and writes the start state.
+#   NOTE: the masher STOPS pressing START once gameplay is detected, so it
+#   does NOT trip Kid Icarus's START=PAUSE. If you hand-roll a capture, press
+#   START only to LEAVE the title, then release it.
+#
+# ===========================================================================
+# EVAL: "made progress" metric
+# ===========================================================================
+# episode_success() is now a REAL win (KidIcarusReward): stage_index 0x0130
+# advanced beyond the episode start OR fortress boss 0x006B defeated. For
+# richer telemetry also track:
+#   * PRIMARY  max stage_index (0x0130) reached (0 -> 1 == cleared 1-1).
+#   * peak_score = binary-decode(0x0131..0x0133); a stalled/dead agent = 0.
+#   * SURVIVAL episode length in steps (fell/died early => short + health 0x00A6 -> 0).
+# NOTE: scripts/eval_game.py still routes only tile encoders (nature_dqn
+# raises "unsupported_profile") and its "furthest stage" byte is SMB-hardcoded
+# ($075F/$0760) — a shared pixel-game eval gap (Metroid/Contra/GnG too). Read
+# the above from vanilla_ppo training telemetry until eval is generalized.

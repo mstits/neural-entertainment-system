@@ -1,0 +1,117 @@
+name: "Excitebike"
+# Live Selection-A race state, captured right at the GO of the start
+# countdown. Without it the emulator cold-boots to the title/attract demo,
+# which ignores controller input -> zero learning signal.
+start_state_path: "roms/Excitebike (Japan, USA)_start.state.bin"
+rom_hashes:
+  - "d7fe15cf2bc7b6582c07d12b3cf3bede"  # Excitebike (Japan, USA) — NROM mapper 0
+
+# Racing/action game — landing rotation, lane timing and crash-recovery all
+# need responsive control, so frame_skip 4 (NOT the trainer default 16, which
+# is far too coarse to time a ramp landing).
+frame_skip: 4
+# There is NO race time limit (verified: idling never ends the race; the
+# clock 0x0069 just wraps 0..59). A clean turbo-managed run finishes the track
+# in ~4600 frames (~1150 steps @ fs4). 1600 covers a full race + slow/crashy
+# runs; the episode also ends the instant the finish line is crossed.
+max_episode_steps: 1600
+
+description: >
+  Training profile for Excitebike (NES, 1984/85), Selection A (solo time
+  trial — no CPU opponents, cleanest signal). The bike is controlled with
+  A (throttle) / B (turbo, faster but overheats), UP/DOWN (change among 4
+  lanes) and LEFT/RIGHT (lean the bike mid-air to land level). Reward pays
+  forward distance + a per-section milestone + a small speed bonus, and
+  penalizes crashes and engine overheat. The WIN is crossing the finish
+  line (section index 0x03A4 reaches the final section) — a terminal bonus
+  that dominates all shaping. episode_success() is a real finish, not
+  total>0.
+
+# All addresses verified empirically against nes_core on the (Japan, USA)
+# dump by driving the bike and reading RAM. NOTE two corrections to the prior
+# guesses: the overheat gauge is 0x03B6 (NOT 0x03E3, which stays 0 here), and
+# the finish is the section index 0x03A4 reaching 3 (there is no time limit).
+ram_mapping:
+  # --- forward progress (THE shaping signal) ---
+  section_dist:    0x00ED   # VERIFIED-LIVE distance within current section,
+                            # 0..~129, RESETS at each section boundary. Pure
+                            # forward distance (stays 0 under NOOP). Shaping
+                            # uses max(0, delta).
+  section_index:   0x03A4   # VERIFIED-LIVE 0->1->2->3 (+1 per section
+                            # boundary); reaching 3 == FINISH LINE crossed,
+                            # then the race resets to 0. THE win signal.
+  # --- vehicle state ---
+  speed:           0x00F3   # VERIFIED-LIVE 0..48 (47 = A top, 48 = turbo)
+  motor_temp:      0x03B6   # VERIFIED-LIVE engine heat: starts 8, +~1/20f
+                            # under B (turbo), cools fast otherwise; at 32 =
+                            # OVERHEAT and the bike stalls (speed -> ~1).
+  bike_status:     0x00F2   # VERIFIED-LIVE 0 ok, 2 crash/tumble, 4 remount
+                            # after an overheat stall.
+  surface_status:  0x037C   # MED  0 ok, 1 puddle, 2 top/bottom edge (unused)
+  lane:            0x00B0   # MED  current lane (reads 0/2 here)
+  # --- race framing (not used by the reward; documented) ---
+  ready_flag:      0x000E   # VERIFIED-LIVE 1 = staged/idle/crashed-remount,
+                            # 0 = racing, 2 = FINISHED (race over, corroborates
+                            # section_index == 3).
+  start_countdown: 0x0024   # VERIFIED-LIVE start countdown; also a big value
+                            # (~136) on the post-finish race restart.
+  race_clock:      0x0069   # VERIFIED-LIVE elapsed seconds 0..59, WRAPS
+                            # forever. TIME, not distance; NO time limit — do
+                            # NOT use as progress or termination.
+
+reward_weights:
+  # Bespoke ExcitebikeReward keys (name.contains("excitebike") dispatch).
+  # Progress + section milestones shape densely; the finish DOMINATES.
+  forward_progress: 1.0     # per unit of within-section distance (0x00ED)
+  section_bonus:    25.0    # milestone each section boundary (0x03A4 +1)
+  speed_bonus:      0.02    # small throttle-holding shaping (normalized)
+  crash_penalty:   -8.0     # one-shot on crash/tumble (0x00F2 -> 2)
+  overheat_penalty: -5.0    # one-shot on overheat/stall (0x03B6 >= 32)
+  completion_bonus: 1000.0  # TERMINAL: finish line (0x03A4 -> final section)
+  time_penalty:    -0.005   # mild per-step; discourages idling
+
+action_space:
+  - []                      # NOOP
+  - ["A"]                   # throttle (normal)
+  - ["B"]                   # turbo (faster, overheats)
+  - ["up"]                  # lane up
+  - ["down"]                # lane down
+  - ["A", "up"]             # accelerate + lane up
+  - ["A", "down"]           # accelerate + lane down
+  - ["A", "left"]           # accelerate + lean back (nose up for landings)
+  - ["A", "right"]          # accelerate + lean forward
+  - ["left"]                # mid-air lean back
+  - ["right"]               # mid-air lean forward
+
+curriculum:
+  stage_1: ["*"]            # single track; SMB area-byte curriculum is gated
+                            # off for non-Mario games by the trainer.
+
+reinforce:
+  enabled: true
+  # UNIFIED vanilla_ppo (universal pixel-CNN path, same as Contra/MM): no RAM
+  # tile decoder -> Nature-DQN encoder over 4-stacked 84x84 grayscale frames.
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: mps
+
+  # === ROLLOUT ===
+  rollout_steps: 1024
+  steps: 10                 # K PPO epochs / iter
+  ppo_minibatch_size: 256
+
+  # === PPO HYPERPARAMETERS ===
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02        # keep exploration up: throttle-only collapses fast
+  grad_clip: 0.5
+  value_loss: huber
+
+  # === RND INTRINSIC EXPLORATION ===
+  # Extrinsic signal is dense (distance) but the finish is far, so RND helps
+  # the agent discover "hold throttle + survive + manage turbo". 0.0 = off.
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0

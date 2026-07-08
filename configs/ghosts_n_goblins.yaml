@@ -1,0 +1,131 @@
+name: "Ghosts'n Goblins"
+# Live Stage-1 (graveyard) gameplay state. WITHOUT it the emulator
+# cold-boots to the title screen, whose attract-mode demo auto-plays and
+# ignores controller input — training there gives zero learning signal
+# (the start-state-demo bug). Capture recipe is at the bottom of this file.
+start_state_path: "roms/Ghosts'n Goblins (USA)_start.state.bin"
+rom_hashes:
+  - "6dd3872fff67b4f324a740aa87ac2b93"  # Ghosts'n Goblins (USA), mapper 2 (UNROM)
+
+# Precise action platformer (frame-perfect jumps + projectile timing).
+# frame_skip 4 like Contra/Castlevania/Mega Man, NOT the trainer default 16.
+frame_skip: 4
+max_episode_steps: 2000
+
+description: >
+  Bespoke GhostsReward (build_reward substring "ghosts"). Brutal side-
+  scrolling action platformer: Arthur runs right, jumps (A), and throws
+  weapons (B) through a graveyard (Stage 1). Two-hit armor (armored ->
+  underwear -> dead), instant-death pits/water, a stage timer, and lives.
+  Reward: dense backtrack-safe forward progress + survival, a one-shot
+  penalty on armor loss, a death penalty that ends the episode, and a large
+  terminal stage-clear bonus that dominates everything. episode_success is a
+  REAL stage clear only (never total>0).
+
+# ---------------------------------------------------------------------------
+# RAM MAP (empirically probed LIVE on this ROM via the shipped Stage-1 state;
+# HUD/sprite/PLAYER-1-READY screenshots used as ground truth).
+# ---------------------------------------------------------------------------
+ram_mapping:
+  # VERIFIED-LIVE — Player-1 lives. Start state = 2; -1 per death (2->1).
+  # Cross-sourced: GnG Game Genie infinite-lives-P1 targets $0715 (P2 $0716).
+  lives:            0x0715
+  # VERIFIED-LIVE — game/player mode: 0x08 = active gameplay; 0x0A = title /
+  # death sequence / menu / attract non-play. Hard "really playing" gate.
+  mode:             0x0028
+  # VERIFIED-LIVE — armor flag: 1 = armored, 0 = underwear. Flips 1->0 at the
+  # exact frame Arthur's sprite goes silver->red on his first hit; stays 0.
+  armor_flag:       0x0585
+  # VERIFIED-LIVE (direction) — horizontal world/camera x, signed 16-bit LE.
+  # LEFT at spawn -> 0xFFF8 (-8); RIGHT increases it; ~0 at stage start. Its
+  # per-stage scale/reset is UNVERIFIED (the opening cannot be traversed under
+  # scripted play), so the win thresholds below are conservative + tunable.
+  scroll_x_lo:      0x005D
+  scroll_x_hi:      0x005E
+  # UNVERIFIED / not located: a stage/area index byte (would let the direct
+  # Path-A win fire). The GnG opening is so hard that neither scripted play
+  # nor the game's own attract demo can reach a 1-A->1-B / Stage-1->2
+  # transition to diff-identify one. Leave stage_addr=0 until a real stage
+  # transition is reachable, then set + verify it.
+  # NOT a clean CPU-RAM byte: score (HUD tile buffer; +100/kill on screen but
+  # no single BCD byte) -> score/kill shaping is off by default (score_addr=0).
+
+# ---------------------------------------------------------------------------
+# REWARD WEIGHTS — consumed by the bespoke GhostsReward.
+# ---------------------------------------------------------------------------
+reward_weights:
+  forward_progress:    0.05     # per NEW furthest world-x unit (backtrack-safe)
+  kill_weight:         0.05     # inert unless score_addr set (positive deltas)
+  armor_hit_penalty:  -8.0      # one-shot: armored(1) -> underwear(0)
+  death_penalty:     -25.0      # first life lost; ends the episode
+  stage_cleared:     500.0      # TERMINAL win bonus — dominates all shaping
+  survival_weight:     0.01     # per-step alive bonus
+  time_penalty:       -0.005    # nudge against stalling
+  # Path-B "area reload" win (verified-address-only): reach deep world-x then
+  # see it collapse to ~0 while alive & in play. clear_min_progress MUST be
+  # tuned to a real Stage-1 length once a transition is reachable; kept well
+  # above spawn noise so it can NEVER false-fire. Set very high to disable.
+  clear_min_progress:  1500
+  reset_threshold:     200
+  # 0 = optional verified-stage-byte win path DISABLED (Path A). Set to a
+  # verified stage index address to enable the cleaner direct clear signal.
+  stage_addr:          0
+  # 0 = score/kill shaping DISABLED (no clean score byte isolated on this ROM).
+  score_addr:          0
+
+# GnG controls: A = JUMP, B = THROW weapon (verified). NO start/select
+# (START pauses the game).
+action_space:
+  - []                     # noop
+  - ["right"]
+  - ["left"]
+  - ["A"]                  # jump
+  - ["B"]                  # throw
+  - ["right", "B"]         # advance + throw
+  - ["right", "A"]         # running jump
+  - ["right", "A", "B"]    # running jump + throw
+  - ["down"]               # crouch (throw low / dodge)
+  - ["down", "B"]          # crouch-throw
+  - ["up"]                 # ladders (Stage 2+)
+
+curriculum:
+  stage_1: ["*"]
+  stage_2: ["*"]
+
+reinforce:
+  enabled: true
+  # UNIFIED vanilla_ppo (pixel-CNN path, same as Contra/Castlevania). No RAM
+  # tile decoder for GnG -> universal pixel encoder: 4-stacked 84x84 grayscale
+  # -> Nature DQN CNN -> actor/critic. RND drives exploration (GnG is a
+  # sparse-reward, punishing hard-exploration regime).
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: mps
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02        # sparse rewards -> keep exploration up (like Contra)
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0
+
+# ===========================================================================
+# START-STATE CAPTURE RECIPE (GnG-specific; the generic masher does NOT work)
+# ===========================================================================
+# The generic scripts/capture_start_state.py fails on GnG (it pulses START =
+# PAUSE, and its RIGHT/LEFT probe false-positives on the 1P/2P title cursor).
+# Correct sequence:
+#   1. Reset. Hold NOOP ~120 frames until the "1 PLAYER / 2 PLAYERS" title is up.
+#   2. Pulse START ONCE to select 1 PLAYER.
+#   3. Hold NOOP through the intro + "PLAYER 1 READY" + "STAGE 1 A" banner.
+#      Active gameplay = $0028 becomes 0x08 (~frame 2600 from cold boot).
+#   4. Snapshot there -> roms/Ghosts'n Goblins (USA)_start.state.bin
+# The shipped capture drops Arthur into the Stage-1 graveyard, armored, near a
+# skeleton (so some episodes die fast — a cleaner safe-spawn capture is a
+# nice-to-have but not required).

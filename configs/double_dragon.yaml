@@ -1,0 +1,160 @@
+name: "Double Dragon"
+# ============================================================================
+# STATUS: TRAINABLE reward SHIPPED (DoubleDragonReward). One blocker remains:
+# the start-state file is not captured (see BLOCKERS). All RAM addresses below
+# were confirmed empirically on the nes_core emulator by driving real inputs
+# from the Mode-A 1P Mission-1 start — NOT copied from a doc.
+# ============================================================================
+#
+# Live Mission-1 boot. The generic capture_start_state.py masher FAILS on
+# Double Dragon (verified): the title ignores START/A and does NOT auto-advance
+# to the attract demo. Double Dragon needs a GAME-SPECIFIC boot sequence:
+#
+#   1. NOOP ~120 frames        (let the title settle)
+#   2. SELECT  ~6 frames       (arms the mode menu; cursor defaults to MODE A
+#                               1PLAYER. START alone at the title does nothing.)
+#   3. NOOP ~20 frames
+#   4. START  ~8 frames        (launches Mode A 1-Player)
+#   5. NOOP ~1000 frames       (~15s Marian-kidnap intro + "MISSION 1" card,
+#                               during which all input is ignored, then the
+#                               player becomes controllable)
+#
+# DETERMINISTIC (byte-identical RAM across runs); lands in controllable
+# Mission-1 gameplay (RIGHT vs LEFT x-divergence). Wire it into a
+# `double_dragon` branch of scripts/capture_start_state.py (like megaman), then:
+#   python scripts/capture_start_state.py --game double-dragon
+start_state_path: "roms/Double Dragon (USA)_start.state.bin"
+rom_hashes:
+  - "79aa819580967ffb27a9698efbf493b9"  # Double Dragon (USA), No-Intro; MMC1 (mapper 1), 128K PRG / 128K CHR
+
+# 2.5D beat-'em-up — needs responsive control (frame_skip 4, same class as
+# Contra), NOT the trainer's default 16.
+frame_skip: 4
+# Missions are long and combat-gated (the screen locks until you clear each
+# enemy wave), so give episodes room.
+max_episode_steps: 2500
+
+description: >
+  Training profile for Double Dragon (NES, 1988, Technos/Tradewest). Single-
+  player Mode A. Side-scrolling brawler: walk right, but the camera locks at
+  each enemy gate until the wave is defeated, so forward progress is gated by
+  winning fights. Reward = forward progress + enemies defeated + heart/move
+  unlocks + mission clear, minus health-loss, death, and time. episode_success
+  fires ONLY on a mission-counter increment (a real mission clear).
+
+ram_mapping:
+  # --- VERIFIED-LIVE on nes_core (real-input drive) ---
+  player_health:  0x03B4  # life bar 0..64. Steady at 64 while safe, drops only
+                          #   in combat, hits 0 exactly at death; drives the bar
+                          #   tiles at 0x0469+. Cross-src GameHacking energy=948.
+  lives:          0x0043  # =2 at start. Counts down 2->1->0 (respawns each), the
+                          #   death at 0 wraps 0->255 = GAME OVER. retro addr 67.
+  player_x:       0x005A  # screen-x, 72 start; +RIGHT/-LEFT; ~234 at a locked
+                          #   gate. Mirror at 0x037E.
+  heart_progress: 0x0042  # rises per ENEMY DEFEATED (0 passive, 1..2 as kills
+                          #   land); fills a heart then bumps 0x0040. Non-farmable
+                          #   (screen won't advance until the wave is cleared).
+  hearts:         0x0040  # heart count / move unlock; bumps when 0x0042 fills.
+                          #   =0 at Mission-1 start. Cross-src GG 0040:07.
+  score:          0x0044  # little-endian 3-byte score (0x0044-0x0046). Rose on
+                          #   landed punches. Cross-src retro addr 68 type <d3.
+  scroll_coarse:  0x03B2  # coarse world-scroll/screen column; steps up as the
+                          #   world scrolls. Opt-in cross-section progress.
+  scroll_fine:    0x03B0  # fine camera scroll (16->112 on walk, wraps at 256);
+                          #   jitters under lock. Not used by the reward.
+  timer:          0x0505  # steady countdown; does NOT drive the observed death.
+
+  # --- WIN KEY (verified stable, increment cross-sourced-by-structure) ---
+  mission:        0x0030  # mission/scene counter. =1 through ALL of Mission 1
+                          #   (rock-stable across combat + two deaths), transitions
+                          #   0->1 at Mission-1 start. Could NOT be driven to
+                          #   increment (clearing a mission needs real combat), so
+                          #   its INCREMENT is unverified. episode_success keys on
+                          #   an increase => real mission clear, never a false
+                          #   positive; if wrong, it simply never fires. Override
+                          #   via reward_weights.mission_addr once verified.
+  # --- NOT FOUND ---
+  # willy_boss_flag: 0x????  # final-boss (Willy) defeated flag — unreachable by a
+  #                          #   scripted probe (Mission 4). The generic mission-
+  #                          #   increment win covers "beat the game" structurally.
+  # enemy_count:     ~0x0280 # actor table (x-positions at 0x0283/0x0287, stride 4)
+  #                          #   located but no clean count byte isolated; the
+  #                          #   reward uses enemies-DEFEATED (0x0042) instead.
+
+reward_weights:
+  # Keys consumed by DoubleDragonReward::new (see build_reward "double dragon").
+  forward_progress: 0.5     # per unit of new rightward high-water (0x005A)
+  enemy_defeat:     25.0    # per +1 of heart_progress (0x0042) == enemy killed
+  heart_earned:     15.0    # per +1 of hearts (0x0040) == move unlock
+  score_delta:      0.01    # tiny strike-landed shaping (0x0044-46)
+  health_penalty:  -0.2     # per life-bar unit lost (0x03B4 decrease)
+  death_penalty:   -30.0    # per life lost + once at game over
+  mission_clear:    2000.0  # TERMINAL win (mission counter increment) — dominates
+  time_penalty:    -0.01
+  mission_addr:     48      # 0x0030 — mission/scene counter used by episode_success
+  section_scale:    0.0     # opt-in coarse-scroll (0x03B2) cross-section progress
+
+action_space:
+  # 2.5D brawler: UP/DOWN move along the Z-axis (into/out of the street) to line
+  # up with enemies. A and B are both attacks (context/direction-sensitive
+  # punch/kick); A+B together = jump. All seven buttons drive distinct responses.
+  - []                 # NOOP
+  - ["right"]
+  - ["left"]
+  - ["up"]             # step back along Z
+  - ["down"]           # step forward along Z
+  - ["A"]              # attack
+  - ["B"]              # attack
+  - ["A", "B"]         # jump
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+
+curriculum:
+  mission_1: ["*"]
+  mission_2: ["*"]
+  mission_3: ["*"]
+  mission_4: ["*"]
+
+reinforce:
+  enabled: true
+  # === UNIFIED vanilla_ppo (pixel-CNN path, same stack as Contra/Castlevania) ===
+  # No RAM tile decoder for Double Dragon, so the universal pixel encoder:
+  # 4-stacked 84x84 grayscale -> Nature DQN CNN -> actor/critic. RND drives
+  # exploration through the combat gates.
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: mps            # CNN ~4.7x faster on MPS than CPU (benched)
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 2.5e-4
+  gamma: 0.99            # brawler is denser/longer-horizon than SMB
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02     # combat-gate exploration wants a bit more entropy
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0
+
+# ============================================================================
+# BLOCKERS to a valid training run today:
+#
+#  1. START STATE not captured. roms/Double Dragon (USA)_start.state.bin does
+#     not exist and the generic masher CANNOT produce it. Add the game-specific
+#     boot sequence above to scripts/capture_start_state.py, then capture.
+#
+#  2. NOT REGISTERED. Add "double_dragon" to DEFAULT_PROFILES and DEFAULT_ROMS
+#     ("roms/Double Dragon (USA).nes") in scripts/train_game.py, or --game
+#     double-dragon won't resolve.
+#
+#  3. MISSION-CLEAR address to FINAL-VERIFY. 0x0030 is verified rock-stable in
+#     Mission 1 but its increment was not observed (a scripted bot can't clear a
+#     mission). The win predicate never false-positives (safe under-trigger); do
+#     ONE assisted full-Mission-1 clear to confirm 0x0030 (or set mission_addr to
+#     the true counter). Everything else (progress, combat, health, death, game
+#     over) is fully verified and trains today.
+# ============================================================================

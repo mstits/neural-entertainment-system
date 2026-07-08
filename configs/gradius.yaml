@@ -1,0 +1,130 @@
+name: "Gradius"
+# Live stage-1 gameplay state (scripts/capture_start_state.py --game gradius).
+# Without it the emulator cold-boots to the TITLE + attract-mode demo, which
+# ignores controller input — training there gives zero learning signal.
+# Captured state was confirmed LIVE (passed the RIGHT-vs-LEFT directionality
+# probe) and is the pristine start of Stage 1: weapon/options/shield all 0,
+# 3 lives, Vic Viper controllable.
+start_state_path: "roms/Gradius (USA)_start.state.bin"
+rom_hashes:
+  - "fcc019dc8054403fd28b8de03d7e16aa"  # Gradius (USA) — mapper 3 CNROM, 32K PRG / 32K CHR
+
+# Horizontal shoot-'em-up — needs responsive dodging, so frame_skip 4 (NOT
+# the trainer's default 16, which is far too coarse to weave through bullet
+# streams / terrain). Same choice as Contra / Mega Man.
+frame_skip: 4
+max_episode_steps: 2500
+
+description: >
+  Training profile for Gradius (NES, 1986, Konami). Horizontal AUTO-SCROLLING
+  shoot-'em-up dispatched to the bespoke nes_core::rewards::GradiusReward.
+  GENRE NOTE: the stage scrolls automatically, so the ship's on-screen X is NOT
+  stage progress — staying alive IS progress (the world advances past the ship
+  while it lives). SURVIVAL is therefore the dominant dense signal, layered with
+  the signature power-up mechanic (collect capsules -> advance the meter ($0042)
+  -> spend for Speed/Missile/Double/Laser/Option/Shield) and, on top, a
+  stage-clear (Big-Core boss defeated) milestone that strictly dominates
+  everything else. First death ends the episode (single-life convention) with a
+  penalty — losing a life also wipes every power-up.
+  WIN / BLOCKER: episode_success is a REAL stage clear (the stage byte strictly
+  increments when the Big Core dies and the next stage loads), NOT a
+  `cumulative_reward > 0` proxy. Gradius's stage-number byte is undocumented on
+  datacrystal and every stable-looking zero-page candidate proved to change
+  mid-stage under live probing, so `stage_addr` ships DISABLED (0): the win is
+  conservatively unreachable — never a false positive — until the real byte is
+  read off a genuine stage-1->2 transition (dump RAM at the moment the Big Core
+  dies and find the byte that goes 1 -> 2) and set below. This mirrors Contra's
+  clear_screen=255 sentinel.
+
+# ── Verified RAM (empirical, on THIS emulator, from the captured start state)
+# VERIFIED-LIVE: player_x/_y confirmed by directional-input divergence; lives
+# confirmed (3 -> 2 on a collision death); status confirmed (1 alive, flips to 2
+# during the death/explosion animation). weapon/option/shield/speed/missile/sel
+# are the datacrystal.tcrf.net/wiki/Gradius_(NES) RAM-map values, cross-checked
+# against fresh-ship base == 0 (scripted play could not grab a capsule to
+# delta-verify them, so GradiusReward treats them as INCREASE-only shaping — a
+# wrong address is a no-op, never a farmable bonus).
+ram_mapping:
+  player_x:      0x00A4   # current Vic Viper X (head of X-trail 0x07A0-0x07AB); LEFT-/RIGHT+  [VERIFIED-LIVE]
+  player_y:      0x00A5   # current Vic Viper Y (head of Y-trail 0x07C0-0x07CF); UP-/DOWN+      [VERIFIED-LIVE]
+  status:        0x0100   # 0x01 alive, 0x02 dead/dying (empirically flipped on collision)      [VERIFIED-LIVE]
+  lives:         0x0020   # remaining ships (starts at 3; 3->2 on death)                         [VERIFIED-LIVE]
+  weapon:        0x0044   # 0=Normal, 1=Laser, 2=Double        [datacrystal + base==0 verified]
+  powerup_sel:   0x0042   # power-up meter selector (advances 1 per capsule collected)  [datacrystal]
+  missile:       0x0041   # missile-enabled flag               [datacrystal + base==0 verified]
+  options:       0x0045   # number of Options (multiples), cap 2 [datacrystal + base==0 verified]
+  shield:        0x0046   # shield/Force-field strength         [datacrystal + base==0 verified]
+  speed:         0x0040   # speed-up level                      [datacrystal + base==0 verified]
+  high_score_lo: 0x07E4   # high-score BCD (datacrystal); current-score bytes NOT reliably pinned
+  high_score_hi: 0x07E6   #   (0x07E0-0x07EF read all-zero after kill runs)
+  # stage/area number: NOT FOUND — undocumented + no stable empirical candidate.
+  # Required for the real WIN. See `stage_addr` below and the BLOCKER note above.
+
+# ── reward_weights: keys for the bespoke GradiusReward.
+# GradiusReward::new(survival_weight, powerup_bonus, capsule_bonus,
+#                    stage_clear_bonus, death_penalty, time_penalty, stage_addr).
+# SURVIVAL is the dense auto-scroller signal (each alive step = the stage
+# scrolled forward). Over a full 2500-step episode it tops out near
+# 0.05*2500 = 125, so the stage-clear win (1000) dominates it ~8x and the
+# power-ups by far more — there is no farmable local optimum.
+reward_weights:
+  survival_weight:    0.05    # DOMINANT dense signal — every alive step is forward progress
+  powerup_bonus:      5.0     # per composite upgrade level gained (Speed/Missile/Options/Shield/armed-Weapon)
+  capsule_bonus:      2.0     # per power-meter ($0042) advance = one capsule collected
+  stage_clear_bonus:  1000.0  # THE win — Big Core defeated -> next stage (must dominate survival)
+  death_penalty:     -25.0    # first death ends the episode (also wipes all power-ups)
+  time_penalty:      -0.002   # mild; smaller than survival so living always nets positive (+0.048/step)
+  stage_addr:         0       # 0 = stage-clear WIN DISABLED (never-false-positive default).
+                              #   Set to the verified current-stage byte to enable win detection.
+
+# ── Action space: 8-way movement + fire (B) + power-up activate (A).
+# Bit layout: A=0x01 (activate selected capsule), B=0x02 (fire). Diagonals +
+# fire are the core dodge-while-shooting verbs of a shmup. select/start omitted.
+action_space:
+  - []                       # NOOP
+  - ["B"]                    # fire
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["right", "B"]
+  - ["left", "B"]
+  - ["up", "B"]
+  - ["down", "B"]
+  - ["up", "right", "B"]     # dodge up-forward while firing
+  - ["down", "right", "B"]   # dodge down-forward while firing
+  - ["up", "left", "B"]
+  - ["down", "left", "B"]
+  - ["A"]                    # activate power-up capsule (speed/missile/double/laser/option/shield)
+
+curriculum:
+  stage_1: ["*"]
+  stage_2: ["*"]
+  stage_3: ["*"]
+
+reinforce:
+  enabled: true
+  # === UNIFIED vanilla_ppo (pixel-CNN path, same as Contra / Mega Man) ===
+  # No RAM tile decoder for Gradius, so the universal pixel encoder:
+  # 4-stacked 84x84 grayscale -> Nature DQN CNN -> actor/critic. The SMB
+  # area-byte save-state curriculum is gated off for non-Mario games; Gradius
+  # trains single-stage from its start state. RND drives exploration.
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: mps            # CNN ~4.7x faster on MPS than CPU (benched)
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02     # shmups are dodge-heavy; keep exploration up
+  grad_clip: 0.5
+  value_loss: huber
+  # Gradius is unforgiving (one hit kills the ship + strips its upgrades) —
+  # a hard-exploration regime RND targets. Set rnd_intrinsic_coef: 0.0 for a
+  # pure baseline.
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0

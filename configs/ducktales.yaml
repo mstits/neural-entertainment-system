@@ -1,0 +1,118 @@
+name: "DuckTales (USA)"
+# Live gameplay start-state (scripts/capture_start_state.py). The masher lands
+# in THE AMAZON (level 0 — the default LAND SELECT cursor and the canonical
+# speedrun opener). Verified: reaches Amazon gameplay (~frame 105); HUD shows
+# $/TOTAL/HP-hearts/TIME and Scrooge is controllable.
+#   python scripts/capture_start_state.py --game ducktales \
+#       --rom "roms/DuckTales (USA).nes"
+start_state_path: "roms/DuckTales (USA)_start.state.bin"
+rom_hashes:
+  - "34fd4014afd15b562d7100f641f900ab"  # DuckTales (USA), No-Intro
+
+# Cartridge (iNES header): mapper 2 (UNROM), CHR-RAM, 128 KB PRG. Boots on the
+# full-library-compat core and has a parity tape (tests/parity/mesen_tapes/),
+# so emulation fidelity is not a concern.
+
+# Action platformer with pogo-cane traversal — frame_skip 4 (NOT the trainer
+# default 16, too coarse for pogo timing).
+frame_skip: 4
+max_episode_steps: 2000
+
+description: >
+  Training profile for DuckTales (NES, 1989, Capcom). Non-linear platformer:
+  5 selectable levels (Amazon, Transylvania, African Mines, Himalayas, Moon)
+  plus a final confrontation; pogo-cane movement; treasure/money collection is
+  the objective. Trains single-stage from a THE AMAZON start state with the
+  hand-authored DuckTalesReward in nes_core/src/rewards.rs. Reward = forward
+  progress (screen-X nudge) + treasure/money (HUD digit field, capped) +
+  damage/death penalty (HP hearts) + a DOMINANT level-clear bonus. The clear
+  is detected as a single-step money jump >= win_treasure_value: each level
+  boss guards a $1,000,000 main treasure claimed in one atomic pickup, while
+  the largest gem is a $50,000 red diamond, so a jump this large can ONLY be a
+  boss's main treasure = that level cleared; being per-step, gem farming can
+  never fake it. episode_success is therefore a REAL level clear.
+
+# Addresses verified empirically against THIS core (import nes_core; load the
+# Amazon start state; drive; diff RAM; render HUD). See DuckTalesReward for the
+# authoritative map — these are the reward inputs.
+ram_mapping:
+  player_x_screen: 0x0008   # VERIFIED-LIVE: screen-relative X; RIGHT++ LEFT--;
+                            #   wraps on scroll (NOT a global world-X).
+  player_hp:       0x00DD   # VERIFIED-LIVE: hit points = the HUD hearts (3 at
+                            #   the Amazon start; equals the on-screen count).
+  level_index:     0x00F6   # VERIFIED-LIVE: 0=Amazon 1=Transylvania 2=African
+                            #   Mines 3=Himalayas 4=Moon; persists in gameplay.
+  money_field:     0x0324   # VERIFIED-LIVE: 7 HUD money digit tiles $0324-$032A
+                            #   (MSB first, blank=0x24). $0 -> $2000 ATOMICALLY
+                            #   on a gem pickup. Max display $9,999,999.
+  # Cross-sourced (Game Genie RAM codes), NOT used by the reward:
+  #   0x007D post-hit i-frame/flashing timer (007D:FA) — also fires at screen
+  #     boundaries live, so it is ambiguous and left unused.
+  #   0x0075 star-effect invincibility flag (0075:01).
+  # Rejected: lives (P.n HUD) — 0x01F9 flickers 0-4 every frame (noise); no
+  #   stable address found. Death is handled via HP reaching 0 instead.
+
+# DuckTalesReward keys (see build_reward). The level-clear bonus dwarfs every
+# shaping term so the win milestone strictly dominates.
+reward_weights:
+  forward_progress:   0.01      # small rightward screen-X nudge (capped,
+                                #   wrap-robust; non-linear game so weak)
+  treasure_weight:    0.0005    # money delta, shaped delta capped at $50k
+  level_clear_bonus:  2000.0    # DOMINANT win: boss main-treasure = clear
+  damage_penalty:    -5.0       # per heart lost
+  death_penalty:     -25.0      # HP reaches 0
+  survival_weight:    0.01
+  time_penalty:      -0.001
+  win_treasure_value: 500000    # single-step $ jump marking a $1,000,000 main
+                                #   treasure vs the $50k red diamond
+  level_goal:         1         # levels to clear for episode_success
+
+# Platformer + pogo action set. Pogo = A (jump) then DOWN+B airborne to bounce
+# on the cane (core traversal + attack); B on ground swings the cane; UP climbs.
+action_space:
+  - []                      # NOOP
+  - ["right"]
+  - ["left"]
+  - ["A"]                   # jump
+  - ["B"]                   # cane swing / putt
+  - ["down"]                # duck / pogo setup
+  - ["up"]                  # climb rope/vine
+  - ["right", "A"]          # jump-right
+  - ["left", "A"]           # jump-left
+  - ["down", "B"]           # POGO bounce (airborne) — key traversal move
+  - ["right", "down", "B"]  # moving pogo
+
+# Non-linear (5 levels selectable from LAND SELECT). Documentation only — this
+# is NOT the SMB area-byte save-state curriculum (gated off for non-Mario).
+# Single-stage PPO from the Amazon start; to train another level, capture a
+# per-level start state (navigate LAND SELECT via 0x00F6) and swap start_state.
+curriculum:
+  amazon: ["*"]
+  transylvania: ["*"]
+  african_mines: ["*"]
+  himalayas: ["*"]
+  moon: ["*"]
+
+reinforce:
+  enabled: true
+  # === UNIFIED vanilla_ppo (pixel-CNN path, same as Contra/MegaMan) ===
+  # 4-stacked 84x84 grayscale -> Nature DQN CNN -> actor/critic. The agent
+  # reads the SCREEN, so the reward RAM addresses drive the reward only, not
+  # the observation. SMB area-byte curriculum gated off (non-Mario). RND drives
+  # exploration (treasure is sparse until reached).
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: mps
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02     # higher — exploration/sparse-treasure regime
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0
