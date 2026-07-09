@@ -1,0 +1,100 @@
+name: "Mario 1-4 reverse"
+rom_hashes:
+  - "811b027eaf99c2def7b933c5208636de"
+
+# SMB 1-4 REVERSE CURRICULUM, phase 1 (the Bowser/axe sparse end).
+#
+# Research (2026-07-07): uvipen's per-level PPO CLEARS 1-4 — the unsolved
+# castles are the mazes (4-4/7-4/8-4). Our ceiling is under-budget +
+# mis-tuned + a sparse ending, NOT a wall. The #1 literature lever for a
+# precise sparse ending is the Salimans&Chen "backward algorithm": reset
+# every episode NEAR THE END of a winning trajectory, learn to finish,
+# then move the reset point earlier once >=20% of workers finish.
+#
+# Phase 1 warm-starts ALL envs at the captured x~2100 anchor (past the
+# moving-platform-over-lava gauntlet, at the Bowser approach) so the agent
+# only has to learn the short x2100 -> x2560 axe-touch — the LEVEL_1_4
+# dense ladder already rewards this segment densely. Later phases move the
+# anchor earlier (x1900 -> 1-4 start -> chain to 1-1). Bowser is framed as
+# "touch the axe" = world-byte $075F increment (rewards.rs F52 credits it);
+# you never have to defeat him.
+#
+# Hyperparameters corrected to the canonical uvipen recipe that clears 1-4:
+#   lr 3e-4 -> 1e-4, gae_lambda 0.95 -> 1.0 (Monte-Carlo for the long
+#   sparse castle), entropy 0.02 (explore; a later consolidation run drops
+#   it to 0.002 for a deployable greedy clear). Budget: run long (canonical
+#   is ~5M env-steps/level; at rollout 1024 x ~24 envs that's ~200 iters,
+#   so --iters 600 gives generous headroom + consolidation).
+start_state_path: "checkpoints/super_mario_bros/smb_curriculum/stage_1_4_x2100.state"
+
+frame_skip: 4
+max_episode_steps: 1200   # short: the x2100->axe segment is brief
+
+ram_mapping:
+  x_position_page: 0x006D
+  x_position_low:  0x0086
+  y_position:      0x00CE
+  lives:           0x075A
+  score_start:     0x07DE
+  score_end:       0x07E3
+  world:           0x075F
+  level:           0x075C
+  player_state:    0x000E
+  float_state:     0x001D
+
+reinforce:
+  enabled: true
+  encoder: smb_tiles
+  tile_frame_stack: 4
+  trainer_mode: vanilla_ppo
+  smb_curriculum: false
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 1.0e-4              # canonical uvipen (was 3e-4)
+  gamma: 0.9
+  gae_lambda: 1.0        # Monte-Carlo returns (was 0.95) — better sparse-end credit
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02     # explore phase; consolidate later at 0.002
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.1
+  rnd_loss_coef: 1.0
+  bc_replay_enabled: false
+  warmup_gens_ga_only: 0
+  sticky_action_prob: 0.0
+  device: cpu
+  panic_isolation: false
+  async_pipeline: false
+
+reward_weights:
+  forward_progress: 3.0
+  score_delta:      0.005
+  death_penalty:    0.0
+  completion_bonus: 2000.0
+  time_penalty:     -0.05
+  checkpoint_scale: 1.0      # LEVEL_1_4 dense x-ladder ON (calibrated to the axe)
+  jump_clear_bonus: 50.0
+  jump_clear_min_dx: 16
+  survival_bonus:   0.0
+  survival_block_steps: 150
+  air_bonus:        1.5
+  pit_fall_extra:   0.0
+  enemy_death_extra: 0.0
+
+action_space:
+  - []
+  - ["right"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["right", "A", "B"]
+  - ["A"]
+  - ["left"]
+
+curriculum:
+  stages:
+    - name: stage_1
+      levels: ["1-4"]
+      advance_threshold: 0.5
+      min_episodes: 200

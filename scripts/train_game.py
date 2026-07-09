@@ -54,6 +54,23 @@ DEFAULT_PROFILES: dict[str, str] = {
     "castlevania": "configs/castlevania.yaml",
     "zelda": "configs/zelda.yaml",
     "metroid": "configs/metroid.yaml",
+    "punchout": "configs/punchout.yaml",
+    "punch-out": "configs/punchout.yaml",
+    "punch_out": "configs/punchout.yaml",
+    "kungfu": "configs/kungfu.yaml",
+    "kung_fu": "configs/kungfu.yaml",
+    "gradius": "configs/gradius.yaml",
+    "excitebike": "configs/excitebike.yaml",
+    "ghosts": "configs/ghosts_n_goblins.yaml",
+    "ghosts_n_goblins": "configs/ghosts_n_goblins.yaml",
+    "ducktales": "configs/ducktales.yaml",
+    "kid_icarus": "configs/kid_icarus.yaml",
+    "kidicarus": "configs/kid_icarus.yaml",
+    "double_dragon": "configs/double_dragon.yaml",
+    "doubledragon": "configs/double_dragon.yaml",
+    "tetris": "configs/tetris.yaml",
+    "bubble_bobble": "configs/bubble_bobble.yaml",
+    "bubblebobble": "configs/bubble_bobble.yaml",
 }
 
 # Per-game canonical ROM. Profile YAMLs don't declare rom_path (the
@@ -70,6 +87,26 @@ DEFAULT_ROMS: dict[str, str] = {
     "castlevania": "roms/Castlevania (USA).nes",
     "zelda": "roms/Legend of Zelda, The (USA) (Rev A).nes",
     "metroid": "roms/Metroid (USA).nes",
+    # Punch-Out!! (USA) — the Mr. Dream retail dump (mapper 9 / MMC2). The
+    # profile RAM map + start state are calibrated to THIS dump; the Mike
+    # Tyson dump differs on later-opponent offsets.
+    "punchout": "roms/Punch-Out!! (USA).nes",
+    "punch-out": "roms/Punch-Out!! (USA).nes",
+    "punch_out": "roms/Punch-Out!! (USA).nes",
+    "kungfu": "roms/Kung Fu (Japan, USA).nes",
+    "kung_fu": "roms/Kung Fu (Japan, USA).nes",
+    "gradius": "roms/Gradius (USA).nes",
+    "excitebike": "roms/Excitebike (Japan, USA).nes",
+    "ghosts": "roms/Ghosts'n Goblins (USA).nes",
+    "ghosts_n_goblins": "roms/Ghosts'n Goblins (USA).nes",
+    "ducktales": "roms/DuckTales (USA).nes",
+    "kid_icarus": "roms/Kid Icarus (USA, Europe).nes",
+    "kidicarus": "roms/Kid Icarus (USA, Europe).nes",
+    "double_dragon": "roms/Double Dragon (USA).nes",
+    "doubledragon": "roms/Double Dragon (USA).nes",
+    "tetris": "roms/Tetris (USA).nes",
+    "bubble_bobble": "roms/Bubble Bobble (USA).nes",
+    "bubblebobble": "roms/Bubble Bobble (USA).nes",
 }
 
 

@@ -1,58 +1,129 @@
 name: "Metroid"
-# Live start-room gameplay state (scripts/capture_start_state.py).
-# Without it the emulator cold-boots to the title-screen demo, which
-# ignores input — training there gives zero learning signal.
+# Live start-room gameplay state (Brinstar, 30 energy). Verified: loads
+# via NCST instant-load, input moves Samus (x-on-map 0x0050 advances,
+# health 0x0106/0x0107 reads 30), i.e. real gameplay, NOT the title-screen
+# demo. Without it the emulator cold-boots to the demo, which ignores
+# input — zero learning signal.
 start_state_path: "roms/Metroid (USA)_start.state.bin"
 rom_hashes:
   - ""
 
+# Action-platformer — needs responsive control, so frame_skip 4 (the
+# trainer default is 16, far too coarse to jump/dodge/aim). Exploration
+# game → long episodes.
+frame_skip: 4
+max_episode_steps: 3000
+
 description: >
-  Training profile for Metroid (NES, 1986). Non-linear Metroidvania — hard
-  exploration problem. Reward strongly favors reaching new rooms + picking
-  up powerups (missiles, energy tanks, suit upgrades) + boss kills.
+  Training profile for Metroid (NES, 1986). Non-linear Metroidvania — a
+  hard-exploration problem. The ONLY reward channels wired to reachable
+  RAM today are exploration (new map cells) + health/death/time. Item,
+  missile, energy-tank, and boss channels are DISARMED (weight 0.0)
+  because they read cartridge PRG-RAM ($6878/$6879) that nes_core does
+  not expose — see the note on reward_weights below.
 
+# =====================================================================
+# RAM mapping — VERIFIED against datacrystal + empirical differential
+# scan. nes_core.get_ram()/the reward snapshot only expose the 2 KB
+# system RAM ($0000-$07FF, mirrored); addresses in cartridge PRG-RAM
+# ($6000-$7FFF) are UNREACHABLE (get_ram masks to $07FF).
+#
+# NOTE: MetroidReward in rewards.rs uses HARDCODED address constants;
+# this ram_mapping block is documentation only (the Rust reward does
+# not read it). Kept accurate so a future reward rewrite has ground
+# truth.
+# =====================================================================
 ram_mapping:
-  samus_x:         0x030D
-  samus_y:         0x030C
-  samus_health:    0x0106   # 3-digit BCD (0..99)
-  samus_health_tens: 0x0107
-  missiles:        0x0109
-  room_number:     0x0050
-  area_number:     0x0074
-  # Item flags (equipment bits)
-  item_flags:      0x0878
+  samus_x_screen:  0x0051   # X on screen (0-255)         [VERIFIED: 0->220 moving right]
+  samus_x_map:     0x0050   # X on map (coarse column)    [VERIFIED: 3->5 moving right]
+  samus_y_screen:  0x0052   # Y on screen                 [VERIFIED]
+  samus_y_map:     0x004F   # Y on map                    [VERIFIED]
+  samus_health:    0x0106   # BCD low: tenths | ones      [VERIFIED: reads 30 at start, 30->20 on damage]
+  samus_health_hi: 0x0107   # BCD hi: tens | filled-tanks nibble
+  area_number:     0x0074   # region index (start value 0 in Brinstar) [reward RAM_AREA]
+  # --- UNREACHABLE (cartridge PRG-RAM $6000-$7FFF; get_ram cannot read) ---
+  # missiles:      0x6879   # live missile count      — NOT reachable
+  # missile_cap:   0x687A   # missile tanks           — NOT reachable
+  # energy_tanks:  0x6877   # energy-tank count       — NOT reachable
+  # item_flags:    0x6878   # equipment bitfield: bit4=Morph Ball, bit0=Bombs,
+  #                         #   bit1=HighJump, bit2=LongBeam, bit3=ScrewAttack,
+  #                         #   bit5=Varia, bit6=Wave, bit7=Ice — NOT reachable
+  # NOTE: partial energy-tank progress IS reachable via the upper nibble
+  # of 0x0107 (filled-tank count), the one item-ish signal in system RAM.
 
+# =====================================================================
+# Reward weights.
+#   WORKING (reachable RAM):  exploration_bonus, health_delta,
+#                             death_penalty, time_penalty.
+#   DISARMED (weight 0.0):    missile_collected, energy_tank, new_item,
+#                             boss_damage, boss_killed.
+# The disarmed channels are read by build_reward() and, at their old
+# non-zero weights, fired on the WRONG byte (ram[0x006A]) — an empirical
+# run awarded +270 phantom "new_item" reward over one episode while
+# Samus collected ZERO items, drowning the real +16 exploration signal
+# 17:1. They MUST stay 0.0 until nes_core exposes PRG-RAM AND
+# MetroidReward is repointed to $6878/$6879. Restore the values in the
+# trailing comments once that lands.
+# =====================================================================
 reward_weights:
-  exploration_bonus: 8.0    # new (area, room) — Metroid *lives* on exploration
-  missile_collected: 3.0
-  energy_tank:       20.0
-  new_item:          30.0   # per newly-set item bit
-  boss_damage:        2.0
-  boss_killed:       60.0
-  health_delta:      -1.0
+  exploration_bonus: 8.0    # new (area, map-column) cell — the spine of the reward
+  health_delta:      -1.0   # per unit of energy lost
   death_penalty:    -25.0
   time_penalty:      -0.002
+  # --- DISARMED until PRG-RAM is exposed (was: 3.0 / 20.0 / 30.0 / 2.0 / 60.0) ---
+  missile_collected:  0.0
+  energy_tank:        0.0
+  new_item:           0.0
+  boss_damage:        0.0
+  boss_killed:        0.0
 
 action_space:
-  - []
+  - []                 # NOOP
   - ["right"]
   - ["left"]
   - ["A"]              # jump
   - ["B"]              # fire / missile
   - ["right", "B"]
   - ["left", "B"]
-  - ["right", "A"]
-  - ["up"]             # aim up / door
-  - ["up", "B"]
-  - ["down"]           # morph ball
-  # select (weapon toggle) unlocked later once agent has a missile.
+  - ["right", "A"]     # run-jump right
+  - ["left", "A"]      # run-jump left
+  - ["up"]             # aim up / take door up
+  - ["up", "B"]        # shoot up
+  - ["down"]           # morph ball (once Maru Mari obtained)
 
 curriculum:
+  # Metroid has no SMB-style area-byte save-state curriculum; the
+  # trainer gates that machinery to Mario only. Single-stage from the
+  # start state.
   stage_1: ["*"]
-  stage_2: ["*"]
-  stage_3: ["*"]
 
 reinforce:
   enabled: true
-  entropy_coef: 0.02     # Metroid is exploration-heavy — keep entropy up
+  # === UNIFIED vanilla_ppo + universal pixel CNN ===
+  # Metroid has no RAM tile decoder, so it uses the pixel path:
+  # 4-stacked 84x84 grayscale frames -> Nature-DQN encoder -> actor/critic.
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  device: mps
+
+  # === ROLLOUT ===
+  rollout_steps: 1024
+  steps: 10                # K PPO epochs / iter
+  ppo_minibatch_size: 256
+
+  # === PPO HYPERPARAMETERS ===
+  lr: 2.5e-4
+  gamma: 0.99
+  gae_lambda: 0.95
   ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.03       # exploration-heavy game — keep entropy high
+  grad_clip: 0.5
+  value_loss: huber
+
+  # === RND INTRINSIC EXPLORATION ===
+  # Metroid is the canonical hard-exploration regime RND targets. With
+  # the extrinsic item/boss channels disarmed, RND intrinsic reward is
+  # the main driver of "go somewhere new". Set to 0.0 for a pure baseline.
+  rnd_intrinsic_coef: 0.5
+  rnd_loss_coef: 1.0

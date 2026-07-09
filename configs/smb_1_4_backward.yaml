@@ -1,0 +1,88 @@
+name: "Mario 1-4 go-explore"   # SAME ckpt dir -> --resume the go_explore policy (iter 790)
+
+# BACKWARD-CURRICULUM phase 1 for 1-4. Validated facts (2026-07-07):
+#   * From the bridge (world-x ~2432) the trained policy crosses to world 2
+#     6/6 — the Bowser/axe end is EASY.
+#   * The bottleneck is REACHING the bridge: the platform-over-lava gauntlet
+#     + firebars kill the policy (dies ~x676 from the 1-4 start).
+# So apply the backward algorithm: warm-start ALL envs at the x~1300 anchor
+# (a survivable Go-Explore-archived state past the deadliest early gauntlet,
+# in the firebar section before the bridge) and train the policy to reliably
+# run x1300 -> bridge -> cross. Shorter segment + 6/6 end => the clear rate
+# should climb high. Later phases move the anchor earlier (x1000 -> x700 ->
+# 1-4 start), each extending the reliable-clear zone backward, then chain to
+# 1-1. Resumes the go_explore policy; go_explore OFF (fixed anchor); entropy
+# 0.02 to refine, lr 1e-4 (canonical).
+start_state_path: "checkpoints/super_mario_bros/smb_curriculum/stage_1_4_bw_x1300.state"
+
+frame_skip: 4
+max_episode_steps: 1600
+
+ram_mapping:
+  x_position_page: 0x006D
+  x_position_low:  0x0086
+  y_position:      0x00CE
+  lives:           0x075A
+  score_start:     0x07DE
+  score_end:       0x07E3
+  world:           0x075F
+  level:           0x075C
+  player_state:    0x000E
+  float_state:     0x001D
+
+reinforce:
+  enabled: true
+  encoder: smb_tiles
+  tile_frame_stack: 4
+  trainer_mode: vanilla_ppo
+  smb_curriculum: false
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 1.0e-4
+  gamma: 0.9
+  gae_lambda: 1.0
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.02
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.1
+  rnd_loss_coef: 1.0
+  bc_replay_enabled: false
+  warmup_gens_ga_only: 0
+  sticky_action_prob: 0.0
+  device: cpu
+  panic_isolation: false
+  async_pipeline: false
+
+reward_weights:
+  forward_progress: 3.0
+  score_delta:      0.005
+  death_penalty:    0.0
+  completion_bonus: 2000.0
+  time_penalty:     -0.05
+  checkpoint_scale: 1.0
+  jump_clear_bonus: 50.0
+  jump_clear_min_dx: 16
+  survival_bonus:   0.0
+  survival_block_steps: 150
+  air_bonus:        1.5
+  pit_fall_extra:   0.0
+  enemy_death_extra: 0.0
+
+action_space:
+  - []
+  - ["right"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["right", "A", "B"]
+  - ["A"]
+  - ["left"]
+
+curriculum:
+  stages:
+    - name: stage_1
+      levels: ["1-4"]
+      advance_threshold: 0.5
+      min_episodes: 200

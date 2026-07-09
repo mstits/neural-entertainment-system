@@ -1,14 +1,18 @@
 name: "Mega Man"
-# NOTE: the reward fn + RAM map are calibrated for Mega Man 2 (health
-# $06C0, lives $00A8), and DEFAULT_ROMS now points at the MM2 ROM. A
-# valid in-stage MM2 start state still needs capturing: the generic
-# capture_start_state masher can't navigate MM2's title "START GAME vs
-# PASSWORD" menu + stage-select, so this needs a game-specific capture
-# (or a manual one). Until then the launcher fails loud rather than
-# training on a wrong/absent state — which is correct.
+# NOTE: the reward fn + RAM map are calibrated for Mega Man 2 and
+# verified against datacrystal.tcrf.net/wiki/Mega_Man_2/RAM_map:
+#   $0460 X (screen-relative, wraps per screen), $04A0 Y, $06C0 HP
+#   (full=0x1C=28), $06C1 boss HP (idles 0 until the boss room),
+#   $00A8 lives (boots to 3). DEFAULT_ROMS points at the MM2 ROM.
+# The start state below drops into Metal Man's stage (the easiest
+# first-win target). It was captured with a game-specific sequence
+# (the generic capture_start_state masher cannot navigate MM2's
+# title -> START GAME -> NORMAL difficulty -> stage-select flow, and
+# must move the cursor off the locked center before confirming); see
+# the megaman branch documented for scripts/capture_start_state.py.
 start_state_path: "roms/Mega Man 2 (USA)_start.state.bin"
 rom_hashes:
-  - ""  # TODO: fill in when a known-good Mega Man 2 dump is used
+  - "8e4bc5b03ffbd4ef91400e92e50dd294"  # Mega Man 2 (USA), No-Intro
 
 # Action platformer — needs responsive control (frame_skip 4, not the
 # trainer's default 16). The start state drops into a robot-master stage.

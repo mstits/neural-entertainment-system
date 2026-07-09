@@ -1,0 +1,82 @@
+name: "Mario 1-4 go-explore"   # SAME name -> same ckpt dir -> --resume from iter 790
+
+# CONSOLIDATION phase for 1-4. The Go-Explore run reached a ~15% stochastic
+# clear rate but stayed at high entropy (~1.87) — it explores but never
+# COMMITS to the winning axe path. Resume that policy at entropy 0.002 (the
+# exact lever that turned 1-2 and 1-3 from stochastic into deployable GREEDY
+# clears) with go_explore OFF, so PPO collapses the policy onto its best
+# axe-reaching trajectory. Always greedy-eval the result. lr dropped to
+# 5e-5 for a stable fine-tune.
+start_state_path: "checkpoints/super_mario_bros/smb_curriculum/stage_1_4.state"
+
+frame_skip: 4
+max_episode_steps: 2400
+
+ram_mapping:
+  x_position_page: 0x006D
+  x_position_low:  0x0086
+  y_position:      0x00CE
+  lives:           0x075A
+  score_start:     0x07DE
+  score_end:       0x07E3
+  world:           0x075F
+  level:           0x075C
+  player_state:    0x000E
+  float_state:     0x001D
+
+reinforce:
+  enabled: true
+  encoder: smb_tiles
+  tile_frame_stack: 4
+  trainer_mode: vanilla_ppo
+  smb_curriculum: false
+  rollout_steps: 1024
+  steps: 10
+  ppo_minibatch_size: 256
+  lr: 5.0e-5
+  gamma: 0.9
+  gae_lambda: 1.0
+  ppo_clip_eps: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.002       # CONSOLIDATE: commit to the winning path
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.0   # no exploration bonus during consolidation
+  rnd_loss_coef: 1.0
+  bc_replay_enabled: false
+  warmup_gens_ga_only: 0
+  sticky_action_prob: 0.0
+  device: cpu
+  panic_isolation: false
+  async_pipeline: false
+
+reward_weights:
+  forward_progress: 3.0
+  score_delta:      0.005
+  death_penalty:    0.0
+  completion_bonus: 2000.0
+  time_penalty:     -0.05
+  checkpoint_scale: 1.0
+  jump_clear_bonus: 50.0
+  jump_clear_min_dx: 16
+  survival_bonus:   0.0
+  survival_block_steps: 150
+  air_bonus:        1.5
+  pit_fall_extra:   0.0
+  enemy_death_extra: 0.0
+
+action_space:
+  - []
+  - ["right"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["right", "A", "B"]
+  - ["A"]
+  - ["left"]
+
+curriculum:
+  stages:
+    - name: stage_1
+      levels: ["1-4"]
+      advance_threshold: 0.5
+      min_episodes: 200
