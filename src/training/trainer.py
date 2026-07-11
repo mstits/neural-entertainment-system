@@ -71,6 +71,15 @@ from src.utils.reward_functions import build_reward_function
 
 log = logging.getLogger(__name__)
 
+# Torch's intra-op pool size as the process started (one thread per
+# P-core — 12 on the target M4 Max), captured at import time before any
+# Trainer caps it. CPU-device trainers pin the pool to 1 thread (see
+# __init__) because for the tiny tensors this trainer pushes on CPU the
+# pool's sync overhead exceeds the math; the once-per-iter full-rollout
+# RND pass is the one op big enough to profit from threads, so it
+# temporarily restores this value.
+_TORCH_DEFAULT_NUM_THREADS = torch.get_num_threads()
+
 
 def _safe_sample_from_logits(
     logits: torch.Tensor,
@@ -762,6 +771,24 @@ class Trainer:
         else:
             self.device = get_best_device()
         log.info("Using device: %s", self.device)
+        # CPU-device runs (tile mode) push tensors so small that torch's
+        # default intra-op pool is a net loss: at mb=256×700 through the
+        # tile MLP + TileRND, one minibatch measures 2399 us with 12
+        # threads vs 1191 us with 1 (sweep is monotonic: 1T beats 2/4/8/
+        # 12T), and the per-step rollout inference chain shows the same
+        # pathology (240 us vs 92 us). Pin the pool to a single thread —
+        # the update bucket roughly halves. MPS/pixel runs keep the
+        # default; rayon's emulation threads are unaffected either way
+        # (torch threads only spin during torch ops). The full-rollout
+        # RND pass temporarily lifts the cap — see the update loop.
+        if self.device.type == "cpu":
+            torch.set_num_threads(1)
+            log.info(
+                "CPU device: capped torch intra-op threads to 1 "
+                "(default %d) — small-tensor thread sync costs more "
+                "than the math",
+                _TORCH_DEFAULT_NUM_THREADS,
+            )
 
         self.action_space = game_profile.get("action_space", [])
         self.num_actions = len(self.action_space)
@@ -4313,6 +4340,13 @@ class Trainer:
             # Buffers are reused across iters; reset the validity mask so a
             # slot is only counted valid if this iter's rollout wrote it.
             valid_buf[:] = False
+            # Per-step critic values / taken log-probs stay on-device
+            # during the rollout and drain to value_buf / log_prob_buf in
+            # ONE fused transfer after the loop (see below). Neither is
+            # consumed until GAE / the update, so the old per-step .cpu()
+            # calls were two avoidable MPS queue drains per step.
+            value_steps: list[torch.Tensor] = []
+            log_prob_steps: list[torch.Tensor] = []
             with torch.no_grad():
                 for t in range(rollout_steps):
                     if not self._running:
@@ -4350,8 +4384,13 @@ class Trainer:
 
                     actions_np = actions.cpu().numpy().astype(np.int32)
                     action_buf[t] = actions_np
-                    value_buf[t] = values.cpu().numpy()
-                    log_prob_buf[t] = log_probs_taken.cpu().numpy()
+                    # Accumulate as device tensors; the fused post-loop
+                    # drain writes value_buf/log_prob_buf. Plain lists +
+                    # torch.stack only — per-step indexed writes into a
+                    # preallocated MPS tensor leak via the MPSGraph
+                    # kernel cache.
+                    value_steps.append(values)
+                    log_prob_steps.append(log_probs_taken)
                     self._gen_timer.add(
                         "rollout_forward", time.perf_counter_ns() - _fwd_t0
                     )
@@ -4666,6 +4705,25 @@ class Trainer:
                         ).to(self.device).unsqueeze(-1)
                         h_rollout = h_rollout_next * (1.0 - done_mask_t)
 
+                # Fused device-to-host drain of the deferred per-step
+                # values / log-probs: one MPS sync for the whole rollout
+                # instead of two per step. On an early Stop the loop
+                # breaks after len(value_steps) steps — only those rows
+                # are written and the untouched tail stays zero (the
+                # update is skipped for truncated rollouts anyway).
+                _drain_t0 = time.perf_counter_ns()
+                n_rolled = len(value_steps)
+                if n_rolled:
+                    value_buf[:n_rolled] = (
+                        torch.stack(value_steps, dim=0).cpu().numpy()
+                    )
+                    log_prob_buf[:n_rolled] = (
+                        torch.stack(log_prob_steps, dim=0).cpu().numpy()
+                    )
+                self._gen_timer.add(
+                    "rollout_forward", time.perf_counter_ns() - _drain_t0
+                )
+
                 # Bootstrap V(s_T) from the final observation per env.
                 final_batch_np = np.stack(stacked_obs, axis=0)
                 final_batch_t = (
@@ -4702,23 +4760,39 @@ class Trainer:
             # states. Zeroed on done/padded steps by the fold helper.
             rnd_intrinsic_mean = 0.0
             if self._rnd is not None:
-                with torch.no_grad():
-                    rnd_obs_t = (
-                        torch.from_numpy(
-                            obs_buf.reshape((rollout_steps * num_envs,) + obs_shape)
-                        ).to(self.device).float()
-                    )
-                    if not self._is_tile_mode and not self.preprocess_f16:
-                        rnd_obs_t = rnd_obs_t.div_(255.0)
-                    intrinsic_raw = self._rnd(rnd_obs_t)  # raw per-sample MSE
-                    bonus_t = self._rnd.normalize_bonus(intrinsic_raw)
-                    # Update running stats with the RAW error, not the
-                    # normalized bonus (avoids the reward_rms self-loop).
-                    self._rnd.update_normalization(rnd_obs_t, intrinsic_raw)
-                    intrinsic_np = (
-                        bonus_t.cpu().numpy().astype(np.float32)
-                        * self.rnd_intrinsic_coef
-                    ).reshape(rollout_steps, num_envs)
+                # This full-rollout pass (rollout_steps × num_envs rows in
+                # one op) is the only torch call in the loop big enough to
+                # profit from the intra-op pool (62 ms at 1T vs 24 ms at
+                # default threads). Lift the CPU 1-thread cap from
+                # __init__ just for this block, then restore it for the
+                # small-tensor minibatch loop below.
+                _rnd_threads_raised = (
+                    self.device.type == "cpu"
+                    and torch.get_num_threads() < _TORCH_DEFAULT_NUM_THREADS
+                )
+                if _rnd_threads_raised:
+                    torch.set_num_threads(_TORCH_DEFAULT_NUM_THREADS)
+                try:
+                    with torch.no_grad():
+                        rnd_obs_t = (
+                            torch.from_numpy(
+                                obs_buf.reshape((rollout_steps * num_envs,) + obs_shape)
+                            ).to(self.device).float()
+                        )
+                        if not self._is_tile_mode and not self.preprocess_f16:
+                            rnd_obs_t = rnd_obs_t.div_(255.0)
+                        intrinsic_raw = self._rnd(rnd_obs_t)  # raw per-sample MSE
+                        bonus_t = self._rnd.normalize_bonus(intrinsic_raw)
+                        # Update running stats with the RAW error, not the
+                        # normalized bonus (avoids the reward_rms self-loop).
+                        self._rnd.update_normalization(rnd_obs_t, intrinsic_raw)
+                        intrinsic_np = (
+                            bonus_t.cpu().numpy().astype(np.float32)
+                            * self.rnd_intrinsic_coef
+                        ).reshape(rollout_steps, num_envs)
+                finally:
+                    if _rnd_threads_raised:
+                        torch.set_num_threads(1)
                 rnd_intrinsic_mean = float(intrinsic_np.mean())
                 reward_buf = fold_intrinsic_into_rewards(
                     reward_buf, intrinsic_np, done_buf
