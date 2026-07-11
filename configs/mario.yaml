@@ -92,6 +92,12 @@ reinforce:
   # dispatch. ~50-100 ms/gen win at fs=16 16-worker. No policy
   # impact — purely a numerical-precision change for the H→D path.
   preprocess_f16: true
+  # Skip-per-pixel batched PPU via clean-scanline history (headless-only;
+  # a live frame sink keeps exact rendering). Training-quality accepted:
+  # rare 1-frame-stale rows are invisible to the 4-frame-stacked policy.
+  batched_render: replace
+  # Production fast path: drop the per-worker-step catch_unwind wrap.
+  panic_isolation: false
   # BC pretraining epochs. The default (8) is fine for short demos
   # but a full-game TAS (~17k frames) benefits from more epochs to
   # entrench the imitated weights deeply enough that subsequent PPO

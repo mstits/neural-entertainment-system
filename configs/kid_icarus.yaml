@@ -125,6 +125,9 @@ reinforce:
   # (vertical climb is a sparse-reward, punishing hard-exploration regime).
   trainer_mode: vanilla_ppo
   encoder: nature_dqn
+  # f16 observations straight from the Rust pool: skips the per-batch
+  # /255 MPS kernel and halves host->device bytes on the pixel path.
+  preprocess_f16: true
   device: mps
   rollout_steps: 1024
   steps: 10                # K PPO epochs / iter

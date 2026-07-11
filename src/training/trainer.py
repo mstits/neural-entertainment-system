@@ -513,6 +513,14 @@ class Trainer:
         # so existing training runs keep bit-identical observation math
         # unless the profile opts in.
         self.preprocess_f16: bool = rl_cfg.get("preprocess_f16", False)
+        # Batched PPU rendering (ppu_neon Replace mode): skip-per-pixel
+        # fast path driven by prev-frame clean-scanline history. Measured
+        # +10-27% single-env / +2-4% parallel (2026-04-21 bench). Off by
+        # default: games with mid-scanline raster tricks can see a
+        # 1-frame-stale row on mispredict, so profiles opt in per-game
+        # ("off" | "verify" | "replace"). Applied only in headless runs —
+        # the GUI grid needs exact frames.
+        self.batched_render: str = str(rl_cfg.get("batched_render", "off")).lower()
         # PPO clipping + entropy bonus. Vanilla REINFORCE collapses policies
         # onto single actions too fast (we saw the Zelda agent spam "down"
         # for 80% of steps). PPO's clipped surrogate limits per-step policy
@@ -1901,6 +1909,33 @@ class Trainer:
                     "Pool panic_isolation=OFF — production fast path. "
                     "Worker panics may abort the process."
                 )
+        # Batched PPU (skip-per-pixel via clean-scanline history).
+        # Headless-only: under Replace, raster-effect games can paint a
+        # 1-frame-stale row — invisible to a 4-frame-stacked policy but
+        # wrong for the GUI grid / recordings, so a live frame sink
+        # forces exact per-pixel rendering regardless of the profile.
+        if self.batched_render in ("verify", "replace"):
+            if self._frame_sink is None:
+                setter = getattr(inner, "set_batched_render_mode", None)
+                if setter is not None:
+                    setter(self.batched_render)
+                    log.info(
+                        "Pool batched_render=%s — skip-per-pixel PPU "
+                        "fast path enabled.",
+                        self.batched_render,
+                    )
+            else:
+                log.info(
+                    "Pool batched_render=%s requested but a frame sink "
+                    "is active — keeping exact rendering (off).",
+                    self.batched_render,
+                )
+        elif self.batched_render != "off":
+            log.warning(
+                "Unknown reinforce.batched_render=%r (expected off | "
+                "verify | replace) — keeping off.",
+                self.batched_render,
+            )
 
     def _run_one_generation(self, gen: int) -> None:
         log.info("=== Generation %d (stage: %s) ===", gen, self.curriculum.current_stage.name)

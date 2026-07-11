@@ -83,6 +83,15 @@ reinforce:
   # curriculum is gated off for non-Mario games (the trainer detects
   # this by name); Contra trains single-stage from its start state.
   encoder: nature_dqn
+  # f16 observations straight from the Rust pool: skips the per-batch
+  # /255 MPS kernel and halves host->device bytes on the pixel path.
+  preprocess_f16: true
+  # Skip-per-pixel batched PPU via clean-scanline history (headless-only;
+  # a live frame sink keeps exact rendering). Training-quality accepted:
+  # rare 1-frame-stale rows are invisible to the 4-frame-stacked policy.
+  batched_render: replace
+  # Production fast path: drop the per-worker-step catch_unwind wrap.
+  panic_isolation: false
   device: mps            # CNN is ~4.7x faster on MPS than CPU (benched); switch to cpu if MPS misbehaves
 
   # === ROLLOUT ===

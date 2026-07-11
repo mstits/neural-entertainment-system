@@ -74,6 +74,9 @@ reinforce:
   # from the start state (a robot-master stage). RND drives exploration.
   trainer_mode: vanilla_ppo
   encoder: nature_dqn
+  # f16 observations straight from the Rust pool: skips the per-batch
+  # /255 MPS kernel and halves host->device bytes on the pixel path.
+  preprocess_f16: true
   device: mps            # CNN ~4.7x faster on MPS than CPU (benched)
   rollout_steps: 1024
   steps: 10
