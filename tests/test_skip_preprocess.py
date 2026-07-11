@@ -55,6 +55,13 @@ def test_skip_preprocess_preserves_emulation_but_zeroes_obs():
         "skip_preprocess changed RAM — it must only skip obs post-"
         "processing, never affect emulation"
     )
-    # Without skip the obs has real content; with skip it is all zeros.
+    # Without skip the obs has real content; with skip it carries none.
+    # Newer binaries ship a 0-length (0, 0) sentinel (the adapter
+    # substitutes a shared zeros((84, 84)) singleton); older ones ship
+    # a full zero buffer. Both are "no content".
     assert pp_off.any(), "non-skip preprocessed obs should have content"
-    assert not pp_on.any(), "skip_preprocess should return an all-zero obs"
+    assert not pp_on.any(), "skip_preprocess should return a contentless obs"
+    assert pp_on.size in (0, 84 * 84), (
+        f"skip obs must be the (0,0) sentinel or a full zero buffer, "
+        f"got shape {pp_on.shape}"
+    )

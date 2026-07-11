@@ -15,6 +15,23 @@ import numpy as np
 
 import nes_core
 
+# Shared observation served in skip_preprocess (tile) mode. The Rust
+# pool ships a 0-length sentinel instead of a fresh 7-14 KB zero buffer
+# per worker per step (tile policies read `ram_snapshot`, never
+# `preprocessed`); every StepResult in skip mode aliases this single
+# read-only array so the (84, 84) shape invariant holds for any stray
+# consumer. Marked non-writeable so an accidental in-place write fails
+# loud instead of corrupting every other slot sharing the buffer.
+_PP_SKIP_SINGLETON = np.zeros((84, 84), dtype=np.uint8)
+_PP_SKIP_SINGLETON.setflags(write=False)
+
+# Shared empty audio buffer for workers whose audio output is off (the
+# default: Pool workers boot with audio disabled; only set_worker_pace
+# enables it). Skipping their per-step drain_audio saves an FFI call +
+# bytearray copy + np.frombuffer per worker per step.
+_AUDIO_EMPTY = np.zeros(0, dtype=np.int16)
+_AUDIO_EMPTY.setflags(write=False)
+
 
 @dataclass
 class StepResult:
@@ -50,6 +67,14 @@ class RustPool:
         self.env_spec = env_spec
         self._inner: Optional[nes_core.Pool] = None
         self._seed = seed
+        # Workers whose audio output is currently enabled (paced via
+        # set_worker_pace). Only these get a per-step drain_audio call
+        # in _materialize; everyone else's APU sample generation is off
+        # in Rust (Worker::new disables it; only set_worker_pace flips
+        # it), so their sample buffer stays empty and there is nothing
+        # to drain. Per-worker and dynamic: any subset of workers —
+        # including all of them — can be paced on simultaneously.
+        self._audio_workers: set[int] = set()
 
     def start(self) -> None:
         if self._inner is not None:
@@ -60,9 +85,13 @@ class RustPool:
             frame_skip=self.frame_skip,
             start_state_path=self.start_state_path,
         )
+        # Fresh Pool workers boot with audio off; drop any stale
+        # bookkeeping from a previous start/shutdown cycle.
+        self._audio_workers.clear()
 
     def shutdown(self) -> None:
         self._inner = None
+        self._audio_workers.clear()
 
     @property
     def num_dead(self) -> int:
@@ -115,8 +144,16 @@ class RustPool:
 
     def _materialize(self, raw: list) -> list[StepResult]:
         results: list[StepResult] = []
+        audio_workers = self._audio_workers
         for i, (frame, pp, ram_bytes, done) in enumerate(raw):
-            if pp.dtype == np.uint8 and pp.shape == (84, 168):
+            if pp.size == 0:
+                # skip_preprocess (tile mode) sentinel: Rust ships a
+                # 0-length array instead of a dead 7-14 KB zero buffer
+                # per worker per step. Serve the shared zeros singleton
+                # so StepResult.preprocessed keeps its (84, 84) shape
+                # invariant for any stray consumer.
+                pp = _PP_SKIP_SINGLETON
+            elif pp.dtype == np.uint8 and pp.shape == (84, 168):
                 # Zero-copy reinterpret from the Rust fallback uint8 array
                 pp = pp.view(np.float16).reshape((84, 84))
             elif pp.shape != (84, 84) or pp.dtype not in (np.float16, np.uint8):
@@ -132,7 +169,13 @@ class RustPool:
                     f"{pp.shape}/{pp.dtype}; expected (84,84)/{{float16,uint8}} "
                     f"or (84,168)/uint8 fallback"
                 )
-            audio = self.drain_audio(i)
+            # Only paced workers produce audio (Rust gates APU sample
+            # generation on set_worker_pace); everyone else's buffer is
+            # structurally empty, so skip the FFI drain + copy for them.
+            if i in audio_workers:
+                audio = self.drain_audio(i)
+            else:
+                audio = _AUDIO_EMPTY
             results.append(StepResult(
                 worker_id=i,
                 frame=frame,
@@ -177,7 +220,20 @@ class RustPool:
     def set_worker_pace(self, worker_id: int, on: bool) -> None:
         if self._inner is None:
             return
-        self._inner.set_worker_pace(worker_id, bool(on))
+        wid = int(worker_id)
+        self._inner.set_worker_pace(wid, bool(on))
+        if not (0 <= wid < self.num_workers):
+            # Rust silently ignores out-of-range ids; mirror that so
+            # the audio bookkeeping stays 1:1 with actual pool state.
+            return
+        if on:
+            self._audio_workers.add(wid)
+        elif wid in self._audio_workers:
+            # Pace-off just disabled sample generation in Rust. Drain
+            # one final time to flush residue accumulated since the
+            # last per-step drain, then stop draining this worker.
+            self.drain_audio(wid)
+            self._audio_workers.discard(wid)
 
     def peek_max_x_per_worker(self) -> Optional[list[int]]:
         """Peak SMB world-x position seen during the most recent

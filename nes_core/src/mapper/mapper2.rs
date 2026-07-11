@@ -6,6 +6,17 @@ pub struct Mapper2 {
     cartridge: Cartridge,
     switchable_bank: u8,
     prg_asm_window: Vec<u8>,
+    /// ASM bulk-step budget in CPU cycles. Defaults to 1 (the
+    /// shipped path) so default-settings timing is unchanged.
+    /// Runtime perf knob — NOT console state, so it is excluded from
+    /// `get_state`/`apply_state` and survives resets/state loads.
+    /// Raised via `set_asm_bulk_cycles_override` (clamped 1..=16)
+    /// only after the per-game lockstep + Mesen-oracle gate passes;
+    /// UxROM has no IRQ line and bank-switch writes rebuild the ASM
+    /// window in place, but action games that race sprite-0 via
+    /// timed $2002 polling (Contra status split) can still observe
+    /// the coarser tick granularity.
+    asm_bulk_budget: i64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -20,6 +31,7 @@ impl Mapper2 {
             cartridge,
             switchable_bank: 0,
             prg_asm_window: vec![0u8; 32 * 1024],
+            asm_bulk_budget: 1,
         };
         m.rebuild_asm_window();
         m
@@ -110,7 +122,15 @@ impl Mapper for Mapper2 {
         Some(self.prg_asm_window.as_ptr())
     }
 
-    fn asm_bulk_cycles(&self) -> i64 { 1 }
+    fn asm_bulk_cycles(&self) -> i64 {
+        self.asm_bulk_budget
+    }
+
+    fn set_asm_bulk_cycles_override(&mut self, cycles: i64) {
+        // Same ceiling rationale as Mapper1: 16 cycles = 2-5
+        // instructions per batch, the top rung of the measured ladder.
+        self.asm_bulk_budget = cycles.clamp(1, 16);
+    }
 
     fn get_state(&self) -> mapper::State {
         mapper::State::State2(State {

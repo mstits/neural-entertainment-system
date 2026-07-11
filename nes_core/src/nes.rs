@@ -603,6 +603,17 @@ impl Nes {
         self.ppu.set_skip_render(skip);
     }
 
+    /// Forward to `Mapper::set_asm_bulk_cycles_override`. Opt-in ASM
+    /// bulk budget for the batch-safe mappers (MMC1, UxROM); no-op on
+    /// every other mapper. Default budget is 1 — timing on default
+    /// settings is unchanged. The cycle-locked `advance_one_frame`
+    /// margins in `python.rs`/`pool.rs` query
+    /// `asm_bulk_cycles_margin()` per frame, so they track the new
+    /// budget automatically.
+    pub fn set_asm_bulk_cycles_override(&mut self, cycles: i64) {
+        self.mapper.set_asm_bulk_cycles_override(cycles);
+    }
+
     pub fn reset(&mut self) {
         {
             let mut bus = SystemBus::new(

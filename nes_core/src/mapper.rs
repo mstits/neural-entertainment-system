@@ -139,6 +139,19 @@ pub trait Mapper {
         1
     }
 
+    /// Opt-in runtime override for `asm_bulk_cycles`. Default no-op:
+    /// most mappers either already run at their validated ceiling
+    /// (NROM = 64) or must stay at 1 for correctness (e.g. MMC3,
+    /// whose scanline IRQ can assert mid-batch — not an ASM exit
+    /// condition, so batching would delay IRQ service). Only mappers
+    /// whose batching is structurally batch-safe implement this:
+    /// MMC1 (`Mapper1`) and UxROM (`Mapper2`) — no mapper IRQ line,
+    /// bank-switch writes rebuild the ASM window in place. The
+    /// default budget stays 1 so emulation timing on default
+    /// settings is unchanged; the trainer raises it per-game only
+    /// after the lockstep + Mesen-oracle + parity gate passes.
+    fn set_asm_bulk_cycles_override(&mut self, _cycles: i64) {}
+
     fn reset(&mut self);
     fn get_state(&self) -> State;
     fn apply_state(&mut self, state: &State);

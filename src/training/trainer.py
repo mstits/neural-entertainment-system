@@ -824,6 +824,17 @@ class Trainer:
         # the trainer down. Opt out per-profile after the ROMs in use
         # have been validated.
         self.panic_isolation = bool(rl_cfg.get("panic_isolation", True))
+        # ASM bulk-step budget (CPU cycles per ASM invocation) for the
+        # batch-safe mappers (MMC1: Zelda/Metroid/Mega Man 2...; UxROM:
+        # Contra/Castlevania...). Default 1 = one instruction per
+        # invocation — the shipped path, timing unchanged (parity-safe).
+        # Raising it (ladder: 8, then 16) amortizes per-invocation ASM
+        # setup over 2-5 instructions but coarsens tick granularity
+        # visible to timed $2002 sprite-0 polling and mid-batch APU IRQ
+        # service. Opt in per-profile via `reinforce.asm_bulk_cycles`
+        # ONLY after the lockstep + Mesen-oracle + parity gate passes
+        # for that game at that budget. Other mappers ignore the call.
+        self.asm_bulk_cycles = int(rl_cfg.get("asm_bulk_cycles", 1))
         # Frames emulated between decisions. 16 is ~2.8× faster in
         # game-time throughput than 8 with no measurable learning loss on
         # slow NES games. Profiles can override: twitchy games (Contra
@@ -1963,6 +1974,30 @@ class Trainer:
                 "verify | replace) — keeping off.",
                 self.batched_render,
             )
+        # ASM bulk budget: opt-in per-profile, honored only by the
+        # batch-safe mappers (MMC1/UxROM). Default 1 leaves emulation
+        # timing unchanged from the shipped path; see the config
+        # comment where `self.asm_bulk_cycles` is read.
+        if self.asm_bulk_cycles > 1:
+            setter = getattr(inner, "set_asm_bulk_cycles", None)
+            if setter is not None:
+                setter(self.asm_bulk_cycles)
+                log.info(
+                    "Pool asm_bulk_cycles=%d — ASM CPU batches up to %d "
+                    "cycles per invocation on MMC1/UxROM workers. Only "
+                    "enable after the lockstep/Mesen/parity gate passes "
+                    "for this game at this budget.",
+                    self.asm_bulk_cycles,
+                    self.asm_bulk_cycles,
+                )
+            else:
+                log.warning(
+                    "reinforce.asm_bulk_cycles=%d requested but the pool "
+                    "binary has no set_asm_bulk_cycles — running at the "
+                    "default budget of 1. The installed nes_core .so is "
+                    "likely stale; rebuild and reinstall it.",
+                    self.asm_bulk_cycles,
+                )
 
     def _run_one_generation(self, gen: int) -> None:
         log.info("=== Generation %d (stage: %s) ===", gen, self.curriculum.current_stage.name)

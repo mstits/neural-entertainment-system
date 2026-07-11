@@ -594,7 +594,8 @@ pub struct Pool {
     /// preprocess runs every step (60 workers × 1024 steps/iter). The
     /// caller opts in via `set_skip_preprocess(true)` only when the
     /// policy reads RAM, not pixels. `preprocessed` is then returned as
-    /// a zero buffer of the expected length (the trainer ignores it).
+    /// a 0-length (0, 0) sentinel array (the adapter substitutes a
+    /// shared zeros((84, 84)) singleton; the trainer ignores it).
     skip_preprocess: std::sync::atomic::AtomicBool,
     /// When true (default), every worker closure in `step_all` /
     /// `reset_all` is wrapped in `catch_unwind(AssertUnwindSafe(...))`
@@ -823,10 +824,25 @@ impl Pool {
                 .enumerate()
                 .map(|(idx, (cell, a))| {
                     let w = unsafe { worker_mut(cell) };
+                    // In skip_preprocess mode nobody reads `preprocessed`
+                    // (tile policies consume `ram_snapshot`), so ship a
+                    // 0-length sentinel instead of a dead 7-14 KB zero
+                    // buffer. `build_result_list` turns it into a (0, 0)
+                    // array and the Python adapter substitutes a shared
+                    // zeros((84, 84)) singleton. At 60 workers × 1024
+                    // steps/iter the dead buffer was ~430 MB of zeroing
+                    // + ~61K numpy allocations per iteration.
+                    let empty_or_zero_pp = || {
+                        if skip_preprocess {
+                            Vec::new()
+                        } else {
+                            vec![0u8; pp_byte_len]
+                        }
+                    };
                     if w.dead {
                         return (
                             vec![0u8; FRAME_PIXELS * 3],
-                            vec![0u8; pp_byte_len],
+                            empty_or_zero_pp(),
                             vec![0u8; RAM_SIZE],
                             true,
                         );
@@ -846,7 +862,7 @@ impl Pool {
                             w.nes.system_ram().as_ref().to_vec();
                         return (
                             Vec::new(),
-                            vec![0u8; pp_byte_len],
+                            empty_or_zero_pp(),
                             ram_bytes,
                             true,
                         );
@@ -858,12 +874,15 @@ impl Pool {
                     // downstream match arms stay unchanged.
                     let mut work = || {
                         w.step(action, frame_skip);
-                        let mut preprocessed = vec![0u8; pp_byte_len];
+                        // Tile-encoder games read `ram_snapshot`, not
+                        // `preprocessed`, so in skip mode the buffer is a
+                        // 0-length sentinel and every gray/resize write
+                        // below is gated on `!skip_preprocess` (writing
+                        // through the raw-pointer f16 path on an empty
+                        // Vec would be UB).
+                        let mut preprocessed = empty_or_zero_pp();
                         let Worker { gray_scratch, video_buf, nes, .. } = &mut *w;
                         let rgb: Vec<u8> = if headless {
-                            // Tile-encoder games read `ram_snapshot`, not
-                            // `preprocessed`, so skip the gray+resize kernel
-                            // entirely — `preprocessed` stays a zero buffer.
                             if !skip_preprocess {
                                 xrgb_to_gray(video_buf, gray_scratch);
                                 if f16_mode {
@@ -893,20 +912,22 @@ impl Pool {
                             // zero-init is free in practice.
                             let mut rgb: Vec<u8> = vec![0u8; FRAME_PIXELS * 3];
                             xrgb_to_rgb(video_buf, &mut rgb);
-                            if f16_mode {
-                                let out_u16 = unsafe {
-                                    std::slice::from_raw_parts_mut(
-                                        preprocessed.as_mut_ptr() as *mut u16,
-                                        pp_dim * pp_dim,
-                                    )
-                                };
-                                crate::preprocess::preprocess_frame_into_f16(
-                                    &rgb, gray_scratch, out_u16,
-                                );
-                            } else {
-                                crate::preprocess::preprocess_frame_into(
-                                    &rgb, gray_scratch, &mut preprocessed,
-                                );
+                            if !skip_preprocess {
+                                if f16_mode {
+                                    let out_u16 = unsafe {
+                                        std::slice::from_raw_parts_mut(
+                                            preprocessed.as_mut_ptr() as *mut u16,
+                                            pp_dim * pp_dim,
+                                        )
+                                    };
+                                    crate::preprocess::preprocess_frame_into_f16(
+                                        &rgb, gray_scratch, out_u16,
+                                    );
+                                } else {
+                                    crate::preprocess::preprocess_frame_into(
+                                        &rgb, gray_scratch, &mut preprocessed,
+                                    );
+                                }
                             }
                             rgb
                         };
@@ -933,7 +954,7 @@ impl Pool {
                             w.dead = true;
                             (
                                 vec![0u8; FRAME_PIXELS * 3],
-                                vec![0u8; pp_byte_len],
+                                empty_or_zero_pp(),
                                 vec![0u8; RAM_SIZE],
                                 true,
                             )
@@ -1080,7 +1101,8 @@ impl Pool {
     /// Set true for tile-encoder games whose policy reads `ram_snapshot`
     /// and never consumes `preprocessed` — the kernel is wasted CPU
     /// otherwise (60 workers × 1024 steps/iter). `preprocessed` is then
-    /// returned as a zero buffer of the expected length.
+    /// returned as a 0-length (0, 0) sentinel array; the Python adapter
+    /// substitutes a shared zeros((84, 84)) singleton.
     fn set_skip_preprocess(&self, on: bool) {
         self.skip_preprocess
             .store(on, std::sync::atomic::Ordering::Release);
@@ -1115,6 +1137,35 @@ impl Pool {
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
             w.nes.disable_asm_cpu = on;
+        }
+        Ok(())
+    }
+
+    /// Opt-in ASM bulk-step budget (CPU cycles per ASM invocation)
+    /// on all Pool workers. Only the batch-safe mappers honor it —
+    /// MMC1 (Zelda, Metroid, Kid Icarus, Mega Man 2, …) and UxROM
+    /// (Contra, Castlevania, DuckTales, …); every other mapper
+    /// ignores the call. Default budget is 1 (one instruction per
+    /// invocation) — the shipped path, so leaving this untouched is
+    /// parity-safe by construction.
+    /// Raising it amortizes the per-invocation ASM setup (SystemBus
+    /// construction, TLS tick install, state init/writeback, FFI,
+    /// NMI prediction) over 2-5 instructions, but coarsens the tick
+    /// granularity that timed $2002 polling (sprite-0 waits) and
+    /// mid-batch APU frame/DMC IRQ service can observe. Enable
+    /// per-game ONLY after the lockstep + Mesen-oracle + parity
+    /// gate passes at that budget. Measured ladder: 1 -> 8 -> 16.
+    fn set_asm_bulk_cycles(&self, cycles: i64) -> PyResult<()> {
+        if !(1..=16).contains(&cycles) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("asm_bulk_cycles must be in 1..=16, got {cycles}"),
+            ));
+        }
+        // SAFETY: called sequentially from Python — never overlaps
+        // with an in-flight step_all/reset_all rayon dispatch.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.set_asm_bulk_cycles_override(cycles);
         }
         Ok(())
     }
@@ -1411,7 +1462,19 @@ impl Pool {
         // emulator state.
         let pp_dim = crate::preprocess::PP_SIZE;
         let f16_mode = self.preprocess_f16.load(std::sync::atomic::Ordering::Relaxed);
+        let skip_preprocess = self.skip_preprocess.load(std::sync::atomic::Ordering::Acquire);
         let pp_byte_len = if f16_mode { pp_dim * pp_dim * 2 } else { pp_dim * pp_dim };
+        // Mirror of step_all: in skip_preprocess mode `preprocessed`
+        // is a 0-length sentinel (tile policies read `ram_snapshot`);
+        // build_result_list emits it as a (0, 0) array and the Python
+        // adapter substitutes a shared zeros((84, 84)) singleton.
+        let empty_or_zero_pp = || {
+            if skip_preprocess {
+                Vec::new()
+            } else {
+                vec![0u8; pp_byte_len]
+            }
+        };
         let collected: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> = py.allow_threads(|| {
             // SAFETY: rayon's `par_iter()` gives each task a unique
             // element of `self.workers`; no two tasks touch the same
@@ -1424,7 +1487,7 @@ impl Pool {
                     if w.dead {
                         return (
                             vec![0u8; FRAME_PIXELS * 3],
-                            vec![0u8; pp_byte_len],
+                            empty_or_zero_pp(),
                             vec![0u8; RAM_SIZE],
                             true,
                         );
@@ -1438,22 +1501,24 @@ impl Pool {
                         // uninitialized &mut slice); xrgb_to_rgb overwrites it.
                         let mut rgb: Vec<u8> = vec![0u8; FRAME_PIXELS * 3];
                         xrgb_to_rgb(&w.video_buf, &mut rgb);
-                        let mut preprocessed = vec![0u8; pp_byte_len];
+                        let mut preprocessed = empty_or_zero_pp();
                         let Worker { gray_scratch, nes, .. } = &mut *w;
-                        if f16_mode {
-                            let out_u16 = unsafe {
-                                std::slice::from_raw_parts_mut(
-                                    preprocessed.as_mut_ptr() as *mut u16,
-                                    pp_dim * pp_dim,
-                                )
-                            };
-                            crate::preprocess::preprocess_frame_into_f16(
-                                &rgb, gray_scratch, out_u16,
-                            );
-                        } else {
-                            crate::preprocess::preprocess_frame_into(
-                                &rgb, gray_scratch, &mut preprocessed,
-                            );
+                        if !skip_preprocess {
+                            if f16_mode {
+                                let out_u16 = unsafe {
+                                    std::slice::from_raw_parts_mut(
+                                        preprocessed.as_mut_ptr() as *mut u16,
+                                        pp_dim * pp_dim,
+                                    )
+                                };
+                                crate::preprocess::preprocess_frame_into_f16(
+                                    &rgb, gray_scratch, out_u16,
+                                );
+                            } else {
+                                crate::preprocess::preprocess_frame_into(
+                                    &rgb, gray_scratch, &mut preprocessed,
+                                );
+                            }
                         }
                         let ram_bytes: Vec<u8> = nes.system_ram().as_ref().to_vec();
                         (rgb, preprocessed, ram_bytes, false)
@@ -1464,7 +1529,7 @@ impl Pool {
                             w.dead = true;
                             (
                                 vec![0u8; FRAME_PIXELS * 3],
-                                vec![0u8; pp_byte_len],
+                                empty_or_zero_pp(),
                                 vec![0u8; RAM_SIZE],
                                 true,
                             )
@@ -1500,7 +1565,18 @@ impl Pool {
             };
             use numpy::IntoPyArray;
             let frame_py = frame.into_pyarray_bound(py);
-            let pp_py: Bound<'py, pyo3::PyAny> = if f16_mode {
+            let pp_py: Bound<'py, pyo3::PyAny> = if preprocessed.is_empty() {
+                // skip_preprocess sentinel: tile-mode policies read
+                // `ram_snapshot` and never consume `preprocessed`, so
+                // ship a 0-length (0, 0) uint8 array instead of a fresh
+                // 7-14 KB zero buffer per worker per step. The Python
+                // adapter substitutes a shared zeros((84, 84)) singleton
+                // to keep the StepResult shape invariant. `pp_byte_len`
+                // is always > 0 on the live paths, so empty ⇔ skip mode.
+                numpy::ndarray::Array2::<u8>::zeros((0, 0))
+                    .into_pyarray_bound(py)
+                    .into_any()
+            } else if f16_mode {
                 debug_assert_eq!(preprocessed.len(), pp_dim * pp_dim * 2);
                 let pp = numpy::ndarray::Array2::from_shape_vec((pp_dim, pp_dim * 2), preprocessed)
                     .expect("preprocessed f16 shape");

@@ -379,6 +379,22 @@ impl NESEnvironment {
         self.nes.set_audio_output_enabled(enabled);
     }
 
+    /// Opt-in ASM bulk-step budget (CPU cycles per ASM invocation).
+    /// Single-env mirror of `Pool::set_asm_bulk_cycles` — see the
+    /// docs there. Only the batch-safe mappers (MMC1, UxROM) honor
+    /// it; default budget 1 is the shipped path (timing unchanged).
+    /// Enable per-game ONLY after the lockstep + Mesen-oracle +
+    /// parity gate passes at that budget.
+    fn set_asm_bulk_cycles(&mut self, cycles: i64) -> PyResult<()> {
+        if !(1..=16).contains(&cycles) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                format!("asm_bulk_cycles must be in 1..=16, got {cycles}"),
+            ));
+        }
+        self.nes.set_asm_bulk_cycles_override(cycles);
+        Ok(())
+    }
+
     /// Save the current emulator state as an opaque `bytes` blob.
     /// Format is bincode-encoded `nes::State` — RAM, CPU, PPU, APU,
     /// mapper, input registers. Versioning is implicit: only blobs
