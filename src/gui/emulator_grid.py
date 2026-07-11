@@ -38,6 +38,13 @@ from PyQt6.QtWidgets import (
 NES_WIDTH = 256
 NES_HEIGHT = 240
 
+# Above this many tiles the grid trades imperceptible per-tile polish
+# for Qt-main-thread headroom: nearest-neighbor final scaling and an
+# alternating-parity repaint budget (~15 fps/tile). Cells that small
+# can't show the difference; a 64-tile stream layout can't afford the
+# smooth pass.
+FAST_PAINT_THRESHOLD = 32
+
 
 def _wrap_text(text: str, fm, max_px: int, max_lines: int = 2) -> list[str]:
     """Greedy word-wrap for caption overlays. Returns up to `max_lines`
@@ -93,6 +100,12 @@ class _TileLabel(QLabel):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(NES_WIDTH // 2, NES_HEIGHT // 2)
         self._scale_mode = ScaleMode.SHARP_BILINEAR
+        # High-tile-count paint budget: when the grid holds more tiles
+        # than FAST_PAINT_THRESHOLD, the final smooth/bilinear pass
+        # downgrades to nearest-neighbor. At 30+ tiles each cell is so
+        # small the bilinear residual is invisible, but its cost on the
+        # Qt main thread is not.
+        self._fast_paint = False
         # Sentinel that no real frame_id will ever equal. -1 is reserved
         # by the legacy provider path ("invalidate every tick"); using
         # None as the sentinel keeps those paths from accidentally
@@ -174,6 +187,11 @@ class _TileLabel(QLabel):
             tgt_w = label_w
             tgt_h = int(tgt_w / aspect)
 
+        smooth = (
+            Qt.TransformationMode.FastTransformation
+            if self._fast_paint
+            else Qt.TransformationMode.SmoothTransformation
+        )
         if self._scale_mode is ScaleMode.STRETCH_FILL:
             # Fill the ENTIRE cell, ignoring NES aspect. Useful at high
             # instance counts where every pixel of screen matters more
@@ -181,7 +199,7 @@ class _TileLabel(QLabel):
             pix = QPixmap.fromImage(qimg).scaled(
                 label_w, label_h,
                 Qt.AspectRatioMode.IgnoreAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
+                smooth,
             )
 
         elif self._scale_mode is ScaleMode.PIXEL_PERFECT:
@@ -210,14 +228,14 @@ class _TileLabel(QLabel):
                 pix = intermediate.scaled(
                     tgt_w, tgt_h,
                     Qt.AspectRatioMode.IgnoreAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
+                    smooth,
                 )
 
         else:  # SMOOTH
             pix = QPixmap.fromImage(qimg).scaled(
                 tgt_w, tgt_h,
                 Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
+                smooth,
             )
 
         # Overlay the name tag + caption onto the pixmap BEFORE setting
@@ -318,6 +336,10 @@ class EmulatorGrid(QMainWindow):
         self._timer.timeout.connect(self._refresh_frames)
         self._timer.start(33)
 
+        # Round-robin parity for the high-tile-count paint budget in
+        # _refresh_frames.
+        self._paint_phase = 0
+
         # Provider is a callable returning a list of (frame, frame_id)
         # pairs, one per instance — or (frame, None) if no ID is tracked.
         self._frame_provider = None
@@ -371,8 +393,10 @@ class EmulatorGrid(QMainWindow):
             layout.setRowStretch(r, 1)
 
         self.frame_labels: list[_TileLabel] = []
+        fast_paint = self.num_instances > FAST_PAINT_THRESHOLD
         for i in range(self.num_instances):
             label = _TileLabel()
+            label._fast_paint = fast_paint
             row = i // self.cols
             col = i % self.cols
             layout.addWidget(label, row, col)
@@ -434,8 +458,25 @@ class EmulatorGrid(QMainWindow):
     def _refresh_frames(self) -> None:
         if self._frame_provider is None:
             return
+        # Always pull from the provider (it also feeds the highlight
+        # recorder), but skip all paint work while minimized — nobody
+        # sees it, and at 64 tiles the QImage+scale pass is the single
+        # biggest Qt-main-thread cost.
         items = self._frame_provider()
+        if self.isMinimized():
+            return
+        # Paint budget: above FAST_PAINT_THRESHOLD tiles, repaint only
+        # every other tile per 33 ms tick (alternating parity), halving
+        # main-thread paint cost. Each tile still refreshes at ~15 fps —
+        # imperceptible at the cell sizes a 32+ grid implies, and the
+        # seq short-circuit in update_frame keeps unchanged tiles free.
+        budgeted = self.num_instances > FAST_PAINT_THRESHOLD
+        phase = self._paint_phase
+        if budgeted:
+            self._paint_phase = 1 - phase
         for i, tile in enumerate(self.frame_labels):
+            if budgeted and (i & 1) != phase:
+                continue
             if i >= len(items):
                 continue
             item = items[i]
