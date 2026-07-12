@@ -31,15 +31,32 @@ checklist in the integration notes.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from src.emulation.rust_pool_adapter import (
     _AUDIO_EMPTY,
+    _FRAME_SHAPE,
     _PP_SKIP_SINGLETON,
     BASE_AUDIO_RATE,
     RustPool,
 )
+
+
+def _find_smb_rom() -> Path | None:
+    """Locate the SMB ROM whether tests run from the main checkout or an
+    isolated worktree (roms/ is gitignored, so it lives only in the
+    primary tree — walk up from here until we find it)."""
+    for base in [Path(__file__).resolve().parent.parent, *Path(__file__).resolve().parents]:
+        cand = base / "roms" / "Super Mario Bros. (World).nes"
+        if cand.exists():
+            return cand
+    return None
+
+
+_SMB_ROM = _find_smb_rom()
 
 
 class FakeInner:
@@ -72,6 +89,9 @@ class FakeInner:
             )
             for _ in range(self.num_workers)
         ]
+
+    def reset_all(self):
+        return self.step_all(None)
 
     def drain_audio(self, worker_id: int) -> bytearray:
         self.drain_calls.append(worker_id)
@@ -597,3 +617,125 @@ def test_pool_knobs_multiplier_default_off() -> None:
     stub._frame_sink = object()
     _trainer_cls()._apply_pool_knobs(stub)
     assert inner.mult_calls == [], "1.0 means the knob is not pushed"
+
+
+# ---------------------------------------------------------------------------
+# Part 8 — done-worker frame reuse (spectator grid must not go black)
+# ---------------------------------------------------------------------------
+#
+# The Rust done-worker short-circuit skips emulation and ships a
+# (1, 1, 3) / 0-length frame sentinel instead of re-rendering the
+# ~180 KB framebuffer (preserving the perf win). If the adapter passed
+# that sentinel straight through, the GUI _frame_sink would overwrite
+# the tile's last live image with black until the next reset_all.
+# _materialize must instead hand a done worker its cached previous
+# frame (zero-copy reference reuse), cleared on reset_all / start.
+
+
+def _pp84() -> np.ndarray:
+    return np.zeros((84, 84), dtype=np.uint8)
+
+
+def _full(fill: int = 7) -> np.ndarray:
+    return np.full(_FRAME_SHAPE, fill, dtype=np.uint8)
+
+
+def test_done_worker_sentinel_reuses_cached_frame() -> None:
+    """A (1, 1, 3) done sentinel must be replaced by the worker's last
+    full frame — the exact cached object, not a black placeholder."""
+    p, _ = _pool(num_workers=2)
+    live = _full(7)
+    r1 = p._materialize([
+        (live, _pp84(), b"\x00" * 8, False),
+        (_full(9), _pp84(), b"\x00" * 8, False),
+    ])
+    assert r1[0].frame is live  # full frame cached + passed through
+    sentinel = np.zeros((1, 1, 3), dtype=np.uint8)
+    r2 = p._materialize([
+        (sentinel, _pp84(), b"\x00" * 8, True),
+        (_full(9), _pp84(), b"\x00" * 8, False),
+    ])
+    assert r2[0].frame is live, "done worker must reuse the cached frame"
+    assert r2[0].frame.shape == _FRAME_SHAPE
+    assert int(r2[0].frame.max()) == 7, "reused frame is live, not black"
+
+
+def test_empty_frame_sentinel_also_reuses_cache() -> None:
+    """Defensive: a truly 0-length frame (alternate sentinel shape) is
+    handled the same as the (1, 1, 3) placeholder."""
+    p, _ = _pool(num_workers=1)
+    live = _full(5)
+    p._materialize([(live, _pp84(), b"\x00" * 8, False)])
+    empty = np.zeros((0,), dtype=np.uint8)
+    r = p._materialize([(empty, _pp84(), b"\x00" * 8, True)])
+    assert r[0].frame is live
+
+
+def test_sentinel_without_prior_live_frame_passes_through() -> None:
+    """No cached frame yet (a worker done before ever rendering) => the
+    sentinel passes through unchanged rather than raising."""
+    p, _ = _pool(num_workers=1)
+    sentinel = np.zeros((1, 1, 3), dtype=np.uint8)
+    r = p._materialize([(sentinel, _pp84(), b"\x00" * 8, True)])
+    assert r[0].frame is sentinel
+
+
+def test_reset_all_clears_frame_cache() -> None:
+    """reset_all drops cached frames so a done worker from the previous
+    rollout can't leak its stale image into the new generation."""
+    p, _ = _pool(num_workers=2)
+    live = _full(7)
+    p._materialize([
+        (live, _pp84(), b"\x00" * 8, False),
+        (_full(9), _pp84(), b"\x00" * 8, False),
+    ])
+    assert p._last_frames.get(0) is live
+    p.reset_all()  # FakeInner ships fresh full frames
+    assert p._last_frames.get(0) is not live, "stale frame must be dropped"
+    # A sentinel after the reset reuses the fresh reset frame, never the
+    # pre-reset image.
+    sentinel = np.zeros((1, 1, 3), dtype=np.uint8)
+    r = p._materialize([
+        (sentinel, _pp84(), b"\x00" * 8, True),
+        (_full(9), _pp84(), b"\x00" * 8, False),
+    ])
+    assert r[0].frame is not live
+
+
+def test_shutdown_clears_frame_cache() -> None:
+    p, _ = _pool(num_workers=1)
+    p._materialize([(_full(7), _pp84(), b"\x00" * 8, False)])
+    assert p._last_frames
+    p.shutdown()
+    assert p._last_frames == {}
+
+
+@pytest.mark.skipif(_SMB_ROM is None, reason="SMB ROM not available")
+def test_done_worker_frame_not_black_end_to_end() -> None:
+    """Live guard against the installed .so: mark a worker done and
+    confirm its next StepResult.frame is the last live frame — full
+    resolution and non-black — not the raw (1, 1, 3) black sentinel the
+    binary ships for a short-circuited worker."""
+    p = RustPool(rom_path=str(_SMB_ROM), num_workers=2, frame_skip=4)
+    p.start()
+    try:
+        p.reset_all()
+        live = p.step_all([1, 1])
+        assert live[0].frame.shape == _FRAME_SHAPE
+        assert int(live[0].frame.max()) > 0, "sanity: live frame has content"
+        last = live[0].frame
+        p.set_worker_done(0, True)
+        done = p.step_all([1, 1])
+        # Without the fix this frame is the raw (1, 1, 3) all-black
+        # sentinel; with it, the cached live frame is reused.
+        assert done[0].frame.shape == _FRAME_SHAPE
+        assert done[0].frame is last
+        assert int(done[0].frame.max()) > 0
+        # The still-running worker 1 keeps producing fresh live frames.
+        assert done[1].frame.shape == _FRAME_SHAPE
+        # reset_all clears the cache: after it, the done flag is also
+        # cleared in Rust so worker 0 renders fresh again.
+        p.reset_all()
+        assert p._last_frames == {} or p._last_frames.get(0) is not last
+    finally:
+        p.shutdown()

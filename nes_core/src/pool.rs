@@ -1317,13 +1317,18 @@ impl Pool {
                     );
                 }
                 // Trainer-flagged episode-done short-circuit. Skip
-                // the entire step (no Nes::step, no preprocess) —
-                // the worker's prior frame and RAM stay untouched
-                // and we return them as-is. The trainer is going
-                // to ignore this slot anyway (see done_flags in
-                // _evaluate_batch); the saved work is the ~4×
-                // frame_skip NES cycles per remaining-step that
-                // would otherwise burn on this dead worker.
+                // the entire step (no Nes::step, no preprocess). The
+                // worker's RAM is returned as-is, but the frame ships
+                // as a 0-length sentinel (build_result_list emits it
+                // as a (1, 1, 3) placeholder) — we do NOT re-render or
+                // copy the ~180 KB prior framebuffer for a slot the
+                // trainer already ignores (see done_flags in
+                // _evaluate_batch). The Python adapter reuses the
+                // worker's previous live frame so a spectator tile
+                // keeps its last image instead of going black. The
+                // saved work is the ~4× frame_skip NES cycles per
+                // remaining-step that would otherwise burn on this
+                // dead worker.
                 if self.worker_done[idx]
                     .load(std::sync::atomic::Ordering::Acquire)
                 {

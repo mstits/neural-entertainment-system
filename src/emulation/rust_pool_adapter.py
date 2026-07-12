@@ -39,6 +39,12 @@ _PP_SKIP_SINGLETON.setflags(write=False)
 _AUDIO_EMPTY = np.zeros(0, dtype=np.int16)
 _AUDIO_EMPTY.setflags(write=False)
 
+# Full RGB frame shape (SCREEN_HEIGHT, SCREEN_WIDTH, 3). The Rust
+# done-worker short-circuit skips emulation and ships a 0-length /
+# (1, 1, 3) sentinel instead — anything that is not this shape is a
+# sentinel the adapter must not surface to a spectator grid as-is.
+_FRAME_SHAPE = (240, 256, 3)
+
 
 @dataclass
 class StepResult:
@@ -100,6 +106,14 @@ class RustPool:
         # set by set_pace_multiplier AFTER the inner call landed — an
         # old .so that ignores the multiplier keeps rate 1.0×.
         self._pace_multiplier: float = 1.0
+        # Last full-resolution frame shipped per worker, keyed by index.
+        # A done worker short-circuits emulation in Rust and returns a
+        # (1, 1, 3) / 0-length sentinel; _materialize hands that worker
+        # its cached previous frame (zero-copy reference reuse) so a
+        # spectator tile keeps its last live image instead of going
+        # black. Populated only when full frames arrive (non-headless),
+        # cleared on start / shutdown / reset_all.
+        self._last_frames: dict[int, np.ndarray] = {}
 
     def _clear_audio_tracking(self) -> None:
         """Reset all audio/pacing bookkeeping to a fresh pool's state
@@ -117,6 +131,7 @@ class RustPool:
         # previous inner (shutdown -> start respawn) so drain gating
         # and audio_rate stamping match the new pool's reality.
         self._clear_audio_tracking()
+        self._last_frames.clear()
         self._inner = nes_core.Pool(
             rom_path=self.rom_path,
             num_workers=self.num_workers,
@@ -127,6 +142,7 @@ class RustPool:
     def shutdown(self) -> None:
         self._inner = None
         self._clear_audio_tracking()
+        self._last_frames.clear()
 
     @property
     def num_dead(self) -> int:
@@ -151,6 +167,11 @@ class RustPool:
     def reset_all(self) -> list[StepResult]:
         if self._inner is None:
             raise RuntimeError("RustPool.start() must be called first")
+        # New generation/rollout: drop cached spectator frames so a
+        # done worker from the previous rollout can't leak its last
+        # image forward. reset ships full frames that repopulate the
+        # cache in the _materialize call below.
+        self._last_frames.clear()
         return self._materialize(self._inner.reset_all())
 
     def step_all(self, actions: Iterable[int]) -> list[StepResult]:
@@ -181,6 +202,21 @@ class RustPool:
         results: list[StepResult] = []
         audio_workers = self._audio_workers
         for i, (frame, pp, ram_bytes, done) in enumerate(raw):
+            # Spectator frame reuse. A done worker short-circuits its
+            # step in Rust and ships a (1, 1, 3) / 0-length sentinel
+            # rather than re-rendering the ~180 KB framebuffer. Cache
+            # each worker's last full frame and hand a sentinel-shipping
+            # worker that cached reference back (zero-copy) so a
+            # spectator tile keeps its last live image instead of going
+            # black until the next reset_all. Headless training never
+            # ships full frames, so the cache stays empty and this is a
+            # no-op on the hot path.
+            if frame.shape == _FRAME_SHAPE:
+                self._last_frames[i] = frame
+            else:
+                cached = self._last_frames.get(i)
+                if cached is not None:
+                    frame = cached
             if pp.size == 0:
                 # skip_preprocess (tile mode) sentinel: Rust ships a
                 # 0-length array instead of a dead 7-14 KB zero buffer
