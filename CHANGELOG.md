@@ -10,6 +10,46 @@ System). The original Nintendo Entertainment System hardware is named in full.
 
 ## [Unreleased]
 
+### Performance (2026-07-11 optimization pass)
+
+Measure-first pass over the training hot path, the Rust core, and the
+spectator grid. Every emulation-touching change gated on the 146-tape
+parity suite + Mesen lockstep (33/33); fidelity unchanged on default
+settings.
+
+- **Tile-mode PPO update ~1.9× faster** (real 60-env A/B): torch's
+  default intra-op thread pool thrashed against the emulator's rayon
+  workers on cpu-device runs; now capped to 1 thread with a temporary
+  raise for the once-per-iter RND pass. Wall time -16%/iter.
+- **Rollout device-syncs cut 3× → 1×/step**: values/log-probs
+  accumulate on-device and drain in one fused transfer after the
+  rollout (bit-identical buffers); only the action transfer the
+  emulator needs remains per-step.
+- **Punch-Out (MMC2) and Gradius (CNROM) now run on the ASM CPU**
+  (+12-13% and +21% respectively, single-env): both mappers gained
+  flat ASM PRG windows. Wiring Gradius byte-exact also surfaced and
+  fixed two pre-existing engine-wide ASM MMIO-timing misalignments
+  ($4014 OAM-DMA arming on STY/STX; indexed/indirect MMIO store and
+  early-read commit cycles) — an across-the-board fidelity win.
+- **Tile mode stops shipping a dead 7-14 KB observation buffer** per
+  worker per step (~430 MB of zeroing + 61k numpy objects per
+  iteration at 60 envs, all discarded); audio drain FFI now only
+  polls workers whose audio is on.
+- **Batched PPU Replace mode finally wired** (shipped in April with
+  zero callers): per-game `reinforce.batched_render` knob, enabled
+  for Contra/Zelda/Metroid/Mario headless runs (+10-27% single-env
+  benched); `preprocess_f16` propagated to all 16 pixel configs;
+  opt-in `reinforce.asm_bulk_cycles` budget for MMC1/UxROM (default
+  unchanged; per-game lockstep+Mesen+parity rungs required to raise).
+- **Spectator grid at 32+ tiles**: nearest-neighbor final scaling +
+  alternating-parity repaint budget (~15 fps/tile, imperceptible at
+  those cell sizes), and zero paint work while minimized — headroom
+  for 64-tile stream layouts.
+- New guard tests: batched-render RAM-identity over 240 SMB frames,
+  adapter sentinel/audio-gating suite (15 tests), grid paint-budget
+  tests, Punch-Out + Gradius ASM lockstep soaks, Tecmo Bowl parity
+  tape (second CNROM title).
+
 Product-hardening + cross-game reward program. The tool went from "trains SMB"
 to installable, crash-safe, and reward-complete across 16 games, with every
 emulator-fidelity and win-predicate change validated against a ground-truth
