@@ -49,6 +49,17 @@ settings.
   adapter sentinel/audio-gating suite (15 tests), grid paint-budget
   tests, Punch-Out + Gradius ASM lockstep soaks, Tecmo Bowl parity
   tape (second CNROM title).
+- **Spectator scale for the live grid**: realtime pacing moved out of
+  the emulator worker threads (the old design capped simultaneously
+  paced workers at ~12 — one parked thread each; now one pool-level
+  sleep, GIL released, capacity bounded only by the emulation budget),
+  a 0.25-16× pace multiplier (`reinforce.pace_multiplier`), audio
+  production decoupled from pacing (`set_worker_audio`) so the mixer's
+  all-mode finally sums every game's audio at once (1/√n normalized,
+  pitch-up above 1× via the existing resampler), and paced workers now
+  render only the displayed final sub-frame (3-4× less PPU work each,
+  verified bit-identical emulation). Finished/dead spectator workers
+  no longer throttle the pool.
 
 Product-hardening + cross-game reward program. The tool went from "trains SMB"
 to installable, crash-safe, and reward-complete across 16 games, with every
