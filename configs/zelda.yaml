@@ -1,6 +1,7 @@
 name: "The Legend of Zelda"
 rom_hashes:
-  - ""  # TODO: fill in with MD5 of a known-good dump
+  - "f4095791987351be68674a9355b266bc"  # Legend of Zelda, The (USA) (Rev A).nes — canonical launcher dump
+  - "614fb3085826e62f3be3a3fe0b931689"  # zelda.nes — alternate dump used by the bench harnesses
 
 # Live overworld start (past the title, CONTROLLABLE) — without this Zelda
 # cold-boots to the title demo and trains on ignored inputs (the start-state
