@@ -1721,7 +1721,20 @@ impl Pool {
 
     /// Wrap a `Vec<(rgb, preprocessed, ram, done)>` into the Python
     /// list of tuples `step_all` / `reset_all` return. Factored out
-    /// so both methods share one GIL-held copy path.
+    /// so both methods share one GIL-held wrap path.
+    ///
+    /// This is NOT a per-worker framebuffer memcpy. `into_pyarray_bound`
+    /// on an owned `Array` *moves* the Rust `Vec` into the NumPy array
+    /// (`from_owned_array_bound` → `from_raw_parts` + `PySliceContainer`
+    /// base), so the ~180 KB frame + 84×84 preprocess buffers are handed
+    /// to Python by ownership transfer — zero copy. The XRGB→RGB / resize
+    /// work that fills those `Vec`s already ran in the GIL-released rayon
+    /// phase of `step_all_native`. The only real copy here is the 2 KB
+    /// RAM → `PyBytes` per worker (~2.5 µs at 60 workers). Measured object
+    /// churn for this whole loop is ~0.03 ms at 60 workers (≈0.3% of a
+    /// 60-worker `step_all`), and it is irreducible GIL-bound Python
+    /// object creation — there is no bulk frame copy to hoist into the
+    /// parallel phase. (Verified 2026-07-12; see the perf analysis.)
     fn build_result_list<'py>(
         &self,
         py: Python<'py>,
