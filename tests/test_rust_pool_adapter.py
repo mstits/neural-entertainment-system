@@ -512,6 +512,23 @@ def test_mode_all_enables_audio_everywhere_without_pacing() -> None:
     assert inner.pace_calls == [], "'all' must not touch pacing"
 
 
+def test_mode_all_paces_everyone_when_spectator_multiplier_active() -> None:
+    """A config that sets reinforce.pace_multiplier declares a spectator
+    pool: 'all' mode then paces every worker so N audio streams are
+    produced at ~playback rate instead of flooding the mixer ring."""
+    p, inner = _pool(num_workers=3)
+    stub = _TrainerStub(p)
+    stub._active_pace_multiplier = 2.0
+    _trainer_cls()._apply_pace_for_mode(stub, "all")
+    assert inner.pace_calls == [(0, True), (1, True), (2, True)]
+    # Audio enabled up front, then re-pinned after the pace weld.
+    assert inner.audio_calls == [
+        (0, True), (1, True), (2, True),
+        (0, True), (1, True), (2, True),
+    ]
+    assert p._audio_workers == {0, 1, 2}
+
+
 def test_mode_mute_unpaces_and_silences_everyone() -> None:
     p, inner = _pool(num_workers=3)
     # Simulate a prior 'all' mode: audio on everywhere, nobody paced.

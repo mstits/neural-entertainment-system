@@ -1674,6 +1674,19 @@ class Trainer:
                 return
             for worker_id in range(self.num_instances):
                 set_audio(worker_id, True)
+            # A config that sets reinforce.pace_multiplier declares this
+            # a spectator pool: pace every worker so N audio streams are
+            # produced at ~playback rate (the pool-level pacing costs one
+            # sleep per step_all regardless of worker count). Without the
+            # knob, 'all' keeps today's semantics — audible but unpaced,
+            # training at full speed.
+            if self._active_pace_multiplier != 1.0:
+                for worker_id in range(self.num_instances):
+                    self.pool.set_worker_pace(worker_id, True)
+                # Re-pin audio ON everywhere: the pace weld just turned
+                # it on anyway, but be explicit — last call wins.
+                for worker_id in range(self.num_instances):
+                    set_audio(worker_id, True)
             return
         soloed: Optional[int] = None
         if mode.startswith("solo-"):

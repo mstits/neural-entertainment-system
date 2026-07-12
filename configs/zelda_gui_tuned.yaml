@@ -31,6 +31,10 @@ ga_params:
   restart_fraction: 0.3
 
 reinforce:
+  # Spectator pool: pace every worker (mixer 'all' mode paces the
+  # whole grid) at 2x realtime; audio pitch-ups to match. Remove or
+  # set 1.0 for full-speed training with the GUI attached.
+  pace_multiplier: 2.0
   top_k: 5
   ppo_clip_eps: 0.2
   entropy_coef: 0.02
