@@ -10,6 +10,35 @@ System). The original Nintendo Entertainment System hardware is named in full.
 
 ## [Unreleased]
 
+### Fixed (2026-07-12 validation pass)
+
+Post-perf-day validation of the spectator/audio recipe across Zelda,
+Contra, and SMB surfaced seven issues (full evidence in
+`reports/validation_2026-07-12.md`); all fixed same day. Gates: 735
+fast tests + 146 parity tapes + the real-loop learning guard.
+
+- **`zelda_gui_tuned.yaml` is now a complete, bootable profile** (it
+  lacked `action_space`/`name`/`frame_skip` and had never booted) with
+  `frame_skip: 4` for 30 fps spectator tiles at 2× and its own
+  checkpoint subtree. A new config-lint test asserts every GUI-offered
+  profile meets the Trainer boot contract.
+- **Trainer construction crashes now surface in the GUI** instead of
+  dying silently in the training thread ("Starting training…" forever);
+  the audio-mixer button reports when no trainer is running.
+- **Done workers no longer black out spectator tiles**: the adapter
+  serves each done worker's last live frame (Rust still skips all
+  emulation + frame copies for them). Re-validated live: 60/60 Contra
+  tiles (was 3/60).
+- **The GUI Resume checkbox now controls vanilla_ppo auto-resume**
+  (it silently resumed regardless; `train_game.py --no-resume` shares
+  the same gate), and resuming runs announce the source checkpoint.
+- **Mario/Contra level clears now record as curriculum successes even
+  when the agent dies later in the episode** (durable clear latch; the
+  old predicate lost every 1-1 clear to the level-change re-arm +
+  death negation, pinning success_rate at 0.00 and freezing curriculum
+  advancement in tile/GA mode). Validated by a 150-gen from-scratch
+  tile run whose depth tracker showed repeated clears into 1-2/1-3.
+
 ### Performance (2026-07-11 optimization pass)
 
 Measure-first pass over the training hot path, the Rust core, and the
