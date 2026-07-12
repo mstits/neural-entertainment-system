@@ -64,7 +64,8 @@ const BUTTON_A: u8 = 1 << 0;
 /// (measured ~20-50ns × 16 workers × 1700+ sps = ~27K atomic ops/s).
 ///
 /// All sequential access (reset_all, save_worker_state,
-/// set_worker_pace, drain_audio, set_batched_render_mode,
+/// set_worker_pace, set_worker_audio, drain_audio,
+/// set_batched_render_mode,
 /// load_worker_state, load_start_state) runs on the Python trainer
 /// thread and never overlaps with the parallel `step_all`/`reset_all`
 /// rayon closures — those are the only two methods that dispatch
@@ -83,10 +84,12 @@ struct Worker {
     video_buf: Vec<u32>,
     // Captured audio samples since the last drain.
     audio: Vec<i16>,
-    // Realtime pacing for the live-audio worker. Unused for the
-    // 15 non-audio workers; keeps them running at max speed.
+    // Marks this worker as a spectator (GUI-visible / live-audio)
+    // worker. Pacing itself is pool-level (see `Pool::pace_pool_step`)
+    // so rayon threads never sleep; this flag feeds the pool's
+    // "any worker paced?" check and controls sub-frame rendering
+    // (see `spectator_subframe_skip`).
     realtime_pace: bool,
-    pace_next_target: Option<std::time::Instant>,
     // Cached start-state snapshot for fast `reset()` (<=ms restore).
     start_state_snapshot: Option<Vec<u8>>,
     // Set to `true` after a panic in this worker's step/reset. Once
@@ -133,7 +136,6 @@ impl Worker {
             video_buf: vec![0u32; FRAME_PIXELS],
             audio: Vec::new(),
             realtime_pace: false,
-            pace_next_target: None,
             start_state_snapshot: None,
             dead: false,
             gray_scratch: vec![0u8; FRAME_PIXELS],
@@ -171,7 +173,6 @@ impl Worker {
             self.nes.reset();
         }
         self.audio.clear();
-        self.pace_next_target = None;
         self.frame_cycle_target = None;
         self.advance_one_frame();
     }
@@ -220,7 +221,7 @@ impl Worker {
         self.frame_cycle_target = Some(target);
     }
 
-    fn step(&mut self, action: u8, frame_skip: u32) -> bool {
+    fn step(&mut self, action: u8, frame_skip: u32, spectator_subframe_skip: bool) -> bool {
         self.apply_buttons(action);
         // Reset peak tracker. Read x BEFORE the first frame so the
         // baseline includes the entry state (otherwise a step that
@@ -228,7 +229,15 @@ impl Worker {
         // pre-step x).
         let initial_ram = self.nes.system_ram();
         self.last_max_x = 256 * initial_ram[0x006D] as u32 + initial_ram[0x0086] as u32;
-        let use_skip = !self.realtime_pace;
+        // Sub-frame render skip. Unpaced training workers always skip
+        // the first N-1 sub-frames (proven emulation-neutral — see
+        // tests/skip_render_parity.rs; sprite-0 / NMI / IRQ / RAM are
+        // bit-identical, only framebuffer writes are elided). Spectator
+        // (paced) workers historically rendered every sub-frame even
+        // though only the final one ships to Python; with
+        // `spectator_subframe_skip` (pool default ON) they use the same
+        // final-frame-only path, cutting their PPU pixel work ~N×.
+        let use_skip = !self.realtime_pace || spectator_subframe_skip;
         for i in 0..frame_skip {
             let is_last = i + 1 == frame_skip;
             self.nes.set_skip_render(use_skip && !is_last);
@@ -245,9 +254,12 @@ impl Worker {
             }
         }
         self.nes.set_skip_render(false);
-        if self.realtime_pace {
-            self.pace_to_realtime(frame_skip);
-        }
+        // Realtime pacing is pool-level (`Pool::pace_pool_step`), NOT
+        // per-worker: a sleep here would park one of the ~12 rayon
+        // threads per paced worker, capping the number of realtime
+        // spectator workers at the thread count. The pool sleeps ONCE
+        // on the calling thread after the parallel step completes.
+        //
         // Nes doesn't expose a per-step done flag in this codebase;
         // done-ness is rewards-driven in the trainer. Always return
         // false here to match existing worker behaviour.
@@ -264,27 +276,6 @@ impl Worker {
         pad.set_button_pressed(Button::Select, mask & BUTTON_SELECT != 0);
         pad.set_button_pressed(Button::B, mask & BUTTON_B != 0);
         pad.set_button_pressed(Button::A, mask & BUTTON_A != 0);
-    }
-
-    fn pace_to_realtime(&mut self, frame_skip: u32) {
-        let step_dur = std::time::Duration::from_nanos(
-            ((frame_skip as u64) * 1_000_000_000) / 60,
-        );
-        let now = std::time::Instant::now();
-        let target = match self.pace_next_target {
-            Some(t) if t > now => t,
-            _ => now,
-        };
-        if target > now {
-            std::thread::sleep(target - now);
-        }
-        let advanced = target + step_dur;
-        let max_lag = now + step_dur;
-        self.pace_next_target = Some(if advanced > max_lag {
-            advanced
-        } else {
-            max_lag
-        });
     }
 }
 
@@ -555,7 +546,8 @@ impl AudioSink for AudioVecSink<'_> {
 // `unsafe { worker_mut(cell) }` to mint an exclusive `&mut Worker`
 // for just that element — indices are not shared, so no two tasks
 // ever alias the same Worker. All other methods
-// (`save_worker_state`, `set_worker_pace`, `drain_audio`,
+// (`save_worker_state`, `set_worker_pace`, `set_worker_audio`,
+// `drain_audio`,
 // `load_worker_state`, `set_batched_render_mode`, `load_start_state`)
 // run sequentially on the Python trainer thread and never overlap
 // with an in-flight `step_all`/`reset_all` — Python holds the GIL
@@ -620,6 +612,27 @@ pub struct Pool {
     /// frames of dead-time emulation per episode. Cleared on
     /// `reset_all` so the next episode starts everyone fresh.
     worker_done: Vec<std::sync::atomic::AtomicBool>,
+    /// Pool-level pacing speed multiplier as raw IEEE 754 f64 bits
+    /// (atomics have no f64 flavor). 1.0 = realtime (frame_skip / 60 s
+    /// per step); 2.0 = double speed; clamped to [0.25, 16.0] by
+    /// `set_pace_multiplier`. Only scales the pool pacing budget —
+    /// emulation semantics are untouched.
+    pace_multiplier_bits: std::sync::atomic::AtomicU64,
+    /// When true (default), paced spectator workers render only the
+    /// FINAL sub-frame of each step — the only frame that ships to
+    /// Python — via the same `skip_render` mechanism unpaced workers
+    /// already use (emulation-neutral; see tests/skip_render_parity.rs).
+    /// Set false to restore the historical render-every-sub-frame
+    /// behaviour for paced workers.
+    spectator_subframe_skip: std::sync::atomic::AtomicBool,
+    /// Absolute wall-clock target for the next paced `step_all`
+    /// completion. Pool-level replacement for the old per-worker
+    /// `pace_next_target`: ONE sleep on the `step_all` calling thread
+    /// after the rayon join, instead of N sleeps that would each park
+    /// a rayon thread (hard ~thread-count ceiling on paced workers).
+    /// Mutex is uncontended — locked once per `step_all` on the
+    /// (sequential) trainer thread.
+    pool_pace_next_target: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 #[pymethods]
@@ -689,6 +702,9 @@ impl Pool {
             skip_preprocess: std::sync::atomic::AtomicBool::new(false),
             panic_isolation: std::sync::atomic::AtomicBool::new(true),
             worker_done,
+            pace_multiplier_bits: std::sync::atomic::AtomicU64::new(1.0f64.to_bits()),
+            spectator_subframe_skip: std::sync::atomic::AtomicBool::new(true),
+            pool_pace_next_target: std::sync::Mutex::new(None),
         };
 
         if let Some(p) = start_state_path {
@@ -716,6 +732,10 @@ impl Pool {
         for done in &self.worker_done {
             done.store(false, std::sync::atomic::Ordering::Release);
         }
+        // Re-anchor pool pacing — mirrors the old per-worker
+        // `pace_next_target = None` in `Worker::reset` so the first
+        // step after a reset never sleeps against a stale target.
+        self.clear_pool_pace_target();
         py.allow_threads(|| {
             // SAFETY: rayon's `par_iter().enumerate()` gives each task
             // a unique index; no two tasks touch the same worker cell.
@@ -789,180 +809,12 @@ impl Pool {
                 self.num_workers
             )));
         }
-        let frame_skip = self.frame_skip;
-        let pp_dim = crate::preprocess::PP_SIZE;
-        let headless = self.headless.load(std::sync::atomic::Ordering::Acquire);
-        let f16_mode = self.preprocess_f16.load(std::sync::atomic::Ordering::Acquire);
-        let skip_preprocess = self.skip_preprocess.load(std::sync::atomic::Ordering::Acquire);
-        // Load the panic-isolation flag once outside the rayon closure.
-        // Acquire pairs with the Release store in `set_panic_isolation`.
-        let panic_isolation = self
-            .panic_isolation
-            .load(std::sync::atomic::Ordering::Acquire);
-        // When f16 mode is on, `preprocessed` holds raw IEEE 754 half-
-        // precision bytes: 2 bytes × 84×84 = 14112 bytes. The Python
-        // side reinterprets via `np.frombuffer(..., dtype=np.float16)`.
-        let pp_byte_len = if f16_mode { pp_dim * pp_dim * 2 } else { pp_dim * pp_dim };
-        // Fused step + collect in one rayon pass. Previously this
-        // was two separate par_iter runs — a for_each that stepped,
-        // then a map in `collect_results` that unpacked frames.
-        // Merging halves the mutex acquisitions, reuses the hot
-        // worker-state cache while it's still in L1 after the step,
-        // and cuts one rayon join barrier off the critical path.
-        // Merging halves the mutex acquisitions, reuses the hot
-        // worker-state cache while it's still in L1 after the step,
-        // and cuts one rayon join barrier off the critical path.
-        let collected: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> = py.allow_threads(|| {
-            // SAFETY: rayon's `par_iter().enumerate()` gives each task
-            // a unique index; no two tasks touch the same worker cell.
-            // The `&mut Worker` reborrowed from the UnsafeCell is valid
-            // for the lifetime of this closure — no aliasing, so it
-            // crosses the `catch_unwind` boundary soundly.
-            self.workers
-                .par_iter()
-                .zip(actions_vec.par_iter())
-                .enumerate()
-                .map(|(idx, (cell, a))| {
-                    let w = unsafe { worker_mut(cell) };
-                    // In skip_preprocess mode nobody reads `preprocessed`
-                    // (tile policies consume `ram_snapshot`), so ship a
-                    // 0-length sentinel instead of a dead 7-14 KB zero
-                    // buffer. `build_result_list` turns it into a (0, 0)
-                    // array and the Python adapter substitutes a shared
-                    // zeros((84, 84)) singleton. At 60 workers × 1024
-                    // steps/iter the dead buffer was ~430 MB of zeroing
-                    // + ~61K numpy allocations per iteration.
-                    let empty_or_zero_pp = || {
-                        if skip_preprocess {
-                            Vec::new()
-                        } else {
-                            vec![0u8; pp_byte_len]
-                        }
-                    };
-                    if w.dead {
-                        return (
-                            vec![0u8; FRAME_PIXELS * 3],
-                            empty_or_zero_pp(),
-                            vec![0u8; RAM_SIZE],
-                            true,
-                        );
-                    }
-                    // Trainer-flagged episode-done short-circuit. Skip
-                    // the entire step (no Nes::step, no preprocess) —
-                    // the worker's prior frame and RAM stay untouched
-                    // and we return them as-is. The trainer is going
-                    // to ignore this slot anyway (see done_flags in
-                    // _evaluate_batch); the saved work is the ~4×
-                    // frame_skip NES cycles per remaining-step that
-                    // would otherwise burn on this dead worker.
-                    if self.worker_done[idx]
-                        .load(std::sync::atomic::Ordering::Acquire)
-                    {
-                        let ram_bytes: Vec<u8> =
-                            w.nes.system_ram().as_ref().to_vec();
-                        return (
-                            Vec::new(),
-                            empty_or_zero_pp(),
-                            ram_bytes,
-                            true,
-                        );
-                    }
-                    let action = *a;
-                    // The worker body is identical in both branches;
-                    // only the `catch_unwind` wrap differs. Both
-                    // branches produce the same `res` type so the
-                    // downstream match arms stay unchanged.
-                    let mut work = || {
-                        w.step(action, frame_skip);
-                        // Tile-encoder games read `ram_snapshot`, not
-                        // `preprocessed`, so in skip mode the buffer is a
-                        // 0-length sentinel and every gray/resize write
-                        // below is gated on `!skip_preprocess` (writing
-                        // through the raw-pointer f16 path on an empty
-                        // Vec would be UB).
-                        let mut preprocessed = empty_or_zero_pp();
-                        let Worker { gray_scratch, video_buf, nes, .. } = &mut *w;
-                        let rgb: Vec<u8> = if headless {
-                            if !skip_preprocess {
-                                xrgb_to_gray(video_buf, gray_scratch);
-                                if f16_mode {
-                                    let out_u16 = unsafe {
-                                        std::slice::from_raw_parts_mut(
-                                            preprocessed.as_mut_ptr() as *mut u16,
-                                            pp_dim * pp_dim,
-                                        )
-                                    };
-                                    crate::preprocess::resize_gray_to_f16_norm(
-                                        gray_scratch, out_u16,
-                                    );
-                                } else {
-                                    crate::preprocess::resize_area_into(
-                                        gray_scratch, 240, 256, &mut preprocessed,
-                                        crate::preprocess::PP_SIZE,
-                                    );
-                                }
-                            } else {
-                                let _ = (&video_buf, &gray_scratch);
-                            }
-                            Vec::new()
-                        } else {
-                            // vec![0u8; N], not with_capacity + set_len: a
-                            // reference to uninitialized memory is UB even for
-                            // u8. xrgb_to_rgb fully overwrites it below, so the
-                            // zero-init is free in practice.
-                            let mut rgb: Vec<u8> = vec![0u8; FRAME_PIXELS * 3];
-                            xrgb_to_rgb(video_buf, &mut rgb);
-                            if !skip_preprocess {
-                                if f16_mode {
-                                    let out_u16 = unsafe {
-                                        std::slice::from_raw_parts_mut(
-                                            preprocessed.as_mut_ptr() as *mut u16,
-                                            pp_dim * pp_dim,
-                                        )
-                                    };
-                                    crate::preprocess::preprocess_frame_into_f16(
-                                        &rgb, gray_scratch, out_u16,
-                                    );
-                                } else {
-                                    crate::preprocess::preprocess_frame_into(
-                                        &rgb, gray_scratch, &mut preprocessed,
-                                    );
-                                }
-                            }
-                            rgb
-                        };
-                        let ram_bytes: Vec<u8> = nes.system_ram().as_ref().to_vec();
-                        (rgb, preprocessed, ram_bytes, false)
-                    };
-                    let res: Result<(Vec<u8>, Vec<u8>, Vec<u8>, bool), Box<dyn std::any::Any + Send>> =
-                        if panic_isolation {
-                            catch_unwind(AssertUnwindSafe(work))
-                        } else {
-                            // Direct call. Any panic will unwind past
-                            // the rayon worker, which is unsound — but
-                            // the trainer takes responsibility for
-                            // stable ROMs/states when this flag is off.
-                            Ok(work())
-                        };
-                    match res {
-                        Ok(tuple) => tuple,
-                        Err(_) => {
-                            eprintln!(
-                                "[nes_core::Pool] worker {idx} panicked on step (action=0x{:02x}); marking dead",
-                                action,
-                            );
-                            w.dead = true;
-                            (
-                                vec![0u8; FRAME_PIXELS * 3],
-                                empty_or_zero_pp(),
-                                vec![0u8; RAM_SIZE],
-                                true,
-                            )
-                        }
-                    }
-                })
-                .collect()
-        });
+        // The heavy lifting (rayon dispatch + pool pacing) lives in
+        // `step_all_native` so cargo tests can drive it without a
+        // Python interpreter. GIL released for the whole native step —
+        // including the pacing sleep — so Qt / trainer-control threads
+        // aren't starved while a spectator pool paces at realtime.
+        let collected = py.allow_threads(|| self.step_all_native(&actions_vec));
         self.build_result_list(py, collected)
     }
 
@@ -1015,9 +867,18 @@ impl Pool {
         Ok(pyo3::types::PyByteArray::new_bound(py, slice))
     }
 
-    /// Toggle realtime pacing on a specific worker — used for the
-    /// live-audio worker (mixer Solo X mode) so audio production
-    /// matches playback rate. Other workers stay unpaced.
+    /// Toggle realtime pacing on a specific worker — used for
+    /// GUI-visible spectator workers so audio production matches
+    /// playback rate. Other workers stay unpaced. Pacing is enforced
+    /// at pool level (one sleep per `step_all` on the calling thread),
+    /// so any number of workers can be paced without parking rayon
+    /// threads.
+    ///
+    /// Back-compat side effect: also flips this worker's audio output
+    /// to match (`set_audio_output_enabled(on)`), preserving the
+    /// historical pace↔audio welding. To control audio independently,
+    /// call `set_worker_audio` — between the two, the LAST call wins
+    /// for the audio-enable state.
     fn set_worker_pace(&self, worker_id: usize, on: bool) {
         if worker_id >= self.num_workers {
             return;
@@ -1027,12 +888,64 @@ impl Pool {
         let w = unsafe { worker_mut(&self.workers[worker_id]) };
         if w.realtime_pace != on {
             w.realtime_pace = on;
-            w.pace_next_target = None;
-            // Flipping pace ↔ audio: the paced worker is the one
-            // whose audio the mixer plays, so only it should do the
-            // sample-gen + mix work. Re-align audio output to match.
+            // Flipping pace ↔ audio: the paced worker is one whose
+            // audio the mixer plays, so it should do the sample-gen +
+            // mix work. Re-align audio output to match. (Overridable
+            // afterwards via `set_worker_audio` — last call wins.)
             w.nes.set_audio_output_enabled(on);
+            // Re-anchor pool pacing on any membership change — mirrors
+            // the old per-worker `pace_next_target = None` on flip, so
+            // the next step paces from "now" instead of a stale target.
+            self.clear_pool_pace_target();
         }
+    }
+
+    /// Enable/disable APU sample output for a specific worker WITHOUT
+    /// touching its realtime pacing. Lets the mixer's Mode::All hear
+    /// many workers while only the pool-level pacer controls speed.
+    /// Channel timers + frame counter still tick when off, so IRQ/DMC
+    /// emulation semantics are bit-identical either way.
+    ///
+    /// Interaction with `set_worker_pace`: that method also flips the
+    /// same audio-enable flag as a back-compat side effect. Between
+    /// the two, the LAST call wins. Out-of-range ids are ignored.
+    fn set_worker_audio(&self, worker_id: usize, on: bool) {
+        if worker_id >= self.num_workers {
+            return;
+        }
+        // SAFETY: called sequentially from Python — never overlaps with
+        // an in-flight step_all/reset_all rayon dispatch.
+        let w = unsafe { worker_mut(&self.workers[worker_id]) };
+        w.nes.set_audio_output_enabled(on);
+    }
+
+    /// Set the pool pacing speed multiplier. 1.0 (default) = realtime:
+    /// each paced `step_all` targets `frame_skip / 60` seconds of wall
+    /// clock. 2.0 = double speed, 0.5 = half speed. Clamped to
+    /// [0.25, 16.0]; non-finite input resets to 1.0. Only scales the
+    /// pacing budget — emulation semantics are untouched, and unpaced
+    /// pools ignore it entirely.
+    fn set_pace_multiplier(&self, mult: f64) {
+        let m = if mult.is_finite() {
+            mult.clamp(0.25, 16.0)
+        } else {
+            1.0
+        };
+        self.pace_multiplier_bits
+            .store(m.to_bits(), std::sync::atomic::Ordering::Release);
+    }
+
+    /// Toggle final-frame-only rendering for paced spectator workers
+    /// (default ON). When on, a paced worker renders only the LAST
+    /// sub-frame of each step — the only frame shipped to Python —
+    /// using the same `skip_render` mechanism the unpaced training
+    /// path has always used (emulation-neutral: RAM / NMI / IRQ /
+    /// sprite-0 are bit-identical; see tests/skip_render_parity.rs).
+    /// Set false to restore the historical render-every-sub-frame
+    /// behaviour.
+    fn set_spectator_subframe_skip(&self, on: bool) {
+        self.spectator_subframe_skip
+            .store(on, std::sync::atomic::Ordering::Release);
     }
 
     /// Enable headless mode — `step_all` returns a dummy 1×1×3
@@ -1337,6 +1250,265 @@ impl Pool {
 }
 
 impl Pool {
+    /// Rayon-parallel step across all workers + pool-level pacing.
+    /// Python-free core of `step_all` — factored out so cargo tests
+    /// can exercise stepping/pacing without a live interpreter. Must
+    /// be called with the GIL released (`py.allow_threads`) from the
+    /// Python entry point; the pacing sleep happens here.
+    fn step_all_native(&self, actions_vec: &[u8]) -> Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> {
+        debug_assert_eq!(actions_vec.len(), self.num_workers);
+        let frame_skip = self.frame_skip;
+        let pp_dim = crate::preprocess::PP_SIZE;
+        let headless = self.headless.load(std::sync::atomic::Ordering::Acquire);
+        let f16_mode = self.preprocess_f16.load(std::sync::atomic::Ordering::Acquire);
+        let skip_preprocess = self.skip_preprocess.load(std::sync::atomic::Ordering::Acquire);
+        let spectator_subframe_skip = self
+            .spectator_subframe_skip
+            .load(std::sync::atomic::Ordering::Acquire);
+        // Load the panic-isolation flag once outside the rayon closure.
+        // Acquire pairs with the Release store in `set_panic_isolation`.
+        let panic_isolation = self
+            .panic_isolation
+            .load(std::sync::atomic::Ordering::Acquire);
+        // When f16 mode is on, `preprocessed` holds raw IEEE 754 half-
+        // precision bytes: 2 bytes × 84×84 = 14112 bytes. The Python
+        // side reinterprets via `np.frombuffer(..., dtype=np.float16)`.
+        let pp_byte_len = if f16_mode { pp_dim * pp_dim * 2 } else { pp_dim * pp_dim };
+        // Fused step + collect in one rayon pass. Previously this
+        // was two separate par_iter runs — a for_each that stepped,
+        // then a map in `collect_results` that unpacked frames.
+        // Merging halves the mutex acquisitions, reuses the hot
+        // worker-state cache while it's still in L1 after the step,
+        // and cuts one rayon join barrier off the critical path.
+        //
+        // SAFETY: rayon's `par_iter().enumerate()` gives each task
+        // a unique index; no two tasks touch the same worker cell.
+        // The `&mut Worker` reborrowed from the UnsafeCell is valid
+        // for the lifetime of this closure — no aliasing, so it
+        // crosses the `catch_unwind` boundary soundly.
+        let collected: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> = self
+            .workers
+            .par_iter()
+            .zip(actions_vec.par_iter())
+            .enumerate()
+            .map(|(idx, (cell, a))| {
+                let w = unsafe { worker_mut(cell) };
+                // In skip_preprocess mode nobody reads `preprocessed`
+                // (tile policies consume `ram_snapshot`), so ship a
+                // 0-length sentinel instead of a dead 7-14 KB zero
+                // buffer. `build_result_list` turns it into a (0, 0)
+                // array and the Python adapter substitutes a shared
+                // zeros((84, 84)) singleton. At 60 workers × 1024
+                // steps/iter the dead buffer was ~430 MB of zeroing
+                // + ~61K numpy allocations per iteration.
+                let empty_or_zero_pp = || {
+                    if skip_preprocess {
+                        Vec::new()
+                    } else {
+                        vec![0u8; pp_byte_len]
+                    }
+                };
+                if w.dead {
+                    return (
+                        vec![0u8; FRAME_PIXELS * 3],
+                        empty_or_zero_pp(),
+                        vec![0u8; RAM_SIZE],
+                        true,
+                    );
+                }
+                // Trainer-flagged episode-done short-circuit. Skip
+                // the entire step (no Nes::step, no preprocess) —
+                // the worker's prior frame and RAM stay untouched
+                // and we return them as-is. The trainer is going
+                // to ignore this slot anyway (see done_flags in
+                // _evaluate_batch); the saved work is the ~4×
+                // frame_skip NES cycles per remaining-step that
+                // would otherwise burn on this dead worker.
+                if self.worker_done[idx]
+                    .load(std::sync::atomic::Ordering::Acquire)
+                {
+                    let ram_bytes: Vec<u8> =
+                        w.nes.system_ram().as_ref().to_vec();
+                    return (
+                        Vec::new(),
+                        empty_or_zero_pp(),
+                        ram_bytes,
+                        true,
+                    );
+                }
+                let action = *a;
+                // The worker body is identical in both branches;
+                // only the `catch_unwind` wrap differs. Both
+                // branches produce the same `res` type so the
+                // downstream match arms stay unchanged.
+                let mut work = || {
+                    w.step(action, frame_skip, spectator_subframe_skip);
+                    // Tile-encoder games read `ram_snapshot`, not
+                    // `preprocessed`, so in skip mode the buffer is a
+                    // 0-length sentinel and every gray/resize write
+                    // below is gated on `!skip_preprocess` (writing
+                    // through the raw-pointer f16 path on an empty
+                    // Vec would be UB).
+                    let mut preprocessed = empty_or_zero_pp();
+                    let Worker { gray_scratch, video_buf, nes, .. } = &mut *w;
+                    let rgb: Vec<u8> = if headless {
+                        if !skip_preprocess {
+                            xrgb_to_gray(video_buf, gray_scratch);
+                            if f16_mode {
+                                let out_u16 = unsafe {
+                                    std::slice::from_raw_parts_mut(
+                                        preprocessed.as_mut_ptr() as *mut u16,
+                                        pp_dim * pp_dim,
+                                    )
+                                };
+                                crate::preprocess::resize_gray_to_f16_norm(
+                                    gray_scratch, out_u16,
+                                );
+                            } else {
+                                crate::preprocess::resize_area_into(
+                                    gray_scratch, 240, 256, &mut preprocessed,
+                                    crate::preprocess::PP_SIZE,
+                                );
+                            }
+                        } else {
+                            let _ = (&video_buf, &gray_scratch);
+                        }
+                        Vec::new()
+                    } else {
+                        // vec![0u8; N], not with_capacity + set_len: a
+                        // reference to uninitialized memory is UB even for
+                        // u8. xrgb_to_rgb fully overwrites it below, so the
+                        // zero-init is free in practice.
+                        let mut rgb: Vec<u8> = vec![0u8; FRAME_PIXELS * 3];
+                        xrgb_to_rgb(video_buf, &mut rgb);
+                        if !skip_preprocess {
+                            if f16_mode {
+                                let out_u16 = unsafe {
+                                    std::slice::from_raw_parts_mut(
+                                        preprocessed.as_mut_ptr() as *mut u16,
+                                        pp_dim * pp_dim,
+                                    )
+                                };
+                                crate::preprocess::preprocess_frame_into_f16(
+                                    &rgb, gray_scratch, out_u16,
+                                );
+                            } else {
+                                crate::preprocess::preprocess_frame_into(
+                                    &rgb, gray_scratch, &mut preprocessed,
+                                );
+                            }
+                        }
+                        rgb
+                    };
+                    let ram_bytes: Vec<u8> = nes.system_ram().as_ref().to_vec();
+                    (rgb, preprocessed, ram_bytes, false)
+                };
+                let res: Result<(Vec<u8>, Vec<u8>, Vec<u8>, bool), Box<dyn std::any::Any + Send>> =
+                    if panic_isolation {
+                        catch_unwind(AssertUnwindSafe(work))
+                    } else {
+                        // Direct call. Any panic will unwind past
+                        // the rayon worker, which is unsound — but
+                        // the trainer takes responsibility for
+                        // stable ROMs/states when this flag is off.
+                        Ok(work())
+                    };
+                match res {
+                    Ok(tuple) => tuple,
+                    Err(_) => {
+                        eprintln!(
+                            "[nes_core::Pool] worker {idx} panicked on step (action=0x{:02x}); marking dead",
+                            action,
+                        );
+                        w.dead = true;
+                        (
+                            vec![0u8; FRAME_PIXELS * 3],
+                            empty_or_zero_pp(),
+                            vec![0u8; RAM_SIZE],
+                            true,
+                        )
+                    }
+                }
+            })
+            .collect();
+        // Pool-level pacing: ONE sleep on this (calling) thread after
+        // the parallel block joins. Rayon threads never sleep, so N
+        // paced workers cost the same as one — no ~thread-count
+        // ceiling on realtime spectator workers.
+        self.pace_pool_step(frame_skip);
+        collected
+    }
+
+    /// True if any worker is flagged for realtime pacing AND still
+    /// live this episode. Dead workers and trainer-flagged done
+    /// workers short-circuit before `Worker::step` runs, so under the
+    /// old per-worker pacer they never slept — a paced spectator whose
+    /// episode ended stopped throttling immediately. Preserve exactly
+    /// that: a paced worker only counts while it is neither dead nor
+    /// `worker_done` (otherwise a finished GUI-solo worker would drag
+    /// the WHOLE pool down to realtime until `reset_all`, since the
+    /// trainer calls `set_worker_done` as episodes terminate).
+    ///
+    /// SAFETY: read sequentially on the `step_all` calling thread
+    /// after the rayon join (same pattern as `peek_max_x_per_worker`);
+    /// never overlaps a parallel dispatch.
+    fn any_worker_paced(&self) -> bool {
+        self.workers.iter().enumerate().any(|(idx, cell)| {
+            let w = unsafe { &*cell.0.get() };
+            w.realtime_pace
+                && !w.dead
+                && !self.worker_done[idx].load(std::sync::atomic::Ordering::Acquire)
+        })
+    }
+
+    /// Re-anchor pool pacing so the next paced step measures from
+    /// "now" instead of a stale target (mirrors the old per-worker
+    /// `pace_next_target = None` semantics on reset / pace flip).
+    fn clear_pool_pace_target(&self) {
+        let mut slot = self
+            .pool_pace_next_target
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        *slot = None;
+    }
+
+    /// Pool-level realtime pacing, run once per `step_all` on the
+    /// calling thread after the rayon join. Sleeps so paced steps
+    /// average `frame_skip / (60 × multiplier)` seconds of wall clock,
+    /// with the same catch-up clamp as the old per-worker pacer: if
+    /// emulation ran slower than the budget, the next target is
+    /// re-anchored to `now + step_dur` so lag debt never accumulates
+    /// past one step. No-op (and target cleared) when no live,
+    /// not-done worker is paced.
+    fn pace_pool_step(&self, frame_skip: u32) {
+        let mut slot = self
+            .pool_pace_next_target
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if !self.any_worker_paced() {
+            *slot = None;
+            return;
+        }
+        let mult = f64::from_bits(
+            self.pace_multiplier_bits
+                .load(std::sync::atomic::Ordering::Acquire),
+        );
+        let step_dur = std::time::Duration::from_nanos(
+            ((frame_skip as f64) * 1_000_000_000.0 / (60.0 * mult)) as u64,
+        );
+        let now = std::time::Instant::now();
+        let target = match *slot {
+            Some(t) if t > now => t,
+            _ => now,
+        };
+        if target > now {
+            std::thread::sleep(target - now);
+        }
+        let advanced = target + step_dur;
+        let max_lag = now + step_dur;
+        *slot = Some(if advanced > max_lag { advanced } else { max_lag });
+    }
+
     fn load_start_state(&self, path: &std::path::Path) -> PyResult<()> {
         let raw = std::fs::read(path).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -1609,7 +1781,7 @@ mod bugfix_tests {
     /// Build a synthetic 32 KB-PRG NROM (mapper 0) iNES ROM whose PRG
     /// is filled with a chosen instruction pattern. Reset vector at
     /// $FFFC → $8000 (start of the PRG window).
-    fn build_nrom(fill: &[u8]) -> Vec<u8> {
+    pub(super) fn build_nrom(fill: &[u8]) -> Vec<u8> {
         let mut rom = Vec::with_capacity(16 + 32 * 1024);
         rom.extend_from_slice(b"NES\x1a");
         rom.push(2); // PRG = 2 × 16 KB = 32 KB
@@ -1635,7 +1807,7 @@ mod bugfix_tests {
         rom
     }
 
-    fn worker_from_rom(rom: Vec<u8>) -> Worker {
+    pub(super) fn worker_from_rom(rom: Vec<u8>) -> Worker {
         let cart = Cartridge::load(&mut std::io::Cursor::new(rom))
             .expect("synthetic NROM should parse");
         Worker::new(cart)
@@ -1731,5 +1903,304 @@ mod bugfix_tests {
         // whole point of the guard.
         w.dead = true;
         assert!(w.dead);
+    }
+}
+
+/// Spectator-scale pool features: pool-level pacing (no per-worker
+/// sleeps inside rayon), pace multiplier, pace-independent audio
+/// enable, and paced-worker sub-frame render skip.
+///
+/// Timing tests use generous ±35% tolerances — macOS sleep overshoot
+/// and CI load vary — and the whole suite is expected to run with
+/// `--test-threads=1` (the repo's standard; parallel timing tests
+/// would fight each other for the rayon pool anyway).
+#[cfg(test)]
+mod spectator_tests {
+    use super::bugfix_tests::{build_nrom, worker_from_rom};
+    use super::*;
+
+    /// Write a synthetic NOP-filled NROM into target/test-scratch and
+    /// build a Pool from it. Unique file per tag so tests don't race
+    /// on the ROM file if ever run in parallel.
+    fn pool_from_nrom(num_workers: usize, frame_skip: u32, tag: &str) -> Pool {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-scratch");
+        std::fs::create_dir_all(&dir).expect("create test-scratch dir");
+        let path = dir.join(format!("spectator_{tag}.nes"));
+        std::fs::write(&path, build_nrom(&[0xEA])).expect("write synthetic NROM");
+        Pool::new(path, num_workers, frame_skip, None).expect("Pool::new")
+    }
+
+    fn run_steps(pool: &Pool, steps: usize) -> f64 {
+        let actions = vec![0u8; pool.num_workers];
+        let t0 = std::time::Instant::now();
+        for _ in 0..steps {
+            let _ = pool.step_all_native(&actions);
+        }
+        t0.elapsed().as_secs_f64()
+    }
+
+    fn assert_wall_within(wall: f64, expected: f64, what: &str) {
+        let lo = expected * 0.65;
+        let hi = expected * 1.35;
+        assert!(
+            wall >= lo && wall <= hi,
+            "{what}: wall {wall:.3}s outside [{lo:.3}, {hi:.3}] (expected ~{expected:.3}s)",
+        );
+    }
+
+    /// (a) Pool pacing budget at mult=4 with EVERY worker paced. With
+    /// the old per-worker in-rayon sleeps this would still pass at 4
+    /// workers (4 < thread count) — the load-bearing all-paced scaling
+    /// check is `sixteen_paced_workers_do_not_serialize` below. This
+    /// one pins the budget arithmetic: 30 steps × 4 frames / (60 × 4)
+    /// = 0.5 s.
+    #[test]
+    fn pool_pacing_budget_all_paced_mult4() {
+        let pool = pool_from_nrom(4, 4, "budget_mult4");
+        for i in 0..4 {
+            pool.set_worker_pace(i, true);
+        }
+        pool.set_pace_multiplier(4.0);
+        let wall = run_steps(&pool, 30);
+        assert_wall_within(wall, 30.0 * 4.0 / 240.0, "4 paced workers @ mult 4");
+    }
+
+    /// (a, no-serialization) 16 paced workers on a rayon pool that is
+    /// almost certainly smaller than 16 threads (P-core cap). Under
+    /// the old per-worker pacing, each paced worker slept ~66.7 ms
+    /// INSIDE its rayon task, so 16 paced workers on ≤12 threads took
+    /// ≥2 sleep waves ≈ 2× the budget per step (~1.3 s here). Pool-
+    /// level pacing sleeps once on the caller: wall stays at 1× the
+    /// budget (10 steps × 4/60 ≈ 0.667 s) no matter how many workers
+    /// pace. Runs at mult=1 so the budget comfortably covers debug-
+    /// build emulation time for 16 workers queued on fewer threads —
+    /// at tighter budgets this test would measure emulation speed,
+    /// not pacing.
+    #[test]
+    fn sixteen_paced_workers_do_not_serialize() {
+        let pool = pool_from_nrom(16, 4, "no_serialize");
+        for i in 0..16 {
+            pool.set_worker_pace(i, true);
+        }
+        pool.set_pace_multiplier(1.0);
+        let wall = run_steps(&pool, 10);
+        assert_wall_within(wall, 10.0 * 4.0 / 60.0, "16 paced workers @ mult 1");
+    }
+
+    /// (b) Default multiplier (1.0) + exactly one paced worker = the
+    /// pre-change GUI solo mode. Budget must match the historical
+    /// per-worker pacer: frame_skip / 60 s per step.
+    #[test]
+    fn single_paced_worker_matches_realtime_budget() {
+        let pool = pool_from_nrom(4, 4, "solo_realtime");
+        pool.set_worker_pace(0, true);
+        let wall = run_steps(&pool, 10);
+        assert_wall_within(wall, 10.0 * 4.0 / 60.0, "1 paced worker @ mult 1");
+    }
+
+    /// Unpaced pools must not pace at all — no worker flagged, so
+    /// `pace_pool_step` is a no-op and 30 steps of a 4-worker NROM
+    /// pool complete in a tiny fraction of the realtime budget.
+    #[test]
+    fn unpaced_pool_never_sleeps() {
+        let pool = pool_from_nrom(4, 4, "unpaced");
+        let wall = run_steps(&pool, 30);
+        let budget = 30.0 * 4.0 / 60.0; // 2 s realtime equivalent
+        assert!(
+            wall < budget * 0.25,
+            "unpaced pool took {wall:.3}s — pacing appears active (budget {budget:.3}s)",
+        );
+    }
+
+    /// A paced worker whose episode the trainer has flagged done
+    /// (`set_worker_done`) must stop throttling the pool IMMEDIATELY.
+    /// Old per-worker semantics: the done short-circuit in the step
+    /// closure returned before `Worker::step`, so `pace_to_realtime`
+    /// never ran and the pool sprinted from the moment the spectator's
+    /// episode ended until `reset_all`. The trainer relies on this
+    /// (trainer.py calls `set_worker_done` as episodes terminate) — a
+    /// pool-level pacer keyed on `realtime_pace` alone would drag ALL
+    /// workers down to realtime (~15 steps/s at fs=4) during that
+    /// window.
+    #[test]
+    fn done_paced_worker_stops_pacing() {
+        let pool = pool_from_nrom(4, 4, "done_paced");
+        pool.set_worker_pace(0, true);
+        // A couple of paced steps first so a pace target exists — the
+        // regression must clear/ignore it, not just never create one.
+        let paced_wall = run_steps(&pool, 3);
+        assert_wall_within(paced_wall, 3.0 * 4.0 / 60.0, "3 paced warm-up steps");
+        pool.set_worker_done(0, true);
+        let wall = run_steps(&pool, 10);
+        let budget = 10.0 * 4.0 / 60.0;
+        assert!(
+            wall < budget * 0.25,
+            "done paced worker still throttles the pool: {wall:.3}s \
+             (realtime budget {budget:.3}s)",
+        );
+        // reset_all clears worker_done, so pacing must resume on the
+        // next episode. Drive the native reset path (no interpreter):
+        // clear the flag exactly as reset_all does, then re-measure.
+        pool.set_worker_done(0, false);
+        let resumed = run_steps(&pool, 5);
+        assert_wall_within(resumed, 5.0 * 4.0 / 60.0, "pacing resumes after done clears");
+    }
+
+    /// Same as above for a worker that died (panicked): dead workers
+    /// short-circuit before `Worker::step`, so under the old semantics
+    /// they never paced. A paced-then-dead spectator must not throttle
+    /// the pool.
+    #[test]
+    fn dead_paced_worker_stops_pacing() {
+        let pool = pool_from_nrom(4, 4, "dead_paced");
+        pool.set_worker_pace(0, true);
+        {
+            // SAFETY: sequential test-thread access, no rayon dispatch
+            // in flight — same discipline as drain_audio.
+            let w0 = unsafe { worker_mut(&pool.workers[0]) };
+            w0.dead = true;
+        }
+        let wall = run_steps(&pool, 10);
+        let budget = 10.0 * 4.0 / 60.0;
+        assert!(
+            wall < budget * 0.25,
+            "dead paced worker still throttles the pool: {wall:.3}s \
+             (realtime budget {budget:.3}s)",
+        );
+    }
+
+    /// Guard against over-eager eligibility: a DIFFERENT worker being
+    /// done must not stop pacing while the paced spectator is alive.
+    #[test]
+    fn other_worker_done_keeps_pacing() {
+        let pool = pool_from_nrom(4, 4, "other_done");
+        pool.set_worker_pace(0, true);
+        pool.set_worker_done(1, true);
+        let wall = run_steps(&pool, 10);
+        assert_wall_within(wall, 10.0 * 4.0 / 60.0, "paced worker 0, done worker 1");
+    }
+
+    /// (c) `set_worker_audio(id, true)` on an UNPACED worker: samples
+    /// accumulate (the APU emits at ~44.1 kHz even in silence) and the
+    /// worker is NOT paced — steps stay far under the realtime budget.
+    #[test]
+    fn set_worker_audio_accumulates_without_pacing() {
+        let pool = pool_from_nrom(4, 4, "audio_unpaced");
+        pool.set_worker_audio(1, true);
+        let wall = run_steps(&pool, 10);
+
+        // SAFETY: sequential test-thread access, no rayon dispatch in
+        // flight — same discipline as drain_audio.
+        let w1 = unsafe { worker_mut(&pool.workers[1]) };
+        assert!(
+            !w1.audio.is_empty(),
+            "worker 1 audio ring empty after 10 steps with audio enabled",
+        );
+        assert!(
+            !w1.realtime_pace,
+            "set_worker_audio must not flip realtime_pace",
+        );
+        let w0 = unsafe { worker_mut(&pool.workers[0]) };
+        assert!(
+            w0.audio.is_empty(),
+            "worker 0 audio should stay disabled (default off)",
+        );
+        let budget = 10.0 * 4.0 / 60.0;
+        assert!(
+            wall < budget * 0.25,
+            "audio-enabled unpaced worker got paced: wall {wall:.3}s vs realtime budget {budget:.3}s",
+        );
+    }
+
+    /// `set_worker_pace`'s audio side effect is preserved, and
+    /// `set_worker_audio` afterwards wins (documented last-call-wins).
+    #[test]
+    fn pace_audio_weld_last_call_wins() {
+        let pool = pool_from_nrom(2, 4, "weld");
+        pool.set_worker_pace(0, true); // welds audio ON
+        pool.set_worker_audio(0, false); // last call: audio OFF, still paced
+        let actions = vec![0u8; 2];
+        for _ in 0..3 {
+            let _ = pool.step_all_native(&actions);
+        }
+        let w0 = unsafe { worker_mut(&pool.workers[0]) };
+        assert!(w0.realtime_pace, "worker 0 should still be paced");
+        assert!(
+            w0.audio.is_empty(),
+            "set_worker_audio(0, false) after set_worker_pace(0, true) must win",
+        );
+    }
+
+    #[test]
+    fn pace_multiplier_clamps_and_rejects_non_finite() {
+        let pool = pool_from_nrom(1, 4, "clamp");
+        let get = |p: &Pool| {
+            f64::from_bits(
+                p.pace_multiplier_bits
+                    .load(std::sync::atomic::Ordering::Acquire),
+            )
+        };
+        assert_eq!(get(&pool), 1.0, "default multiplier");
+        pool.set_pace_multiplier(100.0);
+        assert_eq!(get(&pool), 16.0, "upper clamp");
+        pool.set_pace_multiplier(0.01);
+        assert_eq!(get(&pool), 0.25, "lower clamp");
+        pool.set_pace_multiplier(f64::NAN);
+        assert_eq!(get(&pool), 1.0, "NaN resets to default");
+        pool.set_pace_multiplier(2.0);
+        assert_eq!(get(&pool), 2.0, "in-range value passes through");
+    }
+
+    /// (d) Spectator sub-frame skip is emulation-neutral: a paced
+    /// worker stepped with final-frame-only rendering must land on
+    /// bit-identical RAM, identical CPU cycle count, AND an identical
+    /// final framebuffer vs one rendering every sub-frame. Uses the
+    /// real SMB ROM when present (sprite-0-timed HUD split is the
+    /// historically risky path — see tests/skip_render_parity.rs),
+    /// falling back to the synthetic NROM used by the other pool
+    /// tests.
+    #[test]
+    fn spectator_subframe_skip_is_emulation_neutral() {
+        let rom_bytes = std::fs::read("../roms/Super Mario Bros. (World).nes")
+            .unwrap_or_else(|_| build_nrom(&[0xEA]));
+        let mut w_skip = worker_from_rom(rom_bytes.clone());
+        let mut w_full = worker_from_rom(rom_bytes);
+        w_skip.realtime_pace = true;
+        w_full.realtime_pace = true;
+
+        // Hold Start on steps 15..18 (frames 60..72) to leave the SMB
+        // title screen, then run right — enters the sprite-0 HUD-split
+        // gameplay path. Harmless input pattern on the NROM fallback.
+        for step_idx in 0..60usize {
+            let action = if (15..18).contains(&step_idx) {
+                BUTTON_START
+            } else {
+                BUTTON_RIGHT
+            };
+            w_skip.step(action, 4, true);
+            w_full.step(action, 4, false);
+        }
+
+        assert_eq!(
+            w_skip.nes.cycles, w_full.nes.cycles,
+            "CPU cycle counts diverged — sub-frame skip touched emulation timing",
+        );
+        assert_eq!(
+            w_skip.nes.system_ram().as_ref(),
+            w_full.nes.system_ram().as_ref(),
+            "RAM diverged — sub-frame skip is not emulation-neutral",
+        );
+        let px_diff = w_skip
+            .video_buf
+            .iter()
+            .zip(w_full.video_buf.iter())
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(
+            px_diff, 0,
+            "final framebuffer diverged on {px_diff} / {FRAME_PIXELS} pixels",
+        );
     }
 }
