@@ -1,28 +1,138 @@
+# The Legend of Zelda — spectator profile.
+#
+# Self-contained, bootable variant of zelda.yaml for the GUI grid + mixer
+# 'all' recipe: every worker paced to 2x realtime with pitched-up audio.
+# This is the base zelda.yaml profile with the reward_weights / ga_params /
+# reinforce tuning deltas merged over it, plus two spectator-only changes:
+# a distinct `name` (own checkpoint subtree — see below) and `frame_skip: 4`
+# (see the frame_skip comment). The old version of this file carried only
+# the tuning deltas and no action_space, so Trainer.__init__ raised
+# "Game profile must define a non-empty action_space" — it never booted.
+#
+# Distinct name keeps checkpoints separate: profile_utils.derive_checkpoint_dir
+# slugs "The Legend of Zelda (Spectator)" -> checkpoints/the_legend_of_zelda_spectator,
+# which never collides with zelda.yaml's checkpoints/the_legend_of_zelda.
+# Full tuning rationale (reward round history, ram addresses) lives in
+# zelda.yaml; only the spectator deltas are called out here.
+name: "The Legend of Zelda (Spectator)"
+rom_hashes:
+  - ""  # TODO: fill in with MD5 of a known-good dump
+
+# Live overworld start (past the title, CONTROLLABLE) — without this Zelda
+# cold-boots to the title demo and trains on ignored inputs (the start-state
+# demo bug). Shared with zelda.yaml.
+start_state_path: "roms/zelda_start_ctrl.state.bin"
+
+description: >
+  Spectator/streaming profile for The Legend of Zelda (NES, 1986). Identical
+  reward + observation setup to zelda.yaml with the tuned reward/GA/reinforce
+  deltas applied; adds 2x pacing, pitched-up audio, and a 30-fps tile cadence
+  for the live grid. Training semantics differ from zelda.yaml (frame_skip 4
+  vs 16) — use zelda.yaml for headless from-scratch training.
+
+ram_mapping:
+  # Link's position
+  link_x:          0x0070
+  link_y:          0x0084
+  # Overworld / dungeon location
+  world_map_x:     0x00EB
+  world_map_y:     0x00EC
+  dungeon_level:   0x10
+  # Inventory / stats
+  current_hearts:  0x066F  # current HP (4 bits per heart)
+  max_hearts:      0x066F  # upper 4 bits
+  rupees:          0x066D
+  bombs:           0x0658
+  keys:            0x066E
+  triforce_pieces: 0x0671  # bitfield, 1 bit/fragment; 0xFF = all 8 (opens L9)
+  # Win chain (disassembly + emulator-verified): the REAL victory signals.
+  ganon_defeated:  0x0672  # 0->1 when Ganon dies — THE win flag
+  song:            0x0609  # active track: 0x10=ending (rescued), 0x02=Ganon fight
+
 reward_weights:
+  # Base zelda.yaml round-6 weights with the tuned overlay merged over
+  # them. The two deltas from zelda.yaml are the anti-stagnation and
+  # wall-bump penalties, softened ~100x for the spectator run so paced
+  # experimentation isn't crushed; every other weight (win chain, item
+  # and heart signals) is inherited unchanged.
   exploration_bonus: 50.0
-  dungeon_enter:   3000.0
+  dungeon_enter:   3000.0     # THE next-tier gradient
   enemy_kill:        75.0
   rupee_collected:    5.0
-  heart_container:  300.0
+  heart_container:  300.0     # rare and valuable
   heart_recovery:    20.0
-  triforce_piece: 10000.0
+  triforce_piece: 10000.0     # per-fragment (8 total) — MILESTONE, not win
+  # Win chain — must strictly dominate the fragment economy so the agent
+  # is driven to actually BEAT Ganon, not just farm fragments.
+  all_fragments:  20000.0     # one-time: all 8 collected -> Level 9 openable
+  level9_enter:   30000.0     # one-time: entered Ganon's dungeon ($0010==9)
+  ganon_reached:  30000.0     # one-time: Ganon fight begins (song 0x02)
+  win_bonus:     100000.0     # TERMINAL jackpot: Ganon dead / Zelda rescued
   damage_taken:      -5.0
   death_penalty:    -30.0
   new_item:          80.0
   item_tier_upgrade: 40.0
-  first_sword:        0.0
+  first_sword:        0.0     # start-state already has sword
   key_collected:     50.0
   magic_key:        500.0
   map_compass:      200.0
   item_used:          3.0
   item_cycle:         0.5
-  motion:             0.0
-  stagnation:        -0.005
+  motion:             0.0     # disabled — was exploitable
+  stagnation:        -0.005   # spectator delta: was -0.5 in zelda.yaml
   stagnation_window: 15
-  wall_bump:         -0.05
+  wall_bump:         -0.05    # spectator delta: was -0.5 in zelda.yaml
+  # Activity-based episode cutoff (SethBling's MarI/O trick). At
+  # frame_skip=4 this is N × 4 / 60 seconds of game time.
   activity_timeout_steps: 900
 
+action_space:
+  # Start removed: opens an empty inventory menu early game (agent has
+  # only the sword), wastes 1/N of the action budget. Inherited from
+  # zelda.yaml so the two share a policy architecture.
+  - []                # no-op
+  - ["up"]
+  - ["down"]
+  - ["left"]
+  - ["right"]
+  - ["A"]             # sword
+  - ["B"]             # secondary item
+  - ["up", "A"]
+  - ["down", "A"]
+  - ["left", "A"]
+  - ["right", "A"]
+
+curriculum:
+  # Zelda reward fn emits concrete map_xx_xx IDs from RAM — "*" matches
+  # every recorded level, so stage_success_rate averages across wherever
+  # the agents went.
+  stage_1: ["*"]
+  stage_2: ["*"]
+  stage_3: ["*"]
+  stage_4: ["*"]
+
+reinforce:
+  # f16 observations straight from the Rust pool: skips the per-batch
+  # /255 MPS kernel and halves host->device bytes on the pixel path.
+  preprocess_f16: true
+  # Skip-per-pixel batched PPU via clean-scanline history (headless-only;
+  # a live frame sink keeps exact rendering).
+  batched_render: replace
+  # Production fast path: drop the per-worker-step catch_unwind wrap.
+  panic_isolation: false
+  enabled: true
+  # Spectator overlay: entropy_coef softened from zelda.yaml's 0.05.
+  entropy_coef: 0.02
+  ppo_clip_eps: 0.2
+  max_steps_per_traj: 1000
+  top_k: 5
+  # Spectator pool: pace every worker (mixer 'all' mode paces the whole
+  # grid) at 2x realtime; audio pitch-ups to match. Remove or set 1.0 for
+  # full-speed training with the GUI attached.
+  pace_multiplier: 2.0
+
 ga_params:
+  # zelda.yaml's restart cadence with the tuned mutation/selection overlay.
   mutation_std: 0.008
   mutation_rate: 0.08
   elite_fraction: 0.3
@@ -30,12 +140,32 @@ ga_params:
   stale_gens_before_restart: 15
   restart_fraction: 0.3
 
-reinforce:
-  # Spectator pool: pace every worker (mixer 'all' mode paces the
-  # whole grid) at 2x realtime; audio pitch-ups to match. Remove or
-  # set 1.0 for full-speed training with the GUI attached.
-  pace_multiplier: 2.0
-  top_k: 5
-  ppo_clip_eps: 0.2
-  entropy_coef: 0.02
-  max_steps_per_traj: 1000
+# Frames emulated between decisions. zelda.yaml uses 16 for game-time
+# throughput; this spectator profile pins 4 so paced tiles update at
+# ~30 fps at 2x pacing (frame_skip / (60 × pace_multiplier) = 4 / 120 s
+# per step -> 30 tile updates/s), instead of the 7.5 fps slideshow that
+# frame_skip 16 gives at 2x. This changes the action cadence: decisions
+# are 4x more frequent than zelda.yaml, so learning dynamics differ —
+# this profile is tuned for the live grid, not headless training.
+frame_skip: 4
+
+# Per-episode step budget. At frame_skip=4 and 60 fps, N agent-steps
+# corresponds to N × 4 / 60 seconds of in-game time. Loose cap; the
+# activity_timeout_steps above kills idle genomes long before this.
+max_episode_steps: 36000
+
+# DreamerV3 trainer settings (inherited from zelda.yaml). Only used when
+# training_mode=dreamer; the vanilla path ignores this block.
+dreamer:
+  replay_capacity: 1000000
+  warmup_steps: 20000
+  batch_size: 16
+  seq_len: 64
+  imag_horizon: 10
+  actor_lr: 8.0e-5
+  critic_lr: 8.0e-5
+  entropy_coef: 1.0e-3
+  latent_kind: categorical
+  stoch_dim: 32
+  stoch_classes: 32
+  checkpoint_every_gens: 50

@@ -68,6 +68,112 @@ def test_profile_yaml_loads_and_action_space_is_list_of_lists(profile_path: Path
             )
 
 
+def _gui_offered_profiles() -> list[Path]:
+    """Every top-level `configs/*.yaml` the GUI profile dropdown offers.
+
+    Mirrors the discovery rule in `main_window._populate_profiles`
+    exactly: a top-level YAML that parses to a mapping with a *truthy*
+    `action_space`. Override-only overlays (no action_space) are hidden
+    by the GUI so a user can't select one and crash the trainer with an
+    empty action_space — they're excluded here too.
+    """
+    offered: list[Path] = []
+    for path in _top_level_yaml_profiles():
+        try:
+            data = yaml.safe_load(path.read_text())
+        except Exception:
+            continue
+        if isinstance(data, dict) and data.get("action_space"):
+            offered.append(path)
+    return offered
+
+
+def _trainer_boot_problems(profile: dict) -> list[str]:
+    """Return the reasons `Trainer.__init__` would reject `profile`, empty
+    if it would construct.
+
+    The cheapest possible check of the load-bearing construction contract
+    (trainer.py ~840-870) without building a Trainer or touching a ROM:
+      * `num_actions = len(action_space)`; an absent/empty action_space
+        raises ``ValueError("Game profile must define a non-empty
+        action_space")``;
+      * `_build_bitmask_table()` folds each entry via
+        `action_space_to_bitmasks`, which raises on a bare-string entry
+        or an unknown button name.
+    """
+    from src.training.profile_utils import action_space_to_bitmasks
+
+    action_space = profile.get("action_space", [])
+    if not action_space:
+        return ["action_space missing or empty (Trainer requires a "
+                "non-empty action_space)"]
+    try:
+        action_space_to_bitmasks(action_space)
+    except (ValueError, TypeError) as exc:
+        return [f"action_space does not fold to NES bitmasks: {exc}"]
+    return []
+
+
+@pytest.mark.parametrize(
+    "profile_path", _gui_offered_profiles(), ids=lambda p: p.name
+)
+def test_gui_offered_profile_meets_trainer_boot_contract(profile_path: Path) -> None:
+    """Every profile the GUI dropdown offers must actually construct a
+    Trainer.
+
+    ISSUE-1 guard: `zelda_gui_tuned.yaml` shipped with only reward/GA
+    overlay blocks and no action_space, so selecting it and pressing
+    Start raised `ValueError: Game profile must define a non-empty
+    action_space` from `Trainer.__init__` — it had plausibly never
+    booted. If a profile is offered in the picker, it must clear the
+    minimum construction contract.
+    """
+    data = yaml.safe_load(profile_path.read_text())
+    problems = _trainer_boot_problems(data)
+    assert not problems, f"{profile_path.name}: {'; '.join(problems)}"
+
+
+def test_zelda_gui_tuned_is_offered_and_boots() -> None:
+    """The spectator profile must now be picker-visible AND bootable, with
+    its own checkpoint subtree (no collision with zelda.yaml).
+
+    Fails before the ISSUE-1 fix: the old file had no action_space, so
+    `_gui_offered_profiles()` never lists it (the GUI hides it).
+    """
+    from src.training.profile_utils import derive_checkpoint_dir
+
+    path = CONFIG_DIR / "zelda_gui_tuned.yaml"
+    assert path in _gui_offered_profiles(), (
+        "zelda_gui_tuned.yaml is not offered by the GUI dropdown — it "
+        "still lacks a truthy action_space."
+    )
+    data = yaml.safe_load(path.read_text())
+    assert not _trainer_boot_problems(data), _trainer_boot_problems(data)
+
+    base = yaml.safe_load((CONFIG_DIR / "zelda.yaml").read_text())
+    base_dir = derive_checkpoint_dir("./checkpoints", base.get("name"))
+    tuned_dir = derive_checkpoint_dir("./checkpoints", data.get("name"))
+    assert tuned_dir != base_dir, (
+        f"spectator profile checkpoint dir {tuned_dir} collides with "
+        f"zelda.yaml's {base_dir}; give it a distinct name."
+    )
+
+
+def test_override_only_profile_fails_boot_contract() -> None:
+    """Negative case: a profile shaped like the old broken
+    zelda_gui_tuned (reward/GA/reinforce overlay, no action_space) must
+    be rejected by the boot-contract check, proving the lint above has
+    teeth."""
+    broken = {
+        "reward_weights": {"exploration_bonus": 50.0},
+        "ga_params": {"mutation_std": 0.008},
+        "reinforce": {"pace_multiplier": 2.0},
+    }
+    assert _trainer_boot_problems(broken), (
+        "a profile with no action_space must fail the boot contract."
+    )
+
+
 def test_vanilla_ppo_profile_declares_existing_start_state() -> None:
     """Regression guard: the vanilla_ppo SMB profile MUST declare a
     start_state_path pointing to a real file.
