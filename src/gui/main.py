@@ -179,8 +179,14 @@ def _run_trainer(
         stop_event.set()
         raise
 
+    # The "Resume from latest checkpoint" checkbox drives BOTH resume
+    # paths: the GA `gen_*.pt` load below, and the vanilla_ppo
+    # `vanilla_ppo_iter_*.pt` auto-resume inside _run_vanilla_ppo. The
+    # latter used to fire unconditionally, so an unticked box silently
+    # continued a supposedly-fresh run; `fresh_start` now gates it.
+    want_resume = bool(config.get("resume"))
     resume_from = None
-    if config.get("resume"):
+    if want_resume:
         latest = find_latest_checkpoint(trainer.checkpoint_dir)
         if latest:
             resume_from = str(latest)
@@ -199,7 +205,10 @@ def _run_trainer(
     t.start()
 
     try:
-        trainer.run(num_generations=10_000, resume_from=resume_from)
+        trainer.run(
+            num_generations=10_000, resume_from=resume_from,
+            fresh_start=not want_resume,
+        )
     except Exception as exc:
         # Capture the exception so _check_trainer_alive can surface it
         # to the user as a real error instead of the misleading

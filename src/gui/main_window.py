@@ -814,4 +814,10 @@ class MainWindow(QMainWindow):
             f"Success rate:     {sr:.1%}" if isinstance(sr, (int, float)) else "Success rate:     -",
             f"Episodes:         {data.get('episodes', '-')}",
         ]
+        # Only present when the run auto-resumed off a checkpoint — makes
+        # a silent "fresh run that actually continued iter N" visible so
+        # it can't quietly invalidate a from-scratch experiment.
+        resumed = data.get('resumed_from_iter')
+        if isinstance(resumed, (int, float)) and resumed:
+            lines.append(f"Resumed from:     iter {int(resumed)}")
         self.metrics_label.setText("\n".join(lines))

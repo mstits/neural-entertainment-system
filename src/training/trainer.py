@@ -1181,11 +1181,22 @@ class Trainer:
         return action_space_to_bitmasks(self.action_space)
 
 
-    def run(self, num_generations: int = 1000, resume_from: str | None = None) -> None:
+    def run(
+        self,
+        num_generations: int = 1000,
+        resume_from: str | None = None,
+        fresh_start: bool = False,
+    ) -> None:
         """Main training loop. Blocks until complete or stopped.
 
         If resume_from points to an existing GA checkpoint, load it and
         continue from that generation; otherwise start fresh.
+
+        `fresh_start` is the explicit from-scratch signal for the
+        vanilla_ppo auto-resume (GUI "Resume" checkbox unticked / headless
+        `--no-resume`): when True the vanilla_ppo_iter_*.pt scan is
+        skipped. Default False preserves today's auto-resume behavior for
+        callers that pass no signal.
         """
         import time as _time
         _t0 = _time.monotonic()
@@ -1318,7 +1329,9 @@ class Trainer:
             # thread / TB writer. Without it the GUI leaked a full pool
             # + a live daemon thread on every Start→Stop→Start.
             try:
-                self._run_vanilla_ppo(num_iters=num_generations)
+                self._run_vanilla_ppo(
+                    num_iters=num_generations, fresh_start=fresh_start,
+                )
             finally:
                 self._teardown()
             return
@@ -3950,7 +3963,82 @@ class Trainer:
                 ll = float(loss.detach().item())
         return lp, lv, le, ll, lr
 
-    def _run_vanilla_ppo(self, num_iters: int) -> None:
+    def _maybe_resume_vanilla_ppo(
+        self, net, optimizer, *, fresh_start: bool = False,
+    ) -> int:
+        """Load the newest vanilla_ppo_iter_*.pt on top of the freshly
+        built net + optimizer and return the absolute iteration offset to
+        continue checkpoint numbering from (0 = nothing loaded).
+
+        The GA-path resume at trainer.run() loads `gen_*.pt` and is a
+        no-op for our `vanilla_ppo_iter_*.pt` format, so this is the only
+        resume a vanilla_ppo run gets. `fresh_start` is the user's
+        explicit from-scratch request — the GUI "Resume" checkbox
+        unticked, or headless `--no-resume` — and skips the scan so the
+        run starts from random weights even when a checkpoint is sitting
+        in the dir. Default False preserves the historical auto-resume so
+        headless scripts that rely on it are unaffected.
+
+        Sets `self._vppo_resumed_from_iter` to the resumed iter (or None
+        when nothing was loaded) so the caller can surface it to the GUI.
+        """
+        self._vppo_resumed_from_iter = None
+        if fresh_start:
+            # Only worth a line when there was actually a checkpoint to
+            # ignore — otherwise it is noise on a genuinely fresh dir.
+            existing = list(
+                self.checkpoint_dir.glob("vanilla_ppo_iter_*.pt")
+            )
+            if existing:
+                log.info(
+                    "[vanilla_ppo] fresh start requested — ignoring %d "
+                    "existing checkpoint(s) in %s",
+                    len(existing), self.checkpoint_dir,
+                )
+            return 0
+
+        iter_offset = 0
+        try:
+            latest_ckpts = sorted(
+                self.checkpoint_dir.glob("vanilla_ppo_iter_*.pt"),
+                key=lambda p: int(p.stem.rsplit("_", 1)[-1]),
+            )
+            if latest_ckpts:
+                latest = latest_ckpts[-1]
+                state = torch.load(str(latest), map_location=self.device)
+                if isinstance(state, dict) and "net_state_dict" in state:
+                    net.load_state_dict(state["net_state_dict"], strict=False)
+                    try:
+                        optimizer.load_state_dict(state["optimizer_state_dict"])
+                    except Exception as exc:
+                        log.warning(
+                            "[vanilla_ppo] optimizer state load failed "
+                            "(continuing with fresh Adam state): %s", exc,
+                        )
+                    iter_offset = int(state.get("iter", 0) or 0)
+                    if "rnd_state_dict" in state:
+                        # RND builds lazily on the first update (after this
+                        # resume block); stash and apply at build time.
+                        self._pending_rnd_state = state["rnd_state_dict"]
+                    if "anticollapse" in state:
+                        # Anti-collapse locals init after this block; stash
+                        # and restore them there.
+                        self._pending_anticollapse = state["anticollapse"]
+                    self._vppo_resumed_from_iter = iter_offset
+                    log.info(
+                        "[vanilla_ppo] RESUMED net + optimizer from %s "
+                        "(saved at iter %d; continuing checkpoint "
+                        "numbering from there)",
+                        latest, iter_offset,
+                    )
+        except Exception as exc:
+            log.warning(
+                "[vanilla_ppo] auto-resume scan failed (starting fresh): %s",
+                exc,
+            )
+        return iter_offset
+
+    def _run_vanilla_ppo(self, num_iters: int, fresh_start: bool = False) -> None:
         """Vanilla PPO with N parallel envs — the literature recipe.
 
         Single policy network, N envs collecting parallel rollouts of
@@ -4023,52 +4111,22 @@ class Trainer:
         # which is how a collapsed resume silently destroyed a good
         # run's checkpoints. Continue numbering from the resumed iter
         # so checkpoints BEFORE the resume point are never overwritten.
-        iter_offset = 0
+        # `fresh_start` (GUI "Resume" unticked / headless --no-resume)
+        # skips the scan entirely so a from-scratch experiment isn't
+        # silently continued off a stale checkpoint.
+        iter_offset = self._maybe_resume_vanilla_ppo(
+            net, optimizer, fresh_start=fresh_start,
+        )
 
-        # Vanilla-PPO-specific auto-resume. The GA-path resume at
-        # trainer.run() loads `gen_*.pt` (GA checkpoints) and is a no-
-        # op for our `vanilla_ppo_iter_*.pt` format — so without this
-        # block, a GUI restart of a vanilla_ppo run would silently
-        # start from random weights even with the "Resume" checkbox
-        # ticked. Scan for the latest vanilla_ppo_iter_*.pt and load
-        # net + optimizer state on top of the fresh-built ones.
-        try:
-            latest_ckpts = sorted(
-                self.checkpoint_dir.glob("vanilla_ppo_iter_*.pt"),
-                key=lambda p: int(p.stem.rsplit("_", 1)[-1]),
-            )
-            if latest_ckpts:
-                latest = latest_ckpts[-1]
-                state = torch.load(str(latest), map_location=self.device)
-                if isinstance(state, dict) and "net_state_dict" in state:
-                    net.load_state_dict(state["net_state_dict"], strict=False)
-                    try:
-                        optimizer.load_state_dict(state["optimizer_state_dict"])
-                    except Exception as exc:
-                        log.warning(
-                            "[vanilla_ppo] optimizer state load failed "
-                            "(continuing with fresh Adam state): %s", exc,
-                        )
-                    iter_offset = int(state.get("iter", 0) or 0)
-                    if "rnd_state_dict" in state:
-                        # RND builds lazily on the first update (after this
-                        # resume block); stash and apply at build time.
-                        self._pending_rnd_state = state["rnd_state_dict"]
-                    if "anticollapse" in state:
-                        # Anti-collapse locals init after this block; stash
-                        # and restore them there.
-                        self._pending_anticollapse = state["anticollapse"]
-                    log.info(
-                        "[vanilla_ppo] RESUMED net + optimizer from %s "
-                        "(saved at iter %d; continuing checkpoint "
-                        "numbering from there)",
-                        latest, iter_offset,
-                    )
-        except Exception as exc:
-            log.warning(
-                "[vanilla_ppo] auto-resume scan failed (starting fresh): %s",
-                exc,
-            )
+        # Surface an auto-resume for the whole run: the log line alone is
+        # easy to miss, and a silent resume of a supposedly-fresh run has
+        # invalidated real experiments. Carried on every metrics emission
+        # so the GUI dashboard keeps showing "Resumed from iter N";
+        # absent entirely on a genuinely fresh run.
+        resume_metrics = (
+            {"resumed_from_iter": self._vppo_resumed_from_iter}
+            if self._vppo_resumed_from_iter else {}
+        )
 
         # Reproducibility manifest: ROM + start state + seed + git commit
         # + pinned hyperparameters, written to the checkpoint dir. With
@@ -5345,6 +5403,7 @@ class Trainer:
                 vanilla_ppo_intrinsic_mean=rnd_intrinsic_mean,
                 vanilla_ppo_samples_per_sec=samples_per_sec,
                 vanilla_ppo_realtime_x=realtime_x,
+                **resume_metrics,
                 **progress_metrics,
                 **timing_metrics,
                 **reward_breakdown_emit,

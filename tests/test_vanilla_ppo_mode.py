@@ -135,6 +135,10 @@ def test_vanilla_ppo_dispatch_branch_in_run() -> None:
     src = Path("src/training/trainer.py").read_text()
     # The dispatch must call _run_vanilla_ppo and bail out via return.
     assert "if self.vanilla_ppo_mode:" in src
-    assert "self._run_vanilla_ppo(num_iters=num_generations)" in src
+    assert "self._run_vanilla_ppo(" in src
+    assert "num_iters=num_generations" in src
     # And the method itself must exist.
-    assert "def _run_vanilla_ppo(self, num_iters: int) -> None:" in src
+    assert (
+        "def _run_vanilla_ppo(self, num_iters: int, fresh_start: bool = False)"
+        " -> None:" in src
+    )

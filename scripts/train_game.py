@@ -620,11 +620,15 @@ def main() -> int:
     resume_from = None
     if args.resume:
         # For vanilla_ppo, auto-resume is built into _run_vanilla_ppo
-        # itself. For GA modes, we'd resolve a latest gen_*.pt here.
-        # Either way, passing None lets the trainer handle it.
+        # itself and is gated by `fresh_start` below. For GA modes, we'd
+        # resolve a latest gen_*.pt here; passing None lets the trainer
+        # handle it. `--no-resume` forces a fresh run through both paths.
         pass
 
-    trainer.run(num_generations=args.iters, resume_from=resume_from)
+    trainer.run(
+        num_generations=args.iters, resume_from=resume_from,
+        fresh_start=not args.resume,
+    )
     return 0
 
 
