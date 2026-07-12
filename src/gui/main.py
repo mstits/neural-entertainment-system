@@ -98,16 +98,30 @@ def _run_trainer(
         training_mode = str(profile.get("training_mode", "ga_ppo")).lower()
     if training_mode == "dreamer":
         from src.training.dreamer import DreamerTrainer
-        d_trainer = DreamerTrainer(
-            rom_path=config["rom_path"],
-            game_profile=profile,
-            num_instances=config["num_instances"],
-            frame_sink=frame_sink,
-            metrics_queue=metrics_queue,
-            env_spec=env_spec,
-            start_state_path=config.get("start_state_path"),
-            max_episode_steps=int(config.get("max_episode_steps", 100_000)),
-        )
+        try:
+            d_trainer = DreamerTrainer(
+                rom_path=config["rom_path"],
+                game_profile=profile,
+                num_instances=config["num_instances"],
+                frame_sink=frame_sink,
+                metrics_queue=metrics_queue,
+                env_spec=env_spec,
+                start_state_path=config.get("start_state_path"),
+                max_episode_steps=int(config.get("max_episode_steps", 100_000)),
+            )
+        except Exception as exc:
+            # Construction failures (bad profile, bad ROM) must reach the
+            # GUI via error_holder too — otherwise they escape as a raw
+            # thread exception and _check_trainer_alive reports a clean
+            # finish. Mirror the run()-crash guard below.
+            import logging as _logging
+            _logging.getLogger(__name__).exception(
+                "dreamer trainer construction failed with uncaught exception"
+            )
+            if error_holder is not None:
+                error_holder.append(exc)
+            stop_event.set()
+            raise
 
         def _control_listener_dreamer() -> None:
             while not stop_event.is_set():
@@ -135,21 +149,35 @@ def _run_trainer(
             stop_event.set()
         return
 
-    trainer = Trainer(
-        rom_path=config["rom_path"],
-        game_profile=profile,
-        num_instances=config["num_instances"],
-        population_size=config["population_size"],
-        frame_sink=frame_sink,
-        metrics_queue=metrics_queue,
-        reward_queue=reward_queue,
-        audio_queue=audio_queue,
-        narrator_queue=narrator_queue,
-        start_state_path=config.get("start_state_path"),
-        bc_demo_path=config.get("bc_demo_path"),
-        env_spec=env_spec,
-        max_episode_steps=int(config.get("max_episode_steps", 1000)),
-    )
+    try:
+        trainer = Trainer(
+            rom_path=config["rom_path"],
+            game_profile=profile,
+            num_instances=config["num_instances"],
+            population_size=config["population_size"],
+            frame_sink=frame_sink,
+            metrics_queue=metrics_queue,
+            reward_queue=reward_queue,
+            audio_queue=audio_queue,
+            narrator_queue=narrator_queue,
+            start_state_path=config.get("start_state_path"),
+            bc_demo_path=config.get("bc_demo_path"),
+            env_spec=env_spec,
+            max_episode_steps=int(config.get("max_episode_steps", 1000)),
+        )
+    except Exception as exc:
+        # Same guard as the run() call below: a construction-time failure
+        # (bad profile, bad ROM) has to land in error_holder so
+        # _check_trainer_alive surfaces it instead of the misleading
+        # "generation budget reached" message.
+        import logging as _logging
+        _logging.getLogger(__name__).exception(
+            "trainer construction failed with uncaught exception"
+        )
+        if error_holder is not None:
+            error_holder.append(exc)
+        stop_event.set()
+        raise
 
     resume_from = None
     if config.get("resume"):
@@ -537,7 +565,14 @@ class AppController:
         self.play_window.activateWindow()
 
     def _on_audio_mixer(self) -> None:
-        if self.audio_queue is None:
+        # Gate on a live trainer. If construction crashed (ISSUE-2) or the
+        # run ended, audio_queue is None or stale and nothing drains it —
+        # opening the mixer would be a silent no-op, so say why instead.
+        t = self.training_thread
+        if self.audio_queue is None or t is None or not t.is_alive():
+            self.main_window._show_status(
+                "Audio mixer needs a running trainer — press Start first."
+            )
             return
 
         def _push(upd: dict) -> None:
