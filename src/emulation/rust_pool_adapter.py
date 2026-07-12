@@ -8,12 +8,18 @@ address space and see results directly.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 import numpy as np
 
 import nes_core
+
+# APU sample production rate at 1.0× pacing (NTSC CPU clock / 41).
+# StepResult.audio_rate scales this by the active pace multiplier so
+# the mixer's resampler pitch-shifts instead of overflowing its ring.
+BASE_AUDIO_RATE = 43653
 
 # Shared observation served in skip_preprocess (tile) mode. The Rust
 # pool ships a 0-length sentinel instead of a fresh 7-14 KB zero buffer
@@ -26,9 +32,10 @@ _PP_SKIP_SINGLETON = np.zeros((84, 84), dtype=np.uint8)
 _PP_SKIP_SINGLETON.setflags(write=False)
 
 # Shared empty audio buffer for workers whose audio output is off (the
-# default: Pool workers boot with audio disabled; only set_worker_pace
-# enables it). Skipping their per-step drain_audio saves an FFI call +
-# bytearray copy + np.frombuffer per worker per step.
+# default: Pool workers boot with audio disabled; set_worker_pace and
+# set_worker_audio enable it). Skipping their per-step drain_audio
+# saves an FFI call + bytearray copy + np.frombuffer per worker per
+# step. Read-only: it is aliased into every muted worker's StepResult.
 _AUDIO_EMPTY = np.zeros(0, dtype=np.int16)
 _AUDIO_EMPTY.setflags(write=False)
 
@@ -67,31 +74,59 @@ class RustPool:
         self.env_spec = env_spec
         self._inner: Optional[nes_core.Pool] = None
         self._seed = seed
-        # Workers whose audio output is currently enabled (paced via
-        # set_worker_pace). Only these get a per-step drain_audio call
-        # in _materialize; everyone else's APU sample generation is off
-        # in Rust (Worker::new disables it; only set_worker_pace flips
-        # it), so their sample buffer stays empty and there is nothing
-        # to drain. Per-worker and dynamic: any subset of workers —
-        # including all of them — can be paced on simultaneously.
+        # Workers whose audio output is currently enabled. Only these
+        # get a per-step drain_audio call in _materialize; everyone
+        # else's APU sample generation is off in Rust (Worker::new
+        # disables it), so their sample buffer stays empty and there is
+        # nothing to drain. Fed by BOTH set_worker_pace (whose Rust
+        # side welds audio to pacing on a pace *transition*) and
+        # set_worker_audio (audio only). Between the two, the last call
+        # wins, mirroring the Rust semantics. Per-worker and dynamic:
+        # any subset of workers — including all of them — can be
+        # enabled simultaneously.
         self._audio_workers: set[int] = set()
+        # Mirrors each worker's realtime_pace flag so the adapter
+        # reproduces the Rust transition-only pace↔audio weld exactly
+        # (a redundant set_worker_pace call never clobbers a later
+        # set_worker_audio override).
+        self._paced: set[int] = set()
+        # Worker ids whose audio just turned off: their ring is drained
+        # ONCE more on the next step (shipping any tail samples instead
+        # of letting them sit and burst out on a later re-enable).
+        self._audio_flush: set[int] = set()
+        # Active pool pacing speed. Stamped onto StepResult.audio_rate
+        # (BASE_AUDIO_RATE × multiplier) so the mixer's resampler
+        # consumes exactly as fast as paced workers produce. Only ever
+        # set by set_pace_multiplier AFTER the inner call landed — an
+        # old .so that ignores the multiplier keeps rate 1.0×.
+        self._pace_multiplier: float = 1.0
+
+    def _clear_audio_tracking(self) -> None:
+        """Reset all audio/pacing bookkeeping to a fresh pool's state
+        (audio off everywhere, nobody paced, multiplier 1.0)."""
+        self._audio_workers.clear()
+        self._paced.clear()
+        self._audio_flush.clear()
+        self._pace_multiplier = 1.0
 
     def start(self) -> None:
         if self._inner is not None:
             return
+        # A fresh inner pool boots with audio off on every worker, no
+        # pacing, and multiplier 1.0 — drop any state cached from a
+        # previous inner (shutdown -> start respawn) so drain gating
+        # and audio_rate stamping match the new pool's reality.
+        self._clear_audio_tracking()
         self._inner = nes_core.Pool(
             rom_path=self.rom_path,
             num_workers=self.num_workers,
             frame_skip=self.frame_skip,
             start_state_path=self.start_state_path,
         )
-        # Fresh Pool workers boot with audio off; drop any stale
-        # bookkeeping from a previous start/shutdown cycle.
-        self._audio_workers.clear()
 
     def shutdown(self) -> None:
         self._inner = None
-        self._audio_workers.clear()
+        self._clear_audio_tracking()
 
     @property
     def num_dead(self) -> int:
@@ -169,11 +204,17 @@ class RustPool:
                     f"{pp.shape}/{pp.dtype}; expected (84,84)/{{float16,uint8}} "
                     f"or (84,168)/uint8 fallback"
                 )
-            # Only paced workers produce audio (Rust gates APU sample
-            # generation on set_worker_pace); everyone else's buffer is
-            # structurally empty, so skip the FFI drain + copy for them.
+            # Only audio-enabled workers produce samples (Rust gates
+            # APU sample output on set_worker_pace / set_worker_audio);
+            # everyone else's buffer is structurally empty, so skip the
+            # FFI drain + copy for them. Freshly-disabled workers get
+            # one final flush so the ring's tail ships instead of
+            # sitting until a later re-enable.
             if i in audio_workers:
                 audio = self.drain_audio(i)
+            elif i in self._audio_flush:
+                audio = self.drain_audio(i)
+                self._audio_flush.discard(i)
             else:
                 audio = _AUDIO_EMPTY
             results.append(StepResult(
@@ -183,7 +224,10 @@ class RustPool:
                 done=bool(done),
                 preprocessed=pp,
                 audio=audio,
-                audio_rate=43653 if audio.size > 0 else 0,
+                audio_rate=(
+                    int(BASE_AUDIO_RATE * self._pace_multiplier)
+                    if audio.size > 0 else 0
+                ),
             ))
         return results
 
@@ -217,23 +261,97 @@ class RustPool:
             return
         self._inner.load_worker_state(worker_id, bytes(data))
 
+    def _note_audio(self, worker_id: int, on: bool) -> None:
+        """Record a worker's audio-enable state for drain gating."""
+        if on:
+            self._audio_workers.add(worker_id)
+            self._audio_flush.discard(worker_id)
+        elif worker_id in self._audio_workers:
+            self._audio_workers.discard(worker_id)
+            # Ring may still hold samples produced before the flip —
+            # drain it once more on the next step, then stop.
+            self._audio_flush.add(worker_id)
+
     def set_worker_pace(self, worker_id: int, on: bool) -> None:
+        """Toggle realtime pacing for one worker. Pacing is enforced at
+        pool level (one sleep per step_all), so any number of workers
+        may be paced. Back-compat side effect preserved from the Rust
+        side: a pace *transition* also flips the worker's audio output
+        to match. set_worker_audio afterwards overrides (last call
+        wins)."""
         if self._inner is None:
             return
         wid = int(worker_id)
-        self._inner.set_worker_pace(wid, bool(on))
+        on = bool(on)
+        self._inner.set_worker_pace(wid, on)
         if not (0 <= wid < self.num_workers):
             # Rust silently ignores out-of-range ids; mirror that so
-            # the audio bookkeeping stays 1:1 with actual pool state.
+            # the audio/pace bookkeeping stays 1:1 with actual pool
+            # state.
             return
-        if on:
-            self._audio_workers.add(wid)
-        elif wid in self._audio_workers:
-            # Pace-off just disabled sample generation in Rust. Drain
-            # one final time to flush residue accumulated since the
-            # last per-step drain, then stop draining this worker.
-            self.drain_audio(wid)
-            self._audio_workers.discard(wid)
+        # Mirror the Rust weld exactly: audio flips only when the pace
+        # state actually changes (Rust early-outs on no-op calls, so a
+        # redundant set_worker_pace never clobbers a later
+        # set_worker_audio override).
+        if (wid in self._paced) != on:
+            if on:
+                self._paced.add(wid)
+            else:
+                self._paced.discard(wid)
+            self._note_audio(wid, on)
+
+    def set_worker_audio(self, worker_id: int, on: bool) -> None:
+        """Enable/disable APU sample output for one worker WITHOUT
+        touching its pacing — lets the mixer's `all` mode hear many
+        workers while pool-level pacing stays under separate control.
+        Emulation semantics (RAM, NMI/IRQ, sprite-0, DMC/frame-counter
+        IRQs) are bit-identical either way. Old .so => silent no-op
+        (drain gating is left untouched so we never drain a ring the
+        binary can't fill)."""
+        if self._inner is None:
+            return
+        setter = getattr(self._inner, "set_worker_audio", None)
+        if setter is None:
+            return
+        wid = int(worker_id)
+        on = bool(on)
+        setter(wid, on)
+        if not (0 <= wid < self.num_workers):
+            # Rust silently ignores out-of-range ids; mirror that.
+            return
+        self._note_audio(wid, on)
+
+    def set_pace_multiplier(self, mult: float) -> None:
+        """Set the pool pacing speed multiplier (1.0 = realtime). The
+        clamp mirrors Rust ([0.25, 16.0]; non-finite resets to 1.0) so
+        the audio_rate stamped on StepResult always matches the speed
+        the pool actually paces at. Old .so => silent no-op, including
+        the stored multiplier (the binary would still pace at 1.0×, so
+        scaling audio_rate would pitch-shift wrongly)."""
+        if self._inner is None:
+            return
+        setter = getattr(self._inner, "set_pace_multiplier", None)
+        if setter is None:
+            return
+        m = float(mult)
+        if not math.isfinite(m):
+            m = 1.0
+        else:
+            m = min(16.0, max(0.25, m))
+        setter(m)
+        self._pace_multiplier = m
+
+    def set_spectator_subframe_skip(self, on: bool) -> None:
+        """Toggle final-frame-only rendering for paced spectator
+        workers (Rust default ON). Emulation-neutral — only framebuffer
+        writes on non-final sub-frames are elided, and only the final
+        sub-frame ever ships to Python. Old .so => silent no-op."""
+        if self._inner is None:
+            return
+        setter = getattr(self._inner, "set_spectator_subframe_skip", None)
+        if setter is None:
+            return
+        setter(bool(on))
 
     def peek_max_x_per_worker(self) -> Optional[list[int]]:
         """Peak SMB world-x position seen during the most recent

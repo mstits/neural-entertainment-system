@@ -824,6 +824,20 @@ class Trainer:
         # the trainer down. Opt out per-profile after the ROMs in use
         # have been validated.
         self.panic_isolation = bool(rl_cfg.get("panic_isolation", True))
+        # Spectator pacing speed multiplier. Scales the pool-level
+        # realtime pacing budget (frame_skip / (60 × m) wall-clock per
+        # step): 1.0 = realtime, 2.0 = double speed. Default 1.0 = off
+        # (knob not pushed to the pool at all — today's behavior).
+        # Applied in _apply_pool_knobs only when a frame sink exists;
+        # headless training must never pace. Pacing itself engages only
+        # when some worker is paced (mixer solo mode today); the
+        # multiplier just sets how fast paced stepping runs.
+        self.pace_multiplier = float(rl_cfg.get("pace_multiplier", 1.0))
+        # The multiplier actually applied to the live pool (1.0 until
+        # _apply_pool_knobs pushes one). The adapter stamps it onto
+        # StepResult.audio_rate so the mixer resampler pitch-ups
+        # instead of overflowing its ring.
+        self._active_pace_multiplier: float = 1.0
         # ASM bulk-step budget (CPU cycles per ASM invocation) for the
         # batch-safe mappers (MMC1: Zelda/Metroid/Mega Man 2...; UxROM:
         # Contra/Castlevania...). Default 1 = one instruction per
@@ -1629,12 +1643,37 @@ class Trainer:
         self._apply_pace_for_mode(mode)
 
     def _apply_pace_for_mode(self, mode: str) -> None:
-        """Toggle realtime pacing on workers based on the audio
-        mixer mode. Solo X mode paces worker X (so its audio source
-        produces continuously at realtime); all other modes (mute,
-        all) unpace every worker so training runs at max throughput.
-        Backends that don't support pacing silently no-op."""
-        if self.pool is None:
+        """Map the audio mixer mode onto worker pacing/audio state.
+
+        - ``solo-X``: today's behavior — pace worker X (audio source
+          produces continuously at realtime) and unpace everyone else;
+          audio explicitly on for X only, so entering solo from ``all``
+          actually silences the rest.
+        - ``all``: enable audio production on EVERY worker, pacing
+          untouched — the Rust mixer already sums all rings with
+          1/sqrt(n) normalization in Mode::All. Pool-level pacing
+          (solo leftovers / pace-multiplier knob) stays whatever it is.
+        - ``mute`` (and unknown modes): today's behavior — unpace
+          everyone (training back to max throughput) and audio off
+          everywhere.
+
+        Backends without per-worker audio control fall back to the
+        historical pace-welded behavior (solo paces X / others off;
+        all+mute unpace everyone, which welds audio off)."""
+        pool = self.pool
+        if pool is None:
+            return
+        set_audio = getattr(pool, "set_worker_audio", None)
+        if mode == "all":
+            if set_audio is None:
+                # Legacy backend: no audio-without-pacing control.
+                # Unpace everyone (welds audio off) — 'all' stays
+                # silent, exactly today's behavior.
+                for worker_id in range(self.num_instances):
+                    pool.set_worker_pace(worker_id, False)
+                return
+            for worker_id in range(self.num_instances):
+                set_audio(worker_id, True)
             return
         soloed: Optional[int] = None
         if mode.startswith("solo-"):
@@ -1643,7 +1682,15 @@ class Trainer:
             except ValueError:
                 soloed = None
         for worker_id in range(self.num_instances):
-            self.pool.set_worker_pace(worker_id, soloed == worker_id)
+            pool.set_worker_pace(worker_id, soloed == worker_id)
+        # The pace weld only fires on a pace *transition*, so a worker
+        # left audio-on by a previous 'all' mode (unpaced then, unpaced
+        # now) would keep sounding through mute/solo. Pin audio
+        # explicitly: soloed on, everyone else off. Last call wins on
+        # the Rust side.
+        if set_audio is not None:
+            for worker_id in range(self.num_instances):
+                set_audio(worker_id, soloed == worker_id)
 
     def _start_audio_drainer(self) -> None:
         if self._audio_queue is None or self._audio_mixer is None:
@@ -1997,6 +2044,27 @@ class Trainer:
                     "default budget of 1. The installed nes_core .so is "
                     "likely stale; rebuild and reinstall it.",
                     self.asm_bulk_cycles,
+                )
+        # Spectator pacing speed (reinforce.pace_multiplier). Goes
+        # through the ADAPTER method — not `inner` — because the
+        # adapter records the applied multiplier and stamps it onto
+        # StepResult.audio_rate (BASE_AUDIO_RATE × m) so the mixer's
+        # resampler pitch-ups instead of overflowing its ring. Only
+        # applied when a frame sink exists: headless training must
+        # never pace. Old adapter/.so => silent no-op (pool keeps
+        # pacing at 1.0×, audio_rate stays 1.0× — consistent).
+        if self.pace_multiplier != 1.0 and self._frame_sink is not None:
+            setter = getattr(pool, "set_pace_multiplier", None)
+            if setter is not None:
+                setter(self.pace_multiplier)
+                self._active_pace_multiplier = getattr(
+                    pool, "_pace_multiplier", self.pace_multiplier
+                )
+                log.info(
+                    "Pool pace_multiplier=%.2f — paced stepping targets "
+                    "%.2fx realtime; audio_rate scales to match.",
+                    self._active_pace_multiplier,
+                    self._active_pace_multiplier,
                 )
 
     def _run_one_generation(self, gen: int) -> None:
@@ -2888,6 +2956,12 @@ class Trainer:
                     # mixer corresponds to the first evaluated genome.
                     self._audio_mixer.push_ram(i, r.ram_snapshot)
                     if r.audio.size > 0 and r.audio_rate > 0:
+                        # r.audio_rate is stamped by the adapter as
+                        # BASE_AUDIO_RATE × active pace multiplier, so
+                        # the mixer's resampler consumes exactly as
+                        # fast as paced workers produce (pitch-up at
+                        # >1x instead of ring overflow). Do NOT scale
+                        # it again here.
                         self._audio_mixer.push_audio(i, r.audio, r.audio_rate)
                 # Pre-captured snapshot from the pre-pass above (None in
                 # the headless / narrator-off case to skip the dict copy).
