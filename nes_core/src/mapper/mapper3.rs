@@ -6,6 +6,14 @@ use serde_derive::{Deserialize, Serialize};
 pub struct Mapper3 {
     cartridge: Cartridge,
     chr_bank: u8,
+    /// Flat 32 KB PRG ROM view for the AArch64 ASM CPU fast path.
+    /// CNROM has no PRG banking (writes to $8000+ select CHR banks
+    /// only), so this is built once at construction and is pointer-
+    /// AND content-stable for the mapper's lifetime — same shape as
+    /// Mapper0. 16 KB carts hold a duplicated copy (low bank at
+    /// 0x0000 and 0x4000) so the ASM's 0x7FFF mask resolves the
+    /// mirror exactly like `prg_peek_byte`'s `& (len-1)`.
+    prg_flat_32k: Vec<u8>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -16,9 +24,20 @@ pub struct State {
 
 impl Mapper3 {
     pub fn new(cartridge: Cartridge) -> Self {
+        let prg_flat_32k = match cartridge.prg_rom.len() {
+            n if n == 32 * 1024 => cartridge.prg_rom.clone(),
+            n if n == 16 * 1024 => {
+                let mut v = Vec::with_capacity(32 * 1024);
+                v.extend_from_slice(&cartridge.prg_rom);
+                v.extend_from_slice(&cartridge.prg_rom);
+                v
+            }
+            _ => Vec::new(), // unsupported size — ASM path disabled
+        };
         Mapper3 {
             cartridge,
             chr_bank: 0,
+            prg_flat_32k,
         }
     }
 
@@ -45,6 +64,35 @@ impl Mapper for Mapper3 {
             if len == 0 { return 0; }
             self.cartridge.prg_rom[(address - 0x8000) as usize & (len - 1)]
         }
+    }
+
+    fn prg_asm_ptr(&self) -> Option<*const u8> {
+        if self.prg_flat_32k.len() == 32 * 1024 {
+            Some(self.prg_flat_32k.as_ptr())
+        } else {
+            None
+        }
+    }
+
+    /// CNROM has no IRQ source and fully static PRG, so like NROM it
+    /// is safe under multi-instruction ASM batches: the mapper-
+    /// agnostic `cpu_cycles_until_nmi_fire` cap in `Nes::step` ends
+    /// each batch at most one instruction past the vblank rising
+    /// edge, and CHR-bank stores to $8000+ route through the ASM
+    /// MMIO write callback (cumulative PPU tick before the write) —
+    /// the same path AxROM bank writes already use at bulk=4.
+    ///
+    /// Verified at 8 by `tests/asm_vs_slow_gradius.rs` (20M-
+    /// instruction lockstep: per-instruction cycle + register
+    /// equality, periodic full-RAM compare) and
+    /// `tests/gradius_state_diag.rs` (full serialized-state compare
+    /// incl. PPU/APU internals). Wiring CNROM onto the ASM engine
+    /// surfaced two engine-wide MMIO-timing misalignments (indexed
+    /// stores + early-commit reads — fixed in cpu_asm.s). Raise
+    /// toward the NROM-equivalent 64 only after re-running those
+    /// suites and the Gradius Mesen tape at the higher value.
+    fn asm_bulk_cycles(&self) -> i64 {
+        8
     }
 
     fn prg_write_byte(&mut self, address: u16, value: u8) {

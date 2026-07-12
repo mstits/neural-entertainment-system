@@ -417,11 +417,20 @@ Llda_abs_done:
     NEXT    4
 Llda_abs_mmio:
     mov     w9, w0
-    mov     w2, #4
+    // Read at the same intra-instruction position as the Rust core:
+    // `cycle_zero_early_commit` runs the MMIO read during the CPU's
+    // dispatch tick, which `Nes::tick` executes AFTER that cycle's
+    // APU tick + 3 PPU dots. Pre-charge 1 cycle so Lmmio_read's
+    // cumulative tick includes the dispatch cycle — without it the
+    // ASM read lands 3 PPU dots early and a $2002 poll straddling a
+    // flag transition (vblank / sprite-0) diverges from the slow
+    // core (found via Gradius asm-vs-slow lockstep at the attract-
+    // mode sprite-0 wait).
+    sub     x25, x25, #1
     bl      Lmmio_read
     and     w20, w0, #0xFF
     SET_NZ  w20
-    NEXT    4
+    NEXT    3
 
 // ----- LDX abs (0xAE, 4 cycles) — RAM/PRG direct, MMIO via callback -----
 
@@ -583,11 +592,12 @@ Lldx_abs_done:
     NEXT    4
 Lldx_abs_mmio:
     mov     w9, w0
-    mov     w2, #4
+    // Dispatch-tick read alignment — see Llda_abs_mmio rationale.
+    sub     x25, x25, #1
     bl      Lmmio_read
     and     w21, w0, #0xFF
     SET_NZ  w21
-    NEXT    4
+    NEXT    3
 
 // ----- LDY abs (0xAC, 4 cycles) — RAM/PRG direct, MMIO via callback -----
 
@@ -626,11 +636,12 @@ Lldy_abs_done:
     NEXT    4
 Lldy_abs_mmio:
     mov     w9, w0
-    mov     w2, #4
+    // Dispatch-tick read alignment — see Llda_abs_mmio rationale.
+    sub     x25, x25, #1
     bl      Lmmio_read
     and     w22, w0, #0xFF
     SET_NZ  w22
-    NEXT    4
+    NEXT    3
 
 // ----- AND zp (0x25, 3 cycles) -----
 
@@ -1435,8 +1446,12 @@ Lbit_abs_done:
     NEXT    4
 Lbit_abs_mmio:
     mov     w9, w0
-    mov     w2, #4
+    // Dispatch-tick read alignment — see Llda_abs_mmio rationale.
+    // x25 is restored after the call because this path rejoins
+    // Lbit_abs_do, whose shared tail still charges NEXT 4.
+    sub     x25, x25, #1
     bl      Lmmio_read
+    add     x25, x25, #1
     mov     w1, w0
     b       Lbit_abs_do
 
@@ -1560,9 +1575,10 @@ _op_sta_ind_x:
 Lsta_ind_x_mmio:
     mov     w9, w0
     mov     w10, w20
-    mov     w3, #6
+    // Last-cycle commit — see Lsta_abs_x_mmio rationale.
+    sub     x25, x25, #6
     bl      Lmmio_write
-    NEXT    6
+    NEXT    0
 
 // ----- ORA (zp,X) (0x01, 6 cy) -----
 
@@ -1847,9 +1863,18 @@ _op_sta_abs_x:
 Lsta_abs_x_mmio:
     mov     w9, w0
     mov     w10, w20
-    mov     w3, #5
+    // Commit at the instruction's LAST cycle like the Rust core
+    // (sta_write_byte_abs is the final entry in 0x9D's cycles array;
+    // the non-indexed abs stores early-commit at cycle 0 in BOTH
+    // engines, but indexed stores commit late). Pre-charging the full
+    // 5 instruction cycles makes Lmmio_write's cumulative tick bring
+    // APU/PPU to the write cycle before the bus write lands — without
+    // this, APU register writes via STA $400x,X land 5 cycles early
+    // and pulse phase diverges from the slow core (found via Gradius
+    // asm-vs-slow lockstep; its sound engine uses indexed stores).
+    sub     x25, x25, #5
     bl      Lmmio_write
-    NEXT    5
+    NEXT    0
 
 // ----- STA abs,Y (0x99, 5 cycles) -----
 
@@ -1867,9 +1892,10 @@ _op_sta_abs_y:
 Lsta_abs_y_mmio:
     mov     w9, w0
     mov     w10, w20
-    mov     w3, #5
+    // Last-cycle commit — see Lsta_abs_x_mmio rationale.
+    sub     x25, x25, #5
     bl      Lmmio_write
-    NEXT    5
+    NEXT    0
 
 // ----- STA (zp),Y (0x91, 6 cycles) — indirect indexed Y -----
 
@@ -1890,9 +1916,10 @@ _op_sta_ind_y:
 Lsta_ind_y_mmio:
     mov     w9, w1
     mov     w10, w20
-    mov     w3, #6
+    // Last-cycle commit — see Lsta_abs_x_mmio rationale.
+    sub     x25, x25, #6
     bl      Lmmio_write
-    NEXT    6
+    NEXT    0
 
 // ----- ASL A (0x0A, 2 cycles) — A<<1, C=old bit 7, N/Z from result -----
 

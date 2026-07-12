@@ -1637,6 +1637,27 @@ impl Cpu {
         false
     }
 
+    /// STX/STY $abs analogues of `sta_abs_4014_late_write`. Nearly
+    /// every game arms OAM DMA with STA, but Konami CNROM titles use
+    /// STY (Gradius: `8C 14 40` at $8087). Without the deferral the
+    /// slow path commits the $4014 write at cycle 0 while ASM commits
+    /// after the full 4-cycle store — the DMA dummy_read parity flips
+    /// and asm-vs-slow lockstep diverges by 1 cycle on every DMA,
+    /// exactly the STA failure mode fixed 2026-04-26.
+    fn stx_abs_4014_late_write(self_: &mut Cpu, bus: &mut SystemBus) -> bool {
+        if self_.addr_abs == 0x4014 {
+            bus.write_byte(0x4014, self_.regs.x);
+        }
+        false
+    }
+
+    fn sty_abs_4014_late_write(self_: &mut Cpu, bus: &mut SystemBus) -> bool {
+        if self_.addr_abs == 0x4014 {
+            bus.write_byte(0x4014, self_.regs.y);
+        }
+        false
+    }
+
     /// LaiNES-parity early commit: for the MMIO-reading load opcodes
     /// and MMIO-writing store opcodes with absolute addressing,
     /// execute the entire instruction work (operand fetch + MMIO
@@ -1673,19 +1694,25 @@ impl Cpu {
                     bus.write_byte(self.addr_abs, self.regs.a);
                 }
             }
-            // STX $abs (4 cycles).
+            // STX $abs (4 cycles). $4014 deferred like STA — see
+            // `stx_abs_4014_late_write`.
             0x8E => {
                 let lo = self.next_pc_byte(bus) as u16;
                 let hi = (self.next_pc_byte(bus) as u16) << 8;
                 self.addr_abs = hi | lo;
-                bus.write_byte(self.addr_abs, self.regs.x);
+                if self.addr_abs != 0x4014 {
+                    bus.write_byte(self.addr_abs, self.regs.x);
+                }
             }
-            // STY $abs (4 cycles).
+            // STY $abs (4 cycles). $4014 deferred like STA — see
+            // `sty_abs_4014_late_write`.
             0x8C => {
                 let lo = self.next_pc_byte(bus) as u16;
                 let hi = (self.next_pc_byte(bus) as u16) << 8;
                 self.addr_abs = hi | lo;
-                bus.write_byte(self.addr_abs, self.regs.y);
+                if self.addr_abs != 0x4014 {
+                    bus.write_byte(self.addr_abs, self.regs.y);
+                }
             }
             // LDA $abs (4 cycles): fetch 2 operand bytes, read into A.
             0xAD => {
@@ -3195,8 +3222,11 @@ pub const OPCODES: [Option<Instruction>; 256] = {
         length: 3,
         mode: AddressMode::Absolute,
         official: true,
-        // Early-commit at cycle 0 via `cycle_zero_early_commit`.
-        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::noop_cycle],
+        // Early-commit at cycle 0 via `cycle_zero_early_commit` for all
+        // addresses except $4014 (OAM DMA) — deferred to the LAST cycle
+        // so DMA-stall alignment matches the asm_cpu path. See
+        // `sta_abs_4014_late_write` rationale.
+        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::stx_abs_4014_late_write],
     });
 
     opcodes[0x84] = Some(Instruction {
@@ -3224,8 +3254,11 @@ pub const OPCODES: [Option<Instruction>; 256] = {
         length: 3,
         mode: AddressMode::Absolute,
         official: true,
-        // Early-commit at cycle 0 via `cycle_zero_early_commit`.
-        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::noop_cycle],
+        // Early-commit at cycle 0 via `cycle_zero_early_commit` for all
+        // addresses except $4014 (OAM DMA) — deferred to the LAST cycle
+        // so DMA-stall alignment matches the asm_cpu path. See
+        // `sta_abs_4014_late_write` rationale.
+        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::sty_abs_4014_late_write],
     });
 
     opcodes[0x69] = Some(Instruction {

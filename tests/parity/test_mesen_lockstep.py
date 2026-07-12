@@ -90,7 +90,13 @@ CASES = [
     # non-banking CPU/PPU accuracy gap (boot seeds from uninit RAM $06F0),
     # not reachable by mapper work; ceilings carry headroom.
     ("Dragon Warrior III (USA).nes",                   380),  # SUROM 512KB
-    ("Dragon Warrior IV (USA).nes",                     12),  # SUROM 512KB
+    # DW4 re-baselined 12 -> 18 with the STY/STX $4014 late-write
+    # deferral (matches the 2026-04-26 STA $4014 fix; DW4 arms OAM DMA
+    # via STX/STY during boot). Measured max 13 (last frame 3) on the
+    # deferred build vs 5 before; +5 headroom. Same trade the STA
+    # deferral made: hardware-correct post-instruction DMA arming,
+    # re-baselined against Mesen.
+    ("Dragon Warrior IV (USA).nes",                     18),  # SUROM 512KB
     ("Tetris (USA).nes",                                12),
     ("Excitebike (Japan, USA).nes",                     18),
     ("Ice Climber.nes",                                 20),
