@@ -965,6 +965,12 @@ pub struct MarioReward {
     prev_display_level: u8,
     completed: bool,
     won: bool,
+    /// Durable per-episode "cleared at least one level" latch. Set on any
+    /// flagpole touch OR castle clear; reset only on episode start. Unlike
+    /// `completed` it is never re-armed on a level change, and unlike the old
+    /// predicate it is not gated on `!died` — drives `episode_success` so a real
+    /// clear followed by a later death still counts (see the note there).
+    cleared_any: bool,
     died: bool,
     first_step: bool,
 }
@@ -1218,6 +1224,7 @@ impl MarioReward {
             prev_display_level: 0,
             completed: false,
             won: false,
+            cleared_any: false,
             died: false,
             first_step: true,
         }
@@ -1236,6 +1243,7 @@ impl MarioReward {
         self.prev_display_level = 0;
         self.completed = false;
         self.won = false;
+        self.cleared_any = false;
         self.died = false;
         self.first_step = true;
     }
@@ -1316,6 +1324,7 @@ impl MarioReward {
                     acc.add("completion", self.completion_bonus);
                 }
                 self.won = true; // durable success latch (survives the reset below)
+                self.cleared_any = true; // durable "cleared a level" latch for curriculum/BC
             }
             // Always re-arm the flagpole-completion latch on ANY level change
             // so the next level's flag-touch fires its own bonus. Without this,
@@ -1471,6 +1480,7 @@ impl MarioReward {
         if !self.completed && float_state == 3 {
             acc.add("completion", self.completion_bonus);
             self.completed = true;
+            self.cleared_any = true; // durable clear latch — survives the per-level re-arm + a later death
             // DON'T fire done — let the SMB cutscene play through and
             // the next level load naturally. Episode continues across
             // levels; level-change detection above re-arms `completed`
@@ -1491,11 +1501,16 @@ impl MarioReward {
     }
 
     pub fn episode_success(&self) -> bool {
-        // Success = touched a flagpole (`completed`, re-armed per level) OR
-        // beat a castle (`won`, a durable latch). `won` survives the per-level
-        // re-arm of `completed`, so a mid-episode castle clear still counts
-        // even after the agent walks into the next world.
-        (self.completed || self.won) && !self.died
+        // Success for curriculum/BC = cleared AT LEAST ONE level this episode.
+        // `cleared_any` is a durable latch set on every flagpole touch AND every
+        // castle clear; unlike `completed` it is never re-armed on a level change
+        // and, unlike the old predicate, it is NOT gated on `!died`. The normal
+        // way a long SMB episode ends is a death in a LATER level, so the old
+        // `(completed || won) && !died` scored every real clear-then-die as a
+        // failure — `completed` was already re-armed to false by the level change
+        // and the trailing death negated the result, so the curriculum could
+        // never advance in tile mode even while agents cleared 1-1 into 1-2/1-3.
+        self.cleared_any
     }
 }
 
@@ -1659,7 +1674,14 @@ impl ContraReward {
         }
     }
     pub fn episode_success(&self) -> bool {
-        self.completed && !self.died
+        // Reaching the measured stage-end screen (`completed`) is a durable clear
+        // latch that is never re-armed. It does NOT fire `done`, so the run can
+        // continue past the clear and end on a later death — the old
+        // `completed && !died` therefore mis-scored a genuine clear-then-die as a
+        // failure (the same died-negation-after-durable-clear shape as the Mario
+        // tile-mode curriculum bug). A real stage clear stays a success
+        // regardless of any subsequent death.
+        self.completed
     }
 }
 
@@ -5916,6 +5938,38 @@ fn double_dragon_forward_is_high_water_not_farmable() {
     }
 
     #[test]
+    fn contra_clear_then_death_still_success() {
+        // Contra's completion (reaching the measured stage-end screen) is a
+        // durable latch that does NOT end the episode, so a genuine clear can be
+        // followed by a later death. That must still count as success — the same
+        // died-negation-after-durable-clear shape fixed for Mario in ISSUE-7.
+        let mut weights = HashMap::new();
+        weights.insert("forward_progress".to_string(), 0.0);
+        weights.insert("score_delta".to_string(), 0.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        weights.insert("death_penalty".to_string(), 0.0);
+        weights.insert("completion_bonus".to_string(), 100.0);
+        weights.insert("clear_screen".to_string(), 5.0);
+        let mut r = build_reward("contra", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0032] = 3; // lives
+        ram[0x0064] = 0; // seed at screen 0
+        let _ = r.compute(&ram, 0, false);
+        // Reach the clear screen -> completion latches, success true.
+        ram[0x0064] = 5;
+        let _ = r.compute(&ram, 0, false);
+        assert!(r.episode_success(), "reaching clear_screen must latch success");
+        // Die afterwards (lives drop): the episode ends but the clear stands.
+        ram[0x0032] = 2;
+        let o = r.compute(&ram, 0, false);
+        assert!(o.done, "a life lost must end the episode");
+        assert!(
+            r.episode_success(),
+            "a real stage clear followed by a later death is still a success"
+        );
+    }
+
+    #[test]
     fn castlevania_forward_rewards_only_new_progress() {
         // Same backtrack-no-penalty contract as the Mario test:
         // walking forward then back then forward should reward only
@@ -6009,8 +6063,14 @@ fn double_dragon_forward_is_high_water_not_farmable() {
     fn mario_within_world_level_change_still_re_arms() {
         // Guard the F52 change: a within-world level change (1-1 -> 1-2, world
         // byte unchanged) must STILL re-arm completed=false so each flagpole
-        // clear re-fires — the working 1-1/1-2/1-3 recipe must be untouched.
-        let weights: HashMap<String, f64> = HashMap::new();
+        // clear re-fires its own bonus — the working 1-1/1-2/1-3 recipe must be
+        // untouched. Re-arm is now verified via the reward output (the 1-2
+        // flagpole re-fires completion), NOT via episode_success, which is a
+        // durable per-episode latch (`cleared_any`) that must survive the change.
+        let mut weights: HashMap<String, f64> = HashMap::new();
+        weights.insert("completion_bonus".to_string(), 1000.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        weights.insert("forward_progress".to_string(), 0.0);
         let mut r = build_reward("mario", &weights).unwrap();
         let mut ram = zram();
         ram[0x075A] = 3;
@@ -6018,16 +6078,80 @@ fn double_dragon_forward_is_high_water_not_farmable() {
         ram[0x0760] = 0; // 1-1
         let _ = r.compute(&ram, 0, false);
         ram[0x001D] = 3; // flagpole slide -> completion latches
-        let _ = r.compute(&ram, 0, false);
+        let o1 = r.compute(&ram, 0, false);
+        assert!(o1.reward > 500.0, "1-1 flagpole must fire completion, got {}", o1.reward);
         assert!(r.episode_success(), "flagpole clear latches success");
-        // Advance to 1-2 (area 2), world byte unchanged -> must re-arm.
+        // Advance to 1-2 (area 2), world byte unchanged -> `completed` re-arms
+        // for reward purposes, but the durable success latch must persist.
         ram[0x001D] = 0;
         ram[0x0760] = 2;
         let _ = r.compute(&ram, 0, false);
         assert!(
-            !r.episode_success(),
-            "within-world level change must re-arm completed (not latch)"
+            r.episode_success(),
+            "durable clear latch must survive the level change (curriculum can advance)"
         );
+        // Touch the 1-2 flagpole -> completion must fire AGAIN, proving `completed`
+        // re-armed (the working per-level bonus recipe is untouched).
+        ram[0x001D] = 3;
+        let o2 = r.compute(&ram, 0, false);
+        assert!(
+            o2.reward > 500.0,
+            "re-armed `completed` must let the 1-2 flagpole re-fire completion, got {}",
+            o2.reward
+        );
+    }
+
+    #[test]
+    fn mario_clear_then_level_change_then_death_is_success() {
+        // ISSUE-7: an agent that clears 1-1 (flagpole), transitions to 1-2 (which
+        // re-arms `completed`), then dies in 1-2 — the normal way a long SMB
+        // episode ends — must STILL report episode_success. The old
+        // `(completed || won) && !died` predicate scored every such real clear as
+        // a failure, so the ga_ppo tile-mode curriculum (keyed on the rolling
+        // stage_success_rate) could never advance despite agents reaching 1-2/1-3.
+        let mut weights: HashMap<String, f64> = HashMap::new();
+        weights.insert("completion_bonus".to_string(), 1000.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        let mut r = build_reward("mario", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x075A] = 3; // lives
+        ram[0x075F] = 0; // world 1
+        ram[0x0760] = 0; // 1-1
+        let _ = r.compute(&ram, 0, false); // seed prev state
+        // Clear 1-1 via the flagpole slide.
+        ram[0x001D] = 3;
+        let _ = r.compute(&ram, 0, false);
+        assert!(r.episode_success(), "flagpole clear must latch success");
+        // Transition to 1-2 (area 2): re-arms `completed` to false.
+        ram[0x001D] = 0;
+        ram[0x0760] = 2;
+        let _ = r.compute(&ram, 0, false);
+        // Die in 1-2: lives drop -> death latches and the episode ends.
+        ram[0x075A] = 2;
+        let o = r.compute(&ram, 0, false);
+        assert!(o.done, "a life lost must end the episode");
+        assert!(
+            r.episode_success(),
+            "a real 1-1 clear followed by a later death is a curriculum success"
+        );
+    }
+
+    #[test]
+    fn mario_death_without_clear_is_not_success() {
+        // Negative case: an episode that never touches a flagpole or beats a
+        // castle and ends in death must NOT report success — `cleared_any` stays
+        // false, so the durable latch cannot false-positive from a plain death.
+        let weights: HashMap<String, f64> = HashMap::new();
+        let mut r = build_reward("mario", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x075A] = 3; // lives
+        let _ = r.compute(&ram, 0, false); // seed prev state
+        assert!(!r.episode_success(), "no clear yet -> not a success");
+        // Die with no prior clear.
+        ram[0x075A] = 2;
+        let o = r.compute(&ram, 0, false);
+        assert!(o.done, "a life lost must end the episode");
+        assert!(!r.episode_success(), "death without any clear is not a success");
     }
 
     #[test]
