@@ -1,0 +1,200 @@
+# Distinct display name -> distinct checkpoint slug
+# (super_mario_bros_tiles_vanilla), so a from-scratch run of this profile
+# does NOT collide with the ga_ppo baseline's checkpoints/super_mario_bros/
+# subtree (same isolation pattern as the ISSUE-1 spectator profile). All
+# game dispatch is substring-gated on "mario" (reward fn, _smb_curriculum
+# gate, depth tracker), so the SMB machinery stays fully active under this
+# name — only the checkpoint directory changes.
+name: "Super Mario Bros. (tiles, vanilla)"
+rom_hashes:
+  # MD5 hashes of known-good Super Mario Bros. ROM dumps
+  - "811b027eaf99c2def7b933c5208636de"
+
+# mario_tiles.yaml routed onto the PROVEN advancing path (vanilla_ppo).
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# mario_tiles.yaml pins `trainer_mode: ga_ppo`. In that mode the
+# curriculum's advance gate can never fire: the trainer records EVERY
+# genome's EVERY episode into the CurriculumManager (trainer.py, the
+# `for success, level_id in zip(successes, level_ids)` loop), and
+# `stage_success_rate()` averages that whole population. The advance
+# threshold is 0.80 (`_build_curriculum_stages`), so the stage only
+# advances when 80% of the WHOLE 60-genome population clears 1-1 — a
+# structurally unreachable bar even with a perfect elite, because the
+# mutated children in the population drag the mean far below 0.80.
+# Raising the elite's clear rate does NOT help: the gate averages over
+# the population, not the best policy. (Flagged as a GA-mode design
+# question, not changed here.)
+#
+# The vanilla_ppo path has a DIFFERENT, working advance gate: ONE
+# policy across N envs, and it promotes the SMB save-state curriculum
+# when the rolling-mean fraction of envs clearing past the current
+# anchor reaches 50% over 5 iters (SMB_ADVANCE_PCT / SMB_ADVANCE_WINDOW
+# in `_run_vanilla_ppo`). That gate is proven — it is the path
+# `test_vanilla_ppo_actually_learns_on_real_smb` exercises and the one
+# `make train GAME=mario` defaults to (configs/mario_vanilla_ppo.yaml).
+#
+# This profile is a MINIMAL override of mario_tiles.yaml: same tile
+# encoder, same 6-action space, same dense-shaping reward_weights, same
+# ram_mapping / frame_skip / episode budget / curriculum stages. The
+# ONLY changes are the ones required to run vanilla_ppo correctly (see
+# each inline "# vanilla:" note). It is the clean A/B partner for
+# mario_tiles.yaml — flip exactly the trainer mode, hold the reward
+# fixed, and see whether the tile policy consolidates a deployable 1-1
+# clear and advances the curriculum.
+#
+# RELATED CONFIGS (pick your arm):
+#   * configs/mario_vanilla_ppo.yaml    — tile + vanilla + CANONICAL
+#     reward (yumouwei r=v+c+d, no dense shaping). Literature baseline.
+#   * configs/mario_vanilla_shaped.yaml — tile + vanilla + dense shaping
+#     but re-canonicalized (forward 1.0, death -15, 7 actions incl left).
+#   * THIS FILE                          — tile + vanilla, holding
+#     mario_tiles.yaml's EXACT reward + 6-action space, so the only
+#     variable vs. the ga_ppo run is the trainer mode.
+
+# CRITICAL: without a start state the emulator cold-boots to the TITLE
+# SCREEN, where the attract-mode demo auto-plays 1-1 and IGNORES all
+# controller input — the policy would "train" on a scripted demo and
+# learn nothing. This state drops the agent into live 1-1 gameplay so
+# inputs matter. mario_tiles.yaml (ga_ppo) gets its start state from
+# the launcher/curriculum machinery; the vanilla path reads it here.
+start_state_path: "roms/Super Mario Bros. (World)_start.state.bin"
+
+frame_skip: 4
+
+description: >
+  Tile-based Super Mario Bros. on the vanilla_ppo trainer — the proven
+  advancing path. Same 13x13 RAM tile grid + small MLP + dense shaping
+  as mario_tiles.yaml, but a single policy over N parallel envs with the
+  working save-state curriculum advance gate instead of the GA
+  population whose 0.80 whole-population advance threshold can never
+  fire. See the header of this file and src/emulation/tile_observations/smb.py.
+
+ram_mapping:
+  x_position_page: 0x006D
+  x_position_low:  0x0086
+  y_position:      0x00CE
+  lives:           0x075A
+  score_start:     0x07DE
+  score_end:       0x07E3
+  world:           0x075F
+  level:           0x075C
+  player_state:    0x000E
+  float_state:     0x001D
+
+# Reward shaping held IDENTICAL to mario_tiles.yaml so the A/B isolates
+# the trainer mode. See mario_tiles.yaml for the full rationale on each
+# weight; the short version: forward*3.0 + dense checkpoint ladder +
+# air/jump/survival carrots pushed the GA elite to the flagpole region
+# repeatedly (depth 3161) — it just never CONSOLIDATED a reliable clear
+# because the GA mixes 60 policies' data into one PPO gradient. Vanilla
+# PPO trains one policy on one homogeneous batch, which is the missing
+# ingredient the shaping was waiting on.
+reward_weights:
+  forward_progress: 3.0
+  air_bonus:        1.5
+  survival_bonus:        300.0
+  survival_block_steps:  150
+  jump_clear_bonus:      50.0
+  jump_clear_min_dx:     16
+  pit_fall_extra:    0.0
+  score_delta:      0.005
+  death_penalty:    0.0
+  completion_bonus: 2000.0
+  time_penalty:     0.0
+  checkpoint_scale: 1.0
+
+action_space:
+  # Identical 6-action set to mario_tiles.yaml (no left — SMB 1-1 has no
+  # left-required moments). Kept the same so the A/B varies only the
+  # trainer mode. (mario_vanilla_*.yaml use a 7-action set with left.)
+  - []                      # no-op
+  - ["right"]
+  - ["right", "A"]          # jump right
+  - ["right", "B"]          # run right
+  - ["right", "A", "B"]     # run-jump right
+  - ["A"]                   # stationary jump
+
+reinforce:
+  enabled: true
+  encoder: smb_tiles
+  # vanilla: THE fix. vanilla_ppo branches off run() before the GA loop
+  # — one policy, N envs, batched GAE, K-epoch PPO, and the working SMB
+  # save-state curriculum advance gate. mario_tiles.yaml pins ga_ppo.
+  trainer_mode: vanilla_ppo
+
+  # 4-frame stack on the 175-dim tile feature vector (yumouwei recipe).
+  # mario_tiles.yaml relied on the code default (4 for tile mode); pinned
+  # explicitly here so the vanilla rollout stacker is unambiguous.
+  tile_frame_stack: 4
+
+  # vanilla: per-env rollout length + PPO minibatch. ga_ppo ignores
+  # these (it uses whole-episode trajectories); vanilla_ppo requires
+  # them. 1024 x N envs per update, 256-sample minibatches. Matches the
+  # proven configs/mario_vanilla_ppo.yaml rollout geometry (1024 lets
+  # the 1-1 -> 1-2 transition fit inside a single rollout).
+  rollout_steps: 1024
+  ppo_minibatch_size: 256
+  # K-epoch SGD over each rollout (canonical PPO value, same as mario_tiles).
+  steps: 10
+  lr: 3.0e-4
+  # Kept from mario_tiles: symlog + Huber critic + value_coef 0.25 keep
+  # the value loss bounded under the +2000 completion spike.
+  symlog_rewards: true
+  value_loss: huber
+  value_coef: 0.25
+
+  # vanilla: 0.01, not mario_tiles' 0.001. 0.001 is a GA-specific value
+  # (the GA gets its exploration from mutation + per-genome sticky RNG,
+  # so it keeps the PPO entropy bonus tiny). Vanilla PPO is a SINGLE
+  # policy with no mutation/sticky, so the entropy bonus is its only
+  # exploration knob; 0.01 is the yumouwei/uvipen canonical. (Follow-up
+  # option, not wired here: decay 0.01 -> 0.002 late in training to
+  # consolidate a stochastic clear into a deployable greedy one — the
+  # June recipe that consolidated 1-2 on the vanilla path.)
+  entropy_coef: 0.01
+
+  # RND intrinsic exploration kept at mario_tiles' 0.1. The dense
+  # checkpoint ladder already bridges 1-1's dead zones, so RND is a
+  # secondary nudge here (configs/mario_vanilla_ppo.yaml runs 0.5
+  # because it has NO dense shaping to lean on).
+  rnd_intrinsic_coef: 0.1
+  rnd_loss_coef: 1.0
+
+  # vanilla: sticky actions OFF. Sticky overwrites the policy's sampled
+  # action with the previous one, which invalidates PPO's importance
+  # ratio (the recorded log-prob no longer matches the executed action).
+  # It was a GA-exploration hack in mario_tiles; it is a correctness bug
+  # under vanilla PPO. (Same reasoning as mario_vanilla_ppo.yaml.)
+  sticky_action_prob: 0.0
+
+  # vanilla: GA/BC population machinery is dead code in this mode. Set
+  # explicitly off so a reader doesn't think they're mistakes.
+  bc_replay_enabled: false
+  warmup_gens_ga_only: 0
+
+  # Tile MLP is tiny; CPU beats MPS (kernel-launch overhead dominates).
+  device: cpu
+  panic_isolation: false
+  # async_pipeline stays off for SMB — the 1-step obs lag breaks
+  # frame-perfect jumps (see mario_tiles.yaml).
+  async_pipeline: false
+
+# Per-episode step budget — identical to mario_tiles.yaml (full 1-1
+# clock at frame_skip 4).
+max_episode_steps: 2400
+
+# Curriculum stages held identical to mario_tiles.yaml. NOTE: on the
+# vanilla_ppo path these abstract stage labels are informational — the
+# actual advancement is driven by the SMB area-byte save-state
+# curriculum inside _run_vanilla_ppo (advance at rolling-mean 50% clear
+# past the anchor over 5 iters), not by the CurriculumManager's
+# stage_success_rate. Kept here for parity and for any future generic
+# curriculum consumer.
+curriculum:
+  stage_1: ["1-1"]
+  stage_2: ["1-1", "1-2"]
+  stage_3: ["1-1", "1-2", "1-3", "1-4"]
+  stage_4: ["1-1", "1-2", "1-3", "1-4", "2-1", "2-2", "2-3", "2-4"]
+  stage_5: "full_game"
