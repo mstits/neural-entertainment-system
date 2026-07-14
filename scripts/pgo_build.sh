@@ -59,11 +59,38 @@ if [[ "${MODE}" == "full" ]]; then
     # to the actually-fastest code.
     case "${WORKLOAD}" in
         bench)
-            # Two-ROM profile run: Zelda (MMC1) + Contra (mapper differs,
-            # exercises both hot-path dispatch branches). 16-worker +
-            # 12-worker both profiled so the PGO covers the 16w-contended
-            # code path (where the 16P-core rayon scheduling stresses
+            # Three-ROM profile run, one per deployed mapper family whose
+            # dispatch is data-dependent hot Rust:
+            #   * Zelda     (MMC1 / Mapper1) — the headline 16w training
+            #                 workload; kept dominant so its shared PPU/CPU
+            #                 block layout stays tuned to it.
+            #   * Contra    (UNROM / Mapper2) — second dispatch branch.
+            #   * Punch-Out (MMC2 / Mapper9) — its CHR bank-latch
+            #                 (fetch_sprite_tile -> Mapper9::chr_read_byte)
+            #                 is hot but data-dependent; when the profile
+            #                 never sees it, PGO lays that function out COLD
+            #                 (no inline, cold-section, pessimal branch
+            #                 order), leaving Punch-Out training ~5-6%
+            #                 slower. One short pass flips it hot.
+            # 16-worker + 12-worker both profiled so the PGO covers the
+            # 16w-contended path (where 16P-core rayon scheduling stresses
             # cache/lock prediction) AND the 12w-deployment path.
+            #
+            # The Punch-Out pass is deliberately SHORT (12w x 100 steps,
+            # ~12% of the profile's frame mass) rather than an equal share:
+            # the MMC2 win is a hot/cold-layout threshold effect (chr_read
+            # only needs nonzero counts to leave the cold section), so a
+            # short pass captures it, while a full-weight pass would pull
+            # the shared PPU/CPU block layout toward Punch-Out's
+            # sprite-heavy pattern and dilute Zelda. Measured (pure-Rust
+            # emulator-codegen A/B, cargo-clean between profiles, min-of/
+            # median of 7-10 interleaved P-core-pinned rounds vs the
+            # two-ROM profile):
+            #   Punch-Out (m9)  single-env +6.3% / 16w +5.7%
+            #   Zelda     (m1)  16w denominator  -0.5% median (noise)
+            #   Contra/SMB/Gradius              flat-to-positive
+            # A naive all-games profile instead regresses the Zelda 16w
+            # denominator -1.4%, so do NOT broaden past this short pass.
             "${REPO}/.venv/bin/python" \
                 "${REPO}/scripts/bench_hot_path.py" \
                 --workers 16 --steps 400 --frame-skip 16
@@ -72,6 +99,11 @@ if [[ "${MODE}" == "full" ]]; then
                 --workers 12 --steps 200 --frame-skip 16 \
                 --rom "${REPO}/roms/CONTRA.NES" \
                 --profile "${REPO}/configs/contra.yaml"
+            "${REPO}/.venv/bin/python" \
+                "${REPO}/scripts/bench_hot_path.py" \
+                --workers 12 --steps 100 --frame-skip 16 \
+                --rom "${REPO}/roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes" \
+                --profile "${REPO}/configs/punchout.yaml"
             ;;
         train)
             "${REPO}/.venv/bin/python" \

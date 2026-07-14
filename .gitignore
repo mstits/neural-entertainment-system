@@ -78,3 +78,6 @@ playability_sweep*.json
 third_party/
 tests/parity/mesen_tapes/*.status.txt
 demos/
+
+# PGO transient instrumentation dumps — only the merged nes_core.profdata is tracked
+nes_core/pgo/raw/

@@ -10,6 +10,61 @@ System). The original Nintendo Entertainment System hardware is named in full.
 
 ## [Unreleased]
 
+### Performance (2026-07-14 integration pass)
+
+Measure-first campaign over the emulator core, trainer, and PGO
+pipeline: a 6-lane profiling sweep, then 5 implementation lanes, each
+adversarially reviewed, with a whole-tree composition review before
+merge. End-to-end on fresh-PGO wheels (same machine, same day,
+quiet): **Zelda 16-worker pool_step 16.23 → 14.17 ms (−12.7%),
+869 → 991 samples/s (+14.0%)**; single-env NES fps: Punch-Out +12.0%
+(roughly half of it from the PGO-workload fix below), Contra +13.1%,
+Gradius +11.5%, SMB +10.1%, Zelda +10.9%; 60-env tile mode
+~11.2–12.3k env-steps/s (no regression, modest gain). Per-lane shares
+come from lane-level A/Bs — the end-to-end delta also includes PGO
+whole-program relayout between the two profiles, so it is reported as
+the integrated campaign, not summed per-lane credits. Fidelity
+unchanged: 748 pytest + 146 parity tapes + learning guard + 262 cargo
+tests + ASM/interpreter lockstep soaks all green.
+
+- **PPU idle-HBlank early-return under skip_render** (all mappers,
+  default on): visible-scanline dots 258–320 that provably do no
+  observable work collapse to a counter increment. ~5% single-env.
+  The BG-pixel-pipeline elision variant ships byte-exact but OFF
+  (`ppu_skip_bg` feature): it regresses MMC2/MMC3 via hot-loop code
+  layout and stays parked pending PGO re-evaluation.
+- **MMC1 flat CHR window** served to the PPU via a cached pointer
+  (~4.6% on MMC1 games; CHR-RAM writes and bank switches rebuild the
+  window in place). The matching PRG flat-window read path is ~0%
+  under the production ASM CPU (which already fetches through that
+  window) and pays only on interpreter builds — kept for that case.
+- **APU muted-worker channel-timer skip**: pulse/triangle/noise
+  timers, envelopes, and sweeps pause on silent training workers;
+  DMC, frame counter, length counters, and $4015/IRQ semantics stay
+  fully live (byte-identical over 11.5M-checkpoint lockstep).
+- **CPU bulk=1 fixed-overhead trim** (ASM builds): the NMI-predict
+  query is skipped where its result is provably discarded; budget
+  lookup cached; opcode-table install hoisted. ~4% single-env on
+  bulk=1 mappers (Zelda).
+- **Action sampling moved off MPS**: `torch.multinomial` on MPS
+  decomposes into ~10 serial kernels (~0.83 ms per collection step —
+  more than the CNN forward itself); sampling now runs on the
+  CPU-moved logits, replacing (not adding to) the existing per-step
+  device sync. Note: seeded runs draw from the CPU generator now, so
+  they no longer bit-reproduce pre-change trajectories. Fused Adam on
+  cpu-device optimizers (tile update ~2% faster).
+- **PGO stage-2 workload now covers MMC2** (Punch-Out added to
+  Zelda+Contra): the old profile compiled the MMC2 CHR-latch path
+  cold, costing Punch-Out ~6% — recovered with the other games
+  neutral-to-positive and the Zelda training denominator unregressed.
+- Debunked this campaign (measured, do not re-chase): further ASM
+  opcode porting (coverage is already 98–99% of cycles with zero
+  interpreter fallbacks), bulk-cycle raises at 16 workers,
+  torch.compile/fp16/channels_last/MLX/ANE for the collection
+  forward, allocator and codegen-flag changes, GIL-side frame-build
+  copies (already zero-copy). The next structural headline is
+  event-driven PPU catch-up (>9% of pool_step ceiling, high risk).
+
 ### Fixed (2026-07-12 validation pass)
 
 Post-perf-day validation of the spectator/audio recipe across Zelda,
