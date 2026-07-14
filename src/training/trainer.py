@@ -96,7 +96,21 @@ def _safe_sample_from_logits(
     a clamp, falls back to a uniform distribution for any row that's
     still pathological, and logs a warning so the divergence is
     visible without taking the run down.
+
+    Sampling runs on CPU. On MPS `torch.multinomial` decomposes into
+    ~10 serial primitive kernels (~0.83 ms/step, flat with batch —
+    dispatch-bound, more than the CNN forward), the `bad_rows.any()`
+    guard forces a device→host sync, and callers pull three tensors
+    back with separate `.cpu()` transfers. Moving the tiny
+    (rows, num_actions) logits device→host once folds all of that into
+    a single small transfer and runs the sanitise / sample / gather on
+    CPU (~0.008 ms). `.cpu()` is a no-op when logits already live on
+    the CPU (tile / CPU-device runs), and the returned tensors are on
+    CPU so the callers' downstream `.cpu()` calls become no-ops. The
+    log-probs stay paired with the distribution actually sampled from
+    (`chosen_lp == log_probs_all[row, sampled]`).
     """
+    logits = logits.cpu()
     safe_logits = torch.nan_to_num(
         logits, nan=0.0, posinf=1e4, neginf=-1e4
     ).clamp(-50.0, 50.0)
@@ -4555,14 +4569,32 @@ class Trainer:
                         )
                     else:
                         logits, values = net.forward_ac(batch_t)
-                    log_probs_all = F.log_softmax(logits.float(), dim=-1)
+                    # Sample the categorical action on CPU. On MPS
+                    # `torch.multinomial` on the tiny (num_envs,
+                    # num_actions) logits decomposes into ~10 serial
+                    # primitive kernels (~0.83 ms/step, flat with batch —
+                    # dispatch-bound), costing more than the CNN forward
+                    # itself; the CPU draw on the same shape is ~0.008 ms.
+                    # Pulling the tiny logits device→host REPLACES the
+                    # mandatory per-step actions sync a few lines down (it
+                    # does not add a transfer — the old `actions.cpu()`
+                    # drained the same MPS queue). `values` stays on device
+                    # for the fused post-loop drain. log_softmax / exp /
+                    # gather run on the SAME CPU distribution we sample
+                    # from, so `log_probs_taken == log_probs_all[i, action]`.
+                    # Note: draws now consume the CPU default generator
+                    # instead of the MPS Philox stream — statistically
+                    # identical, but a seeded run does not bit-reproduce
+                    # pre-change trajectories.
+                    logits_cpu = logits.float().cpu()
+                    log_probs_all = F.log_softmax(logits_cpu, dim=-1)
                     probs = log_probs_all.exp()
                     actions = torch.multinomial(probs, num_samples=1).squeeze(-1)
                     log_probs_taken = log_probs_all.gather(
                         1, actions.unsqueeze(1)
                     ).squeeze(1)
 
-                    actions_np = actions.cpu().numpy().astype(np.int32)
+                    actions_np = actions.numpy().astype(np.int32)
                     action_buf[t] = actions_np
                     # Accumulate as device tensors; the fused post-loop
                     # drain writes value_buf/log_prob_buf. Plain lists +
@@ -5748,6 +5780,25 @@ class Trainer:
         params = list(net.parameters())
         if self._rnd is not None:
             params += list(self._rnd.predictor.parameters())
+        # CPU-device runs (tile mode) get PyTorch's fused Adam: on the
+        # ~14k-param tile net + RND predictor the per-parameter Python
+        # loop over the moment updates is optimizer overhead, not math,
+        # and fusing it into one C++ kernel trims ~18% off the tile
+        # minibatch (~0.09 ms/mb). Same algorithm, identical moment
+        # math — a drop-in impl swap. MPS has no fused Adam, so the
+        # pixel path is unaffected. Fall back to the default impl if
+        # this torch build rejects fused (older build, unsupported
+        # param dtype/device).
+        if self.device.type == "cpu":
+            try:
+                return torch.optim.Adam(
+                    params, lr=self.reinforce_lr, fused=True
+                )
+            except (RuntimeError, ValueError, TypeError) as exc:
+                log.warning(
+                    "fused Adam unavailable on CPU (%s) — falling back "
+                    "to the default optimizer impl", exc,
+                )
         return torch.optim.Adam(params, lr=self.reinforce_lr)
 
     def _teardown(self) -> None:

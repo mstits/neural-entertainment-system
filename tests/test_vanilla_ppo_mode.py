@@ -103,12 +103,16 @@ def test_build_ppo_optimizer_keeps_rnd_predictor() -> None:
     include the RND predictor params. A prior hand-rolled rollback
     rebuilt over net.parameters() only, silently dropping the predictor
     so it never trained again after a collapse-recovery."""
+    import torch
     import torch.nn as nn
     from src.training.trainer import Trainer
     from src.models.tile_rnd import TileRND
 
     t = Trainer.__new__(Trainer)  # no env/pool boot
     t.reinforce_lr = 3.0e-4
+    # _build_ppo_optimizer reads self.device for the cpu fused-Adam gate;
+    # the real __init__ always sets it, so the shell must too.
+    t.device = torch.device("cpu")
     net = nn.Linear(8, 4)
     net_params = sum(p.numel() for p in net.parameters())
 
