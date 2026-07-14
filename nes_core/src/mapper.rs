@@ -263,6 +263,52 @@ impl MapperEnum {
             _ => panic!("Unsupported mapper number: {}", cartridge.mapper),
         }
     }
+
+    /// True only for mappers whose *visible-scanline* (dot 1..=256) CHR
+    /// pattern fetches have no CPU-observable side effect. The refined
+    /// skip-render path (`Ppu::tick`) uses this to decide whether it may
+    /// drop the unobserved background-pixel pipeline on a skip-render
+    /// frame: on these mappers a suppressed BG fetch changes nothing the
+    /// CPU can read, because
+    ///   * `chr_read_byte` is a pure banked/flat ROM/RAM read — no
+    ///     MMC2/MMC4-style tile latch that flips a CHR bank on the fetch
+    ///     address (mapper 9/10),
+    ///   * there is no MMC3-style A12 IRQ clocked off the fetch address
+    ///     (`clock_a12` in mapper 4/64/… ) or per-scanline IRQ hook
+    ///     (`on_scanline_tick` in mapper 5/19/37/47/69/85/VRC…),
+    ///   * nametable/attribute reads route through PPU CIRAM, not the
+    ///     mapper, under the standard mirroring these mappers use.
+    /// The dropped fetches only ever feed the BG/sprite shift registers,
+    /// which are read solely by `render_pixel` — and that bails before
+    /// touching them on a non-sprite-0 scanline under skip_render.
+    ///
+    /// Conservative by construction: any mapper NOT listed here keeps the
+    /// full per-cycle fetch stream, so a newly-added or side-effectful
+    /// mapper is never silently elided before its CHR path has been
+    /// proven fetch-side-effect-free. Sprite tile fetches (dots
+    /// 257..=320) and the 321..=336 prefetch are preserved for ALL
+    /// mappers regardless — only the unobserved visible-dot BG pipeline
+    /// is a candidate for elision.
+    #[inline]
+    pub fn skip_render_bg_elision_safe(&self) -> bool {
+        // Canonical discrete-logic mappers: pure banked/flat CHR reads,
+        // no scanline/A12/latch IRQ, standard CIRAM nametables (no
+        // CHR-ROM nametable routing). Empirically hash-verified here for
+        // NROM (SMB) and MMC1 (Zelda); the rest share the identical
+        // audited safety property. Deliberately excludes anything with a
+        // CHR-fetch side effect (MMC3 A12, MMC2/4 latch), a per-scanline
+        // IRQ, or CHR-ROM nametables (e.g. Sunsoft-4) — see the trait
+        // survey. Extend only after per-mapper validation.
+        matches!(
+            self,
+            MapperEnum::Mapper0(_)   // NROM
+                | MapperEnum::Mapper1(_)   // MMC1 (banked CHR, no IRQ/latch)
+                | MapperEnum::Mapper2(_)   // UxROM
+                | MapperEnum::Mapper3(_)   // CNROM
+                | MapperEnum::Mapper7(_)   // AxROM
+                | MapperEnum::Mapper66(_)  // GxROM
+        )
+    }
 }
 
 #[derive(Deserialize, Serialize)]

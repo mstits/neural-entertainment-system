@@ -209,3 +209,219 @@ fn smb_in_game_skip_render_with_reset_advance_is_byte_exact() {
         diff, FRAME_PIXELS,
     );
 }
+
+// ---------------------------------------------------------------------
+// Refined skip-render fast-path guards.
+//
+// The refined skip-render path adds, on top of plain skip_render:
+//   (1) idle-HBlank early-return — dots 258..=320 on visible scanlines
+//       collapse to `cycles += 1` (shipped ON, all mappers), and
+//   (2) BG-pixel-pipeline elision under skip_render (behind the
+//       off-by-default `ppu_skip_bg` feature, eligible mappers only).
+// Both are pixel-write / unobserved-work elisions: they must leave every
+// CPU-observable side effect (sprite-0 hit, scroll v/t, OAM, sprite
+// overflow, NMI, mapper IRQ/CHR state, RAM) byte-identical. These guards
+// pin that. They pass in BOTH build configs — the default build (idle
+// only) is fully byte-exact including the shift registers; the
+// `ppu_skip_bg` build drops the (unobserved) fetch pipeline, which these
+// guards deliberately exclude from the comparison.
+// ---------------------------------------------------------------------
+
+/// Load an `NCST\x01`-framed save-state onto `nes` (mirrors the loader in
+/// `python.rs` / the ppu_state_profile harness).
+fn load_state(nes: &mut Nes, path: &str) {
+    let raw = std::fs::read(path).expect("read state file");
+    let magic = b"NCST\x01";
+    let mut body = &raw[..];
+    while body.len() >= magic.len() && &body[..magic.len()] == magic {
+        body = &body[magic.len()..];
+    }
+    let state: nes_core::nes::State =
+        bincode::deserialize(body).expect("bincode state");
+    nes.apply_state(&state);
+}
+
+/// Serialize ONLY the CPU-observable machine state: CPU RAM + registers,
+/// mapper (banks / IRQ counters / CHR latch), APU, controller latch, and
+/// the PPU register file (v/t/x/w, PPUCTRL/MASK/STATUS, OAMADDR, read
+/// buffer), OAM, VRAM (nametables), palette RAM, the frame/scanline/cycle
+/// counters, and the sprite-0 / NMI flags. DELIBERATELY excludes the BG +
+/// sprite fetch pipeline (name/attr/bitmap latches, bg shift registers,
+/// sprite pattern/attribute/x registers): those are pure render
+/// intermediates read only by `render_pixel`, and are exactly the
+/// unobserved state the `ppu_skip_bg` elision is allowed to drop on a
+/// skip-render frame. If any of the INCLUDED state ever diverges between
+/// the refined path and the full tick body, the CPU could observe it.
+fn observable_digest(nes: &Nes) -> Vec<u8> {
+    let s = nes.get_state();
+    let p = &s.ppu;
+    let mut d =
+        bincode::serialize(&(&s.ram, &s.mapper, &s.cpu, &s.apu, &s.input, s.cycles))
+            .expect("serialize nes-level observable state");
+    d.extend(
+        bincode::serialize(&(
+            &p.regs,
+            &p.vram,
+            &p.palette_ram,
+            &p.oam,
+            p.ppu_data_read_buffer,
+            p.ppu_gen_latch,
+            p.cycles,
+            p.scanline,
+            p.scanline_start_cycle,
+            p.frame,
+            p.sprite_0_on_scanline,
+            p.nmi_occurred,
+            p.nmi_output,
+        ))
+        .expect("serialize ppu observable state"),
+    );
+    d
+}
+
+/// Run `nes` for one outer step of `skip_group` frames with the trainer's
+/// skip-render bracketing (skip the first N-1, render the last), holding
+/// the given buttons across the whole step.
+fn step_group(nes: &mut Nes, skip_group: usize, buf: &mut Vec<u32>, buttons: &[nes_core::input::Button]) {
+    use nes_core::input::Button;
+    // Release everything, then press the requested buttons. (`Button`
+    // is Copy but not PartialEq, so we clear-then-set rather than test
+    // membership.)
+    for b in [
+        Button::A, Button::B, Button::Select, Button::Start,
+        Button::Up, Button::Down, Button::Left, Button::Right,
+    ] {
+        nes.game_pad_1().set_button_pressed(b, false);
+    }
+    for &b in buttons {
+        nes.game_pad_1().set_button_pressed(b, true);
+    }
+    for i in 0..skip_group {
+        let is_last = i + 1 == skip_group;
+        nes.ppu.set_skip_render(skip_group > 1 && !is_last);
+        step_one_frame(nes, buf);
+    }
+    nes.ppu.set_skip_render(false);
+}
+
+/// Core guard: run two copies of the same ROM/state through an identical
+/// input script under fs=`skip_group` skip-render bracketing — one with
+/// the refined skip-render path ON (the shipped default), one with it
+/// forced OFF (`set_refined_skip_render(false)` = the exact full per-cycle
+/// tick body) — and assert their full observable state is byte-identical
+/// at EVERY frame-group boundary.
+fn refined_off_vs_on_state_parity(
+    rom: &str,
+    state: Option<&str>,
+    skip_group: usize,
+    steps: usize,
+    script: impl Fn(usize) -> Vec<nes_core::input::Button>,
+) {
+    let mut on = load(rom);
+    let mut off = load(rom);
+    if let Some(st) = state {
+        load_state(&mut on, st);
+        load_state(&mut off, st);
+    }
+    // `on` keeps the production default (refined ON); force `off` to the
+    // full tick body.
+    off.ppu.set_refined_skip_render(false);
+
+    let mut buf = vec![0u32; FRAME_PIXELS];
+    for step in 0..steps {
+        let buttons = script(step);
+        step_group(&mut on, skip_group, &mut buf, &buttons);
+        step_group(&mut off, skip_group, &mut buf, &buttons);
+        let da = observable_digest(&on);
+        let db = observable_digest(&off);
+        assert!(
+            da == db,
+            "refined skip-render observable-state divergence on {rom} at step {step} \
+             (skip_group={skip_group}): the fast path changed CPU-observable state",
+        );
+    }
+}
+
+/// SMB (NROM) is the sprite-0 canary — its in-game HUD split is timed off
+/// the sprite-0 hit, the exact side effect the refined path must preserve.
+/// Boot, press Start into gameplay, then hold Right; refined off vs on
+/// must stay byte-identical in observable state every frame.
+#[test]
+fn smb_refined_skip_render_state_parity_off_vs_on() {
+    let script = |step: usize| {
+        use nes_core::input::Button;
+        if (15..18).contains(&step) {
+            vec![Button::Start]
+        } else if step >= 20 {
+            vec![Button::Right]
+        } else {
+            vec![]
+        }
+    };
+    refined_off_vs_on_state_parity(
+        "../roms/Super Mario Bros. (World).nes",
+        None,
+        4,
+        60,
+        script,
+    );
+}
+
+/// Zelda (MMC1) from an in-game save-state — HUD sprite-0 active from
+/// frame 0, banked CHR, and (under `ppu_skip_bg`) an elision-eligible
+/// mapper. Walk around; observable state must match refined off vs on.
+#[test]
+fn zelda_refined_skip_render_state_parity_off_vs_on() {
+    let script = |step: usize| {
+        use nes_core::input::Button;
+        match step % 4 {
+            0 | 1 => vec![Button::Right],
+            _ => vec![Button::Left, Button::B],
+        }
+    };
+    refined_off_vs_on_state_parity(
+        "../roms/Legend of Zelda, The (USA) (Rev A).nes",
+        Some("../roms/zelda_start_ctrl.state.bin"),
+        16,
+        30,
+        script,
+    );
+}
+
+/// Zelda (MMC1) frame-buffer parity: fs=1 (skip_render never set →
+/// refined never fires) vs fs=16 (refined fires on 15/16 frames) must
+/// produce a byte-identical rendered frame — the MMC1 sprite-0-HUD analog
+/// of the SMB frame-buffer guards above. A constant held button keeps the
+/// per-frame input identical across both frame-skip rates, so the ONLY
+/// variable is the refined skip-render path.
+#[test]
+fn zelda_in_game_skip_render_matches_full_render() {
+    use nes_core::input::Button;
+    let rom = "../roms/Legend of Zelda, The (USA) (Rev A).nes";
+    let state = "../roms/zelda_start_ctrl.state.bin";
+    let mut nes_full = load(rom);
+    let mut nes_skip = load(rom);
+    load_state(&mut nes_full, state);
+    load_state(&mut nes_skip, state);
+
+    let mut buf_full = vec![0u32; FRAME_PIXELS];
+    let mut buf_skip = vec![0u32; FRAME_PIXELS];
+
+    // Hold Right the whole run: scrolls the world (exercises scroll v/t
+    // reloads) with the HUD sprite-0 active every frame.
+    let held = [Button::Right];
+    // 320 frames: fs=1 all-full vs fs=16 (15 skip + 1 full) per step.
+    for _ in 0..320 {
+        step_group(&mut nes_full, 1, &mut buf_full, &held);
+    }
+    for _ in 0..20 {
+        step_group(&mut nes_skip, 16, &mut buf_skip, &held);
+    }
+
+    let diff = frame_diff(&buf_full, &buf_skip);
+    assert_eq!(
+        diff, 0,
+        "refined skip_render drift on Zelda (MMC1) gameplay: {} / {} pixels differ",
+        diff, FRAME_PIXELS,
+    );
+}

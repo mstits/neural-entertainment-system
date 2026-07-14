@@ -136,6 +136,20 @@ metal = ["dep:objc2", "dep:objc2-metal", "dep:objc2-foundation"]
 # Diagnostic only — a handful of atomic-free `+= 1` on the Ppu struct.
 # Off by default; enable for tuning the invalidation heuristics.
 ppu_neon_stats = []
+# Refined skip-render BG-pixel-pipeline elision. On a skip-render frame,
+# a visible scanline with no sprite 0 drops its unobserved dot 1..=256
+# background pipeline (fetches/shifts/render_pixel) for mappers with no
+# visible-fetch side effect (see `MapperEnum::skip_render_bg_elision_safe`).
+# OFF by default: it is byte-exact (guards: the *_refined_skip_render_
+# state_parity_off_vs_on tests in tests/skip_render_parity.rs pass with
+# this feature too) but a non-PGO A/B on Zelda/SMB/Punch-Out showed it
+# does NOT beat the always-on
+# idle-HBlank fast path and regresses the common MMC3/MMC2 mappers by
+# ~1-3% (added hot-tick-body code crosses a bad layout threshold — the
+# same icache fragility that makes inlining `tick` regress 52%). Retained
+# for re-evaluation under PGO, which may recover the discovery's numbers.
+# The idle-HBlank fast path (the measured, shipped win) is unconditional.
+ppu_skip_bg = []
 
 [profile.release]
 opt-level = 3
