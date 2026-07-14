@@ -130,6 +130,21 @@ asm_hit_counter = []
 # on 15/16 frames) but closes the single-env fs=1 gap vs nes-py's
 # LaiNES C++ PPU — the workload `watch_asm.py` hits.
 metal = ["dep:objc2", "dep:objc2-metal", "dep:objc2-foundation"]
+# `mmc1_prg_bankmath_ab` forces MMC1 ($8000-$FFFF) PRG reads back
+# through the per-read bank-math path instead of the maintained flat
+# 32 KB window. Measurement-only: the shipped default serves those
+# reads from the window (byte-identical, provably so for the pow2 PRG
+# every commercial MMC1 board uses). Enable it to build the A/B
+# baseline binary for re-verifying the win under fresh PGO. Off by
+# default; has no effect on any other mapper or code path.
+mmc1_prg_bankmath_ab = []
+# `mmc1_chr_dispatch_ab` forces MMC1 CHR pattern fetches back through
+# the per-read `chr_read_byte` + `chr_address` dispatch instead of the
+# maintained flat 8 KB CHR window the PPU reads via `chr_static_ptr`.
+# Measurement-only, same role as `mmc1_prg_bankmath_ab`: build the A/B
+# baseline binary to re-verify the win under fresh PGO. Off by default;
+# no effect on any other mapper.
+mmc1_chr_dispatch_ab = []
 # `ppu_neon_stats` enables per-frame counters for the batched PPU
 # renderer: total scanlines, fallback counts, and per-source
 # invalidation tallies (palette, nametable, register, mapper).
