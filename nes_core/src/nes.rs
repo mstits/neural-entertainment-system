@@ -46,6 +46,14 @@ pub struct Nes {
     /// Bypasses the per-Nes::step `MapperEnum` virtual dispatch
     /// (PGO showed 366M calls/run).
     cached_prg_asm_ptr: Option<*const u8>,
+
+    /// Cached `mapper.asm_bulk_cycles()` budget. A per-mapper constant
+    /// (NROM = 64, most others = 1) that only ever changes through
+    /// `set_asm_bulk_cycles_override` — never per-step or on bank
+    /// switches — so caching it lets `Nes::step` skip a `MapperEnum`
+    /// virtual call on every instruction. Refreshed at construction +
+    /// reset + apply_state + override, exactly like `cached_prg_asm_ptr`.
+    cached_asm_bulk_cycles: i64,
 }
 
 // SAFETY: cached_prg_asm_ptr aliases memory owned by the same Nes
@@ -81,8 +89,22 @@ impl Nes {
             trace: false,
             disable_asm_cpu: false,
             cached_prg_asm_ptr: None,
+            cached_asm_bulk_cycles: 1,
         };
         nes.cached_prg_asm_ptr = nes.mapper.prg_asm_ptr();
+        nes.cached_asm_bulk_cycles = nes.mapper.asm_bulk_cycles();
+
+        // Install the ASM dispatch + opcode-cycle tables once, at
+        // construction, instead of on the per-instruction hot path.
+        // `install_opcode_table_once` is a global `Once`, so the first
+        // Nes built in the process pays it and every later worker's
+        // call is a single atomic-load fast return — but hoisting it
+        // out of `Nes::step` removes that load from every instruction.
+        // `asm_opcode_cycles` (read in `step` to decide the ASM entry)
+        // depends on the cycle table this populates, so it MUST run
+        // before the first step.
+        #[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
+        crate::cpu_asm::install_opcode_table_once();
 
         // Constructor-time reset initializes CPU PC / SP / flags so the
         // state is immediately usable (some harnesses poke state without
@@ -152,13 +174,14 @@ impl Nes {
             // ASM exits cleanly and we fall through to try_bulk_step.
             #[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
             {
-                crate::cpu_asm::install_opcode_table_once();
                 let ram_ptr = self.ram.as_mut_ptr();
                 // Cached at construction / reset / apply_state. The
                 // underlying prg_asm_window Vec is fixed-size 32 KB
                 // mutated only via slice indexing; pointer is stable.
                 let prg_ptr = self.cached_prg_asm_ptr;
-                let raw_bulk_cycles = self.mapper.asm_bulk_cycles();
+                // Cached per-mapper budget (see the field doc). Avoids a
+                // `MapperEnum` virtual call on every instruction.
+                let raw_bulk_cycles = self.cached_asm_bulk_cycles;
                 // Predict NMI fire and cap the bulk so the batch ends
                 // at most one instruction past the vblank rising edge
                 // (matches real 6502 NMI delivery — services between
@@ -169,11 +192,24 @@ impl Nes {
                 // before this cap). With the cap, NROM can safely run
                 // bulk_cycles=16+ — the cap shrinks dynamically as
                 // vblank approaches.
-                let bulk_cycles = match self.ppu.cpu_cycles_until_nmi_fire() {
-                    Some(n) if (n as i64) < raw_bulk_cycles => {
-                        (n as i64).max(1)
+                //
+                // At raw==1 (every MMC1/UxROM/MMC3 game — the majority
+                // of the library) the cap is provably dead: its only
+                // shrinking arm needs `n < 1` (i.e. n==0), which
+                // `.max(1)`s straight back to 1, and every other arm
+                // yields raw==1. So the batch is always exactly 1 and
+                // the per-instruction `cpu_cycles_until_nmi_fire()`
+                // query is discarded work — skip it. Control flow for
+                // raw > 1 is byte-identical to the prior match.
+                let bulk_cycles = if raw_bulk_cycles == 1 {
+                    1
+                } else {
+                    match self.ppu.cpu_cycles_until_nmi_fire() {
+                        Some(n) if (n as i64) < raw_bulk_cycles => {
+                            (n as i64).max(1)
+                        }
+                        _ => raw_bulk_cycles,
                     }
-                    _ => raw_bulk_cycles,
                 };
                 // Only enter the ASM path if the mapper exposes a PRG
                 // window AND the opcode at PC has an ASM handler. This
@@ -538,6 +574,7 @@ impl Nes {
         // (e.g., after a fresh deserialize). Refresh the cached
         // ptr so any subsequent Nes::step uses the new allocation.
         self.cached_prg_asm_ptr = self.mapper.prg_asm_ptr();
+        self.cached_asm_bulk_cycles = self.mapper.asm_bulk_cycles();
         self.cpu.apply_state(&state.cpu);
         self.ppu.apply_state(&state.ppu);
         self.apu.apply_state(&state.apu);
@@ -612,6 +649,10 @@ impl Nes {
     /// budget automatically.
     pub fn set_asm_bulk_cycles_override(&mut self, cycles: i64) {
         self.mapper.set_asm_bulk_cycles_override(cycles);
+        // Keep the cached budget in lockstep with the mapper — this is
+        // the only path (besides construction / reset / apply_state)
+        // that changes what `asm_bulk_cycles()` returns.
+        self.cached_asm_bulk_cycles = self.mapper.asm_bulk_cycles();
     }
 
     pub fn reset(&mut self) {
@@ -634,6 +675,7 @@ impl Nes {
         // called from Nes::reset). But re-cache anyway so first
         // ASM dispatch sees the right pointer.
         self.cached_prg_asm_ptr = self.mapper.prg_asm_ptr();
+        self.cached_asm_bulk_cycles = self.mapper.asm_bulk_cycles();
 
         // Model the 8-cycle 6502 reset sequence: real hardware spends
         // 8 CPU cycles reading the reset vector + setting up internal

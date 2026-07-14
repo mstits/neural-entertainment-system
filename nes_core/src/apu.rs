@@ -345,27 +345,43 @@ impl Apu {
         // - - - f    - - - - -    IRQ (if bit 6 is clear)
         // - l - l    l - l - -    Length counter and sweep
         // e e e e    e e e e -    Envelope and linear counter
+        //
+        // Length counters + the frame IRQ flag are CPU-observable
+        // ($4015 status bits 0-3 and the IRQ line), so they always
+        // step. Sweep + envelope + linear-counter clocking feeds ONLY
+        // channel `output()`, so it is skipped on the muted training
+        // workers. When audio is enabled every gated block runs in the
+        // original order, so the audio-ON path is byte-identical.
+        let audio = self.sample_output_enabled;
         match self.frame_counter.mode {
             FrameCounterMode::FourStep => {
                 match self.frame_counter.sequence_frame {
                     0 => {
-                        self.step_envelope_and_linear_counter();
+                        if audio {
+                            self.step_envelope_and_linear_counter();
+                        }
                     }
                     1 => {
                         self.step_length_counter();
-                        self.step_sweep();
-                        self.step_envelope_and_linear_counter();
+                        if audio {
+                            self.step_sweep();
+                            self.step_envelope_and_linear_counter();
+                        }
                     }
                     2 => {
-                        self.step_envelope_and_linear_counter();
+                        if audio {
+                            self.step_envelope_and_linear_counter();
+                        }
                     }
                     3 => {
                         if !self.frame_counter.interrupt_inhibit_flag {
                             self.frame_counter.irq_pending = true;
                         }
                         self.step_length_counter();
-                        self.step_sweep();
-                        self.step_envelope_and_linear_counter();
+                        if audio {
+                            self.step_sweep();
+                            self.step_envelope_and_linear_counter();
+                        }
                     }
                     _ => (),
                 }
@@ -375,11 +391,15 @@ impl Apu {
                 match self.frame_counter.sequence_frame {
                     0 | 2 => {
                         self.step_length_counter();
-                        self.step_sweep();
-                        self.step_envelope_and_linear_counter();
+                        if audio {
+                            self.step_sweep();
+                            self.step_envelope_and_linear_counter();
+                        }
                     }
                     1 | 3 => {
-                        self.step_envelope_and_linear_counter();
+                        if audio {
+                            self.step_envelope_and_linear_counter();
+                        }
                     }
                     _ => (),
                 }
@@ -410,14 +430,27 @@ impl Apu {
     #[inline(always)]
     fn step_timer(&mut self, mapper: &mut MapperEnum) -> u8 {
         let mut cpu_stall_cycles = 0;
+        // Pulse/triangle/noise timer + duty/shift advance feeds ONLY
+        // `output()` → `generate_sample()`, which is gated off on the
+        // muted training workers. Skip it there. DMC is fidelity-
+        // mandatory: its `step_timer` return value steals CPU cycles
+        // and it drives $4015 bit 4 + the DMC IRQ, so it always steps.
+        // When audio is enabled every branch below is taken, so the
+        // audio-ON path (and the parity / Mesen gates, which run
+        // audio-ON) stays byte-identical to the pre-skip sequence.
+        let audio = self.sample_output_enabled;
         if self.cycles.is_multiple_of(2) {
-            self.pulse_1.step_timer();
-            self.pulse_2.step_timer();
-            self.noise.step_timer();
+            if audio {
+                self.pulse_1.step_timer();
+                self.pulse_2.step_timer();
+                self.noise.step_timer();
+            }
             cpu_stall_cycles = self.dmc.step_timer(mapper);
         }
 
-        self.triangle.step_timer();
+        if audio {
+            self.triangle.step_timer();
+        }
 
         cpu_stall_cycles
     }
