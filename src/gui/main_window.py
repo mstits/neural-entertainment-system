@@ -222,8 +222,11 @@ class MainWindow(QMainWindow):
 
         # --- Instance count slider ---
         # Default 24: post-PGO M4 Max throughput peak per
-        # docs/proposals/archive/hot_path_baseline.md. Users on smaller chips
-        # should drop to their physical core count.
+        # docs/proposals/archive/hot_path_baseline.md, re-confirmed by the
+        # 2026-07-14 worker sweep (24 = +19% pool throughput vs 16; the
+        # 13-16 range is the scheduling sour spot — workers spill onto
+        # E-cores and gate the pool barrier). Users on smaller chips
+        # should drop to their physical P-core count.
         inst_row = QHBoxLayout()
         inst_row.addWidget(QLabel("Parallel instances:"))
         self.instance_spin = QSpinBox()

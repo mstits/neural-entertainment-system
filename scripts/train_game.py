@@ -480,7 +480,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--num-envs", type=int, default=None,
-        help="Override num_instances from the profile.",
+        help="Override num_instances from the profile. Scheduling note "
+             "(M4-class, 12P+4E cores): 13-16 envs is the measured sour "
+             "spot — workers spill onto E-cores and gate the pool "
+             "barrier; prefer <=12 or >=24 (24 measured +19%% pool "
+             "throughput vs 16).",
     )
     parser.add_argument(
         "--resume", action="store_true", default=True,
