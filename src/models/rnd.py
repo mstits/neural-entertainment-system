@@ -177,6 +177,34 @@ class RND(nn.Module):
         pred_feat = self.predictor(normalized)
         return ((pred_feat - target_feat) ** 2).mean(dim=-1)
 
+    def target_features(self, obs: torch.Tensor) -> torch.Tensor:
+        """Frozen-target embedding `target(normalize_obs(obs))`, no grad.
+
+        The constant half of `forward`'s per-sample MSE. The target is
+        frozen and, for the whole of a K-epoch PPO update, `obs_rms` is
+        held fixed — so this embedding is identical every epoch for a
+        given observation. The trainer computes it once per iteration and
+        reuses it across the minibatch loop (via `predictor_loss`) instead
+        of re-running the target CNN K times per observation.
+        """
+        with torch.no_grad():
+            return self.target(self._normalize_obs(obs))
+
+    def predictor_loss(
+        self, obs: torch.Tensor, target_feat: torch.Tensor
+    ) -> torch.Tensor:
+        """Per-sample MSE, shape `(B,)`, against a precomputed target
+        embedding. Equivalent to `forward(obs)` but takes the (cached)
+        frozen target features instead of recomputing them; the predictor
+        half still forwards with grad. `target_feat` MUST be
+        `target_features(obs)` under the SAME `obs_rms` — valid only while
+        `obs_rms` is unchanged (the vanilla_ppo update loop). Paths that
+        mutate `obs_rms` mid-update (the GA `_reinforce_update`) must keep
+        using `forward`.
+        """
+        pred_feat = self.predictor(self._normalize_obs(obs))
+        return ((pred_feat - target_feat) ** 2).mean(dim=-1)
+
     def normalize_bonus(self, per_sample_err: torch.Tensor) -> torch.Tensor:
         """Scale a raw per-sample error into the intrinsic-reward bonus.
 
@@ -204,6 +232,12 @@ class RND(nn.Module):
         obs_flat = obs.reshape(-1, *obs.shape[1:])
         self.obs_rms.update(obs_flat)
         self.reward_rms.update(intrinsic_err.reshape(-1))
+
+    @property
+    def feat_dim(self) -> int:
+        """Width of the target/predictor embedding — the row size of the
+        per-iter target-feature cache the update loop builds."""
+        return self.target.proj.out_features
 
     @property
     def num_params(self) -> int:

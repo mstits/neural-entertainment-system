@@ -134,6 +134,36 @@ class TileRND(nn.Module):
         pred_feat = self.predictor(normalized)
         return ((pred_feat - target_feat) ** 2).mean(dim=-1)
 
+    def target_features(self, obs: torch.Tensor) -> torch.Tensor:
+        """Frozen-target embedding `target(normalize_obs(obs))`, no grad.
+
+        Same contract as `RND.target_features`: constant across the
+        K-epoch PPO update while `obs_rms` is held fixed, so the trainer
+        computes it once per iteration and reuses it via
+        `predictor_loss` instead of re-running the target MLP per
+        minibatch per epoch.
+        """
+        with torch.no_grad():
+            return self.target(self._normalize_obs(obs))
+
+    def predictor_loss(
+        self, obs: torch.Tensor, target_feat: torch.Tensor
+    ) -> torch.Tensor:
+        """Per-sample MSE, shape `(B,)`, against a precomputed target
+        embedding. Same contract as `RND.predictor_loss`: `target_feat`
+        MUST be `target_features(obs)` under the SAME `obs_rms` — valid
+        only while `obs_rms` is unchanged (the vanilla_ppo update loop);
+        paths that mutate `obs_rms` mid-update keep using `forward`.
+        """
+        pred_feat = self.predictor(self._normalize_obs(obs))
+        return ((pred_feat - target_feat) ** 2).mean(dim=-1)
+
+    @property
+    def feat_dim(self) -> int:
+        """Width of the target/predictor embedding — the row size of the
+        per-iter target-feature cache the update loop builds."""
+        return self.target.net[-1].out_features
+
     def normalize_bonus(self, per_sample_err: torch.Tensor) -> torch.Tensor:
         """Scale a raw per-sample error into the intrinsic-reward bonus
         by the running std of the bonus. Detached. Call BEFORE

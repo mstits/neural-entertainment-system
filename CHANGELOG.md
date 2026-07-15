@@ -57,6 +57,26 @@ tests + ASM/interpreter lockstep soaks all green.
   Zelda+Contra): the old profile compiled the MMC2 CHR-latch path
   cold, costing Punch-Out ~6% — recovered with the other games
   neutral-to-positive and the Zelda training denominator unregressed.
+- **RND target-feature cache** (evening addendum): the frozen RND
+  target's embeddings are constant across the K-epoch PPO update, yet
+  were recomputed K× per observation per iteration. They are now
+  computed once per iter (chunked, valid rows only, built after the
+  intrinsic block's stats update so the cache sees post-update
+  normalization) and reused across the minibatch loop — bit-identical
+  losses and post-update parameters, ~6-8% off the update phase (~3%
+  of a pixel iteration). Pixel and tile RND both covered; GA and
+  recurrent paths (which mutate stats mid-update) keep the full
+  forward. The unattributed ~17% of iteration wall now has timing
+  buckets (rnd_intrinsic / bookkeeping / iter_reset).
+- Evening experiment verdicts (measured): `ppu_skip_bg` is
+  permanently dead — a PGO build with it regresses every game
+  (up to −24% on MMC3) and the training denominator by −13.7%;
+  worker-count sweep on the M4 Max found 24 workers = +19% pool
+  throughput vs 16 (work-stealing balance over the 12P+4E topology;
+  13-16 workers is the sour spot), applicable per-config where the
+  env count fits the training design; RND predictor-update
+  subsampling (+15% of iter wall) is measured but behavior-changing
+  and parked pending a learning A/B.
 - Debunked this campaign (measured, do not re-chase): further ASM
   opcode porting (coverage is already 98–99% of cycles with zero
   interpreter fallbacks), bulk-cycle raises at 16 workers,

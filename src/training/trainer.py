@@ -4971,6 +4971,9 @@ class Trainer:
             # in the update below, driving the bonus down on familiar
             # states. Zeroed on done/padded steps by the fold helper.
             rnd_intrinsic_mean = 0.0
+            # Attribute the RND full-rollout intrinsic pass — previously
+            # part of the unbucketed ~17% iter-wall gap. Diagnostic only.
+            _rnd_intrinsic_t0 = time.perf_counter_ns()
             if self._rnd is not None:
                 # This full-rollout pass (rollout_steps × num_envs rows in
                 # one op) is the only torch call in the loop big enough to
@@ -5009,6 +5012,9 @@ class Trainer:
                 reward_buf = fold_intrinsic_into_rewards(
                     reward_buf, intrinsic_np, done_buf
                 )
+            self._gen_timer.add(
+                "rnd_intrinsic", time.perf_counter_ns() - _rnd_intrinsic_t0
+            )
 
             # ============== GAE-λ BACKWARD SWEEP ==============
             # Batched, per-step-done-masked GAE (src/training/ppo.py).
@@ -5096,6 +5102,43 @@ class Trainer:
                     advantages_norm, value_targets, done_buf,
                     num_envs, rollout_steps,
                 )
+            # RND target-feature cache (behaviour-identical). The frozen
+            # target's embedding target(normalize_obs(obs)) is a constant
+            # for the entire K-epoch update: the target is frozen AND
+            # obs_rms was already updated once this iter, in the intrinsic
+            # block ABOVE — so the minibatch RND loss must (and does) see
+            # the post-update stats. Precompute it ONCE here, in a no-grad
+            # chunked pass keyed by flat rollout index, then index it per
+            # minibatch instead of re-running the target CNN K times per
+            # observation. Only valid on the feedforward vanilla path:
+            # the GA `_reinforce_update` mutates obs_rms inside its loop
+            # (cache would go stale) and the recurrent path has its own
+            # update — both are excluded here. Only the frozen target is
+            # cached; the predictor trains every step and is never cached.
+            rnd_tgt_feat_cache = None
+            if (self._rnd is not None and not self._recurrent
+                    and valid_indices.size):
+                rnd_tgt_feat_cache = torch.zeros(
+                    total_n, self._rnd.feat_dim, device=self.device
+                )
+                # Chunk the build so peak memory stays bounded (the full
+                # cache is (total_n, 512) f32; each chunk adds one obs
+                # tensor + one feature tensor on top).
+                _rnd_cache_chunk = 1024
+                for _c0 in range(0, valid_indices.shape[0], _rnd_cache_chunk):
+                    _rows = valid_indices[_c0:_c0 + _rnd_cache_chunk]
+                    _rows_t = torch.from_numpy(_rows).to(self.device)
+                    if obs_all is not None:
+                        _obs_chunk = obs_all[_rows_t]
+                    else:
+                        _obs_chunk = torch.from_numpy(
+                            np.ascontiguousarray(obs_flat[_rows])
+                        ).to(self.device).float()
+                        if not self.preprocess_f16:
+                            _obs_chunk = _obs_chunk.div_(255.0)
+                    rnd_tgt_feat_cache.index_copy_(
+                        0, _rows_t, self._rnd.target_features(_obs_chunk)
+                    )
             for epoch in range(0 if self._recurrent else self.reinforce_steps):
                 perm = np.random.permutation(valid_indices)
                 n_valid = perm.shape[0]
@@ -5139,7 +5182,19 @@ class Trainer:
                     # in this optimizer). Forward with grad here, unlike
                     # the no-grad intrinsic-reward pass above.
                     if self._rnd is not None:
-                        rnd_loss = self._rnd(states_t).mean()
+                        # Cached frozen-target features (built once per
+                        # iter above): the target CNN runs once per obs
+                        # this iter instead of K times. The predictor half
+                        # still forwards with grad, so the gradient path —
+                        # and the loss value — are unchanged. Falls back to
+                        # the full forward when the cache is absent
+                        # (recurrent path / no valid steps).
+                        if rnd_tgt_feat_cache is not None:
+                            rnd_loss = self._rnd.predictor_loss(
+                                states_t, rnd_tgt_feat_cache[mb_idx]
+                            ).mean()
+                        else:
+                            rnd_loss = self._rnd(states_t).mean()
                         loss = loss + self.rnd_loss_coef * rnd_loss
                         _last_rnd_t = rnd_loss.detach()
 
@@ -5165,6 +5220,12 @@ class Trainer:
             self._gen_timer.add("update", time.perf_counter_ns() - _upd_t0)
 
             # ============== LOGGING + METRICS ==============
+            # Attribute the per-iter bookkeeping (episode stats, reward
+            # breakdown, curriculum/advance detection, metric assembly) —
+            # previously part of the unbucketed ~17% iter-wall gap. Closed
+            # just before the snapshot below so it lands in THIS gen's row.
+            # Diagnostic only.
+            _bookkeeping_t0 = time.perf_counter_ns()
             mean_ep_return = (
                 float(np.mean(completed_returns)) if completed_returns else 0.0
             )
@@ -5386,8 +5447,12 @@ class Trainer:
                 global_it, samples_per_sec, nes_fps, realtime_x, _iter_dt,
             )
             # Per-section timing (rollout_forward / emulation / gae /
-            # update) so the active pixel path stops flying blind: a
-            # regression shows up as `jq '.timing_*' metrics.jsonl`.
+            # update / rnd_intrinsic / bookkeeping / iter_reset) so the
+            # active pixel path stops flying blind: a regression shows up
+            # as `jq '.timing_*' metrics.jsonl`.
+            self._gen_timer.add(
+                "bookkeeping", time.perf_counter_ns() - _bookkeeping_t0
+            )
             timing_metrics = self._gen_timer.snapshot()
             self._gen_timer.reset()
             # Progress telemetry so every run is interpretable: Contra's
@@ -5501,6 +5566,12 @@ class Trainer:
             # starts from N fresh cold-boot episodes. Avoids workers
             # idling in a post-done state when our reward-fn / stacker
             # logic doesn't match the rust pool's auto-step semantics.
+            # Attribute the iter-boundary reset + warm-start — previously
+            # part of the unbucketed ~17% iter-wall gap. This runs AFTER
+            # the snapshot above, so it lands in the NEXT gen's row (a
+            # constant one-gen offset; magnitude is what matters).
+            # Diagnostic only.
+            _iter_reset_t0 = time.perf_counter_ns()
             init_results = self.pool.reset_all()
             self._emit_frame_sink(init_results)
             # reset_all revives dead workers; a still-nonzero count means a
@@ -5637,6 +5708,9 @@ class Trainer:
                     stackers[i].reset(r.frame, getattr(r, "preprocessed", None))
                     for i, r in enumerate(init_results)
                 ]
+            self._gen_timer.add(
+                "iter_reset", time.perf_counter_ns() - _iter_reset_t0
+            )
 
             # Checkpoint every 10 iters. No GA to save — just the policy
             # network's state_dict (plus the ABSOLUTE iter counter for
