@@ -609,6 +609,17 @@ class Trainer:
             "mario" in str(game_profile.get("name", "")).lower()
             and bool(rl_cfg.get("smb_curriculum", True))
         )
+        # A fresh run (GUI "Resume" unticked / headless --no-resume) resets
+        # the model weights but, historically, silently inherited whatever
+        # SMB curriculum stage a prior run had reached on disk — a validated
+        # confusion where a "fresh" run resumed at stage 2. Fresh runs now
+        # start the curriculum at stage 0; set this True to restore the old
+        # inherit-on-fresh behavior. Resume (non-fresh) runs always inherit
+        # the saved curriculum regardless of this knob. The stage_NN.state
+        # files are never deleted either way, so paused runs stay resumable.
+        self._inherit_curriculum_on_fresh: bool = bool(
+            rl_cfg.get("inherit_curriculum_on_fresh", False)
+        )
         # Frame stacking for tile observations. yumouwei (2022) showed
         # empirically that stack=1 fails to clear SMB 1-1 while stack=4
         # succeeds — point-in-time RAM features lack temporal context
@@ -4052,6 +4063,109 @@ class Trainer:
             )
         return iter_offset
 
+    def _load_smb_curriculum_from_disk(
+        self, *, fresh_start: bool = False,
+    ) -> tuple[list, list, int]:
+        """Scan `checkpoint_dir/smb_curriculum` for `stage_NN.state` files
+        and return `(states, anchors, stage)` for the SMB save-state
+        curriculum.
+
+        `states`/`anchors` seed with the stage-0 cold-boot entry
+        (`[None]`/`[0]`); each successfully loaded stage appends its blob +
+        anchor byte and bumps `stage`. Anchor bytes come from the sidecar
+        `stage_NN.meta.json`; a legacy state without one is peeked via
+        worker 0 and the sidecar backfilled.
+
+        `fresh_start=True` (GUI "Resume" unticked / headless `--no-resume`)
+        IGNORES any saved stage states and returns stage 0 — a fresh run
+        trains from 1-1 rather than silently inheriting a prior run's mid-
+        game curriculum (a validated confusion where a "fresh" run resumed
+        at stage 2). The `stage_NN.state` files are NEVER deleted or moved
+        (a paused experiment must stay resumable); they are only skipped.
+        Set `reinforce.inherit_curriculum_on_fresh: true` to opt back into
+        the historical inherit-on-fresh behavior. Resume (non-fresh) runs
+        always inherit the saved curriculum.
+        """
+        smb_curriculum_anchors: list[int] = [0]  # area-byte for each stage
+        smb_curriculum_states: list[Optional[bytes]] = [None]  # state per stage
+        smb_curriculum_stage = 0  # index into anchors
+
+        smb_curriculum_dir = self.checkpoint_dir / "smb_curriculum"
+        smb_curriculum_dir.mkdir(parents=True, exist_ok=True)
+
+        if fresh_start and not getattr(
+            self, "_inherit_curriculum_on_fresh", False
+        ):
+            # A fresh run ignores saved curriculum state. Surface exactly
+            # what was found and how to opt in, but leave every file on disk
+            # untouched so a paused run stays resumable.
+            existing = sorted(smb_curriculum_dir.glob("stage_*.state"))
+            if existing and self._smb_curriculum_active:
+                log.info(
+                    "[vanilla_ppo] fresh start requested — ignoring %d saved "
+                    "curriculum stage state(s) in %s (files left untouched); "
+                    "starting curriculum at stage 0. Set "
+                    "reinforce.inherit_curriculum_on_fresh: true to resume "
+                    "the saved curriculum on a fresh run.",
+                    len(existing), smb_curriculum_dir,
+                )
+            return (
+                smb_curriculum_states,
+                smb_curriculum_anchors,
+                smb_curriculum_stage,
+            )
+
+        # Non-Mario games skip the SMB area-byte curriculum entirely
+        # (stage stays 0 -> no warm-start, no capture, no advance): plain
+        # single-stage vanilla PPO from the profile start state.
+        _curr_range = range(1, 32) if self._smb_curriculum_active else range(0)
+        for n in _curr_range:
+            stage_path = smb_curriculum_dir / f"stage_{n:02d}.state"
+            meta_path = smb_curriculum_dir / f"stage_{n:02d}.meta.json"
+            if not stage_path.exists():
+                break
+            try:
+                blob = stage_path.read_bytes()
+                # Read the anchor byte from the sidecar metadata. If
+                # absent (state written before this fix), fall back to
+                # reading ram[$0760] from the save state by briefly
+                # loading it into worker 0. Pool exists at this point.
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text())
+                    anchor = int(meta["anchor"])
+                else:
+                    # Legacy state without sidecar: derive anchor by
+                    # peeking at the saved RAM. Load into worker 0,
+                    # read byte, then re-reset so we don't pollute the
+                    # cold-boot initial state for the actual run.
+                    self.pool.load_worker_state(0, blob)
+                    peek = self.pool.step_all(
+                        np.zeros(self.pool.num_workers, dtype=np.uint8)
+                    )
+                    ram = peek[0][2]
+                    anchor = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)
+                    log.info(
+                        "[vanilla_ppo] derived anchor=%d for legacy "
+                        "stage_%02d.state (no sidecar); writing it now.",
+                        anchor, n,
+                    )
+                    meta_path.write_text(json.dumps({"anchor": anchor}))
+                    # Reset before continuing setup.
+                    self.pool.reset_all()
+                smb_curriculum_states.append(blob)
+                smb_curriculum_anchors.append(anchor)
+                smb_curriculum_stage = n
+            except Exception as e:
+                log.warning(
+                    "[vanilla_ppo] failed to load stage_%02d: %s", n, e,
+                )
+                break
+        return (
+            smb_curriculum_states,
+            smb_curriculum_anchors,
+            smb_curriculum_stage,
+        )
+
     def _run_vanilla_ppo(self, num_iters: int, fresh_start: bool = False) -> None:
         """Vanilla PPO with N parallel envs — the literature recipe.
 
@@ -4210,9 +4324,10 @@ class Trainer:
         # The curriculum advances on byte changes (any time an env's
         # max-byte exceeds the current stage anchor, we count it as
         # "made progress past the stage").
-        smb_curriculum_anchors: list[int] = [0]  # area-byte for each stage
-        smb_curriculum_states: list[Optional[bytes]] = [None]  # save state per stage
-        smb_curriculum_stage = 0  # index into anchors
+        #
+        # The initial `states`/`anchors`/`stage` come from
+        # `_load_smb_curriculum_from_disk` below (a fresh run starts at
+        # stage 0 unless opted in); it seeds the stage-0 cold-boot entry.
         smb_stage_clear_history: list[int] = []  # rolling: clears past current anchor
         # `smb_pending_capture` is updated mid-rollout the moment an
         # env transitions to area-byte > current_anchor while alive.
@@ -4277,53 +4392,16 @@ class Trainer:
         # restart resumes the curriculum mid-game instead of starting
         # over from 1-1. Anchor byte is stored in a sidecar JSON so the
         # capture gate (`byte > anchor + 1`) doesn't degrade on reload.
+        # A fresh run (fresh_start) ignores saved state and starts at
+        # stage 0 unless reinforce.inherit_curriculum_on_fresh is set;
+        # the saved files are left untouched either way. `smb_curriculum_dir`
+        # is still needed below for writing newly captured stages.
         smb_curriculum_dir = self.checkpoint_dir / "smb_curriculum"
-        smb_curriculum_dir.mkdir(parents=True, exist_ok=True)
-        # Non-Mario games skip the SMB area-byte curriculum entirely
-        # (stage stays 0 -> no warm-start, no capture, no advance): plain
-        # single-stage vanilla PPO from the profile start state.
-        _curr_range = range(1, 32) if self._smb_curriculum_active else range(0)
-        for n in _curr_range:
-            stage_path = smb_curriculum_dir / f"stage_{n:02d}.state"
-            meta_path = smb_curriculum_dir / f"stage_{n:02d}.meta.json"
-            if not stage_path.exists():
-                break
-            try:
-                blob = stage_path.read_bytes()
-                # Read the anchor byte from the sidecar metadata. If
-                # absent (state written before this fix), fall back to
-                # reading ram[$0760] from the save state by briefly
-                # loading it into worker 0. Pool exists at this point.
-                if meta_path.exists():
-                    meta = json.loads(meta_path.read_text())
-                    anchor = int(meta["anchor"])
-                else:
-                    # Legacy state without sidecar: derive anchor by
-                    # peeking at the saved RAM. Load into worker 0,
-                    # read byte, then re-reset so we don't pollute the
-                    # cold-boot initial state for the actual run.
-                    self.pool.load_worker_state(0, blob)
-                    peek = self.pool.step_all(
-                        np.zeros(self.pool.num_workers, dtype=np.uint8)
-                    )
-                    ram = peek[0][2]
-                    anchor = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)
-                    log.info(
-                        "[vanilla_ppo] derived anchor=%d for legacy "
-                        "stage_%02d.state (no sidecar); writing it now.",
-                        anchor, n,
-                    )
-                    meta_path.write_text(json.dumps({"anchor": anchor}))
-                    # Reset before continuing setup.
-                    self.pool.reset_all()
-                smb_curriculum_states.append(blob)
-                smb_curriculum_anchors.append(anchor)
-                smb_curriculum_stage = n
-            except Exception as e:
-                log.warning(
-                    "[vanilla_ppo] failed to load stage_%02d: %s", n, e,
-                )
-                break
+        (
+            smb_curriculum_states,
+            smb_curriculum_anchors,
+            smb_curriculum_stage,
+        ) = self._load_smb_curriculum_from_disk(fresh_start=fresh_start)
         if smb_curriculum_stage > 0:
             log.info(
                 "[vanilla_ppo] curriculum resumed at stage %d (%d save "
