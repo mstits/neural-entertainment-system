@@ -762,6 +762,25 @@ class Trainer:
         # is built and no bonus is added).
         self.rnd_intrinsic_coef: float = float(rl_cfg.get("rnd_intrinsic_coef", 0.0))
         self.rnd_loss_coef: float = float(rl_cfg.get("rnd_loss_coef", 1.0))
+        # Fraction of vanilla-PPO minibatches on which the RND *predictor*
+        # is distilled toward the frozen target. 1.0 (default) trains it on
+        # every minibatch — byte-for-byte today's behaviour. f in (0,1)
+        # subsamples the predictor update on a DETERMINISTIC schedule
+        # (minibatch index i carries RND grads iff i % round(1/f) == 0,
+        # counted over processed minibatches across all K epochs); the
+        # skipped minibatches backprop policy/value losses only, so the
+        # predictor's Adam params stay frozen on those steps. The intrinsic
+        # reward pass and update_normalization are unaffected — only the
+        # distillation cadence changes — so the reward signal is identical
+        # and this stays an opt-in learning A/B, not a default change. Only
+        # the feedforward vanilla path honours it (GA + recurrent untouched).
+        _rnd_pred_frac = float(rl_cfg.get("rnd_predictor_update_fraction", 1.0))
+        if not (0.0 < _rnd_pred_frac <= 1.0):
+            raise ValueError(
+                "reinforce.rnd_predictor_update_fraction must be in (0, 1]; "
+                f"got {_rnd_pred_frac!r}"
+            )
+        self.rnd_predictor_update_fraction: float = _rnd_pred_frac
         # Built lazily on first PPO step so the RND module lands on the
         # correct device once Trainer.run sets it up.
         self._rnd: Optional["RND"] = None
@@ -5306,6 +5325,20 @@ class Trainer:
                     rnd_tgt_feat_cache.index_copy_(
                         0, _rows_t, self._rnd.target_features(_obs_chunk)
                     )
+            # RND predictor-update subsampling schedule. The predictor is
+            # distilled on a DETERMINISTIC cadence: processed minibatch i
+            # (counted across all K epochs) carries RND grads iff
+            # i % _rnd_pred_stride == 0. f=1.0 -> stride 1 -> every
+            # minibatch, byte-identical to the un-subsampled path. Skipped
+            # minibatches never build the RND graph, so (with Adam's
+            # set_to_none zero_grad) the predictor params stay frozen on
+            # those steps while policy/value still update. The cache above
+            # is built unconditionally — it still serves the minibatches
+            # that DO update, and its cost pays for itself at f>=0.25.
+            _rnd_pred_stride = max(
+                1, int(round(1.0 / self.rnd_predictor_update_fraction))
+            )
+            _rnd_mb_index = 0
             for epoch in range(0 if self._recurrent else self.reinforce_steps):
                 perm = np.random.permutation(valid_indices)
                 n_valid = perm.shape[0]
@@ -5315,6 +5348,11 @@ class Trainer:
                     if mb_np.size < 2:
                         continue
                     mb_idx = torch.from_numpy(mb_np).to(self.device)
+                    # Advance the schedule counter per PROCESSED minibatch
+                    # (post skip-guard) and decide whether this step trains
+                    # the predictor. Cheap host-side ints; no tensor work.
+                    _rnd_update_this_mb = (_rnd_mb_index % _rnd_pred_stride == 0)
+                    _rnd_mb_index += 1
 
                     if obs_all is not None:
                         states_t = obs_all[mb_idx]
@@ -5348,7 +5386,7 @@ class Trainer:
                     # the frozen target on visited states (its params are
                     # in this optimizer). Forward with grad here, unlike
                     # the no-grad intrinsic-reward pass above.
-                    if self._rnd is not None:
+                    if self._rnd is not None and _rnd_update_this_mb:
                         # Cached frozen-target features (built once per
                         # iter above): the target CNN runs once per obs
                         # this iter instead of K times. The predictor half

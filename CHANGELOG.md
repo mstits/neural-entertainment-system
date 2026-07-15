@@ -174,6 +174,16 @@ through an adversarial regression review.
 
 ### Added
 
+- **`reinforce.rnd_predictor_update_fraction`** (default `1.0`): subsamples
+  the RND predictor's distillation in the `vanilla_ppo` update on a
+  deterministic per-minibatch schedule — processed minibatch `i` (across all
+  K epochs) carries predictor grads iff `i % round(1/f) == 0`; skipped
+  minibatches backprop policy/value losses only, so the predictor's params
+  stay frozen those steps. The intrinsic-reward pass, `update_normalization`,
+  and the frozen-target cache are untouched, so the reward signal is
+  unchanged and `f=1.0` is byte-for-byte today's behaviour. Opt-in knob for
+  a learning A/B (early numbers: `f=0.25` ≈ +38% update-phase / +15%
+  iter-wall). GA and recurrent paths are unaffected.
 - **Bespoke reward functions with real win predicates for 16 games** (was ~6):
   added Tetris, Bubble Bobble, Punch-Out, Kung Fu, Gradius, Excitebike,
   Ghosts'n Goblins, DuckTales, Kid Icarus, Double Dragon. Every RAM address is
