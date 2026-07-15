@@ -1,6 +1,7 @@
 .PHONY: help test smoke parity bench bench-hot bench-scaling bench-phases bench-all \
         build build-pgo build-pgo-apply selftest clean train eval scoreboard \
-        test-fast selftest-learning demo gui setup-check setup-game
+        test-fast selftest-learning demo gui setup-check setup-game \
+        ppu_layout_check ppu-batch-profile
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -89,6 +90,22 @@ build-pgo:
 
 build-pgo-apply:
 	bash scripts/pgo_build.sh apply
+
+# Event-driven-PPU campaign (docs/proposals/ppu_event_driven_catchup.md).
+# Rung-0 layout gate: fail if a rung changed the machine code of the hot
+# Ppu::tick body. Regenerate the golden only on an intentional,
+# gate-passing tick change: bash scripts/ppu_layout_check.sh regen
+ppu_layout_check:
+	bash scripts/ppu_layout_check.sh check
+
+# Rung-0 batchable-fraction measurement for one ROM+state. Example:
+#   make ppu-batch-profile ROM="roms/zelda.nes" STATE="roms/zelda_start_ctrl.state.bin"
+ROM ?= roms/Super Mario Bros. (World).nes
+STATE ?=
+ppu-batch-profile:
+	(cd nes_core && cargo build --release --features ppu_batch_stats --example ppu_batch_profile)
+	PROF_ROM="$(ROM)" PROF_STATE="$(STATE)" \
+	  nes_core/target/release/examples/ppu_batch_profile
 
 bench:
 	. .venv/bin/activate && python scripts/bench.py

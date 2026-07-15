@@ -99,6 +99,20 @@ pub trait Mapper {
     /// override this. Default impl is a no-op.
     fn on_scanline_tick(&mut self) {}
 
+    /// Whether `on_scanline_tick` does real work (clocks a scanline
+    /// IRQ counter that can assert an A12-driven IRQ), as opposed to
+    /// the trait's no-op default. Only consulted by the
+    /// `ppu_batch_stats` diagnostic (Rung 0 of the event-driven-PPU
+    /// campaign) to tell a genuine A12 scanline apart from a no-op
+    /// `on_scanline_tick` firing on a mapper without a scanline IRQ
+    /// (e.g. NROM/UxROM with split BG/sprite pattern tables). Never
+    /// called on the release hot path — it is dead-code-eliminated
+    /// unless the feature is enabled. Override to `true` in any mapper
+    /// that overrides `on_scanline_tick`.
+    fn uses_scanline_irq(&self) -> bool {
+        false
+    }
+
     fn sram(&mut self) -> *mut u8 {
         ptr::null_mut()
     }

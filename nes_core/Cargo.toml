@@ -151,6 +151,19 @@ mmc1_chr_dispatch_ab = []
 # Diagnostic only — a handful of atomic-free `+= 1` on the Ppu struct.
 # Off by default; enable for tuning the invalidation heuristics.
 ppu_neon_stats = []
+# `ppu_batch_stats` enables the event-driven-PPU catch-up campaign's
+# Rung-0 instrumentation: a per-visible-scanline histogram of the
+# observable-event classes that force a per-dot advance (mid-line
+# $2000-$2007 MMIO, sprite-0 pre-hit lines, sprite-overflow lines,
+# MMC3 A12 scanline-IRQ lines, mid-line rendering toggles, mid-line
+# mapper-register writes) and the resulting batchable fraction — the
+# share of visible lines a scanline-granular `advance` could
+# fast-forward. Diagnostic only — a per-scanline `u8` flag word and a
+# `PpuBatchStats` accumulator on the Ppu struct, both `#[cfg]`-gated so
+# the default build's `tick` machine code is byte-identical (the
+# golden-disasm gate depends on this). Drives
+# `examples/ppu_batch_profile.rs`. Off by default.
+ppu_batch_stats = []
 
 [profile.release]
 opt-level = 3

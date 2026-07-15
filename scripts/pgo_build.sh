@@ -25,9 +25,31 @@
 #     bench    (default) — scripts/bench_hot_path.py
 #     train    — scripts/test_trainer_one_gen.py
 #
+#   PGO_CORPUS env var (stage 2 only) — which profile corpus to emit.
+#     Part of the event-driven-PPU catch-up campaign
+#     (docs/proposals/ppu_event_driven_catchup.md, graft L4 "dual-corpus
+#     PGO"): once a scanline-granular `advance` becomes the common
+#     skip-render path, PGO could demote `Ppu::tick` to a cold section
+#     and regress the full-render / spectator path that still uses it.
+#     To keep BOTH `tick` (full render) and `advance` (skip render) hot,
+#     stage 2 must profile both.
+#       skip  (default) — current behaviour EXACTLY: the skip-render
+#                         training frames only (frame-skip 16).
+#       full            — only the full-render / spectator leg
+#                         (frame-skip 1, skip_render OFF every frame).
+#       dual            — skip-render legs PLUS the full-render leg, so
+#                         the merged profile covers tick AND advance.
+#     Default = skip, so an unset PGO_CORPUS reproduces today's profile
+#     byte-for-byte.
+#
+#   PGO_DRY_RUN=1 — print every stage command (build, profile legs,
+#     merge, apply) WITHOUT executing anything. Use to inspect the plan.
+#
 # PGO is NOT automatic on plain `maturin develop` — rebuilds without
 # these RUSTFLAGS get a non-PGO wheel. Run this script once after any
 # `nes_core/src/*` change that warrants a fresh perf pass.
+#
+#   scripts/pgo_build.sh help    — print this usage.
 
 set -euo pipefail
 
@@ -39,6 +61,30 @@ LLVM_PROFDATA="$(xcrun -find llvm-profdata)"
 
 MODE="${1:-full}"
 WORKLOAD="${2:-bench}"
+CORPUS="${PGO_CORPUS:-skip}"
+DRY_RUN="${PGO_DRY_RUN:-0}"
+
+if [[ "${MODE}" == "help" || "${MODE}" == "-h" || "${MODE}" == "--help" ]]; then
+    sed -n '2,58p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+fi
+
+case "${CORPUS}" in
+    skip|full|dual) ;;
+    *) echo "unknown PGO_CORPUS: ${CORPUS} (want: skip | full | dual)" >&2; exit 2 ;;
+esac
+
+# Run (or, under PGO_DRY_RUN, just print) a labelled command.
+run_step() {
+    local label="$1"; shift
+    if [[ "${DRY_RUN}" == "1" ]]; then
+        printf '    [dry-run] %s\n              ' "${label}"
+        printf '%q ' "$@"; printf '\n'
+    else
+        echo "    -> ${label}"
+        "$@"
+    fi
+}
 
 mkdir -p "${PGO_DIR}"
 cd "${REPO}/nes_core"
@@ -46,12 +92,26 @@ source "$HOME/.cargo/env" 2>/dev/null || true
 
 if [[ "${MODE}" == "full" ]]; then
     echo "==> [1/3] Building instrumented wheel..."
-    rm -rf "${RAW_DIR}"
-    mkdir -p "${RAW_DIR}"
-    RUSTFLAGS="-Cprofile-generate=${RAW_DIR}" \
+    if [[ "${DRY_RUN}" != "1" ]]; then
+        rm -rf "${RAW_DIR}"
+        mkdir -p "${RAW_DIR}"
+    fi
+    run_step "instrumented build (profile-generate)" \
+        env RUSTFLAGS="-Cprofile-generate=${RAW_DIR}" \
         "${REPO}/.venv/bin/maturin" develop --release --quiet
 
-    echo "==> [2/3] Running workload (${WORKLOAD}) to generate profile data..."
+    echo "==> [2/3] Running workload (${WORKLOAD}, corpus=${CORPUS}) to generate profile data..."
+    # A full-render / spectator leg (frame-skip 1 => skip_render OFF
+    # every frame) that keeps `Ppu::tick` and write_frame hot in the
+    # profile. Emitted for PGO_CORPUS=full|dual (see the header). The
+    # Zelda dominant matches the skip legs so block layout stays tuned
+    # to the headline workload.
+    full_render_leg() {
+        run_step "full-render / spectator (fs=1, Zelda)" \
+            "${REPO}/.venv/bin/python" \
+            "${REPO}/scripts/bench_hot_path.py" \
+            --workers 12 --steps 120 --frame-skip 1
+    }
     # Empirical: the default (non-headless) xrgb→rgb + rgb→gray
     # two-stage path is faster than the fused xrgb→gray kernel
     # because vld4q+vst3q is cheaper than per-pixel luma muladd.
@@ -91,23 +151,41 @@ if [[ "${MODE}" == "full" ]]; then
             #   Contra/SMB/Gradius              flat-to-positive
             # A naive all-games profile instead regresses the Zelda 16w
             # denominator -1.4%, so do NOT broaden past this short pass.
-            "${REPO}/.venv/bin/python" \
-                "${REPO}/scripts/bench_hot_path.py" \
-                --workers 16 --steps 400 --frame-skip 16
-            "${REPO}/.venv/bin/python" \
-                "${REPO}/scripts/bench_hot_path.py" \
-                --workers 12 --steps 200 --frame-skip 16 \
-                --rom "${REPO}/roms/CONTRA.NES" \
-                --profile "${REPO}/configs/contra.yaml"
-            "${REPO}/.venv/bin/python" \
-                "${REPO}/scripts/bench_hot_path.py" \
-                --workers 12 --steps 100 --frame-skip 16 \
-                --rom "${REPO}/roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes" \
-                --profile "${REPO}/configs/punchout.yaml"
+            #
+            # These three skip-render legs are the historical corpus and
+            # run for PGO_CORPUS=skip (default) or dual — byte-identical
+            # to the pre-dual-corpus script.
+            if [[ "${CORPUS}" == "skip" || "${CORPUS}" == "dual" ]]; then
+                run_step "skip-render Zelda (16w, fs=16)" \
+                    "${REPO}/.venv/bin/python" \
+                    "${REPO}/scripts/bench_hot_path.py" \
+                    --workers 16 --steps 400 --frame-skip 16
+                run_step "skip-render Contra (12w, fs=16)" \
+                    "${REPO}/.venv/bin/python" \
+                    "${REPO}/scripts/bench_hot_path.py" \
+                    --workers 12 --steps 200 --frame-skip 16 \
+                    --rom "${REPO}/roms/CONTRA.NES" \
+                    --profile "${REPO}/configs/contra.yaml"
+                run_step "skip-render Punch-Out (12w, fs=16)" \
+                    "${REPO}/.venv/bin/python" \
+                    "${REPO}/scripts/bench_hot_path.py" \
+                    --workers 12 --steps 100 --frame-skip 16 \
+                    --rom "${REPO}/roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes" \
+                    --profile "${REPO}/configs/punchout.yaml"
+            fi
+            if [[ "${CORPUS}" == "full" || "${CORPUS}" == "dual" ]]; then
+                full_render_leg
+            fi
             ;;
         train)
-            "${REPO}/.venv/bin/python" \
-                "${REPO}/scripts/test_trainer_one_gen.py"
+            if [[ "${CORPUS}" == "skip" || "${CORPUS}" == "dual" ]]; then
+                run_step "trainer one-gen (skip-render)" \
+                    "${REPO}/.venv/bin/python" \
+                    "${REPO}/scripts/test_trainer_one_gen.py"
+            fi
+            if [[ "${CORPUS}" == "full" || "${CORPUS}" == "dual" ]]; then
+                full_render_leg
+            fi
             ;;
         *)
             echo "unknown workload: ${WORKLOAD}" >&2
@@ -118,18 +196,25 @@ fi
 
 if [[ "${MODE}" == "full" || "${MODE}" == "refresh" ]]; then
     echo "==> [2.5/3] Merging raw profdata..."
-    "${LLVM_PROFDATA}" merge -o "${MERGED}" "${RAW_DIR}"
+    run_step "merge raw profdata" \
+        "${LLVM_PROFDATA}" merge -o "${MERGED}" "${RAW_DIR}"
 fi
 
-if [[ ! -f "${MERGED}" ]]; then
+if [[ "${DRY_RUN}" != "1" && ! -f "${MERGED}" ]]; then
     echo "error: merged profdata not found at ${MERGED}" >&2
     echo "hint: run 'scripts/pgo_build.sh full' to generate it" >&2
     exit 1
 fi
 
 echo "==> [3/3] Rebuilding with PGO applied..."
-RUSTFLAGS="-Cprofile-use=${MERGED}" \
+run_step "PGO-applied build (profile-use)" \
+    env RUSTFLAGS="-Cprofile-use=${MERGED}" \
     "${REPO}/.venv/bin/maturin" develop --release --quiet
+
+if [[ "${DRY_RUN}" == "1" ]]; then
+    echo
+    echo "[dry-run] no commands were executed."
+fi
 
 echo
 echo "Done. nes_core rebuilt with PGO applied."

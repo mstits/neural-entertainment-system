@@ -13,6 +13,66 @@ pub const SCREEN_HEIGHT: usize = 240;
 
 const CYCLES_PER_SCANLINE: u64 = 341;
 
+// Rung-0 batchable-fraction instrumentation (feature `ppu_batch_stats`).
+// One bit per observable-event class that lands on a visible scanline;
+// accumulated into `Ppu::batch_scanline_flags` as the line runs and
+// classified into `PpuBatchStats` at the scanline boundary. A visible
+// line carrying none of the "blocking" classes is one a scanline-
+// granular `advance` (Rung 1/2/3) could fast-forward in closed form.
+#[cfg(feature = "ppu_batch_stats")]
+mod batch_ev {
+    /// Any $2000-$2007 read or write landed mid-line (dot >= 1) — a
+    /// slice boundary that splits the scanline. Superset of the
+    /// REG_WRITE / STATUS_READ / RENDER_TOGGLE refinements below.
+    pub const MMIO: u8 = 1 << 0;
+    /// The mid-line MMIO included at least one $2000-$2007 *write*.
+    pub const REG_WRITE: u8 = 1 << 1;
+    /// The mid-line MMIO included at least one $2002 (PPUSTATUS) read
+    /// — the sprite-0 / vblank poll that hands the PPU short slices.
+    pub const STATUS_READ: u8 = 1 << 2;
+    /// Line began with sprite 0 in range and the sprite-0-hit flag not
+    /// yet latched: the hit dot must be found per-dot (exact, no math).
+    pub const SPRITE0_PREHIT: u8 = 1 << 3;
+    /// SPRITE_OVERFLOW was set during this line's sprite evaluation.
+    pub const OVERFLOW: u8 = 1 << 4;
+    /// A genuine A12 scanline-IRQ clock fired on this line (mapper
+    /// reports `uses_scanline_irq`). Handled by the Rung-3 IRQ horizon,
+    /// so it blocks the strict (Rung-1) fraction but not the horizon one.
+    pub const A12: u8 = 1 << 5;
+    /// A mid-line PPUMASK write toggled rendering on/off (subset of
+    /// MMIO; reported for diagnosis of raster-split games).
+    pub const RENDER_TOGGLE: u8 = 1 << 6;
+    /// A mapper register write ($4018-$FFFF) landed mid-line. Under
+    /// skip_render the closed-form advance does no CHR fetch, so this
+    /// does NOT block batching — reported for context only.
+    pub const MAPPER_WRITE: u8 = 1 << 7;
+}
+
+/// Per-visible-scanline event histogram for the event-driven-PPU
+/// campaign's Rung-0 measurement (feature `ppu_batch_stats`). Every
+/// field accumulates across the frames run since the last
+/// `reset_batch_stats`. `lines_batchable_*` are the headline: the
+/// count of visible lines a scanline-granular `advance` could
+/// fast-forward, under two models — `strict` (Rung 1, A12 lines fall
+/// to per-dot) and `with_a12` (Rung 2/3, the A12 clock is emitted from
+/// the batch via the IRQ horizon).
+#[cfg(feature = "ppu_batch_stats")]
+#[derive(Default, Clone, Copy, Debug)]
+pub struct PpuBatchStats {
+    pub frames: u64,
+    pub visible_lines: u64,
+    pub lines_mmio: u64,
+    pub lines_reg_write: u64,
+    pub lines_status_read: u64,
+    pub lines_sprite0_prehit: u64,
+    pub lines_overflow: u64,
+    pub lines_a12: u64,
+    pub lines_render_toggle: u64,
+    pub lines_mapper_write: u64,
+    pub lines_batchable_strict: u64,
+    pub lines_batchable_with_a12: u64,
+}
+
 const VISIBLE_START_SCANLINE: u16 = 0;
 pub const VISIBLE_END_SCANLINE: u16 = 239;
 const VBLANK_START_SCANLINE: u16 = 241;
@@ -257,6 +317,15 @@ pub struct Ppu {
     /// fallback. Never a correctness lever: both settings must produce
     /// byte-identical CPU-observable state.
     refined_skip_render: bool,
+
+    /// Rung-0 batchable-fraction accumulator (feature `ppu_batch_stats`).
+    /// Cleared by `reset_batch_stats`; read via `batch_stats`.
+    #[cfg(feature = "ppu_batch_stats")]
+    batch_stats: PpuBatchStats,
+    /// Event flags (`batch_ev::*`) set as the current visible scanline
+    /// runs; classified + cleared at the scanline boundary.
+    #[cfg(feature = "ppu_batch_stats")]
+    batch_scanline_flags: u8,
 }
 
 // SAFETY: chr_cache_ptr aliases memory owned by the same Nes that
@@ -373,6 +442,69 @@ impl Ppu {
             ppu_mask_cache: 0,
             grey_mask: 0x3F,
             refined_skip_render: true,
+            #[cfg(feature = "ppu_batch_stats")]
+            batch_stats: PpuBatchStats::default(),
+            #[cfg(feature = "ppu_batch_stats")]
+            batch_scanline_flags: 0,
+        }
+    }
+
+    /// Snapshot the Rung-0 batchable-fraction histogram accumulated
+    /// since the last `reset_batch_stats`. See `PpuBatchStats`.
+    #[cfg(feature = "ppu_batch_stats")]
+    pub fn batch_stats(&self) -> PpuBatchStats {
+        self.batch_stats
+    }
+
+    /// Zero the Rung-0 histogram (call after warm-up so the measurement
+    /// window covers only steady-state gameplay).
+    #[cfg(feature = "ppu_batch_stats")]
+    pub fn reset_batch_stats(&mut self) {
+        self.batch_stats = PpuBatchStats::default();
+        self.batch_scanline_flags = 0;
+    }
+
+    /// Record a $2000-$2007 CPU access for the Rung-0 histogram. A
+    /// no-op unless it lands mid-visible-line (dot >= 1), where it is a
+    /// slice boundary that blocks whole-line batching. Compiles to
+    /// nothing without `ppu_batch_stats`.
+    #[inline(always)]
+    #[allow(unused_variables)]
+    fn note_ppu_reg_access(&mut self, address: u16, is_write: bool, value: u8) {
+        #[cfg(feature = "ppu_batch_stats")]
+        {
+            if self.scanline <= VISIBLE_END_SCANLINE && self.scanline_cycle() >= 1 {
+                self.batch_scanline_flags |= batch_ev::MMIO;
+                let reg = address & 0x2007;
+                if is_write {
+                    self.batch_scanline_flags |= batch_ev::REG_WRITE;
+                    if reg == PPUMASK_ADDRESS {
+                        // SHOW_BACKGROUND (1<<3) | SHOW_SPRITES (1<<4).
+                        let new_render = value & 0x18 != 0;
+                        if new_render != self.rendering_enabled() {
+                            self.batch_scanline_flags |= batch_ev::RENDER_TOGGLE;
+                        }
+                    }
+                } else if reg == PPUSTATUS_ADDRESS {
+                    self.batch_scanline_flags |= batch_ev::STATUS_READ;
+                }
+            }
+        }
+    }
+
+    /// Flag the current visible line as a sprite-0 pre-hit line (must
+    /// run per-dot to latch the hit on its true dot) when sprite 0 is
+    /// in range and not yet latched. Called at dot 1, after
+    /// `sprite_evaluation_init`. Compiles out without `ppu_batch_stats`.
+    #[inline(always)]
+    fn note_sprite0_prehit(&mut self) {
+        #[cfg(feature = "ppu_batch_stats")]
+        {
+            if self.sprite_0_on_scanline
+                && !self.regs.ppu_status.contains(PpuStatus::SPRITE_ZERO_HIT)
+            {
+                self.batch_scanline_flags |= batch_ev::SPRITE0_PREHIT;
+            }
         }
     }
 
@@ -765,6 +897,10 @@ impl Ppu {
                 let y = self.oam.last_read_byte;
                 if self.is_sprite_at_y_on_scanline(y) {
                     self.regs.ppu_status.set(PpuStatus::SPRITE_OVERFLOW, true);
+                    #[cfg(feature = "ppu_batch_stats")]
+                    {
+                        self.batch_scanline_flags |= batch_ev::OVERFLOW;
+                    }
                     self.oam.m += 1;
                 } else {
                     self.oam.n += 1;
@@ -1034,6 +1170,12 @@ impl Ppu {
                 if self.batched_invalidation_broad {
                     self.batched_scanline_invalid = true;
                 }
+            }
+        }
+        #[cfg(feature = "ppu_batch_stats")]
+        {
+            if self.scanline <= VISIBLE_END_SCANLINE && self.scanline_cycle() >= 1 {
+                self.batch_scanline_flags |= batch_ev::MAPPER_WRITE;
             }
         }
     }
@@ -1653,6 +1795,16 @@ impl Ppu {
             };
             if Some(scanline_cycle) == trigger_cycle {
                 mapper.on_scanline_tick();
+                #[cfg(feature = "ppu_batch_stats")]
+                {
+                    // Only a mapper that actually clocks a scanline IRQ
+                    // makes this a batching-relevant A12 line; a no-op
+                    // `on_scanline_tick` (e.g. NROM with split tables)
+                    // does not.
+                    if mapper.uses_scanline_irq() {
+                        self.batch_scanline_flags |= batch_ev::A12;
+                    }
+                }
             }
         }
 
@@ -1753,6 +1905,7 @@ impl Ppu {
                     match scanline_cycle {
                         1 => {
                             self.sprite_evaluation_init();
+                            self.note_sprite0_prehit();
                         }
                         2..=64 => {
                             if scanline_cycle.is_multiple_of(2) {
@@ -1800,6 +1953,37 @@ impl Ppu {
             scanline_cycle == CYCLES_PER_SCANLINE - 2 &&
             !self.frame.is_multiple_of(2))
         {
+            // Rung-0 histogram: classify the finishing scanline (still
+            // `self.scanline` here, pre-increment) from its accumulated
+            // event flags, then clear for the next line. Visible lines
+            // only; vblank lines take the fast path above and pre-render
+            // (261) is not counted.
+            #[cfg(feature = "ppu_batch_stats")]
+            {
+                if self.scanline <= VISIBLE_END_SCANLINE {
+                    let f = self.batch_scanline_flags;
+                    self.batch_stats.visible_lines += 1;
+                    if f & batch_ev::MMIO != 0 { self.batch_stats.lines_mmio += 1; }
+                    if f & batch_ev::REG_WRITE != 0 { self.batch_stats.lines_reg_write += 1; }
+                    if f & batch_ev::STATUS_READ != 0 { self.batch_stats.lines_status_read += 1; }
+                    if f & batch_ev::SPRITE0_PREHIT != 0 { self.batch_stats.lines_sprite0_prehit += 1; }
+                    if f & batch_ev::OVERFLOW != 0 { self.batch_stats.lines_overflow += 1; }
+                    if f & batch_ev::A12 != 0 { self.batch_stats.lines_a12 += 1; }
+                    if f & batch_ev::RENDER_TOGGLE != 0 { self.batch_stats.lines_render_toggle += 1; }
+                    if f & batch_ev::MAPPER_WRITE != 0 { self.batch_stats.lines_mapper_write += 1; }
+                    // Blocking sets: `strict` = Rung-1 (A12 falls to
+                    // per-dot); `with_a12` = Rung-2/3 (A12 clock emitted
+                    // from the batch). Mapper writes never block under
+                    // skip_render (no CHR fetch in the closed form).
+                    const STRICT: u8 =
+                        batch_ev::MMIO | batch_ev::SPRITE0_PREHIT | batch_ev::OVERFLOW | batch_ev::A12;
+                    const WITH_A12: u8 =
+                        batch_ev::MMIO | batch_ev::SPRITE0_PREHIT | batch_ev::OVERFLOW;
+                    if f & STRICT == 0 { self.batch_stats.lines_batchable_strict += 1; }
+                    if f & WITH_A12 == 0 { self.batch_stats.lines_batchable_with_a12 += 1; }
+                }
+                self.batch_scanline_flags = 0;
+            }
             self.scanline_start_cycle = self.cycles;
             self.scanline += 1;
             // Refresh cached CHR pointer at every scanline boundary.
@@ -1823,6 +2007,10 @@ impl Ppu {
                 video_frame_sink.write_frame(&self.frame_buffer);
                 self.scanline = VISIBLE_START_SCANLINE;
                 self.frame += 1;
+                #[cfg(feature = "ppu_batch_stats")]
+                {
+                    self.batch_stats.frames += 1;
+                }
                 // Clear skip_render so the first cycles of the new frame
                 // always render. Bulk-step CPU paths (try_bulk_step,
                 // cpu_asm) tick the PPU in batches that can cross a frame
@@ -1896,6 +2084,8 @@ impl Ppu {
 
         let address = address & 0x2007;
 
+        self.note_ppu_reg_access(address, false, 0);
+
         let val = match address {
             PPUSTATUS_ADDRESS => self.read_ppu_status(),
             OAMDATA_ADDRESS => self.read_oam_byte(),
@@ -1952,6 +2142,11 @@ impl Ppu {
         // 0x10 (the open-bus low 5 bits of the prior `STA $2000
         // #$10`). That's the first byte-divergence on cold boot.
         self.ppu_gen_latch = value;
+
+        // Rung-0 histogram: note the mid-line register access BEFORE the
+        // PPUMASK write below applies, so `rendering_enabled()` still
+        // reflects the pre-write state for the rendering-toggle check.
+        self.note_ppu_reg_access(address, true, value);
 
         // Writes to the following registers are ignored if earlier than
         // ~29658 CPU clocks after reset: PPUCTRL, PPUMASK, PPUSCROLL, PPUADDR

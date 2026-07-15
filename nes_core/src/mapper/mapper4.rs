@@ -618,6 +618,10 @@ impl Mapper for Mapper4 {
         self.clock_irq();
     }
 
+    fn uses_scanline_irq(&self) -> bool {
+        true
+    }
+
     fn sram(&mut self) -> *mut u8 {
         self.cartridge.prg_ram.as_mut_ptr() as *mut _
     }
