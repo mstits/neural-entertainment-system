@@ -30,9 +30,9 @@ tests + ASM/interpreter lockstep soaks all green.
 - **PPU idle-HBlank early-return under skip_render** (all mappers,
   default on): visible-scanline dots 258–320 that provably do no
   observable work collapse to a counter increment. ~5% single-env.
-  The BG-pixel-pipeline elision variant ships byte-exact but OFF
-  (`ppu_skip_bg` feature): it regresses MMC2/MMC3 via hot-loop code
-  layout and stays parked pending PGO re-evaluation.
+  A companion BG-pixel-pipeline elision variant was prototyped
+  byte-exact but OFF; it regressed MMC2/MMC3 via hot-loop code layout
+  and, after the PGO verdict below, was removed entirely.
 - **MMC1 flat CHR window** served to the PPU via a cached pointer
   (~4.6% on MMC1 games; CHR-RAM writes and bank switches rebuild the
   window in place). The matching PRG flat-window read path is ~0%
@@ -68,9 +68,10 @@ tests + ASM/interpreter lockstep soaks all green.
   recurrent paths (which mutate stats mid-update) keep the full
   forward. The unattributed ~17% of iteration wall now has timing
   buckets (rnd_intrinsic / bookkeeping / iter_reset).
-- Evening experiment verdicts (measured): `ppu_skip_bg` is
-  permanently dead — a PGO build with it regresses every game
-  (up to −24% on MMC3) and the training denominator by −13.7%;
+- Evening experiment verdicts (measured): the BG-pixel-pipeline
+  elision variant is permanently dead and has been removed — a PGO
+  build with it regressed every game (up to −24% on MMC3) and the
+  training denominator by −13.7%;
   worker-count sweep on the M4 Max found 24 workers = +19% pool
   throughput vs 16 (work-stealing balance over the 12P+4E topology;
   13-16 workers is the sour spot), applicable per-config where the

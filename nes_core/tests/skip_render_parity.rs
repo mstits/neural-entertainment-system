@@ -213,18 +213,13 @@ fn smb_in_game_skip_render_with_reset_advance_is_byte_exact() {
 // ---------------------------------------------------------------------
 // Refined skip-render fast-path guards.
 //
-// The refined skip-render path adds, on top of plain skip_render:
-//   (1) idle-HBlank early-return — dots 258..=320 on visible scanlines
-//       collapse to `cycles += 1` (shipped ON, all mappers), and
-//   (2) BG-pixel-pipeline elision under skip_render (behind the
-//       off-by-default `ppu_skip_bg` feature, eligible mappers only).
-// Both are pixel-write / unobserved-work elisions: they must leave every
-// CPU-observable side effect (sprite-0 hit, scroll v/t, OAM, sprite
-// overflow, NMI, mapper IRQ/CHR state, RAM) byte-identical. These guards
-// pin that. They pass in BOTH build configs — the default build (idle
-// only) is fully byte-exact including the shift registers; the
-// `ppu_skip_bg` build drops the (unobserved) fetch pipeline, which these
-// guards deliberately exclude from the comparison.
+// The refined skip-render path adds, on top of plain skip_render, the
+// idle-HBlank early-return — dots 258..=320 on visible scanlines
+// collapse to `cycles += 1` (shipped ON, all mappers). It is an
+// unobserved-work elision: it must leave every CPU-observable side
+// effect (sprite-0 hit, scroll v/t, OAM, sprite overflow, NMI, mapper
+// IRQ/CHR state, RAM) byte-identical. These guards pin that — the
+// refined path is fully byte-exact, including the shift registers.
 // ---------------------------------------------------------------------
 
 /// Load an `NCST\x01`-framed save-state onto `nes` (mirrors the loader in
@@ -248,10 +243,9 @@ fn load_state(nes: &mut Nes, path: &str) {
 /// counters, and the sprite-0 / NMI flags. DELIBERATELY excludes the BG +
 /// sprite fetch pipeline (name/attr/bitmap latches, bg shift registers,
 /// sprite pattern/attribute/x registers): those are pure render
-/// intermediates read only by `render_pixel`, and are exactly the
-/// unobserved state the `ppu_skip_bg` elision is allowed to drop on a
-/// skip-render frame. If any of the INCLUDED state ever diverges between
-/// the refined path and the full tick body, the CPU could observe it.
+/// intermediates read only by `render_pixel`. If any of the INCLUDED
+/// state ever diverges between the refined path and the full tick body,
+/// the CPU could observe it.
 fn observable_digest(nes: &Nes) -> Vec<u8> {
     let s = nes.get_state();
     let p = &s.ppu;
@@ -368,8 +362,8 @@ fn smb_refined_skip_render_state_parity_off_vs_on() {
 }
 
 /// Zelda (MMC1) from an in-game save-state — HUD sprite-0 active from
-/// frame 0, banked CHR, and (under `ppu_skip_bg`) an elision-eligible
-/// mapper. Walk around; observable state must match refined off vs on.
+/// frame 0, banked CHR. Walk around; observable state must match refined
+/// off vs on.
 #[test]
 fn zelda_refined_skip_render_state_parity_off_vs_on() {
     let script = |step: usize| {

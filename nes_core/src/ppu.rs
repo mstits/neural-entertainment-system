@@ -249,29 +249,14 @@ pub struct Ppu {
     /// the default (greyscale off) path stays byte-identical.
     grey_mask: u8,
 
-    /// Runtime kill-switch for the refined skip-render fast paths
-    /// (idle-HBlank early-return + BG-pixel-pipeline elision). Default
-    /// `true` (the paths are active whenever `skip_render` is also set).
-    /// Set to `false` to force the full per-cycle tick body — the exact
-    /// pre-optimization behaviour — for A/B measurement, byte-exactness
-    /// verification, or as a safety fallback. Never a correctness lever:
-    /// both settings must produce byte-identical CPU-observable state.
+    /// Runtime kill-switch for the refined skip-render idle-HBlank
+    /// early-return fast path. Default `true` (the path is active
+    /// whenever `skip_render` is also set). Set to `false` to force the
+    /// full per-cycle tick body — the exact pre-optimization behaviour —
+    /// for A/B measurement, byte-exactness verification, or as a safety
+    /// fallback. Never a correctness lever: both settings must produce
+    /// byte-identical CPU-observable state.
     refined_skip_render: bool,
-
-    /// Cached at scanline boundary: does the active mapper's CHR fetch
-    /// path have NO visible-dot side effect (see
-    /// `MapperEnum::skip_render_bg_elision_safe`)? Gates the BG-pixel
-    /// pipeline elision so MMC3-A12 / MMC2-latch / scanline-IRQ mappers
-    /// keep their full per-cycle fetch stream. Refreshed wherever
-    /// `chr_cache_ptr` is (the only spots holding a `&mut mapper`).
-    /// Safe conservative default `false`: until the first scanline
-    /// boundary sets it, the BG pipeline runs in full (byte-exact, just
-    /// unoptimized). The mapper never changes for a live `Nes`, so once
-    /// set this value is stable — it can never flip from a wrong `true`
-    /// to `false`, so it can never cause a fidelity break. Only compiled
-    /// in under `ppu_skip_bg` (the pipeline-elision experiment).
-    #[cfg(feature = "ppu_skip_bg")]
-    bg_elision_allowed: bool,
 }
 
 // SAFETY: chr_cache_ptr aliases memory owned by the same Nes that
@@ -388,8 +373,6 @@ impl Ppu {
             ppu_mask_cache: 0,
             grey_mask: 0x3F,
             refined_skip_render: true,
-            #[cfg(feature = "ppu_skip_bg")]
-            bg_elision_allowed: false,
         }
     }
 
@@ -454,11 +437,10 @@ impl Ppu {
         self.skip_render = skip;
     }
 
-    /// Toggle the refined skip-render fast paths (idle-HBlank
-    /// early-return + BG-pixel-pipeline elision). Default on. Setting
-    /// `false` restores the exact full per-cycle tick body; it is a
-    /// perf/verification knob only and must never change
-    /// CPU-observable output. See `refined_skip_render`.
+    /// Toggle the refined skip-render idle-HBlank early-return fast
+    /// path. Default on. Setting `false` restores the exact full
+    /// per-cycle tick body; it is a perf/verification knob only and
+    /// must never change CPU-observable output. See `refined_skip_render`.
     pub fn set_refined_skip_render(&mut self, on: bool) {
         self.refined_skip_render = on;
     }
@@ -1576,10 +1558,6 @@ impl Ppu {
                 // boundary, including vblank → pre-render (260 →
                 // 261). Pre-render does CHR reads via BG fetches.
                 self.chr_cache_ptr = mapper.chr_static_ptr().unwrap_or(core::ptr::null());
-                #[cfg(feature = "ppu_skip_bg")]
-                {
-                    self.bg_elision_allowed = mapper.skip_render_bg_elision_safe();
-                }
                 // Vblank-scanline transitions never reach pre-render
                 // boundary state that batched_render needs, so skip
                 // the boundary work entirely — it gets done when we
@@ -1682,50 +1660,6 @@ impl Ppu {
         let on_bg_prefetch_cycle = (321..=336).contains(&scanline_cycle);
         let on_bg_fetch_cycle = on_visible_cycle || on_bg_prefetch_cycle;
 
-        // Refined skip-render fast path #2: BG-pixel-pipeline elision.
-        // On a skip-render frame, a visible scanline that does NOT
-        // contain sprite 0 produces no CPU-observable effect from its
-        // dot 1..=256 background pipeline (name/attr/bitmap fetches, bg
-        // shift, register load, sprite-shift, render_pixel): the shift
-        // registers it feeds are read only by `render_pixel`, which
-        // bails before touching them precisely when
-        // `!self.sprite_0_on_scanline` under skip_render (see the bail
-        // at the top of `render_pixel`). So this gate mirrors that bail
-        // exactly — whenever `skip_bg` is true, `render_pixel` would
-        // have returned a no-op anyway; whenever sprite 0 IS present,
-        // `skip_bg` is false and the full pipeline runs so the sprite-0
-        // hit latches on its exact dot. Scroll increments (coarse-x at
-        // multiples of 8, y at 256, v<-t at 257), sprite EVALUATION
-        // (which sets `sprite_0_on_scanline` for the next line), sprite
-        // tile fetches (257..=320), and the 321..=336 prefetch that
-        // re-primes the next scanline's shift regs are all preserved —
-        // so scroll (`regs.v`), OAM, sprite overflow, and mapper timing
-        // stay cycle-exact. `bg_elision_allowed` restricts this to
-        // mappers with no visible-fetch side effect (see
-        // `skip_render_bg_elision_safe`); MMC3/MMC2/scanline-IRQ mappers
-        // keep the full fetch stream and only benefit from fast path #1.
-        // `bg_elision_allowed` is constant per ROM, so listing it first
-        // makes `skip_bg` short-circuit after a single load on excluded
-        // mappers (MMC3/MMC2/scanline-IRQ) — they pay nothing for this
-        // path and still get fast path #1. `skip_render` is the next
-        // cheapest gate (a field bool that is false on every full-render
-        // tick), so the remaining terms are only reached on the frames
-        // this optimization targets.
-        #[cfg(feature = "ppu_skip_bg")]
-        let skip_bg = self.bg_elision_allowed
-            && self.refined_skip_render
-            && self.skip_render
-            && rendering_enabled
-            && on_visible_scanline
-            && !self.sprite_0_on_scanline;
-        // Default build: compile-time `false`, so every `!skip_bg` /
-        // `if skip_bg {…} else {…}` below folds back to the exact
-        // baseline inner loop — the shipped tick body carries ZERO
-        // pipeline-elision code and only the (unconditional) idle-HBlank
-        // fast path.
-        #[cfg(not(feature = "ppu_skip_bg"))]
-        let skip_bg = false;
-
         if on_visible_scanline && on_visible_cycle {
             if rendering_enabled {
                 // Scanline-level skip: when Replace mode has committed
@@ -1740,7 +1674,7 @@ impl Ppu {
                 let skip_pixel_call = self.skip_pixel_writes_this_scanline
                     && (!self.sprite_0_on_scanline
                         || self.regs.ppu_status.contains(PpuStatus::SPRITE_ZERO_HIT));
-                if !skip_pixel_call && !skip_bg {
+                if !skip_pixel_call {
                     self.render_pixel();
                 }
             } else {
@@ -1767,20 +1701,13 @@ impl Ppu {
             // Handle backgrounds
             {
                 if on_visible_scanline || on_prerender_scanline {
-                    // Under skip_bg, suppress the unobserved dot 2..=257
-                    // shifts; keep the 322..=337 prefetch shifts that
-                    // prime the next scanline's registers.
-                    if (!skip_bg && (2..=257).contains(&scanline_cycle))
+                    if (2..=257).contains(&scanline_cycle)
                         || (322..=337).contains(&scanline_cycle)
                     {
                         self.shift_background_registers();
                     }
 
-                    // Under skip_bg, suppress the visible-dot (1..=256)
-                    // BG fetches + register load; keep the 321..=336
-                    // prefetch fetches (`on_bg_prefetch_cycle`).
-                    let do_bg_fetch = if skip_bg { on_bg_prefetch_cycle } else { on_bg_fetch_cycle };
-                    if do_bg_fetch {
+                    if on_bg_fetch_cycle {
                         match scanline_cycle % 8 {
                             1 => self.fetch_name_table_byte(mapper),
                             3 => self.fetch_attribute_table_byte(mapper),
@@ -1818,11 +1745,7 @@ impl Ppu {
             // Handle sprites
             {
                 if on_visible_scanline {
-                    // Under skip_bg the per-pixel sprite shift/counter
-                    // update is unobserved (it feeds only render_pixel,
-                    // which is skipped); the shift regs are reloaded by
-                    // the preserved fetch_sprite_tile at dots 257..=320.
-                    if on_visible_cycle && !skip_bg {
+                    if on_visible_cycle {
                         self.update_sprite_rendering_registers();
                     }
 
@@ -1885,10 +1808,6 @@ impl Ppu {
             // banked-CHR mappers (MMC1, MMC3) the trait method
             // returns None and reads fall back to enum dispatch.
             self.chr_cache_ptr = mapper.chr_static_ptr().unwrap_or(core::ptr::null());
-            #[cfg(feature = "ppu_skip_bg")]
-            {
-                self.bg_elision_allowed = mapper.skip_render_bg_elision_safe();
-            }
             // End of frame: scanline only changes here, so the
             // overflow check belongs in the same branch — fires once
             // per scanline transition (262×/frame) instead of once
