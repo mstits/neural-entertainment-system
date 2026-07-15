@@ -51,6 +51,9 @@ from src.training.profile_utils import (  # noqa: E402
 from src.training.checkpointing import (  # noqa: E402
     find_latest_trained_checkpoint, find_playable_checkpoint,
 )
+from src.training.smb_sequential import (  # noqa: E402
+    SequentialTracker, level_label,
+)
 
 # Reuse the same logical → profile + ROM tables as the launcher so
 # eval and train always agree on which files to read.
@@ -63,15 +66,21 @@ def resolve_eval_checkpoint(
     game: str,
     latest: bool = False,
     iter_: Optional[int] = None,
+    checkpoint: Optional[str] = None,
 ) -> Optional[Path]:
     """Pick which checkpoint to eval.
 
     Default prefers the retained winner (`winners/best.pt`), then the best
     eval-history clear_rate, then the latest — so `make eval` measures a
     real win rather than whatever the latest (possibly collapsed) iter is.
+    `--checkpoint PATH` pins an exact file by path (used by the cold-eval
+    probe, which writes a temp checkpoint and subprocesses this script);
     `--iter N` pins an exact `vanilla_ppo_iter_NNNNN.pt`; `--latest` forces
     the freshest trained checkpoint (to measure current training progress).
     """
+    if checkpoint is not None:
+        pinned = Path(checkpoint)
+        return pinned if pinned.exists() else None
     if iter_ is not None:
         pinned = ckpt_dir / f"vanilla_ppo_iter_{iter_:05d}.pt"
         return pinned if pinned.exists() else None
@@ -89,12 +98,16 @@ def eval_one_game(
     stage: Optional[int] = None,
     latest: bool = False,
     iter_: Optional[int] = None,
+    checkpoint: Optional[str] = None,
+    sequential: bool = False,
 ) -> dict:
     """Run N episodes; return a dict of eval stats."""
     with open(profile_path) as f:
         profile = yaml.safe_load(f)
     ckpt_dir = derive_checkpoint_dir("./checkpoints", profile.get("name"))
-    ckpt = resolve_eval_checkpoint(ckpt_dir, game, latest=latest, iter_=iter_)
+    ckpt = resolve_eval_checkpoint(
+        ckpt_dir, game, latest=latest, iter_=iter_, checkpoint=checkpoint,
+    )
     if ckpt is None:
         return {
             "game": game,
@@ -192,6 +205,12 @@ def eval_one_game(
     lengths: list[int] = []
     max_bytes: list[int] = []
     clears = 0
+    # --sequential accumulators (per-episode). Only populated in sequential
+    # mode; left empty otherwise so the back-compat result is unchanged.
+    seq_clears = 0
+    warps = 0
+    best_seq: Optional[tuple] = None
+    best_any: Optional[tuple] = None
 
     for ep in range(n_episodes):
         pool.reset_all()
@@ -207,6 +226,11 @@ def eval_one_game(
         # Fresh hidden state per episode — the GRU must not carry memory
         # across episode boundaries.
         hidden = net.initial_hidden(1, device) if is_recurrent else None
+        # In --sequential mode reconstruct World-1 progression from RAM
+        # independently of episode_success(). episode_success() latches on
+        # `cleared_any` at the FIRST 1-1 flagpole, so it can never observe a
+        # sequential 1-4 clear; the tracker's `won` semantics can.
+        tracker = SequentialTracker() if sequential else None
         ep_return = 0.0
         ep_max_byte = 0
         ep_cleared = False
@@ -232,15 +256,35 @@ def eval_one_game(
             obs = stacker.push(extractor.extract(ram))
             if reward_fn.episode_success():
                 ep_cleared = True
+            if tracker is not None:
+                tracker.update(ram)
+                # Sequential mode: do NOT stop at the 1-1 flag (ep_cleared).
+                # Run until a real World-1 castle clear (seq_clear), a death /
+                # pool-done, or max_steps.
+                if rew_done or bool(r[0][3]) or tracker.seq_clear:
+                    break
             # End the episode on the reward fn's terminal signal, the
             # pool's done flag, or once the game is cleared.
-            if rew_done or bool(r[0][3]) or ep_cleared:
+            elif rew_done or bool(r[0][3]) or ep_cleared:
                 break
         returns.append(ep_return)
         lengths.append(step + 1)
         max_bytes.append(ep_max_byte)
         if ep_cleared:
             clears += 1
+        if tracker is not None:
+            if tracker.seq_clear:
+                seq_clears += 1
+            if tracker.warp_taken:
+                warps += 1
+            if tracker.furthest_seq is not None and (
+                best_seq is None or tracker.furthest_seq > best_seq
+            ):
+                best_seq = tracker.furthest_seq
+            if tracker.furthest_any is not None and (
+                best_any is None or tracker.furthest_any > best_any
+            ):
+                best_any = tracker.furthest_any
 
     pool.shutdown()
 
@@ -258,6 +302,19 @@ def eval_one_game(
         "clear_rate": clears / max(1, n_episodes),
         "timestamp": time.time(),
     }
+    if sequential:
+        # THE primary campaign metric: sequential World-1 clear rate + how far
+        # the greedy policy actually reaches, with warps reported "beyond" but
+        # never counted as a clear. `clear_rate` above stays the 1-1-latch rate
+        # for back-compat; `seq_clear_rate` is the DoD number every phase gates
+        # on. `furthest_*_level` are the deepest (world, level) across episodes.
+        result["sequential"] = True
+        result["seq_clear_rate"] = seq_clears / max(1, n_episodes)
+        result["warp_rate"] = warps / max(1, n_episodes)
+        result["furthest_seq_level"] = level_label(best_seq)
+        result["furthest_any_level"] = level_label(best_any)
+        result["furthest_seq"] = list(best_seq) if best_seq is not None else None
+        result["furthest_any"] = list(best_any) if best_any is not None else None
     # Append to per-game eval log for scoreboard consumption.
     eval_log = ckpt_dir / "eval.jsonl"
     with open(eval_log, "a") as f:
@@ -285,6 +342,15 @@ def main() -> int:
                         metavar="N",
                         help="Eval an exact vanilla_ppo_iter_NNNNN.pt by "
                              "iteration number.")
+    parser.add_argument("--checkpoint", type=str, default=None, metavar="PATH",
+                        help="Eval an exact checkpoint file by path (used by "
+                             "the cold-eval probe, which writes a temp "
+                             "checkpoint and subprocesses this script).")
+    parser.add_argument("--sequential", action="store_true",
+                        help="SMB one-shot mode: reconstruct sequential World-1 "
+                             "progression from RAM (play THROUGH the 1-1 flag) "
+                             "and report seq_clear_rate / furthest_seq_level / "
+                             "furthest_any_level / warp_rate. The DoD metric.")
     args = parser.parse_args()
 
     profile_path = resolve_profile_path(args.game, args.profile)
@@ -300,6 +366,7 @@ def main() -> int:
         args.game, profile_path, rom_path,
         args.episodes, args.max_steps, stage=args.stage,
         latest=args.latest, iter_=args.iter_,
+        checkpoint=args.checkpoint, sequential=args.sequential,
     )
     print(json.dumps(result, indent=2))
     return 0

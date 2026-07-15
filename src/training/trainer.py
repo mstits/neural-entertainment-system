@@ -4524,6 +4524,121 @@ class Trainer:
                 "fraction over %d iters >= %.0f%%)",
                 SMB_ADVANCE_WINDOW, SMB_ADVANCE_PCT * 100,
             )
+
+        # === SUB-STAGE LADDER (SMB one-shot campaign, Lane 4) ===
+        # When the profile declares `reinforce.substage_ladder.enabled`,
+        # the flat scalar area-byte curriculum above is REPLACED by an
+        # ordered (world, area, x-bucket) rung ladder: `smb_curriculum_stage`
+        # becomes the FRONTIER rung order, `smb_curriculum_states` is
+        # re-indexed by rung order (disk seeds loaded up front, deeper rungs
+        # live-filled by capture), the advance gate measures `region_of(ram)`
+        # sub-stage orders, and warm-start is the three-way Frontier /
+        # Retention / Spread partition. Everything is gated on `ladder_on`,
+        # so non-campaign SMB profiles are byte-for-byte untouched. All the
+        # DECISIONS route through the isolated, unit-tested
+        # `oneshot_curriculum` module; this block is thin glue.
+        _rl_cfg = self.game_profile.get("reinforce", {}) or {}
+        _substage_cfg = dict(_rl_cfg.get("substage_ladder", {}) or {})
+        ladder_on = bool(
+            self._smb_curriculum_active and _substage_cfg.get("enabled", False)
+        )
+        ladder = None
+        oc = None            # oneshot_curriculum module (bound when ladder_on)
+        region_of = None     # bound from smb_substage_ladder when ladder_on
+        smb_sequential_cell = None
+        OFF_LADDER = -1
+        LADDER_SIZE = 0
+        _adv_cfg = dict(_rl_cfg.get("advance", {}) or {})
+        _ws_cfg = dict(_rl_cfg.get("warm_start", {}) or {})
+        _cold_cfg = dict(_rl_cfg.get("cold_eval", {}) or {})
+        _cons_cfg = dict(_rl_cfg.get("consolidate", {}) or {})
+        _forget_cfg = dict(_cold_cfg.get("forgetting", {}) or {})
+        frontier_frac = float(_ws_cfg.get("frontier", 0.50))
+        base_retention_frac = float(_ws_cfg.get("retention", 0.25))
+        retention_frac = base_retention_frac
+        retention_bump = float(_forget_cfg.get("retention_bump", 0.40))
+        retention_bump_until = 0
+        forget_probes = int(_forget_cfg.get("probes", 2))
+        forget_bump_iters = int(_forget_cfg.get("bump_iters", 100))
+        cold_every = max(1, int(_cold_cfg.get("every", 25)))
+        cold_curve_eps = max(1, int(_cold_cfg.get("curve_episodes", 8)))
+        cold_winner_name = str(_cold_cfg.get("winner", "best_cold.pt"))
+        cold_highwater = 0
+        forget_strikes = 0
+        best_cold_rate = -1.0
+        best_cold_snapshot: Optional[dict] = None
+        last_cold_metrics: dict = {}
+        # Consolidation (gated, reversible) state.
+        _cons_ent = dict(_cons_cfg.get("entropy", {}) or {})
+        _cons_rnd = dict(_cons_cfg.get("rnd", {}) or {})
+        _cons_abort = dict(_cons_cfg.get("abort_if", {}) or {})
+        cons_ent_from = float(_cons_ent.get("from", self.entropy_coef))
+        cons_ent_to = float(_cons_ent.get("to", self.entropy_coef))
+        cons_ent_iters = int(_cons_ent.get("iters", 80))
+        cons_rnd_from = float(_cons_rnd.get("from", self.rnd_intrinsic_coef))
+        cons_rnd_to = float(_cons_rnd.get("to", 0.0))
+        cons_no_gain_iters = int(_cons_abort.get("no_gain_iters", 40))
+        cons_fallback = str(_cons_cfg.get("fallback", "cyclic"))
+        consolidating = False
+        cons_step = 0
+        cons_best_rate = -1.0
+        cons_no_gain = 0
+        cons_aborts = 0
+        cyclic_mode = False
+        cyclic_phase = 0
+        if ladder_on:
+            from src.training import oneshot_curriculum as oc
+            from src.training.smb_substage_ladder import (
+                LADDER_SIZE, OFF_LADDER, build_ladder, region_of,
+                smb_sequential_cell,
+            )
+            ladder = build_ladder(_substage_cfg.get("seed_globs"))
+            # Preserve any campaign-captured rung states from a resume: they
+            # were written with meta anchor == rung order (see the advance
+            # block below), so re-index them into the rung array first.
+            _resumed_states = smb_curriculum_states
+            _resumed_anchors = smb_curriculum_anchors
+            smb_curriculum_states = [None] * LADDER_SIZE
+            _resumed_frontier = 0
+            for _st, _an in zip(_resumed_states, _resumed_anchors):
+                if _st is not None and 0 <= int(_an) < LADDER_SIZE:
+                    smb_curriculum_states[int(_an)] = _st
+                    _resumed_frontier = max(_resumed_frontier, int(_an))
+            # Then bind each rung's disk seed (never clobber a resumed live
+            # capture, which is a truer warm-start than the base blob).
+            _n_seeded = 0
+            for _rung in ladder:
+                if smb_curriculum_states[_rung.order] is not None:
+                    continue
+                if _rung.seed_blob:
+                    try:
+                        smb_curriculum_states[_rung.order] = (
+                            Path(_rung.seed_blob).read_bytes()
+                        )
+                        _n_seeded += 1
+                    except Exception as _e:
+                        log.warning(
+                            "[vanilla_ppo] ladder seed load failed "
+                            "(rung %d, %s): %s", _rung.order, _rung.seed_blob, _e,
+                        )
+            # anchors[k] == k so the reused gate reads the frontier order
+            # directly; `smb_curriculum_stage` is now the frontier rung.
+            smb_curriculum_anchors = list(range(LADDER_SIZE))
+            smb_curriculum_stage = min(
+                max(_resumed_frontier, 0), LADDER_SIZE - 1
+            )
+            SMB_ADVANCE_PCT = float(_adv_cfg.get("pct", SMB_ADVANCE_PCT))
+            SMB_ADVANCE_WINDOW = int(_adv_cfg.get("window", SMB_ADVANCE_WINDOW))
+            log.info(
+                "[vanilla_ppo] SUB-STAGE LADDER on: %d rungs, %d disk seeds "
+                "bound, frontier=%d, advance %.0f%%/%d-iter, warm-start "
+                "F/R/S=%.2f/%.2f/%.2f, cold probe every %d iters.",
+                LADDER_SIZE, _n_seeded, smb_curriculum_stage,
+                SMB_ADVANCE_PCT * 100, SMB_ADVANCE_WINDOW,
+                frontier_frac, base_retention_frac,
+                float(_ws_cfg.get("spread", 0.25)), cold_every,
+            )
+
         if self._is_tile_mode:
             base_dim = self._tile_extractor.feature_dim
             tile_stackers = [
@@ -4596,6 +4711,10 @@ class Trainer:
         # from "pushed past it" without the dense-checkpoint reward (which
         # would otherwise inflate the return and confound the comparison).
         max_x_reached = np.zeros(num_envs, dtype=np.int32)
+        # Per-env furthest sub-stage rung reached this iter (ladder mode).
+        # Init OFF_LADDER (-1) so an env that only ever warps stays strictly
+        # below frontier 0 and can never satisfy the advance gate.
+        max_region_reached = np.full(num_envs, -1, dtype=np.int32)
 
         # ============== GO-EXPLORE ARCHIVE (opt-in, generic) ==============
         # First-return-then-explore (Ecoffet et al. 2021): a game-agnostic
@@ -4830,6 +4949,15 @@ class Trainer:
                         x_pos = (int(ram[0x006D]) << 8) | int(ram[0x0086])
                         if x_pos > max_x_reached[i]:
                             max_x_reached[i] = x_pos
+                        # Ladder mode: track the furthest sub-stage rung this
+                        # env reached. `region_of` credits only sequential-path
+                        # states (a warp yields OFF_LADDER), so it never rises
+                        # on a warp and the frontier can't be gamed off-chain.
+                        reg_here = None
+                        if ladder_on:
+                            reg_here = region_of(ram, ladder)
+                            if reg_here > max_region_reached[i]:
+                                max_region_reached[i] = reg_here
                         # Mid-rollout curriculum capture: FIRST detection
                         # per stage wins (no overwrites), capture on ANY
                         # byte strictly greater than the current anchor.
@@ -4865,7 +4993,29 @@ class Trainer:
                         # auto-reset on death (below) this still works
                         # but wastes the ~15-step in-game GAME OVER
                         # screen between attempts.
-                        if (self._smb_curriculum_active
+                        if ladder_on:
+                            # Warp guard (§Q5 layer 2): a state the admission
+                            # predicate rejects (world != 1 or an off-chain
+                            # area byte) never seeds the ladder. Capture the
+                            # first live state to reach PAST the frontier rung;
+                            # its region order is the anchor, and it live-fills
+                            # that rung's warm-start seed (disk seeds win).
+                            if (smb_pending_capture is None
+                                    and reg_here is not None
+                                    and reg_here > smb_curriculum_stage
+                                    and smb_sequential_cell(ram) is not None
+                                    and int(ram[0x075A]) >= 1):
+                                try:
+                                    blob = self.pool.save_worker_state(i)
+                                    if blob is not None:
+                                        smb_pending_capture = (
+                                            int(reg_here), bytes(blob),
+                                        )
+                                        if smb_curriculum_states[reg_here] is None:
+                                            smb_curriculum_states[reg_here] = bytes(blob)
+                                except Exception:
+                                    pass
+                        elif (self._smb_curriculum_active
                                 and smb_pending_capture is None
                                 and wl_packed > cur_anchor
                                 and int(ram[0x075A]) >= 1):
@@ -5511,9 +5661,13 @@ class Trainer:
             # fraction among current-stage envs (not the whole mixed
             # pool) is the correct denominator now that earlier-stage
             # envs are intentionally present.
+            # Ladder mode measures `region_of(ram)` sub-stage orders; the
+            # scalar path measures the packed world<<4|area byte. Both feed
+            # the identical rolling-mean gate below.
+            past_metric = max_region_reached if ladder_on else max_world_level_packed
             at_current = (env_stage == smb_curriculum_stage)
             n_at_current = int(at_current.sum())
-            past_mask = (max_world_level_packed > current_anchor)
+            past_mask = (past_metric > current_anchor)
             n_past_stage = int(past_mask.sum())
             n_past_current = int((past_mask & at_current).sum())
             frac_past = n_past_current / max(1, n_at_current)
@@ -5525,6 +5679,10 @@ class Trainer:
                 smb_pending_capture is not None
                 and len(smb_pastfrac_history) >= SMB_ADVANCE_WINDOW
                 and rolling_mean >= SMB_ADVANCE_PCT
+                # Freeze the frontier while consolidating (§Q4) and never
+                # advance past the ladder's final rung.
+                and not consolidating
+                and (not ladder_on or smb_curriculum_stage < LADDER_SIZE - 1)
             )
             if self._smb_curriculum_active:
                 log.info(
@@ -5537,7 +5695,35 @@ class Trainer:
                     "set" if smb_pending_capture is not None else "None",
                     should_advance,
                 )
-            if should_advance and smb_pending_capture is not None:
+            if should_advance and ladder_on:
+                # Ladder advance: the frontier climbs exactly ONE rung. The
+                # capture already live-filled its own (deeper) rung's seed, so
+                # here we only move the pointer, persist the new frontier
+                # rung's seed for resume (anchor == rung order), and re-arm.
+                new_frontier = smb_curriculum_stage + 1
+                _seed = smb_curriculum_states[new_frontier]
+                if _seed is not None:
+                    stage_path = smb_curriculum_dir / f"stage_{new_frontier:02d}.state"
+                    _tmp_stage = stage_path.with_suffix(".state.tmp")
+                    _tmp_stage.write_bytes(_seed)
+                    _tmp_stage.replace(stage_path)
+                    meta_path = smb_curriculum_dir / f"stage_{new_frontier:02d}.meta.json"
+                    _tmp_meta = meta_path.with_suffix(".json.tmp")
+                    _tmp_meta.write_text(json.dumps({"anchor": int(new_frontier)}))
+                    _tmp_meta.replace(meta_path)
+                _rung = ladder[new_frontier]
+                smb_curriculum_stage = new_frontier
+                smb_stage_clear_history = []
+                smb_pastfrac_history = []   # new rung must re-earn advance
+                smb_pending_capture = None
+                log.info(
+                    "[vanilla_ppo] *** LADDER ADVANCE *** frontier %d -> %d "
+                    "(%s, area=%d, x[%d,%d)); seed=%s.",
+                    new_frontier - 1, new_frontier, _rung.level, _rung.area,
+                    _rung.x_lo, _rung.x_hi,
+                    "live/disk" if _seed is not None else "cold",
+                )
+            elif should_advance and smb_pending_capture is not None:
                 # Use the mid-rollout capture: a LIVING env's state
                 # taken the moment it first crossed into the next
                 # area-byte. The previous design used end-of-iter
@@ -5686,6 +5872,139 @@ class Trainer:
                 progress_metrics["vanilla_ppo_curriculum_stage"] = int(
                     smb_curriculum_stage
                 )
+
+            # === COLD-EVAL PROBE (primary metric + winner selector, §Q2) ===
+            # Subprocess eval_game.py --sequential (greedy from the 1-1 start,
+            # sequential predicate reconstructed from RAM) every `cold_every`
+            # iters. The result is the DoD number: it drives best_cold.pt, the
+            # forgetting alarm, and the consolidation trigger — training
+            # telemetry never selects the deliverable.
+            cold_metrics_emit: dict = {}
+            if ladder_on:
+                progress_metrics["vanilla_ppo_frontier"] = int(smb_curriculum_stage)
+                progress_metrics["vanilla_ppo_retention_frac"] = float(retention_frac)
+                progress_metrics["vanilla_ppo_consolidating"] = int(consolidating)
+            if ladder_on and it % cold_every == 0:
+                from src.training import cold_probe as _cold_probe
+                _cold = _cold_probe.probe(
+                    net, self.game_profile,
+                    episodes=cold_curve_eps, device=self.device,
+                    sequential=True, rom_path=self.rom_path,
+                    game=str(self.game_profile.get("name", "mario")),
+                )
+                last_cold_metrics = _cold
+                cold_metrics_emit = dict(_cold)
+                _rate = _cold.get("cold_seq_clear_rate")
+                _rate = float(_rate) if _rate is not None else -1.0
+                _furthest = _cold.get("cold_furthest_seq")
+                log.info(
+                    "[vanilla_ppo] COLD PROBE iter %d: seq_clear=%s furthest=%s "
+                    "warp=%s clear_1_1=%.2f status=%s",
+                    global_it, _cold.get("cold_seq_clear_rate"), _furthest,
+                    _cold.get("cold_warp_rate"),
+                    _cold.get("cold_clear_1_1", 0.0), _cold.get("cold_status"),
+                )
+                # best_cold.pt: keep the greedy-sequential winner. Snapshot +
+                # persist on a strict improvement; this is the rollback target.
+                if _rate > best_cold_rate:
+                    best_cold_rate = _rate
+                    best_cold_snapshot = {
+                        k: v.detach().cpu().clone()
+                        for k, v in net.state_dict().items()
+                    }
+                    try:
+                        torch.save(
+                            {"net_state_dict": best_cold_snapshot,
+                             "iter": global_it,
+                             "metric_name": "cold_seq_clear_rate",
+                             "metric_value": best_cold_rate},
+                            str(self.checkpoint_dir / cold_winner_name),
+                        )
+                    except Exception as _e:
+                        log.warning("[vanilla_ppo] best_cold save failed: %s", _e)
+                # Forgetting alarm on an already-cleared early level (§Q2): 2
+                # consecutive high-water regressions -> bump Retention to 40%
+                # for 100 iters; if it persists -> roll back to best_cold.pt.
+                _alarm = False
+                if _cold.get("cold_sequential"):
+                    cold_highwater, forget_strikes, _alarm = oc.update_forgetting(
+                        cold_highwater, forget_strikes, _furthest, forget_probes,
+                    )
+                _action = oc.forgetting_action(
+                    _alarm, global_it, retention_bump_until
+                )
+                if _action == "bump":
+                    retention_frac = retention_bump
+                    retention_bump_until = global_it + forget_bump_iters
+                    log.warning(
+                        "[vanilla_ppo] *** FORGETTING *** cold furthest "
+                        "regressed %d probes; Retention -> %.0f%% for %d iters.",
+                        forget_probes, retention_bump * 100, forget_bump_iters,
+                    )
+                    forget_strikes = 0
+                elif _action == "rollback" and best_cold_snapshot is not None:
+                    net.load_state_dict(best_cold_snapshot)
+                    self._ppo_optimizer = self._build_ppo_optimizer(net)
+                    optimizer = self._ppo_optimizer
+                    log.warning(
+                        "[vanilla_ppo] *** FORGETTING ROLLBACK *** persisted "
+                        "regression; restored best_cold.pt (rate=%.3f) + reset "
+                        "optimizer.", best_cold_rate,
+                    )
+                    forget_strikes = 0
+                # Consolidation trigger / abort / re-arm (§Q4).
+                if (not consolidating and oc.reached_1_4(_furthest)
+                        and smb_curriculum_stage >= 15):
+                    consolidating = True
+                    cons_step = 0
+                    cons_best_rate = _rate
+                    cons_no_gain = 0
+                    log.info(
+                        "[vanilla_ppo] *** CONSOLIDATE ARMED *** cold reached "
+                        "1-4 at frontier %d; entropy %.3f->%.3f, rnd %.3f->%.3f "
+                        "over %d iters (reversible).",
+                        smb_curriculum_stage, cons_ent_from, cons_ent_to,
+                        cons_rnd_from, cons_rnd_to, cons_ent_iters,
+                    )
+                elif consolidating:
+                    if _rate > cons_best_rate + 1e-6:
+                        cons_best_rate = _rate
+                        cons_no_gain = 0
+                    if _alarm or cons_no_gain >= cons_no_gain_iters:
+                        # Abort + rearm (reversibility): restore exploration.
+                        self.entropy_coef = cons_ent_from
+                        self.rnd_intrinsic_coef = cons_rnd_from
+                        consolidating = False
+                        cons_aborts += 1
+                        if cons_aborts >= 2 and cons_fallback == "cyclic":
+                            cyclic_mode = True
+                        log.warning(
+                            "[vanilla_ppo] *** CONSOLIDATE ABORT #%d *** (%s); "
+                            "restored entropy=%.3f rnd=%.3f%s.",
+                            cons_aborts, "forgetting" if _alarm else "no gain",
+                            cons_ent_from, cons_rnd_from,
+                            " -> cyclic fallback" if cyclic_mode else "",
+                        )
+            # Reset a stale Retention bump once its window elapses.
+            if retention_bump_until and global_it >= retention_bump_until:
+                retention_frac = base_retention_frac
+                retention_bump_until = 0
+            # Apply the consolidation coefficient schedule (or the cyclic
+            # fallback oscillation) for the NEXT update.
+            if consolidating:
+                self.entropy_coef = oc.lerp_coef(
+                    cons_ent_from, cons_ent_to, cons_step, cons_ent_iters
+                )
+                self.rnd_intrinsic_coef = oc.lerp_coef(
+                    cons_rnd_from, cons_rnd_to, cons_step, cons_ent_iters
+                )
+                cons_step += 1
+                cons_no_gain += 1
+            elif cyclic_mode:
+                if it % cold_every == 0:
+                    cyclic_phase ^= 1
+                self.entropy_coef = cons_ent_from if cyclic_phase else cons_ent_to
+
             self._emit_metrics(
                 generation=global_it,
                 best_fitness=max(best_completed, best_in_progress),
@@ -5709,6 +6028,7 @@ class Trainer:
                 **progress_metrics,
                 **timing_metrics,
                 **reward_breakdown_emit,
+                **cold_metrics_emit,
             )
 
             # Drain the narrator events accumulated this iter onto the
@@ -5800,7 +6120,51 @@ class Trainer:
             env_stage[:] = 0
             stage_seed_results = [None] * num_envs
             env_return_state = [None] * num_envs
-            if smb_curriculum_stage > 0:
+            if ladder_on:
+                # Three-way warm-start partition (§Q2): Frontier F/F-1,
+                # Retention on every cleared level-entry (the anti-forgetting
+                # floor, bumped to 40% while a forgetting alarm is active),
+                # Spread uniform below F. All rung math in oneshot_curriculum;
+                # here we just load each env's rung seed.
+                _part = oc.warm_start_partition(
+                    num_envs, smb_curriculum_stage, ladder,
+                    frontier_frac=frontier_frac, retention_frac=retention_frac,
+                )
+                env_stage[:] = _part.assignment
+                any_warm = False
+                for i in range(num_envs):
+                    k = int(env_stage[i])
+                    if k > 0 and smb_curriculum_states[k] is not None:
+                        try:
+                            self.pool.load_worker_state(i, smb_curriculum_states[k])
+                            any_warm = True
+                        except Exception as e:
+                            log.warning(
+                                "[vanilla_ppo] ladder warm-start env %d rung "
+                                "%d failed: %s — cold boot.", i, k, e,
+                            )
+                            env_stage[i] = 0
+                if any_warm:
+                    noop_actions = np.zeros(self.pool.num_workers, dtype=np.uint8)
+                    init_results = self.pool.step_all(noop_actions)
+                    self._emit_frame_sink(init_results)
+                stage_seed_results = [
+                    init_results[i]
+                    if (int(env_stage[i]) > 0
+                        and smb_curriculum_states[int(env_stage[i])] is not None)
+                    else None
+                    for i in range(num_envs)
+                ]
+                _dist: dict = {}
+                for k in env_stage.tolist():
+                    _dist[k] = _dist.get(k, 0) + 1
+                log.info(
+                    "[vanilla_ppo] ladder warm-start F=%d, F/R/S=%d/%d/%d, "
+                    "rung distribution %s", smb_curriculum_stage,
+                    _part.n_frontier, _part.n_retention, _part.n_spread,
+                    dict(sorted(_dist.items())),
+                )
+            elif smb_curriculum_stage > 0:
                 n_current = max(
                     1, int(round(num_envs * SMB_CURRENT_STAGE_FRAC))
                 )
@@ -5898,6 +6262,9 @@ class Trainer:
             # after the policy regresses/collapses — which masked a 1-4
             # collapse (metric held at 2432 while the policy fell to 814).
             max_x_reached[:] = 0
+            # Per-iter reset of the sub-stage rung tracker to OFF_LADDER, so a
+            # non-progressing / warping env can never satisfy the advance gate.
+            max_region_reached[:] = -1
             # Clear per-iter clear-counter + per-env completion-baseline.
             # Reward fns were just reset() above, so their `completion`
             # breakdowns are back to 0 — match that here.
@@ -5958,20 +6325,34 @@ class Trainer:
                 except Exception as exc:
                     log.warning("[vanilla_ppo] checkpoint save failed: %s", exc)
 
-                # Retain the best-ever policy by clear rate under winners/
-                # (excluded from rotation). This is what keeps `make demo`/
-                # `make eval` pointed at a real win even if the curriculum
-                # run later self-collapses. save_winner only overwrites when
-                # this iter's clear rate strictly beats the stored best.
+                # Retain the best-ever policy under winners/ (excluded from
+                # rotation) so `make demo`/`make eval` stay pointed at a real
+                # win even if the run later self-collapses. save_winner only
+                # overwrites when the metric strictly beats the stored best.
+                # LADDER MODE re-keys this on the COLD sequential clear rate
+                # (the DoD number) and pins the exact net that scored it — so
+                # training telemetry (the 1-1-latched clear_rate) never selects
+                # the deliverable (§Q2).
                 try:
-                    save_winner(
-                        {k: v.detach().cpu() for k, v in net.state_dict().items()},
-                        game=str(self.game_profile.get("name", "game")),
-                        metric_value=float(vppo_success_rate),
-                        out_dir=self.checkpoint_dir,
-                        metric_name="clear_rate",
-                        source_iter=global_it,
-                    )
+                    if ladder_on:
+                        if best_cold_snapshot is not None and best_cold_rate >= 0.0:
+                            save_winner(
+                                best_cold_snapshot,
+                                game=str(self.game_profile.get("name", "game")),
+                                metric_value=float(best_cold_rate),
+                                out_dir=self.checkpoint_dir,
+                                metric_name="cold_seq_clear_rate",
+                                source_iter=global_it,
+                            )
+                    else:
+                        save_winner(
+                            {k: v.detach().cpu() for k, v in net.state_dict().items()},
+                            game=str(self.game_profile.get("name", "game")),
+                            metric_value=float(vppo_success_rate),
+                            out_dir=self.checkpoint_dir,
+                            metric_name="clear_rate",
+                            source_iter=global_it,
+                        )
                 except Exception as exc:
                     log.warning("[vanilla_ppo] winner retention failed: %s", exc)
 
