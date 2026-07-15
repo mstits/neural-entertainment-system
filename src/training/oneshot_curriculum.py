@@ -8,7 +8,7 @@ advance / anti-collapse rollback); every game- and RAM-specific fact
 lives in `smb_substage_ladder` / `smb_sequential`, and this module knows
 only about rung orders, env counts, and cold-probe scalars.
 
-Five behaviours are factored out:
+Six behaviours are factored out:
 
   * `warm_start_partition` — the three-way Frontier / Retention / Spread
     split of the env pool, recomputed each iter from the frontier rung.
@@ -20,6 +20,11 @@ Five behaviours are factored out:
   * `furthest_rank` / `reached_1_4` — parse a cold-probe "furthest_seq"
     (a "1-4" label, a [world, level] pair, or None) into a comparable
     rank so forgetting and the consolidation trigger can reason about it.
+  * `stall_ready` / `burst_quota` / `burst_tick` / `harvest_burst_seed` —
+    the DEFERRED, bounded Go-Explore unstick burst (Lane 5): when a rung
+    stalls, arm a capped, self-retracting archive burst that harvests at
+    most one deeper seed. Pure decisions only; the trainer owns the
+    `GoExploreArchive` and the env diversion.
 """
 
 from __future__ import annotations
@@ -237,3 +242,97 @@ def lerp_coef(from_v: float, to_v: float, step: int, iters: int) -> float:
         return float(to_v)
     frac = min(1.0, max(0.0, float(step) / float(iters)))
     return float(from_v) + (float(to_v) - float(from_v)) * frac
+
+
+# ---------------------------------------------------------------------------
+# Go-Explore unstick burst (Lane 5, DEFERRED — §Q3).
+#
+# When a rung's advance gate stalls for `patience` iters while the frontier is
+# genuinely being played, the trainer arms a BOUNDED archive burst: it diverts
+# a small, capped env quota to `GoExploreArchive` return states to spread
+# exploration across the stalled rung, harvests at most one deeper seed, then
+# self-retracts. These four pure functions are the burst's *decisions*; the
+# trainer owns the archive, the env diversion, and the seed injection. Nothing
+# here ever flips the curriculum flag — the burst is a subroutine, not a mode.
+# ---------------------------------------------------------------------------
+
+
+def stall_ready(
+    iters_since_advance: int,
+    patience: int,
+    *,
+    enabled: bool,
+    reaches: bool,
+    frontier: int,
+    ladder_size: int,
+    blocked: bool = False,
+) -> bool:
+    """Decide whether to arm a Go-Explore unstick burst this iter (§Q3).
+
+    Fires iff ALL hold:
+      * `enabled` — the profile set the `go_explore_fallback` knob;
+      * not `blocked` — never concurrent with consolidation (or an
+        already-running burst; the trainer passes both);
+      * `reaches` — the frontier rung is genuinely being reached this iter
+        (the block is "find the next state," NOT "can't play this rung"; a
+        rung the pool can't even reach is not a Go-Explore candidate);
+      * there is a deeper rung to seed (`frontier < ladder_size - 1`);
+      * the stall has lasted at least `patience` iters
+        (`iters_since_advance >= patience` — fires at N, never at N-1).
+    """
+    if not enabled or blocked or not reaches:
+        return False
+    if int(frontier) >= int(ladder_size) - 1:
+        return False
+    return int(iters_since_advance) >= int(patience)
+
+
+def burst_quota(num_envs: int, frac: float, cap: int) -> int:
+    """Size the capped env quota a burst diverts to archive returns.
+
+    A `frac` of the pool, but never more than `cap` envs (nor the whole
+    pool) — the hard cap is what keeps the burst a *diversion* and not a
+    permanent Go-Explore takeover of the curriculum. At least 1 env when
+    the pool is non-empty (a zero-env burst would be a no-op arm); 0 for an
+    empty pool.
+    """
+    n = int(num_envs)
+    if n <= 0:
+        return 0
+    q = max(1, int(round(n * float(frac))))
+    return max(0, min(q, int(cap), n))
+
+
+def burst_tick(remaining: int) -> tuple:
+    """Advance the burst clock one iter; return `(new_remaining, retract)`.
+
+    Consuming the last remaining iter (`remaining <= 1`) sets `retract`
+    True — the burst has run its bounded course and must retract to normal
+    curriculum operation. A burst armed with `burst_iters == N` therefore
+    ticks N times and retracts on exactly the Nth (never earlier, never
+    permanently), so it self-terminates even if it never harvested a seed.
+    """
+    r = int(remaining) - 1
+    return max(0, r), r <= 0
+
+
+def harvest_burst_seed(cells, frontier: int) -> Optional[tuple]:
+    """The harvest-one-seed rule: pick at most ONE deeper seed from a burst.
+
+    `cells` is an iterable of `(region_order, state_blob)` pairs the archive
+    produced (the trainer reads each cell's region off its stored score).
+    Returns the SINGLE deepest `(region_order, state_blob)` whose region is
+    strictly past the stalled `frontier`, or `None` when the burst found
+    nothing deeper (a state at/below the frontier is no help, and a cell
+    with no state blob can't seed). At most one seed ever leaves a burst —
+    the burst harvests a single frontier state, not a whole sub-curriculum.
+    """
+    best: Optional[tuple] = None
+    f = int(frontier)
+    for region_order, state_blob in cells:
+        if state_blob is None:
+            continue
+        r = int(region_order)
+        if r > f and (best is None or r > int(best[0])):
+            best = (r, state_blob)
+    return best

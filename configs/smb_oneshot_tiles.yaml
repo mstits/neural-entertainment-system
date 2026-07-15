@@ -146,10 +146,19 @@ reinforce:
   # === GO-EXPLORE UNSTICK (DEFERRED subroutine, NOT the go_explore_on branch) ===
   # A bounded archive burst invoked ONLY on a stall — never concurrent with
   # the curriculum. cell = smb_sequential puts world/area IN the key (the
-  # Angle-B collision fix). Wired only if Phase D actually stalls.
+  # Angle-B collision fix). Lane 5: when a rung stalls `stall_patience` iters
+  # while genuinely reached, divert `burst_env_frac` of the pool (hard-capped
+  # at `burst_env_cap` envs, so the curriculum keeps the majority — no
+  # permanent GE takeover) to archive returns for up to `burst_iters` iters,
+  # harvest the single deepest state past the frontier, inject it as the next
+  # rung's seed, and retract. OFF unless `enabled: true` — set that on a
+  # resume to unstick a parked frontier without invalidating any checkpoint.
   go_explore_fallback:
-    stall_patience: 60
+    enabled: true              # armed 2026-07-15: rung-4 stall (270+ iters) met the spec's deploy criterion
+    stall_patience: 20          # scout reacts fast — the stall is already proven
     burst_iters: 30
+    burst_env_frac: 0.25       # fraction of the pool diverted to archive returns
+    burst_env_cap: 8           # hard cap (no permanent GE takeover)
     cell: smb_sequential
 
   # === WARP HANDLING ===

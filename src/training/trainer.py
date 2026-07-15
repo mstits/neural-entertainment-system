@@ -4586,6 +4586,23 @@ class Trainer:
         cons_aborts = 0
         cyclic_mode = False
         cyclic_phase = 0
+        # Go-Explore unstick burst (Lane 5, DEFERRED). A bounded, reversible
+        # archive burst armed ONLY when a rung stalls for `stall_patience`
+        # iters while the frontier is genuinely being played (§Q3). Off unless
+        # the profile sets `go_explore_fallback.enabled`; when off, every `ge_*`
+        # branch below is dead, so non-campaign runs are byte-for-byte untouched.
+        _geb_cfg = dict(_rl_cfg.get("go_explore_fallback", {}) or {})
+        ge_burst_on = bool(ladder_on and _geb_cfg.get("enabled", False))
+        ge_stall_patience = max(1, int(_geb_cfg.get("stall_patience", 60)))
+        ge_burst_iters = max(1, int(_geb_cfg.get("burst_iters", 30)))
+        ge_burst_frac = float(_geb_cfg.get("burst_env_frac", 0.25))
+        ge_burst_cap = int(_geb_cfg.get("burst_env_cap", 8))
+        ge_archive = None            # a GoExploreArchive, live only mid-burst
+        ge_burst_active = False
+        ge_burst_remaining = 0
+        ge_burst_quota = 0
+        ge_iters_since_advance = 0   # stall clock; reset on advance / arm / retract
+        ge_bursts_done = 0
         if ladder_on:
             from src.training import oneshot_curriculum as oc
             from src.training.smb_substage_ladder import (
@@ -4958,6 +4975,28 @@ class Trainer:
                             reg_here = region_of(ram, ladder)
                             if reg_here > max_region_reached[i]:
                                 max_region_reached[i] = reg_here
+                                # Go-Explore burst (Lane 5): archive each new
+                                # on-ladder region a rollout reaches while a
+                                # burst is in flight, so the burst can return
+                                # to and explore forward from the deepest
+                                # frontier cells and harvest one deeper seed.
+                                # The cell's stored score IS its region order,
+                                # so the harvest reads depth off it directly.
+                                # Warp states (cell == None) are never archived
+                                # (§Q5). Guarded by `ge_burst_active`, so this
+                                # save_worker_state cost is paid only mid-burst
+                                # (expected 0-1 bursts per campaign).
+                                if (ge_burst_active and ge_archive is not None
+                                        and smb_sequential_cell(ram) is not None):
+                                    try:
+                                        _geb = self.pool.save_worker_state(i)
+                                        if _geb is not None:
+                                            ge_archive.record(
+                                                bytes(ram), bytes(_geb),
+                                                float(reg_here), int(t),
+                                            )
+                                    except Exception:
+                                        pass
                         # Mid-rollout curriculum capture: FIRST detection
                         # per stage wins (no overwrites), capture on ANY
                         # byte strictly greater than the current anchor.
@@ -5723,6 +5762,20 @@ class Trainer:
                     _rung.x_lo, _rung.x_hi,
                     "live/disk" if _seed is not None else "cold",
                 )
+                # An advance resets the stall clock; a burst in flight has
+                # done its job the moment the frontier moves, so retract it
+                # early (no harvest — the capture already seeded the new rung).
+                if ge_burst_on:
+                    ge_iters_since_advance = 0
+                    if ge_burst_active:
+                        ge_burst_active = False
+                        ge_archive = None
+                        ge_bursts_done += 1
+                        log.warning(
+                            "[vanilla_ppo] *** GO-EXPLORE BURST SUCCESS *** "
+                            "frontier advanced during burst #%d; retracting "
+                            "early.", ge_bursts_done,
+                        )
             elif should_advance and smb_pending_capture is not None:
                 # Use the mid-rollout capture: a LIVING env's state
                 # taken the moment it first crossed into the next
@@ -5989,6 +6042,136 @@ class Trainer:
             if retention_bump_until and global_it >= retention_bump_until:
                 retention_frac = base_retention_frac
                 retention_bump_until = 0
+
+            # === GO-EXPLORE UNSTICK BURST (Lane 5, DEFERRED — §Q3) ===
+            # A bounded, reversible archive burst that fires ONLY when the
+            # frontier rung stalls for `stall_patience` iters while being
+            # genuinely reached. It diverts a small, capped env quota (below,
+            # in the warm-start block) to Go-Explore return states to spread
+            # exploration across the stalled rung, then harvests AT MOST ONE
+            # deeper seed and RETRACTS. It is a direct `GoExploreArchive`
+            # call — never the `go_explore_on` branch — so `smb_curriculum_
+            # active` never flips; it touches neither entropy nor RND; and it
+            # self-caps after `burst_iters`, so it can never become a
+            # permanent Go-Explore takeover. All decisions route through the
+            # unit-tested `oneshot_curriculum` module.
+            if ge_burst_on:
+                if not ge_burst_active:
+                    # "Reaches" = the pool actually got to the frontier rung
+                    # this iter (the block is "find the NEXT state," not
+                    # "can't play this rung"). `consolidating` blocks it.
+                    _reaches = bool(
+                        (max_region_reached >= smb_curriculum_stage).any()
+                    )
+                    if oc.stall_ready(
+                        ge_iters_since_advance, ge_stall_patience,
+                        enabled=True, reaches=_reaches,
+                        frontier=smb_curriculum_stage, ladder_size=LADDER_SIZE,
+                        blocked=consolidating,
+                    ):
+                        from src.training.go_explore import GoExploreArchive
+                        _stalled = ge_iters_since_advance
+                        ge_archive = GoExploreArchive(
+                            smb_sequential_cell, seed=global_it
+                        )
+                        ge_burst_active = True
+                        ge_burst_remaining = ge_burst_iters
+                        ge_burst_quota = oc.burst_quota(
+                            num_envs, ge_burst_frac, ge_burst_cap
+                        )
+                        ge_iters_since_advance = 0
+                        log.warning(
+                            "[vanilla_ppo] *** GO-EXPLORE BURST ARMED *** "
+                            "frontier %d stalled %d iters; diverting %d/%d "
+                            "envs to archive returns for <=%d iters "
+                            "(reversible; curriculum flag untouched).",
+                            smb_curriculum_stage, _stalled, ge_burst_quota,
+                            num_envs, ge_burst_iters,
+                        )
+                else:
+                    ge_burst_remaining, _retract = oc.burst_tick(
+                        ge_burst_remaining
+                    )
+                    # Consolidation wins over an in-flight burst: the
+                    # arm-side `blocked=consolidating` gate is one-way, so
+                    # force the retract here or the two could overlap for
+                    # up to burst_iters (the "never concurrent" invariant).
+                    if consolidating and not _retract:
+                        _retract = True
+                        log.warning(
+                            "[vanilla_ppo] *** GO-EXPLORE BURST RETRACT *** "
+                            "consolidation armed mid-burst; retracting early "
+                            "(%d iters unused).", ge_burst_remaining,
+                        )
+                    if _retract:
+                        # Harvest at most ONE deeper seed. A cell's stored
+                        # score IS its region order, so read depth off it.
+                        _cells = (
+                            [(int(round(c.best_score)), c.state)
+                             for c in ge_archive.cells.values()]
+                            if ge_archive is not None else []
+                        )
+                        _harvest = oc.harvest_burst_seed(
+                            _cells, smb_curriculum_stage
+                        )
+                        ge_burst_active = False
+                        ge_iters_since_advance = 0
+                        ge_bursts_done += 1
+                        if _harvest is not None:
+                            _hreg, _hstate = _harvest
+                            # Inject as the NEXT rung's live-fill seed (§Q3):
+                            # region is recomputed from RAM on warm-start, so
+                            # a deeper-than-F+1 blob simply makes rung F+1
+                            # immediately "beatable".
+                            _target = min(
+                                smb_curriculum_stage + 1, LADDER_SIZE - 1
+                            )
+                            smb_curriculum_states[_target] = _hstate
+                            try:
+                                _sp = (smb_curriculum_dir
+                                       / f"stage_{_target:02d}.state")
+                                _tp = _sp.with_suffix(".state.tmp")
+                                _tp.write_bytes(_hstate)
+                                _tp.replace(_sp)
+                                _mp = (smb_curriculum_dir
+                                       / f"stage_{_target:02d}.meta.json")
+                                _tmp = _mp.with_suffix(".json.tmp")
+                                _tmp.write_text(
+                                    json.dumps({"anchor": int(_target)})
+                                )
+                                _tmp.replace(_mp)
+                            except Exception as _e:
+                                log.warning(
+                                    "[vanilla_ppo] burst seed persist "
+                                    "failed: %s", _e,
+                                )
+                            log.warning(
+                                "[vanilla_ppo] *** GO-EXPLORE BURST HARVEST "
+                                "*** burst #%d found a region-%d state (%d "
+                                "cells); injected as rung %d seed. Retracting "
+                                "to curriculum.",
+                                ge_bursts_done, _hreg, len(_cells), _target,
+                            )
+                        else:
+                            log.warning(
+                                "[vanilla_ppo] *** GO-EXPLORE BURST RETRACT "
+                                "*** burst #%d found no state past frontier %d "
+                                "(%d cells); no seed harvested. Retracting to "
+                                "curriculum.",
+                                ge_bursts_done, smb_curriculum_stage,
+                                len(_cells),
+                            )
+                        ge_archive = None
+                progress_metrics["vanilla_ppo_ge_bursting"] = int(
+                    ge_burst_active
+                )
+                progress_metrics["vanilla_ppo_ge_bursts_done"] = int(
+                    ge_bursts_done
+                )
+                progress_metrics["vanilla_ppo_ge_stall_iters"] = int(
+                    ge_iters_since_advance
+                )
+
             # Apply the consolidation coefficient schedule (or the cyclic
             # fallback oscillation) for the NEXT update.
             if consolidating:
@@ -6131,12 +6314,34 @@ class Trainer:
                     frontier_frac=frontier_frac, retention_frac=retention_frac,
                 )
                 env_stage[:] = _part.assignment
+                # Go-Explore burst (Lane 5): while a burst is in flight, divert
+                # a capped quota of envs off their ladder rung onto archive
+                # return states (spreads exploration across the stalled rung).
+                # The rest of the pool stays on the curriculum, so the burst is
+                # a diversion, never a takeover. `_burst_seeds[i]` overrides
+                # env i's warm-start blob for this iter only.
+                _burst_seeds: dict = {}
+                if (ge_burst_active and ge_archive is not None
+                        and ge_burst_quota > 0 and len(ge_archive) > 0):
+                    _returns = ge_archive.select_return_states(ge_burst_quota)
+                    for _j, _rs in enumerate(_returns):
+                        if _j < num_envs and _rs is not None:
+                            _burst_seeds[_j] = _rs
+                    if _burst_seeds:
+                        log.info(
+                            "[vanilla_ppo] GO-EXPLORE burst diverting %d/%d "
+                            "envs to archive returns (%d cells).",
+                            len(_burst_seeds), num_envs, len(ge_archive),
+                        )
                 any_warm = False
                 for i in range(num_envs):
                     k = int(env_stage[i])
-                    if k > 0 and smb_curriculum_states[k] is not None:
+                    _seed = _burst_seeds.get(i)
+                    if _seed is None and k > 0:
+                        _seed = smb_curriculum_states[k]
+                    if _seed is not None:
                         try:
-                            self.pool.load_worker_state(i, smb_curriculum_states[k])
+                            self.pool.load_worker_state(i, _seed)
                             any_warm = True
                         except Exception as e:
                             log.warning(
@@ -6144,14 +6349,16 @@ class Trainer:
                                 "%d failed: %s — cold boot.", i, k, e,
                             )
                             env_stage[i] = 0
+                            _burst_seeds.pop(i, None)
                 if any_warm:
                     noop_actions = np.zeros(self.pool.num_workers, dtype=np.uint8)
                     init_results = self.pool.step_all(noop_actions)
                     self._emit_frame_sink(init_results)
                 stage_seed_results = [
                     init_results[i]
-                    if (int(env_stage[i]) > 0
-                        and smb_curriculum_states[int(env_stage[i])] is not None)
+                    if (i in _burst_seeds
+                        or (int(env_stage[i]) > 0
+                            and smb_curriculum_states[int(env_stage[i])] is not None))
                     else None
                     for i in range(num_envs)
                 ]
@@ -6265,6 +6472,12 @@ class Trainer:
             # Per-iter reset of the sub-stage rung tracker to OFF_LADDER, so a
             # non-progressing / warping env can never satisfy the advance gate.
             max_region_reached[:] = -1
+            # Go-Explore stall clock (Lane 5): count iters since the frontier
+            # last advanced (reset on advance / arm / retract). Incremented
+            # once per completed iter so `stall_ready` fires at exactly
+            # `stall_patience` iters of no advance.
+            if ge_burst_on:
+                ge_iters_since_advance += 1
             # Clear per-iter clear-counter + per-env completion-baseline.
             # Reward fns were just reset() above, so their `completion`
             # breakdowns are back to 0 — match that here.
