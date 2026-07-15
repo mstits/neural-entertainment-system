@@ -129,6 +129,13 @@ curriculum:
   stage_3: ["1-1", "1-2", "1-3", "1-4"]
   stage_4: ["1-1", "1-2", "1-3", "1-4", "2-1", "2-2", "2-3", "2-4"]
   stage_5: "full_game"
+  # Advance on the top-5 genomes' clear rate rather than the whole-
+  # population mean — the same fix, and rationale, documented in
+  # configs/mario_tiles.yaml. This is the pixel-CNN ga_ppo SMB path; its
+  # population-mean gate is just as structurally unreachable, so it gets
+  # the top-k gate too. Non-SMB games omit this key and keep the legacy
+  # whole-population gate.
+  top_k_gate: 5
 
 # DreamerV3 trainer settings (only used when training_mode is `dreamer`,
 # either set here or selected from the GUI dropdown). Mario is the

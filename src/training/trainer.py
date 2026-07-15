@@ -905,8 +905,21 @@ class Trainer:
 
         self.reward_fn_factory = lambda: build_reward_function(game_profile)
 
-        stages = self._build_curriculum_stages(game_profile.get("curriculum", {}))
-        self.curriculum = CurriculumManager(stages=stages)
+        curriculum_spec = game_profile.get("curriculum", {})
+        stages = self._build_curriculum_stages(curriculum_spec)
+        # top_k_gate (optional): when set, the ga_ppo advance gate measures
+        # only the top-k highest-fitness genomes' episodes instead of the
+        # whole-population mean, which a mutated GA population can never push
+        # above the 0.8 threshold (see CurriculumManager). Absent → legacy
+        # whole-population gate, unchanged for every existing config.
+        top_k_gate = (
+            curriculum_spec.get("top_k_gate")
+            if isinstance(curriculum_spec, dict)
+            else None
+        )
+        if top_k_gate is not None:
+            top_k_gate = int(top_k_gate)
+        self.curriculum = CurriculumManager(stages=stages, top_k_gate=top_k_gate)
 
         ga_params = game_profile.get("ga_params", {})
         self.ga = GeneticAlgorithm(
@@ -2118,6 +2131,60 @@ class Trainer:
                     self._active_pace_multiplier,
                 )
 
+    def _record_curriculum_episodes(
+        self,
+        pop: list,
+        records: list[tuple[str, bool, int]],
+    ) -> None:
+        """Flush a generation's buffered episodes into the curriculum.
+
+        `records` is a list of (level_id, success, global_genome_index) in the
+        same order the episodes were evaluated. When the curriculum has a
+        top_k_gate, rank the whole population by THIS generation's mean fitness
+        (already finalized by the caller) and tag each episode with whether its
+        genome is one of the top-k — the advance/regress gate then measures
+        only the best k policies' clear rate, mirroring how the vanilla trainer
+        gates on its single deployed policy rather than a population average.
+
+        Ranking uses the current generation's fitness, not the previous one's:
+        at generation 0 there is no prior fitness, and immediately after a
+        stage advance the fitness scale resets to the new level set, so only
+        the freshly-measured fitnesses identify the current best policies.
+
+        With no gate (top_k_gate is None) the eligibility flag is passed as
+        None and ignored downstream — every episode is recorded exactly as
+        before, in the original order.
+        """
+        gate = self.curriculum.top_k_gate
+        topk_idx: set[int] | None = None
+        if gate is not None and gate > 0 and pop:
+            # k highest by mean fitness. Stable sort → deterministic ties.
+            ranked = sorted(
+                range(len(pop)), key=lambda i: pop[i].fitness, reverse=True
+            )
+            topk_idx = set(ranked[: min(gate, len(pop))])
+        n_topk_clears = 0
+        for level_id, success, g_idx in records:
+            eligible = None if topk_idx is None else (g_idx in topk_idx)
+            self.curriculum.record_episode(
+                level_id, success, top_k_eligible=eligible
+            )
+            if eligible and success:
+                n_topk_clears += 1
+        if topk_idx is not None:
+            # Cheap per-gen telemetry so a run can be inspected for whether the
+            # gate is moving (top-k clears > 0) without re-deriving it from raw
+            # episode logs.
+            log.info(
+                "  curriculum top_k_gate=%d: %d/%d episodes from top-k genomes, "
+                "%d top-k clears; stage_success_rate=%.4f",
+                gate,
+                sum(1 for _, _, gi in records if gi in topk_idx),
+                len(records),
+                n_topk_clears,
+                self.curriculum.stage_success_rate(),
+            )
+
     def _run_one_generation(self, gen: int) -> None:
         log.info("=== Generation %d (stage: %s) ===", gen, self.curriculum.current_stage.name)
         self._drain_reward_updates()
@@ -2142,6 +2209,16 @@ class Trainer:
         pop_traj_log_probs = np.zeros((len(pop), self.max_episode_steps), dtype=np.float32)
         pop_traj_lens = np.zeros(len(pop), dtype=np.int32)
         gen_breakdown: dict[str, float] = {}
+        # Curriculum episode records for this generation, flushed AFTER every
+        # genome's mean fitness is known (below). Each entry is
+        # (level_id, success, global_genome_index). Deferring the flush lets
+        # us tag each episode with whether its genome landed in this
+        # generation's top-k by fitness — the top_k_gate advance gate then
+        # measures only those. The order of collection matches the old inline
+        # record order (batch-major, then episode, then genome), so the legacy
+        # (gate-off) path appends to the curriculum in the exact same sequence
+        # it always did.
+        gen_curriculum_records: list[tuple[str, bool, int]] = []
         ga_batch_size = self._ga_batch_size()
         for batch_start in range(0, len(pop), ga_batch_size):
             if not self._running:
@@ -2189,9 +2266,15 @@ class Trainer:
                         best_traj_log_probs[g_i] = traj_flat["log_probs"][g_i]
                         best_traj_lens[g_i] = traj_flat["lens"][g_i]
                 # Curriculum tracks every episode regardless of best/avg
-                # so the rolling success-rate window is unbiased.
-                for success, level_id in zip(successes, level_ids):
-                    self.curriculum.record_episode(level_id, success)
+                # so the rolling success-rate window is unbiased. Buffered
+                # here (not recorded inline) so the flush below can tag each
+                # episode with its genome's top-k membership once this
+                # generation's fitnesses are final. global index = the
+                # genome's position in `pop` = batch_start + g_i.
+                for g_i, (success, level_id) in enumerate(zip(successes, level_ids)):
+                    gen_curriculum_records.append(
+                        (level_id, success, batch_start + g_i)
+                    )
                 # Capture successful trajectories to the BC replay buffer.
                 # Done HERE (inside the per-episode loop) rather than after
                 # multi-eval averaging because we need the per-episode
@@ -2249,6 +2332,12 @@ class Trainer:
             pop_traj_rewards[batch_start:batch_start + nb] = best_traj_rewards[:nb]
             pop_traj_log_probs[batch_start:batch_start + nb] = best_traj_log_probs[:nb]
             pop_traj_lens[batch_start:batch_start + nb] = best_traj_lens[:nb]
+
+        # Flush this generation's episodes into the curriculum now that every
+        # genome's mean fitness (set above) is final. Done BEFORE the PPO step
+        # so top-k ranking reads the pure eval fitnesses, not any post-PPO
+        # clone-overwrite. No-op ordering change for the legacy gate.
+        self._record_curriculum_episodes(pop, gen_curriculum_records)
 
         best = self.ga.best_genome()
         avg = sum(g.fitness for g in pop) / len(pop)

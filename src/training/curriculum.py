@@ -45,19 +45,37 @@ class CurriculumManager:
         stages: list[CurriculumStage],
         regression_threshold: float = 0.3,
         history_window: int = 200,
+        top_k_gate: int | None = None,
     ) -> None:
         """
         Args:
             stages: ordered list of curriculum stages
             regression_threshold: if success rate drops below this, go back a stage
             history_window: how many recent episodes to track per level
+            top_k_gate: when set to k, the advance/regress gate measures only
+                episodes recorded by the k highest-fitness genomes of each
+                generation (see record_episode's top_k_eligible). This exists
+                for the GA path (ga_ppo), where the population is mostly junk
+                mutations: a whole-population success mean can never reach the
+                0.8 advance threshold even with a perfect elite (validation
+                2026-07-12: a 60-genome population maxed 0.005 over 300 gens),
+                so the gate is structurally unreachable. Gating on the top-k
+                mirrors how the vanilla trainer gates on its single deployed
+                policy's clear fraction rather than a population average.
+                When None (default) EVERY episode counts — byte-identical to
+                the pre-gate behavior, so non-GA callers are unaffected.
         """
         if not stages:
             raise ValueError("At least one curriculum stage is required")
+        if top_k_gate is not None and top_k_gate < 1:
+            raise ValueError(
+                f"top_k_gate must be a positive integer or None, got {top_k_gate}"
+            )
 
         self.stages = stages
         self.regression_threshold = regression_threshold
         self.history_window = history_window
+        self.top_k_gate = top_k_gate
 
         self.current_stage_idx = 0
         self.episodes_in_stage = 0
@@ -123,7 +141,9 @@ class CurriculumManager:
                 return level
         return active_levels[-1]  # floating point edge case
 
-    def record_episode(self, level: str, success: bool) -> None:
+    def record_episode(
+        self, level: str, success: bool, top_k_eligible: bool | None = None
+    ) -> None:
         """Record whether an episode succeeded (completed the level).
 
         Appends to BOTH the cross-run history (used by sample_level) and
@@ -131,13 +151,32 @@ class CurriculumManager:
         them separately means stage advancement is governed only by
         episodes that happened in the current stage, while difficulty-
         weighted level sampling can still consult cumulative experience.
+
+        `top_k_eligible` is only consulted when this manager was built with
+        `top_k_gate` set (the ga_ppo path). It marks whether the recording
+        genome landed in this generation's top-k by fitness. When gating is
+        active, ONLY top-k episodes enter the within-stage history, so the
+        advance/regress gate measures "can the best policies this stage
+        produces clear it reliably" instead of a whole-population mean the
+        mutated GA population can never push above ~0. The cross-run history
+        (difficulty-weighted sampling) always sees every episode regardless
+        — the sampler should weight by the whole population's experience, not
+        just the elite's. When gating is OFF (`top_k_gate is None`) the flag
+        is ignored and every episode is recorded, byte-identical to the
+        pre-gate behavior.
         """
         if level not in self._success_history:
             self._success_history[level] = deque(maxlen=self.history_window)
         self._success_history[level].append(success)
-        if level not in self._stage_success_history:
-            self._stage_success_history[level] = deque(maxlen=self.history_window)
-        self._stage_success_history[level].append(success)
+        # Within-stage (gate) history: all episodes when gating is off; only
+        # top-k episodes when it's on. `episodes_in_stage` still counts every
+        # episode below, so the min_episodes floor reflects total play, not
+        # just elite play.
+        record_to_stage = self.top_k_gate is None or bool(top_k_eligible)
+        if record_to_stage:
+            if level not in self._stage_success_history:
+                self._stage_success_history[level] = deque(maxlen=self.history_window)
+            self._stage_success_history[level].append(success)
         self.episodes_in_stage += 1
 
     def stage_success_rate(self, undersampled_as_zero: bool = True) -> float:
@@ -147,6 +186,11 @@ class CurriculumManager:
         wildcard "*" stage expansion only counts episodes since this
         stage began. Otherwise prior stages' history would dominate
         and prevent further advancement.
+
+        When the manager was built with `top_k_gate`, that history was
+        already filtered to top-k episodes at record time (see
+        record_episode), so this method needs no top-k logic of its own —
+        it just averages whatever the gate admitted.
 
         "*" matches every level the reward function has reported during
         the CURRENT stage — useful for games where the reward fn emits
