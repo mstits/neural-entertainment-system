@@ -104,6 +104,16 @@ fn main() {
         eprintln!("[refined skip-render OFF]");
     }
 
+    // PROF_SCANLINE_ADV=0 forces the Rung-1 scanline-granular `advance`
+    // fast path off (per-cycle tick_three catch-up), for a same-binary
+    // A/B against the default (on). Any other value / unset leaves it on.
+    if std::env::var("PROF_SCANLINE_ADV").as_deref() == Ok("0") {
+        nes.ppu.set_ppu_scanline_advance(false);
+        eprintln!("[scanline-advance OFF]");
+    } else {
+        eprintln!("[scanline-advance ON]");
+    }
+
     let mut video_buf = vec![0u32; FRAME_PIXELS];
     let mut audio = Null;
     let mut target = nes.cycles;

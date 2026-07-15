@@ -318,6 +318,18 @@ pub struct Ppu {
     /// byte-identical CPU-observable state.
     refined_skip_render: bool,
 
+    /// Runtime kill-switch for the scanline-granular `advance` fast path
+    /// (event-driven-PPU campaign, Rung 1 / Level A). When `true` (and
+    /// `skip_render` is active), the Nes CPU-PPU catch-up loops call
+    /// `Ppu::advance` in place of a per-cycle `tick_three` loop; it
+    /// fast-forwards whole event-free scanlines — vblank / post-render,
+    /// forced-blank visible lines, and (when a slice owns a full 341-dot
+    /// line) rendering-enabled visible lines — in closed form. Default
+    /// mirrors `refined_skip_render`. Never a correctness lever: ON and
+    /// OFF must produce byte-identical CPU-observable state. See
+    /// `set_ppu_scanline_advance`.
+    ppu_scanline_advance: bool,
+
     /// Rung-0 batchable-fraction accumulator (feature `ppu_batch_stats`).
     /// Cleared by `reset_batch_stats`; read via `batch_stats`.
     #[cfg(feature = "ppu_batch_stats")]
@@ -442,6 +454,12 @@ impl Ppu {
             ppu_mask_cache: 0,
             grey_mask: 0x3F,
             refined_skip_render: true,
+            // Default OFF: at bulk=1 the Level-A slices are 3 dots, so
+            // per-slice classification runs ~89k times/frame and regresses
+            // the 16-worker pool ~28% (PGO A/B 2026-07-15). Rung 2's
+            // owed-dots horizon flips the economics; enable via
+            // set_ppu_scanline_advance for rung testing until then.
+            ppu_scanline_advance: false,
             #[cfg(feature = "ppu_batch_stats")]
             batch_stats: PpuBatchStats::default(),
             #[cfg(feature = "ppu_batch_stats")]
@@ -569,12 +587,38 @@ impl Ppu {
         self.skip_render = skip;
     }
 
+    /// Whether the per-frame skip-render fast path is active. Read by the
+    /// Nes catch-up loops: `Ppu::advance` batches unobserved render work,
+    /// so it is only engaged while `skip_render` is set (the full-render
+    /// path must produce pixels per-dot).
+    #[inline(always)]
+    pub fn is_skip_render(&self) -> bool {
+        self.skip_render
+    }
+
     /// Toggle the refined skip-render idle-HBlank early-return fast
     /// path. Default on. Setting `false` restores the exact full
     /// per-cycle tick body; it is a perf/verification knob only and
     /// must never change CPU-observable output. See `refined_skip_render`.
     pub fn set_refined_skip_render(&mut self, on: bool) {
         self.refined_skip_render = on;
+    }
+
+    /// Toggle the scanline-granular `advance` fast path (Rung 1 / Level
+    /// A). Default on. Setting `false` makes the Nes catch-up loops fall
+    /// back to the exact per-cycle `tick_three` path — a perf/verification
+    /// knob only that must never change CPU-observable output. See
+    /// `ppu_scanline_advance`.
+    pub fn set_ppu_scanline_advance(&mut self, on: bool) {
+        self.ppu_scanline_advance = on;
+    }
+
+    /// Whether the scanline-granular `advance` fast path is armed. Read
+    /// by the Nes catch-up loops to decide between `advance` and the
+    /// verbatim `tick_three` loop.
+    #[inline(always)]
+    pub fn scanline_advance_enabled(&self) -> bool {
+        self.ppu_scanline_advance
     }
 
     /// CPU cycles until the PPU vblank-NMI rising edge fires.
@@ -2074,6 +2118,219 @@ impl Ppu {
         }
     }
 
+    // ===================================================================
+    // Event-driven-PPU campaign — Rung 1 / Level A: scanline-granular
+    // `advance`. These functions are the ON-path fast-forward; `tick`
+    // and `tick_three` above are UNCHANGED (they remain the full-render
+    // path, the per-dot reference the fallback delegates to, and the
+    // parity oracle). All logic here lives in separate `#[inline(never)]`
+    // symbols so the layout gate's `Ppu::tick` fingerprint is untouched.
+    //
+    // Design (see docs/proposals/ppu_event_driven_catchup.md §3, §8):
+    // `advance` reproduces every CPU-observable scanline-boundary side
+    // effect the per-dot body would — the `v` scroll register, sprite
+    // evaluation + secondary OAM (including the overflow flag), the
+    // vblank/NMI edge, and the counters — while DELIBERATELY skipping the
+    // render pipeline (pixel output, BG/sprite CHR fetches, and the
+    // shift/latch registers those feed) that `skip_render` already
+    // discards. Those pipeline registers are read only by `render_pixel`;
+    // under `skip_render` no CPU-observable state depends on them, so
+    // `advance` is observably identical to — though NOT bitwise identical
+    // in those unobserved intermediates to — an equivalent run of `tick`.
+    // ===================================================================
+
+    /// Fast-forward the PPU by `dots` cycles (always a multiple of 3;
+    /// callers pass `cpu_cycles * 3`). Batches whole event-free scanlines
+    /// in closed form; delegates any line that could carry an observable
+    /// event to the reference per-dot `tick`. Observably identical to
+    /// `(dots / 3)` calls to `tick_three`.
+    #[inline(never)]
+    pub fn advance<V: VideoSink>(
+        &mut self,
+        dots: u64,
+        mapper: &mut MapperEnum,
+        video_frame_sink: &mut V,
+    ) {
+        // Level-A mapper gate. Skipping a batched line's CHR fetches is
+        // observable only when the mapper (a) latches banks off a CHR
+        // read (MMC2/MMC4) or (b) clocks an A12 scanline IRQ (MMC3/MMC5)
+        // whose per-scanline tick must land on its exact dot. A mapper
+        // that exposes a STATIC CHR window cannot do (a) — the per-dot
+        // path itself reads through the cached pointer and never calls
+        // `chr_read_byte` — and `!uses_scanline_irq()` rules out (b).
+        // Both are conservative over-approximations of "must run per-dot":
+        // any excluded mapper simply runs the verbatim reference loop, at
+        // no fidelity cost. (`chr_static_ptr()` reflects the mapper's
+        // CURRENT banking, re-queried every call, so an MMC1 that toggles
+        // its static window mid-run is always classified correctly.)
+        let mapper_batchable =
+            mapper.chr_static_ptr().is_some() && !mapper.uses_scanline_irq();
+        // `advance` is a skip-render fast path: its closed forms omit the
+        // pixel writes (`render_pixel` / `clear_pixel`) that the
+        // full-render path performs, so it must never batch while
+        // `skip_render` is off. Under full render — or a non-batchable
+        // mapper — run the byte-identical reference loop instead (exactly
+        // what the caller would otherwise run; `dots` is a multiple of 3).
+        if !self.skip_render || !mapper_batchable {
+            for _ in 0..(dots / 3) {
+                self.tick_three(mapper, video_frame_sink);
+            }
+            return;
+        }
+
+        // `rendering_enabled()` is constant across the whole call: it can
+        // change only via a $2001 MMIO write, which is a slice boundary
+        // and never lands inside a catch-up `advance`.
+        let rendering = self.rendering_enabled();
+
+        let mut remaining = dots;
+        while remaining > 0 {
+            let dot = self.scanline_cycle();
+            let line = self.scanline;
+            // Every line `advance` is allowed to batch is a full-length
+            // 341-dot line (the pre-render line — the only 340-dot line,
+            // on odd frames — is always delegated below), so the dots
+            // left on the current line is `341 - dot`.
+            let line_span = CYCLES_PER_SCANLINE - dot;
+            let span = remaining.min(line_span);
+
+            // Class 1 — pure-counter lines: post-render (240) and vblank
+            // (242..=260), plus forced-blank visible lines (rendering
+            // off). The per-dot body does nothing here but `cycles += 1`
+            // (clear_pixel is a no-op under skip_render, and the vblank
+            // fast path already collapses to the counter). Batch ANY
+            // span, partial or whole. Line 241 (set_vblank) and 261
+            // (clear_vblank + flag clears + vertical v<-t copy + prefetch
+            // + odd-frame skip + frame boundary) are NOT counter lines —
+            // they fall through to the exact per-dot body.
+            let counter_line = line == VISIBLE_END_SCANLINE + 1
+                || (line > VBLANK_START_SCANLINE && line < PRE_RENDER_SCANLINE)
+                || (line <= VISIBLE_END_SCANLINE && !rendering);
+            if counter_line {
+                self.cycles += span;
+                if span == line_span {
+                    self.scanline_boundary_advance(mapper);
+                }
+                remaining -= span;
+                continue;
+            }
+
+            // Class 2 — a whole rendering-enabled visible line owned from
+            // dot 0 with no observable event. TWO sprite-0 flags gate the
+            // batch, because the per-dot eval pipeline is split at dot 1:
+            //   * `oam.sprite_0_found` — the prior line's evaluation
+            //     result, i.e. "sprite 0 is on THIS line". Dot 1's
+            //     `sprite_evaluation_init` publishes it into
+            //     `sprite_0_on_scanline`, so it gates `render_pixel` for
+            //     x = 1..=255.
+            //   * `sprite_0_on_scanline` — at dot 0 this still holds the
+            //     line-BEFORE-LAST's evaluation. The x = 0 pixel's
+            //     `render_pixel` runs BEFORE dot 1's init swap and
+            //     consults THIS flag, so an x=0 hit can latch off it
+            //     even when `sprite_0_found` is false (regression test:
+            //     `whole_line_batch_latches_x0_sprite0_hit_from_stale_flag`).
+            // If either flag is set and the hit is not already latched,
+            // the line must run per-dot so `render_pixel` latches the hit
+            // on its true dot (conservative — over-approximates, batching
+            // only lines that provably carry no sprite-0 hit at ANY dot,
+            // x = 0 included).
+            if dot == 0
+                && span == CYCLES_PER_SCANLINE
+                && line <= VISIBLE_END_SCANLINE
+                && rendering
+                && ((!self.oam.sprite_0_found && !self.sprite_0_on_scanline)
+                    || self.regs.ppu_status.contains(PpuStatus::SPRITE_ZERO_HIT))
+            {
+                self.step_whole_visible_scanline(mapper);
+                remaining -= CYCLES_PER_SCANLINE;
+                continue;
+            }
+
+            // Fallback — the reference per-dot body for this span. Covers
+            // line 241, the pre-render line 261, sprite-0 pre-hit lines,
+            // and any partial rendering-enabled visible span (dot != 0,
+            // or a slice too short to own the whole line — the common case
+            // for bulk<=64 mappers, where no slice owns a full 341-dot
+            // line). Drive it in `tick_three` chunks so this reference
+            // path keeps the exact PGO-friendly 3-tick unroll the original
+            // catch-up loop used (`tick_three == 3 x tick` byte-for-byte),
+            // then finish the <3 remainder per-dot. Each tick self-syncs
+            // the scanline/frame counters (incl. the odd-frame pre-render
+            // dot skip), so the chunked loop is exact even across a line
+            // boundary.
+            let mut left = span;
+            while left >= 3 {
+                self.tick_three(mapper, video_frame_sink);
+                left -= 3;
+            }
+            for _ in 0..left {
+                self.tick(mapper, video_frame_sink);
+            }
+            remaining -= span;
+        }
+    }
+
+    /// Advance the scanline counter across a batched line boundary,
+    /// matching the per-dot body's end-of-line bookkeeping for the lines
+    /// `advance` batches (vblank / post-render / forced-blank visible /
+    /// rendering-enabled visible). Those never cross the frame boundary
+    /// (that happens only at pre-render 261 -> 0, which is always
+    /// delegated per-dot), so no `write_frame` / frame++ / skip_render
+    /// reset is needed here.
+    #[inline(always)]
+    fn scanline_boundary_advance(&mut self, mapper: &mut MapperEnum) {
+        self.scanline_start_cycle = self.cycles;
+        self.scanline += 1;
+        self.chr_cache_ptr = mapper.chr_static_ptr().unwrap_or(core::ptr::null());
+    }
+
+    /// Closed form for a whole rendering-enabled visible scanline
+    /// (0..=239) owned from dot 0. Precondition (guaranteed by the
+    /// `advance` caller): rendering on, sprite 0 absent this line AND
+    /// absent the prior line's stale dot-0 flag — or its hit already
+    /// latched — and mapper batchable. Reproduces the per-dot
+    /// body's CPU-observable side effects — sprite evaluation (incl. the
+    /// overflow flag) and the `v` scroll sequence — for exactly 341 dots,
+    /// then advances the line. Skips the unobserved render pipeline.
+    #[inline(never)]
+    fn step_whole_visible_scanline(&mut self, mapper: &mut MapperEnum) {
+        // --- Sprite evaluation, verbatim per-dot schedule ---
+        // dot 1: init — publishes `sprite_0_on_scanline` from the prior
+        // line's scan and resets n/m/secondary_write_index/sprite_0_found.
+        self.sprite_evaluation_init();
+        // dots 2..=64 (even): clear the 32-byte secondary OAM to 0xFF.
+        for b in self.oam.secondary.iter_mut() {
+            *b = 0xFF;
+        }
+        // dots 65..=256: read (odd) then write (even) — 96 pairs. The
+        // overflow flag latches inside `sprite_evaluation_write_byte`
+        // exactly as per-dot; no mid-line $2002 read can observe an
+        // intermediate value because a batched line carries no MMIO by
+        // construction (an MMIO access is a slice boundary, splitting the
+        // line so it is never owned whole).
+        for _ in 0..96 {
+            self.sprite_evaluation_read_byte();
+            self.sprite_evaluation_write_byte();
+        }
+
+        // --- `v` scroll, verbatim per-dot order ---
+        // 32 coarse-X increments (dots 8,16,..,256), the dot-256 Y
+        // increment, the dot-257 horizontal v<-t copy, then the two
+        // prefetch coarse-X increments (dots 328, 336).
+        for _ in 0..32 {
+            self.inc_coarse_x_with_wrap();
+        }
+        self.inc_y_with_wrap();
+        self.regs.v = (self.regs.v & !0x041F) | (self.regs.t & 0x041F);
+        self.inc_coarse_x_with_wrap();
+        self.inc_coarse_x_with_wrap();
+
+        // --- counters + boundary (visible lines are always 341 dots;
+        // the odd-frame skip applies only to pre-render 261) ---
+        self.cycles += CYCLES_PER_SCANLINE;
+        self.scanline_boundary_advance(mapper);
+    }
+
     pub fn read_byte(&mut self, mapper: &mut MapperEnum, address: u16) -> u8 {
         if !((0x2000..=0x3FFF).contains(&address)) {
             panic!(
@@ -3003,5 +3260,267 @@ mod greyscale_tests {
         assert_eq!(sink.frames, 1, "exactly one frame should have emitted");
         // bit5 (red) → 0x01, bit7 (blue) → 0x04 ⇒ 0b101.
         assert_eq!(sink.emphasis, 0b101, "emphasis bits must reach the sink");
+    }
+}
+
+/// Load-bearing Rung-1 equivalence proof: `advance(D)` reproduces the
+/// exact CPU-observable state that `D` calls to `tick` (under
+/// skip_render) would, over an entry lattice spanning a whole frame and
+/// many span lengths — the primary defense against the odd-frame /
+/// frame-boundary drift risk (§7 risk #5). Deliberately compares only
+/// the OBSERVABLE sub-state; `advance` does not reproduce the unobserved
+/// render pipeline (BG/sprite shift + fetch latches) that skip_render
+/// discards.
+#[cfg(test)]
+mod advance_equivalence_tests {
+    use super::*;
+    use crate::mapper::{Mapper, MapperEnum};
+    use crate::sink::VideoSink;
+
+    struct Discard;
+    impl VideoSink for Discard {
+        fn write_frame(&mut self, _: &[u8]) {}
+        fn frame_written(&self) -> bool { false }
+        fn pixel_size(&self) -> usize { 4 }
+    }
+
+    fn synth_mapper(mapper_byte_hi: u8, chr_banks: u8) -> MapperEnum {
+        let mut rom = Vec::new();
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // 32 KB PRG
+        rom.push(chr_banks);
+        rom.push(mapper_byte_hi & 0xF0); // flags6: low nibble of mapper
+        rom.push(mapper_byte_hi & 0x00); // flags7
+        rom.extend_from_slice(&[0u8; 8]);
+        rom.extend(vec![0x60u8; 32 * 1024]); // RTS-filled PRG
+        let chr_len = (chr_banks as usize).max(1) * 8 * 1024;
+        let mut chr = vec![0u8; chr_len];
+        for (i, b) in chr.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(31).wrapping_add(7);
+        }
+        rom.extend(chr);
+        let cart = crate::cartridge::Cartridge::load(&mut std::io::Cursor::new(rom))
+            .expect("synth iNES");
+        MapperEnum::from_cartridge(cart)
+    }
+
+    fn nrom() -> MapperEnum { synth_mapper(0x00, 1) } // mapper 0, batchable
+    fn mmc3() -> MapperEnum { synth_mapper(0x40, 2) } // mapper 4, scanline IRQ
+
+    /// Everything the CPU can observe, EXCLUDING the render pipeline that
+    /// `advance` intentionally leaves stale under skip_render.
+    fn observable(p: &Ppu) -> Vec<u8> {
+        let s = p.get_state();
+        bincode::serialize(&(
+            s.cycles,
+            s.regs,
+            s.vram,
+            s.palette_ram,
+            s.oam,
+            s.scanline,
+            s.scanline_start_cycle,
+            s.frame,
+            s.sprite_0_on_scanline,
+            s.nmi_occurred,
+            s.nmi_output,
+            s.ppu_data_read_buffer,
+            s.ppu_gen_latch,
+        ))
+        .expect("serialize observable ppu state")
+    }
+
+    fn seed(scanline: u16, dot: u64, rendering: bool) -> State {
+        let mut p = Ppu::new();
+        p.scanline = scanline;
+        p.scanline_start_cycle = 90_000;
+        p.cycles = 90_000 + dot;
+        p.frame = 1; // odd frame — exercises the pre-render dot skip
+        if rendering {
+            p.regs.ppu_mask = PpuMask::SHOW_BACKGROUND | PpuMask::SHOW_SPRITES;
+        }
+        p.refresh_ppu_mask_cache();
+        p.regs.t = 0x2C15 & 0x7FFF;
+        p.regs.v = 0x0800;
+        p.regs.x = 5;
+        p.nmi_output = true;
+        // Seed OAM: sprites at assorted Y so evaluation fills secondary
+        // OAM, sets sprite_0_found, and (where >8 land on a line) trips
+        // the overflow flag.
+        for i in 0..64usize {
+            let y = ((i * 7) % 256) as u8;
+            p.oam.primary[i * 4] = y;
+            p.oam.primary[i * 4 + 1] = (i as u8) | 1;
+            p.oam.primary[i * 4 + 2] = (i as u8) & 0xE3;
+            p.oam.primary[i * 4 + 3] = ((i * 5) % 256) as u8;
+        }
+        p.get_state()
+    }
+
+    fn restore(state: &State) -> Ppu {
+        let mut p = Ppu::new();
+        p.apply_state(state);
+        p.skip_render = true; // advance is a skip-render fast path
+        p
+    }
+
+    /// Run `advance(D)` on one PPU and `D` per-dot ticks on a fresh copy
+    /// from the same seed; assert observable equality.
+    fn assert_equiv(state: &State, mapper: &mut MapperEnum, d: u64) {
+        let msnap = mapper.get_state();
+        let mut sink = Discard;
+
+        let mut a = restore(state);
+        a.advance(d, mapper, &mut sink);
+        let obs_a = observable(&a);
+
+        mapper.apply_state(&msnap);
+        let mut b = restore(state);
+        for _ in 0..d {
+            b.tick(mapper, &mut sink);
+        }
+        let obs_b = observable(&b);
+
+        mapper.apply_state(&msnap);
+        assert!(
+            obs_a == obs_b,
+            "advance({d}) diverged from {d}x tick at entry \
+             (scanline={}, dot={}): scanline_advance is NOT observably exact",
+            b.scanline, // post-run, but useful context
+            b.scanline_cycle(),
+        );
+    }
+
+    #[test]
+    fn advance_matches_tick_over_entry_lattice_nrom() {
+        let mut m = nrom();
+        // Entry lines spanning the frame: visible, sprite-0 band, the
+        // vblank set/clear lines, and the pre-render line.
+        let lines = [0u16, 7, 8, 30, 100, 239, 240, 241, 242, 260, 261];
+        let dots = [0u64, 1, 100, 255, 256, 257, 260, 340];
+        // Spans: sub-line, whole-line, multi-line, near-frame, full-frame.
+        let ds = [3u64, 9, 30, 342, 684, 1023, 1026, 2049, 6000, 89342];
+        for &line in &lines {
+            for &dot in &dots {
+                if dot >= CYCLES_PER_SCANLINE {
+                    continue;
+                }
+                let s_on = seed(line, dot, true);
+                let s_off = seed(line, dot, false);
+                for &d in &ds {
+                    assert_equiv(&s_on, &mut m, d);
+                    assert_equiv(&s_off, &mut m, d);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn advance_matches_tick_non_batchable_mmc3() {
+        // A scanline-IRQ mapper always takes advance's reference path;
+        // prove it is byte-for-byte a `tick` loop (incl. the mapper's own
+        // IRQ-counter mutations under D that are multiples of 3).
+        let mut m = mmc3();
+        for &line in &[0u16, 100, 240, 261] {
+            for &d in &[3u64, 342, 1023, 6000] {
+                assert_equiv(&seed(line, 0, true), &mut m, d);
+            }
+        }
+    }
+
+    #[test]
+    fn advance_off_under_full_render_is_reference_loop() {
+        // With skip_render off, advance must delegate entirely (it omits
+        // pixel work): it must equal a plain tick loop and touch the
+        // framebuffer-independent observable state identically.
+        let mut m = nrom();
+        let state = seed(50, 0, true);
+        let mut sink = Discard;
+        let msnap = m.get_state();
+
+        let mut a = restore(&state);
+        a.skip_render = false;
+        a.advance(1023, &mut m, &mut sink);
+        let obs_a = observable(&a);
+
+        m.apply_state(&msnap);
+        let mut b = restore(&state);
+        b.skip_render = false;
+        for _ in 0..1023 {
+            b.tick(&mut m, &mut sink);
+        }
+        assert!(obs_a == observable(&b), "advance under full render must equal tick loop");
+    }
+
+    /// Regression: the x=0 sprite-0 edge case that forces the Class-2
+    /// gate to consult BOTH sprite-0 flags.
+    ///
+    /// At dot 1 the per-dot body calls `render_pixel` (x = 0) BEFORE
+    /// `sprite_evaluation_init` swaps the eval pipeline, so the x=0
+    /// pixel is gated by the line-BEFORE-LAST's `sprite_0_on_scanline`
+    /// (E(K-2)), not by `oam.sprite_0_found` (E(K-1)). Construct exactly
+    /// that state — sprite 0's last visible line was K-2, so
+    /// E(K-2)=true / E(K-1)=false — with an opaque background pixel and
+    /// an opaque decoy sprite in lane 0 at x=0, left-8 clipping enabled
+    /// for both planes, and no prior hit. The per-dot reference latches
+    /// SPRITE_ZERO_HIT at x=0; a whole-line batch keyed on
+    /// `sprite_0_found` alone would skip it. The gate must therefore
+    /// require both flags clear before batching the line.
+    #[test]
+    fn whole_line_batch_latches_x0_sprite0_hit_from_stale_flag() {
+        let mut m = nrom();
+        let mut sink = Discard;
+        let k: u16 = 9;
+        let setup = |p: &mut Ppu| {
+            p.skip_render = true; // advance is a skip-render fast path
+            p.scanline = k;
+            p.scanline_start_cycle = 90_000;
+            p.cycles = 90_000; // dot 0 — line owned whole
+            p.frame = 2; // even frame — a plain 341-dot visible line
+            p.regs.ppu_mask = PpuMask::SHOW_BACKGROUND
+                | PpuMask::SHOW_SPRITES
+                | PpuMask::SHOW_BACKGROUND_LEFT_8
+                | PpuMask::SHOW_SPRITES_LEFT_8;
+            p.refresh_ppu_mask_cache();
+            p.regs.x = 0;
+            // Background opaque at x=0: bit 15 of plane-0 shift set.
+            p.bg_shift = [0x8000, 0, 0, 0];
+            // Decoy sprite in lane 0 (loaded from line K-1's fetch of
+            // sprite 0): active at x=0 with an opaque plane-0 bit.
+            p.sprite_x_counters = [0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+            p.sprite_pattern_shifts_lo = [0x80, 0, 0, 0, 0, 0, 0, 0];
+            p.sprite_pattern_shifts_hi = [0; 8];
+            p.sprite_attribute_latches = [SpriteAttributes(0); 8];
+            // The crux: E(K-2)=true (sprite 0 rendered on line K-1, flag
+            // still stale at dot 0), E(K-1)=false (sprite 0 NOT on K).
+            p.sprite_0_on_scanline = true;
+            p.oam.sprite_0_found = false;
+            p.regs.ppu_status.set(PpuStatus::SPRITE_ZERO_HIT, false);
+        };
+
+        let mut a = Ppu::new();
+        setup(&mut a);
+        a.advance(CYCLES_PER_SCANLINE, &mut m, &mut sink);
+        let hit_advance = a.regs.ppu_status.contains(PpuStatus::SPRITE_ZERO_HIT);
+
+        let mut b = Ppu::new();
+        setup(&mut b);
+        for _ in 0..CYCLES_PER_SCANLINE {
+            b.tick(&mut m, &mut sink);
+        }
+        let hit_tick = b.regs.ppu_status.contains(PpuStatus::SPRITE_ZERO_HIT);
+
+        // Guard against the scenario rotting into a vacuous pass: the
+        // per-dot reference MUST latch the hit at x=0 here.
+        assert!(
+            hit_tick,
+            "scenario no longer fires the x=0 sprite-0 hit per-dot; \
+             regression test needs re-derivation"
+        );
+        assert_eq!(
+            hit_advance, hit_tick,
+            "advance(341) skipped an x=0 sprite-0 hit the per-dot \
+             reference latches via the stale dot-0 sprite_0_on_scanline: \
+             the Class-2 gate must require BOTH sprite-0 flags clear"
+        );
     }
 }

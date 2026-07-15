@@ -54,6 +54,19 @@ pub struct Nes {
     /// virtual call on every instruction. Refreshed at construction +
     /// reset + apply_state + override, exactly like `cached_prg_asm_ptr`.
     cached_asm_bulk_cycles: i64,
+
+    /// Coarse "this mapper could be batchable by `Ppu::advance`" hint
+    /// (event-driven-PPU campaign, Rung 1). `mapper.chr_static_ptr()
+    /// .is_some() && !mapper.uses_scanline_irq()` sampled at the mapper's
+    /// current banking. Purely a perf gate on the catch-up loops: when
+    /// `false` (MMC3/MMC5 scanline-IRQ mappers, MMC2/MMC4 CHR-latch
+    /// mappers, and MMC1 while its static window is inactive) the loops
+    /// run the verbatim `tick_three` path with zero `advance` overhead.
+    /// Correctness never rests on this: `Ppu::advance` re-checks the live
+    /// mapper every call and self-selects the reference path, so a stale
+    /// hint only ever costs a batching opportunity, never fidelity.
+    /// Refreshed alongside `cached_asm_bulk_cycles`.
+    cached_ppu_batchable: bool,
 }
 
 // SAFETY: cached_prg_asm_ptr aliases memory owned by the same Nes
@@ -90,9 +103,11 @@ impl Nes {
             disable_asm_cpu: false,
             cached_prg_asm_ptr: None,
             cached_asm_bulk_cycles: 1,
+            cached_ppu_batchable: false,
         };
         nes.cached_prg_asm_ptr = nes.mapper.prg_asm_ptr();
         nes.cached_asm_bulk_cycles = nes.mapper.asm_bulk_cycles();
+        nes.cached_ppu_batchable = nes.ppu_batchable();
 
         // Install the ASM dispatch + opcode-cycle tables once, at
         // construction, instead of on the per-instruction hot path.
@@ -290,9 +305,30 @@ impl Nes {
                     // boundary — exactly as before.
                     let remaining = r.cycles_consumed
                         .saturating_sub(r.cycles_ticked_in_callback);
-                    for _ in 0..remaining {
-                        self.apu.tick(&mut self.mapper, audio_frame_sink);
-                        self.ppu.tick_three(&mut self.mapper, video_frame_sink);
+                    // Rung-1 scanline-granular PPU catch-up. Only under
+                    // skip_render (advance omits pixel work), a batchable
+                    // mapper, and the runtime gate. APU stays per-cycle
+                    // (audio / DMC / frame-IRQ), then the PPU fast-forwards
+                    // in one call — observably identical to the interleaved
+                    // `tick_three` loop below, which is the verbatim,
+                    // byte-identical fallback for every other case.
+                    if self.ppu.is_skip_render()
+                        && self.ppu.scanline_advance_enabled()
+                        && self.cached_ppu_batchable
+                    {
+                        for _ in 0..remaining {
+                            self.apu.tick(&mut self.mapper, audio_frame_sink);
+                        }
+                        self.ppu.advance(
+                            remaining as u64 * 3,
+                            &mut self.mapper,
+                            video_frame_sink,
+                        );
+                    } else {
+                        for _ in 0..remaining {
+                            self.apu.tick(&mut self.mapper, audio_frame_sink);
+                            self.ppu.tick_three(&mut self.mapper, video_frame_sink);
+                        }
                     }
                     self.cycles += r.cycles_consumed as usize;
                     self.cpu.set_nmi_line(
@@ -349,9 +385,26 @@ impl Nes {
                 // reintroducing the black-screen bug. Verified via
                 // the frame-render regression test inline in the
                 // bulk_step_bench module below.
-                for _ in 0..cycles {
-                    self.apu.tick(&mut self.mapper, audio_frame_sink);
-                    self.ppu.tick_three(&mut self.mapper, video_frame_sink);
+                // Rung-1 scanline-granular PPU catch-up (see the ASM
+                // remainder loop above for the invariant). Verbatim
+                // interleaved fallback in the else arm.
+                if self.ppu.is_skip_render()
+                    && self.ppu.scanline_advance_enabled()
+                    && self.cached_ppu_batchable
+                {
+                    for _ in 0..cycles {
+                        self.apu.tick(&mut self.mapper, audio_frame_sink);
+                    }
+                    self.ppu.advance(
+                        cycles as u64 * 3,
+                        &mut self.mapper,
+                        video_frame_sink,
+                    );
+                } else {
+                    for _ in 0..cycles {
+                        self.apu.tick(&mut self.mapper, audio_frame_sink);
+                        self.ppu.tick_three(&mut self.mapper, video_frame_sink);
+                    }
                 }
                 self.cycles += cycles as usize;
                 // Detect NMI edge once, at the end. `set_nmi_line`
@@ -575,6 +628,7 @@ impl Nes {
         // ptr so any subsequent Nes::step uses the new allocation.
         self.cached_prg_asm_ptr = self.mapper.prg_asm_ptr();
         self.cached_asm_bulk_cycles = self.mapper.asm_bulk_cycles();
+        self.cached_ppu_batchable = self.ppu_batchable();
         self.cpu.apply_state(&state.cpu);
         self.ppu.apply_state(&state.ppu);
         self.apu.apply_state(&state.apu);
@@ -655,6 +709,14 @@ impl Nes {
         self.cached_asm_bulk_cycles = self.mapper.asm_bulk_cycles();
     }
 
+    /// Coarse batchability sample for `cached_ppu_batchable`. See the
+    /// field doc: a perf hint only, re-checked authoritatively inside
+    /// `Ppu::advance`.
+    #[inline]
+    fn ppu_batchable(&self) -> bool {
+        self.mapper.chr_static_ptr().is_some() && !self.mapper.uses_scanline_irq()
+    }
+
     pub fn reset(&mut self) {
         {
             let mut bus = SystemBus::new(
@@ -676,6 +738,7 @@ impl Nes {
         // ASM dispatch sees the right pointer.
         self.cached_prg_asm_ptr = self.mapper.prg_asm_ptr();
         self.cached_asm_bulk_cycles = self.mapper.asm_bulk_cycles();
+        self.cached_ppu_batchable = self.ppu_batchable();
 
         // Model the 8-cycle 6502 reset sequence: real hardware spends
         // 8 CPU cycles reading the reset vector + setting up internal
