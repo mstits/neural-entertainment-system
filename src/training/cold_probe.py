@@ -133,16 +133,24 @@ def _parse_eval_stdout(stdout: str) -> dict:
 
 
 def _run_eval(cmd: list[str], want_sequential: Optional[bool], timeout: float,
-              cwd: str) -> tuple[subprocess.CompletedProcess, bool]:
+              cwd: str, extra_args: Optional[list[str]] = None,
+              ) -> tuple[subprocess.CompletedProcess, bool]:
     """Run `eval_game.py`, negotiating ``--sequential`` support.
 
     ``want_sequential``: ``None`` = auto (try unless known-unsupported, degrade
     on "unrecognized argument"); ``True`` = force on (unsupported surfaces as a
     nonzero return, no silent degrade); ``False`` = never pass the flag.
 
+    ``extra_args`` are always-passed flags that go WITH the sequential predicate
+    (e.g. ``--start-state PATH`` / ``--level-clear`` for the level-scoped gate).
+    They ride along only when the sequential predicate itself is used — the
+    degrade path (Lane 1 absent) drops them too, since they are meaningless
+    without it.
+
     Returns ``(completed_process, sequential_was_passed)``.
     """
     global _SEQUENTIAL_SUPPORTED
+    extra = list(extra_args or [])
     if want_sequential is False:
         use_seq = False
     elif want_sequential is True:
@@ -151,7 +159,7 @@ def _run_eval(cmd: list[str], want_sequential: Optional[bool], timeout: float,
         use_seq = _SEQUENTIAL_SUPPORTED is not False
 
     proc = subprocess.run(
-        cmd + (["--sequential"] if use_seq else []),
+        cmd + (extra + ["--sequential"] if use_seq else []),
         cwd=cwd, capture_output=True, text=True, timeout=timeout,
     )
     unrecognized = (
@@ -189,6 +197,8 @@ def probe(
     *,
     max_steps: int = 3000,
     sequential: Optional[bool] = None,
+    start_state: Optional[str] = None,
+    level_clear: bool = False,
     timeout: float = 1800.0,
     rom_path: Optional[str] = None,
     game: Optional[str] = None,
@@ -213,6 +223,15 @@ def probe(
         max_steps: per-episode step cap handed to ``eval_game.py``.
         sequential: ``None`` = auto-detect the ``--sequential`` flag and degrade
             if absent; ``True`` = require it; ``False`` = legacy metrics only.
+        start_state: warm-start every eval episode from this save-state file
+            (a level's entry state) instead of the profile cold boot — the
+            level-scoped consolidation gate probes each level from its entry.
+            A relative path resolves against the caller's CWD. Requires the
+            ``--start-state`` flag on ``eval_game.py``.
+        level_clear: with ``sequential``, score "cleared the level it STARTED
+            in" (``cold_seq_clear_rate`` becomes the per-level clear rate)
+            instead of the full World-1 chain — the number the gate accepts /
+            rolls back on. Requires the ``--level-clear`` flag on ``eval_game.py``.
         timeout: seconds before the subprocess is killed (failure, not crash).
         rom_path: ROM path; falls back to ``cfg['rom_path']`` / ``cfg['rom']``.
         game: cosmetic ``--game`` label for the subprocess (defaults to the
@@ -263,8 +282,19 @@ def probe(
                 "--episodes", str(int(episodes)),
                 "--max-steps", str(int(max_steps)),
             ]
+            # Level-scoped gate extras (ride WITH --sequential). The start
+            # state is absolutized against the caller's CWD because the
+            # subprocess runs from the throwaway temp dir.
+            extra_args: list[str] = []
+            ss_probe = _resolve_path(start_state)
+            if ss_probe is not None:
+                extra_args += ["--start-state", ss_probe]
+            if level_clear:
+                extra_args += ["--level-clear"]
             try:
-                proc, seq_ran = _run_eval(cmd, sequential, timeout, str(td_path))
+                proc, seq_ran = _run_eval(
+                    cmd, sequential, timeout, str(td_path), extra_args=extra_args,
+                )
             except subprocess.TimeoutExpired:
                 return _base_result("timeout", f"eval subprocess exceeded {timeout}s", None)
 

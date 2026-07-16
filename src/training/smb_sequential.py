@@ -180,6 +180,101 @@ class SequentialTracker:
         return self._furthest_any
 
 
+class LevelClearTracker:
+    """Score "cleared the level it *started* in" for a mid-chain warm start.
+
+    The full-chain `SequentialTracker.seq_clear` only fires on a real World-1
+    castle clear (the 1-4 -> World 2 crossing), so it can never score a probe
+    that warm-starts *inside* 1-2 or 1-3 — those levels are cleared by an
+    area/level transition, not a world-byte increment. This wrapper adds the
+    pragmatic per-level notion the level-scoped consolidation gate needs: an
+    episode has cleared its level once the sequential chain advances strictly
+    beyond the level Mario started in.
+
+    The starting level is auto-detected from the FIRST RAM fed to `.update()`
+    (the displayed ``(world, level)`` after the warm start settles), so the
+    caller need not know or configure which level a save state holds — feed the
+    warm-start frame first, then the per-step RAM. `level_cleared`:
+
+      * **start below the x-4 castle** (displayed level < 4): cleared once
+        `furthest_seq` reaches the NEXT displayed level in the same world — a
+        real forward area/level transition on the ADMITTED (warp-immune) chain.
+        `furthest_seq` only counts on-chain World-1 states, so a warp out of the
+        level (a world-byte jump into a warp zone) never advances it; the gate
+        is warp-guarded by construction.
+      * **start at the x-4 castle** (displayed level 4): cleared on the
+        F52-guarded `seq_clear` (a world-byte increment out of ``$075C == 3``),
+        the same real-castle-clear signal the full chain uses.
+
+    It proxies `SequentialTracker`'s read surface (`seq_clear` re-pointed at
+    `level_cleared`, plus `warp_taken` / `furthest_seq` / `furthest_any`) so an
+    existing sequential eval loop can swap this in and treat it identically —
+    the only change is what "cleared" means.
+    """
+
+    # Displayed level of an x-4 castle (``$075C == 3`` -> displayed 4). Starts
+    # here are cleared by the world-byte increment, not an area transition.
+    CASTLE_DISPLAY_LEVEL = DISPLAY_LEVEL_CASTLE + 1
+
+    def __init__(self) -> None:
+        self._seq = SequentialTracker()
+        self._start: Optional[Tuple[int, int]] = None
+
+    def reset(self) -> None:
+        self._seq.reset()
+        self._start = None
+
+    def update(self, ram) -> None:
+        # Lock the starting level from the first frame BEFORE delegating, so
+        # both this tracker and the inner SequentialTracker seed off the same
+        # RAM. `_start` is the displayed (world, level) the episode began in.
+        if self._start is None:
+            self._start = _displayed(
+                _byte(ram, RAM_WORLD), _byte(ram, RAM_DISPLAY)
+            )
+        self._seq.update(ram)
+
+    @property
+    def start_level(self) -> Optional[Tuple[int, int]]:
+        """Displayed `(world, level)` the episode warm-started in, or None."""
+        return self._start
+
+    @property
+    def level_cleared(self) -> bool:
+        """True once the sequential chain advanced past the starting level."""
+        if self._start is None:
+            return False
+        world, level = self._start
+        if level >= self.CASTLE_DISPLAY_LEVEL:
+            # x-4 castle start: only a real castle clear (world increment) counts.
+            return self._seq.seq_clear
+        f = self._seq.furthest_seq
+        # A forward transition to the next displayed level in the SAME world,
+        # on the admitted chain (so a warp — which never raises furthest_seq —
+        # cannot satisfy it).
+        return f is not None and f[0] == world and f[1] > level
+
+    # --- SequentialTracker-compatible read surface -------------------------
+    # `seq_clear` is re-pointed at the per-level predicate so a sequential eval
+    # loop that breaks/tallies on `tracker.seq_clear` scores the started level
+    # unchanged; the rest pass through to the inner full-chain tracker.
+    @property
+    def seq_clear(self) -> bool:
+        return self.level_cleared
+
+    @property
+    def warp_taken(self) -> bool:
+        return self._seq.warp_taken
+
+    @property
+    def furthest_seq(self) -> Optional[Tuple[int, int]]:
+        return self._seq.furthest_seq
+
+    @property
+    def furthest_any(self) -> Optional[Tuple[int, int]]:
+        return self._seq.furthest_any
+
+
 def level_label(level: Optional[Tuple[int, int]]) -> Optional[str]:
     """Format a displayed `(world, level)` tuple as e.g. ``"1-4"``."""
     if level is None:

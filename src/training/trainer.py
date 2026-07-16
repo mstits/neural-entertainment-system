@@ -4539,9 +4539,27 @@ class Trainer:
         # `oneshot_curriculum` module; this block is thin glue.
         _rl_cfg = self.game_profile.get("reinforce", {}) or {}
         _substage_cfg = dict(_rl_cfg.get("substage_ladder", {}) or {})
+        # Level-scoped consolidation ("weld ONE level"), a DISTINCT mode from
+        # the frontier ladder — see the setup block below. It trains 100% of the
+        # pool inside a single target level under a hard cold no-regression gate
+        # on a protect list; there is no advance / spread / Go-Explore. Whole-
+        # distribution consolidation collapsed the cold chain twice on the tile
+        # scout; this scopes the weld to one level with the cold probe as a
+        # hard gate. Mutually exclusive with the frontier ladder — if a profile
+        # enables both, consolidation wins and the ladder advance is OFF.
+        _clevel_cfg = dict(_rl_cfg.get("consolidate_level", {}) or {})
+        consolidate_on = bool(
+            self._smb_curriculum_active and _clevel_cfg.get("enabled", False)
+        )
         ladder_on = bool(
             self._smb_curriculum_active and _substage_cfg.get("enabled", False)
+            and not consolidate_on
         )
+        if consolidate_on and _substage_cfg.get("enabled", False):
+            log.warning(
+                "[vanilla_ppo] both substage_ladder and consolidate_level are "
+                "enabled; consolidate_level wins (frontier advance is OFF)."
+            )
         ladder = None
         oc = None            # oneshot_curriculum module (bound when ladder_on)
         region_of = None     # bound from smb_substage_ladder when ladder_on
@@ -4675,6 +4693,178 @@ class Trainer:
                 SMB_ADVANCE_PCT * 100, SMB_ADVANCE_WINDOW,
                 frontier_frac, base_retention_frac,
                 float(_ws_cfg.get("spread", 0.25)), cold_every,
+            )
+
+        # === LEVEL-SCOPED CONSOLIDATION ("weld one level") setup ===
+        # Trains 100% of the pool inside ONE target level's rungs and, every
+        # probe, cold-evals the target AND every already-welded PROTECT level
+        # from their entry states (eval_game.py --sequential --level-clear:
+        # greedy from each level's entry, "cleared the level it started in").
+        # A protect regression below its mode-start baseline rolls back to the
+        # last accepted snapshot + freezes entropy for a cooldown; a target
+        # improvement snapshot-accepts (best_<level>.pt). Terminates when the
+        # target cold clear rate holds >= accept_bar for accept_probes probes
+        # (writes best_<level>.pt + a DONE marker + exits cleanly, so a driver
+        # can chain levels). All gate DECISIONS route through the unit-tested
+        # oneshot_curriculum module; this block is thin glue.
+        clevel_target = ""
+        clevel_target_rungs: list = []
+        clevel_target_entry: Optional[str] = None
+        clevel_protect_entries: dict = {}
+        _clevel_probe = dict(_clevel_cfg.get("probe", {}) or {})
+        clevel_every = max(1, int(_clevel_probe.get("every", 25)))
+        clevel_eps = max(1, int(_clevel_probe.get("episodes", 8)))
+        clevel_max_steps = int(_clevel_probe.get("max_steps", 1500))
+        clevel_bar = float(_clevel_cfg.get("accept_bar", 0.75))
+        clevel_need = max(1, int(_clevel_cfg.get("accept_probes", 3)))
+        clevel_cooldown = max(0, int(_clevel_cfg.get("cooldown", 40)))
+        clevel_tol = float(_clevel_cfg.get("tol", 1e-9))
+        _clevel_sched = dict(_clevel_cfg.get("schedule", {}) or {})
+        _clevel_ent = dict(_clevel_sched.get("entropy", {}) or {})
+        _clevel_rnd = dict(_clevel_sched.get("rnd", {}) or {})
+        clevel_ent_from = float(_clevel_ent.get("from", self.entropy_coef))
+        clevel_ent_to = float(_clevel_ent.get("to", self.entropy_coef))
+        clevel_ent_iters = int(_clevel_ent.get("iters", 80))
+        clevel_rnd_from = float(_clevel_rnd.get("from", self.rnd_intrinsic_coef))
+        clevel_rnd_to = float(_clevel_rnd.get("to", 0.0))
+        clevel_step = 0
+        clevel_cooldown_until = 0
+        clevel_sustain = 0
+        clevel_done = False
+        clevel_baselines: Optional[dict] = None
+        clevel_protect_rates: dict = {}
+        clevel_tgt_rate = -1.0
+        best_tgt_rate = -1.0
+        accepted_snapshot: Optional[dict] = None
+        clevel_winner_name = "best_level.pt"
+        clevel_sidecar = self.checkpoint_dir / "consolidate.json"
+        clevel_done_marker = self.checkpoint_dir / "consolidate.DONE"
+        if consolidate_on:
+            from src.training import oneshot_curriculum as oc
+            from src.training.smb_substage_ladder import (
+                LADDER_SIZE, build_ladder,
+            )
+            _seed_globs = (
+                _clevel_cfg.get("seed_globs") or _substage_cfg.get("seed_globs")
+            )
+            ladder = build_ladder(_seed_globs)
+            # Rung-indexed warm-start seed array (disk seeds only — this mode
+            # never captures or advances). Reuses the same smb_curriculum_states
+            # slot the auto-reset + warm-start plumbing already reads.
+            smb_curriculum_states = [None] * LADDER_SIZE
+            for _rung in ladder:
+                if _rung.seed_blob:
+                    try:
+                        smb_curriculum_states[_rung.order] = (
+                            Path(_rung.seed_blob).read_bytes()
+                        )
+                    except Exception as _e:
+                        log.warning(
+                            "[vanilla_ppo] consolidate seed load failed "
+                            "(rung %d, %s): %s", _rung.order, _rung.seed_blob, _e,
+                        )
+            smb_curriculum_anchors = list(range(LADDER_SIZE))
+            smb_curriculum_stage = 0  # unused (no advance); keeps indexing safe
+
+            clevel_target = str(_clevel_cfg.get("target", "")).strip()
+            clevel_target_rungs = oc.level_rungs(ladder, clevel_target)
+
+            def _resolve_entry(_level, _explicit):
+                """Entry-state PATH for a level: explicit config path wins, else
+                the level's entry-rung disk seed, else the profile cold boot
+                (correct only for 1-1). Used for both probing and warm-start."""
+                if _explicit:
+                    _p = Path(str(_explicit))
+                    if not _p.is_absolute():
+                        _p = Path.cwd() / _p
+                    if _p.exists():
+                        return str(_p)
+                    log.warning(
+                        "[vanilla_ppo] consolidate entry state for %s not "
+                        "found: %s — falling back.", _level, _p,
+                    )
+                _rungs = oc.level_rungs(ladder, _level)
+                if _rungs and ladder[_rungs[0]].seed_blob:
+                    return ladder[_rungs[0]].seed_blob
+                return self.start_state_path  # profile start == the 1-1 boot
+
+            clevel_target_entry = _resolve_entry(
+                clevel_target, _clevel_cfg.get("target_entry_state")
+            )
+            for _pe in (_clevel_cfg.get("protect", []) or []):
+                if isinstance(_pe, str):
+                    _plevel, _ppath = _pe, None
+                else:
+                    _plevel = str(_pe.get("level", "")).strip()
+                    _ppath = _pe.get("entry_state")
+                if _plevel:
+                    clevel_protect_entries[_plevel] = _resolve_entry(_plevel, _ppath)
+
+            clevel_winner_name = str(
+                _clevel_cfg.get("winner", f"best_{clevel_target}.pt")
+            )
+            clevel_sidecar = self.checkpoint_dir / f"consolidate_{clevel_target}.json"
+            clevel_done_marker = (
+                self.checkpoint_dir / f"consolidate_{clevel_target}.DONE"
+            )
+
+            log.info(
+                "[vanilla_ppo] LEVEL CONSOLIDATION on: target=%s rungs=%s "
+                "entry=%s protect=%s; probe every %d (%d eps, %d steps), "
+                "accept_bar=%.2f x%d probes, cooldown=%d, entropy "
+                "%.3f->%.3f/%d iters.",
+                clevel_target, clevel_target_rungs, clevel_target_entry,
+                list(clevel_protect_entries), clevel_every, clevel_eps,
+                clevel_max_steps, clevel_bar, clevel_need, clevel_cooldown,
+                clevel_ent_from, clevel_ent_to, clevel_ent_iters,
+            )
+
+            # Baseline capture at mode start: probe the pristine champion once
+            # for the target AND every protect level from their entry states.
+            # These baselines are the hard no-regression floor; the initial
+            # accepted snapshot is the champion itself.
+            from src.training import cold_probe as _cold_probe
+
+            def _clevel_probe_level(_entry):
+                if _entry is None:
+                    return None, None
+                _r = _cold_probe.probe(
+                    net, self.game_profile, episodes=clevel_eps,
+                    device=self.device, sequential=True, level_clear=True,
+                    start_state=_entry, max_steps=clevel_max_steps,
+                    rom_path=self.rom_path,
+                    game=str(self.game_profile.get("name", "mario")),
+                )
+                _rate = _r.get("cold_seq_clear_rate")
+                return (
+                    float(_rate) if _rate is not None else None,
+                    _r.get("cold_furthest_seq"),
+                )
+            clevel_baselines = {}
+            for _plevel, _pentry in clevel_protect_entries.items():
+                _b, _ = _clevel_probe_level(_pentry)
+                if _b is not None:
+                    clevel_baselines[_plevel] = _b
+            _tb, _ = _clevel_probe_level(clevel_target_entry)
+            best_tgt_rate = _tb if _tb is not None else -1.0
+            accepted_snapshot = {
+                k: v.detach().cpu().clone() for k, v in net.state_dict().items()
+            }
+            # Persist the accepted champion immediately so best_<level>.pt
+            # exists even if the run dies before the first accept.
+            try:
+                torch.save(
+                    {"net_state_dict": accepted_snapshot, "iter": iter_offset,
+                     "metric_name": f"consolidate_{clevel_target}_clear_rate",
+                     "metric_value": max(best_tgt_rate, 0.0)},
+                    str(self.checkpoint_dir / clevel_winner_name),
+                )
+            except Exception as _e:
+                log.warning("[vanilla_ppo] best_%s init save failed: %s",
+                            clevel_target, _e)
+            log.info(
+                "[vanilla_ppo] CONSOLIDATE baselines: target %s=%.3f, "
+                "protect=%s", clevel_target, best_tgt_rate, clevel_baselines,
             )
 
         if self._is_tile_mode:
@@ -5076,6 +5266,7 @@ class Trainer:
                                 except Exception:
                                     pass
                         elif (self._smb_curriculum_active
+                                and not consolidate_on
                                 and smb_pending_capture is None
                                 and wl_packed > cur_anchor
                                 and int(ram[0x075A]) >= 1):
@@ -5740,8 +5931,10 @@ class Trainer:
                 and len(smb_pastfrac_history) >= SMB_ADVANCE_WINDOW
                 and rolling_mean >= SMB_ADVANCE_PCT
                 # Freeze the frontier while consolidating (§Q4) and never
-                # advance past the ladder's final rung.
+                # advance past the ladder's final rung. Level-scoped
+                # consolidation keeps the ladder read-only: never advance.
                 and not consolidating
+                and not consolidate_on
                 and (not ladder_on or smb_curriculum_stage < LADDER_SIZE - 1)
             )
             if self._smb_curriculum_active:
@@ -6094,6 +6287,177 @@ class Trainer:
                 retention_frac = base_retention_frac
                 retention_bump_until = 0
 
+            # === LEVEL-SCOPED CONSOLIDATION GATE (the whole point) ===
+            # Every `clevel_every` iters, cold-eval the TARGET level and EVERY
+            # protect level from their entry states (greedy, per-level
+            # "cleared the level it started in"). HARD RULE: any protect level
+            # below its mode-start baseline -> immediate rollback to the last
+            # accepted snapshot + entropy freeze for a cooldown. Protect held +
+            # target improved -> snapshot-accept (best_<level>.pt). Target held
+            # >= accept_bar for accept_probes probes -> DONE + clean exit.
+            clevel_metrics_emit: dict = {}
+            if consolidate_on:
+                # `consolidate_sustain` is emitted post-gate via
+                # clevel_metrics_emit below (on probe iters), so it is NOT
+                # duplicated here.
+                progress_metrics["consolidate_step"] = int(clevel_step)
+                progress_metrics["consolidate_cooldown"] = int(
+                    max(0, clevel_cooldown_until - global_it)
+                )
+            if consolidate_on and it % clevel_every == 0:
+                from src.training import cold_probe as _cold_probe
+
+                def _gate_probe(_entry):
+                    if _entry is None:
+                        return None, None
+                    _r = _cold_probe.probe(
+                        net, self.game_profile, episodes=clevel_eps,
+                        device=self.device, sequential=True, level_clear=True,
+                        start_state=_entry, max_steps=clevel_max_steps,
+                        rom_path=self.rom_path,
+                        game=str(self.game_profile.get("name", "mario")),
+                    )
+                    _rate = _r.get("cold_seq_clear_rate")
+                    return (
+                        float(_rate) if _rate is not None else None,
+                        _r.get("cold_furthest_seq"),
+                    )
+                _tr, _ = _gate_probe(clevel_target_entry)
+                clevel_tgt_rate = _tr if _tr is not None else -1.0
+                clevel_protect_rates = {}
+                for _plevel, _pentry in clevel_protect_entries.items():
+                    _pr, _ = _gate_probe(_pentry)
+                    if _pr is not None:
+                        clevel_protect_rates[_plevel] = _pr
+                _pmin = (
+                    min(clevel_protect_rates.values())
+                    if clevel_protect_rates else 1.0
+                )
+                log.info(
+                    "[vanilla_ppo] CONSOLIDATE PROBE iter %d: target %s=%.3f "
+                    "(best=%.3f) protect=%s sustain=%d/%d%s",
+                    global_it, clevel_target, clevel_tgt_rate, best_tgt_rate,
+                    clevel_protect_rates, clevel_sustain, clevel_need,
+                    " [cooldown]" if global_it < clevel_cooldown_until else "",
+                )
+                _regressed = oc.protect_regressed(
+                    clevel_baselines or {}, clevel_protect_rates, tol=clevel_tol
+                )
+                # Pure gate sequencing: rollback (protect regressed) > accept
+                # (target strictly improved) > hold, plus the sustained-bar
+                # termination. A rollback with no accepted snapshot yet degrades
+                # to a hold (nothing to restore to — the champion IS the floor).
+                if _regressed is not None and accepted_snapshot is None:
+                    _regressed = None
+                _gate = oc.gate_step(
+                    regressed=_regressed, target_rate=(
+                        clevel_tgt_rate if clevel_tgt_rate >= 0.0 else None
+                    ),
+                    best_rate=best_tgt_rate, sustain=clevel_sustain,
+                    bar=clevel_bar, need=clevel_need, tol=clevel_tol,
+                )
+                clevel_sustain = int(_gate["sustain"])
+                clevel_done = bool(_gate["done"])
+                if _gate["action"] == "rollback":
+                    # Roll back to the last accepted snapshot, reset the
+                    # optimizer, and freeze entropy high for a cooldown so the
+                    # protect level can recover before the weld resumes.
+                    net.load_state_dict(accepted_snapshot)
+                    self._ppo_optimizer = self._build_ppo_optimizer(net)
+                    optimizer = self._ppo_optimizer
+                    clevel_cooldown_until = global_it + clevel_cooldown
+                    self.entropy_coef = clevel_ent_from
+                    self.rnd_intrinsic_coef = clevel_rnd_from
+                    log.warning(
+                        "[vanilla_ppo] *** CONSOLIDATE ROLLBACK *** protect "
+                        "level %s regressed (%.3f < baseline %.3f); restored "
+                        "%s + reset optimizer + froze entropy for %d iters.",
+                        _regressed,
+                        clevel_protect_rates.get(_regressed, -1.0),
+                        (clevel_baselines or {}).get(_regressed, -1.0),
+                        clevel_winner_name, clevel_cooldown,
+                    )
+                elif _gate["action"] == "accept":
+                    # Protect held + target strictly improved: pin the new best.
+                    best_tgt_rate = clevel_tgt_rate
+                    accepted_snapshot = {
+                        k: v.detach().cpu().clone()
+                        for k, v in net.state_dict().items()
+                    }
+                    try:
+                        torch.save(
+                            {"net_state_dict": accepted_snapshot,
+                             "iter": global_it,
+                             "metric_name":
+                                 f"consolidate_{clevel_target}_clear_rate",
+                             "metric_value": best_tgt_rate},
+                            str(self.checkpoint_dir / clevel_winner_name),
+                        )
+                    except Exception as _e:
+                        log.warning(
+                            "[vanilla_ppo] best_%s save failed: %s",
+                            clevel_target, _e,
+                        )
+                    log.info(
+                        "[vanilla_ppo] *** CONSOLIDATE ACCEPT *** target %s "
+                        "improved to %.3f; snapshot -> %s.",
+                        clevel_target, best_tgt_rate, clevel_winner_name,
+                    )
+                # Persist gate state for resume / inspection.
+                try:
+                    clevel_sidecar.write_text(json.dumps({
+                        "target": clevel_target,
+                        "best_tgt_rate": best_tgt_rate,
+                        "target_rate": clevel_tgt_rate,
+                        "baselines": clevel_baselines or {},
+                        "last_protect_rates": clevel_protect_rates,
+                        "sustain": int(clevel_sustain),
+                        "iter": int(global_it),
+                    }))
+                except Exception:
+                    pass
+                clevel_metrics_emit = {
+                    "consolidate_target_rate": float(clevel_tgt_rate),
+                    "consolidate_best_rate": float(best_tgt_rate),
+                    "consolidate_protect_min": float(_pmin),
+                    "consolidate_sustain": int(clevel_sustain),
+                }
+                if clevel_done:
+                    # Final accepted snapshot + a DONE marker so a driver script
+                    # can detect completion and chain the next level. The break
+                    # (after the metrics emit below) is the clean exit.
+                    try:
+                        if accepted_snapshot is not None:
+                            torch.save(
+                                {"net_state_dict": accepted_snapshot,
+                                 "iter": global_it,
+                                 "metric_name":
+                                     f"consolidate_{clevel_target}_clear_rate",
+                                 "metric_value": best_tgt_rate},
+                                str(self.checkpoint_dir / clevel_winner_name),
+                            )
+                        clevel_done_marker.write_text(json.dumps({
+                            "target": clevel_target,
+                            "final_rate": best_tgt_rate,
+                            "bar": clevel_bar,
+                            "probes_sustained": int(clevel_sustain),
+                            "winner": clevel_winner_name,
+                            "protect_baselines": clevel_baselines or {},
+                            "last_protect_rates": clevel_protect_rates,
+                            "iter": int(global_it),
+                        }, indent=2))
+                        log.info(
+                            "[vanilla_ppo] *** CONSOLIDATE DONE *** target %s "
+                            "held %.3f >= %.2f for %d probes; wrote %s + %s. "
+                            "Exiting cleanly.", clevel_target, best_tgt_rate,
+                            clevel_bar, clevel_need, clevel_winner_name,
+                            clevel_done_marker.name,
+                        )
+                    except Exception as _e:
+                        log.warning(
+                            "[vanilla_ppo] DONE marker write failed: %s", _e,
+                        )
+
             # === GO-EXPLORE UNSTICK BURST (Lane 5, DEFERRED — §Q3) ===
             # A bounded, reversible archive burst that fires ONLY when the
             # frontier rung stalls for `stall_patience` iters while being
@@ -6239,6 +6603,25 @@ class Trainer:
                     cyclic_phase ^= 1
                 self.entropy_coef = cons_ent_from if cyclic_phase else cons_ent_to
 
+            # Level-scoped consolidation schedule (the weld itself): decay
+            # entropy/RND from->to over N iters via the shared lerp_coef. During
+            # a post-rollback cooldown, FREEZE — hold exploration high and pause
+            # the decay so the protect level recovers before the weld resumes.
+            if consolidate_on:
+                if global_it < clevel_cooldown_until:
+                    self.entropy_coef = clevel_ent_from
+                    self.rnd_intrinsic_coef = clevel_rnd_from
+                else:
+                    self.entropy_coef = oc.lerp_coef(
+                        clevel_ent_from, clevel_ent_to,
+                        clevel_step, clevel_ent_iters,
+                    )
+                    self.rnd_intrinsic_coef = oc.lerp_coef(
+                        clevel_rnd_from, clevel_rnd_to,
+                        clevel_step, clevel_ent_iters,
+                    )
+                    clevel_step += 1
+
             self._emit_metrics(
                 generation=global_it,
                 best_fitness=max(best_completed, best_in_progress),
@@ -6263,7 +6646,19 @@ class Trainer:
                 **timing_metrics,
                 **reward_breakdown_emit,
                 **cold_metrics_emit,
+                **clevel_metrics_emit,
             )
+
+            # Level-scoped consolidation reached its termination bar: the DONE
+            # marker + final snapshot were written in the gate block, and the
+            # final metrics were just emitted. Break for a clean exit so a
+            # driver script can chain the next level.
+            if clevel_done:
+                log.info(
+                    "[vanilla_ppo] consolidation of %s complete — exiting the "
+                    "training loop.", clevel_target,
+                )
+                break
 
             # Drain the narrator events accumulated this iter onto the
             # GUI caption queue so the live stream is narrated (captions
@@ -6354,7 +6749,48 @@ class Trainer:
             env_stage[:] = 0
             stage_seed_results = [None] * num_envs
             env_return_state = [None] * num_envs
-            if ladder_on:
+            if consolidate_on:
+                # 100% of the pool inside the TARGET level's rungs (round-robin
+                # over its x-buckets). No Frontier/Retention/Spread, no advance,
+                # no Go-Explore — the ladder is read-only here. On death, the
+                # auto-reset path above reloads each env's OWN target rung
+                # (env_stage[i]), so a rollout still runs multiple attempts.
+                env_stage[:] = oc.consolidate_assignment(
+                    num_envs, clevel_target_rungs
+                )
+                any_warm = False
+                for i in range(num_envs):
+                    k = int(env_stage[i])
+                    _seed = smb_curriculum_states[k] if k > 0 else None
+                    if _seed is not None:
+                        try:
+                            self.pool.load_worker_state(i, _seed)
+                            any_warm = True
+                        except Exception as e:
+                            log.warning(
+                                "[vanilla_ppo] consolidate warm-start env %d "
+                                "rung %d failed: %s — cold boot.", i, k, e,
+                            )
+                            env_stage[i] = 0
+                if any_warm:
+                    noop_actions = np.zeros(self.pool.num_workers, dtype=np.uint8)
+                    init_results = self.pool.step_all(noop_actions)
+                    self._emit_frame_sink(init_results)
+                stage_seed_results = [
+                    init_results[i]
+                    if (int(env_stage[i]) > 0
+                        and smb_curriculum_states[int(env_stage[i])] is not None)
+                    else None
+                    for i in range(num_envs)
+                ]
+                _dist: dict = {}
+                for k in env_stage.tolist():
+                    _dist[k] = _dist.get(k, 0) + 1
+                log.info(
+                    "[vanilla_ppo] consolidate warm-start target=%s rung "
+                    "distribution %s", clevel_target, dict(sorted(_dist.items())),
+                )
+            elif ladder_on:
                 # Three-way warm-start partition (§Q2): Frontier F/F-1,
                 # Retention on every cleared level-entry (the anti-forgetting
                 # floor, bumped to 40% while a forgetting alarm is active),
@@ -6598,7 +7034,14 @@ class Trainer:
                 # training telemetry (the 1-1-latched clear_rate) never selects
                 # the deliverable (§Q2).
                 try:
-                    if ladder_on:
+                    if consolidate_on:
+                        # The mode's deliverable is the gate-accepted
+                        # best_<level>.pt (written on accept in the gate block);
+                        # the shared winners/ slot is left untouched so a
+                        # per-level weld can't clobber the cold champion under a
+                        # different metric.
+                        pass
+                    elif ladder_on:
                         if best_cold_snapshot is not None and best_cold_rate >= 0.0:
                             save_winner(
                                 best_cold_snapshot,

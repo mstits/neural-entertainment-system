@@ -231,6 +231,129 @@ def forgetting_action(
     return "bump" if int(global_it) >= int(retention_bump_until) else "rollback"
 
 
+# ---------------------------------------------------------------------------
+# Level-scoped consolidation gate (SMB one-shot "weld one level" mode).
+#
+# Whole-distribution consolidation collapsed the cold chain twice on the tile
+# scout (CONSOLIDATE ABORT #1/#2). The level-scoped mode instead welds exactly
+# ONE level at a time under a hard cold no-regression gate: it trains 100% of
+# the pool inside the TARGET level's rungs while every probe cold-evals the
+# target AND every already-welded PROTECT level from their entry states. These
+# pure decisions are the gate; the trainer owns the eval subprocess, the
+# snapshot save, and the rollback side effects.
+# ---------------------------------------------------------------------------
+
+
+def level_rungs(ladder: Sequence, level: str) -> list:
+    """Rung orders belonging to `level` (e.g. ``"1-2"``), in ascending order.
+
+    A level can span several rungs (its x-buckets) and — for 1-2 — two area
+    bytes that share a displayed label. The consolidation warm-start spreads
+    the pool across exactly these rungs; an empty list means the level is not
+    represented in this ladder (the caller falls back to a cold boot).
+    """
+    return sorted(r.order for r in ladder if r.level == level)
+
+
+def consolidate_assignment(num_envs: int, rung_orders: Sequence) -> np.ndarray:
+    """Round-robin ALL envs across the target level's rungs (100% target).
+
+    No Frontier/Retention/Spread split and no advance — this mode trains the
+    single target level only, deterministically (round-robin, no RNG) so a
+    resumed weld places the pool identically. With no rungs (level absent from
+    the ladder) every env lands on rung 0, a cold boot into the game's start.
+    """
+    n = int(num_envs)
+    if n <= 0:
+        return np.zeros(0, dtype=int)
+    if not rung_orders:
+        return np.zeros(n, dtype=int)
+    rungs = [int(r) for r in rung_orders]
+    return np.array([rungs[i % len(rungs)] for i in range(n)], dtype=int)
+
+
+def protect_regressed(
+    baselines: dict, rates: dict, *, tol: float = 1e-9
+) -> Optional[str]:
+    """First protect level whose cold clear rate fell below its baseline.
+
+    `baselines` is the per-level cold greedy clear rate captured at mode start;
+    `rates` is this probe's. Returns the name of the FIRST level whose current
+    rate is strictly below its baseline (beyond `tol`), or None if every
+    protect level held. A level absent from `rates` (its probe failed) is
+    skipped rather than treated as a regression — a failed probe must never
+    trigger a false rollback. `tol` absorbs eval quantization (a rate is
+    ``k/episodes``) so an identical clear count never reads as a regression.
+    """
+    for level in baselines:
+        cur = rates.get(level)
+        if cur is None:
+            continue
+        if float(cur) < float(baselines[level]) - float(tol):
+            return str(level)
+    return None
+
+
+def target_improved(best_rate: float, rate: float, *, tol: float = 1e-9) -> bool:
+    """True iff the target cold clear rate strictly improves on the accepted best.
+
+    A `rate` of None (probe failed) or one within `tol` of `best_rate` is not
+    an improvement — the accepted snapshot is only replaced on real progress.
+    """
+    if rate is None:
+        return False
+    return float(rate) > float(best_rate) + float(tol)
+
+
+def update_sustain(sustain: int, rate: float, bar: float) -> int:
+    """Advance the "target >= bar for N consecutive probes" counter.
+
+    Increments when `rate` meets `bar`, resets to 0 otherwise (or on a failed
+    probe, `rate is None`). The trainer terminates once the returned count
+    reaches the configured `accept_probes`.
+    """
+    if rate is None or float(rate) < float(bar):
+        return 0
+    return int(sustain) + 1
+
+
+def gate_step(
+    *,
+    regressed: Optional[str],
+    target_rate: Optional[float],
+    best_rate: float,
+    sustain: int,
+    bar: float,
+    need: int,
+    tol: float = 1e-9,
+) -> dict:
+    """Sequence ONE probe of the level-scoped consolidation gate (pure).
+
+    `regressed` is the protect level that fell below baseline this probe (from
+    :func:`protect_regressed`), or None. Returns a decision dict:
+
+      * ``action``  — ``"rollback"`` (a protect level regressed: restore the
+        last accepted snapshot + freeze entropy; takes strict priority and
+        never accepts or terminates this probe), ``"accept"`` (protect held and
+        the target strictly improved: snapshot the new best), or ``"hold"``
+        (protect held, no target improvement: keep training).
+      * ``sustain`` — the updated "target >= bar" consecutive-probe count, reset
+        to 0 on a rollback and advanced only while protect is healthy.
+      * ``done``    — True once `sustain` reaches `need` with protect healthy:
+        the target held its bar long enough to weld; the caller writes the
+        final snapshot + DONE marker and exits.
+
+    This is the whole gate policy in one place so its three named behaviours —
+    rollback on protect regression, accept on target improvement, terminate on
+    the sustained bar — are unit-testable with stubbed eval rates.
+    """
+    if regressed is not None:
+        return {"action": "rollback", "sustain": 0, "done": False}
+    action = "accept" if target_improved(best_rate, target_rate, tol=tol) else "hold"
+    new_sustain = update_sustain(sustain, target_rate, bar)
+    return {"action": action, "sustain": new_sustain, "done": new_sustain >= int(need)}
+
+
 def lerp_coef(from_v: float, to_v: float, step: int, iters: int) -> float:
     """Linear coefficient schedule for the reversible consolidation decay.
 

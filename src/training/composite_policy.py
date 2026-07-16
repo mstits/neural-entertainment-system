@@ -104,13 +104,19 @@ def _label_rank(label: Optional[str]) -> tuple[int, int]:
         return (0, 0)
 
 
-def resolve_level_key(labels, label: str) -> Optional[str]:
+def resolve_level_key(labels, label: str, area: Optional[int] = None) -> Optional[str]:
     """Resolve a router label to a manifest key.
 
-    Exact level wins; otherwise the ``"default"`` catch-all; otherwise ``None``
-    (the caller fails loud rather than silently reusing the wrong specialist).
+    Area-granular key ``"<label>@<area>"`` wins when present (a level's
+    sub-scenes can need different specialists: 1-2's above-ground vestibule
+    is champion terrain while its underground belongs to the June
+    specialist); then the exact level; then the ``"default"`` catch-all;
+    otherwise ``None`` (the caller fails loud rather than silently reusing
+    the wrong specialist).
     """
     labels = set(labels)
+    if area is not None and f"{label}@{area}" in labels:
+        return f"{label}@{area}"
     if label in labels:
         return label
     if DEFAULT_LEVEL_KEY in labels:
@@ -428,8 +434,8 @@ class CompositeController:
         self.switches = 0
         self.segments: list[Segment] = []
 
-    def _select(self, label: str) -> LevelNet:
-        key = resolve_level_key(self.labels, label)
+    def _select(self, label: str, area: Optional[int] = None) -> LevelNet:
+        key = resolve_level_key(self.labels, label, area)
         if key is None:
             raise KeyError(
                 f"level {label!r} has no manifest entry and no "
@@ -440,7 +446,8 @@ class CompositeController:
     def begin(self, ram, pp) -> None:
         label = label_from_ram(ram)
         self.active_label = label
-        self.active_net = self._select(label)
+        self._area = int(ram[RAM_AREA])
+        self.active_net = self._select(label, self._area)
         self.adapter = self.active_net.new_adapter()
         self.obs = self.adapter.reset(ram, pp)
         self.hidden = self.active_net.initial_hidden()
@@ -472,13 +479,33 @@ class CompositeController:
             self.segments[-1].exited_step = step
             self.segments[-1].exit_reason = reason
             self.active_label = switched
-            self.active_net = self._select(switched)
+            self._area = int(ram[RAM_AREA])
+            self.active_net = self._select(switched, self._area)
             self.adapter = self.active_net.new_adapter()
             self.obs = self.adapter.reset(ram, pp)
             self.hidden = self.active_net.initial_hidden()
             self.switches += 1
             self.segments.append(Segment(level=switched, entered_step=step))
             return switched
+        # Scene cut WITHIN a level: an area-byte change (pipe entry, bonus
+        # room, vestibule -> underground) is a hard visual/positional
+        # discontinuity, and area-granular manifest keys may hand the new
+        # scene to a different specialist. Reselect + fresh adapter/hidden
+        # either way — measured: the 1-2 specialist wanders 2100+ steps
+        # against a stale stack vs clearing in 573 with a fresh one from
+        # the identical state, and it was never trained on the vestibule
+        # at all (that scene belongs to the champion's rungs).
+        area = int(ram[RAM_AREA])
+        if area != self._area:
+            self._area = area
+            new_net = self._select(self.active_label, area)
+            if new_net is not self.active_net:
+                self.active_net = new_net
+                self.switches += 1
+            self.adapter = self.active_net.new_adapter()
+            self.obs = self.adapter.reset(ram, pp)
+            self.hidden = self.active_net.initial_hidden()
+            return None
         self.obs = self.adapter.push(ram, pp)
         return None
 

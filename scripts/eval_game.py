@@ -53,7 +53,7 @@ from src.training.checkpointing import (  # noqa: E402
     find_latest_trained_checkpoint, find_playable_checkpoint,
 )
 from src.training.smb_sequential import (  # noqa: E402
-    SequentialTracker, level_label,
+    LevelClearTracker, SequentialTracker, level_label,
 )
 
 # Reuse the same logical → profile + ROM tables as the launcher so
@@ -201,6 +201,8 @@ def eval_one_game(
     iter_: Optional[int] = None,
     checkpoint: Optional[str] = None,
     sequential: bool = False,
+    start_state: Optional[str] = None,
+    level_clear: bool = False,
 ) -> dict:
     """Run N episodes; return a dict of eval stats."""
     with open(profile_path) as f:
@@ -348,13 +350,27 @@ def eval_one_game(
     if pool_preprocess_f16:
         pool.set_preprocess_f16(True)
 
-    # Optional curriculum-stage warm-start. By default eval boots from
-    # the profile start state (live level-1 gameplay), so it only
-    # measures the FIRST stage. A curriculum-trained policy spends most
-    # of its training on later stages; pass --stage N to load
-    # smb_curriculum/stage_NN.state and measure that stage instead.
+    # Optional mid-chain warm-start. By default eval boots from the profile
+    # start state (live level-1 gameplay), so it only measures the FIRST
+    # level. Two ways to warm-start each episode elsewhere:
+    #   --stage N        load smb_curriculum/stage_NN.state (curriculum stage).
+    #   --start-state P  load an ARBITRARY save-state file P (a ladder rung's
+    #                    seed, a captured entry blob, etc.) — the level-scoped
+    #                    consolidation gate probes each level from its entry.
+    # The two are mutually exclusive; --start-state takes precedence.
     stage_blob: Optional[bytes] = None
-    if stage is not None:
+    if start_state is not None:
+        ss_path = Path(start_state)
+        if not ss_path.exists():
+            pool.shutdown()
+            return {
+                "game": game,
+                "status": "no_such_start_state",
+                "start_state": str(start_state),
+                "detail": f"{ss_path} not found",
+            }
+        stage_blob = ss_path.read_bytes()
+    elif stage is not None:
         stage_path = ckpt_dir / "smb_curriculum" / f"stage_{stage:02d}.state"
         if not stage_path.exists():
             pool.shutdown()
@@ -400,8 +416,21 @@ def eval_one_game(
         # In --sequential mode reconstruct World-1 progression from RAM
         # independently of episode_success(). episode_success() latches on
         # `cleared_any` at the FIRST 1-1 flagpole, so it can never observe a
-        # sequential 1-4 clear; the tracker's `won` semantics can.
-        tracker = SequentialTracker() if sequential else None
+        # sequential 1-4 clear; the tracker's `won` semantics can. With
+        # --level-clear the predicate is instead "cleared the level it STARTED
+        # in" (a forward area/level transition out of the warm-start level,
+        # warp-guarded) — the notion the level-scoped consolidation gate probes
+        # each level from its entry with. The tracker is seeded with the
+        # warm-start frame (init RAM) so its start level locks to where the
+        # episode actually began, not the first post-action frame.
+        if sequential and level_clear:
+            tracker = LevelClearTracker()
+        elif sequential:
+            tracker = SequentialTracker()
+        else:
+            tracker = None
+        if tracker is not None:
+            tracker.update(init[0][2])
         ep_return = 0.0
         ep_max_byte = 0
         ep_cleared = False
@@ -473,13 +502,19 @@ def eval_one_game(
         "clear_rate": clears / max(1, n_episodes),
         "timestamp": time.time(),
     }
+    if start_state is not None:
+        result["start_state"] = str(start_state)
     if sequential:
         # THE primary campaign metric: sequential World-1 clear rate + how far
         # the greedy policy actually reaches, with warps reported "beyond" but
         # never counted as a clear. `clear_rate` above stays the 1-1-latch rate
         # for back-compat; `seq_clear_rate` is the DoD number every phase gates
-        # on. `furthest_*_level` are the deepest (world, level) across episodes.
+        # on. With --level-clear it is instead the per-level rate: the fraction
+        # of episodes that cleared the level they warm-started in — the number
+        # the level-scoped consolidation gate accepts/rolls back on.
+        # `furthest_*_level` are the deepest (world, level) across episodes.
         result["sequential"] = True
+        result["level_clear"] = bool(level_clear)
         result["seq_clear_rate"] = seq_clears / max(1, n_episodes)
         result["warp_rate"] = warps / max(1, n_episodes)
         result["furthest_seq_level"] = level_label(best_seq)
@@ -522,6 +557,18 @@ def main() -> int:
                              "progression from RAM (play THROUGH the 1-1 flag) "
                              "and report seq_clear_rate / furthest_seq_level / "
                              "furthest_any_level / warp_rate. The DoD metric.")
+    parser.add_argument("--start-state", type=str, default=None, metavar="PATH",
+                        dest="start_state",
+                        help="Warm-start every episode from an ARBITRARY "
+                             "save-state file (a ladder rung seed or captured "
+                             "entry blob). The level-scoped consolidation gate "
+                             "probes each level from its entry with this. "
+                             "Mutually exclusive with --stage; takes precedence.")
+    parser.add_argument("--level-clear", action="store_true", dest="level_clear",
+                        help="With --sequential, score 'cleared the level it "
+                             "STARTED in' (a forward area/level transition out "
+                             "of the warm-start level, warp-guarded) instead of "
+                             "the full World-1 chain. The per-level gate metric.")
     args = parser.parse_args()
 
     profile_path = resolve_profile_path(args.game, args.profile)
@@ -538,6 +585,7 @@ def main() -> int:
         args.episodes, args.max_steps, stage=args.stage,
         latest=args.latest, iter_=args.iter_,
         checkpoint=args.checkpoint, sequential=args.sequential,
+        start_state=args.start_state, level_clear=args.level_clear,
     )
     print(json.dumps(result, indent=2))
     return 0
