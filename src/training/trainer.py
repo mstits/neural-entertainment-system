@@ -1113,6 +1113,16 @@ class Trainer:
                 ram = r[0][2]
                 gx = (int(ram[0x006D]) << 8) | int(ram[0x0086])
                 out = (int(ram[0x075F]), int(ram[0x0760]), gx)
+                # Viability: a blob can be a DOOMED capture — saved on the
+                # frame of death (player_state 0x06/0x0B, lives 0xFF), from
+                # which every episode ends in ~3 steps regardless of policy
+                # (stage_1_4_bw_x700.state is such a capture). Advance a few
+                # frames and reject states that are dying or out of lives.
+                for _ in range(8):
+                    r = _p.step_all(np.zeros(1, dtype=np.uint8))
+                ram = r[0][2]
+                if int(ram[0x000E]) in (0x06, 0x0B) or int(ram[0x075A]) >= 0x80:
+                    out = None
             except Exception:
                 out = None
             cache[path] = out
