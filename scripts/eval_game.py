@@ -42,7 +42,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from nes_core import Pool  # noqa: E402
-from src.emulation.frame_utils import TileFeatureStacker  # noqa: E402
+from src.emulation.frame_utils import FrameStacker, TileFeatureStacker  # noqa: E402
+from src.models.policy_network import PolicyNetwork  # noqa: E402
 from src.models.tile_policy import build_tile_policy_from_checkpoint  # noqa: E402
 from src.utils.reward_functions import build_reward_function  # noqa: E402
 from src.training.profile_utils import (  # noqa: E402
@@ -59,6 +60,106 @@ from src.training.smb_sequential import (  # noqa: E402
 # eval and train always agree on which files to read.
 sys.path.insert(0, str(ROOT / "scripts"))
 from train_game import DEFAULT_PROFILES, DEFAULT_ROMS, resolve_profile_path  # noqa: E402
+
+
+# Pixel encoders the trainer's PolicyNetwork can build. resolve_encoder
+# (the tile path) rejects these by design — they have their own CNN path
+# in the trainer — so eval routes them through the pixel path below. Kept
+# in lockstep with src/models/policy_network.PolicyNetwork's accepted
+# encoders and the trainer's `_is_tile_mode = encoder in ("smb_tiles",)`
+# split: any encoder that is neither a tile encoder nor one of these is
+# genuinely unsupported.
+PIXEL_ENCODERS: tuple[str, ...] = ("nature_dqn", "impala")
+
+
+def resolve_pixel_encoder(profile: dict) -> Optional[str]:
+    """Return `reinforce.encoder` iff it names a pixel encoder the trainer's
+    PolicyNetwork supports (nature_dqn / impala); else None."""
+    rl = profile.get("reinforce", {}) or {}
+    name = rl.get("encoder")
+    return name if name in PIXEL_ENCODERS else None
+
+
+class _TilePolicy:
+    """Obs assembly + greedy forward for a tile (RAM-feature) policy.
+
+    Wraps the exact operations the pre-pixel eval loop performed inline so the
+    tile path stays byte-identical. `step` is a pool `step_all`/`reset_all`
+    tuple `(frame, preprocessed, ram, done)`; tile obs reads `ram` (index 2)
+    and decodes it into a feature vector.
+    """
+
+    def __init__(self, net, stacker, extractor, is_recurrent: bool) -> None:
+        self.net = net
+        self.stacker = stacker
+        self.extractor = extractor
+        self.is_recurrent = is_recurrent
+
+    def reset(self, step) -> np.ndarray:
+        return self.stacker.reset(self.extractor.extract(step[2]))
+
+    def push(self, step) -> np.ndarray:
+        return self.stacker.push(self.extractor.extract(step[2]))
+
+    def initial_hidden(self, device):
+        return self.net.initial_hidden(1, device) if self.is_recurrent else None
+
+    def logits(self, obs: np.ndarray, hidden):
+        x = torch.from_numpy(obs[None, :]).float()
+        if self.is_recurrent:
+            logits, _, hidden = self.net.forward_ac_recurrent(x, hidden)
+        else:
+            logits, _ = self.net.forward_ac(x)
+        return logits, hidden
+
+
+class _PixelPolicy:
+    """Obs assembly + greedy forward for a pixel (CNN) policy.
+
+    Reproduces the trainer's collection path bit-for-bit: a FrameStacker over
+    the pool's 84x84 `preprocessed` obs (index 1 of the step tuple), then
+    `torch.from_numpy(obs).float()` with a `/255` divide ONLY for uint8 obs.
+    When the profile sets `preprocess_f16`, the pool delivers observations
+    already normalized to [0, 1] in float16, so dividing again would scale
+    them 255x and silently wreck the policy — the divide is gated exactly as
+    the trainer gates it (`if not preprocess_f16`). Non-recurrent; CPU device.
+    """
+
+    is_recurrent = False
+
+    def __init__(self, net, stacker, preprocess_f16: bool) -> None:
+        self.net = net
+        self.stacker = stacker
+        self.preprocess_f16 = preprocess_f16
+
+    def _pp(self, step) -> np.ndarray:
+        pp = step[1]
+        if self.preprocess_f16:
+            # The raw pool in f16 mode ships the 84x84 float16 obs as a
+            # (84, 168) uint8 array of raw IEEE-754 half bytes — identical to
+            # RustPool._materialize; reinterpret it back to (84, 84) float16
+            # so the FrameStacker sees the same [0, 1] normalized obs the
+            # trainer feeds its CNN.
+            if pp.dtype == np.uint8 and pp.shape == (84, 168):
+                return pp.view(np.float16).reshape((84, 84))
+            return np.asarray(pp, dtype=np.float16)
+        return pp
+
+    def reset(self, step) -> np.ndarray:
+        return self.stacker.reset(step[0], self._pp(step))
+
+    def push(self, step) -> np.ndarray:
+        return self.stacker.push(step[0], self._pp(step))
+
+    def initial_hidden(self, device):
+        return None
+
+    def logits(self, obs: np.ndarray, hidden):
+        x = torch.from_numpy(obs[None, :]).float()
+        if not self.preprocess_f16:
+            x = x.div_(255.0)
+        logits, _ = self.net.forward_ac(x)
+        return logits, hidden
 
 
 def resolve_eval_checkpoint(
@@ -120,12 +221,14 @@ def eval_one_game(
             ),
         }
 
-    # Profile-driven action space + observation encoder. No game-
-    # specific constants live in this script — adding a 7th game is a
-    # profile + a trained checkpoint, never an eval-script edit.
+    # Profile-driven action space + observation encoder/policy. No game-
+    # specific constants live in this script — adding a game is a profile +
+    # a trained checkpoint, never an eval-script edit. Tile encoders route
+    # through resolve_encoder (unchanged, byte-identical). A pixel encoder
+    # (nature_dqn / impala) that resolve_encoder rejects gets the CNN path
+    # below; anything neither tile nor pixel stays unsupported_profile.
     try:
         bitmasks = action_space_to_bitmasks(profile["action_space"])
-        extractor, feature_dim, stacked_dim = resolve_encoder(profile)
     except (KeyError, ValueError) as e:
         return {
             "game": game,
@@ -133,39 +236,102 @@ def eval_one_game(
             "detail": str(e),
             "ckpt_dir": str(ckpt_dir),
         }
-    stack_size = stacked_dim // feature_dim
+    pixel_encoder: Optional[str] = None
+    try:
+        extractor, feature_dim, stacked_dim = resolve_encoder(profile)
+    except ValueError as tile_err:
+        pixel_encoder = resolve_pixel_encoder(profile)
+        if pixel_encoder is None:
+            return {
+                "game": game,
+                "status": "unsupported_profile",
+                "detail": str(tile_err),
+                "ckpt_dir": str(ckpt_dir),
+            }
 
     state = torch.load(str(ckpt), map_location="cpu")
-    # Dispatch on the checkpoint's architecture family. A recurrent
-    # (tile_gru) checkpoint MUST load into the recurrent policy and have
-    # its GRU hidden state threaded through the step loop below; loading
-    # it into the stateless net would leave a non-empty `missing` set
-    # (the GRU weights) and eval a half-random policy.
-    net, is_recurrent = build_tile_policy_from_checkpoint(
-        state, num_actions=len(bitmasks), feature_dim=stacked_dim,
-    )
-    net_kind = type(net).__name__
-    # Load non-strict so older checkpoints with extra aux heads still
-    # load, but FAIL LOUD if core weights are missing — a silent
-    # partial load would eval a half-random policy and still print
-    # status "ok", which is worse than an error.
-    load_res = net.load_state_dict(state["net_state_dict"], strict=False)
-    if load_res.missing_keys:
-        return {
-            "game": game,
-            "status": "checkpoint_mismatch",
-            "checkpoint": str(ckpt),
-            "recurrent": bool(is_recurrent),
-            "missing_keys": list(load_res.missing_keys),
-            "unexpected_keys": list(load_res.unexpected_keys),
-            "detail": (
-                "checkpoint does not provide all network weights for "
-                f"{net_kind}(num_actions={len(bitmasks)}, "
-                f"feature_dim={stacked_dim}); refusing to eval a "
-                "partially-initialized policy."
-            ),
-        }
-    net.eval()
+    # CPU device: eval is deliberately CPU-only so the cold probe can
+    # subprocess it without perturbing the trainer's MPS context/RNG.
+    device = torch.device("cpu")
+    # Whether the pool must emit float16-normalized [0, 1] observations
+    # (pixel f16 fast path). False for tile — tile reads RAM, not pixels.
+    pool_preprocess_f16 = False
+
+    if pixel_encoder is None:
+        # === TILE PATH (RAM-feature MLP / GRU) — unchanged behavior ===
+        stack_size = stacked_dim // feature_dim
+        # Dispatch on the checkpoint's architecture family. A recurrent
+        # (tile_gru) checkpoint MUST load into the recurrent policy and have
+        # its GRU hidden state threaded through the step loop below; loading
+        # it into the stateless net would leave a non-empty `missing` set
+        # (the GRU weights) and eval a half-random policy.
+        net, is_recurrent = build_tile_policy_from_checkpoint(
+            state, num_actions=len(bitmasks), feature_dim=stacked_dim,
+        )
+        net_kind = type(net).__name__
+        # Load non-strict so older checkpoints with extra aux heads still
+        # load, but FAIL LOUD if core weights are missing — a silent
+        # partial load would eval a half-random policy and still print
+        # status "ok", which is worse than an error.
+        load_res = net.load_state_dict(state["net_state_dict"], strict=False)
+        if load_res.missing_keys:
+            return {
+                "game": game,
+                "status": "checkpoint_mismatch",
+                "checkpoint": str(ckpt),
+                "recurrent": bool(is_recurrent),
+                "missing_keys": list(load_res.missing_keys),
+                "unexpected_keys": list(load_res.unexpected_keys),
+                "detail": (
+                    "checkpoint does not provide all network weights for "
+                    f"{net_kind}(num_actions={len(bitmasks)}, "
+                    f"feature_dim={stacked_dim}); refusing to eval a "
+                    "partially-initialized policy."
+                ),
+            }
+        net.eval()
+        stacker = TileFeatureStacker(stack_size=stack_size, feature_dim=feature_dim)
+        pol = _TilePolicy(net, stacker, extractor, is_recurrent)
+    else:
+        # === PIXEL PATH (CNN) ===
+        # Build the SAME PolicyNetwork the trainer builds — frame_stack=4 /
+        # frame_size=84 defaults, encoder + layernorm from the profile — and
+        # load its net_state_dict (the exact key the trainer saves). Obs are
+        # assembled by a FrameStacker over the pool's 84x84 preprocessed obs,
+        # matching the trainer's collection path bit-for-bit (see _PixelPolicy).
+        rl = profile.get("reinforce", {}) or {}
+        pool_preprocess_f16 = bool(rl.get("preprocess_f16", False))
+        frame_stack = int(rl.get("frame_stack", 4))
+        use_layernorm = bool(rl.get("layernorm", True))
+        net = PolicyNetwork(
+            num_actions=len(bitmasks),
+            frame_stack=frame_stack,
+            frame_size=84,
+            encoder=pixel_encoder,
+            use_layernorm=use_layernorm,
+        )
+        is_recurrent = False
+        net_kind = type(net).__name__
+        load_res = net.load_state_dict(state["net_state_dict"], strict=False)
+        if load_res.missing_keys:
+            return {
+                "game": game,
+                "status": "checkpoint_mismatch",
+                "checkpoint": str(ckpt),
+                "recurrent": False,
+                "missing_keys": list(load_res.missing_keys),
+                "unexpected_keys": list(load_res.unexpected_keys),
+                "detail": (
+                    "checkpoint does not provide all network weights for "
+                    f"{net_kind}(num_actions={len(bitmasks)}, "
+                    f"encoder={pixel_encoder!r}, frame_stack={frame_stack}); "
+                    "refusing to eval a partially-initialized policy."
+                ),
+            }
+        net.eval()
+        obs_dtype = np.float16 if pool_preprocess_f16 else np.uint8
+        stacker = FrameStacker(stack_size=frame_stack, dtype=obs_dtype)
+        pol = _PixelPolicy(net, stacker, pool_preprocess_f16)
 
     start_state = profile.get("start_state_path") or (
         Path(rom_path).with_name(Path(rom_path).stem + "_start.state.bin")
@@ -174,6 +340,13 @@ def eval_one_game(
         rom_path=rom_path, num_workers=1, frame_skip=4,
         start_state_path=str(start_state) if Path(str(start_state)).exists() else None,
     )
+    # Pixel f16 fast path: tell the pool to emit the 84x84 obs as float16
+    # already normalized to [0, 1] (shipped as (84, 168) uint8 half-bytes),
+    # exactly as the trainer configures it via RustPool._apply_pool_knobs.
+    # _PixelPolicy reinterprets and the /255 divide is skipped. No-op for the
+    # tile path (pool_preprocess_f16 stays False — tile reads RAM, not pixels).
+    if pool_preprocess_f16:
+        pool.set_preprocess_f16(True)
 
     # Optional curriculum-stage warm-start. By default eval boots from
     # the profile start state (live level-1 gameplay), so it only
@@ -193,14 +366,12 @@ def eval_one_game(
             }
         stage_blob = stage_path.read_bytes()
 
-    stacker = TileFeatureStacker(stack_size=stack_size, feature_dim=feature_dim)
     # The reward function is the SAME Rust object the trainer uses, so
     # the eval's notion of "cleared" (episode_success) and "return"
     # (sum of per-step rewards) matches training exactly — no separate
     # heuristic to drift out of sync.
     reward_fn = build_reward_function(profile)
 
-    device = torch.device("cpu")
     returns: list[float] = []
     lengths: list[int] = []
     max_bytes: list[int] = []
@@ -222,10 +393,10 @@ def eval_one_game(
             pool.load_worker_state(0, stage_blob)
         reward_fn.reset()
         init = pool.step_all(np.zeros(1, dtype=np.uint8))
-        obs = stacker.reset(extractor.extract(init[0][2]))
+        obs = pol.reset(init[0])
         # Fresh hidden state per episode — the GRU must not carry memory
         # across episode boundaries.
-        hidden = net.initial_hidden(1, device) if is_recurrent else None
+        hidden = pol.initial_hidden(device)
         # In --sequential mode reconstruct World-1 progression from RAM
         # independently of episode_success(). episode_success() latches on
         # `cleared_any` at the FIRST 1-1 flagpole, so it can never observe a
@@ -236,12 +407,12 @@ def eval_one_game(
         ep_cleared = False
         step = 0
         for step in range(max_steps):
-            x = torch.from_numpy(obs[None, :]).float()
+            # Obs -> greedy argmax action. The policy object supplies the
+            # (obs -> logits) mapping; everything else in this loop (reward,
+            # RAM byte proxy, sequential tracker, JSON) is obs-agnostic and
+            # identical for tile and pixel.
             with torch.no_grad():
-                if is_recurrent:
-                    logits, _, hidden = net.forward_ac_recurrent(x, hidden)
-                else:
-                    logits, _ = net.forward_ac(x)
+                logits, hidden = pol.logits(obs, hidden)
                 action_idx = int(torch.argmax(logits[0]).item())
             bitmask = bitmasks[action_idx]
             r = pool.step_all(np.array([bitmask], dtype=np.uint8))
@@ -253,7 +424,7 @@ def eval_one_game(
             byte = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)
             if byte > ep_max_byte:
                 ep_max_byte = byte
-            obs = stacker.push(extractor.extract(ram))
+            obs = pol.push(r[0])
             if reward_fn.episode_success():
                 ep_cleared = True
             if tracker is not None:
