@@ -1084,6 +1084,42 @@ class Trainer:
         except Exception as exc:
             log.warning("[archive] failed to attach run.log handler: %s", exc)
 
+    def _make_seed_content_probe(self):
+        """Build `f(path) -> (world, area, gx) | None` that classifies a
+        save-state blob by loading it into a scratch single-worker pool and
+        reading RAM — the authoritative alternative to filename parsing for
+        ladder seed binding. The scratch pool is created lazily on first
+        probe and torn down by GC; results are cached per path. Any load
+        failure (corrupt blob, mapper-state drift) returns None so the
+        candidate is simply skipped."""
+        from nes_core import Pool as _RawPool
+
+        state = {"pool": None}
+        cache: dict = {}
+
+        def _probe(path):
+            if path in cache:
+                return cache[path]
+            if state["pool"] is None:
+                state["pool"] = _RawPool(
+                    rom_path=self.rom_path, num_workers=1, frame_skip=4,
+                )
+            _p = state["pool"]
+            try:
+                blob = Path(path).read_bytes()
+                _p.reset_all()
+                _p.load_worker_state(0, blob)
+                r = _p.step_all(np.zeros(1, dtype=np.uint8))
+                ram = r[0][2]
+                gx = (int(ram[0x006D]) << 8) | int(ram[0x0086])
+                out = (int(ram[0x075F]), int(ram[0x0760]), gx)
+            except Exception:
+                out = None
+            cache[path] = out
+            return out
+
+        return _probe
+
     def _make_network(self):
         """Construct the policy network appropriate for the configured
         encoder. Pixel encoders (`nature_dqn`, `impala`) use the CNN-
@@ -4747,7 +4783,17 @@ class Trainer:
             _seed_globs = (
                 _clevel_cfg.get("seed_globs") or _substage_cfg.get("seed_globs")
             )
-            ladder = build_ladder(_seed_globs)
+            # Content-verified seed binding: classify every candidate blob by
+            # LOADING it and reading (world, level, area, gx) from RAM, never
+            # by filename/meta. Filename schemes have drifted (bw_x* blobs
+            # that are really post-win World-2 states; one-shot metas storing
+            # the rung order, not the packed anchor) and a mis-bound seed
+            # silently poisons a rung's warm-starts: World-2 starts terminate
+            # off-target within ~12 steps, and depth captures claiming x=0
+            # leave every rung training the level entry.
+            ladder = build_ladder(
+                _seed_globs, content_probe=self._make_seed_content_probe(),
+            )
             # Rung-indexed warm-start seed array (disk seeds only — this mode
             # never captures or advances). Reuses the same smb_curriculum_states
             # slot the auto-reset + warm-start plumbing already reads.

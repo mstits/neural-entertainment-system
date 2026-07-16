@@ -270,6 +270,7 @@ def build_ladder(
     *,
     base_dir: Union[str, Path, None] = None,
     reward_profile: str = DEFAULT_REWARD_PROFILE,
+    content_probe=None,
 ) -> list[SubStage]:
     """Build the ordered World-1 sub-stage ladder, binding disk seeds.
 
@@ -286,6 +287,15 @@ def build_ladder(
             `.../stage_1_4_bw_x*.state`, `.../depth_0_*.state.bin`.
         base_dir: optional root to resolve relative glob patterns against.
         reward_profile: the shared platform-shaping profile tag for each rung.
+        content_probe: optional `f(path) -> (world, area, gx) | None` that
+            classifies a blob by LOADING it and reading RAM. When given, it
+            replaces filename/meta parsing entirely — the authoritative
+            path. Filename schemes have drifted twice (bw_x* files that are
+            really post-win World-2 states; one-shot metas storing the rung
+            ORDER where the old curriculum stored the packed anchor byte),
+            and a mis-bound seed silently poisons a rung's warm-starts.
+            The probe must return None (or raise) for off-chain/unreadable
+            blobs; raises are treated as None.
 
     Returns:
         18 `SubStage`s ordered 0..17.
@@ -297,6 +307,18 @@ def build_ladder(
         if path in seen:
             continue
         seen.add(path)
+        if content_probe is not None:
+            try:
+                probed = content_probe(path)
+            except Exception:
+                probed = None
+            if probed is None:
+                continue
+            world, area, gx = probed
+            if world != WORLD1_BYTE or area not in SEQUENTIAL_AREA_ALLOWLIST:
+                continue
+            seeds.append((int(area), int(gx), path))
+            continue
         parsed = _parse_seed(path)
         if parsed is None:
             continue
