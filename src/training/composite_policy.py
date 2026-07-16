@@ -521,13 +521,15 @@ class CompositeController:
 # --------------------------------------------------------------------------
 
 def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int,
-                capture_dir=None) -> dict:
+                capture_dir=None, stop_after_worlds: int = 1) -> dict:
     """Play one cold episode; return its per-episode record.
 
     Terminal semantics mirror `eval_game.py --sequential`: play THROUGH the 1-1
-    flag (never stop on the `episode_success` latch), ending only on a real
-    World-1 castle clear (`tracker.seq_clear`), a death (`rew_done` / pool done),
-    or `max_steps`.
+    flag (never stop on the `episode_success` latch), ending only on enough
+    real castle clears (`stop_after_worlds`; default 1 = the World-1 DoD, so
+    existing callers are unchanged; 0 = never stop on clears, play until death
+    or `max_steps` — the "how far can it go" mode), a death (`rew_done` / pool
+    done), or `max_steps`.
 
     `capture_dir`: when set, the emulator state is saved the first time the
     controller commits a switch into each level, as
@@ -574,7 +576,7 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
             blob = pool.save_worker_state(0)
             Path(capture_dir).mkdir(parents=True, exist_ok=True)
             (Path(capture_dir) / f"handoff_{safe}.state").write_bytes(blob)
-        if tracker.seq_clear:
+        if stop_after_worlds and tracker.worlds_cleared >= stop_after_worlds:
             end_reason = "seq_clear"
             break
         if rew_done or sr.done:
@@ -587,6 +589,8 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
         "warp_taken": tracker.warp_taken,
         "furthest_seq": tracker.furthest_seq,
         "furthest_any": tracker.furthest_any,
+        "worlds_cleared": tracker.worlds_cleared,
+        "furthest_nowarp": tracker.furthest_nowarp,
         "cleared": ep_cleared,
         "return": ep_return,
         "length": steps,
@@ -666,6 +670,13 @@ def summarize(records: list[dict], *, manifest_path: str, game: str,
         "furthest_any_level": level_label(best_any),
         "furthest_seq": list(best_seq) if best_seq is not None else None,
         "furthest_any": list(best_any) if best_any is not None else None,
+        # Beyond World 1: max castle-clear count and the deepest no-warp reach.
+        "worlds_cleared": max(
+            (r.get("worlds_cleared", 0) for r in records), default=0
+        ),
+        "furthest_nowarp_level": level_label(
+            _fmax(r.get("furthest_nowarp") for r in records)
+        ),
         "mean_switches": (
             float(np.mean([r["switches"] for r in records])) if records else 0.0
         ),
@@ -674,6 +685,8 @@ def summarize(records: list[dict], *, manifest_path: str, game: str,
             {
                 "seq_clear": r["seq_clear"],
                 "warp_taken": r["warp_taken"],
+                "worlds_cleared": r.get("worlds_cleared", 0),
+                "furthest_nowarp_level": level_label(r.get("furthest_nowarp")),
                 "end_reason": r["end_reason"],
                 "length": r["length"],
                 "furthest_seq_level": level_label(r["furthest_seq"]),

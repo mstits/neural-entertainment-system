@@ -102,6 +102,7 @@ def eval_composite(
     device_str: str = "cpu",
     hysteresis_k: Optional[int] = None,
     capture_handoffs: Optional[str] = None,
+    stop_after_worlds: int = 1,
 ) -> dict:
     if not manifest_path.exists():
         return _err(status="no_manifest", manifest=str(manifest_path))
@@ -179,7 +180,8 @@ def eval_composite(
                 nets, levels.keys(), device, k=k,
             )
             records.append(run_episode(pool, controller, reward_fn, max_steps,
-                                       capture_dir=capture_handoffs))
+                                       capture_dir=capture_handoffs,
+                                       stop_after_worlds=stop_after_worlds))
     finally:
         pool.shutdown()
 
@@ -221,6 +223,11 @@ def main() -> int:
                    help="Save the emulator state at each first committed level "
                         "switch as DIR/handoff_<label>.state (the exact entry "
                         "frame the incoming specialist takes over from).")
+    p.add_argument("--stop-after-worlds", type=int, default=1, metavar="N",
+                   help="End the episode after N real castle clears (default "
+                        "1: the World-1 DoD). 0 = never stop on clears — play "
+                        "until death/timeout and report how far the chain got "
+                        "(worlds_cleared / furthest_nowarp).")
     args = p.parse_args()
 
     result = eval_composite(
@@ -228,6 +235,7 @@ def main() -> int:
         rom=args.rom, start_state=args.start_state, out_dir=args.out_dir,
         device_str=args.device, hysteresis_k=args.hysteresis_k,
         capture_handoffs=args.capture_handoffs,
+        stop_after_worlds=args.stop_after_worlds,
     )
     print(json.dumps(result, indent=2))
     return 0 if result.get("status") == "ok" else 1

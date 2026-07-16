@@ -126,6 +126,14 @@ class SequentialTracker:
         self._warp_taken: bool = False
         self._furthest_seq: Optional[Tuple[int, int]] = None
         self._furthest_any: Optional[Tuple[int, int]] = None
+        # Beyond World 1: castle-clear count across worlds, and the deepest
+        # displayed (world, level) reached WITHOUT ever having warped. World 2+
+        # has no verified per-world area allowlist (SEQ_AREAS is World-1 only),
+        # so the general sequential guard is the warp latch itself: once a warp
+        # fires, `furthest_nowarp` freezes — progression after a warp is real
+        # play but not SEQUENTIAL play.
+        self._worlds_cleared: int = 0
+        self._furthest_nowarp: Optional[Tuple[int, int]] = None
 
     def update(self, ram) -> None:
         world = _byte(ram, RAM_WORLD)
@@ -144,6 +152,7 @@ class SequentialTracker:
             if world > self._prev_world:
                 if self._prev_display == DISPLAY_LEVEL_CASTLE:
                     self._seq_clear = True
+                    self._worlds_cleared += 1
                 else:
                     self._warp_taken = True
             self._prev_world = world
@@ -158,6 +167,9 @@ class SequentialTracker:
         if world + 1 == 1 and area in SEQ_AREAS:
             if self._furthest_seq is None or cur > self._furthest_seq:
                 self._furthest_seq = cur
+        if not self._warp_taken:
+            if self._furthest_nowarp is None or cur > self._furthest_nowarp:
+                self._furthest_nowarp = cur
 
     @property
     def seq_clear(self) -> bool:
@@ -178,6 +190,18 @@ class SequentialTracker:
     def furthest_any(self) -> Optional[Tuple[int, int]]:
         """Deepest displayed `(world, level)` on ANY route, warps included."""
         return self._furthest_any
+
+    @property
+    def worlds_cleared(self) -> int:
+        """Count of real castle clears (F52-guarded world crossings)."""
+        return self._worlds_cleared
+
+    @property
+    def furthest_nowarp(self) -> Optional[Tuple[int, int]]:
+        """Deepest displayed `(world, level)` reached before any warp — the
+        general sequential high-water mark for World 2+ ("beyond"), where no
+        per-world area allowlist exists to admit states individually."""
+        return self._furthest_nowarp
 
 
 class LevelClearTracker:
@@ -248,10 +272,12 @@ class LevelClearTracker:
         if level >= self.CASTLE_DISPLAY_LEVEL:
             # x-4 castle start: only a real castle clear (world increment) counts.
             return self._seq.seq_clear
-        f = self._seq.furthest_seq
         # A forward transition to the next displayed level in the SAME world,
-        # on the admitted chain (so a warp — which never raises furthest_seq —
-        # cannot satisfy it).
+        # warp-guarded. `furthest_nowarp` (frozen at the first warp) instead of
+        # the World-1-only `furthest_seq`, so mid-chain starts in World 2+ can
+        # be scored: SEQ_AREAS admission only exists for World 1, but a warp
+        # can never advance the no-warp high-water mark in any world.
+        f = self._seq.furthest_nowarp
         return f is not None and f[0] == world and f[1] > level
 
     # --- SequentialTracker-compatible read surface -------------------------
