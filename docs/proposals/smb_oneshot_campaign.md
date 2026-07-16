@@ -371,3 +371,18 @@ parity` must stay green after the edit (Rust untouched, but the smoke test asser
   `configs/smb_weld_1_4.yaml`), and chain handoff states
   (`checkpoints/handoffs/handoff_1-2.state`, `handoff_1_2.state` back-compat copy,
   `handoff_1-3.state`).
+
+## 2026-07-16 — WORLD 1 ONE-SHOT: ACHIEVED
+
+`eval_composite --manifest configs/composite_world1.yaml` reports
+**seq_clear_rate 1.0** (seeds 0 and 1, single life, warp-guarded): cold boot
+→ 1-1 (536 steps) → 1-2 (767) → 1-3 (452) → 1-4 castle clear (534), 2,289
+steps total. Method: level-keyed composite of four specialists, each link
+welded to the exact handoff frame captured from the live chain
+(`--capture-handoffs`) via self-imitation — collect the policy's own
+stochastic clears from the fixed entry (hybrid rollouts: stochastic bridge,
+argmax finish), behavior-clone into the same net (solo-demo fallback when
+multi-demo labels conflict), greedy-verify inline. 1-4 required backward
+induction across 16 rungs (harvested survival-verified seeds gx108-1800 +
+curriculum states). Winning artifacts archived in
+`runs/world1_oneshot_20260716/`.
