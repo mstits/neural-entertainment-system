@@ -109,7 +109,9 @@ reinforce:
   # frontier order: Frontier holds F and F-1, Retention pins a fixed floor
   # on every already-cleared level-entry (anti-forgetting), Spread samples
   # uniformly over all buckets below the frontier.
-  warm_start: {frontier: 0.50, retention: 0.25, spread: 0.25}
+  # Scout lesson (2026-07-16): deep-frontier pressure erodes the cold
+  # chain at retention 0.25 — the tile run needed 0.40. Start there.
+  warm_start: {frontier: 0.35, retention: 0.40, spread: 0.25}
 
   # === COLD-EVAL PROBE (primary metric + winner selector) ===
   # Subprocess scripts/eval_game.py --sequential (greedy argmax from the
@@ -153,7 +155,7 @@ reinforce:
   # resume to unstick a parked frontier without invalidating any checkpoint.
   go_explore_fallback:
     enabled: true              # armed 2026-07-15: rung-4 stall (270+ iters) met the spec's deploy criterion
-    stall_patience: 60
+    stall_patience: 20          # scout-proven cadence
     burst_iters: 30
     burst_env_frac: 0.25       # fraction of the pool diverted to archive returns
     burst_env_cap: 8           # hard cap (no permanent GE takeover)

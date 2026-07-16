@@ -4566,8 +4566,29 @@ class Trainer:
         cold_highwater = 0
         forget_strikes = 0
         best_cold_rate = -1.0
+        best_cold_key = (-1.0, -1.0, -1.0)
         best_cold_snapshot: Optional[dict] = None
         last_cold_metrics: dict = {}
+        # Alarm/winner state survives resumes via a sidecar. Without it,
+        # every resume re-baselined the forgetting high-water to whatever
+        # regressed level the run started at (regression stopped counting
+        # as regression) and reset the winner baseline (see the winner-key
+        # comment at the probe block). Best-effort IO — a missing/corrupt
+        # sidecar degrades to fresh state, never a crash.
+        _alarm_sidecar = self.checkpoint_dir / "oneshot_alarm.json"
+        try:
+            if _alarm_sidecar.exists():
+                _sc = json.loads(_alarm_sidecar.read_text())
+                cold_highwater = int(_sc.get("highwater", 0))
+                best_cold_key = tuple(_sc.get("best_cold_key", (-1.0,) * 3))
+                best_cold_rate = float(best_cold_key[0])
+                log.info(
+                    "[vanilla_ppo] alarm sidecar loaded: highwater=%d "
+                    "best_cold_key=%s", cold_highwater, best_cold_key,
+                )
+        except Exception as _e:
+            log.warning("[vanilla_ppo] alarm sidecar unreadable (%s) — "
+                        "fresh alarm state", _e)
         # Consolidation (gated, reversible) state.
         _cons_ent = dict(_cons_cfg.get("entropy", {}) or {})
         _cons_rnd = dict(_cons_cfg.get("rnd", {}) or {})
@@ -5959,7 +5980,19 @@ class Trainer:
                 )
                 # best_cold.pt: keep the greedy-sequential winner. Snapshot +
                 # persist on a strict improvement; this is the rollback target.
-                if _rate > best_cold_rate:
+                # The winner key is LEXICOGRAPHIC (seq_clear_rate, furthest
+                # rank, 1-1 clear rate) — comparing the rate alone let a
+                # regressed policy clobber the champion whenever every rate
+                # was still 0.0 (all-night failure mode, 2026-07-16: the
+                # first probe of each resumed run beat the fresh -1.0
+                # baseline and best_cold.pt stopped being the best).
+                _winner_key = (
+                    float(_rate),
+                    float(oc.furthest_rank(_furthest) or 0),
+                    float(_cold.get("cold_clear_1_1") or 0.0),
+                )
+                if _winner_key > best_cold_key:
+                    best_cold_key = _winner_key
                     best_cold_rate = _rate
                     best_cold_snapshot = {
                         k: v.detach().cpu().clone()
@@ -5983,6 +6016,15 @@ class Trainer:
                     cold_highwater, forget_strikes, _alarm = oc.update_forgetting(
                         cold_highwater, forget_strikes, _furthest, forget_probes,
                     )
+                # Persist alarm/winner state so resumes cannot re-baseline
+                # regression as normal (see the init-side sidecar comment).
+                try:
+                    _alarm_sidecar.write_text(json.dumps({
+                        "highwater": int(cold_highwater),
+                        "best_cold_key": list(best_cold_key),
+                    }))
+                except Exception:
+                    pass
                 _action = oc.forgetting_action(
                     _alarm, global_it, retention_bump_until
                 )
@@ -6006,7 +6048,16 @@ class Trainer:
                     )
                     forget_strikes = 0
                 # Consolidation trigger / abort / re-arm (§Q4).
-                if (not consolidating and oc.reached_1_4(_furthest)
+                # De-circularized trigger (2026-07-16): the original gate
+                # required the COLD probe to reach 1-4 before consolidating —
+                # but cold 1-4 needs the welded chain consolidation itself
+                # produces, so the weld waited on its own output all night.
+                # Arm when the ladder is COMPLETE (frontier at the top rung)
+                # — the June recipe consolidated from stochastic competence —
+                # or on cold-1-4 if it ever arrives first.
+                if (not consolidating
+                        and (oc.reached_1_4(_furthest)
+                             or smb_curriculum_stage >= LADDER_SIZE - 1)
                         and smb_curriculum_stage >= 15):
                     consolidating = True
                     cons_step = 0

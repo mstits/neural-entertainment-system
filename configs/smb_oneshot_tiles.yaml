@@ -111,7 +111,12 @@ reinforce:
   # frontier order: Frontier holds F and F-1, Retention pins a fixed floor
   # on every already-cleared level-entry (anti-forgetting), Spread samples
   # uniformly over all buckets below the frontier.
-  warm_start: {frontier: 0.50, retention: 0.25, spread: 0.25}
+  # Retention raised 0.25->0.40 (2026-07-16 01:30): deep-castle frontier
+  # pressure cost cold 1-1 for 4 straight probes, and banking restarts
+  # reset the alarm escalation's per-run state before rollback could
+  # fire. Frontier is one rung from the top; the weld phase needs the
+  # early chain held firmly from here on.
+  warm_start: {frontier: 0.35, retention: 0.40, spread: 0.25}
 
   # === COLD-EVAL PROBE (primary metric + winner selector) ===
   # Subprocess scripts/eval_game.py --sequential (greedy argmax from the
