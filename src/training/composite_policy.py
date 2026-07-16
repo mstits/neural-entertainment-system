@@ -50,6 +50,7 @@ zero-padding leak on the incoming net's first forward.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -519,16 +520,24 @@ class CompositeController:
 # Episode runner + aggregation (the run loop is the only pool-touching part)
 # --------------------------------------------------------------------------
 
-def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int) -> dict:
+def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int,
+                capture_dir=None) -> dict:
     """Play one cold episode; return its per-episode record.
 
     Terminal semantics mirror `eval_game.py --sequential`: play THROUGH the 1-1
     flag (never stop on the `episode_success` latch), ending only on a real
     World-1 castle clear (`tracker.seq_clear`), a death (`rew_done` / pool done),
     or `max_steps`.
+
+    `capture_dir`: when set, the emulator state is saved the first time the
+    controller commits a switch into each level, as
+    `<capture_dir>/handoff_<label>.state` — the exact frame the incoming
+    specialist takes over. These blobs are the entry states the per-link
+    robustifier / consolidation weld trains and probes from.
     """
     pool.reset_all()
     reward_fn.reset()
+    _captured: set = set()
     # Noop step after reset flushes the post-restore frame (matches eval_game).
     init = pool.step_all(np.zeros(1, dtype=np.uint8))
     sr = init[0]
@@ -555,7 +564,16 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
         if reward_fn.episode_success():
             ep_cleared = True
         tracker.update(ram)
+        prev_label = controller.active_label
         controller.observe(ram, sr.preprocessed, step + 1)
+        if (capture_dir is not None
+                and controller.active_label != prev_label
+                and controller.active_label not in _captured):
+            _captured.add(controller.active_label)
+            safe = str(controller.active_label).replace("@", "_a")
+            blob = pool.save_worker_state(0)
+            Path(capture_dir).mkdir(parents=True, exist_ok=True)
+            (Path(capture_dir) / f"handoff_{safe}.state").write_bytes(blob)
         if tracker.seq_clear:
             end_reason = "seq_clear"
             break

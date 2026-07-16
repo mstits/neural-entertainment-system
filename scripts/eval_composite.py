@@ -101,6 +101,7 @@ def eval_composite(
     out_dir: Optional[str] = None,
     device_str: str = "cpu",
     hysteresis_k: Optional[int] = None,
+    capture_handoffs: Optional[str] = None,
 ) -> dict:
     if not manifest_path.exists():
         return _err(status="no_manifest", manifest=str(manifest_path))
@@ -177,7 +178,8 @@ def eval_composite(
             controller = CompositeController(
                 nets, levels.keys(), device, k=k,
             )
-            records.append(run_episode(pool, controller, reward_fn, max_steps))
+            records.append(run_episode(pool, controller, reward_fn, max_steps,
+                                       capture_dir=capture_handoffs))
     finally:
         pool.shutdown()
 
@@ -215,12 +217,17 @@ def main() -> int:
     p.add_argument("--hysteresis", type=int, default=None, dest="hysteresis_k",
                    metavar="K",
                    help="Consecutive agreeing frames before a net switch (default 2).")
+    p.add_argument("--capture-handoffs", type=str, default=None, metavar="DIR",
+                   help="Save the emulator state at each first committed level "
+                        "switch as DIR/handoff_<label>.state (the exact entry "
+                        "frame the incoming specialist takes over from).")
     args = p.parse_args()
 
     result = eval_composite(
         Path(args.manifest), args.episodes, args.max_steps, args.seed,
         rom=args.rom, start_state=args.start_state, out_dir=args.out_dir,
         device_str=args.device, hysteresis_k=args.hysteresis_k,
+        capture_handoffs=args.capture_handoffs,
     )
     print(json.dumps(result, indent=2))
     return 0 if result.get("status") == "ok" else 1
