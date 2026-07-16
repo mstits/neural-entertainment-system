@@ -1,0 +1,35 @@
+# Composite (level-keyed hierarchical) manifest — the SMB one-shot BANKER.
+#
+# Plays ONE cold session from the 1-1 start and routes each step's action to the
+# specialist for the CURRENT displayed level (read from RAM). This scout manifest
+# maps EVERY World-1 level to the tile scout champion, so it is the honest
+# hierarchical baseline: it proves the composite plumbing (cold 1-1 -> clear ->
+# enter 1-2 -> full JSON) before per-level specialists are dropped in.
+#
+# To compose real specialists (mixed encoders allowed), point each level at its
+# own (ckpt, profile): e.g. a tile specialist for 1-2 and a pixel specialist for
+# 1-4 in the same session. The profile drives that level's encoder + action space.
+#
+# Run (from the repo root, where these relative paths resolve):
+#   python scripts/eval_composite.py --manifest configs/composite_scout.yaml \
+#       --episodes 2 --max-steps 1600
+
+name: scout_champion_everywhere
+game: mario
+
+levels:
+  "1-1":
+    ckpt: checkpoints/super_mario_bros_one_shot_tiles/vanilla_ppo_iter_01580.pt
+    profile: configs/smb_oneshot_tiles.yaml
+  "1-2":
+    ckpt: checkpoints/super_mario_bros_one_shot_tiles/vanilla_ppo_iter_01580.pt
+    profile: configs/smb_oneshot_tiles.yaml
+  "1-3":
+    ckpt: checkpoints/super_mario_bros_one_shot_tiles/vanilla_ppo_iter_01580.pt
+    profile: configs/smb_oneshot_tiles.yaml
+  "1-4":
+    ckpt: checkpoints/super_mario_bros_one_shot_tiles/vanilla_ppo_iter_01580.pt
+    profile: configs/smb_oneshot_tiles.yaml
+  default:
+    ckpt: checkpoints/super_mario_bros_one_shot_tiles/vanilla_ppo_iter_01580.pt
+    profile: configs/smb_oneshot_tiles.yaml
