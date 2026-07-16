@@ -347,3 +347,27 @@ it's built only if Phase D actually stalls, keeping the initial edit minimal. (4
 **tile scout runs the identical Lane-4 code ~4× faster**, so a curriculum-mechanics
 regression surfaces in hours on tile before the pixel run commits 1.5 days. (5) `make
 parity` must stay green after the edit (Rust untouched, but the smoke test asserts it).
+
+---
+
+## Status — 2026-07-16
+
+- **1-2 link welded.** Self-imitation BC on the 1-2 specialist's own successful
+  trajectories produced `checkpoints/mario_1_2_underground_consolidate/robust_1_2_handoff.pt`;
+  chain-verified (clears 1-2 cold from the 1-1 exit handoff state, hands off a valid
+  1-3 entry state).
+- **Die-respawn eval artifact discovered.** Cold evals that started a specialist
+  mid-level could die, respawn at the level start, and still count the episode's
+  eventual clear — inflating clear rates. Old specialist clear-rate claims measured
+  under that harness are invalid; all weld gates now use single-life cold evals.
+- **Seed binding hardened.** Curriculum seed states are now content-verified
+  (area/level bytes checked against the state's claimed level) and viability-filtered
+  (dead/glitched snapshots rejected) before entering the pool.
+- **1-3 / 1-4 welds running.** `consolidate_level` weld runs are live for 1-3
+  (`configs/smb_weld_1_3.yaml`, entry `checkpoints/handoffs/handoff_1-3.state`) and
+  1-4 (`configs/smb_weld_1_4.yaml`, entry `stage_1_4.state`).
+- **Artifacts promoted into the repo:** composite World-1 manifest
+  (`configs/composite_world1.yaml`), weld profiles (`configs/smb_weld_1_3.yaml`,
+  `configs/smb_weld_1_4.yaml`), and chain handoff states
+  (`checkpoints/handoffs/handoff_1-2.state`, `handoff_1_2.state` back-compat copy,
+  `handoff_1-3.state`).
