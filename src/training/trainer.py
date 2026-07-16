@@ -4800,6 +4800,29 @@ class Trainer:
                 if _plevel:
                     clevel_protect_entries[_plevel] = _resolve_entry(_plevel, _ppath)
 
+            # Train on what you probe: the resolved target entry state
+            # replaces the entry rung's disk seed, so the entry-rung envs
+            # warm-start from the exact frame the gate cold-probes. A
+            # mid-chain handoff differs from the scout's native capture by
+            # enemy/timer phase — a gate probing a state the pool never
+            # trains from can sit at 0.000 indefinitely.
+            if clevel_target_entry and clevel_target_rungs:
+                try:
+                    smb_curriculum_states[clevel_target_rungs[0]] = Path(
+                        clevel_target_entry
+                    ).read_bytes()
+                    log.info(
+                        "[vanilla_ppo] consolidate entry rung %d warm-start "
+                        "bound to target entry state %s",
+                        clevel_target_rungs[0], clevel_target_entry,
+                    )
+                except Exception as _e:
+                    log.warning(
+                        "[vanilla_ppo] consolidate entry-state warm-start "
+                        "bind failed (%s): %s — keeping disk seed.",
+                        clevel_target_entry, _e,
+                    )
+
             clevel_winner_name = str(
                 _clevel_cfg.get("winner", f"best_{clevel_target}.pt")
             )
