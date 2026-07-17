@@ -77,7 +77,7 @@ def _level_key(ram) -> tuple:
 
 def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
                 seed=0, collect=False, harvest=None, explore_eps=0.0,
-                greedy_after=0, greedy_after_gx=0):
+                greedy_after=0, greedy_after_gx=0, sticky_prob=0.0):
     """One episode. Returns (outcome, traj) with outcome in
     'clear' | 'died' | 'timeout'. `harvest`: optional dict[bucket->blob]
     filled at every first x-bucket crossing while still inside the
@@ -98,6 +98,7 @@ def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
     tracker.update(init[0][2])
     start_key = _level_key(init[0][2])
     traj = []
+    _prev_a = 0
     joined = False  # position-triggered argmax handover latch
     last_ram = init[0][2]
     for _step in range(max_steps):
@@ -118,13 +119,21 @@ def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
             joined = _gx(last_ram) >= greedy_after_gx
         if mode == "sample" and not joined and not (
                 greedy_after and _step >= greedy_after):
-            if explore_eps > 0 and torch.rand(1, generator=g).item() < explore_eps:
+            # Match the TRAINING noise model: a net trained with sticky
+            # actions has learned to expect action persistence — sampling
+            # it without sticky systematically shortens every hold and
+            # can collapse its clear rate ~two orders of magnitude.
+            if (sticky_prob > 0.0 and _step > 0
+                    and torch.rand(1, generator=g).item() < sticky_prob):
+                a = _prev_a
+            elif explore_eps > 0 and torch.rand(1, generator=g).item() < explore_eps:
                 a = int(torch.randint(len(bitmasks), (1,), generator=g).item())
             else:
                 probs = torch.softmax(logits[0], dim=-1)
                 a = int(torch.multinomial(probs, 1, generator=g).item())
         else:
             a = int(torch.argmax(logits[0]).item())
+        _prev_a = a
         if collect:
             traj.append((np.array(obs, dtype=np.int8, copy=True), a))
         r = pool.step_all(np.array([bitmasks[a]], dtype=np.uint8))
@@ -147,14 +156,14 @@ def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
 
 def collect_demos(pool, pol, bitmasks, blob, max_steps, device, reward_fn,
                   want, cap, harvest=None, tag="", explore_eps=0.0,
-                  greedy_after=0, greedy_after_gx=0):
+                  greedy_after=0, greedy_after_gx=0, sticky_prob=0.0):
     demos, seen = [], 0
     while len(demos) < want and seen < cap:
         outcome, traj = run_episode(
             pool, pol, bitmasks, blob, max_steps, "sample", device,
             reward_fn, seed=seen, collect=True, harvest=harvest,
             explore_eps=explore_eps, greedy_after=greedy_after,
-            greedy_after_gx=greedy_after_gx,
+            greedy_after_gx=greedy_after_gx, sticky_prob=sticky_prob,
         )
         seen += 1
         if outcome == "clear":
@@ -277,6 +286,11 @@ def main() -> int:
                          "argmax after this many steps — bridge the "
                          "unwelded gap stochastically, then let the "
                          "welded greedy policy finish (0 = off).")
+    ap.add_argument("--sticky-prob", type=float, default=0.0,
+                    help="Match the training noise model during collection: "
+                         "repeat the previous action with this probability "
+                         "(use the profile's sticky_action_prob for nets "
+                         "trained with sticky actions).")
     ap.add_argument("--greedy-after-gx", type=int, default=0,
                     help="Position-triggered argmax handover: switch to "
                          "pure argmax the first time Mario's global x "
@@ -332,6 +346,7 @@ def main() -> int:
             args.clears, args.episode_cap, harvest=harvested, tag=f":{name}",
             explore_eps=args.explore_eps, greedy_after=args.greedy_after,
             greedy_after_gx=args.greedy_after_gx,
+            sticky_prob=args.sticky_prob,
         )
         if demos:
             rate, best_sd = bc_round(net, pol, pool, bitmasks, blob, demos,
