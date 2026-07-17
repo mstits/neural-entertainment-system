@@ -9,20 +9,12 @@ description: 'Tile-scout vanilla PPO targeting SMB 2-3, the Cheep Cheep bridge l
   the Cheep Cheep rain stops at the stone steps before the flag. Reputedly one of
   the easier levels for RL: dominant strategy is run right with occasional committed
   jumps, so standard platform shaping (air/jump-clear bonuses) applies. PPO params
-  are the uvipen-calibrated set that cleared 2-2 (lr 1e-4, 4096 samples/update,
-  gae_lambda 1.0).
+  are the uvipen-calibrated set that cleared 2-2 (lr 1e-4, 4096 samples/update, gae_lambda
+  1.0).
 
   '
 frame_skip: 4
 max_episode_steps: 2400
-# Entry point for the World-2 chain: the exact frame of the 2-2 -> 2-3 transition,
-# captured by the preceding weld as checkpoints/handoffs/handoff_2-3.state.
-# This file does NOT exist yet — it must exist before launch. The launcher's
-# start-state resolution (scripts/train_game.py resolve_start_state) only fails
-# loud (SystemExit) when NOTHING resolves; if the ROM's `_start.state.bin`
-# sidecar is present it silently falls back to it with a warning, which would
-# train 1-1 from power-on instead of 2-3. Verify the handoff file exists (and
-# no "[launcher] using start-state sidecar" line appears) before trusting a run.
 start_state_path: checkpoints/handoffs/handoff_2-3.state
 ram_mapping:
   x_position_page: 109
@@ -44,10 +36,6 @@ reinforce:
   batched_render: replace
   device: mps
   smb_curriculum: true
-  # DISABLED for now: no 2-3 entry state exists yet. It arrives when the chain
-  # reaches it (the 2-2 weld captures handoff_2-3.state on the 2-2 -> 2-3
-  # transition). Flip enabled: true once checkpoints/handoffs/handoff_2-3.state
-  # exists; the block below is kept content-verified so only the flag changes.
   consolidate_level:
     enabled: false
     target: 2-3
@@ -72,9 +60,6 @@ reinforce:
     accept_probes: 3
     cooldown: 40
     target_entry_state: checkpoints/handoffs/handoff_2-3.state
-  # uvipen-calibrated PPO: lr 1e-4, gamma 0.9, tau (gae_lambda) 1.0, clip 0.2,
-  # entropy 0.01 (decays to 0.002 via the consolidate schedule), 10 epochs,
-  # 4096 samples/update (rollout_steps 4096, minibatch 512).
   rollout_steps: 4096
   steps: 10
   ppo_minibatch_size: 512
@@ -90,16 +75,9 @@ reinforce:
   rnd_loss_coef: 1.0
   bc_replay_enabled: false
   warmup_gens_ga_only: 0
-  sticky_action_prob: 0.0
+  sticky_action_prob: 0.25
   panic_isolation: false
   async_pipeline: false
-# Bridge-level shaping: forward progress stays the dense signal; standard
-# platform bonuses are back on (unlike 2-2 water, where Mario is perpetually
-# "airborne" and both were zeroed). air_bonus 1.5 pays for time spent in
-# committed jumps — on the bridges a running jump is how Cheep Cheep arcs are
-# threaded, and in the second half the small-platform leaps are mandatory.
-# jump_clear_bonus 50 rewards landing a jump that covered >= jump_clear_min_dx
-# pixels of forward ground, which is exactly the platform-gap clears.
 reward_weights:
   forward_progress: 3.0
   score_delta: 0.005
@@ -114,11 +92,6 @@ reward_weights:
   air_bonus: 1.5
   pit_fall_extra: 0.0
   enemy_death_extra: 0.0
-# Standard 7-action SIMPLE_MOVEMENT set. No ["left","A"] here — that extra
-# action was water-specific (in 2-2, A is the only vertical control, so backing
-# off a Blooper while holding depth needed a leftward stroke). On land the
-# standard set already covers every useful move, and an eighth action would
-# only dilute exploration.
 action_space:
 - []
 - - right

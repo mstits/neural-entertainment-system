@@ -34,10 +34,6 @@ reinforce:
   batched_render: replace
   device: mps
   smb_curriculum: true
-  # DISABLED for now: no 2-2 entry state exists yet. It arrives when the 2-1
-  # link welds (stage_2_2.state gets captured on the 2-1 -> 2-2 transition).
-  # Flip enabled: true once checkpoints/super_mario_bros/smb_curriculum/stage_2_2.state
-  # exists; the block below is kept content-verified so only the flag changes.
   consolidate_level:
     enabled: false
     target: 2-2
@@ -62,9 +58,6 @@ reinforce:
     accept_probes: 3
     cooldown: 40
     target_entry_state: checkpoints/super_mario_bros/smb_curriculum/stage_2_2.state
-  # uvipen-calibrated PPO: lr 1e-4, gamma 0.9, tau (gae_lambda) 1.0, clip 0.2,
-  # entropy 0.01 (decays to 0.002 via the consolidate schedule), 10 epochs,
-  # 4096 samples/update (rollout_steps 4096, minibatch 512).
   rollout_steps: 4096
   steps: 10
   ppo_minibatch_size: 512
@@ -80,16 +73,9 @@ reinforce:
   rnd_loss_coef: 1.0
   bc_replay_enabled: false
   warmup_gens_ga_only: 0
-  sticky_action_prob: 0.0
+  sticky_action_prob: 0.25
   panic_isolation: false
   async_pipeline: false
-# Water-level shaping: forward progress stays the dense signal (swimming right
-# is still the objective); time penalty matters because hovering in place is
-# free in water (no fall commitment, so stalling costs nothing physically);
-# completion kept small per our critic findings. Jump-clear and air bonuses are
-# platforming shaping — in water Mario is perpetually "airborne" (float_state),
-# so air_bonus would pay a constant stipend and jump_clear would fire on drift;
-# both zeroed.
 reward_weights:
   forward_progress: 3.0
   score_delta: 0.005
@@ -104,14 +90,6 @@ reward_weights:
   air_bonus: 0.0
   pit_fall_extra: 0.0
   enemy_death_extra: 0.0
-# SIMPLE_MOVEMENT's 7 actions were enough for uvipen to clear 2-2/7-2 (A alone
-# strokes upward, right+A strokes while advancing). We add ["left","A"] because
-# in water A is the ONLY vertical control and SIMPLE_MOVEMENT has no leftward
-# variant with A: backing off a Blooper/Cheep Cheep while holding depth would
-# otherwise require alternating [left] and [A] across frame-skip boundaries.
-# ["down"] is NOT added: down does nothing in SMB1 water (no duck-swim, and
-# 2-2's exit pipe is entered by walking right on the seabed, not by pressing
-# down), so it would only dilute exploration.
 action_space:
 - []
 - - right
