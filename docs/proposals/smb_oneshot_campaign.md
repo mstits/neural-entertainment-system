@@ -386,3 +386,46 @@ multi-demo labels conflict), greedy-verify inline. 1-4 required backward
 induction across 16 rungs (harvested survival-verified seeds gx108-1800 +
 curriculum states). Winning artifacts archived in
 `runs/world1_oneshot_20260716/`.
+
+## 2026-07-16 — World 2 campaign + welding playbook
+
+**Beyond-World-1 tracking shipped (commit 11c0532).** `SequentialTracker` now
+counts real castle clears past the World-1 DoD: `worlds_cleared`,
+`furthest_nowarp` (deepest no-warp level reached), and
+`eval_composite --stop-after-worlds N` to run the chain past world 1 instead
+of stopping at the first `seq_clear`. Per-seed and aggregate records carry
+both fields.
+
+**The 2-1 barrier war, generalized — WELDING PLAYBOOK for future levels:**
+
+- **Trajectory-welds and phase-consistency.** A frozen entry state can be
+  phase-cursed: enemy/timer phase baked into the snapshot makes a section
+  unwinnable (or trivially winnable) in a way no policy change fixes. Weld to
+  trajectories, not just frozen frames — verify the section is clearable from
+  the state *as arrived at* along the live chain before burning training on it.
+- **Self-harvested chain-consistent seeds beat foreign disk seeds.** Seeds
+  captured from the policy's own chain (same phase, same power-up, same
+  momentum) train welds that hold; foreign disk states from other runs carry
+  mismatched context and verify green in isolation while failing in the chain.
+- **Runway matters.** Harvest seeds with acceleration room before the
+  obstacle — a standing start at the barrier is a different (harder) task than
+  the arrived-at one. Beware survivable pit-traps: a seed placed where Mario
+  can drop into a pit he survives but cannot escape wastes the whole rollout
+  budget without registering a death.
+- **Position-triggered argmax handover (`--greedy-after-gx`).** For long
+  gauntlets, run the stochastic bridge only up to a global-x threshold, then
+  hand over to argmax for the welded corridor. Position-triggered (not
+  step-triggered) so the handover lands at the same screen regardless of how
+  long the bridge wandered.
+- **Deterministic replay banking.** Seeded random searches make every lucky
+  success reproducible: when a search stumbles into a clear, replay it under
+  the same seed and bank BOTH the resulting state and the action prefix that
+  produced it. A banked prefix is a free demo; a banked state is a free rung.
+- **Stack-consistent demo composition.** Record demos with the exact
+  frame-stack history the final net will see. A weld verified from a fresh
+  (zero-padded) stack can diverge when arrived-at mid-episode with a real
+  stack — the first few post-handover actions see different observations than
+  the ones the demo was cloned from.
+
+**Status.** 2-1 post-barrier corridor welded greedy 1.00. Runway/entry welds
+in flight. 2-2 water profile ready (`configs/smb_2_2_water.yaml`).

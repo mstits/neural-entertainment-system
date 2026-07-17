@@ -218,6 +218,8 @@ you train them with the flow above).
   clears. The open work is the early x700→x1000 platform-hop (the true
   bottleneck) and consolidating a single greedy 1-1→1-4 chain; full autonomous
   progression to 8-4 remains a research goal.
+- **Cold full-World-1 single-life clear achieved** via a level-keyed composite
+  (`eval_composite`, `seq_clear_rate 1.0`).
 - **16 games have hand-authored reward functions with real win predicates** —
   Mario, Contra, Castlevania, Mega Man, Metroid, Zelda, Tetris, Bubble Bobble,
   Punch-Out, Kung Fu, Gradius, Excitebike, Ghosts'n Goblins, DuckTales, Kid
