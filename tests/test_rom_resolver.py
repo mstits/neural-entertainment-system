@@ -217,7 +217,22 @@ def test_resolve_start_state_none_when_missing(tg, tmp_path):
     assert tg.resolve_start_state({}, str(rom)) is None
 
 
-def test_resolve_start_state_ignores_missing_profile_path(tg, tmp_path):
+def test_resolve_start_state_missing_profile_path_is_fatal(tg, tmp_path):
+    """A DECLARED start_state_path that doesn't exist must raise (naming
+    the path), not silently resolve to None/cold boot — that trained
+    the title-screen demo for a whole run before anyone noticed."""
     rom = _touch(tmp_path / "g.nes")
     profile = {"start_state_path": str(tmp_path / "gone.state.bin")}
-    assert tg.resolve_start_state(profile, str(rom)) is None
+    with pytest.raises(SystemExit, match="gone.state.bin"):
+        tg.resolve_start_state(profile, str(rom))
+
+
+def test_resolve_start_state_sidecar_does_not_mask_missing_declared(tg, tmp_path):
+    """Even with a valid sidecar on disk, a missing DECLARED path stays
+    fatal — the sidecar may hold a different level than the profile
+    configured, so falling back would silently train the wrong one."""
+    rom = _touch(tmp_path / "g.nes")
+    _touch(tmp_path / "g_start.state.bin", b"state")
+    profile = {"start_state_path": str(tmp_path / "gone.state.bin")}
+    with pytest.raises(SystemExit, match="gone.state.bin"):
+        tg.resolve_start_state(profile, str(rom))

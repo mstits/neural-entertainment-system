@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable, Optional
 
 import numpy as np
@@ -72,6 +73,21 @@ class RustPool:
         if not env_spec.startswith("nes_core"):
             raise ValueError(
                 f"RustPool only supports nes_core env_spec; got {env_spec!r}"
+            )
+        # A configured start state MUST exist. nes_core.Pool would raise
+        # a RuntimeError at start() anyway (fs read failure), but that
+        # fires deep inside the training thread; checking at
+        # construction makes a stale path a clear STARTUP error naming
+        # the file, and guarantees no caller can ever fall back to a
+        # silent cold boot (which trains the title-screen demo / the
+        # wrong level). None keeps its meaning: deliberate cold boot.
+        if start_state_path and not Path(start_state_path).is_file():
+            raise FileNotFoundError(
+                f"start_state_path={start_state_path!r} does not exist or is "
+                "not a regular file. Refusing to build the pool: proceeding "
+                "would cold-boot and silently train the wrong content. Fix "
+                "the path or pass start_state_path=None to cold-boot "
+                "deliberately."
             )
         self.rom_path = rom_path
         self.num_workers = num_workers

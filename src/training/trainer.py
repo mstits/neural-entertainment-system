@@ -292,30 +292,35 @@ class Trainer:
             )
             self.max_episode_steps = int(_safe_max)
         self.env_spec = env_spec
-        # Validate start_state_path up front — if the file doesn't exist
-        # or is non-readable, warn and proceed without it rather than
-        # letting the Pool constructor crash the training thread with a
-        # hard RuntimeError. Observed 2026-04-21/22: a prior session
-        # left a stale path in the GUI config; every Start click
-        # produced "Training finished" because the thread died with
-        # FileNotFoundError before gen 0 even began.
+        # Validate start_state_path up front. A CONFIGURED-but-missing
+        # start state is a hard startup error: the old behavior (warn +
+        # fall back to cold boot) silently trained the title-screen
+        # attract demo / the wrong level, wasting entire runs before
+        # anyone noticed. Raising here — before any pool spawns — names
+        # the bad path while the operator is still watching the launch;
+        # the GUI surfaces trainer-thread exceptions, so the historical
+        # "Training finished with no explanation" failure mode this
+        # used to guard against no longer applies. A path that is None
+        # or empty (nothing configured) still cold-boots below.
         if start_state_path:
             _ss = Path(start_state_path)
             if not _ss.exists():
-                log.warning(
-                    "start_state_path=%s does not exist — proceeding without "
-                    "a start state (fresh boot). Clear the field in the GUI "
-                    "or profile to silence this warning.",
-                    start_state_path,
+                raise FileNotFoundError(
+                    f"start_state_path={start_state_path!r} does not exist. "
+                    "Refusing to start: falling back to cold boot would "
+                    "silently train the title-screen demo / the wrong level "
+                    "instead of the configured start state. Fix the path in "
+                    "the profile or GUI (or capture the state with "
+                    "scripts/capture_start_state.py), or remove "
+                    "start_state_path entirely to cold-boot deliberately."
                 )
-                start_state_path = None
-            elif not _ss.is_file():
-                log.warning(
-                    "start_state_path=%s is not a regular file — proceeding "
-                    "without a start state.",
-                    start_state_path,
+            if not _ss.is_file():
+                raise FileNotFoundError(
+                    f"start_state_path={start_state_path!r} is not a regular "
+                    "file. Refusing to start: point it at a save-state file, "
+                    "or remove start_state_path entirely to cold-boot "
+                    "deliberately."
                 )
-                start_state_path = None
         if not start_state_path:
             # No start state => the emulator cold-boots to the title
             # screen. For these NES games the title screen auto-plays an

@@ -292,12 +292,26 @@ def validate_rom_md5(rom_path: str, profile: dict) -> str:
 def resolve_start_state(profile: dict, rom_path: str) -> Optional[str]:
     """Resolve a start-state file for a run, or `None` if none exists.
 
-    Prefers the profile's `start_state_path`; falls back to a
-    `<rom_stem>_start.state.bin` sidecar next to the ROM. Only returns a
-    path that actually exists on disk.
+    A profile that DECLARES `start_state_path` must point at a real
+    file: a missing declared path is a hard error, not a fallback.
+    (The old sidecar/None fallback silently trained a different level —
+    or the title-screen demo — than the one the profile configured.)
+    Only when the profile declares nothing do we fall back to the
+    `<rom_stem>_start.state.bin` sidecar next to the ROM, or `None`
+    when that is absent too.
     """
     declared = profile.get("start_state_path")
-    if declared and Path(str(declared)).exists():
+    if declared:
+        if not Path(str(declared)).is_file():
+            raise SystemExit(
+                f"start_state_path={declared!r} is declared in the profile "
+                f"but does not exist (or is not a regular file). Refusing "
+                f"to fall back to a sidecar or cold boot — that silently "
+                f"trains the wrong level. Fix the profile's "
+                f"start_state_path, capture the state (scripts/"
+                f"capture_start_state.py), or remove the key to use the "
+                f"'<rom>_start.state.bin' sidecar."
+            )
         return str(declared)
     sidecar = Path(rom_path).with_name(Path(rom_path).stem + "_start.state.bin")
     if sidecar.exists():
@@ -560,8 +574,8 @@ def main() -> int:
         )
     if start_state != profile.get("start_state_path"):
         logging.getLogger("train_game").warning(
-            "[launcher] using start-state sidecar %s (profile declared none "
-            "or a missing path)", start_state,
+            "[launcher] using start-state sidecar %s (profile declared "
+            "none)", start_state,
         )
 
     num_instances = args.num_envs or int(
