@@ -80,6 +80,8 @@ _SEQ_KEYS = {
     "mean_return", "mean_length", "max_byte_seen", "mean_max_byte",
     "clear_rate", "timestamp", "sequential", "seq_clear_rate", "warp_rate",
     "furthest_seq_level", "furthest_any_level", "furthest_seq", "furthest_any",
+    # Level-scoped probe surface (eval_game --level-clear / --start-state).
+    "level_clear", "start_state",
 }
 
 
