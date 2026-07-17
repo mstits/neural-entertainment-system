@@ -103,6 +103,8 @@ def eval_composite(
     hysteresis_k: Optional[int] = None,
     capture_handoffs: Optional[str] = None,
     stop_after_worlds: int = 1,
+    sticky_prob: float = 0.0,
+    start_jitter: int = 0,
 ) -> dict:
     if not manifest_path.exists():
         return _err(status="no_manifest", manifest=str(manifest_path))
@@ -175,13 +177,16 @@ def eval_composite(
     pool.start()
     try:
         records = []
-        for _ in range(episodes):
+        for _ep in range(episodes):
             controller = CompositeController(
                 nets, levels.keys(), device, k=k,
             )
             records.append(run_episode(pool, controller, reward_fn, max_steps,
                                        capture_dir=capture_handoffs,
-                                       stop_after_worlds=stop_after_worlds))
+                                       stop_after_worlds=stop_after_worlds,
+                                       sticky_prob=sticky_prob,
+                                       start_jitter=start_jitter,
+                                       seed=seed * 10_000 + _ep))
     finally:
         pool.shutdown()
 
@@ -228,6 +233,14 @@ def main() -> int:
                         "1: the World-1 DoD). 0 = never stop on clears — play "
                         "until death/timeout and report how far the chain got "
                         "(worlds_cleared / furthest_nowarp).")
+    p.add_argument("--sticky-prob", type=float, default=0.0, metavar="P",
+                   help="Honest-eval protocol: repeat the previous action "
+                        "with probability P (Machado et al. sticky actions; "
+                        "0.25 is the standard). Default 0 = deterministic.")
+    p.add_argument("--start-jitter", type=int, default=0, metavar="N",
+                   help="Hold up to N random noop steps before control "
+                        "begins, desynchronizing hazard phases from the "
+                        "trained trajectory. Default 0.")
     args = p.parse_args()
 
     result = eval_composite(
@@ -236,6 +249,8 @@ def main() -> int:
         device_str=args.device, hysteresis_k=args.hysteresis_k,
         capture_handoffs=args.capture_handoffs,
         stop_after_worlds=args.stop_after_worlds,
+        sticky_prob=args.sticky_prob,
+        start_jitter=args.start_jitter,
     )
     print(json.dumps(result, indent=2))
     return 0 if result.get("status") == "ok" else 1

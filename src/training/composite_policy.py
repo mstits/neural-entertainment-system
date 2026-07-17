@@ -521,7 +521,9 @@ class CompositeController:
 # --------------------------------------------------------------------------
 
 def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int,
-                capture_dir=None, stop_after_worlds: int = 1) -> dict:
+                capture_dir=None, stop_after_worlds: int = 1,
+                sticky_prob: float = 0.0, start_jitter: int = 0,
+                seed: int = 0) -> dict:
     """Play one cold episode; return its per-episode record.
 
     Terminal semantics mirror `eval_game.py --sequential`: play THROUGH the 1-1
@@ -536,12 +538,25 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
     `<capture_dir>/handoff_<label>.state` — the exact frame the incoming
     specialist takes over. These blobs are the entry states the per-link
     robustifier / consolidation weld trains and probes from.
+
+    `sticky_prob` / `start_jitter`: the HONEST evaluation protocol (Machado
+    et al. 2018). With probability `sticky_prob`, the previous action is
+    repeated instead of the controller's choice; `start_jitter` holds up to
+    that many noop steps before control begins, desynchronizing every enemy
+    and hazard phase from the trained trajectory. Deterministic greedy eval
+    structurally overstates trajectory-replay systems — a chain that only
+    clears at sticky 0.0 has memorized, not learned. Both default off so
+    existing callers/tests are byte-identical.
     """
+    _rng = np.random.RandomState(1_000_003 * (seed + 1))
     pool.reset_all()
     reward_fn.reset()
     _captured: set = set()
     # Noop step after reset flushes the post-restore frame (matches eval_game).
     init = pool.step_all(np.zeros(1, dtype=np.uint8))
+    if start_jitter > 0:
+        for _ in range(int(_rng.randint(0, start_jitter + 1))):
+            init = pool.step_all(np.zeros(1, dtype=np.uint8))
     sr = init[0]
     tracker = SequentialTracker()
     tracker.update(sr.ram_snapshot)
@@ -552,9 +567,13 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
     ep_cleared = False
     steps = 0
     end_reason = "timeout"
+    _last_bitmask = 0
     for step in range(max_steps):
         steps = step + 1
         bitmask = controller.act()
+        if sticky_prob > 0.0 and step > 0 and _rng.rand() < sticky_prob:
+            bitmask = _last_bitmask
+        _last_bitmask = bitmask
         r = pool.step_all(np.array([bitmask], dtype=np.uint8))
         sr = r[0]
         ram = sr.ram_snapshot
