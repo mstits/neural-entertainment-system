@@ -441,3 +441,42 @@ Machado et al. predict for deterministic-eval-only agents. Sticky+jitter is
 the reported metric from here on (roadmap Bet 2); the trainer already
 supports sticky_action_prob — the next weld generation trains with noise ON
 and is measured against this floor.
+
+## 2026-07-16 — end-of-day state (paused overnight, resume 07-17 morning)
+
+**Chain (nets-only, harness-measured):** cold power-on clears all of World 1
+(seq_clear_rate 1.0 deterministic), dies 100 steps into 2-1. One seam from
+three more levels: 2-2 (robust_2_2_pretrain.pt) and 2-3 (robust_2_3_native.pt)
+are welded and routed in configs/composite_world1.yaml; 2-4's entry is banked
+(checkpoints/handoffs/handoff_2-4_pretrain.state, captured by the legacy
+whole-pool curriculum when training episodes genuinely cleared 2-3).
+
+**The 2-1 entry seam** (only gap): back half welded greedy 1.0 from gx1963
+(robust_2_1_post_barrier.pt). Front half resists: eight attack angles today
+(entry PPO, barrier-lip PPO, disk-seed ladders, self-harvest hybrids, 16k
+pattern-search episodes, 3.3k deterministic grid combos, GRU seq-BC x2, full-
+demo BC) — full winning trajectories exist and are banked
+(harvested_seeds/demos_2_1_runway.npz + ep231_prefix_actions.npy + seeds) but
+no single feed-forward net reproduces one end-to-end greedy (clones cap ~0.81
+demo accuracy; die at the gx~1658 enemy pack / barrier compound). Training
+runs paused: mario_2_1_sticky (iter ~365 of 1500, sticky 0.25, episodes
+reaching 800-900 steps), mario_2_3 (iter ~190, stage-2 envs organically
+training 2-4).
+
+**Morning plan (in order):**
+1. Demo-augmented PPO (SIL/DQfD-style): inject the banked winning demos into
+   vanilla_ppo as an anchor loss — overnight research swarm delivers the
+   implementation design; the bc_replay knobs exist but are dead code in
+   vanilla_ppo mode. This is the roadmap's imitation-lane cure for exactly
+   this failure signature.
+2. Restart the two paused trainers (their checkpoints resume cleanly).
+3. Dedicated 2-4 castle training from the banked entry.
+4. On 2-1's first real clear (its curriculum will capture stage_01
+   automatically = the alarm), snap + route + full-chain replay toward 3-1.
+
+**Discoveries recorded today:** the legacy whole-pool curriculum is a
+self-advancing chain factory (clear level N -> capture N+1 entry -> train
+N+1); demo collection must match the training noise model (sticky) or clear
+rates collapse ~70x; freeze checkpoints only after confirming the clears era
+includes them; chain-captured vs training-native entry states differ by phase
+and are not interchangeable for welding.
