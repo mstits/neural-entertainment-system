@@ -208,3 +208,29 @@ mod tests {
         assert_eq!(out[7 * GRID_W + 6], TILE_EMPTY);
     }
 }
+
+/// v2 feature width: the 175 v1 features + 3 de-aliasing scalars.
+pub const FEATURE_DIM_V2: usize = FEATURE_DIM + 3;
+
+/// v2 extractor: the v1 layout plus three scalars that dissolve the
+/// observation aliasing v1 suffers in precision compounds (identical
+/// local tile windows at different level positions / hazard phases):
+///
+/// * `out[175]` — level-progress page (`global_x / 256`, clamped 0..127):
+///   coarse absolute position within the level.
+/// * `out[176]` — fine progress (`(global_x % 256) / 2`, 0..127).
+/// * `out[177]` — global frame counter / 2 (`RAM[$0009] >> 1`, 0..127):
+///   the phase driver for firebars / piranhas / enemy walk cycles.
+///
+/// v1 (`extract`) is untouched — every shipped checkpoint keeps its
+/// contract; v2 is opt-in per profile (`encoder: smb_tiles_pos`).
+pub fn extract_v2(ram: &[u8]) -> [i8; FEATURE_DIM_V2] {
+    let v1 = extract(ram);
+    let mut out = [0i8; FEATURE_DIM_V2];
+    out[..FEATURE_DIM].copy_from_slice(&v1);
+    let gx: i32 = ((ram[RAM_X_PAGE] as i32) << 8) | (ram[RAM_X_LOW] as i32);
+    out[FEATURE_DIM] = (gx >> 8).min(127) as i8;
+    out[FEATURE_DIM + 1] = ((gx & 0xFF) >> 1) as i8;
+    out[FEATURE_DIM + 2] = (ram[0x0009] >> 1) as i8;
+    out
+}

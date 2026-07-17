@@ -234,3 +234,52 @@ class SMBTileObservation:
         if 0 <= addr < ram.shape[0] and ram[addr] != 0:
             return _TILE_SOLID
         return _TILE_EMPTY
+
+
+FEATURE_DIM_V2 = FEATURE_DIM + 3
+
+
+class SMBTileObservationV2(SMBTileObservation):
+    """v1 features + 3 de-aliasing scalars (opt-in: `encoder: smb_tiles_pos`).
+
+    The 13×13 window aliases badly in precision compounds: identical
+    local tiles at different level positions / hazard phases demand
+    different actions, capping BC accuracy and killing argmax play at
+    e.g. 2-1's pit/piranha gauntlet. v2 appends:
+
+      * ``out[175]`` level-progress page  (global_x >> 8, clamped 0..127)
+      * ``out[176]`` fine progress        ((global_x & 0xFF) >> 1)
+      * ``out[177]`` frame-counter phase  (RAM[$0009] >> 1) — the phase
+        driver for firebars / piranhas / walk cycles.
+
+    v1 checkpoints keep their contract; nets trained on v2 are 178-wide.
+    Rust-native dispatch (`nes_core.extract_smb_tiles_v2`) with a numpy
+    fallback composed from the v1 python path.
+    """
+
+    def __init__(self, use_rust: bool = True) -> None:
+        super().__init__(use_rust=use_rust)
+        self._extract_rust_v2 = None
+        if use_rust:
+            try:
+                import nes_core
+                if hasattr(nes_core, "extract_smb_tiles_v2"):
+                    self._extract_rust_v2 = nes_core.extract_smb_tiles_v2
+            except ImportError:
+                pass
+
+    @property
+    def feature_dim(self) -> int:
+        return FEATURE_DIM_V2
+
+    def extract(self, ram_bytes: bytes) -> np.ndarray:
+        if self._extract_rust_v2 is not None:
+            return np.asarray(self._extract_rust_v2(ram_bytes))
+        v1 = super().extract(ram_bytes)
+        ram = np.frombuffer(ram_bytes, dtype=np.uint8)
+        gx = (int(ram[0x006D]) << 8) | int(ram[0x0086])
+        extra = np.array(
+            [min(gx >> 8, 127), (gx & 0xFF) >> 1, int(ram[0x0009]) >> 1],
+            dtype=np.int8,
+        )
+        return np.concatenate([v1, extra])

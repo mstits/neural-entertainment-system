@@ -947,6 +947,24 @@ fn extract_smb_tiles<'py>(
     Ok(numpy::PyArray1::from_slice_bound(py, &out))
 }
 
+/// v2 tile extractor: v1 + 3 de-aliasing scalars (level page, fine
+/// progress, global frame-counter phase). Opt-in per profile.
+#[pyfunction]
+fn extract_smb_tiles_v2<'py>(
+    py: Python<'py>,
+    ram_bytes: &Bound<'py, PyBytes>,
+) -> PyResult<Bound<'py, numpy::PyArray1<i8>>> {
+    let bytes = ram_bytes.as_bytes();
+    if bytes.len() < 0x0800 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "ram_bytes too short: got {} bytes, need at least 2048",
+            bytes.len(),
+        )));
+    }
+    let out = crate::smb_tile_extract::extract_v2(bytes);
+    Ok(numpy::PyArray1::from_slice_bound(py, &out))
+}
+
 
 /// Factory — mirrors `src/utils/reward_functions/__init__.py::build_reward_function`.
 /// Accepts a game profile dict and returns a ready-to-use RewardFunction.
@@ -1224,6 +1242,7 @@ fn nes_core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_reward_function, m)?)?;
     m.add_function(wrap_pyfunction!(compute_rewards_batch, m)?)?;
     m.add_function(wrap_pyfunction!(extract_smb_tiles, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_smb_tiles_v2, m)?)?;
     m.add_function(wrap_pyfunction!(rom_info, m)?)?;
     m.add_function(wrap_pyfunction!(supported_mappers, m)?)?;
     m.add("BUTTON_RIGHT", BUTTON_RIGHT)?;
