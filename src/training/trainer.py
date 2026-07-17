@@ -610,7 +610,9 @@ class Trainer:
         # to enable. Tile mode also implies a different obs shape, so
         # the trainer's trajectory buffers, frame stacker, and PPO
         # preprocessing all branch on it.
-        self._is_tile_mode: bool = self.encoder_kind in ("smb_tiles",)
+        self._is_tile_mode: bool = self.encoder_kind in (
+            "smb_tiles", "smb_tiles_pos",
+        )
         # Opt-in recurrent (GRU) tile policy for the vanilla_ppo path —
         # the SMB-past-1-2 lever (memory over the trajectory). Only valid
         # with the tile encoder; the proven feedforward path is untouched
