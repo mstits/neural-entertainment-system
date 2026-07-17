@@ -77,7 +77,7 @@ def _level_key(ram) -> tuple:
 
 def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
                 seed=0, collect=False, harvest=None, explore_eps=0.0,
-                greedy_after=0):
+                greedy_after=0, greedy_after_gx=0):
     """One episode. Returns (outcome, traj) with outcome in
     'clear' | 'died' | 'timeout'. `harvest`: optional dict[bucket->blob]
     filled at every first x-bucket crossing while still inside the
@@ -98,6 +98,8 @@ def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
     tracker.update(init[0][2])
     start_key = _level_key(init[0][2])
     traj = []
+    joined = False  # position-triggered argmax handover latch
+    last_ram = init[0][2]
     for _step in range(max_steps):
         with torch.no_grad():
             logits, hidden = pol.logits(obs, hidden)
@@ -107,8 +109,15 @@ def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
         # can be near-impossible even 150px from a welded basin. With
         # greedy_after > 0, sample only the unwelded gap, then hand the
         # episode to argmax and let the welded policy finish closed-loop.
+        # greedy_after_gx does the same POSITION-triggered: hand over the
+        # first time Mario physically crosses into the welded basin —
+        # correct when the gap is a long gauntlet and a step-count
+        # trigger would fire argmax mid-gauntlet in unwelded territory.
         # The demo (stochastic prefix + greedy suffix) is BC-consistent.
-        if mode == "sample" and not (greedy_after and _step >= greedy_after):
+        if greedy_after_gx and not joined:
+            joined = _gx(last_ram) >= greedy_after_gx
+        if mode == "sample" and not joined and not (
+                greedy_after and _step >= greedy_after):
             if explore_eps > 0 and torch.rand(1, generator=g).item() < explore_eps:
                 a = int(torch.randint(len(bitmasks), (1,), generator=g).item())
             else:
@@ -120,6 +129,7 @@ def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
             traj.append((np.array(obs, dtype=np.int8, copy=True), a))
         r = pool.step_all(np.array([bitmasks[a]], dtype=np.uint8))
         ram = r[0][2]
+        last_ram = ram
         _, rew_done, _ = reward_fn.compute(ram, action=int(bitmasks[a]))
         tracker.update(ram)
         if (harvest is not None and _level_key(ram) == start_key
@@ -137,13 +147,14 @@ def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
 
 def collect_demos(pool, pol, bitmasks, blob, max_steps, device, reward_fn,
                   want, cap, harvest=None, tag="", explore_eps=0.0,
-                  greedy_after=0):
+                  greedy_after=0, greedy_after_gx=0):
     demos, seen = [], 0
     while len(demos) < want and seen < cap:
         outcome, traj = run_episode(
             pool, pol, bitmasks, blob, max_steps, "sample", device,
             reward_fn, seed=seen, collect=True, harvest=harvest,
             explore_eps=explore_eps, greedy_after=greedy_after,
+            greedy_after_gx=greedy_after_gx,
         )
         seen += 1
         if outcome == "clear":
@@ -266,6 +277,12 @@ def main() -> int:
                          "argmax after this many steps — bridge the "
                          "unwelded gap stochastically, then let the "
                          "welded greedy policy finish (0 = off).")
+    ap.add_argument("--greedy-after-gx", type=int, default=0,
+                    help="Position-triggered argmax handover: switch to "
+                         "pure argmax the first time Mario's global x "
+                         "crosses this value (the welded basin edge). "
+                         "Correct for long-gauntlet gaps where a step "
+                         "trigger would fire mid-gauntlet (0 = off).")
     args = ap.parse_args()
 
     profile = yaml.safe_load(Path(args.profile).read_text())
@@ -314,6 +331,7 @@ def main() -> int:
             pool, pol, bitmasks, blob, args.max_steps, device, reward_fn,
             args.clears, args.episode_cap, harvest=harvested, tag=f":{name}",
             explore_eps=args.explore_eps, greedy_after=args.greedy_after,
+            greedy_after_gx=args.greedy_after_gx,
         )
         if demos:
             rate, best_sd = bc_round(net, pol, pool, bitmasks, blob, demos,

@@ -1,0 +1,134 @@
+name: Mario 2-2 water
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+description: 'Tile-scout vanilla PPO targeting SMB 2-2, the first underwater level.
+  Swimming physics differ from platforming: A is a swim stroke (small upward impulse,
+  repeatable mid-water, no jump commitment), Mario sinks slowly under reduced gravity,
+  horizontal movement is slow drift, and contact hazards (Bloopers, Cheep Cheeps)
+  cannot be stomped. uvipen''s PPO cleared 2-2 and 7-2 with plain SIMPLE_MOVEMENT
+  and default hyperparameters, so the level is tractable for the standard recipe;
+  PPO params below are calibrated to that reference (lr 1e-4, 4096 samples/update,
+  gae_lambda 1.0).
+
+  '
+frame_skip: 4
+max_episode_steps: 2400
+start_state_path: roms/Super Mario Bros. (World)_start.state.bin
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+reinforce:
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles
+  num_envs: 24
+  preprocess_f16: true
+  batched_render: replace
+  device: mps
+  smb_curriculum: true
+  # DISABLED for now: no 2-2 entry state exists yet. It arrives when the 2-1
+  # link welds (stage_2_2.state gets captured on the 2-1 -> 2-2 transition).
+  # Flip enabled: true once checkpoints/super_mario_bros/smb_curriculum/stage_2_2.state
+  # exists; the block below is kept content-verified so only the flag changes.
+  consolidate_level:
+    enabled: false
+    target: 2-2
+    protect: []
+    seed_globs:
+    - checkpoints/super_mario_bros/smb_curriculum/stage_*.state
+    - checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/stage_*.state
+    - checkpoints/harvested_seeds/seed_2_2_gx*.state
+    schedule:
+      entropy:
+        from: 0.01
+        to: 0.002
+        iters: 80
+      rnd:
+        from: 0.1
+        to: 0.0
+    probe:
+      every: 25
+      episodes: 8
+      max_steps: 1500
+    accept_bar: 0.75
+    accept_probes: 3
+    cooldown: 40
+    target_entry_state: checkpoints/super_mario_bros/smb_curriculum/stage_2_2.state
+  # uvipen-calibrated PPO: lr 1e-4, gamma 0.9, tau (gae_lambda) 1.0, clip 0.2,
+  # entropy 0.01 (decays to 0.002 via the consolidate schedule), 10 epochs,
+  # 4096 samples/update (rollout_steps 4096, minibatch 512).
+  rollout_steps: 4096
+  steps: 10
+  ppo_minibatch_size: 512
+  lr: 0.0001
+  gamma: 0.9
+  gae_lambda: 1.0
+  ppo_clip_eps: 0.2
+  value_coef: 0.25
+  entropy_coef: 0.01
+  grad_clip: 0.5
+  value_loss: huber
+  rnd_intrinsic_coef: 0.1
+  rnd_loss_coef: 1.0
+  bc_replay_enabled: false
+  warmup_gens_ga_only: 0
+  sticky_action_prob: 0.0
+  panic_isolation: false
+  async_pipeline: false
+# Water-level shaping: forward progress stays the dense signal (swimming right
+# is still the objective); time penalty matters because hovering in place is
+# free in water (no fall commitment, so stalling costs nothing physically);
+# completion kept small per our critic findings. Jump-clear and air bonuses are
+# platforming shaping — in water Mario is perpetually "airborne" (float_state),
+# so air_bonus would pay a constant stipend and jump_clear would fire on drift;
+# both zeroed.
+reward_weights:
+  forward_progress: 3.0
+  score_delta: 0.005
+  death_penalty: 0.0
+  completion_bonus: 25.0
+  time_penalty: -0.05
+  checkpoint_scale: 1.0
+  jump_clear_bonus: 0.0
+  jump_clear_min_dx: 16
+  survival_bonus: 0.0
+  survival_block_steps: 150
+  air_bonus: 0.0
+  pit_fall_extra: 0.0
+  enemy_death_extra: 0.0
+# SIMPLE_MOVEMENT's 7 actions were enough for uvipen to clear 2-2/7-2 (A alone
+# strokes upward, right+A strokes while advancing). We add ["left","A"] because
+# in water A is the ONLY vertical control and SIMPLE_MOVEMENT has no leftward
+# variant with A: backing off a Blooper/Cheep Cheep while holding depth would
+# otherwise require alternating [left] and [A] across frame-skip boundaries.
+# ["down"] is NOT added: down does nothing in SMB1 water (no duck-swim, and
+# 2-2's exit pipe is entered by walking right on the seabed, not by pressing
+# down), so it would only dilute exploration.
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+- - left
+- - left
+  - A
+curriculum:
+  stage_1:
+  - 2-1
+  stage_2:
+  - 2-1
+  - 2-2
