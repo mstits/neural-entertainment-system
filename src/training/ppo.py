@@ -148,3 +148,23 @@ def ppo_losses(
 
     loss = policy_loss + value_coef * value_loss - entropy_coef * entropy
     return loss, policy_loss, value_loss, entropy
+
+
+def demo_anchor_loss(logits, demo_actions, *, margin: float = 0.0):
+    """DQfD-style supervised anchor on demonstration states.
+
+    margin=0 -> plain cross-entropy. margin>0 -> adds the large-margin
+    term (Hester et al. 2018, eq. 4): push the demo action's logit at
+    least `margin` above the best non-demo logit, forcing a decisive
+    gap at precision seams instead of a soft CE plateau.
+    """
+    logp = F.log_softmax(logits.float(), dim=-1)
+    ce = F.nll_loss(logp, demo_actions)
+    if margin <= 0:
+        return ce
+    q = logits.float()
+    m = torch.full_like(q, margin)
+    m.scatter_(1, demo_actions.unsqueeze(1), 0.0)
+    demo_q = q.gather(1, demo_actions.unsqueeze(1)).squeeze(1)
+    large_margin = (q + m).max(dim=1).values - demo_q
+    return ce + large_margin.mean()

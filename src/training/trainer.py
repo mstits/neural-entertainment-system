@@ -64,7 +64,9 @@ from src.training.checkpointing import (
 from src.training.curriculum import CurriculumManager, CurriculumStage
 from src.training.gae import gae as _gae
 from src.training.genetic_algorithm import GeneticAlgorithm, Genome
-from src.training.ppo import batched_gae, fold_intrinsic_into_rewards, ppo_losses
+from src.training.ppo import (
+    batched_gae, demo_anchor_loss, fold_intrinsic_into_rewards, ppo_losses,
+)
 from src.training.metrics_sink import MetricsSink
 from src.utils.reward_functions import build_reward_function
 
@@ -449,6 +451,37 @@ class Trainer:
         self.bc_replay_train_window: int = max(
             1, int(rl_cfg.get("bc_replay_train_window", 3))
         )
+        # === DEMO-ANCHORED PPO (DQfD-style) ===
+        # Unlike bc_replay (out-of-loop separate-net BC, which caps at the
+        # demo-fit ceiling and never sees the reward gradient), the demo
+        # anchor adds a supervised CE(+large-margin) term on a FIXED bank
+        # of winning demo (obs, action) pairs INSIDE every PPO minibatch:
+        # the anchor holds the policy on the demo manifold through a hard
+        # seam while the reward gradient sculpts what BC alone cannot fit.
+        # The coefficient decays linearly so PPO can eventually exceed the
+        # demos. Tile mode only (the bank stores tile feature vectors).
+        self.demo_anchor_enabled: bool = bool(
+            rl_cfg.get("demo_anchor_enabled", False)
+        )
+        self.demo_anchor_paths: list = list(
+            rl_cfg.get("demo_anchor_paths", []) or []
+        )
+        self.demo_anchor_coef0: float = float(
+            rl_cfg.get("demo_anchor_coef", 1.0)
+        )
+        self.demo_anchor_final: float = float(
+            rl_cfg.get("demo_anchor_coef_final", 0.02)
+        )
+        self.demo_anchor_decay_iters: int = max(
+            1, int(rl_cfg.get("demo_anchor_decay_iters", 400))
+        )
+        self.demo_anchor_margin: float = float(
+            rl_cfg.get("demo_anchor_margin", 0.0)
+        )
+        self.demo_anchor_mb: int = max(
+            1, int(rl_cfg.get("demo_anchor_minibatch", 256))
+        )
+        self._demo_bank = None
         # In-memory buffer of (obs, actions, rewards, length) tuples from
         # successful episodes. Capped at bc_replay_max_buffer to bound
         # memory; new successes evict the oldest.
@@ -4364,6 +4397,23 @@ class Trainer:
             self._ppo_net = self._make_network()
             self._ppo_net.to(self.device)
         net = self._ppo_net
+        # Demo-anchor bank (DQfD-style; see knobs at __init__). Built once
+        # per run — validates obs width against the net's input dim and
+        # rejects buffer-aliased banks (all-identical rows).
+        if self.demo_anchor_enabled and self._is_tile_mode:
+            from src.training.demo_bank import DemoBank
+            self._demo_bank = DemoBank.from_npz(
+                self.demo_anchor_paths, self._tile_feature_dim,
+                self.num_actions, self.device,
+            )
+            log.info(
+                "[vanilla_ppo] DEMO ANCHOR on: %d pairs from %s; coef "
+                "%.3f -> %.3f over %d iters, margin %.2f, mb %d",
+                self._demo_bank.n, self.demo_anchor_paths,
+                self.demo_anchor_coef0, self.demo_anchor_final,
+                self.demo_anchor_decay_iters, self.demo_anchor_margin,
+                self.demo_anchor_mb,
+            )
         # RND intrinsic exploration (opt-in via reinforce.rnd_intrinsic_coef).
         # Same module + knobs the GA path uses; lazily built so it lands
         # on the current device. Predictor params train in the same Adam
@@ -5824,6 +5874,19 @@ class Trainer:
                 1, int(round(1.0 / self.rnd_predictor_update_fraction))
             )
             _rnd_mb_index = 0
+            # Demo-anchor coefficient: linear decay from coef0 to final
+            # over decay_iters (resume-safe via the absolute iteration),
+            # so early training rides the demo spine and late training
+            # lets the reward gradient own — and exceed — the demos.
+            if self._demo_bank is not None:
+                _da_frac = min(
+                    1.0, it / max(1, self.demo_anchor_decay_iters)
+                )
+                _demo_coef = self.demo_anchor_coef0 + _da_frac * (
+                    self.demo_anchor_final - self.demo_anchor_coef0
+                )
+            else:
+                _demo_coef = 0.0
             for epoch in range(0 if self._recurrent else self.reinforce_steps):
                 perm = np.random.permutation(valid_indices)
                 n_valid = perm.shape[0]
@@ -5867,6 +5930,19 @@ class Trainer:
                         entropy_coef=self.entropy_coef,
                         value_loss_kind=self.value_loss_kind,
                     )
+                    # Demo anchor (DQfD-style): every PPO minibatch also
+                    # draws a demo minibatch from the fixed bank and adds
+                    # CE(+large-margin) on the demo actions, decayed by
+                    # _demo_coef (computed per iter). Same backward pass —
+                    # demonstrations and reward shape one gradient.
+                    if self._demo_bank is not None and _demo_coef > 0:
+                        d_obs, d_act = self._demo_bank.sample(
+                            self.demo_anchor_mb
+                        )
+                        d_logits, _ = net.forward_ac(d_obs)
+                        loss = loss + _demo_coef * demo_anchor_loss(
+                            d_logits, d_act, margin=self.demo_anchor_margin
+                        )
                     # RND predictor loss: train the predictor to mimic
                     # the frozen target on visited states (its params are
                     # in this optimizer). Forward with grad here, unlike
