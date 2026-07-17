@@ -23,3 +23,6 @@ levels:
   2-2:
     ckpt: checkpoints/mario_2_2_water/robust_2_2_pretrain.pt
     profile: configs/smb_2_2_water.yaml
+  2-3:
+    ckpt: checkpoints/mario_2_3/robust_2_3_native.pt
+    profile: configs/smb_2_3.yaml
