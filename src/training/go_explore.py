@@ -37,12 +37,36 @@ import pickle
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Hashable, Optional
+from typing import Callable, Hashable, Optional, Sequence, Union
 
 # A cell key is any hashable produced from a RAM snapshot. Games inject
 # their own abstraction (see cell function helpers below).
 CellKey = Hashable
 CellFn = Callable[[bytes], CellKey]
+# Maps a cell key to its horizontal-neighbor keys (see
+# `horizontal_neighbors`). Injected like `cell_fn`, so games with an
+# unusual key layout can supply their own adjacency.
+NeighborFn = Callable[[CellKey], tuple]
+
+# Coefficient of the neighbor-aware location bonus in `_selection_weight`
+# (Ecoffet et al. 2021, Nature: W_location = (2 - h) / 10 where h is the
+# number of horizontal neighbors already present in the archive). Set to
+# 0.0 to disable the bonus and recover the pure count-based weight.
+W_LOCATION_COEF = 0.1
+
+# Contract: a first task-success is NOT terminal for exploration. The
+# archive's domination rule in `record()` (higher score wins; at equal
+# score, FEWER steps win) means post-clear exploration keeps ratcheting
+# elites toward shorter trajectories — Go-Explore's "keep improving after
+# the first solution" behavior (Ecoffet et al. 2021). Nothing in this
+# module early-outs on success; harvest drivers should gate their loops
+# on `keep_exploring()` rather than on "found a clear".
+EXPLORE_AFTER_FIRST_CLEAR = True
+
+# Backward-algorithm start window, in FRAMES (Salimans & Chen 2018,
+# arXiv:1812.03381: start states sampled from the trailing 160 frames
+# behind the anchor, not from one frozen state).
+START_WINDOW_FRAMES = 160
 
 
 @dataclass
@@ -81,8 +105,16 @@ class GoExploreArchive:
         cell_fn: CellFn,
         *,
         seed: int = 0,
+        neighbor_fn: Optional[NeighborFn] = None,
     ) -> None:
         self.cell_fn = cell_fn
+        # Adjacency used by the W_location selection bonus. Defaults to
+        # the `horizontal_neighbors` convention (last key component = x
+        # bucket); pass an explicit callable for custom key layouts, or
+        # zero W_LOCATION_COEF to disable the bonus entirely.
+        self.neighbor_fn: NeighborFn = (
+            neighbor_fn if neighbor_fn is not None else horizontal_neighbors
+        )
         self._cells: dict[CellKey, Cell] = {}
         self._rng = random.Random(seed)
         # Monotone counters for reporting / convergence checks.
@@ -109,7 +141,12 @@ class GoExploreArchive:
         """Observe a reached state. Returns True if this created a new
         cell or improved (dominated) an existing one — i.e. the archive
         learned something. `state` is the blob that reproduces this exact
-        position (from pool.save_worker_state)."""
+        position (from pool.save_worker_state).
+
+        Domination is (higher score, then FEWER steps at equal score), so
+        a task-success is never terminal for the archive: post-clear
+        records keep replacing elites with shorter trajectories (see
+        EXPLORE_AFTER_FIRST_CLEAR / `keep_exploring`)."""
         key = self.cell_fn(ram)
         self.total_records += 1
         existing = self._cells.get(key)
@@ -145,10 +182,24 @@ class GoExploreArchive:
         paper's count-based form: weight decays with how often the cell
         has been chosen, with a bonus for never-yet-explored (frontier)
         cells so newly discovered territory is expanded promptly.
+
+        On top of the count term, the paper's neighbor-aware location
+        bonus (Ecoffet et al. 2021): W_location = (2 - h) / 10, where h is
+        the number of the cell's horizontal neighbors (same area, x bucket
+        +/- 1) already present in the archive. Cells at the edge of
+        explored space — missing one or both neighbors — get an additive
+        boost, so the frontier is expanded preferentially. The coefficient
+        is the module constant W_LOCATION_COEF (zero it to disable).
         """
         base = 1.0 / math.sqrt(cell.times_chosen + 1)
         frontier_bonus = 2.0 if not cell.explored else 1.0
-        return base * frontier_bonus
+        weight = base * frontier_bonus
+        if W_LOCATION_COEF > 0.0:
+            neighbors = self.neighbor_fn(cell.key)
+            if neighbors:
+                h = sum(1 for k in neighbors if k in self._cells)
+                weight += W_LOCATION_COEF * (len(neighbors) - h)
+        return weight
 
     def select_return_cell(self) -> Optional[Cell]:
         """Pick a cell to return to and explore from, weighted toward the
@@ -246,3 +297,155 @@ def ram_downsample_cell(stride: int = 64, bucket: int = 16) -> CellFn:
         return tuple((ram[i] // bucket) for i in range(0, len(ram), stride))
 
     return _fn
+
+
+# ---------------------------------------------------------------------
+# Pure helpers for the Nature-spec selection / robustification quartet.
+# All are side-effect-free and unit-tested in tests/test_go_explore.py.
+# ---------------------------------------------------------------------
+
+
+def horizontal_neighbors(key: CellKey) -> tuple:
+    """The two same-area cells one x-bucket left/right of `key`.
+
+    Convention (matches `ram_bytes_cell` usage across the repo): the key
+    is a tuple whose LAST component is the horizontal-position bucket and
+    whose leading components identify the area (world/level/area bytes).
+    The neighbors therefore share every leading component and differ by
+    +/-1 in the last. Keys without that structure (non-tuple, empty, or a
+    non-int last component) have no known adjacency and yield `()`, which
+    disables the W_location bonus for them.
+    """
+    if (
+        isinstance(key, tuple)
+        and key
+        and isinstance(key[-1], int)
+        and not isinstance(key[-1], bool)
+    ):
+        return (key[:-1] + (key[-1] - 1,), key[:-1] + (key[-1] + 1,))
+    return ()
+
+
+def keep_exploring(
+    clears_found: int,
+    want_clears: int,
+    *,
+    explore_after_first_clear: bool = EXPLORE_AFTER_FIRST_CLEAR,
+) -> bool:
+    """Should a harvest driver keep sampling episodes?
+
+    Go-Explore's exploration phase does not stop at the first solution
+    (Ecoffet et al. 2021): further clears keep improving the archive
+    because `record()`'s domination rule replaces elites with equal-
+    progress, fewer-step trajectories — the demo-shortening that makes
+    later backward robustification tractable. Drivers should therefore
+    loop on this predicate instead of early-outing on the first clear:
+
+        while keep_exploring(len(demos), want) and seen < cap: ...
+
+    With `explore_after_first_clear=False` (legacy behavior), the first
+    clear is treated as terminal.
+    """
+    if clears_found <= 0:
+        return True
+    if not explore_after_first_clear:
+        return False
+    return clears_found < want_clears
+
+
+def start_window(
+    archive_or_trajectory: Union["GoExploreArchive", dict, Sequence],
+    anchor_index: int,
+    window_frames: int = START_WINDOW_FRAMES,
+    *,
+    frames_per_step: int = 1,
+) -> list:
+    """Candidate start entries in the trailing window behind an anchor.
+
+    Backward robustification a la Salimans & Chen (arXiv:1812.03381)
+    starts each episode from a state sampled inside a 160-FRAME window
+    ending at the anchor, not from one frozen state — the single-anchor
+    weld arrives with one exact enemy/firebar phase and the clone
+    overfits to it (the phase curse). Callers (robustify_level.py ladder
+    rungs, trainer warm starts) should draw uniformly from the returned
+    list each episode instead of always loading the anchor blob.
+
+    Two input shapes:
+
+    * A per-step TRAJECTORY (any sequence — state blobs, (frame, blob)
+      pairs, demo steps). `anchor_index` indexes the sequence (negative
+      OK, Python-style); entries within `window_frames // frames_per_step`
+      steps before the anchor, anchor inclusive, are returned. Pass
+      `frames_per_step` = the emulator frame_skip (4 in the robustifier)
+      so the window is measured in real frames.
+    * A `GoExploreArchive` or its `.cells` dict. Cells are ordered by
+      `best_steps` (ascending, i.e. by depth along the elite path);
+      `anchor_index` indexes that ordering and the returned cells are
+      those whose `best_steps` lies within the window behind the
+      anchor's, anchor inclusive.
+
+    Pure: no mutation of the archive or trajectory; raises IndexError on
+    an out-of-range anchor.
+    """
+    if window_frames < 0:
+        raise ValueError(f"window_frames must be >= 0, got {window_frames}")
+    if frames_per_step < 1:
+        raise ValueError(f"frames_per_step must be >= 1, got {frames_per_step}")
+    window_steps = window_frames // frames_per_step
+
+    cells_map: Optional[dict] = None
+    if isinstance(archive_or_trajectory, GoExploreArchive):
+        cells_map = archive_or_trajectory.cells
+    elif isinstance(archive_or_trajectory, dict):
+        cells_map = archive_or_trajectory
+
+    if cells_map is not None:
+        ordered = sorted(cells_map.values(), key=lambda c: c.best_steps)
+        anchor = ordered[anchor_index]  # IndexError propagates
+        lo = anchor.best_steps - window_steps
+        return [c for c in ordered if lo <= c.best_steps <= anchor.best_steps]
+
+    seq = list(archive_or_trajectory)
+    n = len(seq)
+    idx = anchor_index + n if anchor_index < 0 else anchor_index
+    if not 0 <= idx < n:
+        raise IndexError(
+            f"anchor_index {anchor_index} out of range for trajectory of "
+            f"length {n}"
+        )
+    return seq[max(0, idx - window_steps): idx + 1]
+
+
+def learnable(p_success: float, lo: float = 0.1, hi: float = 0.9) -> bool:
+    """Is a start state inside the Florensa learnability band?
+
+    Florensa et al. (arXiv:1707.05300, reverse curriculum generation)
+    keep only "goals of intermediate difficulty": starts whose estimated
+    success probability lies in [lo, hi]. Below `lo` the start is
+    hopeless (no learning signal); above `hi` it is mastered (wasted
+    samples). Bounds are inclusive.
+    """
+    if not 0.0 <= lo <= hi <= 1.0:
+        raise ValueError(f"need 0 <= lo <= hi <= 1, got lo={lo} hi={hi}")
+    return lo <= p_success <= hi
+
+
+def filter_learnable(
+    starts: Sequence,
+    p_success: Sequence[float],
+    lo: float = 0.1,
+    hi: float = 0.9,
+) -> list:
+    """Band-filter a start-state collection by the Florensa criterion.
+
+    `p_success[i]` is the success estimate for `starts[i]` (e.g. a
+    rolling greedy clear rate). Returns the starts whose estimate lies in
+    [lo, hi] — retiring both mastered and hopeless starts (see
+    `learnable`). Pure; the inputs are not mutated.
+    """
+    ps = list(p_success)
+    if len(ps) != len(starts):
+        raise ValueError(
+            f"starts ({len(starts)}) and p_success ({len(ps)}) lengths differ"
+        )
+    return [s for s, p in zip(starts, ps) if learnable(p, lo, hi)]

@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+import pytest
+
+import src.training.go_explore as go_explore
 from src.training.go_explore import (
+    EXPLORE_AFTER_FIRST_CLEAR,
+    START_WINDOW_FRAMES,
     GoExploreArchive,
+    filter_learnable,
+    horizontal_neighbors,
+    keep_exploring,
+    learnable,
     ram_bytes_cell,
     ram_downsample_cell,
+    start_window,
 )
 
 
@@ -167,3 +177,189 @@ def test_save_load_roundtrip(tmp_path) -> None:
     assert arc2.cells[(2,)].state == b"B"
     assert arc2.cells[(2,)].best_score == 9.0
     assert arc2.cells[(1,)].best_steps == 10
+
+
+# ---- QW3: neighbor-aware selection weight (W_location) --------------
+
+
+def test_horizontal_neighbors_vary_last_component_only() -> None:
+    # (area..., x_bucket) convention: same area, x bucket +/- 1.
+    assert horizontal_neighbors((1, 0, 5)) == ((1, 0, 4), (1, 0, 6))
+    assert horizontal_neighbors((7,)) == ((6,), (8,))
+
+
+def test_horizontal_neighbors_unstructured_keys_have_no_adjacency() -> None:
+    assert horizontal_neighbors("not-a-tuple") == ()
+    assert horizontal_neighbors(()) == ()
+    assert horizontal_neighbors((1, "x")) == ()
+
+
+def test_w_location_boosts_cells_with_missing_neighbors() -> None:
+    """Paper form (Ecoffet 2021): W_location = (2 - h)/10 with h = number
+    of horizontal neighbors present. Three contiguous cells: the middle
+    one has both neighbors (h=2, bonus 0), the edges have one (h=1,
+    bonus 0.1). Count/frontier terms are equalized so only W_location
+    differs."""
+    arc = GoExploreArchive(ram_bytes_cell([0x0086]))
+    for x in (1, 2, 3):
+        arc.record(_ram(**{"0x0086": x}), b"s", score=1.0, steps=10)
+    for c in arc.cells.values():
+        c.explored = True  # frontier bonus off; times_chosen equal
+    w_edge = arc._selection_weight(arc.cells[(1,)])
+    w_mid = arc._selection_weight(arc.cells[(2,)])
+    assert w_edge == pytest.approx(w_mid + 0.1)
+    # An isolated cell misses both neighbors: h=0, bonus 0.2.
+    arc.record(_ram(**{"0x0086": 100}), b"s", score=1.0, steps=10)
+    lone = arc.cells[(100,)]
+    lone.explored = True
+    assert arc._selection_weight(lone) == pytest.approx(w_mid + 0.2)
+
+
+def test_w_location_coefficient_is_zeroable(monkeypatch) -> None:
+    arc = GoExploreArchive(ram_bytes_cell([0x0086]))
+    arc.record(_ram(**{"0x0086": 1}), b"s", score=1.0, steps=10)
+    arc.record(_ram(**{"0x0086": 2}), b"s", score=1.0, steps=10)
+    for c in arc.cells.values():
+        c.explored = True
+    monkeypatch.setattr(go_explore, "W_LOCATION_COEF", 0.0)
+    w1 = arc._selection_weight(arc.cells[(1,)])
+    w2 = arc._selection_weight(arc.cells[(2,)])
+    assert w1 == pytest.approx(1.0)  # pure count-based weight
+    assert w2 == pytest.approx(1.0)
+
+
+def test_custom_neighbor_fn_is_injectable() -> None:
+    # A no-adjacency neighbor_fn disables the bonus per cell.
+    arc = GoExploreArchive(ram_bytes_cell([0x0086]), neighbor_fn=lambda k: ())
+    arc.record(_ram(**{"0x0086": 1}), b"s", score=1.0, steps=10)
+    cell = arc.cells[(1,)]
+    cell.explored = True
+    assert arc._selection_weight(cell) == pytest.approx(1.0)
+
+
+# ---- QW4: keep exploring after the first clear -----------------------
+
+
+def test_keep_exploring_does_not_stop_at_first_clear() -> None:
+    assert EXPLORE_AFTER_FIRST_CLEAR is True
+    assert keep_exploring(0, 10) is True
+    assert keep_exploring(1, 10) is True  # first clear is NOT terminal
+    assert keep_exploring(9, 10) is True
+    assert keep_exploring(10, 10) is False  # demo budget met
+    assert keep_exploring(11, 10) is False
+
+
+def test_keep_exploring_legacy_flag_stops_at_first_clear() -> None:
+    assert keep_exploring(0, 10, explore_after_first_clear=False) is True
+    assert keep_exploring(1, 10, explore_after_first_clear=False) is False
+
+
+def test_post_clear_shorter_trajectory_keeps_improving_elite() -> None:
+    """The archive contract behind QW4: at equal progress, later (post-
+    clear) records with fewer steps still dominate — success never
+    freezes an elite."""
+    arc = GoExploreArchive(ram_bytes_cell([0x0760]))
+    ram = _ram(**{"0x0760": 4})
+    arc.record(ram, b"first_clear", score=100.0, steps=900)
+    assert arc.record(ram, b"shorter_clear", score=100.0, steps=700) is True
+    assert arc.record(ram, b"shortest", score=100.0, steps=500) is True
+    cell = arc.cells[(4,)]
+    assert cell.state == b"shortest"
+    assert cell.best_steps == 500
+
+
+# ---- backward-algorithm start window ---------------------------------
+
+
+def test_start_window_slices_trailing_window_of_trajectory() -> None:
+    traj = [f"blob{i}" for i in range(100)]
+    # 160 frames at frame_skip 4 = 40 steps back from the anchor.
+    win = start_window(traj, 60, window_frames=160, frames_per_step=4)
+    assert win == traj[20:61]
+    assert win[-1] == "blob60"  # anchor inclusive
+    assert len(win) == 41
+
+
+def test_start_window_defaults_to_nature_160_frames() -> None:
+    assert START_WINDOW_FRAMES == 160
+    traj = list(range(500))
+    win = start_window(traj, 400)
+    assert win == list(range(240, 401))
+
+
+def test_start_window_clamps_at_trajectory_start() -> None:
+    traj = list(range(10))
+    win = start_window(traj, 3, window_frames=160, frames_per_step=4)
+    assert win == [0, 1, 2, 3]
+
+
+def test_start_window_negative_anchor_and_bounds() -> None:
+    traj = list(range(50))
+    win = start_window(traj, -1, window_frames=8, frames_per_step=4)
+    assert win == [47, 48, 49]
+    with pytest.raises(IndexError):
+        start_window(traj, 50)
+    with pytest.raises(IndexError):
+        start_window(traj, -51)
+
+
+def test_start_window_over_archive_cells_by_best_steps() -> None:
+    """Archive form: cells ordered by best_steps; the window behind the
+    anchor cell (in steps) is the candidate start set for backward
+    robustification."""
+    arc = GoExploreArchive(ram_bytes_cell([0x0086]))
+    for x, steps in ((1, 10), (2, 50), (3, 90), (4, 100)):
+        arc.record(_ram(**{"0x0086": x}), f"s{x}".encode(), score=float(x),
+                   steps=steps)
+    win = start_window(arc, -1, window_frames=60, frames_per_step=1)
+    assert [c.best_steps for c in win] == [50, 90, 100]
+    assert win[-1].state == b"s4"  # anchor = deepest cell
+    # The raw cells dict is accepted too.
+    win2 = start_window(arc.cells, -1, window_frames=60, frames_per_step=1)
+    assert [c.key for c in win2] == [c.key for c in win]
+
+
+def test_start_window_is_pure() -> None:
+    traj = list(range(20))
+    before = list(traj)
+    start_window(traj, 10, window_frames=8, frames_per_step=1)
+    assert traj == before
+    with pytest.raises(ValueError):
+        start_window(traj, 10, window_frames=-1)
+    with pytest.raises(ValueError):
+        start_window(traj, 10, frames_per_step=0)
+
+
+# ---- Florensa learnability band --------------------------------------
+
+
+def test_learnable_band_is_inclusive() -> None:
+    assert learnable(0.1) is True
+    assert learnable(0.5) is True
+    assert learnable(0.9) is True
+    assert learnable(0.05) is False  # hopeless
+    assert learnable(0.95) is False  # mastered
+    assert learnable(0.0) is False
+    assert learnable(1.0) is False
+
+
+def test_learnable_custom_bounds_and_validation() -> None:
+    assert learnable(0.05, lo=0.02, hi=0.5) is True
+    with pytest.raises(ValueError):
+        learnable(0.5, lo=0.9, hi=0.1)
+    with pytest.raises(ValueError):
+        learnable(0.5, lo=-0.1)
+
+
+def test_filter_learnable_retires_mastered_and_hopeless_starts() -> None:
+    starts = ["hopeless", "hard", "mid", "easy", "mastered"]
+    p = [0.0, 0.15, 0.5, 0.85, 0.99]
+    kept = filter_learnable(starts, p)
+    assert kept == ["hard", "mid", "easy"]
+    # Inputs are not mutated.
+    assert len(starts) == 5 and len(p) == 5
+
+
+def test_filter_learnable_length_mismatch_raises() -> None:
+    with pytest.raises(ValueError):
+        filter_learnable(["a", "b"], [0.5])
