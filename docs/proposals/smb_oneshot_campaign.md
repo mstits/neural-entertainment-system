@@ -429,3 +429,15 @@ both fields.
 
 **Status.** 2-1 post-barrier corridor welded greedy 1.00. Runway/entry welds
 in flight. 2-2 water profile ready (`configs/smb_2_2_water.yaml`).
+
+## 2026-07-16 — L0: the honest baseline
+
+`eval_composite --sticky-prob 0.25 --start-jitter 16 --episodes 50` on the
+World-1 composite: **seq_clear_rate 0.0** — all 50 episodes die in 1-1
+(mean 314 steps in). Deterministic greedy: 1.0. The delta is the quantified
+memorizes-vs-understands gap: the composite is a trajectory-replay system,
+and sticky actions + phase jitter break every replayed line, exactly as
+Machado et al. predict for deterministic-eval-only agents. Sticky+jitter is
+the reported metric from here on (roadmap Bet 2); the trainer already
+supports sticky_action_prob — the next weld generation trains with noise ON
+and is measured against this floor.
