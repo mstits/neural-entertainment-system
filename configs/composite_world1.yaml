@@ -20,3 +20,6 @@ levels:
   1-2@1:
     ckpt: checkpoints/mario_1_2_underground_consolidate/robust_1_2_handoff.pt
     profile: configs/smb_underground_consolidate.yaml
+  2-2:
+    ckpt: checkpoints/mario_2_2_water/robust_2_2_pretrain.pt
+    profile: configs/smb_2_2_water.yaml
