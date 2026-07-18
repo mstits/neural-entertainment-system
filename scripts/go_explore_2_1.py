@@ -233,7 +233,15 @@ class Harvester:
         # (1) ep231 lineage: verified compound crossing from the runway
         # seed. Record every step; keep per-step blobs for phase seeding.
         ram = self._add_root("gx1421_runway", args.root_state)
-        prefix = np.load(args.prefix_actions).astype(np.int64)
+        # '' disables the prefix lineage (same convention as
+        # --handoff-state ''): the archive then seeds from the bare root
+        # plus no-op phase offsets and exploration bursts — the mode for
+        # a fresh root with no verified action prefix (e.g. a live seam
+        # arrival state).
+        prefix = (
+            np.load(args.prefix_actions).astype(np.int64)
+            if args.prefix_actions else np.array([], dtype=np.int64)
+        )
         blobs, gxs = [], []
         trace: list = []
         prev = _gx(ram)
@@ -244,11 +252,12 @@ class Harvester:
             prev = _gx(ram)
             blobs.append(self.pool.save_worker_state(0))
             gxs.append(prev)
-        end_gx = gxs[-1]
-        assert 1900 <= end_gx <= 2050, \
-            f"ep231 prefix replay de-synced: end gx {end_gx}, expected ~1966"
-        print(f"[seed] ep231 prefix: {len(prefix)} steps -> gx {end_gx}",
-              flush=True)
+        if len(prefix):
+            end_gx = gxs[-1]
+            assert 1900 <= end_gx <= 2050, \
+                f"ep231 prefix replay de-synced: end gx {end_gx}, expected ~1966"
+            print(f"[seed] ep231 prefix: {len(prefix)} steps -> gx {end_gx}",
+                  flush=True)
         # (2) no-op phase offsets: one 7-noop run per pre-compound
         # checkpoint covers offsets 1..7 = all 8 phase classes there.
         for i in range(0, len(prefix), args.phase_seed_stride):

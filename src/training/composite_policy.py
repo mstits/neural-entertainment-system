@@ -422,7 +422,8 @@ class CompositeController:
     seals the final segment.
     """
 
-    def __init__(self, nets: dict, labels, device, k: int = 2) -> None:
+    def __init__(self, nets: dict, labels, device, k: int = 2,
+                 gx_routes: Optional[dict] = None) -> None:
         self.nets = nets
         self.labels = set(labels)
         self.device = device
@@ -434,6 +435,16 @@ class CompositeController:
         self.obs: Optional[np.ndarray] = None
         self.switches = 0
         self.segments: list[Segment] = []
+        # Intra-level gx-keyed routing: manifest key -> sorted
+        # [(at_gx, net_key), ...]. A level can hand off mid-level from one
+        # specialist to the next at a disclosed x threshold (e.g. a welded
+        # front-half net to a back-half net at the seam). One-way per level
+        # visit; 2-frame confirm so a mid-transition gx glitch can't fire it.
+        self.gx_routes = gx_routes or {}
+        self._active_key: Optional[str] = None
+        self._gx_stage = 0
+        self._gx_confirm = 0
+        self.gx_switch_events: list[dict] = []
 
     def _select(self, label: str, area: Optional[int] = None) -> LevelNet:
         key = resolve_level_key(self.labels, label, area)
@@ -442,7 +453,11 @@ class CompositeController:
                 f"level {label!r} has no manifest entry and no "
                 f"{DEFAULT_LEVEL_KEY!r} fallback"
             )
+        self._active_key = key
         return self.nets[key]
+
+    def _gx_stage_active(self) -> bool:
+        return bool(self.gx_routes.get(self._active_key)) and self._gx_stage > 0
 
     def begin(self, ram, pp) -> None:
         label = label_from_ram(ram)
@@ -455,6 +470,9 @@ class CompositeController:
         self.hyst.reset(label)
         self.switches = 0
         self.segments = [Segment(level=label, entered_step=0)]
+        self._gx_stage = 0
+        self._gx_confirm = 0
+        self.gx_switch_events = []
 
     def act(self) -> int:
         t = self.adapter.to_tensor(self.obs, self.device)
@@ -481,6 +499,8 @@ class CompositeController:
             self.segments[-1].exit_reason = reason
             self.active_label = switched
             self._area = int(ram[RAM_AREA])
+            self._gx_stage = 0
+            self._gx_confirm = 0
             self.active_net = self._select(switched, self._area)
             self.adapter = self.active_net.new_adapter()
             self.obs = self.adapter.reset(ram, pp)
@@ -499,14 +519,42 @@ class CompositeController:
         area = int(ram[RAM_AREA])
         if area != self._area:
             self._area = area
-            new_net = self._select(self.active_label, area)
-            if new_net is not self.active_net:
-                self.active_net = new_net
-                self.switches += 1
+            if self._gx_stage_active():
+                # A committed gx-stage net rides through in-level scene
+                # cuts (pipe bonus rooms) — reselecting the base net here
+                # would silently undo the routed handoff. Fresh adapter +
+                # hidden either way (the documented scene-cut reset).
+                pass
+            else:
+                new_net = self._select(self.active_label, area)
+                if new_net is not self.active_net:
+                    self.active_net = new_net
+                    self.switches += 1
             self.adapter = self.active_net.new_adapter()
             self.obs = self.adapter.reset(ram, pp)
             self.hidden = self.active_net.initial_hidden()
             return None
+        routes = self.gx_routes.get(self._active_key)
+        if routes and self._gx_stage < len(routes):
+            at_gx, net_key = routes[self._gx_stage]
+            gx = (int(ram[0x006D]) << 8) | int(ram[0x0086])
+            if gx >= at_gx:
+                self._gx_confirm += 1
+            else:
+                self._gx_confirm = 0
+            if self._gx_confirm >= 2:
+                self._gx_confirm = 0
+                self._gx_stage += 1
+                self.active_net = self.nets[net_key]
+                self.adapter = self.active_net.new_adapter()
+                self.obs = self.adapter.reset(ram, pp)
+                self.hidden = self.active_net.initial_hidden()
+                self.switches += 1
+                self.gx_switch_events.append({
+                    "level": self.active_label, "at_gx": at_gx,
+                    "gx": gx, "step": step, "net": net_key,
+                })
+                return None
         self.obs = self.adapter.push(ram, pp)
         return None
 
@@ -564,6 +612,7 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
 
     ep_return = 0.0
     ep_max_byte = 0
+    ep_level_max_gx: dict = {}
     ep_cleared = False
     steps = 0
     end_reason = "timeout"
@@ -582,6 +631,12 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
         byte = (int(ram[RAM_WORLD]) << 4) | (int(ram[RAM_AREA]) & 0x0F)
         if byte > ep_max_byte:
             ep_max_byte = byte
+        # Per-level death-gx telemetry: the level's horizontal frontier
+        # this episode, keyed by the controller's active label — WHERE a
+        # segment stalled, not just that it died.
+        _gx_now = (int(ram[0x006D]) << 8) | int(ram[0x0086])
+        if _gx_now > ep_level_max_gx.get(controller.active_label, 0):
+            ep_level_max_gx[controller.active_label] = _gx_now
         if reward_fn.episode_success():
             ep_cleared = True
         tracker.update(ram)
@@ -615,6 +670,8 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
         "length": steps,
         "max_byte": ep_max_byte,
         "switches": controller.switches,
+        "gx_switches": controller.gx_switch_events,
+        "level_max_gx": ep_level_max_gx,
         "end_reason": end_reason,
         "segments": [s.as_dict() for s in controller.segments],
     }
@@ -710,6 +767,8 @@ def summarize(records: list[dict], *, manifest_path: str, game: str,
                 "length": r["length"],
                 "furthest_seq_level": level_label(r["furthest_seq"]),
                 "switches": r["switches"],
+                "gx_switches": r.get("gx_switches", []),
+                "level_max_gx": r.get("level_max_gx", {}),
                 "segments": r["segments"],
             }
             for r in records

@@ -125,6 +125,7 @@ def eval_composite(
     scoring_profile: Optional[dict] = None
     cache: dict[tuple, object] = {}
     nets: dict[str, object] = {}
+    gx_routes: dict[str, list] = {}
     for key, entry in levels.items():
         if not isinstance(entry, dict) or "ckpt" not in entry or "profile" not in entry:
             return _err(status="bad_manifest",
@@ -147,6 +148,41 @@ def eval_composite(
                 return _err(status="load_failed", level=key, ckpt=ckpt,
                             profile=prof_path, detail=str(e))
         nets[key] = cache[cache_key]
+        # Optional intra-level gx-keyed handoffs: a sorted stage list of
+        # {at_gx, ckpt, profile}. Each stage net loads through the same
+        # cache; the controller switches to it (one-way, disclosed in the
+        # output as gx_switches) once the level's x crosses at_gx.
+        for sw in entry.get("gx_switches") or []:
+            try:
+                at_gx = int(sw["at_gx"])
+                s_ckpt = str(sw["ckpt"])
+                s_prof = str(sw["profile"])
+            except (KeyError, TypeError, ValueError):
+                return _err(status="bad_manifest", level=key,
+                            detail="each gx_switches entry needs "
+                                   "at_gx, ckpt and profile")
+            if not Path(s_ckpt).exists():
+                return _err(status="missing_checkpoint",
+                            level=f"{key}@gx{at_gx}", ckpt=s_ckpt)
+            if not Path(s_prof).exists():
+                return _err(status="missing_profile",
+                            level=f"{key}@gx{at_gx}", profile=s_prof)
+            s_profile = yaml.safe_load(Path(s_prof).read_text())
+            s_cache_key = (str(Path(s_ckpt).resolve()),
+                           str(Path(s_prof).resolve()))
+            if s_cache_key not in cache:
+                try:
+                    cache[s_cache_key] = build_level_net(
+                        s_profile, s_ckpt, device, label=f"{key}@gx{at_gx}",
+                    )
+                except (ValueError, KeyError, RuntimeError) as e:
+                    return _err(status="load_failed", level=f"{key}@gx{at_gx}",
+                                ckpt=s_ckpt, profile=s_prof, detail=str(e))
+            s_key = f"{key}@gx{at_gx}"
+            nets[s_key] = cache[s_cache_key]
+            gx_routes.setdefault(key, []).append((at_gx, s_key))
+    for key in gx_routes:
+        gx_routes[key].sort()
 
     # ROM + cold-start state + frame_skip resolution.
     rom_path = rom or manifest.get("rom") or DEFAULT_ROMS.get(game)
@@ -179,7 +215,7 @@ def eval_composite(
         records = []
         for _ep in range(episodes):
             controller = CompositeController(
-                nets, levels.keys(), device, k=k,
+                nets, levels.keys(), device, k=k, gx_routes=gx_routes,
             )
             records.append(run_episode(pool, controller, reward_fn, max_steps,
                                        capture_dir=capture_handoffs,
@@ -196,6 +232,15 @@ def eval_composite(
     result["timestamp"] = time.time()
     result["hysteresis_k"] = k
     result["levels"] = sorted(levels.keys())
+    if gx_routes:
+        # Routed seams are disclosed, never hidden: the result names every
+        # gx-keyed handoff the manifest declares, alongside the per-episode
+        # gx_switches events summarize() carries through.
+        result["gx_routed"] = True
+        result["gx_routes"] = {
+            key: [[gx, name] for gx, name in stages]
+            for key, stages in gx_routes.items()
+        }
 
     # Append to a composite-specific eval log.
     slug = profile_slug(manifest.get("name")) if manifest.get("name") else "composite"
