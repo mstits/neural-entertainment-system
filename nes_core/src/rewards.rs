@@ -1332,6 +1332,18 @@ impl MarioReward {
             self.prev_world = world;
             self.prev_level = level;
             self.prev_display_level = display_level;
+            // Arm the checkpoint cursor at the episode's TRUE starting
+            // position: a mid-level restore (curriculum warm start,
+            // archive return, backplay rung) must not lump-pay every
+            // rung behind it on step 1. Rungs behind the start are
+            // skipped, never paid — a level-entrance restore skips
+            // nothing, so forward play from the start is unchanged.
+            let checkpoints = Self::checkpoints_for(world, level);
+            while self.next_checkpoint < checkpoints.len()
+                && x >= checkpoints[self.next_checkpoint].0
+            {
+                self.next_checkpoint += 1;
+            }
             self.first_step = false;
         }
 
