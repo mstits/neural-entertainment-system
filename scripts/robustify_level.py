@@ -77,7 +77,8 @@ def _level_key(ram) -> tuple:
 
 def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
                 seed=0, collect=False, harvest=None, explore_eps=0.0,
-                greedy_after=0, greedy_after_gx=0, sticky_prob=0.0):
+                greedy_after=0, greedy_after_gx=0, sticky_prob=0.0,
+                success_gx=0):
     """One episode. Returns (outcome, traj) with outcome in
     'clear' | 'died' | 'timeout'. `harvest`: optional dict[bucket->blob]
     filled at every first x-bucket crossing while still inside the
@@ -147,6 +148,12 @@ def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
             if b not in harvest:
                 harvest[b] = pool.save_worker_state(0)
         obs = pol.push(r[0])
+        # Segment predicate: with success_gx set, the episode SUCCEEDS on
+        # reaching that global x alive — the front-half weld target for
+        # gx-keyed intra-level routing (the back half is a separately
+        # welded net; the composite hands over at the boundary).
+        if success_gx and _gx(ram) >= success_gx and int(ram[0x000E]) not in (6, 11):
+            return "clear", (traj if collect else None)
         if tracker.seq_clear:
             return "clear", (traj if collect else None)
         if rew_done or bool(r[0][3]):
@@ -156,7 +163,8 @@ def run_episode(pool, pol, bitmasks, blob, max_steps, mode, device, reward_fn,
 
 def collect_demos(pool, pol, bitmasks, blob, max_steps, device, reward_fn,
                   want, cap, harvest=None, tag="", explore_eps=0.0,
-                  greedy_after=0, greedy_after_gx=0, sticky_prob=0.0):
+                  greedy_after=0, greedy_after_gx=0, sticky_prob=0.0,
+                  success_gx=0):
     demos, seen = [], 0
     while len(demos) < want and seen < cap:
         outcome, traj = run_episode(
@@ -164,6 +172,7 @@ def collect_demos(pool, pol, bitmasks, blob, max_steps, device, reward_fn,
             reward_fn, seed=seen, collect=True, harvest=harvest,
             explore_eps=explore_eps, greedy_after=greedy_after,
             greedy_after_gx=greedy_after_gx, sticky_prob=sticky_prob,
+            success_gx=success_gx,
         )
         seen += 1
         if outcome == "clear":
@@ -175,12 +184,12 @@ def collect_demos(pool, pol, bitmasks, blob, max_steps, device, reward_fn,
 
 
 def greedy_rate(pool, pol, bitmasks, blob, max_steps, device, reward_fn,
-                episodes) -> float:
+                episodes, success_gx=0) -> float:
     c = 0
     for ep in range(episodes):
         outcome, _ = run_episode(
             pool, pol, bitmasks, blob, max_steps, "greedy", device,
-            reward_fn, seed=ep,
+            reward_fn, seed=ep, success_gx=success_gx,
         )
         c += outcome == "clear"
     return c / max(1, episodes)
@@ -217,7 +226,8 @@ def _bc_fit(net, pol, pool, bitmasks, blob, demos, args, device, reward_fn,
             with torch.no_grad():
                 acc = (net.forward_ac(X)[0].argmax(-1) == Y).float().mean()
             rate = greedy_rate(pool, pol, bitmasks, blob, args.max_steps,
-                               device, reward_fn, args.eval_episodes)
+                               device, reward_fn, args.eval_episodes,
+                               success_gx=getattr(args, "success_gx", 0))
             print(f"[bc{tag}] epoch {epoch+1} loss {loss.item():.4f} "
                   f"acc {acc.item():.3f} greedy {rate:.2f}", flush=True)
             if rate > best_rate:
@@ -286,6 +296,10 @@ def main() -> int:
                          "argmax after this many steps — bridge the "
                          "unwelded gap stochastically, then let the "
                          "welded greedy policy finish (0 = off).")
+    ap.add_argument("--success-gx", type=int, default=0,
+                    help="Segment weld: success = reaching this global x "
+                         "alive (instead of clearing the level). For "
+                         "gx-keyed intra-level routing front halves.")
     ap.add_argument("--sticky-prob", type=float, default=0.0,
                     help="Match the training noise model during collection: "
                          "repeat the previous action with this probability "
@@ -346,7 +360,7 @@ def main() -> int:
             args.clears, args.episode_cap, harvest=harvested, tag=f":{name}",
             explore_eps=args.explore_eps, greedy_after=args.greedy_after,
             greedy_after_gx=args.greedy_after_gx,
-            sticky_prob=args.sticky_prob,
+            sticky_prob=args.sticky_prob, success_gx=args.success_gx,
         )
         if demos:
             rate, best_sd = bc_round(net, pol, pool, bitmasks, blob, demos,
