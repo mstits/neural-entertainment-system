@@ -27,5 +27,9 @@ levels:
     ckpt: checkpoints/mario_2_2_water/robust_2_2_pretrain.pt
     profile: configs/smb_2_2_water.yaml
   2-3:
-    ckpt: checkpoints/mario_2_3/robust_2_3_native.pt
+    # winners/best.pt from iter 380 (frozen 2026-07-17, training
+    # clear_rate 0.110): probed 1.0 greedy 6/6 from the 2-3 entry on
+    # 2026-07-18. robust_2_3_native.pt probes 0.0 from the same entry —
+    # the earlier freeze promoted a checkpoint outside its clears era.
+    ckpt: checkpoints/mario_2_3/robust_2_3_iter380_clears.pt
     profile: configs/smb_2_3.yaml

@@ -518,3 +518,53 @@ these fixes; 2) if its stochastic rate rises, snap; if argmax emerges, route
 directly; 3) beam solver v2 (phase enumeration + state dedup + ep231
 frontier init) as the guaranteed-demo generator if needed; 4) go/no-go
 Sunday 18:00 per the decision memo stands.
+
+## 2026-07-18 — day 3: the famine breaks
+
+**Diagnosis (26-agent research swarm, all-survivor judging):** the 2-1
+blocker was a trajectory famine at the gx1658 enemy-pack compound plus an
+arrival-phase diversity famine — not capacity, reward, or credit. Ranked
+plan + build order in the workflow journal (wf_76ecd14e-270).
+
+**Shipped, in order:**
+1. explore-credit patch: demo-anchor decay was LOOP-LOCAL (`it`) — every
+   resume re-pinned the run to the single-phase 503-pair bank at ~coef0
+   while entropy collapsed; now global-iteration honest with
+   demo_anchor_coef/demo_anchor_loss telemetry. gx-count frontier bonus
+   (beta/sqrt(visits) on 64px buckets, cumulative, checkpoint-persisted).
+   Bounce #1 12:25. Bars MISSED (entropy 0.07-0.19, ceiling gx~1635) —
+   anchor release alone was insufficient, as the swarm predicted.
+2. rewards.rs checkpoint-arming fix: mid-level restores lump-paid every
+   rung behind them (+1125 at gx1860); the cursor now arms at the true
+   start. Verified both directions. Unblocked all restore-based levers.
+3. go-explore harvester (scripts/go_explore_2_1.py + replay_to_demos.py):
+   SIX verified full 2-1 clears in 4 phase classes in the first minutes
+   (historical rate ~1/16k episodes); all 8 phase classes at the flag;
+   provenance "search" sidecars throughout.
+4. Bank swap + archive returns (bounce #2, global iter 175): anchor =
+   v2 + six v3 clear demos (3610 pairs), hard re-anchor 1.0->0.25/200
+   from the swap (new demo_anchor_decay_start knob); in-trainer
+   go_explore ENABLED (smb_gx_phase cells, iter-boundary returns +
+   inline_return_prob 0.5). RESULT: first training clears of 2-1 EVER —
+   8-16/iter sustained (mixed restored starts; honest metric is the cold
+   from-root probe, 0.0 at iter-180 snapshot, re-probing on cadence).
+5. eval_game --start-state was DEAD CODE (profile state clobbered the
+   CLI param) — every past arbitrary-state probe warm-started from the
+   profile state. Fixed; past probe claims through this flag are suspect.
+6. Seam probes with the fixed harness: 2-2 weld = 1.0 from its pretrain
+   entry but 0.0 from a GENUINE flag arrival — a pure PHASE mismatch
+   (frame counter 1 vs 7, all other gameplay bytes identical). Genuine
+   arrivals are phase-locked by the flag walk, so the weld fine-tune
+   needs one phase. 10-state genuine arrival band banked
+   (checkpoints/handoffs/arrival_band_2_2/). 2-3: winners/best.pt
+   (iter 380) probes 1.0 greedy 6/6 — the earlier freeze promoted
+   robust_2_3_native.pt from outside its clears era (0.0); composite now
+   routes robust_2_3_iter380_clears.pt. 2-1 routes robust_2_1_front.pt
+   (W1 chain re-verified 3/3 cold, zero deaths).
+
+**Open, in order:** (a) cold from-root 2-1 probe on cadence — expectation
+is the restored-start competence welds to the front within the anchor
+decay window; (b) 2-2 weld fine-tune from the genuine arrival band
+(machine is saturated: fires at the next natural Run B pause); (c) probe
+2-3 from a genuine 2-2 exit once one exists; (d) harvester keeps running
+for a v4 bank + backplay rungs (beam v2 stays the E1/E2 fallback only).
