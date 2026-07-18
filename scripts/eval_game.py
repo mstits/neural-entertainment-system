@@ -335,12 +335,20 @@ def eval_one_game(
         stacker = FrameStacker(stack_size=frame_stack, dtype=obs_dtype)
         pol = _PixelPolicy(net, stacker, pool_preprocess_f16)
 
-    start_state = profile.get("start_state_path") or (
+    # The profile's start state seeds the POOL (cold-boot default). It
+    # must not clobber the `start_state` CLI param: this line previously
+    # assigned to `start_state` itself, which silently killed every
+    # --start-state override — all "arbitrary state" probes warm-started
+    # from the profile's state instead (the 2-2 probes cold-booted into
+    # the title demo and scored an artifact 0.0).
+    profile_start = profile.get("start_state_path") or (
         Path(rom_path).with_name(Path(rom_path).stem + "_start.state.bin")
     )
     pool = Pool(
         rom_path=rom_path, num_workers=1, frame_skip=4,
-        start_state_path=str(start_state) if Path(str(start_state)).exists() else None,
+        start_state_path=(
+            str(profile_start) if Path(str(profile_start)).exists() else None
+        ),
     )
     # Pixel f16 fast path: tell the pool to emit the 84x84 obs as float16
     # already normalized to [0, 1] (shipped as (84, 168) uint8 half-bytes),

@@ -472,6 +472,12 @@ class Trainer:
         self.demo_anchor_final: float = float(
             rl_cfg.get("demo_anchor_coef_final", 0.02)
         )
+        # Global iteration at which the anchor schedule STARTS. Lets a
+        # mid-run bank swap re-anchor fresh (coef0 at the swap iter, not
+        # back-dated to iter 0) while staying honest under global_it.
+        self.demo_anchor_decay_start: int = int(
+            rl_cfg.get("demo_anchor_decay_start", 0)
+        )
         self.demo_anchor_decay_iters: int = max(
             1, int(rl_cfg.get("demo_anchor_decay_iters", 400))
         )
@@ -5989,7 +5995,9 @@ class Trainer:
             # lets the reward gradient own — and exceed — the demos.
             if self._demo_bank is not None:
                 _da_frac = min(
-                    1.0, global_it / max(1, self.demo_anchor_decay_iters)
+                    1.0,
+                    max(0, global_it - self.demo_anchor_decay_start)
+                    / max(1, self.demo_anchor_decay_iters),
                 )
                 _demo_coef = self.demo_anchor_coef0 + _da_frac * (
                     self.demo_anchor_final - self.demo_anchor_coef0

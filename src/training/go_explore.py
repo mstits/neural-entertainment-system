@@ -300,10 +300,13 @@ def ram_downsample_cell(stride: int = 64, bucket: int = 16) -> CellFn:
 
 
 def smb_gx_phase_cell(gx_bucket: int = 16, y_bucket: int = 32) -> CellFn:
-    """SMB cell key: (area, y-band, enemy phase, gx bucket).
+    """SMB cell key: (area, enemy phase, y-band, gx bucket).
 
-    The gx bucket is LAST so `horizontal_neighbors` sees the x component
-    per its convention. The phase component is ((ram[0x0009] >> 2) & 7):
+    Component order matches scripts/go_explore_2_1.py exactly so the
+    harvester's archive and the trainer's speak one key language and a
+    copied archive stays coherent under domination/dedup. The gx bucket
+    is LAST so `horizontal_neighbors` sees the x component per its
+    convention. The phase component is ((ram[0x0009] >> 2) & 7):
     bits 2-4 of the frame counter. At frame_skip 4 consecutive decisions
     land 4 frames apart, so bits 0-1 are constant within a lineage and a
     raw mod-8 key collapses to 2-4 residues; bits 2-4 are the granularity
@@ -318,8 +321,8 @@ def smb_gx_phase_cell(gx_bucket: int = 16, y_bucket: int = 32) -> CellFn:
         gx = (ram[0x006D] << 8) | ram[0x0086]
         return (
             ram[0x0760],
-            ram[0x00CE] // y_bucket,
             (ram[0x0009] >> 2) & 7,
+            ram[0x00CE] // y_bucket,
             gx // gx_bucket,
         )
 
