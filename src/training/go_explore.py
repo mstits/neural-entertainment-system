@@ -299,6 +299,33 @@ def ram_downsample_cell(stride: int = 64, bucket: int = 16) -> CellFn:
     return _fn
 
 
+def smb_gx_phase_cell(gx_bucket: int = 16, y_bucket: int = 32) -> CellFn:
+    """SMB cell key: (area, y-band, enemy phase, gx bucket).
+
+    The gx bucket is LAST so `horizontal_neighbors` sees the x component
+    per its convention. The phase component is ((ram[0x0009] >> 2) & 7):
+    bits 2-4 of the frame counter. At frame_skip 4 consecutive decisions
+    land 4 frames apart, so bits 0-1 are constant within a lineage and a
+    raw mod-8 key collapses to 2-4 residues; bits 2-4 are the granularity
+    at which enemy spawn/walk cycles genuinely differ. Eight phase
+    classes keeps arrival-context diversity in the archive — the same
+    (area, y, gx) reached on a different enemy phase is a DIFFERENT
+    cell, so the archive holds one return state per arrival context —
+    without fragmenting the key space 64-way.
+    """
+
+    def _fn(ram: bytes) -> CellKey:
+        gx = (ram[0x006D] << 8) | ram[0x0086]
+        return (
+            ram[0x0760],
+            ram[0x00CE] // y_bucket,
+            (ram[0x0009] >> 2) & 7,
+            gx // gx_bucket,
+        )
+
+    return _fn
+
+
 # ---------------------------------------------------------------------
 # Pure helpers for the Nature-spec selection / robustification quartet.
 # All are side-effect-free and unit-tested in tests/test_go_explore.py.

@@ -802,6 +802,15 @@ class Trainer:
         # is built and no bonus is added).
         self.rnd_intrinsic_coef: float = float(rl_cfg.get("rnd_intrinsic_coef", 0.0))
         self.rnd_loss_coef: float = float(rl_cfg.get("rnd_loss_coef", 1.0))
+        # Count-based frontier bonus on (world/level, 64px gx-bucket)
+        # visitation: bonus = beta / sqrt(visits). Unlike RND, whose
+        # novelty re-inflates on distribution shift, the count table is
+        # cumulative across the whole run — trodden ground decays
+        # permanently and only a genuine frontier keeps paying, so the
+        # bonus is a cross-episode monotone gradient toward rare depth.
+        # 0.0 (default) = off, no behavior change for other profiles.
+        self._gx_count_beta: float = float(rl_cfg.get("gx_count_bonus_coef", 0.0))
+        self._gx_counts: dict[int, int] = {}
         # Fraction of vanilla-PPO minibatches on which the RND *predictor*
         # is distilled toward the frozen target. 1.0 (default) trains it on
         # every minibatch — byte-for-byte today's behaviour. f in (0,1)
@@ -4243,6 +4252,11 @@ class Trainer:
                         # Anti-collapse locals init after this block; stash
                         # and restore them there.
                         self._pending_anticollapse = state["anticollapse"]
+                    if "gx_counts" in state:
+                        self._gx_counts = {
+                            int(k): int(v)
+                            for k, v in state["gx_counts"].items()
+                        }
                     self._vppo_resumed_from_iter = iter_offset
                     log.info(
                         "[vanilla_ppo] RESUMED net + optimizer from %s "
@@ -5025,6 +5039,9 @@ class Trainer:
         obs_buf = np.zeros((rollout_steps, num_envs) + obs_shape, dtype=obs_dtype)
         action_buf = np.zeros((rollout_steps, num_envs), dtype=np.int32)
         reward_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
+        # Count-bonus stream kept separate from extrinsic rewards so it
+        # folds once per iter, done-masked, alongside RND's intrinsic.
+        bonus_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
         value_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
         log_prob_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
         done_buf = np.zeros((rollout_steps, num_envs), dtype=np.bool_)
@@ -5112,13 +5129,24 @@ class Trainer:
         def _ge_score(_i: int) -> float:  # replaced below when enabled
             return 0.0
 
+        # Probability that an INLINE (mid-rollout death) restart draws its
+        # start from the archive instead of the profile start state. 0.0
+        # (default) keeps every inline restart at the configured start —
+        # archive returns then happen only at iter boundaries.
+        _ge_inline_p = float(_ge_cfg.get("inline_return_prob", 0.0))
         if go_explore_on:
             from src.training.go_explore import (
                 GoExploreArchive, ram_bytes_cell, ram_downsample_cell,
+                smb_gx_phase_cell,
             )
             _cell_cfg = dict(_ge_cfg.get("cell", {}) or {})
             _cell_type = str(_cell_cfg.get("type", "ram_downsample"))
-            if _cell_type == "ram_bytes":
+            if _cell_type == "smb_gx_phase":
+                cell_fn = smb_gx_phase_cell(
+                    gx_bucket=int(_cell_cfg.get("gx_bucket", 16)),
+                    y_bucket=int(_cell_cfg.get("y_bucket", 32)),
+                )
+            elif _cell_type == "ram_bytes":
                 _addrs = [
                     int(a) for a in _cell_cfg.get(
                         "addresses", [0x075F, 0x0760, 0x006D]
@@ -5309,6 +5337,7 @@ class Trainer:
                             # bootstrap across the boundary. Zero reward
                             # (nothing earned in this "dead" step).
                             reward_buf[t, i] = 0.0
+                            bonus_buf[t, i] = 0.0
                             done_buf[t, i] = True
                             continue
                         ram = r.ram_snapshot
@@ -5322,6 +5351,15 @@ class Trainer:
                         x_pos = (int(ram[0x006D]) << 8) | int(ram[0x0086])
                         if x_pos > max_x_reached[i]:
                             max_x_reached[i] = x_pos
+                        if self._gx_count_beta > 0.0:
+                            _gxk = (wl_packed << 9) | (x_pos >> 6)
+                            _gxn = self._gx_counts.get(_gxk, 0) + 1
+                            self._gx_counts[_gxk] = _gxn
+                            bonus_buf[t, i] = (
+                                self._gx_count_beta / math.sqrt(_gxn)
+                            )
+                        else:
+                            bonus_buf[t, i] = 0.0
                         # Ladder mode: track the furthest sub-stage rung this
                         # env reached. `region_of` credits only sequential-path
                         # states (a warp yields OFF_LADDER), so it never rises
@@ -5622,8 +5660,31 @@ class Trainer:
                                 # multiplier on the level. Stacker re-seed
                                 # is deferred one step (post-restore RAM
                                 # arrives on the next step_all).
+                                _restart_bytes = _start_bytes
+                                if (
+                                    go_explore_archive is not None
+                                    and _ge_inline_p > 0.0
+                                    and len(go_explore_archive) > 0
+                                    and np.random.random() < _ge_inline_p
+                                ):
+                                    # First-return-then-explore on the
+                                    # inline path: restart this life from
+                                    # an archive frontier cell instead of
+                                    # the level entrance, concentrating
+                                    # attempt density where progress
+                                    # actually stalls. The checkpoint
+                                    # cursor arms at the restored x
+                                    # (rewards.rs first-step arming), so
+                                    # deep restores pay nothing for the
+                                    # ground behind them.
+                                    _ge_blob = (
+                                        go_explore_archive
+                                        .select_return_states(1)[0]
+                                    )
+                                    if _ge_blob is not None:
+                                        _restart_bytes = _ge_blob
                                 try:
-                                    self.pool.load_worker_state(i, _start_bytes)
+                                    self.pool.load_worker_state(i, _restart_bytes)
                                     reward_fns[i].reset()
                                     prev_completion_total[i] = 0.0
                                     _stage0_reseed[i] = True
@@ -5776,6 +5837,14 @@ class Trainer:
             self._gen_timer.add(
                 "rnd_intrinsic", time.perf_counter_ns() - _rnd_intrinsic_t0
             )
+            # Fold the count-based frontier bonus exactly like RND's
+            # intrinsic stream (same done-masked helper).
+            count_bonus_mean = 0.0
+            if self._gx_count_beta > 0.0:
+                count_bonus_mean = float(bonus_buf.mean())
+                reward_buf = fold_intrinsic_into_rewards(
+                    reward_buf, bonus_buf, done_buf
+                )
 
             # ============== GAE-λ BACKWARD SWEEP ==============
             # Batched, per-step-done-masked GAE (src/training/ppo.py).
@@ -5920,13 +5989,15 @@ class Trainer:
             # lets the reward gradient own — and exceed — the demos.
             if self._demo_bank is not None:
                 _da_frac = min(
-                    1.0, it / max(1, self.demo_anchor_decay_iters)
+                    1.0, global_it / max(1, self.demo_anchor_decay_iters)
                 )
                 _demo_coef = self.demo_anchor_coef0 + _da_frac * (
                     self.demo_anchor_final - self.demo_anchor_coef0
                 )
             else:
                 _demo_coef = 0.0
+            _demo_loss_accum = 0.0
+            _demo_loss_n = 0
             for epoch in range(0 if self._recurrent else self.reinforce_steps):
                 perm = np.random.permutation(valid_indices)
                 n_valid = perm.shape[0]
@@ -5980,9 +6051,14 @@ class Trainer:
                             self.demo_anchor_mb
                         )
                         d_logits, _ = net.forward_ac(d_obs)
-                        loss = loss + _demo_coef * demo_anchor_loss(
+                        _da_loss = demo_anchor_loss(
                             d_logits, d_act, margin=self.demo_anchor_margin
                         )
+                        loss = loss + _demo_coef * _da_loss
+                        # Tensor-accumulate; a single sync at metrics
+                        # emission instead of one .item() per minibatch.
+                        _demo_loss_accum = _demo_loss_accum + _da_loss.detach()
+                        _demo_loss_n += 1
                     # RND predictor loss: train the predictor to mimic
                     # the frozen target on visited states (its params are
                     # in this optimizer). Forward with grad here, unlike
@@ -6839,6 +6915,12 @@ class Trainer:
                 vanilla_ppo_clears=n_clears_this_iter,
                 vanilla_ppo_rnd_loss=last_rnd_loss,
                 vanilla_ppo_intrinsic_mean=rnd_intrinsic_mean,
+                vanilla_ppo_count_bonus_mean=count_bonus_mean,
+                demo_anchor_coef=_demo_coef,
+                demo_anchor_loss=(
+                    float(_demo_loss_accum) / _demo_loss_n
+                    if _demo_loss_n else 0.0
+                ),
                 vanilla_ppo_samples_per_sec=samples_per_sec,
                 vanilla_ppo_realtime_x=realtime_x,
                 **resume_metrics,
@@ -7210,6 +7292,10 @@ class Trainer:
                             k: v.detach().cpu()
                             for k, v in self._rnd.state_dict().items()
                         }
+                    # Persist the gx-visitation table so a bounce doesn't
+                    # re-inflate already-trodden buckets' bonuses.
+                    if self._gx_counts:
+                        _ckpt_payload["gx_counts"] = self._gx_counts
                     # Persist the anti-collapse rollback baseline (best-ever
                     # healthy snapshot + its fitness + strike count) so a
                     # resumed run keeps its collapse-recovery memory. The
