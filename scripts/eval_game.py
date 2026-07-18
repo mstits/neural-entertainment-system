@@ -399,6 +399,7 @@ def eval_one_game(
     returns: list[float] = []
     lengths: list[int] = []
     max_bytes: list[int] = []
+    max_gxs: list[int] = []
     clears = 0
     # --sequential accumulators (per-episode). Only populated in sequential
     # mode; left empty otherwise so the back-compat result is unchanged.
@@ -441,6 +442,7 @@ def eval_one_game(
             tracker.update(init[0][2])
         ep_return = 0.0
         ep_max_byte = 0
+        ep_max_gx = 0
         ep_cleared = False
         step = 0
         for step in range(max_steps):
@@ -461,6 +463,13 @@ def eval_one_game(
             byte = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)
             if byte > ep_max_byte:
                 ep_max_byte = byte
+            if tracker is not None:
+                # Death-gx telemetry (SMB modes only): where each episode's
+                # horizontal frontier stalled — THE localization signal when
+                # a level trains but a cold probe still reads 0.0.
+                gx_now = (int(ram[0x006D]) << 8) | int(ram[0x0086])
+                if gx_now > ep_max_gx:
+                    ep_max_gx = gx_now
             obs = pol.push(r[0])
             if reward_fn.episode_success():
                 ep_cleared = True
@@ -478,6 +487,7 @@ def eval_one_game(
         returns.append(ep_return)
         lengths.append(step + 1)
         max_bytes.append(ep_max_byte)
+        max_gxs.append(ep_max_gx)
         if ep_cleared:
             clears += 1
         if tracker is not None:
@@ -507,6 +517,7 @@ def eval_one_game(
         "mean_length": float(np.mean(lengths)) if lengths else 0.0,
         "max_byte_seen": int(max(max_bytes)) if max_bytes else 0,
         "mean_max_byte": float(np.mean(max_bytes)) if max_bytes else 0.0,
+        "max_gx_per_episode": max_gxs,
         "clear_rate": clears / max(1, n_episodes),
         "timestamp": time.time(),
     }
