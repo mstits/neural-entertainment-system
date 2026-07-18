@@ -480,3 +480,41 @@ N+1); demo collection must match the training noise model (sticky) or clear
 rates collapse ~70x; freeze checkpoints only after confirming the clears era
 includes them; chain-captured vs training-native entry states differ by phase
 and are not interchangeable for welding.
+
+## 2026-07-17 — end-of-day 2: all stopped for the night, resume 07-18
+
+**Chain:** unchanged — World 1 clears (deterministic 1.0), dies in 2-1.
+
+**What day 2 established (in order of importance):**
+1. The adversarial audit found SEVEN verified execution defects; the two
+   largest are FIXED AND PUSHED (935e609): 2-1 trained in a reward desert
+   (World-2 checkpoint fallthrough — calibrated LEVEL_2_1 ladder + generic
+   every-256px ladder added to rewards.rs) and stage-0 freeze-on-done wasted
+   ~95% of env slots (inline start-state restarts added). Also verified:
+   sticky_action_prob is DEAD CODE in vanilla_ppo (never trained sticky);
+   the credit config was wrong four ways (fixed in Run B's profile);
+   the anchor decayed before cashing; the curriculum quartet is shelf-ware;
+   the v2 run's stage capture misfired (poisoned stage archived).
+2. The v2 de-aliased encoder is proven: a solo clone greedy-plays the
+   entire former killer compound (runway->flag, 503 steps, perfect replay).
+3. The front half is welded: robust_2_1_front.pt, greedy 1.00 from the
+   TRUE handoff to gx1471, via the new --success-gx segment predicate.
+4. Composition of one-demo clones fails off-line (arrival contexts unknown
+   to a single-trajectory net); stochastic suffix expansion got 0/500;
+   beam search v1 goes extinct at the enemy pack (needs the attack plan's
+   phase-enumeration + dedup design, docs/proposals/ + workflow journal
+   wf_8895a944-098).
+
+**RUN B was launched with every fix stacked** (dense rewards + inline
+restarts + gamma 0.99/lambda 0.95 + RND 0.02 + corridor warm start + anchor
+floor 0.25) and ran healthily to iter ~60 (episodes deepening, no clears
+yet) before the night stop. Resume:
+  `python scripts/train_game.py --game mario --profile <weld_2_1_runB.yaml>`
+  (profile snapshot in checkpoints/mario_2_1_runB/run_manifest.json if the
+  scratchpad copy is gone; dir auto-resumes from its checkpoints).
+
+**Morning order:** 1) resume Run B, give it the hours it never had with
+these fixes; 2) if its stochastic rate rises, snap; if argmax emerges, route
+directly; 3) beam solver v2 (phase enumeration + state dedup + ep231
+frontier init) as the guaranteed-demo generator if needed; 4) go/no-go
+Sunday 18:00 per the decision memo stands.
