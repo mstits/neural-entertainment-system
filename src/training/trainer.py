@@ -5053,6 +5053,15 @@ class Trainer:
         # causes re-firing done on every step" bug — that path inflated
         # completed_eps to 1000+ per iter and mean_len to 3-5.
         active_in_iter = np.ones(num_envs, dtype=bool)
+        # Stage-0 inline restart: deferred stacker re-seed flags (the
+        # restored state produces RAM only on the NEXT step_all).
+        _stage0_reseed = np.zeros(num_envs, dtype=bool)
+        _start_bytes = None
+        if self.start_state_path:
+            try:
+                _start_bytes = Path(self.start_state_path).read_bytes()
+            except Exception:
+                _start_bytes = None
         # Count per-env flag-touches across the iter. Each time the
         # reward fn's `completion` breakdown key grows, an SMB level
         # was cleared by that env. Tracks last-seen value per env so
@@ -5603,9 +5612,30 @@ class Trainer:
                                         self.pool.set_worker_done(i, True)
                                     except Exception:
                                         pass
+                            elif _start_bytes is not None and self._is_tile_mode:
+                                # Stage 0 with a configured start state:
+                                # inline restart instead of freezing. The
+                                # old freeze-on-done wasted ~95% of env
+                                # slots at rollout 4096 (one ~200-step
+                                # episode then frozen padding) — this is
+                                # the single biggest attempts-per-hour
+                                # multiplier on the level. Stacker re-seed
+                                # is deferred one step (post-restore RAM
+                                # arrives on the next step_all).
+                                try:
+                                    self.pool.load_worker_state(i, _start_bytes)
+                                    reward_fns[i].reset()
+                                    prev_completion_total[i] = 0.0
+                                    _stage0_reseed[i] = True
+                                except Exception:
+                                    active_in_iter[i] = False
+                                    try:
+                                        self.pool.set_worker_done(i, True)
+                                    except Exception:
+                                        pass
                             else:
-                                # Stage 0: no warm-state, freeze and wait
-                                # for the iter-boundary reset_all.
+                                # Stage 0, no start bytes (cold-boot-only
+                                # game): freeze until iter boundary.
                                 active_in_iter[i] = False
                                 try:
                                     self.pool.set_worker_done(i, True)
@@ -5619,7 +5649,15 @@ class Trainer:
                         # re-introduce the desync). Once done+frozen, the
                         # stacker's contents represent the final pre-done
                         # observation — no point contaminating it.
-                        if active_in_iter[i] and not reseeded:
+                        if active_in_iter[i] and _stage0_reseed[i] and self._is_tile_mode:
+                            # Deferred stage-0 restart seed: this step's
+                            # RAM is the first post-restore frame — fresh
+                            # stack, exactly like an episode start.
+                            stacked_obs[i] = tile_stackers[i].reset(
+                                self._tile_extractor.extract(ram)
+                            )
+                            _stage0_reseed[i] = False
+                        elif active_in_iter[i] and not reseeded:
                             if self._is_tile_mode:
                                 stacked_obs[i] = tile_stackers[i].push(
                                     self._tile_extractor.extract(ram)

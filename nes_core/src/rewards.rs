@@ -1053,6 +1053,40 @@ impl MarioReward {
         // motor pattern) rather than only on reaching-the-staircase.
         (3000, 1500.0),
     ];
+
+    /// World 2-1 dense ladder — calibrated from the 2026-07-16/17
+    /// campaign's empirical hazard map (pit-trap ~1640, enemy pack
+    /// ~1658, 4-tall piranha pipe ~1904, pit to ~1963, corridor to the
+    /// staircase, flag ~3161). Without this table 2-1 trained on
+    /// forward-progress alone; at gamma 0.9 the completion bonus is
+    /// invisible >~200px out and the pool provably collapsed to a
+    /// frozen death line at ~1891 after touching x=3300.
+    const LEVEL_2_1: &'static [(u32, f64)] = &[
+        (400, 50.0),    // past the opening enemies
+        (800, 100.0),   // mid approach
+        (1200, 150.0),  // approach to the runway
+        (1421, 200.0),  // the runway line
+        (1640, 275.0),  // pit-trap edge survived
+        (1760, 350.0),  // past the enemy pack
+        (1904, 425.0),  // at the piranha pipe
+        (1990, 550.0),  // PAST the pipe+pit compound (the campaign wall)
+        (2200, 600.0),  // corridor
+        (2600, 675.0),  // corridor deep
+        (2900, 750.0),  // staircase base
+        (3100, 850.0),  // final approach
+    ];
+
+    /// Generic dense ladder for any level with no calibrated table:
+    /// a checkpoint every 256px. Coarse, but it guarantees NO level
+    /// ever again trains in a reward desert (the World-2 fallthrough
+    /// oversight): with gamma 0.9, some forward signal must exist
+    /// within every ~200px or distant progress cannot be credited.
+    const GENERIC_LADDER: &'static [(u32, f64)] = &[
+        (256, 40.0), (512, 80.0), (768, 120.0), (1024, 160.0),
+        (1280, 200.0), (1536, 240.0), (1792, 280.0), (2048, 320.0),
+        (2304, 360.0), (2560, 400.0), (2816, 440.0), (3072, 480.0),
+        (3328, 520.0), (3584, 560.0), (3840, 600.0),
+    ];
     // Note: a previous revision (commit 770d258) added 5 dense
     // intermediate checkpoints at 1850/2000/2200/2400/2600 — the
     // population stalled at depth=1275 long before the dense zone.
@@ -1174,9 +1208,12 @@ impl MarioReward {
             (0, 2) => Self::LEVEL_1_2,
             (0, 3) => Self::LEVEL_1_3,
             (0, 4) => Self::LEVEL_1_4,
-            // world 2+ — not yet calibrated. Falls through to forward +
-            // completion only.
-            _ => &[],
+            // World 2-1: calibrated (see LEVEL_2_1). Every other
+            // uncalibrated level gets the generic every-256px ladder —
+            // never again a reward desert (the World-2 fallthrough that
+            // cost 2-1 seventeen machine-hours).
+            (1, 0) => Self::LEVEL_2_1,
+            _ => Self::GENERIC_LADDER,
         }
     }
 
