@@ -444,6 +444,7 @@ class CompositeController:
         self._active_key: Optional[str] = None
         self._gx_stage = 0
         self._gx_confirm = 0
+        self._gx_pad = 0
         self.gx_switch_events: list[dict] = []
 
     def _select(self, label: str, area: Optional[int] = None) -> LevelNet:
@@ -472,9 +473,12 @@ class CompositeController:
         self.segments = [Segment(level=label, entered_step=0)]
         self._gx_stage = 0
         self._gx_confirm = 0
+        self._gx_pad = 0
         self.gx_switch_events = []
 
     def act(self) -> int:
+        if self._gx_pad > 0:
+            return 0  # noop through the switch pad
         t = self.adapter.to_tensor(self.obs, self.device)
         bitmask, self.hidden = self.active_net.forward_greedy(t, self.hidden)
         return bitmask
@@ -534,9 +538,19 @@ class CompositeController:
             self.obs = self.adapter.reset(ram, pp)
             self.hidden = self.active_net.initial_hidden()
             return None
+        if self._gx_pad > 0:
+            # Mid-pad: the incoming stage net's stack seeds AFTER the pad
+            # so its first observation matches the load -> one-noop ->
+            # act replay convention its demos were minted under.
+            self._gx_pad -= 1
+            if self._gx_pad == 0:
+                self.adapter = self.active_net.new_adapter()
+                self.obs = self.adapter.reset(ram, pp)
+                self.hidden = self.active_net.initial_hidden()
+            return None
         routes = self.gx_routes.get(self._active_key)
         if routes and self._gx_stage < len(routes):
-            at_gx, net_key = routes[self._gx_stage]
+            at_gx, net_key, noop_pad = routes[self._gx_stage]
             gx = (int(ram[0x006D]) << 8) | int(ram[0x0086])
             if gx >= at_gx:
                 self._gx_confirm += 1
@@ -546,14 +560,19 @@ class CompositeController:
                 self._gx_confirm = 0
                 self._gx_stage += 1
                 self.active_net = self.nets[net_key]
-                self.adapter = self.active_net.new_adapter()
-                self.obs = self.adapter.reset(ram, pp)
-                self.hidden = self.active_net.initial_hidden()
                 self.switches += 1
                 self.gx_switch_events.append({
                     "level": self.active_label, "at_gx": at_gx,
                     "gx": gx, "step": step, "net": net_key,
+                    "noop_pad": noop_pad,
                 })
+                if noop_pad > 0:
+                    # act() emits noops for the pad; stack seeds at pad end.
+                    self._gx_pad = noop_pad
+                else:
+                    self.adapter = self.active_net.new_adapter()
+                    self.obs = self.adapter.reset(ram, pp)
+                    self.hidden = self.active_net.initial_hidden()
                 return None
         self.obs = self.adapter.push(ram, pp)
         return None

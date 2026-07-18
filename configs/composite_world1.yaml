@@ -21,8 +21,25 @@ levels:
     ckpt: checkpoints/mario_1_2_underground_consolidate/robust_1_2_handoff.pt
     profile: configs/smb_underground_consolidate.yaml
   2-1:
+    # Routed two-net level (disclosed via gx_switches in every result):
+    # the welded front (greedy 1.0 to gx1471) opens; at gx1440 the back
+    # net takes the seam. back_2_1_iter230_clears.pt is the Run B winner
+    # frozen in its clears era — greedy 1.0 (12/12) from the gx1421
+    # runway seed to the flag, probed 2026-07-18.
     ckpt: checkpoints/mario_2_1/robust_2_1_front.pt
     profile: configs/smb_oneshot_tiles.yaml
+    gx_switches:
+      # Seam pilot: BC clone of one verified live-lineage solution
+      # (sol_020, 386 actions, provenance search) at 100% action
+      # accuracy — deterministic replay from the deterministic front-net
+      # arrival. Probed greedy 4/4 live-arrival -> flag (gx3299).
+      # Robustified replacement trains in mario_2_1_seamweld.
+      - at_gx: 1440
+        ckpt: checkpoints/mario_2_1_seamweld/seam_pilot_sol020.pt
+        profile: checkpoints/mario_2_1_seamweld/weld_2_1_seam.yaml
+        # One noop step at the switch reproduces the load -> one-noop ->
+        # act convention the pilot's demo was minted (and probed) under.
+        noop_pad: 1
   2-2:
     ckpt: checkpoints/mario_2_2_water/robust_2_2_pretrain.pt
     profile: configs/smb_2_2_water.yaml

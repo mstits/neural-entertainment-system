@@ -180,7 +180,9 @@ def eval_composite(
                                 ckpt=s_ckpt, profile=s_prof, detail=str(e))
             s_key = f"{key}@gx{at_gx}"
             nets[s_key] = cache[s_cache_key]
-            gx_routes.setdefault(key, []).append((at_gx, s_key))
+            gx_routes.setdefault(key, []).append(
+                (at_gx, s_key, int(sw.get("noop_pad", 0)))
+            )
     for key in gx_routes:
         gx_routes[key].sort()
 
@@ -238,7 +240,7 @@ def eval_composite(
         # gx_switches events summarize() carries through.
         result["gx_routed"] = True
         result["gx_routes"] = {
-            key: [[gx, name] for gx, name in stages]
+            key: [[gx, name, pad] for gx, name, pad in stages]
             for key, stages in gx_routes.items()
         }
 
