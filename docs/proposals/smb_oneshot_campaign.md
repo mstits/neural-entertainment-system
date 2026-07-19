@@ -627,3 +627,43 @@ harvester resumes from its flushed archive with the same command
 (checkpoints/go_explore_2_2/harvester.log documents it). The chain
 verifies with: eval_composite --manifest configs/composite_world1.yaml
 --episodes 3 --stop-after-worlds 2 (expect 2-1 3/3, death in 2-2).
+
+## 2026-07-19 — GATE MET, 7 hours early
+
+**The written go/no-go criterion is satisfied as of 11:20 (deadline
+18:00).** Verdict: GO — the chain continues; Tetris does not go primary.
+
+- **(ii)** Cold, single-session, single-life, warpless deterministic
+  composite clears **1-1 through 2-3 consecutively on BOTH gate seeds**
+  (2/2 episodes each; first death 2-4 gx471), with per-episode action
+  receipts (runs/gate_receipts_seed{0,1}) and every seam disclosed
+  (gx_switches + level entry opts in the result JSON). git 45b0d11.
+- **(i)** World 1 replays 1.0 warpless inside those same runs, both
+  seeds.
+- **(iii)** The sticky-0.25 + start-jitter-16 pair (50 episodes,
+  receipted) is running report-only; its number will be published
+  as-is. The deterministic chain is a trajectory-replay system at the
+  routed seams and the honest pair is expected to be far below 1.0 —
+  robustifying the pilots is the standing next lane, not a gate item.
+- Receipts are Tier-A (self-replay verified: the seed-0 receipt's 4514
+  masks reproduce the run from power-on by direct pool replay). fm2 /
+  FCEUX cross-verification remains the flagged Tier-B gap.
+
+**How 2-2 fell this morning (~2.5 h):** the "frontier stuck at 2071"
+was a telemetry artifact — the harvester's progress line only tracked
+the ENTRANCE area byte; the archive actually held 10,856 water cells to
+gx3264. Beam (111 actions) finished the level from the deepest cell;
+trace+beam replayed from the true chain entry = a verified 933-action
+clear. The 700-dim water encoder aliased wall-push states (identical
+obs, different actions — BC-unlearnable); re-minting the demo on the
+712-dim de-aliased encoder gave zero conflicts and a 100%-accuracy
+pilot. New router machinery shipped for it: per-level `entry:` opts
+(noop_pad + continuous_stack) so a pilot owns a level from its entrance
+and rides through in-level scene cuts. 2-3's winner survived its true
+chain arrival unmodified — no work needed.
+
+**Next (Worlds 1-3 by Fri 07-24):** 2-4 v2 trainer materials are
+banked (entries through 3-3); the loop (capture true arrival → harvest
+→ beam finish if needed → de-aliased demo → clone → route) is now
+five verified tools; robustify the 2-1/2-2 pilots in the background to
+move the honest sticky number and delete seams over time.
