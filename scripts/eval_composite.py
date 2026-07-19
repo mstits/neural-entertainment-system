@@ -126,6 +126,7 @@ def eval_composite(
     cache: dict[tuple, object] = {}
     nets: dict[str, object] = {}
     gx_routes: dict[str, list] = {}
+    entry_opts: dict[str, dict] = {}
     for key, entry in levels.items():
         if not isinstance(entry, dict) or "ckpt" not in entry or "profile" not in entry:
             return _err(status="bad_manifest",
@@ -148,6 +149,13 @@ def eval_composite(
                 return _err(status="load_failed", level=key, ckpt=ckpt,
                             profile=prof_path, detail=str(e))
         nets[key] = cache[cache_key]
+        if isinstance(entry.get("entry"), dict):
+            entry_opts[key] = {
+                "noop_pad": int(entry["entry"].get("noop_pad", 0)),
+                "continuous_stack": bool(
+                    entry["entry"].get("continuous_stack", False)
+                ),
+            }
         # Optional intra-level gx-keyed handoffs: a sorted stage list of
         # {at_gx, ckpt, profile}. Each stage net loads through the same
         # cache; the controller switches to it (one-way, disclosed in the
@@ -181,7 +189,8 @@ def eval_composite(
             s_key = f"{key}@gx{at_gx}"
             nets[s_key] = cache[s_cache_key]
             gx_routes.setdefault(key, []).append(
-                (at_gx, s_key, int(sw.get("noop_pad", 0)))
+                (at_gx, s_key, int(sw.get("noop_pad", 0)),
+                 bool(sw.get("continuous_stack", False)))
             )
     for key in gx_routes:
         gx_routes[key].sort()
@@ -218,6 +227,7 @@ def eval_composite(
         for _ep in range(episodes):
             controller = CompositeController(
                 nets, levels.keys(), device, k=k, gx_routes=gx_routes,
+                entry_opts=entry_opts,
             )
             records.append(run_episode(pool, controller, reward_fn, max_steps,
                                        capture_dir=capture_handoffs,
@@ -239,8 +249,9 @@ def eval_composite(
         # gx-keyed handoff the manifest declares, alongside the per-episode
         # gx_switches events summarize() carries through.
         result["gx_routed"] = True
+        result["level_entry_opts"] = entry_opts
         result["gx_routes"] = {
-            key: [[gx, name, pad] for gx, name, pad in stages]
+            key: [[gx, name, pad, cont] for gx, name, pad, cont in stages]
             for key, stages in gx_routes.items()
         }
 

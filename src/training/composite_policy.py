@@ -423,7 +423,8 @@ class CompositeController:
     """
 
     def __init__(self, nets: dict, labels, device, k: int = 2,
-                 gx_routes: Optional[dict] = None) -> None:
+                 gx_routes: Optional[dict] = None,
+                 entry_opts: Optional[dict] = None) -> None:
         self.nets = nets
         self.labels = set(labels)
         self.device = device
@@ -441,10 +442,16 @@ class CompositeController:
         # front-half net to a back-half net at the seam). One-way per level
         # visit; 2-frame confirm so a mid-transition gx glitch can't fire it.
         self.gx_routes = gx_routes or {}
+        # Per-level ENTRY options (manifest `entry:` block): noop_pad
+        # reproduces the load -> one-noop -> act replay convention for a
+        # BC-pilot level net; continuous_stack rides the stack through
+        # in-level scene cuts (replay_to_demos never resets its stack).
+        self.entry_opts = entry_opts or {}
         self._active_key: Optional[str] = None
         self._gx_stage = 0
         self._gx_confirm = 0
         self._gx_pad = 0
+        self._gx_continuous = False
         self.gx_switch_events: list[dict] = []
 
     def _select(self, label: str, area: Optional[int] = None) -> LevelNet:
@@ -474,6 +481,7 @@ class CompositeController:
         self._gx_stage = 0
         self._gx_confirm = 0
         self._gx_pad = 0
+        self._gx_continuous = False
         self.gx_switch_events = []
 
     def act(self) -> int:
@@ -506,11 +514,19 @@ class CompositeController:
             self._gx_stage = 0
             self._gx_confirm = 0
             self.active_net = self._select(switched, self._area)
-            self.adapter = self.active_net.new_adapter()
-            self.obs = self.adapter.reset(ram, pp)
-            self.hidden = self.active_net.initial_hidden()
+            _opts = self.entry_opts.get(self._active_key) or {}
+            self._gx_continuous = bool(_opts.get("continuous_stack", False))
             self.switches += 1
             self.segments.append(Segment(level=switched, entered_step=step))
+            _pad = int(_opts.get("noop_pad", 0))
+            if _pad > 0:
+                # act() emits noops through the pad; the incoming net's
+                # stack seeds at pad end (the replay convention).
+                self._gx_pad = _pad
+            else:
+                self.adapter = self.active_net.new_adapter()
+                self.obs = self.adapter.reset(ram, pp)
+                self.hidden = self.active_net.initial_hidden()
             return switched
         # Scene cut WITHIN a level: an area-byte change (pipe entry, bonus
         # room, vestibule -> underground) is a hard visual/positional
@@ -523,11 +539,19 @@ class CompositeController:
         area = int(ram[RAM_AREA])
         if area != self._area:
             self._area = area
+            if self._gx_continuous:
+                # A continuous-stack net (BC pilot, whether the level's
+                # base net or a committed gx stage) replays demos whose
+                # feature stack was built CONTINUOUSLY through in-level
+                # area changes (replay_to_demos never resets); a scene-
+                # cut reset here would desync it from its memorized
+                # observation sequence at the boundary.
+                self.obs = self.adapter.push(ram, pp)
+                return None
             if self._gx_stage_active():
                 # A committed gx-stage net rides through in-level scene
-                # cuts (pipe bonus rooms) — reselecting the base net here
-                # would silently undo the routed handoff. Fresh adapter +
-                # hidden either way (the documented scene-cut reset).
+                # cuts — reselecting the base net would silently undo
+                # the routed handoff. Fresh adapter either way.
                 pass
             else:
                 new_net = self._select(self.active_label, area)
@@ -550,7 +574,7 @@ class CompositeController:
             return None
         routes = self.gx_routes.get(self._active_key)
         if routes and self._gx_stage < len(routes):
-            at_gx, net_key, noop_pad = routes[self._gx_stage]
+            at_gx, net_key, noop_pad, continuous = routes[self._gx_stage]
             gx = (int(ram[0x006D]) << 8) | int(ram[0x0086])
             if gx >= at_gx:
                 self._gx_confirm += 1
@@ -561,10 +585,11 @@ class CompositeController:
                 self._gx_stage += 1
                 self.active_net = self.nets[net_key]
                 self.switches += 1
+                self._gx_continuous = continuous
                 self.gx_switch_events.append({
                     "level": self.active_label, "at_gx": at_gx,
                     "gx": gx, "step": step, "net": net_key,
-                    "noop_pad": noop_pad,
+                    "noop_pad": noop_pad, "continuous_stack": continuous,
                 })
                 if noop_pad > 0:
                     # act() emits noops for the pad; stack seeds at pad end.

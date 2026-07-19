@@ -41,8 +41,17 @@ levels:
         # act convention the pilot's demo was minted (and probed) under.
         noop_pad: 1
   2-2:
-    ckpt: checkpoints/mario_2_2_water/robust_2_2_pretrain.pt
-    profile: configs/smb_2_2_water.yaml
+    # BC pilot of the verified chain-entry solution (archive trace +
+    # beam exit, 933 actions, provenance search): 100% action accuracy
+    # on the 712-dim de-aliased encoder (the 700-dim water encoder
+    # aliases wall-push states and made the demo unlearnable). Probed
+    # 4/4 greedy from the true chain entry. entry opts reproduce the
+    # replay convention and ride the stack through the water scene cut.
+    ckpt: checkpoints/mario_2_2_water/pilot_2_2_beam.pt
+    profile: checkpoints/mario_2_2_water/water_tiles_pos.yaml
+    entry:
+      noop_pad: 1
+      continuous_stack: true
   2-3:
     # winners/best.pt from iter 380 (frozen 2026-07-17, training
     # clear_rate 0.110): probed 1.0 greedy 6/6 from the 2-3 entry on
