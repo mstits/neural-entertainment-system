@@ -693,3 +693,38 @@ banked and the chain already reaches gx1636 on the default net;
 (0/50 published) — the demo banks now hold 60+ verified clear
 trajectories across nine levels as anchor material; (c) the Tier-B
 fm2/FCEUX receipt gap.
+
+## 2026-07-19 evening — Worlds 1-4 through 4-3; the 4-4 maze dossier
+
+**Chain now clears FIFTEEN levels cold: 1-1 through 4-3, both seeds,
+zero deaths** (pushed 57daa80). 4-1 and 4-3 fell to the standard loop in
+minutes. 4-2 took visual diagnosis: its outdoor flag section SHARES the
+underground's area byte (blinding every area-change detector) — solved
+by gluing the archive's own exit-pipe trace to a 159-step driven flag
+approach. Down-actions were added to a per-level harvest profile
+(needed for warp pipes, not for 4-2's side-entry exit).
+
+**4-4 is unfinished but fully reverse-engineered.** The maze's loop
+mechanics, from the disassembly (LoopCmd tables at smbdis.asm:7787):
+- World 4 (0-indexed $03) checks at SCREEN pages $05 and $09 with
+  required Player_Y $40 (top corridor) and $B0 (bottom), player
+  grounded (Player_State == 0).
+- ProcLoopCommand runs EVERY FRAME the screen is on a check page: any
+  frame not grounded at the exact Y triggers ExecGameLoopback (player
+  and screen sent back four pages — the observed gx~2064 -> ~1042
+  teleports; page 8 - 4 = page 4).
+- CRITICAL for tooling: teleport frames minted archive cells whose KEYS
+  read thousands of px deeper than their restored truth (keys must be
+  audited by restore+read, never trusted); and states saved anywhere
+  past a failed check are DOOMED (the verdict rides in the save state
+  — a verified gx2056 cell teleports on its first step).
+- Burst harvesting fails here structurally: random jump-heavy bursts
+  are essentially never grounded-at-exact-Y through a whole check page.
+
+**The 4-4 recipe for next session** (~1 h): a maze driver that reads
+CurrentPageLoc from RAM directly, walks the required floor grounded
+through each check page (no jumps while the screen is on pages 5/9),
+and beams the segments between checks (clean pre-check roots exist in
+the archive at true gx ~1016, y64 — audit keys by restore). Then the
+standard demo -> clone -> route path. 7-4 and 8-4 use the same tables
+(worlds $06/$07 entries; 8-4 also needs down-entry pipes).
