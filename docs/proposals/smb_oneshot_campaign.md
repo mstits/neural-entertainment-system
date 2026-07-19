@@ -568,3 +568,62 @@ decay window; (b) 2-2 weld fine-tune from the genuine arrival band
 (machine is saturated: fires at the next natural Run B pause); (c) probe
 2-3 from a genuine 2-2 exit once one exists; (d) harvester keeps running
 for a v4 bank + backplay rungs (beam v2 stays the E1/E2 fallback only).
+
+## 2026-07-18 — day-3 close: 2-1 CLEARED COLD; 2-2 is the last gate level
+
+**Headline: the cold chain clears power-on -> 1-1 -> 1-2 -> 1-3 -> 1-4 ->
+2-1 flag, 3/3 episodes, zero deaths across five levels (6e2f272).** The
+frontier is 2-2; 2-3 is already solved and routed. One level stands
+between the chain and the Sunday-18:00 gate.
+
+**How 2-1 fell — the level-cracking loop (now fully tooled):**
+1. Cold chain run with `--capture-handoffs` banks the TRUE entry state
+   of every level (arrival lineage matters: a banked handoff from any
+   other trajectory has different scroll-history enemy state, and nets
+   die on it — measured three separate times today).
+2. `capture_arrival.py` runs the incumbent net from that true entry and
+   captures the exact state a gx-routed switch hands the next stage.
+3. `go_explore_2_1.py` rooted at that arrival (fresh-root mode) mints
+   verified clear solutions — for 2-1's seam, 21 solutions in minutes.
+4. `replay_to_demos.py` turns ONE solution into a demo;
+   `bc_clone_demo.py` overfits a pilot to 100% action accuracy on it.
+   (One, not many: multiple solutions from one root teach contradictory
+   actions and the anchor loss floors — measured, not conjectured.)
+5. The composite router's `gx_switches` (new) hands the level from the
+   front weld to the pilot at a disclosed threshold with `noop_pad: 1`
+   reproducing the load -> one-noop -> act replay convention. Every
+   switch is disclosed in the eval JSON; the pilot's demo carries
+   provenance:search. Robustness (the honest sticky report) remains a
+   separate training track, not a claim of this pilot.
+
+**Today's defect ledger (all fixed + pushed):** demo-anchor decay used
+the loop-local iteration (every resume re-pinned the policy);
+eval_game --start-state was DEAD CODE (profile state clobbered the CLI
+param — all prior arbitrary-state probe claims are suspect);
+checkpoint ladders lump-paid deep restores (+1125 free reward at
+gx1860); the 2-1 composite had NO 2-1 entry; 2-3's promoted checkpoint
+was frozen outside its clears era (winners iter-380 probes 1.0 — now
+routed); the harvester died on 2-2's scene transitions (now
+quarantines), overflowed on the water profile's 8th action, and hard-
+asserted an ep231-specific prefix band.
+
+**2-2, honestly:** the winner checkpoint reaches gx2083 from the true
+chain arrival (weld: 1236; neither clears). Policy-seeded harvesting
+(winner's 488-action prefix -> archive at gx2071, all 8 phase classes)
+ran ~1 h WITHOUT advancing the frontier past the seed: random bursts do
+not make forward progress in water physics. Next levers, in order:
+(a) policy-guided bursts — sample from the winner net with temperature
+instead of the static weight table (the harvester is torch-free today;
+a small adapter or a pre-sampled action-distribution table keeps it
+light); (b) beam search with the emulator as the model (beam_solver v1
++ per-bucket retention, swim-aware scoring); (c) a short PPO run from
+the gx2071 frontier band with the arming fix + count bonus, which is
+now safe for deep restores. The 2-2 clone must also ride a
+continuous-stack stage flag: the router resets the obs stack at 2-2's
+in-level scene cut but replay_to_demos stacks continuously — unresolved.
+
+**Runbook to resume:** all campaign processes are STOPPED. The 2-2
+harvester resumes from its flushed archive with the same command
+(checkpoints/go_explore_2_2/harvester.log documents it). The chain
+verifies with: eval_composite --manifest configs/composite_world1.yaml
+--episodes 3 --stop-after-worlds 2 (expect 2-1 3/3, death in 2-2).
