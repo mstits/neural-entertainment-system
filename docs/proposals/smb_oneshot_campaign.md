@@ -667,3 +667,29 @@ banked (entries through 3-3); the loop (capture true arrival → harvest
 → beam finish if needed → de-aliased demo → clone → route) is now
 five verified tools; robustify the 2-1/2-2 pilots in the background to
 move the honest sticky number and delete seams over time.
+
+## 2026-07-19 afternoon — Worlds 1-3 COMPLETE (pace commitment met 5 days early)
+
+**Cold chain from power-on clears all twelve levels — 1-1 through 3-4 —
+3/3 (seed 0) and 2/2 (seed 1), zero deaths, receipted
+(runs/gate_receipts_w3_seed{0,1}), entering World 4 (dies 4-1 gx1636).**
+The Fri 07-24 Worlds-1-3 pace commitment is met on Sunday.
+
+The five-tool loop ran per level in 25-45 minutes each, fully mechanical:
+- 2-4: five castle solutions in 2 min of bursts; castle demos need the
+  AXE TRIM (post-axe end sequence is input-ignored + obs-aliased —
+  trim at first conflict, verify wd still advances on noops).
+- 3-1: eight solutions in 3 min (Hammer Bros were no obstacle);
+  conflict-free demo straight off the burst.
+- 3-2: eight solutions in 32 SECONDS; all thirteen demos conflict-free.
+- 3-3 (the treetop/pit level, historically feared): six solutions in
+  3 min; every demo conflict-free.
+- 3-4: castle pattern again (axe trim); one 99.78% BC stall was pure
+  optimization (no conflicts) — longer schedule closed it.
+
+Standing next fronts: (a) World 4+ — same loop; 4-1 true arrival is
+banked and the chain already reaches gx1636 on the default net;
+(b) robustification of the eleven pilots to move the honest sticky pair
+(0/50 published) — the demo banks now hold 60+ verified clear
+trajectories across nine levels as anchor material; (c) the Tier-B
+fm2/FCEUX receipt gap.
