@@ -96,6 +96,24 @@ levels:
     entry:
       noop_pad: 1
       continuous_stack: true
+  4-1:
+    # BC pilot (sol_005, 713 actions, conflict-free, provenance search)
+    ckpt: checkpoints/mario_4_1/pilot_4_1.pt
+    profile: checkpoints/mario_2_4_v2/smb_2_4_pos.yaml
+    entry:
+      noop_pad: 1
+      continuous_stack: true
+  4-2:
+    # BC pilot of archive-trace + hand-driven flag approach (1191
+    # actions, conflict-free, provenance search). The level's outdoor
+    # ending shares the underground's area byte, which blinded every
+    # area-change detector — the exit route was found visually via the
+    # level map. 4/4 greedy from the true chain arrival.
+    ckpt: checkpoints/mario_4_2/pilot_4_2.pt
+    profile: checkpoints/mario_2_4_v2/smb_2_4_pos.yaml
+    entry:
+      noop_pad: 1
+      continuous_stack: true
   2-3:
     # winners/best.pt from iter 380 (frozen 2026-07-17, training
     # clear_rate 0.110): probed 1.0 greedy 6/6 from the 2-3 entry on
