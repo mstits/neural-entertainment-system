@@ -615,7 +615,7 @@ class CompositeController:
 def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int,
                 capture_dir=None, stop_after_worlds: int = 1,
                 sticky_prob: float = 0.0, start_jitter: int = 0,
-                seed: int = 0) -> dict:
+                seed: int = 0, record_dir=None, episode_idx: int = 0) -> dict:
     """Play one cold episode; return its per-episode record.
 
     Terminal semantics mirror `eval_game.py --sequential`: play THROUGH the 1-1
@@ -640,7 +640,8 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
     clears at sticky 0.0 has memorized, not learned. Both default off so
     existing callers/tests are byte-identical.
     """
-    _rng = np.random.RandomState(1_000_003 * (seed + 1))
+    _rng = np.random.RandomState((1_000_003 * (seed + 1)) % (2**32))
+    _recorded: list[int] = []
     pool.reset_all()
     reward_fn.reset()
     _captured: set = set()
@@ -667,6 +668,10 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
         if sticky_prob > 0.0 and step > 0 and _rng.rand() < sticky_prob:
             bitmask = _last_bitmask
         _last_bitmask = bitmask
+        if record_dir is not None:
+            # The receipt records the post-sticky STEPPED mask at the
+            # single choke point, so even sticky episodes replay exactly.
+            _recorded.append(int(bitmask))
         r = pool.step_all(np.array([bitmask], dtype=np.uint8))
         sr = r[0]
         ram = sr.ram_snapshot
@@ -702,7 +707,7 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
             break
     controller.close(steps, end_reason)
 
-    return {
+    record = {
         "seq_clear": tracker.seq_clear,
         "warp_taken": tracker.warp_taken,
         "furthest_seq": tracker.furthest_seq,
@@ -719,6 +724,21 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
         "end_reason": end_reason,
         "segments": [s.as_dict() for s in controller.segments],
     }
+    if record_dir is not None:
+        import json as _json
+        rd = Path(record_dir)
+        rd.mkdir(parents=True, exist_ok=True)
+        np.save(rd / f"ep{episode_idx:03d}_actions.npy",
+                np.array(_recorded, dtype=np.uint8))
+        (rd / f"ep{episode_idx:03d}_meta.json").write_text(_json.dumps({
+            "seed": seed, "sticky_prob": sticky_prob,
+            "start_jitter": start_jitter, "steps": len(_recorded),
+            "end_reason": end_reason,
+            "worlds_cleared": record.get("worlds_cleared", 0),
+            "gx_switches": record["gx_switches"],
+        }, indent=1))
+        record["receipt"] = str(rd / f"ep{episode_idx:03d}_actions.npy")
+    return record
 
 
 def _per_level_breakdown(records: list[dict]) -> dict:

@@ -105,6 +105,7 @@ def eval_composite(
     stop_after_worlds: int = 1,
     sticky_prob: float = 0.0,
     start_jitter: int = 0,
+    record_actions: Optional[str] = None,
 ) -> dict:
     if not manifest_path.exists():
         return _err(status="no_manifest", manifest=str(manifest_path))
@@ -234,7 +235,9 @@ def eval_composite(
                                        stop_after_worlds=stop_after_worlds,
                                        sticky_prob=sticky_prob,
                                        start_jitter=start_jitter,
-                                       seed=seed * 10_000 + _ep))
+                                       seed=seed * 10_000 + _ep,
+                                       record_dir=record_actions,
+                                       episode_idx=_ep))
     finally:
         pool.shutdown()
 
@@ -242,6 +245,23 @@ def eval_composite(
         records, manifest_path=str(manifest_path), game=game, n_episodes=episodes,
     )
     result["timestamp"] = time.time()
+    # Self-describing protocol fields: a logged row proves how it was run.
+    result["sticky_prob"] = sticky_prob
+    result["start_jitter"] = start_jitter
+    result["seed"] = seed
+    try:
+        import subprocess as _sp
+        result["git_commit"] = _sp.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=str(ROOT),
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except Exception:
+        result["git_commit"] = None
+    try:
+        import hashlib as _hl
+        result["rom_md5"] = _hl.md5(Path(rom_path).read_bytes()).hexdigest()
+    except Exception:
+        result["rom_md5"] = None
     result["hysteresis_k"] = k
     result["levels"] = sorted(levels.keys())
     if gx_routes:
@@ -295,6 +315,10 @@ def main() -> int:
                    help="Honest-eval protocol: repeat the previous action "
                         "with probability P (Machado et al. sticky actions; "
                         "0.25 is the standard). Default 0 = deterministic.")
+    p.add_argument("--record-actions", default=None, dest="record_actions",
+                   help="Directory for per-episode action receipts: the "
+                        "post-sticky stepped mask per step (.npy) + a "
+                        "protocol sidecar (.json).")
     p.add_argument("--start-jitter", type=int, default=0, metavar="N",
                    help="Hold up to N random noop steps before control "
                         "begins, desynchronizing hazard phases from the "
@@ -305,6 +329,7 @@ def main() -> int:
         Path(args.manifest), args.episodes, args.max_steps, args.seed,
         rom=args.rom, start_state=args.start_state, out_dir=args.out_dir,
         device_str=args.device, hysteresis_k=args.hysteresis_k,
+        record_actions=args.record_actions,
         capture_handoffs=args.capture_handoffs,
         stop_after_worlds=args.stop_after_worlds,
         sticky_prob=args.sticky_prob,
