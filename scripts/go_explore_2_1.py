@@ -159,6 +159,11 @@ class Harvester:
         if int(ram[0x000E]) in DEATH_STATES:
             return "dead"
         gx = _gx(ram)
+        if gx > 3900:
+            # Transition-frame garbage read (page byte mid-update can
+            # yield gx up to 65535); recording it would poison the
+            # frontier selection with unreachable "deepest" cells.
+            return "live"
         if prev_gx - gx > 400 and int(ram[0x0760]) == self.main_area:
             return "dead"  # in-level reload = pit/time death, new life
         if int(ram[0x0760]) == self.main_area:
