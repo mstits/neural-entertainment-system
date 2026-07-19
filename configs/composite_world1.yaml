@@ -52,6 +52,50 @@ levels:
     entry:
       noop_pad: 1
       continuous_stack: true
+  2-4:
+    # BC pilot of a harvester castle solution trimmed at the axe (the
+    # post-axe end sequence is input-ignored and obs-aliased; trimmed
+    # replay + noops verified to still clear into 3-1). 4/4 greedy from
+    # the true chain arrival, provenance search.
+    ckpt: checkpoints/mario_2_4_v2/pilot_2_4.pt
+    profile: checkpoints/mario_2_4_v2/smb_2_4_pos.yaml
+    entry:
+      noop_pad: 1
+      continuous_stack: true
+  3-1:
+    # BC pilot of a conflict-free harvester solution (sol_012, 750
+    # actions, provenance search); 4/4 greedy from the true chain
+    # arrival to the flag.
+    ckpt: checkpoints/mario_3_1_v2/pilot_3_1.pt
+    profile: checkpoints/mario_2_4_v2/smb_2_4_pos.yaml
+    entry:
+      noop_pad: 1
+      continuous_stack: true
+  3-2:
+    # BC pilot (sol_011, 686 actions, conflict-free, provenance
+    # search); 4/4 greedy from the true chain arrival.
+    ckpt: checkpoints/mario_3_2/pilot_3_2.pt
+    profile: checkpoints/mario_2_4_v2/smb_2_4_pos.yaml
+    entry:
+      noop_pad: 1
+      continuous_stack: true
+  3-3:
+    # BC pilot (sol_005, 497 actions, conflict-free, provenance
+    # search); 4/4 greedy from the true chain arrival.
+    ckpt: checkpoints/mario_3_3/pilot_3_3.pt
+    profile: checkpoints/mario_2_4_v2/smb_2_4_pos.yaml
+    entry:
+      noop_pad: 1
+      continuous_stack: true
+  3-4:
+    # BC pilot (sol_011 trimmed at the axe, 462 actions, conflict-free,
+    # provenance search); 4/4 greedy from the true chain arrival into
+    # World 4.
+    ckpt: checkpoints/mario_3_4/pilot_3_4.pt
+    profile: checkpoints/mario_2_4_v2/smb_2_4_pos.yaml
+    entry:
+      noop_pad: 1
+      continuous_stack: true
   2-3:
     # winners/best.pt from iter 380 (frozen 2026-07-17, training
     # clear_rate 0.110): probed 1.0 greedy 6/6 from the 2-3 entry on
