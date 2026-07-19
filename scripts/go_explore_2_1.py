@@ -254,9 +254,14 @@ class Harvester:
             gxs.append(prev)
         if len(prefix):
             end_gx = gxs[-1]
-            assert 1900 <= end_gx <= 2050, \
-                f"ep231 prefix replay de-synced: end gx {end_gx}, expected ~1966"
-            print(f"[seed] ep231 prefix: {len(prefix)} steps -> gx {end_gx}",
+            # The hard 1900-2050 band was the ep231-specific desync guard;
+            # arbitrary policy prefixes (e.g. the 2-2 winner's 2083-deep
+            # line) legitimately end elsewhere. Desync still shows up as a
+            # near-zero end gx — warn loudly rather than die.
+            if end_gx < 200:
+                print(f"[seed] WARNING: prefix replay ended at gx {end_gx} "
+                      f"— likely de-synced from its root", flush=True)
+            print(f"[seed] prefix: {len(prefix)} steps -> gx {end_gx}",
                   flush=True)
         # (2) no-op phase offsets: one 7-noop run per pre-compound
         # checkpoint covers offsets 1..7 = all 8 phase classes there.
@@ -281,11 +286,11 @@ class Harvester:
                 cell = self.archive.cells[root_key]
                 self.pool.load_worker_state(0, cell.state)
                 t: list = []
-                pa = int(self.rng.choice(7, p=self.weights))
+                pa = int(self.rng.choice(len(self.weights), p=self.weights))
                 prev = _gx(root_ram)
                 for _ in range(300):
                     a = pa if self.rng.random() < args.sticky else \
-                        int(self.rng.choice(7, p=self.weights))
+                        int(self.rng.choice(len(self.weights), p=self.weights))
                     pa = a
                     t.append(a)
                     ram = self._step0(a)
@@ -339,7 +344,7 @@ class Harvester:
         root_id, tb = self.traces[cell.key]
         return {"key": cell.key, "root": root_id, "trace": list(tb),
                 "steps": cell.best_steps, "left": self.args.burst,
-                "prev": int(self.rng.choice(7, p=self.weights)),
+                "prev": int(self.rng.choice(len(self.weights), p=self.weights)),
                 "fresh": True}
 
     def explore(self) -> None:
@@ -351,7 +356,7 @@ class Harvester:
         while not self.stop:
             for i, c in enumerate(ctx):
                 a = c["prev"] if self.rng.random() < args.sticky else \
-                    int(self.rng.choice(7, p=self.weights))
+                    int(self.rng.choice(len(self.weights), p=self.weights))
                 c["prev"] = a
                 c["pending"] = a
                 acts[i] = self.bitmasks[a]
@@ -371,9 +376,16 @@ class Harvester:
                     # the restored blob must land within +/-2 gx buckets
                     # of the cell key (catches restore corruption; dead/
                     # clear/area-transition steps are classified above).
-                    assert abs(_gx(ram) // 16 - c["key"][3]) <= 2, \
-                        f"restore drift: worker {i} at gx {_gx(ram)} " \
-                        f"vs cell bucket {c['key'][3]}"
+                    # Multi-area levels (2-2 water) can read gx 0 for a
+                    # frame on scene boundaries — quarantine the cell and
+                    # keep harvesting instead of killing the process.
+                    if abs(_gx(ram) // 16 - c["key"][3]) > 2:
+                        print(f"[quarantine] worker {i}: restore drift "
+                              f"gx {_gx(ram)} vs bucket {c['key'][3]} — "
+                              f"cell dropped", flush=True)
+                        self.archive.cells.pop(c["key"], None)
+                        ctx[i] = self._assign(i)
+                        continue
                 c["prev_gx"] = _gx(ram)
                 if (c["left"] <= 0 and not c.get("extended")
                         and self._at_deep_band(ram)):
