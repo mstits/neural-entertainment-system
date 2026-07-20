@@ -1,3 +1,10 @@
+# ============================================================
+# EXHIBITION LEDGER (see CLAIMS.md): this chain routes search-
+# derived pilots (BC replays of the system's own Go-Explore/beam
+# solutions) plus learned specialists. It demonstrates the SOLVER,
+# not the learner — never present its runs as "the AI playing".
+# The Learned-ledger chain is configs/composite_learned.yaml.
+# ============================================================
 name: world1_specialists_v1
 game: mario
 hysteresis_k: 2
@@ -103,13 +110,9 @@ levels:
     entry:
       noop_pad: 1
       continuous_stack: true
-  4-2:
-    # BC pilot of archive-trace + hand-driven flag approach (1191
-    # actions, conflict-free, provenance search). The level's outdoor
-    # ending shares the underground's area byte, which blinded every
-    # area-change detector — the exit route was found visually via the
-    # level map. 4/4 greedy from the true chain arrival.
-    ckpt: checkpoints/mario_4_2/pilot_4_2.pt
+  4-3:
+    # BC pilot (sol_009, 491 actions, conflict-free, provenance search)
+    ckpt: checkpoints/mario_4_3/pilot_4_3.pt
     profile: checkpoints/mario_2_4_v2/smb_2_4_pos.yaml
     entry:
       noop_pad: 1

@@ -696,6 +696,14 @@ fm2/FCEUX receipt gap.
 
 ## 2026-07-19 evening — Worlds 1-4 through 4-3; the 4-4 maze dossier
 
+> **BANNED KNOWLEDGE (added at the 2026-07-19 course correction, see
+> CLAIMS.md):** the 4-4 dossier below was derived from the game's
+> disassembly and violates the project's Tier-3 line. It is preserved
+> as a record of the drift, and NOTHING in it — the LoopCmd tables,
+> page/Y values, or any strategy derived from them — may be used by
+> any Learned-ledger (or Exhibition) work. The maze castles are an
+> exploration-learning problem, by design.
+
 **Chain now clears FIFTEEN levels cold: 1-1 through 4-3, both seeds,
 zero deaths** (pushed 57daa80). 4-1 and 4-3 fell to the standard loop in
 minutes. 4-2 took visual diagnosis: its outdoor flag section SHARES the
@@ -728,3 +736,25 @@ and beams the segments between checks (clean pre-check roots exist in
 the archive at true gx ~1016, y64 — audit keys by restore). Then the
 standard demo -> clone -> route path. 7-4 and 8-4 use the same tables
 (worlds $06/$07 entries; 8-4 also needs down-entry pipes).
+
+## 2026-07-19 night — COURSE CORRECTION: the product learns, it does not cheat
+
+The user called the drift: disassembly tables, level maps, and
+hand-driven inputs are cheating for a product whose identity is an AI
+that learns games itself. A 28-agent research swarm (synthesis at
+runs/legit_learning_research_2026-07-19.json) rebuilt the plan on
+evidence. Verdicts: the field's purity bar is the EVAL protocol, not
+save-state-free training (Go-Explore, Nature 2021); our pilot chain is
+Machado et al.'s "Brute" and its 0/50 sticky score is the published
+signature; the missed step is phase-2 backward-algorithm
+robustification trained WITH sticky-0.25 (Salimans & Chen 2018); this
+machine is sample-rich (0.7-0.8B env-steps/week) and algorithm-bound;
+nobody anywhere has published a sticky-protocol multi-world SMB chain —
+that claim is available. Shipped tonight: CLAIMS.md (two ledgers,
+four-tier knowledge policy, verbatim claim language), Tier-3 quarantine
+(4-2 hand-driven artifacts), configs/demo_allowlist.txt (114 clean
+banks) enforced in the trainer loader + make provenance-check, and the
+manifest split (composite_world1.yaml = Exhibition, labeled;
+composite_learned.yaml = Learned, pilots removed). Next: sticky into
+_run_vanilla_ppo, the phase-2 backward scheduler, the 1-1 calibration
+gate.

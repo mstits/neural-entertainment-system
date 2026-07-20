@@ -4424,6 +4424,24 @@ class Trainer:
         # rejects buffer-aliased banks (all-identical rows).
         if self.demo_anchor_enabled and self._is_tile_mode:
             from src.training.demo_bank import DemoBank
+            # Provenance gate (CLAIMS.md): Learned-ledger training only
+            # consumes allowlisted demo banks. The allowlist is
+            # authoritative — sidecars are advisory and have mislabeled
+            # once already. Fail LOUD: silently training on a tainted
+            # bank would poison the ledger's central claim.
+            _allow_path = Path("configs/demo_allowlist.txt")
+            if _allow_path.exists():
+                _allowed = {
+                    ln.strip() for ln in _allow_path.read_text().splitlines()
+                    if ln.strip() and not ln.startswith("#")
+                }
+                _bad = [p for p in self.demo_anchor_paths
+                        if str(p) not in _allowed]
+                if _bad:
+                    raise ValueError(
+                        "demo_anchor_paths not on configs/demo_allowlist"
+                        f".txt (see CLAIMS.md): {_bad}"
+                    )
             self._demo_bank = DemoBank.from_npz(
                 self.demo_anchor_paths, self._tile_feature_dim,
                 self.num_actions, self.device,

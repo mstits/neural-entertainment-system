@@ -128,3 +128,10 @@ selftest:
 clean:
 	rm -rf .pytest_cache __pycache__ **/__pycache__ **/**/__pycache__
 	find . -name "*.pyc" -delete
+
+# Provenance gate for Learned-ledger training inputs (see CLAIMS.md):
+# allowlist integrity, quarantine intact, no profile references
+# quarantined artifacts. Run before any Learned-ledger training run
+# and before publishing any number.
+provenance-check:
+	.venv/bin/python scripts/provenance_check.py

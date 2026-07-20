@@ -1,0 +1,49 @@
+# ============================================================
+# LEARNED LEDGER (see CLAIMS.md): every net in this manifest is a
+# trained policy — PPO winners and self-imitation-robustified nets.
+# NO single-trajectory BC pilots. This is the chain the words "the
+# AI plays" refer to, and its honest numbers are the sticky-0.25 +
+# start-jitter pair from cold power-on. It is expected to die
+# earlier than the Exhibition chain until phase-2 robustification
+# (backward algorithm, sticky-on) retrains each level; that gap IS
+# the learning story.
+# ============================================================
+name: learned_chain_v1
+game: mario
+hysteresis_k: 2
+levels:
+  1-1:
+    ckpt: checkpoints/super_mario_bros_one_shot_tiles/vanilla_ppo_iter_01580.pt
+    profile: configs/smb_oneshot_tiles.yaml
+  1-2:
+    ckpt: checkpoints/mario_1_2_underground_consolidate/robust_1_2_handoff.pt
+    profile: configs/smb_underground_consolidate.yaml
+  1-2@1:
+    ckpt: checkpoints/mario_1_2_underground_consolidate/robust_1_2_handoff.pt
+    profile: configs/smb_underground_consolidate.yaml
+  1-3:
+    ckpt: checkpoints/mario_1_3/robust_1_3_handoff.pt
+    profile: configs/smb_1_3.yaml
+  1-4:
+    ckpt: checkpoints/mario_1_4_go_explore/robust_1_4_handoff.pt
+    profile: configs/smb_1_4_go_explore.yaml
+  default:
+    ckpt: checkpoints/super_mario_bros_one_shot_tiles/vanilla_ppo_iter_01580.pt
+    profile: configs/smb_oneshot_tiles.yaml
+  2-1:
+    # Front: self-imitation-robustified net (greedy 1.0 to gx1471).
+    # Back: the Run B PPO winner (learned; 12/12 greedy from the runway
+    # seed). Currently dies at the live seam (~gx1609) — the honest
+    # state of the learned chain until phase-2 retrains 2-1 end-to-end.
+    ckpt: checkpoints/mario_2_1/robust_2_1_front.pt
+    profile: configs/smb_oneshot_tiles.yaml
+    gx_switches:
+      - at_gx: 1440
+        ckpt: checkpoints/mario_2_1_runB/back_2_1_iter230_clears.pt
+        profile: checkpoints/mario_2_1_runB/weld_2_1_runB.yaml
+  2-2:
+    ckpt: checkpoints/mario_2_2_water/winners/best.pt
+    profile: configs/smb_2_2_water.yaml
+  2-3:
+    ckpt: checkpoints/mario_2_3/robust_2_3_iter380_clears.pt
+    profile: configs/smb_2_3.yaml
