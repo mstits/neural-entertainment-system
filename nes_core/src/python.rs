@@ -21,6 +21,36 @@ use crate::sink::{AudioSink, VideoSink, Xrgb8888VideoSink};
 
 const FRAME_PIXELS: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 
+/// Apply a save-state to `nes` behind a panic guard, mapping any panic
+/// (wrong-length RAM, mismatched mapper enum variant, etc.) to a
+/// PyValueError instead of unwinding across the PyO3 boundary and
+/// killing the interpreter. Single funnel so every restore site
+/// (constructor, load_state, reset_no_advance) inherits the same
+/// guarantee — the Pool paths were hardened after a wrong-game-state
+/// process-kill incident; the NESEnvironment paths were not, and a GUI
+/// "Load State" on a stale/wrong-game/truncated .state.bin hard-crashed
+/// the play window. On failure the caller is expected to leave the env
+/// cold-reset, never half-mutated.
+fn apply_state_guarded(nes: &mut Nes, state: &crate::nes::State) -> PyResult<()> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        nes.apply_state(state);
+    }))
+    .map_err(|e| {
+        let msg = if let Some(s) = e.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = e.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic".to_string()
+        };
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "save-state is not compatible with this ROM (apply_state \
+             panicked: {msg}) — it is likely from a different game, a \
+             different core version, or a truncated/corrupt file"
+        ))
+    })
+}
+
 /// Magic prefix for versioned on-the-wire save-state blobs.
 /// Format: `b"NCST" + version_byte + bincode(nes::State)`. Version
 /// byte bumps whenever the `State` struct layout changes so old blobs
@@ -217,7 +247,7 @@ impl NESEnvironment {
                             p.display()
                         ))
                     })?;
-                env.nes.apply_state(&state);
+                apply_state_guarded(&mut env.nes, &state)?;
                 // Cache for fast resets.
                 env.start_state_snapshot = Some(blob.to_vec());
             } else {
@@ -306,13 +336,20 @@ impl NESEnvironment {
     /// frame buffer contains uninitialized memory until the first
     /// `step()`. Use only for trace generation.
     fn reset_no_advance(&mut self) {
-        if let Some(snap) = &self.start_state_snapshot {
-            if let Ok(state) = bincode::deserialize::<crate::nes::State>(snap) {
-                self.nes.apply_state(&state);
-            } else {
-                self.nes.reset();
-            }
-        } else {
+        // Deserialize into an owned State first so the immutable borrow
+        // of `start_state_snapshot` is released before the mutable
+        // apply — and cold-reset on any deserialize OR apply failure.
+        let restored = self
+            .start_state_snapshot
+            .as_ref()
+            .and_then(|snap| {
+                bincode::deserialize::<crate::nes::State>(snap).ok()
+            });
+        let applied = match restored {
+            Some(state) => apply_state_guarded(&mut self.nes, &state).is_ok(),
+            None => false,
+        };
+        if !applied {
             self.nes.reset();
         }
         self.audio.drain();
@@ -464,7 +501,7 @@ impl NESEnvironment {
                 "load_state deserialize failed: {e}"
             ))
         })?;
-        self.nes.apply_state(&state);
+        apply_state_guarded(&mut self.nes, &state)?;
         // The cycle anchor was tied to the PREVIOUS Nes instance's
         // CPU clock. After a state load the CPU clock effectively
         // jumps; clear the anchor so the next advance_one_frame

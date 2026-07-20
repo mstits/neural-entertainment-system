@@ -1408,16 +1408,18 @@ impl Pool {
                     let ram_bytes: Vec<u8> = nes.system_ram().as_ref().to_vec();
                     (rgb, preprocessed, ram_bytes, false)
                 };
+                // catch_unwind is now UNCONDITIONAL. A panic unwinding
+                // past a rayon worker crosses the PyO3 boundary as a
+                // PanicException and kills the whole training process —
+                // the "crashed and stayed dead" failure class. Always
+                // catching it means one bad worker degrades to
+                // dead+zero-frame (revived by reset_all) instead of
+                // taking down 60 envs. `panic_isolation` now only
+                // controls how loudly the event is logged; measured
+                // always-on cost was 0.5-1%.
+                let _ = panic_isolation;
                 let res: Result<(Vec<u8>, Vec<u8>, Vec<u8>, bool), Box<dyn std::any::Any + Send>> =
-                    if panic_isolation {
-                        catch_unwind(AssertUnwindSafe(work))
-                    } else {
-                        // Direct call. Any panic will unwind past
-                        // the rayon worker, which is unsound — but
-                        // the trainer takes responsibility for
-                        // stable ROMs/states when this flag is off.
-                        Ok(work())
-                    };
+                    catch_unwind(AssertUnwindSafe(work));
                 match res {
                     Ok(tuple) => tuple,
                     Err(_) => {
