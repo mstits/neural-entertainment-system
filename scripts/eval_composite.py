@@ -230,14 +230,34 @@ def eval_composite(
                 nets, levels.keys(), device, k=k, gx_routes=gx_routes,
                 entry_opts=entry_opts,
             )
-            records.append(run_episode(pool, controller, reward_fn, max_steps,
-                                       capture_dir=capture_handoffs,
-                                       stop_after_worlds=stop_after_worlds,
-                                       sticky_prob=sticky_prob,
-                                       start_jitter=start_jitter,
-                                       seed=seed * 10_000 + _ep,
-                                       record_dir=record_actions,
-                                       episode_idx=_ep))
+            # Per-episode isolation: one off-map level (KeyError from
+            # _select) or any episode-level fault must not discard the
+            # whole batch and lose every completed episode's log row.
+            # Record a sentinel and keep going.
+            try:
+                rec = run_episode(pool, controller, reward_fn, max_steps,
+                                  capture_dir=capture_handoffs,
+                                  stop_after_worlds=stop_after_worlds,
+                                  sticky_prob=sticky_prob,
+                                  start_jitter=start_jitter,
+                                  seed=seed * 10_000 + _ep,
+                                  record_dir=record_actions,
+                                  episode_idx=_ep)
+            except Exception as exc:  # noqa: BLE001 — isolate the batch
+                import traceback as _tb
+                print(f"[eval_composite] episode {_ep} faulted "
+                      f"({exc}); recording sentinel and continuing:\n"
+                      f"{_tb.format_exc()}", file=sys.stderr)
+                rec = {
+                    "seq_clear": False, "warp_taken": False,
+                    "furthest_seq": None, "furthest_any": None,
+                    "worlds_cleared": 0, "furthest_nowarp": None,
+                    "cleared": False, "return": 0.0, "length": 0,
+                    "max_byte": 0, "switches": 0, "gx_switches": [],
+                    "level_max_gx": {}, "segments": [],
+                    "end_reason": "episode_fault", "fault": str(exc),
+                }
+            records.append(rec)
     finally:
         pool.shutdown()
 

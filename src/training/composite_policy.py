@@ -647,9 +647,19 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
     _captured: set = set()
     # Noop step after reset flushes the post-restore frame (matches eval_game).
     init = pool.step_all(np.zeros(1, dtype=np.uint8))
+    _jitter_noops = 0
     if start_jitter > 0:
-        for _ in range(int(_rng.randint(0, start_jitter + 1))):
+        _jitter_noops = int(_rng.randint(0, start_jitter + 1))
+        for _ in range(_jitter_noops):
             init = pool.step_all(np.zeros(1, dtype=np.uint8))
+            # Record the DRAWN jitter noops into the receipt: without
+            # them the .npy is phase-shifted by the unrecorded random
+            # draw and does not self-replay, which silently falsified
+            # the Tier-A "all receipts self-replay" claim for every
+            # jitter>0 eval. The replay convention is reset + one flush
+            # noop + this complete stepped sequence.
+            if record_dir is not None:
+                _recorded.append(0)
     sr = init[0]
     tracker = SequentialTracker()
     tracker.update(sr.ram_snapshot)
@@ -732,8 +742,10 @@ def run_episode(pool, controller: CompositeController, reward_fn, max_steps: int
                 np.array(_recorded, dtype=np.uint8))
         (rd / f"ep{episode_idx:03d}_meta.json").write_text(_json.dumps({
             "seed": seed, "sticky_prob": sticky_prob,
-            "start_jitter": start_jitter, "steps": len(_recorded),
-            "end_reason": end_reason,
+            "start_jitter": start_jitter,
+            "jitter_noops_drawn": _jitter_noops,
+            "replay_convention": "reset + 1 flush noop + actions.npy",
+            "steps": len(_recorded), "end_reason": end_reason,
             "worlds_cleared": record.get("worlds_cleared", 0),
             "gx_switches": record["gx_switches"],
         }, indent=1))

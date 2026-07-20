@@ -151,8 +151,19 @@ class SequentialTracker:
             # a warp pipe.
             if world > self._prev_world:
                 if self._prev_display == DISPLAY_LEVEL_CASTLE:
-                    self._seq_clear = True
                     self._worlds_cleared += 1
+                    # seq_clear means "cleared World 1 SEQUENTIALLY": only
+                    # the genuine World-1->2 castle crossing counts, and
+                    # only if no warp was taken. Without the prev_world==0
+                    # gate, a warp out of 1-2 (which lands in World 2/3/4)
+                    # followed by clearing THAT world's x-4 castle latched
+                    # seq_clear=True — inflating the headline
+                    # seq_clear_rate with runs that skipped most of the
+                    # game. (You cannot reach 1-4's castle after a 1-2
+                    # warp, so prev_world==0 alone is sufficient; the
+                    # warp check is belt-and-suspenders.)
+                    if self._prev_world == 0 and not self._warp_taken:
+                        self._seq_clear = True
                 else:
                     self._warp_taken = True
             self._prev_world = world
