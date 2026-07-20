@@ -5240,6 +5240,23 @@ class Trainer:
         # is skipped entirely — zero overhead on the winning path.
         narrator_on = self._narrator is not None
 
+        # Sticky-action training (Machado et al. 2018 protocol, ported
+        # from the GA path's _apply_sampled_actions): with probability
+        # sticky_action_prob the env executes the PREVIOUS step's action
+        # instead of the fresh sample, and the recorded log-prob is the
+        # EXECUTED action's under the current policy, keeping PPO's
+        # importance ratio consistent with what actually ran. Training
+        # with the same stochasticity the honest eval applies is the
+        # published cure for deterministic-replay collapse (Go-Explore,
+        # Nature 2021, robustification phase).
+        _sticky_p = float(self.sticky_action_prob)
+        _prev_exec_action = np.zeros(num_envs, dtype=np.int64)
+        if _sticky_p > 0.0:
+            log.info(
+                "[vanilla_ppo] STICKY TRAINING on: p=%.2f (executed-action "
+                "log-probs; eval protocol parity)", _sticky_p,
+            )
+
         for it in range(num_iters):
             if not self._running:
                 break
@@ -5323,6 +5340,22 @@ class Trainer:
                     log_probs_taken = log_probs_all.gather(
                         1, actions.unsqueeze(1)
                     ).squeeze(1)
+
+                    if _sticky_p > 0.0 and t > 0:
+                        _stick_rows = np.nonzero(
+                            np.random.random(num_envs) < _sticky_p
+                        )[0]
+                        if _stick_rows.size:
+                            _rows_t = torch.from_numpy(_stick_rows)
+                            _prev_t = torch.from_numpy(
+                                _prev_exec_action[_stick_rows]
+                            )
+                            actions[_rows_t] = _prev_t
+                            log_probs_taken[_rows_t] = log_probs_all[
+                                _rows_t, _prev_t
+                            ]
+                    if _sticky_p > 0.0:
+                        _prev_exec_action[:] = actions.numpy()
 
                     actions_np = actions.numpy().astype(np.int32)
                     action_buf[t] = actions_np
