@@ -514,6 +514,11 @@ def main() -> int:
              "and the run relaunches with auto-resume, up to 5 times).",
     )
     parser.add_argument(
+        "--strict-config", action="store_true",
+        help="Reject (rather than warn on) unregistered profile keys — "
+             "catches typo'd/dead knobs that would be silently ignored.",
+    )
+    parser.add_argument(
         "--seed", type=int, default=0,
         help="RNG seed for reproducibility (default: 0). Seeds python, "
              "numpy and torch, and is recorded in the run manifest.",
@@ -613,6 +618,16 @@ def main() -> int:
         max_episode_steps=int(profile.get("max_episode_steps", 1000)),
         seed=args.seed,
     )
+
+    # Schema check: a misspelled reinforce knob is silently ignored
+    # otherwise (the parsed-but-inert bug class). Warn loudly at startup.
+    try:
+        from src.training.config_schema import check_profile
+        check_profile(profile, strict=args.strict_config, logger=log)
+    except Exception as exc:
+        if args.strict_config:
+            raise
+        log.warning("[launcher] config schema check errored: %s", exc)
 
     log.info("[launcher] checkpoint_dir = %s", trainer.checkpoint_dir)
 

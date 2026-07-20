@@ -596,6 +596,21 @@ class Trainer:
         # ppo_clip_eps=0 to degrade to vanilla REINFORCE for A/B testing.
         self.ppo_clip_eps: float = rl_cfg.get("ppo_clip_eps", 0.2)
         self.entropy_coef: float = rl_cfg.get("entropy_coef", 0.01)
+        # Adaptive entropy FLOOR (opt-in; 0 = off). The fixed coef can't
+        # stop a policy from collapsing to near-deterministic under
+        # sticky/jitter training — the 2026-07-19 1-1 calibration crashed
+        # entropy 0.57 -> 0.05 and then died 0/50 under sticky eval,
+        # because a start-locked deterministic policy is exactly what
+        # sticky perturbations break. When last_entropy drops below
+        # entropy_floor we raise the effective coef (toward
+        # entropy_coef_max); when it recovers we decay back toward the
+        # base. SAC-style automatic-temperature logic, simplified to a
+        # per-iteration multiplicative controller.
+        self.entropy_floor: float = float(rl_cfg.get("entropy_floor", 0.0))
+        self._entropy_coef_base: float = self.entropy_coef
+        self.entropy_coef_max: float = float(
+            rl_cfg.get("entropy_coef_max", 0.05)
+        )
         # torch.compile can lower per-step dispatch overhead on MPS; it's
         # opt-out because compile can fail on non-trivial graphs.
         self.compile_nets: bool = rl_cfg.get("torch_compile", True)
@@ -7128,6 +7143,21 @@ class Trainer:
                     )
             else:
                 collapse_strikes = 0
+
+            # Adaptive entropy-floor controller (opt-in via entropy_floor).
+            # Keeps the policy from collapsing to a brittle deterministic
+            # trajectory under sticky/jitter training — the mechanism that
+            # makes a policy actually survive the honest sticky eval rather
+            # than memorizing one start-locked path.
+            if self.entropy_floor > 0.0:
+                if last_entropy < self.entropy_floor:
+                    self.entropy_coef = min(
+                        self.entropy_coef * 1.5 + 1e-4, self.entropy_coef_max
+                    )
+                elif last_entropy > 1.5 * self.entropy_floor:
+                    self.entropy_coef = max(
+                        self.entropy_coef * 0.9, self._entropy_coef_base
+                    )
 
             # Clear per-iteration episode-completion buffer so the next
             # iter reports against fresh episode data only.
