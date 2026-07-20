@@ -670,7 +670,15 @@ def main() -> int:
         except KeyboardInterrupt:
             log.info("[supervisor] interrupted — clean stop")
             return 0
-        except Exception:  # noqa: BLE001 — the supervisor's entire job
+        # BaseException, NOT Exception: a Rust worker panic crosses the
+        # PyO3 boundary as pyo3_runtime.PanicException, which subclasses
+        # BaseException — `except Exception` would let it kill the
+        # process, defeating the supervisor for the exact failure class
+        # (worker panic) it exists to survive. SystemExit still
+        # propagates (a deliberate exit is not a crash to restart).
+        except SystemExit:
+            raise
+        except BaseException:  # noqa: BLE001 — the supervisor's entire job
             attempt += 1
             log.error(
                 "[supervisor] trainer crashed (attempt %d/%d):\n%s",

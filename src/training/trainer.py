@@ -24,6 +24,7 @@ import contextlib
 import json
 import logging
 import math
+import os
 import queue as _queue
 import threading
 import time
@@ -4232,48 +4233,67 @@ class Trainer:
             return 0
 
         iter_offset = 0
-        try:
-            latest_ckpts = sorted(
-                self.checkpoint_dir.glob("vanilla_ppo_iter_*.pt"),
-                key=lambda p: int(p.stem.rsplit("_", 1)[-1]),
+        # Tear-tolerant resume: walk candidates NEWEST->OLDEST and load
+        # the first that opens. A single torn newest checkpoint (a death
+        # mid-save, now made rare by the atomic write above but still
+        # possible on older runs) must NOT trigger a silent from-scratch
+        # restart while ~50 good checkpoints sit on disk — that converts
+        # a long run into random-weights training with only a log line,
+        # and under the supervisor it happens unattended. A corrupt file
+        # is renamed aside so it stops winning the sort, and starting
+        # fresh is an ERROR (not a shrug) reached only when NOTHING loads.
+        candidates = sorted(
+            self.checkpoint_dir.glob("vanilla_ppo_iter_*.pt"),
+            key=lambda p: int(p.stem.rsplit("_", 1)[-1]),
+            reverse=True,
+        )
+        state = None
+        latest = None
+        for cand in candidates:
+            try:
+                state = torch.load(str(cand), map_location=self.device)
+                latest = cand
+                break
+            except Exception as exc:
+                corrupt = cand.with_suffix(".pt.corrupt")
+                try:
+                    cand.rename(corrupt)
+                except OSError:
+                    pass
+                log.error(
+                    "[vanilla_ppo] checkpoint %s failed to load (%s) — "
+                    "quarantined as %s, trying next-older",
+                    cand.name, exc, corrupt.name,
+                )
+        if state is not None and isinstance(state, dict) \
+                and "net_state_dict" in state:
+            net.load_state_dict(state["net_state_dict"], strict=False)
+            try:
+                optimizer.load_state_dict(state["optimizer_state_dict"])
+            except Exception as exc:
+                log.warning(
+                    "[vanilla_ppo] optimizer state load failed "
+                    "(continuing with fresh Adam state): %s", exc,
+                )
+            iter_offset = int(state.get("iter", 0) or 0)
+            if "rnd_state_dict" in state:
+                self._pending_rnd_state = state["rnd_state_dict"]
+            if "anticollapse" in state:
+                self._pending_anticollapse = state["anticollapse"]
+            if "gx_counts" in state:
+                self._gx_counts = {
+                    int(k): int(v) for k, v in state["gx_counts"].items()
+                }
+            self._vppo_resumed_from_iter = iter_offset
+            log.info(
+                "[vanilla_ppo] RESUMED net + optimizer from %s "
+                "(saved at iter %d; continuing checkpoint numbering)",
+                latest, iter_offset,
             )
-            if latest_ckpts:
-                latest = latest_ckpts[-1]
-                state = torch.load(str(latest), map_location=self.device)
-                if isinstance(state, dict) and "net_state_dict" in state:
-                    net.load_state_dict(state["net_state_dict"], strict=False)
-                    try:
-                        optimizer.load_state_dict(state["optimizer_state_dict"])
-                    except Exception as exc:
-                        log.warning(
-                            "[vanilla_ppo] optimizer state load failed "
-                            "(continuing with fresh Adam state): %s", exc,
-                        )
-                    iter_offset = int(state.get("iter", 0) or 0)
-                    if "rnd_state_dict" in state:
-                        # RND builds lazily on the first update (after this
-                        # resume block); stash and apply at build time.
-                        self._pending_rnd_state = state["rnd_state_dict"]
-                    if "anticollapse" in state:
-                        # Anti-collapse locals init after this block; stash
-                        # and restore them there.
-                        self._pending_anticollapse = state["anticollapse"]
-                    if "gx_counts" in state:
-                        self._gx_counts = {
-                            int(k): int(v)
-                            for k, v in state["gx_counts"].items()
-                        }
-                    self._vppo_resumed_from_iter = iter_offset
-                    log.info(
-                        "[vanilla_ppo] RESUMED net + optimizer from %s "
-                        "(saved at iter %d; continuing checkpoint "
-                        "numbering from there)",
-                        latest, iter_offset,
-                    )
-        except Exception as exc:
-            log.warning(
-                "[vanilla_ppo] auto-resume scan failed (starting fresh): %s",
-                exc,
+        elif candidates:
+            log.error(
+                "[vanilla_ppo] NO loadable checkpoint among %d candidate(s)"
+                " — starting from random weights", len(candidates),
             )
         return iter_offset
 
@@ -7388,7 +7408,25 @@ class Trainer:
                             "best_snapshot_fitness": float(best_snapshot_fitness),
                             "collapse_strikes": int(collapse_strikes),
                         }
-                    torch.save(_ckpt_payload, str(ckpt_path))
+                    # Atomic write: tmp + fsync + os.replace, so a death
+                    # mid-save (OOM/SIGKILL — and the full CPU state copy
+                    # above widens that window) can never leave a
+                    # TRUNCATED highest-numbered checkpoint that the
+                    # resume scan would then pick and fail to load. The
+                    # old bare torch.save-to-final-path could, converting
+                    # a long run into a silent from-scratch restart under
+                    # the supervisor. Mirrors save_checkpoint_atomic.
+                    _tmp_path = ckpt_path.with_suffix(".pt.tmp")
+                    torch.save(_ckpt_payload, str(_tmp_path))
+                    try:
+                        _fd = os.open(str(_tmp_path), os.O_RDONLY)
+                        try:
+                            os.fsync(_fd)
+                        finally:
+                            os.close(_fd)
+                    except OSError:
+                        pass
+                    os.replace(str(_tmp_path), str(ckpt_path))
                     log.info("[vanilla_ppo] saved checkpoint: %s", ckpt_path)
                 except Exception as exc:
                     log.warning("[vanilla_ppo] checkpoint save failed: %s", exc)
