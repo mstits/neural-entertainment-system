@@ -40,21 +40,64 @@ def main() -> int:
         if not (REPO / rel).exists():
             errors.append(f"allowlisted but missing: {rel}")
 
+    # Every demo bank (.npz — what the trainer's demo loader consumes)
+    # under SEEDS must be allowlisted, RECURSIVE so a bank dropped in a
+    # subdir is not invisible (the original top-level glob missed it).
+    # .npy/.state artifacts are harvester/replay inputs, not demo banks,
+    # so they are covered by the quarantine hash check below rather than
+    # the allowlist.
     if SEEDS.exists():
-        for f in sorted(SEEDS.glob("*.npz")):
+        for f in sorted(SEEDS.rglob("*.npz")):
             rel = str(f.relative_to(REPO))
             if rel not in allowed:
-                errors.append(f"demo not on allowlist (add or quarantine): {rel}")
+                errors.append(
+                    f"demo bank not on allowlist (add or quarantine): {rel}")
 
+    # Content-hash every quarantined file, then confirm NO copy of it
+    # exists anywhere under checkpoints/ outside the quarantine — a
+    # restore-by-copy (not just moving the original back) must be caught.
+    import hashlib
+
+    def _sha(p: Path) -> str:
+        h = hashlib.sha256()
+        h.update(p.read_bytes())
+        return h.hexdigest()
+
+    quarantined_hashes = {}
     for name in QUARANTINED_NAMES:
-        if not (QUARANTINE / name).exists():
+        qp = QUARANTINE / name
+        if not qp.exists():
             errors.append(f"quarantined artifact missing from quarantine: {name}")
+        else:
+            try:
+                quarantined_hashes[_sha(qp)] = name
+            except OSError:
+                pass
+    ck = REPO / "checkpoints"
+    if ck.exists() and quarantined_hashes:
+        for f in ck.rglob("*"):
+            if not f.is_file() or QUARANTINE in f.parents:
+                continue
+            if f.suffix not in (".npz", ".npy", ".pt", ".state"):
+                continue
+            try:
+                if (h := _sha(f)) in quarantined_hashes:
+                    errors.append(
+                        f"quarantined artifact {quarantined_hashes[h]} "
+                        f"copied back into the tree at "
+                        f"{f.relative_to(REPO)}")
+            except OSError:
+                continue
 
-    yaml_roots = [REPO / "configs", REPO / "checkpoints"]
-    for root in yaml_roots:
+    # Reference scan across every manifest format (.yaml/.yml/.json), not
+    # just .yaml.
+    ref_roots = [REPO / "configs", REPO / "checkpoints"]
+    for root in ref_roots:
         if not root.exists():
             continue
-        for y in root.rglob("*.yaml"):
+        for y in root.rglob("*"):
+            if y.suffix not in (".yaml", ".yml", ".json"):
+                continue
             if QUARANTINE in y.parents:
                 continue
             try:
