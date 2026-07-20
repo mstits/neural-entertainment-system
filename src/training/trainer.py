@@ -5351,9 +5351,15 @@ class Trainer:
                                 _prev_exec_action[_stick_rows]
                             )
                             actions[_rows_t] = _prev_t
-                            log_probs_taken[_rows_t] = log_probs_all[
-                                _rows_t, _prev_t
-                            ]
+                            # Clamp: a near-deterministic policy gives a
+                            # stuck action ~0 probability, and an
+                            # unclamped log-prob of -30..-46 explodes the
+                            # PPO ratio into NaN weights (observed: warm-
+                            # started 1-1 collapsed to NaN in 56 iters).
+                            # Floor at ~2e-6 probability.
+                            log_probs_taken[_rows_t] = torch.clamp(
+                                log_probs_all[_rows_t, _prev_t], min=-13.0
+                            )
                     if _sticky_p > 0.0:
                         _prev_exec_action[:] = actions.numpy()
 
@@ -7329,7 +7335,24 @@ class Trainer:
             # network's state_dict (plus the ABSOLUTE iter counter for
             # resume). Filenames use global_it so a resumed run never
             # overwrites checkpoints saved before the resume point.
+            _params_finite = True
             if it > 0 and it % 10 == 0:
+                # Poison guard: a numerically-collapsed net must never
+                # become the auto-resume point, or the crash supervisor
+                # would relaunch straight back into NaN. Refusing the
+                # save keeps the last GOOD checkpoint as the rollback.
+                _params_finite = all(
+                    torch.isfinite(v).all()
+                    for v in net.state_dict().values()
+                )
+                if not _params_finite:
+                    log.error(
+                        "[vanilla_ppo] REFUSING checkpoint save at iter "
+                        "%d: non-finite parameters (numeric collapse) — "
+                        "auto-resume will roll back to the last good "
+                        "checkpoint", global_it,
+                    )
+            if it > 0 and it % 10 == 0 and _params_finite:
                 ckpt_path = (
                     self.checkpoint_dir
                     / f"vanilla_ppo_iter_{global_it:05d}.pt"

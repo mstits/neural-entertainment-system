@@ -509,6 +509,11 @@ def main() -> int:
         help="Force a fresh run (ignores existing checkpoints).",
     )
     parser.add_argument(
+        "--no-supervise", action="store_true",
+        help="Disable the crash supervisor (default: crashes are logged "
+             "and the run relaunches with auto-resume, up to 5 times).",
+    )
+    parser.add_argument(
         "--seed", type=int, default=0,
         help="RNG seed for reproducibility (default: 0). Seeds python, "
              "numpy and torch, and is recorded in the run manifest.",
@@ -643,11 +648,50 @@ def main() -> int:
         # handle it. `--no-resume` forces a fresh run through both paths.
         pass
 
-    trainer.run(
-        num_generations=args.iters, resume_from=resume_from,
-        fresh_start=not args.resume,
-    )
-    return 0
+    # Self-healing supervisor: a training process must NEVER die and stay
+    # dead. Any trainer exception (numeric collapse, worker panic, MPS
+    # hiccup) is logged with its traceback and the run is relaunched with
+    # auto-resume, which rolls back to the latest on-disk checkpoint (at
+    # most one save interval of progress). Backoff between attempts;
+    # repeated immediate failures abort loudly rather than looping — a
+    # checkpoint that crashes on load needs a human, not a hot loop.
+    import time as _time
+    import traceback as _tb
+    max_restarts = 0 if args.no_supervise else 5
+    attempt = 0
+    while True:
+        _t0 = _time.time()
+        try:
+            trainer.run(
+                num_generations=args.iters, resume_from=resume_from,
+                fresh_start=(not args.resume) and attempt == 0,
+            )
+            return 0
+        except KeyboardInterrupt:
+            log.info("[supervisor] interrupted — clean stop")
+            return 0
+        except Exception:  # noqa: BLE001 — the supervisor's entire job
+            attempt += 1
+            log.error(
+                "[supervisor] trainer crashed (attempt %d/%d):\n%s",
+                attempt, max_restarts, _tb.format_exc(),
+            )
+            if attempt > max_restarts:
+                log.error(
+                    "[supervisor] restart budget exhausted — aborting"
+                )
+                return 1
+            if _time.time() - _t0 < 120:
+                # Crashed within two minutes of starting: likely a
+                # poisoned checkpoint or config, not a transient. Longer
+                # backoff, and give up sooner via the attempt budget.
+                _time.sleep(60)
+            else:
+                _time.sleep(15)
+            log.info(
+                "[supervisor] relaunching with auto-resume (attempt %d)",
+                attempt,
+            )
 
 
 if __name__ == "__main__":
