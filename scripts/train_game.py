@@ -616,6 +616,39 @@ def main() -> int:
 
     log.info("[launcher] checkpoint_dir = %s", trainer.checkpoint_dir)
 
+    # Run-lock: two trainers writing the same checkpoint dir corrupt each
+    # other's checkpoints and metrics (interleaved saves, torn files,
+    # numbering clashes). A stale lock from a dead process is reclaimed;
+    # a live one aborts. Cheap insurance against a double `nohup` launch
+    # or a supervisor relaunch racing a not-quite-dead predecessor.
+    import os as _os
+    _lock = trainer.checkpoint_dir / ".run.lock"
+    try:
+        if _lock.exists():
+            try:
+                _old_pid = int(_lock.read_text().split()[0])
+                _os.kill(_old_pid, 0)  # raises if no such process
+                log.error(
+                    "[launcher] checkpoint dir is locked by live PID %d "
+                    "(%s). Refusing to run two trainers on one dir. Stop "
+                    "the other run or pick a different dir.",
+                    _old_pid, _lock,
+                )
+                return 1
+            except (ProcessLookupError, ValueError, IndexError):
+                log.warning("[launcher] reclaiming stale run-lock %s", _lock)
+            except PermissionError:
+                # PID exists but is not ours — treat as live, abort.
+                log.error("[launcher] checkpoint dir locked by another "
+                          "process; refusing to run.")
+                return 1
+        _lock.write_text(f"{_os.getpid()} {rom_path}\n")
+        import atexit as _atexit
+        _atexit.register(lambda: _lock.exists() and _lock.unlink())
+    except OSError as exc:
+        log.warning("[launcher] could not establish run-lock (%s); "
+                    "continuing without it", exc)
+
     # Reproducibility manifest: ROM + its MD5 + start state + seed + git
     # commit + pinned hyperparameters, written to the checkpoint dir before
     # the run starts. With the code at that commit and the run's

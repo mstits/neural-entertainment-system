@@ -4219,17 +4219,37 @@ class Trainer:
         """
         self._vppo_resumed_from_iter = None
         if fresh_start:
-            # Only worth a line when there was actually a checkpoint to
-            # ignore — otherwise it is noise on a genuinely fresh dir.
+            # MOVE prior checkpoints aside, don't just ignore them. A
+            # fresh run numbers its own checkpoints from 0, below any
+            # abandoned longer run's; if left in place, a supervisor
+            # crash-relaunch (which runs fresh_start=False) would resume
+            # the OLD run by highest-number and silently discard the
+            # fresh run — the "fresh run resumed at stage N" confusion,
+            # now automatable by the self-healing supervisor. Relocating
+            # them makes the fresh run's numbering unambiguous and
+            # leaves the old checkpoints recoverable under prevrun_*/.
             existing = list(
                 self.checkpoint_dir.glob("vanilla_ppo_iter_*.pt")
             )
             if existing:
-                log.info(
-                    "[vanilla_ppo] fresh start requested — ignoring %d "
-                    "existing checkpoint(s) in %s",
-                    len(existing), self.checkpoint_dir,
-                )
+                from datetime import datetime as _dt
+                dest = self.checkpoint_dir / f"prevrun_{_dt.now():%Y%m%d_%H%M%S}"
+                try:
+                    dest.mkdir(parents=True, exist_ok=True)
+                    for p in existing:
+                        p.rename(dest / p.name)
+                    log.info(
+                        "[vanilla_ppo] fresh start — moved %d prior "
+                        "checkpoint(s) to %s so a relaunch can't resume "
+                        "them", len(existing), dest,
+                    )
+                except OSError as exc:
+                    log.warning(
+                        "[vanilla_ppo] fresh start — could not relocate "
+                        "%d prior checkpoint(s) (%s); they are ignored "
+                        "this launch but a crash-relaunch may resume "
+                        "them", len(existing), exc,
+                    )
             return 0
 
         iter_offset = 0
