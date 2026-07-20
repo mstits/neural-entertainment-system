@@ -693,6 +693,15 @@ impl Ppu {
     }
 
     pub fn apply_state(&mut self, state: &State) {
+        // Invalidate the CHR fast-path cache: a state restore makes the
+        // cartridge free and re-clone its CHR buffer (cartridge.rs:
+        // self.chr = state.chr.clone()), so a stale chr_cache_ptr would
+        // dangle into freed memory and read_chr_byte would deref it —
+        // a use-after-free on EVERY restore (curriculum, Go-Explore,
+        // GUI load-state). Null self-heals: read_chr_byte falls back to
+        // the mapper until the render path rebuilds the cache from the
+        // new allocation. Mirrors nes.rs refreshing cached_prg_asm_ptr.
+        self.chr_cache_ptr = core::ptr::null();
         self.cycles = state.cycles;
         self.regs = state.regs;
         self.refresh_ppu_mask_cache();

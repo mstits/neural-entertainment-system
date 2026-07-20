@@ -1323,7 +1323,12 @@ class Trainer:
                 # PPO's importance ratio stays consistent with what
                 # the env actually executes.
                 a = last_action_per_genome[genome_idx]
-                lp = float(log_probs_all_cpu[batch_idx, a])
+                # Clamp at ~2e-6 probability: a near-deterministic policy
+                # gives a stuck action a log-prob of -30..-46, and an
+                # unclamped value explodes the PPO ratio into NaN. Same
+                # floor the vanilla sticky path uses; this GA/ga_ppo path
+                # ships live via mario_tiles.yaml (sticky 0.5).
+                lp = max(float(log_probs_all_cpu[batch_idx, a]), -13.0)
             else:
                 a = int(sampled_cpu[batch_idx])
                 lp = float(lp_cpu[batch_idx])
@@ -4100,6 +4105,12 @@ class Trainer:
             # above, this gives each trajectory equal voice regardless of
             # length.
             loss = total_loss / total_traj_items
+            # NaN backstop (see vanilla path): skip a non-finite step
+            # rather than let clip_grad_norm_ splash NaN across weights.
+            if not torch.isfinite(loss):
+                log.error("[ga_ppo] non-finite loss — skipping step")
+                optimizer.zero_grad(set_to_none=True)
+                continue
             loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), self.reinforce_grad_clip)
             optimizer.step()
@@ -4187,6 +4198,11 @@ class Trainer:
                     loss = loss + self.rnd_loss_coef * rnd_loss
                     lr = float(rnd_loss.detach().item())
                 optimizer.zero_grad()
+                # NaN backstop (see vanilla path).
+                if not torch.isfinite(loss):
+                    log.error("[ga_ppo] non-finite loss — skipping step")
+                    optimizer.zero_grad(set_to_none=True)
+                    continue
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(
                     net.parameters(), self.reinforce_grad_clip
@@ -6186,6 +6202,21 @@ class Trainer:
                         _last_rnd_t = rnd_loss.detach()
 
                     optimizer.zero_grad()
+                    # NaN backstop: clip_grad_norm_ is NOT one — a
+                    # non-finite loss yields clip_coef=NaN, which
+                    # multiplies EVERY gradient (net + RND, same
+                    # optimizer) to NaN and optimizer.step() then writes
+                    # NaN into all weights. Skip the whole step instead;
+                    # the rollout continues and the next minibatch
+                    # usually recovers. This subsumes the per-source
+                    # log-prob clamp as the general guard.
+                    if not torch.isfinite(loss):
+                        log.error(
+                            "[vanilla_ppo] non-finite loss (%s) — skipping "
+                            "optimizer step this minibatch", loss.item(),
+                        )
+                        optimizer.zero_grad(set_to_none=True)
+                        continue
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(
                         net.parameters(), self.reinforce_grad_clip
@@ -7381,10 +7412,30 @@ class Trainer:
                 # become the auto-resume point, or the crash supervisor
                 # would relaunch straight back into NaN. Refusing the
                 # save keeps the last GOOD checkpoint as the rollback.
-                _params_finite = all(
-                    torch.isfinite(v).all()
-                    for v in net.state_dict().values()
-                )
+                # Checks the NET, the RND module, AND the optimizer
+                # moments: grad clipping covers net.parameters() only, so
+                # the RND predictor (same Adam) can go non-finite while
+                # the net stays finite — a save landing there would
+                # persist finite-net + NaN-RND/NaN-moments as the resume
+                # point, and the load path restores them unvalidated.
+                def _all_finite(sd) -> bool:
+                    return all(
+                        torch.isfinite(v).all()
+                        for v in sd.values()
+                        if torch.is_tensor(v) and v.is_floating_point()
+                    )
+                _params_finite = _all_finite(net.state_dict())
+                if _params_finite and self._rnd is not None:
+                    _params_finite = _all_finite(self._rnd.state_dict())
+                if _params_finite:
+                    for _grp in optimizer.state.values():
+                        if not all(
+                            torch.isfinite(t).all()
+                            for t in _grp.values()
+                            if torch.is_tensor(t) and t.is_floating_point()
+                        ):
+                            _params_finite = False
+                            break
                 if not _params_finite:
                     log.error(
                         "[vanilla_ppo] REFUSING checkpoint save at iter "

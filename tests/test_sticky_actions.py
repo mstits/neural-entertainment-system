@@ -74,9 +74,12 @@ def test_sticky_one_overrides_every_step_after_zero() -> None:
     # Both genomes should stick to their last_action (5 and 7).
     assert actions == [5, 7]
     # log_prob recorded should be the OVERRIDDEN action's log-prob from
-    # log_probs_all, NOT the sampled action's lp.
-    assert log_probs_old[0] == pytest.approx(-15.0)  # log_probs_all[0, 5]
-    assert log_probs_old[1] == pytest.approx(-27.0)  # log_probs_all[1, 7]
+    # log_probs_all, NOT the sampled action's lp — but FLOORED at -13.0.
+    # A near-deterministic policy gives a stuck action a log-prob of
+    # -30..-46; unclamped that explodes the PPO ratio to NaN, so the
+    # recorded value is clamped (raw -15/-27 both floor to -13.0).
+    assert log_probs_old[0] == pytest.approx(-13.0)  # clamp(log_probs_all[0,5])
+    assert log_probs_old[1] == pytest.approx(-13.0)  # clamp(log_probs_all[1,7])
     # last unchanged because we re-stuck (5→5, 7→7).
     assert last == [5, 7]
 
@@ -134,7 +137,9 @@ def test_sticky_partial_probability_average_correct() -> None:
     lp = np.array([-1.0], dtype=np.float32)
     # Distinguishable log-probs so we can detect override events.
     log_probs_all = np.array([[-10.0] * 8], dtype=np.float32)
-    log_probs_all[0, 5] = -99.0  # last_action's slot has a unique value
+    # Unique marker ABOVE the -13.0 clamp floor so override detection is
+    # unaffected by the clamp (the clamp itself is tested separately).
+    log_probs_all[0, 5] = -12.0
     for _ in range(n_trials):
         actions = [0]
         log_probs_old = [0.0]
@@ -144,6 +149,27 @@ def test_sticky_partial_probability_average_correct() -> None:
         )
         if actions[0] == 5:  # override fired
             overrides += 1
-            assert log_probs_old[0] == pytest.approx(-99.0)
+            assert log_probs_old[0] == pytest.approx(-12.0)
     # Allow ±5% slop on a 1000-trial fair coin.
     assert 450 <= overrides <= 550, f"sticky rate {overrides}/1000 out of [450, 550]"
+
+
+def test_sticky_logprob_clamped_at_floor():
+    """A near-deterministic policy gives a stuck action a very negative
+    log-prob (-30..-46); recording it unclamped explodes the PPO ratio
+    to NaN (the 2026-07-19 collapse). The GA sticky path must floor it
+    at -13.0, matching the vanilla path."""
+    t = _stub(1.0)  # always stick
+    sampled = np.array([3], dtype=np.int64)
+    lp = np.array([-1.0], dtype=np.float32)
+    log_probs_all = np.array([[-2.0] * 8], dtype=np.float32)
+    log_probs_all[0, 5] = -46.0  # stuck action ~0 probability
+    actions = [0]
+    log_probs_old = [0.0]
+    last = [5]
+    t._apply_sampled_actions(
+        [0], sampled, lp, log_probs_all, actions, log_probs_old, last, step=10,
+    )
+    assert actions == [5]
+    assert log_probs_old[0] == pytest.approx(-13.0), \
+        "stuck-action log-prob must be floored at -13.0, not recorded raw"
