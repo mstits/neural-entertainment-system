@@ -42,7 +42,9 @@ trainer step via `pool.step_all(actions)`.
 
 ### CPU
 - `cpu.rs` — pure-Rust 6502 interpreter. Per-cycle dispatch via
-  `Instruction.cycles: &[CycleFn]`. Passes blargg's CPU test suite. Runs on
+  `Instruction.cycles: &[CycleFn]`. Validated byte-exact (registers + CYC) by
+  nestest and the Mesen-oracle lockstep; the full public blargg CPU suite is
+  not yet run end-to-end as a gate (see README *Accuracy status*). Runs on
   every target; the authoritative reference for the ASM path.
 - `cpu_asm.rs` + `cpu_asm.s` — AArch64 assembly core gated on
   `#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]`. 151 official

@@ -10,12 +10,18 @@ original 1985 console is referred to by its full name to disambiguate.
 
 ## What this is
 
-- A **byte-exact** Rust NES core — 6502 CPU, PPU, APU, and 36 mappers — with a
-  hand-written **AArch64 assembly 6502 core for Apple Silicon**
-  (`nes_core/src/cpu_asm.s`, ~4,300 lines). Fidelity is gated by real test
-  suites, not vibes: **nestest** validates 8,991 CPU instructions byte-for-byte
-  against the Nintendulator golden trace, and **146 parity tapes**
-  (`make parity`) diff `nes_core` against nes-py / Mesen frame-by-frame.
+- A Rust NES core — 6502 CPU, PPU, APU, and 36 mappers. The **pure-Rust
+  interpreter is the correctness reference** and what gates fidelity:
+  **nestest** validates 8,991 CPU instructions byte-for-byte — registers *and*
+  cycle count (CYC) — against the Nintendulator golden trace, and a **31-ROM
+  Mesen-oracle lockstep** plus **146 parity tapes** (`make parity`) diff
+  `nes_core` against Mesen / nes-py frame-by-frame. A hand-written
+  **AArch64-assembly 6502 core** (`nes_core/src/cpu_asm.s`) rides on top as an
+  Apple-Silicon *performance* path — enabled in the maturin/Makefile build,
+  differential-fuzzed against the interpreter for 240M+ instructions with zero
+  divergence, and falling back to the interpreter for any unported opcode. (The
+  full public blargg CPU/PPU/APU test-ROM gauntlet is **not yet run** end-to-end
+  — see *Accuracy status* below.)
 - Broad compatibility: as of the latest library scan, **793 of 794 tested ROMs
   (~99.9%)** boot cleanly across **36 mappers**. Unsupported mappers and
   malformed headers fail cleanly at load time with a `RuntimeError` instead of
@@ -83,7 +89,9 @@ make build-pgo        # + 3-stage instrument -> profile -> rebuild (~3 min)
 
 Build features worth knowing:
 - `python` — PyO3 module + cpal audio (set by maturin).
-- `asm_cpu` — AArch64 assembly 6502 core. Recommended on Apple Silicon.
+- `asm_cpu` — AArch64-assembly 6502 core: an Apple-Silicon *performance* path
+  (on in the maturin/Makefile build; the pure-Rust interpreter remains the
+  fidelity reference and is what `cargo test` exercises).
 - `simd` — NEON palette and audio paths.
 - `metal` — experimental Metal compute shim (off by default; see docs).
 
@@ -152,8 +160,10 @@ iter 12 | ppo loss=0.031 policy=-0.004 value=0.048 entropy=1.71 | rnd=0.92
 
 The curriculum line is the one to watch on Mario: as the pool learns to clear a
 level it snapshots the worker state at the new stage boundary and warm-starts
-all envs from it, so `curriculum stage` climbs 0 → 1 → 2 as it masters 1-1 →
-1-2 → 1-3. Stages persist to `checkpoints/super_mario_bros/smb_curriculum/` so
+all envs from it, so `curriculum stage` climbs 0 → 1 → 2 as it advances through
+1-1 → 1-2 → 1-3 in training. (These are training-time clears; the honest
+cold-start sticky eval is a separate, lower number — see *What actually works
+today*.) Stages persist to `checkpoints/super_mario_bros/smb_curriculum/` so
 restarts resume mid-curriculum.
 
 Want to watch it train live instead of headless? Launch the GUI, pick the ROM,
@@ -205,21 +215,33 @@ whole-file MD5 are recorded in `checkpoints/<game_slug>/run_manifest.json`.
 
 ## What actually works today
 
-Honest, evidence-based status. This repo ships the **emulator, the trainer, and
-the harnesses** — it does not ship pre-trained checkpoints (they are gitignored;
-you train them with the flow above).
+Honest, evidence-based status, split by the two ledgers defined in `CLAIMS.md`:
+**LEARNED** (a policy trained by RL, evaluated cold from power-on under the
+Machado et al. 2018 sticky-actions protocol) versus **EXHIBITION** (search
+output — Go-Explore / routed-replay / BC-pilot solutions, always labeled as the
+*search system* solving the game, never as learning). This repo ships the
+**emulator, the trainer, and the harnesses** — it does not ship pre-trained
+checkpoints (they are gitignored; you train them with the flow above).
 
-- **Super Mario Bros., world 1 — trains and produces greedy clears of 1-1, 1-2,
-  and 1-3** via the save-state curriculum + dense-reward tile encoder. Decaying
-  the entropy coefficient consolidates a stochastic clear into a deployable
-  greedy one. **1-4 (the Bowser castle): the boss fight itself is solved** — a
-  Go-Explore-trained policy crosses 1-4 → world 2 (beats Bowser, touches the
-  axe) reliably from mid-1-4, and the win predicate is verified live on real
-  clears. The open work is the early x700→x1000 platform-hop (the true
-  bottleneck) and consolidating a single greedy 1-1→1-4 chain; full autonomous
-  progression to 8-4 remains a research goal.
-- **Cold full-World-1 single-life clear achieved** via a level-keyed composite
-  (`eval_composite`, `seq_clear_rate 1.0`).
+- **Super Mario Bros. — LEARNED, honest cold-start number: `0/50`.** Under the
+  only headline protocol (cold power-on, zero test-time state loads,
+  sticky-actions 0.25 + start-jitter, single-life, 50 episodes × 2 seeds), the
+  best policy to date **scores 0/50 — it dies in 1-1.** The *deterministic*
+  (no-sticky) greedy eval of the same checkpoint does reach the 1-1 flag (1.0),
+  and learned per-level calibration peaked around ~0.11 before collapsing — but
+  per the claims policy the sticky number is the one that counts, and right now
+  it is zero. Backward-algorithm Go-Explore robustification (the published
+  Nature-2021 cure for exactly this sticky collapse) is the active work.
+- **Super Mario Bros. — EXHIBITION (search, not learning).** A level-keyed
+  composite (`eval_composite`) chains routed BC-pilot / Go-Explore solutions
+  into a **cold full-World-1 single-life traversal (`seq_clear_rate 1.0`)**, and
+  a Go-Explore search crosses **1-4 → world 2** (beats Bowser, touches the axe)
+  reliably from a mid-1-4 save-state, with the win predicate verified live on
+  real clears. These are deterministic replays of search output — real and
+  interesting, but the *search system* solving the game, **not** a
+  learned-from-power-on policy. Greedy training telemetry also shows 1-1/1-2/1-3
+  clears mid-run; those are training-time numbers, not the honest sticky eval
+  above. Full autonomous progression to 8-4 remains a research goal.
 - **16 games have hand-authored reward functions with real win predicates** —
   Mario, Contra, Castlevania, Mega Man, Metroid, Zelda, Tetris, Bubble Bobble,
   Punch-Out, Kung Fu, Gradius, Excitebike, Ghosts'n Goblins, DuckTales, Kid
@@ -230,19 +252,31 @@ you train them with the flow above).
   emulator) for SMB, Punch-Out, and Kung Fu; the rest key on reachable RAM with
   the final-boss values cross-sourced (labeled in-code) until an agent or a
   near-boss save-state reaches those endgames. **These make the games trainable
-  and measurable — none but SMB world 1 has a demonstrated clear yet; winning
-  the rest is a matter of training compute, not missing code.**
+  and measurable — no game yet has a LEARNED cold-start clear (SMB world 1's
+  demonstrated clear is EXHIBITION — search / routed replay, per above); winning
+  them for real is a matter of training compute plus the sticky-robustness work,
+  not missing code.**
 - **DreamerV3 world-model trainer — scaffolded and trains end-to-end**, but has
   not been converged to outperform PPO on these games; it is a research path,
   not a shipping result.
 
-The emulator itself is the mature layer: byte-exact CPU (nestest), 146 parity
-tapes green, ~99.9% library boot compatibility, and a differential fuzz of the
-ASM core against the pure-Rust reference with zero divergence over 240M+
-instructions. Recent fidelity fixes (MMC5/MMC1-SUROM/MMC3 banking, PPU
-forced-blank backdrop + color-emphasis, OAM-DMA bus routing) were validated
-against Mesen as the ground-truth oracle, and the whole change set was put
-through an adversarial regression review.
+The emulator itself is the mature layer: byte-exact CPU (nestest, registers +
+CYC), 146 parity tapes green, a 31-ROM Mesen-oracle lockstep, ~99.9% library
+boot compatibility, and a differential fuzz of the ASM core against the
+pure-Rust reference with zero divergence over 240M+ instructions. Recent
+fidelity fixes (MMC5/MMC1-SUROM/MMC3 banking, PPU forced-blank backdrop +
+color-emphasis, OAM-DMA bus routing) were validated against Mesen as the
+ground-truth oracle, and the whole change set was put through an adversarial
+regression review.
+
+**Accuracy status (the honest gap).** What *passes today*: nestest byte-exact
+including cycle count (CYC), the 31-ROM Mesen-oracle lockstep
+(`tests/parity/test_mesen_lockstep.py`), and the 146 parity tapes (`make
+parity`). What is **not** yet done: the full public **blargg CPU/PPU/APU
+test-ROM gauntlet** has not been run end-to-end as a gate. Individual blargg
+ROMs have been read during fidelity work, but "passes the blargg suite" is not
+a claim this project has earned suite-wide — running that gauntlet is open work,
+not a shipped result.
 
 ### Game readiness
 
@@ -395,6 +429,15 @@ numbers will vary with chip, macOS version, and background load.
 Parallel training throughput is the headline number and the workload the trainer
 actually runs. Reproduce with `make bench-scaling` / `make bench-hot`.
 
+**Save/restore latency** (full 21,164-byte `nes::State` blob; benched in
+`runs/emulator_bench_2026-07-20.json` via `scripts/bench_save_restore.py`):
+**median save ~1.8 µs / restore ~1.0 µs, p99 save ~4.7 µs / restore ~1.3 µs** at
+one worker, and it holds at 16-worker scale (**p99 save ~4.7 µs, restore
+~2.1 µs**) — so "microsecond save/restore at scale" is now measured, not
+asserted. Honest caveat: that run was under a concurrent ~11-core training load,
+and the *mean* is inflated by rare OS-preemption outliers (a few multi-ms tail
+events), so the median/p99 above — not the mean — describe the common case.
+
 ## Compatibility
 
 The full matrix lives in `reports/full_library.md`. A summary:
@@ -494,10 +537,11 @@ latest soak numbers.
 
 What this release **does** ship:
 
-- A fast, accurate Rust NES emulator with 36 mappers (793/794 ROMs boot), an
-  AArch64 ASM 6502 core (differential-fuzzed against the pure-Rust reference for
-  240M+ instructions, zero divergence), and byte-exact CPU validation via
-  nestest (8,991 instructions).
+- A fast Rust NES emulator with 36 mappers (793/794 ROMs boot), byte-exact CPU
+  validation via nestest (8,991 instructions, registers + cycle count) and a
+  31-ROM Mesen-oracle lockstep, plus an AArch64 ASM 6502 core
+  (differential-fuzzed against the pure-Rust interpreter for 240M+ instructions,
+  zero divergence).
 - The training stack: rayon worker pool, vanilla-PPO trainer (default) with
   save-state curriculum, tile and pixel-CNN encoders, RND exploration, a
   DreamerV3 scaffold, and Core ML export.
@@ -506,8 +550,12 @@ What this release **does** ship:
 What this release **does not** ship:
 
 - **Pre-trained checkpoints.** Checkpoints are gitignored; train them yourself
-  with the flow above. On SMB, world-1 training reliably produces greedy clears
-  of 1-1/1-2/1-3; **1-4 and full autonomous 8-4 are not yet solved.**
+  with the flow above. On SMB, world-1 training produces deterministic greedy
+  clears of 1-1/1-2/1-3 (training-time / no-sticky numbers), but the honest
+  cold-start sticky eval is currently **0/50**; **1-4 and full autonomous 8-4
+  are not yet solved**, and the World-1 traversal that does exist is EXHIBITION
+  (search / routed replay), not a learned policy — see *What actually works
+  today*.
 - **A clearing Contra policy.** Contra learns under the pixel-CNN + RND recipe
   but does not yet clear stage 1; value-loss tuning is the open lever.
 - **Tile encoders for games other than SMB.** The framework
@@ -518,6 +566,10 @@ What this release **does not** ship:
   but has not been converged to beat PPO on these games — open research.
 - **All 794 tested ROMs booting.** The single load failure (`Yoshi (USA).nes`)
   is a truncated dump, not an emulator bug.
+- **A completed public accuracy gauntlet.** nestest (registers + CYC), the
+  31-ROM Mesen-oracle lockstep, and the 146 parity tapes pass; the full public
+  **blargg CPU/PPU/APU test-ROM suite** has not yet been run end-to-end as a
+  gate (see *Accuracy status*).
 - **USB-DAC audio sign-off.** Done on built-in MacBook speakers and headphones;
   run `scripts/audio_signoff.py` for the 60-second harness on your own devices.
 - **Metal-accelerated PPU rendering.** A v1 palette-expand kernel exists
@@ -612,7 +664,10 @@ their code ships in this repo, but the lineage is real and worth naming.
   code is present in this repo.
 - [**NESdev Wiki**](https://www.nesdev.org/wiki/) — indispensable reference for
   every mapper, PPU state-machine quirk, and APU oddity in this codebase.
-- **blargg's NES test ROMs** — CPU, PPU, and APU regression coverage.
+- **blargg's NES test ROMs** — the standard public CPU/PPU/APU accuracy
+  gauntlet. Individual ROMs were read during fidelity work; the full suite is
+  not yet run end-to-end as a gate (see *Accuracy status*). nestest and the
+  Mesen-oracle lockstep are the current CPU gates.
 - **kevtris's nestest** + the **Nintendulator golden trace** — drive the
   byte-exact CPU validation harness (8,991 instructions, every official +
   undocumented opcode). These are the only third-party ROMs distributed with the
