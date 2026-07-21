@@ -8,6 +8,49 @@ play — reproducibly.
 Hereafter, **NES** refers to this project (Neural Entertainment System); the
 original 1985 console is referred to by its full name to disambiguate.
 
+## Where it stands today
+
+![A learned policy playing through World 1 of Super Mario Bros — 1-1 to the 1-4 castle](docs/media/world1_learned.gif)
+
+*A trained reinforcement-learning policy playing Super Mario Bros from
+power-on — 1-1 through the 1-4 castle, no warp pipes. This is the network
+choosing every button press live; it is **not** a replay of a recorded run.*
+
+**How far we've come.** A genuinely learned agent clears all of **World 1**
+(1-1, 1-2, 1-3, and 1-4 including Bowser's castle) in one continuous session
+from the title screen, then reaches 2-1. Reproduce this exact recording:
+
+```bash
+python scripts/record_learned_playthrough.py \
+  --manifest configs/composite_learned.yaml \
+  --out runs/demo/world1 --stop-after-worlds 1
+# -> World 1 cleared, no warps, end_reason: seq_clear
+```
+
+**How much is left — stated plainly, because an honest miss beats a dishonest
+highlight reel:**
+
+- **Not the whole game.** It beats World 1, then gets stuck at the 2-1
+  hand-off. Worlds 2–8 are open work.
+- **Not perturbation-proof.** Under the research-standard sticky-actions
+  protocol (25% random input repeats, Machado et al. 2018), the honest
+  cold-start score is **0/50** today — the policy is a start-locked trajectory
+  that stochastic play breaks. Making it robust is the active work.
+- **Not yet one agent that understands the game — this is the real gap.**
+  Today's playthrough is a *hierarchical composite*: a separate learned net per
+  level, swapped in by a router that reads the on-screen world/level. No single
+  policy experiences a whole run, so nothing yet *recognizes* "I've entered a
+  water level" or "this is a castle" and adapts its navigation. Per-level
+  specialists, hand-shaped per-level rewards, and save-state warm-starts each
+  quietly removed the pressure to learn the game's fundamentals. The next
+  direction is **one generalist policy, trained across all levels with a
+  generic reward, that learns environment types — overworld, water, castle,
+  pipe-descent — and navigates each on its own.** That is the *un-solved*
+  version of this benchmark, and where the real contribution lives.
+
+The Rust emulator and the honest-evaluation harness underneath are the mature
+layers (below); the single generalist agent is the expedition ahead.
+
 ## What this is
 
 - A Rust NES core — 6502 CPU, PPU, APU, and 36 mappers. The **pure-Rust
