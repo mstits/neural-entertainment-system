@@ -94,3 +94,15 @@ cleared for Learned-ledger training. The trainer refuses demo paths not
 on the allowlist. `make provenance-check` verifies the allowlist, the
 quarantine, and that no profile references quarantined artifacts.
 Provenance sidecars are advisory; the allowlist is authoritative.
+
+## Documented negatives (Learned ledger)
+
+`docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md` records the
+measured negative for World 1-2 under the honest protocol: the policy
+class (compact feedforward on tile observations) was falsified by a
+pre-registered, externally-reviewed protocol — SPRT-verified local
+sticky-robustness at 1,900+ zones does not compose into traversal, and
+the gauntlet core has a measured local sticky ceiling of ~0.03–0.05.
+The companion literature audit found no published agent by any method
+that clears 1-2 under this protocol. Negative results carry the same
+evidentiary standard as positives and are quotable with their data.
