@@ -452,14 +452,41 @@ def build_tile_policy_from_checkpoint(
     `TilePolicyNetwork` (which would leave a non-empty `missing` set and
     eval/demo a half-random policy).
     """
+    # Infer the MLP widths from the checkpoint's weight SHAPES so a net
+    # trained with non-default widths (e.g. the multi-level generalist's wider
+    # trunk) reconstructs at the right size. The winner/cold-probe checkpoints
+    # carry only `net_state_dict` (no arch config), so shape inference is the
+    # only reliable source. Falls back to the constructor defaults when a key
+    # is absent (older/partial checkpoints).
+    sd = None
+    if isinstance(checkpoint, dict):
+        sd = checkpoint.get("net_state_dict") or checkpoint.get("state_dict")
+        if sd is None and all(hasattr(v, "shape") for v in checkpoint.values()):
+            sd = checkpoint
+
+    def _rows(key):
+        try:
+            return int(sd[key].shape[0]) if sd is not None and key in sd else None
+        except Exception:
+            return None
+
     if checkpoint_is_recurrent(checkpoint):
-        return (
-            TileRecurrentPolicyNetwork(
-                num_actions=num_actions, feature_dim=feature_dim
-            ),
-            True,
-        )
-    return (
-        TilePolicyNetwork(num_actions=num_actions, feature_dim=feature_dim),
-        False,
-    )
+        # input_proj.0.weight: (hidden_dim, feature_dim); gru.weight_ih:
+        # (3*gru_dim, hidden_dim).
+        hidden = _rows("input_proj.0.weight")
+        gru_ih = _rows("gru.weight_ih")
+        kwargs = {"num_actions": num_actions, "feature_dim": feature_dim}
+        if hidden is not None:
+            kwargs["hidden_dim"] = hidden
+        if gru_ih is not None:
+            kwargs["gru_dim"] = gru_ih // 3
+        return (TileRecurrentPolicyNetwork(**kwargs), True)
+    # fc1.weight: (hidden_dim, feature_dim); fc2.weight: (trunk_dim, hidden_dim).
+    hidden = _rows("fc1.weight")
+    trunk = _rows("fc2.weight")
+    kwargs = {"num_actions": num_actions, "feature_dim": feature_dim}
+    if hidden is not None:
+        kwargs["hidden_dim"] = hidden
+    if trunk is not None:
+        kwargs["trunk_dim"] = trunk
+    return (TilePolicyNetwork(**kwargs), False)

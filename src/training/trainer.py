@@ -691,6 +691,13 @@ class Trainer:
         self._tile_frame_stack: int = int(
             rl_cfg.get("tile_frame_stack", 4 if self._is_tile_mode else 1)
         )
+        # Tile MLP width. The defaults (64/32) are tuned for a SINGLE level;
+        # a multi-level generalist needs more capacity in the trunk (the
+        # 32-d bottleneck squeezes two levels' policies into a mediocre
+        # average — the measured multi-level collapse). Config-overridable so
+        # single-level runs stay byte-identical.
+        self._tile_hidden_dim: int = int(rl_cfg.get("tile_hidden_dim", 64))
+        self._tile_trunk_dim: int = int(rl_cfg.get("tile_trunk_dim", 32))
         if self._is_tile_mode:
             from src.emulation.tile_observations import get_extractor
             self._tile_extractor = get_extractor(self.encoder_kind)
@@ -1212,11 +1219,15 @@ class Trainer:
                 return TileRecurrentPolicyNetwork(
                     num_actions=self.num_actions,
                     feature_dim=self._tile_feature_dim,
+                    hidden_dim=self._tile_hidden_dim,
+                    gru_dim=self._tile_trunk_dim,
                 )
             from src.models.tile_policy import TilePolicyNetwork
             return TilePolicyNetwork(
                 num_actions=self.num_actions,
                 feature_dim=self._tile_feature_dim,
+                hidden_dim=self._tile_hidden_dim,
+                trunk_dim=self._tile_trunk_dim,
             )
         return PolicyNetwork(
             num_actions=self.num_actions,
@@ -4737,6 +4748,33 @@ class Trainer:
                 SMB_ADVANCE_WINDOW, SMB_ADVANCE_PCT * 100,
             )
 
+        # === PRIORITIZED LEVEL REPLAY (generalist, Phase-B) ===
+        # ONE policy over a FIXED set of level entrances, each env sampled by
+        # inverse-recent-success weight. All decision logic is in the isolated,
+        # unit-tested src/training/plr.py; this is thin glue. Mutually exclusive
+        # with the staged curriculum / ladder / consolidate modes (PLR requires
+        # reinforce.smb_curriculum: false). See configs/mario_generalist_w1.yaml.
+        from src.training import plr as _plr_mod
+        plr_ctx = _plr_mod.build_plr_context(self.game_profile, num_envs)
+        plr_on = plr_ctx is not None
+        if plr_on:
+            if self._smb_curriculum_active:
+                raise ValueError(
+                    "reinforce.plr_enabled requires smb_curriculum: false "
+                    "(PLR replaces the staged curriculum / ladder / consolidate)."
+                )
+            # Route each env's warm-start through the existing per-env plumbing:
+            # env_stage[i] indexes smb_curriculum_states, so populating it with
+            # the PLR entry blobs (index 0 == None cold boot) makes the iter-
+            # boundary warm-start AND the mid-rollout auto-reset reload each
+            # env's assigned level with zero new load bookkeeping.
+            smb_curriculum_states = list(plr_ctx.states)
+            log.info(
+                "[vanilla_ppo] PLR ENABLED: train=%s index_map=%s holdout=%s",
+                plr_ctx.train_labels, plr_ctx.level_to_idx,
+                sorted(plr_ctx.holdout.keys()),
+            )
+
         # === SUB-STAGE LADDER (SMB one-shot campaign, Lane 4) ===
         # When the profile declares `reinforce.substage_ladder.enabled`,
         # the flat scalar area-byte curriculum above is REPLACED by an
@@ -4783,6 +4821,23 @@ class Trainer:
         _cold_cfg = dict(_rl_cfg.get("cold_eval", {}) or {})
         _cons_cfg = dict(_rl_cfg.get("consolidate", {}) or {})
         _forget_cfg = dict(_cold_cfg.get("forgetting", {}) or {})
+        # Non-cheating wavefront potential reward (PBRS). Loads a distance-to-goal
+        # map built from Go-Explore SOLUTION traces (search output, not the ROM);
+        # densifies the long-horizon gradient without changing the optimal
+        # policy. Gated on reinforce.wavefront_reward.enabled + a dmap path.
+        _wave_cfg = dict(_rl_cfg.get("wavefront_reward", {}) or {})
+        wave_pot = None
+        if _wave_cfg.get("enabled", False) and _wave_cfg.get("dmap"):
+            from src.utils.wavefront_reward import WavefrontPotential
+            wave_pot = WavefrontPotential.load(
+                _wave_cfg["dmap"],
+                phi_target=float(_wave_cfg.get("phi_target", 100.0)),
+                gamma=float(_wave_cfg.get("gamma", _rl_cfg.get("gamma", 0.99))),
+            )
+            log.info("[vanilla_ppo] WAVEFRONT reward ON (NON-FARMABLE): %d cells, "
+                     "phi_target=%.1f, D_start=%.0f (positive-shifted PBRS, "
+                     "search-derived, no game internals)",
+                     len(wave_pot.dmap), wave_pot.phi_target, wave_pot.d_start)
         frontier_frac = float(_ws_cfg.get("frontier", 0.50))
         base_retention_frac = float(_ws_cfg.get("retention", 0.25))
         retention_frac = base_retention_frac
@@ -5180,6 +5235,31 @@ class Trainer:
         # we can diff per-step. Quantitative confirmation of clears
         # alongside the visual GUI signal.
         prev_completion_total = np.zeros(num_envs, dtype=np.float32)
+        # Per-env "already recorded this episode's outcome to PLR" flag. A
+        # level clear is recorded True the instant the completion-breakdown
+        # diff fires (below) — NOT at the `done` boundary, because a clear
+        # often does NOT fire done (the env rolls past the flag into the next
+        # level and only `done`s on a later death), so done-time recording
+        # systematically drops clears. A death records False at done IFF the
+        # episode wasn't already recorded as a clear. Dedupe via this flag so
+        # each episode contributes exactly one PLR sample.
+        episode_recorded = np.zeros(num_envs, dtype=bool)
+        # Wavefront PBRS: previous-step potential per env (None = episode start,
+        # no shaping across the boundary).
+        wave_prev_phi: list = [None] * num_envs
+        # Per-episode peak Phi + consecutive off-envelope steps. Non-clear
+        # terminals charge -PEAK (not -Phi(final)): charging the final state
+        # let the policy bank progress then retreat to a Phi=0 region (the 1-2
+        # warp room, off every solution) and time out for FREE — the shaping's
+        # last sanctuary. Peak-charging makes every non-completing episode net
+        # <= 0 shaping regardless of HOW it ends. The lost-cut terminates
+        # episodes that linger off the solution envelope (Phi~0 for LOST_K
+        # consecutive steps) — reclaims the ~70% of rollout steps burned
+        # wandering the warp room. Search-derived (envelope = solution
+        # trajectories), no game internals.
+        wave_peak_phi = np.zeros(num_envs, dtype=np.float32)
+        wave_lost_count = np.zeros(num_envs, dtype=np.int32)
+        WAVE_LOST_K = 150  # ~10 s game time; area-load blips are ~6 steps
         n_clears_this_iter = 0
         # Per-env max world+level reached this iter, packed as
         # world*16+level so a single uint8 max comparator works
@@ -5328,6 +5408,198 @@ class Trainer:
                 "log-probs; eval protocol parity)", _sticky_p,
             )
 
+        # ===== CGSA-PPO: Cell-Granular Stochasticity Annealing =====
+        # (research recipe 2026-07-23, "SMB 1-2 RL Consulting"). Each archived
+        # Go-Explore cell carries its OWN sticky probability p_sticky(c),
+        # initialized 0.0 and annealed toward the eval target as the policy
+        # masters the segment under the current noise:
+        #   every cg_window attempts from c: succ_rate >= 0.75 -> p += 0.05;
+        #   succ_rate < 0.30 and p > 0 -> p -= 0.05.  (success = advancing
+        #   >= one cell zone from the restart gx.)
+        # Restart cells are drawn from the archive with priority
+        #   W(c) = (1-p_hat_c)^2 + 0.1 on the un-welded frontier, 0.01
+        # maintenance on welded cells (anti-forgetting).  A cell at the
+        # target noise is WELDED only by passing Wald's SPRT
+        # (H0: p<=0.15 vs H1: p>=0.60, alpha=.01, beta=.05) — the sound
+        # replacement for the small-sample "gate-mirage" acceptance that
+        # inflated every prior weld claim.  Training-time noise curricula
+        # do not alter the eval protocol (cold sticky-0.25 from the
+        # entrance, unchanged).
+        _cgsa_cfg = dict(_rl_cfg.get("cgsa", {}) or {})
+        cgsa_on = bool(_cgsa_cfg.get("enabled", False)) and go_explore_on
+        cg_target = float(_cgsa_cfg.get("target_sticky", _sticky_p or 0.25))
+        cg_step = float(_cgsa_cfg.get("anneal_step", 0.05))
+        cg_window = int(_cgsa_cfg.get("attempts_per_update", 50))
+        cg_zone_px = int(_cgsa_cfg.get("zone_px", 32))
+        cg_alpha = float(_cgsa_cfg.get("priority_alpha", 2.0))
+        cg_floor = float(_cgsa_cfg.get("priority_floor", 0.1))
+        cg_maint = float(_cgsa_cfg.get("maintenance_weight", 0.01))
+        # SPRT log-likelihood increments for H0 p=.15 vs H1 p=.60.
+        _SPRT_S, _SPRT_F = 1.386, -0.754
+        _SPRT_ACC, _SPRT_REJ = 4.554, -2.996
+        # key -> {p, att, succ, rate, lam, welded}; "__ENTRANCE__" covers
+        # non-archive (start-state) episodes so the entrance anneals too.
+        cg_stats: dict = {}
+        cg_env_cell: list = [None] * num_envs
+        cg_env_start_gx = np.full(num_envs, -1, dtype=np.int64)
+        # Steps lived since the tag — episodes cut younger than this at a
+        # boundary are DROPPED, not scored: a late-rollout restart gets <30
+        # steps before the boundary and would be counted a failure it never
+        # had time to avoid, biasing every zone's rate downward.
+        cg_env_steps = np.zeros(num_envs, dtype=np.int32)
+        CG_MIN_SCORE_STEPS = 20
+        # Per-env sticky prob consulted by the rollout. Without CGSA it stays
+        # at the scalar (behavior unchanged); with CGSA each episode runs at
+        # its restart cell's current curriculum noise.
+        _sticky_p_env = np.full(num_envs, _sticky_p, dtype=np.float64)
+        _cgsa_sel_cache: dict = {"it": -1, "keys": None, "cum": None}
+
+        def _cg_entry(key):
+            st = cg_stats.get(key)
+            if st is None:
+                st = {"p": 0.0, "att": 0, "succ": 0, "rate": 0.0,
+                      "lam": 0.0, "welded": False}
+                cg_stats[key] = st
+            return st
+
+        def _cg_zone_of_key(k):
+            """Archive key (area, phase, yband, gxbucket) -> spatial ZONE
+            (area, gxbucket, yband). The curriculum attaches to zones — the
+            researcher's 32x32 px (gx, gy) bins — NOT to phase-augmented
+            archive keys: the 8x phase multiplier diluted the v1 run to ~4
+            attempts/cell against a 50-attempt window (anneal never fired)."""
+            try:
+                return (k[0], k[3], k[2])
+            except Exception:
+                return k
+
+        # Active weld-frontier cohort size: the K lowest-(area, gx) un-welded
+        # zones get the priority mass; everything deeper waits, welded zones
+        # get maintenance. Without this, attempts spread uniformly over ~800
+        # zones (~0.15/zone/iter — a 25-attempt window takes 150+ iters) and
+        # the curriculum starves; with it, the weld proceeds entrance-forward
+        # the same way the honest eval composes.
+        CG_COHORT_K = int(_cgsa_cfg.get("cohort_k", 40))
+
+        def _cgsa_select_state():
+            """Priority-sample a restart ZONE by W(z) over the weld-frontier
+            cohort, then a random archive cell within it; returns
+            (zone_key, state_bytes). The entrance is a pseudo-zone whose
+            member state is the profile start state — once welded it drops
+            to maintenance like any other zone (no fixed restart share)."""
+            cells = go_explore_archive.cells
+            if not cells:
+                return ("__ENTRANCE__", _start_bytes)
+            if _cgsa_sel_cache["it"] != it:  # refresh once per iter
+                zone_cells: dict = {}
+                for _k in cells.keys():
+                    zone_cells.setdefault(_cg_zone_of_key(_k), []).append(_k)
+                # entrance pseudo-zone sorts FIRST (area 0 < any real area)
+                zone_cells["__ENTRANCE__"] = None
+                def _zsort(z):
+                    return (0, 0) if z == "__ENTRANCE__" else (z[0], z[1])
+                unwelded = sorted(
+                    (z for z in zone_cells
+                     if not cg_stats.get(z, {}).get("welded", False)),
+                    key=_zsort,
+                )
+                cohort = set(unwelded[:CG_COHORT_K])
+                zones = list(zone_cells.keys())
+                wts = np.empty(len(zones), dtype=np.float64)
+                for _j, _z in enumerate(zones):
+                    st = cg_stats.get(_z)
+                    if st is not None and st["welded"]:
+                        wts[_j] = cg_maint
+                    elif _z in cohort:
+                        rate = st["rate"] if st is not None else 0.0
+                        wts[_j] = (1.0 - rate) ** cg_alpha + cg_floor
+                    else:
+                        wts[_j] = cg_maint  # beyond the frontier: wait
+                _cgsa_sel_cache.update(
+                    it=it, zones=zones, zone_cells=zone_cells,
+                    cum=np.cumsum(wts / wts.sum()),
+                )
+            zones = _cgsa_sel_cache["zones"]
+            _z = zones[int(np.searchsorted(
+                _cgsa_sel_cache["cum"], np.random.random()
+            ))]
+            if _z == "__ENTRANCE__":
+                return ("__ENTRANCE__", _start_bytes)
+            _members = _cgsa_sel_cache["zone_cells"][_z]
+            _k = _members[np.random.randint(len(_members))]
+            cell = cells.get(_k)
+            return (_z, cell.state) if cell is not None else (None, None)
+
+        def _cg_finish_episode(i: int, min_steps: int = 0) -> None:
+            """Score the ended episode against its restart cell and run the
+            annealing + SPRT bookkeeping."""
+            key = cg_env_cell[i]
+            if key is None:
+                return
+            if cg_env_steps[i] < min_steps:
+                # Too young to judge (boundary-cut) — drop, don't score.
+                cg_env_cell[i] = None
+                cg_env_start_gx[i] = -1
+                cg_env_steps[i] = 0
+                return
+            st = _cg_entry(key)
+            success = (
+                cg_env_start_gx[i] >= 0
+                and int(max_x_reached[i]) >= int(cg_env_start_gx[i]) + cg_zone_px
+            )
+            st["att"] += 1
+            st["succ"] += int(success)
+            if st["p"] >= cg_target and not st["welded"]:
+                st["lam"] += _SPRT_S if success else _SPRT_F
+                if st["lam"] >= _SPRT_ACC:
+                    st["welded"] = True
+                elif st["lam"] <= _SPRT_REJ:
+                    st["lam"] = 0.0
+                    st["p"] = max(0.0, st["p"] - cg_step)  # reject: back off
+            if st["att"] >= cg_window:
+                st["rate"] = st["succ"] / st["att"]
+                st["windows"] = st.get("windows", 0) + 1
+                if st["rate"] >= 0.75:
+                    st["p"] = min(cg_target, st["p"] + cg_step)
+                elif st["rate"] < 0.30 and st["p"] > 0.0:
+                    st["p"] = max(0.0, st["p"] - cg_step)
+                st["att"] = 0
+                st["succ"] = 0
+            cg_env_cell[i] = None
+            cg_env_start_gx[i] = -1
+            cg_env_steps[i] = 0
+
+        if cgsa_on:
+            _sticky_p_env[:] = 0.0  # every cell (incl. entrance) starts at 0
+            # Resume the curriculum: without this, a process restart zeroes
+            # every zone's p/rate/weld and the anneal starts over.
+            try:
+                import json as _json
+                import ast as _ast
+                _cg_path = self.checkpoint_dir / "cgsa_stats.json"
+                if _cg_path.exists():
+                    with open(_cg_path) as _f:
+                        _raw = _json.load(_f)
+                    for _ks, _v in _raw.items():
+                        try:
+                            _key = (_ks if _ks == "__ENTRANCE__"
+                                    else tuple(_ast.literal_eval(_ks)))
+                        except Exception:
+                            _key = _ks
+                        cg_stats[_key] = _v
+                    log.info(
+                        "[vanilla_ppo] CGSA: resumed curriculum (%d zones, "
+                        "%d welded)", len(cg_stats),
+                        sum(1 for s in cg_stats.values() if s.get("welded")),
+                    )
+            except Exception as e:
+                log.warning("[vanilla_ppo] CGSA stats reload failed: %s", e)
+            log.info(
+                "[vanilla_ppo] CGSA ENABLED: target=%.2f step=%.2f window=%d "
+                "zone=%dpx alpha=%.1f (per-cell noise curriculum + SPRT welds)",
+                cg_target, cg_step, cg_window, cg_zone_px, cg_alpha,
+            )
+
         for it in range(num_iters):
             if not self._running:
                 break
@@ -5412,9 +5684,12 @@ class Trainer:
                         1, actions.unsqueeze(1)
                     ).squeeze(1)
 
-                    if _sticky_p > 0.0 and t > 0:
+                    if (_sticky_p > 0.0 or cgsa_on) and t > 0:
+                        # Per-env sticky: with CGSA each env rolls at its
+                        # restart cell's curriculum noise; without it the
+                        # vector holds the scalar everywhere (unchanged).
                         _stick_rows = np.nonzero(
-                            np.random.random(num_envs) < _sticky_p
+                            np.random.random(num_envs) < _sticky_p_env
                         )[0]
                         if _stick_rows.size:
                             _rows_t = torch.from_numpy(_stick_rows)
@@ -5431,7 +5706,7 @@ class Trainer:
                             log_probs_taken[_rows_t] = torch.clamp(
                                 log_probs_all[_rows_t, _prev_t], min=-13.0
                             )
-                    if _sticky_p > 0.0:
+                    if _sticky_p > 0.0 or cgsa_on:
                         _prev_exec_action[:] = actions.numpy()
 
                     actions_np = actions.numpy().astype(np.int32)
@@ -5485,6 +5760,14 @@ class Trainer:
                         x_pos = (int(ram[0x006D]) << 8) | int(ram[0x0086])
                         if x_pos > max_x_reached[i]:
                             max_x_reached[i] = x_pos
+                        # CGSA: fill the restart gx lazily on the first REAL
+                        # frame after a restore (the restored RAM only arrives
+                        # one step later; x reads 0 on the load frame).
+                        if cgsa_on and cg_env_cell[i] is not None:
+                            cg_env_steps[i] += 1
+                            if cg_env_start_gx[i] < 0 and x_pos > 0:
+                                cg_env_start_gx[i] = x_pos
+                                _cg_entry(cg_env_cell[i]).setdefault("gx", x_pos)
                         if self._gx_count_beta > 0.0:
                             _gxk = (wl_packed << 9) | (x_pos >> 6)
                             _gxn = self._gx_counts.get(_gxk, 0) + 1
@@ -5614,6 +5897,54 @@ class Trainer:
                             except ValueError:
                                 pass
                         done = bool(r.done) or bool(rew_done)
+                        # NON-FARMABLE wavefront PBRS (research fix 2026-07-22).
+                        # Positive-shifted Phi in [0, phi_target]; Phi(terminal)=0.
+                        #   LIVE : F = gamma*Phi(s') - Phi(s)
+                        #   DEATH: F = gamma*0 - Phi(s) = -Phi(s)  <- cancels the
+                        #          earned approach shaping, so progress-then-die
+                        #          telescopes to <= 0 and CANNOT be farmed.
+                        #   CLEAR: no shaping term (the +50 completion is the
+                        #          reward; a positive terminal Phi would double it).
+                        # The prior form skipped the terminal term on death, which
+                        # let greedy bank +168 of un-canceled approach shaping then
+                        # die at gx 183 (confirmed by the 3-mode diagnostic).
+                        if wave_pot is not None:
+                            if not done:
+                                _phi = wave_pot.potential(ram)
+                                if wave_prev_phi[i] is not None:
+                                    reward += wave_pot.gamma * _phi - wave_prev_phi[i]
+                                wave_prev_phi[i] = _phi
+                                if _phi > wave_peak_phi[i]:
+                                    wave_peak_phi[i] = _phi
+                                # Lost-cut: linger off the solution envelope
+                                # (Phi~0) for WAVE_LOST_K consecutive steps ->
+                                # terminate as a non-clear (charge -peak below
+                                # via the done branch on THIS step).
+                                if _phi <= 0.5:
+                                    wave_lost_count[i] += 1
+                                    if wave_lost_count[i] >= WAVE_LOST_K:
+                                        done = True
+                                        rew_done = True
+                                else:
+                                    wave_lost_count[i] = 0
+                            if done:
+                                # A clear grows the `completion` breakdown this
+                                # step (same diff the clear-counter uses below).
+                                # CLEAR -> no shaping term. Any OTHER terminal
+                                # (death, timeout, lost-cut) -> charge -PEAK Phi:
+                                # the telescoped sum over any non-completing
+                                # episode is <= 0 no matter where it ends, so
+                                # neither dying, idling, nor hiding in a Phi=0
+                                # region can bank shaping.
+                                _cur_comp = float(
+                                    reward_fns[i].breakdown.get("completion", 0.0)
+                                )
+                                _is_clear = _cur_comp > prev_completion_total[i] + 1e-6
+                                if not _is_clear and wave_peak_phi[i] > 0.0:
+                                    reward += -float(wave_peak_phi[i])
+                                wave_prev_phi[i] = None
+                                wave_peak_phi[i] = 0.0
+                                wave_lost_count[i] = 0
                         # Caption new events for the live stream. Per-env
                         # (one policy across N envs); the narrator's
                         # min-event-gap rate-limits so the grid doesn't spam.
@@ -5655,6 +5986,15 @@ class Trainer:
                             )
                             if cur_comp > prev_completion_total[i] + 1e-6:
                                 n_clears_this_iter += 1
+                                # Flag touched this step = this episode cleared
+                                # its level. Record the PLR success NOW (a clear
+                                # may never reach `done`), once per episode.
+                                if plr_on and not episode_recorded[i]:
+                                    try:
+                                        plr_ctx.record(plr_ctx.env_level[i], True)
+                                    except Exception:
+                                        pass
+                                    episode_recorded[i] = True
                             prev_completion_total[i] = cur_comp
                         except Exception:
                             pass
@@ -5697,6 +6037,19 @@ class Trainer:
                             completed_lengths.append(int(ep_lengths[i]))
                             ep_returns[i] = 0.0
                             ep_lengths[i] = 0
+                            if plr_on and not episode_recorded[i]:
+                                # Episode ended WITHOUT clearing (a death) and
+                                # wasn't already recorded at a flag-touch above
+                                # — record the failure so PLR up-weights this
+                                # level. env_stage[i] is unchanged, so the
+                                # reload below re-seeds the SAME level (a fresh
+                                # level is drawn at the next iter boundary).
+                                try:
+                                    plr_ctx.record(plr_ctx.env_level[i], False)
+                                except Exception:
+                                    pass
+                            # Start the next episode's accounting fresh.
+                            episode_recorded[i] = False
                             # AUTO-RESET on death within a rollout. If the
                             # curriculum has a warm-start state for the
                             # current stage, immediately reload it so this
@@ -5795,7 +6148,25 @@ class Trainer:
                                 # is deferred one step (post-restore RAM
                                 # arrives on the next step_all).
                                 _restart_bytes = _start_bytes
-                                if (
+                                if cgsa_on:
+                                    # Score the episode that just ended vs
+                                    # its restart cell, then draw the next
+                                    # restart from the weld-frontier selector
+                                    # and adopt that zone's curriculum noise.
+                                    _cg_finish_episode(i)
+                                    max_x_reached[i] = 0
+                                    _k, _ge_blob = _cgsa_select_state()
+                                    if _ge_blob is not None:
+                                        _restart_bytes = _ge_blob
+                                        cg_env_cell[i] = _k
+                                        _sticky_p_env[i] = _cg_entry(_k)["p"]
+                                    else:
+                                        cg_env_cell[i] = "__ENTRANCE__"
+                                        _sticky_p_env[i] = _cg_entry(
+                                            "__ENTRANCE__"
+                                        )["p"]
+                                    cg_env_start_gx[i] = -1
+                                elif (
                                     go_explore_archive is not None
                                     and _ge_inline_p > 0.0
                                     and len(go_explore_archive) > 0
@@ -6531,6 +6902,66 @@ class Trainer:
                 "%.0f NES-fps | %.0fx realtime | %.2f s/iter",
                 global_it, samples_per_sec, nes_fps, realtime_x, _iter_dt,
             )
+            # ===== CGSA telemetry + research signposts =====
+            if cgsa_on and (it % 25 == 0 or it in (350, 800, 1150)):
+                _tracked = [s for s in cg_stats.values() if "gx" in s]
+                _welded_n = sum(1 for s in _tracked if s["welded"])
+                _front = [s for s in _tracked if not s["welded"]]
+                _avg_p = (np.mean([s["p"] for s in _front])
+                          if _front else 0.0)
+                _gaunt = [s for s in _front if 1600 <= s.get("gx", -1) <= 2200]
+                _gaunt_p = (np.mean([s["p"] for s in _gaunt])
+                            if _gaunt else 0.0)
+                _gx_arch = max((s.get("gx", 0) for s in _tracked), default=0)
+                # Rate distribution over MEASURED zones (>=1 completed
+                # window) — the leading indicator the v1/v2 runs lacked:
+                # tells apart "windows never fill" from "rates below bar".
+                _meas = [s for s in _tracked if s.get("windows", 0) > 0]
+                _rates = sorted(s["rate"] for s in _meas)
+                _p50 = _rates[len(_rates) // 2] if _rates else 0.0
+                _p90 = _rates[int(len(_rates) * 0.9)] if _rates else 0.0
+                _n_annealed = sum(1 for s in _tracked if s["p"] > 0.0)
+                log.info(
+                    "[cgsa] iter %d: cells=%d welded=%d frontier_avg_p=%.3f "
+                    "gauntlet(n=%d)_avg_p=%.3f archive_gx_max>=%d | "
+                    "measured=%d rate_p50=%.2f rate_p90=%.2f zones_p>0=%d",
+                    global_it, len(_tracked), _welded_n, _avg_p,
+                    len(_gaunt), _gaunt_p, _gx_arch,
+                    len(_meas), _p50, _p90, _n_annealed,
+                )
+                # Persist curriculum state for post-run analysis (the v1
+                # run's stats died with the process).
+                try:
+                    import json as _json
+                    _cg_path = self.checkpoint_dir / "cgsa_stats.json"
+                    with open(_cg_path, "w") as _f:
+                        _json.dump(
+                            {str(k): v for k, v in cg_stats.items()}, _f
+                        )
+                except Exception:
+                    pass
+                if it == 350:
+                    _ok = _gx_arch >= 2000
+                    log.info(
+                        "[cgsa] SIGNPOST 1 (it350) frontier-expansion: "
+                        "gx_max=%d %s (abandon if <1800)", _gx_arch,
+                        "PASS" if _ok else ("FAIL" if _gx_arch < 1800
+                                            else "MARGINAL"),
+                    )
+                if it == 800:
+                    log.info(
+                        "[cgsa] SIGNPOST 2 (it800) gauntlet noise: "
+                        "avg_p=%.3f %s (need >=0.15; terminate if <0.10)",
+                        _gaunt_p,
+                        "PASS" if _gaunt_p >= 0.15 else (
+                            "FAIL" if _gaunt_p < 0.10 else "MARGINAL"),
+                    )
+                if it == 1150:
+                    log.info(
+                        "[cgsa] SIGNPOST 3 (it1150): run the 30-episode "
+                        "gauntlet-traversal probe from gx~1500 at sticky "
+                        "0.25 externally (need >=10%% to gx>=2200).",
+                    )
             # Per-section timing (rollout_forward / emulation / gae /
             # update / rnd_intrinsic / bookkeeping / iter_reset) so the
             # active pixel path stops flying blind: a regression shows up
@@ -6574,6 +7005,80 @@ class Trainer:
             # forgetting alarm, and the consolidation trigger — training
             # telemetry never selects the deliverable.
             cold_metrics_emit: dict = {}
+            if plr_on and it % cold_every == 0:
+                from src.training import cold_probe as _cold_probe
+                # Cold-eval EACH training level from its entrance AND the
+                # held-out level under the honest protocol (sticky-0.25 +
+                # jitter-16) so the winner metric matches the Phase-A gate.
+                # Winner key = the WEAKEST training level (a generalist must
+                # hold ALL of them), tie-broken by the mean. Holdout is
+                # report-only — the transfer measurement.
+                _per_level: dict = {}
+                for _lvl in plr_ctx.train_labels:
+                    _ss = plr_ctx.level_state_path.get(_lvl)  # None == cold boot
+                    _c = _cold_probe.probe(
+                        net, self.game_profile, episodes=cold_curve_eps,
+                        device=self.device, sequential=True, level_clear=True,
+                        start_state=_ss, sticky_prob=0.25, start_jitter=16,
+                        rom_path=self.rom_path,
+                        game=str(self.game_profile.get("name", "mario")),
+                    )
+                    _per_level[_lvl] = float(_c.get("cold_seq_clear_rate") or 0.0)
+                _hold: dict = {}
+                for _lvl, _ss in plr_ctx.holdout.items():
+                    _c = _cold_probe.probe(
+                        net, self.game_profile, episodes=cold_curve_eps,
+                        device=self.device, sequential=True, level_clear=True,
+                        start_state=_ss, sticky_prob=0.25, start_jitter=16,
+                        rom_path=self.rom_path,
+                        game=str(self.game_profile.get("name", "mario")),
+                    )
+                    _hold[_lvl] = float(_c.get("cold_seq_clear_rate") or 0.0)
+                _weakest = min(_per_level.values()) if _per_level else -1.0
+                _mean = (
+                    sum(_per_level.values()) / len(_per_level)
+                    if _per_level else -1.0
+                )
+                cold_metrics_emit = {
+                    "cold_seq_clear_rate": _weakest,
+                    "cold_plr_per_level": _per_level,
+                    "cold_plr_mean": _mean,
+                    "cold_plr_holdout": _hold,
+                }
+                last_cold_metrics = cold_metrics_emit
+                log.info(
+                    "[vanilla_ppo] PLR COLD PROBE iter %d: per_level=%s "
+                    "weakest=%.2f mean=%.2f holdout=%s (sticky0.25+jitter16)",
+                    global_it,
+                    {k: round(v, 2) for k, v in _per_level.items()},
+                    _weakest, _mean,
+                    {k: round(v, 2) for k, v in _hold.items()},
+                )
+                _pkey = (round(_weakest, 4), round(_mean, 4), 0.0)
+                if _pkey > best_cold_key:
+                    best_cold_key = _pkey
+                    best_cold_rate = _weakest
+                    best_cold_snapshot = {
+                        k: v.detach().cpu().clone()
+                        for k, v in net.state_dict().items()
+                    }
+                    try:
+                        torch.save(
+                            {"net_state_dict": best_cold_snapshot,
+                             "iter": global_it,
+                             "metric_name": "cold_plr_weakest_level",
+                             "metric_value": best_cold_rate,
+                             "per_level": _per_level, "holdout": _hold},
+                            str(self.checkpoint_dir / cold_winner_name),
+                        )
+                        log.info(
+                            "[vanilla_ppo] *** PLR WINNER *** best_cold.pt "
+                            "weakest=%.2f mean=%.2f", _weakest, _mean,
+                        )
+                    except Exception as _e:
+                        log.warning(
+                            "[vanilla_ppo] PLR best_cold save failed: %s", _e
+                        )
             if ladder_on:
                 progress_metrics["vanilla_ppo_frontier"] = int(smb_curriculum_stage)
                 progress_metrics["vanilla_ppo_retention_frac"] = float(retention_frac)
@@ -7197,7 +7702,61 @@ class Trainer:
             env_stage[:] = 0
             stage_seed_results = [None] * num_envs
             env_return_state = [None] * num_envs
-            if consolidate_on:
+            # CGSA: score the OLD episodes BEFORE the warm-start chain below
+            # re-tags every env. (First version scored after re-tagging: the
+            # fresh tags — start_gx still -1 — were counted as instant
+            # failures, ~60 per boundary, and every zone's window filled with
+            # zeros; the entrance read 0/1975.)
+            if cgsa_on:
+                for _ci in range(num_envs):
+                    _cg_finish_episode(_ci, min_steps=CG_MIN_SCORE_STEPS)
+            if plr_on:
+                # PLR: sample each env's level by inverse-recent-success weight
+                # and warm-start it from that level's entrance. Index 0 == the
+                # cold-boot level (already at its entrance from reset_all above,
+                # so no per-worker load); index>0 loads the level's entry blob.
+                # Structurally identical to the mixed-stage branch below, with
+                # PLR sampling in place of the current/spread split and NO
+                # advance / capture / Go-Explore.
+                for i in range(num_envs):
+                    _lvl = plr_ctx.sample()
+                    plr_ctx.env_level[i] = _lvl
+                    env_stage[i] = plr_ctx.index_of(_lvl)
+                any_warm = False
+                for i in range(num_envs):
+                    k = int(env_stage[i])
+                    if k > 0 and smb_curriculum_states[k] is not None:
+                        try:
+                            self.pool.load_worker_state(
+                                i, smb_curriculum_states[k]
+                            )
+                            any_warm = True
+                        except Exception as e:
+                            log.warning(
+                                "[vanilla_ppo] PLR warm-start env %d level %s "
+                                "failed: %s — cold boot.", i,
+                                plr_ctx.env_level[i], e,
+                            )
+                            env_stage[i] = 0
+                            plr_ctx.env_level[i] = plr_ctx.idx_to_level[0]
+                if any_warm:
+                    noop_actions = np.zeros(
+                        self.pool.num_workers, dtype=np.uint8
+                    )
+                    init_results = self.pool.step_all(noop_actions)
+                    self._emit_frame_sink(init_results)
+                stage_seed_results = [
+                    init_results[i] if int(env_stage[i]) > 0 else None
+                    for i in range(num_envs)
+                ]
+                if it % 25 == 0:
+                    log.info(
+                        "[vanilla_ppo] PLR warm-start dist=%s success=%s",
+                        plr_ctx.distribution(),
+                        {k: round(v, 2)
+                         for k, v in plr_ctx.success_rates().items()},
+                    )
+            elif consolidate_on:
                 # 100% of the pool inside the TARGET level's rungs (round-robin
                 # over its x-buckets). No Frontier/Retention/Spread, no advance,
                 # no Go-Explore — the ladder is read-only here. On death, the
@@ -7360,7 +7919,21 @@ class Trainer:
                 # every env at cold boot. Reuses the curriculum's no-op flush
                 # + the stacked_obs rebuild below, so there is zero extra
                 # re-seed bookkeeping and no desync risk.
-                _states = go_explore_archive.select_return_states(num_envs)
+                if cgsa_on:
+                    # CGSA priority restarts: ALL restarts flow through the
+                    # weld-frontier selector (the entrance is a pseudo-zone in
+                    # the same distribution — no fixed share; once welded it
+                    # drops to maintenance like everything else).
+                    _states = []
+                    for i in range(num_envs):
+                        _k, _blob2 = _cgsa_select_state()
+                        _states.append(_blob2)
+                        if _blob2 is not None:
+                            cg_env_cell[i] = _k
+                            cg_env_start_gx[i] = -1
+                            _sticky_p_env[i] = _cg_entry(_k)["p"]
+                else:
+                    _states = go_explore_archive.select_return_states(num_envs)
                 _any_return = False
                 for i in range(num_envs):
                     _blob = _states[i]
@@ -7388,6 +7961,17 @@ class Trainer:
                 fn.reset()
             ep_returns[:] = 0
             ep_lengths[:] = 0
+            # reward_fns.reset() above zeroed each env's `completion`
+            # breakdown, so the last-seen tracker must zero too — otherwise a
+            # stale-high prior value masks the FIRST clear of the new iter
+            # (cur_comp == stale prev → no positive diff), under-counting both
+            # n_clears and the PLR clear flag. Sync them here.
+            prev_completion_total[:] = 0.0
+            episode_recorded[:] = False
+            for _wi in range(num_envs):
+                wave_prev_phi[_wi] = None  # fresh episodes, no shaping carryover
+            wave_peak_phi[:] = 0.0
+            wave_lost_count[:] = 0
             # Re-arm every env for the next iter. `set_worker_done(i, True)`
             # calls from this iter are cleared automatically by reset_all
             # (per the rust pool's contract).
@@ -7399,6 +7983,8 @@ class Trainer:
             # update these from the post-restore RAM.
             max_world_level_packed[:] = 0
             end_world_level_packed[:] = 0
+            # (CGSA episode scoring moved ABOVE the warm-start chain — it must
+            # run before re-tagging, see the comment there.)
             # Per-iter reset (was missing): without this, vanilla_ppo_max_x
             # is a cumulative running max that preserves an old peak even
             # after the policy regresses/collapses — which masked a 1-4

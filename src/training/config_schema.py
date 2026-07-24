@@ -39,18 +39,19 @@ KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     "demo_anchor_enabled", "demo_anchor_margin", "demo_anchor_minibatch",
     "demo_anchor_paths", "device", "drq_aug", "drq_pad", "enabled",
     "encoder", "entropy_coef", "entropy_coef_max", "entropy_floor",
-    "episodes_per_genome", "freeze_pre_ppo_elite", "gae_lambda", "gamma",
+    "cgsa", "episodes_per_genome", "freeze_pre_ppo_elite", "gae_lambda", "gamma",
     "go_explore", "go_explore_fallback", "grad_clip",
     "gx_count_bonus_coef", "inherit_curriculum_on_fresh", "layernorm",
     "lr", "max_steps_per_traj", "num_envs", "num_instances",
-    "pace_multiplier", "panic_isolation", "ppo_clip_eps",
+    "pace_multiplier", "panic_isolation", "plr_enabled", "ppo_clip_eps",
     "ppo_minibatch_size", "preprocess_f16", "preserve_elite_diversity",
     "recurrent", "recurrent_env_minibatch", "rnd_intrinsic_coef",
     "rnd_loss_coef", "rnd_predictor_update_fraction", "rollout_steps",
     "smb_curriculum", "steps", "sticky_action_prob", "substage_ladder",
-    "symlog_rewards", "tile_frame_stack", "top_k", "torch_compile",
+    "symlog_rewards", "tile_frame_stack", "tile_hidden_dim", "tile_trunk_dim",
+    "top_k", "torch_compile",
     "trainer_mode", "value_coef", "value_loss", "vmap_forward",
-    "warm_start", "warmup_gens_ga_only",
+    "warm_start", "warmup_gens_ga_only", "wavefront_reward",
 })
 
 # Top-level profile keys read outside `reinforce` — by the launcher,
@@ -62,6 +63,7 @@ KNOWN_TOP_KEYS: frozenset[str] = frozenset({
     "start_state_path", "start_state", "ram_mapping", "reinforce",
     "reward_weights", "action_space", "curriculum", "env_spec", "seed",
     "ga_params", "dreamer", "levels", "hysteresis_k", "stop_after_worlds",
+    "plr_levels",
 })
 
 

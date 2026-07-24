@@ -203,8 +203,13 @@ def eval_one_game(
     sequential: bool = False,
     start_state: Optional[str] = None,
     level_clear: bool = False,
+    sticky_prob: float = 0.0,
+    start_jitter: int = 0,
+    eval_seed: int = 0,
 ) -> dict:
     """Run N episodes; return a dict of eval stats."""
+    import numpy as _np
+    _sticky_rng = _np.random.RandomState(eval_seed)
     with open(profile_path) as f:
         profile = yaml.safe_load(f)
     ckpt_dir = derive_checkpoint_dir("./checkpoints", profile.get("name"))
@@ -418,6 +423,12 @@ def eval_one_game(
             pool.load_worker_state(0, stage_blob)
         reward_fn.reset()
         init = pool.step_all(np.zeros(1, dtype=np.uint8))
+        # Machado no-op starts: hold up to start_jitter no-op frames before
+        # control begins, desynchronizing enemy/timer phase from the trained
+        # trajectory (the other half of the honest stochastic-eval protocol).
+        if start_jitter > 0:
+            for _ in range(int(_sticky_rng.randint(0, start_jitter + 1))):
+                init = pool.step_all(np.zeros(1, dtype=np.uint8))
         obs = pol.reset(init[0])
         # Fresh hidden state per episode — the GRU must not carry memory
         # across episode boundaries.
@@ -445,6 +456,7 @@ def eval_one_game(
         ep_max_gx = 0
         ep_cleared = False
         step = 0
+        _prev_action_idx = 0
         for step in range(max_steps):
             # Obs -> greedy argmax action. The policy object supplies the
             # (obs -> logits) mapping; everything else in this loop (reward,
@@ -453,6 +465,14 @@ def eval_one_game(
             with torch.no_grad():
                 logits, hidden = pol.logits(obs, hidden)
                 action_idx = int(torch.argmax(logits[0]).item())
+            # Sticky-actions eval (Machado et al. 2018): with prob
+            # sticky_prob repeat the previous executed action. On the
+            # TRUSTWORTHY-obs harness (eval_game's obs matches training,
+            # unlike eval_composite's tile adapter) this is the honest
+            # perturbation test.
+            if sticky_prob > 0.0 and step > 0 and _sticky_rng.random() < sticky_prob:
+                action_idx = _prev_action_idx
+            _prev_action_idx = action_idx
             bitmask = bitmasks[action_idx]
             r = pool.step_all(np.array([bitmask], dtype=np.uint8))
             ram = r[0][2]
@@ -583,6 +603,11 @@ def main() -> int:
                              "entry blob). The level-scoped consolidation gate "
                              "probes each level from its entry with this. "
                              "Mutually exclusive with --stage; takes precedence.")
+    parser.add_argument("--sticky-prob", type=float, default=0.0, dest="sticky_prob",
+                        help="Machado sticky-actions eval: prob of repeating the previous action.")
+    parser.add_argument("--start-jitter", type=int, default=0, dest="start_jitter",
+                        help="Machado no-op starts: up to this many no-op frames before control.")
+    parser.add_argument("--eval-seed", type=int, default=0, dest="eval_seed")
     parser.add_argument("--level-clear", action="store_true", dest="level_clear",
                         help="With --sequential, score 'cleared the level it "
                              "STARTED in' (a forward area/level transition out "
@@ -605,6 +630,8 @@ def main() -> int:
         latest=args.latest, iter_=args.iter_,
         checkpoint=args.checkpoint, sequential=args.sequential,
         start_state=args.start_state, level_clear=args.level_clear,
+        sticky_prob=args.sticky_prob, start_jitter=args.start_jitter,
+        eval_seed=args.eval_seed,
     )
     print(json.dumps(result, indent=2))
     return 0

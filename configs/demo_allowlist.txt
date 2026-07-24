@@ -112,3 +112,9 @@ checkpoints/harvested_seeds/demos_seam_sol_017_ph6.npz
 checkpoints/harvested_seeds/demos_seam_sol_018_ph0.npz
 checkpoints/harvested_seeds/demos_seam_sol_019_ph1.npz
 checkpoints/harvested_seeds/demos_seam_sol_020_ph4.npz
+runs/ge_1_2_solve/demos/demo_000.npz
+runs/ge_1_2_solve/demos/demo_001.npz
+runs/ge_1_2_solve/demos/demo_002.npz
+runs/ge_1_2_solve/demos/demo_003.npz
+runs/dars_1_2/recovery_demos.npz
+runs/dars_1_2/wall_recovery_demos.npz

@@ -1,0 +1,117 @@
+# Phase-B PIVOT: 2-level generalist isolation — does the PROVEN single-level
+# Phase-A #2 recipe scale from ONE level to TWO?
+#
+# Motivation: the 3-level run (mario_generalist_w1) showed one small tile net
+# cannot consolidate 1-1 + 1-2 + 1-4 at once — v1 (floor 0.0) collapsed, v2
+# (floor 0.3) avoided collapse but capped greedy consolidation (1-1 stuck at
+# 0-12% cold, 1-2/1-4 flat 0). This isolates the question: is it the LEVEL
+# COUNT (3 over-reaches the net/budget) or the ENTROPY SCHEDULE?
+#
+# Clean test: train {1-1 overworld, 1-2 underground} with the EXACT recipe that
+# won Phase-A (entropy_floor 0.0, coef 0.005 — entropy self-regulated to ~0.22
+# and consolidated 63-67% cold on 1-1). Hold out 1-3 for transfer. If 2 levels
+# consolidate → the generalist mechanism scales and 3 was the over-reach (add
+# levels incrementally with retention). If 2 ALSO collapses → 2 is already too
+# hard for floor-0.0 and the entropy schedule (not level count) is the wall.
+# This directly answers the user's "why does it break 1-1 -> 1-2" question.
+
+name: Mario 2-level generalist (PLR, tile)
+rom_path: "roms/Super Mario Bros. (World).nes"
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+start_state_path: "roms/Super Mario Bros. (World)_start.state.bin"
+description: >
+  Two-level generalist isolation: one tile policy over 1-1 + 1-2 via PLR,
+  Phase-A #2 recipe (floor 0.0). Tests whether the proven single-level recipe
+  scales to two levels. Holds out 1-3 for transfer.
+
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+
+plr_levels:
+  - level: "1-1"
+    state: null   # power-on boot = clean 1-1 entrance
+  - level: "1-2"
+    state: "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/stage_03.state"  # x=0
+  - level: "1-3"
+    state: "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/stage_05.state"  # x=0
+    holdout: true
+
+reinforce:
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  symlog_rewards: true
+  value_loss: huber
+  value_coef: 0.25
+  bc_epochs: 0
+  warmup_gens_ga_only: 10
+  steps: 10
+  lr: 0.0003
+  async_pipeline: false
+  device: cpu
+  panic_isolation: false
+  entropy_coef: 0.005
+  rnd_intrinsic_coef: 0.1
+  rnd_loss_coef: 1.0
+  sticky_action_prob: 0.25
+  bc_replay_enabled: false
+  preprocess_f16: false
+  smb_curriculum: false
+  plr_enabled: true
+  entropy_floor: 0.0        # Phase-A #2 recipe — entropy self-regulates if solvable
+  entropy_coef_max: 0.05
+  # CAPACITY BUMP (v2 of the 2-level test): the default tile net (hidden 64 /
+  # trunk 32) consolidated ONE level but collapsed to a non-clearing average on
+  # two — the 32-d trunk can't hold two levels' policies. Widen ~4.5x params
+  # (still tiny vs the 1.7M pixel CNN, throughput unaffected). Tests whether
+  # the multi-level wall is CAPACITY vs entropy/aliasing.
+  tile_hidden_dim: 256
+  tile_trunk_dim: 128
+  num_envs: 60
+
+ga_params:
+  mutation_rate: 0.8
+  mutation_std: 0.001
+  adaptive_mutation_scale: false
+  elite_fraction: 0.4
+  stale_gens_before_restart: 50
+  restart_fraction: 0.5
+
+max_episode_steps: 2400

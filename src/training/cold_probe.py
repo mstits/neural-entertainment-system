@@ -202,6 +202,8 @@ def probe(
     timeout: float = 1800.0,
     rom_path: Optional[str] = None,
     game: Optional[str] = None,
+    sticky_prob: float = 0.0,
+    start_jitter: int = 0,
     eval_script: Optional[str] = None,
     python_exe: Optional[str] = None,
 ) -> dict:
@@ -291,6 +293,13 @@ def probe(
                 extra_args += ["--start-state", ss_probe]
             if level_clear:
                 extra_args += ["--level-clear"]
+            # Honest-protocol perturbations (Machado): the winner metric must
+            # match the gate, else greedy-only selection picks a policy that is
+            # brittle under sticky actions (the Phase-A over-consolidation trap).
+            if sticky_prob > 0.0:
+                extra_args += ["--sticky-prob", str(float(sticky_prob))]
+            if start_jitter > 0:
+                extra_args += ["--start-jitter", str(int(start_jitter))]
             try:
                 proc, seq_ran = _run_eval(
                     cmd, sequential, timeout, str(td_path), extra_args=extra_args,
