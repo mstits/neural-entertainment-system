@@ -154,7 +154,8 @@ class Solver:
     # ---- record path -------------------------------------------------
 
     def observe(self, wid: int, ram, trace: list, steps: int,
-                root_id: str) -> str:
+                root_id: str, loops: int = 0,
+                route_sig: tuple = ()) -> str:
         """Record one reached state. Returns 'dead' | 'clear' | 'live'."""
         # Clear (warp-guarded) is checked FIRST.
         if is_forward_clear(self.start_wd, ram):
@@ -182,16 +183,44 @@ class Solver:
         # Domination score = gx within the cell; deeper-x wins, ties to fewer
         # steps (elites keep shortening). Peek-then-record: only pay
         # save_worker_state for a new/dominating cell.
-        key = cell_fn(ram)
+        # MAZE FIX (2026-07-24): the trajectory's loop-count is the LEADING
+        # key component. Castle mazes (4-4/7-4/8-4) loop wrong paths back —
+        # observable as a discontinuous gx->0 collapse in our own rollouts —
+        # so gx alone aliases first-pass and looped-back states and the
+        # frontier saturates (4-4: pinned at gx 2064, 0 solutions, 1.5M
+        # records). With the counter, the same coordinates on different
+        # maze phases are DIFFERENT cells and search explores each pass.
+        # Search-derived (a property of the agent's own path), no internals.
+        #
+        # SECOND MAZE FIX (same day, v4): the loop-count alone still aliased
+        # right-route and wrong-route states at the same coordinates — the
+        # game tracks the current pass's route in internal state, and the
+        # wall-2102 diagnostic showed the deepest lineages were wrong-route
+        # spirals from which EVERY action loops back. (A raw RAM-hash key
+        # separated routes but exploded the archive to 585k one-visit cells
+        # — timers/enemies churn every frame.) The ROUTE SIGNATURE is the
+        # compact middle path: the trajectory's own y-band at each 512-px
+        # gx-boundary crossing since the last loop event — the observable
+        # footprint of the route the current pass has taken. Derived purely
+        # from our own rollout; bounded cardinality (<=4 entries, 4 bands).
+        # v5: key on the DISCOVERED route-tracker bytes. Differential analysis
+        # of our own rollouts (32 passes, /tmp/ram_diff2.py) found $0742 and
+        # $07F8 change rarely, at single consistent fork positions — the
+        # empirical signature of the game's route-tracking state. Keying on
+        # their VALUES separates right-route from wrong-route states with
+        # bounded cardinality (vs the raw-hash explosion / sig blindness).
+        _rb = (int(ram[0x0742]), int(ram[0x07F8]))
+        key = (loops, _rb, route_sig) + cell_fn(ram)
         cur = self.archive.cells.get(key)
         dom = (cur is None or gx > cur.best_score + 1e-9
                or (abs(gx - cur.best_score) <= 1e-9 and steps < cur.best_steps))
         if dom:
             blob = self.pool.save_worker_state(wid)
-            if blob is not None and self.archive.record(ram, blob, gx, steps):
-                self.traces[key] = (root_id, bytes(trace))
+            if blob is not None and self.archive.record(ram, blob, gx, steps,
+                                                        key=key):
+                self.traces[key] = (root_id, bytes(trace), loops, route_sig)
         else:
-            self.archive.record(ram, None, gx, steps)
+            self.archive.record(ram, None, gx, steps, key=key)
         return "live"
 
     def _dump_solution(self, root_id: str, trace: list, ram, steps) -> None:
@@ -240,11 +269,22 @@ class Solver:
         # Deep-frontier arm: bias toward cells in the DEEPEST area reached,
         # near its max gx — this follows Mario through area transitions.
         if self.rng.random() < self.args.deep_bias:
-            deep = [c for c in cells if c.key[0] == self.max_area]
+            # cell_fn components are always the LAST 4: area [-4], gxb [-1]
+            deep = [c for c in cells if c.key[-4] == self.max_area]
             if deep:
-                topgx = max(c.key[3] for c in deep)
+                # LOW-LOOP bias (maze levels): every loop-back means a wrong
+                # fork was taken, so the solution path lives at the minimal
+                # loop counts. 70% of deep draws restrict to the lowest
+                # loop-phase present; 30% roam all phases (fork discovery
+                # still needs the looped lineages to find UNTRIED forks).
+                if self.rng.random() < 0.7:
+                    minl = min(c.key[0] for c in deep)
+                    lowl = [c for c in deep if c.key[0] <= minl + 1]
+                    if lowl:
+                        deep = lowl
+                topgx = max(c.key[-1] for c in deep)
                 floor = topgx - int(self.rng.integers(0, 24))
-                band = [c for c in deep if c.key[3] >= floor]
+                band = [c for c in deep if c.key[-1] >= floor]
                 cell = band[int(self.rng.integers(len(band)))]
                 cell.times_chosen += 1
                 cell.explored = True
@@ -261,12 +301,16 @@ class Solver:
             # Fall back to the entrance root.
             self.pool.load_worker_state(wid, Path(self.args.root_state).read_bytes())
             return {"key": None, "root": "entrance", "trace": [], "steps": 0,
-                    "left": self.args.burst,
+                    "left": self.args.burst, "loops": 0, "prev_gx": -1,
+                    "sig": (),
                     "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
         self.pool.load_worker_state(wid, cell.state)
-        root_id, tb = self.traces[cell.key]
+        root_id, tb, loops, sig = self.traces[cell.key]
+        # prev_gx -1: no loop detection on the restore step (the load frame
+        # reads transitional garbage; the first real step re-arms it).
         return {"key": cell.key, "root": root_id, "trace": list(tb),
                 "steps": cell.best_steps, "left": self.args.burst,
+                "loops": loops, "prev_gx": -1, "sig": sig,
                 "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
 
     def explore(self) -> None:
@@ -289,7 +333,24 @@ class Solver:
                 c["trace"].append(c["pending"])
                 c["steps"] += 1
                 c["left"] -= 1
-                status = self.observe(i, ram, c["trace"], c["steps"], c["root"])
+                # Loop-back detection: a discontinuous backward gx jump on a
+                # non-garbage frame advances the trajectory's maze phase
+                # (capped so wrong-path spirals can't explode the archive).
+                # Route signature: the y-band recorded at each 512-px gx
+                # boundary the pass crosses (reset on loop-back) — the
+                # observable footprint of THIS pass's route choice.
+                _lgx = _gx(ram)
+                if _lgx <= 3900:
+                    if c["prev_gx"] >= 0:
+                        if _lgx < c["prev_gx"] - 100:
+                            if c["loops"] < 8:
+                                c["loops"] += 1
+                            c["sig"] = ()   # new pass, fresh route
+                        elif _lgx // 512 != c["prev_gx"] // 512:
+                            c["sig"] = (c["sig"] + (int(ram[R_YPOS]) // 64,))[-4:]
+                    c["prev_gx"] = _lgx
+                status = self.observe(i, ram, c["trace"], c["steps"],
+                                      c["root"], c["loops"], c["sig"])
                 # Finisher extension: the level-END transition (exit pipe /
                 # flag slide) can run many steps with gx frozen, so a burst
                 # from the deepest cell can end just short of the wd advance.

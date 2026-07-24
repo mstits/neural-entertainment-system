@@ -137,6 +137,7 @@ class GoExploreArchive:
         state: Optional[bytes],
         score: float,
         steps: int,
+        key: Optional[tuple] = None,
     ) -> bool:
         """Observe a reached state. Returns True if this created a new
         cell or improved (dominated) an existing one — i.e. the archive
@@ -147,7 +148,11 @@ class GoExploreArchive:
         a task-success is never terminal for the archive: post-clear
         records keep replacing elites with shorter trajectories (see
         EXPLORE_AFTER_FIRST_CLEAR / `keep_exploring`)."""
-        key = self.cell_fn(ram)
+        # Caller-supplied key override: lets a harvester augment the state
+        # key with trajectory features (e.g. the maze loop-count) that a
+        # ram-only cell_fn cannot see. Default preserves prior behavior.
+        if key is None:
+            key = self.cell_fn(ram)
         self.total_records += 1
         existing = self._cells.get(key)
         if existing is None:
