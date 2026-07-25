@@ -73,13 +73,17 @@ def _wd(ram) -> tuple:
     return (int(ram[R_WORLD]), int(ram[R_LEVEL]))
 
 
+GX_BUCKET = 16   # overridable via --gx-bucket (micro-search: 8)
+Y_BAND = 32      # overridable via --y-band (micro-search: 16)
+
+
 def cell_fn(ram) -> tuple:
     # (area, step-phase, y-band, gx bucket). Phase = (frame>>2)&7 is
     # step-granular at frame_skip 4 (all 8 classes reachable via step-count
     # variance). gx bucket is LAST so the archive's horizontal_neighbors
     # frontier bonus applies unmodified.
     return (int(ram[R_AREA]), (int(ram[R_PHASE]) >> 2) & 7,
-            int(ram[R_YPOS]) // 32, _gx(ram) // 16)
+            int(ram[R_YPOS]) // Y_BAND, _gx(ram) // GX_BUCKET)
 
 
 def is_forward_clear(start_wd: tuple, ram) -> bool:
@@ -209,8 +213,16 @@ class Solver:
         # empirical signature of the game's route-tracking state. Keying on
         # their VALUES separates right-route from wrong-route states with
         # bounded cardinality (vs the raw-hash explosion / sig blindness).
-        _rb = (int(ram[0x0742]), int(ram[0x07F8]))
-        key = (loops, _rb, route_sig) + cell_fn(ram)
+        # v7: CONTENT-aware cells. Hypothesis shift — the seam wrap (gx->0)
+        # may fire on the CORRECT route too, loading the NEXT section's
+        # layout; coordinate keys then alias post-seam progress with
+        # wrong-route repeats and every gx-based metric is blind to success
+        # by construction. The tile buffer ($0500-$06BF, the drawn layout) is
+        # the observable content signature: same coords + same section hash
+        # alike, same coords + ADVANCED section hash differently. Bounded
+        # cardinality (distinct layouts only), unlike the v4 full-RAM hash.
+        _th = hash(bytes(ram[0x0500:0x06C0])) % 64
+        key = (loops, _th, route_sig) + cell_fn(ram)
         cur = self.archive.cells.get(key)
         dom = (cur is None or gx > cur.best_score + 1e-9
                or (abs(gx - cur.best_score) <= 1e-9 and steps < cur.best_steps))
@@ -418,7 +430,13 @@ def main() -> int:
     ap.add_argument("--max-steps", type=int, default=4000)
     ap.add_argument("--flush-secs", type=float, default=120)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--gx-bucket", type=int, default=16,
+                    help="Cell gx granularity px (micro-search: 8).")
+    ap.add_argument("--y-band", type=int, default=32,
+                    help="Cell y granularity px (micro-search: 16).")
     args = ap.parse_args()
+    global GX_BUCKET, Y_BAND
+    GX_BUCKET, Y_BAND = args.gx_bucket, args.y_band
 
     s = Solver(args)
     signal.signal(signal.SIGTERM, lambda *_: setattr(s, "stop", True))
