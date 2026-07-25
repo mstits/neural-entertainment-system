@@ -82,7 +82,13 @@ def cell_fn(ram) -> tuple:
     # step-granular at frame_skip 4 (all 8 classes reachable via step-count
     # variance). gx bucket is LAST so the archive's horizontal_neighbors
     # frontier bonus applies unmodified.
-    return (int(ram[R_AREA]), (int(ram[R_PHASE]) >> 2) & 7,
+    # vx sign disambiguates travel direction: doubling back through
+    # previously-visited coordinates is a DISTINCT cell, so the archive
+    # explores backtracking maneuvers instead of pruning them as loops
+    # (heuristic-inversion recipe, maze consultation 2026-07-24).
+    vx = int(np.int8(ram[0x57]))
+    vsign = 0 if vx == 0 else (1 if vx > 0 else 2)
+    return (int(ram[R_AREA]), (int(ram[R_PHASE]) >> 2) & 7, vsign,
             int(ram[R_YPOS]) // Y_BAND, _gx(ram) // GX_BUCKET)
 
 
@@ -100,6 +106,25 @@ def is_forward_clear(start_wd: tuple, ram) -> bool:
     if w == sw + 1 and l == 0 and sl >= 2:
         return True   # castle clear -> next world (only from an x-4, level idx>=2... )
     return False
+
+
+def inverted_weights(action_space) -> list:
+    """Exploration bias for the saturation window: reward the maneuvers the
+    forward heuristic structurally prunes (leftward, downward)."""
+    ws = []
+    for buttons in action_space:
+        b = set(buttons)
+        w = 1.0
+        if "left" in b:
+            w += 3.0
+        if "down" in b:
+            w += 3.0
+        if "A" in b:
+            w += 1.0
+        if "right" in b:
+            w -= 0.5
+        ws.append(max(w, 0.2))
+    return ws
 
 
 def action_weights(action_space) -> list:
@@ -127,6 +152,8 @@ class Solver:
         self.bitmasks = action_space_to_bitmasks(profile["action_space"])
         self.weights = np.array(action_weights(profile["action_space"]))
         self.weights /= self.weights.sum()
+        self.inv_weights = np.array(inverted_weights(profile["action_space"]))
+        self.inv_weights /= self.inv_weights.sum()
         self.pool = Pool(rom_path=ROM, num_workers=args.workers,
                          frame_skip=int(profile.get("frame_skip", 4)))
         self.pool.set_headless(True)
@@ -333,8 +360,18 @@ class Solver:
         deadline = self.t0 + args.minutes * 60 if args.minutes > 0 else None
         while not self.stop:
             for i, c in enumerate(ctx):
+                # Heuristic inversion inside the self-measured saturation
+                # window [pin-300, pin+60]: the frontier pin is where OUR
+                # search saturates (live telemetry, not any external map);
+                # inside it, sample from inverted weights so leftward /
+                # downward entries get explored instead of pruned.
+                _pin = self.max_gx_in_area.get(self.max_area, 0)
+                _w = (self.inv_weights
+                      if (_pin > 400 and c.get("gx", -1) >= 0
+                          and _pin - 300 <= c["gx"] <= _pin + 60)
+                      else self.weights)
                 a = c["prev"] if self.rng.random() < args.sticky else \
-                    int(self.rng.choice(len(self.weights), p=self.weights))
+                    int(self.rng.choice(len(_w), p=_w))
                 c["prev"] = a
                 c["pending"] = a
                 acts[i] = self.bitmasks[a]
@@ -352,6 +389,7 @@ class Solver:
                 # boundary the pass crosses (reset on loop-back) — the
                 # observable footprint of THIS pass's route choice.
                 _lgx = _gx(ram)
+                c["gx"] = _lgx if _lgx <= 3900 else c.get("gx", -1)
                 if _lgx <= 3900:
                     if c["prev_gx"] >= 0:
                         if _lgx < c["prev_gx"] - 100:

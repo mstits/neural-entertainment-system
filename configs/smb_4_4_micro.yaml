@@ -47,6 +47,8 @@ action_space:
 - - down
 - - down
   - right
+- - down
+  - left
 plr_levels:
 - level: 1-2
   state: null
