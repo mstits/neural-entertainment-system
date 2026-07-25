@@ -1,8 +1,12 @@
 # Results: SMB World 1-2 Under the Honest Protocol — a Measured Negative
 
-**Date:** 2026-07-24. **Status:** two of three protocol seeds complete and
-concurring; seed 3 in progress (formality). **Ledger:** LEARNED (documented
-negative). **Companion documents:** `DOSSIER_V3_2026-07-23.md` (the
+**Date:** 2026-07-24. **Status:** **ALL THREE protocol seeds complete and
+concurring** (seed 0: S3 0/30, deaths by gx 1827, 1,940 welds; seed 1:
+0/30, uniform gx 1635, 1,648 welds; seed 2: 0/30, uniform gx 1635, 1,967
+welds; every seed's curriculum mechanically healthy, every gauntlet
+residual core stuck at local sticky ceiling p≈0.01–0.03). Under the
+pre-registered criteria the policy class is **formally falsified**.
+**Ledger:** LEARNED (documented negative). **Companion documents:** `DOSSIER_V3_2026-07-23.md` (the
 elimination record), the SMB 1-2 consulting report (external), and the
 CGSA-PPO implementation (`configs/mario_1_2_cgsa.yaml`,
 `src/training/trainer.py`).
