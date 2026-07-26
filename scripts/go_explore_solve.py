@@ -170,6 +170,9 @@ class Solver:
         # the underground instead of pinning on the entrance area.
         self.max_area = 0
         self.max_gx_in_area: dict = {}    # area -> max gx seen
+        self._pin_time = time.time()      # last frontier advance (inversion gate)
+        self._loop_dest_min = None        # min gx observed right after a loop
+        self.max_sect = 0                 # deepest section-transit count seen
         self.n_solutions = 0
         self.sol_counter = 0
         self.best_sol_len = 10 ** 9
@@ -186,7 +189,8 @@ class Solver:
 
     def observe(self, wid: int, ram, trace: list, steps: int,
                 root_id: str, loops: int = 0,
-                route_sig: tuple = ()) -> str:
+                route_sig: tuple = (), sect: int = 0,
+                psig: tuple = ()) -> str:
         """Record one reached state. Returns 'dead' | 'clear' | 'live'."""
         # Clear (warp-guarded) is checked FIRST.
         if is_forward_clear(self.start_wd, ram):
@@ -205,10 +209,15 @@ class Solver:
         if _wd(ram) != self.start_wd and not is_forward_clear(self.start_wd, ram):
             return "dead"
         gx = _gx(ram)
-        if gx > 3900:
-            return "live"   # transition-frame garbage read; skip recording
+        if gx > 7000:
+            # Transition-frame garbage read (page byte mid-load reads huge);
+            # real SMB levels reach ~6,300 px (8-1) — the old 3900 cap silently
+            # froze the 8-1 frontier at 3900 (states past it never archived).
+            return "live"
         area = int(ram[R_AREA])
-        self.max_gx_in_area[area] = max(self.max_gx_in_area.get(area, 0), gx)
+        if gx > self.max_gx_in_area.get(area, 0):
+            self.max_gx_in_area[area] = gx
+            self._pin_time = time.time()  # frontier moved: inversion stays off
         if area > self.max_area:
             self.max_area = area
         # Domination score = gx within the cell; deeper-x wins, ties to fewer
@@ -240,6 +249,16 @@ class Solver:
         # empirical signature of the game's route-tracking state. Keying on
         # their VALUES separates right-route from wrong-route states with
         # bounded cardinality (vs the raw-hash explosion / sig blindness).
+        # Archive-eligibility gate (8-4 lesson): lineages beyond loop-phase 6
+        # are wrong-route spirals — they reach deep gx but are unwinnable, and
+        # archiving them bloated the archive to 3.6M cells (sps 3300->1700)
+        # while poisoning deep-cell selection. They may still EXPLORE (their
+        # forks feed discovery) but do not enter the selection pool.
+        if loops > 6:
+            return "live"
+        if sect > self.max_sect:
+            self.max_sect = sect
+            self._pin_time = time.time()
         # v7: CONTENT-aware cells. Hypothesis shift — the seam wrap (gx->0)
         # may fire on the CORRECT route too, loading the NEXT section's
         # layout; coordinate keys then alias post-seam progress with
@@ -248,18 +267,28 @@ class Solver:
         # the observable content signature: same coords + same section hash
         # alike, same coords + ADVANCED section hash differently. Bounded
         # cardinality (distinct layouts only), unlike the v4 full-RAM hash.
-        _th = hash(bytes(ram[0x0500:0x06C0])) % 64
-        key = (loops, _th, route_sig) + cell_fn(ram)
+        # SECTION-aware key (8-4 fix, verified empirically 2026-07-25):
+        # correct pipe transits change the section pointer $0750 while the
+        # area byte $0760 stays constant — confirmed by differential
+        # comparison of our own pre/post-gate archive states (2 -> 229).
+        # The transit count leads the key and dominates the score, so
+        # section progress is the frontier even when gx jumps backward.
+        # psig = the last-4 section-pointer values = PIPE-PATH IDENTITY.
+        # sect alone aliases different pipe sequences at equal transit
+        # counts; 8-4's final checks discriminate by the route taken, so
+        # each path is its own frontier (fix 2026-07-26).
+        key = (sect, psig, loops, route_sig) + cell_fn(ram)
+        score = sect * 10000 + gx
         cur = self.archive.cells.get(key)
-        dom = (cur is None or gx > cur.best_score + 1e-9
-               or (abs(gx - cur.best_score) <= 1e-9 and steps < cur.best_steps))
+        dom = (cur is None or score > cur.best_score + 1e-9
+               or (abs(score - cur.best_score) <= 1e-9 and steps < cur.best_steps))
         if dom:
             blob = self.pool.save_worker_state(wid)
-            if blob is not None and self.archive.record(ram, blob, gx, steps,
+            if blob is not None and self.archive.record(ram, blob, score, steps,
                                                         key=key):
-                self.traces[key] = (root_id, bytes(trace), loops, route_sig)
+                self.traces[key] = (root_id, bytes(trace), loops, route_sig, sect, psig)
         else:
-            self.archive.record(ram, None, gx, steps, key=key)
+            self.archive.record(ram, None, score, steps, key=key)
         return "live"
 
     def _dump_solution(self, root_id: str, trace: list, ram, steps) -> None:
@@ -301,37 +330,57 @@ class Solver:
 
     # ---- frontier selection ------------------------------------------
 
+    def _refresh_sel_cache(self) -> None:
+        """Rebuild the selection caches. A full archive scan ran on EVERY
+        worker reassignment (every episode end) — O(330k) three times over
+        (state filter, deep filter, weighted fallback) — starving the Rust
+        pool at 1.6/16 cores with sps decayed 2378->475. Rebuild only when
+        the archive grows 2% or the deepest area advances."""
+        self._sel_cells = [c for c in self.archive.cells.values()
+                           if c.state is not None]
+        self._sel_n = len(self.archive.cells)
+        self._sel_area = self.max_area
+        deep = [c for c in self._sel_cells
+                if c.key[0] == self.max_sect and c.key[-5] == self.max_area]
+        self._sel_deep = deep
+        if deep:
+            minl = min(c.key[0] for c in deep)
+            lowl = [c for c in deep if c.key[0] <= minl + 1]
+            self._sel_topgx = max(c.key[-1] for c in deep)
+            # Near-frontier bands precomputed (the per-call band filter over
+            # `deep` was itself O(N) in one-area castle levels).
+            _f24 = self._sel_topgx - 24
+            self._sel_band24 = [c for c in deep if c.key[-1] >= _f24]
+            self._sel_lowl_band24 = [c for c in lowl if c.key[-1] >= _f24]
+        else:
+            self._sel_topgx = 0
+            self._sel_band24 = []
+            self._sel_lowl_band24 = []
+
     def select(self):
-        cells = [c for c in self.archive.cells.values() if c.state is not None]
+        if (getattr(self, "_sel_cells", None) is None
+                or len(self.archive.cells) > self._sel_n * 1.02
+                or self._sel_area != self.max_area):
+            self._refresh_sel_cache()
+        cells = self._sel_cells
         if not cells:
             return None
         # Deep-frontier arm: bias toward cells in the DEEPEST area reached,
         # near its max gx — this follows Mario through area transitions.
         if self.rng.random() < self.args.deep_bias:
-            # cell_fn components are always the LAST 4: area [-4], gxb [-1]
-            deep = [c for c in cells if c.key[-4] == self.max_area]
-            if deep:
-                # LOW-LOOP bias (maze levels): every loop-back means a wrong
-                # fork was taken, so the solution path lives at the minimal
-                # loop counts. 70% of deep draws restrict to the lowest
-                # loop-phase present; 30% roam all phases (fork discovery
-                # still needs the looped lineages to find UNTRIED forks).
-                if self.rng.random() < 0.7:
-                    minl = min(c.key[0] for c in deep)
-                    lowl = [c for c in deep if c.key[0] <= minl + 1]
-                    if lowl:
-                        deep = lowl
-                topgx = max(c.key[-1] for c in deep)
-                floor = topgx - int(self.rng.integers(0, 24))
-                band = [c for c in deep if c.key[-1] >= floor]
-                cell = band[int(self.rng.integers(len(band)))]
-                cell.times_chosen += 1
-                cell.explored = True
-                return cell
-        for _ in range(8):
-            cell = self.archive.select_return_cell()
-            if cell is not None and cell.state is not None:
-                return cell
+            pool_band = (self._sel_lowl_band24
+                         if (self.rng.random() < 0.7 and self._sel_lowl_band24)
+                         else self._sel_band24)
+            if pool_band:
+                floor = self._sel_topgx - int(self.rng.integers(0, 24))
+                band = [c for c in pool_band if c.key[-1] >= floor]
+                if band:
+                    cell = band[int(self.rng.integers(len(band)))]
+                    cell.times_chosen += 1
+                    cell.explored = True
+                    return cell
+        # Uniform over the cached list (the archive's weighted selection was
+        # itself an O(N) scan; the deep arm supplies the directed pressure).
         return cells[int(self.rng.integers(len(cells)))]
 
     def _assign(self, wid: int) -> dict:
@@ -341,15 +390,19 @@ class Solver:
             self.pool.load_worker_state(wid, Path(self.args.root_state).read_bytes())
             return {"key": None, "root": "entrance", "trace": [], "steps": 0,
                     "left": self.args.burst, "loops": 0, "prev_gx": -1,
-                    "sig": (),
+                    "sig": (), "sect": 0, "p0750": None, "psig": (),
                     "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
         self.pool.load_worker_state(wid, cell.state)
-        root_id, tb, loops, sig = self.traces[cell.key]
+        rec = self.traces[cell.key]
+        root_id, tb, loops, sig = rec[0], rec[1], rec[2], rec[3]
+        sect = rec[4] if len(rec) > 4 else 0
+        psig = rec[5] if len(rec) > 5 else ()
         # prev_gx -1: no loop detection on the restore step (the load frame
         # reads transitional garbage; the first real step re-arms it).
         return {"key": cell.key, "root": root_id, "trace": list(tb),
                 "steps": cell.best_steps, "left": self.args.burst,
                 "loops": loops, "prev_gx": -1, "sig": sig,
+                "sect": sect, "p0750": None, "psig": psig,
                 "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
 
     def explore(self) -> None:
@@ -365,10 +418,19 @@ class Solver:
                 # search saturates (live telemetry, not any external map);
                 # inside it, sample from inverted weights so leftward /
                 # downward entries get explored instead of pruned.
+                # SATURATION-TRIGGERED inversion (fix 2026-07-25): always-on
+                # inversion sabotaged standard levels — at 5-3's frontier the
+                # solver sampled left/down exactly where a full-speed rightward
+                # jump was needed (chain stall). The maze maneuver hunt now
+                # arms only after the frontier has been pinned >=180 s.
                 _pin = self.max_gx_in_area.get(self.max_area, 0)
+                _floor = (self._loop_dest_min
+                          if self._loop_dest_min is not None
+                          else _pin - 300)
                 _w = (self.inv_weights
                       if (_pin > 400 and c.get("gx", -1) >= 0
-                          and _pin - 300 <= c["gx"] <= _pin + 60)
+                          and _floor <= c["gx"] <= _pin + 60
+                          and time.time() - self._pin_time >= 180.0)
                       else self.weights)
                 a = c["prev"] if self.rng.random() < args.sticky else \
                     int(self.rng.choice(len(_w), p=_w))
@@ -389,10 +451,18 @@ class Solver:
                 # boundary the pass crosses (reset on loop-back) — the
                 # observable footprint of THIS pass's route choice.
                 _lgx = _gx(ram)
-                c["gx"] = _lgx if _lgx <= 3900 else c.get("gx", -1)
-                if _lgx <= 3900:
+                c["gx"] = _lgx if _lgx <= 7000 else c.get("gx", -1)
+                _v0750 = int(ram[0x0750])
+                _transit = (c["p0750"] is not None and _v0750 != c["p0750"])
+                if _transit and c["sect"] < 32:
+                    c["sect"] += 1
+                    c["psig"] = (c["psig"] + (_v0750,))[-4:]
+                c["p0750"] = _v0750
+                if _lgx <= 7000:
                     if c["prev_gx"] >= 0:
-                        if _lgx < c["prev_gx"] - 100:
+                        if _transit:
+                            c["prev_gx"] = _lgx   # section change: re-arm, no loop
+                        elif _lgx < c["prev_gx"] - 100:
                             if c["loops"] < 8:
                                 c["loops"] += 1
                             c["sig"] = ()   # new pass, fresh route
@@ -400,7 +470,8 @@ class Solver:
                             c["sig"] = (c["sig"] + (int(ram[R_YPOS]) // 64,))[-4:]
                     c["prev_gx"] = _lgx
                 status = self.observe(i, ram, c["trace"], c["steps"],
-                                      c["root"], c["loops"], c["sig"])
+                                      c["root"], c["loops"], c["sig"],
+                                      c["sect"], c["psig"])
                 # Finisher extension: the level-END transition (exit pipe /
                 # flag slide) can run many steps with gx frozen, so a burst
                 # from the deepest cell can end just short of the wd advance.
@@ -435,6 +506,7 @@ class Solver:
             "cells": len(self.archive),
             "max_area": self.max_area,
             "max_gx_in_max_area": self.max_gx_in_area.get(self.max_area, 0),
+            "max_sect": self.max_sect,
             "solutions": self.n_solutions,
             "best_sol_actions": (self.best_sol_len if self.n_solutions else None),
             "steps": self.steps_done,
