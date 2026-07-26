@@ -286,25 +286,30 @@ output — Go-Explore / routed-replay / BC-pilot solutions, always labeled as th
 **emulator, the trainer, and the harnesses** — it does not ship pre-trained
 checkpoints (they are gitignored; you train them with the flow above).
 
-- **Super Mario Bros. — LEARNED, honest cold-start number: `0/50`.** Under the
+- **Super Mario Bros. — LEARNED, honest cold-start numbers.** Under the
   only headline protocol (cold power-on, zero test-time state loads,
-  sticky-actions 0.25 + start-jitter, single-life, 50 episodes × 2 seeds), the
-  best policy to date **scores 0/50 — it dies in 1-1.** The *deterministic*
-  (no-sticky) greedy eval of the same checkpoint does reach the 1-1 flag (1.0),
-  and learned per-level calibration peaked around ~0.11 before collapsing — but
-  per the claims policy the sticky number is the one that counts, and right now
-  it is zero. Backward-algorithm Go-Explore robustification (the published
-  Nature-2021 cure for exactly this sticky collapse) is the active work.
-- **Super Mario Bros. — EXHIBITION (search, not learning).** A level-keyed
-  composite (`eval_composite`) chains routed BC-pilot / Go-Explore solutions
-  into a **cold full-World-1 single-life traversal (`seq_clear_rate 1.0`)**, and
-  a Go-Explore search crosses **1-4 → world 2** (beats Bowser, touches the axe)
-  reliably from a mid-1-4 save-state, with the win predicate verified live on
-  real clears. These are deterministic replays of search output — real and
-  interesting, but the *search system* solving the game, **not** a
-  learned-from-power-on policy. Greedy training telemetry also shows 1-1/1-2/1-3
-  clears mid-run; those are training-time numbers, not the honest sticky eval
-  above. Full autonomous progression to 8-4 remains a research goal.
+  sticky-actions 0.25 + start-jitter, single-life, greedy), **1-1 is
+  genuinely learned: 63–67% clear rate** by from-scratch PPO on tile
+  observations — the project's first true clear at the research-standard
+  bar. **1-2 is a measured negative**: a pre-registered three-seed campaign
+  falsified the compact feedforward policy class there (SPRT-verified local
+  robustness at 1,900+ zones does not compose into traversal), and a
+  literature audit found no published agent by any method that clears 1-2
+  under this protocol. The full falsification record and the measured
+  robustness profile across noise levels live in
+  `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`. Negative
+  results carry the same evidentiary standard as positives here.
+- **Super Mario Bros. — EXHIBITION (search, not learning): 31 of 32 levels
+  solved.** The Go-Explore solver (`scripts/go_explore_solve.py`) has
+  discovered verified, self-replaying solutions from power-on through
+  **8-3**, including every castle and both silently-looping mazes — 4-4 and
+  7-4 fell to direction-aware cells plus saturation-triggered exploration
+  inversion. Only **8-4**, the final pipe-maze, remains open; its full
+  elimination record and the active research questions are in
+  `docs/research/MAZE_DOSSIER_V3_2026-07-26.md`. The older level-keyed
+  composite (`eval_composite`, cold full-World-1 `seq_clear_rate 1.0`)
+  still reproduces. All of this is the *search system* solving the game —
+  real and rigorous, always labeled, never presented as learning.
 - **16 games have hand-authored reward functions with real win predicates** —
   Mario, Contra, Castlevania, Mega Man, Metroid, Zelda, Tetris, Bubble Bobble,
   Punch-Out, Kung Fu, Gradius, Excitebike, Ghosts'n Goblins, DuckTales, Kid
@@ -613,12 +618,11 @@ What this release **does** ship:
 What this release **does not** ship:
 
 - **Pre-trained checkpoints.** Checkpoints are gitignored; train them yourself
-  with the flow above. On SMB, world-1 training produces deterministic greedy
-  clears of 1-1/1-2/1-3 (training-time / no-sticky numbers), but the honest
-  cold-start sticky eval is currently **0/50**; **1-4 and full autonomous 8-4
-  are not yet solved**, and the World-1 traversal that does exist is EXHIBITION
-  (search / routed replay), not a learned policy — see *What actually works
-  today*.
+  with the flow above. On SMB, the honest learned result to date is **1-1 at
+  63–67%** under the full sticky protocol (1-2 is a documented,
+  three-seed-verified negative for this policy class); the 31-of-32-level
+  traversal that exists is EXHIBITION (search output), not a learned policy —
+  see *What actually works today*.
 - **A clearing Contra policy.** Contra learns under the pixel-CNN + RND recipe
   but does not yet clear stage 1; value-loss tuning is the open lever.
 - **Tile encoders for games other than SMB.** The framework
