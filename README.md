@@ -16,9 +16,42 @@ original 1985 console is referred to by its full name to disambiguate.
 power-on — 1-1 through the 1-4 castle, no warp pipes. This is the network
 choosing every button press live; it is **not** a replay of a recorded run.*
 
-**How far we've come.** A genuinely learned agent clears all of **World 1**
-(1-1, 1-2, 1-3, and 1-4 including Bowser's castle) in one continuous session
-from the title screen, then reaches 2-1. Reproduce this exact recording:
+This project keeps two strictly separate ledgers (see `CLAIMS.md`): what the
+**search system** solves, and what a policy genuinely **learns**. Both moved
+a long way this month.
+
+**The search system (Exhibition ledger): 31 of 32 levels solved.** A
+Go-Explore solver — deterministic Rust emulator, microsecond save-states,
+first-return-then-explore over a cell archive — has discovered verified
+solutions from power-on through **8-3**, including every castle and both
+looping mazes (4-4 and 7-4, which required direction-aware cells and
+saturation-triggered exploration inversion to crack). Every solution is an
+action trace that self-replays to a warp-guarded clear. Only **8-4**, the
+final pipe-maze, remains — under active work, with the campaign's full
+elimination record in `docs/research/`. This is the machine *solving* the
+game in the tradition of the ALE "Brute", and is always labeled as search,
+never as learning.
+
+**The learned ledger — the honest numbers:**
+
+- **World 1-1 is genuinely learned**: from-scratch PPO on tile observations
+  clears it at **63–67%** under the full honest protocol — cold start,
+  greedy actions, 25% sticky-action noise, start jitter (Machado et al.
+  2018). This is the project's first true learned clear under the
+  research-standard bar.
+- **World 1-2 is a documented negative** — and a measured one. A
+  pre-registered, externally-reviewed campaign (three concurring seeds)
+  falsified the compact feedforward policy class on this level: local
+  robustness verified at 1,900+ zones by sequential statistical tests does
+  not compose into traversal, and the level's central gauntlet has a
+  measured local noise ceiling far below the protocol's 25%. The literature
+  audit found **no published agent by any method** that clears 1-2 under
+  this protocol; it is an open problem at the field's frontier. Full record:
+  `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`.
+- **The composite World-1 playthrough** (the GIF above) remains
+  reproducible: per-level learned nets behind a router, playing 1-1 through
+  the 1-4 castle live from power-on. It is a *composite of specialists* —
+  labeled as such — not one agent that understands the game:
 
 ```bash
 python scripts/record_learned_playthrough.py \
@@ -27,29 +60,16 @@ python scripts/record_learned_playthrough.py \
 # -> World 1 cleared, no warps, end_reason: seq_clear
 ```
 
-**How much is left — stated plainly, because an honest miss beats a dishonest
-highlight reel:**
+**The gap, stated plainly, because an honest miss beats a dishonest
+highlight reel:** no single learned policy yet plays whole worlds under
+honest noise, and 1-2 is measured evidence that getting there needs a
+stronger policy class, not more training tricks. The candidate next bet —
+recurrent policies inside the per-zone noise curriculum — is specified and
+gated behind pre-registered kill criteria.
 
-- **Not the whole game.** It beats World 1, then gets stuck at the 2-1
-  hand-off. Worlds 2–8 are open work.
-- **Not perturbation-proof.** Under the research-standard sticky-actions
-  protocol (25% random input repeats, Machado et al. 2018), the honest
-  cold-start score is **0/50** today — the policy is a start-locked trajectory
-  that stochastic play breaks. Making it robust is the active work.
-- **Not yet one agent that understands the game — this is the real gap.**
-  Today's playthrough is a *hierarchical composite*: a separate learned net per
-  level, swapped in by a router that reads the on-screen world/level. No single
-  policy experiences a whole run, so nothing yet *recognizes* "I've entered a
-  water level" or "this is a castle" and adapts its navigation. Per-level
-  specialists, hand-shaped per-level rewards, and save-state warm-starts each
-  quietly removed the pressure to learn the game's fundamentals. The next
-  direction is **one generalist policy, trained across all levels with a
-  generic reward, that learns environment types — overworld, water, castle,
-  pipe-descent — and navigates each on its own.** That is the *un-solved*
-  version of this benchmark, and where the real contribution lives.
-
-The Rust emulator and the honest-evaluation harness underneath are the mature
-layers (below); the single generalist agent is the expedition ahead.
+The Rust emulator and the honest-evaluation harness underneath are the
+mature layers (below); the single generalist agent remains the expedition
+ahead.
 
 ## What this is
 

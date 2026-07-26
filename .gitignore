@@ -81,3 +81,6 @@ demos/
 
 # PGO transient instrumentation dumps — only the merged nes_core.profdata is tracked
 nes_core/pgo/raw/
+# Local experiment artifacts (archives, handoffs, receipts, demos) — large,
+# regenerable, referenced by path from configs; never committed.
+runs/
