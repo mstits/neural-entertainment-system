@@ -20,17 +20,18 @@ This project keeps two strictly separate ledgers (see `CLAIMS.md`): what the
 **search system** solves, and what a policy genuinely **learns**. Both moved
 a long way this month.
 
-**The search system (Exhibition ledger): 31 of 32 levels solved.** A
-Go-Explore solver — deterministic Rust emulator, microsecond save-states,
-first-return-then-explore over a cell archive — has discovered verified
-solutions from power-on through **8-3**, including every castle and both
-looping mazes (4-4 and 7-4, which required direction-aware cells and
-saturation-triggered exploration inversion to crack). Every solution is an
-action trace that self-replays to a warp-guarded clear. Only **8-4**, the
-final pipe-maze, remains — under active work, with the campaign's full
-elimination record in `docs/research/`. This is the machine *solving* the
-game in the tradition of the ALE "Brute", and is always labeled as search,
-never as learning.
+**The search system (Exhibition ledger): THE COMPLETE GAME.** A Go-Explore
+solver — deterministic Rust emulator, microsecond save-states,
+first-return-then-explore over a cell archive — beat **all 32 levels**, and
+the whole run is one verified artifact: a single controller tape from an
+actual cold boot (reset, title screen, START press) through every level to
+the **"THANK YOU MARIO — YOUR QUEST IS OVER"** ending. 31,202 inputs, ~35
+minutes of gameplay, zero state loads, every level boundary receipted, and
+a deterministic sha256 across replays. The 31 KB tape, per-level receipts,
+and ending frame live in `docs/receipts/full_run/`; the three-round
+research trail that cracked the looping mazes and the final pipe-maze is in
+`docs/research/`. This is the machine *solving* the game in the tradition
+of the ALE "Brute", and is always labeled as search, never as learning.
 
 **The learned ledger — the honest numbers:**
 
