@@ -72,6 +72,189 @@ The Rust emulator and the honest-evaluation harness underneath are the
 mature layers (below); the single generalist agent remains the expedition
 ahead.
 
+
+## The complete run
+
+![Cold boot to 1-1 — reset, title screen, START press](docs/media/run_boot_to_1-1.gif)
+![The 4-4 looping maze](docs/media/run_4-4_maze.gif)
+![The finale — Bowser's bridge, the axe, the princess](docs/media/run_finale_princess.gif)
+
+*Three moments from the single verified tape (EXHIBITION — search output,
+not a learned policy): the cold boot through the title screen into 1-1; the
+4-4 looping maze that defeated coordinate-keyed search until cells learned
+direction; and the ending. Full 34:40 video: `runs/full_run/
+smb_complete_run.mp4` (re-render anytime with `python scripts/
+assemble_full_run.py --video out.mp4`).*
+
+## How the machine beat the game — methods and math
+
+Everything below is documented with its ledger label. **EXHIBITION** =
+the search system (this is what completed the game). **LEARNED** = policies
+trained by RL and judged by the honest protocol (1-1 clear; 1-2 documented
+negative). The split follows `CLAIMS.md` and the ALE evaluation literature
+[1].
+
+### Go-Explore over a deterministic emulator (EXHIBITION)
+
+The solver is first-return-then-explore [2]: an archive of *cells* maps a
+discretized state to the best emulator save-state that reached it, search
+repeatedly restores a frontier cell (microsecond restore in the Rust core)
+and explores onward with right-biased random bursts. A cell is replaced only
+under **domination** — a strictly better score, or an equal score in fewer
+steps:
+
+$$\text{replace}(c) \iff s > s_c \;\lor\; (s = s_c \wedge t < t_c)$$
+
+Selection favors rarely-chosen frontier cells; a *deep-frontier arm* biases
+draws toward the highest progress coordinate. Standard levels fall in
+minutes. The interesting failures — and the mechanisms they forced — were:
+
+- **Looping mazes (4-4, 7-4).** Castle mazes silently warp wrong routes
+  backward, so coordinate cells alias first-pass and looped states and the
+  frontier saturates (measured: 4-4 pinned at gx≈2064, 1.5M records, zero
+  solutions). Two generic mechanisms crack this class. *Direction-aware
+  cells* append $\mathrm{sgn}(v_x)$ to the cell key so a backtracking
+  maneuver re-traversing visited coordinates is a distinct, explorable cell
+  rather than a pruned loop. *Saturation-gated heuristic inversion* flips
+  the action-sampling bias toward left/down — the maneuvers a forward
+  heuristic structurally prunes — but only inside a self-measured window
+  $[g_\text{floor},\, g_\text{pin}+60]$ where $g_\text{pin}$ is the live
+  frontier pin and $g_\text{floor}$ is the observed warp destination, and
+  only after the frontier has been pinned for 180 s. (Always-on inversion
+  measurably sabotages standard levels; the gate was added after it stalled
+  an athletic level.) 4-4 fell in 45 minutes, 7-4 in 59, with no per-level
+  configuration.
+- **The pipe-maze finale (8-4).** Route progress goes through pipes that
+  must be *entered*: stand on the pipe, hold Down. A measured
+  enterability sweep (settle, hold Down 24 steps, at every reachable 16-px
+  bucket) fired transitions at 83 of 320 positions — a behavior stochastic
+  play essentially never produces. The solver therefore interleaves a
+  scripted settle-and-hold-Down macro (2% of steps, recorded verbatim in
+  the trace so replays stay exact). The frontier moved from its
+  three-day pin to the ending in 45 minutes.
+- **The invisible ending.** SMB's victory screen advances no world/level
+  byte — there is no next level — and locks input. The winning run sat in
+  the archive for 90 minutes classified as a stall until the frontier state
+  was *rendered* and showed the princess. Finales are now detected by the
+  operating-mode byte (`$0770`: play = 1, victory = 2, verified
+  empirically). Lesson, earned twice: never declare a stall without
+  rendering the frame.
+
+### Empirical state discovery — no disassembly, ever (EXHIBITION tooling)
+
+The project bans game internals (disassembly, maps, walkthroughs). When
+search needed to understand hidden state, it *measured* it, in the system-
+identification tradition [8, 9, 10]:
+
+- **Predicate verification.** Any RAM byte used by search must first pass a
+  change-rate measurement (e.g., the community-documented "area pointer"
+  `$0750` churns ~6/1000 steps with the scroll engine — an invalidated
+  interpretation; the area-type byte `$074E` changes 0.67/1000, only at
+  screen transitions — verified and used).
+- **Sparse causal probes.** To find state that *decides* an outcome,
+  collect same-channel snapshot/label pairs, one-hot the 2048-byte RAM and
+  fit an $L_1$-regularized logistic regression [11]:
+
+$$\min_{w,b}\; \frac{1}{N}\sum_{j=1}^{N} \ln\!\left(1+e^{-Y_j (w^\top \Phi(R_j)+b)}\right) + \lambda \lVert w \rVert_1$$
+
+  Surviving coefficients are only *candidates*: each must pass a **causal
+  mutation test** — overwrite that single byte in a failing state with the
+  passing value and observe the outcome flip. The mutation filter earns its
+  keep: in one probe it rejected 100%-holdout-accuracy candidates that were
+  collection-channel artifacts, and in another it exposed a "route byte"
+  that was actually momentum.
+- **Fate probes.** Where no event marker exists, a checkpoint sweep
+  collects states at fixed coordinates and rolls each forward under fixed
+  scripted continuations; divergence in *fate* localizes where deciding
+  state lives before any byte is named.
+
+### The honest evaluation protocol and the learned ledger (LEARNED)
+
+Learned policies are judged by the protocol of Machado et al. [1]: cold
+power-on, zero test-time state loads, greedy action selection, 25%
+sticky actions, 0–16 frame start jitter, single-life scoring. Under this
+bar, **1-1 is learned at 63–67%** by from-scratch PPO [12, 13] on tile
+observations. **1-2 is a documented negative** with the same evidentiary
+standard: a pre-registered three-seed campaign falsified the compact
+feedforward policy class. The machinery built for that campaign is
+documented because negative results deserve their math too:
+
+- **Non-farmable potential shaping.** Reward shaping is potential-based
+  [4], with the potential positive-shifted from a search-derived distance
+  map: $\Phi(s) = \Phi_\max\,(1 - D(s)/D_\text{start}) \in [0,
+  \Phi_\max]$, live transitions shaped by $F = \gamma\Phi(s') -
+  \Phi(s)$, and **every non-completing terminal charged $-\Phi_\text{peak}$**
+  (the episode maximum). The telescoping sum over any non-completing
+  episode is then $\le 0$ — dying, idling, retreating, or hiding in a
+  zero-potential region cannot bank shaping; only finishing pays. Each
+  clause exists because a trained policy found the exploit it closes
+  (documented in `docs/research/DOSSIER_V3_2026-07-23.md`).
+- **Per-cell stochasticity curriculum with sequential verification.** Each
+  archived cell carries its own sticky probability, annealed toward the
+  evaluation level on local mastery ($\hat{p} \ge 0.75$ over a window
+  $\Rightarrow p \mathrel{+}= 0.05$), with restarts prioritized by
+  $W(c) = (1-\hat{p}_c)^2 + 0.1$. A cell is accepted as robust only by
+  Wald's SPRT [5] testing $H_0\!: p \le 0.15$ vs $H_1\!: p \ge 0.60$:
+
+$$\Lambda_m = \sum_i \left[ x_i \ln\tfrac{0.60}{0.15} + (1-x_i)\ln\tfrac{0.40}{0.85} \right],\quad \text{accept at } \Lambda \ge \ln\tfrac{1-\beta}{\alpha} \approx 4.55$$
+
+  Small-sample acceptance gates were measured to pass "welds" whose true
+  success was below 1/400; fixed-count claims use the Wilson interval [6]
+  instead. The campaign's decisive result: SPRT-verified *local*
+  robustness at 1,900+ cells did **not** compose into level traversal —
+  three seeds concurring — and no published agent by any method is known to
+  clear 1-2 under this protocol. The full record and robustness profile:
+  `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`.
+
+### Verification and receipts
+
+The completed run is reproducible from first principles: a cold boot
+(reset, 60-step title wait, START), then 31,202 controller inputs with zero
+save-state loads. The assembler verifies every world/level boundary in
+sequence and the finale by operating mode, and emits per-level receipts
+plus the tape's sha256 — byte-identical across independent replays on the
+deterministic core. Artifacts: `docs/receipts/full_run/`.
+
+### References
+
+1. M. C. Machado et al., "Revisiting the Arcade Learning Environment,"
+   *JAIR* 61, 2018 — the sticky-actions evaluation protocol.
+2. A. Ecoffet et al., "First return, then explore," *Nature* 590, 2021
+   (and arXiv:1901.10995) — Go-Explore.
+3. T. Salimans & R. Chen, "Learning Montezuma's Revenge from a Single
+   Demonstration," 2018 — backward-curriculum restarts.
+4. A. Y. Ng, D. Harada, S. Russell, "Policy invariance under reward
+   transformations," *ICML* 1999 — potential-based reward shaping.
+5. A. Wald, "Sequential Tests of Statistical Hypotheses," *Ann. Math.
+   Stat.* 16, 1945 — the SPRT.
+6. E. B. Wilson, "Probable Inference…," *JASA* 22, 1927 — the Wilson score
+   interval.
+7. T. Hester et al., "Deep Q-learning from Demonstrations," *AAAI* 2018 —
+   the large-margin demonstration loss used in the 1-2 campaign.
+8. A. Anand et al., "Unsupervised State Representation Learning in Atari,"
+   *NeurIPS* 2019 (Atari-ARI) — probing RAM-state semantics.
+9. A. K. McCallum, "Reinforcement Learning with Selective Perception and
+   Hidden State," PhD thesis, 1995 (U-Tree) — sufficient statistics for
+   POMDPs.
+10. M. Littman, R. Sutton, S. Singh, "Predictive Representations of
+    State," *NeurIPS* 2001 — PSRs.
+11. R. Tibshirani, "Regression Shrinkage and Selection via the Lasso,"
+    *JRSS-B* 58, 1996.
+12. J. Schulman et al., "Proximal Policy Optimization Algorithms," 2017;
+    and "High-Dimensional Continuous Control Using GAE," 2015.
+13. Community SMB-PPO baselines by uvipen, yumouwei, and Kautenja
+    (gym-super-mario-bros / nes-py), whose published hyperparameters and
+    RAM telemetry conventions (position, world/level bytes) this project
+    follows.
+14. M. Jiang, E. Grefenstette, T. Rocktäschel, "Prioritized Level
+    Replay," *ICML* 2021 — level-granular restart prioritization.
+15. S. Kakade & J. Langford, "Approximately Optimal Approximate
+    Reinforcement Learning," *ICML* 2002 — restart-distribution policy
+    improvement.
+16. The TASVideos community — the tool-assisted-superplay tradition that
+    the Exhibition ledger's completed run consciously parallels (and is
+    labeled alongside, per `CLAIMS.md`).
+
 ## What this is
 
 - A Rust NES core — 6502 CPU, PPU, APU, and 36 mappers. The **pure-Rust
