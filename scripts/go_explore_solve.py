@@ -192,6 +192,15 @@ class Solver:
                 route_sig: tuple = (), sect: int = 0,
                 psig: tuple = ()) -> str:
         """Record one reached state. Returns 'dead' | 'clear' | 'live'."""
+        # GAME-COMPLETE check (8-4 finale): the ending never advances the
+        # world/level bytes (there is no next level) — the victory state is
+        # operating mode $0770 == 2 with inputs locked (verified 2026-07-27,
+        # THANK YOU MARIO screen). Without this the winning trajectory sits
+        # in the archive invisible, as it did for 1.5 hours on the night the
+        # game was first beaten.
+        if int(ram[0x770]) == 2 and self.start_wd == (7, 3):
+            self._dump_solution(root_id, trace, ram, steps)
+            return "clear"
         # Clear (warp-guarded) is checked FIRST.
         if is_forward_clear(self.start_wd, ram):
             self._dump_solution(root_id, trace, ram, steps)
