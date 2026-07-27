@@ -3,22 +3,30 @@
 A macOS / Apple-Silicon NES emulator that trains AI to play NES games. A
 purpose-built Rust NES core (`nes_core`) drives a PyTorch + PyQt6 reinforcement-
 learning stack: you supply a ROM, run one command, and watch a policy learn to
-play — reproducibly.
+play — reproducibly. Its search system has beaten Super Mario Bros end to end
+— cold boot to the princess, every input receipted — and its learned policies
+are measured against the strictest published evaluation protocol, with the
+wins and the negatives documented to the same standard.
 
 Hereafter, **NES** refers to this project (Neural Entertainment System); the
 original 1985 console is referred to by its full name to disambiguate.
 
 ## Where it stands today
 
-![A learned policy playing through World 1 of Super Mario Bros — 1-1 to the 1-4 castle](docs/media/world1_learned.gif)
+**The machine has beaten Super Mario Bros — the whole game.** From an
+actual cold boot (reset, title screen, START press) through all 32 levels
+to the "THANK YOU MARIO — YOUR QUEST IS OVER" ending, as one verified
+controller tape with per-level receipts and a deterministic sha256
+([release with video, tape, and receipts](https://github.com/mstits/neural-entertainment-system/releases/tag/smb-complete-v1)).
 
-*A trained reinforcement-learning policy playing Super Mario Bros from
-power-on — 1-1 through the 1-4 castle, no warp pipes. This is the network
-choosing every button press live; it is **not** a replay of a recorded run.*
+![The finale — Bowser's bridge, the axe, the princess](docs/media/run_finale_princess.gif)
+
+*The final minutes of the verified run (EXHIBITION — search output, not a
+learned policy): 8-4's pipe maze, Bowser's bridge, the axe, the rescue.*
 
 This project keeps two strictly separate ledgers (see `CLAIMS.md`): what the
-**search system** solves, and what a policy genuinely **learns**. Both moved
-a long way this month.
+**search system** solves, and what a policy genuinely **learns**. The
+completed game belongs to the first; the second has its own honest wins.
 
 **The search system (Exhibition ledger): THE COMPLETE GAME.** A Go-Explore
 solver — deterministic Rust emulator, microsecond save-states,
@@ -49,10 +57,12 @@ of the ALE "Brute", and is always labeled as search, never as learning.
   audit found **no published agent by any method** that clears 1-2 under
   this protocol; it is an open problem at the field's frontier. Full record:
   `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`.
-- **The composite World-1 playthrough** (the GIF above) remains
-  reproducible: per-level learned nets behind a router, playing 1-1 through
-  the 1-4 castle live from power-on. It is a *composite of specialists* —
-  labeled as such — not one agent that understands the game:
+- **The composite World-1 playthrough** remains reproducible: per-level
+  learned nets behind a router, playing 1-1 through the 1-4 castle live
+  from power-on. It is a *composite of specialists* — labeled as such —
+  not one agent that understands the game:
+
+  ![A learned composite playing World 1](docs/media/world1_learned.gif)
 
 ```bash
 python scripts/record_learned_playthrough.py \
@@ -508,10 +518,10 @@ checkpoints (they are gitignored; you train them with the flow above).
   emulator) for SMB, Punch-Out, and Kung Fu; the rest key on reachable RAM with
   the final-boss values cross-sourced (labeled in-code) until an agent or a
   near-boss save-state reaches those endgames. **These make the games trainable
-  and measurable — no game yet has a LEARNED cold-start clear (SMB world 1's
-  demonstrated clear is EXHIBITION — search / routed replay, per above); winning
-  them for real is a matter of training compute plus the sticky-robustness work,
-  not missing code.**
+  and measurable. SMB 1-1 is the first LEARNED cold-start clear under the
+  honest protocol; no other game has one yet — winning them for real is a
+  matter of training compute plus the sticky-robustness research, not
+  missing code.**
 - **DreamerV3 world-model trainer — scaffolded and trains end-to-end**, but has
   not been converged to outperform PPO on these games; it is a research path,
   not a shipping result.
@@ -834,10 +844,18 @@ What this release **does not** ship:
 
 Near-term roadmap:
 
-- Push SMB past 1-3: solve 1-4 and stitch full autonomous world progression.
-- Tune Contra's value loss to a first stage-1 clear.
-- Tile encoders for the other five games (each ~1 day of work).
-- Tune DreamerV3 for sparse-reward games (Zelda, Metroid).
+- **The learned-ledger frontier: SMB 1-2 under the honest protocol.** The
+  documented negative bounds today's policy class; the specified next bet
+  (recurrent policies inside the per-cell stochasticity curriculum) is
+  gated behind pre-registered signposts and kill criteria before it gets
+  compute.
+- **One generalist policy** across levels with a generic reward — the
+  unsolved version of this benchmark and where the real learning
+  contribution lives.
+- Apply the completed solver pipeline (chain + maze mechanisms + receipts)
+  to a second game end-to-end.
+- Tune Contra's value loss to a first learned stage-1 clear; tile encoders
+  for the other games (~1 day each); DreamerV3 for sparse-reward games.
 - Close the `fs=1` single-env perf gap with LaiNES (currently ~0.7×).
 
 This is **pre-release** software. Expect the README and docs to be revised as
@@ -868,7 +886,8 @@ each batch lands.
 ├── configs/           Per-game profiles. mario_vanilla_ppo.yaml is the
 │                      launcher default for Mario; mario_tiles.yaml and
 │                      mario.yaml are alternate profiles.
-├── docs/              Architecture + proposals
+├── docs/              Architecture, research record (docs/research/),
+│                      run receipts (docs/receipts/), media
 ├── scripts/           install, capture_start_state, train_game, eval_game,
 │                      scoreboard, pgo_build, benches
 ├── tests/             pytest suites
