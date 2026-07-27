@@ -1,0 +1,297 @@
+{
+  "rom": "Super Mario Bros. (World).nes",
+  "frame_skip": 4,
+  "cold_boot": true,
+  "state_loads": 0,
+  "steps": 31202,
+  "frames": 124808,
+  "duration_s": 2080.133333333333,
+  "tape_sha256": "38ae326e65104381794726acc6edb5939c9e92169f3db3435dddda3496a75464",
+  "levels": [
+    {
+      "level": "lvl_00_1-1",
+      "end_step": 871,
+      "wd_after": [
+        0,
+        1
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_01_1-2",
+      "end_step": 2085,
+      "wd_after": [
+        0,
+        2
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_02_1-3",
+      "end_step": 2736,
+      "wd_after": [
+        0,
+        3
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_03_1-4",
+      "end_step": 3476,
+      "wd_after": [
+        1,
+        0
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_04_2-1",
+      "end_step": 4448,
+      "wd_after": [
+        1,
+        1
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_05_2-2",
+      "end_step": 5730,
+      "wd_after": [
+        1,
+        2
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_06_2-3",
+      "end_step": 6517,
+      "wd_after": [
+        1,
+        3
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_07_2-4",
+      "end_step": 7294,
+      "wd_after": [
+        2,
+        0
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_08_3-1",
+      "end_step": 8240,
+      "wd_after": [
+        2,
+        1
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_09_3-2",
+      "end_step": 9043,
+      "wd_after": [
+        2,
+        2
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_10_3-3",
+      "end_step": 9700,
+      "wd_after": [
+        2,
+        3
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_11_3-4",
+      "end_step": 10419,
+      "wd_after": [
+        3,
+        0
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_12_4-1",
+      "end_step": 11465,
+      "wd_after": [
+        3,
+        1
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_13_4-2",
+      "end_step": 13025,
+      "wd_after": [
+        3,
+        2
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_14_4-3",
+      "end_step": 13634,
+      "wd_after": [
+        3,
+        3
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_00_4-4",
+      "end_step": 15109,
+      "wd_after": [
+        4,
+        0
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_01_5-1",
+      "end_step": 15913,
+      "wd_after": [
+        4,
+        1
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_02_5-2",
+      "end_step": 16837,
+      "wd_after": [
+        4,
+        2
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_03_5-3",
+      "end_step": 17473,
+      "wd_after": [
+        4,
+        3
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_04_5-4",
+      "end_step": 18076,
+      "wd_after": [
+        5,
+        0
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_05_6-1",
+      "end_step": 18864,
+      "wd_after": [
+        5,
+        1
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_06_6-2",
+      "end_step": 20476,
+      "wd_after": [
+        5,
+        2
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_07_6-3",
+      "end_step": 21254,
+      "wd_after": [
+        5,
+        3
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_08_6-4",
+      "end_step": 21852,
+      "wd_after": [
+        6,
+        0
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_09_7-1",
+      "end_step": 22756,
+      "wd_after": [
+        6,
+        1
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_10_7-2",
+      "end_step": 24011,
+      "wd_after": [
+        6,
+        2
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_11_7-3",
+      "end_step": 24783,
+      "wd_after": [
+        6,
+        3
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_12_7-4",
+      "end_step": 26085,
+      "wd_after": [
+        7,
+        0
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_13_8-1",
+      "end_step": 27569,
+      "wd_after": [
+        7,
+        1
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_14_8-2",
+      "end_step": 28569,
+      "wd_after": [
+        7,
+        2
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_15_8-3",
+      "end_step": 29430,
+      "wd_after": [
+        7,
+        3
+      ],
+      "ok": true
+    },
+    {
+      "level": "lvl_16_8-4_retry",
+      "end_step": 31202,
+      "verify": "opermode==2",
+      "ok": true
+    }
+  ]
+}

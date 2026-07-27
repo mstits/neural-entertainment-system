@@ -299,16 +299,20 @@ checkpoints (they are gitignored; you train them with the flow above).
   robustness profile across noise levels live in
   `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`. Negative
   results carry the same evidentiary standard as positives here.
-- **Super Mario Bros. — EXHIBITION (search, not learning): 31 of 32 levels
-  solved.** The Go-Explore solver (`scripts/go_explore_solve.py`) has
-  discovered verified, self-replaying solutions from power-on through
-  **8-3**, including every castle and both silently-looping mazes — 4-4 and
-  7-4 fell to direction-aware cells plus saturation-triggered exploration
-  inversion. Only **8-4**, the final pipe-maze, remains open; its full
-  elimination record and the active research questions are in
-  `docs/research/MAZE_DOSSIER_V3_2026-07-26.md`. The older level-keyed
-  composite (`eval_composite`, cold full-World-1 `seq_clear_rate 1.0`)
-  still reproduces. All of this is the *search system* solving the game —
+- **Super Mario Bros. — EXHIBITION (search, not learning): THE COMPLETE
+  GAME.** The Go-Explore solver beat all 32 levels, and the full run is a
+  single verified artifact: **one controller tape from an actual cold boot
+  (reset, title screen, START) through every level to the "THANK YOU
+  MARIO" ending — 31,202 inputs, ~35 minutes of gameplay, zero state loads,
+  every level boundary receipted, deterministic sha256 across replays**
+  (`docs/receipts/full_run/`: the 31 KB tape, per-level receipts, ending
+  frame; assembler: `scripts/assemble_full_run.py`). Both silently-looping
+  mazes fell to direction-aware cells plus saturation-triggered exploration
+  inversion; the final pipe-maze fell to a measured pipe-entry macro; the
+  ending itself had to be *discovered* (the victory screen is invisible to
+  next-level detectors — the campaign's last lesson). The research trail —
+  three consultation rounds, every falsified hypothesis — lives in
+  `docs/research/`. All of this is the *search system* solving the game —
   real and rigorous, always labeled, never presented as learning.
 - **16 games have hand-authored reward functions with real win predicates** —
   Mario, Contra, Castlevania, Mega Man, Metroid, Zelda, Tetris, Bubble Bobble,
