@@ -452,12 +452,17 @@ class Solver:
                 # observable footprint of THIS pass's route choice.
                 _lgx = _gx(ram)
                 c["gx"] = _lgx if _lgx <= 7000 else c.get("gx", -1)
-                _v0750 = int(ram[0x0750])
-                _transit = (c["p0750"] is not None and _v0750 != c["p0750"])
-                if _transit and c["sect"] < 32:
+                # ROOM IDENTITY (verified 2026-07-26: $074E changes 0.67/1k
+                # steps, only at full-screen transitions — vs $0750's 6/1k
+                # streaming churn). rid = (area type, swim flag, Bowser slot
+                # present); a rid CHANGE is a true room transition.
+                _bw = 1 if 0x2D in bytes(ram[0x14:0x1C]) else 0
+                _rid = (int(ram[0x74E]), int(ram[0x1D]), _bw)
+                _transit = (c["p0750"] is not None and _rid != c["p0750"])
+                if _transit and c["sect"] < 16:
                     c["sect"] += 1
-                    c["psig"] = (c["psig"] + (_v0750,))[-4:]
-                c["p0750"] = _v0750
+                    c["psig"] = _rid
+                c["p0750"] = _rid
                 if _lgx <= 7000:
                     if c["prev_gx"] >= 0:
                         if _transit:
@@ -469,6 +474,11 @@ class Solver:
                         elif _lgx // 512 != c["prev_gx"] // 512:
                             c["sig"] = (c["sig"] + (int(ram[R_YPOS]) // 64,))[-4:]
                     c["prev_gx"] = _lgx
+                if (self.args.swim_gx_ceiling > 0 and int(ram[0x1D]) == 1
+                        and _lgx <= 7000
+                        and _lgx > self.args.swim_gx_ceiling):
+                    ctx[i] = self._assign(i)
+                    continue
                 status = self.observe(i, ram, c["trace"], c["steps"],
                                       c["root"], c["loops"], c["sig"],
                                       c["sect"], c["psig"])
@@ -540,6 +550,11 @@ def main() -> int:
     ap.add_argument("--max-steps", type=int, default=4000)
     ap.add_argument("--flush-secs", type=float, default=120)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--swim-gx-ceiling", type=int, default=0,
+                    help="If >0: in swim rooms ($001D=1), lineages crossing "
+                         "this gx are terminated — forces attempt density "
+                         "onto the section's floor pipes instead of the "
+                         "scroll-buffer wrap (8-4 water separating expt).")
     ap.add_argument("--gx-bucket", type=int, default=16,
                     help="Cell gx granularity px (micro-search: 8).")
     ap.add_argument("--y-band", type=int, default=32,
