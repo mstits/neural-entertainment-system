@@ -23,7 +23,11 @@ description: >
 ram_mapping:
   player_x:        0x0040   # level-x low byte: hold-right net +2412, mono 0.91
   player_x_hi:     0x0041   # page byte: 8/9 wraps coupled, 10 changes/900 steps
-  player_y:        0x0488   # jump-arc verified: swing 40, ~1 rise-fall per jump
+  player_y:        0x003F   # ABSOLUTE screen-y: jump arc ptp 53, stair-climb
+                            # mono 0.85 (hold-up sweep), floor ~176. The
+                            # 0x488 byte is only a jump OFFSET (blind to
+                            # stairs/terrain) — cost block 2 its frontier.
+  jump_offset:     0x0488   # informational; do not key cells on it
   player_health:   0x0044
   stage_number:    0x0028   # stable under random play (0.08 changes/1k)
   lives:           0x002A   # 4 decrements observed over 12k random steps
@@ -38,9 +42,17 @@ ram_mapping:
 solve:
   rom: "roms/Castlevania (USA).nes"
   progress: {lo: 0x0040, hi: 0x0041}
-  y: 0x0488
+  y: 0x003F
   level_key: [0x0028]
   lives: 0x002A
+  # Sustained-hold macros: stair mounts need many consecutive up-holds,
+  # which stochastic sampling almost never emits (block-2 frontier pinned
+  # at the first staircase wall, 34 cells, gx 264 — diagnosed by rendering
+  # the frontier 2026-07-27). Same generic mechanism as SMB 8-4's
+  # pipe-entry macro; recorded verbatim in traces.
+  hold_macros:
+    - {buttons: ["up"], steps: 24, p: 0.02}
+    - {buttons: ["down"], steps: 24, p: 0.01}
 
 reward_weights:
   forward_progress: 0.5

@@ -8,18 +8,26 @@
   },
   "verdicts": {
     "player_y": {
+      "addr": "0x3f",
+      "ok": true,
+      "why": "jump-probe swing 53 (need >=8)",
+      "churn_1k_random": 99.01,
+      "net_holdright": -1,
+      "mono_holdright": 0.45
+    },
+    "jump_offset": {
       "addr": "0x488",
       "ok": true,
-      "why": "jump-probe swing 40 (need >=8)",
-      "churn_1k_random": 51.25,
+      "why": "unclassified; churn 53.6/1k",
+      "churn_1k_random": 53.59,
       "net_holdright": 0,
       "mono_holdright": 0.0
     },
     "player_health": {
       "addr": "0x44",
       "ok": true,
-      "why": "churn 12.3/1k (informational)",
-      "churn_1k_random": 12.33,
+      "why": "churn 12.6/1k (informational)",
+      "churn_1k_random": 12.58,
       "net_holdright": -16,
       "mono_holdright": 0.02
     },
@@ -59,7 +67,7 @@
       "addr": "0x40",
       "ok": true,
       "why": "hold-right net 2412, mono 0.91; wraps 9, page-coupled 8",
-      "churn_1k_random": 150.43,
+      "churn_1k_random": 155.51,
       "net_holdright": 2412,
       "mono_holdright": 0.91
     },
@@ -67,7 +75,7 @@
       "addr": "0x41",
       "ok": true,
       "why": "page byte: 8/9 wraps coupled",
-      "churn_1k_random": 2.42,
+      "churn_1k_random": 0.58,
       "net_holdright": 1,
       "mono_holdright": 0.8
     }
@@ -77,13 +85,13 @@
       "addr": "0x3ac",
       "net": 39248,
       "mono": 0.91,
-      "churn_1k_random": 131.6
+      "churn_1k_random": 157.9
     },
     {
       "addr": "0x3ae",
       "net": 24912,
       "mono": 0.93,
-      "churn_1k_random": 126.5
+      "churn_1k_random": 152.6
     },
     {
       "addr": "0x1a",
@@ -95,37 +103,37 @@
       "addr": "0xfd",
       "net": 2076,
       "mono": 0.92,
-      "churn_1k_random": 109.3
+      "churn_1k_random": 40.6
     },
     {
       "addr": "0x2e",
       "net": 1564,
       "mono": 0.9,
-      "churn_1k_random": 110.7
+      "churn_1k_random": 42.4
     },
     {
       "addr": "0xa3",
       "net": 491,
       "mono": 0.98,
-      "churn_1k_random": 187.8
+      "churn_1k_random": 168.5
     },
     {
       "addr": "0x93",
       "net": 359,
       "mono": 0.98,
-      "churn_1k_random": 111.0
+      "churn_1k_random": 100.1
     },
     {
       "addr": "0x4a4",
       "net": 281,
       "mono": 0.99,
-      "churn_1k_random": 43.4
+      "churn_1k_random": 44.4
     },
     {
       "addr": "0x83",
       "net": 249,
       "mono": 0.97,
-      "churn_1k_random": 102.3
+      "churn_1k_random": 92.3
     },
     {
       "addr": "0xc8",
@@ -137,7 +145,7 @@
       "addr": "0x17e",
       "net": 128,
       "mono": 1.0,
-      "churn_1k_random": 0.1
+      "churn_1k_random": 0.0
     },
     {
       "addr": "0x372",
@@ -149,7 +157,7 @@
       "addr": "0x38d",
       "net": 88,
       "mono": 1.0,
-      "churn_1k_random": 36.3
+      "churn_1k_random": 25.8
     },
     {
       "addr": "0x640",

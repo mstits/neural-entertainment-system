@@ -293,6 +293,28 @@ class Solver:
         self.pool.set_skip_preprocess(True)
         self.pool.reset_all()
         self.rng = np.random.default_rng(args.seed)
+        # Sustained-hold macros (generic mechanism, profile-selected): at a
+        # small per-step probability a worker settles briefly then HOLDS one
+        # input for N steps — producing the long consecutive holds that
+        # stochastic sampling almost never emits (stair mounts, pipe
+        # entries). The 8-4 pipe-entry macro was this mechanism hardcoded;
+        # macro steps are recorded verbatim in traces like any other action.
+        self.macros = []          # (action_idx, hold_steps, weight)
+        self.macro_p = 0.0
+        for m in profile.get("solve", {}).get("hold_macros", []):
+            want = set(m["buttons"])
+            idx = next((i for i, c in enumerate(profile["action_space"])
+                        if set(c) == want), None)
+            if idx is None:
+                print(f"[solver] hold_macro {m['buttons']} not in "
+                      f"action_space — skipped", flush=True)
+                continue
+            p = float(m.get("p", 0.02))
+            self.macros.append((idx, int(m.get("steps", 20)), p))
+            self.macro_p += p
+        if self.macros:
+            w = np.array([m[2] for m in self.macros])
+            self._macro_weights = w / w.sum()
         self.archive = GoExploreArchive(self.game.cell_fn, seed=args.seed)
         self.traces: dict = {}            # cell key -> (root_id, trace bytes)
         self.roots: dict = {}             # root_id -> {path, start_wd, lives}
@@ -580,8 +602,19 @@ class Solver:
                           and _floor <= c["gx"] <= _pin + 60
                           and time.time() - self._pin_time >= 180.0)
                       else self.weights)
-                a = c["prev"] if self.rng.random() < args.sticky else \
-                    int(self.rng.choice(len(_w), p=_w))
+                if (c.get("macro_left", 0) <= 0 and self.macros
+                        and self.rng.random() < self.macro_p):
+                    mi = int(self.rng.choice(len(self.macros),
+                                             p=self._macro_weights))
+                    c["macro_a"], c["macro_hold"] = self.macros[mi][:2]
+                    c["macro_left"] = c["macro_hold"] + 6   # settle, then hold
+                if c.get("macro_left", 0) > 0:
+                    c["macro_left"] -= 1
+                    a = NOOP if c["macro_left"] >= c["macro_hold"] \
+                        else c["macro_a"]
+                else:
+                    a = c["prev"] if self.rng.random() < args.sticky else \
+                        int(self.rng.choice(len(_w), p=_w))
                 c["prev"] = a
                 c["pending"] = a
                 acts[i] = self.bitmasks[a]
