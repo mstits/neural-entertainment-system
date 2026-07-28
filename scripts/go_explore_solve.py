@@ -335,8 +335,9 @@ class Solver:
         self.t0 = time.time()
         self.stop = False
         # Optional spectator hook: called every pool step with
-        # (worker0_result, solver) — used by the live show window. None
-        # in headless runs (zero overhead).
+        # (results, solver) — the FULL per-worker results list, so the
+        # live show can render one worker or the whole swarm. None in
+        # headless runs (zero overhead).
         self.step_hook = None
 
     def _step0(self, a: int):
@@ -622,7 +623,7 @@ class Solver:
             self.steps_done += args.workers
             if self.step_hook is not None:
                 try:
-                    self.step_hook(results[0], self)
+                    self.step_hook(results, self)
                 except Exception:
                     pass
             for i, c in enumerate(ctx):
