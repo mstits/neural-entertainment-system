@@ -143,6 +143,130 @@ def action_weights(action_space) -> list:
     return ws
 
 
+class SmbGame:
+    """SMB adapter — wraps the module-level helpers verbatim, so solver
+    behavior on SMB is byte-identical to the pre-adapter code (regression:
+    seeded 1-1 run reproduces the same solution sha)."""
+    rom = ROM
+    progress_cap = 7000   # transition-frame garbage guard (8-1 lesson)
+
+    def progress(self, ram) -> int:
+        return _gx(ram)
+
+    def level_key(self, ram) -> tuple:
+        return _wd(ram)
+
+    def lives(self, ram) -> int:
+        return int(ram[R_LIVES])
+
+    def area(self, ram) -> int:
+        return int(ram[R_AREA])
+
+    def y(self, ram) -> int:
+        return int(ram[R_YPOS])
+
+    def swim(self, ram) -> int:
+        return int(ram[0x1D])
+
+    def cell_fn(self, ram) -> tuple:
+        return cell_fn(ram)
+
+    def is_clear(self, start_key: tuple, ram) -> bool:
+        return is_forward_clear(start_key, ram)
+
+    def is_dead(self, ram, start_lives: int) -> bool:
+        return (int(ram[R_LIVES]) < start_lives
+                or int(ram[R_PSTATE]) in DEATH_STATES)
+
+    def is_finale(self, start_key: tuple, ram) -> bool:
+        # GAME-COMPLETE (8-4): the ending never advances the world/level
+        # bytes — victory is operating mode $0770 == 2 with inputs locked.
+        return int(ram[0x770]) == 2 and tuple(start_key) == (7, 3)
+
+    def room_id(self, ram) -> tuple:
+        # rid = (area type, swim flag, Bowser-slot) — verified 2026-07-26:
+        # $074E changes 0.67/1k steps, only at full-screen transitions.
+        bw = 1 if 0x2D in bytes(ram[0x14:0x1C]) else 0
+        return (int(ram[0x74E]), int(ram[0x1D]), bw)
+
+
+class GenericGame:
+    """Profile-driven adapter: every address comes from the game profile's
+    `solve:` section, whose bytes must be observationally verified first
+    (scripts/verify_ram_map.py; receipts under docs/receipts/ram_verify/).
+
+    Required solve keys: rom, progress {lo[, hi]}, y, level_key (list of
+    addrs; any lexicographic advance = clear), lives (decrement = death).
+    Optional: area, progress_cap, player_state + death_states, finale
+    {addr, value, level_key} for the game's ending."""
+
+    def __init__(self, profile: dict) -> None:
+        s = profile["solve"]
+        self.rom = str(REPO / s["rom"])
+        p = s["progress"]
+        self._plo = int(p["lo"])
+        self._phi = int(p["hi"]) if "hi" in p else None
+        self._y = int(s["y"])
+        self._lk = [int(a) for a in s["level_key"]]
+        self._lives = int(s["lives"])
+        self._area = int(s["area"]) if "area" in s else None
+        self.progress_cap = int(s.get("progress_cap", 30000))
+        self._pstate = int(s["player_state"]) if "player_state" in s else None
+        self._death_states = tuple(s.get("death_states", ()))
+        self._finale = s.get("finale")
+
+    def progress(self, ram) -> int:
+        v = int(ram[self._plo])
+        if self._phi is not None:
+            v |= int(ram[self._phi]) << 8
+        return v
+
+    def level_key(self, ram) -> tuple:
+        return tuple(int(ram[a]) for a in self._lk)
+
+    def lives(self, ram) -> int:
+        return int(ram[self._lives])
+
+    def area(self, ram) -> int:
+        return int(ram[self._area]) if self._area is not None else 0
+
+    def y(self, ram) -> int:
+        return int(ram[self._y])
+
+    def swim(self, ram) -> int:
+        return 0
+
+    def cell_fn(self, ram) -> tuple:
+        # Same arity as SMB's cell (selection caches index key[-5]/key[-1]).
+        return (self.area(ram), 0, 0,
+                self.y(ram) // Y_BAND, self.progress(ram) // GX_BUCKET)
+
+    def is_clear(self, start_key: tuple, ram) -> bool:
+        # Forward = lexicographic advance of the level key (stage counters
+        # increment; a game-over reset reads backward and lands in `dead`).
+        return self.level_key(ram) > tuple(start_key)
+
+    def is_dead(self, ram, start_lives: int) -> bool:
+        if self.lives(ram) < start_lives:
+            return True
+        return (self._pstate is not None
+                and int(ram[self._pstate]) in self._death_states)
+
+    def is_finale(self, start_key: tuple, ram) -> bool:
+        f = self._finale
+        return (bool(f) and tuple(start_key) == tuple(f["level_key"])
+                and int(ram[int(f["addr"])]) == int(f["value"]))
+
+    def room_id(self, ram) -> tuple:
+        return self.level_key(ram) + (self.area(ram),)
+
+
+def make_game(profile: dict):
+    """SMB profiles carry no `solve:` section — they get the byte-exact
+    SMB adapter. A profile with `solve:` opts into the generic path."""
+    return GenericGame(profile) if "solve" in profile else SmbGame()
+
+
 class Solver:
     def __init__(self, args) -> None:
         self.args = args
@@ -154,13 +278,14 @@ class Solver:
         self.weights /= self.weights.sum()
         self.inv_weights = np.array(inverted_weights(profile["action_space"]))
         self.inv_weights /= self.inv_weights.sum()
-        self.pool = Pool(rom_path=ROM, num_workers=args.workers,
+        self.game = make_game(profile)
+        self.pool = Pool(rom_path=self.game.rom, num_workers=args.workers,
                          frame_skip=int(profile.get("frame_skip", 4)))
         self.pool.set_headless(True)
         self.pool.set_skip_preprocess(True)
         self.pool.reset_all()
         self.rng = np.random.default_rng(args.seed)
-        self.archive = GoExploreArchive(cell_fn, seed=args.seed)
+        self.archive = GoExploreArchive(self.game.cell_fn, seed=args.seed)
         self.traces: dict = {}            # cell key -> (root_id, trace bytes)
         self.roots: dict = {}             # root_id -> {path, start_wd, lives}
         self.start_wd = (0, 0)
@@ -202,32 +327,31 @@ class Solver:
         # THANK YOU MARIO screen). Without this the winning trajectory sits
         # in the archive invisible, as it did for 1.5 hours on the night the
         # game was first beaten.
-        if int(ram[0x770]) == 2 and self.start_wd == (7, 3):
+        game = self.game
+        if game.is_finale(self.start_wd, ram):
             self._dump_solution(root_id, trace, ram, steps)
             return "clear"
         # Clear (warp-guarded) is checked FIRST.
-        if is_forward_clear(self.start_wd, ram):
+        if game.is_clear(self.start_wd, ram):
             self._dump_solution(root_id, trace, ram, steps)
             return "clear"
-        # A non-forward world/level change with fewer lives, or an explicit
-        # dying state, or any life lost = death. Lives-based detection is
-        # robust across enemy/pit/time deaths and multi-area levels.
-        if int(ram[R_LIVES]) < self.start_lives:
+        # Any life lost, or an explicit dying state = death. Lives-based
+        # detection is robust across enemy/pit/time deaths and multi-area
+        # levels.
+        if game.is_dead(ram, self.start_lives):
             return "dead"
-        if int(ram[R_PSTATE]) in DEATH_STATES:
+        # A level-key change that ISN'T a forward clear = a warp (or a
+        # backward reload / game-over reset): do not record it (would
+        # poison the archive with off-level cells).
+        if game.level_key(ram) != self.start_wd:
             return "dead"
-        # A world/level change that ISN'T a forward clear = a warp (or a
-        # backward reload): do not record it (would poison the archive with
-        # off-level cells).
-        if _wd(ram) != self.start_wd and not is_forward_clear(self.start_wd, ram):
-            return "dead"
-        gx = _gx(ram)
-        if gx > 7000:
+        gx = game.progress(ram)
+        if gx > game.progress_cap:
             # Transition-frame garbage read (page byte mid-load reads huge);
             # real SMB levels reach ~6,300 px (8-1) — the old 3900 cap silently
             # froze the 8-1 frontier at 3900 (states past it never archived).
             return "live"
-        area = int(ram[R_AREA])
+        area = game.area(ram)
         if gx > self.max_gx_in_area.get(area, 0):
             self.max_gx_in_area[area] = gx
             self._pin_time = time.time()  # frontier moved: inversion stays off
@@ -290,7 +414,7 @@ class Solver:
         # sect alone aliases different pipe sequences at equal transit
         # counts; 8-4's final checks discriminate by the route taken, so
         # each path is its own frontier (fix 2026-07-26).
-        key = (sect, psig, loops, route_sig) + cell_fn(ram)
+        key = (sect, psig, loops, route_sig) + game.cell_fn(ram)
         score = sect * 10000 + gx
         cur = self.archive.cells.get(key)
         dom = (cur is None or score > cur.best_score + 1e-9
@@ -318,11 +442,12 @@ class Solver:
             "root_id": root_id,
             "root_state": self.roots[root_id]["path"],
             "start_wd": list(self.start_wd),
-            "clear_wd": list(_wd(ram)),
+            "clear_wd": list(self.game.level_key(ram)),
             "steps": steps, "actions": len(trace),
         }, indent=2) + "\n")
         print(f"[go_explore_solve] *** SOLUTION {n} *** root={root_id} "
-              f"{len(trace)} actions, {self.start_wd}->{_wd(ram)}", flush=True)
+              f"{len(trace)} actions, {self.start_wd}->"
+              f"{self.game.level_key(ram)}", flush=True)
 
     # ---- seeding: root ONLY (honest) ---------------------------------
 
@@ -330,9 +455,9 @@ class Solver:
         path = self.args.root_state
         self.pool.load_worker_state(0, Path(path).read_bytes())
         r = self._step0(NOOP)  # convention: load root, one NOOP, then actions
-        self.start_wd = _wd(r)
-        self.start_lives = int(r[R_LIVES])
-        self.max_area = int(r[R_AREA])
+        self.start_wd = self.game.level_key(r)
+        self.start_lives = self.game.lives(r)
+        self.max_area = self.game.area(r)
         self.roots["entrance"] = {"path": str(path),
                                   "start_wd": list(self.start_wd),
                                   "lives": self.start_lives}
@@ -420,6 +545,8 @@ class Solver:
 
     def explore(self) -> None:
         args = self.args
+        game = self.game
+        cap = game.progress_cap
         ctx = [self._assign(i) for i in range(args.workers)]
         acts = np.zeros(args.workers, dtype=np.uint8)
         self.t0 = last_progress = last_flush = time.time()
@@ -468,20 +595,18 @@ class Solver:
                 # Route signature: the y-band recorded at each 512-px gx
                 # boundary the pass crosses (reset on loop-back) — the
                 # observable footprint of THIS pass's route choice.
-                _lgx = _gx(ram)
-                c["gx"] = _lgx if _lgx <= 7000 else c.get("gx", -1)
-                # ROOM IDENTITY (verified 2026-07-26: $074E changes 0.67/1k
-                # steps, only at full-screen transitions — vs $0750's 6/1k
-                # streaming churn). rid = (area type, swim flag, Bowser slot
-                # present); a rid CHANGE is a true room transition.
-                _bw = 1 if 0x2D in bytes(ram[0x14:0x1C]) else 0
-                _rid = (int(ram[0x74E]), int(ram[0x1D]), _bw)
+                _lgx = game.progress(ram)
+                c["gx"] = _lgx if _lgx <= cap else c.get("gx", -1)
+                # ROOM IDENTITY (SMB: verified 2026-07-26, $074E changes
+                # 0.67/1k steps, only at full-screen transitions). A rid
+                # CHANGE is a true room transition.
+                _rid = game.room_id(ram)
                 _transit = (c["p0750"] is not None and _rid != c["p0750"])
                 if _transit and c["sect"] < 16:
                     c["sect"] += 1
                     c["psig"] = _rid
                 c["p0750"] = _rid
-                if _lgx <= 7000:
+                if _lgx <= cap:
                     if c["prev_gx"] >= 0:
                         if _transit:
                             c["prev_gx"] = _lgx   # section change: re-arm, no loop
@@ -490,10 +615,10 @@ class Solver:
                                 c["loops"] += 1
                             c["sig"] = ()   # new pass, fresh route
                         elif _lgx // 512 != c["prev_gx"] // 512:
-                            c["sig"] = (c["sig"] + (int(ram[R_YPOS]) // 64,))[-4:]
+                            c["sig"] = (c["sig"] + (game.y(ram) // 64,))[-4:]
                     c["prev_gx"] = _lgx
-                if (self.args.swim_gx_ceiling > 0 and int(ram[0x1D]) == 1
-                        and _lgx <= 7000
+                if (self.args.swim_gx_ceiling > 0 and game.swim(ram) == 1
+                        and _lgx <= cap
                         and _lgx > self.args.swim_gx_ceiling):
                     ctx[i] = self._assign(i)
                     continue
@@ -507,8 +632,8 @@ class Solver:
                 # extension so it can actually complete the clear.
                 if (status == "live" and c["left"] <= 0
                         and not c.get("extended")
-                        and int(ram[R_AREA]) == self.max_area
-                        and _gx(ram) // 16 >= self.max_gx_in_area.get(self.max_area, 0) // 16 - 3):
+                        and game.area(ram) == self.max_area
+                        and _lgx // 16 >= self.max_gx_in_area.get(self.max_area, 0) // 16 - 3):
                     c["left"] += 200
                     c["extended"] = True
                 if status != "live" or c["left"] <= 0 or c["steps"] >= args.max_steps:

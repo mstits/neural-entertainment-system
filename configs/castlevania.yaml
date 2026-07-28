@@ -36,6 +36,7 @@ ram_mapping:
 # the current stage/block (clear = any change); progress is the 16-bit
 # little-endian pair; death = lives decrement.
 solve:
+  rom: "roms/Castlevania (USA).nes"
   progress: {lo: 0x0040, hi: 0x0041}
   y: 0x0488
   level_key: [0x0028]
