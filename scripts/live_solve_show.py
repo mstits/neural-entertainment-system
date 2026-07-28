@@ -61,7 +61,14 @@ def solver_args(profile_path: str, root_state: str, out: Path,
     return SimpleNamespace(
         root_state=root_state, profile=str(profile_path), out=str(out),
         workers=workers, minutes=minutes, want_solutions=1,
-        burst=200, deep_bias=0.6, sticky=0.35, max_steps=4000,
+        # CAMPAIGN-PROVEN search params (the solver defaults that beat
+        # all 32 levels in-chain). The show originally shipped
+        # burst=200/deep_bias=0.6/sticky=0.35, which cleared the
+        # forgiving Worlds 1-3 and then pinned 0-for-2-hours at 4-3's
+        # gx~1650 momentum wall — a wall the campaign params broke in
+        # 3.5 min (sticky 0.5 holds RIGHT+B twice as long = sustained
+        # full-speed run-ups for the big athletic gaps).
+        burst=64, deep_bias=0.4, sticky=0.5, max_steps=4000,
         gx_bucket=16, y_band=32, swim_gx_ceiling=0,
         # NO mid-level archive flushes on stream: pickling a multi-GB
         # archive runs on the solver thread and froze every swarm tile
