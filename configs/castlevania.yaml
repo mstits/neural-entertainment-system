@@ -16,16 +16,30 @@ description: >
   whip-based combat, slow jumps. Reward favors forward progress + defeating
   sub-bosses + collecting hearts (sub-weapon ammo).
 
+# Corrected 2026-07-27 by the change-rate protocol (scripts/verify_ram_map.py,
+# receipt: docs/receipts/ram_verify/castlevania.json). The original
+# player_x_screen (0x3F) failed wrap-coupling (0/9) and player_y (0x3E)
+# showed zero jump swing; the verified pair/arc bytes replace them.
 ram_mapping:
-  player_x_screen: 0x003F
-  player_x:        0x0040
-  player_y:        0x003E
+  player_x:        0x0040   # level-x low byte: hold-right net +2412, mono 0.91
+  player_x_hi:     0x0041   # page byte: 8/9 wraps coupled, 10 changes/900 steps
+  player_y:        0x0488   # jump-arc verified: swing 40, ~1 rise-fall per jump
   player_health:   0x0044
-  stage_number:    0x0028
-  lives:           0x002A
+  stage_number:    0x0028   # stable under random play (0.08 changes/1k)
+  lives:           0x002A   # 4 decrements observed over 12k random steps
   hearts:          0x0045   # sub-weapon ammo
   # Boss health during boss fights
   boss_health:     0x04A0
+
+# Solver contract (go_explore_solve) — every byte observationally verified
+# from our own rollouts; see the receipt above. `level_key` bytes identify
+# the current stage/block (clear = any change); progress is the 16-bit
+# little-endian pair; death = lives decrement.
+solve:
+  progress: {lo: 0x0040, hi: 0x0041}
+  y: 0x0488
+  level_key: [0x0028]
+  lives: 0x002A
 
 reward_weights:
   forward_progress: 0.5

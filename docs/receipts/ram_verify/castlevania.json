@@ -1,0 +1,197 @@
+{
+  "profile": "configs/castlevania.yaml",
+  "rom": "Castlevania (USA).nes",
+  "probe_steps": {
+    "hold_right": 900,
+    "jump": 300,
+    "sticky_random": 12000
+  },
+  "verdicts": {
+    "player_y": {
+      "addr": "0x488",
+      "ok": true,
+      "why": "jump-probe swing 40 (need >=8)",
+      "churn_1k_random": 51.25,
+      "net_holdright": 0,
+      "mono_holdright": 0.0
+    },
+    "player_health": {
+      "addr": "0x44",
+      "ok": true,
+      "why": "churn 12.3/1k (informational)",
+      "churn_1k_random": 12.33,
+      "net_holdright": -16,
+      "mono_holdright": 0.02
+    },
+    "stage_number": {
+      "addr": "0x28",
+      "ok": true,
+      "why": "stable under random play (0.08 changes/1k)",
+      "churn_1k_random": 0.08,
+      "net_holdright": 1,
+      "mono_holdright": 1.0
+    },
+    "lives": {
+      "addr": "0x2a",
+      "ok": true,
+      "why": "4 decrements over random play",
+      "churn_1k_random": 0.33,
+      "net_holdright": -1,
+      "mono_holdright": 0.0
+    },
+    "hearts": {
+      "addr": "0x45",
+      "ok": true,
+      "why": "churn 2.9/1k (informational)",
+      "churn_1k_random": 2.92,
+      "net_holdright": -16,
+      "mono_holdright": 0.09
+    },
+    "boss_health": {
+      "addr": "0x4a0",
+      "ok": true,
+      "why": "churn 0.0/1k (informational)",
+      "churn_1k_random": 0.0,
+      "net_holdright": 0,
+      "mono_holdright": 0.0
+    },
+    "player_x": {
+      "addr": "0x40",
+      "ok": true,
+      "why": "hold-right net 2412, mono 0.91; wraps 9, page-coupled 8",
+      "churn_1k_random": 150.43,
+      "net_holdright": 2412,
+      "mono_holdright": 0.91
+    },
+    "player_x_hi": {
+      "addr": "0x41",
+      "ok": true,
+      "why": "page byte: 8/9 wraps coupled",
+      "churn_1k_random": 2.42,
+      "net_holdright": 1,
+      "mono_holdright": 0.8
+    }
+  },
+  "progress_candidates": [
+    {
+      "addr": "0x3ac",
+      "net": 39248,
+      "mono": 0.91,
+      "churn_1k_random": 131.6
+    },
+    {
+      "addr": "0x3ae",
+      "net": 24912,
+      "mono": 0.93,
+      "churn_1k_random": 126.5
+    },
+    {
+      "addr": "0x1a",
+      "net": 3562,
+      "mono": 1.0,
+      "churn_1k_random": 999.8
+    },
+    {
+      "addr": "0xfd",
+      "net": 2076,
+      "mono": 0.92,
+      "churn_1k_random": 109.3
+    },
+    {
+      "addr": "0x2e",
+      "net": 1564,
+      "mono": 0.9,
+      "churn_1k_random": 110.7
+    },
+    {
+      "addr": "0xa3",
+      "net": 491,
+      "mono": 0.98,
+      "churn_1k_random": 187.8
+    },
+    {
+      "addr": "0x93",
+      "net": 359,
+      "mono": 0.98,
+      "churn_1k_random": 111.0
+    },
+    {
+      "addr": "0x4a4",
+      "net": 281,
+      "mono": 0.99,
+      "churn_1k_random": 43.4
+    },
+    {
+      "addr": "0x83",
+      "net": 249,
+      "mono": 0.97,
+      "churn_1k_random": 102.3
+    },
+    {
+      "addr": "0xc8",
+      "net": 128,
+      "mono": 1.0,
+      "churn_1k_random": 0.6
+    },
+    {
+      "addr": "0x17e",
+      "net": 128,
+      "mono": 1.0,
+      "churn_1k_random": 0.1
+    },
+    {
+      "addr": "0x372",
+      "net": 96,
+      "mono": 1.0,
+      "churn_1k_random": 0.1
+    },
+    {
+      "addr": "0x38d",
+      "net": 88,
+      "mono": 1.0,
+      "churn_1k_random": 36.3
+    },
+    {
+      "addr": "0x640",
+      "net": 85,
+      "mono": 1.0,
+      "churn_1k_random": 0.1
+    },
+    {
+      "addr": "0x641",
+      "net": 85,
+      "mono": 1.0,
+      "churn_1k_random": 0.1
+    },
+    {
+      "addr": "0x642",
+      "net": 85,
+      "mono": 1.0,
+      "churn_1k_random": 0.1
+    },
+    {
+      "addr": "0x643",
+      "net": 85,
+      "mono": 1.0,
+      "churn_1k_random": 0.1
+    },
+    {
+      "addr": "0x644",
+      "net": 85,
+      "mono": 1.0,
+      "churn_1k_random": 0.1
+    },
+    {
+      "addr": "0x645",
+      "net": 85,
+      "mono": 1.0,
+      "churn_1k_random": 0.1
+    },
+    {
+      "addr": "0x646",
+      "net": 85,
+      "mono": 1.0,
+      "churn_1k_random": 0.1
+    }
+  ]
+}
