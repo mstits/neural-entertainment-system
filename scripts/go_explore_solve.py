@@ -179,6 +179,10 @@ class Solver:
         self.steps_done = 0
         self.t0 = time.time()
         self.stop = False
+        # Optional spectator hook: called every pool step with
+        # (worker0_result, solver) — used by the live show window. None
+        # in headless runs (zero overhead).
+        self.step_hook = None
 
     def _step0(self, a: int):
         acts = np.zeros(self.args.workers, dtype=np.uint8)
@@ -448,6 +452,11 @@ class Solver:
                 acts[i] = self.bitmasks[a]
             results = self.pool.step_all(acts)
             self.steps_done += args.workers
+            if self.step_hook is not None:
+                try:
+                    self.step_hook(results[0], self)
+                except Exception:
+                    pass
             for i, c in enumerate(ctx):
                 ram = results[i][2]
                 c["trace"].append(c["pending"])
