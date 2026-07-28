@@ -5734,6 +5734,19 @@ class Trainer:
                         "emulation", time.perf_counter_ns() - _emu_t0
                     )
                     self._emit_frame_sink(step_results)
+                    # Live audio: forward drained APU samples to the GUI
+                    # mixer. This push existed only in the GA loop, so
+                    # every vanilla_ppo run was structurally silent no
+                    # matter what the mixer window said. Same gate as the
+                    # GA path: skip entirely when muted (the common
+                    # headless state — r.audio is empty then anyway
+                    # because no worker has audio enabled).
+                    if (self._audio_mixer is not None
+                            and self._audio_mixer.mode != "mute"):
+                        for r in step_results:
+                            if r.audio.size > 0 and r.audio_rate > 0:
+                                self._audio_mixer.push_audio(
+                                    r.worker_id, r.audio, r.audio_rate)
 
                     # Process each env's result, compute reward, advance stacker.
                     # Envs already done in this iter contribute zero reward
