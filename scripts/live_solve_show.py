@@ -130,7 +130,13 @@ class HeroCam(threading.Thread):
     def _play(self, root: bytes, actions, tag: str) -> bool:
         """Replay actions at 1x; returns False if interrupted."""
         self.env.load_state(root)
-        self.env.step(0)                  # rooting convention no-op
+        # Rooting convention no-op = ONE POOL STEP = frame_skip frames.
+        # A single-frame no-op leaves the replay 3 frames out of phase
+        # with the solver's trajectory — enough to kill Mario mid-lap
+        # (verified on a real solution: 1-frame no-op dies in 1-1,
+        # 4-frame no-op reproduces the clear into 1-2 exactly).
+        for _ in range(self.show.fs):
+            self.env.step(0)
         self._emit()
         for a in actions:
             if self.stop or (tag == "best" and self._lap is not None):
