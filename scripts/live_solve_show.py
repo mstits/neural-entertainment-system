@@ -3,13 +3,21 @@ time, in one window — built for streaming via OBS and walking away.
 
 The window has two synchronized views:
 
-  HERO CAM (left, big, LIVE AUDIO) — a dedicated 1x-paced emulator that
-    continuously replays the swarm's current best attempt with the real
-    APU soundtrack. However fast the search runs, there is always real
-    gameplay at real speed with real audio on screen. When a level falls,
-    the victory lap plays here, start to flagpole.
+  HERO CAM (left, big) — a dedicated 1x-paced emulator that continuously
+    replays the swarm's current best attempt. When a level falls, the
+    victory lap plays here, start to flagpole, with its APU soundtrack
+    featured.
   THE SWARM (right, grid) — every solver worker's live frames at full
     machine speed: the actual parallel search, restarts and all.
+
+AUDIO — the CHORUS: during search you hear ALL workers' real APU output
+mixed together at machine speed (pitch rises with search speed — that is
+the authentic sound of the machine working; --chorus-pitch native gives
+normal-pitch granular slices instead). On each victory lap the mix
+crossfades to the hero cam's clean 1x soundtrack, then back to the
+chorus. --audio hero|chorus|off selects other mixes. Audio production
+is decoupled from pacing in the pool, so the chorus costs sample
+generation only — never search speed.
 
 Per level: the swarm searches; the hero cam narrates the deepest attempt
 so far; on a clear, the hero cam plays the discovered solution; the next
@@ -63,14 +71,18 @@ def default_args(**overrides) -> SimpleNamespace:
     """The show's knobs with their defaults; kwargs override."""
     ns = SimpleNamespace(minutes_per_level=120.0, workers=12, scale=3,
                          volume=0.6, resume=False, view="swarm",
+                         audio="both", chorus_pitch="ff",
                          profile=str(DEFAULT_PROFILE))
     for k, v in overrides.items():
         setattr(ns, k, v)
     return ns
 
 
+APU_RATE = 43653  # native APU sample rate (see watch_asm.py)
+
+
 class HeroCam(threading.Thread):
-    """A 1x-paced emulator with live audio, owned by its own thread.
+    """A 1x-paced emulator, the featured audio voice, in its own thread.
 
     Modes (set via methods, executed in the run loop):
       idle  — sit at the level entrance, stepping no-ops (ambient music).
@@ -88,14 +100,6 @@ class HeroCam(threading.Thread):
             self.env.set_realtime_pace(True)
         except Exception:
             pass
-        self.mixer = None
-        try:
-            self.mixer = nes_core.AudioMixer(num_instances=1)
-            self.mixer.set_volume(show.args.volume)
-            self.mixer.set_mode("solo-0")
-            self.mixer.start()
-        except Exception as e:
-            sys.stderr.write(f"hero audio unavailable (silent): {e}\n")
         self._root: bytes | None = None
         self._get_best = None           # callable -> (root_bytes, trace) | None
         self._lap = None                # (root_bytes, actions ndarray)
@@ -114,6 +118,14 @@ class HeroCam(threading.Thread):
     # -- internals -------------------------------------------------------
     def _emit(self):
         self.show.frame = np.asarray(self.env.get_frame())
+        mixer = self.show.mixer
+        if mixer is not None:
+            try:
+                samples = self.env.get_audio()
+                if samples is not None and len(samples) > 0:
+                    mixer.push_audio(self.show.hero_voice, samples, APU_RATE)
+            except Exception:
+                pass
 
     def _play(self, root: bytes, actions, tag: str) -> bool:
         """Replay actions at 1x; returns False if interrupted."""
@@ -180,6 +192,44 @@ class Show:
         self.show_dir.mkdir(parents=True, exist_ok=True)
         self.state_file = self.show_dir / "progress.json"
         self.hero: HeroCam | None = None
+        # One shared mixer: worker voices 0..N-1 (the CHORUS — every
+        # solver instance's real APU output) + the hero cam as voice N.
+        # Phase presets crossfade between them via per-voice intensity.
+        self.hero_voice = int(args.workers)
+        self.mixer = None
+        if getattr(args, "audio", "both") != "off":
+            try:
+                self.mixer = nes_core.AudioMixer(
+                    num_instances=args.workers + 1)
+                self.mixer.set_mode("all")
+                self.mixer.set_volume(args.volume)
+                self.mixer.start()
+            except Exception as e:
+                sys.stderr.write(f"audio unavailable (silent show): {e}\n")
+
+    def _apply_mix(self, phase: str) -> None:
+        """Crossfade chorus vs hero per show phase."""
+        if self.mixer is None:
+            return
+        n = self.args.workers
+        want = getattr(self.args, "audio", "both")
+        chorus_on = want in ("both", "chorus")
+        hero_on = want in ("both", "hero")
+        # 1/sqrt(N) keeps an N-voice chorus from clipping the master.
+        chorus_lvl = (1.0 / max(1.0, n ** 0.5)) if chorus_on else 0.0
+        if phase == "search":
+            c, h = chorus_lvl, (0.15 if (hero_on and chorus_on)
+                                else (1.0 if hero_on else 0.0))
+        elif phase == "lap":
+            c, h = (0.15 * chorus_lvl), (1.0 if self.mixer else 0.0)
+        else:                              # boot / done: hero carries it
+            c, h = 0.0, 1.0
+        try:
+            for i in range(n):
+                self.mixer.set_instance_intensity(i, c)
+            self.mixer.set_instance_intensity(self.hero_voice, h)
+        except Exception:
+            pass
 
     def _label_of_state(self, state_path: str) -> str:
         pool = nes_core.Pool(rom_path=self.game.rom, num_workers=1,
@@ -229,14 +279,54 @@ class Show:
             entrance = self._campaign_root()
         self.hero = HeroCam(self)
         self.hero.start()
+        self._apply_mix("boot")
+        chorus = (self.mixer is not None
+                  and getattr(self.args, "audio", "both") in ("both", "chorus"))
+        ff = getattr(self.args, "chorus_pitch", "ff") == "ff"
         while not self.stop:
             self.mode = "search"
             self.status = f"searching {self.level}"
+            self._apply_mix("search")
             out = self.show_dir / f"lvl_{self.level}"
             s = Solver(solver_args(self.profile_path, entrance, out,
                                    self.args.minutes_per_level,
                                    self.args.workers))
             root_bytes = Path(entrance).read_bytes()
+            if chorus:
+                # Audio production WITHOUT pacing (decoupled in the pool:
+                # set_worker_audio overrides the pace<->audio welding), so
+                # the chorus costs sample-gen only, never search speed.
+                for i in range(self.args.workers):
+                    s.pool.set_worker_audio(i, True)
+            pump = {"t": time.time()}
+
+            def pump_chorus(sv, _self=self, pump=pump, ff=ff):
+                now = time.time()
+                dt = now - pump["t"]
+                if dt < 0.05:
+                    return
+                pump["t"] = now
+                for i in range(self.args.workers):
+                    try:
+                        raw = sv.pool.drain_audio(i)
+                        if not len(raw):
+                            continue
+                        arr = np.frombuffer(bytes(raw), dtype=np.int16)
+                        if ff:
+                            # True machine-speed audio: push at the rate
+                            # the swarm actually produced it — the mixer
+                            # resamples it into wall time (pitch rises
+                            # with search speed; that IS the sound).
+                            rate = min(int(len(arr) / max(dt, 1e-3)),
+                                       APU_RATE * 64)
+                            _self.mixer.push_audio(i, arr, max(rate, 8000))
+                        else:
+                            # Native pitch: keep the freshest slice that
+                            # fits real time, drop the rest (granular).
+                            keep = int(dt * APU_RATE)
+                            _self.mixer.push_audio(i, arr[-keep:], APU_RATE)
+                    except Exception:
+                        pass
 
             # Hero-cam feed: the deepest archived trace, refreshed at most
             # every 2 s (a scan of the trace table, cheap at this size).
@@ -265,10 +355,12 @@ class Show:
 
             self.hero.set_level(root_bytes, get_best)
 
-            def hook(rs, sv, _self=self):
+            def hook(rs, sv, _self=self, chorus=chorus):
                 if _self.stop:
                     sv.stop = True
                 _self.frames = [r[0] for r in rs]
+                if chorus:
+                    pump_chorus(sv)
                 _self.status = (
                     f"searching {_self.level} — "
                     f"{sv.steps_done/1e6:.1f}M steps, "
@@ -286,6 +378,7 @@ class Show:
             actions = np.load(sols[0]).astype(int)
             self.mode = "lap"
             self.status = f"{self.level} SOLVED — victory lap"
+            self._apply_mix("lap")
             self.hero.play_lap(root_bytes, actions)
             while not self.hero.lap_done.wait(timeout=0.5):
                 if self.stop:
@@ -427,6 +520,15 @@ def main() -> int:
     ap.add_argument("--volume", type=float, default=0.6)
     ap.add_argument("--view", choices=("swarm", "solo"), default="swarm",
                     help="swarm = hero cam + all-worker grid; solo = hero only")
+    ap.add_argument("--audio", choices=("both", "chorus", "hero", "off"),
+                    default="both",
+                    help="both = the swarm CHORUS during search + hero cam "
+                         "featured on laps; chorus = swarm only; hero = "
+                         "1x best-attempt cam only; off = silent")
+    ap.add_argument("--chorus-pitch", choices=("ff", "native"), default="ff",
+                    help="ff = true machine-speed audio (pitch rises with "
+                         "search speed); native = normal-pitch granular "
+                         "slices of each worker's latest audio")
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
     app = QApplication(sys.argv)
