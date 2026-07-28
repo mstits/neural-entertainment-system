@@ -336,6 +336,17 @@ class MainWindow(QMainWindow):
         self.replay_btn.clicked.connect(self._on_replay)
         btn_row.addWidget(self.replay_btn)
 
+        self.solve_btn = QPushButton("Beat the Game (Live)")
+        self.solve_btn.setToolTip(
+            "Open the live-solve window: the search system plays SMB from\n"
+            "power-on through 8-4, discovering each level's solution on\n"
+            "screen, with a real-speed audio replay of every clear.\n"
+            "Runs for hours to days; progress banks per level, so closing\n"
+            "and reopening resumes the campaign. Made for streaming."
+        )
+        self.solve_btn.clicked.connect(self._on_live_solve)
+        btn_row.addWidget(self.solve_btn)
+
         self.start_btn = QPushButton("Start Training")
         self.start_btn.clicked.connect(self._on_start)
         btn_row.addWidget(self.start_btn)
@@ -627,6 +638,36 @@ class MainWindow(QMainWindow):
             "checkpoint_path": path,
             "start_state_path": self._start_state_path or None,
         })
+
+    def _on_live_solve(self) -> None:
+        if self.stop_btn.isEnabled():
+            QMessageBox.warning(
+                self, "Training is running",
+                "The live solve wants the whole machine (it runs the search "
+                "at full speed on all cores). Stop training first.")
+            return
+        win = getattr(self, "_solve_win", None)
+        if win is not None and win.isVisible():
+            win.raise_(); win.activateWindow()
+            return
+        from scripts.live_solve_show import (SHOW_DIR, LiveSolveWindow,
+                                             default_args)
+        resume = False
+        prog = SHOW_DIR / "progress.json"
+        if prog.exists():
+            try:
+                level = json.loads(prog.read_text()).get("level", "?")
+            except Exception:
+                level = "?"
+            pick = QMessageBox.question(
+                self, "Previous campaign found",
+                f"A previous run is banked at level {level}.\n"
+                "Resume it, or restart from power-on?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            resume = pick == QMessageBox.StandardButton.Yes
+        self._solve_win = LiveSolveWindow(default_args(resume=resume))
+        self._solve_win.show()
 
     def _on_start(self) -> None:
         if not self._rom_ready():

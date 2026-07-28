@@ -187,6 +187,73 @@ class Show:
                 {"entrance": entrance, "level": self.level}))
 
 
+def default_args(**overrides) -> SimpleNamespace:
+    """The show's knobs with their defaults; kwargs override."""
+    ns = SimpleNamespace(minutes_per_level=120.0, workers=12, scale=3,
+                         volume=0.6, resume=False)
+    for k, v in overrides.items():
+        setattr(ns, k, v)
+    return ns
+
+
+from PyQt6.QtCore import Qt, QTimer  # noqa: E402
+from PyQt6.QtGui import QImage, QPixmap  # noqa: E402
+from PyQt6.QtWidgets import (QApplication, QLabel, QMainWindow,  # noqa: E402
+                             QVBoxLayout, QWidget)
+
+
+class LiveSolveWindow(QMainWindow):
+    """The show as a window: owns the producer thread's lifecycle, so it
+    embeds in the training GUI (a launcher button) or runs standalone."""
+
+    def __init__(self, args=None, parent=None):
+        super().__init__(parent)
+        args = args or default_args()
+        self.show_state = Show(args)
+        self.setWindowTitle("Super Mario Bros — live solve")
+        self.view = QLabel()
+        self.view.setFixedSize(256 * args.scale, 240 * args.scale)
+        self.caption = QLabel("starting…")
+        self.caption.setStyleSheet(
+            "font-family: Menlo; font-size: 14px; padding: 6px;")
+        box = QWidget(); lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
+        lay.addWidget(self.view); lay.addWidget(self.caption)
+        self.setCentralWidget(box)
+        self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.timer.timeout.connect(self._render)
+        self.timer.start(16)
+        self.thread = threading.Thread(target=self.show_state.run,
+                                       daemon=True)
+        self.thread.start()
+
+    def keyPressEvent(self, ev):
+        if ev.key() == Qt.Key.Key_Q:
+            self.close()
+
+    def closeEvent(self, ev):
+        self.show_state.stop = True   # progress is banked; --resume continues
+        self.timer.stop()
+        super().closeEvent(ev)
+
+    def _render(self):
+        f = self.show_state.frame
+        if f is not None and f.ndim == 3:
+            h, w = f.shape[0], f.shape[1]
+            img = QImage(f.astype(np.uint8).tobytes(), w, h, 3 * w,
+                         QImage.Format.Format_RGB888)
+            self.view.setPixmap(QPixmap.fromImage(img).scaled(
+                self.view.width(), self.view.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation))
+        tag = {"search": "SEARCHING (machine speed)",
+               "lap": "SOLVED — victory lap (1x, live audio)",
+               "boot": "POWER ON", "done": "COMPLETE"}.get(
+                   self.show_state.mode, "")
+        self.caption.setText(f"[{tag}]  {self.show_state.status}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--minutes-per-level", type=float, default=120)
@@ -195,60 +262,10 @@ def main() -> int:
     ap.add_argument("--volume", type=float, default=0.6)
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
-
-    from PyQt6.QtCore import Qt, QTimer
-    from PyQt6.QtGui import QImage, QPixmap
-    from PyQt6.QtWidgets import (QApplication, QLabel, QMainWindow,
-                                 QVBoxLayout, QWidget)
-
-    show = Show(args)
-
-    class Window(QMainWindow):
-        def __init__(self):
-            super().__init__()
-            self.setWindowTitle("Super Mario Bros — live solve")
-            self.view = QLabel()
-            self.view.setFixedSize(256 * args.scale, 240 * args.scale)
-            self.caption = QLabel("starting…")
-            self.caption.setStyleSheet(
-                "font-family: Menlo; font-size: 14px; padding: 6px;")
-            box = QWidget(); lay = QVBoxLayout(box)
-            lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
-            lay.addWidget(self.view); lay.addWidget(self.caption)
-            self.setCentralWidget(box)
-            self.timer = QTimer(self)
-            self.timer.setTimerType(Qt.TimerType.PreciseTimer)
-            self.timer.timeout.connect(self._render)
-            self.timer.start(16)
-
-        def keyPressEvent(self, ev):
-            if ev.key() == Qt.Key.Key_Q:
-                show.stop = True
-                self.close()
-
-        def _render(self):
-            f = show.frame
-            if f is not None and f.ndim == 3:
-                h, w = f.shape[0], f.shape[1]
-                img = QImage(f.astype(np.uint8).tobytes(), w, h, 3 * w,
-                             QImage.Format.Format_RGB888)
-                self.view.setPixmap(QPixmap.fromImage(img).scaled(
-                    self.view.width(), self.view.height(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.FastTransformation))
-            tag = {"search": "SEARCHING (machine speed)",
-                   "lap": "SOLVED — victory lap (1x, live audio)",
-                   "boot": "POWER ON", "done": "COMPLETE"}.get(show.mode, "")
-            self.caption.setText(f"[{tag}]  {show.status}")
-
-    t = threading.Thread(target=show.run, daemon=True)
-    t.start()
     app = QApplication(sys.argv)
-    win = Window()
+    win = LiveSolveWindow(args)
     win.show()
-    rc = app.exec()
-    show.stop = True
-    return rc
+    return app.exec()
 
 
 if __name__ == "__main__":

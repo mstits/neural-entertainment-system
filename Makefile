@@ -1,4 +1,4 @@
-.PHONY: help test smoke parity bench bench-hot bench-scaling bench-phases bench-all \
+.PHONY: help test smoke parity show bench bench-hot bench-scaling bench-phases bench-all \
         build build-pgo build-pgo-apply selftest clean train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
         ppu_layout_check ppu-batch-profile
@@ -22,6 +22,8 @@ help:
 	@echo "                             clear rate + furthest stage reached"
 	@echo "    make demo GAME=mario   - play the best checkpoint + record demos/<game>.gif"
 	@echo "    make gui               - launch the desktop GUI (pick ROM + profile, watch live)"
+	@echo "    make show              - Beat the Game (Live): the search system plays SMB"
+	@echo "                             power-on through 8-4 in a window, audio on every clear"
 	@echo "    make scoreboard        - mission-control: progress across all six games"
 	@echo ""
 	@echo "  Test:"
@@ -63,6 +65,9 @@ demo:
 
 gui:
 	. .venv/bin/activate && python src/gui/main.py
+
+show:
+	. .venv/bin/activate && caffeinate -dis python scripts/live_solve_show.py
 
 scoreboard:
 	. .venv/bin/activate && python scripts/scoreboard.py
