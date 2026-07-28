@@ -39,18 +39,19 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 import nes_core  # noqa: E402
-from scripts.go_explore_solve import Solver  # noqa: E402
+from scripts.go_explore_solve import Solver, make_game  # noqa: E402
 from scripts.go_explore_chain import extract_next_entrance  # noqa: E402
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
 
-ROM = str(REPO / "roms/Super Mario Bros. (World).nes")
-PROFILE = REPO / "configs/smb_4_4_micro.yaml"
-SHOW_DIR = REPO / "runs/live_show"
+DEFAULT_PROFILE = REPO / "configs/smb_4_4_micro.yaml"
+SHOW_ROOT = REPO / "runs/live_show"
+SMB_FINALE_LABEL = "8-4"
 
 
-def solver_args(root_state: str, out: Path, minutes: float, workers: int):
+def solver_args(profile_path: str, root_state: str, out: Path,
+                minutes: float, workers: int):
     return SimpleNamespace(
-        root_state=root_state, profile=str(PROFILE), out=str(out),
+        root_state=root_state, profile=str(profile_path), out=str(out),
         workers=workers, minutes=minutes, want_solutions=1,
         burst=200, deep_bias=0.6, sticky=0.35, max_steps=4000,
         gx_bucket=16, y_band=32, swim_gx_ceiling=0, flush_secs=1200,
@@ -63,21 +64,43 @@ class Show:
 
     def __init__(self, args):
         self.args = args
-        self.profile = yaml.safe_load(PROFILE.read_text())
+        self.profile_path = str(getattr(args, "profile", DEFAULT_PROFILE))
+        self.profile = yaml.safe_load(Path(self.profile_path).read_text())
+        self.game = make_game(self.profile)
+        self.is_smb = "solve" not in self.profile
         self.bm = action_space_to_bitmasks(self.profile["action_space"])
         self.fs = int(self.profile.get("frame_skip", 4))
         self.mode = "boot"          # boot | search | lap | done
-        self.level = "1-1"
+        self.level = "?"
         self.status = "starting"
         self.frame = None           # latest RGB frame (any mode)
-        self.lap_env = None
         self.stop = False
-        SHOW_DIR.mkdir(parents=True, exist_ok=True)
-        self.state_file = SHOW_DIR / "progress.json"
+        self.show_dir = SHOW_ROOT / Path(self.profile_path).stem
+        self.show_dir.mkdir(parents=True, exist_ok=True)
+        self.state_file = self.show_dir / "progress.json"
 
-    # -- power-on entrance (replayed live so even the boot is on air) ----
-    def _power_on_entrance(self) -> bytes:
-        env = nes_core.NESEnvironment(ROM)
+    def _label_of_state(self, state_path: str) -> str:
+        """Read the level label out of a banked entrance state."""
+        pool = nes_core.Pool(rom_path=self.game.rom, num_workers=1,
+                             frame_skip=self.fs)
+        pool.set_headless(True)
+        pool.reset_all()
+        pool.load_worker_state(0, Path(state_path).read_bytes())
+        r = pool.step_all(np.zeros(1, dtype=np.uint8))[0][2]
+        key = self.game.level_key(r)
+        pool.shutdown()
+        return self.game.label(key)
+
+    # -- campaign root ---------------------------------------------------
+    # SMB: an actual power-on boot, replayed live so even the title screen
+    # is on air. Other games: the profile's captured start state (their
+    # title demos ignore input, which is why start states exist at all).
+    def _campaign_root(self) -> str:
+        if not self.is_smb:
+            p = REPO / self.profile["start_state_path"]
+            self.level = self._label_of_state(str(p))
+            return str(p)
+        env = nes_core.NESEnvironment(self.game.rom)
         env.reset()
         try:
             env.set_realtime_pace(True)
@@ -87,16 +110,16 @@ class Show:
         for m in seq:
             env.step(int(m))
             self.frame = np.asarray(env.get_frame())
-        # hand the settled state to the solver via a temp file
         blob = env.save_state()
-        p = SHOW_DIR / "entrance_1-1.state"
+        p = self.show_dir / "entrance_start.state"
         p.write_bytes(bytes(blob))
+        self.level = "1-1"
         return str(p)
 
     def _victory_lap(self, root_state: str, actions):
         """Replay the discovered solution at 1x with audio."""
         self.mode = "lap"
-        env = nes_core.NESEnvironment(ROM)
+        env = nes_core.NESEnvironment(self.game.rom)
         env.reset()
         env.load_state(Path(root_state).read_bytes())
         try:
@@ -130,7 +153,7 @@ class Show:
                 pass
 
     def run(self):
-        # resume or power on
+        # resume or start the campaign from its root
         prog = {}
         if self.args.resume and self.state_file.exists():
             prog = json.loads(self.state_file.read_text())
@@ -138,13 +161,13 @@ class Show:
             entrance, self.level = prog["entrance"], prog["level"]
             self.status = f"resuming at {self.level}"
         else:
-            self.status = "power-on"
-            entrance = self._power_on_entrance()
-        while not self.stop and self.level != "done":
+            self.status = "starting campaign"
+            entrance = self._campaign_root()
+        while not self.stop:
             self.mode = "search"
             self.status = f"searching {self.level}"
-            out = SHOW_DIR / f"lvl_{self.level}"
-            s = Solver(solver_args(entrance, out,
+            out = self.show_dir / f"lvl_{self.level}"
+            s = Solver(solver_args(self.profile_path, entrance, out,
                                    self.args.minutes_per_level,
                                    self.args.workers))
 
@@ -171,18 +194,23 @@ class Show:
             actions = np.load(sols[0]).astype(int)
             self.status = f"{self.level} SOLVED — victory lap"
             self._victory_lap(entrance, actions)
-            if self.level == "8-4":
+            if self.is_smb and self.level == SMB_FINALE_LABEL:
                 self.mode = "done"
                 self.status = "THE GAME IS COMPLETE"
                 break
-            nxt, wd = extract_next_entrance(
+            nxt, key = extract_next_entrance(
                 self.profile, Path(entrance).read_bytes(), actions,
-                SHOW_DIR / f"entrance_after_{self.level}.state")
+                self.show_dir / f"entrance_after_{self.level}.state")
             if nxt is None:
-                self.status = f"{self.level}: no transition?! retrying"
-                continue
+                # A solved level with no onward transition: either the
+                # game's ending (no next level exists) or a finale state
+                # the extractor can't see. Hold here rather than loop.
+                self.mode = "done"
+                self.status = (f"{self.level} SOLVED — no onward level "
+                               "found (campaign end?)")
+                break
             entrance = nxt
-            self.level = f"{wd[0]+1}-{wd[1]+1}"
+            self.level = self.game.label(key)
             self.state_file.write_text(json.dumps(
                 {"entrance": entrance, "level": self.level}))
 
@@ -190,7 +218,8 @@ class Show:
 def default_args(**overrides) -> SimpleNamespace:
     """The show's knobs with their defaults; kwargs override."""
     ns = SimpleNamespace(minutes_per_level=120.0, workers=12, scale=3,
-                         volume=0.6, resume=False)
+                         volume=0.6, resume=False,
+                         profile=str(DEFAULT_PROFILE))
     for k, v in overrides.items():
         setattr(ns, k, v)
     return ns
@@ -210,7 +239,8 @@ class LiveSolveWindow(QMainWindow):
         super().__init__(parent)
         args = args or default_args()
         self.show_state = Show(args)
-        self.setWindowTitle("Super Mario Bros — live solve")
+        game_name = self.show_state.profile.get("name", "NES")
+        self.setWindowTitle(f"{game_name} — live solve")
         self.view = QLabel()
         self.view.setFixedSize(256 * args.scale, 240 * args.scale)
         self.caption = QLabel("starting…")
@@ -256,6 +286,9 @@ class LiveSolveWindow(QMainWindow):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--profile", default=str(DEFAULT_PROFILE),
+                    help="Game profile; non-SMB profiles need a verified "
+                         "`solve:` section (scripts/verify_ram_map.py).")
     ap.add_argument("--minutes-per-level", type=float, default=120)
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--scale", type=int, default=3)

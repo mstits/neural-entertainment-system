@@ -63,6 +63,15 @@ action_space:
   - ["right", "A"]
   - ["down"]           # crouch
   - ["down", "B"]      # crouch-whip
+  # Full d-pad coverage (2026-07-27): the original combat-oriented set had
+  # no plain "up" and no diagonal holds, leaving parts of the controller
+  # unreachable to search. Generic completeness, no route knowledge.
+  - ["up"]
+  - ["up", "right"]
+  - ["up", "left"]
+  - ["down", "right"]
+  - ["down", "left"]
+  - ["left", "A"]
 
 curriculum:
   stage_1: ["*"]

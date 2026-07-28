@@ -66,8 +66,12 @@ demo:
 gui:
 	. .venv/bin/activate && python src/gui/main.py
 
+# Live-solve campaign window (streaming entry). Default = SMB from
+# power-on; any profile with a verified `solve:` section works:
+#   make show PROFILE=configs/castlevania.yaml
+PROFILE ?= configs/smb_4_4_micro.yaml
 show:
-	. .venv/bin/activate && caffeinate -dis python scripts/live_solve_show.py
+	. .venv/bin/activate && caffeinate -dis python scripts/live_solve_show.py --profile $(PROFILE)
 
 scoreboard:
 	. .venv/bin/activate && python scripts/scoreboard.py

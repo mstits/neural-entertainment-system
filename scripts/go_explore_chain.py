@@ -32,23 +32,20 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from nes_core import Pool  # noqa: E402
+from scripts.go_explore_solve import make_game  # noqa: E402
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
 
-ROM = str(REPO / "roms/Super Mario Bros. (World).nes")
 SOLVE = str(REPO / "scripts" / "go_explore_solve.py")
-
-
-def _wd_label(wd) -> str:
-    return f"{wd[0] + 1}-{wd[1] + 1}"
 
 
 def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
                           settle: int = 8):
-    """Replay `actions` from the root; at the first forward level transition,
+    """Replay `actions` from the root; at the first level-key transition,
     settle `settle` no-op frames and snapshot the next level's entrance.
-    Returns (path, next_wd) or (None, None) if no transition seen."""
+    Returns (path, next_key) or (None, None) if no transition seen."""
+    game = make_game(profile)
     bm = action_space_to_bitmasks(profile["action_space"])
-    pool = Pool(rom_path=ROM, num_workers=1,
+    pool = Pool(rom_path=game.rom, num_workers=1,
                 frame_skip=int(profile.get("frame_skip", 4)))
     pool.set_headless(True)
     pool.reset_all()
@@ -60,17 +57,16 @@ def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
         return pool.step_all(x)[0][2]
 
     r = step(0)
-    start_wd = (int(r[0x075F]), int(r[0x075C]))
+    start_key = game.level_key(r)
     result = (None, None)
     for a in actions:
         r = step(int(a))
-        wd = (int(r[0x075F]), int(r[0x075C]))
-        if wd != start_wd:
+        if game.level_key(r) != start_key:
             for _ in range(settle):
                 r = step(0)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_bytes(pool.save_worker_state(0))
-            result = (str(out_path), (int(r[0x075F]), int(r[0x075C])))
+            result = (str(out_path), game.level_key(r))
             break
     pool.shutdown()
     return result
@@ -89,6 +85,7 @@ def main() -> int:
     args = ap.parse_args()
 
     profile = yaml.safe_load(Path(args.profile).read_text())
+    game = make_game(profile)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     chain_log = out / "chain.jsonl"
@@ -132,12 +129,12 @@ def main() -> int:
                   f"chain stops ({len(solved)} solved).", flush=True)
             break
         rec["next_wd"] = list(nwd)
-        rec["next_label"] = _wd_label(nwd)
+        rec["next_label"] = game.label(nwd)
         rec["next_entrance"] = npath
         with open(chain_log, "a") as f:
             f.write(json.dumps(rec) + "\n")
         cur_state = npath
-        cur_label = _wd_label(nwd)
+        cur_label = game.label(nwd)
 
     print(f"\n[chain] DONE: solved {len(solved)} consecutive levels: "
           f"{solved}", flush=True)

@@ -650,10 +650,26 @@ class MainWindow(QMainWindow):
         if win is not None and win.isVisible():
             win.raise_(); win.activateWindow()
             return
-        from scripts.live_solve_show import (SHOW_DIR, LiveSolveWindow,
+        from scripts.live_solve_show import (SHOW_ROOT, LiveSolveWindow,
                                              default_args)
+        import yaml as _yaml
+        profile_path = self.profile_dropdown.currentData()
+        if not profile_path:
+            self._show_status("No game profile selected.")
+            return
+        prof = _yaml.safe_load(Path(profile_path).read_text()) or {}
+        is_smb = "mario" in str(prof.get("name", "")).lower()
+        if "solve" not in prof and not is_smb:
+            QMessageBox.information(
+                self, "No solve contract yet",
+                f"{prof.get('name', 'This game')} has no verified `solve:` "
+                "section in its profile.\n\nRun the change-rate protocol "
+                "first:\n  python scripts/verify_ram_map.py --profile "
+                f"{profile_path}\n\nthen add the verified progress/level/"
+                "lives bytes as a `solve:` block (see castlevania.yaml).")
+            return
         resume = False
-        prog = SHOW_DIR / "progress.json"
+        prog = SHOW_ROOT / Path(profile_path).stem / "progress.json"
         if prog.exists():
             try:
                 level = json.loads(prog.read_text()).get("level", "?")
@@ -661,12 +677,13 @@ class MainWindow(QMainWindow):
                 level = "?"
             pick = QMessageBox.question(
                 self, "Previous campaign found",
-                f"A previous run is banked at level {level}.\n"
-                "Resume it, or restart from power-on?",
+                f"A previous campaign is banked at level {level}.\n"
+                "Resume it, or restart from the beginning?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes)
             resume = pick == QMessageBox.StandardButton.Yes
-        self._solve_win = LiveSolveWindow(default_args(resume=resume))
+        self._solve_win = LiveSolveWindow(default_args(
+            resume=resume, profile=str(profile_path)))
         self._solve_win.show()
 
     def _on_start(self) -> None:

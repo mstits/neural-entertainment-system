@@ -189,6 +189,10 @@ class SmbGame:
         bw = 1 if 0x2D in bytes(ram[0x14:0x1C]) else 0
         return (int(ram[0x74E]), int(ram[0x1D]), bw)
 
+    @staticmethod
+    def label(key: tuple) -> str:
+        return f"{key[0] + 1}-{key[1] + 1}"
+
 
 class GenericGame:
     """Profile-driven adapter: every address comes from the game profile's
@@ -259,6 +263,10 @@ class GenericGame:
 
     def room_id(self, ram) -> tuple:
         return self.level_key(ram) + (self.area(ram),)
+
+    @staticmethod
+    def label(key: tuple) -> str:
+        return "-".join(str(x) for x in key)
 
 
 def make_game(profile: dict):
