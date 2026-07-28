@@ -9,6 +9,7 @@ address space and see results directly.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
@@ -112,6 +113,11 @@ class RustPool:
         # (a redundant set_worker_pace call never clobbers a later
         # set_worker_audio override).
         self._paced: set[int] = set()
+        # Per-worker (monotonic-time, n_samples) of the last drain plus
+        # an EMA of measured production rate — feeds
+        # _effective_audio_rate so audio_rate tracks reality.
+        self._audio_rate_track: dict[int, tuple[float, int]] = {}
+        self._audio_rate_ema: dict[int, float] = {}
         # Worker ids whose audio just turned off: their ring is drained
         # ONCE more on the next step (shipping any tail samples instead
         # of letting them sit and burst out on a later re-enable).
@@ -138,6 +144,8 @@ class RustPool:
         self._paced.clear()
         self._audio_flush.clear()
         self._pace_multiplier = 1.0
+        self._audio_rate_track.clear()
+        self._audio_rate_ema.clear()
 
     def start(self) -> None:
         if self._inner is not None:
@@ -277,11 +285,39 @@ class RustPool:
                 preprocessed=pp,
                 audio=audio,
                 audio_rate=(
-                    int(BASE_AUDIO_RATE * self._pace_multiplier)
+                    self._effective_audio_rate(i, audio.size)
                     if audio.size > 0 else 0
                 ),
             ))
         return results
+
+    def _effective_audio_rate(self, worker_id: int, n_samples: int) -> int:
+        """Rate the mixer must consume this worker's audio at so playback
+        keeps up with PRODUCTION, measured, not assumed.
+
+        The old stamp (BASE × pace-multiplier) was only correct for paced
+        workers. An unpaced training/search worker runs 50-200× realtime,
+        so stamping 1× flooded the mixer ring 200:1 — near-total sample
+        drops that presented as silence/garble in the GUI's "all" mode.
+        Measuring samples/wall-second per worker makes every regime
+        coherent: paced workers measure ≈ BASE (unchanged pitch), unpaced
+        ones play as machine-speed fast-forward — all samples heard, no
+        overflow. EMA-smoothed so per-step jitter doesn't warble the
+        resampler; clamped to [BASE/2, 64×BASE]."""
+        now = time.monotonic()
+        prev = self._audio_rate_track.get(worker_id)
+        self._audio_rate_track[worker_id] = (now, n_samples)
+        if prev is None:
+            return int(BASE_AUDIO_RATE * self._pace_multiplier)
+        dt = now - prev[0]
+        if dt <= 1e-4:
+            return int(BASE_AUDIO_RATE * self._pace_multiplier)
+        inst = n_samples / dt
+        ema_prev = self._audio_rate_ema.get(worker_id, inst)
+        ema = 0.7 * ema_prev + 0.3 * inst
+        self._audio_rate_ema[worker_id] = ema
+        return int(min(max(ema, BASE_AUDIO_RATE * 0.5),
+                       BASE_AUDIO_RATE * 64))
 
     def set_worker_done(self, worker_id: int, done: bool) -> None:
         """Mark a worker as episode-done so subsequent step_all calls
