@@ -62,7 +62,14 @@ def solver_args(profile_path: str, root_state: str, out: Path,
         root_state=root_state, profile=str(profile_path), out=str(out),
         workers=workers, minutes=minutes, want_solutions=1,
         burst=200, deep_bias=0.6, sticky=0.35, max_steps=4000,
-        gx_bucket=16, y_band=32, swim_gx_ceiling=0, flush_secs=1200,
+        gx_bucket=16, y_band=32, swim_gx_ceiling=0,
+        # NO mid-level archive flushes on stream: pickling a multi-GB
+        # archive runs on the solver thread and froze every swarm tile
+        # for minutes at a time (observed live: a 6.5-min stall at a
+        # 1.9 GB archive, 90 min into 4-3). The show never resumes
+        # mid-level — resume restarts from the banked entrance — so
+        # the flush bought nothing.
+        flush_secs=10 ** 9,
         seed=int(time.time()) % 100000,
     )
 
@@ -71,7 +78,7 @@ def default_args(**overrides) -> SimpleNamespace:
     """The show's knobs with their defaults; kwargs override."""
     ns = SimpleNamespace(minutes_per_level=120.0, workers=12, scale=3,
                          volume=0.6, resume=False, view="swarm",
-                         audio="both", chorus_pitch="ff",
+                         audio="both", chorus_pitch="ff", chorus_voices=6,
                          profile=str(DEFAULT_PROFILE))
     for k, v in overrides.items():
         setattr(ns, k, v)
@@ -218,11 +225,12 @@ class Show:
         if self.mixer is None:
             return
         n = self.args.workers
+        n_sing = min(int(getattr(self.args, "chorus_voices", 6)), n)
         want = getattr(self.args, "audio", "both")
-        chorus_on = want in ("both", "chorus")
+        chorus_on = want in ("both", "chorus") and n_sing > 0
         hero_on = want in ("both", "hero")
-        # 1/sqrt(N) keeps an N-voice chorus from clipping the master.
-        chorus_lvl = (1.0 / max(1.0, n ** 0.5)) if chorus_on else 0.0
+        # 1/sqrt(voices) keeps the chorus from clipping the master.
+        chorus_lvl = (1.0 / max(1.0, n_sing ** 0.5)) if chorus_on else 0.0
         if phase == "search":
             c, h = chorus_lvl, (0.15 if (hero_on and chorus_on)
                                 else (1.0 if hero_on else 0.0))
@@ -298,21 +306,29 @@ class Show:
                                    self.args.minutes_per_level,
                                    self.args.workers))
             root_bytes = Path(entrance).read_bytes()
+            n_voices = min(int(getattr(self.args, "chorus_voices", 6)),
+                           self.args.workers)
             if chorus:
                 # Audio production WITHOUT pacing (decoupled in the pool:
-                # set_worker_audio overrides the pace<->audio welding), so
-                # the chorus costs sample-gen only, never search speed.
-                for i in range(self.args.workers):
+                # set_worker_audio overrides the pace<->audio welding).
+                # Sample-gen scales with emulation speed though — every
+                # singing worker synthesizes APU audio at 30-60x realtime
+                # — so all-12-voices cost ~8x search throughput (measured
+                # 380 vs 4,400 sps). Default 6 voices keeps the wall of
+                # sound at roughly half the cost; --chorus-voices 12
+                # brings back the full choir, 0 disables.
+                for i in range(n_voices):
                     s.pool.set_worker_audio(i, True)
             pump = {"t": time.time()}
 
-            def pump_chorus(sv, _self=self, pump=pump, ff=ff):
+            def pump_chorus(sv, _self=self, pump=pump, ff=ff,
+                            n_voices=n_voices):
                 now = time.time()
                 dt = now - pump["t"]
                 if dt < 0.05:
                     return
                 pump["t"] = now
-                for i in range(self.args.workers):
+                for i in range(n_voices):
                     try:
                         raw = sv.pool.drain_audio(i)
                         if not len(raw):
@@ -535,6 +551,10 @@ def main() -> int:
                     help="ff = true machine-speed audio (pitch rises with "
                          "search speed); native = normal-pitch granular "
                          "slices of each worker's latest audio")
+    ap.add_argument("--chorus-voices", type=int, default=6,
+                    help="How many workers sing (audio synthesis costs "
+                         "search speed; 6 = wall of sound at ~half the "
+                         "cost, 12 = full choir, 0 = none)")
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
     app = QApplication(sys.argv)
