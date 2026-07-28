@@ -376,19 +376,26 @@ class Show:
             best_cache = {"t": 0.0, "val": None}
 
             def get_best(sv=s, cache=best_cache):
+                # MUST be O(frontier), never O(archive): the original
+                # full-trace-table max froze the whole show at 4-4
+                # (715k cells -> seconds of GIL-held scanning every 2s;
+                # the solver stepped 264 times in a minute while the
+                # tiles sat frozen). The solver's selection cache
+                # already maintains the near-frontier cells — read
+                # those (~dozens), not the world.
                 now = time.time()
                 if now - cache["t"] < 2.0:
                     return cache["val"]
                 cache["t"] = now
                 try:
-                    items = list(sv.traces.items())
-                    if not items:
+                    band = (getattr(sv, "_sel_band24", None)
+                            or getattr(sv, "_sel_deep", None))
+                    if not band:
                         return cache["val"]
-                    key = max(
-                        items,
-                        key=lambda kv: sv.archive.cells[kv[0]].best_score
-                        if kv[0] in sv.archive.cells else -1)[0]
-                    rec = sv.traces[key]
+                    cell = max(band, key=lambda c: c.best_score)
+                    rec = sv.traces.get(cell.key)
+                    if rec is None:
+                        return cache["val"]
                     root_id, tb = rec[0], rec[1]
                     rb = Path(sv.roots[root_id]["path"]).read_bytes()
                     cache["val"] = (rb, np.frombuffer(tb, dtype=np.uint8))
