@@ -78,7 +78,7 @@ def default_args(**overrides) -> SimpleNamespace:
     """The show's knobs with their defaults; kwargs override."""
     ns = SimpleNamespace(minutes_per_level=120.0, workers=12, scale=3,
                          volume=0.6, resume=False, view="swarm",
-                         audio="both", chorus_pitch="ff", chorus_voices=6,
+                         audio="both", chorus_pitch="ff", chorus_voices=-1,
                          profile=str(DEFAULT_PROFILE))
     for k, v in overrides.items():
         setattr(ns, k, v)
@@ -103,10 +103,12 @@ class HeroCam(threading.Thread):
         self.show = show
         self.env = nes_core.NESEnvironment(show.game.rom)
         self.env.reset()
-        try:
-            self.env.set_realtime_pace(True)
-        except Exception:
-            pass
+        # PACING IS DONE IN PYTHON, NOT THE EMULATOR. set_realtime_pace
+        # sleeps INSIDE env.step() while holding the GIL — measured 85%
+        # solver-throughput loss (3,050 -> 469 sps) with a paced hero
+        # thread running. A Python time.sleep releases the GIL, so the
+        # solver runs free while the hero holds 60 fps wall time.
+        self._next_frame_t = time.monotonic()
         self._root: bytes | None = None
         self._get_best = None           # callable -> (root_bytes, trace) | None
         self._lap = None                # (root_bytes, actions ndarray)
@@ -123,6 +125,15 @@ class HeroCam(threading.Thread):
         self._lap = (root_bytes, np.asarray(actions, dtype=np.int64))
 
     # -- internals -------------------------------------------------------
+    def _pace(self, frames: int):
+        """Hold 1x wall time with a GIL-releasing Python sleep."""
+        self._next_frame_t += frames / 60.0
+        delay = self._next_frame_t - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+        elif delay < -0.25:            # fell behind (lap start etc.): resync
+            self._next_frame_t = time.monotonic()
+
     def _emit(self):
         self.show.frame = np.asarray(self.env.get_frame())
         mixer = self.show.mixer
@@ -150,6 +161,7 @@ class HeroCam(threading.Thread):
                 return False
             for _ in range(self.show.fs):
                 self.env.step(int(self.show.bm[int(a)]))
+            self._pace(self.show.fs)
             self._emit()
         return True
 
@@ -163,6 +175,7 @@ class HeroCam(threading.Thread):
                     if self.stop:
                         break
                     self.env.step(0)
+                    self._pace(1)
                     self._emit()
                 self._lap = None
                 self.lap_done.set()
@@ -179,6 +192,7 @@ class HeroCam(threading.Thread):
                             self._get_best and self._get_best()):
                         break
                     self.env.step(0)
+                    self._pace(1)
                     self._emit()
             else:
                 time.sleep(0.1)
@@ -225,7 +239,8 @@ class Show:
         if self.mixer is None:
             return
         n = self.args.workers
-        n_sing = min(int(getattr(self.args, "chorus_voices", 6)), n)
+        cv = int(getattr(self.args, "chorus_voices", -1))
+        n_sing = n if cv < 0 else min(cv, n)
         want = getattr(self.args, "audio", "both")
         chorus_on = want in ("both", "chorus") and n_sing > 0
         hero_on = want in ("both", "hero")
@@ -306,17 +321,16 @@ class Show:
                                    self.args.minutes_per_level,
                                    self.args.workers))
             root_bytes = Path(entrance).read_bytes()
-            n_voices = min(int(getattr(self.args, "chorus_voices", 6)),
-                           self.args.workers)
+            cv = int(getattr(self.args, "chorus_voices", -1))
+            n_voices = self.args.workers if cv < 0 else min(cv, self.args.workers)
             if chorus:
                 # Audio production WITHOUT pacing (decoupled in the pool:
                 # set_worker_audio overrides the pace<->audio welding).
-                # Sample-gen scales with emulation speed though — every
-                # singing worker synthesizes APU audio at 30-60x realtime
-                # — so all-12-voices cost ~8x search throughput (measured
-                # 380 vs 4,400 sps). Default 6 voices keeps the wall of
-                # sound at roughly half the cost; --chorus-voices 12
-                # brings back the full choir, 0 disables.
+                # Attribution bench 2026-07-28: full-choir synthesis costs
+                # ~14% throughput (3,050 -> 2,615 sps) — the 8x collapse
+                # once blamed on the chorus was the hero cam's in-emulator
+                # pacing sleep holding the GIL (fixed: Python-side pacing).
+                # Default = every worker sings.
                 for i in range(n_voices):
                     s.pool.set_worker_audio(i, True)
             pump = {"t": time.time()}
@@ -551,10 +565,9 @@ def main() -> int:
                     help="ff = true machine-speed audio (pitch rises with "
                          "search speed); native = normal-pitch granular "
                          "slices of each worker's latest audio")
-    ap.add_argument("--chorus-voices", type=int, default=6,
-                    help="How many workers sing (audio synthesis costs "
-                         "search speed; 6 = wall of sound at ~half the "
-                         "cost, 12 = full choir, 0 = none)")
+    ap.add_argument("--chorus-voices", type=int, default=-1,
+                    help="How many workers sing: -1 = all (default; "
+                         "~14%% throughput cost), N = first N, 0 = none")
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
     app = QApplication(sys.argv)
