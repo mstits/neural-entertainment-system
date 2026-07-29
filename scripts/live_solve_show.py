@@ -81,7 +81,21 @@ ESCALATION = [
     # tracks exactly which recipe cleared what.
     {"name": "coverage recipes", "minutes": 90, "gx_bucket": 16,
      "y_band": 32, "sel_mode": "count", "frontier_throttle": 3},
-    # Arm 1: the receipted campaign's legacy recipe.
+    # Arm 1: ENTRANCE DIVERSIFICATION — re-solve the PREVIOUS level
+    # with a fresh seed to mint a different legitimate entrance, then
+    # restart the ladder from it. Rationale (measured 2026-07-28): two
+    # entrances to the same level can differ in hidden game state (a
+    # full-state diff of tonight's vs the campaign's 4-4 entrance shows
+    # 23 RAM bytes of divergent hidden state; the campaign's exact
+    # winning inputs DIE at action 650 from tonight's entrance) — so
+    # per-entrance difficulty varies, and a wall that resists one
+    # entrance instance may fall easily from another. Generic: no byte
+    # interpretation, no route knowledge — just "come at the door from
+    # a different day".
+    {"name": "re-entrance", "reenter": True, "minutes": 25,
+     "gx_bucket": 16, "y_band": 32, "sel_mode": "legacy",
+     "frontier_throttle": 0},
+    # Arm 2: the receipted campaign's legacy recipe.
     {"name": "campaign recipe", "minutes": 60, "gx_bucket": 16,
      "y_band": 32, "sel_mode": "legacy", "frontier_throttle": 0},
     # Arm 2: fresh-seed legacy roll (momentum walls fall to these
@@ -317,6 +331,50 @@ class Show:
         pool.shutdown()
         return self.game.label(key)
 
+    def _reenter(self, prev_entrance: str, prev_level: str,
+                 arm: dict, attempt: int):
+        """Entrance diversification: re-solve the PREVIOUS level with a
+        fresh seed to mint a different legitimate entrance for the
+        current one (different hidden-state stream, same maze). Returns
+        the new entrance path or None."""
+        self.mode = "search"
+        self._apply_mix("search")
+        self.status = (f"re-solving {prev_level} for a fresh "
+                       f"{self.level} entrance [re-entrance arm]")
+        out = self.show_dir / f"reenter_{prev_level}_a{attempt}"
+        sargs, _ = solver_args(self.profile_path, prev_entrance, out,
+                               float(arm["minutes"]), self.args.workers,
+                               attempt=0)
+        sargs.minutes = float(arm["minutes"])
+        sargs.seed = 1000 + attempt
+        sargs.sel_mode = "legacy"
+        sargs.frontier_throttle = 0
+        s = Solver(sargs)
+
+        def hook(rs, sv, _self=self):
+            if _self.stop:
+                sv.stop = True
+            _self.frames = [r[0] for r in rs]
+            _self.status = (
+                f"re-solving {prev_level} (fresh entrance for "
+                f"{_self.level}) — {sv.steps_done/1e6:.1f}M steps, "
+                f"{len(sv.archive)} cells")
+
+        s.step_hook = hook
+        s.pool.set_headless(False)
+        s.seed()
+        s.explore()
+        sols = sorted(out.glob("solutions/sol_*.actions.npy"))
+        if not sols or self.stop:
+            return None
+        actions = np.load(sols[0]).astype(int)
+        nxt, key = extract_next_entrance(
+            self.profile, Path(prev_entrance).read_bytes(), actions,
+            self.show_dir / f"entrance_{self.level}_alt{attempt}.state")
+        if nxt is None or self.game.label(key) != self.level:
+            return None
+        return nxt
+
     # -- campaign root ---------------------------------------------------
     # SMB: an actual power-on boot, replayed live so even the title screen
     # is on air. Other games: the profile's captured start state (their
@@ -346,23 +404,46 @@ class Show:
         prog = {}
         if self.args.resume and self.state_file.exists():
             prog = json.loads(self.state_file.read_text())
+        prev_entrance = prog.get("prev_entrance")
+        prev_level = prog.get("prev_level")
+        resume_attempt = int(prog.get("attempt", 0))
         if prog.get("entrance"):
             entrance, self.level = prog["entrance"], prog["level"]
             self.status = f"resuming at {self.level}"
         else:
             self.status = "starting campaign"
             entrance = self._campaign_root()
+
+        def bank(attempt_n: int):
+            self.state_file.write_text(json.dumps(
+                {"entrance": entrance, "level": self.level,
+                 "attempt": attempt_n,
+                 "prev_entrance": prev_entrance,
+                 "prev_level": prev_level}))
         self.hero = HeroCam(self)
         self.hero.start()
         self._apply_mix("boot")
         chorus = (self.mixer is not None
                   and getattr(self.args, "audio", "both") in ("both", "chorus"))
         ff = getattr(self.args, "chorus_pitch", "ff") == "ff"
-        attempt = 0
+        attempt = resume_attempt
         cur_level = self.level
         while not self.stop:
             if self.level != cur_level:
                 cur_level, attempt = self.level, 0
+            arm_probe = ESCALATION[min(attempt, len(ESCALATION) - 1)]
+            if arm_probe.get("reenter"):
+                if prev_entrance and prev_level and Path(prev_entrance).exists():
+                    new_ent = self._reenter(prev_entrance, prev_level,
+                                            arm_probe, attempt)
+                    if new_ent is not None:
+                        entrance = new_ent
+                        attempt = 0          # fresh instance, fresh ladder
+                        bank(attempt)
+                        continue
+                attempt += 1                  # no prev info / re-solve failed
+                bank(attempt)
+                continue
             self.mode = "search"
             self._apply_mix("search")
             out = self.show_dir / f"lvl_{self.level}"
@@ -388,10 +469,11 @@ class Show:
                     self.profile, Path(entrance).read_bytes(), actions,
                     self.show_dir / f"entrance_after_{self.level}.state")
                 if nxt is not None:
+                    prev_entrance, prev_level = entrance, self.level
                     entrance = nxt
                     self.level = self.game.label(key)
-                    self.state_file.write_text(json.dumps(
-                        {"entrance": entrance, "level": self.level}))
+                    attempt = 0
+                    bank(attempt)
                     continue
             sargs, arm_name = solver_args(
                 self.profile_path, entrance, out,
@@ -508,6 +590,7 @@ class Show:
             sols = sorted(out.glob("solutions/sol_*.actions.npy"))
             if not sols:
                 attempt += 1
+                bank(attempt)
                 nxt_arm = ESCALATION[min(attempt, len(ESCALATION) - 1)]["name"]
                 self.status = (f"{self.level}: budget spent — escalating "
                                f"to attempt {attempt + 1} ({nxt_arm})")
@@ -532,10 +615,11 @@ class Show:
                 self.status = (f"{self.level} SOLVED — no onward level "
                                "found (campaign end?)")
                 break
+            prev_entrance, prev_level = entrance, self.level
             entrance = nxt
             self.level = self.game.label(key)
-            self.state_file.write_text(json.dumps(
-                {"entrance": entrance, "level": self.level}))
+            attempt = 0
+            bank(attempt)
         if self.hero is not None:
             self.hero.stop = True
 
