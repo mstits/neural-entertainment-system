@@ -145,6 +145,10 @@ def action_weights(action_space) -> list:
 
 
 class SmbGame:
+    @staticmethod
+    def score_bonus(ram) -> int:
+        return 0
+
     """SMB adapter — wraps the module-level helpers verbatim, so solver
     behavior on SMB is byte-identical to the pre-adapter code (regression:
     seeded 1-1 run reproduces the same solution sha)."""
@@ -219,6 +223,31 @@ class GenericGame:
         self._pstate = int(s["player_state"]) if "player_state" in s else None
         self._death_states = tuple(s.get("death_states", ()))
         self._finale = s.get("finale")
+        # Boss-fight progress (optional): a fixed-camera boss room pins the
+        # gx frontier and position cells saturate in minutes (block-3 lesson:
+        # 4.2M steps, 5,235 cells, zero gradient). `boss: {hp, start}` keys
+        # cells on the boss-HP byte and scores damage dealt, giving the
+        # archive a fight dimension. The byte must be discovered by
+        # differential analysis of our own rollouts and receipted like every
+        # other solve address.
+        b = s.get("boss") or {}
+        self._boss_hp = int(b["hp"]) if "hp" in b else None
+        self._boss_start = int(b.get("start", 255))
+        # Movement-mode signature (optional): `state_sig: [{addr, match}]`.
+        # Each entry contributes one bit: ram[addr] in match. Separates
+        # aliased player modes at the same coordinates — the CV block-3
+        # lesson: stair-climb states share (gx, y-band) with jump apexes,
+        # tie-break to fewer steps, and the airborne dead-end wins the
+        # cell; the staircase stays structurally invisible to the archive.
+        self._state_sig = [(int(e["addr"]),
+                            frozenset(int(v) for v in e.get("match", ())))
+                           for e in s.get("state_sig", ())]
+        # Room signature (optional): `room_sig: [addr,...]` — bytes stable
+        # within a room and different across rooms (found by before/after
+        # transition diff of our own climbs). Feeds room_id, so the sect/
+        # psig transit machinery (built on SMB's $074E) counts CV room
+        # progress even though gx resets in every room.
+        self._room_sig = tuple(int(a) for a in s.get("room_sig", ()))
 
     def progress(self, ram) -> int:
         v = int(ram[self._plo])
@@ -242,9 +271,24 @@ class GenericGame:
         return 0
 
     def cell_fn(self, ram) -> tuple:
-        # Same arity as SMB's cell (selection caches index key[-5]/key[-1]).
-        return (self.area(ram), 0, 0,
+        # Same arity as SMB's cell (selection caches index key[-5]/key[-1];
+        # boss HP and the mode bits ride in free middle slots so those
+        # stay intact).
+        hp = int(ram[self._boss_hp]) if self._boss_hp is not None else 0
+        sig = 0
+        for i, (a, m) in enumerate(self._state_sig):
+            if int(ram[a]) in m:
+                sig |= 1 << i
+        return (self.area(ram), hp, sig,
                 self.y(ram) // Y_BAND, self.progress(ram) // GX_BUCKET)
+
+    def score_bonus(self, ram) -> int:
+        # Damage dealt dominates within-room gx differences (a whip hit is
+        # worth more frontier than any sidestep) without touching the
+        # cross-room score ordering scale.
+        if self._boss_hp is None:
+            return 0
+        return max(0, self._boss_start - int(ram[self._boss_hp])) * 2000
 
     def is_clear(self, start_key: tuple, ram) -> bool:
         # Forward = lexicographic advance of the level key (stage counters
@@ -263,7 +307,8 @@ class GenericGame:
                 and int(ram[int(f["addr"])]) == int(f["value"]))
 
     def room_id(self, ram) -> tuple:
-        return self.level_key(ram) + (self.area(ram),)
+        return (self.level_key(ram) + (self.area(ram),)
+                + tuple(int(ram[a]) for a in self._room_sig))
 
     @staticmethod
     def label(key: tuple) -> str:
@@ -501,7 +546,7 @@ class Solver:
                     self._adj.setdefault(ia, set()).add(ib)
                     self._adj.setdefault(ib, set()).add(ia)
             ctx["cur_key"] = key
-        score = sect * 10000 + gx
+        score = sect * 10000 + gx + game.score_bonus(ram)
         cur = self.archive.cells.get(key)
         dom = (cur is None or score > cur.best_score + 1e-9
                or (abs(score - cur.best_score) <= 1e-9 and steps < cur.best_steps))

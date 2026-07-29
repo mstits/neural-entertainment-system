@@ -53,6 +53,15 @@ solve:
   hold_macros:
     - {buttons: ["up"], steps: 24, p: 0.02}
     - {buttons: ["down"], steps: 24, p: 0.01}
+  # On-stairs mode bit (block-3 diagnosis 2026-07-29): player mode byte
+  # $0004 reads 8 exactly while in the stair state-machine (auto-walk +
+  # climb), found by differential analysis of scripted climbs vs jumps/
+  # walks/stands. Without it, stair-climb states alias with jump apexes
+  # at the same (gx, y-band) and lose the fewer-steps tie-break — the
+  # staircase stays structurally invisible to the archive (4.2M steps,
+  # zero climbs survived). One bit, cardinality 2.
+  state_sig:
+    - {addr: 0x0004, match: [8]}
 
 reward_weights:
   forward_progress: 0.5
