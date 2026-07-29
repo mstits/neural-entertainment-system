@@ -5408,6 +5408,47 @@ class Trainer:
                 "log-probs; eval protocol parity)", _sticky_p,
             )
 
+        # ===== PR-MDP: Probabilistic Action Robust MDP =====
+        # (Tessler, Efroni & Mannor, ICML 2019; deep-research candidate 1,
+        # pre-registration 2026-07-27.) Two-player zero-sum: a co-trained
+        # adversary's action executes with prob alpha instead of the
+        # protagonist's — the sticky protocol with the noise made
+        # worst-case. During training this REPLACES random sticky (set
+        # sticky_action_prob 0 in prmdp configs); the honest eval protocol
+        # (cold greedy sticky-0.25 jitter-16) is untouched. The
+        # protagonist trains on executed actions with clamped log-probs
+        # (the house sticky pattern); the adversary trains by PPO on the
+        # SAME rollout with negated rewards, restricted to the steps its
+        # action executed. Update alternation 10:2 = reinforce_steps
+        # protagonist epochs vs adversary_epochs.
+        _prmdp_cfg = dict(_rl_cfg.get("prmdp", {}) or {})
+        prmdp_on = bool(_prmdp_cfg.get("enabled", False))
+        _prmdp_alpha = float(_prmdp_cfg.get("alpha", 0.25))
+        _prmdp_adv_epochs = int(_prmdp_cfg.get("adversary_epochs", 2))
+        _prmdp_adv_clip = float(_prmdp_cfg.get("adversary_clip", 0.1))
+        _prmdp_adv_ent = float(_prmdp_cfg.get("adversary_entropy_coef", 0.1))
+        _adv_net = None
+        _adv_opt = None
+        if prmdp_on:
+            _adv_net = self._make_network()
+            _adv_net.to(self.device)
+            _adv_opt = torch.optim.Adam(
+                _adv_net.parameters(),
+                lr=float(_prmdp_cfg.get("adversary_lr", 2.5e-4)),
+            )
+            log.info(
+                "[prmdp] ON: alpha=%.2f adversary=%s params, %d epochs, "
+                "clip=%.2f ent=%.2f (sticky_p=%.2f should be 0)",
+                _prmdp_alpha,
+                sum(p.numel() for p in _adv_net.parameters()),
+                _prmdp_adv_epochs, _prmdp_adv_clip, _prmdp_adv_ent,
+                _sticky_p,
+            )
+        adv_action_buf = np.zeros((rollout_steps, num_envs), dtype=np.int64)
+        adv_logp_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
+        adv_value_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
+        exec_mask_buf = np.zeros((rollout_steps, num_envs), dtype=np.bool_)
+
         # ===== CGSA-PPO: Cell-Granular Stochasticity Annealing =====
         # (research recipe 2026-07-23, "SMB 1-2 RL Consulting"). Each archived
         # Go-Explore cell carries its OWN sticky probability p_sticky(c),
@@ -5631,6 +5672,8 @@ class Trainer:
             # calls were two avoidable MPS queue drains per step.
             value_steps: list[torch.Tensor] = []
             log_prob_steps: list[torch.Tensor] = []
+            adv_value_steps: list[torch.Tensor] = []
+            exec_mask_buf[:] = False
             with torch.no_grad():
                 for t in range(rollout_steps):
                     if not self._running:
@@ -5708,6 +5751,38 @@ class Trainer:
                             )
                     if _sticky_p > 0.0 or cgsa_on:
                         _prev_exec_action[:] = actions.numpy()
+
+                    if prmdp_on:
+                        # Adversary forward on the same obs; its action
+                        # executes on alpha of the rows. Protagonist's
+                        # taken log-prob follows the executed action
+                        # (clamped — the house sticky pattern; unclamped
+                        # near-zero-prob overrides NaN the PPO ratio).
+                        adv_logits, adv_values = _adv_net.forward_ac(batch_t)
+                        adv_lp_all = F.log_softmax(
+                            adv_logits.float().cpu(), dim=-1
+                        )
+                        adv_actions = torch.multinomial(
+                            adv_lp_all.exp(), 1
+                        ).squeeze(1)
+                        _ov_rows = np.nonzero(
+                            np.random.random(num_envs) < _prmdp_alpha
+                        )[0]
+                        if _ov_rows.size:
+                            _ov_t = torch.from_numpy(_ov_rows)
+                            _ov_a = adv_actions[_ov_t]
+                            actions[_ov_t] = _ov_a
+                            log_probs_taken[_ov_t] = torch.clamp(
+                                log_probs_all[_ov_t, _ov_a], min=-13.0
+                            )
+                            exec_mask_buf[t, _ov_rows] = True
+                        adv_action_buf[t] = adv_actions.numpy()
+                        adv_logp_buf[t] = torch.clamp(
+                            adv_lp_all.gather(
+                                1, adv_actions.unsqueeze(1)
+                            ).squeeze(1), min=-13.0,
+                        ).numpy()
+                        adv_value_steps.append(adv_values)
 
                     actions_np = actions.numpy().astype(np.int32)
                     action_buf[t] = actions_np
@@ -6272,6 +6347,10 @@ class Trainer:
                     log_prob_buf[:n_rolled] = (
                         torch.stack(log_prob_steps, dim=0).cpu().numpy()
                     )
+                    if prmdp_on and adv_value_steps:
+                        adv_value_buf[:len(adv_value_steps)] = (
+                            torch.stack(adv_value_steps, dim=0).cpu().numpy()
+                        )
                 self._gen_timer.add(
                     "rollout_forward", time.perf_counter_ns() - _drain_t0
                 )
@@ -6291,6 +6370,9 @@ class Trainer:
                 else:
                     _, final_values = net.forward_ac(final_batch_t)
                 final_values_np = final_values.cpu().numpy()
+                if prmdp_on:
+                    _, adv_final_values = _adv_net.forward_ac(final_batch_t)
+                    adv_final_values_np = adv_final_values.cpu().numpy()
 
             # Stop pressed mid-rollout: the rollout loop broke early, so the
             # buffer is only partially filled (valid_buf is sparse). Running
@@ -6635,6 +6717,85 @@ class Trainer:
             if _last_rnd_t is not None:
                 last_rnd_loss = float(_last_rnd_t.item())
             self._gen_timer.add("update", time.perf_counter_ns() - _upd_t0)
+
+            # ============== PR-MDP ADVERSARY UPDATE ==============
+            # Plain PPO on the SAME rollout with negated rewards and its
+            # own critic, restricted to steps where the adversary's
+            # action executed (its behavior distribution). Zero-sum:
+            # what kills the protagonist is the adversary's return.
+            if prmdp_on and valid_indices.size:
+                _prm_t0 = time.perf_counter_ns()
+                adv_advantages, adv_targets = batched_gae(
+                    -reward_buf, adv_value_buf, done_buf,
+                    adv_final_values_np,
+                    self.reinforce_gamma, self.gae_lambda,
+                )
+                exec_flat = (exec_mask_buf & valid_buf).reshape(-1)
+                adv_valid = np.where(exec_flat)[0]
+                _prm_override_frac = float(exec_flat.sum()) / max(
+                    1, int(valid_flat.sum()))
+                _prm_last = {}
+                if adv_valid.size >= 2:
+                    _a_adv = adv_advantages.reshape(-1)[adv_valid]
+                    _a_mean = float(_a_adv.mean())
+                    _a_std = float(_a_adv.std()) + 1e-8
+                    adv_adv_all = torch.from_numpy(
+                        ((adv_advantages.reshape(-1) - _a_mean) / _a_std)
+                        .astype(np.float32)).to(self.device)
+                    adv_tgt_all = torch.from_numpy(
+                        adv_targets.reshape(-1).astype(np.float32)
+                    ).to(self.device)
+                    adv_act_all = torch.from_numpy(
+                        adv_action_buf.reshape(-1)).to(self.device)
+                    adv_lp_old_all = torch.from_numpy(
+                        adv_logp_buf.reshape(-1)).to(self.device)
+                    for _ in range(_prmdp_adv_epochs):
+                        _perm = np.random.permutation(adv_valid)
+                        for _mb0 in range(0, _perm.shape[0], mb_size):
+                            _mb = _perm[_mb0:_mb0 + mb_size]
+                            if _mb.size < 2:
+                                continue
+                            _mb_t = torch.from_numpy(_mb).to(self.device)
+                            if obs_all is not None:
+                                _st = obs_all[_mb_t]
+                            else:
+                                _st = torch.from_numpy(np.ascontiguousarray(
+                                    obs_flat[_mb])).to(self.device).float()
+                                if not self.preprocess_f16:
+                                    _st = _st.div_(255.0)
+                            _lg, _vp = _adv_net.forward_ac(_st)
+                            _l, _pl, _vl, _en = ppo_losses(
+                                _lg, _vp, adv_act_all[_mb_t],
+                                adv_lp_old_all[_mb_t], adv_adv_all[_mb_t],
+                                adv_tgt_all[_mb_t],
+                                clip_eps=_prmdp_adv_clip,
+                                value_coef=self.value_coef,
+                                entropy_coef=_prmdp_adv_ent,
+                                value_loss_kind=self.value_loss_kind,
+                            )
+                            if not torch.isfinite(_l):
+                                _adv_opt.zero_grad(set_to_none=True)
+                                continue
+                            _adv_opt.zero_grad()
+                            _l.backward()
+                            torch.nn.utils.clip_grad_norm_(
+                                _adv_net.parameters(),
+                                self.reinforce_grad_clip,
+                            )
+                            _adv_opt.step()
+                            _prm_last = {"pl": _pl.detach(),
+                                         "en": _en.detach()}
+                if _prm_last:
+                    log.info(
+                        "[prmdp] iter %d: override_frac=%.3f "
+                        "adv_policy=%.4f adv_entropy=%.4f (%d exec steps)",
+                        global_it, _prm_override_frac,
+                        float(_prm_last["pl"].item()),
+                        float(_prm_last["en"].item()), adv_valid.size,
+                    )
+                self._gen_timer.add(
+                    "prmdp_adversary", time.perf_counter_ns() - _prm_t0
+                )
 
             # ============== LOGGING + METRICS ==============
             # Attribute the per-iter bookkeeping (episode stats, reward
