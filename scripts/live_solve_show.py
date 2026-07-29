@@ -615,6 +615,19 @@ class LiveSolveWindow(QMainWindow):
     def keyPressEvent(self, ev):
         if ev.key() == Qt.Key.Key_Q:
             self.close()
+        elif ev.key() == Qt.Key.Key_M:
+            # Mute toggle — master volume only; search never pauses.
+            st = self.show_state
+            if st.mixer is not None:
+                self._muted = not getattr(self, "_muted", False)
+                try:
+                    st.mixer.set_volume(
+                        0.0 if self._muted else st.args.volume)
+                except Exception:
+                    pass
+                self.caption.setText(
+                    "[audio muted — M to unmute]" if self._muted
+                    else "[audio on]")
 
     def closeEvent(self, ev):
         self.show_state.stop = True   # progress banked; --resume continues
