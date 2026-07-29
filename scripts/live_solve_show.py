@@ -56,29 +56,45 @@ SHOW_ROOT = REPO / "runs/live_show"
 SMB_FINALE_LABEL = "8-4"
 
 
+# THE ESCALATION LADDER — the campaign's actual wall-breaking behavior,
+# encoded. During the receipted campaign a stuck level got a human
+# diagnosis and a recipe change; the show used to just re-roll the same
+# config forever. Now each failed budget escalates: the exact campaign
+# recipe first (seed 0 — the settings and seed that beat all 32 levels),
+# then a fresh seed, then micro-search cell granularity (the castle
+# recipe: gx_bucket 8 / y_band 16 credits the small precise maneuvers
+# castles demand), then micro with a doubled budget. Seeds are the
+# attempt index — deterministic, reproducible, receiptable.
+ESCALATION = [
+    {"name": "campaign recipe", "minutes": 45, "gx_bucket": 16, "y_band": 32},
+    {"name": "fresh seed",      "minutes": 45, "gx_bucket": 16, "y_band": 32},
+    {"name": "micro-search",    "minutes": 45, "gx_bucket": 8,  "y_band": 16},
+    {"name": "micro + long",    "minutes": 90, "gx_bucket": 8,  "y_band": 16},
+]
+
+
 def solver_args(profile_path: str, root_state: str, out: Path,
-                minutes: float, workers: int):
+                minutes: float, workers: int, attempt: int = 0):
+    arm = ESCALATION[min(attempt, len(ESCALATION) - 1)]
     return SimpleNamespace(
         root_state=root_state, profile=str(profile_path), out=str(out),
-        workers=workers, minutes=minutes, want_solutions=1,
-        # CAMPAIGN-PROVEN search params (the solver defaults that beat
-        # all 32 levels in-chain). The show originally shipped
-        # burst=200/deep_bias=0.6/sticky=0.35, which cleared the
-        # forgiving Worlds 1-3 and then pinned 0-for-2-hours at 4-3's
-        # gx~1650 momentum wall — a wall the campaign params broke in
-        # 3.5 min (sticky 0.5 holds RIGHT+B twice as long = sustained
-        # full-speed run-ups for the big athletic gaps).
+        workers=workers,
+        minutes=min(float(arm["minutes"]), minutes),
+        want_solutions=1,
+        # Campaign-proven search params (the solver defaults that beat
+        # all 32 levels in-chain; sticky 0.5 sustains the full-speed
+        # run-ups athletic gaps demand — the show's original 0.35
+        # pinned two seeds at 4-3's momentum wall for 2h).
         burst=64, deep_bias=0.4, sticky=0.5, max_steps=4000,
-        gx_bucket=16, y_band=32, swim_gx_ceiling=0,
+        gx_bucket=int(arm["gx_bucket"]), y_band=int(arm["y_band"]),
+        swim_gx_ceiling=0,
         # NO mid-level archive flushes on stream: pickling a multi-GB
-        # archive runs on the solver thread and froze every swarm tile
-        # for minutes at a time (observed live: a 6.5-min stall at a
-        # 1.9 GB archive, 90 min into 4-3). The show never resumes
-        # mid-level — resume restarts from the banked entrance — so
-        # the flush bought nothing.
+        # archive on the solver thread froze every swarm tile for
+        # minutes (observed live: 6.5-min stall at 1.9 GB). The show
+        # never resumes mid-level, so flushes bought nothing.
         flush_secs=10 ** 9,
-        seed=int(time.time()) % 100000,
-    )
+        seed=attempt,
+    ), arm["name"]
 
 
 def default_args(**overrides) -> SimpleNamespace:
@@ -319,14 +335,21 @@ class Show:
         chorus = (self.mixer is not None
                   and getattr(self.args, "audio", "both") in ("both", "chorus"))
         ff = getattr(self.args, "chorus_pitch", "ff") == "ff"
+        attempt = 0
+        cur_level = self.level
         while not self.stop:
+            if self.level != cur_level:
+                cur_level, attempt = self.level, 0
             self.mode = "search"
-            self.status = f"searching {self.level}"
             self._apply_mix("search")
             out = self.show_dir / f"lvl_{self.level}"
-            s = Solver(solver_args(self.profile_path, entrance, out,
-                                   self.args.minutes_per_level,
-                                   self.args.workers))
+            sargs, arm_name = solver_args(
+                self.profile_path, entrance, out,
+                self.args.minutes_per_level, self.args.workers,
+                attempt=attempt)
+            self.status = (f"searching {self.level} "
+                           f"[attempt {attempt + 1}: {arm_name}]")
+            s = Solver(sargs)
             root_bytes = Path(entrance).read_bytes()
             cv = int(getattr(self.args, "chorus_voices", -1))
             n_voices = self.args.workers if cv < 0 else min(cv, self.args.workers)
@@ -412,7 +435,8 @@ class Show:
                 if chorus:
                     pump_chorus(sv)
                 _self.status = (
-                    f"searching {_self.level} — "
+                    f"searching {_self.level} "
+                    f"[attempt {attempt + 1}: {arm_name}] — "
                     f"{sv.steps_done/1e6:.1f}M steps, "
                     f"frontier gx {sv.max_gx_in_area.get(sv.max_area, 0)}, "
                     f"{len(sv.archive)} cells")
@@ -423,8 +447,11 @@ class Show:
             s.explore()
             sols = sorted(out.glob("solutions/sol_*.actions.npy"))
             if not sols:
-                self.status = f"{self.level}: budget spent — searching again"
-                continue                              # fresh seed, another round
+                attempt += 1
+                nxt_arm = ESCALATION[min(attempt, len(ESCALATION) - 1)]["name"]
+                self.status = (f"{self.level}: budget spent — escalating "
+                               f"to attempt {attempt + 1} ({nxt_arm})")
+                continue
             actions = np.load(sols[0]).astype(int)
             self.mode = "lap"
             self.status = f"{self.level} SOLVED — victory lap"
