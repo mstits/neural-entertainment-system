@@ -180,9 +180,9 @@ class HeroCam(threading.Thread):
         self._root = root_bytes
         self._get_best = get_best
 
-    def play_lap(self, root_bytes: bytes, actions) -> None:
+    def play_lap(self, root_bytes: bytes, actions, linger: int = 150) -> None:
         self.lap_done.clear()
-        self._lap = (root_bytes, np.asarray(actions, dtype=np.int64))
+        self._lap = (root_bytes, np.asarray(actions, dtype=np.int64), linger)
 
     # -- internals -------------------------------------------------------
     def _pace(self, frames: int):
@@ -229,9 +229,11 @@ class HeroCam(threading.Thread):
         while not self.stop:
             lap = self._lap
             if lap is not None:
-                root, actions = lap
+                root, actions, linger = lap
                 self._play(root, actions, "lap")
-                for _ in range(150):      # linger on the clear
+                for _ in range(linger):   # linger on the clear; the finale
+                                          # passes ~30s so the ending
+                                          # sequence plays to the princess
                     if self.stop:
                         break
                     self.env.step(0)
@@ -457,7 +459,9 @@ class Show:
                 self.status = (f"{self.level}: banked solution found — "
                                "victory lap")
                 self._apply_mix("lap")
-                self.hero.play_lap(Path(entrance).read_bytes(), actions)
+                finale = self.is_smb and self.level == SMB_FINALE_LABEL
+                self.hero.play_lap(Path(entrance).read_bytes(), actions,
+                                   linger=1800 if finale else 150)
                 while not self.hero.lap_done.wait(timeout=0.5):
                     if self.stop:
                         break
@@ -599,7 +603,9 @@ class Show:
             self.mode = "lap"
             self.status = f"{self.level} SOLVED — victory lap"
             self._apply_mix("lap")
-            self.hero.play_lap(root_bytes, actions)
+            finale = self.is_smb and self.level == SMB_FINALE_LABEL
+            self.hero.play_lap(root_bytes, actions,
+                               linger=1800 if finale else 150)
             while not self.hero.lap_done.wait(timeout=0.5):
                 if self.stop:
                     break
