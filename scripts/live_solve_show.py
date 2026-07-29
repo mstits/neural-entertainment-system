@@ -70,19 +70,20 @@ SMB_FINALE_LABEL = "8-4"
 # 1-3 and 4-3 both fell within ~10 min of a FRESH archive after 2h
 # stuck on a stale one.
 ESCALATION = [
-    # Arm 0: the campaign recipe, 60 min (its hardest coverage level
-    # needed 41.5 headless — but cliff cell-counts are SEED-DEPENDENT:
-    # two live 4-4 attempts expired at 0.9M and 1.06M cells, the second
-    # PAST the campaign seed's 966k breakthrough. 60 min ~ 1.6M cells
-    # of runway).
-    {"name": "campaign recipe", "minutes": 60, "gx_bucket": 16,
-     "y_band": 32, "sel_mode": "legacy", "frontier_throttle": 0},
-    # Arm 1: the maze-coverage research recipes (R1 count-based
-    # selection + R2 boundary throttling) with a long budget — the
-    # commissioned cure for coverage walls; also benign-to-helpful on
-    # momentum walls (throttling stops hammering the wall cell).
+    # Arm 0: the maze-coverage research recipes LEAD (user call,
+    # 2026-07-28 after three legacy attempts burned an evening on
+    # 4-4's seed-dependent cliff: expiries at 0.9M and 1.06M cells,
+    # the second PAST the campaign seed's 966k breakthrough). R1
+    # count-based selection is Go-Explore's own native prior; R2
+    # boundary throttling stops hammering pinned walls — commissioned
+    # for coverage walls, expected benign-to-helpful on momentum
+    # walls. Every solution receipt stamps its arm, so the ledger
+    # tracks exactly which recipe cleared what.
     {"name": "coverage recipes", "minutes": 90, "gx_bucket": 16,
      "y_band": 32, "sel_mode": "count", "frontier_throttle": 3},
+    # Arm 1: the receipted campaign's legacy recipe.
+    {"name": "campaign recipe", "minutes": 60, "gx_bucket": 16,
+     "y_band": 32, "sel_mode": "legacy", "frontier_throttle": 0},
     # Arm 2: fresh-seed legacy roll (momentum walls fall to these
     # inside 10 min when they fall at all).
     {"name": "fresh seed", "minutes": 45, "gx_bucket": 16,
