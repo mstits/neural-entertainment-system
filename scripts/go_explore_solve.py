@@ -277,6 +277,15 @@ def make_game(profile: dict):
 
 class Solver:
     def __init__(self, args) -> None:
+        # Cell granularity globals are consumed by cell_fn at call time.
+        # main() sets them for subprocess runs; IN-PROCESS constructions
+        # (the live show) previously bypassed that, silently ignoring
+        # args.gx_bucket/y_band — the escalation ladder's micro-search
+        # arm would have been a no-op. Apply here so both paths agree
+        # (subprocess path re-applies the same values: no change).
+        global GX_BUCKET, Y_BAND
+        GX_BUCKET = int(getattr(args, "gx_bucket", GX_BUCKET))
+        Y_BAND = int(getattr(args, "y_band", Y_BAND))
         self.args = args
         self.out = Path(args.out)
         (self.out / "solutions").mkdir(parents=True, exist_ok=True)
@@ -334,6 +343,19 @@ class Solver:
         self.steps_done = 0
         self.t0 = time.time()
         self.stop = False
+        # Maze-coverage recipes (research round 2), flag-gated so the
+        # default path stays byte-identical to the receipted campaign:
+        # sel_mode "count" swaps the uniform arm for Go-Explore's native
+        # count-based prior W = 1/sqrt(times_chosen+1) * (score_norm +
+        # 0.1) via O(1) rejection sampling (the archive's own weighted
+        # selection was bypassed for being an O(N) scan — this restores
+        # the prior without the scan). frontier_throttle N > 0 arms
+        # DD-RRT-style boundary suppression: a cell whose bursts yield
+        # nothing novel N times in a row is excluded from the deep-
+        # frontier band (stop throwing bursts at the physical wall).
+        self.sel_mode = str(getattr(args, "sel_mode", "legacy"))
+        self.frontier_throttle = int(getattr(args, "frontier_throttle", 0))
+        self._recorded_new = False
         # Optional spectator hook: called every pool step with
         # (results, solver) — the FULL per-worker results list, so the
         # live show can render one worker or the whole swarm. None in
@@ -455,6 +477,7 @@ class Solver:
             if blob is not None and self.archive.record(ram, blob, score, steps,
                                                         key=key):
                 self.traces[key] = (root_id, bytes(trace), loops, route_sig, sect, psig)
+                self._recorded_new = True
         else:
             self.archive.record(ram, None, score, steps, key=key)
         return "live"
@@ -470,6 +493,11 @@ class Solver:
         np.save(str(base) + ".actions.npy", np.array(trace, dtype=np.int64))
         (base.parent / (base.name + ".json")).write_text(json.dumps({
             "provenance": "search",
+            # Full effective invocation (audit finding: receipts recorded
+            # neither workers nor profile nor buckets, making parity
+            # claims between runs unverifiable after the fact).
+            "solver_args": {k: v for k, v in vars(self.args).items()
+                            if isinstance(v, (str, int, float, bool))},
             "root_id": root_id,
             "root_state": self.roots[root_id]["path"],
             "start_wd": list(self.start_wd),
@@ -509,6 +537,8 @@ class Solver:
                            if c.state is not None]
         self._sel_n = len(self.archive.cells)
         self._sel_area = self.max_area
+        self._sel_maxscore = max(
+            (c.best_score for c in self._sel_cells), default=1.0) or 1.0
         deep = [c for c in self._sel_cells
                 if c.key[0] == self.max_sect and c.key[-5] == self.max_area]
         self._sel_deep = deep
@@ -540,6 +570,13 @@ class Solver:
             pool_band = (self._sel_lowl_band24
                          if (self.rng.random() < 0.7 and self._sel_lowl_band24)
                          else self._sel_band24)
+            if pool_band and self.frontier_throttle > 0:
+                # DD-RRT boundary suppression: cells whose bursts came
+                # back empty `throttle` times in a row are walls — stop
+                # sampling them; if the whole band is walls, fall through
+                # to the count arm (least-visited exploration).
+                pool_band = [c for c in pool_band
+                             if getattr(c, "barren", 0) < self.frontier_throttle]
             if pool_band:
                 floor = self._sel_topgx - int(self.rng.integers(0, 24))
                 band = [c for c in pool_band if c.key[-1] >= floor]
@@ -548,11 +585,36 @@ class Solver:
                     cell.times_chosen += 1
                     cell.explored = True
                     return cell
-        # Uniform over the cached list (the archive's weighted selection was
-        # itself an O(N) scan; the deep arm supplies the directed pressure).
+        if self.sel_mode == "count":
+            # Count-based prior via O(1) rejection sampling: accept cell
+            # with prob W/Wmax, W = 1/sqrt(times_chosen+1) * (score_norm
+            # + 0.1), Wmax = 1.1. Expected O(few) draws; bounded at 64.
+            ms = self._sel_maxscore
+            pick = None
+            for _ in range(64):
+                pick = cells[int(self.rng.integers(len(cells)))]
+                w = ((1.0 / (pick.times_chosen + 1) ** 0.5)
+                     * (pick.best_score / ms + 0.1))
+                if self.rng.random() < w / 1.1:
+                    break
+            pick.times_chosen += 1
+            pick.explored = True
+            return pick
+        # Legacy: uniform over the cached list (the archive's weighted
+        # selection was an O(N) scan; the deep arm supplies direction).
         return cells[int(self.rng.integers(len(cells)))]
 
-    def _assign(self, wid: int) -> dict:
+    def _assign(self, wid: int, prev: dict | None = None) -> dict:
+        # R2 bookkeeping: credit or debit the cell the finished burst
+        # was rooted at. A burst that recorded nothing novel increments
+        # the source cell's barren counter; any novelty resets it.
+        if prev is not None and prev.get("key") is not None:
+            src = self.archive.cells.get(prev["key"])
+            if src is not None:
+                if prev.get("yielded"):
+                    src.barren = 0
+                else:
+                    src.barren = getattr(src, "barren", 0) + 1
         cell = self.select()
         if cell is None:
             # Fall back to the entrance root.
@@ -662,7 +724,7 @@ class Solver:
                 if (self.args.swim_gx_ceiling > 0 and game.swim(ram) == 1
                         and _lgx <= cap
                         and _lgx > self.args.swim_gx_ceiling):
-                    ctx[i] = self._assign(i)
+                    ctx[i] = self._assign(i, prev=c)
                     continue
                 status = self.observe(i, ram, c["trace"], c["steps"],
                                       c["root"], c["loops"], c["sig"],
@@ -679,7 +741,7 @@ class Solver:
                     c["left"] += 200
                     c["extended"] = True
                 if status != "live" or c["left"] <= 0 or c["steps"] >= args.max_steps:
-                    ctx[i] = self._assign(i)
+                    ctx[i] = self._assign(i, prev=c)
             now = time.time()
             if now - last_progress >= 60:
                 last_progress = now
@@ -744,6 +806,14 @@ def main() -> int:
                     help="Cell gx granularity px (micro-search: 8).")
     ap.add_argument("--y-band", type=int, default=32,
                     help="Cell y granularity px (micro-search: 16).")
+    ap.add_argument("--sel-mode", choices=("legacy", "count"),
+                    default="legacy",
+                    help="count = Go-Explore count-based selection prior "
+                         "via O(1) rejection sampling (maze-coverage R1).")
+    ap.add_argument("--frontier-throttle", type=int, default=0,
+                    help="If >0: exclude cells whose bursts came back "
+                         "empty this many times in a row from the deep-"
+                         "frontier band (DD-RRT boundary suppression, R2).")
     args = ap.parse_args()
     global GX_BUCKET, Y_BAND
     GX_BUCKET, Y_BAND = args.gx_bucket, args.y_band
