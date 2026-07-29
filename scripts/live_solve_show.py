@@ -59,17 +59,37 @@ SMB_FINALE_LABEL = "8-4"
 # THE ESCALATION LADDER — the campaign's actual wall-breaking behavior,
 # encoded. During the receipted campaign a stuck level got a human
 # diagnosis and a recipe change; the show used to just re-roll the same
-# config forever. Now each failed budget escalates: the exact campaign
-# recipe first (seed 0 — the settings and seed that beat all 32 levels),
-# then a fresh seed, then micro-search cell granularity (the castle
-# recipe: gx_bucket 8 / y_band 16 credits the small precise maneuvers
-# castles demand), then micro with a doubled budget. Seeds are the
-# attempt index — deterministic, reproducible, receiptable.
+# config forever. Now each failed budget escalates: the campaign-proven
+# search settings first (seed 0; note the campaign receipts recorded
+# neither worker count nor profile, so "same trajectory" is not claimed
+# — same recipe is), then a fresh seed, then micro-search cell
+# granularity (the castle recipe: gx_bucket 8 / y_band 16 credits the
+# small precise maneuvers castles demand), then micro with a doubled
+# budget. Seeds are the attempt index — deterministic and receiptable.
+# The forensics of the 8h stream day validated the short budgets:
+# 1-3 and 4-3 both fell within ~10 min of a FRESH archive after 2h
+# stuck on a stale one.
 ESCALATION = [
-    {"name": "campaign recipe", "minutes": 45, "gx_bucket": 16, "y_band": 32},
-    {"name": "fresh seed",      "minutes": 45, "gx_bucket": 16, "y_band": 32},
-    {"name": "micro-search",    "minutes": 45, "gx_bucket": 8,  "y_band": 16},
-    {"name": "micro + long",    "minutes": 90, "gx_bucket": 8,  "y_band": 16},
+    # Arm 0: the campaign recipe, 60 min (its hardest coverage level
+    # needed 41.5 headless — but cliff cell-counts are SEED-DEPENDENT:
+    # two live 4-4 attempts expired at 0.9M and 1.06M cells, the second
+    # PAST the campaign seed's 966k breakthrough. 60 min ~ 1.6M cells
+    # of runway).
+    {"name": "campaign recipe", "minutes": 60, "gx_bucket": 16,
+     "y_band": 32, "sel_mode": "legacy", "frontier_throttle": 0},
+    # Arm 1: the maze-coverage research recipes (R1 count-based
+    # selection + R2 boundary throttling) with a long budget — the
+    # commissioned cure for coverage walls; also benign-to-helpful on
+    # momentum walls (throttling stops hammering the wall cell).
+    {"name": "coverage recipes", "minutes": 90, "gx_bucket": 16,
+     "y_band": 32, "sel_mode": "count", "frontier_throttle": 3},
+    # Arm 2: fresh-seed legacy roll (momentum walls fall to these
+    # inside 10 min when they fall at all).
+    {"name": "fresh seed", "minutes": 45, "gx_bucket": 16,
+     "y_band": 32, "sel_mode": "legacy", "frontier_throttle": 0},
+    # Arm 3: micro-search granularity (castle precision) + recipes.
+    {"name": "micro + recipes", "minutes": 90, "gx_bucket": 8,
+     "y_band": 16, "sel_mode": "count", "frontier_throttle": 3},
 ]
 
 
@@ -87,6 +107,8 @@ def solver_args(profile_path: str, root_state: str, out: Path,
         # pinned two seeds at 4-3's momentum wall for 2h).
         burst=64, deep_bias=0.4, sticky=0.5, max_steps=4000,
         gx_bucket=int(arm["gx_bucket"]), y_band=int(arm["y_band"]),
+        sel_mode=str(arm.get("sel_mode", "legacy")),
+        frontier_throttle=int(arm.get("frontier_throttle", 0)),
         swim_gx_ceiling=0,
         # NO mid-level archive flushes on stream: pickling a multi-GB
         # archive on the solver thread froze every swarm tile for
@@ -343,6 +365,33 @@ class Show:
             self.mode = "search"
             self._apply_mix("search")
             out = self.show_dir / f"lvl_{self.level}"
+            # A prior session may have dumped a solution and died before
+            # banking the next entrance — don't burn a full budget
+            # rediscovering it (audit finding: stale-solution edge).
+            stale = sorted(out.glob("solutions/sol_*.actions.npy"))
+            if stale:
+                actions = np.load(stale[-1]).astype(int)
+                self.mode = "lap"
+                self.status = (f"{self.level}: banked solution found — "
+                               "victory lap")
+                self._apply_mix("lap")
+                self.hero.play_lap(Path(entrance).read_bytes(), actions)
+                while not self.hero.lap_done.wait(timeout=0.5):
+                    if self.stop:
+                        break
+                if self.is_smb and self.level == SMB_FINALE_LABEL:
+                    self.mode = "done"
+                    self.status = "THE GAME IS COMPLETE"
+                    break
+                nxt, key = extract_next_entrance(
+                    self.profile, Path(entrance).read_bytes(), actions,
+                    self.show_dir / f"entrance_after_{self.level}.state")
+                if nxt is not None:
+                    entrance = nxt
+                    self.level = self.game.label(key)
+                    self.state_file.write_text(json.dumps(
+                        {"entrance": entrance, "level": self.level}))
+                    continue
             sargs, arm_name = solver_args(
                 self.profile_path, entrance, out,
                 self.args.minutes_per_level, self.args.workers,
@@ -428,16 +477,26 @@ class Show:
 
             self.hero.set_level(root_bytes, get_best)
 
-            def hook(rs, sv, _self=self, chorus=chorus):
+            inst = {"t": time.time(), "steps": 0, "sps": 0}
+
+            def hook(rs, sv, _self=self, chorus=chorus, inst=inst):
                 if _self.stop:
                     sv.stop = True
                 _self.frames = [r[0] for r in rs]
                 if chorus:
                     pump_chorus(sv)
+                # INSTANTANEOUS sps (2s window) — the cumulative figure
+                # decays slowly and masked full stalls on stream (the
+                # audit found 640s windows at ~0 sps shown as "300+").
+                now = time.time()
+                if now - inst["t"] >= 2.0:
+                    inst["sps"] = int((sv.steps_done - inst["steps"])
+                                      / (now - inst["t"]))
+                    inst["t"], inst["steps"] = now, sv.steps_done
                 _self.status = (
                     f"searching {_self.level} "
                     f"[attempt {attempt + 1}: {arm_name}] — "
-                    f"{sv.steps_done/1e6:.1f}M steps, "
+                    f"{sv.steps_done/1e6:.1f}M steps @ {inst['sps']}/s, "
                     f"frontier gx {sv.max_gx_in_area.get(sv.max_area, 0)}, "
                     f"{len(sv.archive)} cells")
 
