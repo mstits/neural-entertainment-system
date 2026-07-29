@@ -483,13 +483,13 @@ def eval_one_game(
             byte = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)
             if byte > ep_max_byte:
                 ep_max_byte = byte
-            if tracker is not None:
-                # Death-gx telemetry (SMB modes only): where each episode's
-                # horizontal frontier stalled — THE localization signal when
-                # a level trains but a cold probe still reads 0.0.
-                gx_now = (int(ram[0x006D]) << 8) | int(ram[0x0086])
-                if gx_now > ep_max_gx:
-                    ep_max_gx = gx_now
+            # Death-gx telemetry (SMB addresses; benign reads elsewhere,
+            # like the byte proxy above): where each episode's horizontal
+            # frontier stalled — THE localization signal when a level
+            # trains but a cold probe still reads 0.0.
+            gx_now = (int(ram[0x006D]) << 8) | int(ram[0x0086])
+            if gx_now > ep_max_gx:
+                ep_max_gx = gx_now
             obs = pol.push(r[0])
             if reward_fn.episode_success():
                 ep_cleared = True
@@ -560,8 +560,11 @@ def eval_one_game(
         result["furthest_any_level"] = level_label(best_any)
         result["furthest_seq"] = list(best_seq) if best_seq is not None else None
         result["furthest_any"] = list(best_any) if best_any is not None else None
-    # Append to per-game eval log for scoreboard consumption.
+    # Append to per-game eval log for scoreboard consumption. The dir may
+    # not exist when --checkpoint points outside the profile's default
+    # checkpoint dir (e.g. probing a seed-suffixed run dir).
     eval_log = ckpt_dir / "eval.jsonl"
+    eval_log.parent.mkdir(parents=True, exist_ok=True)
     with open(eval_log, "a") as f:
         f.write(json.dumps(result) + "\n")
     return result

@@ -4340,6 +4340,11 @@ class Trainer:
             iter_offset = int(state.get("iter", 0) or 0)
             if "rnd_state_dict" in state:
                 self._pending_rnd_state = state["rnd_state_dict"]
+            if "prmdp_adv_net_state_dict" in state:
+                self._pending_prmdp_adv = (
+                    state["prmdp_adv_net_state_dict"],
+                    state.get("prmdp_adv_optimizer_state_dict"),
+                )
             if "anticollapse" in state:
                 self._pending_anticollapse = state["anticollapse"]
             if "gx_counts" in state:
@@ -5436,6 +5441,23 @@ class Trainer:
                 _adv_net.parameters(),
                 lr=float(_prmdp_cfg.get("adversary_lr", 2.5e-4)),
             )
+            _pending_adv = getattr(self, "_pending_prmdp_adv", None)
+            if _pending_adv is not None:
+                _adv_sd, _adv_opt_sd = _pending_adv
+                _adv_net.load_state_dict(_adv_sd, strict=False)
+                if _adv_opt_sd is not None:
+                    try:
+                        _adv_opt.load_state_dict(_adv_opt_sd)
+                    except Exception as exc:
+                        log.warning(
+                            "[prmdp] adversary optimizer state load failed "
+                            "(continuing with fresh Adam state): %s", exc,
+                        )
+                self._pending_prmdp_adv = None
+                log.info(
+                    "[prmdp] RESUMED adversary net + optimizer from "
+                    "checkpoint — arms race continues, not reset"
+                )
             log.info(
                 "[prmdp] ON: alpha=%.2f adversary=%s params, %d epochs, "
                 "clip=%.2f ent=%.2f (sticky_p=%.2f should be 0)",
@@ -8255,6 +8277,17 @@ class Trainer:
                             k: v.detach().cpu()
                             for k, v in self._rnd.state_dict().items()
                         }
+                    # Persist the PR-MDP adversary (net + optimizer) so a
+                    # resume continues the arms race instead of pitting the
+                    # trained protagonist against a fresh random opponent.
+                    if _adv_net is not None:
+                        _ckpt_payload["prmdp_adv_net_state_dict"] = {
+                            k: v.detach().cpu()
+                            for k, v in _adv_net.state_dict().items()
+                        }
+                        _ckpt_payload["prmdp_adv_optimizer_state_dict"] = (
+                            _adv_opt.state_dict()
+                        )
                     # Persist the gx-visitation table so a bounce doesn't
                     # re-inflate already-trodden buckets' bonuses.
                     if self._gx_counts:
