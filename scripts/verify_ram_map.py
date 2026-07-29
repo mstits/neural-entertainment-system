@@ -118,7 +118,18 @@ def main() -> int:
     state = (REPO / prof["start_state_path"]).read_bytes()
     fs = int(prof.get("frame_skip", 4))
     bm = action_space_to_bitmasks(prof["action_space"])
-    mapping = {k: int(v) for k, v in prof.get("ram_mapping", {}).items()}
+    # NES CPU RAM is 2 KB mirrored through $1FFF: fold mirror-region claims
+    # (e.g. a profile's $09C0 -> physical $01C0) into the physical range so
+    # they are gradable; addresses past $2000 are MMIO, not RAM — skip them.
+    mapping = {}
+    for k, v in prof.get("ram_mapping", {}).items():
+        v = int(v)
+        if v >= 0x2000:
+            print(f"[warn] {k} addr {hex(v)} is not CPU RAM; skipping")
+            continue
+        if v >= RAM_SIZE:
+            print(f"[note] {k} {hex(v)} folded to mirror {hex(v & (RAM_SIZE - 1))}")
+        mapping[k] = v & (RAM_SIZE - 1)
     print(f"[rig] {Path(rom).name}  frame_skip={fs}  "
           f"{len(mapping)} mapped bytes to grade")
 

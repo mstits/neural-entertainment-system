@@ -89,9 +89,10 @@ def main():
              "-s", "256x240", "-r", str(60 // fs), "-i", "-",
              "-vf", "scale=768:720:flags=neighbor",
              "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
+             "-movflags", "+faststart",
              args.video],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL)
+            stderr=open("/tmp/ffmpeg_err.log", "w"))
 
     def step(mask: int):
         r = pool.step_all(np.array([mask], dtype=np.uint8))
