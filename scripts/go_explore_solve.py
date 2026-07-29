@@ -36,6 +36,7 @@ import json
 import pickle
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -355,6 +356,21 @@ class Solver:
         # frontier band (stop throwing bursts at the physical wall).
         self.sel_mode = str(getattr(args, "sel_mode", "legacy"))
         self.frontier_throttle = int(getattr(args, "frontier_throttle", 0))
+        # R4 door discovery (research round 2): cut vertices of the archive
+        # transition graph are the maze's doors — every route between the
+        # regions they separate passes through them. Edges are recorded from
+        # our own rollouts (cell-to-cell transitions, no game internals); an
+        # async pass re-derives articulation points every door_interval and
+        # the count arm up-weights door cells by door_weight. 0 = off, and
+        # the default path stays byte-identical to the receipted campaign.
+        self.door_weight = float(getattr(args, "door_weight", 0.0))
+        self.door_interval = float(getattr(args, "door_interval", 45.0))
+        self._key_ids: dict = {}          # cell key -> int id (interned)
+        self._adj: dict = {}              # id -> set of neighbor ids
+        self._doors: frozenset = frozenset()
+        self._door_lock = threading.Lock()
+        self._door_thread: threading.Thread | None = None
+        self._last_door_t = time.time()
         self._recorded_new = False
         # Optional spectator hook: called every pool step with
         # (results, solver) — the FULL per-worker results list, so the
@@ -372,7 +388,7 @@ class Solver:
     def observe(self, wid: int, ram, trace: list, steps: int,
                 root_id: str, loops: int = 0,
                 route_sig: tuple = (), sect: int = 0,
-                psig: tuple = ()) -> str:
+                psig: tuple = (), ctx: dict | None = None) -> str:
         """Record one reached state. Returns 'dead' | 'clear' | 'live'."""
         # GAME-COMPLETE check (8-4 finale): the ending never advances the
         # world/level bytes (there is no next level) — the victory state is
@@ -468,6 +484,23 @@ class Solver:
         # counts; 8-4's final checks discriminate by the route taken, so
         # each path is its own frontier (fix 2026-07-26).
         key = (sect, psig, loops, route_sig) + game.cell_fn(ram)
+        # R4 edge recording: a cell-to-cell transition in OUR OWN rollout is
+        # an edge of the maze's traversal graph. Interned ids keep the
+        # adjacency compact at castle-archive scale (1M+ cells).
+        if ctx is not None and self.door_weight > 0:
+            pk = ctx.get("cur_key")
+            if pk is not None and pk != key:
+                ids = self._key_ids
+                ia = ids.get(pk)
+                if ia is None:
+                    ia = ids[pk] = len(ids)
+                ib = ids.get(key)
+                if ib is None:
+                    ib = ids[key] = len(ids)
+                with self._door_lock:
+                    self._adj.setdefault(ia, set()).add(ib)
+                    self._adj.setdefault(ib, set()).add(ia)
+            ctx["cur_key"] = key
         score = sect * 10000 + gx
         cur = self.archive.cells.get(key)
         dom = (cur is None or score > cur.best_score + 1e-9
@@ -589,13 +622,20 @@ class Solver:
             # Count-based prior via O(1) rejection sampling: accept cell
             # with prob W/Wmax, W = 1/sqrt(times_chosen+1) * (score_norm
             # + 0.1), Wmax = 1.1. Expected O(few) draws; bounded at 64.
+            # R4: door cells (articulation points of the transition graph)
+            # get door_weight x — Wmax scales so the sampling stays exact.
             ms = self._sel_maxscore
+            doors = self._doors
+            dw = self.door_weight if doors else 0.0
+            wmax = 1.1 * max(dw, 1.0)
             pick = None
             for _ in range(64):
                 pick = cells[int(self.rng.integers(len(cells)))]
                 w = ((1.0 / (pick.times_chosen + 1) ** 0.5)
                      * (pick.best_score / ms + 0.1))
-                if self.rng.random() < w / 1.1:
+                if dw > 0 and self._key_ids.get(pick.key) in doors:
+                    w *= dw
+                if self.rng.random() < w / wmax:
                     break
             pick.times_chosen += 1
             pick.explored = True
@@ -603,6 +643,77 @@ class Solver:
         # Legacy: uniform over the cached list (the archive's weighted
         # selection was an O(N) scan; the deep arm supplies direction).
         return cells[int(self.rng.integers(len(cells)))]
+
+    # ---- R4: door discovery (articulation points, async) --------------
+
+    @staticmethod
+    def _articulation_points(adj: dict) -> set:
+        """Iterative Hopcroft-Tarjan cut vertices of an undirected graph
+        given as {node: iterable-of-neighbors}. Pure derived-from-rollouts
+        structure — no game internals."""
+        disc: dict = {}
+        low: dict = {}
+        ap: set = set()
+        timer = 0
+        for start in adj:
+            if start in disc:
+                continue
+            disc[start] = low[start] = timer
+            timer += 1
+            root_children = 0
+            stack = [(start, None, iter(adj.get(start, ())))]
+            while stack:
+                node, parent, it = stack[-1]
+                pushed = False
+                for nb in it:
+                    if nb == parent:
+                        continue
+                    if nb in disc:
+                        if disc[nb] < low[node]:
+                            low[node] = disc[nb]
+                    else:
+                        disc[nb] = low[nb] = timer
+                        timer += 1
+                        if node == start:
+                            root_children += 1
+                        stack.append((nb, node, iter(adj.get(nb, ()))))
+                        pushed = True
+                        break
+                if not pushed:
+                    stack.pop()
+                    if stack:
+                        pnode = stack[-1][0]
+                        if low[node] < low[pnode]:
+                            low[pnode] = low[node]
+                        if pnode != start and low[node] >= disc[pnode]:
+                            ap.add(pnode)
+            if root_children > 1:
+                ap.add(start)
+        return ap
+
+    def _door_scan(self) -> None:
+        """Snapshot the adjacency and publish the current door set. Runs in
+        a daemon thread; the snapshot copy holds the edge lock briefly (the
+        4-4 frozen-show lesson: never scan a live million-entry structure
+        from the hot loop)."""
+        try:
+            with self._door_lock:
+                snap = {k: tuple(v) for k, v in self._adj.items()}
+            self._doors = frozenset(self._articulation_points(snap))
+        except Exception as exc:
+            print(f"[door_scan] failed (doors unchanged): {exc}", flush=True)
+
+    def _maybe_scan_doors(self, now: float) -> None:
+        if self.door_weight <= 0:
+            return
+        if now - self._last_door_t < self.door_interval:
+            return
+        if self._door_thread is not None and self._door_thread.is_alive():
+            return
+        self._last_door_t = now
+        self._door_thread = threading.Thread(target=self._door_scan,
+                                             daemon=True)
+        self._door_thread.start()
 
     def _assign(self, wid: int, prev: dict | None = None) -> dict:
         # R2 bookkeeping: credit or debit the cell the finished burst
@@ -633,7 +744,7 @@ class Solver:
         return {"key": cell.key, "root": root_id, "trace": list(tb),
                 "steps": cell.best_steps, "left": self.args.burst,
                 "loops": loops, "prev_gx": -1, "sig": sig,
-                "sect": sect, "p0750": None, "psig": psig,
+                "sect": sect, "p0750": None, "psig": psig, "cur_key": cell.key,
                 "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
 
     def explore(self) -> None:
@@ -728,7 +839,7 @@ class Solver:
                     continue
                 status = self.observe(i, ram, c["trace"], c["steps"],
                                       c["root"], c["loops"], c["sig"],
-                                      c["sect"], c["psig"])
+                                      c["sect"], c["psig"], ctx=c)
                 # Finisher extension: the level-END transition (exit pipe /
                 # flag slide) can run many steps with gx frozen, so a burst
                 # from the deepest cell can end just short of the wd advance.
@@ -743,6 +854,7 @@ class Solver:
                 if status != "live" or c["left"] <= 0 or c["steps"] >= args.max_steps:
                     ctx[i] = self._assign(i, prev=c)
             now = time.time()
+            self._maybe_scan_doors(now)
             if now - last_progress >= 60:
                 last_progress = now
                 self.progress_line(now - self.t0)
@@ -769,6 +881,9 @@ class Solver:
             "steps": self.steps_done,
             "sps": round(self.steps_done / max(elapsed, 1e-9)),
         }
+        if self.door_weight > 0:
+            line["doors"] = len(self._doors)
+            line["edges"] = sum(len(v) for v in self._adj.values()) // 2
         with open(self.out / "progress.jsonl", "a") as f:
             f.write(json.dumps(line) + "\n")
         print(f"[go_explore_solve] {json.dumps(line)}", flush=True)
@@ -814,6 +929,15 @@ def main() -> int:
                     help="If >0: exclude cells whose bursts came back "
                          "empty this many times in a row from the deep-"
                          "frontier band (DD-RRT boundary suppression, R2).")
+    ap.add_argument("--door-weight", type=float, default=0.0,
+                    help="If >0: up-weight archive cells that are cut "
+                         "vertices (doors) of the rollout transition graph "
+                         "by this factor in the count arm (Hopcroft-Tarjan "
+                         "sub-goals, R4). Needs --sel-mode count. 5 = "
+                         "research-recipe default.")
+    ap.add_argument("--door-interval", type=float, default=45.0,
+                    help="Seconds between async door (articulation-point) "
+                         "recomputations (R4).")
     args = ap.parse_args()
     global GX_BUCKET, Y_BAND
     GX_BUCKET, Y_BAND = args.gx_bucket, args.y_band
