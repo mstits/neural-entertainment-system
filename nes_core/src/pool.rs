@@ -1083,6 +1083,18 @@ impl Pool {
         Ok(())
     }
 
+    /// Hardware-true PPU-register read timing on every worker —
+    /// single-env mirror is `NESEnvironment::set_hw_mmio_read_timing`;
+    /// see the Cpu field doc for the ground-truth receipt. Default
+    /// OFF (legacy LaiNES-parity early commit).
+    fn set_hw_mmio_read_timing(&self, on: bool) {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.cpu.hw_mmio_read_timing = on;
+        }
+    }
+
     /// Enable the batched PPU renderer on every worker. Trades
     /// (rare) single-frame stale-row artifacts on mid-scanline-
     /// writing games for a measured +10-27% single-env throughput.

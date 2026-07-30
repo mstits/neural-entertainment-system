@@ -37,7 +37,13 @@ def main() -> int:
     args = p.parse_args()
 
     env = nes_core.NESEnvironment(rom_path=str(args.rom), frame_skip=1)
-    env.reset()
+    # True power-on alignment for cross-emulator diffs: reset() advances a
+    # frame before returning (Mesen traces from CYC 7); with no tape we
+    # want instruction 1 of the reset vector.
+    if args.tape_frames == 0 and hasattr(env, "reset_no_advance"):
+        env.reset_no_advance()
+    else:
+        env.reset()
 
     if args.tape_frames and args.tape.exists():
         tape = list(args.tape.read_bytes())

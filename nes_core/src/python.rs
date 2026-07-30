@@ -432,6 +432,15 @@ impl NESEnvironment {
         Ok(())
     }
 
+    /// Hardware-true PPU-register read timing (Mesen-verified): defer
+    /// absolute-mode $2000-$3FFF reads to the instruction's final
+    /// cycle instead of the LaiNES-parity cycle-0 early commit.
+    /// Default OFF — banked trajectories replay on legacy semantics.
+    /// Config, not state: survives save/load untouched.
+    fn set_hw_mmio_read_timing(&mut self, on: bool) {
+        self.nes.cpu.hw_mmio_read_timing = on;
+    }
+
     /// Save the current emulator state as an opaque `bytes` blob.
     /// Format is bincode-encoded `nes::State` — RAM, CPU, PPU, APU,
     /// mapper, input registers. Versioning is implicit: only blobs

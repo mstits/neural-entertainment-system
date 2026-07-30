@@ -251,6 +251,19 @@ pub struct Cpu {
     base_addr: u8,
     rel_offset: i8,
     fetched_data: u8,
+
+    /// Hardware-true MMIO read timing (config, not savestate state):
+    /// when set, absolute-mode reads of PPU registers ($2000-$3FFF)
+    /// commit on the instruction's FINAL cycle (real 6502 / Mesen
+    /// behavior) instead of the LaiNES-parity cycle-0 early commit.
+    /// Ground truth receipt (2026-07-30): CV boot vblank-wait
+    /// `LDA $2002` whose read lands at PPU 241,8 must see the vblank
+    /// flag (Mesen A=80); early-commit samples pre-241,1 and misses
+    /// it, shifting every edge-straddling poll one loop iteration
+    /// late and displacing lag frames vs hardware. Default OFF: every
+    /// banked trajectory (SMB campaign, curriculum states, chains)
+    /// replays on the legacy semantics it was recorded under.
+    pub hw_mmio_read_timing: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1715,28 +1728,36 @@ impl Cpu {
                 }
             }
             // LDA $abs (4 cycles): fetch 2 operand bytes, read into A.
+            // PPU-register reads defer to the final cycle under
+            // hw_mmio_read_timing — see `abs_late_ppu_read_a`.
             0xAD => {
                 let lo = self.next_pc_byte(bus) as u16;
                 let hi = (self.next_pc_byte(bus) as u16) << 8;
                 self.addr_abs = hi | lo;
-                self.regs.a = bus.read_byte(self.addr_abs);
-                self.set_zero_negative(self.regs.a);
+                if !self.defer_ppu_read() {
+                    self.regs.a = bus.read_byte(self.addr_abs);
+                    self.set_zero_negative(self.regs.a);
+                }
             }
             // LDX $abs (4 cycles).
             0xAE => {
                 let lo = self.next_pc_byte(bus) as u16;
                 let hi = (self.next_pc_byte(bus) as u16) << 8;
                 self.addr_abs = hi | lo;
-                self.regs.x = bus.read_byte(self.addr_abs);
-                self.set_zero_negative(self.regs.x);
+                if !self.defer_ppu_read() {
+                    self.regs.x = bus.read_byte(self.addr_abs);
+                    self.set_zero_negative(self.regs.x);
+                }
             }
             // LDY $abs (4 cycles).
             0xAC => {
                 let lo = self.next_pc_byte(bus) as u16;
                 let hi = (self.next_pc_byte(bus) as u16) << 8;
                 self.addr_abs = hi | lo;
-                self.regs.y = bus.read_byte(self.addr_abs);
-                self.set_zero_negative(self.regs.y);
+                if !self.defer_ppu_read() {
+                    self.regs.y = bus.read_byte(self.addr_abs);
+                    self.set_zero_negative(self.regs.y);
+                }
             }
             // BIT $abs (4 cycles): the canonical vblank-poll idiom
             // `BIT $2002 / BPL loop` lives here. Matching LaiNES's
@@ -1747,13 +1768,61 @@ impl Cpu {
                 let lo = self.next_pc_byte(bus) as u16;
                 let hi = (self.next_pc_byte(bus) as u16) << 8;
                 self.addr_abs = hi | lo;
-                let m = bus.read_byte(self.addr_abs);
-                self.flags.n = (m & 0x80) != 0;
-                self.flags.v = (m & 0x40) != 0;
-                self.flags.z = (m & self.regs.a) == 0;
+                if !self.defer_ppu_read() {
+                    let m = bus.read_byte(self.addr_abs);
+                    self.flags.n = (m & 0x80) != 0;
+                    self.flags.v = (m & 0x40) != 0;
+                    self.flags.z = (m & self.regs.a) == 0;
+                }
             }
             _ => {}
         }
+    }
+
+    /// True when the just-decoded absolute-mode MMIO read must wait
+    /// for the instruction's final cycle (hardware-true PPU register
+    /// read timing; see the `hw_mmio_read_timing` field doc).
+    #[inline]
+    fn defer_ppu_read(&self) -> bool {
+        self.hw_mmio_read_timing && (0x2000..=0x3FFF).contains(&self.addr_abs)
+    }
+
+    /// Final-cycle handlers for the deferred PPU-register reads — the
+    /// read-side mirror of `sta_abs_4014_late_write`. When the read
+    /// was NOT deferred (flag off or non-PPU target) these are noops:
+    /// the work already happened at cycle 0.
+    fn abs_late_ppu_read_a(self_: &mut Cpu, bus: &mut SystemBus) -> bool {
+        if self_.defer_ppu_read() {
+            self_.regs.a = bus.read_byte(self_.addr_abs);
+            self_.set_zero_negative(self_.regs.a);
+        }
+        false
+    }
+
+    fn abs_late_ppu_read_x(self_: &mut Cpu, bus: &mut SystemBus) -> bool {
+        if self_.defer_ppu_read() {
+            self_.regs.x = bus.read_byte(self_.addr_abs);
+            self_.set_zero_negative(self_.regs.x);
+        }
+        false
+    }
+
+    fn abs_late_ppu_read_y(self_: &mut Cpu, bus: &mut SystemBus) -> bool {
+        if self_.defer_ppu_read() {
+            self_.regs.y = bus.read_byte(self_.addr_abs);
+            self_.set_zero_negative(self_.regs.y);
+        }
+        false
+    }
+
+    fn abs_late_ppu_read_bit(self_: &mut Cpu, bus: &mut SystemBus) -> bool {
+        if self_.defer_ppu_read() {
+            let m = bus.read_byte(self_.addr_abs);
+            self_.flags.n = (m & 0x80) != 0;
+            self_.flags.v = (m & 0x40) != 0;
+            self_.flags.z = (m & self_.regs.a) == 0;
+        }
+        false
     }
 
     fn stx_write_byte_abs(self: &mut Cpu, bus: &mut SystemBus) -> bool {
@@ -2954,7 +3023,7 @@ pub const OPCODES: [Option<Instruction>; 256] = {
         mode: AddressMode::Absolute,
         official: true,
         // Early-commit at cycle 0 via `cycle_zero_early_commit`.
-        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::noop_cycle],
+        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::abs_late_ppu_read_a],
     });
 
     opcodes[0xBD] = Some(Instruction {
@@ -3045,7 +3114,7 @@ pub const OPCODES: [Option<Instruction>; 256] = {
         mode: AddressMode::Absolute,
         official: true,
         // Early-commit at cycle 0 via `cycle_zero_early_commit`.
-        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::noop_cycle],
+        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::abs_late_ppu_read_x],
     });
 
     opcodes[0xBE] = Some(Instruction {
@@ -3095,7 +3164,7 @@ pub const OPCODES: [Option<Instruction>; 256] = {
         mode: AddressMode::Absolute,
         official: true,
         // Early-commit at cycle 0 via `cycle_zero_early_commit`.
-        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::noop_cycle],
+        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::abs_late_ppu_read_y],
     });
 
     opcodes[0xBC] = Some(Instruction {
@@ -4069,7 +4138,7 @@ pub const OPCODES: [Option<Instruction>; 256] = {
         official: true,
         // Early-commit at cycle 0 via `cycle_zero_early_commit`.
         // Critical for vblank-polling loops (`BIT $2002 / BPL loop`).
-        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::noop_cycle],
+        cycles: &[Cpu::noop_cycle, Cpu::noop_cycle, Cpu::abs_late_ppu_read_bit],
     });
 
     opcodes[0xE6] = Some(Instruction {
