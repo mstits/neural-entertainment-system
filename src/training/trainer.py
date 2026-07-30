@@ -5432,9 +5432,27 @@ class Trainer:
         _prmdp_adv_epochs = int(_prmdp_cfg.get("adversary_epochs", 2))
         _prmdp_adv_clip = float(_prmdp_cfg.get("adversary_clip", 0.1))
         _prmdp_adv_ent = float(_prmdp_cfg.get("adversary_entropy_coef", 0.1))
+        # v7 report (2026-07-30): the co-trained adversary collapsed to a
+        # uniform noise generator (entropy pinned at ln|A| for the whole
+        # 130M-step run — GDA limit cycle from the 10:2 epoch imbalance +
+        # 0.1 entropy coef). adversary_mode "uniform" keeps the exact
+        # alpha-override noise profile the protagonist adapted to, with
+        # no adversary net, no adversary updates — the recovered compute
+        # pays for SHAPO below.
+        _prmdp_adv_mode = str(_prmdp_cfg.get("adversary_mode", "net"))
+        _adv_is_net = prmdp_on and _prmdp_adv_mode == "net"
+        # SHAPO / SAM-PPO (v7 report): pessimistic policy gradient
+        # evaluated at θ+ε over the ACTOR set (trunk + actor head; the
+        # critic head and RND train standard at θ — three-pass variant,
+        # documented deviation for the shared-trunk architecture).
+        # 0.0 disables — byte-identical update path.
+        _sam_rho = float(_rl_cfg.get("sam_rho", 0.0) or 0.0)
+        if _sam_rho > 0.0 and self._recurrent:
+            log.warning("[shapo] sam_rho ignored on the recurrent path")
+            _sam_rho = 0.0
         _adv_net = None
         _adv_opt = None
-        if prmdp_on:
+        if _adv_is_net:
             _adv_net = self._make_network()
             _adv_net.to(self.device)
             _adv_opt = torch.optim.Adam(
@@ -5780,13 +5798,21 @@ class Trainer:
                         # taken log-prob follows the executed action
                         # (clamped — the house sticky pattern; unclamped
                         # near-zero-prob overrides NaN the PPO ratio).
-                        adv_logits, adv_values = _adv_net.forward_ac(batch_t)
-                        adv_lp_all = F.log_softmax(
-                            adv_logits.float().cpu(), dim=-1
-                        )
-                        adv_actions = torch.multinomial(
-                            adv_lp_all.exp(), 1
-                        ).squeeze(1)
+                        # Uniform mode (v7): same override channel, the
+                        # actions are uniform draws, nothing to train.
+                        if _adv_net is not None:
+                            adv_logits, adv_values = _adv_net.forward_ac(batch_t)
+                            adv_lp_all = F.log_softmax(
+                                adv_logits.float().cpu(), dim=-1
+                            )
+                            adv_actions = torch.multinomial(
+                                adv_lp_all.exp(), 1
+                            ).squeeze(1)
+                        else:
+                            adv_actions = torch.randint(
+                                0, int(log_probs_all.shape[1]),
+                                (num_envs,), dtype=torch.long,
+                            )
                         _ov_rows = np.nonzero(
                             np.random.random(num_envs) < _prmdp_alpha
                         )[0]
@@ -5798,13 +5824,14 @@ class Trainer:
                                 log_probs_all[_ov_t, _ov_a], min=-13.0
                             )
                             exec_mask_buf[t, _ov_rows] = True
-                        adv_action_buf[t] = adv_actions.numpy()
-                        adv_logp_buf[t] = torch.clamp(
-                            adv_lp_all.gather(
-                                1, adv_actions.unsqueeze(1)
-                            ).squeeze(1), min=-13.0,
-                        ).numpy()
-                        adv_value_steps.append(adv_values)
+                        if _adv_net is not None:
+                            adv_action_buf[t] = adv_actions.numpy()
+                            adv_logp_buf[t] = torch.clamp(
+                                adv_lp_all.gather(
+                                    1, adv_actions.unsqueeze(1)
+                                ).squeeze(1), min=-13.0,
+                            ).numpy()
+                            adv_value_steps.append(adv_values)
 
                     actions_np = actions.numpy().astype(np.int32)
                     action_buf[t] = actions_np
@@ -6392,7 +6419,7 @@ class Trainer:
                 else:
                     _, final_values = net.forward_ac(final_batch_t)
                 final_values_np = final_values.cpu().numpy()
-                if prmdp_on:
+                if _adv_net is not None:
                     _, adv_final_values = _adv_net.forward_ac(final_batch_t)
                     adv_final_values_np = adv_final_values.cpu().numpy()
 
@@ -6720,11 +6747,100 @@ class Trainer:
                         )
                         optimizer.zero_grad(set_to_none=True)
                         continue
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(
-                        net.parameters(), self.reinforce_grad_clip
-                    )
-                    optimizer.step()
+                    if _sam_rho > 0.0:
+                        # SHAPO (v7 report, three-pass shared-trunk
+                        # variant). Pass A: policy(+entropy,+demo)
+                        # gradient at θ over the actor set (trunk +
+                        # actor head; the policy objective never
+                        # touches the critic head). ε = ρ·g/‖g‖.
+                        _actor_params = [
+                            p for n, p in net.named_parameters()
+                            if not n.startswith("critic")
+                        ]
+                        _pol_obj = (policy_loss
+                                    - self.entropy_coef * entropy)
+                        if self._demo_bank is not None and _demo_coef > 0:
+                            _pol_obj = _pol_obj + _demo_coef * _da_loss
+                        _pol_obj.backward(retain_graph=False)
+                        with torch.no_grad():
+                            _gsq = None
+                            for p in _actor_params:
+                                if p.grad is not None:
+                                    _s = (p.grad.detach() ** 2).sum()
+                                    _gsq = _s if _gsq is None else _gsq + _s
+                            _gn = torch.sqrt(_gsq) + 1e-12 \
+                                if _gsq is not None else None
+                            _eps_list = []
+                            for p in _actor_params:
+                                if p.grad is None or _gn is None:
+                                    _eps_list.append(None)
+                                    continue
+                                _e = p.grad.detach() * (_sam_rho / _gn)
+                                _eps_list.append(_e)
+                                p.add_(_e)
+                        # Pass B: pessimistic policy gradient at θ+ε
+                        # (value_coef=0 keeps the critic head out).
+                        optimizer.zero_grad(set_to_none=True)
+                        _lg2, _vp2 = net.forward_ac(states_t)
+                        _l2, _pl2, _vl2, _en2 = ppo_losses(
+                            _lg2, _vp2, actions_t, log_probs_old_t,
+                            adv_t, target_t,
+                            clip_eps=self.ppo_clip_eps,
+                            value_coef=0.0,
+                            entropy_coef=self.entropy_coef,
+                            value_loss_kind=self.value_loss_kind,
+                        )
+                        if self._demo_bank is not None and _demo_coef > 0:
+                            _dl2, _ = net.forward_ac(d_obs)
+                            _l2 = _l2 + _demo_coef * demo_anchor_loss(
+                                _dl2, d_act, margin=self.demo_anchor_margin
+                            )
+                        if not torch.isfinite(_l2):
+                            with torch.no_grad():
+                                for p, _e in zip(_actor_params, _eps_list):
+                                    if _e is not None:
+                                        p.sub_(_e)
+                            optimizer.zero_grad(set_to_none=True)
+                            continue
+                        _l2.backward()
+                        with torch.no_grad():
+                            for p, _e in zip(_actor_params, _eps_list):
+                                if _e is not None:
+                                    p.sub_(_e)
+                        # Pass C: critic (+RND) standard at restored θ;
+                        # grads ACCUMULATE onto pass B's actor grads —
+                        # trunk gets pessimistic-policy + standard-value
+                        # contributions, matching baseline semantics.
+                        _lg3, _vp3 = net.forward_ac(states_t)
+                        _vp3 = _vp3.float()
+                        if self.value_loss_kind == "mse":
+                            _vloss3 = F.mse_loss(_vp3, target_t)
+                        else:
+                            _vloss3 = F.smooth_l1_loss(_vp3, target_t)
+                        _c_loss = self.value_coef * _vloss3
+                        if self._rnd is not None and _rnd_update_this_mb:
+                            if rnd_tgt_feat_cache is not None:
+                                _rl3 = self._rnd.predictor_loss(
+                                    states_t, rnd_tgt_feat_cache[mb_idx]
+                                ).mean()
+                            else:
+                                _rl3 = self._rnd(states_t).mean()
+                            _c_loss = _c_loss + self.rnd_loss_coef * _rl3
+                            _last_rnd_t = _rl3.detach()
+                        if not torch.isfinite(_c_loss):
+                            optimizer.zero_grad(set_to_none=True)
+                            continue
+                        _c_loss.backward()
+                        torch.nn.utils.clip_grad_norm_(
+                            net.parameters(), self.reinforce_grad_clip
+                        )
+                        optimizer.step()
+                    else:
+                        loss.backward()
+                        torch.nn.utils.clip_grad_norm_(
+                            net.parameters(), self.reinforce_grad_clip
+                        )
+                        optimizer.step()
 
                     _last_policy_t = policy_loss.detach()
                     _last_value_t = value_loss.detach()
@@ -6745,7 +6861,7 @@ class Trainer:
             # own critic, restricted to steps where the adversary's
             # action executed (its behavior distribution). Zero-sum:
             # what kills the protagonist is the adversary's return.
-            if prmdp_on and valid_indices.size:
+            if _adv_net is not None and valid_indices.size:
                 _prm_t0 = time.perf_counter_ns()
                 adv_advantages, adv_targets = batched_gae(
                     -reward_buf, adv_value_buf, done_buf,
@@ -6817,6 +6933,12 @@ class Trainer:
                     )
                 self._gen_timer.add(
                     "prmdp_adversary", time.perf_counter_ns() - _prm_t0
+                )
+            elif prmdp_on and valid_indices.size:
+                log.info(
+                    "[prmdp] iter %d: uniform adversary, "
+                    "override_frac=%.3f", global_it,
+                    float(exec_mask_buf.mean()),
                 )
 
             # ============== LOGGING + METRICS ==============
