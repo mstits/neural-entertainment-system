@@ -62,6 +62,10 @@ solve:
   # zero climbs survived). One bit, cardinality 2.
   state_sig:
     - {addr: 0x0004, match: [8]}
+  # Active-entity slot flags (0x450..0x457, observed 0/1 spawn/despawn in
+  # block-3 differential probes 2026-07-29/30): --kill-key counts 1->0
+  # transitions as kills for the prerequisite-gate search dimension.
+  entity_slots: {lo: 0x0450, hi: 0x0458}
 
 reward_weights:
   forward_progress: 0.5

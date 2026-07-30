@@ -410,6 +410,20 @@ class Solver:
         # the default path stays byte-identical to the receipted campaign.
         self.door_weight = float(getattr(args, "door_weight", 0.0))
         self.door_interval = float(getattr(args, "door_interval", 45.0))
+        # v6-report recipes (2026-07-30), flag-gated, default byte-identical:
+        # time_bins: append floor(log2(steps+1)) to the key prefix (after
+        # sect, so key[0]/key[-N] indexing is untouched). Time-Myopic
+        # Go-Explore: slow structural trajectories (stairs, waits) stop
+        # losing the fewer-steps domination tie-break to drive-by states,
+        # and wait-gated triggers become explorable at archive scale.
+        # kill_key: append a capped cumulative entity-kill count (observed
+        # 1->0 transitions of profile-configured entity-slot flags) —
+        # prerequisite/kill-count gates become a searchable dimension.
+        self.time_bins = bool(getattr(args, "time_bins", False))
+        self.kill_key = bool(getattr(args, "kill_key", False))
+        eslots = (profile.get("solve", {}) or {}).get("entity_slots")
+        self.entity_slots = (range(int(eslots["lo"]), int(eslots["hi"]))
+                             if eslots else None)
         self._key_ids: dict = {}          # cell key -> int id (interned)
         self._adj: dict = {}              # id -> set of neighbor ids
         self._doors: frozenset = frozenset()
@@ -433,7 +447,8 @@ class Solver:
     def observe(self, wid: int, ram, trace: list, steps: int,
                 root_id: str, loops: int = 0,
                 route_sig: tuple = (), sect: int = 0,
-                psig: tuple = (), ctx: dict | None = None) -> str:
+                psig: tuple = (), ctx: dict | None = None,
+                kills: int = 0) -> str:
         """Record one reached state. Returns 'dead' | 'clear' | 'live'."""
         # GAME-COMPLETE check (8-4 finale): the ending never advances the
         # world/level bytes (there is no next level) — the victory state is
@@ -528,7 +543,9 @@ class Solver:
         # sect alone aliases different pipe sequences at equal transit
         # counts; 8-4's final checks discriminate by the route taken, so
         # each path is its own frontier (fix 2026-07-26).
-        key = (sect, psig, loops, route_sig) + game.cell_fn(ram)
+        tb = int(steps + 1).bit_length() if self.time_bins else 0
+        kk = min(int(kills), 15) if self.kill_key else 0
+        key = (sect, tb, kk, psig, loops, route_sig) + game.cell_fn(ram)
         # R4 edge recording: a cell-to-cell transition in OUR OWN rollout is
         # an edge of the maze's traversal graph. Interned ids keep the
         # adjacency compact at castle-archive scale (1M+ cells).
@@ -554,7 +571,8 @@ class Solver:
             blob = self.pool.save_worker_state(wid)
             if blob is not None and self.archive.record(ram, blob, score, steps,
                                                         key=key):
-                self.traces[key] = (root_id, bytes(trace), loops, route_sig, sect, psig)
+                self.traces[key] = (root_id, bytes(trace), loops, route_sig,
+                                    sect, psig, kills)
                 self._recorded_new = True
         else:
             self.archive.record(ram, None, score, steps, key=key)
@@ -809,6 +827,7 @@ class Solver:
             return {"key": None, "root": "entrance", "trace": [], "steps": 0,
                     "left": self.args.burst, "loops": 0, "prev_gx": -1,
                     "sig": (), "sect": 0, "p0750": None, "psig": (),
+                    "kills": 0, "eslots": None,
                     "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
         self.pool.load_worker_state(wid, cell.state)
         rec = self.traces[cell.key]
@@ -821,6 +840,7 @@ class Solver:
                 "steps": cell.best_steps, "left": self.args.burst,
                 "loops": loops, "prev_gx": -1, "sig": sig,
                 "sect": sect, "p0750": None, "psig": psig, "cur_key": cell.key,
+                "kills": rec[6] if len(rec) > 6 else 0, "eslots": None,
                 "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
 
     def explore(self) -> None:
@@ -891,6 +911,13 @@ class Solver:
                 # ROOM IDENTITY (SMB: verified 2026-07-26, $074E changes
                 # 0.67/1k steps, only at full-screen transitions). A rid
                 # CHANGE is a true room transition.
+                if self.kill_key and self.entity_slots is not None:
+                    _es = tuple(int(ram[a]) for a in self.entity_slots)
+                    pes = c.get("eslots")
+                    if pes is not None:
+                        c["kills"] = c.get("kills", 0) + sum(
+                            1 for p, q in zip(pes, _es) if p == 1 and q == 0)
+                    c["eslots"] = _es
                 _rid = game.room_id(ram)
                 _transit = (c["p0750"] is not None and _rid != c["p0750"])
                 if _transit and c["sect"] < 16:
@@ -915,7 +942,8 @@ class Solver:
                     continue
                 status = self.observe(i, ram, c["trace"], c["steps"],
                                       c["root"], c["loops"], c["sig"],
-                                      c["sect"], c["psig"], ctx=c)
+                                      c["sect"], c["psig"], ctx=c,
+                                      kills=c.get("kills", 0))
                 # Finisher extension: the level-END transition (exit pipe /
                 # flag slide) can run many steps with gx frozen, so a burst
                 # from the deepest cell can end just short of the wd advance.
@@ -1014,6 +1042,17 @@ def main() -> int:
     ap.add_argument("--door-interval", type=float, default=45.0,
                     help="Seconds between async door (articulation-point) "
                          "recomputations (R4).")
+    ap.add_argument("--time-bins", action="store_true",
+                    help="Append floor(log2(steps)) to the key prefix "
+                         "(Time-Myopic Go-Explore, v6 recipe 4): slow "
+                         "structural paths survive domination; wait-gates "
+                         "become searchable. Old-format archives resume "
+                         "with duplicated (still-valid) cells.")
+    ap.add_argument("--kill-key", action="store_true",
+                    help="Append capped cumulative entity kills (profile "
+                         "solve.entity_slots {lo,hi} flag bytes, observed "
+                         "1->0) to the key prefix — prerequisite/kill-count "
+                         "gates become a searchable dimension (v6 mech B).")
     ap.add_argument("--resume-archive", type=str, default=None, metavar="DIR",
                     help="Resume from a prior run's flushed out-dir: load "
                          "archive.pkl + traces.pkl + roots.json and continue "
