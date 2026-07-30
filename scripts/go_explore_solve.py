@@ -699,6 +699,14 @@ class Solver:
             pick = None
             for _ in range(64):
                 pick = cells[int(self.rng.integers(len(cells)))]
+                # R2 extension (block-3 doomed-tip lesson): a cell whose
+                # bursts die yielding nothing `throttle` times in a row is
+                # skipped here too — deterministic death states (e.g. a
+                # committed bat swoop) otherwise drain the count arm's
+                # budget forever, since depth keeps their score high.
+                if (self.frontier_throttle > 0
+                        and getattr(pick, "barren", 0) >= self.frontier_throttle):
+                    continue
                 w = ((1.0 / (pick.times_chosen + 1) ** 0.5)
                      * (pick.best_score / ms + 0.1))
                 if dw > 0 and self._key_ids.get(pick.key) in doors:
