@@ -599,6 +599,29 @@ class Solver:
                                   "start_wd": list(self.start_wd),
                                   "lives": self.start_lives}
         self.observe(0, r, [], 0, "entrance")
+        prev = getattr(self.args, "resume_archive", None)
+        if prev:
+            prev = Path(prev)
+            self.archive.load(prev / "archive.pkl")
+            with open(prev / "traces.pkl", "rb") as f:
+                self.traces.update(pickle.load(f))
+            saved_roots = json.loads((prev / "roots.json").read_text())
+            for rid, info in saved_roots.items():
+                self.roots.setdefault(rid, info)
+            # Rebuild the frontier trackers the loaded cells imply.
+            for c in self.archive.cells.values():
+                area, gx = c.key[-5], c.key[-1] * GX_BUCKET
+                sect = c.key[0]
+                if area > self.max_area:
+                    self.max_area = area
+                if gx > self.max_gx_in_area.get(area, 0):
+                    self.max_gx_in_area[area] = gx
+                if sect > self.max_sect:
+                    self.max_sect = sect
+            print(f"[seed] RESUMED archive from {prev}: "
+                  f"{len(self.archive.cells)} cells, "
+                  f"{len(self.traces)} traces, max_area={self.max_area}, "
+                  f"max_sect={self.max_sect}", flush=True)
         print(f"[seed] rooted at {path} wd={self.start_wd} lives="
               f"{self.start_lives} area={self.max_area}; archive="
               f"{json.dumps(self.archive.stats())}", flush=True)
@@ -983,6 +1006,12 @@ def main() -> int:
     ap.add_argument("--door-interval", type=float, default=45.0,
                     help="Seconds between async door (articulation-point) "
                          "recomputations (R4).")
+    ap.add_argument("--resume-archive", type=str, default=None, metavar="DIR",
+                    help="Resume from a prior run's flushed out-dir: load "
+                         "archive.pkl + traces.pkl + roots.json and continue "
+                         "exploring instead of starting from one root cell. "
+                         "Iterating on a single wall keeps every hard-won "
+                         "frontier cell (e.g. CV block-3's stair funnel).")
     args = ap.parse_args()
     global GX_BUCKET, Y_BAND
     GX_BUCKET, Y_BAND = args.gx_bucket, args.y_band
