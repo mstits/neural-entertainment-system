@@ -479,6 +479,23 @@ impl NESEnvironment {
         self.frame_cycle_target = None;
     }
 
+    /// Hardware-true NMI service timing: an NMI edge landing on an
+    /// instruction's final cycle defers service by one instruction
+    /// (real 6502 second-to-last-cycle poll). Disables the ASM/bulk
+    /// CPU fast paths while on. See the Cpu field doc for the CV
+    /// frame-3792 receipt. Default OFF. Config, not state.
+    fn set_hw_nmi_poll_timing(&mut self, on: bool) {
+        self.nes.cpu.hw_nmi_poll_timing = on;
+    }
+
+    /// Hardware-true PPU-register write timing: absolute-mode stores
+    /// to $2000-$3FFF commit on the instruction's final cycle. See
+    /// the Cpu field doc for the CV frame-11 NMI-enable receipt.
+    /// Default OFF. Config, not state.
+    fn set_hw_mmio_write_timing(&mut self, on: bool) {
+        self.nes.cpu.hw_mmio_write_timing = on;
+    }
+
     /// Save the current emulator state as an opaque `bytes` blob.
     /// Format is bincode-encoded `nes::State` — RAM, CPU, PPU, APU,
     /// mapper, input registers. Versioning is implicit: only blobs

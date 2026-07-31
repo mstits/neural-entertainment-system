@@ -264,6 +264,40 @@ pub struct Cpu {
     /// banked trajectory (SMB campaign, curriculum states, chains)
     /// replays on the legacy semantics it was recorded under.
     pub hw_mmio_read_timing: bool,
+
+    /// Hardware-true PPU-register WRITE timing (config, not
+    /// savestate): defer absolute-mode stores to $2000-$3FFF to the
+    /// instruction's final cycle instead of the LaiNES-parity cycle-0
+    /// early commit — the write-side counterpart of
+    /// `hw_mmio_read_timing`, using the `$4014` late-write plumbing.
+    /// Ground-truth receipt (2026-07-31): CV frame 11 re-enables NMI
+    /// via `STA $2000` mid-vblank; the early-committed write raises
+    /// the NMI edge 3 cycles before the instruction boundary so the
+    /// poll services it immediately, where hardware/Mesen (write on
+    /// final cycle) defer service by one instruction. That one-
+    /// instruction idle-loop phase offset seeds every later NMI-
+    /// quantization flip on the tape. Default OFF.
+    pub hw_mmio_write_timing: bool,
+
+    /// Hardware-true NMI service timing (config, not savestate):
+    /// the real 6502 decides "service an interrupt after this
+    /// instruction" at the poll on the instruction's second-to-last
+    /// cycle. An NMI edge that lands during the FINAL cycle is too
+    /// late — the next instruction runs to completion first. Legacy
+    /// behavior services the NMI at the very next boundary no matter
+    /// which cycle the edge landed on, entering handlers up to one
+    /// instruction (2-3 cycles) early. Ground-truth receipt
+    /// (2026-07-31): CV frame-3792 NMI entry at PPU 241,23 (ours)
+    /// vs 241,31 (Mesen) — the per-frame ±3-cycle jitter that flips
+    /// OAM-DMA parity and forks long tape replays. Default OFF.
+    pub hw_nmi_poll_timing: bool,
+
+    /// `nmi_pended` as of the end of the previous CPU cycle — the
+    /// value the hardware poll point actually sees. Runtime latch,
+    /// deliberately not serialized: at savestate boundaries the CPU
+    /// sits between instructions where the latch re-syncs within one
+    /// cycle.
+    nmi_poll_latch: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -331,6 +365,9 @@ impl Cpu {
         self.flags = state.flags;
         self.nmi_line_low = state.nmi_line_low;
         self.nmi_pended = state.nmi_pended;
+        // Not serialized: re-sync so a restored pending NMI isn't
+        // spuriously deferred at the first post-load boundary.
+        self.nmi_poll_latch = state.nmi_pended;
         self.irq_line_low = state.irq_line_low;
         self.cycles_total = state.cycles_total;
         self.opcode = state.opcode;
@@ -417,6 +454,9 @@ impl Cpu {
     pub fn tick(&mut self, bus: &mut SystemBus) -> bool {
         if self.stall_cycles > 0 {
             self.stall_cycles -= 1;
+            // The interrupt-poll pipeline keeps sampling while the CPU
+            // is halted for DMA/DMC stalls.
+            self.nmi_poll_latch = self.nmi_pended;
             return false;
         }
 
@@ -434,6 +474,7 @@ impl Cpu {
                 self.cycle_zero_early_commit(bus);
             }
 
+            self.nmi_poll_latch = self.nmi_pended;
             return false;
         }
 
@@ -467,9 +508,13 @@ impl Cpu {
 
         if completed || self.cycle as usize > instr.cycles.len() {
             self.cycle = 0;
+            // NOTE: poll_interrupts consumes `nmi_poll_latch` (state as
+            // of the end of the second-to-last cycle) and re-syncs it —
+            // do not update the latch before this call.
             self.poll_interrupts();
             true
         } else {
+            self.nmi_poll_latch = self.nmi_pended;
             false
         }
     }
@@ -514,7 +559,18 @@ impl Cpu {
     }
 
     pub(crate) fn poll_interrupts(&mut self) {
-        if self.nmi_pended {
+        // Hardware polls interrupts at the end of the instruction's
+        // second-to-last cycle: under `hw_nmi_poll_timing` the service
+        // decision uses `nmi_poll_latch` (the pended state as of the
+        // end of the PREVIOUS cycle), so an edge landing during the
+        // final cycle defers service by one instruction. Legacy path
+        // uses the live `nmi_pended` (immediate service).
+        let take_nmi = if self.hw_nmi_poll_timing {
+            self.nmi_poll_latch
+        } else {
+            self.nmi_pended
+        };
+        if take_nmi {
             self.instruction = Some(NMI_INTERRUPT);
         } else if self.irq_line_low && !self.flags.i {
             self.instruction = Some(IRQ_INTERRUPT);
@@ -524,6 +580,9 @@ impl Cpu {
             // knows to read from PC.
             self.instruction = None;
         }
+        // A deferred edge (pended but not latched at the poll point)
+        // becomes visible to the NEXT boundary.
+        self.nmi_poll_latch = self.nmi_pended;
     }
 
     #[inline(always)]
@@ -1644,8 +1703,8 @@ impl Cpu {
     /// Cost: shifts nes-py parity for ROMs that hit OAM DMA on a
     /// timing-sensitive scanline. Re-baselined against Mesen.
     fn sta_abs_4014_late_write(self_: &mut Cpu, bus: &mut SystemBus) -> bool {
-        if self_.addr_abs == 0x4014 {
-            bus.write_byte(0x4014, self_.regs.a);
+        if self_.addr_abs == 0x4014 || self_.defer_ppu_write() {
+            bus.write_byte(self_.addr_abs, self_.regs.a);
         }
         false
     }
@@ -1658,15 +1717,15 @@ impl Cpu {
     /// and asm-vs-slow lockstep diverges by 1 cycle on every DMA,
     /// exactly the STA failure mode fixed 2026-04-26.
     fn stx_abs_4014_late_write(self_: &mut Cpu, bus: &mut SystemBus) -> bool {
-        if self_.addr_abs == 0x4014 {
-            bus.write_byte(0x4014, self_.regs.x);
+        if self_.addr_abs == 0x4014 || self_.defer_ppu_write() {
+            bus.write_byte(self_.addr_abs, self_.regs.x);
         }
         false
     }
 
     fn sty_abs_4014_late_write(self_: &mut Cpu, bus: &mut SystemBus) -> bool {
-        if self_.addr_abs == 0x4014 {
-            bus.write_byte(0x4014, self_.regs.y);
+        if self_.addr_abs == 0x4014 || self_.defer_ppu_write() {
+            bus.write_byte(self_.addr_abs, self_.regs.y);
         }
         false
     }
@@ -1703,7 +1762,7 @@ impl Cpu {
                 let lo = self.next_pc_byte(bus) as u16;
                 let hi = (self.next_pc_byte(bus) as u16) << 8;
                 self.addr_abs = hi | lo;
-                if self.addr_abs != 0x4014 {
+                if self.addr_abs != 0x4014 && !self.defer_ppu_write() {
                     bus.write_byte(self.addr_abs, self.regs.a);
                 }
             }
@@ -1713,7 +1772,7 @@ impl Cpu {
                 let lo = self.next_pc_byte(bus) as u16;
                 let hi = (self.next_pc_byte(bus) as u16) << 8;
                 self.addr_abs = hi | lo;
-                if self.addr_abs != 0x4014 {
+                if self.addr_abs != 0x4014 && !self.defer_ppu_write() {
                     bus.write_byte(self.addr_abs, self.regs.x);
                 }
             }
@@ -1723,7 +1782,7 @@ impl Cpu {
                 let lo = self.next_pc_byte(bus) as u16;
                 let hi = (self.next_pc_byte(bus) as u16) << 8;
                 self.addr_abs = hi | lo;
-                if self.addr_abs != 0x4014 {
+                if self.addr_abs != 0x4014 && !self.defer_ppu_write() {
                     bus.write_byte(self.addr_abs, self.regs.y);
                 }
             }
@@ -1785,6 +1844,12 @@ impl Cpu {
     #[inline]
     fn defer_ppu_read(&self) -> bool {
         self.hw_mmio_read_timing && (0x2000..=0x3FFF).contains(&self.addr_abs)
+    }
+
+    /// Write-side mirror of `defer_ppu_read` — see the
+    /// `hw_mmio_write_timing` field doc.
+    fn defer_ppu_write(&self) -> bool {
+        self.hw_mmio_write_timing && (0x2000..=0x3FFF).contains(&self.addr_abs)
     }
 
     /// Final-cycle handlers for the deferred PPU-register reads — the

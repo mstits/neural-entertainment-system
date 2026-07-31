@@ -1118,6 +1118,27 @@ impl Pool {
         }
     }
 
+    /// Hardware-true NMI service timing on every worker — single-env
+    /// mirror is `NESEnvironment::set_hw_nmi_poll_timing`; see the
+    /// Cpu field doc. Disables ASM/bulk fast paths while on.
+    fn set_hw_nmi_poll_timing(&self, on: bool) {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.cpu.hw_nmi_poll_timing = on;
+        }
+    }
+
+    /// Hardware-true PPU-register write timing on every worker —
+    /// single-env mirror is `NESEnvironment::set_hw_mmio_write_timing`.
+    fn set_hw_mmio_write_timing(&self, on: bool) {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.cpu.hw_mmio_write_timing = on;
+        }
+    }
+
     /// Enable the batched PPU renderer on every worker. Trades
     /// (rare) single-frame stale-row artifacts on mid-scanline-
     /// writing games for a measured +10-27% single-env throughput.

@@ -38,11 +38,19 @@ def main() -> int:
                    help="Enable hardware-true MMIO read timing")
     p.add_argument("--hw-reset", action="store_true",
                    help="Enable hardware-true boot alignment (CYC=7, PPU dot 25)")
+    p.add_argument("--hw-all", action="store_true",
+                   help="Enable every hardware-true flag (mmio read, boot, "
+                        "DMC stall, frame anchor, NMI poll)")
     args = p.parse_args()
 
     env = nes_core.NESEnvironment(rom_path=str(args.rom), frame_skip=1)
-    if args.hw_reset:
+    if args.hw_reset or args.hw_all:
         env.set_hw_reset_alignment(True)
+    if args.hw_all:
+        env.set_hw_dmc_stall_timing(True)
+        env.set_hw_frame_anchor(True)
+        env.set_hw_nmi_poll_timing(True)
+        env.set_hw_mmio_write_timing(True)
     # True power-on alignment for cross-emulator diffs: reset() advances a
     # frame before returning (Mesen traces from CYC 7); with no tape we
     # want instruction 1 of the reset vector.
@@ -50,7 +58,7 @@ def main() -> int:
         env.reset_no_advance()
     else:
         env.reset()
-    if args.hw:
+    if args.hw or args.hw_all:
         env.set_hw_mmio_read_timing(True)
 
     if args.tape_frames and args.tape.exists():

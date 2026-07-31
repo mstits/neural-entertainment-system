@@ -187,6 +187,11 @@ impl Nes {
             && self.cpu.stall_cycles == 0
             && !self.cpu.nmi_pended
             && !(self.cpu.irq_line_low && !self.cpu.flags.i)
+            // Hardware NMI poll timing needs the per-cycle latch
+            // pipeline in Cpu::tick; the ASM/bulk paths batch cycles
+            // and would take NMIs at the wrong boundary. Fidelity
+            // lane trades speed for exactness.
+            && !self.cpu.hw_nmi_poll_timing
         {
             let pc = self.cpu.regs.pc;
             // Fast opcode peek. Almost all code executes from PRG

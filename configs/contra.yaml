@@ -114,3 +114,18 @@ reinforce:
   # regime RND targets. Set rnd_intrinsic_coef: 0.0 for a pure baseline.
   rnd_intrinsic_coef: 0.5
   rnd_loss_coef: 1.0
+
+# Solver adapter (breadth sprint 2026-07-31). Addresses are the June
+# training-track map (receipted in-config at contra_screen9.yaml; x/screen/
+# state/lives validated in production runs 2026-06). progress = player_x +
+# screen_number<<8 — monotone through a stage's screens.
+# level_key deliberately EMPTY for the coverage baseline: no stage byte is
+# receipted yet (discover it from deep arrival states, then chain).
+solve:
+  rom: "roms/Contra (USA).nes"
+  progress: {lo: 0x0031, hi: 0x0064}
+  y: 0x0021
+  level_key: []
+  lives: 0x0032
+  player_state: 0x002C
+  death_states: [1, 2]
