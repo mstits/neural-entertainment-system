@@ -123,8 +123,12 @@ reinforce:
 # receipted yet (discover it from deep arrival states, then chain).
 solve:
   rom: "roms/Contra (USA).nes"
-  progress: {lo: 0x0031, hi: 0x0064}
-  y: 0x0021
+  # progress = fine scroll + screen<<8 (receipts: docs/receipts/ram_verify/
+  # contra.json — the June map's 0x0031/0x0021 read 0 in live play and
+  # collapsed the archive to screen granularity; 0x0065/0x031A discovered
+  # by differential analysis 2026-07-31).
+  progress: {lo: 0x0065, hi: 0x0064}
+  y: 0x031A
   level_key: []
   lives: 0x0032
   player_state: 0x002C

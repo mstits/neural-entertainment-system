@@ -1,0 +1,25 @@
+{
+  "game": "Contra (USA)",
+  "date": "2026-07-31",
+  "method": "differential analysis of own scripted rollouts from the receipted start state (no external maps)",
+  "observables": {
+    "progress_lo": {
+      "addr": "0x0065",
+      "receipt": "fine-scroll byte: wraps 255->0 exactly at all 7 observed screen-byte increments during a hold-right rollout; 65% small positive deltas while advancing; adjacent to screen byte 0x0064 (coarse/fine pair)"
+    },
+    "progress_hi": {
+      "addr": "0x0064",
+      "receipt": "screen counter: increments 0..7 during a single hold-right rollout of stage 1 (June 2026 training-track receipt, revalidated)"
+    },
+    "y": {
+      "addr": "0x031A",
+      "receipt": "ballistic arc under scripted jumps: ground 100, apex ~42, smooth rise/fall, returns to baseline; flat while standing; increases during spawn drop (y-down screen coords)"
+    },
+    "lives": {"addr": "0x0032", "receipt": "starts 2, decrements on deaths during random rollouts (June 2026 production receipt)"},
+    "player_state": {"addr": "0x002C", "receipt": "0 alive / 1 dead / 2 dying (June 2026 production receipt); 3/4/6 observed as menu/demo/gameover modes"}
+  },
+  "corrections_vs_june_map": {
+    "0x0031": "player_x per June comment — reads 0 throughout live gameplay; NOT usable (baseline run collapsed to 12 cells = screen-granularity only)",
+    "0x0021": "player_y per June comment — reads 0 throughout live gameplay; NOT usable"
+  }
+}
