@@ -5915,10 +5915,17 @@ fn double_dragon_forward_is_high_water_not_farmable() {
             }
         }
         // World 1 levels 1-3 (area 3) and 1-4 (area 4) are calibrated;
-        // world 2+ remains uncalibrated -> empty (forward + completion).
+        // 2-1 has its own calibrated table; every other uncalibrated
+        // level gets the generic every-256px ladder (never again a
+        // reward desert — the World-2 fallthrough that cost 2-1
+        // seventeen machine-hours).
         assert_eq!(MarioReward::checkpoints_for(0, 3), MarioReward::LEVEL_1_3);
         assert_eq!(MarioReward::checkpoints_for(0, 4), MarioReward::LEVEL_1_4);
-        assert!(MarioReward::checkpoints_for(1, 0).is_empty());
+        assert_eq!(MarioReward::checkpoints_for(1, 0), MarioReward::LEVEL_2_1);
+        assert_eq!(
+            MarioReward::checkpoints_for(2, 0),
+            MarioReward::GENERIC_LADDER
+        );
     }
 
     #[test]

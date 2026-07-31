@@ -281,6 +281,8 @@ def _bare_tile_trainer(tmp: Path):
     t._recurrent = False
     t.num_actions = _NUM_ACTIONS
     t._tile_feature_dim = _TILE_FEATURE_DIM
+    t._tile_hidden_dim = 64
+    t._tile_trunk_dim = 32
     t._rnd = None
     t.device = torch.device("cpu")
     t.reinforce_lr = 3.0e-4
