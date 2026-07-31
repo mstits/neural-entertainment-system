@@ -114,6 +114,22 @@ impl<'a> SystemBus<'a> {
         }
     }
 
+    /// Advance the PPU alone by `dots` (no CPU/APU accounting). Used
+    /// by hardware-true reset alignment to establish the power-on
+    /// CPU↔PPU phase offset (PPU 4 dots ahead of 3×CPU).
+    pub fn tick_ppu_dots_discard(&mut self, dots: u32) {
+        struct V;
+        impl crate::sink::VideoSink for V {
+            fn write_frame(&mut self, _: &[u8]) {}
+            fn frame_written(&self) -> bool { false }
+            fn pixel_size(&self) -> usize { 4 }
+        }
+        let mut v = V;
+        for _ in 0..dots {
+            self.ppu.tick(self.mapper, &mut v);
+        }
+    }
+
     pub fn read_byte(&mut self, addr: u16) -> u8 {
         let byte = match addr {
             // PRG ROM first: CPU instruction fetches dominate this

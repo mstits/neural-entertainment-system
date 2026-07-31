@@ -38,6 +38,19 @@ pub struct Nes {
     /// `false` so single-env GUI / tests keep the ASM win.
     pub disable_asm_cpu: bool,
 
+    /// Hardware-true boot alignment (config, not savestate). When set,
+    /// `reset()` lands the first opcode fetch at CYC=7 with the PPU 25
+    /// dots into the frame — Mesen's canonical NTSC power-on phase —
+    /// instead of the legacy accounting (construction + reset each
+    /// discarding 8 cycles → first fetch at CYC=16, PPU dot 24). The
+    /// legacy path leaves an ODD cycle-counter offset vs Mesen, which
+    /// flips OAM-DMA 513/514 alignment parity at every DMA and makes
+    /// long input-tape replays drift (receipted: CV tape desyncs at
+    /// ~frame 3992 via a sprite-0 poll flip). Default `false`: nes-py
+    /// parity suites and all existing solver receipts assume legacy
+    /// boot accounting.
+    pub hw_reset_alignment: bool,
+
     /// Cached `mapper.prg_asm_ptr()` result. Stable for the mapper's
     /// lifetime — all mapper PRG-ASM windows are fixed-size 32 KB
     /// `Vec<u8>`s mutated only via slice indexing (never resized),
@@ -101,6 +114,7 @@ impl Nes {
             cycles: 0,
             trace: false,
             disable_asm_cpu: false,
+            hw_reset_alignment: false,
             cached_prg_asm_ptr: None,
             cached_asm_bulk_cycles: 1,
             cached_ppu_batchable: false,
@@ -766,9 +780,23 @@ impl Nes {
             &mut self.input,
             &self.cheats,
         );
-        bus.tick_cpu_cycles_discard(8);
-        drop(bus);
-        self.cycles += 8;
+        if self.hw_reset_alignment {
+            // Hardware-true boot: 7-cycle reset sequence, then the PPU
+            // sits 4 dots ahead of 3×CPU (Mesen canonical power-on
+            // alignment → first opcode fetch at CYC=7, PPU dot 25).
+            // `self.cycles` is SET (not incremented) so a reset after
+            // construction can't stack a second discard's worth of
+            // cycles — the odd 16-vs-7 offset is exactly what flips
+            // OAM-DMA parity against Mesen on tape replays.
+            bus.tick_cpu_cycles_discard(7);
+            bus.tick_ppu_dots_discard(4);
+            drop(bus);
+            self.cycles = 7;
+        } else {
+            bus.tick_cpu_cycles_discard(8);
+            drop(bus);
+            self.cycles += 8;
+        }
     }
 
     pub fn initialize_nestest(&mut self) {

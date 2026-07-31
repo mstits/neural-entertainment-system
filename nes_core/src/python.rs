@@ -118,6 +118,16 @@ pub struct NESEnvironment {
     // pacing accumulates cleanly across steps without drift. Reset
     // on reset() and on realtime_pace toggle.
     pace_next_target: Option<std::time::Instant>,
+    // Hardware-true frame anchoring (config): when set,
+    // `advance_one_frame` runs to the next real PPU frame boundary
+    // (29,780/29,781 CPU cycles alternating with the odd-frame dot
+    // skip) instead of the legacy fixed 29,781-cycle block. The fixed
+    // block drifts +1/3 CPU cycle per frame against the true frame,
+    // so input tapes applied per step slip ~1,900 cycles into the
+    // frame by ~frame 3,800 and eventually miss the game's controller
+    // poll — the receipted CV-vs-Mesen tape desync mechanism. Default
+    // OFF: training/parity paths depend on the cycle-locked step.
+    hw_frame_anchor: bool,
     // Reusable RGB conversion buffer — Xrgb8888VideoSink writes into
     // this u32 array, then `step()` repacks it into a (240, 256, 3)
     // numpy uint8 array. Kept on the struct so we don't reallocate
@@ -213,6 +223,7 @@ impl NESEnvironment {
             realtime_pace: false,
             pace_next_target: None,
             frame_cycle_target: None,
+            hw_frame_anchor: false,
         };
         if let Some(p) = start_state_path {
             let p_basename = p
@@ -439,6 +450,33 @@ impl NESEnvironment {
     /// Config, not state: survives save/load untouched.
     fn set_hw_mmio_read_timing(&mut self, on: bool) {
         self.nes.cpu.hw_mmio_read_timing = on;
+    }
+
+    /// Hardware-true boot alignment (Mesen-verified): the next
+    /// `reset()`/`reset_no_advance()` lands the first opcode fetch at
+    /// CYC=7 with the PPU 25 dots into the frame (canonical NTSC
+    /// power-on phase) instead of the legacy CYC=16 / dot-24
+    /// accounting. Set BEFORE calling reset. Default OFF — existing
+    /// receipts and nes-py parity assume legacy boot accounting.
+    /// Config, not state: survives save/load untouched.
+    fn set_hw_reset_alignment(&mut self, on: bool) {
+        self.nes.hw_reset_alignment = on;
+    }
+
+    /// Hardware-true DMC DMA stall (3 cycles aligned vs legacy flat
+    /// 4). See the `Apu` field doc for the drift receipt. Default
+    /// OFF. Config, not state: survives save/load untouched.
+    fn set_hw_dmc_stall_timing(&mut self, on: bool) {
+        self.nes.apu.hw_dmc_stall_timing = on;
+    }
+
+    /// Hardware-true frame anchoring: `step()` advances to real PPU
+    /// frame boundaries instead of fixed 29,781-cycle blocks. See the
+    /// struct field doc for the tape-drift receipt. Default OFF.
+    /// Config, not state.
+    fn set_hw_frame_anchor(&mut self, on: bool) {
+        self.hw_frame_anchor = on;
+        self.frame_cycle_target = None;
     }
 
     /// Save the current emulator state as an opaque `bytes` blob.
@@ -673,6 +711,24 @@ impl NESEnvironment {
     fn advance_one_frame(&mut self) {
         let mut video = Xrgb8888VideoSink::new(&mut self.video_buf);
         const CPU_CYCLES_PER_FRAME: usize = 29781;
+        if self.hw_frame_anchor {
+            // Hardware-true frame boundary: run to the next PPU frame
+            // increment (29,780/29,781 CPU cycles alternating). Input
+            // bytes then land on real frames, matching Mesen's
+            // inputPolled schedule on tape replays. Cap at ~2 frames
+            // of cycles so a wedged PPU can't loop forever.
+            let start_frame = self.nes.ppu.frame;
+            let cap = self.nes.cycles + 2 * CPU_CYCLES_PER_FRAME + 64;
+            while self.nes.ppu.frame == start_frame && self.nes.cycles < cap {
+                if self.nes.oam_dma.active {
+                    self.nes.tick(&mut video, &mut self.audio);
+                } else {
+                    self.nes.step(&mut video, &mut self.audio);
+                }
+            }
+            self.frame_cycle_target = None;
+            return;
+        }
         let target = self
             .frame_cycle_target
             .map(|t| t + CPU_CYCLES_PER_FRAME)

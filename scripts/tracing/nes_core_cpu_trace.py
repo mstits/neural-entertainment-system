@@ -34,9 +34,15 @@ def main() -> int:
                    help="Number of frames to trace after tape playback")
     p.add_argument("--out", type=Path, default=Path("/tmp/ours_zelda_trace.txt"))
     p.add_argument("--max-instr", type=int, default=200_000)
+    p.add_argument("--hw", action="store_true",
+                   help="Enable hardware-true MMIO read timing")
+    p.add_argument("--hw-reset", action="store_true",
+                   help="Enable hardware-true boot alignment (CYC=7, PPU dot 25)")
     args = p.parse_args()
 
     env = nes_core.NESEnvironment(rom_path=str(args.rom), frame_skip=1)
+    if args.hw_reset:
+        env.set_hw_reset_alignment(True)
     # True power-on alignment for cross-emulator diffs: reset() advances a
     # frame before returning (Mesen traces from CYC 7); with no tape we
     # want instruction 1 of the reset vector.
@@ -44,6 +50,8 @@ def main() -> int:
         env.reset_no_advance()
     else:
         env.reset()
+    if args.hw:
+        env.set_hw_mmio_read_timing(True)
 
     if args.tape_frames and args.tape.exists():
         tape = list(args.tape.read_bytes())

@@ -59,6 +59,16 @@ pub struct Apu {
 
     last_sampled_cycles: u64,
 
+    /// Hardware-true DMC DMA stall length (config, not savestate).
+    /// Legacy charges a flat 4 CPU cycles per DMC byte fetch; real
+    /// hardware (and Mesen) charge 3 when the RDY halt lands aligned
+    /// with a get cycle — which, in this engine's timing model, is
+    /// every normal fetch (DMC steps only on even APU cycles). The
+    /// flat 4 over-stalls by ~+1/fetch and drifts long tape replays
+    /// vs Mesen at ~3 cycles/frame while DPCM plays (receipted on
+    /// the CV block-1 drums). Default OFF: legacy receipts assume 4.
+    pub hw_dmc_stall_timing: bool,
+
     pulse_1: Pulse,
     pulse_2: Pulse,
     triangle: Triangle,
@@ -99,6 +109,7 @@ impl Apu {
         Apu {
             cycles: 0,
             last_sampled_cycles: 0,
+            hw_dmc_stall_timing: false,
             pulse_1: Pulse::new(SweepNegationType::OnesComplement),
             pulse_2: Pulse::new(SweepNegationType::TwosComplement),
             triangle: Triangle::new(),
@@ -445,7 +456,8 @@ impl Apu {
                 self.pulse_2.step_timer();
                 self.noise.step_timer();
             }
-            cpu_stall_cycles = self.dmc.step_timer(mapper);
+            cpu_stall_cycles =
+                self.dmc.step_timer(mapper, self.hw_dmc_stall_timing);
         }
 
         if audio {
@@ -1064,7 +1076,7 @@ impl Dmc {
         self.current_length = self.sample_length;
     }
 
-    fn step_timer(&mut self, mapper: &mut MapperEnum) -> u8 {
+    fn step_timer(&mut self, mapper: &mut MapperEnum, hw_stall: bool) -> u8 {
         let mut cpu_stall_cycles = 0;
         if self.enable_flag {
             // DMC interrupt fires when the bytes-remaining counter
@@ -1073,7 +1085,7 @@ impl Dmc {
             // previous code asserted irq_pending on every tick when
             // both enable+irq_flag were set, which made $4015 bit 7
             // permanently high for any ROM that enabled DMC IRQ.
-            cpu_stall_cycles = self.step_reader(mapper);
+            cpu_stall_cycles = self.step_reader(mapper, hw_stall);
             if self.tick_value == 0 {
                 self.tick_value = self.tick_period;
                 self.step_shifter();
@@ -1085,10 +1097,13 @@ impl Dmc {
         cpu_stall_cycles
     }
 
-    fn step_reader(&mut self, mapper: &mut MapperEnum) -> u8 {
+    fn step_reader(&mut self, mapper: &mut MapperEnum, hw_stall: bool) -> u8 {
         let mut cpu_stall_cycles = 0;
         if self.current_length > 0 && self.bit_count == 0 {
-            cpu_stall_cycles = 4;
+            // Hardware: halt + dummy + read = 3 cycles when the RDY
+            // halt lands on a get cycle (always true here — DMC steps
+            // on even APU cycles only). Legacy flat 4 kept as default.
+            cpu_stall_cycles = if hw_stall { 3 } else { 4 };
             self.shift_register = mapper.prg_read_byte(self.current_address);
             self.bit_count = 8;
             self.current_address += 1;

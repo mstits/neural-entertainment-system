@@ -1095,6 +1095,29 @@ impl Pool {
         }
     }
 
+    /// Hardware-true boot alignment on every worker — single-env
+    /// mirror is `NESEnvironment::set_hw_reset_alignment`; see the
+    /// `Nes` field doc. Takes effect on each worker's next reset.
+    /// Default OFF (legacy boot accounting).
+    fn set_hw_reset_alignment(&self, on: bool) {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.hw_reset_alignment = on;
+        }
+    }
+
+    /// Hardware-true DMC DMA stall on every worker — single-env
+    /// mirror is `NESEnvironment::set_hw_dmc_stall_timing`; see the
+    /// `Apu` field doc. Default OFF (legacy flat-4 stall).
+    fn set_hw_dmc_stall_timing(&self, on: bool) {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.apu.hw_dmc_stall_timing = on;
+        }
+    }
+
     /// Enable the batched PPU renderer on every worker. Trades
     /// (rare) single-frame stale-row artifacts on mid-scanline-
     /// writing games for a measured +10-27% single-env throughput.
