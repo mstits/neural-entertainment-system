@@ -5447,6 +5447,7 @@ class Trainer:
         # documented deviation for the shared-trunk architecture).
         # 0.0 disables — byte-identical update path.
         _sam_rho = float(_rl_cfg.get("sam_rho", 0.0) or 0.0)
+        _sam_actor_params = None   # lazily resolved once (net exists later)
         if _sam_rho > 0.0 and self._recurrent:
             log.warning("[shapo] sam_rho ignored on the recurrent path")
             _sam_rho = 0.0
@@ -6753,10 +6754,16 @@ class Trainer:
                         # gradient at θ over the actor set (trunk +
                         # actor head; the policy objective never
                         # touches the critic head). ε = ρ·g/‖g‖.
-                        _actor_params = [
-                            p for n, p in net.named_parameters()
-                            if not n.startswith("critic")
-                        ]
+                        # Param set is static — resolve once per run
+                        # (audit: the per-minibatch named_parameters()
+                        # rescan cost a string-match traversal × 2,400
+                        # minibatches/iter).
+                        if _sam_actor_params is None:
+                            _sam_actor_params = [
+                                p for n, p in net.named_parameters()
+                                if not n.startswith("critic")
+                            ]
+                        _actor_params = _sam_actor_params
                         _pol_obj = (policy_loss
                                     - self.entropy_coef * entropy)
                         if self._demo_bank is not None and _demo_coef > 0:
