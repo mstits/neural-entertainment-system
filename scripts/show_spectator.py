@@ -173,25 +173,43 @@ class SpectatorRenderer:
         frame, _ = env.step(0)          # advance one frame -> renders it
         return _scale_nn(np.asarray(frame), scale)
 
+    # Per-tick render budget: nes_core's env calls HOLD the GIL (no
+    # allow_threads in the bindings yet), so rendering all tiles every
+    # tick starves the interpreter inside the live show — the receipted
+    # in-show failure was a sub-1 fps mosaic while the standalone demo
+    # (idle main thread) hit 20 fps/tile. Budgeted round-robin keeps
+    # spectator GIL demand at ~30-60 ms/s regardless of tile count.
+    TILES_PER_TICK = 4
+
     def tick(self) -> np.ndarray:
-        """Apply pending snapshots, render every due tile, composite, return
-        the surface (a live buffer — copy it if another thread consumes it)."""
+        """Apply pending snapshots, render up to TILES_PER_TICK due tiles
+        (round-robin), composite, return the surface (a live buffer — copy
+        it if another thread consumes it)."""
         now = time.monotonic()
         with self._lock:
             pending, self._pending = self._pending, [None] * self.n_tiles
             phero, self._pending_hero = self._pending_hero, None
 
+        # Apply ALL pending snapshots (cheap ~21 KB deserializes) so no
+        # blob is dropped, but budget the expensive render+scale work.
         for i, env in enumerate(self._envs):
-            blob = pending[i]
-            if blob is not None:
+            if pending[i] is not None:
                 try:
-                    env.load_state(blob)
+                    env.load_state(pending[i])
                     self.restores += 1
+                    self._next_render[i] = 0.0   # render ASAP post-restore
                 except Exception:
-                    blob = None
-            due = now >= self._next_render[i]
-            if blob is None and not (due or not self._primed[i]):
+                    pass
+
+        rendered = 0
+        start = getattr(self, "_rr_cursor", 0)
+        for k in range(self.n_tiles):
+            i = (start + k) % self.n_tiles
+            if rendered >= self.TILES_PER_TICK:
+                break
+            if now < self._next_render[i] and self._primed[i]:
                 continue
+            env = self._envs[i]
             try:
                 buf = self._render_env(env, self.tile_scale)
             except Exception:
@@ -201,6 +219,8 @@ class SpectatorRenderer:
             self.tile_frames += 1
             self._primed[i] = True
             self._next_render[i] = now + self._tile_dt
+            rendered += 1
+        self._rr_cursor = (start + rendered) % self.n_tiles
 
         if self._hero_env is not None:
             rendered = False
