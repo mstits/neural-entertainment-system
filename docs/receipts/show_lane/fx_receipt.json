@@ -1,0 +1,78 @@
+{
+  "profile": "configs/smb_4_4_micro.yaml",
+  "entrance": "runs/live_show/smb_4_4_micro/entrance_start.state",
+  "solution": "runs/live_show/smb_4_4_micro/lvl_1-1/solutions/sol_000.actions.npy",
+  "n_frames_replayed": 200,
+  "native_shape": [
+    240,
+    256,
+    3
+  ],
+  "torch_available": true,
+  "torch_device": "mps",
+  "target_ms_crt_plus_2x": 4.0,
+  "effects": {
+    "2x": {
+      "upscale_numpy": {
+        "mean_ms": 0.4656,
+        "p95_ms": 0.5482,
+        "max_ms": 0.6157
+      },
+      "crt_numpy": {
+        "mean_ms": 2.201,
+        "p95_ms": 2.3374,
+        "max_ms": 2.5937
+      },
+      "crt_plus_upscale_numpy_combined": {
+        "mean_ms": 2.6666,
+        "p95_ms": 2.8442,
+        "max_ms": 3.1441,
+        "meets_4ms_target": true
+      },
+      "crt_torch": {
+        "mean_ms": 1.4509,
+        "p95_ms": 1.584,
+        "max_ms": 3.052,
+        "faster_than_numpy": true
+      }
+    },
+    "3x": {
+      "upscale_numpy": {
+        "mean_ms": 1.1553,
+        "p95_ms": 1.2574,
+        "max_ms": 1.3825
+      },
+      "crt_numpy": {
+        "mean_ms": 3.9627,
+        "p95_ms": 4.1309,
+        "max_ms": 4.4953
+      },
+      "crt_plus_upscale_numpy_combined": {
+        "mean_ms": 5.118,
+        "p95_ms": 5.3221,
+        "max_ms": 5.7403,
+        "meets_4ms_target": false
+      },
+      "crt_torch": {
+        "mean_ms": 2.8294,
+        "p95_ms": 3.8444,
+        "max_ms": 8.7452,
+        "faster_than_numpy": true
+      }
+    }
+  },
+  "images": {
+    "before_native": "docs/receipts/show_lane/before_native.png",
+    "after_crt_2x": "docs/receipts/show_lane/after_crt_2x.png",
+    "after_crt_3x": "docs/receipts/show_lane/after_crt_3x.png",
+    "sparkline_wide": "docs/receipts/show_lane/sparkline_wide.png",
+    "sparkline_small": "docs/receipts/show_lane/sparkline_small.png",
+    "sparkline_stateless": "docs/receipts/show_lane/sparkline_stateless.png"
+  },
+  "sparkline": {
+    "history_len": 150,
+    "render_ms_240x48": 0.1181,
+    "render_ms_120x24": 0.052,
+    "synthetic_series": "sps: base ~3000 + random walk + one simulated stall"
+  }
+}

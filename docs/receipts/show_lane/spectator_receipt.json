@@ -1,0 +1,56 @@
+{
+  "what": "low-cost spectator renderer \u2014 swarm mosaic + hero rendered outside the solver pool from ~21KB save-state snapshots",
+  "git_commit": "c9d3d95",
+  "machine": {
+    "platform": "macOS-26.6-arm64-arm-64bit",
+    "processor": "arm",
+    "python": "3.11.15"
+  },
+  "source_archive": "/Users/stits/Documents/macos-emulation-and-training/runs/breadth_contra/stage1_v6_resume/archive.pkl",
+  "rom": "/Users/stits/Documents/macos-emulation-and-training/roms/Contra (USA).nes",
+  "blob_pull": {
+    "blobs": 17,
+    "pull_ms": 1.1,
+    "method": "streaming unpickle, bounded scan (never loads the full multi-GB pickle)"
+  },
+  "microbench": {
+    "load_state_us": 1.316,
+    "load_step_frame_us": 915.287
+  },
+  "stability_caveat_verified": {
+    "states_tested": 16,
+    "distinct_frames": 16,
+    "deterministic_restore": true,
+    "one_env_same_rom_stable": true
+  },
+  "single_core_ceiling_restores_per_s": 911.2,
+  "config": {
+    "n_tiles": 16,
+    "cols": 4,
+    "rows": 4,
+    "tile_scale": 1,
+    "hero_scale": 2,
+    "tile_fps_target": 20.0,
+    "composite_fps_target": 60.0,
+    "composite_wh": [
+      1568,
+      984
+    ],
+    "feeder_snapshot_hz_per_tile": 15.0
+  },
+  "measured": {
+    "wall_s": 30.0,
+    "restores_per_s": 245.0,
+    "rendered_tile_frames_per_s": 347.1,
+    "fps_per_tile": 20.42,
+    "render_core_fraction": 0.4062,
+    "render_core_percent": 40.62,
+    "full_mosaic_under_one_core": true
+  },
+  "pngs": [
+    "/Users/stits/Documents/macos-emulation-and-training/docs/receipts/show_lane/spectator_composite_0.png",
+    "/Users/stits/Documents/macos-emulation-and-training/docs/receipts/show_lane/spectator_composite_1.png",
+    "/Users/stits/Documents/macos-emulation-and-training/docs/receipts/show_lane/spectator_composite_2.png"
+  ],
+  "verdict": "full swarm mosaic + hero renders under one core; the solver pool stays headless at full search speed"
+}

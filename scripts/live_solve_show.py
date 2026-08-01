@@ -37,6 +37,7 @@ import json
 import sys
 import threading
 import time
+from itertools import islice
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -139,7 +140,11 @@ def default_args(**overrides) -> SimpleNamespace:
     ns = SimpleNamespace(minutes_per_level=120.0, workers=12, scale=3,
                          volume=0.6, resume=False, view="swarm",
                          audio="both", chorus_pitch="ff", chorus_voices=-1,
-                         profile=str(DEFAULT_PROFILE))
+                         profile=str(DEFAULT_PROFILE),
+                         # optional show-lane panels/effects — all OFF by
+                         # default; the base show is byte-identical unless set.
+                         heatmap=False, clips=False, fx="off",
+                         spectator_lite=False)
     for k, v in overrides.items():
         setattr(ns, k, v)
     return ns
@@ -195,13 +200,28 @@ class HeroCam(threading.Thread):
             self._next_frame_t = time.monotonic()
 
     def _emit(self):
-        self.show.frame = np.asarray(self.env.get_frame())
+        frame = np.asarray(self.env.get_frame())
+        self.show.frame = frame
         mixer = self.show.mixer
-        if mixer is not None:
+        clips = self.show.clips
+        # Audio is drained at most ONCE per emit (get_audio empties the
+        # buffer) and shared between the mixer and the clip recorder.
+        samples = None
+        if mixer is not None or clips is not None:
             try:
                 samples = self.env.get_audio()
-                if samples is not None and len(samples) > 0:
-                    mixer.push_audio(self.show.hero_voice, samples, APU_RATE)
+            except Exception:
+                samples = None
+        if mixer is not None and samples is not None and len(samples) > 0:
+            try:
+                mixer.push_audio(self.show.hero_voice, samples, APU_RATE)
+            except Exception:
+                pass
+        if clips is not None:
+            try:
+                clips.push_frame(
+                    frame,
+                    samples if (samples is not None and len(samples)) else None)
             except Exception:
                 pass
 
@@ -296,6 +316,110 @@ class Show:
             except Exception as e:
                 sys.stderr.write(f"audio unavailable (silent show): {e}\n")
 
+        # -- optional show-lane modules (all default OFF). Each is imported
+        # LAZILY inside its flag branch so the default show never executes a
+        # single line of these modules at import time — a missing/broken
+        # module can only affect a run that explicitly asked for it.
+        self.heatmap = None                # live exploration-coverage panel
+        self._HeatmapCls = None
+        self._hm_cursor = 0
+        self._hm_lock = threading.Lock()
+        if getattr(args, "heatmap", False):
+            try:
+                from scripts.show_heatmap import HeatmapRenderer
+                self._HeatmapCls = HeatmapRenderer
+                self.heatmap = HeatmapRenderer(width=512, height=128)
+            except Exception as e:
+                sys.stderr.write(f"heatmap panel unavailable: {e}\n")
+
+        self.clips = None                  # rolling hardware-encoded clips
+        if getattr(args, "clips", False):
+            try:
+                from scripts.show_clips import ClipRecorder
+                self.clips = ClipRecorder(
+                    out_dir=self.show_dir / "clips", fps=60.0,
+                    buffer_seconds=20.0, frame_shape=(240, 256, 3))
+            except Exception as e:
+                sys.stderr.write(
+                    f"clips disabled (no hardware H.264 encoder?): {e}\n")
+
+        self.spec_renderer = None          # out-of-pool swarm renderer
+        self.spec_thread = None
+        self._spec_push_t = 0.0
+        if getattr(args, "spectator_lite", False):
+            try:
+                from scripts.show_spectator import (SpectatorRenderer,
+                                                    SpectatorThread)
+                self.spec_renderer = SpectatorRenderer(
+                    self.game.rom, n_tiles=int(args.workers), cols=4,
+                    hero_scale=0, tile_fps=20.0)
+                self.spec_thread = SpectatorThread(self.spec_renderer, fps=60.0)
+                self.spec_thread.start()
+            except Exception as e:
+                sys.stderr.write(f"spectator-lite disabled: {e}\n")
+                self.spec_renderer = None
+                self.spec_thread = None
+
+    # -- optional-module plumbing (no-ops unless a flag turned one on) ----
+    def _ingest_frames(self, rs, sv) -> None:
+        """Route the swarm view. spectator-lite pushes ~21 KB save-state
+        snapshots to the out-of-pool renderer (the pool stays headless at
+        full search speed); otherwise consume the pool's worker-rendered
+        frames exactly as the base show always has."""
+        if self.spec_renderer is not None:
+            now = time.monotonic()
+            if now - self._spec_push_t >= (1.0 / 15.0):   # ~15 Hz push
+                self._spec_push_t = now
+                for i in range(len(rs)):
+                    try:
+                        blob = sv.pool.save_worker_state(i)
+                        if blob is not None:
+                            self.spec_renderer.update_slot(i, blob)
+                    except Exception:
+                        pass
+        else:
+            self.frames = [r[0] for r in rs]
+
+    def _heatmap_feed(self, sv) -> None:
+        """Stream newly-recorded archive cells into the heatmap in O(new
+        cells). The archive is append-only and only ever mutated on THIS
+        (solver) thread, so the tail past our cursor is exactly what's new —
+        read it with islice over reversed keys, never an O(archive) scan."""
+        hm = self.heatmap
+        if hm is None:
+            return
+        try:
+            cells = sv.archive.cells
+            n = len(cells)
+            with self._hm_lock:
+                delta = n - self._hm_cursor
+                self._hm_cursor = n
+                if delta <= 0:
+                    return
+                for k in islice(reversed(cells), min(delta, 20000)):
+                    hm.observe(k)
+        except Exception:
+            pass
+
+    def _heatmap_reset(self) -> None:
+        """New level/search: clear the panel to the fresh archive."""
+        if self._HeatmapCls is None:
+            return
+        with self._hm_lock:
+            self.heatmap = self._HeatmapCls(width=512, height=128)
+            self._hm_cursor = 0
+
+    def _clip_trigger(self, name: str, extra_seconds: float = 12.0) -> None:
+        """Fire a highlight-clip capture on a show event (<1 ms hand-off;
+        the encode runs on the recorder's own thread). No-op unless --clips
+        turned the recorder on."""
+        if self.clips is None:
+            return
+        try:
+            self.clips.trigger(name, extra_seconds=extra_seconds)
+        except Exception:
+            pass
+
     def _apply_mix(self, phase: str) -> None:
         """Crossfade chorus vs hero per show phase."""
         if self.mixer is None:
@@ -352,18 +476,20 @@ class Show:
         sargs.sel_mode = "legacy"
         sargs.frontier_throttle = 0
         s = Solver(sargs)
+        self._heatmap_reset()
 
         def hook(rs, sv, _self=self):
             if _self.stop:
                 sv.stop = True
-            _self.frames = [r[0] for r in rs]
+            _self._ingest_frames(rs, sv)
+            _self._heatmap_feed(sv)
             _self.status = (
                 f"re-solving {prev_level} (fresh entrance for "
                 f"{_self.level}) — {sv.steps_done/1e6:.1f}M steps, "
                 f"{len(sv.archive)} cells")
 
         s.step_hook = hook
-        s.pool.set_headless(False)
+        s.pool.set_headless(self.spec_renderer is not None)
         s.seed()
         s.explore()
         sols = sorted(out.glob("solutions/sol_*.actions.npy"))
@@ -459,6 +585,7 @@ class Show:
                 self.status = (f"{self.level}: banked solution found — "
                                "victory lap")
                 self._apply_mix("lap")
+                self._clip_trigger(f"solution_{self.level}")
                 finale = self.is_smb and self.level == SMB_FINALE_LABEL
                 self.hero.play_lap(Path(entrance).read_bytes(), actions,
                                    linger=1800 if finale else 150)
@@ -486,6 +613,7 @@ class Show:
             self.status = (f"searching {self.level} "
                            f"[attempt {attempt + 1}: {arm_name}]")
             s = Solver(sargs)
+            self._heatmap_reset()
             root_bytes = Path(entrance).read_bytes()
             cv = int(getattr(self.args, "chorus_voices", -1))
             n_voices = self.args.workers if cv < 0 else min(cv, self.args.workers)
@@ -569,7 +697,8 @@ class Show:
             def hook(rs, sv, _self=self, chorus=chorus, inst=inst):
                 if _self.stop:
                     sv.stop = True
-                _self.frames = [r[0] for r in rs]
+                _self._ingest_frames(rs, sv)
+                _self._heatmap_feed(sv)
                 if chorus:
                     pump_chorus(sv)
                 # INSTANTANEOUS sps (2s window) — the cumulative figure
@@ -588,7 +717,9 @@ class Show:
                     f"{len(sv.archive)} cells")
 
             s.step_hook = hook
-            s.pool.set_headless(False)               # render worker frames
+            # spectator-lite keeps the pool headless (frames rendered
+            # out-of-pool); otherwise the workers render their own frames.
+            s.pool.set_headless(self.spec_renderer is not None)
             s.seed()
             s.explore()
             sols = sorted(out.glob("solutions/sol_*.actions.npy"))
@@ -603,6 +734,7 @@ class Show:
             self.mode = "lap"
             self.status = f"{self.level} SOLVED — victory lap"
             self._apply_mix("lap")
+            self._clip_trigger(f"solution_{self.level}")
             finale = self.is_smb and self.level == SMB_FINALE_LABEL
             self.hero.play_lap(root_bytes, actions,
                                linger=1800 if finale else 150)
@@ -665,24 +797,59 @@ class LiveSolveWindow(QMainWindow):
         lv.setContentsMargins(0, 0, 0, 0); lv.setSpacing(0)
         lv.addWidget(self.hero_view); lv.addWidget(self.hero_tag)
 
+        # -- optional hero-cam CRT filter (--fx crt): scanlines + vignette
+        #    + bloom over the upscaled hero frame. Lazy import; on any error
+        #    the hero falls back to the raw frame (never a blank cam).
+        self._fx_fn = None
+        if getattr(args, "fx", "off") == "crt":
+            try:
+                from scripts.show_fx import crt, upscale
+                _s = int(args.scale)
+                self._fx_fn = lambda fr, _s=_s: crt(upscale(fr, _s), 1.0, _s)
+            except Exception as e:
+                sys.stderr.write(f"fx disabled: {e}\n")
+
+        # -- optional exploration-heatmap panel (--heatmap) under the hero.
+        self.heatmap_view = None
+        if self.show_state.heatmap is not None:
+            htag = QLabel("EXPLORATION — search coverage (live)")
+            htag.setStyleSheet(
+                "font-family: Menlo; font-size: 11px; padding: 2px;")
+            self.heatmap_view = QLabel()
+            self.heatmap_view.setFixedSize(256 * args.scale, 64 * args.scale)
+            self.heatmap_view.setStyleSheet("background: #06070c;")
+            lv.addWidget(htag); lv.addWidget(self.heatmap_view)
+
         self.tiles: list[QLabel] = []
+        self.spectator_view = None
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0); row.setSpacing(4)
         row.addWidget(left)
         if args.view == "swarm":
-            cols = 4
-            rows = (args.workers + cols - 1) // cols
-            tile_h = (240 * args.scale) // rows - 4
-            tile_w = int(tile_h * 256 / 240)
-            gridw = QWidget(); grid = QGridLayout(gridw)
-            grid.setContentsMargins(0, 0, 0, 0); grid.setSpacing(4)
-            for i in range(args.workers):
-                t = QLabel()
-                t.setFixedSize(tile_w, tile_h)
-                t.setStyleSheet("background: #111;")
-                grid.addWidget(t, i // cols, i % cols)
-                self.tiles.append(t)
-            row.addWidget(gridw)
+            if self.show_state.spec_renderer is not None:
+                # spectator-lite: one out-of-pool composite mosaic replaces
+                # the per-worker grid (the pool renders nothing).
+                sr = self.show_state.spec_renderer
+                tile_h = 240 * args.scale
+                lw = max(1, int(sr.W / sr.H * tile_h))
+                self.spectator_view = QLabel()
+                self.spectator_view.setFixedSize(lw, tile_h)
+                self.spectator_view.setStyleSheet("background: #111;")
+                row.addWidget(self.spectator_view)
+            else:
+                cols = 4
+                rows = (args.workers + cols - 1) // cols
+                tile_h = (240 * args.scale) // rows - 4
+                tile_w = int(tile_h * 256 / 240)
+                gridw = QWidget(); grid = QGridLayout(gridw)
+                grid.setContentsMargins(0, 0, 0, 0); grid.setSpacing(4)
+                for i in range(args.workers):
+                    t = QLabel()
+                    t.setFixedSize(tile_w, tile_h)
+                    t.setStyleSheet("background: #111;")
+                    grid.addWidget(t, i // cols, i % cols)
+                    self.tiles.append(t)
+                row.addWidget(gridw)
 
         box = QWidget(); root = QVBoxLayout(box)
         root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
@@ -718,11 +885,24 @@ class LiveSolveWindow(QMainWindow):
                 self.caption.setText(
                     "[audio muted — M to unmute]" if self._muted
                     else "[audio on]")
+        elif ev.key() == Qt.Key.Key_C:
+            # Manual highlight capture (no-op unless --clips is on).
+            st = self.show_state
+            if st.clips is not None:
+                st._clip_trigger("manual", extra_seconds=10.0)
+                self.caption.setText("[highlight clip captured]")
 
     def closeEvent(self, ev):
         self.show_state.stop = True   # progress banked; --resume continues
         if self.show_state.hero is not None:
             self.show_state.hero.stop = True
+        if self.show_state.spec_thread is not None:
+            self.show_state.spec_thread.stop = True
+        if self.show_state.clips is not None:
+            try:
+                self.show_state.clips.close()
+            except Exception:
+                pass
         self.timer.stop()
         super().closeEvent(ev)
 
@@ -730,14 +910,36 @@ class LiveSolveWindow(QMainWindow):
         st = self.show_state
         f = st.frame
         if f is not None and f.ndim == 3:
+            if self._fx_fn is not None:
+                try:
+                    f = self._fx_fn(f)
+                except Exception:
+                    f = st.frame
             self.hero_view.setPixmap(_to_pixmap(
                 f, self.hero_view.width(), self.hero_view.height()))
-        if self.tiles and st.mode == "search" and st.frames:
+        if self.spectator_view is not None:
+            comp = (st.spec_thread.latest()
+                    if st.spec_thread is not None else None)
+            if comp is not None:
+                self.spectator_view.setPixmap(_to_pixmap(
+                    comp, self.spectator_view.width(),
+                    self.spectator_view.height()))
+        elif self.tiles and st.mode == "search" and st.frames:
             for t, wf in zip(self.tiles, st.frames):
                 if wf is not None:
                     a = np.asarray(wf)
                     if a.ndim == 3:
                         t.setPixmap(_to_pixmap(a, t.width(), t.height()))
+        if self.heatmap_view is not None and st.heatmap is not None:
+            try:
+                with st._hm_lock:
+                    pm = QPixmap.fromImage(st.heatmap.qimage())
+                self.heatmap_view.setPixmap(pm.scaled(
+                    self.heatmap_view.width(), self.heatmap_view.height(),
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
+                    Qt.TransformationMode.FastTransformation))
+            except Exception:
+                pass
         hero_tags = {
             "boot": "POWER ON (real speed, live audio)",
             "search": "HERO CAM — current best attempt (real speed, live audio)",
@@ -773,6 +975,27 @@ def main() -> int:
                     help="How many workers sing: -1 = all (default; "
                          "~14%% throughput cost), N = first N, 0 = none")
     ap.add_argument("--resume", action="store_true")
+    # -- optional show-lane panels/effects (all OFF by default; the show is
+    #    byte-identical to the base experience unless one is turned on) -----
+    ap.add_argument("--heatmap", action="store_true",
+                    help="Add a live exploration-heatmap panel below the hero "
+                         "cam: the Go-Explore search's coverage of the current "
+                         "level (visit intensity + hot frontier trails), reset "
+                         "per level. Off by default.")
+    ap.add_argument("--clips", action="store_true",
+                    help="Record hardware-encoded highlight .mp4 clips of the "
+                         "hero cam on each solution (and on the C key) into "
+                         "<show_dir>/clips. Needs ffmpeg with "
+                         "h264_videotoolbox; disables itself cleanly if absent.")
+    ap.add_argument("--fx", choices=("off", "crt"), default="off",
+                    help="off = raw frames; crt = scanline/vignette/bloom CRT "
+                         "filter on the hero cam only (numpy shader, a few "
+                         "ms/frame). Swarm tiles are untouched.")
+    ap.add_argument("--spectator-lite", action="store_true",
+                    help="Render the swarm mosaic OUTSIDE the pool from "
+                         "save-state snapshots so the pool stays headless at "
+                         "full search speed, instead of paying the "
+                         "worker-render tax. Off by default.")
     args = ap.parse_args()
     app = QApplication(sys.argv)
     win = LiveSolveWindow(args)

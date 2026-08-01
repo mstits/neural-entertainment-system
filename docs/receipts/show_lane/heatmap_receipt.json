@@ -1,0 +1,47 @@
+{
+  "generated": "2026-07-31T22:47:19",
+  "archive": "/Users/stits/Documents/macos-emulation-and-training/runs/breadth_contra/stage1_v6_resume/archive.pkl",
+  "archive_bytes": 13851633222,
+  "cells_requested": 50000,
+  "cells_loaded": 50000,
+  "feed_order": "discovery",
+  "cold_start_load_seconds": 0.752,
+  "peak_rss_mb_after_load": 95.0,
+  "peak_rss_mb_final": 106.4,
+  "grid": [
+    512,
+    32
+  ],
+  "surface": [
+    512,
+    240
+  ],
+  "gx_bucket_range": [
+    0,
+    384
+  ],
+  "y_band_range": [
+    0,
+    31
+  ],
+  "areas": [
+    0
+  ],
+  "frames_rendered": 600,
+  "events_replayed": 49800,
+  "events_per_frame": 83,
+  "render_only_seconds": 0.754,
+  "render_only_fps": 795.8,
+  "avg_render_ms": 1.2567,
+  "p50_render_ms": 1.242,
+  "p99_render_ms": 1.6637,
+  "max_render_ms": 2.6791,
+  "combined_feed_plus_render_fps": 728.1,
+  "target_fps": 60,
+  "meets_target": true,
+  "pngs": {
+    "early": "/Users/stits/Documents/macos-emulation-and-training/docs/receipts/show_lane/heatmap_early.png",
+    "mid": "/Users/stits/Documents/macos-emulation-and-training/docs/receipts/show_lane/heatmap_mid.png",
+    "late": "/Users/stits/Documents/macos-emulation-and-training/docs/receipts/show_lane/heatmap_late.png"
+  }
+}

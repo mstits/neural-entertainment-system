@@ -1,0 +1,78 @@
+{
+  "what": "Integration of four show-lane modules into scripts/live_solve_show.py, each behind an OFF-by-default flag. Default (no flags) path is byte-identical to the base show.",
+  "git_commit_at_test": "c9d3d95",
+  "integration_point": "scripts/live_solve_show.py",
+  "modules_wired": {
+    "heatmap": {
+      "flag": "--heatmap",
+      "status": "WIRED",
+      "how": "HeatmapRenderer(512x128) panel under the hero cam. Fed in the solver step hook via Show._heatmap_feed(sv): the Go-Explore archive is append-only and mutated only on the solver thread, so new cells are streamed in O(new) with islice(reversed(archive.cells), delta) past a cursor — never an O(archive) scan. Reset per level (Show._heatmap_reset) at each Solver construction. Rendered on the Qt timer under a lock shared with the feed.",
+      "cell_key_contract": "key=(sect,tb,kk,psig,loops,route_sig)+cell_fn(ram); heatmap reads key[0]=sect, key[-2]=y_band, key[-1]=gx_bucket (SMB cell_fn tail=(area,phase,vsign,y_band,gx_bucket)) — game-agnostic on those indices."
+    },
+    "clips": {
+      "flag": "--clips",
+      "status": "WIRED",
+      "how": "ClipRecorder(out_dir=<show_dir>/clips, fps=60, buffer 20s). Hero-cam frames+audio pushed every HeroCam._emit (audio drained once, shared with the mixer). trigger() fired on each solution (fresh + banked paths) and on the C key. Constructor failure (no ffmpeg) is caught -> recorder stays None, show unaffected."
+    },
+    "fx": {
+      "flag": "--fx crt",
+      "status": "WIRED",
+      "how": "crt(upscale(frame, scale), 1.0, scale) applied to the HERO cam only in _render, before _to_pixmap. Swarm tiles untouched. Any fx error falls back to the raw frame (hero never blanks)."
+    },
+    "spectator_lite": {
+      "flag": "--spectator-lite",
+      "status": "WIRED",
+      "how": "SpectatorRenderer(n_tiles=workers, hero_scale=0) + SpectatorThread render the swarm mosaic OUTSIDE the pool. Pool is set_headless(True) during search; Show._ingest_frames pushes pool.save_worker_state(i) -> renderer.update_slot(i) throttled to ~15 Hz. The mosaic composite replaces the per-worker QLabel grid in one QLabel; the base grid is still built when the flag is off.",
+      "note": "No pool changes were needed: set_headless(True) and save_worker_state are the solver's native fast path (used internally already). Not stubbed."
+    }
+  },
+  "default_off_invariant": {
+    "verified": true,
+    "checks": [
+      "importing scripts.live_solve_show imports NONE of scripts.show_{heatmap,spectator,clips,fx} (lazy imports inside flag branches)",
+      "default_args() -> heatmap=False clips=False fx=off spectator_lite=False",
+      "constructing the window with all flags off: heatmap/clips/spec_renderer all None, _fx_fn None, spectator_view/heatmap_view None, per-worker tile grid still built",
+      "_emit/_render/_ingest_frames off-branches reproduce the pre-change behavior exactly"
+    ]
+  },
+  "smoke": {
+    "platform": "QT_QPA_PLATFORM=offscreen, .venv/bin/python, M4, alongside the running 10-worker Contra solver",
+    "pool_size": 2,
+    "profile": "SMB power-on boot (configs/smb_4_4_micro.yaml, no solve: section)",
+    "off_run": {
+      "result": "PASS",
+      "asserts": "no show_* import; all optional handles None; base tile grid built; a few Qt render ticks + screenshot with no exception",
+      "screenshot": "docs/receipts/show_lane/integration_smoke_off.png"
+    },
+    "on_run": {
+      "result": "PASS",
+      "flags": "--heatmap --clips --fx crt --spectator-lite",
+      "observed": {
+        "clips_backend": "ffmpeg_videotoolbox",
+        "solved_live": "1-1 cleared from cold power-on (814-action solution), advanced toward 1-2",
+        "heatmap_events_streamed": "1796 (then dropped to 1145 after the per-level reset on level advance — confirms feed + reset)",
+        "spectator_restores": 330,
+        "spectator_frame_present": true,
+        "clip_frames_buffered": 912,
+        "clips_written": [
+          "solution_1-1_*.mp4 (h264 256x240 + aac, ffprobe duration 15.28s)",
+          "smoke_manual_*.mp4 (C-key trigger)"
+        ],
+        "fx": "CRT scanlines+vignette visible on the hero cam in the screenshot"
+      },
+      "screenshot": "docs/receipts/show_lane/integration_smoke_on.png"
+    }
+  },
+  "module_demo_receipts": {
+    "heatmap": "docs/receipts/show_lane/heatmap_receipt.json",
+    "spectator": "docs/receipts/show_lane/spectator_receipt.json",
+    "clips": "docs/receipts/show_lane/clips_receipt.json",
+    "fx": "docs/receipts/show_lane/fx_receipt.json"
+  },
+  "remaining_risks": [
+    "Frontier-record auto-clips are intentionally NOT wired: the frontier advances many times per level, which would spam mp4s. Clips fire on solution + manual C key only. Add a debounced frontier trigger later if desired.",
+    "spectator-lite mosaic replaces the per-worker grid with a single composite; it renders K extra emulators on a spare core (design intent). Verified with 2 tiles; the full 12-worker mosaic was not load-tested here to avoid contending with the live Contra solver.",
+    "--fx crt at scale 3 costs ~5ms/frame on the hero (module-measured); the 60fps Qt timer has headroom but this is the hero tile only.",
+    "Heatmap feed holds a short lock while observing up to 20000 new keys per drain (bounded); normal per-tick delta is tiny."
+  ]
+}
