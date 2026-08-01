@@ -65,7 +65,12 @@ action_space:
   - ["right", "A"]            # right-jump
   - ["right", "A", "B"]       # run-jump-fire
   - ["up", "B"]               # shoot up
-  - ["down"]                  # prone
+  - ["down"]
+  # Prone fire: the base-wall core sits recessed at ground level behind a
+  # ledge lip (strike-film receipt 2026-07-31); the original set had no
+  # down+B so the solver structurally could not fire prone. Generic
+  # controller completeness, same rationale as CV's plain "up".
+  - ["down", "B"]                  # prone
 
 curriculum:
   stage_1: ["*"]
@@ -151,6 +156,12 @@ solve:
   # (type 54 hp 3->0, type ->0 on destruction) and wall-vs-pre-wall
   # corpus (54/55/68 present in 50-101 of 600 wall cells, <=2 of 600
   # pre-wall). Soldiers (33/44/45) share the slots — hence typed.
+  # Core open-window phase bit (pixel-phase mining receipt
+  # runs/breadth_contra/pixel_phase_receipt.json: exposed palette when
+  # $001A % 16 in 7..14; MI 0.53 vs 0.006 null, accuracy 0.997).
+  # Keyed into cells so window-timed fire trajectories are archivable.
+  state_sig:
+    - {addr: 0x001A, mod: 16, match: [7, 8, 9, 10, 11, 12, 13, 14]}
   boss_typed:
     type_addrs: [0x0311, 0x0312, 0x0313, 0x0314]
     hp_addrs: [0x04BF, 0x04C0, 0x04C1, 0x04C2]

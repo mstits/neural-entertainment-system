@@ -252,8 +252,13 @@ class GenericGame:
         # lesson: stair-climb states share (gx, y-band) with jump apexes,
         # tie-break to fewer steps, and the airborne dead-end wins the
         # cell; the staircase stays structurally invisible to the archive.
+        # Optional 'mod': the bit tests (ram[addr] % mod) in match —
+        # for PHASE observables (e.g. Contra's core open-window: frame
+        # counter $001A % 16 in 7..14, discovered by pixel-phase mining
+        # 2026-07-31, MI 0.53, accuracy 0.997). mod=0/absent = raw value.
         self._state_sig = [(int(e["addr"]),
-                            frozenset(int(v) for v in e.get("match", ())))
+                            frozenset(int(v) for v in e.get("match", ())),
+                            int(e.get("mod", 0)))
                            for e in s.get("state_sig", ())]
         # Room signature (optional): `room_sig: [addr,...]` — bytes stable
         # within a room and different across rooms (found by before/after
@@ -299,8 +304,9 @@ class GenericGame:
         else:
             hp = 0
         sig = 0
-        for i, (a, m) in enumerate(self._state_sig):
-            if int(ram[a]) in m:
+        for i, (a, m, md) in enumerate(self._state_sig):
+            v = int(ram[a]) % md if md else int(ram[a])
+            if v in m:
                 sig |= 1 << i
         return (self.area(ram), hp, sig,
                 self.y(ram) // Y_BAND, self.progress(ram) // GX_BUCKET)
