@@ -1,0 +1,80 @@
+{
+  "task": "Contra stage-1 base-wall TRUE weak-point sweep (observation only)",
+  "date": "2026-08-01",
+  "method": "player-bullet despawn tracking (bright red-orange dots R>200,40<G<140,B<100; per-frame connected-component clustering; left-to-right track linking; despawn = last position of a rightward track) + deterministic fire-vs-nofire RAM differential + sustained aimed bursts reading semantic RAM. One env (nes_core.NESEnvironment frame_skip=1), ~2 cores.",
+  "archive": {
+    "path": "runs/breadth_contra/stage1_v7b_doctrine/archive.pkl",
+    "cells_total": 2087424,
+    "cell_key_layout": "(sect,tb,kk,psig,loops,route_sig)+(area,hp,sig,y_band,gx_bucket); gx=key[-1]*8, y_band=key[-2], kk=key[2]",
+    "wall_cells_gx_ge_3064": 1043760,
+    "wall_cells_kk_ge_13": 52963,
+    "global_max_gx": 3072,
+    "global_max_player_x_0x0334": 194,
+    "global_max_player_x_at_gx": 2632,
+    "note_max_px": "sprite-x 194 only occurs mid-scroll pre-wall (gx 2632). AT the wall (gx>=3064) player sprite-x tops out at ~136-143 (dominant bucket 136, n=9244)."
+  },
+  "sweep": {
+    "states_probed": 93,
+    "y_bands": "0..25 (py 0..205); useful firing heights py 21..205",
+    "poses": ["stand+B", "run-fire(right+B)", "prone(down+B)", "jump-fire(right+A-cycle+B)", "up-diagonal(up+right+B)"],
+    "frames": 50427,
+    "player_deaths_ending_volleys": 400,
+    "volleys_total": 465,
+    "bullet_tracks": 178593,
+    "red_bursts": 34732,
+    "despawn_zones": {"CORE": 83458, "SHORT": 44604, "LOWER": 26407, "UPPER": 6039, "PASS": 4472, "TURRET": 4462, "STRUCT": 4359, "OTHER": 4792},
+    "burst_zones": {"CORE": 21801, "SHORT": 11551, "UPPER": 717, "LOWER": 375, "TURRET": 146, "STRUCT": 87, "OTHER": 55},
+    "zone_geometry_px": {
+      "CORE": "x148-186 y144-192 (X-plated green-glow core / wall face)",
+      "TURRET": "x138-204 y98-146 (mid-wall turret box)",
+      "UPPER": "x144-214 y34-98 (tall upper structure)",
+      "LOWER": "x138-204 y192-214 (wall base at ground)",
+      "PASS": "x>=220 (bullet flew past all structure to right edge)"
+    },
+    "coverage_conclusion": "player fire from banked positions REACHES and collides with every wall locus at every launch height: core, turret box, upper structure, lower base all struck (confirmed by despawns AND hit-spark bursts landing on them)."
+  },
+  "ram_correlation": {
+    "naive_impact_window_method": "REJECTED as confounded: 124725 struct-impact events over 50427 frames -> +/-2 windows cover ~every frame, so byte_change_impact == byte_change_total for the object array; cannot discriminate.",
+    "deterministic_fire_vs_nofire_differential": {
+      "impact_volleys": 279,
+      "firing_signature_bytes_all_volleys": ["0x00F1", "0x00F5", "0x00F9", "0x0004"],
+      "firing_signature_meaning": "player bullet array (stride-4 slots F1/F5/F9) + bullet counter 0x0004; appear whenever firing regardless of target",
+      "sky_control_divergent_bytes": 4,
+      "sky_control_addrs": ["0x0004", "0x00F1", "0x00F5", "0x00F9"],
+      "frame_counter_0x0000": "evolves IDENTICALLY fire vs nofire (178->178) -> firing does NOT perturb RNG; the ~427 divergent bytes near the wall are OAM sprite-shadow + bullet-object churn, not RNG cascade and not wall damage",
+      "score_0x07E2_0x07E7": "NEVER diverges fire-vs-nofire in ANY of 279 volleys or any focused scenario",
+      "enemy_HP_0x04BF_0x04C2": "never a fire-driven monotone decrement; ends identical fire/nofire; oscillates 0-4 (config-noted slot cycling)",
+      "idents_0x058F_0x0592": "change identically in fire and nofire (enemy-array cycling {1,5}); never cleared to 0 by fire",
+      "boss_flag_0x003B__level_0x0030__screen_0x0064": "never diverge / stay flat (0,0,12) under fire"
+    },
+    "score_positive_control": {
+      "test": "fire from Contra start state at real early enemies",
+      "result": "score bytes [0,0,0,0,0,0] -> CHANGED (score-byte-sum rose to 4)",
+      "conclusion": "score detector proven to register real kills; its flatness at the wall is a true negative, not a dead read"
+    },
+    "sustained_burst_at_loci": {
+      "loci_tested": ["TURRET b16 horiz", "TURRET b15 horiz", "TURRET b14 up+B", "CORE b22 horiz", "LOWER b24 horiz", "UPPER b22 up+B"],
+      "score_changed_by_fire": false,
+      "boss_level_screen": "flat at every locus",
+      "hp_0x04BF_0x04C2": "oscillate 0-4 (slot cycling), never monotone-to-terminal under fire",
+      "weapon_0x00AA_16_to_0": "tracks PLAYER DEATH (turret return-fire), not a wall hit"
+    },
+    "hidden_destructible_HP_scan": {
+      "criterion": "any of 2048 bytes strictly non-increasing under FIRE, net drop>=2 to a held terminal, NOT the same under NOFIRE (deterministic frame-lock)",
+      "clean_horizontal_tests_CORE_LOWER_TURRET_b15_b16": "0 genuine candidates (false positives identical in fire/nofire: 0x0017,0x051D,0x00E8; generic timer 0x0083)",
+      "movement_pose_candidates": "0x0334 (PLAYER sprite-x), 0x0344/0x0345, 0x0312 -> player-position contamination from holding UP, not wall HP; accompanied by ZERO score",
+      "conclusion": "no destructible wall-HP byte exists (a killable target that awards no points is also ruled out)"
+    }
+  },
+  "verdict": "NEGATIVE — no shot-reachable weak point at the Contra stage-1 base wall from any of the 2.08M banked archive positions. Bullets reach and collide with every locus (X-plated core, mid-wall turret box, upper structure, lower base) at every launch height and every attack pose, but produce ZERO destructible response: no score increment (detector proven working), no monotone HP decrement to terminal, no ident clear, no boss-flag/level/screen transition. The core, turret box, and upper structure are inert scenery to player fire. The ONLY RAM that ever responds to the wall fight is lives (0x0032), decremented by the turret's return fire.",
+  "never_achieved_geometry": {
+    "scroll_gate": "progress hard-capped: global_max_gx=3072 across ALL 2.08M cells; no cell has ever breached the wall.",
+    "position_right_of_wall_face": "player sprite-x (0x0334) at the wall never exceeds ~143; the player has NEVER stood on or right of the wall face (x144-168), never on top of the tower.",
+    "sustained_fire": "player cannot survive stationary at the wall: 400/465 volleys ended in death (turret/enemy return fire kills in ~80-136 frames); only the lowest ground position firing horizontally into the core survived a 200-frame window. Grinding a target across many hits is not possible from banked positions.",
+    "implication": "the base wall is a scroll-gate whose defeat is not shot-reachable from any geometry the archive discovered. If a true destructible exists, it lies in the unreached region (right-of/on-top-of the structure, or under sustained fire the player cannot currently survive)."
+  },
+  "receipts": {
+    "impact_map_png": "docs/receipts/breadth_contra/impact_map.png",
+    "launch_vs_despawn_png": "docs/receipts/breadth_contra/launch_vs_despawn.png"
+  }
+}
