@@ -1,0 +1,43 @@
+{
+  "game": "Mega Man 2 (USA)",
+  "rom": "roms/Mega Man 2 (USA).nes",
+  "start_state": "roms/Mega Man 2 (USA)_start.state.bin",
+  "method": "differential RAM analysis of OUR OWN scripted rollouts only (no external RAM map). frame_skip 4, headless Pool; full 2048-byte RAM captured every step. Provisional partials from prior probing were RE-VERIFIED here, not trusted blindly.",
+  "start_state_context": {
+    "stage": "a robot-master stage with a rightward conveyor belt at the entrance (Metal Man's stage per the profile)",
+    "conveyor_evidence": "under PURE NOOP the horizontal position bytes ($0016/$0018/$001A/$0460/$054C) all increment steadily while Y ($002E) stays 164 (grounded) -- MM is carried right while standing still. Lives ($00A8) even drops 3->2 during the 200-step NOOP probe: the conveyor delivers a standing MM into a hazard.",
+    "reachable_region": "random/greedy right-biased play (8-worker restore-explore beam, ~720k steps) plateaus at cumulative rightward displacement ~424 px (~1.7 screen-widths) then every trajectory dies -- a hard hazard wall. First death occurs by step ~88 (~6 s) under NOOP, hold-right, and random inputs alike. => small reachable strip; level_key left [] as a coverage baseline."
+  },
+  "confirmed": {
+    "progress": {
+      "spec": "{lo: 0x0460, hi: 0x0440}  ->  progress = ram[0x0460] | (ram[0x0440] << 8)",
+      "meaning": "MegaMan absolute X position. 0x0460 = X low byte (screen-relative, wraps 255->0 per screen), 0x0440 = X high byte (screen/page index, steps 0->1->2 across the reachable strip).",
+      "monotone_through_stage_test": "PASS. Trajectory-anchored depth ladder of 7 states at independently-measured cumulative displacement [63,127,191,255,319,383,424] px. The odometer (0x0440<<8 | 0x0460) reads [191,255,319,383,447,511,552] -- strictly monotone AND exactly equals cum+128 (a constant 128-px start offset) at every rung, byte-for-byte. So the RAM odometer IS the true absolute X.",
+      "gameplay_locked_wrap_test": "PASS. 0x0460 wraps 255->63 EXACTLY when 0x0440 steps 0->1 (a real screen advance); the low byte never wraps without the high byte incrementing. This is a position odometer, not a clock.",
+      "cum_displacement_derivation": "wrap-aware signed sum of d(0x0460) along each rollout (forward_delta = ((new-old+128) mod 256) - 128), frozen at death; a pure property of our own motion."
+    },
+    "y": {
+      "addr": "0x002E",
+      "test": "PASS. stand+jump probe (A pressed in bursts): 0x002E reads 164 grounded, dips to 114 at the jump apex, returns to 164 -- ballistic, matches the receipted partial (ground ~164, apex ~114). 0x002F is the Y subpixel/fraction (0 grounded, ramps during the arc)."
+    },
+    "lives": {
+      "addr": "0x00A8",
+      "test": "PASS. reads 3 at start; decrements 3->2->1->0 at deaths across every rollout (random-run lives-drop step indices: 88, 244, 405). Robust death signal; GenericGame.is_dead checks lives<start_lives first."
+    }
+  },
+  "rejected": {
+    "0x001C / 0x00EA (frame counter)": "REJECTED as progress. Wraps 255->0 on a FIXED 64-frame cadence in BOTH the stand and hold-right probes, independent of screen motion -- a free-running clock, not a scroll byte (fails the gameplay-locked-wrap test).",
+    "0x0016 / 0x0018 / 0x001A (camera/scroll group)": "NOT chosen as progress. These track motion too (camera X in a ~1/4 scale: +1 per +4 of 0x0460) and 0x0018 is perfectly monotone with depth here, but their high bytes (0x0017/0x0019) sit constant at 132/133 and the low bytes did not form a clean absolute odometer in the reachable strip. 0x0440/0x0460 is the cleaner player-absolute odometer (matches true displacement byte-exact), so it was preferred.",
+    "0x054C (sprite shadow)": "NOT chosen. Moves with MM (+4/step, wraps ~every screen) but has no clean high-byte partner (odometers with 0x0440/0x045F were non-monotone) -- it is a sprite-render X shadow, not the player position of record.",
+    "0x045F": "NOT chosen as the progress high byte. It also steps 0->1->2 with depth, but the odometer (0x045F<<8|0x0460) was NON-monotone (offset mismatch); 0x0440 is 0x0460's true partner.",
+    "player_state / death byte": "NONE confirmed clean. Candidates from a post-death scan: 0x0020 (1 during active play, 0 in death frames) -- but it is ALSO 0 at spawn/intro, so 0x0020==0 would fire is_dead at episode start (false positive). 0x002A (5 live, 6 in death frames) covers only ~72% of post-death frames and is not confirmed absent in live play. Both unsafe as death_states; omitted. Death detection uses the lives decrement (0x00A8), which is unambiguous."
+  },
+  "solve_section_written": {
+    "progress": {"lo": "0x0460", "hi": "0x0440"},
+    "y": "0x002E",
+    "lives": "0x00A8",
+    "level_key": [],
+    "player_state": "omitted (no clean byte)",
+    "death_states": "omitted"
+  }
+}

@@ -91,3 +91,33 @@ reinforce:
   value_loss: huber
   rnd_intrinsic_coef: 0.5
   rnd_loss_coef: 1.0
+
+# Solver adapter (Observatory v2 bootstrap, 2026-08-01). Addresses discovered
+# by differential analysis of OUR OWN scripted rollouts from the start state
+# (no external RAM map). Full evidence: runs/megaman/mm2_observables_receipt.json.
+# NOTE: the ram_mapping block above is the datacrystal-derived TRAINING map and
+# is deliberately NOT reused here -- these solve addresses are independently
+# receipted. y and lives happen to agree with the receipted partials; progress
+# is the newly-confirmed player-absolute-X odometer.
+solve:
+  rom: "roms/Mega Man 2 (USA).nes"
+  # progress = MegaMan absolute X = ram[0x0460] | (ram[0x0440] << 8).
+  # 0x0460 = X low byte (screen-relative, wraps 255->0 per screen); 0x0440 =
+  # X high byte (screen/page index). Confirmed monotone: on a 7-state depth
+  # ladder the odometer == independently-measured cumulative displacement + 128
+  # byte-for-byte, and 0x0460 wraps EXACTLY when 0x0440 increments (gameplay-
+  # locked-wrap test PASS). Rejected the frame counter 0x001C/0x00EA (fixed
+  # 64-frame wrap cadence, motion-independent).
+  progress: {lo: 0x0460, hi: 0x0440}
+  # 0x002E = MegaMan Y (ballistic): 164 grounded, 114 at jump apex.
+  y: 0x002E
+  # level_key EMPTY = coverage baseline. No stage/room advance byte is receipted
+  # yet (the start-state strip is a single robot-master stage; a room counter
+  # would be discovered from deep arrival states before chaining).
+  level_key: []
+  # 0x00A8 = lives (3 at start, decrements 3->2->1->0 at deaths). Death signal.
+  lives: 0x00A8
+  # player_state/death_states OMITTED: no clean death byte confirmed. 0x0020
+  # (alive flag) is also 0 at spawn; 0x002A (5 live / 6 death) covers only ~72%
+  # of death frames -- both risk false is_dead at episode start. The lives
+  # decrement is the unambiguous death detector.
