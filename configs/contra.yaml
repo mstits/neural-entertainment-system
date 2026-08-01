@@ -133,3 +133,32 @@ solve:
   lives: 0x0032
   player_state: 0x002C
   death_states: [1, 2]
+  # Enemy object array (provisional, 2026-07-31): state bytes at
+  # $0368 + k*$10 span the stride-$20 object array plus its interleaved
+  # phase; fire-vs-idle probe receipt (20 wall/pre-wall cells x 100
+  # steps): nonzero->zero transitions 36-44 under fire vs 5-7 idle per
+  # slot byte. Feeds --kill-key so the base-wall fight (fixed camera,
+  # progress-invisible: frontier pinned at 3072 for 45 min in the v2
+  # coverage baseline) gets a searchable kill dimension.
+  entity_slots: {lo: 0x0311, hi: 0x0315}
+  # Local kill counting (see solver comment): cumulative kk saturates on
+  # run-and-gun stages; local kk counts kills since the last progress
+  # high-water mark = the fight itself at a fixed-camera wall.
+  kill_key_local: true
+  # Type-conditioned wall health (causal receipts 2026-07-31): entity
+  # types at $0311-$0314, per-slot HP at $04BF-$04C2; wall hardware =
+  # types 54/68 (guns) + 55/56 (sensor/core), receipted by fire test
+  # (type 54 hp 3->0, type ->0 on destruction) and wall-vs-pre-wall
+  # corpus (54/55/68 present in 50-101 of 600 wall cells, <=2 of 600
+  # pre-wall). Soldiers (33/44/45) share the slots — hence typed.
+  boss_typed:
+    type_addrs: [0x0311, 0x0312, 0x0313, 0x0314]
+    hp_addrs: [0x04BF, 0x04C0, 0x04C1, 0x04C2]
+    types: [54, 55, 56, 68]
+    start: 12
+  # Sustained-fire holds: stochastic sampling rarely emits the long
+  # aimed bursts the base fight wants (same generic mechanism as CV
+  # stair-mount up-holds).
+  hold_macros:
+    - {buttons: ["B", "right"], steps: 16, p: 0.03}
+    - {buttons: ["B"], steps: 12, p: 0.01}

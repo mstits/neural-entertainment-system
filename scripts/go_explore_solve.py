@@ -233,6 +233,19 @@ class GenericGame:
         b = s.get("boss") or {}
         self._boss_hp = int(b["hp"]) if "hp" in b else None
         self._boss_start = int(b.get("start", 255))
+        # Type-conditioned boss health (object-array engines): slots are
+        # SHARED between fight objects and respawning mobs (Contra base:
+        # wall guns type 54/68 + sensor 55 alternate with soldiers 33/44
+        # in $0311-$0314; per-slot HP at $04BF-$04C2, causal fire receipt
+        # 2026-07-31). hp = sum of hp_addrs[i] where type_addrs[i] holds
+        # a listed type; reads as `start` when no fight object is live
+        # (pre-wall AND post-destruction — the transit machinery owns the
+        # post state).
+        bt = s.get("boss_typed") or {}
+        self._bt_types = frozenset(int(t) for t in bt.get("types", ()))
+        self._bt_addrs = list(zip((int(a) for a in bt.get("type_addrs", ())),
+                                  (int(a) for a in bt.get("hp_addrs", ()))))
+        self._bt_start = int(bt.get("start", 12))
         # Movement-mode signature (optional): `state_sig: [{addr, match}]`.
         # Each entry contributes one bit: ram[addr] in match. Separates
         # aliased player modes at the same coordinates — the CV block-3
@@ -270,11 +283,21 @@ class GenericGame:
     def swim(self, ram) -> int:
         return 0
 
+    def _typed_hp(self, ram) -> int:
+        live = [int(ram[h]) for t, h in self._bt_addrs
+                if int(ram[t]) in self._bt_types]
+        return sum(live) if live else self._bt_start
+
     def cell_fn(self, ram) -> tuple:
         # Same arity as SMB's cell (selection caches index key[-5]/key[-1];
         # boss HP and the mode bits ride in free middle slots so those
         # stay intact).
-        hp = int(ram[self._boss_hp]) if self._boss_hp is not None else 0
+        if self._bt_addrs:
+            hp = self._typed_hp(ram)
+        elif self._boss_hp is not None:
+            hp = int(ram[self._boss_hp])
+        else:
+            hp = 0
         sig = 0
         for i, (a, m) in enumerate(self._state_sig):
             if int(ram[a]) in m:
@@ -286,6 +309,8 @@ class GenericGame:
         # Damage dealt dominates within-room gx differences (a whip hit is
         # worth more frontier than any sidestep) without touching the
         # cross-room score ordering scale.
+        if self._bt_addrs:
+            return max(0, self._bt_start - self._typed_hp(ram)) * 2000
         if self._boss_hp is None:
             return 0
         return max(0, self._boss_start - int(ram[self._boss_hp])) * 2000
@@ -421,8 +446,14 @@ class Solver:
         # prerequisite/kill-count gates become a searchable dimension.
         self.time_bins = bool(getattr(args, "time_bins", False))
         self.kill_key = bool(getattr(args, "kill_key", False))
+        self.kill_key_local = bool(
+            (profile.get("solve", {}) or {}).get("kill_key_local", False))
         eslots = (profile.get("solve", {}) or {}).get("entity_slots")
-        self.entity_slots = (range(int(eslots["lo"]), int(eslots["hi"]))
+        # Optional stride: object-array engines (Contra: state bytes at
+        # $0368 + k*$20) space their per-entity flags; contiguous ranges
+        # (CV: $0450..$0457) are stride 1, the default.
+        self.entity_slots = (range(int(eslots["lo"]), int(eslots["hi"]),
+                                   int(eslots.get("stride", 1)))
                              if eslots else None)
         self._key_ids: dict = {}          # cell key -> int id (interned)
         self._adj: dict = {}              # id -> set of neighbor ids
@@ -915,9 +946,24 @@ class Solver:
                     _es = tuple(int(ram[a]) for a in self.entity_slots)
                     pes = c.get("eslots")
                     if pes is not None:
+                        # nonzero->zero: CV's slots are 0/1 flags (same
+                        # result); object-array engines (Contra) hold
+                        # state values, so ==1 missed most despawns.
                         c["kills"] = c.get("kills", 0) + sum(
-                            1 for p, q in zip(pes, _es) if p == 1 and q == 0)
+                            1 for p, q in zip(pes, _es) if p != 0 and q == 0)
                     c["eslots"] = _es
+                    # Local mode: reset the counter whenever the
+                    # trajectory sets a new progress high-water mark.
+                    # Run-and-gun games kill constantly — cumulative kk
+                    # saturates its cap long before the wall (Contra v3:
+                    # 92% of cells at kk=15, ALL wall cells capped =
+                    # zero gradient exactly where the fight is). With
+                    # the reset, kk counts kills SINCE progress froze —
+                    # at a fixed-camera fight, that IS the fight.
+                    if self.kill_key_local:
+                        if _lgx <= cap and _lgx > c.get("kk_max_gx", -1):
+                            c["kk_max_gx"] = _lgx
+                            c["kills"] = 0
                 _rid = game.room_id(ram)
                 _transit = (c["p0750"] is not None and _rid != c["p0750"])
                 if _transit and c["sect"] < 16:
