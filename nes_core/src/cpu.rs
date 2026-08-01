@@ -1852,6 +1852,44 @@ impl Cpu {
         self.hw_mmio_write_timing && (0x2000..=0x3FFF).contains(&self.addr_abs)
     }
 
+    /// Sub-cycle bus-catch-up hook (event-driven PPU Stage 3). Returns
+    /// `Some(is_write)` when the CPU is poised to run the FINAL cycle of
+    /// an absolute-mode load/store whose deferred bus access targets a
+    /// PPU-observable register ($2000-$3FFF) or `$4014` OAM DMA — i.e.
+    /// the next `Cpu::tick` will perform that access through a late-commit
+    /// handler (`abs_late_ppu_read_*` / `*_abs_4014_late_write`).
+    /// Otherwise `None`.
+    ///
+    /// `Nes::tick` queries this BEFORE `cpu.tick` so it can hold the PPU
+    /// at the exact intra-cycle dot the access samples instead of the end
+    /// of the CPU cycle. It only fires on the deferred-access cycle the
+    /// `hw_mmio_read_timing` / `hw_mmio_write_timing` (and always-deferred
+    /// `$4014`) machinery already pins, inheriting that exact-cycle
+    /// placement and adding only the dot offset within the cycle. With
+    /// those flags OFF a PPU-register access is early-committed at cycle 0
+    /// (`cycle_zero_early_commit`) and this returns `None`, so the legacy
+    /// end-of-cycle timing is untouched.
+    #[inline]
+    pub(crate) fn pending_deferred_ppu_access(&self) -> Option<bool> {
+        let instr = self.instruction?;
+        // The late-commit handler is the last entry in the cycle table;
+        // `Cpu::tick` runs it on the tick it enters with
+        // `cycle == cycles.len()` (see `Cpu::tick` dispatch).
+        if self.cycle as usize != instr.base_cycles() {
+            return None;
+        }
+        match self.opcode {
+            // LDA/LDX/LDY/BIT $abs — deferred PPU-register reads.
+            0xAD | 0xAE | 0xAC | 0x2C if self.defer_ppu_read() => Some(false),
+            // STA/STX/STY $abs — deferred PPU-register writes and the
+            // always-deferred `$4014` OAM DMA arm.
+            0x8D | 0x8E | 0x8C if self.defer_ppu_write() || self.addr_abs == 0x4014 => {
+                Some(true)
+            }
+            _ => None,
+        }
+    }
+
     /// Final-cycle handlers for the deferred PPU-register reads — the
     /// read-side mirror of `sta_abs_4014_late_write`. When the read
     /// was NOT deferred (flag off or non-PPU target) these are noops:

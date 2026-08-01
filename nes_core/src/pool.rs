@@ -1189,6 +1189,28 @@ impl Pool {
         }
     }
 
+    /// Sub-cycle bus-access dot offset for deferred PPU-register READS on
+    /// every worker — single-env mirror is
+    /// `NESEnvironment::set_ppu_read_dot_offset` (event-driven PPU
+    /// Stage 3). 0..=2 (clamped); default 2 = byte-identical.
+    fn set_ppu_read_dot_offset(&self, offset: u8) {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.ppu_read_dot_offset = offset.min(2);
+        }
+    }
+
+    /// Write-side mirror of `set_ppu_read_dot_offset` on every worker —
+    /// single-env mirror is `NESEnvironment::set_ppu_write_dot_offset`.
+    fn set_ppu_write_dot_offset(&self, offset: u8) {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.ppu_write_dot_offset = offset.min(2);
+        }
+    }
+
     /// Enable the batched PPU renderer on every worker. Trades
     /// (rare) single-frame stale-row artifacts on mid-scanline-
     /// writing games for a measured +10-27% single-env throughput.

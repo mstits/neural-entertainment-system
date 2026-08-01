@@ -342,6 +342,14 @@ pub struct Ppu {
     /// runs; classified + cleared at the scanline boundary.
     #[cfg(feature = "ppu_batch_stats")]
     batch_scanline_flags: u8,
+
+    /// Test-only capture of the PPU dot (`self.cycles`) at which the most
+    /// recent `$2002` (PPUSTATUS) read was serviced — the sub-cycle
+    /// bus-catch-up landing (event-driven PPU Stage 3). Absent from
+    /// production builds (no `Ppu::tick` layout-gate / `ppu::State`
+    /// serialization impact) and only written under `#[cfg(test)]`.
+    #[cfg(test)]
+    pub last_status_read_dot: u64,
 }
 
 // SAFETY: chr_cache_ptr aliases memory owned by the same Nes that
@@ -468,6 +476,8 @@ impl Ppu {
             batch_stats: PpuBatchStats::default(),
             #[cfg(feature = "ppu_batch_stats")]
             batch_scanline_flags: 0,
+            #[cfg(test)]
+            last_status_read_dot: 0,
         }
     }
 
@@ -754,6 +764,14 @@ impl Ppu {
 
     fn read_ppu_status(&mut self) -> u8 {
         // http://wiki.nesdev.com/w/index.php/PPU_scrolling#.242002_read
+        #[cfg(test)]
+        {
+            // Sub-cycle bus-catch-up landing witness (Stage 3): the PPU
+            // dot this poll observes. Under `hw_event_ppu` with a
+            // non-default read offset this is `cycle_base + offset + 1`
+            // instead of the end-of-cycle `cycle_base + 3`.
+            self.last_status_read_dot = self.cycles;
+        }
         self.regs.w = WriteToggle::FirstWrite;
 
         let vblank = if self.nmi_occurred { 0x80 } else { 0x00 };

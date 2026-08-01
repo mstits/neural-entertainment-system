@@ -528,6 +528,28 @@ impl NESEnvironment {
         self.nes.hw_event_ppu = on;
     }
 
+    /// Sub-cycle bus-access dot offset for deferred PPU-register READS
+    /// under `hw_event_ppu` (event-driven PPU Stage 3). 0..=2 (clamped);
+    /// **default 2** = end-of-cycle = byte-identical to Stages 1-2 and to
+    /// `hw_event_ppu` OFF. Lower values make a `$2002`/`$2004`/`$2007`
+    /// read sample the PPU earlier within its final CPU cycle's three
+    /// dots — the sub-cycle race fix. Only effective on the per-cycle
+    /// path (needs `hw_mmio_read_timing` to pin the read to its final
+    /// cycle, and the ASM/bulk batchers off — `hw_nmi_poll_timing`, set
+    /// by `--hw-all`, does that). Calibrate against Mesen; see
+    /// scripts/verify_subcycle_offset.py. Config, not state.
+    fn set_ppu_read_dot_offset(&mut self, offset: u8) {
+        self.nes.ppu_read_dot_offset = offset.min(2);
+    }
+
+    /// Write-side mirror of `set_ppu_read_dot_offset`: sub-cycle dot
+    /// offset for deferred PPU-register WRITES ($2000-$3FFF stores and
+    /// the always-deferred `$4014` OAM DMA arm) under `hw_event_ppu`.
+    /// 0..=2 (clamped); default 2. Needs `hw_mmio_write_timing`.
+    fn set_ppu_write_dot_offset(&mut self, offset: u8) {
+        self.nes.ppu_write_dot_offset = offset.min(2);
+    }
+
     /// Save the current emulator state as an opaque `bytes` blob.
     /// Format is bincode-encoded `nes::State` — RAM, CPU, PPU, APU,
     /// mapper, input registers. Versioning is implicit: only blobs

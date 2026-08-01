@@ -64,6 +64,29 @@ pub struct Nes {
     /// See docs/proposals/event_driven_ppu_design_2026-07-31.md.
     pub hw_event_ppu: bool,
 
+    /// Sub-cycle bus-access dot offsets (event-driven PPU Stage 3;
+    /// config, not savestate). A 6502 bus access resolves on the LAST
+    /// cycle of the memory phase; in our 3-dots-per-CPU-cycle model that
+    /// cycle spans PPU dot-slots 0, 1, 2. These pick which slot a
+    /// *deferred* PPU-register READ (`ppu_read_dot_offset`) or WRITE
+    /// (`ppu_write_dot_offset`) samples the PPU at: when `hw_event_ppu`
+    /// is on, `Nes::tick` advances `offset + 1` of the cycle's three dots
+    /// BEFORE `cpu.tick` services the access, then the remaining
+    /// `2 - offset` dots after — so `$2002` polls / `$2000` NMI-enables
+    /// land at the exact intra-instruction dot instead of the end of the
+    /// CPU cycle. Range 0..=2, **default 2** = end-of-cycle = the shipped
+    /// model (receipt: 93% of accesses already land at `abs_dot%3==2`),
+    /// so the default is byte-identical to Stages 1-2 and to `hw_event_ppu`
+    /// OFF. Only effective on the per-cycle path: the access must be pinned
+    /// to its final cycle by `hw_mmio_read_timing` / `hw_mmio_write_timing`
+    /// (always-deferred for `$4014`), and that final-cycle pin is only
+    /// reached per-cycle when the ASM/bulk batchers are off — which
+    /// `hw_nmi_poll_timing` (set by `--hw-all`) does. Calibrate against a
+    /// Mesen master-clock trace post-rebuild; see
+    /// scripts/verify_subcycle_offset.py and §3.4 of the design doc.
+    pub ppu_read_dot_offset: u8,
+    pub ppu_write_dot_offset: u8,
+
     /// Cached `mapper.prg_asm_ptr()` result. Stable for the mapper's
     /// lifetime — all mapper PRG-ASM windows are fixed-size 32 KB
     /// `Vec<u8>`s mutated only via slice indexing (never resized),
@@ -129,6 +152,8 @@ impl Nes {
             disable_asm_cpu: false,
             hw_reset_alignment: false,
             hw_event_ppu: false,
+            ppu_read_dot_offset: 2,
+            ppu_write_dot_offset: 2,
             cached_prg_asm_ptr: None,
             cached_asm_bulk_cycles: 1,
             cached_ppu_batchable: false,
@@ -561,12 +586,25 @@ impl Nes {
         }
 
         // There are 3 PPU cycles per CPU cycle.
+        //
+        // Sub-cycle bus catch-up (event-driven PPU Stage 3): when a
+        // deferred PPU-register access will fire in `cpu.tick` below, hold
+        // the PPU back at the calibrated sub-cycle dot (`lead` = offset+1
+        // of the three dots) so the access samples that exact dot; the
+        // remaining `3 - lead` dots run AFTER the access. `lead == 3` for
+        // every non-access cycle and for the default end-of-cycle offset,
+        // making this path byte-identical to the pre-Stage-3 interleave.
+        let lead = if self.hw_event_ppu {
+            self.ppu_bus_dot_lead()
+        } else {
+            3
+        };
         if self.hw_event_ppu {
             // Event-driven routing: advance one dot at a time through
             // `advance_to` so the per-dot `set_nmi_line` edge sampling is
             // preserved exactly (`advance_to(cycles+1)` is one `tick`).
             // Byte-identical to the else branch by construction.
-            let target = self.ppu.cycles + 3;
+            let target = self.ppu.cycles + lead;
             while self.ppu.cycles < target {
                 self.ppu
                     .advance_to(self.ppu.cycles + 1, &mut self.mapper, video_frame_sink);
@@ -603,11 +641,58 @@ impl Nes {
             self.cpu.tick(&mut bus)
         };
 
+        // Sub-cycle bus catch-up tail: advance the `3 - lead` dots that
+        // were deferred past a sub-cycle PPU-register access this cycle
+        // (zero unless `hw_event_ppu` held the PPU back at a non-default
+        // offset above). Runs before the post-cycle IRQ sample so the
+        // mapper sees the whole cycle's fetches. `lead == 3` → no-op.
+        if self.hw_event_ppu && lead < 3 {
+            let target = self.ppu.cycles + (3 - lead);
+            while self.ppu.cycles < target {
+                self.ppu
+                    .advance_to(self.ppu.cycles + 1, &mut self.mapper, video_frame_sink);
+                self.cpu
+                    .set_nmi_line(self.ppu.nmi_output && self.ppu.nmi_occurred);
+            }
+        }
+
         self.update_irq_line();
 
         self.cycles += 1;
 
         completed_instruction
+    }
+
+    /// Dots to advance BEFORE this CPU cycle's bus work under
+    /// `hw_event_ppu`: 3 (end-of-cycle — the default and every
+    /// non-access cycle), or `offset + 1` when the next `cpu.tick`
+    /// performs a deferred PPU-register access, so the access samples the
+    /// PPU at the calibrated sub-cycle dot (`ppu_read_dot_offset` /
+    /// `ppu_write_dot_offset`). The remaining `3 - lead` dots run after
+    /// the access. See the `ppu_read_dot_offset` field doc and §3.4 of
+    /// docs/proposals/event_driven_ppu_design_2026-07-31.md.
+    #[inline]
+    fn ppu_bus_dot_lead(&self) -> u64 {
+        // Default (end-of-cycle) offsets, OAM DMA (its per-cycle $2004
+        // writes are the island, §1.10), and DMC/OAM stall cycles never
+        // sub-cycle: return the full 3 so the interleave is byte-identical.
+        if (self.ppu_read_dot_offset >= 2 && self.ppu_write_dot_offset >= 2)
+            || self.oam_dma.active
+            || self.cpu.stall_cycles > 0
+        {
+            return 3;
+        }
+        match self.cpu.pending_deferred_ppu_access() {
+            Some(is_write) => {
+                let off = if is_write {
+                    self.ppu_write_dot_offset
+                } else {
+                    self.ppu_read_dot_offset
+                };
+                (off.min(2) as u64) + 1
+            }
+            None => 3,
+        }
     }
 
     #[inline(always)]
@@ -1320,5 +1405,163 @@ mod event_ppu_routing_tests {
                 );
             }
         }
+    }
+
+    // ================================================================
+    // Stage 3 — sub-cycle bus-access catch-up (READ_DOT_OFFSET).
+    // ================================================================
+
+    /// Synthetic 32 KB NROM whose entire PRG is `LDA $2002` (`AD 02 20`),
+    /// so the CPU polls PPUSTATUS forever, walking straight up through PRG
+    /// from the reset vector. RESET points at `$8000` — PRG offset 0, the
+    /// fixed NROM base for any bank count, so the first fetch is
+    /// pattern-aligned and every instruction is a clean `LDA $2002`. No
+    /// `$2000` write means `nmi_output` stays false (no NMI ever fires)
+    /// and `LDA` never branches on the read value, so the instruction
+    /// stream is fully deterministic and independent of the sub-cycle
+    /// offset — letting the tests attribute any change in the read's PPU
+    /// dot purely to the offset.
+    fn build_status_poll_rom() -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 32 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // PRG = 2 × 16 KB = 32 KB
+        rom.push(1); // CHR = 1 × 8 KB
+        rom.push(0); // flags6: mapper 0, H-mirror
+        rom.push(0); // flags7: mapper 0 (iNES 1.0)
+        rom.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 32 * 1024];
+        for (i, b) in prg.iter_mut().enumerate() {
+            *b = match i % 3 {
+                0 => 0xAD, // LDA abs
+                1 => 0x02, // $2002 lo
+                _ => 0x20, // $2002 hi
+            };
+        }
+        // Vectors (PRG tail). All point at $8000 (pattern-aligned); the
+        // NMI/IRQ vectors are never taken in the tests' pre-NMI window.
+        prg[0x7FFA] = 0x00;
+        prg[0x7FFB] = 0x80;
+        prg[0x7FFC] = 0x00;
+        prg[0x7FFD] = 0x80;
+        prg[0x7FFE] = 0x00;
+        prg[0x7FFF] = 0x80;
+        let chr = vec![0u8; 8 * 1024];
+        rom.extend(prg);
+        rom.extend(chr);
+        rom
+    }
+
+    /// Run the status-poll ROM for `steps` instructions and return the PPU
+    /// dot at which the last `$2002` read was serviced. `hw_nmi_poll_timing`
+    /// is always on to force the per-cycle path (disabling the ASM/bulk
+    /// batchers), the only path that positions a deferred access sub-cycle.
+    fn poll_status_read_dot(
+        hw_event_ppu: bool,
+        mmio_read_timing: bool,
+        read_offset: u8,
+        steps: usize,
+    ) -> u64 {
+        let cart = Cartridge::load(&mut std::io::Cursor::new(build_status_poll_rom()))
+            .expect("synthetic status-poll NROM should parse");
+        let mut nes = Nes::new(cart);
+        nes.hw_event_ppu = hw_event_ppu;
+        nes.cpu.hw_mmio_read_timing = mmio_read_timing;
+        nes.cpu.hw_nmi_poll_timing = true;
+        nes.ppu_read_dot_offset = read_offset;
+        nes.set_skip_render(true);
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        for _ in 0..steps {
+            nes.step(&mut v, &mut a);
+        }
+        nes.ppu.last_status_read_dot
+    }
+
+    #[test]
+    fn subcycle_read_offset_shifts_status_poll_landing() {
+        // The deferred `$2002` read must sample the PPU 2 / 1 / 0 dots
+        // earlier as `ppu_read_dot_offset` drops 2 → 1 → 0. The CPU-cycle
+        // base is identical across offsets (the PPU always advances 3 dots
+        // per CPU cycle), so the landings differ by exactly (2 - offset).
+        let steps = 60;
+        let d2 = poll_status_read_dot(true, true, 2, steps);
+        let d1 = poll_status_read_dot(true, true, 1, steps);
+        let d0 = poll_status_read_dot(true, true, 0, steps);
+        assert!(d2 >= 3, "sanity: end-of-cycle landing should be well past boot (d2={d2})");
+        assert_eq!(
+            d2 - d1, 1,
+            "read offset 1 must land one dot before end-of-cycle (d2={d2} d1={d1})"
+        );
+        assert_eq!(
+            d2 - d0, 2,
+            "read offset 0 must land two dots before end-of-cycle (d2={d2} d0={d0})"
+        );
+    }
+
+    #[test]
+    fn subcycle_default_offset_matches_event_ppu_off() {
+        // hw_event_ppu ON at the default end-of-cycle offset (2) must land
+        // the `$2002` read at the SAME PPU dot as hw_event_ppu OFF — the
+        // Stage 3 default is byte-identical to the legacy interleave.
+        let steps = 60;
+        let off = poll_status_read_dot(false, true, 2, steps);
+        let on2 = poll_status_read_dot(true, true, 2, steps);
+        assert_eq!(
+            off, on2,
+            "default offset must reproduce the OFF-path read dot (off={off} on2={on2})"
+        );
+    }
+
+    #[test]
+    fn subcycle_offset_inert_without_mmio_read_timing() {
+        // Without hw_mmio_read_timing the `$2002` read is early-committed
+        // at cycle 0 (cycle_zero_early_commit), so no final-cycle handle
+        // exists and the sub-cycle offset cannot move the landing:
+        // offset 0 lands at the same dot as offset 2. This documents that
+        // Stage 3 rides the existing exact-cycle pin, not a new one.
+        let steps = 60;
+        let d0 = poll_status_read_dot(true, false, 0, steps);
+        let d2 = poll_status_read_dot(true, false, 2, steps);
+        assert_eq!(
+            d0, d2,
+            "offset must be inert when the read is not deferred to its final cycle \
+             (d0={d0} d2={d2})"
+        );
+    }
+
+    #[test]
+    fn pending_deferred_ppu_access_fires_only_on_final_read_cycle() {
+        // `Cpu::pending_deferred_ppu_access` must flag Some(false) exactly
+        // on the tick that runs the deferred `$2002` read (the final cycle
+        // of `LDA $2002`) and None on every other cycle.
+        let cart = Cartridge::load(&mut std::io::Cursor::new(build_status_poll_rom()))
+            .expect("synthetic status-poll NROM should parse");
+        let mut nes = Nes::new(cart);
+        nes.cpu.hw_mmio_read_timing = true;
+        nes.set_skip_render(true);
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        // Step past boot so the next fetch is a clean, pattern-aligned
+        // `LDA $2002` at an instruction boundary.
+        for _ in 0..5 {
+            nes.step(&mut v, &mut a);
+        }
+        let mut seen = Vec::new();
+        loop {
+            seen.push(nes.cpu.pending_deferred_ppu_access());
+            if nes.tick(&mut v, &mut a) {
+                break; // instruction completed on this cycle
+            }
+        }
+        let somes = seen.iter().filter(|x| x.is_some()).count();
+        assert_eq!(
+            somes, 1,
+            "exactly one final-cycle read handle per instruction; saw {seen:?}"
+        );
+        assert_eq!(
+            seen.last().copied().flatten(),
+            Some(false),
+            "the handle must land on the LAST cycle and be a read; saw {seen:?}"
+        );
     }
 }
