@@ -162,11 +162,20 @@ solve:
   # Keyed into cells so window-timed fire trajectories are archivable.
   state_sig:
     - {addr: 0x001A, mod: 16, match: [7, 8, 9, 10, 11, 12, 13, 14]}
+  # v2 (slot-identity receipt runs/breadth_contra/slot_identity_receipt.json):
+  # keyed on the STABLE per-slot identity array $058F+k (constancy 0.97-1.0,
+  # class TVD 0.909) instead of the cycling animation-phase codes at $0311+k
+  # (constancy 0.007 within guns — the receipted phase-aliasing source).
+  # Identity values: 5/48 = wall guns, 50 = core/sensor; soldiers = 1;
+  # 0 = empty-slot reset (deliberately excluded — counting it would alias
+  # empty slots as dead hardware). Slots are time-multiplexed (HP flickers
+  # 0 between phase cycles, median lifetime 20 steps) — the hp sum is
+  # therefore a live-visible-hardware reading, not a persistent pool.
   boss_typed:
-    type_addrs: [0x0311, 0x0312, 0x0313, 0x0314]
+    type_addrs: [0x058F, 0x0590, 0x0591, 0x0592]
     hp_addrs: [0x04BF, 0x04C0, 0x04C1, 0x04C2]
-    types: [54, 55, 56, 68]
-    start: 12
+    types: [5, 48, 50]
+    start: 16
   # Sustained-fire holds: stochastic sampling rarely emits the long
   # aimed bursts the base fight wants (same generic mechanism as CV
   # stair-mount up-holds).

@@ -1,0 +1,231 @@
+{
+  "case": "contra_stage1_base_wall_core",
+  "target": "X-plated circle low on the right wall (armored core)",
+  "method": "pixel-phase mining: frame-diff dV_t over the core bbox vs every RAM byte (pooled MI + open/closed MI + exact-match)",
+  "archive": "runs/breadth_contra/stage1_v6_resume",
+  "profile": "configs/contra.yaml",
+  "input": "neutral (NOOP) every frame",
+  "n_states": 12,
+  "frames_per_state": 600,
+  "wall_progress_filter": "key[-1]*8 >= 3064",
+  "states": [
+    {
+      "hp": 12,
+      "gx": 384,
+      "y_band": 22,
+      "best_score": 3072.0,
+      "best_steps": 1570
+    },
+    {
+      "hp": 3,
+      "gx": 384,
+      "y_band": 24,
+      "best_score": 21072.0,
+      "best_steps": 1564
+    },
+    {
+      "hp": 4,
+      "gx": 384,
+      "y_band": 17,
+      "best_score": 19072.0,
+      "best_steps": 1568
+    },
+    {
+      "hp": 2,
+      "gx": 384,
+      "y_band": 24,
+      "best_score": 23072.0,
+      "best_steps": 1440
+    },
+    {
+      "hp": 5,
+      "gx": 384,
+      "y_band": 24,
+      "best_score": 17072.0,
+      "best_steps": 1441
+    },
+    {
+      "hp": 8,
+      "gx": 384,
+      "y_band": 11,
+      "best_score": 11072.0,
+      "best_steps": 1343
+    },
+    {
+      "hp": 6,
+      "gx": 384,
+      "y_band": 24,
+      "best_score": 15072.0,
+      "best_steps": 1580
+    },
+    {
+      "hp": 7,
+      "gx": 384,
+      "y_band": 22,
+      "best_score": 13072.0,
+      "best_steps": 1481
+    },
+    {
+      "hp": 11,
+      "gx": 384,
+      "y_band": 11,
+      "best_score": 5072.0,
+      "best_steps": 1344
+    },
+    {
+      "hp": 12,
+      "gx": 384,
+      "y_band": 24,
+      "best_score": 3072.0,
+      "best_steps": 1567
+    },
+    {
+      "hp": 3,
+      "gx": 384,
+      "y_band": 23,
+      "best_score": 21072.0,
+      "best_steps": 1563
+    },
+    {
+      "hp": 4,
+      "gx": 384,
+      "y_band": 24,
+      "best_score": 19072.0,
+      "best_steps": 1566
+    }
+  ],
+  "core_bbox_xyxy": {
+    "x0": 156,
+    "x1": 166,
+    "y0": 168,
+    "y1": 184
+  },
+  "core_bbox_note": "derived: peak of per-pixel periodic power (periods [8, 16, 32]) in the lower-wall prior [145, 150, 210, 196], then the compact component around it. Isolates the cycling core from aperiodic bullets and the period-2 decorative light.",
+  "appearance_open_threshold_redness": 42.75,
+  "dv_transition_threshold_otsu": 0.1336,
+  "mi_gate_bits": 0.3,
+  "gate_metric": "MI(top_byte; discretized dV_t), bits",
+  "gate_passed": true,
+  "gate_top_byte": {
+    "addr": "$0035",
+    "mi_dv_bits": 0.5441,
+    "mi_open_bits": 1.0,
+    "cardinality": 64
+  },
+  "top_bytes": [
+    {
+      "addr": "$0035",
+      "addr_dec": 53,
+      "mi_dv_bits": 0.5441,
+      "mi_open_bits": 1.0,
+      "cardinality": 64,
+      "mi_null_bits": 0.0063
+    },
+    {
+      "addr": "$001A",
+      "addr_dec": 26,
+      "mi_dv_bits": 0.5328,
+      "mi_open_bits": 0.9886,
+      "cardinality": 256,
+      "mi_null_bits": 0.0256
+    },
+    {
+      "addr": "$017B",
+      "addr_dec": 379,
+      "mi_dv_bits": 0.2943,
+      "mi_open_bits": 0.4509,
+      "cardinality": 96,
+      "mi_null_bits": 0.0095
+    },
+    {
+      "addr": "$0563",
+      "addr_dec": 1379,
+      "mi_dv_bits": 0.2514,
+      "mi_open_bits": 0.047,
+      "cardinality": 41,
+      "mi_null_bits": 0.004
+    },
+    {
+      "addr": "$0567",
+      "addr_dec": 1383,
+      "mi_dv_bits": 0.2023,
+      "mi_open_bits": 0.0669,
+      "cardinality": 41,
+      "mi_null_bits": 0.004
+    },
+    {
+      "addr": "$0100",
+      "addr_dec": 256,
+      "mi_dv_bits": 0.1819,
+      "mi_open_bits": 0.1979,
+      "cardinality": 96,
+      "mi_null_bits": 0.0095
+    },
+    {
+      "addr": "$0101",
+      "addr_dec": 257,
+      "mi_dv_bits": 0.1819,
+      "mi_open_bits": 0.1979,
+      "cardinality": 96,
+      "mi_null_bits": 0.0095
+    },
+    {
+      "addr": "$0102",
+      "addr_dec": 258,
+      "mi_dv_bits": 0.1756,
+      "mi_open_bits": 0.1443,
+      "cardinality": 96,
+      "mi_null_bits": 0.0095
+    }
+  ],
+  "winner": {
+    "addr": "$001A",
+    "addr_dec": 26,
+    "selected_by": "highest simple-schedule (byte mod m) open-predicate accuracy among gate-passing top-MI bytes; ties to smallest modulus",
+    "mi_dv_bits": 0.5328,
+    "mi_open_bits": 0.9886,
+    "cardinality": 256,
+    "semantics": "frame counter (increments +1/frame, wraps 256)",
+    "open_predicate": {
+      "modulus": 16,
+      "open_values": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14
+      ],
+      "accuracy": 0.9973567056204786,
+      "n_open_values": 8,
+      "per_state_accuracy": [
+        0.997,
+        0.998,
+        0.998,
+        0.995,
+        0.995,
+        1.0,
+        0.997,
+        0.993,
+        1.0,
+        0.998,
+        0.998,
+        0.998
+      ]
+    },
+    "palette_change_period_frames": 8,
+    "open_window_frames": 8,
+    "closed_window_frames": 8,
+    "open_closed_cycle_frames": 16,
+    "full_palette_supercycle_frames_note": "the two 'closed' palettes alternate, so the full palette identity cycle is 32 frames; the open/closed vulnerability window is the 16-frame sub-cycle.",
+    "receipt_frames": {
+      "representative_state_hp": 3,
+      "open_frame_t": 65,
+      "closed_frame_t": 60
+    },
+    "open_semantics": "open = exposed high-red palette phase (armor retracted appearance), the presumed-vulnerable window. Damage-gating is NOT independently confirmed here (prior fire tests left the core intact) -- this observable is what feeds a window-timed fire experiment / an open-phase cell dimension.",
+    "note": "the max-MI byte is $0035 (MI_dV=0.544); it is the same frame clock in a derived form (needs a full value table). $001A is reported as the observable because its open window is a minimal (byte % 16) schedule."
+  }
+}

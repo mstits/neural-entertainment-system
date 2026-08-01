@@ -1,0 +1,406 @@
+{
+  "task": "slot-identity recovery (Contra base wall, object-array engine): find the stable per-slot identity array",
+  "method": "action-trace replay from the run root (roots.json), one noop rooting step then the traces.pkl action list; per-slot HP!=0 lifetimes; stride-1 base+k scan of 0x0300-0x07FF for per-lifetime constancy + class separation. Own-archive only; no external RAM map.",
+  "archive": "/Users/stits/Documents/macos-emulation-and-training/runs/breadth_contra/stage1_v6_resume",
+  "profile": "configs/contra.yaml",
+  "params": {
+    "n_traces_replayed": 160,
+    "workers": 3,
+    "wall_progress_threshold": 3064,
+    "scan_range": [
+      "0x300",
+      "0x800"
+    ],
+    "stride": 1,
+    "min_lifetime_steps": 3,
+    "constancy_threshold": 0.9,
+    "separation_threshold": 0.5,
+    "min_lifetimes_per_class": 20,
+    "hardware_phase_codes": [
+      54,
+      55,
+      56,
+      68,
+      69,
+      70
+    ],
+    "soldier_phase_codes": [
+      1,
+      30,
+      33,
+      44,
+      45,
+      46
+    ],
+    "seed": 11
+  },
+  "occupancy_validation": {
+    "signal": "HP $04BF+k != 0 (occupancy) vs phase $0311+k != 0",
+    "occupied_steps": 76331,
+    "phase_nonzero_agreement_frac": 1.0,
+    "phase_nonzero_while_hp_zero_steps": 0,
+    "hp_nonzero_while_phase_zero_steps": 0,
+    "verdict": "HP!=0 and phase!=0 coincide -> HP occupancy is a clean per-slot presence signal"
+  },
+  "lifetime_stats": {
+    "n_lifetimes": 2486,
+    "n_wall_region": 1235,
+    "n_prewall_region": 1251,
+    "n_hardware_class": 1152,
+    "n_soldier_class": 1291,
+    "n_unlabelled": 43,
+    "lifetime_len_pctiles": {
+      "50": 20,
+      "90": 57,
+      "99": 115
+    },
+    "note": "guns/core do NOT appear as long continuous HP runs -- the slots are time-multiplexed and HP flickers to 0 between phase cycles, so classes are labelled by phase-repertoire (hardware vs soldier) and region, not by longevity."
+  },
+  "reference_known_arrays_low_constancy": {
+    "phase_0x0311": {
+      "constancy_all": 0.4151,
+      "constancy_wall": 0.3231,
+      "constancy_hardware_class": 0.0069
+    },
+    "hp_0x04BF": {
+      "constancy_all": 0.6098,
+      "constancy_wall": 0.3951,
+      "constancy_hardware_class": 0.1753
+    }
+  },
+  "n_candidates_scanned": 1277,
+  "n_eligible": 2,
+  "result": "FOUND",
+  "identity_array": {
+    "base": "0x58f",
+    "stride": 1,
+    "per_slot_addrs": [
+      "0x58f",
+      "0x590",
+      "0x591",
+      "0x592"
+    ],
+    "constancy_all": 0.965,
+    "constancy_wall": 0.9741,
+    "constancy_hardware_class": 0.9262,
+    "constancy_soldier_class": 0.9985,
+    "ndist_wall": 5,
+    "separation_hardware_vs_soldier_tvd": 0.9092,
+    "separation_wall_vs_prewall_tvd": 0.6665,
+    "n_hardware_lifetimes_constant": 1067,
+    "n_soldier_lifetimes_constant": 1289
+  },
+  "per_slot_confirmation": {
+    "per_slot_alignment_cramersV": {
+      "offset_0": 0.745,
+      "offset_1": 0.266,
+      "offset_2": 0.322,
+      "offset_3": 0.301
+    },
+    "aligned_at_offset0": true,
+    "within_lifetime_constancy": 0.9655,
+    "n_lifetimes": 145,
+    "changes_at_occupant_transition_frac": 0.617,
+    "value_when_all_slots_empty": {
+      "0": 14671,
+      "1": 14125,
+      "48": 1023,
+      "50": 1007
+    }
+  },
+  "separation_table": {
+    "value_to_object": {
+      "0": {
+        "n_total": 54,
+        "n_hardware_class": 54,
+        "n_soldier_class": 0,
+        "n_wall_region": 0,
+        "n_prewall_region": 54,
+        "example_object_signatures": [
+          {
+            "hp_max": 4,
+            "phase_repertoire": [
+              1,
+              53,
+              54,
+              55
+            ],
+            "count": 50
+          },
+          {
+            "hp_max": 5,
+            "phase_repertoire": [
+              1,
+              53,
+              54,
+              55
+            ],
+            "count": 4
+          }
+        ]
+      },
+      "1": {
+        "n_total": 1109,
+        "n_hardware_class": 0,
+        "n_soldier_class": 1109,
+        "n_wall_region": 337,
+        "n_prewall_region": 772,
+        "example_object_signatures": [
+          {
+            "hp_max": 2,
+            "phase_repertoire": [
+              30
+            ],
+            "count": 876
+          },
+          {
+            "hp_max": 2,
+            "phase_repertoire": [
+              1,
+              30
+            ],
+            "count": 233
+          }
+        ]
+      },
+      "5": {
+        "n_total": 814,
+        "n_hardware_class": 697,
+        "n_soldier_class": 117,
+        "n_wall_region": 792,
+        "n_prewall_region": 22,
+        "example_object_signatures": [
+          {
+            "hp_max": 3,
+            "phase_repertoire": [
+              33,
+              54,
+              55
+            ],
+            "count": 408
+          },
+          {
+            "hp_max": 4,
+            "phase_repertoire": [
+              33,
+              54,
+              55
+            ],
+            "count": 89
+          },
+          {
+            "hp_max": 3,
+            "phase_repertoire": [
+              1,
+              33,
+              54,
+              55
+            ],
+            "count": 83
+          },
+          {
+            "hp_max": 2,
+            "phase_repertoire": [
+              33
+            ],
+            "count": 83
+          }
+        ]
+      },
+      "34": {
+        "n_total": 11,
+        "n_hardware_class": 0,
+        "n_soldier_class": 11,
+        "n_wall_region": 0,
+        "n_prewall_region": 11,
+        "example_object_signatures": [
+          {
+            "hp_max": 5,
+            "phase_repertoire": [
+              1
+            ],
+            "count": 11
+          }
+        ]
+      },
+      "48": {
+        "n_total": 89,
+        "n_hardware_class": 87,
+        "n_soldier_class": 0,
+        "n_wall_region": 32,
+        "n_prewall_region": 57,
+        "example_object_signatures": [
+          {
+            "hp_max": 4,
+            "phase_repertoire": [
+              1,
+              68,
+              69,
+              70
+            ],
+            "count": 44
+          },
+          {
+            "hp_max": 4,
+            "phase_repertoire": [
+              44,
+              45,
+              68,
+              69,
+              70
+            ],
+            "count": 13
+          },
+          {
+            "hp_max": 4,
+            "phase_repertoire": [
+              1,
+              44,
+              45,
+              68,
+              69,
+              70
+            ],
+            "count": 11
+          },
+          {
+            "hp_max": 2,
+            "phase_repertoire": [
+              68
+            ],
+            "count": 8
+          }
+        ]
+      },
+      "50": {
+        "n_total": 270,
+        "n_hardware_class": 229,
+        "n_soldier_class": 0,
+        "n_wall_region": 0,
+        "n_prewall_region": 270,
+        "example_object_signatures": [
+          {
+            "hp_max": 7,
+            "phase_repertoire": [
+              1,
+              53,
+              54,
+              55
+            ],
+            "count": 179
+          },
+          {
+            "hp_max": 2,
+            "phase_repertoire": [
+              1,
+              77
+            ],
+            "count": 40
+          },
+          {
+            "hp_max": 8,
+            "phase_repertoire": [
+              53,
+              54,
+              55
+            ],
+            "count": 37
+          },
+          {
+            "hp_max": 7,
+            "phase_repertoire": [
+              53,
+              54,
+              55
+            ],
+            "count": 13
+          }
+        ]
+      },
+      "66": {
+        "n_total": 35,
+        "n_hardware_class": 0,
+        "n_soldier_class": 35,
+        "n_wall_region": 30,
+        "n_prewall_region": 5,
+        "example_object_signatures": [
+          {
+            "hp_max": 2,
+            "phase_repertoire": [
+              1
+            ],
+            "count": 35
+          }
+        ]
+      },
+      "130": {
+        "n_total": 17,
+        "n_hardware_class": 0,
+        "n_soldier_class": 17,
+        "n_wall_region": 12,
+        "n_prewall_region": 5,
+        "example_object_signatures": [
+          {
+            "hp_max": 2,
+            "phase_repertoire": [
+              1
+            ],
+            "count": 17
+          }
+        ]
+      }
+    },
+    "hardware_class_value_distribution": {
+      "0": 54,
+      "5": 697,
+      "48": 87,
+      "50": 229
+    },
+    "soldier_class_value_distribution": {
+      "1": 1109,
+      "5": 117,
+      "34": 11,
+      "66": 35,
+      "130": 17
+    }
+  },
+  "runner_up_candidates": [
+    {
+      "base": "0x5bf",
+      "constancy_hw": 0.9384,
+      "constancy_runner": 0.9636,
+      "ndist_wall": 2,
+      "sep_hw_runner": 0.5508
+    }
+  ],
+  "proposed_profile_stanza": {
+    "note": "Drop-in analog of boss_typed keyed on the STABLE per-slot identity array instead of the cycling phase codes at $0311-$0314. typed HP = sum of hp_addrs[i] where ident_addrs[i] holds a wall-hardware identity value, read as `start` when no wall object is live. Removes the phase-aliasing in boss_typed's type ladder. PROPOSAL ONLY -- do not hand-edit configs/contra.yaml from this script (it already carries a state_sig mod entry and a down+B action; leave those alone).",
+    "boss_ident": {
+      "ident_addrs": [
+        "0x58f",
+        "0x590",
+        "0x591",
+        "0x592"
+      ],
+      "hp_addrs": [
+        "0x4bf",
+        "0x4c0",
+        "0x4c1",
+        "0x4c2"
+      ],
+      "wall_ident_values": [
+        0,
+        5,
+        48,
+        50
+      ],
+      "soldier_ident_values": [
+        1,
+        34,
+        66,
+        130
+      ],
+      "start": 12
+    }
+  }
+}
