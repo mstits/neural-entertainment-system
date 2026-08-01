@@ -12,6 +12,10 @@ pub const SCREEN_WIDTH: usize = 256;
 pub const SCREEN_HEIGHT: usize = 240;
 
 const CYCLES_PER_SCANLINE: u64 = 341;
+/// Total PPU dots in one frame ignoring the odd-frame pre-render skip:
+/// 262 scanlines × 341. The authoritative event predictors add the odd
+/// skip separately (`next_odd_skip_dot`).
+const FRAME_TOTAL_DOTS: u64 = 262 * CYCLES_PER_SCANLINE;
 
 // Rung-0 batchable-fraction instrumentation (feature `ppu_batch_stats`).
 // One bit per observable-event class that lands on a visible scanline;
@@ -2340,6 +2344,154 @@ impl Ppu {
         self.scanline_boundary_advance(mapper);
     }
 
+    // ===================================================================
+    // Event-driven-PPU campaign — Stage 1/2: `advance_to(target)`.
+    //
+    // The absolute-dot entry point the event design anchors on (bus
+    // catch-up flushes to an exact target dot). `advance_to(target)`
+    // advances the PPU clock to `target` and is observably identical to
+    // `(target - self.cycles)` calls to `tick`, in EVERY flag / render /
+    // mapper configuration — proven by construction (Stage 1 is a pure
+    // per-dot loop; Stage 2 delegates the multiple-of-3 bulk to the
+    // already-proven `advance` batcher and finishes the <3 remainder
+    // per-dot). Like `advance`, it is an `#[inline(never)]` symbol in its
+    // own region so the layout gate's `Ppu::tick` fingerprint is
+    // untouched, and `tick`/`tick_three` remain the unmodified reference.
+    // See docs/proposals/event_driven_ppu_design_2026-07-31.md §3.1.
+    // ===================================================================
+
+    /// Fast-forward the PPU clock to the absolute dot `target` (on the
+    /// PPU's own monotonic `cycles` counter). Observably identical to
+    /// `(target - self.cycles)` calls to `tick`. `target` need not be a
+    /// multiple of 3 past `self.cycles` (the bus-catch-up sub-cycle
+    /// offset lands mid-CPU-cycle), so the <3-dot remainder is always
+    /// finished per-dot.
+    #[inline(never)]
+    pub fn advance_to<V: VideoSink>(
+        &mut self,
+        target: u64,
+        mapper: &mut MapperEnum,
+        video_frame_sink: &mut V,
+    ) {
+        debug_assert!(
+            target >= self.cycles,
+            "advance_to target {} is behind the PPU clock {}",
+            target,
+            self.cycles
+        );
+        if target <= self.cycles {
+            return;
+        }
+        let remaining = target - self.cycles;
+        // Bulk = the multiple-of-3 portion; remainder = the <3-dot tail
+        // (present only for a sub-cycle bus-catch-up target).
+        let bulk = remaining - (remaining % 3);
+        // Stage 2: delegate the aligned bulk to the proven `advance`
+        // batcher. `advance` collapses the event-free dot ranges —
+        // post-render 240, the 21 vblank lines 242..=260, forced-blank
+        // visible lines, and whole rendering-enabled visible lines — into
+        // closed-form counter/scanline advances, and delegates the lines
+        // that carry a CPU-observable event (241 vblank-set, 261
+        // vblank-clear + odd-skip, sprite-0 lines) plus every non-batchable
+        // mapper / full-render case to the verbatim per-dot reference. It
+        // is proven observably identical to `bulk` ticks (see the
+        // `advance_*` equivalence tests), so `advance_to` stays equal by
+        // construction. `advance`'s contract requires a multiple of 3;
+        // `bulk` satisfies it. (Stage 1 ran this span as a pure per-dot
+        // `tick_three` loop — the ONLY Stage 1→2 change is this delegation.)
+        if bulk > 0 {
+            self.advance(bulk, mapper, video_frame_sink);
+        }
+        // The <3-dot remainder runs per-dot against the reference `tick`
+        // — the exact fallback body `advance` itself uses.
+        for _ in 0..(remaining % 3) {
+            self.tick(mapper, video_frame_sink);
+        }
+    }
+
+    /// Absolute frame-base dot for the frame `self.cycles` currently
+    /// sits in: the dot at which scanline 0, cycle 0 of this frame began.
+    /// The authoritative counter ignores the odd-frame pre-render skip
+    /// for this base (the skip is modeled explicitly by
+    /// `next_odd_skip_dot`); callers that need skip-exact horizons add it
+    /// separately. Used by the event predictors to promote per-frame
+    /// positions to absolute dots.
+    #[inline(always)]
+    fn frame_base_dot(&self) -> u64 {
+        // `self.cycles - within_frame_pos`, where within_frame_pos is the
+        // PPU position inside the current frame ignoring the odd skip.
+        let within = (self.scanline as u64) * CYCLES_PER_SCANLINE + self.scanline_cycle();
+        self.cycles - within
+    }
+
+    /// §1.1 — the soonest absolute dot at which `set_vblank()` fires
+    /// (scanline 241, cycle 1). Closed form, independent of scroll/mask.
+    /// If the current position is already past this frame's set tick, the
+    /// answer is next frame's. Ignores the odd-frame skip (< 1 CPU cycle;
+    /// the skip lands on pre-render 261, after the vblank set at 241).
+    #[inline(never)]
+    pub fn next_vblank_set_dot(&self) -> u64 {
+        let base = self.frame_base_dot();
+        let set = base + (VBLANK_START_SCANLINE as u64) * CYCLES_PER_SCANLINE + 1;
+        if self.cycles <= set {
+            set
+        } else {
+            set + FRAME_TOTAL_DOTS
+        }
+    }
+
+    /// §1.2 — the soonest absolute dot at which `clear_vblank` + the
+    /// sprite-overflow / sprite-0-hit flag clears fire (pre-render 261,
+    /// cycle 1). Closed form.
+    #[inline(never)]
+    pub fn next_vblank_clear_dot(&self) -> u64 {
+        let base = self.frame_base_dot();
+        let clear = base + (PRE_RENDER_SCANLINE as u64) * CYCLES_PER_SCANLINE + 1;
+        if self.cycles <= clear {
+            clear
+        } else {
+            clear + FRAME_TOTAL_DOTS
+        }
+    }
+
+    /// §1.3 — the soonest absolute dot at which the vblank-NMI rising
+    /// edge asserts. `= next_vblank_set_dot()` iff `nmi_output` is enabled
+    /// and the edge is still ahead (vblank not already latched this
+    /// frame); otherwise `None` (deassert is a bus/flush boundary, never
+    /// a forward horizon). The absolute-dot, odd-skip-aware counterpart
+    /// of `cpu_cycles_until_nmi_fire`.
+    #[inline(never)]
+    pub fn next_nmi_edge_dot(&self) -> Option<u64> {
+        if !self.nmi_output || self.nmi_occurred {
+            return None;
+        }
+        Some(self.next_vblank_set_dot())
+    }
+
+    /// §1.7 — the absolute dot of the odd-frame pre-render single-cycle
+    /// skip (scanline 261, cycle 339: the tick that jumps 339→341),
+    /// present iff rendering is enabled and the current frame is odd.
+    /// `None` when the skip does not apply this frame. The authoritative
+    /// counter must honor this so `next_vblank_set_dot` for the FOLLOWING
+    /// frame stays dot-exact.
+    #[inline(never)]
+    pub fn next_odd_skip_dot(&self) -> Option<u64> {
+        if !self.rendering_enabled() || self.frame.is_multiple_of(2) {
+            // No skip when rendering is off, or on EVEN frames (which run
+            // the full 341-dot pre-render line). Only odd frames skip —
+            // matching the `tick` end-of-scanline gate `!frame
+            // .is_multiple_of(2)`. (`frame` counts from 0.)
+            return None;
+        }
+        let base = self.frame_base_dot();
+        let skip = base + (PRE_RENDER_SCANLINE as u64) * CYCLES_PER_SCANLINE + 339;
+        if self.cycles <= skip {
+            Some(skip)
+        } else {
+            None
+        }
+    }
+
     pub fn read_byte(&mut self, mapper: &mut MapperEnum, address: u16) -> u8 {
         if !((0x2000..=0x3FFF).contains(&address)) {
             panic!(
@@ -3531,5 +3683,230 @@ mod advance_equivalence_tests {
              reference latches via the stale dot-0 sprite_0_on_scanline: \
              the Class-2 gate must require BOTH sprite-0 flags clear"
         );
+    }
+
+    // ================================================================
+    // Event-driven-PPU campaign — Stage 1/2: `advance_to` + predictors.
+    // ================================================================
+
+    fn restore_render(state: &State, skip_render: bool) -> Ppu {
+        let mut p = Ppu::new();
+        p.apply_state(state);
+        p.skip_render = skip_render;
+        p
+    }
+
+    /// `advance_to(cycles + off)` must be observably identical to `off`
+    /// sequential `tick`s from the same seed, for arbitrary `off` (incl.
+    /// non-multiples of 3 — the sub-cycle bus-catch-up target) and both
+    /// render modes.
+    fn assert_advance_to_equiv(
+        state: &State,
+        mapper: &mut MapperEnum,
+        off: u64,
+        skip_render: bool,
+    ) {
+        let msnap = mapper.get_state();
+        let mut sink = Discard;
+
+        let mut a = restore_render(state, skip_render);
+        let target = a.cycles + off;
+        a.advance_to(target, mapper, &mut sink);
+        assert_eq!(a.cycles, target, "advance_to must land exactly on target");
+        let obs_a = observable(&a);
+
+        mapper.apply_state(&msnap);
+        let mut b = restore_render(state, skip_render);
+        for _ in 0..off {
+            b.tick(mapper, &mut sink);
+        }
+        let obs_b = observable(&b);
+
+        mapper.apply_state(&msnap);
+        assert!(
+            obs_a == obs_b,
+            "advance_to(+{off}) diverged from {off}x tick \
+             (skip_render={skip_render}) at post-run scanline={}, dot={}",
+            b.scanline,
+            b.scanline_cycle(),
+        );
+    }
+
+    #[test]
+    fn advance_to_matches_tick_over_entry_lattice_nrom() {
+        let mut m = nrom();
+        let lines = [0u16, 7, 8, 30, 100, 239, 240, 241, 242, 260, 261];
+        let dots = [0u64, 1, 100, 255, 256, 257, 260, 340];
+        // Offsets: sub-cycle (1,2), sub-line, whole-line, multi-line,
+        // near-frame, full-frame, and non-multiple-of-3 tails.
+        let offs = [1u64, 2, 3, 5, 9, 30, 341, 342, 683, 1024, 6001, 89342];
+        for &line in &lines {
+            for &dot in &dots {
+                if dot >= CYCLES_PER_SCANLINE {
+                    continue;
+                }
+                let s_on = seed(line, dot, true);
+                let s_off = seed(line, dot, false);
+                for &off in &offs {
+                    // skip_render true exercises the closed-form path;
+                    // false forces the per-dot reference. Both must match.
+                    assert_advance_to_equiv(&s_on, &mut m, off, true);
+                    assert_advance_to_equiv(&s_on, &mut m, off, false);
+                    assert_advance_to_equiv(&s_off, &mut m, off, true);
+                    assert_advance_to_equiv(&s_off, &mut m, off, false);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn advance_to_matches_tick_non_batchable_mmc3() {
+        // A scanline-IRQ mapper always takes the per-dot reference inside
+        // `advance`; advance_to must still equal a tick loop (incl. the
+        // mapper's own IRQ-counter mutations), both render modes.
+        let mut m = mmc3();
+        for &line in &[0u16, 100, 240, 261] {
+            for &off in &[1u64, 2, 342, 1024, 6001] {
+                assert_advance_to_equiv(&seed(line, 0, true), &mut m, off, true);
+                assert_advance_to_equiv(&seed(line, 0, true), &mut m, off, false);
+            }
+        }
+    }
+
+    /// Run per-dot from `state` until `pred(&p)` becomes true or `cap`
+    /// ticks elapse; return the `cycles` value at the START of the tick
+    /// that first satisfies `pred`. Used to check the event predictors.
+    fn run_until<F: Fn(&Ppu) -> bool>(
+        mut p: Ppu,
+        mapper: &mut MapperEnum,
+        cap: u64,
+        pred: F,
+    ) -> Option<u64> {
+        let mut sink = Discard;
+        for _ in 0..cap {
+            let before = p.cycles;
+            p.tick(mapper, &mut sink);
+            if pred(&p) {
+                return Some(before);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn next_vblank_set_dot_matches_actual() {
+        let mut m = nrom();
+        // Positions strictly before this frame's 241,1: same-frame set,
+        // exact (the cross-frame wraparound shares cpu_cycles_until_nmi
+        // _fire's documented odd-skip approximation and is not asserted).
+        for &line in &[0u16, 50, 100, 239, 240] {
+            let mut p = restore(&seed(line, 0, false));
+            p.nmi_occurred = false;
+            let predicted = p.next_vblank_set_dot();
+            let actual = run_until(p, &mut m, 100_000, |p| p.nmi_occurred)
+                .expect("vblank set must fire within a frame");
+            assert_eq!(
+                predicted, actual,
+                "next_vblank_set_dot mispredicted from scanline {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn next_nmi_edge_dot_matches_actual() {
+        let mut m = nrom();
+        // nmi_output on + edge ahead → Some(vblank set dot); the edge
+        // (nmi_output && nmi_occurred low→high) fires at that dot.
+        let mut p = restore(&seed(100, 0, false));
+        p.nmi_output = true;
+        p.nmi_occurred = false;
+        let predicted = p.next_nmi_edge_dot();
+        assert_eq!(predicted, Some(p.next_vblank_set_dot()));
+        let actual = run_until(p, &mut m, 100_000, |p| {
+            p.nmi_output && p.nmi_occurred
+        })
+        .expect("nmi edge must fire");
+        assert_eq!(predicted, Some(actual), "next_nmi_edge_dot mispredicted");
+
+        // nmi_output off → None (no forward edge).
+        let mut q = restore(&seed(100, 0, false));
+        q.nmi_output = false;
+        q.nmi_occurred = false;
+        assert_eq!(q.next_nmi_edge_dot(), None);
+
+        // nmi_occurred already latched → None (edge is in the past).
+        let mut r = restore(&seed(100, 0, false));
+        r.nmi_output = true;
+        r.nmi_occurred = true;
+        assert_eq!(r.next_nmi_edge_dot(), None);
+    }
+
+    #[test]
+    fn next_vblank_clear_dot_matches_actual() {
+        let mut m = nrom();
+        // Seed in vblank (after 241,1) with the sprite-0 hit latched and
+        // rendering off, so no path re-sets it before the 261,1 clear.
+        for &line in &[242u16, 250, 260] {
+            let mut p = restore(&seed(line, 0, false));
+            p.regs.ppu_mask = PpuMask::empty();
+            p.refresh_ppu_mask_cache();
+            p.regs.ppu_status.set(PpuStatus::SPRITE_ZERO_HIT, true);
+            let predicted = p.next_vblank_clear_dot();
+            let actual = run_until(p, &mut m, 100_000, |p| {
+                !p.regs.ppu_status.contains(PpuStatus::SPRITE_ZERO_HIT)
+            })
+            .expect("vblank/flag clear must fire at 261,1");
+            assert_eq!(
+                predicted, actual,
+                "next_vblank_clear_dot mispredicted from scanline {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn next_odd_skip_dot_matches_actual() {
+        let mut m = nrom();
+        let mut sink = Discard;
+        // Count ticks for a whole pre-render line (261 -> 0) in each
+        // configuration; assert the odd-frame rendering line is 340 dots
+        // (skip fired) and the predictor points at scanline_cycle 339.
+        let mut line_len = |frame: u64, rendering: bool| -> (u64, Option<u64>) {
+            let mut p = Ppu::new();
+            p.scanline = PRE_RENDER_SCANLINE;
+            p.scanline_start_cycle = 90_000;
+            p.cycles = 90_000;
+            p.frame = frame;
+            if rendering {
+                p.regs.ppu_mask = PpuMask::SHOW_BACKGROUND | PpuMask::SHOW_SPRITES;
+            }
+            p.refresh_ppu_mask_cache();
+            p.skip_render = rendering; // exercise the render mode faithfully
+            let predicted = p.next_odd_skip_dot();
+            let start = p.cycles;
+            let mut n = 0u64;
+            while p.scanline == PRE_RENDER_SCANLINE {
+                p.tick(&mut m, &mut sink);
+                n += 1;
+                if n > 400 {
+                    break;
+                }
+            }
+            (n, predicted.map(|d| d - start))
+        };
+
+        // Odd frame + rendering: 340 dots, skip predicted at offset 339.
+        let (n_odd, pred_odd) = line_len(1, true);
+        assert_eq!(n_odd, 340, "odd-frame pre-render must skip one dot");
+        assert_eq!(pred_odd, Some(339), "odd skip must be predicted at dot 339");
+
+        // Even frame + rendering: full 341 dots, no skip.
+        let (n_even, pred_even) = line_len(2, true);
+        assert_eq!(n_even, 341, "even-frame pre-render is a full line");
+        assert_eq!(pred_even, None);
+
+        // Odd frame + rendering off: no skip (341 dots).
+        let (n_off, pred_off) = line_len(1, false);
+        assert_eq!(n_off, 341, "no skip when rendering is disabled");
+        assert_eq!(pred_off, None);
     }
 }

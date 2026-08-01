@@ -470,9 +470,32 @@ unsafe fn xrgb_to_rgb_neon(src: &[u32], dst: &mut [u8]) {
 /// Interior-mutability wrapper around a `Worker`. The inner
 /// `UnsafeCell` is not `Sync`; we assert `Sync` manually because all
 /// access is discipline-based (see the `Pool` `Send + Sync` SAFETY
-/// comment below). This is a transparent newtype so rayon can hand
-/// out `&WorkerCell` items across worker threads.
-#[repr(transparent)]
+/// comment below).
+///
+/// `#[repr(align(128))]` (M4's cache line size) rather than the
+/// default 8-byte alignment `Worker`'s fields would otherwise imply.
+/// `Vec<WorkerCell>` (`Pool::workers`) is the one contiguous,
+/// worker_id-indexed allocation where every element is written by a
+/// DIFFERENT rayon thread on every `step_all`/`reset_all` call — and
+/// each `step()` dirties close to the whole `Worker` (RAM writes,
+/// PPU/OAM/mapper state, CPU registers), not just one field. Without
+/// this, `Worker`'s natural 8-byte alignment lets consecutive
+/// elements land with only an 8-byte-granular boundary, so the tail
+/// bytes of worker[i] and the head bytes of worker[i+1] can share a
+/// physical cache line — two different threads then write that same
+/// line every step, forcing MESI invalidation traffic back and forth
+/// between cores on every boundary pair. Same failure shape as the
+/// `ASM_HITS` regression (see `nes.rs`'s note near the ASM dispatch
+/// path), just at the worker-array boundary instead of a single
+/// global counter. `#[repr(align(128))]` pads `WorkerCell`'s size up
+/// to a 128-byte multiple and 128-byte-aligns the whole `Vec`'s
+/// backing allocation, so no two workers' elements can ever share a
+/// line — a few dozen bytes of padding per multi-KB `Worker`, not a
+/// logic change. (Dropping `#[repr(transparent)]`: nothing here
+/// transmutes or pointer-casts `WorkerCell` to `UnsafeCell<Worker>`
+/// — every access goes through `.0.get()` / `WorkerCell::new()` — so
+/// the ABI-transparency guarantee wasn't load-bearing, only cosmetic.)
+#[repr(align(128))]
 struct WorkerCell(UnsafeCell<Worker>);
 
 // SAFETY: sharing `&WorkerCell` across threads is sound because the
@@ -611,6 +634,22 @@ pub struct Pool {
     /// genome that dies at step 50 of 1500, this saves ~5800 NES
     /// frames of dead-time emulation per episode. Cleared on
     /// `reset_all` so the next episode starts everyone fresh.
+    ///
+    /// Cache-alignment audit note: this IS a contiguous,
+    /// worker_id-indexed array touched by every rayon task on every
+    /// `step_all` (the `load` in the `step_all` closure), so it looks
+    /// like the `ASM_HITS` pattern at first glance. It isn't one:
+    /// every access inside the parallel closure is a read
+    /// (`Ordering::Acquire` load), and concurrent reads of a shared
+    /// cache line don't invalidate each other under MESI — only
+    /// writes do. The only writers (`store` in `set_worker_done` and
+    /// the `reset_all` clear loop) run sequentially on the Python
+    /// trainer thread and, per the `Pool` SAFETY note, never overlap
+    /// an in-flight `step_all`. No concurrent writer ⇒ no per-step
+    /// cache-line ping-pong ⇒ left un-padded on purpose. Padding
+    /// `AtomicBool` entries to 128B each would cost real memory
+    /// (128× vs the current 1 byte per worker) to guard against a
+    /// contention pattern that cannot occur here.
     worker_done: Vec<std::sync::atomic::AtomicBool>,
     /// Pool-level pacing speed multiplier as raw IEEE 754 f64 bits
     /// (atomics have no f64 flavor). 1.0 = realtime (frame_skip / 60 s
@@ -1136,6 +1175,17 @@ impl Pool {
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
             w.nes.cpu.hw_mmio_write_timing = on;
+        }
+    }
+
+    /// Event-driven PPU catch-up on every worker — single-env mirror is
+    /// `NESEnvironment::set_hw_event_ppu`; see the `Nes` field doc.
+    /// Observably identical to the legacy inline interleave. Default OFF.
+    fn set_hw_event_ppu(&self, on: bool) {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.hw_event_ppu = on;
         }
     }
 

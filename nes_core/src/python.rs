@@ -297,45 +297,53 @@ impl NESEnvironment {
     }
 
     fn reset<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<u8>>> {
-        // When a start-state snapshot is cached, restore from it
-        // directly WITHOUT a power-cycle first. The upstream
-        // `Nes::reset()` reinitializes mapper internals (PRG/CHR
-        // bank windows etc.) that `apply_state` doesn't fully
-        // re-establish; doing a reset before apply leaves the CPU
-        // pointing into PRG ROM with the wrong bank mapped, which
-        // crashes on the first opcode fetch (observed: opcode 0x02
-        // panic at PC 0xE534 on Zelda after 100 frames of play).
-        if let Some(snap) = &self.start_state_snapshot {
-            let state: crate::nes::State = bincode::deserialize(snap).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "failed to restore start-state snapshot: {e}"
-                ))
-            })?;
-            self.nes.apply_state(&state);
-        } else {
-            self.nes.reset();
-        }
-        self.audio.drain();
-        self.done = false;
-        // Reset pacing so the first paced step doesn't sleep for the
-        // entire elapsed time since pacing was last active.
-        self.pace_next_target = None;
-        // Reset cycle target so the first post-reset advance_one_frame
-        // anchors to the post-reset cycle count rather than to the
-        // previous episode's accumulated drift.
-        self.frame_cycle_target = None;
-        // Step until first frame is rendered, so the caller gets a
-        // valid image rather than uninitialized buffer.
-        //
-        // Note on parity: this puts nes_core one emulated frame
-        // ahead of nes-py, whose `NESEnv.reset()` does NOT advance.
-        // Parity tests (`tests/parity/lockstep.py`) compensate by
-        // advancing nes-py an extra frame; removing this advance
-        // entirely breaks the GUI play-window (user sees a black
-        // frame and thinks the emulator is frozen) and has been
-        // empirically confirmed user-visible bad. Accept the 1-frame
-        // offset cost and compensate in parity tests instead.
-        self.advance_one_frame();
+        // Emulation-heavy work (state restore + a full frame advance)
+        // runs with the GIL released so other Python threads (Qt event
+        // loop, spectator renderer, trainer control) keep running. The
+        // closure touches only pure-Rust `self` fields — no `py`, no
+        // Py* objects. The numpy frame export below reacquires the GIL.
+        py.allow_threads(|| -> PyResult<()> {
+            // When a start-state snapshot is cached, restore from it
+            // directly WITHOUT a power-cycle first. The upstream
+            // `Nes::reset()` reinitializes mapper internals (PRG/CHR
+            // bank windows etc.) that `apply_state` doesn't fully
+            // re-establish; doing a reset before apply leaves the CPU
+            // pointing into PRG ROM with the wrong bank mapped, which
+            // crashes on the first opcode fetch (observed: opcode 0x02
+            // panic at PC 0xE534 on Zelda after 100 frames of play).
+            if let Some(snap) = &self.start_state_snapshot {
+                let state: crate::nes::State = bincode::deserialize(snap).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "failed to restore start-state snapshot: {e}"
+                    ))
+                })?;
+                self.nes.apply_state(&state);
+            } else {
+                self.nes.reset();
+            }
+            self.audio.drain();
+            self.done = false;
+            // Reset pacing so the first paced step doesn't sleep for the
+            // entire elapsed time since pacing was last active.
+            self.pace_next_target = None;
+            // Reset cycle target so the first post-reset advance_one_frame
+            // anchors to the post-reset cycle count rather than to the
+            // previous episode's accumulated drift.
+            self.frame_cycle_target = None;
+            // Step until first frame is rendered, so the caller gets a
+            // valid image rather than uninitialized buffer.
+            //
+            // Note on parity: this puts nes_core one emulated frame
+            // ahead of nes-py, whose `NESEnv.reset()` does NOT advance.
+            // Parity tests (`tests/parity/lockstep.py`) compensate by
+            // advancing nes-py an extra frame; removing this advance
+            // entirely breaks the GUI play-window (user sees a black
+            // frame and thinks the emulator is frozen) and has been
+            // empirically confirmed user-visible bad. Accept the 1-frame
+            // offset cost and compensate in parity tests instead.
+            self.advance_one_frame();
+            Ok(())
+        })?;
         Ok(self.frame_to_numpy(py))
     }
 
@@ -346,27 +354,31 @@ impl NESEnvironment {
     /// advance on reset. Not safe for the GUI / training paths —
     /// frame buffer contains uninitialized memory until the first
     /// `step()`. Use only for trace generation.
-    fn reset_no_advance(&mut self) {
-        // Deserialize into an owned State first so the immutable borrow
-        // of `start_state_snapshot` is released before the mutable
-        // apply — and cold-reset on any deserialize OR apply failure.
-        let restored = self
-            .start_state_snapshot
-            .as_ref()
-            .and_then(|snap| {
-                bincode::deserialize::<crate::nes::State>(snap).ok()
-            });
-        let applied = match restored {
-            Some(state) => apply_state_guarded(&mut self.nes, &state).is_ok(),
-            None => false,
-        };
-        if !applied {
-            self.nes.reset();
-        }
-        self.audio.drain();
-        self.done = false;
-        self.pace_next_target = None;
-        self.frame_cycle_target = None;
+    fn reset_no_advance(&mut self, py: Python<'_>) {
+        // Entirely pure-Rust — no Py* objects touched — so the whole
+        // body runs with the GIL released.
+        py.allow_threads(|| {
+            // Deserialize into an owned State first so the immutable borrow
+            // of `start_state_snapshot` is released before the mutable
+            // apply — and cold-reset on any deserialize OR apply failure.
+            let restored = self
+                .start_state_snapshot
+                .as_ref()
+                .and_then(|snap| {
+                    bincode::deserialize::<crate::nes::State>(snap).ok()
+                });
+            let applied = match restored {
+                Some(state) => apply_state_guarded(&mut self.nes, &state).is_ok(),
+                None => false,
+            };
+            if !applied {
+                self.nes.reset();
+            }
+            self.audio.drain();
+            self.done = false;
+            self.pace_next_target = None;
+            self.frame_cycle_target = None;
+        });
     }
 
     fn step<'py>(
@@ -374,32 +386,41 @@ impl NESEnvironment {
         py: Python<'py>,
         action_bitmask: u8,
     ) -> PyResult<(Bound<'py, PyArray3<u8>>, bool)> {
-        self.apply_buttons(action_bitmask);
-        // Skip-render fast path: only the LAST frame in the frame_skip
-        // batch needs a rendered frame buffer (the trainer observes
-        // that one). All earlier frames in the batch run with PPU
-        // pixel work skipped — sprite-0 / NMI / vblank / mapper IRQs
-        // still tick correctly, but per-pixel color resolution +
-        // frame_buffer writes are eliminated.
-        //
-        // Exception: when `realtime_pace` is on (this worker's audio is
-        // being heard live), DISABLE skip-render entirely. Skip-render
-        // sacrifices MMC3 IRQ + sprite-0 hit accuracy on intermediate
-        // frames; that's fine for headless training but produces
-        // visible glitches on a stream. Pacing implies "this is the
-        // user-facing demo," so we run the full PPU.
-        let use_skip = !self.realtime_pace;
-        for i in 0..self.frame_skip {
-            let is_last = i + 1 == self.frame_skip;
-            self.nes.set_skip_render(use_skip && !is_last);
-            self.advance_one_frame();
-        }
-        self.nes.set_skip_render(false);
+        // The whole emulation batch (button apply, frame_skip stepping,
+        // and any realtime pacing sleep) runs with the GIL released so
+        // the ~1,000 env calls/s from a spectator/solver thread no longer
+        // fight the GIL — the receipted spectator-starvation fix
+        // (commit f14d60b). The closure touches only pure-Rust `self`
+        // fields; the numpy frame export below reacquires the GIL.
+        let done = py.allow_threads(|| {
+            self.apply_buttons(action_bitmask);
+            // Skip-render fast path: only the LAST frame in the frame_skip
+            // batch needs a rendered frame buffer (the trainer observes
+            // that one). All earlier frames in the batch run with PPU
+            // pixel work skipped — sprite-0 / NMI / vblank / mapper IRQs
+            // still tick correctly, but per-pixel color resolution +
+            // frame_buffer writes are eliminated.
+            //
+            // Exception: when `realtime_pace` is on (this worker's audio is
+            // being heard live), DISABLE skip-render entirely. Skip-render
+            // sacrifices MMC3 IRQ + sprite-0 hit accuracy on intermediate
+            // frames; that's fine for headless training but produces
+            // visible glitches on a stream. Pacing implies "this is the
+            // user-facing demo," so we run the full PPU.
+            let use_skip = !self.realtime_pace;
+            for i in 0..self.frame_skip {
+                let is_last = i + 1 == self.frame_skip;
+                self.nes.set_skip_render(use_skip && !is_last);
+                self.advance_one_frame();
+            }
+            self.nes.set_skip_render(false);
 
-        if self.realtime_pace {
-            self.pace_to_realtime();
-        }
-        Ok((self.frame_to_numpy(py), self.done))
+            if self.realtime_pace {
+                self.pace_to_realtime();
+            }
+            self.done
+        });
+        Ok((self.frame_to_numpy(py), done))
     }
 
     /// Toggle realtime pacing. When `true`, `step()` sleeps so the
@@ -496,6 +517,17 @@ impl NESEnvironment {
         self.nes.cpu.hw_mmio_write_timing = on;
     }
 
+    /// Event-driven PPU catch-up: route the per-cycle PPU advancement in
+    /// `Nes::tick` and the ASM/bulk catch-up loops through
+    /// `Ppu::advance_to(target_dot)` (absolute-dot re-parameterization of
+    /// the per-dot tick loop; closed-form vblank/post-render fast-forward
+    /// under the hood). Observably identical to the legacy inline
+    /// interleave in every render mode / mapper. Default OFF. Config, not
+    /// state. See docs/proposals/event_driven_ppu_design_2026-07-31.md.
+    fn set_hw_event_ppu(&mut self, on: bool) {
+        self.nes.hw_event_ppu = on;
+    }
+
     /// Save the current emulator state as an opaque `bytes` blob.
     /// Format is bincode-encoded `nes::State` — RAM, CPU, PPU, APU,
     /// mapper, input registers. Versioning is implicit: only blobs
@@ -504,21 +536,28 @@ impl NESEnvironment {
     /// header. For now, callers who care about durability should
     /// re-snapshot rather than relying on cross-version loads.
     fn save_state<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let state = self.nes.get_state();
-        let body = bincode::serialize(&state).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "save_state serialize failed: {e}"
-            ))
+        // Snapshot + bincode serialize is pure-Rust; run it with the GIL
+        // released so a concurrent Python thread isn't blocked while a
+        // large state blob is encoded. The `PyBytes` allocation (which
+        // needs the GIL) happens after the closure returns the owned Vec.
+        let out = py.allow_threads(|| -> PyResult<Vec<u8>> {
+            let state = self.nes.get_state();
+            let body = bincode::serialize(&state).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "save_state serialize failed: {e}"
+                ))
+            })?;
+            // Prefix every blob with `NCST\x01` so future format changes
+            // can bump the version byte and refuse to load old blobs with
+            // a clear error (instead of silently deserialising into the
+            // wrong struct layout). PlayWindow's on-disk `.state.bin`
+            // files write the same prefix — save_state()'s output is
+            // copy-paste loadable there.
+            let mut out = Vec::with_capacity(STATE_MAGIC.len() + body.len());
+            out.extend_from_slice(STATE_MAGIC);
+            out.extend_from_slice(&body);
+            Ok(out)
         })?;
-        // Prefix every blob with `NCST\x01` so future format changes
-        // can bump the version byte and refuse to load old blobs with
-        // a clear error (instead of silently deserialising into the
-        // wrong struct layout). PlayWindow's on-disk `.state.bin`
-        // files write the same prefix — save_state()'s output is
-        // copy-paste loadable there.
-        let mut out = Vec::with_capacity(STATE_MAGIC.len() + body.len());
-        out.extend_from_slice(STATE_MAGIC);
-        out.extend_from_slice(&body);
         Ok(PyBytes::new_bound(py, &out))
     }
 
@@ -526,7 +565,7 @@ impl NESEnvironment {
     /// blobs without the `NCST\x01` header (prevents silent corruption
     /// on a version mismatch). After load, the next `step()` produces
     /// the frame as if the saved emulator had stepped from that point.
-    fn load_state(&mut self, data: &Bound<'_, PyBytes>) -> PyResult<()> {
+    fn load_state(&mut self, py: Python<'_>, data: &Bound<'_, PyBytes>) -> PyResult<()> {
         let raw = data.as_bytes();
         let body = if raw.starts_with(STATE_MAGIC) {
             // Strip every repeated NCST prefix — tolerates the
@@ -560,22 +599,31 @@ impl NESEnvironment {
             // migrated.
             raw
         };
-        let state: crate::nes::State = bincode::deserialize(body).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "load_state deserialize failed: {e}"
-            ))
-        })?;
-        apply_state_guarded(&mut self.nes, &state)?;
-        // The cycle anchor was tied to the PREVIOUS Nes instance's
-        // CPU clock. After a state load the CPU clock effectively
-        // jumps; clear the anchor so the next advance_one_frame
-        // recomputes target = current_cycles + CPU_CYCLES_PER_FRAME
-        // rather than chasing a stale offset that could undershoot
-        // or overshoot by a full frame.
-        self.frame_cycle_target = None;
-        self.audio.drain();
-        self.done = false;
-        Ok(())
+        // Copy the parsed body out of the (GIL-bound) PyBytes buffer into
+        // an owned Vec so the deserialize + apply can run with the GIL
+        // released — the closure must not reference any Py* object. The
+        // copy is a cheap memcpy of the state blob (tens of KB), dwarfed
+        // by the emulation-state apply it precedes; load_state is not a
+        // per-frame hot path.
+        let body_owned: Vec<u8> = body.to_vec();
+        py.allow_threads(|| -> PyResult<()> {
+            let state: crate::nes::State = bincode::deserialize(&body_owned).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "load_state deserialize failed: {e}"
+                ))
+            })?;
+            apply_state_guarded(&mut self.nes, &state)?;
+            // The cycle anchor was tied to the PREVIOUS Nes instance's
+            // CPU clock. After a state load the CPU clock effectively
+            // jumps; clear the anchor so the next advance_one_frame
+            // recomputes target = current_cycles + CPU_CYCLES_PER_FRAME
+            // rather than chasing a stale offset that could undershoot
+            // or overshoot by a full frame.
+            self.frame_cycle_target = None;
+            self.audio.drain();
+            self.done = false;
+            Ok(())
+        })
     }
 
     fn get_audio<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<i16>>> {
@@ -659,7 +707,7 @@ impl NESEnvironment {
     /// total but split across many calls).
     ///
     /// Caps at 600 ticks to detect runaway loops.
-    fn step_one_instruction(&mut self) -> (u16, u8, u32) {
+    fn step_one_instruction(&mut self, py: Python<'_>) -> (u16, u8, u32) {
         use crate::sink::{AudioSink, VideoSink};
         struct V;
         impl VideoSink for V {
@@ -672,25 +720,29 @@ impl NESEnvironment {
             fn write_sample(&mut self, _: f32) {}
             fn samples_written(&self) -> usize { 0 }
         }
-        let mut v = V;
-        let mut a = A;
-        let starting_pc = self.nes.cpu.regs().pc;
-        let starting_opcode = {
-            let bus = self.nes.system_bus();
-            bus.peek_byte(starting_pc)
-        };
-        let mut ticks = 0u32;
-        // Tick at least once to leave the current boundary.
-        loop {
-            self.nes.tick(&mut v, &mut a);
-            ticks += 1;
-            if ticks > 600 { break; }
-            if self.nes.cpu.at_instruction_boundary() {
-                break;
+        // Bounded (≤600 ticks) pure-Rust work; return is a plain Copy
+        // tuple, so the whole body runs with the GIL released.
+        py.allow_threads(|| {
+            let mut v = V;
+            let mut a = A;
+            let starting_pc = self.nes.cpu.regs().pc;
+            let starting_opcode = {
+                let bus = self.nes.system_bus();
+                bus.peek_byte(starting_pc)
+            };
+            let mut ticks = 0u32;
+            // Tick at least once to leave the current boundary.
+            loop {
+                self.nes.tick(&mut v, &mut a);
+                ticks += 1;
+                if ticks > 600 { break; }
+                if self.nes.cpu.at_instruction_boundary() {
+                    break;
+                }
             }
-        }
-        let new_pc = self.nes.cpu.regs().pc;
-        (new_pc, starting_opcode, ticks)
+            let new_pc = self.nes.cpu.regs().pc;
+            (new_pc, starting_opcode, ticks)
+        })
     }
 
     /// Format the next instruction's nestest-style trace line at the

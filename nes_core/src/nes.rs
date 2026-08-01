@@ -51,6 +51,19 @@ pub struct Nes {
     /// boot accounting.
     pub hw_reset_alignment: bool,
 
+    /// Event-driven PPU catch-up (config, not savestate). When set, the
+    /// per-cycle PPU advancement in `Nes::tick` and the ASM/bulk catch-up
+    /// loops route through `Ppu::advance_to(target_dot)` — an absolute-dot
+    /// re-parameterization of the per-dot `tick` loop — instead of the
+    /// inline `3× ppu.tick` / `tick_three` sequences. Stage 1 is
+    /// equal-by-construction (the routed path is the same tick body);
+    /// Stage 2 lets `advance_to` fast-forward event-free dot ranges in
+    /// closed form (vblank/post-render lines) via the proven `advance`
+    /// batcher. Default `false`: every legacy path stays byte-identical
+    /// (the parity suites + banked receipts assume the inline interleave).
+    /// See docs/proposals/event_driven_ppu_design_2026-07-31.md.
+    pub hw_event_ppu: bool,
+
     /// Cached `mapper.prg_asm_ptr()` result. Stable for the mapper's
     /// lifetime — all mapper PRG-ASM windows are fixed-size 32 KB
     /// `Vec<u8>`s mutated only via slice indexing (never resized),
@@ -115,6 +128,7 @@ impl Nes {
             trace: false,
             disable_asm_cpu: false,
             hw_reset_alignment: false,
+            hw_event_ppu: false,
             cached_prg_asm_ptr: None,
             cached_asm_bulk_cycles: 1,
             cached_ppu_batchable: false,
@@ -324,17 +338,32 @@ impl Nes {
                     // boundary — exactly as before.
                     let remaining = r.cycles_consumed
                         .saturating_sub(r.cycles_ticked_in_callback);
-                    // Rung-1 scanline-granular PPU catch-up. Only under
-                    // skip_render (advance omits pixel work), a batchable
-                    // mapper, and the runtime gate. APU stays per-cycle
-                    // (audio / DMC / frame-IRQ), then the PPU fast-forwards
-                    // in one call — observably identical to the interleaved
-                    // `tick_three` loop below, which is the verbatim,
-                    // byte-identical fallback for every other case.
-                    if self.ppu.is_skip_render()
+                    // Event-driven PPU catch-up (Stage 1/2). APU stays
+                    // per-cycle (audio / DMC / frame-IRQ), then the PPU
+                    // fast-forwards to the absolute batch-end dot in one
+                    // `advance_to` — observably identical to the
+                    // interleaved `tick_three` loop (APU/PPU do not observe
+                    // each other mid-batch; IRQ/NMI lines are sampled only
+                    // at batch end below). Works for every render mode /
+                    // mapper: `advance_to` self-selects closed-form vs the
+                    // verbatim per-dot reference. Legacy branches unchanged.
+                    if self.hw_event_ppu {
+                        for _ in 0..remaining {
+                            self.apu.tick(&mut self.mapper, audio_frame_sink);
+                        }
+                        let target = self.ppu.cycles + remaining as u64 * 3;
+                        self.ppu.advance_to(
+                            target,
+                            &mut self.mapper,
+                            video_frame_sink,
+                        );
+                    } else if self.ppu.is_skip_render()
                         && self.ppu.scanline_advance_enabled()
                         && self.cached_ppu_batchable
                     {
+                        // Rung-1 scanline-granular PPU catch-up. Only under
+                        // skip_render (advance omits pixel work), a
+                        // batchable mapper, and the runtime gate.
                         for _ in 0..remaining {
                             self.apu.tick(&mut self.mapper, audio_frame_sink);
                         }
@@ -404,10 +433,21 @@ impl Nes {
                 // reintroducing the black-screen bug. Verified via
                 // the frame-render regression test inline in the
                 // bulk_step_bench module below.
-                // Rung-1 scanline-granular PPU catch-up (see the ASM
-                // remainder loop above for the invariant). Verbatim
-                // interleaved fallback in the else arm.
-                if self.ppu.is_skip_render()
+                // Event-driven PPU catch-up (Stage 1/2; see the ASM
+                // remainder loop above for the invariant). Legacy
+                // scanline-granular + verbatim interleaved branches
+                // unchanged below.
+                if self.hw_event_ppu {
+                    for _ in 0..cycles {
+                        self.apu.tick(&mut self.mapper, audio_frame_sink);
+                    }
+                    let target = self.ppu.cycles + cycles as u64 * 3;
+                    self.ppu.advance_to(
+                        target,
+                        &mut self.mapper,
+                        video_frame_sink,
+                    );
+                } else if self.ppu.is_skip_render()
                     && self.ppu.scanline_advance_enabled()
                     && self.cached_ppu_batchable
                 {
@@ -521,10 +561,24 @@ impl Nes {
         }
 
         // There are 3 PPU cycles per CPU cycle.
-        for _ in 0..3 {
-            self.ppu.tick(&mut self.mapper, video_frame_sink);
-            self.cpu
-                .set_nmi_line(self.ppu.nmi_output && self.ppu.nmi_occurred);
+        if self.hw_event_ppu {
+            // Event-driven routing: advance one dot at a time through
+            // `advance_to` so the per-dot `set_nmi_line` edge sampling is
+            // preserved exactly (`advance_to(cycles+1)` is one `tick`).
+            // Byte-identical to the else branch by construction.
+            let target = self.ppu.cycles + 3;
+            while self.ppu.cycles < target {
+                self.ppu
+                    .advance_to(self.ppu.cycles + 1, &mut self.mapper, video_frame_sink);
+                self.cpu
+                    .set_nmi_line(self.ppu.nmi_output && self.ppu.nmi_occurred);
+            }
+        } else {
+            for _ in 0..3 {
+                self.ppu.tick(&mut self.mapper, video_frame_sink);
+                self.cpu
+                    .set_nmi_line(self.ppu.nmi_output && self.ppu.nmi_occurred);
+            }
         }
 
         // Push current CPU cycle to the mapper so it can implement
@@ -1036,6 +1090,235 @@ mod oam_dma_bus_tests {
                 (i as u8).wrapping_add(7),
                 "OAM[{i}] from mirrored page $0A did not resolve to $0200",
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod event_ppu_routing_tests {
+    //! `hw_event_ppu` is a routing gate: ON must produce byte-identical
+    //! machine state to OFF (the legacy inline `3× ppu.tick` / catch-up
+    //! interleave). These tests drive real instruction streams through
+    //! both flag states in lockstep and assert full-`Nes`-state equality,
+    //! exercising `Nes::tick` (slow path), the ASM/bulk catch-up loops
+    //! (call sites C/D), and — via a $2000 write that enables the NMI —
+    //! the vblank / NMI edge the routing must not misplace.
+    use super::*;
+    use crate::cartridge::Cartridge;
+
+    struct NullSinks;
+    impl VideoSink for NullSinks {
+        fn write_frame(&mut self, _: &[u8]) {}
+        fn frame_written(&self) -> bool {
+            false
+        }
+        fn pixel_size(&self) -> usize {
+            4
+        }
+    }
+    impl AudioSink for NullSinks {
+        fn write_sample(&mut self, _: f32) {}
+        fn samples_written(&self) -> usize {
+            0
+        }
+    }
+
+    /// Synthetic 32 KB NROM whose reset routine at $C000 enables the
+    /// vblank NMI (`LDA #$80 ; STA $2000`) and then spins on NOPs. The
+    /// NMI handler ($E000, wired via the vector) is a bare `RTI`. This
+    /// keeps the CPU emitting bulk/ASM-eligible opcodes (so the catch-up
+    /// loops run) while forcing a real NMI edge every frame (so the
+    /// routing's edge handling is exercised).
+    fn build_nop_rom() -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 32 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // PRG = 2 × 16 KB = 32 KB
+        rom.push(1); // CHR = 1 × 8 KB
+        rom.push(0); // flags6: mapper 0 low nibble, H-mirror
+        rom.push(0); // flags7: mapper 0 high nibble (iNES 1.0)
+        rom.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0xEAu8; 32 * 1024]; // NOP fill
+        // Reset routine at $C000 (PRG offset 0x0000): LDA #$80; STA $2000.
+        prg[0x0000] = 0xA9; // LDA #imm
+        prg[0x0001] = 0x80; // #$80 — PPUCTRL bit 7 (NMI enable)
+        prg[0x0002] = 0x8D; // STA abs
+        prg[0x0003] = 0x00; // $2000 lo
+        prg[0x0004] = 0x20; // $2000 hi
+        // rest of PRG stays NOP; PC free-runs into the NOP field and wraps.
+        // NMI handler at $E000 (PRG offset 0x2000): RTI.
+        prg[0x2000] = 0x40; // RTI
+        // Vectors at $FFFA-$FFFF (PRG offset 0x7FFA..0x7FFF).
+        prg[0x7FFA] = 0x00; // NMI  → $E000
+        prg[0x7FFB] = 0xE0;
+        prg[0x7FFC] = 0x00; // RESET → $C000
+        prg[0x7FFD] = 0xC0;
+        prg[0x7FFE] = 0x00; // IRQ  → $E000
+        prg[0x7FFF] = 0xE0;
+        let mut chr = vec![0u8; 8 * 1024];
+        for (i, b) in chr.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(31).wrapping_add(7);
+        }
+        rom.extend(prg);
+        rom.extend(chr);
+        rom
+    }
+
+    fn build_nes(hw_event_ppu: bool) -> Nes {
+        let cart = Cartridge::load(&mut std::io::Cursor::new(build_nop_rom()))
+            .expect("synthetic NROM should parse");
+        let mut nes = Nes::new(cart);
+        nes.hw_event_ppu = hw_event_ppu;
+        nes
+    }
+
+    fn state_digest(nes: &Nes) -> Vec<u8> {
+        bincode::serialize(&nes.get_state()).expect("serialize nes state")
+    }
+
+    /// Step both machines instruction-for-instruction; the routing gate
+    /// must keep them byte-identical the whole way. `skip_render` chosen
+    /// by the caller so both the full-render and skip-render code paths
+    /// through `advance_to` are covered.
+    fn assert_routing_equiv(steps: usize, skip_render: bool) {
+        let mut on = build_nes(true);
+        let mut off = build_nes(false);
+        on.set_skip_render(skip_render);
+        off.set_skip_render(skip_render);
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        assert_eq!(
+            state_digest(&on),
+            state_digest(&off),
+            "post-reset state must match (skip_render={skip_render})"
+        );
+        for i in 0..steps {
+            on.step(&mut v, &mut a);
+            off.step(&mut v, &mut a);
+            // Compare every step for the first 6000 (tight around boot +
+            // first vblank), then sample to keep the test fast.
+            if i < 6000 || i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&on),
+                    state_digest(&off),
+                    "hw_event_ppu ON diverged from OFF at instruction {i} \
+                     (skip_render={skip_render}): routing is NOT byte-identical"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn routing_on_equals_off_skip_render() {
+        // ~90k instructions ≈ several frames — crosses vblank set, the
+        // NMI edge + RTI, vblank clear, and odd/even frame skips many
+        // times, through the ASM/bulk catch-up loops.
+        assert_routing_equiv(90_000, true);
+    }
+
+    #[test]
+    fn routing_on_equals_off_full_render() {
+        // Full render forces `advance_to`'s per-dot fallback inside the
+        // catch-up loops; must still match the legacy interleave exactly.
+        assert_routing_equiv(30_000, false);
+    }
+
+    #[test]
+    fn routing_on_equals_off_asm_disabled() {
+        // With the ASM path disabled the machine runs the Rust bulk-step
+        // + slow (`Nes::tick`) paths; the per-cycle `advance_to(cycles+1)`
+        // routing in `Nes::tick` must match the legacy `3× ppu.tick`.
+        let mut on = build_nes(true);
+        let mut off = build_nes(false);
+        on.disable_asm_cpu = true;
+        off.disable_asm_cpu = true;
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        for i in 0..30_000usize {
+            on.step(&mut v, &mut a);
+            off.step(&mut v, &mut a);
+            if i < 4000 || i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&on),
+                    state_digest(&off),
+                    "hw_event_ppu ON diverged from OFF (asm disabled) at {i}"
+                );
+            }
+        }
+    }
+
+    /// Synthetic MMC3 (mapper 4) ROM. MMC3 is a NON-batchable mapper
+    /// (scanline IRQ), so under `hw_event_ppu` the catch-up loops still
+    /// tick the APU separately and let `advance_to` run the PPU per-dot
+    /// via the reference path — the one configuration the NROM routing
+    /// tests don't cover (they exercise the closed-form batcher instead).
+    /// Code lives entirely in MMC3's fixed last 8 KB bank ($E000-$FFFF)
+    /// so no bank register init is needed to boot.
+    fn build_mmc3_rom() -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 128 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(8); // PRG = 8 × 16 KB = 128 KB
+        rom.push(1); // CHR = 1 × 8 KB
+        rom.push(0x40); // flags6: mapper 4 low nibble (H-mirror)
+        rom.push(0x00); // flags7: mapper 4 high nibble = 0 (iNES 1.0)
+        rom.extend_from_slice(&[0u8; 8]);
+        let prg_len = 128 * 1024;
+        let mut prg = vec![0xEAu8; prg_len]; // NOP fill
+        // The fixed last 8 KB bank maps to $E000-$FFFF = PRG tail.
+        let last = prg_len - 8 * 1024; // offset of $E000
+        // Reset routine at $E000: LDA #$80; STA $2000 (enable NMI); NOPs.
+        prg[last] = 0xA9;
+        prg[last + 1] = 0x80;
+        prg[last + 2] = 0x8D;
+        prg[last + 3] = 0x00;
+        prg[last + 4] = 0x20;
+        // NMI/IRQ handler at $F000 (offset last + 0x1000): RTI.
+        prg[last + 0x1000] = 0x40; // RTI
+        // Vectors at $FFFA-$FFFF (PRG tail).
+        prg[prg_len - 6] = 0x00; // NMI → $F000
+        prg[prg_len - 5] = 0xF0;
+        prg[prg_len - 4] = 0x00; // RESET → $E000
+        prg[prg_len - 3] = 0xE0;
+        prg[prg_len - 2] = 0x00; // IRQ → $F000
+        prg[prg_len - 1] = 0xF0;
+        let mut chr = vec![0u8; 8 * 1024];
+        for (i, b) in chr.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(31).wrapping_add(7);
+        }
+        rom.extend(prg);
+        rom.extend(chr);
+        rom
+    }
+
+    #[test]
+    fn routing_on_equals_off_mmc3_non_batchable() {
+        let load = |ev: bool| {
+            let cart = Cartridge::load(&mut std::io::Cursor::new(build_mmc3_rom()))
+                .expect("synthetic MMC3 should parse");
+            let mut nes = Nes::new(cart);
+            nes.hw_event_ppu = ev;
+            nes
+        };
+        let mut on = load(true);
+        let mut off = load(false);
+        on.set_skip_render(true);
+        off.set_skip_render(true);
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        // Cross several frames so the MMC3 A12 scanline-IRQ counter clocks
+        // and (if it fires) both machines take the IRQ identically — the
+        // routing must keep them byte-identical regardless.
+        for i in 0..60_000usize {
+            on.step(&mut v, &mut a);
+            off.step(&mut v, &mut a);
+            if i < 6000 || i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&on),
+                    state_digest(&off),
+                    "hw_event_ppu ON diverged from OFF on MMC3 at instruction {i}: \
+                     APU/PPU catch-up separation is not byte-identical for a \
+                     non-batchable mapper"
+                );
+            }
         }
     }
 }

@@ -1,0 +1,106 @@
+{
+  "task": "perf_counters.py bootstrap -- kpc/kperf hardware-counter telemetry for PPU-rework stage gates",
+  "date": "2026-08-01",
+  "artifact": "scripts/perf_counters.py",
+  "environment": {
+    "hw_model": "Mac16,5",
+    "cpu_brand": "Apple M4 Max",
+    "cores_total": 16,
+    "cores_performance": 12,
+    "cores_efficiency": 4,
+    "macos_version": "26.6 (25G72)",
+    "arch": "arm64",
+    "sip_status": "enabled",
+    "euid_tonight": 501,
+    "is_root_tonight": false
+  },
+  "claim": "ctypes binding against kperf.framework + kperfdata.framework is WORKABLE on this macOS version (26.6 / T6041 M4 Max). All required symbols resolve, the full non-privileged setup path (event-database lookup, config-word generation) runs to completion and produces sane output, and the root-gated calls fail with the exact, expected EPERM -- not a load error, not a missing-symbol error, not a crash.",
+  "verified_tonight": {
+    "kperf_framework_dlopen": {
+      "path": "/System/Library/PrivateFrameworks/kperf.framework/kperf",
+      "loaded": true,
+      "note": "file is a dyld-shared-cache stub on disk (nm/file/otool fail on it directly) but ctypes.CDLL() resolves it fine via dyld -- this is normal on macOS 11+."
+    },
+    "kperf_symbols_bound": [
+      "kpc_set_counting", "kpc_set_config", "kpc_set_thread_counting",
+      "kpc_get_thread_counters", "kpc_get_counter_count", "kpc_get_config_count"
+    ],
+    "kperfdata_framework_dlopen": {
+      "path": "/System/Library/PrivateFrameworks/kperfdata.framework/kperfdata",
+      "loaded": true,
+      "db_name": "Apple silicon",
+      "note": "kperfdata.framework's kpep_db_create(NULL, ...) loads the CURRENT machine's PMU event database dynamically at runtime. perf_counters.py resolves all 5 target events BY NAME against this live database instead of hardcoding chip-generation-specific config-register encodings, so it is not tied to M4/T6041 specifically."
+    },
+    "counter_budget": {
+      "fixed_counter_count": 2,
+      "configurable_counter_count": 5,
+      "note": "fixed class is always [cycles, instructions] on every Apple Silicon generation to date; our 5 target configurable events exactly fill the 5 configurable slots this chip reports."
+    },
+    "configurable_event_resolution": {
+      "l1d_fetch_misses": {"kpep_event": "L1D_CACHE_MISS_LD", "physical_slot": 0, "config_word": "0x5a3"},
+      "l1d_sector_refills": {"kpep_event": "ARM_L1D_CACHE_REFILL", "physical_slot": 1, "config_word": "0x3"},
+      "l2_tlb_misses_data": {"kpep_event": "L2_TLB_MISS_DATA", "physical_slot": 2, "config_word": "0x40b"},
+      "l2_tlb_misses_instruction": {"kpep_event": "L2_TLB_MISS_INSTRUCTION", "physical_slot": 3, "config_word": "0x40a"},
+      "branch_mispredictions": {"kpep_event": "BRANCH_MISPRED_NONSPEC", "physical_slot": 4, "config_word": "0x22"},
+      "note": "kpep_config_add_event + kpep_config_kpc + kpep_config_kpc_map all returned rc=0 for all 5 events; config words above are the ACTUAL output of tonight's run (docs cross-checked against scripts/perf_counters.py --diagnose --json), not hand-derived."
+    },
+    "permission_probe": {
+      "kpc_set_counting(FIXED)": {"rc": -1, "errno": 1, "errno_str": "Operation not permitted"},
+      "kpc_set_thread_counting(FIXED)": {"rc": -1, "errno": 1, "errno_str": "Operation not permitted"},
+      "kpc_set_config(CONFIGURABLE, real_config_words)": {"rc": -1, "errno": 1, "errno_str": "Operation not permitted"},
+      "kpc_get_thread_counters(tid=0)": {"rc": -1, "errno": 1, "errno_str": "Operation not permitted"},
+      "kpc_get_thread_counters(tid=pthread_mach_thread_np(self)=259)": {"rc": -1, "errno": 1, "errno_str": "Operation not permitted"},
+      "kpc_force_all_ctrs_set(1)": {"rc": -1, "errno": 1, "errno_str": "Operation not permitted", "note": "probed manually during development; NOT called by perf_counters.py -- the task's specified init sequence (kpc_set_counting/kpc_set_config/kpc_set_thread_counting/kpc_get_thread_counters) doesn't need it for the kernel-mediated read path used here."},
+      "conclusion": "every root-gated call fails EXACTLY at the privilege boundary, with EPERM, after all non-privileged setup (dlopen, symbol bind, event DB lookup, config-word generation, buffer sizing) succeeded. This is the graceful-degradation path perf_counters.py detects via os.geteuid()==0 and reports with the exact sudo command to use."
+    },
+    "emu_workload": {
+      "command": ".venv/bin/python scripts/perf_counters.py --bench emu --frames 2000 --json",
+      "rom": "roms/Super Mario Bros. (World).nes",
+      "tape": "runs/full_run/full_tape.npy",
+      "tape_sha256": "034f6eb760f1a3a1173a7796d51b566aaa77e99e5f9b27bfe2397dd81370f101",
+      "tape_provenance": "full-game-clear action recording banked by the live show (see project memory: GAME COMPLETE 2026-07-27); replayed here purely as a fixed, realistic, deterministic CPU/PPU/APU workload -- recorded originally at frame_skip=4 for gameplay, replayed here 1:1 at frame_skip=1 so '2000 frames' is literal. Trajectory fidelity vs. the original playthrough is NOT required or claimed for this purpose.",
+      "single_env": true,
+      "pool_workers_used": 0,
+      "frame_skip": 1,
+      "frames_requested": 2000,
+      "frames_run": 2000,
+      "wall_s": 1.366968333022669,
+      "steps_per_s": 1463.0916837536083,
+      "episode_done_during_replay": false,
+      "note": "'1 core only' is structural, not an affinity syscall: a single NESEnvironment stepped serially holds the GIL and spawns no worker threads/Pool. macOS/Apple Silicon has no user-facing hard core-pin API (mach thread affinity tags are a soft hint, largely ignored on Apple Silicon) -- documented as a known limitation, not attempted."
+    },
+    "xctrace_fallback_probe": {
+      "binary": "/Applications/Xcode.app/Contents/Developer/usr/bin/xctrace",
+      "note_on_xcode_select": "xcode-select -p points at /Library/Developer/CommandLineTools (no 'xctrace' there); the full Xcode.app is installed separately and xctrace was invoked via its absolute path without changing xcode-select globally.",
+      "list_templates": "confirmed 'CPU Counters' present among 26 standard templates",
+      "record_probe": {
+        "command": "xctrace record --template 'CPU Counters' --time-limit 2s --output probe.trace --launch -- /bin/sleep 1",
+        "result": "exit 0, produced a full probe.trace bundle",
+        "developer_mode_note": "DevToolsSecurity -status reports 'Developer mode is currently disabled' on this machine, but xctrace record+export both worked anyway for this template/launch mode -- developer mode was NOT required here, contrary to initial assumption."
+      },
+      "export_probe": {
+        "command": "xctrace export --input probe.trace --xpath '/trace-toc/run[@number=\"1\"]/data/table[@schema=\"CounterMetricAggregatedForProcess\"]'",
+        "result": "exit 0, returned real per-interval uint64 counter arrays (e.g. '0xa09 0x781 0xe70 0x6ca' -> 2569 1921 3696 1738)",
+        "caveat": "columns are raw values from the default 'Guided / CPU Bottlenecks' configuration, not individually labeled to our 5 named events; per-event labeling needs a 'Custom' counter configuration or decoding form.template's metric formulas -- NOT wired tonight, documented as future work only."
+      },
+      "conclusion": "xctrace is a genuine, verified, no-root-needed fallback path, fully independent of the ctypes/kpc path above. Both paths work; ctypes/kpc is the primary because it produces individually-named counters directly."
+    }
+  },
+  "not_verified_tonight_deferred_to_root_run": [
+    "Actual nonzero counter VALUES (cycles/instructions/L1D/L2TLB/branch) for the emu workload -- every kpc_set_* call is root-gated and returned EPERM as designed; no counter was ever armed long enough to read a real number.",
+    "Whether kpc_set_config succeeds as plain root with SIP left ENABLED, or whether it needs SIP disabled. Historical Intel-era docs required disabling SIP for kpc_force_all_ctrs_set specifically; that call is NOT used by this module. Expectation (based on the fact that many shipped Apple Silicon tools -- asitop, powermetrics-adjacent utilities -- program kpc as root with SIP enabled) is that plain sudo suffices, but this is NOT independently confirmed against this exact macOS build.",
+    "Fixed-counter slot ordering assumption (index 0 = cycles, index 1 = instructions) -- an architectural convention used across all public Apple Silicon kpc tooling, not independently re-derived from this chip's event database (FIXED events carry no configurable slot mapping to check against). Cross-check first with a trivial spin-loop tomorrow: counter[0] should scale with wall-clock * clock-speed, counter[1] with a known static instruction count.",
+    "Whether the 5 chosen configurable events actually produce sane relative magnitudes on a real workload (e.g. branch_mispredictions should be a small fraction of instructions, not the majority) -- basic sanity-check math, not yet run against real numbers."
+  ],
+  "sudo_invocation_for_tomorrow": "sudo /Users/stits/Documents/macos-emulation-and-training/.venv/bin/python /Users/stits/Documents/macos-emulation-and-training/scripts/perf_counters.py --bench emu --json",
+  "sudo_diagnose_invocation": "sudo /Users/stits/Documents/macos-emulation-and-training/.venv/bin/python /Users/stits/Documents/macos-emulation-and-training/scripts/perf_counters.py --diagnose --json",
+  "cli_surface": {
+    "--bench emu": "runs the single-NESEnvironment 2000-frame replay workload (default), with counters when root",
+    "--frames N": "override replay length (default 2000)",
+    "--rom / --tape": "override the ROM and action-tape paths",
+    "--json / --out PATH": "machine-readable output, optionally written to a file",
+    "--diagnose": "binding/event-DB/permission probe only, no workload, safe to run repeatedly without root",
+    "--xctrace-recipe": "prints the verified Instruments fallback recipe and exits"
+  },
+  "rust_changes": "none -- this task only added a Python module/CLI script; nes_core was used exclusively through the already-installed production wheel's nes_core.NESEnvironment. No cargo check/test run because no Rust source changed."
+}
