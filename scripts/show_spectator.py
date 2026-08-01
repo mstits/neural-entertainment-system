@@ -173,13 +173,13 @@ class SpectatorRenderer:
         frame, _ = env.step(0)          # advance one frame -> renders it
         return _scale_nn(np.asarray(frame), scale)
 
-    # Per-tick render budget: nes_core's env calls HOLD the GIL (no
-    # allow_threads in the bindings yet), so rendering all tiles every
-    # tick starves the interpreter inside the live show — the receipted
-    # in-show failure was a sub-1 fps mosaic while the standalone demo
-    # (idle main thread) hit 20 fps/tile. Budgeted round-robin keeps
-    # spectator GIL demand at ~30-60 ms/s regardless of tile count.
-    TILES_PER_TICK = 4
+    # Per-tick render budget. History: with GIL-holding env calls the
+    # budget had to be 4 tiles @ 12 Hz (the receipted sub-1 fps mosaic
+    # fix). nes_core now releases the GIL in step/load_state (verified:
+    # 180M probe iters, 3.78 ms max stall alongside a stepping env), so
+    # the renderer thread can run near-standalone speed again — full
+    # mosaic per tick at the composite rate.
+    TILES_PER_TICK = 17
 
     def tick(self) -> np.ndarray:
         """Apply pending snapshots, render up to TILES_PER_TICK due tiles

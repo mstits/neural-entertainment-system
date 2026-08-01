@@ -353,10 +353,10 @@ class Show:
                 self.spec_renderer = SpectatorRenderer(
                     self.game.rom, n_tiles=int(args.workers), cols=4,
                     hero_scale=0, tile_fps=20.0)
-                # 12 composite ticks/s x <=4 tile renders/tick keeps the
-                # GIL-holding env work small next to the solver thread
-                # (nes_core does not release the GIL yet).
-                self.spec_thread = SpectatorThread(self.spec_renderer, fps=12.0)
+                # nes_core releases the GIL as of the 840e764 build —
+                # the spectator thread renders concurrently with the
+                # solver; 30 Hz composite, full mosaic per tick.
+                self.spec_thread = SpectatorThread(self.spec_renderer, fps=30.0)
                 self.spec_thread.start()
             except Exception as e:
                 sys.stderr.write(f"spectator-lite disabled: {e}\n")
