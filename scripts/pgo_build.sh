@@ -97,7 +97,7 @@ if [[ "${MODE}" == "full" ]]; then
         mkdir -p "${RAW_DIR}"
     fi
     run_step "instrumented build (profile-generate)" \
-        env RUSTFLAGS="-Cprofile-generate=${RAW_DIR}" \
+        env RUSTFLAGS="-Cprofile-generate=${RAW_DIR} -Ctarget-cpu=native" \
         "${REPO}/.venv/bin/maturin" develop --release --quiet
 
     echo "==> [2/3] Running workload (${WORKLOAD}, corpus=${CORPUS}) to generate profile data..."
@@ -208,7 +208,7 @@ fi
 
 echo "==> [3/3] Rebuilding with PGO applied..."
 run_step "PGO-applied build (profile-use)" \
-    env RUSTFLAGS="-Cprofile-use=${MERGED}" \
+    env RUSTFLAGS="-Cprofile-use=${MERGED} -Ctarget-cpu=native" \
     "${REPO}/.venv/bin/maturin" develop --release --quiet
 
 if [[ "${DRY_RUN}" == "1" ]]; then
