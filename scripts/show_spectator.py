@@ -283,6 +283,11 @@ class SpectatorThread(threading.Thread):
             return None if self._latest is None else self._latest
 
     def run(self) -> None:
+        try:
+            from src.training.qos import demote_current_thread
+            demote_current_thread()   # E-cores: rendering is ambience
+        except Exception:
+            pass
         nxt = time.monotonic()
         while not self.stop:
             comp = self.r.tick()

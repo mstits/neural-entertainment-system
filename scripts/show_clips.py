@@ -386,6 +386,11 @@ class ClipRecorder:
 
     # -- background worker ---------------------------------------------------
     def _worker_loop(self) -> None:
+        try:
+            from src.training.qos import demote_current_thread
+            demote_current_thread()   # E-cores: encoding never touches P-cores
+        except Exception:
+            pass
         while True:
             job = self._queue.get()
             if job is None:

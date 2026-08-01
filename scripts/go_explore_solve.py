@@ -822,6 +822,13 @@ class Solver:
                 ap.add(start)
         return ap
 
+    def _door_scan_qos(self, *a, **k):
+        # Housekeeping: run the periodic articulation-point scan on the
+        # E-cores (QOS_BACKGROUND) so it never evicts worker cache lines.
+        from src.training.qos import demote_current_thread
+        demote_current_thread()
+        return self._door_scan(*a, **k)
+
     def _door_scan(self) -> None:
         """Snapshot the adjacency and publish the current door set. Runs in
         a daemon thread; the snapshot copy holds the edge lock briefly (the
@@ -842,7 +849,7 @@ class Solver:
         if self._door_thread is not None and self._door_thread.is_alive():
             return
         self._last_door_t = now
-        self._door_thread = threading.Thread(target=self._door_scan,
+        self._door_thread = threading.Thread(target=self._door_scan_qos,
                                              daemon=True)
         self._door_thread.start()
 
