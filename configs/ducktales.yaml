@@ -119,3 +119,70 @@ reinforce:
   value_loss: huber
   rnd_intrinsic_coef: 0.5
   rnd_loss_coef: 1.0
+
+# Go-Explore solver adapter (bootstrap 2026-08-02). Every address below was
+# (re)verified live from THIS core's Amazon start state via scripted + random
+# rollouts only (no external maps) — receipt:
+# runs/ducktales/dt_observables_receipt.json.
+#
+# CENTRAL DESIGN CHOICE — progress for a NON-LINEAR game.
+# The natural objective is decoded MONEY ($0324-$032A, 7 HUD digit tiles,
+# strictly monotone, == the win objective). But GenericGame.progress can only
+# read `ram[lo] | ram[hi]<<8`, and money needs a 7-tile decode whose blanks are
+# 0x24 (36) — pointing progress at two money-digit bytes is non-monotone
+# (a blank 36 outranks a real leading digit), so money is NOT consumable as-is.
+# Discovery also found NO clean 2-byte world/scroll signal: screen-X $0008 WRAPS
+# every 256 px (verified: multiple forward/back wraps under a single hold-right),
+# and no scroll-page / camera-X byte survives the fixed-cadence + noop-stability
+# rejection ($0022/$0023 jitter with no monotone travel component; $0038/$0760
+# are 2-3-value coarse flags, not page counters). This matches the level's
+# non-linearity (pogo verticality, backtracking) — there is no monotone spatial
+# frontier to consume.
+# So progress = screen-X $0008 (a verified but LOCAL/wrapping signal — a weak
+# domination score), and the archive is driven as a COVERAGE baseline: count
+# selection (--sel-mode count) + a rich cell = (level_index, y-band, screen-X
+# bucket). MONEY remains the true objective and the $1,000,000-single-step jump
+# remains the true level-clear; both are the reward's signals (see
+# DuckTalesReward) and belong in a FUTURE custom progress/is_clear hook (a
+# GenericGame extension that can decode the 7-tile field), not in the 2-byte
+# GenericGame path. level_key is left EMPTY (coverage baseline) accordingly.
+solve:
+  rom: "roms/DuckTales (USA).nes"
+  # progress = DECODED MONEY (the objective), 7 HUD digit tiles $0324-$032A
+  # MSB-first, blank tile 0x24 skipped, scaled /100 to fit progress_cap
+  # (stage totals ~$1-2M -> 0-20000). Money is monotone and the real goal;
+  # screen-X ($0008) wraps and DuckTales has no monotone spatial frontier
+  # (verified: Scrooge sticks on the first obstacle under pure-right), so the
+  # treasure odometer IS the frontier — banking higher-$ states pulls the
+  # solver along treasure-rich paths, and the $1M boss-treasure single-step
+  # jump (>= the largest $50k gem) reads as a huge progress spike = the clear.
+  progress: {tiles: [0x0324, 0x0325, 0x0326, 0x0327, 0x0328, 0x0329, 0x032A], blank: 0x24, scale: 100}
+  progress_cap: 25000
+  # player Y ($0012). VERIFIED-LIVE: settles to 148 on the ground, traces a
+  # smooth ballistic arc under a jump, and oscillates 65<->148 under the pogo
+  # (down+B) — the ballistic/climb signature (range 135). ($0013 is a coarser
+  # secondary vertical, range 80; $0016 is a jump-VELOCITY flag = 128 while
+  # ascending / 0 otherwise, NOT a position — both rejected.) Drives the cell's
+  # y-band, critical for a pogo game.
+  y: 0x0012
+  # Cell's FIRST coordinate = level_index ($00F6). VERIFIED-LIVE: 0=Amazon..
+  # 4=Moon, constant within a level. Self-labels cells per level for a future
+  # multi-level run; = 0 throughout this Amazon bootstrap.
+  area: 0x00F6
+  # Coverage baseline: no in-level stage counter advances on a REAL clear
+  # (clearing the Amazon returns to LAND SELECT, unreachable under bootstrap
+  # play — untested). The true clear is the boss main-treasure single-step
+  # money jump >= $1,000,000 (see DuckTalesReward.win_treasure_value); wire it
+  # into a future custom is_clear when the 7-tile decode is available.
+  level_key: []
+  # Death. HP hearts ($00DD). VERIFIED-LIVE: 3 at spawn; empirically BIMODAL
+  # {3,0} in play (never observed dwelling at 1-2 across 60+ rollouts) and it
+  # RESETS to 3 a few frames after death — so `lives<start_lives` (HP<3) fires
+  # exactly at real death, not on a survived hit. No true lives byte exists
+  # (documented: $01F9 flickers 0-4). player_state corroborates:
+  lives: 0x00DD
+  # $000E = 4 while alive (the ONLY value across all scripted stand/jump/pogo/
+  # climb + every HP=3 sample), 0 on the death frame (11/11 deaths). A clean
+  # semantic death flag; fires at the same instant HP hits 0.
+  player_state: 0x000E
+  death_states: [0]

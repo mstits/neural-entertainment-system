@@ -1,0 +1,58 @@
+{
+  "game": "DuckTales (USA)",
+  "date": "2026-08-02",
+  "rom": "roms/DuckTales (USA).nes",
+  "start_state": "roms/DuckTales (USA)_start.state.bin",
+  "level": "Amazon (level_index 0), Scrooge controllable",
+  "method": "scripted (noop/right/left/jump/pogo) + seeded random rollouts from the receipted start state on THIS core; differential + fixed-cadence + noop-stability analysis of own RAM traces. No external maps or disassembly.",
+  "frame_skip_note": "Discovery ran at fs=1 for clean per-frame arcs and fs=4 (the solver rate) for the final byte picks; low player bytes double-buffer on a 2-frame phase, which fs=4 sampling aliases to a stable phase.",
+
+  "observables_used": {
+    "money_field": {
+      "addr": "0x0324-0x032A (7 tiles, MSB first)",
+      "decode": "value = sum over tiles MSB-first, digit = tile if tile<=9 else 0 (blank tile = 0x24 = 36 -> 0). Matches DuckTalesReward::read_money exactly.",
+      "receipt": "digit-identity CONFIRMED across distinct values collected in random play: $0 -> (0,0,0,0,0,0,0); $2000 -> (36,36,36,2,0,0,0); $4000 -> (36,36,36,4,0,0,0); $6000/$8000 -> digit 6/8; $14,000 -> (36,36,1,4,0,0,0); $16,000 -> (36,36,1,6,0,0,0). Leading positions are 0x24 blanks; each active tile holds the raw digit 0-9. MONOTONE (only increases; a gem pickup jumps it atomically). This is the true objective but is a 7-tile decimal field, NOT consumable by GenericGame's 2-byte progress (blanks=36 outrank real leading digits).",
+      "role": "TRUE objective; future custom progress + is_clear hook (money single-step jump >= $1,000,000 = boss main-treasure = level clear; largest gem is $50,000 so the jump is non-fakeable)."
+    },
+    "screen_x": {
+      "addr": "0x0008",
+      "receipt": "VERIFIED-LIVE screen-relative X: increments holding right, decrements holding left, and WRAPS 255->0 on scroll (multiple forward AND backward wraps observed in a single hold-right rollout). Confirmed NOT a monotone world-progress signal.",
+      "role": "progress {lo} (weak/local, wrapping) + cell screen-X bucket."
+    },
+    "player_hp": {
+      "addr": "0x00DD",
+      "receipt": "VERIFIED-LIVE HP hearts = 3 at spawn (= on-screen heart count). Empirically BIMODAL {3,0} across 60+ random rollouts (never observed dwelling at 1 or 2), and RESETS to 3 a few frames after reaching 0 (death is a transient). So `lives<start_lives` (HP<3) fires exactly at real death, not on a survived hit.",
+      "role": "solve.lives (death = HP decrease)."
+    },
+    "level_index": {
+      "addr": "0x00F6",
+      "receipt": "VERIFIED-LIVE = 0 (Amazon), constant within a level across all rollouts. 0=Amazon 1=Transylvania 2=African Mines 3=Himalayas 4=Moon.",
+      "role": "solve.area = cell's first coordinate (self-labels cells per level)."
+    },
+    "player_y": {
+      "addr": "0x0012",
+      "receipt": "VERIFIED-LIVE vertical position: settles to 148 on the ground when standing; traces a smooth ballistic arc under a jump (e.g. 65->148 rise/fall); OSCILLATES 65<->148 under the pogo (down+B) bounce. Range 135 across jump and pogo. The ballistic/climb signature.",
+      "role": "solve.y = cell y-band (critical for a pogo game)."
+    },
+    "death_state": {
+      "addr": "0x000E",
+      "receipt": "VERIFIED-LIVE = 4 while alive (the ONLY value seen across scripted stand/jump/pogo/climb/left/right AND every HP=3 sample), = 0 on the death frame (11/11 deaths). Clean semantic death flag; fires the same instant HP hits 0.",
+      "role": "solve.player_state with death_states [0] (corroborates the HP death)."
+    }
+  },
+
+  "rejected_or_not_found": {
+    "scroll_page / camera_x": "NONE found. A hold-right rollout gets Scrooge stuck against the Amazon's early obstacle after ~2 forward wraps, so no clean per-page counter emerges; candidate stepping bytes ($0038 -> {0,1,2}, $0760 -> {0,128}, $004B -> {1,2}) are 2-3-value coarse flags that do not track page crossings, and the $0022/$0023 pair jitters (cam = hi<<8|lo bounces 32840-34208 with no monotone travel component) under right-vs-left travel. Consistent with the level's non-linearity: there is no monotone spatial frontier to consume.",
+    "0x0013": "secondary vertical, settles to 128, range 80 (coarser than $0012); rejected in favor of $0012.",
+    "0x0016": "jump-VELOCITY / airborne flag = 128 while ascending, 0 otherwise (not a smooth position); rejected as y.",
+    "lives_byte": "no stable lives counter exists (documented $01F9 flickers 0-4 per frame). Death handled via HP ($00DD) + $000E instead.",
+    "money_binary_backing_store": "hunt across money-change snapshots found no clean 2-byte binary/BCD counter behind the HUD digits (best byte corr 0.90, not lockstep). The 7 digit tiles ARE the canonical store; money cannot be read as a 2-byte value."
+  },
+
+  "design_decision": {
+    "progress": "screen-X 0x0008 (weak, wraps) — the cleanest signal GenericGame can consume as-is; the archive runs as a COVERAGE baseline (count selection).",
+    "cell": "(level_index 0x00F6, y-band 0x0012 // Y_BAND, screen-X 0x0008 // GX_BUCKET) with GX_BUCKET=8, Y_BAND=8.",
+    "true_objective": "decoded money 0x0324-0x032A (monotone; == win); the $1,000,000 single-step jump is the true level-clear. Both are future-custom-hook signals, not the 2-byte GenericGame path.",
+    "level_key": "empty (coverage baseline)."
+  }
+}

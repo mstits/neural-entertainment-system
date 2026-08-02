@@ -213,7 +213,18 @@ class GenericGame:
         s = profile["solve"]
         self.rom = str(REPO / s["rom"])
         p = s["progress"]
-        self._plo = int(p["lo"])
+        # Decoded HUD-field progress (optional): score/money games (DuckTales)
+        # have no monotone spatial frontier — the objective is a multi-tile
+        # decimal HUD field. `progress: {tiles: [addrs MSB-first], blank: B,
+        # scale: N}` decodes those tiles (tile value = literal digit, blank
+        # tile skipped) into an integer // scale. The monotone objective then
+        # IS the frontier: banking higher-score states drives the solver
+        # toward treasure-rich paths through the level. `lo`/`hi` is the
+        # plain 1-2 byte mode (spatial games).
+        self._ptiles = [int(a) for a in p["tiles"]] if "tiles" in p else None
+        self._pblank = int(p.get("blank", 0x24))
+        self._pscale = int(p.get("scale", 1))
+        self._plo = int(p["lo"]) if "lo" in p else None
         self._phi = int(p["hi"]) if "hi" in p else None
         self._y = int(s["y"])
         self._lk = [int(a) for a in s["level_key"]]
@@ -268,6 +279,13 @@ class GenericGame:
         self._room_sig = tuple(int(a) for a in s.get("room_sig", ()))
 
     def progress(self, ram) -> int:
+        if self._ptiles is not None:
+            v = 0
+            for a in self._ptiles:          # MSB-first digit tiles
+                t = int(ram[a])
+                if t < 10:                   # blank tile (e.g. 0x24) skipped
+                    v = v * 10 + t
+            return v // self._pscale
         v = int(ram[self._plo])
         if self._phi is not None:
             v |= int(ram[self._phi]) << 8
