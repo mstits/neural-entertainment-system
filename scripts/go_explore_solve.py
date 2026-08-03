@@ -149,11 +149,22 @@ class SmbGame:
     def score_bonus(ram) -> int:
         return 0
 
-    """SMB adapter — wraps the module-level helpers verbatim, so solver
-    behavior on SMB is byte-identical to the pre-adapter code (regression:
-    seeded 1-1 run reproduces the same solution sha)."""
-    rom = ROM
+    """SMB-engine adapter — wraps the module-level helpers verbatim, so
+    solver behavior on SMB is byte-identical to the pre-adapter code
+    (regression: seeded 1-1 run reproduces the same solution sha).
+
+    Works for any game on the SMB1 ENGINE, not just SMB1 itself — the
+    RAM map ($006D/$0086 x, $0760 area, $075F/$075C world/level, $075A
+    lives) is engine-level. The Lost Levels (Super Mario Bros. 2 Japan /
+    FDS) is the same engine with harder layouts, so a profile pointing
+    `rom:` at it (and carrying NO solve: section) routes here and gets
+    the full byte-exact SMB solver for free. A profile's optional `rom:`
+    overrides the default SMB1 World ROM."""
     progress_cap = 7000   # transition-frame garbage guard (8-1 lesson)
+
+    def __init__(self, profile: dict = None) -> None:
+        r = (profile or {}).get("rom")
+        self.rom = str(REPO / r) if r else ROM
 
     def progress(self, ram) -> int:
         return _gx(ram)
@@ -447,9 +458,11 @@ class GenericGame:
 
 
 def make_game(profile: dict):
-    """SMB profiles carry no `solve:` section — they get the byte-exact
-    SMB adapter. A profile with `solve:` opts into the generic path."""
-    return GenericGame(profile) if "solve" in profile else SmbGame()
+    """SMB-engine profiles carry no `solve:` section — they get the
+    byte-exact SMB adapter (which reads an optional `rom:` override, so
+    Lost Levels / any SMB1-engine game works). A profile with `solve:`
+    opts into the generic path."""
+    return GenericGame(profile) if "solve" in profile else SmbGame(profile)
 
 
 def derive_transition_macros(action_space: list, room_advance: dict | None) -> list:

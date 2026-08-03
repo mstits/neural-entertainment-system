@@ -1,0 +1,30 @@
+name: "Super Mario Bros. 2 (Japan) — The Lost Levels"
+# THE TRANSFER DEMO: Lost Levels runs on the SMB1 ENGINE (same physics,
+# same RAM map), so it carries NO solve: section and auto-routes to the
+# byte-exact SmbGame adapter — the exact solver that cleared SMB1
+# 1-1 -> 8-4. Only the ROM differs. Harder layouts, same difficulty
+# CLASS as SMB's castle mazes / 8-4, which we already cracked.
+#
+# TO ARM (once the ROM is dropped into roms/):
+#   1. set `rom:` below to the actual Lost Levels filename you added
+#      (e.g. "roms/Super Mario Bros. 2 (Japan).nes" or the FDS->nes name).
+#   2. capture a start state:
+#        .venv/bin/python scripts/capture_start_state.py --game lost_levels \
+#            --rom "roms/<your file>.nes"
+#      then set start_state_path to roms/<stem>_start.state.bin
+#   3. run it:  make show GAME=lost_levels   (or a headless solve)
+rom: "roms/Super Mario Bros. 2 (Japan).nes"   # <-- set to the file you add
+start_state_path: "roms/Super Mario Bros. 2 (Japan)_start.state.bin"  # <-- capture after ROM lands
+frame_skip: 4
+max_episode_steps: 3000
+
+# SMB1-engine action space (identical to the SMB solver's — the adapter is
+# byte-exact on this engine). No solve: section = SmbGame adapter.
+action_space:
+  - []
+  - ["right"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["right", "A", "B"]
+  - ["A"]
+  - ["left"]
