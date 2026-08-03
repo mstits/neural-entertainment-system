@@ -1,0 +1,146 @@
+{
+  "game": "Kirby's Adventure (USA) (Rev A)",
+  "mapper": "MMC3",
+  "rom": "roms/Kirby's Adventure (USA) (Rev A).nes",
+  "start_state": "roms/Kirby's Adventure (USA) (Rev A)_start.state.bin",
+  "frame_skip": 4,
+  "ram_window": "full 2KB $0000-$07FF",
+  "method": "own scripted + random rollouts only (no external RAM maps / disassembly). Frames rendered to verify screen state. Start state is the pre-door platform in Vegetable Valley Stage 1; progress in this ROOM-BASED game is via a DOOR (walk-left ~16px, press UP grounded) into a horizontal scrolling room.",
+  "observables": {
+    "world_x": {
+      "lo": "0x0083",
+      "hi": "0x0095",
+      "formula": "ram[0x0083] | ram[0x0095]<<8",
+      "noop_flat_v": {
+        "first": 40,
+        "last": 40,
+        "min": 40,
+        "max": 40,
+        "verdict": "FLAT under NOOP -> not a frame counter (rejection test the MM2 $001C bootstrap failed)"
+      },
+      "hold_right_v": {
+        "first": 52,
+        "last": 281,
+        "sample": [
+          52,
+          57,
+          62,
+          68,
+          73,
+          78,
+          83,
+          88,
+          94,
+          99,
+          104,
+          109,
+          114,
+          120
+        ],
+        "verdict": "monotone rising, steady ~+5/step (Kirby walk @ fs=4), crosses 256 page boundary"
+      },
+      "hold_left_v": {
+        "from": 244,
+        "last": 16,
+        "verdict": "falls under LEFT (direction-reversible)"
+      },
+      "gameplay_locked_wrap_test": {
+        "down_wraps": 151,
+        "down_wraps_with_hi_+1": 128,
+        "down_couple_rate": 0.848,
+        "up_wraps": 46,
+        "up_wraps_with_hi_-1": 46,
+        "up_couple_rate": 1.0,
+        "reconstruction": "hi*256+lo continuous (|delta|<64) 99.9% of steps across 8 worker trajectories",
+        "verdict": "0x0083 wraps 255->0 exactly when 0x0095 increments (and 0->255 when it decrements) = a true 16-bit world-X, gameplay-locked (NOT fixed-cadence)"
+      }
+    },
+    "player_y": {
+      "addr": "0x001E",
+      "standing_base": 148,
+      "noop_series_flat": [
+        148,
+        148,
+        146,
+        150
+      ],
+      "jump_series": [
+        148,
+        148,
+        148,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        75,
+        84,
+        85,
+        86,
+        223,
+        223,
+        223,
+        223,
+        143,
+        146,
+        149,
+        149,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148,
+        148
+      ],
+      "peak_min": 64,
+      "return": 148,
+      "verdict": "standing ~148; jump dips to ~64 (up = smaller y), returns to base; flat under NOOP -> Kirby vertical position (wide dynamic range for a flyer)"
+    },
+    "health": {
+      "addr": "0x0025",
+      "value_at_spawn": 6,
+      "hud_orbs": 6,
+      "display_mirrors": [
+        "0x06B4",
+        "0x06B5",
+        "0x06B6",
+        "0x06B7",
+        "0x06B8"
+      ],
+      "stability": "constant 6 across ~70,000 scripted+random steps (8-worker fly/inhale + grounded)",
+      "decrement_observed": false,
+      "verdict": "0x0025 == 6 == the 6 HUD health orbs on the title card, with 5 HUD display-mirror tiles at 0x06B4-0x06B8; rock-stable. Decrement NOT triggerable in the forgiving opening (Kirby hover/inhale took zero damage in 70k+ steps) -> used as the death proxy per task guidance."
+    },
+    "area_room_id": {
+      "addr": "0x004F",
+      "start_platform": 58,
+      "horizontal_room": 62,
+      "within_room_constancy": "constant across all 32,000 in-room states",
+      "verdict": "per-room SCENE id: 58 on the start platform, 62 in the post-door horizontal room; constant within a room, steps at the door, increases forward (58<62) so the deep-frontier bias follows Kirby through doors. Monotone across the FULL stage unverified."
+    },
+    "lives": {
+      "addr": null,
+      "hud": "x04",
+      "zero_page_eq4_stable": "none (all ==4 constants are in the 0x05xx-0x07xx HUD/tile buffer: 0x057E,0x0599,0x05C3,0x0640,0x0714 \u2014 unverified display tiles)",
+      "level_id_candidate": "0x0030 == 1 (constant = Vegetable Valley \"Level 1\"; would increment on a real stage clear \u2014 unverified, cannot beat the stage in bootstrap)",
+      "verdict": "no clean zero-page lives counter found; death is proxied by health (0x0025 < 6). Consistent with task guidance."
+    },
+    "rejected": {
+      "0x0022": "churns wildly under NOOP and every input (net thousands) = free-running clock/RNG \u2014 rejected as progress (the $001C-class trap)",
+      "0x0071": "direction-sensitive but huge unbounded net + wraps every step = sub-pixel/velocity accumulator, not a clean position",
+      "0x006A": "fast fractional X (changes ~every step), mono 0.7 \u2014 sub-position, not the page-clean world-X",
+      "0x04xx/0x05xx/0x06xx spikes": "tile/nametable/OAM staging buffers: single large writes at scroll updates gave false mono=1.0; excluded"
+    }
+  }
+}

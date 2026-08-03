@@ -1,0 +1,95 @@
+name: "Kirby's Adventure (USA) (Rev A)"
+# Cold-start capture (2026-08-02): ROM-only, no prior assets. Generic masher
+# (scripts/capture_start_state.py) reached the WORLD MAP (Level 1: Vegetable
+# Valley); pressing UP entered the stage door -> real side-scrolling gameplay
+# (right-vs-left divergence 13 -> 352; hold-right scrolls 410 bytes; Kirby
+# traverses 10 distinct scenes via his hover in 1500 frames, no deaths).
+start_state_path: "roms/Kirby's Adventure (USA) (Rev A)_start.state.bin"
+rom_hashes: []
+
+frame_skip: 4
+max_episode_steps: 2500
+
+description: >
+  Kirby's Adventure (NES, 1993, HAL). Forgiving side-scroll platformer:
+  Kirby can HOVER/FLY (hold A) so pits rarely kill, and can INHALE (B) enemies
+  to copy abilities. Room-based stages. Objective = reach the stage exit;
+  health is the HUD heart meter, lives shown as x04. Solver bootstrap: the
+  progress signal is NOT zero-page (MMC3) and needs discovery (world-x /
+  camera-scroll / room counter). No hand-authored reward — GenericGame solve:.
+
+action_space:
+  - []                      # NOOP
+  - ["right"]
+  - ["left"]
+  - ["A"]                   # jump (hold = puff/float/fly)
+  - ["B"]                   # inhale / spit / use ability
+  - ["down"]                # duck / (air) descend / swallow
+  - ["up"]                  # fly up / enter door
+  - ["right", "A"]          # jump/float right
+  - ["left", "A"]           # jump/float left
+  - ["right", "B"]          # inhale while moving
+  - ["right", "down"]       # slide-ish
+
+# Go-Explore solver adapter (cold-start bootstrap 2026-08-02). Every address
+# below was discovered and verified from THIS core's own scripted + random
+# rollouts — no external RAM maps, no disassembly. Full receipt with the
+# confirming test for each byte: runs/kirby/kirby_observables_receipt.json.
+#
+# THE COLD-MMC3 PROGRESS SIGNAL (the hard part).
+# Kirby's Adventure is ROOM-BASED: the start state is a small platform in
+# Vegetable Valley Stage 1 whose only exit is a DOOR (walk left ~16px, press UP
+# while grounded). Pure hold-right just pins Kirby at the platform edge (a prior
+# zero-page scan found nothing monotone because the room does not scroll there).
+# Entering the door drops into a horizontal scrolling room, and THAT is where the
+# world position lives:
+#   progress = ram[0x0083] | ram[0x0095]<<8  — a true 16-bit WORLD-X.
+# Confirmed by the gameplay-locked-wrap test (the exact rejection the MM2 $001C
+# frame-counter bootstrap failed): under NOOP it is dead FLAT (v=40, so NOT a
+# free-running clock); under hold-right it rises a steady ~+5/step (Kirby's walk
+# at frame_skip 4) and cleanly crosses the 256 page boundary; under hold-left it
+# falls (direction-reversible); and 0x0083 wraps 255->0 exactly when 0x0095
+# increments (84.8% of down-wraps) and 0->255 when 0x0095 decrements (100% of
+# up-wraps), with hi*256+lo continuous (|d|<64) 99.9% of steps across 8 worker
+# trajectories. 0x0071/0x006A are sub-pixel/velocity accumulators (rejected);
+# 0x0022 is a free-running clock (the $001C-class trap, rejected).
+#
+# ROOM ADVANCE. 0x004F is a per-room SCENE id: 58 on the start platform, 62 in
+# the post-door room, constant within a room (across 32,000 in-room states),
+# stepping only at door/room transitions and increasing forward. Used as `area`
+# — which ALSO feeds room_id, so each door transition increments the solver's
+# `sect` transit count (sect*10000 dominates the domination score), pushing the
+# search door-by-door through the stage while world-X gives fine within-room
+# progress. This is the room-based analogue of Contra's screen<<8.
+#
+# level_key = [] (COVERAGE baseline, same choice as contra/ducktales): no
+# stage-clear counter is receipt-verifiable from bootstrap play (clearing
+# Vegetable Valley Stage 1 is unreachable here). 0x0030 == 1 is the stage/level
+# id (Vegetable Valley = "Level 1"); it would increment on a real clear — wire it
+# into level_key once a genuine stage clear is captured and confirmed.
+solve:
+  rom: "roms/Kirby's Adventure (USA) (Rev A).nes"
+  # 16-bit world-X (see the block above). progress_cap guards transition-frame
+  # garbage: real world-X here spans 0..~1023 (0x0095 in 0..3); a door-load
+  # frame that reads a large 0x0095 (>=16 -> >=4096) is dropped, not archived.
+  progress: {lo: 0x0083, hi: 0x0095}
+  progress_cap: 4000
+  # Kirby vertical position. Standing ~148; a jump dips it to ~64 (up = smaller
+  # y) and returns to 148; flat under NOOP. Wide dynamic range (Kirby flies), so
+  # it drives a meaningful y-band cell coordinate. (0x0022 is the clock, not y.)
+  y: 0x001E
+  # Coverage baseline (no verified stage-advance counter from bootstrap play).
+  level_key: []
+  # Death proxy = HEALTH. 0x0025 == 6 == the six HUD health orbs on the title
+  # card, with five HUD display-mirror tiles at 0x06B4-0x06B8; rock-stable at 6
+  # across ~70,000 scripted+random steps. Its decrement could NOT be triggered:
+  # Kirby's hover+inhale took ZERO damage in the forgiving opening (70k+ steps,
+  # 8 grounded/flying workers), exactly as the game is designed. No clean
+  # zero-page lives counter exists (the x04 display maps only to 0x05xx-0x07xx
+  # HUD-buffer constants). is_dead therefore fires on health < 6 — conservative
+  # (treats any hit as terminal), which is fine for this low-damage stage.
+  lives: 0x0025
+  # Per-room scene id (58 start platform -> 62 horizontal room); constant within
+  # a room, steps at doors, increases forward. Self-labels cells per room AND
+  # drives room_id -> sect transitions so the search advances through doors.
+  area: 0x004F
