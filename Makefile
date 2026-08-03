@@ -1,4 +1,4 @@
-.PHONY: help test smoke parity show launcher bench bench-hot bench-scaling bench-phases bench-all \
+.PHONY: help test smoke parity show launcher control-panel bench bench-hot bench-scaling bench-phases bench-all \
         build build-pgo build-pgo-apply selftest clean train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
         ppu_layout_check ppu-batch-profile
@@ -25,8 +25,10 @@ help:
 	@echo "    make show              - Beat the Game (Live): the search system plays SMB"
 	@echo "                             power-on through 8-4 in a window, audio on every clear"
 	@echo "                             (make show GAME=contra or PROFILE=configs/x.yaml for others)"
-	@echo "    make launcher          - the demo console: browse every game + its banked wins,"
-	@echo "                             then launch the show in Live Solve or Replay mode"
+	@echo "    make launcher          - the show control panel: browse every game + banked wins,"
+	@echo "                             edit every show/profile knob, save/load profiles, then"
+	@echo "                             launch the show in Live Solve or Replay mode"
+	@echo "    make control-panel     - alias for make launcher"
 	@echo "    make scoreboard        - mission-control: progress across all six games"
 	@echo ""
 	@echo "  Test:"
@@ -81,10 +83,11 @@ GAME_ARG := $(if $(filter command line,$(origin GAME)),--game $(GAME),--profile 
 show:
 	. .venv/bin/activate && caffeinate -dis python scripts/live_solve_show.py $(GAME_ARG)
 
-# The demo console: a launcher GUI over the catalog (browse every game,
-# its start-state thumbnail + banked wins, then Launch the show in Live
-# Solve or Replay mode as a subprocess).
-launcher:
+# The show control panel: a persistent settings GUI over the catalog
+# (browse every game, its start-state thumbnail + banked wins, edit every
+# show/profile knob, save/load self-contained profiles, then Launch the
+# show in Live Solve or Replay mode as a non-blocking subprocess).
+launcher control-panel:
 	. .venv/bin/activate && python scripts/show_launcher.py
 
 scoreboard:
