@@ -38,11 +38,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -62,6 +64,11 @@ RUNS = REPO / "runs"
 # diverge from the backing config -- so edits reach the show WITHOUT clobbering
 # the repo's canonical configs/<game>.yaml.
 WORKING_PROFILE = RUNS / "launcher" / "active_profile.yaml"
+# Per-launch live-control channel: a polled JSON file the panel writes and the
+# show reads (~5 Hz) so a running show's volume/mute/fx/chorus/audio/heatmap can
+# change WITHOUT a relaunch. One file per launched show; the panel steers the
+# most recent.
+CONTROL_DIR = RUNS / "launcher"
 
 # The interpreter running the launcher is the venv python under `make
 # launcher`; the show inherits it so the same nes_core .so is used.
@@ -197,7 +204,8 @@ def build_launch_argv(python_exe: str, *, game: Optional[str] = None,
                       chorus_voices: Optional[int] = None,
                       heatmap: bool = False, clips: bool = False,
                       fx: str = "off",
-                      spectator_lite: bool = False) -> list[str]:
+                      spectator_lite: bool = False,
+                      control_file: Optional[str] = None) -> list[str]:
     """Compose the live_solve_show.py argv for a launch.
 
     --game is preferred over --profile (a convenience the show already
@@ -235,7 +243,20 @@ def build_launch_argv(python_exe: str, *, game: Optional[str] = None,
         argv += ["--fx", fx]
     if spectator_lite:
         argv += ["--spectator-lite"]
+    if control_file:
+        argv += ["--control-file", control_file]
     return argv
+
+
+def write_control_file(path, state: dict) -> None:
+    """Atomically write the live-control JSON: serialize to a sibling temp file
+    then os.replace it into place, so a polling show never observes a half-
+    written file (os.replace is atomic on the same filesystem)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
+    tmp.write_text(json.dumps(state))
+    os.replace(str(tmp), str(path))
 
 
 def catalog_summary(catalog: dict) -> dict:
@@ -398,13 +419,13 @@ def compose_profile_text(base_text: str, solver_edits: dict,
 # need a display still import cleanly)
 # ---------------------------------------------------------------------------
 
-from PyQt6.QtCore import Qt, QSize  # noqa: E402
+from PyQt6.QtCore import Qt, QSize, QTimer  # noqa: E402
 from PyQt6.QtGui import QImage, QPixmap, QIcon  # noqa: E402
 from PyQt6.QtWidgets import (  # noqa: E402
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox,
     QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QPushButton,
-    QRadioButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
+    QRadioButton, QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget)
 
 _MONO = "font-family: Menlo, monospace;"
 
@@ -430,6 +451,12 @@ class LauncherWindow(QMainWindow):
         self._current_game: Optional[dict] = None
         self._replay_entry: Optional[dict] = None
         self._procs: list[subprocess.Popen] = []
+        # live-control channel state (bound to the most-recent launch)
+        self._live_proc: Optional[subprocess.Popen] = None
+        self._control_path: Optional[Path] = None
+        self._control_seq = 0
+        self._launch_counter = 0
+        self._live_loading = False
 
         # profile-editor state
         self._roster_game: Optional[str] = None
@@ -456,6 +483,14 @@ class LauncherWindow(QMainWindow):
             idx = next((i for i, g in enumerate(self.games)
                         if g.get("name") == "mario"), 0)
             self.game_list.setCurrentRow(idx)
+
+        # Poll the steered show's liveness so the LIVE CONTROL group disables
+        # itself the moment that show exits (idle until a launch; harmless
+        # with no event loop, e.g. under --self-test).
+        self._live_check = QTimer(self)
+        self._live_check.setInterval(1000)
+        self._live_check.timeout.connect(self._check_live_proc)
+        self._live_check.start()
 
     # -- summary + roster -----------------------------------------------
     def _build_summary_bar(self) -> QWidget:
@@ -530,6 +565,7 @@ class LauncherWindow(QMainWindow):
 
         lay.addWidget(self._build_profile_io())
         lay.addWidget(self._build_launch_controls())
+        lay.addWidget(self._build_live_control())
         return panel
 
     # -- settings groups ------------------------------------------------
@@ -978,7 +1014,8 @@ class LauncherWindow(QMainWindow):
             return None, str(WORKING_PROFILE), True
         return None, str(prof), False
 
-    def _build_argv(self, game, profile) -> Optional[list[str]]:
+    def _build_argv(self, game, profile,
+                    control_file: Optional[str] = None) -> Optional[list[str]]:
         if not self._current_game and game is None and profile is None:
             return None
         replay_mode = self.rb_replay.isChecked() and self.rb_replay.isEnabled()
@@ -995,7 +1032,7 @@ class LauncherWindow(QMainWindow):
             audio=rt["audio"], chorus_pitch=rt["chorus_pitch"],
             chorus_voices=rt["chorus_voices"], heatmap=rt["heatmap"],
             clips=rt["clips"], fx=rt["fx"],
-            spectator_lite=rt["spectator_lite"])
+            spectator_lite=rt["spectator_lite"], control_file=control_file)
 
     def _refresh_command(self, *_):
         try:
@@ -1107,16 +1144,176 @@ class LauncherWindow(QMainWindow):
                         f"working-profile write failed ({e}); launching roster "
                         f"config without unsaved solver edits")
                     game, profile = self._roster_game, None
-            argv = self._build_argv(game, profile)
+            # Mint this launch's live-control file (initial state = the editor's
+            # current audio/display settings) so the show can be steered live.
+            control_path = None
+            try:
+                self._launch_counter += 1
+                control_path = CONTROL_DIR / (
+                    f"control_{int(time.time())}_{self._launch_counter}.json")
+                self._control_seq = 1
+                write_control_file(control_path, self._live_state(1))
+            except Exception as e:
+                control_path = None
+                self.status_label.setText(
+                    f"live-control init failed ({e}); launching without it")
+            argv = self._build_argv(
+                game, profile,
+                control_file=(str(control_path) if control_path else None))
             if not argv:
                 return
             self.cmd_label.setText(shlex.join(argv))
             proc = subprocess.Popen(argv, cwd=str(REPO))
             self._procs.append(proc)
+            if control_path is not None:
+                self._activate_live_control(proc, control_path)
             self.status_label.setText(
-                f"launched pid {proc.pid} — panel stays open for the next")
+                f"launched pid {proc.pid} — panel stays open; LIVE CONTROL "
+                f"steers this show")
         except Exception as e:  # pragma: no cover - spawn failure surface
             self.status_label.setText(f"launch failed: {e}")
+
+    # -- live control (steer a running show without relaunch) ------------
+    def _build_live_control(self) -> QWidget:
+        box = QGroupBox("LIVE CONTROL (running show)")
+        self.live_group = box
+        form = QFormLayout(box)
+
+        vol_row = QHBoxLayout()
+        self.live_volume = QSlider(Qt.Orientation.Horizontal)
+        self.live_volume.setRange(0, 100)
+        self.live_volume.setValue(60)
+        self.live_vol_label = QLabel("0.60")
+        self.live_vol_label.setStyleSheet(_MONO + "font-size: 11px;")
+        vol_row.addWidget(self.live_volume, 1)
+        vol_row.addWidget(self.live_vol_label)
+        vh = QWidget(); vh.setLayout(vol_row)
+        form.addRow("volume", vh)
+
+        self.live_mute = QCheckBox("muted")
+        form.addRow("mute", self.live_mute)
+
+        self.live_fx = QComboBox()
+        self.live_fx.addItems(["off", "crt"])
+        form.addRow("fx", self.live_fx)
+
+        self.live_voices = QSpinBox()
+        self.live_voices.setRange(-1, 64)
+        self.live_voices.setSpecialValueText("all (-1)")
+        form.addRow("chorus-voices", self.live_voices)
+
+        self.live_audio = QComboBox()
+        self.live_audio.addItems(["both", "chorus", "hero", "off"])
+        form.addRow("audio", self.live_audio)
+
+        self.live_heatmap = QCheckBox("heatmap visible")
+        form.addRow("heatmap", self.live_heatmap)
+
+        # Debounce the volume slider so dragging it doesn't storm the control
+        # file — one write ~100 ms after the last move.
+        self._vol_debounce = QTimer(self)
+        self._vol_debounce.setSingleShot(True)
+        self._vol_debounce.setInterval(100)
+        self._vol_debounce.timeout.connect(self._write_live_control)
+
+        self.live_volume.valueChanged.connect(self._on_live_volume)
+        self.live_mute.toggled.connect(self._on_live_changed)
+        self.live_fx.currentTextChanged.connect(self._on_live_changed)
+        self.live_voices.valueChanged.connect(self._on_live_changed)
+        self.live_audio.currentTextChanged.connect(self._on_live_changed)
+        self.live_heatmap.toggled.connect(self._on_live_changed)
+
+        box.setEnabled(False)   # enabled only once a show is launched
+        return box
+
+    def _live_state(self, seq: int) -> dict:
+        """The control-file payload from the editor's current settings (the
+        initial write at launch — the show's starting live state)."""
+        return {
+            "seq": int(seq),
+            "volume": round(self.dsp_volume.value(), 3),
+            "muted": False,
+            "fx": self.cmb_fx.currentText(),
+            "chorus_voices": int(self.sp_voices.value()),
+            "audio": self.cmb_audio.currentText(),
+            "heatmap_visible": bool(self.cb_heatmap.isChecked()),
+        }
+
+    def _activate_live_control(self, proc, path) -> None:
+        """Bind the LIVE CONTROL group to a freshly launched show: seed the
+        widgets from the launch settings and enable them. Steers the MOST
+        RECENT launch (any earlier show keeps its last-written control
+        state; only one show is steered at a time)."""
+        self._live_proc = proc
+        self._control_path = Path(path)
+        heatmap_on = bool(self.cb_heatmap.isChecked())
+        self._live_loading = True
+        try:
+            self.live_volume.setValue(int(round(self.dsp_volume.value() * 100)))
+            self.live_vol_label.setText(f"{self.dsp_volume.value():.2f}")
+            self.live_mute.setChecked(False)
+            self._set_combo(self.live_fx, self.cmb_fx.currentText())
+            self.live_voices.setValue(int(self.sp_voices.value()))
+            self._set_combo(self.live_audio, self.cmb_audio.currentText())
+            self.live_heatmap.setChecked(heatmap_on)
+            # the heatmap toggle only has a target if the show was launched
+            # with the panel present; otherwise the show no-ops it.
+            self.live_heatmap.setEnabled(heatmap_on)
+        finally:
+            self._live_loading = False
+        self.live_group.setEnabled(True)
+        self.live_group.setTitle(
+            f"LIVE CONTROL — show pid {proc.pid}"
+            + ("" if heatmap_on else "  (heatmap panel not launched)"))
+
+    def _on_live_volume(self, val: int) -> None:
+        self.live_vol_label.setText(f"{val / 100.0:.2f}")
+        if self._live_loading:
+            return
+        self._vol_debounce.start()
+
+    def _on_live_changed(self, *_):
+        if self._live_loading:
+            return
+        self._write_live_control()
+
+    def _write_live_control(self) -> None:
+        """Serialize the LIVE CONTROL widgets to this launch's control file
+        (bumped seq, atomic temp+replace write). Guarded — a write failure
+        updates the status line, never raises into the event loop."""
+        try:
+            if not self._control_path:
+                return
+            self._control_seq += 1
+            state = {
+                "seq": self._control_seq,
+                "volume": round(self.live_volume.value() / 100.0, 3),
+                "muted": self.live_mute.isChecked(),
+                "fx": self.live_fx.currentText(),
+                "chorus_voices": int(self.live_voices.value()),
+                "audio": self.live_audio.currentText(),
+                "heatmap_visible": self.live_heatmap.isChecked(),
+            }
+            write_control_file(self._control_path, state)
+            self.status_label.setText(
+                f"live → {self._control_path.name}  seq {self._control_seq}  "
+                f"vol {state['volume']} fx {state['fx']} audio {state['audio']}")
+        except Exception as e:
+            self.status_label.setText(f"live-control write failed: {e}")
+
+    def _check_live_proc(self) -> None:
+        """Disable the LIVE CONTROL group once the steered show has exited."""
+        try:
+            if self._live_proc is None:
+                return
+            if self._live_proc.poll() is not None:
+                self._live_proc = None
+                self._control_path = None
+                self.live_group.setEnabled(False)
+                self.live_group.setTitle(
+                    "LIVE CONTROL (running show) — launch a show to enable")
+        except Exception:
+            pass
 
     # -- test hook -------------------------------------------------------
     def select_game(self, name: str) -> bool:
@@ -1233,6 +1430,33 @@ def _self_test() -> int:
     print("  " + shlex.join(replay_argv))
     assert "--mode" in replay_argv and "replay" in replay_argv
     assert "--replay" in replay_argv and target in replay_argv
+
+    # -- live-control channel: argv flag + atomic control-file round-trip --
+    print("\n[self-test] live-control channel ...")
+    live_argv = build_launch_argv(PYTHON, game="contra", mode="solve",
+                                  control_file="/tmp/ctl_demo.json")
+    assert "--control-file" in live_argv and "/tmp/ctl_demo.json" in live_argv, \
+        "control-file flag not emitted"
+    # by default (no control_file) the flag stays off the command line
+    assert "--control-file" not in build_launch_argv(
+        PYTHON, game="contra", mode="solve"), "control-file leaked into default"
+    ctl = Path("/tmp/launcher_control_selftest.json")
+    write_control_file(ctl, {"seq": 1, "volume": 0.6, "muted": False,
+                             "fx": "off", "chorus_voices": -1,
+                             "audio": "both", "heatmap_visible": True})
+    first = json.loads(ctl.read_text())
+    assert first["seq"] == 1 and first["volume"] == 0.6, first
+    write_control_file(ctl, {"seq": 2, "volume": 0.3, "muted": True,
+                             "fx": "crt", "chorus_voices": 4,
+                             "audio": "hero", "heatmap_visible": False})
+    second = json.loads(ctl.read_text())
+    assert second["seq"] == 2 and second["fx"] == "crt" \
+        and second["volume"] == 0.3, second
+    # the panel's live widgets exist and are disabled until a launch
+    assert win.live_group.isEnabled() is False, "live group should start off"
+    print("[self-test] live-control OK: --control-file emitted (and omitted by "
+          "default), atomic temp+replace write, seq bump 1->2 observed, live "
+          "group disabled pre-launch")
 
     out_png = REPO / "runs" / "launcher_thumb_sample.png"
     out_png.parent.mkdir(parents=True, exist_ok=True)

@@ -151,7 +151,10 @@ def default_args(**overrides) -> SimpleNamespace:
                          # optional show-lane panels/effects — all OFF by
                          # default; the base show is byte-identical unless set.
                          heatmap=False, clips=False, fx="off",
-                         spectator_lite=False)
+                         spectator_lite=False,
+                         # live-control channel — off unless a control file is
+                         # named; when None no poll timer is ever installed.
+                         control_file=None)
     for k, v in overrides.items():
         setattr(ns, k, v)
     return ns
@@ -461,6 +464,14 @@ class Show:
         except Exception:
             pass
 
+    def _chorus_active(self) -> bool:
+        """Whether the swarm chorus should be pumping right now: a mixer
+        exists and the current (possibly live-changed) audio mode wants it.
+        Read live so an audio-mode change from the control channel takes
+        effect without a relaunch."""
+        return (self.mixer is not None
+                and getattr(self.args, "audio", "both") in ("both", "chorus"))
+
     def _label_of_state(self, state_path: str) -> str:
         pool = nes_core.Pool(rom_path=self.game.rom, num_workers=1,
                              frame_skip=self.fs)
@@ -566,8 +577,6 @@ class Show:
         self.hero = HeroCam(self)
         self.hero.start()
         self._apply_mix("boot")
-        chorus = (self.mixer is not None
-                  and getattr(self.args, "audio", "both") in ("both", "chorus"))
         ff = getattr(self.args, "chorus_pitch", "ff") == "ff"
         attempt = resume_attempt
         cur_level = self.level
@@ -630,28 +639,51 @@ class Show:
             s = Solver(sargs)
             self._heatmap_reset()
             root_bytes = Path(entrance).read_bytes()
-            cv = int(getattr(self.args, "chorus_voices", -1))
-            n_voices = self.args.workers if cv < 0 else min(cv, self.args.workers)
-            if chorus:
-                # Audio production WITHOUT pacing (decoupled in the pool:
-                # set_worker_audio overrides the pace<->audio welding).
-                # Attribution bench 2026-07-28: full-choir synthesis costs
-                # ~14% throughput (3,050 -> 2,615 sps) — the 8x collapse
-                # once blamed on the chorus was the hero cam's in-emulator
-                # pacing sleep holding the GIL (fixed: Python-side pacing).
-                # Default = every worker sings.
-                for i in range(n_voices):
+
+            def desired_voices(_self=self):
+                cv = int(getattr(_self.args, "chorus_voices", -1))
+                return (_self.args.workers if cv < 0
+                        else max(0, min(cv, _self.args.workers)))
+
+            # Audio production WITHOUT pacing (decoupled in the pool:
+            # set_worker_audio overrides the pace<->audio welding).
+            # Attribution bench 2026-07-28: full-choir synthesis costs ~14%
+            # throughput (3,050 -> 2,615 sps) — the 8x collapse once blamed
+            # on the chorus was the hero cam's in-emulator pacing sleep
+            # holding the GIL (fixed: Python-side pacing). Default = every
+            # worker sings. The singing SET is reconciled every pump tick so
+            # a control-channel chorus-voices / audio change re-voices the
+            # swarm live (reconciliation runs on THIS solver thread — no
+            # cross-thread pool access).
+            voice_state = {"on": set()}
+            if self._chorus_active():
+                for i in range(desired_voices()):
                     s.pool.set_worker_audio(i, True)
+                voice_state["on"] = set(range(desired_voices()))
             pump = {"t": time.time()}
 
             def pump_chorus(sv, _self=self, pump=pump, ff=ff,
-                            n_voices=n_voices):
+                            vs=voice_state):
                 now = time.time()
                 dt = now - pump["t"]
                 if dt < 0.05:
                     return
                 pump["t"] = now
-                for i in range(n_voices):
+                want = (set(range(desired_voices()))
+                        if _self._chorus_active() else set())
+                if want != vs["on"]:
+                    for i in want - vs["on"]:
+                        try:
+                            sv.pool.set_worker_audio(i, True)
+                        except Exception:
+                            pass
+                    for i in vs["on"] - want:
+                        try:
+                            sv.pool.set_worker_audio(i, False)
+                        except Exception:
+                            pass
+                    vs["on"] = want
+                for i in want:
                     try:
                         raw = sv.pool.drain_audio(i)
                         if not len(raw):
@@ -709,13 +741,14 @@ class Show:
 
             inst = {"t": time.time(), "steps": 0, "sps": 0}
 
-            def hook(rs, sv, _self=self, chorus=chorus, inst=inst):
+            def hook(rs, sv, _self=self, inst=inst):
                 if _self.stop:
                     sv.stop = True
                 _self._ingest_frames(rs, sv)
                 _self._heatmap_feed(sv)
-                if chorus:
-                    pump_chorus(sv)
+                # Always pump: pump_chorus self-gates on _chorus_active(), so a
+                # live audio-mode change also disables voices + stops draining.
+                pump_chorus(sv)
                 # INSTANTANEOUS sps (2s window) — the cumulative figure
                 # decays slowly and masked full stalls on stream (the
                 # audit found 640s windows at ~0 sps shown as "300+").
@@ -925,6 +958,7 @@ class LiveSolveWindow(QMainWindow):
         super().__init__(parent)
         args = args or default_args()
         self.args = args
+        self._muted = False           # shared by the M key + control channel
         self.show_state = Show(args)
         game_name = self.show_state.profile.get("name", "NES")
         self.setWindowTitle(f"{game_name} — live solve")
@@ -1006,6 +1040,22 @@ class LiveSolveWindow(QMainWindow):
         self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.timeout.connect(self._render)
         self.timer.start(16)
+
+        # -- LIVE CONTROL channel (opt-in via --control-file). A second,
+        #    slower timer polls a JSON control file the panel writes and
+        #    applies the live-changeable subset (volume / mute / fx /
+        #    chorus-voices / audio / heatmap visibility) to the RUNNING show.
+        #    When the flag is absent NO timer is installed and the show is
+        #    byte-identical to before. Guarded like _render so a malformed
+        #    file or bad value degrades to a skipped poll, never a crash.
+        self._control_path = getattr(args, "control_file", None)
+        self._control_seq = -1
+        self.control_timer = None
+        if self._control_path:
+            self.control_timer = QTimer(self)
+            self.control_timer.timeout.connect(self._poll_control)
+            self.control_timer.start(200)
+
         # replay mode laps a banked solution (no solver swarm); solve mode
         # runs the live campaign exactly as before.
         target = (self.show_state.run_replay
@@ -1049,6 +1099,8 @@ class LiveSolveWindow(QMainWindow):
             except Exception:
                 pass
         self.timer.stop()
+        if getattr(self, "control_timer", None) is not None:
+            self.control_timer.stop()
         super().closeEvent(ev)
 
     def _render(self):
@@ -1110,6 +1162,101 @@ class LiveSolveWindow(QMainWindow):
         tag = {"search": "swarm: full machine speed",
                "lap": "SOLVED", "boot": "booting", "done": ""}.get(st.mode, "")
         self.caption.setText(f"[{tag}]  {st.status}")
+
+    # -- LIVE CONTROL: poll the panel's JSON control file and apply the
+    #    live-changeable subset to the running show. Same swallow-and-log
+    #    discipline as _render — a bad file must never crash the stream.
+    def _poll_control(self):
+        try:
+            self._poll_control_impl()
+        except Exception as e:  # noqa: BLE001 — deliberate stream-safety net
+            n = getattr(self, "_control_errs", 0) + 1
+            self._control_errs = n
+            if n <= 5 or n % 300 == 0:
+                sys.stderr.write(
+                    f"[show] control poll error #{n} (ignored, stream "
+                    f"continues): {type(e).__name__}: {e}\n")
+
+    def _poll_control_impl(self):
+        path = self._control_path
+        if not path:
+            return
+        try:
+            raw = Path(path).read_text()
+        except FileNotFoundError:
+            return                       # not written yet
+        except Exception:
+            return                       # transient read error: keep last good
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return                       # partial write: keep last good state
+        if not isinstance(data, dict):
+            return
+        seq = data.get("seq")
+        if not isinstance(seq, (int, float)) or isinstance(seq, bool):
+            return
+        seq = int(seq)
+        if seq == self._control_seq:
+            return                       # nothing new since last apply
+        self._control_seq = seq
+        self._apply_control(data)
+
+    def _apply_control(self, data: dict):
+        """Apply the live-changeable fields. Each is independently type-
+        validated; an unknown or bad value is ignored, never fatal. Only the
+        LIVE subset is honored here — game/workers/scale/view/start-state are
+        launch-time and never appear in this channel."""
+        st = self.show_state
+        touched_vol = False
+        m = data.get("muted")
+        if isinstance(m, bool):
+            self._muted = m
+            touched_vol = True
+        v = data.get("volume")
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            st.args.volume = max(0.0, min(1.0, float(v)))
+            touched_vol = True
+        if touched_vol and st.mixer is not None:
+            try:
+                st.mixer.set_volume(
+                    0.0 if self._muted else float(st.args.volume))
+            except Exception:
+                pass
+        fx = data.get("fx")
+        if fx in ("off", "crt"):
+            self._set_fx(fx)
+        aud = data.get("audio")
+        if aud in ("both", "chorus", "hero", "off"):
+            st.args.audio = aud
+            try:
+                st._apply_mix(st.mode)   # re-balance chorus vs hero live
+            except Exception:
+                pass
+        cv = data.get("chorus_voices")
+        if isinstance(cv, (int, float)) and not isinstance(cv, bool):
+            st.args.chorus_voices = int(cv)
+            try:
+                st._apply_mix(st.mode)   # re-scale; pump reconciles the set
+            except Exception:
+                pass
+        hv = data.get("heatmap_visible")
+        if isinstance(hv, bool) and self.heatmap_view is not None:
+            self.heatmap_view.setVisible(hv)
+
+    def _set_fx(self, mode: str):
+        """Swap the hero-cam CRT filter on/off live — identical construction
+        to the --fx launch path so the live toggle matches it exactly."""
+        if mode == "crt":
+            if self._fx_fn is None:
+                try:
+                    from scripts.show_fx import crt, upscale
+                    _s = int(self.args.scale)
+                    self._fx_fn = lambda fr, _s=_s: crt(upscale(fr, _s), 1.0, _s)
+                except Exception as e:
+                    sys.stderr.write(f"fx live-enable failed: {e}\n")
+        else:
+            self._fx_fn = None
 
 
 def main() -> int:
@@ -1175,6 +1322,12 @@ def main() -> int:
                          "save-state snapshots so the pool stays headless at "
                          "full search speed, instead of paying the "
                          "worker-render tax. Off by default.")
+    ap.add_argument("--control-file", default=None,
+                    help="Path to a JSON live-control file the show polls "
+                         "(~5 Hz) to apply volume/mute/fx/chorus-voices/audio/"
+                         "heatmap-visibility changes from the control panel "
+                         "WITHOUT relaunching. Off by default (no polling; the "
+                         "show is byte-identical to a plain launch).")
     args = ap.parse_args()
 
     if args.list:
