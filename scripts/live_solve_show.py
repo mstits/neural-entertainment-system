@@ -28,6 +28,10 @@ Usage:
   make show                                   # SMB from power-on
   make show PROFILE=configs/castlevania.yaml  # any solve-ready game
   python scripts/live_solve_show.py --view solo --scale 4   # hero cam only
+  python scripts/live_solve_show.py --game contra            # configs/contra.yaml
+  python scripts/live_solve_show.py --game contra --state runs/x.state  # demo an entrance
+  python scripts/live_solve_show.py --mode replay --replay runs/ge_1_2_solve  # lap a banked solve
+  python scripts/live_solve_show.py --list                   # print the demo catalog and exit
 Keys: Q quits (progress banked; --resume continues).
 """
 from __future__ import annotations
@@ -141,6 +145,9 @@ def default_args(**overrides) -> SimpleNamespace:
                          volume=0.6, resume=False, view="swarm",
                          audio="both", chorus_pitch="ff", chorus_voices=-1,
                          profile=str(DEFAULT_PROFILE),
+                         # demo-loading knobs — all inert by default; the base
+                         # show reaches the exact same code path unless set.
+                         game=None, state=None, mode="solve", replay=None,
                          # optional show-lane panels/effects — all OFF by
                          # default; the base show is byte-identical unless set.
                          heatmap=False, clips=False, fx="off",
@@ -287,6 +294,11 @@ class Show:
         self.args = args
         self.profile_path = str(getattr(args, "profile", DEFAULT_PROFILE))
         self.profile = yaml.safe_load(Path(self.profile_path).read_text())
+        # --state: demo a specific entrance/save by overriding the profile's
+        # captured start state in the loaded dict (no effect when unset).
+        _state_override = getattr(args, "state", None)
+        if _state_override:
+            self.profile["start_state_path"] = _state_override
         self.game = make_game(self.profile)
         self.is_smb = "solve" not in self.profile
         self.bm = action_space_to_bitmasks(self.profile["action_space"])
@@ -764,6 +776,132 @@ class Show:
         if self.hero is not None:
             self.hero.stop = True
 
+    # -- replay: lap a banked solution in the hero cam, NO solver swarm ----
+    def run_replay(self):
+        """Load a discovered solution's root state + action trace and drive
+        the hero cam through idle -> victory lap -> linger, reusing the exact
+        lap machinery the live solve uses. No Solver, no chorus workers, no
+        campaign banking — the 'what it has already done' demo. Loops the lap
+        so the final frame never dies on air; Q closes it."""
+        root_path = getattr(self.args, "_replay_root", None)
+        actions = getattr(self.args, "_replay_actions", None)
+        if root_path is None or actions is None:
+            self.mode = "done"
+            self.status = "replay: no solution loaded"
+            return
+        root_bytes = Path(root_path).read_bytes()
+        try:
+            self.level = self._label_of_state(str(root_path))
+        except Exception:
+            self.level = "?"
+        self.hero = HeroCam(self)
+        self.hero.start()
+        # Idle at the entrance briefly (ambient), then lap it — the hero cam
+        # feeds the featured 1x audio just like a live victory lap.
+        self.mode = "lap"
+        self._apply_mix("lap")
+        self.status = (f"REPLAY — {self.level}: banked solution "
+                       f"({len(actions)} actions)")
+        self.hero.set_level(root_bytes, None)
+        idle_until = time.time() + 2.0
+        while not self.stop and time.time() < idle_until:
+            time.sleep(0.05)
+        while not self.stop:
+            self.hero.play_lap(root_bytes, actions, linger=240)
+            while not self.hero.lap_done.wait(timeout=0.5):
+                if self.stop:
+                    break
+        if self.hero is not None:
+            self.hero.stop = True
+
+
+def resolve_replay(spec: str):
+    """Resolve a --replay target to (root_state_path, actions_ndarray,
+    recorded_profile_or_None).
+
+    Accepts a run-dir (its solutions/ newest sol_*.actions.npy) or a direct
+    sol_*.actions.npy. The root state comes from the solution's companion
+    json (its `root_state`), falling back to the run-dir's roots.json
+    `entrance` path. Relative paths resolve against the repo root. The
+    recorded profile (from the solution's solver_args) lets replay auto-pick
+    the right game when the caller didn't name one."""
+    p = Path(spec)
+    if not p.exists():
+        raise FileNotFoundError(f"--replay path not found: {spec}")
+    if p.is_dir():
+        soldir = p / "solutions"
+        if not soldir.is_dir():
+            soldir = p if p.name == "solutions" else None
+        if soldir is None or not soldir.is_dir():
+            raise FileNotFoundError(f"no solutions/ dir under {p}")
+        sols = sorted(soldir.glob("sol_*.actions.npy"))
+        if not sols:
+            raise FileNotFoundError(f"no sol_*.actions.npy in {soldir}")
+        actions_file = sols[-1]
+    else:
+        actions_file = p
+    actions = np.load(str(actions_file)).astype(np.int64)
+    soldir = actions_file.parent
+    rundir = soldir.parent
+    # Companion json: sol_000.actions.npy -> sol_000.json (base is sol_000).
+    suffix = ".actions.npy"
+    name = actions_file.name
+    base_name = name[:-len(suffix)] if name.endswith(suffix) else actions_file.stem
+    root_state = None
+    rec_profile = None
+    cj = soldir / f"{base_name}.json"
+    if cj.exists():
+        try:
+            meta = json.loads(cj.read_text())
+            root_state = meta.get("root_state")
+            sa = meta.get("solver_args") or {}
+            rec_profile = sa.get("profile") or meta.get("profile")
+        except Exception:
+            pass
+    if not root_state:
+        rj = rundir / "roots.json"
+        if rj.exists():
+            try:
+                roots = json.loads(rj.read_text())
+                ent = roots.get("entrance") or next(iter(roots.values()), None)
+                if isinstance(ent, dict):
+                    root_state = ent.get("path")
+            except Exception:
+                pass
+    if not root_state:
+        raise FileNotFoundError(
+            f"could not determine root state for {actions_file} "
+            "(no companion json root_state, no roots.json entrance)")
+    rp = Path(root_state)
+    if not rp.is_absolute():
+        rp = REPO / rp
+    if not rp.exists():
+        raise FileNotFoundError(f"root state not found: {rp}")
+    return rp, actions, rec_profile
+
+
+def _handle_list() -> int:
+    """Print the demo catalog and exit. demo_catalog is imported lazily so
+    this module still loads if the catalog module isn't present yet."""
+    try:
+        from scripts import demo_catalog
+    except Exception as e:
+        sys.stderr.write(f"demo catalog unavailable: {e}\n")
+        return 0
+    try:
+        cat = demo_catalog.build_catalog()
+    except Exception as e:
+        sys.stderr.write(f"demo catalog build failed: {e}\n")
+        return 0
+    fmt = getattr(demo_catalog, "format_catalog", None)
+    if callable(fmt):
+        print(fmt(cat))
+    elif isinstance(cat, str):
+        print(cat)
+    else:
+        print(json.dumps(cat, indent=2, default=str))
+    return 0
+
 
 from PyQt6.QtCore import Qt, QTimer  # noqa: E402
 from PyQt6.QtGui import QImage, QPixmap  # noqa: E402
@@ -868,8 +1006,12 @@ class LiveSolveWindow(QMainWindow):
         self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.timeout.connect(self._render)
         self.timer.start(16)
-        self.thread = threading.Thread(target=self.show_state.run,
-                                       daemon=True)
+        # replay mode laps a banked solution (no solver swarm); solve mode
+        # runs the live campaign exactly as before.
+        target = (self.show_state.run_replay
+                  if getattr(args, "mode", "solve") == "replay"
+                  else self.show_state.run)
+        self.thread = threading.Thread(target=target, daemon=True)
         self.thread.start()
 
     def keyPressEvent(self, ev):
@@ -910,6 +1052,22 @@ class LiveSolveWindow(QMainWindow):
         super().closeEvent(ev)
 
     def _render(self):
+        # STREAM-SAFE GUARD: PyQt6 calls qFatal()->abort() on ANY unhandled
+        # exception raised inside a slot, so a single transient error in the
+        # 60 fps render tick would hard-kill a live stream (observed:
+        # SIGABRT from a mid-edit callback). Swallow-and-log here so the
+        # show degrades to a dropped frame instead of dying on air. Errors
+        # are rate-limited so a persistent fault doesn't flood the log.
+        try:
+            self._render_impl()
+        except Exception as e:  # noqa: BLE001 — deliberate stream-safety net
+            n = getattr(self, "_render_errs", 0) + 1
+            self._render_errs = n
+            if n <= 5 or n % 300 == 0:
+                sys.stderr.write(f"[show] render error #{n} (frame dropped, "
+                                 f"stream continues): {type(e).__name__}: {e}\n")
+
+    def _render_impl(self):
         st = self.show_state
         f = st.frame
         if f is not None and f.ndim == 3:
@@ -959,6 +1117,24 @@ def main() -> int:
     ap.add_argument("--profile", default=str(DEFAULT_PROFILE),
                     help="Game profile; non-SMB profiles need a verified "
                          "`solve:` section (scripts/verify_ram_map.py).")
+    # -- demo-loading flags (defaults preserve current behavior) ----------
+    ap.add_argument("--game", default=None,
+                    help="Resolve to configs/<name>.yaml (a convenience over "
+                         "--profile <full path>; overrides --profile).")
+    ap.add_argument("--state", default=None,
+                    help="Override the profile's start_state_path to demo a "
+                         "specific entrance/save.")
+    ap.add_argument("--mode", choices=("solve", "replay"), default="solve",
+                    help="solve = the live solve + victory-lap show (default); "
+                         "replay = load a banked solution and lap it in the "
+                         "hero cam (idle->lap->linger), no solver swarm.")
+    ap.add_argument("--replay", default=None,
+                    help="With --mode replay: a run-dir (uses its newest "
+                         "solutions/sol_*.actions.npy + roots.json root state) "
+                         "or a direct sol_*.actions.npy to replay.")
+    ap.add_argument("--list", action="store_true",
+                    help="Print the demo catalog (games/states/banked "
+                         "solutions) and exit.")
     ap.add_argument("--minutes-per-level", type=float, default=120)
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--scale", type=int, default=3)
@@ -1000,6 +1176,38 @@ def main() -> int:
                          "full search speed, instead of paying the "
                          "worker-render tax. Off by default.")
     args = ap.parse_args()
+
+    if args.list:
+        return _handle_list()
+
+    # --game: resolve to configs/<name>.yaml (overrides --profile).
+    if args.game:
+        cfg = REPO / "configs" / f"{args.game}.yaml"
+        if not cfg.exists():
+            ap.error(f"--game {args.game}: no such config ({cfg})")
+        args.profile = str(cfg)
+
+    # --mode replay: resolve the banked solution's root state + actions.
+    if args.mode == "replay":
+        if not args.replay:
+            ap.error("--mode replay requires --replay "
+                     "<run-dir or sol_*.actions.npy>")
+        try:
+            root_path, actions, rec_profile = resolve_replay(args.replay)
+        except Exception as e:
+            ap.error(f"--replay {args.replay}: {e}")
+        # If the caller didn't name a game/profile, adopt the one recorded in
+        # the solution so the right ROM loads.
+        if (args.game is None and args.profile == str(DEFAULT_PROFILE)
+                and rec_profile):
+            rp = Path(rec_profile)
+            if not rp.is_absolute():
+                rp = REPO / rp
+            if rp.exists():
+                args.profile = str(rp)
+        args._replay_root = str(root_path)
+        args._replay_actions = actions
+
     app = QApplication(sys.argv)
     win = LiveSolveWindow(args)
     win.show()

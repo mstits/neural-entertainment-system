@@ -1,4 +1,4 @@
-.PHONY: help test smoke parity show bench bench-hot bench-scaling bench-phases bench-all \
+.PHONY: help test smoke parity show launcher bench bench-hot bench-scaling bench-phases bench-all \
         build build-pgo build-pgo-apply selftest clean train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
         ppu_layout_check ppu-batch-profile
@@ -24,6 +24,9 @@ help:
 	@echo "    make gui               - launch the desktop GUI (pick ROM + profile, watch live)"
 	@echo "    make show              - Beat the Game (Live): the search system plays SMB"
 	@echo "                             power-on through 8-4 in a window, audio on every clear"
+	@echo "                             (make show GAME=contra or PROFILE=configs/x.yaml for others)"
+	@echo "    make launcher          - the demo console: browse every game + its banked wins,"
+	@echo "                             then launch the show in Live Solve or Replay mode"
 	@echo "    make scoreboard        - mission-control: progress across all six games"
 	@echo ""
 	@echo "  Test:"
@@ -69,9 +72,20 @@ gui:
 # Live-solve campaign window (streaming entry). Default = SMB from
 # power-on; any profile with a verified `solve:` section works:
 #   make show PROFILE=configs/castlevania.yaml
+#   make show GAME=contra          # convenience: resolves configs/contra.yaml
 PROFILE ?= configs/smb_4_4_micro.yaml
+# GAME defaults to `mario` project-wide (train/eval/demo), so only treat it as
+# a show override when it's given on the command line -- otherwise `make show`
+# stays byte-identical, launching --profile $(PROFILE).
+GAME_ARG := $(if $(filter command line,$(origin GAME)),--game $(GAME),--profile $(PROFILE))
 show:
-	. .venv/bin/activate && caffeinate -dis python scripts/live_solve_show.py --profile $(PROFILE)
+	. .venv/bin/activate && caffeinate -dis python scripts/live_solve_show.py $(GAME_ARG)
+
+# The demo console: a launcher GUI over the catalog (browse every game,
+# its start-state thumbnail + banked wins, then Launch the show in Live
+# Solve or Replay mode as a subprocess).
+launcher:
+	. .venv/bin/activate && python scripts/show_launcher.py
 
 scoreboard:
 	. .venv/bin/activate && python scripts/scoreboard.py
