@@ -147,3 +147,48 @@ reinforce:
   value_loss: huber
   rnd_intrinsic_coef: 0.5   # sparse floor-clear reward -> RND aids exploration
   rnd_loss_coef: 1.0
+
+# Solver adapter (Go-Explore discovery bootstrap 2026-08-03). Every address
+# below was found/confirmed from OUR OWN scripted rollouts on this core (full
+# 2KB scan, not just zero page) -- no external RAM maps or disassembly.
+#
+# DEBUNKED first (documented so nobody re-adds it): the ram_mapping above
+# labels $0090/$0081 "player world-X, climbs monotonically 1->~2020 across
+# Floor 1". Own-rollout replay falsifies this for solver purposes -- under
+# TOTAL NOOP (zero input) the combined value climbs from 1 to 116+ at the
+# SAME rate it climbs under RIGHT or LEFT input (noop net +115 over 240
+# idle steps): it is a free-running PER-LIFE ELAPSED-FRAME counter (the
+# exact MM2 $001C frame-counter trap the discovery lore warns about), not
+# position. Left untouched above (the shipped reward code may depend on it)
+# but NOT wired into solve: below.
+#
+# The real position signal found instead: $0094 (byte-identical mirrors at
+# $00D4 and $04E0). Passes the wrap+reversibility gate cleanly -- rock-flat
+# at 128 for 200+ idle NOOP frames (only wobbles on a real hit/knockback,
+# confirmed by simultaneous health drain), CLAMPED at 128 under sustained
+# LEFT (can't go below the level-start spawn -- correct forced-minimum
+# behavior, not an artifact), and climbs 128->236 (net +108) under
+# sustained RIGHT. SATURATION TEST: ceilings at 236-240 across every real
+# death cycle observed (3 independent lives under a plain-hold probe and
+# 3 more under a B-attack probe, ~3600-12000 frames total) and was never
+# seen to exceed it. Whether this is a hard camera/scroll-window clamp
+# (the Kirby lesson) or simply "scripted play always dies there" is
+# UNRESOLVED at bootstrap scale: current_floor ($0058, the natural
+# room/screen counter for a multi-screen floor) never advanced in any
+# probe to pair with it or prove a re-basing transition. level_key stays
+# an empty coverage baseline; the archive/solve run below is the actual
+# instrument that answers whether search can push the frontier past 240.
+solve:
+  rom: "roms/Kung Fu (Japan, USA).nes"
+  progress: {lo: 0x0094}
+  # Player pose byte (own-rollout isolated-input probe): 0 = stand/walk,
+  # 4 = duck (DOWN held), 128 = airborne (A held); rock-flat under NOOP,
+  # returns to 0 the instant the button releases. A discrete pose flag
+  # rather than a continuous height -- Kung Fu's jump-kick has no simulated
+  # parabolic arc in RAM -- but it cleanly separates grounded/ducking/
+  # airborne cells, which is what the archive needs.
+  y: 0x0014
+  level_key: []
+  # VERIFIED-LIVE (matches ram_mapping): decrements 3->2->1->0 on every
+  # death cycle observed in our own probes; clean death signal alone.
+  lives: 0x005C

@@ -1,0 +1,152 @@
+{
+  "game": "Bubble Bobble (USA)",
+  "rom": "roms/Bubble Bobble (USA).nes",
+  "rom_md5": "e6cb4e0faf2e944b2a0c8d78a399ac7f",
+  "note": "Single-screen clear-all-enemies arcade; the deliberate non-scrolling test case for the discovery pipeline. All observables below come from this session's own rollouts (headless Pool, our verified ram_mapping); no external RAM maps or disassembly.",
+
+  "step1_start_state_capture": {
+    "tool": "scripts/capture_start_state.py --game bubble_bobble --max-frames 2000",
+    "result": "gameplay confirmed at frame 1695 (+40 settle frames), wrote 45745 bytes",
+    "out": "roms/Bubble Bobble (USA)_start.state.bin",
+    "verification": "is_controllable() growth+directionality gate (RIGHT vs LEFT vs base RAM diff) passed automatically inside the capture tool"
+  },
+
+  "step2_discovery": {
+    "method": "scripts/discover_observables.py (automated wrap+saturation gates) + a dedicated 12,000-step heuristic-random probe (frame_skip 4, full 2KB scan) + a dedicated jump-in-place probe, all from the captured start state",
+
+    "progress_signal": {
+      "chosen": "round/level counter $0401 (lo only, single byte)",
+      "rejected_spatial_candidate": {
+        "addr": "0x0203 (OAM sprite X, mirrored at 0x0207)",
+        "wrap_test": "PASSED naively: rises under a forward RIGHT hold, flat under NOOP",
+        "saturation_test": "FAILED (rejected): under a sustained 500-step RIGHT hold rises 26->224 then sits DEAD FLAT for the remainder of the probe while the character keeps animating (not frozen) -- classic camera-clamp/screen-edge signature; under a sustained LEFT hold rises to only 17 and stays flat. No page/room byte pairs with it (find_page/find_room_counter both returned none) -- there is nothing beyond this one fixed screen to pair with, confirming the game genuinely has no world-X frontier.",
+        "conclusion": "screen-bound pixel coordinate, not world position. discover_observables.py's automated pass independently reached the same verdict: '[recommended progress] none' from the naive zero-page scan (all zero-page candidates were free-running counters that also moved heavily under NOOP, correctly rejected by gate 1)."
+      },
+      "confirmed_progress_byte": {
+        "addr": "0x0401",
+        "evidence": [
+          "flat for hundreds/thousands of steps within a round (only 3 total transitions across the whole 12,000-step probe)",
+          "step 756->757: value 1->2 (round 1 clear)",
+          "step 1682->1683: value 2->3 (round 2 clear)",
+          "both transitions corroborated by a full-scene-reload RAM signature: 194 and 533 (of 2048) bytes changed in that single step -- enemy/OAM object arrays reset, player respawns at the canonical Y=80 start pose (matches frame-0 OAM Y=80)",
+          "both transitions corroborated by the enemies-remaining counter (0x0496, see boss: below) reading exactly 0 immediately beforehand",
+          "lives (0x002E) UNCHANGED at both transitions (2, then 1) -- proves these are real round clears, not a death/reset artifact aliasing the same byte",
+          "independent of lives: 3 separate real deaths occurred in the same probe (steps 127, 876, 2947, lives 3->2->1->0) with 0x0401 NOT moving at any of them"
+        ]
+      }
+    },
+
+    "y_signal": {
+      "chosen": "0x0021",
+      "auto_discovered_by": "scripts/discover_observables.py find_y (top candidate of ['0x21','0x22','0x77','0x32','0xd3'])",
+      "manual_confirmation": "dedicated jump-in-place probe: rests flat at 88, dips to a 37 apex across a 10-frame A hold, returns to 88 and stays flat -- clean ballistic dip-and-return arc; tracks OAM sprite Y (0x0200) within 1-2 frames"
+    },
+
+    "lives_signal": {
+      "chosen": "0x002E",
+      "auto_discovered_by": "scripts/discover_observables.py find_hp_lives -> kind=lives addr=0x002E",
+      "manual_confirmation": "3 clean decrements (3->2->1->0) across the 12k-step probe at steps 127, 876, 2947, each coincident with an OAM position reset (respawn) and independent of the round counter"
+    },
+
+    "death_signal": "is_dead fires on lives-decrement (lives < start_lives); no separate clean player_state/death byte was pursued given the lives signal is already unambiguous",
+
+    "bonus_find_enemy_count": {
+      "addr": "0x0496",
+      "role": "enemies-remaining counter, wired into solve.boss (hp) so it feeds the archive's within-round exploration dimension",
+      "evidence": [
+        "decrements exactly when the score digits (0x0445-0x044A) tick up -- confirmed at 4 separate kill events (steps 132, 627, 890/940/967, cross-checked against score bytes)",
+        "resets to a fresh count after every round transition: round 1 starts at 3, rounds 2 and 3 both start at 4",
+        "reads exactly 0 immediately before both observed round-clear transitions (step 627 -> 0, held until the step-756 clear; step 1553 -> 0, held until the step-1682 clear)"
+      ],
+      "not_required_by_schema": "GenericGame's required fields (progress/y/level_key/lives) don't need this; included as an optional solve.boss hook because this non-scrolling game otherwise has NO in-round exploration axis besides y-band"
+    },
+
+    "full_2kb_scan": "performed (not zero-page-only): custom probe scanned all 0x800 bytes under clean RIGHT/LEFT/NOOP holds and the 12,000-step heuristic-random play log; the only flat-under-NOOP/rises-under-forward candidates in the full scan were 0x0203/0x0207 (OAM X, rejected above) -- no other spatial byte was found anywhere in RAM, consistent with a genuinely non-scrolling game"
+  },
+
+  "step3_solve_config_written": {
+    "file": "configs/bubble_bobble.yaml",
+    "fields_kept_intact": ["name", "rom (via start_state_path)", "frame_skip", "action_space", "ram_mapping", "reward_weights", "reinforce"],
+    "solve_block": {
+      "rom": "roms/Bubble Bobble (USA).nes",
+      "progress": {"lo": "0x0401"},
+      "y": "0x0021",
+      "level_key": ["0x0401"],
+      "lives": "0x002E",
+      "boss": {"hp": "0x0496", "start": 4}
+    },
+    "level_key_note": "NOT the usual coverage-baseline empty list. Unlike Contra/Kirby/DuckTales (all ship level_key: [] because no receipted stage-advance byte exists), Bubble Bobble's round counter doubles as a clean, receipted clear signal -- 'increments each cleared single screen' literally IS is_clear here (see step2 evidence)."
+  },
+
+  "step4_smoke_test": {
+    "result": "PASS",
+    "checks": {
+      "make_game(profile)": "returns GenericGame (profile has solve:)",
+      "pool_load": "Pool(num_workers=3, frame_skip=4).load_worker_state(w, start_state) x3 succeeded",
+      "rollout": "300 steps x 3 workers, mixed RIGHT+B / LEFT+B / A+B actions",
+      "max_progress_seen": 1,
+      "distinct_cells_seen": 7,
+      "sample_cell_fn": [0, 3, 0, 7, 0],
+      "level_key(start)": [1],
+      "lives(start)": 3,
+      "y(start)": 95,
+      "is_dead(start_lives=3)": false,
+      "is_clear(start_key=(1,))": false
+    }
+  },
+
+  "step5_solve_run": {
+    "command": "scripts/go_explore_solve.py --out runs/bubble_bobble/bubble_bobble_bootstrap --root-state \"roms/Bubble Bobble (USA)_start.state.bin\" --profile configs/bubble_bobble.yaml --workers 3 --minutes 6 --sel-mode count --want-solutions 4",
+    "wall_clock": "360s (6 minutes, hit the time budget; want_solutions=4 was not reached)",
+    "throughput": "382,851 total env steps across 3 workers, ~1069 steps/s aggregate",
+    "archive": {"cells": 32, "frontier": 0, "best_score": 8001, "new_cells": 32, "improvements": 218},
+    "cell_saturation_note": "all 32 reachable cells were found within the first ~60s (new_cells stayed at 32 for the remaining 5 minutes) -- the non-spatial cell key (area constant 0, progress-bucket constant 0 while round<16, so diversity reduces to hp(0-4) x sig(0) x y-band) has very low resolution for this game, exactly the stress-test the task called for",
+    "solutions": [
+      {"id": "sol_000", "start_round": 1, "clear_round": 2, "actions": 297, "found_at_elapsed_s": 60},
+      {"id": "sol_001", "start_round": 1, "clear_round": 2, "actions": 232, "found_at_elapsed_s": 120},
+      {"id": "sol_002", "start_round": 1, "clear_round": 2, "actions": 217, "found_at_elapsed_s": 240}
+    ],
+    "max_progress_reached": "round 2 (level_key advance 1->2), all 3 solutions; round 3 was never reached within this 6-minute solve",
+    "trajectory_refinement": "297 -> 232 -> 217 actions (27% shorter) purely through the archive revisiting/improving cells -- a capability blind random cannot replicate"
+  },
+
+  "step5b_random_baseline_comparison": {
+    "purpose": "the actual OUT-TRAVELS-RANDOM validation requested by the task",
+    "method": "uniform-random policy over the SAME profile action_space, SAME GenericGame adapter, SAME 3 workers, matched to the identical 360s (6-minute) wall-clock budget; on death OR a 4000-step life cap, the worker reloads the captured start state (memoryless restart -- no archive, no return mechanism, the textbook Go-Explore-vs-random comparator)",
+    "result": {
+      "total_env_steps": 385947,
+      "steps_per_sec_aggregate": 1072.1,
+      "per_worker_attempts_resets": [497, 527, 482],
+      "per_worker_clears": [18, 18, 21],
+      "per_worker_max_round_reached": [2, 2, 3],
+      "total_clears": 57,
+      "total_env_steps_at_first_clear_anywhere": 2985,
+      "shortest_clear_trajectory": 262,
+      "median_clear_trajectory": 636
+    },
+    "honest_verdict": "Go-Explore did NOT out-travel random on raw round-depth in this run: one random worker reached round 3 once, while all 3 Go-Explore solutions capped at round 2. Two receipted reasons: (1) round 1 is intrinsically easy -- ANY reasonably active policy clears it (blind random's first clear appeared after only 2,985 aggregate env steps, and it clocked 57 total clears vs Go-Explore's 3 in the identical 6-minute budget); (2) the impoverished non-spatial cell key saturates the archive almost immediately (all 32 cells found in ~60s), so Go-Explore's remaining ~300K steps had no fresh frontier to push into and were spent re-sampling the same 32 cells rather than reaching deeper rounds.",
+    "where_go_explore_did_show_real_value": "trajectory quality, not reachability. Its best verified solution (217 actions) is 17% shorter than random's best out of 57 tries (262 actions) and 66% shorter than random's median (636 actions), produced via principled iterative refinement (297->232->217) that a memoryless random-restart process cannot do by construction -- it has no mechanism to improve on a lucky success.",
+    "pipeline_lesson": "for a single-screen, no-scroll game the standard (area, hp, sig, y-band, progress-bucket) cell key is too coarse to give the archive a meaningful frontier once the one and only per-round objective (the round clear) is reachable by luck alone; a real depth advantage for Go-Explore here would need either a finer in-round cell signal (e.g. enemy-slot state combinatorics beyond a single hp scalar) or the same level-chaining used for scrolling games (re-root a fresh solve at a harvested round-2 arrival state to push into round 3), which is out of scope for this single bootstrap run."
+  },
+
+  "step6_observatory_v2": {
+    "command": "scripts/observatory.py --run runs/bubble_bobble/bubble_bobble_bootstrap --profile configs/bubble_bobble.yaml --cells 150",
+    "receipt": "runs/bubble_bobble/bubble_bobble_bootstrap/observatory_v2.json",
+    "archive_size_caveat": "only 32 cells existed to sample (see cell-saturation note above), so pass-1 probed all 32 and pass-2 targeted 2 more (34 total, 24-step probes) -- support counts (10-22 out of ~34) are on the small side; treat ranks as suggestive, not conclusive",
+    "exclusions": "524 bytes excluded before ranking: 5 known observables (0x0021/0x002E/0x0401/0x0445/0x044A), the 6502 stack page, the 256-byte OAM shadow page, 3 zero-page mirrors, and 4 free-running frame counters",
+    "cross_validation": "0x0496 (this session's own independently-verified enemies-remaining byte) surfaces in the shortlist under the jump probe (== 0, MI 4.801) -- an unprompted cross-check that the tool's statistic tracks a byte we already hand-verified",
+    "top_10_candidate_mode_bytes": [
+      {"rank": 1, "predicate": "0x0415 == 0", "cond_MI": 5.467, "support": "12/15", "best_probe": "right"},
+      {"rank": 2, "predicate": "0x0415 == 1", "cond_MI": 5.467, "support": "22/17", "best_probe": "right"},
+      {"rank": 3, "predicate": "0x00D5 == 251", "cond_MI": 5.260, "support": "19/14", "best_probe": "right"},
+      {"rank": 4, "predicate": "0x0413 == 0", "cond_MI": 5.232, "support": "10/11", "best_probe": "right"},
+      {"rank": 5, "predicate": "0x0097 == 0", "cond_MI": 4.975, "support": "16/17", "best_probe": "right"},
+      {"rank": 6, "predicate": "0x0094 == 0", "cond_MI": 4.883, "support": "17/19", "best_probe": "right"},
+      {"rank": 7, "predicate": "0x0095 == 0", "cond_MI": 4.883, "support": "17/18", "best_probe": "right"},
+      {"rank": 8, "predicate": "0x0082 == 1", "cond_MI": 4.860, "support": "12/14", "best_probe": "right"},
+      {"rank": 9, "predicate": "0x0098 == 0", "cond_MI": 4.830, "support": "18/19", "best_probe": "right"},
+      {"rank": 10, "predicate": "0x0099 == 0", "cond_MI": 4.830, "support": "18/19", "best_probe": "right"}
+    ],
+    "interpretation_note": "not independently verified beyond the tool's own statistic (out of scope for this bootstrap): the 0x0094-0x009B run of adjacent addresses looks like a per-slot entity/enemy-AI state array (consistent stride, several tied at identical MI); 0x0496/0x040C/0x0476 rank just outside the printed top-10 under the jump probe and look jump-timer/enemy-count related; 0x0415/0x00D5/0x0413 are unexplored -- candidates for a follow-up differential probe, not receipted claims"
+  }
+}

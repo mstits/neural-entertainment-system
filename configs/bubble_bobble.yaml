@@ -1,7 +1,8 @@
 name: "Bubble Bobble"
-# TODO (user): supply roms/Bubble Bobble (USA).nes, fill in rom_hashes (see
-# `make setup-check`), and capture a LIVE round-1 gameplay start state past the
-# title: python scripts/capture_start_state.py --game bubble_bobble
+# TODO (user): fill in rom_hashes (see `make setup-check`).
+# Start state CAPTURED (scripts/capture_start_state.py --game bubble_bobble):
+# controllable round-1 gameplay confirmed at frame 1695 (title/menu mashed
+# through), settled +40 frames, saved below.
 # The pool passes ONE P1 controller bitmask per worker; 2P co-op is out of scope.
 start_state_path: "roms/Bubble Bobble (USA)_start.state.bin"
 rom_hashes: []   # e.g. ["<md5 of your Bubble Bobble (USA) dump>"]
@@ -70,3 +71,70 @@ reinforce:
   value_loss: huber
   rnd_intrinsic_coef: 0.5   # single-screen exploration -> RND helps
   rnd_loss_coef: 1.0
+
+# Solver adapter (discovery-pipeline bootstrap 2026-08-03). Bubble Bobble is a
+# SINGLE-SCREEN clear-all-enemies arcade game: no scroll, no world-X to chase
+# -- the deliberate non-scrolling test case for the pipeline. Every byte below
+# is receipted from OUR OWN rollouts off the captured start state (12,000-step
+# heuristic-random probe, frame_skip 4, plus a dedicated jump/death probe); no
+# external RAM maps.
+#
+# PROGRESS -- wrap + saturation tests applied to the obvious spatial
+# candidate first, per the Kirby lesson:
+#   * OAM player sprite X ($0203, mirrored $0207) DOES rise under a forward
+#     hold and IS flat under NOOP -- passes the naive wrap/monotone gate --
+#     but SATURATES at the screen edges: rises 26->224 under a sustained
+#     500-step RIGHT hold then sits dead flat for the remainder while the
+#     character keeps animating (not frozen); rises to 17 then flat under a
+#     sustained LEFT hold. Textbook camera-clamp signature, except here the
+#     "camera" is the single fixed screen -- there is no world beyond it.
+#     REJECTED as progress; no page/room byte pairs with it either (there is
+#     nothing to pair with -- confirmed no-world-X, as expected for this
+#     game).
+#   * True progress is the ROUND counter $0401: flat for hundreds/thousands
+#     of steps within a round, and incremented by exactly +1 at each of two
+#     independently observed round clears (step 756: 1->2; step 1682: 2->3
+#     in the probe log). Both transitions are corroborated by (a) a
+#     full-scene-reload RAM signature (194-533 of 2048 bytes changing in one
+#     step: enemy/OAM object arrays reset, player respawns at the canonical
+#     Y=80 start pose) and (b) the enemies-remaining counter (see boss:
+#     below) reading exactly 0 immediately beforehand. Lives is UNCHANGED at
+#     both transitions (2, then 1) -- proving these are real clears, not a
+#     death/reset artifact aliasing the byte.
+solve:
+  rom: "roms/Bubble Bobble (USA).nes"
+  # Round/level counter -- THE progress signal (no world-X frontier exists;
+  # see rejection note above). One byte is plenty (observed range 0-3 in this
+  # probe; NES BB rounds top out well under 256).
+  progress: {lo: 0x0401}
+  # Player Y ($0021). VERIFIED-LIVE ballistic signature: rests flat at 88 on
+  # the ground, dips to a 37 apex across a jump-in-place burst, returns to 88
+  # and stays flat -- the standard dip-and-return arc. Tracks the OAM sprite
+  # Y ($0200) within 1-2 frames.
+  y: 0x0021
+  # level_key = [$0401], NOT the usual coverage-baseline empty list. Unlike
+  # most bootstraps (Contra/Kirby/DuckTales all ship level_key: [] because no
+  # receipted stage-advance byte exists yet), Bubble Bobble's round counter
+  # doubles as a clean, receipted clear signal -- "increments each cleared
+  # single screen" literally IS is_clear here. See the corroboration above.
+  level_key: [0x0401]
+  # Lives ($002E). Auto-discovered (scripts/discover_observables.py) and
+  # confirmed manually: 3 clean decrements (3->2->1->0) across the 12k-step
+  # probe, each coincident with a player respawn (OAM position reset) and
+  # INDEPENDENT of the round counter (round is unchanged across a death) --
+  # the two signals don't alias each other.
+  lives: 0x002E
+  # Enemies-remaining counter ($0496) -- bonus find, wired via the generic
+  # `boss:` hook so it feeds the archive's hp dimension: the within-round
+  # exploration axis this game needs given progress/level_key only move at a
+  # round clear (no in-round spatial signal survived the saturation test).
+  # VERIFIED: decrements exactly when the score digits ($0445-$044A) tick up
+  # (confirmed at 4 separate kills), resets to a fresh count after every
+  # round transition (round 1 starts at 3; rounds 2 and 3 both start at 4),
+  # and reads exactly 0 immediately before both observed round-clear
+  # transitions. `start: 4` uses the higher observed count; score_bonus clips
+  # at 0 so round 1's smaller true start (3) just reads as "one kill in"
+  # rather than going negative.
+  boss:
+    hp: 0x0496
+    start: 4

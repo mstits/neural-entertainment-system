@@ -1,0 +1,111 @@
+{
+  "game": "Kung Fu (Japan, USA)",
+  "date": "2026-08-03",
+  "rom": "roms/Kung Fu (Japan, USA).nes",
+  "rom_md5": "27e5c62c6c169896bf80bafb6595ceb8",
+  "start_state": "roms/Kung Fu (Japan, USA)_start.state.bin",
+  "level": "Floor 1, live gameplay (game_mode $0051==2, grippers spawned), Thomas controllable, 3 lives",
+  "genre": "linear beat-'em-up, single-axis side-scroller within a multi-screen floor (not a forced auto-scroller; camera follows the player and is bounded per screen)",
+  "method": "scripts/discover_observables.py's Discoverer probe machinery (clean_forward/clean_reverse/noop/advance/jump, full-2KB stats, not restricted to zero page) plus bespoke combat-aware and isolated-input (A/DOWN) probes and a full-RAM RIGHT-vs-LEFT diff, all driven on THIS core from the profile's own start state. No external RAM maps or disassembly. The Go-Explore solve run itself (step 5) doubled as the decisive saturation instrument.",
+
+  "step1_in_gameplay": {
+    "test": "RIGHT-vs-LEFT RAM divergence over 40 frames > 25",
+    "result": "PASS",
+    "divergence_bytes": 172,
+    "note": "172 >> 25 across the full 2KB (172 bytes differ between the RIGHT-hold and LEFT-hold end states) -- OAM sprite tiles, HUD digits, and several work-RAM position bytes all diverge with direction. Chosen-progress byte $0094 alone diverges right=240 vs left=128 (unchanged) inside this same 40-frame window. Start state confirmed live in-gameplay (game_mode $0051==2 in both branches, not the frozen intro banner)."
+  },
+
+  "step2_observables": {
+    "progress": {
+      "addr": "$0094 (byte-identical mirrors: $00D4, $04E0 -- redundant copies of the same value, presumably one drawn-object shadow + one logic copy)",
+      "role": "solve.progress {lo: 0x0094} = the frontier",
+      "debunked_first": "the existing ram_mapping's player_x_lo/hi ($0090/$0081, described as 'climbs monotonically 1->~2020 across Floor 1') is FALSIFIED for solver use: own-rollout NOOP replay shows the combined 16-bit value climbs from 1 to 116+ (net +115 over 240 idle frames) at essentially the SAME rate as under held RIGHT or LEFT input -- it is a free-running PER-LIFE ELAPSED-FRAME counter, the exact $001C frame-counter trap from the MM2 bootstrap lesson, not position. Left untouched in ram_mapping (the shipped KungFuReward code may read it) but explicitly NOT wired into solve:. The Observatory pass (step 6) independently flagged two OTHER unrelated free-running frame counters in this ROM ($0020, $0049), confirming this game's memory is rich in the exact trap the lore warns about.",
+      "receipts": {
+        "gate1_flat_under_noop": "$0094 sits ROCK-FLAT at 128 for 200+ consecutive idle NOOP frames (net 0); its only movement under total NOOP is a brief bump to 132/191/169/146 that coincides EXACTLY with a simultaneous health drain (48->43->30->16->2->255-death) -- i.e. it only moves when Thomas is physically knocked back by an unblocked enemy hit, which is correct real-position behavior, not drift.",
+        "gate1_rises_forward_falls_reverse": "sustained RIGHT hold: 128->236 (net +108, mono 0.70-0.93 across the three mirrors). sustained LEFT hold: CLAMPED at 128 (net ~0-4) -- Thomas cannot retreat past his own floor-start spawn, the correct forced-minimum, not an artifact. This asymmetry (free to rise, floored at the level start) is the clean signature of genuine bounded position, unlike the debunked timer which rose identically in both directions.",
+        "wrap_coupled_hi_search": "no lo|hi pairing found: $0094 never reaches a full 0/255 wrap before resetting (it drops from a ~236-240 plateau back to ~127-143), so progress is a single 8-bit byte, not a 16-bit pair.",
+        "saturation_test": "SATURATES. Scripted probes: value ceilings at 236-240 across every one of 3 independently-observed real death cycles (health==255 at each reset, confirmed frame-by-frame) under both a plain-directional-hold probe and a B-attack combat probe (~3600-12000 frames total), never exceeding it. DECISIVE evidence came from the actual Go-Explore solve run (step 5): a 6-minute / 3-worker / count-mode archive taking 514,239 steps found EXACTLY 32 cells (full coverage of every representable y-band x gx-bucket combination up to the cap) and its best_score PLATEAUED AT 244 from the 60-second mark through the full 360-second run with ZERO new cells in the last 5 minutes. The independent random-restart baseline (step 5) hit the IDENTICAL ceiling, 244. Two different search strategies (archive-based first-return-then-explore AND memoryless random-restart) converge on the exact same number -- this is about as strong a saturation signature as bootstrap-scale probing can produce.",
+        "unresolved_camera_vs_wall": "whether 244 is a hard camera/scroll-window clamp (the Kirby lesson) or an unpassable early enemy gauntlet that no amount of scripted/random play can survive through (score stayed at 0 in every probe -- no enemy was ever confirmed killed) could NOT be disambiguated at this scale. Either way $0094 is a WITHIN-SCREEN metric, not floor-wide world position, and should be treated with the same caution as a capped byte pending a resolving probe (see blocker below).",
+        "room_screen_counter_search": "NOT FOUND. current_floor $0058 (the natural floor-level counter) never advanced by even 1 in any probe (own scripted rollouts OR the 514K-step Go-Explore archive) -- floor-boss clears are far beyond bootstrap-scale reach. No other zero-page or full-RAM byte was found to step coincident with $0094's resets that wasn't itself part of the same broad death-reset (dozens of unrelated bytes -- enemy slots, HUD digits -- zero simultaneously on every observed reset; none is a clean 1-per-transition counter). Every $0094 reset event observed coincided with health==255 (death), so no genuine mid-life screen transition was ever captured to test against."
+      }
+    },
+    "y": {
+      "addr": "$0014 (mirror: $006A)",
+      "role": "solve.y = cell y-band",
+      "receipt": "Discrete player POSE byte, not a continuous height: isolated single-input probes show 0 = stand/walk, 4 = duck (DOWN held), 128 = airborne (A held); rock-flat under NOOP and returns to 0 the instant the button releases. Kung Fu's jump-kick has no simulated parabolic arc in RAM (a dedicated jump-then-return arc search across the full 2KB found only 4 candidates, all similarly binary/discrete flags, e.g. $0001/$01F8) -- a 3-valued pose flag is the honest characterization and still separates grounded/ducking/airborne cells for the archive."
+    },
+    "lives": {
+      "addr": "$005C",
+      "role": "solve.lives (death = decrement)",
+      "receipt": "VERIFIED-LIVE (matches ram_mapping, independently re-confirmed here): starts at 3; decremented 3->2->1->0 across every death cycle observed (10 decrements over a 1800-step advance probe; the RIGHT combat probe alone produced multiple clean 3->2->1->0 life-loss sequences). Clean, gap-free death signal alone -- no separate player_state byte wired (Gradius/Contra precedent: lives-only death is sufficient)."
+    },
+    "health_and_boss_energy_reconfirmed": {
+      "health_0x04A6": "own rollouts re-confirm the ram_mapping doc: drains under both NOOP and active play (48 -> 0, then underflows to 255 during the death animation, then refills to 48 on respawn); 50 distinct values sampled, consistent with a real energy bar.",
+      "boss_energy_0x04A5": "own rollouts re-confirm: idles flipping between 0 and 48 across every probe (4 up/4 down transitions in the 1800-step advance probe) -- no boss was reached, matching the existing cross-sourced note; still unused (boss_damage weight is 0 in reward_weights, untouched)."
+    },
+    "score": {
+      "addr": "$0531/$0535",
+      "status": "stayed 0 throughout every bootstrap probe (scripted right+B / mixed-combat rollouts up to 4000 steps landed zero confirmed hits) -- B must be pressed fresh, not simply held, to throw a punch/kick, which none of the crude scripted probes modeled; Go-Explore's stochastic per-step action resampling does not have this limitation. Not wired into solve: (progress/lives/y only, matching the GenericGame schema)."
+    }
+  },
+
+  "step3_solve_section_written": {
+    "rom": "roms/Kung Fu (Japan, USA).nes",
+    "progress": {"lo": "0x0094"},
+    "y": "0x0014",
+    "level_key": [],
+    "lives": "0x005C",
+    "note": "appended as a new solve: block at the end of configs/kungfu.yaml (after the reinforce: section); name/rom/start_state/frame_skip/action_space/ram_mapping left byte-for-byte intact."
+  },
+
+  "step4_smoke": {
+    "make_game": "GenericGame",
+    "pool_workers": 3,
+    "start": {"lives": 3, "progress": 128, "y": 0, "level_key": [], "is_dead": false},
+    "cell_fn_arity": 5,
+    "cell0": [0, 0, 0, 0, 8],
+    "rollout_mixed_right_b_jumpkick": {"steps": 200, "progress_start": 128, "progress_max": 156, "advanced": true, "distinct_cells": 6},
+    "save_worker_state_bytes": 21164,
+    "note": "21164 bytes exactly matches the start-state file's own byte size -- a consistency check that save/restore round-trips the full engine state.",
+    "result": "SMOKE OK"
+  },
+
+  "step5_solve": {
+    "cmd": "scripts/go_explore_solve.py --out runs/kungfu/kungfu_bootstrap --root-state 'roms/Kung Fu (Japan, USA)_start.state.bin' --profile configs/kungfu.yaml --workers 3 --minutes 6 --sel-mode count --seed 0",
+    "workers": 3,
+    "minutes": 6,
+    "sel_mode": "count",
+    "archive": {"cells": 32, "frontier": 0, "best_score": 244, "records": 511701, "new_cells": 32, "improvements": 360},
+    "max_progress": 244,
+    "steps": 514239,
+    "sps": 1428,
+    "solutions": 0,
+    "solutions_note": "expected 0 -- coverage baseline (level_key empty, no verified floor-clear byte reached).",
+    "plateau_note": "cells and best_score were ALREADY at their final values (32 / 244) by the 60-second progress checkpoint and did not move AT ALL through the remaining 5 minutes (300s+ of continued search, ~430K additional steps) -- full, early saturation.",
+    "out_travels_random": {
+      "go_explore_max_progress": 244,
+      "random_baseline_max_progress": 244,
+      "ratio": 1.0,
+      "random_baseline": {"seconds": 120.0, "workers": 3, "steps": 171888, "deaths": 526, "sps": 1432, "action_dist": "same right-biased weights + sticky 0.5 as the solver, restart-from-root on death (no archive returns)"},
+      "verdict": "FAIL to out-travel -- Go-Explore and memoryless random hit the EXACT SAME ceiling (244). This is the real, honest validation result: it demonstrates $0094 is bounded (saturates) rather than proving the solver's search advantage, because there is nothing beyond the cap for archive-based search to exploit within this 6-minute budget. The archive achieved full coverage of the representable cell space (32/32 possible y-band x gx-bucket combinations) instead of pushing a frontier -- diagnostic of a genuine wall, matching the saturation-test verdict above."
+    }
+  },
+
+  "step6_observatory_v2": {
+    "cmd": ".venv/bin/python scripts/observatory.py --run runs/kungfu/kungfu_bootstrap --profile configs/kungfu.yaml --cells 150",
+    "archive_cells": 32,
+    "cells_probed": 32,
+    "candidates": 421,
+    "excluded_bytes": 385,
+    "exclusion_breakdown": {"known_solve_and_ram_mapping": 11, "cpu_stack_0x0100_0x01FF": 256, "mirror_columns": 116, "frame_counters": 2},
+    "frame_counters_found": ["0x0020", "0x0049"],
+    "probes": ["right", "left", "jump", "down", "jump_right"],
+    "top10_candidate_mode_bytes": "NULL RESULT -- every one of the top-20 ranked predicates has cond_MI = 0.000 (best_probe: null, shortlisted: false); none cleared the shortlist threshold.",
+    "interpretation": "the conditional-MI statistic needs WITHIN-COORDINATE contrast (multiple archived states sharing a (y//8, gx//8) bucket with different predicate values) to resolve anything. This archive has only 32 cells total, capped by $0094's 244-value ceiling -- essentially one state per coordinate bucket, no within-bucket population at all. This is the tool's own documented 'thin conditioning' caveat (noted for Contra's 150-of-652k case) taken to its floor: Contra's corpus was ~2,000x larger than ours. The null result is itself informative -- it is a direct consequence of the same saturation that step 5 found, not a tool failure.",
+    "receipt_file": "runs/kungfu/kungfu_bootstrap/observatory_v2.json"
+  },
+
+  "blocker": "PROGRESS SIGNAL IS CAP-LIMITED AND UNRESOLVED CAMERA-VS-WALL. $0094 passed the wrap+reversibility gate cleanly but ceilings at 244 and neither our own combat-flavored scripts, a 514K-step Go-Explore archive, nor a 172K-step random baseline could push past it inside their budgets; score never left 0 in any probe, so we also could not confirm a single enemy kill to rule in/out 'unbeatable early gauntlet' vs 'hard scroll-window clamp'. current_floor ($0058), the natural room/screen counter for this multi-screen floor, never moved in any probe, so no paired screen counter could be confirmed to promote in $0094's place. This mirrors the Gradius/Kirby bootstrap precedent (area_stage_number NOT FOUND / camera-clamp requiring a room-counter fallback) rather than a clean pass: configs/kungfu.yaml's solve.progress is the best verified candidate available at bootstrap scale, documented with this caveat, and level_key stays an empty coverage baseline. Resolving this needs either (a) a longer/smarter solve run (more minutes, sticky/hold_macro tuning for effective B-press timing so an enemy actually dies and score moves), or (b) a targeted training run that can demonstrably clear the first blocking enemy and reveal whether $0094 keeps climbing past 244 or hard-caps against the PPU scroll window.",
+
+  "purity": "Every observable was discovered/confirmed from OUR OWN scripted rollouts and the Go-Explore solve/observatory tooling on this core (full 2KB scanned, not restricted to zero page), plus the config's own already-verified lives/health/boss_energy ram_mapping bytes. No external RAM maps or disassembly. The player_x_lo/hi claim in the existing ram_mapping was actively falsified (not merely accepted) by our own NOOP-flatness test before any progress byte was chosen."
+}
