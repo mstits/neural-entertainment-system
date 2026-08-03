@@ -173,3 +173,70 @@ reinforce:
 # raises "unsupported_profile") and its "furthest stage" byte is SMB-hardcoded
 # ($075F/$0760) — a shared pixel-game eval gap (Metroid/Contra/GnG too). Read
 # the above from vanilla_ppo training telemetry until eval is generalized.
+
+# ===========================================================================
+# Go-Explore SOLVER adapter (bootstrap 2026-08-03). Every byte below was
+# (re)discovered LIVE from THIS core's Stage-1 start state via our own
+# scripted + jumpy restore-explore rollouts only — NO external RAM maps /
+# disassembly. Receipt: runs/kid_icarus/kid_icarus_receipt.json.
+#
+# CENTRAL FINDING — the vertical ALTITUDE the config's description said had
+# "no clean RAM byte" DOES exist; blind play just never scrolled the camera
+# far enough to expose it. Go-Explore's restore-explore climbed ~8-10 screens
+# (rendered-frame confirmed: a visibly higher, different Underworld region,
+# score 0 -> 700) and revealed the pair:
+#   * 0x04D1 = SCREEN counter — increments +1 per screen climbed (start 1 ->
+#     9 at ~8 screens up), FLAT under noop, non-saturating (keeps climbing).
+#     Cross-checked: 0x001A == 256 - 0x04D1 exactly (255/1 -> 247/9), the
+#     decreasing camera complement. NOT a fixed-cadence counter (noop-flat).
+#   * 0x0750 = FINE within-screen altitude — rises 0 -> ~107 as Pit climbs a
+#     screen (0x0074 is its mirror-complement, 238 -> 131; span ~107/screen).
+# progress = ram[0x0750] | ram[0x04D1]<<8 is the 16-bit altitude odometer:
+# MONOTONE-nondecreasing (1.000) across 1788 continuous climb segments, fine
+# within-screen gradient, guaranteed monotone across screen seams (a byte can
+# drop at most 255 < the 256 screen stride). SATURATION TEST PASSED: reached
+# screen 9 (odometer ~2340) still climbing, no cap. Go-Explore OUT-TRAVELS
+# random by a wide margin (a stage-1 vertical climb is exactly the hard-
+# exploration regime random play stalls in — see receipt archive stats).
+#
+# DEATH: Kid Icarus has NO life count — the only clean death signal is HP
+# (0x00A6) reaching 0 (fall off the bottom OR bleed-out; alive=7, death=0,
+# no separate flag exists). So `lives` points at the monotone stage byte
+# 0x0130 (a no-op sentinel that never decreases within a life) and real death
+# is player_state 0x00A6 in death_states [0]. Setting lives=0x00A6 would be a
+# TRAP: restored deep cells carry HP<7, so lives<start_lives(7) would flag
+# every frontier cell instantly-dead and collapse the search to HP=7 states.
+solve:
+  rom: "roms/Kid Icarus (USA, Europe).nes"
+  # 16-bit altitude odometer: lo = fine within-screen scroll (0x0750, rises
+  # with climb), hi = screen counter (0x04D1, +1/screen). progress =
+  # ram[0x0750] | ram[0x04D1]<<8. The frontier IS altitude for this vertical
+  # climber (screen scrolls UP only; falling off the bottom kills).
+  progress: {lo: 0x0750, hi: 0x04D1}
+  # Generous cap: a garbage transition read guard. Real stage-1 altitude tops
+  # out well under this (screen 9 = ~2340; whole stage a few thousand); a true
+  # garbage spike (hi mid-load) reads far higher and is clipped.
+  progress_cap: 20000
+  # Cell's secondary diversity dimension = player_x (0x0026, VERIFIED-LIVE:
+  # 88 idle -> 214 holding RIGHT). For a camera-following vertical climber
+  # Pit's SCREEN-Y stays ~centered (poor diversity) while altitude is already
+  # the progress odometer, so horizontal position is the useful extra cell
+  # axis — being at the right X to reach the next platform is a distinct state.
+  # (NOTE: observatory's up/down dY outcome consequently reads horizontal
+  # response; it still surfaces mode bytes, just not vertically-oriented.)
+  y: 0x0026
+  # Self-labels the stage (0x0130 = stage index, VERIFIED-STABLE at 0). = 0
+  # throughout this Stage-1 bootstrap; splits cells per stage on a real clear.
+  area: 0x0130
+  # Coverage baseline: no clean stage-advance byte is reachable under bootstrap
+  # play (0x0130's 0->1 increment was never triggered — blind/search play never
+  # cleared Stage 1-1). The true clear IS a strict increase of 0x0130 (held 0
+  # across 300k+ frames AND on death, so never a false positive); wire
+  # level_key: [0x0130] the day a solve trajectory actually clears the stage.
+  level_key: []
+  # Monotone no-op sentinel (see DEATH note above). 0x0130 only ever increases
+  # (stage clear), so lives<start_lives never false-fires on a hit; death is
+  # governed solely by player_state below.
+  lives: 0x0130
+  player_state: 0x00A6   # HP (0x00A6): 7 at spawn, bleeds to 0 on death.
+  death_states: [0]      # HP == 0 => death (fall off the bottom OR bleed-out).

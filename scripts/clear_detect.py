@@ -341,6 +341,68 @@ def coord_entity_windows(ram_hist: np.ndarray, gx_series: np.ndarray,
 
 
 # ===========================================================================
+# Streaming confluence detector (live solver hot-loop form)
+# ===========================================================================
+
+class StreamingConfluenceDetector:
+    """Live, RAM-only streaming form of the confluence clear detector, meant
+    for the Go-Explore solver's per-step is_clear hook (GenericGame with
+    `solve: clear: {mode: confluence}`).
+
+    It reuses the SAME ground-truthed signal functions as the offline --test
+    detector -- score_tally_windows and coord_entity_windows -- evaluated over
+    a BOUNDED rolling RAM window, so the per-step cost stays O(window)
+    amortized instead of the O(episode^2) a full re-scan every step would be.
+
+    Availability note (kept honest): the offline detector fuses four signals
+    -- audio, tally, lock, coord. Inside the solver's is_clear the only thing
+    handed to us per step is a RAM snapshot: there is no audio stream, and no
+    env handle for the differential input-LOCK probe (that one needs
+    save/restore of the emulator). So this streaming form votes on the two
+    purely-RAM-derivable signals -- `tally` (a timer->score conversion cadence)
+    and `coord` (a position reset toward a level-start value co-occurring with a
+    contiguous entity-slot wipe = a fresh room/level loading in) -- and declares
+    a clear when at least `min_signals` of them fire inside the same rolling
+    window (default 2 = BOTH must agree, a genuine two-signal confluence and
+    the RAM fingerprint of a level load). It never fires on either signal alone,
+    so an ordinary tally (an in-level 1-up) or an ordinary scroll cannot fake a
+    clear. The full weighted-0.75 four-signal detector remains the authority for
+    offline verification (clear_detect.py --test)."""
+
+    def __init__(self, progress_fn, window: int = 240, stride: int = 20,
+                 min_signals: int | None = None):
+        self._progress = progress_fn
+        self.window = int(window)
+        self.stride = int(stride)
+        self.min_signals = 2 if min_signals is None else int(min_signals)
+        self._ram: list[np.ndarray] = []
+        self._gx: list[int] = []
+        self._n = 0
+        self._fired = False
+
+    def push(self, ram) -> bool:
+        """Feed one RAM snapshot; returns True once the confluence has fired
+        (and stays True thereafter -- the clear is a latching event)."""
+        if self._fired:
+            return True
+        self._ram.append(np.asarray(ram, dtype=np.uint8))
+        self._gx.append(int(self._progress(ram)))
+        if len(self._ram) > self.window:
+            self._ram.pop(0)
+            self._gx.pop(0)
+        self._n += 1
+        if self._n % self.stride != 0 or len(self._ram) < 16:
+            return False
+        hist = np.stack(self._ram)
+        gx = np.array(self._gx, dtype=np.int64)
+        tally = 1 if score_tally_windows(hist) else 0
+        coord = 1 if coord_entity_windows(hist, gx) else 0
+        if tally + coord >= self.min_signals:
+            self._fired = True
+        return self._fired
+
+
+# ===========================================================================
 # Episode driver -- ties the four signals together over one replay
 # ===========================================================================
 

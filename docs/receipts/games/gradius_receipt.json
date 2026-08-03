@@ -1,0 +1,117 @@
+{
+  "game": "Gradius (USA)",
+  "date": "2026-08-03",
+  "rom": "roms/Gradius (USA).nes",
+  "rom_md5": "fcc019dc8054403fd28b8de03d7e16aa",
+  "start_state": "roms/Gradius (USA)_start.state.bin",
+  "level": "Stage 1 (Volcano), Vic Viper controllable, 3 lives, weapon/options/shield 0",
+  "genre": "horizontal auto-scrolling shoot-'em-up (forced scroll = progress; ship screen-X is NOT progress)",
+  "method": "scripted (noop / right / left / up / down / right+B / down+right suicide) + seeded-random rollouts from the receipted start state on THIS core, frame_skip 1 for clean per-frame arcs. Full 2KB scanned per frame. Differential + wrap + saturation + frame-counter-pause + checkpoint-reset analysis of OUR OWN RAM traces. No external maps or disassembly.",
+
+  "step1_in_gameplay": {
+    "test": "RIGHT-vs-LEFT RAM divergence over 40 frames > 25",
+    "result": "PASS",
+    "player_x_0x00A4": {"right40_end": 119, "left40_end": 41, "divergence": 78},
+    "note": "78 >> 25 on $00A4 (plus the OAM ship sprites $0207.. and the X-trail $07A0-$07AF all diverge with direction). Start state confirmed live in-gameplay."
+  },
+
+  "step2_observables": {
+    "progress": {
+      "addr": "$003F<<8 | $003E (16-bit little-endian forced-scroll / stage-distance accumulator)",
+      "role": "solve.progress {lo:0x003E, hi:0x003F} = the frontier",
+      "receipts": {
+        "monotone_while_alive": "nondec=1.000, zero backward jumps over every scripted first life: 11->836 (deep suicide life), 11->429 (shallow noop life), 11->161 (fwd life).",
+        "frame_counter_rejection": "$003E FREEZES during the death/explosion pause (68,68,0,0,0,0...) exactly when the world stops scrolling, whereas the genuine free-running frame counter $0002 counts straight through the same death (56,57,58...66). Scroll-linked, not a fixed-cadence clock. Per-frame counters $0002/$0036 REJECTED.",
+        "depth_dependent_checkpoint_reset": "resets to the WORLD checkpoint on death, depth-dependent: shallow death (noop @837, fwd @301) -> accumulator 0 (start checkpoint); deep suicide death (@1652, @1857) -> accumulator 512 (page-2 checkpoint). A fixed-respawn byte would reset to the same value regardless of death depth (that is what $00F5/$00F6/$00B8/$00D5 do -> those REJECTED).",
+        "saturation_test": "PASS. $003F keeps STEPPING across screens (reached page 3 in a 1652-frame life, page 12 = accumulator 3132 under Go-Explore) and does NOT cap. Contrast the camera byte $006D which CLAMPS at 240 (the Kirby camera-clamp failure mode) -> $006D REJECTED as progress, together with jittery $006E and the cyclic 0-255 scroll-fine copies $0012/$0048 (wrap every ~512 frames, no clean saturation-proof page).",
+        "auto_scroll_input_independent": "$003E advances at the same ~+1 / 2-frame rate under noop and under forward input -> it is the stage's FORCED scroll, not player-driven."
+      }
+    },
+    "player_x": {"addr": "$00A4", "role": "documented (NOT progress on an auto-scroller); RIGHT+ LEFT- div 78 [VERIFIED-LIVE]"},
+    "y": {
+      "addr": "$00A5",
+      "role": "solve.y = cell y-band",
+      "receipt": "VERIFIED-LIVE vertical: up- (216->57) / down+ (216->135); head of the Y-trail $07C0-$07CF (which mirror it, e.g. $0320 OAM-Y). Range >130 across up/down. Critical y-band for a dodge-heavy shmup."
+    },
+    "lives": {
+      "addr": "$0020",
+      "role": "solve.lives (death = decrement)",
+      "receipt": "VERIFIED-LIVE 3 at spawn; steps 3->2->1->0 EXACTLY on each death (noop6000 @837/1727/2617; suicide3000 @1652/1857/2062), then wraps to 255 at game-over. start_lives=3 => is_dead fires on the first life lost. Robust across bullet/collision/terrain deaths."
+    },
+    "death": {
+      "primary": "lives $0020 decrement (used)",
+      "player_state_rejected": "the config ram_mapping's status $0100 is FALSIFIED as a death byte: it reads 2 during NORMAL alive play (fwd1500 frames 200/300/600/900/1000/1300 with lives still 3/2/1) — wiring it into solve.player_state would abort live bursts on phantom deaths. It also sits in the 6502 stack page $0100-$01FF (execution scratch). OMITTED; lives-only death is clean and correct here.",
+      "clean_death_state_candidates_not_used": "constant-while-alive/flip-at-all-11-deaths bytes exist ($000D==0, $0013==12, $001E==1, $005E==63, $0060==2, $006B==168) but lives already gives a gap-free death signal, so no player_state is wired (avoids the false-death risk from limited-coverage traces)."
+    },
+    "area_stage_number": {
+      "status": "NOT FOUND (matches the config BLOCKER note); every stable zero-page candidate changed mid-stage. Unreachable to confirm under bootstrap (needs a genuine stage-1->2 Big-Core transition). solve.area unset (=0), level_key EMPTY -> coverage baseline."
+    }
+  },
+
+  "step3_solve_section_written": {
+    "rom": "roms/Gradius (USA).nes",
+    "progress": {"lo": "0x003E", "hi": "0x003F"},
+    "progress_cap": 20000,
+    "y": "0x00A5",
+    "level_key": [],
+    "lives": "0x0020",
+    "player_state": "omitted (lives-only death)",
+    "note": "written into configs/gradius.yaml; name/rom/start_state/frame_skip/action_space/ram_mapping left intact."
+  },
+
+  "step4_smoke": {
+    "make_game": "GenericGame",
+    "pool_workers": 3,
+    "start_cell": [0, 0, 0, 3, 0],
+    "start": {"lives": 3, "progress": 12, "y": 96, "x": 80, "is_dead": false},
+    "rollout_right_fire": {"steps": 75, "progress_start": 14, "progress_max": 160, "advanced": true, "died_at_step": 74, "distinct_cells": 13},
+    "cell_fn_arity": 5,
+    "save_worker_state_bytes": 45741,
+    "result": "SMOKE OK"
+  },
+
+  "step5_solve": {
+    "cmd": "scripts/go_explore_solve.py --out runs/gradius/gradius_bootstrap --root-state 'roms/Gradius (USA)_start.state.bin' --profile configs/gradius.yaml --workers 3 --minutes 5 --sel-mode count --seed 0",
+    "workers": 3,
+    "minutes": 5,
+    "sel_mode": "count",
+    "archive": {"cells": 3483, "frontier": 886, "best_score": 3132, "records": 308376, "new_cells": 3483, "improvements": 18627},
+    "max_progress": 3132,
+    "steps": 315306,
+    "sps": 1051,
+    "solutions": 0,
+    "solutions_note": "expected 0 — coverage baseline (level_key empty, no stage-clear byte). max_progress 3132 = scroll page $003F=12, deep into stage 1; frontier plateaued there (a genuinely hard survival section), well under the 20000 cap (not clipped).",
+    "out_travels_random": {
+      "go_explore_max_progress": 3132,
+      "random_baseline_max_progress": 1116,
+      "ratio": 2.81,
+      "random_baseline": {"seconds": 120, "workers": 3, "steps": 141132, "deaths": 1591, "sps": 1176, "action_dist": "same right-biased weights + sticky 0.5 as the solver, restart-from-root on death (no archive returns)"},
+      "verdict": "PASS — Go-Explore reaches 2.8x further into the stage than plain random with the identical action distribution. Random dies 1591 times and always restarts from the entrance, so it cannot accumulate past a single lucky life (~1116); Go-Explore banks deep-survival states and returns to them (first-return-then-explore), pushing the forced-scroll frontier to 3132. This is the real validation that the chosen progress signal is being exploited."
+    }
+  },
+
+  "step6_observatory_v2": {
+    "cmd": ".venv/bin/python scripts/observatory.py --run runs/gradius/gradius_bootstrap --profile configs/gradius.yaml --cells 150",
+    "archive_cells": 3483,
+    "cells_probed": 300,
+    "candidates": 1526,
+    "excluded_bytes": 643,
+    "probes": ["right", "left", "jump", "up", "down"],
+    "top10_candidate_mode_bytes": [
+      {"predicate": "0x0311 == 0",   "cond_MI": 1.797, "support_full": 1047, "best_probe": "right"},
+      {"predicate": "0x04F2 == 0",   "cond_MI": 1.312, "support_full": 710,  "best_probe": "right"},
+      {"predicate": "0x0312 == 134", "cond_MI": 1.242, "support_full": 156,  "best_probe": "right"},
+      {"predicate": "0x03B2 == 1",   "cond_MI": 1.242, "support_full": 145,  "best_probe": "right"},
+      {"predicate": "0x03B1 == 0",   "cond_MI": 1.224, "support_full": 3065, "best_probe": "right"},
+      {"predicate": "0x0492 == 240", "cond_MI": 1.200, "support_full": 369,  "best_probe": "right"},
+      {"predicate": "0x04F1 == 128", "cond_MI": 1.196, "support_full": 331,  "best_probe": "right"},
+      {"predicate": "0x0312 == 135", "cond_MI": 1.190, "support_full": 294,  "best_probe": "right"},
+      {"predicate": "0x03B1 == 1",   "cond_MI": 1.177, "support_full": 241,  "best_probe": "right"},
+      {"predicate": "0x0311 == 134", "cond_MI": 1.164, "support_full": 205,  "best_probe": "right"}
+    ],
+    "interpretation": "candidates cluster in the object/entity-array pages ($03xx / $04xx) plus $0311/$0312 — plausible enemy-slot / ship-state mode bytes that gate the response to the 'right'/'jump' probe. MI is modest (1.2-1.8), consistent with 300 probed cells over 3483 (thin per-coordinate conditioning; same regime as the Contra cross-game observatory note). These are CANDIDATES for a future state_sig / entity_slots cell dimension, NOT verified observables — they still need the verify-RAM receipt process before entering the production profile.",
+    "receipt_file": "runs/gradius/gradius_bootstrap/observatory_v2.json"
+  },
+
+  "purity": "Every observable was discovered/confirmed from OUR OWN scripted + random rollouts on this core, plus the config's own already-verified ram_mapping bytes (player_x/y, lives). No external RAM maps or disassembly. Progress and death signals confirmed by the wrap + saturation + frame-counter-pause + checkpoint-reset tests above."
+}

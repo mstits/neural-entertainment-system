@@ -1,0 +1,77 @@
+{
+  "tool": "scripts/discover_observables.py",
+  "purpose": "self-test observable discovery against two ground-truth games",
+  "provenance": "own scripted rollouts (clean directional + maneuver death-recovery + reload jump probes); no external RAM maps",
+  "probe_budget": {
+    "clean_forward": 900,
+    "clean_reverse": 900,
+    "noop": 240,
+    "advance": 1800
+  },
+  "all_passed": true,
+  "cases": [
+    {
+      "game": "Contra",
+      "rom": "Contra (USA).nes",
+      "expect_progress": "$0065|$0064<<8",
+      "candidate_found": true,
+      "candidate_saturates": false,
+      "expect_saturates": false,
+      "saturation_verdict_correct": true,
+      "saturation_evidence": {
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 1,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 635
+      },
+      "room_counter_found": true,
+      "expect_room": "$0064",
+      "found_room_counters": [
+        "$0064"
+      ],
+      "recommendation_correct": true,
+      "recommended": "$0065|$0064<<8",
+      "y_top": "$0010",
+      "hp_lives": {
+        "kind": "lives",
+        "addr": "$0032"
+      },
+      "passed": true
+    },
+    {
+      "game": "Kirby",
+      "rom": "Kirby's Adventure (USA) (Rev A).nes",
+      "expect_progress": "$0083|$0095<<8",
+      "candidate_found": true,
+      "candidate_saturates": true,
+      "expect_saturates": true,
+      "saturation_verdict_correct": true,
+      "saturation_evidence": {
+        "sat_saturates": true,
+        "sat_within_room_cap": true,
+        "sat_cap_tail_len": 896,
+        "sat_rebases_at_transitions": 5,
+        "sat_n_transitions": 5,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 343
+      },
+      "room_counter_found": true,
+      "expect_room": "$004F",
+      "found_room_counters": [
+        "$004F",
+        "$00F1"
+      ],
+      "recommendation_correct": true,
+      "recommended": "$004F (room counter \u2014 spatial $0083|$0095<<8 SATURATES / camera-clamp)",
+      "y_top": "$00A7",
+      "hp_lives": {
+        "kind": "hp_death_proxy",
+        "addr": "$0025"
+      },
+      "passed": true
+    }
+  ]
+}

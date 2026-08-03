@@ -1,0 +1,135 @@
+{
+  "game": "Kid Icarus (USA, Europe)",
+  "date": "2026-08-03",
+  "rom": "roms/Kid Icarus (USA, Europe).nes",
+  "rom_md5": "d464e3e3877a759b8053210baaebc890",
+  "start_state": "roms/Kid Icarus (USA, Europe)_start.state.bin",
+  "frame_skip": 4,
+  "deliverable": "Go-Explore solver adapter: configs/kid_icarus.yaml `solve:` block + runs/kid_icarus/kid_icarus_bootstrap archive.",
+  "method": "All observables (re)discovered LIVE from THIS core's Stage-1 start state via our own scripted + jumpy restore-explore rollouts only (scripts/ki_*.py). Full 2KB RAM differential + noop-stability + gameplay-locked-wrap + SATURATION tests. Real climb confirmed by rendered frames (NESEnvironment.get_frame). No external RAM maps / disassembly.",
+  "game_type": "VERTICAL climber: the screen scrolls UP only and falling off the bottom kills => forward progress = HEIGHT (altitude).",
+
+  "step1_gameplay_verified": {
+    "test": "hold RIGHT (w0) vs hold LEFT (w1) 40 frames from the start state; player_x 0x0026 divergence",
+    "right_end": 88,
+    "left_end": 207,
+    "divergence": 119,
+    "threshold": 25,
+    "verdict": "IN-GAMEPLAY (divergence 119 >> 25): inputs move RAM, not the input-ignoring title/attract demo. (Left worker's 0x0026 wrapped 88->207 moving off the start ledge; right worker held against geometry — both prove live control.)",
+    "script": "scripts/ki_discover.py phase1"
+  },
+
+  "step2_progress_discovery": {
+    "chosen_progress": {
+      "spec": "{lo: 0x0750, hi: 0x04D1}  ->  progress = ram[0x0750] | (ram[0x04D1] << 8)",
+      "meaning": "16-bit ALTITUDE odometer. 0x04D1 = screen counter (+1 per screen climbed); 0x0750 = fine within-screen altitude (rises with climb).",
+      "why_the_config_said_none_exists": "The profile description claimed vertical progress had 'no clean RAM byte (Pit's Y lives in OAM; blind play never scrolled the camera to expose a monotonic altitude counter)'. TRUE for blind/random play — but Go-Explore's restore-explore climbed ~8-10 screens and EXPOSED the accumulator. It was a hard-exploration blind spot, not a missing byte."
+    },
+    "screen_counter_0x04D1": {
+      "role": "progress high byte",
+      "noop_flat": true,
+      "start_value": 1,
+      "value_at_~8_screens_up": 9,
+      "rate": "+1 per screen (start 1 -> 9 over ~8 rendered screens of climb)",
+      "complement_check": "0x001A == 256 - 0x04D1 EXACTLY (255/1 at start, 247/9 deep) — the decreasing camera-Y complement; cross-confirms the screen count.",
+      "not_a_clock": "FLAT under 200 noop steps (screens don't advance while standing) => not a free-running/fixed-cadence frame counter (the MM2-bootstrap trap).",
+      "saturation_test": "PASSED. Keeps incrementing across every screen climbed; reached 9 in the depth-max discovery beam (scripts/ki_maxheight.py) with no cap. NOT a camera-clamp byte (the Kirby trap)."
+    },
+    "fine_altitude_0x0750": {
+      "role": "progress low byte (within-screen gradient)",
+      "noop_flat": true,
+      "within_screen_1_range": "0 .. ~107 (rises with climb); reached 248 at screen 6 under the solver",
+      "mirror_complement": "0x0074 is its inverse (238 -> 131 as climbing, span ~107/screen) — same fine altitude, opposite sign.",
+      "direction": "INCREASES with climb (0x0074 decreases), so 0x0750 is the correct progress low byte for GenericGame (ram[lo] | ram[hi]<<8, no negation available)."
+    },
+    "odometer_monotonicity": {
+      "test": "1788 CONTINUOUS alive climb segments (restore-explore, recorded only between restores); mono_nondecreasing fraction of (0x04D1*256 + 0x0750)",
+      "mono_nondecreasing": 1.000,
+      "guaranteed_across_seams": "progress can drop at most 255 (0x0750 is a byte) at a +256 screen stride, so screen*256+fine is monotone-nondecreasing across screen boundaries by construction.",
+      "honesty_note": "0x0750 and 0x04D1 are NOT frame-locked (0x0750 does not wrap 255->0 exactly at each screen boundary — a screen is ~108-256 fine units, not exactly 256). This is a (screen<<8 | fine) COMPOSITE that is empirically monotone in continuous play (mono 1.000), not a textbook lockstep 16-bit pair. A small backward seam artifact of <=255 can occur at a boundary frame; Go-Explore domination absorbs it (verified: the solver climbed cleanly to 2040).",
+      "script": "scripts/ki_odo.py"
+    },
+    "ground_truth_render_confirmation": {
+      "start_frame": "runs/kid_icarus/_frame_start.png (bottom Underworld, Pit in doorway, score 0, 0x04D1=1)",
+      "deep_frame": "runs/kid_icarus/_frame_deep.png (visibly higher/different Underworld region, Pit mid-climb, score 700, 0x04D1=9)",
+      "verdict": "REAL climb: the deep state is a different, higher part of the level (score 0->700), not a same-screen artifact."
+    },
+    "rejected": {
+      "0x0074 / 0x00FD (mirror pair)": "fine altitude but DECREASES with climb; GenericGame cannot negate, so used as the y/vertical cross-reference, not progress low byte.",
+      "0x001A": "screen counter but DECREASES (256 - 0x04D1); can't be a rising progress high byte.",
+      "0x0016 / 0x0017 / 0x00F8": "jump/velocity STATE flags (values cycle 0/1/8/65/128/129) — not a smooth position; rejected as y.",
+      "high-range noisy bytes (0x073A/0x073E/0x032C/0x001C ... range 255)": "enemy/RNG/render churn; fail the within-segment monotone-ratchet test (mono << 1).",
+      "0x0350/0x0351/0x0239": "reach a fixed value quickly then flatten (state flags), not a climb accumulator."
+    }
+  },
+
+  "step3_full_observable_set": {
+    "progress": {"lo": "0x0750", "hi": "0x04D1", "role": "altitude odometer (frontier)"},
+    "y": {"addr": "0x0026", "role": "cell secondary-diversity dimension = player_x (horizontal). VERIFIED-LIVE (88 idle -> 214 RIGHT per config ram_mapping). Chosen over a vertical byte because for a camera-following climber Pit's screen-Y stays ~centered (poor diversity) while altitude is already the progress axis; horizontal position (which platform column) is the useful extra cell axis. CAVEAT: observatory's up/down dY outcome then reads horizontal response — still surfaces mode bytes, noted."},
+    "area": {"addr": "0x0130", "role": "stage self-label (stage_index, VERIFIED-STABLE at 0; splits cells per stage on a real clear)"},
+    "level_key": {"value": [], "role": "coverage baseline — 0x0130's 0->1 stage-advance was never triggered under bootstrap play (Stage 1-1 never cleared). It IS the true clear (held 0 across 300k+ frames AND on death => no false positives); wire level_key: [0x0130] once a solve trajectory clears the stage."},
+    "lives": {"addr": "0x0130", "role": "MONOTONE NO-OP SENTINEL. Kid Icarus has NO life count; the only clean death signal is HP->0. 0x0130 only ever increases (stage clear), so lives<start_lives never false-fires, and real death is delegated to player_state below. TRAP AVOIDED: lives=0x00A6 would flag every restored deep cell (HP<7) instantly-dead and collapse the search to HP=7 states."},
+    "player_state": {"addr": "0x00A6", "role": "HP (health). 7 at spawn; bleeds to 0 on death."},
+    "death_states": {"value": [0], "role": "HP == 0 => death (covers BOTH fall-off-the-bottom AND bleed-out)."}
+  },
+
+  "step3_death_discovery": {
+    "test": "37 real deaths (HP->0) collected under a fall-prone policy; alive-vs-death byte differential (scripts/ki_death.py)",
+    "result": "0x00A6 (HP) is the ONLY clean death signal: constant 7 alive, 0 on death, disjoint. No separate death/dying flag exists (predeath HP mean 1 => catches both instant fall-deaths and gradual bleed-out).",
+    "receipt": "runs/kid_icarus/ki_death.json"
+  },
+
+  "step4_smoke": {
+    "make_game": "GenericGame built from solve: block; rom + progress_cap(20000) parsed OK",
+    "pool": "Pool(3 workers) loaded the start state and stepped",
+    "start_state_reads": {"progress": 256, "y_player_x": 177, "area": 0, "lives": 0, "cell_fn": [0, 0, 0, 5, 16], "is_dead": false, "is_clear": false},
+    "rollout_advances_progress": {"start": 256, "max": 1784, "max_screen": 6, "progress_buckets": 193},
+    "verdict": "SMOKE PASS"
+  },
+
+  "step5_solve_vs_random": {
+    "solver_cmd": "scripts/go_explore_solve.py --out runs/kid_icarus/kid_icarus_bootstrap --root-state <start.state.bin> --profile configs/kid_icarus.yaml --workers 3 --minutes 5 --sel-mode count --want-solutions 1000000 --seed 0",
+    "go_explore": {
+      "workers": 3, "minutes": 5, "sel_mode": "count",
+      "cells": 1099, "frontier": 115, "records": 314740, "improvements": 3465,
+      "max_progress_best_score": 2040, "max_screen": 7, "sps": 1049, "solutions": 0,
+      "solutions_note": "0 solutions is EXPECTED — coverage baseline (level_key empty), no stage-clear detector armed.",
+      "depth_max_beam_reached": "screen 9 (odometer ~2340) in scripts/ki_maxheight.py — confirms the odometer keeps climbing past the bootstrap solver's screen-7 plateau (a real jump/platform wall, not saturation)."
+    },
+    "random_baseline": {
+      "mode": "pure random, NO restore/archive, re-seed from start on death, same right/jump-biased weights",
+      "workers": 3, "seconds": 150, "steps": 143709,
+      "max_progress": 289, "max_screen": 1,
+      "note": "NEVER left screen 1 in 150s / 143k steps."
+    },
+    "OUT_TRAVELS_RANDOM": "YES, decisively. Go-Explore reached progress 2040 (screen 7) vs random's 289 (screen 1). A Stage-1 vertical climb is exactly the hard-exploration regime random play stalls in; restore-explore is what exposes the altitude accumulator at all.",
+    "receipts": ["runs/kid_icarus/kid_icarus_bootstrap/archive.stats.json", "runs/kid_icarus/kid_icarus_bootstrap/progress.jsonl", "runs/kid_icarus/ki_random_baseline.json"]
+  },
+
+  "step6_observatory_v2": {
+    "cmd": "scripts/observatory.py --run runs/kid_icarus/kid_icarus_bootstrap --profile configs/kid_icarus.yaml --cells 150",
+    "cells_probed": 300, "candidates": 1361, "elapsed_s": 139,
+    "top10_candidate_mode_bytes": [
+      {"predicate": "0x001E == 0 / 128", "cond_MI": 17.138, "probe": "jump", "note": "zero-page jump/airborne STATE bit (0/128 = high-bit flag) — top candidate"},
+      {"predicate": "0x001D == 0", "cond_MI": 16.444, "probe": "jump", "note": "zero-page jump/movement state byte"},
+      {"predicate": "0x04DE == 170", "cond_MI": 9.082, "probe": "jump_right"},
+      {"predicate": "0x033A == 7 / 4", "cond_MI": 8.868, "probe": "jump_right"},
+      {"predicate": "0x0481 == 128", "cond_MI": 7.196, "probe": "jump_right"},
+      {"predicate": "0x048F == 217 (+ 0x0490/0x04AF/0x04B0 mirrors)", "cond_MI": 7.143, "probe": "jump", "note": "object-array bytes"},
+      {"predicate": "0x07DD == 0 / 96", "cond_MI": 7.100, "probe": "jump_right"},
+      {"predicate": "0x07DC == 194", "cond_MI": 6.933, "probe": "jump_right"},
+      {"predicate": "0x0323 == 8 / 24", "cond_MI": 6.869, "probe": "jump_right"},
+      {"predicate": "0x0015 == 13 / 0x0304 == 63 / 0x07D8 == 248 / 0x001C == 1", "cond_MI": 6.7, "probe": "jump / jump_right"}
+    ],
+    "reading": "Top candidates are zero-page jump/airborne state bits (0x001E/0x001D/0x001C, jump-gated). These are the movement-mode bytes a FUTURE wall (e.g. a platform-mount sequence aliased at the same altitude/x) would key into solve.state_sig — surfaced automatically, not yet needed by the bootstrap. Each still requires the verify_ram_map process before entering the profile.",
+    "receipt": "runs/kid_icarus/kid_icarus_bootstrap/observatory_v2.json"
+  },
+
+  "artifacts": {
+    "config": "configs/kid_icarus.yaml (solve: block added; name/rom/start_state/frame_skip/action_space/ram_mapping intact)",
+    "solver_archive": "runs/kid_icarus/kid_icarus_bootstrap/ (archive.pkl, traces.pkl, roots.json, progress.jsonl)",
+    "discovery_scripts": "runs/kid_icarus/discovery/ki_*.py (ki_discover, ki_altitude, ki_maxheight, ki_verify, ki_boundary, ki_fine, ki_odo, ki_death, ki_random_baseline — run from repo root)",
+    "discovery_receipts": ["ki_discovery.json", "ki_altitude.json", "ki_maxheight.json", "ki_verify.json", "ki_fine.json", "ki_odo.json", "ki_death.json", "ki_random_baseline.json"],
+    "render_proof": ["_frame_start.png", "_frame_deep.png"]
+  }
+}

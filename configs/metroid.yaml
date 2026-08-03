@@ -136,3 +136,55 @@ reinforce:
   # the main driver of "go somewhere new". Set to 0.0 for a pure baseline.
   rnd_intrinsic_coef: 0.5
   rnd_loss_coef: 1.0
+
+# =====================================================================
+# Go-Explore solver adapter (coverage bootstrap). Metroid is a
+# non-linear Metroidvania — a hard-exploration problem with NO single
+# monotone axis and NO reachable clear byte (items/missiles/energy-tanks
+# and boss flags live in cartridge PRG-RAM $6000-$7FFF, which get_ram
+# masks off). So this is a COVERAGE baseline over (area, x, y): the
+# archive banks distinct map positions and returns to them, and the
+# search out-travels random by pushing the position frontier past the
+# start room's exit — the maneuvers dumb holds never complete.
+#
+# All addresses were discovered by differential analysis of our OWN
+# scripted rollouts from the verified start state, cross-checked against
+# the profile's own verified ram_mapping (no external maps / disassembly).
+# Receipt: runs/metroid/metroid_receipt.json.
+solve:
+  rom: "roms/Metroid (USA).nes"
+  # progress = fine on-screen X (0x0051, 0-255) | coarse scroll-column
+  # (0x0050) << 8 = a forward-travel spine. 0.99 monotone non-decreasing
+  # under hold-right (768->1500). x_screen ALONE camera-clamps at 220
+  # (rejected as sole progress by the saturation test); x_map is the
+  # non-saturating scroll-column counter (steps 3->4->5 per screen of
+  # rightward travel) and leads the pair as hi — the lore-prescribed
+  # camera-byte + screen-counter pairing. The 1500 ceiling under all
+  # scripted holds is the start ROOM boundary (dumb holds cannot reach
+  # the exit), not a camera clamp on the combined signal — breaking past
+  # it is exactly what the search does.
+  progress: {lo: 0x0051, hi: 0x0050}
+  # y = on-screen Y (0x0052): spans 5 distinct 32-px bands (0,3,4,5,6)
+  # across varied movement — a usable fine vertical coverage axis.
+  # y_map (0x004F) stays constant (14) in the reachable region — too
+  # static/coarse for a cell axis, so the fine screen-Y is used.
+  y: 0x0052
+  # area = region index (0x0074, verified ram_mapping RAM_AREA). Starts 0
+  # (Brinstar) and leads the cell key / frontier — when the search reaches
+  # a new region it steps and the deep-frontier bias follows.
+  area: 0x0074
+  # No reachable per-level clear byte (item/boss state is unreachable
+  # PRG-RAM): coverage baseline, level_key empty.
+  level_key: []
+  # HP-decrease death proxy: 0x0107 = energy tens digit + filled-tank
+  # nibble (verified ram_mapping; start 3 = 30 energy). A DECREASE means
+  # Samus lost >=10 energy (or a tank) = took a real hit; the lineage is
+  # terminated. Coarse by design (chip damage below a tens boundary does
+  # not reset), so exploration is not starved by minor hits. Metroid has
+  # no system-RAM lives counter and no clean death-state byte, so this is
+  # the honest death signal.
+  lives: 0x0107
+  # Guards transition-frame garbage: a mid-load coarse-column read can
+  # spike the <<8 term. Legit progress stays well under 16384 (map column
+  # is small); a garbage read above it is dropped, not archived.
+  progress_cap: 16384

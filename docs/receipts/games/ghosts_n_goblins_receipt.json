@@ -1,0 +1,247 @@
+{
+  "game": "Ghosts'n Goblins (USA)",
+  "rom": "roms/Ghosts'n Goblins (USA).nes",
+  "start_state": "roms/Ghosts'n Goblins (USA)_start.state.bin",
+  "frame_skip": 4,
+  "ram_window": "full 2KB $0000-$07FF",
+  "method": "own scripted + random rollouts only (Pool/save_worker_state/load_worker_state on the installed nes_core), no external RAM maps or disassembly. Frames rendered (headless=False) to visually ground-truth scrolling/obstacles.",
+  "step1_in_gameplay_check": {
+    "test": "in_gameplay_right_vs_left_divergence",
+    "steps": 40,
+    "bytes_differing": 251,
+    "threshold": 25,
+    "pass": true
+  },
+  "step2_progress_discovery": {
+    "summary": "progress = ram[0x006C] | ram[0x0065]<<8 (a 16-bit LE fine-x/screen pair). Confirmed via action-conditioned delta correlation + dense per-step trace inspection + cross-segment wrap coupling + a two-life-length saturation probe. See rejected_candidates for the false positives the DISCOVERY LORE tests specifically caught.",
+    "why_the_opening_is_hard": "The captured start state drops Arthur directly adjacent to an already-active zombie (visually confirmed via rendered frames). Every pure scripted hold (right/left/noop/B-mash/right+A/right+B) dies at ~step 70-130 near spawn, so the classic 'hold right N steps, hold left N steps' controlled probe only samples a tiny, combat-dominated window. Real multi-screen forward distance only appears in lucky random-restart rollouts.",
+    "in_gameplay_locked_wrap_test_on_the_PRE_EXISTING_config_byte": {
+      "candidate": "0x005D/0x005E (config's pre-existing scroll_x_lo/hi, marked UNVERIFIED in the file)",
+      "test_1_reload_collapse": "Saved full engine state at 3 independent random-walk peaks (scroll=250, 245, 212 by this byte's own reading). Reloading any of them and stepping ONE NOOP frame collapses the reading back to -8 or -6 EVERY time (3/3 peaks, and again across 3 workers x 8000 steps x 140+ restarts each in a follow-up run -- 420+ independent attempts NEVER recovered anywhere near the saved peak).",
+      "test_2_best_segment_correlation": "In a single continuous 270-step life with INDEPENDENTLY visually-confirmed monotonic forward scrolling (3 mountains -> 2 -> 1 -> 0, background hill formation appears; see method note), this byte reads net=0, mono=0.52 (indistinguishable from random noise) across the exact same span.",
+      "verdict": "REJECTED. This byte is disconnected from real position; it is NOT the world/camera scroll despite the plausible-looking sign convention in the pre-existing config comment."
+    },
+    "rejected_candidates": [
+      {
+        "addr": "0x0083 / 0x0608",
+        "reason": "free-running frame clock: climbs at an IDENTICAL ~1.3/step rate under NOOP, RIGHT, and LEFT (byte-for-byte identical sequences over 34-128 step controlled probes AND from an independent mid-level save-state) -- the exact MM2 $001C trap the lore names."
+      },
+      {
+        "addr": "0x06C2 / 0x05C0",
+        "reason": "0x05C0 SATURATES (caps ~224-250 across 108 independent long segments) -- the Kirby camera-clamp signature; 0x06C2 is direction-independent (identical net under LEFT and RIGHT) and its dense trace is non-monotone noise (254,22,22,22,16,22,76,254,22,94,22 across a visually-confirmed-monotone ladder) -- an enemy/object-slot artifact, not position."
+      },
+      {
+        "addr": "0x0692 / 0x0682 / 0x06A2 / 0x060E",
+        "reason": "all climb at the SAME ~1.3/step rate identically under NOOP and RIGHT from an independent mid-level save-state (34-step exact match) -- more free-running clocks."
+      },
+      {
+        "addr": "0x0440 / 0x0448 / 0x0458 / 0x0460 / 0x0470 / 0x0523 / 0x0136 / 0x04F1",
+        "reason": "one-shot combat/collision EVENT FLAGS: a single large transition (e.g. 204->0) at a fixed early step under RIGHT, dead flat before and after, absent entirely under LEFT within the same budget -- not a continuous track."
+      },
+      {
+        "addr": "0x00D6 / 0x00D8",
+        "reason": "mirrored pair, but only ONE transition (255->96) in an entire 270-step real-progress segment, right at its end -- looks like a death/transition-adjacent flag, not a per-step position."
+      }
+    ],
+    "winner": {
+      "progress": "{lo: 0x006C, hi: 0x0065}",
+      "discovery_method": "Action-conditioned delta correlation: mean per-step signed RAM delta split by whether the taken action contained 'right' / 'left' / neither, pooled across 243 independent death-restarted rollouts (30000 steps, single worker, right/A/B-biased sampling). 0x003D, 0x0064, and 0x006C (near-mirror addresses) surfaced with mean delta +1.1 to +1.2 under right, -0.66 to -0.82 under left, and ~0.01-0.23 under neither.",
+      "noop_flat_test": "0x006C: net=0 over 73 NOOP-only steps from the true start state (dead flat, all 73 values identically 0).",
+      "hold_right_test": "0x006C: net=67 over 128 steps, mono=0.66; dense trace shows a real walking signature (smooth +1..+6/step climbs, a plateau where Arthur is blocked, then a clean retreat/knockback decline) -- NOT a linear clock.",
+      "hold_left_test": "0x006C: net=0 over 70 steps (flat, identical to NOOP). Interpreted as a LEFT-BOUNDARY CLAMP, not a rejection: the start state is the very first screen of Stage 1 -- there is nowhere further left to go, so a real position byte SHOULD be pinned here under LEFT.",
+      "gameplay_locked_wrap_test": "Dense per-step trace (not just checkpoints) of 0x006C's mirror 0x003D over the 270-step visually-confirmed-monotone segment shows a CLEAN wrap: ...245, 251, 254, 1, 4, 10, 13... (254->1, no intermediate garbage). Cross-validated the coupled high byte across the full 243-segment corpus (28 independent wrap events of the lo byte): 0x0065 increments by exactly +1 in 28/28 (100%) when paired with lo=0x006C (vs 28/33=85% for the 0x003D mirror and 21-29/33 for other candidate high bytes) -- the cleanest lo/hi pair found.",
+      "saturation_test": "PASS (does not cap). The longest captured single life (271 steps, independent seed) crosses TWO lo-byte wraps -- hi (0x0065) reaches a sustained value of 2, filtered for the 1-frame glitch below -- without the value capping the way 0x05C0 does (saturates ~224-250) or resetting the way the pre-existing 0x005D does. The actual SOLVE run (6 min, 3 workers, count selection) drove the max_gx_in_max_area frontier to 3327, ~13x past a single lo-byte wrap (256), confirming continued accumulation deep into the search, not a camera-window cap.",
+      "known_artifact": "0x0065 spikes to 255 for exactly ONE frame (self-correcting the very next frame) during the first-hit/invincibility-init routine (~step 20-26 in every trajectory observed, i.e. RAM-address reuse coincident with the armor-loss animation), which would otherwise read as a huge bogus progress value for that single frame. Guarded via progress_cap: 8000 in the written solve: section (GenericGame's existing transition-frame-garbage guard)."
+    }
+  },
+  "step2_y_discovery": {
+    "winner": "0x021B",
+    "method": "Differential probing: identical save-state, one branch held jump(A) in bursts, the other held pure NOOP; per-byte |diff| between the two branches at matching time steps ranked candidates.",
+    "caveat_HONEST": "Could NOT verify a NOOP-flat Y from a genuinely safe stance -- the pinned opening means every state we could reach is combat-adjacent, so an involuntary knockback-into-air from the nearby zombie fires on almost the same schedule whether or not A is pressed (0x021B showed the identical rise-peak-decline arc under a pure-NOOP run AND under an A-burst run once from that specific pinned start). 0x021B is used as a PROVISIONAL height proxy: real 0-255 dynamic range, a bounded ballistic (rise-then-fall, not unbounded) envelope consistent with real airborne physics (self-jump or knockback-launch), clearly divergent from a matched-NOOP baseline when probed from a safer save-state (post-first-kill). Recommend re-verifying from a cleaner mid-stage save-state once one is captured."
+  },
+  "step2_hp_lives_death": {
+    "hp_armor": {
+      "addr": "0x0585",
+      "values": "1 (or 2, an armor/shield-upgrade state observed once) = has armor; 0 = underwear (one hit from death)",
+      "verified": "flips 1->0 reliably at the first zombie hit across every rollout observed (dozens of independent trials); wired into solve.state_sig as {addr: 0x0585, match: [1,2]}"
+    },
+    "lives": {
+      "addr": "0x0715",
+      "verified": "decrements 2->1 reliably at death across dozens of independent NOOP/RIGHT/LEFT holds and hundreds of random-walk restarts; matches the pre-existing config's own citation of the GnG Game Genie infinite-lives-P1 code"
+    },
+    "death_signal": "lives-decrement only (GenericGame.is_dead default). player_state/death_states deliberately OMITTED: the only candidate (mode $0028, 0x08=play/0x0A=non-play) conflates title, death-sequence, AND menu/attract into the same non-play value, so it cannot safely gate is_dead without risking false positives; same call MegaMan's bootstrap made for the identical reason."
+  },
+  "step3_solve_section_written": {
+    "file": "configs/ghosts_n_goblins.yaml",
+    "preserved_unchanged": [
+      "name",
+      "rom_hashes",
+      "start_state_path",
+      "frame_skip",
+      "action_space",
+      "ram_mapping",
+      "reward_weights",
+      "curriculum",
+      "reinforce"
+    ],
+    "solve": {
+      "rom": "roms/Ghosts'n Goblins (USA).nes",
+      "progress": {
+        "lo": "0x006C",
+        "hi": "0x0065"
+      },
+      "progress_cap": 8000,
+      "y": "0x021B",
+      "level_key": [],
+      "lives": "0x0715",
+      "state_sig": [
+        {
+          "addr": "0x0585",
+          "match": [
+            1,
+            2
+          ]
+        }
+      ],
+      "hold_macros": [
+        {
+          "buttons": [
+            "B"
+          ],
+          "steps": 16,
+          "p": 0.03
+        },
+        {
+          "buttons": [
+            "right",
+            "A"
+          ],
+          "steps": 10,
+          "p": 0.02
+        }
+      ]
+    },
+    "level_key_note": "Left empty (coverage baseline) per task instructions -- no clean stage-clear byte is reachable from bootstrap play; the pre-existing config's own comment already documented this as UNVERIFIED, and our much larger search budget (380K steps, 6657 cells) still never surfaced a 1-A->1-B transition to diff against."
+  },
+  "step4_smoke_test": {
+    "make_game": "GenericGame built successfully from the solve: section",
+    "pool": "Pool(num_workers=3) loaded the start state on all 3 workers and stepped 400 random steps without error",
+    "cell_fn_sanity": "returns a well-formed 5-tuple, e.g. (area=0, hp/boss=0, state_sig_bits=0, y_band=7, gx_bucket=1)",
+    "rollout_advances_progress": "PASS -- max progress reached per worker over 400 random steps: [113, 172, 510] (all >0, confirming the chosen progress signal responds to real rollout play)"
+  },
+  "step5_solve_run": {
+    "command": "scripts/go_explore_solve.py --out runs/ghosts_n_goblins/ghosts_n_goblins_bootstrap --root-state \"roms/Ghosts'n Goblins (USA)_start.state.bin\" --profile configs/ghosts_n_goblins.yaml --workers 3 --minutes 6 --sel-mode count",
+    "wall_clock_s": 360,
+    "steps_taken": 379893,
+    "steps_per_second": 1055,
+    "archive_stats": {
+      "cells": 6657,
+      "frontier": 2231,
+      "best_score": 3327,
+      "records": 368287,
+      "new_cells": 6657,
+      "improvements": 13911
+    },
+    "max_progress_reached": 3327,
+    "solutions": 0,
+    "solutions_note": "0 is EXPECTED and correct: level_key=[] means every state's level_key is the empty tuple (), so GenericGame.is_clear's `level_key(ram) > tuple(start_key)` (() > ()) is always False by construction. This is the same coverage-baseline behavior as Contra/Kirby/MegaMan's bootstrap adapters -- 'solutions' only fires once a real stage-clear byte is wired into level_key.",
+    "random_baseline_comparison": {
+      "method": "Same profile, same progress metric (ram[0x006C]|ram[0x0065]<<8, capped at 8000), same 3 workers, same 360s wall-clock budget, pure i.i.d. uniform-random actions with death-triggered reload to the start state (no archive, no cell selection, no restarts-to-frontier).",
+      "random_steps_taken": 391968,
+      "random_max_progress_per_worker": [
+        1023,
+        767,
+        767
+      ],
+      "random_overall_max_progress": 1023,
+      "go_explore_max_progress": 3327,
+      "out_travel_ratio": 3.25,
+      "verdict": "Go-Explore OUT-TRAVELS random search by ~3.25x (3327 vs 1023) on an almost identical total step budget (379,893 vs 391,968 steps) -- the archive's count-based cell selection and death-triggered restore-to-frontier is doing real work here, not just brute-force step volume."
+    }
+  },
+  "step6_observatory_v2": {
+    "command": "scripts/observatory.py --run runs/ghosts_n_goblins/ghosts_n_goblins_bootstrap --profile configs/ghosts_n_goblins.yaml --cells 150",
+    "pre_probe_exclusions": "284 bytes (8 known ram_mapping/solve addrs, 256 hardware stack page $0100-$01FF, 0 OAM, 20 mirrors)",
+    "candidates_after_pass1": 4782,
+    "shortlisted_for_pass2": 200,
+    "elapsed_s": 123.0,
+    "top_10_candidate_mode_bytes": [
+      {
+        "predicate": "0x0686 == 79",
+        "cond_MI": 4.4152,
+        "best_probe": "up",
+        "support_full": 4252,
+        "support_probed": 196
+      },
+      {
+        "predicate": "0x0696 == 55",
+        "cond_MI": 4.4152,
+        "best_probe": "up",
+        "support_full": 4252,
+        "support_probed": 196
+      },
+      {
+        "predicate": "0x06A6 == 79",
+        "cond_MI": 4.4152,
+        "best_probe": "up",
+        "support_full": 4254,
+        "support_probed": 196
+      },
+      {
+        "predicate": "0x00F8 == 78",
+        "cond_MI": 4.4152,
+        "best_probe": "up",
+        "support_full": 2400,
+        "support_probed": 104
+      },
+      {
+        "predicate": "0x0686 == 91",
+        "cond_MI": 4.4152,
+        "best_probe": "up",
+        "support_full": 2405,
+        "support_probed": 104
+      },
+      {
+        "predicate": "0x0696 == 91",
+        "cond_MI": 4.4152,
+        "best_probe": "up",
+        "support_full": 2405,
+        "support_probed": 104
+      },
+      {
+        "predicate": "0x06A6 == 115",
+        "cond_MI": 4.4152,
+        "best_probe": "up",
+        "support_full": 2403,
+        "support_probed": 104
+      },
+      {
+        "predicate": "0x0681 == 3",
+        "cond_MI": 4.3516,
+        "best_probe": "up",
+        "support_full": 4224,
+        "support_probed": 194
+      },
+      {
+        "predicate": "0x0684 == 72",
+        "cond_MI": 4.3516,
+        "best_probe": "up",
+        "support_full": 4224,
+        "support_probed": 194
+      },
+      {
+        "predicate": "0x0691 == 3",
+        "cond_MI": 4.3516,
+        "best_probe": "up",
+        "support_full": 4228,
+        "support_probed": 194
+      }
+    ],
+    "interpretation": "Top hits cluster in $0681-$06A6 at stride ~0x10 (0x0681/0x0684/0x0686, 0x0691/0x0693/0x0694/0x0696, 0x06A1/0x06A3/0x06A4/0x06A6) plus $00F8 -- consistent with a 3-slot enemy/object array (offsets +0,+3,+4,+6 within each 0x10-byte slot) whose per-slot state/type byte is informative under the 'up' probe specifically. All best_probe='up', cond_MI~4.35-4.42. Candidates for a future entity_slots / state_sig refinement pass; not wired into solve: this round (out of scope for the bootstrap)."
+  },
+  "honest_caveats": [
+    "Y (0x021B) is provisional: could not verify NOOP-flatness from a genuinely safe stance because none was reachable from this start state within the investigation budget; it is a real, wide-range, jump/knockback-responsive height signal but conflates voluntary jumps with involuntary knockback launches.",
+    "level_key is an empty coverage baseline -- no real stage-clear signal exists yet; a future pass should look for a stage/area-index byte once deep-arrival save-states from THIS solve's archive make an actual 1-A->1-B transition reachable.",
+    "progress (0x006C/0x0065) was validated on a LEFT-flat / boundary-clamp basis rather than a true LEFT-negative basis, because the captured start state sits at the stage's own left boundary. This is architecturally sound (nowhere further left exists) but is a weaker form of the textbook reversibility test than a mid-level LEFT-decreases check would be."
+  ]
+}

@@ -93,3 +93,13 @@ solve:
   # a room, steps at doors, increases forward. Self-labels cells per room AND
   # drives room_id -> sect transitions so the search advances through doors.
   area: 0x004F
+  # Door-entry maneuver macros (discrete-transition gate — the room exit
+  # door needs grounded + UP, which world-X can't gradient toward since the
+  # camera clamps at the scroll limit; same generic mechanism as CV's
+  # stair up-holds). At a small per-step probability a worker HOLDS up (or
+  # up+jump) for N steps; when it lands grounded at a door the transition
+  # fires and room-id $004F advances = a dominating sect gain.
+  hold_macros:
+    - {buttons: ["up"], steps: 20, p: 0.03}
+    - {buttons: ["up", "A"], steps: 16, p: 0.015}
+    - {buttons: ["right", "up"], steps: 16, p: 0.015}

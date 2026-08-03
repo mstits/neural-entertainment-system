@@ -1,9 +1,11 @@
 name: "Double Dragon"
 # ============================================================================
-# STATUS: TRAINABLE reward SHIPPED (DoubleDragonReward). One blocker remains:
-# the start-state file is not captured (see BLOCKERS). All RAM addresses below
-# were confirmed empirically on the nes_core emulator by driving real inputs
-# from the Mode-A 1P Mission-1 start — NOT copied from a doc.
+# STATUS: TRAINABLE reward SHIPPED (DoubleDragonReward). Start state CAPTURED
+# (Go-Explore bootstrap pass) and the game IS registered in train_game.py.
+# All RAM addresses below were confirmed empirically on the nes_core emulator
+# by driving real inputs from the Mode-A 1P Mission-1 start — NOT copied from
+# a doc. See `solve:` below for the Go-Explore solver adapter and
+# runs/double_dragon/double_dragon_receipt.json for the full discovery trail.
 # ============================================================================
 #
 # Live Mission-1 boot. The generic capture_start_state.py masher FAILS on
@@ -144,20 +146,82 @@ reinforce:
   rnd_loss_coef: 1.0
 
 # ============================================================================
-# BLOCKERS to a valid training run today:
+# REMAINING OPEN ITEM (not a blocker — everything above and below trains/
+# solves today):
 #
-#  1. START STATE not captured. roms/Double Dragon (USA)_start.state.bin does
-#     not exist and the generic masher CANNOT produce it. Add the game-specific
-#     boot sequence above to scripts/capture_start_state.py, then capture.
-#
-#  2. NOT REGISTERED. Add "double_dragon" to DEFAULT_PROFILES and DEFAULT_ROMS
-#     ("roms/Double Dragon (USA).nes") in scripts/train_game.py, or --game
-#     double-dragon won't resolve.
-#
-#  3. MISSION-CLEAR address to FINAL-VERIFY. 0x0030 is verified rock-stable in
+#  1. MISSION-CLEAR address to FINAL-VERIFY. 0x0030 is verified rock-stable in
 #     Mission 1 but its increment was not observed (a scripted bot can't clear a
 #     mission). The win predicate never false-positives (safe under-trigger); do
 #     ONE assisted full-Mission-1 clear to confirm 0x0030 (or set mission_addr to
 #     the true counter). Everything else (progress, combat, health, death, game
 #     over) is fully verified and trains today.
 # ============================================================================
+
+# Go-Explore solver adapter (cold-start bootstrap). Every address below was
+# discovered and verified from THIS core's own scripted + random rollouts —
+# no external RAM maps, no disassembly. Full receipt with the confirming
+# test for each byte: runs/double_dragon/double_dragon_receipt.json.
+#
+# THE PROGRESS SIGNAL (the hard part — this is a room-gated brawler, not a
+# free-scrolling side-scroller). player_x (0x005A) is the on-screen X: it
+# climbs 72->~234-254 as you walk right, but each enemy gate LOCKS it at a
+# per-screen ceiling until the wave is defeated (Kirby-lesson camera-clamp
+# shape) — using it alone as "progress" would look monotone in a short probe
+# and then silently cap. The gameplay-locked-WRAP + SATURATION tests (own
+# rollouts, combat-biased 3-worker probes) found the true partner:
+#   progress = ram[0x005A] | (ram[0x00B2] << 8)
+# 0x00B2 is a per-SCREEN/ROOM counter: 0 at Mission-1 start, and it steps by
+# +1 (occasionally +2 under frame_skip=4 aliasing when a short room is
+# skipped through in one grouped step) at every VERIFIED forward screen
+# transition — confirmed by diffing full RAM at the exact frame player_x
+# wraps from near-max (232-254) down to a low value (0-72) with health/lives
+# UNCHANGED (i.e. a real scroll transition, not a death): 0x00B2 went 0->1
+# and 2->3 at two independent such events. SATURATION TEST: a 3-minute,
+# 3-worker checkpoint-and-retry random probe (no hand-authored route, just
+# restore-on-death) pushed 0x00B2 to 15 and 16 with NO ceiling in sight —
+# unlike player_x alone (which caps every single screen), the room counter
+# keeps climbing, so it is the TRUE frontier axis, exactly the "prefer a
+# room/level counter" rule for room-based games. 0x00B2 legitimately
+# regresses toward 0 on death/respawn (you restart the current attempt from
+# an earlier room) — expected and handled by the lives-decrement death
+# check below, not a progress-signal defect.
+# Rejected: scroll_fine (0x03B0) and scroll_coarse (0x03B2, NOTE the
+# ram_mapping key `scroll_coarse` above is a DIFFERENT address, 0x03B2 vs
+# this section's 0x00B2 room counter — do not confuse the two) both churn
+# under NOOP-adjacent idle play and move at rates uncorrelated with real
+# forward travel (own differential probe: no clean 1-byte-per-wrap partner,
+# high per-frame churn even before the player moves) — camera/parallax
+# jitter, not position. player_x alone rejected as the sole signal for the
+# saturation reason above.
+solve:
+  rom: "roms/Double Dragon (USA).nes"
+  progress: {lo: 0x005A, hi: 0x00B2}
+  # Guards transition-frame garbage; real values top out far below this in
+  # a single mission (observed room index reached 16 in a 3-minute
+  # undirected probe alone).
+  progress_cap: 10000
+  # Z-DEPTH (2.5D lane position), the correct analog of "y" for a
+  # beat-'em-up: UP/DOWN move the player along the street's depth axis.
+  # 0x0072 is flat under NOOP (64, constant across 200 frames), rises under
+  # held UP to a hard lane ceiling (96) and falls under held DOWN to a hard
+  # lane floor (48), and is fully reversible on a single trajectory
+  # (UP->96, DOWN->48, UP->96 again) — bounded by the street width, not a
+  # camera artifact. (A true "jump dips/returns" ballistic signature was
+  # searched for via the A+B jump input per the action_space and NOT found
+  # clean within the probe window; the Z-depth axis is the game's real
+  # vertical-equivalent dimension and drives meaningful cell diversity.)
+  y: 0x0072
+  # Coverage baseline: no clean MISSION-clear byte is verified yet (see the
+  # open item above — 0x0030's increment needs a real mission clear, which
+  # a scripted/random bot cannot produce). The room counter above already
+  # gives the archive a real per-screen frontier within one mission.
+  level_key: []
+  # 2 at Mission-1 start; decrements 2->1->0 at deaths (own probe: 3-worker
+  # combat rollout observed exactly this sequence, including the 0->255
+  # GAME OVER wrap noted in ram_mapping.lives above). is_dead fires on the
+  # FIRST decrement, so a lineage's burst always stops well before a second
+  # death could reach the 255 wraparound — the wrap is a non-issue in
+  # practice. No clean player_state/death byte was isolated (matches the
+  # Kirby/MM2 bootstraps' precedent) — the lives decrement alone is an
+  # unambiguous, false-positive-free death signal.
+  lives: 0x0043

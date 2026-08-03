@@ -131,3 +131,59 @@ reinforce:
   # pure baseline.
   rnd_intrinsic_coef: 0.5
   rnd_loss_coef: 1.0
+
+# Go-Explore solver adapter (bootstrap 2026-08-03). Every address below was
+# discovered/confirmed LIVE from THIS core's stage-1 start state via scripted
+# (noop/right/left/up/down/right+B/down+right) + suicide rollouts only — no
+# external maps or disassembly. Receipt: runs/gradius/gradius_receipt.json.
+#
+# PROGRESS for a HORIZONTAL AUTO-SCROLLER. The stage scrolls forward on its
+# own, so the ship's screen-X ($00A4) is NOT world progress. The forced scroll
+# is tracked by a 16-bit little-endian accumulator at $003E (lo) / $003F (hi):
+#   * MONOTONE while alive: nondec=1.000, zero backward jumps over every
+#     scripted first life (11 -> 836 deep, 11 -> 429 shallow).
+#   * SCROLL-LINKED, not a free-running frame counter: $003E FREEZES during the
+#     death/explosion pause (68,68,0,0,0...) exactly when the world stops
+#     scrolling, whereas the genuine frame counter $0002 counts straight
+#     through the same death (56,57,...66). This is the frame-counter rejection
+#     the discovery lore demands — $0002/$0036 (per-frame, never pause) are
+#     rejected; $003E/$003F advance only with scroll.
+#   * DEPTH-DEPENDENT CHECKPOINT RESET (world position, not a fixed respawn):
+#     a shallow death near the entrance resets the accumulator to 0 (start
+#     checkpoint); a deep suicide-death resets to 512 (page-2 checkpoint).
+#   * SATURATION TEST PASSED: $003F keeps STEPPING across screens (reached
+#     page 3 in a 1652-frame life and kept climbing), unlike the camera byte
+#     $006D which CLAMPS at 240 (the Kirby camera-clamp failure mode) — $006D,
+#     $006E and the cyclic scroll-fine copies $0012/$0048 are all rejected as
+#     progress. Auto-scroll is input-independent: $003E advances at the same
+#     rate under noop and forward, confirming it is the stage's forced scroll.
+# level_key EMPTY: no clean stage-advance byte exists (the config's ram_mapping
+# already documents that the stage-number byte was NOT FOUND, and a real
+# stage-1->2 transition is unreachable under bootstrap play), so this runs as a
+# COVERAGE baseline (count selection). player_state is deliberately OMITTED:
+# lives ($0020, clean 3->2->1->0 on death) is the robust death signal, while
+# the ram_mapping's status $0100 was falsified here (it reads 2 during NORMAL
+# alive play, e.g. frames 200/300/600 with lives=3 — wiring it would abort live
+# bursts on phantom deaths).
+solve:
+  rom: "roms/Gradius (USA).nes"
+  # 16-bit forced-scroll accumulator (lo $003E, hi $003F). $003E adjacent to
+  # $003F is the natural little-endian pair; $003F increments exactly when
+  # $003E wraps 255->0 (at_wrap 1.00). This is the stage-distance frontier.
+  progress: {lo: 0x003E, hi: 0x003F}
+  # Transition-garbage guard: observed values stay tiny ($003F in 0..3, val
+  # <= 836 in scripted lives); 20000 (page ~78) can never be reached in one
+  # stage yet clips a stray high $003F read on a mode transition.
+  progress_cap: 20000
+  # Vic Viper vertical position (head of the Y-trail $07C0-$07CF). VERIFIED-
+  # LIVE: up- / down+. Drives the cell y-band, critical for a dodge-heavy
+  # shmup. ($0320 OAM-Y mirrors it; $00A5 is the canonical RAM byte.)
+  y: 0x00A5
+  # Coverage baseline: no stage-clear byte (see BLOCKER in the description /
+  # ram_mapping). The Big-Core boss defeat is the true clear; wire a stage
+  # byte here once it is read off a genuine stage-1->2 transition.
+  level_key: []
+  # Remaining ships. VERIFIED-LIVE: 3 at spawn, steps 3->2->1->0 exactly on
+  # each death (then wraps to 255 at game-over). start_lives=3 => is_dead
+  # fires on the first life lost. Robust across bullet/collision/terrain deaths.
+  lives: 0x0020

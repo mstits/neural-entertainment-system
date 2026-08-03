@@ -119,6 +119,98 @@ reinforce:
   rnd_loss_coef: 1.0
 
 # ===========================================================================
+# Go-Explore solver adapter (discovery pass, bootstrap sweep). Every address
+# below was found and verified from THIS core's own scripted + random
+# rollouts (no external RAM maps/disassembly) — full receipt with the
+# confirming tests: runs/ghosts_n_goblins/ghosts_n_goblins_receipt.json.
+#
+# THE HARD PART: the captured start state drops Arthur directly next to an
+# already-active zombie (frame-0 screenshot confirms this), so EVERY scripted
+# hold (right/left/noop/B-mash) dies at almost the same step (~70-130) near
+# spawn, and the pre-existing scroll_x_lo/hi (0x005D/0x005E) turned out to be
+# a red herring: reload-to-a-high-scroll-state + a single NOOP step collapses
+# it back to -8/0 EVERY time (tested from 3 independent ~250-scroll snapshots,
+# 420+ death-restarts total), and inside a full-2KB scan of a real, visually-
+# confirmed 270-step forward run (mountains progressively leave frame — see
+# receipt) it shows net=0, mono=0.52 — indistinguishable from noise. It is
+# NOT Arthur's position; rejected outright.
+#
+# The full-2KB scan also turned up a graveyard of GAMEPLAY-LOCKED-WRAP-test
+# **false positives**: 0x0083/0x0608 climb at the IDENTICAL ~1.3/step rate
+# under NOOP, RIGHT, AND LEFT (byte-for-byte identical sequences over 34-128
+# step windows) — textbook free-running frame clocks, the exact MM2-$001C
+# trap. 0x06C2/0x05C0 SATURATE around 224-250 (the Kirby camera-clamp
+# signature) and also failed direction-independence. 0x0440/0x0448/0x0458/
+# 0x0460/0x0136/0x04F1/0x0523 are one-shot combat/collision EVENT FLAGS (a
+# single 204->0-style transition mid-probe, not a continuous track). All
+# rejected; DO NOT reuse them.
+#
+# THE WINNER: action-conditioned delta correlation (mean per-step RAM delta
+# split by whether the taken action contained "right"/"left"/neither) across
+# 243 independent death-restarted rollouts surfaced 0x003D/0x0064/0x006C as
+# near-mirror bytes whose delta is reliably +ve under "right", ~0 under
+# "left" (Arthur is already pinned at the stage-1 left boundary — there is
+# nowhere further left to go, so this is a boundary clamp, not a rejection),
+# and exactly 0 under pure NOOP over a 70-130 step window. The dense
+# (per-step, not just checkpoint) trace of 0x006C shows a real walking
+# signature: smooth ~1-3/step climbs, believable knockback dips, and a CLEAN
+# 254->1 wrap. Cross-validating the wrap against the full 2KB across 243
+# segments (28 independent wrap events), 0x0065 increments by exactly +1 in
+# ALL 28/28 — a perfect lo/hi pair. The longest captured single life (271
+# steps) crosses TWO such wraps without capping (hi reaches a sustained 2),
+# passing the saturation test where 0x05C0-style bytes failed it.
+# progress_cap guards a receipted one-frame RAM-reuse glitch: 0x0065 spikes
+# to 255 for exactly one frame during the first-hit/invincibility-init
+# routine (~step 20, coincides with the armor-loss frame) before instantly
+# reverting to 0 — harmless in isolation but would read as a huge bogus
+# progress value for that single frame if uncapped.
+solve:
+  rom: "roms/Ghosts'n Goblins (USA).nes"
+  # progress = ram[0x006C] | ram[0x0065]<<8. See the block above for the
+  # rejection list (0x005D scroll bytes, 0x0083/0x0608 frame clocks,
+  # 0x06C2/0x05C0 camera-saturation) and the wrap/direction-sensitivity
+  # evidence for this pair.
+  progress: {lo: 0x006C, hi: 0x0065}
+  progress_cap: 8000
+  # No clean ballistic Y was isolable from the pinned spawn (the same
+  # zombie-lock that killed the X probes also meant every "hold A" burst
+  # coincided with an involuntary knockback-into-air from the adjacent
+  # zombie, so NOOP vs JUMP looked identical for most zero-page candidates).
+  # 0x021B is the best-available height proxy: differential probing (jump
+  # vs matched noop from an identical save-state) shows it diverges sharply
+  # and it has a wide (0-255), bounded, rise-then-fall ballistic envelope —
+  # consistent with real airborne state (jump OR knockback-launch; GnG's
+  # physics engine plausibly reuses one Y variable for both). Not verified
+  # NOOP-flat in isolation from a genuinely safe (non-combat) stance because
+  # none was reachable in this ROM's opening; treat as provisional.
+  y: 0x021B
+  # Coverage baseline: no stage/area-advance byte is reachable from bootstrap
+  # play (GnG's opening is too hard for scripted or random play to reach a
+  # 1-A->1-B transition to diff-identify one against). GnG is a continuously-
+  # scrolling side-scroller (confirmed via the mountain-parallax ladder in
+  # the receipt), not room-based, so no `area` counter is structurally
+  # needed the way Kirby/Zelda need one.
+  level_key: []
+  # VERIFIED-LIVE — decrements 2->1 reliably at death across dozens of
+  # independent trials (noop/right/left holds and hundreds of random-walk
+  # restarts). Primary (and sole) death signal; no player_state byte was
+  # isolated cleanly enough to add (mode $0028 conflates death/title/menu).
+  lives: 0x0715
+  # Armor mode bit: 1 (or 2, an armor/shield upgrade state observed once in
+  # a long rollout) = has armor, 0 = underwear (one hit from death). Lets
+  # the archive tell an armored arrival apart from an unarmored one at the
+  # same (progress, y) cell — matters a lot here since a hit is often fatal.
+  state_sig:
+    - {addr: 0x0585, match: [1, 2]}
+  # Sustained-hold macros (generic mechanism, same rationale as Contra/CV):
+  # the opening zombie needs several consecutive throws to kill before it
+  # closes distance (verified in our own probes: B held for ~16 steps kills
+  # it), which stochastic per-step sampling rarely emits on its own.
+  hold_macros:
+    - {buttons: ["B"], steps: 16, p: 0.03}
+    - {buttons: ["right", "A"], steps: 10, p: 0.02}
+
+# ===========================================================================
 # START-STATE CAPTURE RECIPE (GnG-specific; the generic masher does NOT work)
 # ===========================================================================
 # The generic scripts/capture_start_state.py fails on GnG (it pulses START =

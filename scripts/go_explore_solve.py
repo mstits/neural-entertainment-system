@@ -176,7 +176,9 @@ class SmbGame:
     def cell_fn(self, ram) -> tuple:
         return cell_fn(ram)
 
-    def is_clear(self, start_key: tuple, ram) -> bool:
+    def is_clear(self, start_key: tuple, ram, ctx: dict | None = None) -> bool:
+        # ctx accepted for call-site uniformity with GenericGame; SMB uses the
+        # warp-guarded level_key advance only (behavior byte-identical).
         return is_forward_clear(start_key, ram)
 
     def is_dead(self, ram, start_lives: int) -> bool:
@@ -207,7 +209,11 @@ class GenericGame:
     Required solve keys: rom, progress {lo[, hi]}, y, level_key (list of
     addrs; any lexicographic advance = clear), lives (decrement = death).
     Optional: area, progress_cap, player_state + death_states, finale
-    {addr, value, level_key} for the game's ending."""
+    {addr, value, level_key} for the game's ending; clear {mode: ...} = an
+    OPTIONAL second WIN-CONDITION signal for games whose level_key never
+    advances on a clear (see __init__ / is_clear; default OFF = level_key
+    only). The discrete-transition gate (room_advance) is a Solver-level
+    option (see derive_transition_macros)."""
 
     def __init__(self, profile: dict) -> None:
         s = profile["solve"]
@@ -277,6 +283,46 @@ class GenericGame:
         # psig transit machinery (built on SMB's $074E) counts CV room
         # progress even though gx resets in every room.
         self._room_sig = tuple(int(a) for a in s.get("room_sig", ()))
+        # WIN-CONDITION hook (optional, default OFF). Many games have no clean
+        # level_key that advances on a clear (contra/kirby/ducktales all ship
+        # `level_key: []` = coverage baseline: deep frontier cells accrue but a
+        # clear NEVER fires). `solve: clear: {mode: ...}` lets is_clear ALSO
+        # fire on a second, configured signal. level_key advance stays the sole
+        # default clear, so a profile without a `clear:` key is byte-identical.
+        # Modes:
+        #   score_jump  {threshold}  — a single-step rise in the decoded
+        #     progress (solve.progress, which for DuckTales already IS the
+        #     money odometer) >= threshold. DuckTales's boss main-treasure is
+        #     one atomic $1,000,000 pickup (>= the $50k
+        #     largest gem) so a jump this large can ONLY be the clear; being
+        #     per-step, gem farming can never fake it. threshold is in the same
+        #     units as solve.progress (DuckTales scale /100 -> $1M = 10000).
+        #   byte_change {addr[, direction: up|down|any][, target]} — ram[addr]
+        #     moved off its level-start value (captured in note_start) in the
+        #     given direction (default up): a stage/level counter incrementing
+        #     on a real clear, without making it the level_key (which also gates
+        #     the warp/dead machinery). `target` requires a specific landing.
+        #   confluence  {[window][stride][min_signals]} — the multi-signal
+        #     clear_detect confluence, streamed over a bounded rolling window
+        #     (clear_detect.StreamingConfluenceDetector; see its docstring for
+        #     which signals are RAM-derivable in the hot loop).
+        cl = s.get("clear") or {}
+        self._clear_mode = cl.get("mode")
+        self._clear_threshold = float(cl.get("threshold", 0))
+        self._clear_addr = int(cl["addr"]) if "addr" in cl else None
+        self._clear_dir = str(cl.get("direction", "up"))
+        self._clear_target = int(cl["target"]) if "target" in cl else None
+        self._clear_baseline = None          # byte_change: set by note_start
+        self._conf_window = int(cl.get("window", 240))
+        self._conf_stride = int(cl.get("stride", 20))
+        self._conf_min_signals = cl.get("min_signals")
+
+    def note_start(self, ram) -> None:
+        """Record the level-entrance baseline the byte_change WIN-CONDITION
+        compares against (called once from Solver.seed at the entrance). No-op
+        unless a byte_change clear hook is configured."""
+        if self._clear_mode == "byte_change" and self._clear_addr is not None:
+            self._clear_baseline = int(ram[self._clear_addr])
 
     def progress(self, ram) -> int:
         if self._ptiles is not None:
@@ -339,10 +385,46 @@ class GenericGame:
             return 0
         return max(0, self._boss_start - int(ram[self._boss_hp])) * 2000
 
-    def is_clear(self, start_key: tuple, ram) -> bool:
+    def is_clear(self, start_key: tuple, ram, ctx: dict | None = None) -> bool:
         # Forward = lexicographic advance of the level key (stage counters
         # increment; a game-over reset reads backward and lands in `dead`).
-        return self.level_key(ram) > tuple(start_key)
+        if self.level_key(ram) > tuple(start_key):
+            return True
+        # Optional configured WIN-CONDITION (default OFF). ctx is the caller's
+        # per-worker state dict; None (e.g. the seed observe) short-circuits the
+        # stateful modes so only the level_key advance above can fire.
+        m = self._clear_mode
+        if not m or ctx is None:
+            return False
+        if m == "score_jump":
+            v = self.progress(ram)
+            prev = ctx.get("_clear_prev")
+            ctx["_clear_prev"] = v
+            return prev is not None and (v - prev) >= self._clear_threshold
+        if m == "byte_change":
+            if self._clear_addr is None or self._clear_baseline is None:
+                return False
+            cur = int(ram[self._clear_addr])
+            if self._clear_target is not None:
+                return cur == self._clear_target and cur != self._clear_baseline
+            if self._clear_dir == "up":
+                return cur > self._clear_baseline
+            if self._clear_dir == "down":
+                return cur < self._clear_baseline
+            return cur != self._clear_baseline
+        if m == "confluence":
+            det = ctx.get("_clear_det")
+            if det is None:
+                import sys as _sys
+                _sd = str(Path(__file__).resolve().parent)   # scripts/ on path
+                if _sd not in _sys.path:
+                    _sys.path.insert(0, _sd)
+                from clear_detect import StreamingConfluenceDetector
+                det = ctx["_clear_det"] = StreamingConfluenceDetector(
+                    self.progress, window=self._conf_window,
+                    stride=self._conf_stride, min_signals=self._conf_min_signals)
+            return det.push(ram)
+        return False
 
     def is_dead(self, ram, start_lives: int) -> bool:
         if self.lives(ram) < start_lives:
@@ -368,6 +450,38 @@ def make_game(profile: dict):
     """SMB profiles carry no `solve:` section — they get the byte-exact
     SMB adapter. A profile with `solve:` opts into the generic path."""
     return GenericGame(profile) if "solve" in profile else SmbGame()
+
+
+def derive_transition_macros(action_space: list, room_advance: dict | None) -> list:
+    """Discrete-transition gate (the Kirby lesson). Room-based games stall
+    because forward progress cannot gradient the player into a DISCRETE
+    'grounded + UP' door/room entry — the camera clamps at the scroll limit so
+    world-X gives no pull toward the door. When `solve: room_advance:` is
+    configured this AUTO-DERIVES the door-entry maneuver macros (up / up+jump /
+    up+right holds) straight from the profile's own action space — no
+    hand-authored hold_macros needed — for the solver to inject near the deep
+    frontier. Returns [(action_idx, hold_steps)]; empty when the space has no
+    UP move (the gate is then inert). This is the exact settle-then-HOLD
+    mechanism the existing hold_macros use (Solver.explore), just auto-built and
+    frontier-biased rather than fired uniformly.
+
+    Config: `room_advance: {addr[, steps=20][, p=0.05][, near=24][, buttons]}`.
+    `addr` = the room/area-id byte whose advance we want to provoke (also
+    surfaced as telemetry). `buttons` overrides the auto-derivation with an
+    explicit list of button combos."""
+    if not room_advance:
+        return []
+    steps = int(room_advance.get("steps", 20))
+    want = room_advance.get("buttons")
+    combos = ([set(b) for b in want] if want
+              else [set(c) for c in action_space if "up" in set(c)])
+    out = []
+    for combo in combos:
+        idx = next((i for i, c in enumerate(action_space) if set(c) == combo),
+                   None)
+        if idx is not None:
+            out.append((idx, steps))
+    return out
 
 
 class Solver:
@@ -419,6 +533,26 @@ class Solver:
         if self.macros:
             w = np.array([m[2] for m in self.macros])
             self._macro_weights = w / w.sum()
+        # Discrete-transition gate (the Kirby lesson). When solve.room_advance
+        # is configured, auto-derive door/room-entry maneuver macros from the
+        # action space (derive_transition_macros) and inject them with elevated
+        # probability ONLY when a worker sits at the deep frontier — where the
+        # coordinate frontier has stalled and the next progress is a discrete
+        # 'grounded + UP' door entry, not another step rightward. Reuses the
+        # hold_macros settle-then-hold machinery; empty (inert) for every SMB /
+        # non-room profile, so the default path is byte-identical.
+        ra = (profile.get("solve", {}) or {}).get("room_advance")
+        self.transition_macros = derive_transition_macros(
+            profile["action_space"], ra)
+        self.room_advance_addr = (int(ra["addr"]) if ra and "addr" in ra
+                                  else None)
+        self.transition_p = float(ra.get("p", 0.05)) if ra else 0.0
+        self.transition_near = int(ra.get("near", 24)) if ra else 24
+        self._transition_injections = 0   # telemetry: door macros injected
+        self.max_room = 0                 # telemetry: deepest room_advance byte
+        if ra and not self.transition_macros:
+            print("[solver] room_advance configured but action_space has no "
+                  "'up' maneuver — discrete-transition gate inert", flush=True)
         self.archive = GoExploreArchive(self.game.cell_fn, seed=args.seed)
         self.traces: dict = {}            # cell key -> (root_id, trace bytes)
         self.roots: dict = {}             # root_id -> {path, start_wd, lives}
@@ -515,8 +649,10 @@ class Solver:
         if game.is_finale(self.start_wd, ram):
             self._dump_solution(root_id, trace, ram, steps)
             return "clear"
-        # Clear (warp-guarded) is checked FIRST.
-        if game.is_clear(self.start_wd, ram):
+        # Clear (warp-guarded) is checked FIRST. ctx carries the per-worker
+        # state the optional WIN-CONDITION hook needs (score_jump prev value,
+        # streaming-confluence window); None at seed = level_key-only.
+        if game.is_clear(self.start_wd, ram, ctx):
             self._dump_solution(root_id, trace, ram, steps)
             return "clear"
         # Any life lost, or an explicit dying state = death. Lives-based
@@ -668,6 +804,10 @@ class Solver:
         self.start_wd = self.game.level_key(r)
         self.start_lives = self.game.lives(r)
         self.max_area = self.game.area(r)
+        # WIN-CONDITION byte_change: capture the entrance baseline the hook
+        # compares against (no-op for SMB / non-configured profiles).
+        if hasattr(self.game, "note_start"):
+            self.game.note_start(r)
         self.roots["entrance"] = {"path": str(path),
                                   "start_wd": list(self.start_wd),
                                   "lives": self.start_lives}
@@ -934,6 +1074,18 @@ class Solver:
                           and _floor <= c["gx"] <= _pin + 60
                           and time.time() - self._pin_time >= 180.0)
                       else self.weights)
+                # Discrete-transition gate (Kirby lesson): at the deep frontier,
+                # inject an auto-derived door-entry maneuver (settle then HOLD
+                # up) so a room/area advance can fire where coordinate progress
+                # has stalled. Checked before the ordinary macro roll so it wins
+                # the (shared) macro slot at the frontier; inert everywhere else.
+                if (self.transition_macros and c.get("macro_left", 0) <= 0
+                        and c.get("at_frontier")
+                        and self.rng.random() < self.transition_p):
+                    ti = int(self.rng.integers(len(self.transition_macros)))
+                    c["macro_a"], c["macro_hold"] = self.transition_macros[ti]
+                    c["macro_left"] = c["macro_hold"] + 6
+                    self._transition_injections += 1
                 if (c.get("macro_left", 0) <= 0 and self.macros
                         and self.rng.random() < self.macro_p):
                     mi = int(self.rng.choice(len(self.macros),
@@ -970,6 +1122,19 @@ class Solver:
                 # observable footprint of THIS pass's route choice.
                 _lgx = game.progress(ram)
                 c["gx"] = _lgx if _lgx <= cap else c.get("gx", -1)
+                # Discrete-transition gate: is this worker sitting AT the deep
+                # frontier (deepest area reached, within `near` gx buckets of
+                # its max)? If so the next step may inject a door-entry macro.
+                # Only computed when the gate is armed (non-SMB room profiles).
+                if self.transition_macros:
+                    _fgx = self.max_gx_in_area.get(self.max_area, 0)
+                    c["at_frontier"] = (
+                        game.area(ram) == self.max_area and c["gx"] >= 0
+                        and c["gx"] >= _fgx - self.transition_near * GX_BUCKET)
+                    if self.room_advance_addr is not None:
+                        _rv = int(ram[self.room_advance_addr])
+                        if _rv > self.max_room:
+                            self.max_room = _rv
                 # ROOM IDENTITY (SMB: verified 2026-07-26, $074E changes
                 # 0.67/1k steps, only at full-screen transitions). A rid
                 # CHANGE is a true room transition.
@@ -1065,6 +1230,10 @@ class Solver:
         if self.door_weight > 0:
             line["doors"] = len(self._doors)
             line["edges"] = sum(len(v) for v in self._adj.values()) // 2
+        if self.transition_macros:
+            line["door_macros_injected"] = self._transition_injections
+            if self.room_advance_addr is not None:
+                line["max_room"] = self.max_room
         with open(self.out / "progress.jsonl", "a") as f:
             f.write(json.dumps(line) + "\n")
         print(f"[go_explore_solve] {json.dumps(line)}", flush=True)

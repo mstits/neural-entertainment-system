@@ -1,0 +1,142 @@
+{
+  "game": "Metroid (USA)",
+  "date": "2026-08-03",
+  "rom": "roms/Metroid (USA).nes",
+  "start_state": "roms/Metroid (USA)_start.state.bin",
+  "frame_skip": 4,
+  "method": "differential analysis of our own scripted rollouts from the verified start state, cross-checked against the profile's own verified ram_mapping; no external RAM maps or disassembly",
+  "genre": "non-linear Metroidvania (hard exploration); no single monotone axis; item/missile/energy-tank/boss state lives in cartridge PRG-RAM ($6000-$7FFF) that get_ram masks off, so this is a COVERAGE baseline over (area, x, y)",
+
+  "step1_ingameplay": {
+    "test": "right-40f vs left-40f byte divergence from the start state",
+    "byte_divergence": 135,
+    "threshold": 25,
+    "pass": true,
+    "note": "inputs move Samus (135 bytes differ) -> live gameplay, not the input-ignoring title-screen demo"
+  },
+
+  "step2_discovery": {
+    "progress": {
+      "chosen": {"lo": "0x0051", "hi": "0x0050"},
+      "formula": "(ram[0x0050] << 8) | ram[0x0051]",
+      "semantics": "0x0050 = coarse scroll-column counter (x-on-map); 0x0051 = fine on-screen X (0-255)",
+      "wrap_reversibility_test": "flat under NOOP; rises hold-right (768->1500), falls hold-left (->~512); combined signal 99% monotone non-decreasing under hold-right (prog_monotone_nondec_frac 0.99)",
+      "saturation_test": {
+        "x_screen_0x0051_alone": "CAMERA-CLAMPS at 220 (on-screen X pins at the right screen edge while the world scrolls) -> REJECTED as sole progress",
+        "x_map_0x0050": "non-saturating scroll-column counter, steps 3->4->5 across screens of rightward travel -> the room/screen counter the lore prescribes pairing the camera byte with",
+        "combined_under_dumb_holds": "caps at 1500 under hold-right AND mixed right+jump for 1200f because the START ROOM is physically bounded (scripted holds cannot reach the exit door) -- a room boundary, NOT a camera clamp on the combined signal",
+        "conclusion": "paired (coarse-column<<8 | fine-X) is the honest forward-travel spine; the search, not dumb holds, breaks past 1500 -- confirmed in step5 (Go-Explore reached 2191)"
+      }
+    },
+    "y": {
+      "chosen": "0x0052",
+      "semantics": "on-screen Y (0-255)",
+      "test": "spans 5 distinct 32-px bands (0,3,4,5,6) across 2000f of varied movement -> usable fine vertical coverage axis",
+      "rejected_alternative": "0x004F (y-on-map) stayed constant (14) through jump + 2000f random movement -- too static/coarse in the reachable region, and //Y_BAND(32) would collapse a small map-row range to a single band"
+    },
+    "area": {
+      "chosen": "0x0074",
+      "semantics": "region index (verified ram_mapping RAM_AREA); Brinstar = 0",
+      "test": "constant 0 through all scripted probes and the 4.5-min solve (regions change only at far major transitions); leads the cell key / frontier so a future region reach steps it"
+    },
+    "energy_death": {
+      "chosen_lives": "0x0107",
+      "semantics": "energy tens digit + filled-tank nibble (verified ram_mapping); start = 3 (30 energy: 0x0107*10 + 0x0106 = 30)",
+      "death_proxy": "HP-decrease: a DECREASE of 0x0107 means Samus lost >=10 energy or a tank = took a real hit; the lineage is terminated. Coarse by design (chip damage below a tens boundary does not reset). Metroid has no system-RAM lives counter and no clean death-state byte, so this is the honest death signal.",
+      "hp_readout": {"0x0106": 0, "0x0107": 3, "decoded_energy": 30}
+    },
+    "level_key": {
+      "chosen": [],
+      "reason": "no reachable per-level clear byte (item/missile/energy-tank/boss state is unreachable PRG-RAM) -> coverage baseline"
+    },
+    "progress_cap": 16384,
+    "scan_scope": "full 2KB system RAM ($0000-$07FF), not just zero-page"
+  },
+
+  "step3_solve_section_written": {
+    "file": "configs/metroid.yaml",
+    "solve": {
+      "rom": "roms/Metroid (USA).nes",
+      "progress": {"lo": "0x0051", "hi": "0x0050"},
+      "y": "0x0052",
+      "area": "0x0074",
+      "level_key": [],
+      "lives": "0x0107",
+      "progress_cap": 16384
+    },
+    "preserved_intact": ["name", "start_state_path", "frame_skip", "action_space", "ram_mapping", "reward_weights", "curriculum", "reinforce"]
+  },
+
+  "step4_smoke": {
+    "make_game": "GenericGame (solve: present in profile)",
+    "workers": 3,
+    "start_progress": 768,
+    "start_cell": [0, 0, 0, 0, 48],
+    "hold_right_200f_max_progress": 1500,
+    "hold_right_200f_progress_delta": 732,
+    "distinct_cells_worker0": 11,
+    "save_restore_roundtrip": "OK",
+    "result": "PASS"
+  },
+
+  "step5_solve": {
+    "cmd": "scripts/go_explore_solve.py --out runs/metroid/metroid_bootstrap --root-state 'roms/Metroid (USA)_start.state.bin' --profile configs/metroid.yaml --workers 3 --minutes 4.5 --sel-mode count --seed 0",
+    "workers": 3,
+    "minutes": 4.5,
+    "sel_mode": "count",
+    "out": "runs/metroid/metroid_bootstrap",
+    "cells": 600,
+    "max_progress": 2191,
+    "best_archived_score": 2030,
+    "max_area": 0,
+    "steps": 242034,
+    "sps": 896,
+    "solutions": 0,
+    "solutions_note": "0 is expected -- level_key empty (coverage baseline, no clear condition)",
+    "records": 209584,
+    "improvements": 2413,
+    "key_finding": "Go-Explore reached progress 2191, well past the 1500 ceiling that all scripted dumb holds cap at -- the search found start-room-exit maneuvers dumb holds cannot complete"
+  },
+
+  "step5_random_baseline": {
+    "description": "identical per-step action distribution (solver right/jump weights + sticky 0.5) and the SAME cell_fn, but NO archive return-to-frontier (each worker runs from root, resets to root on death/max_steps); matched step budget",
+    "workers": 3,
+    "steps": 242034,
+    "distinct_cells": 103,
+    "max_progress": 2029,
+    "sps": 926
+  },
+
+  "step5_validation_go_explore_vs_random": {
+    "cells_go_explore": 600,
+    "cells_random": 103,
+    "cells_ratio": 5.83,
+    "max_progress_go_explore": 2191,
+    "max_progress_random": 2029,
+    "out_travels_random": true,
+    "verdict": "Go-Explore OUT-TRAVELS random: 5.8x more distinct coverage cells at equal step budget and a higher position frontier. The return-to-frontier archive is the differentiator on this hard-exploration game."
+  },
+
+  "step6_observatory_v2": {
+    "cmd": "scripts/observatory.py --run runs/metroid/metroid_bootstrap --profile configs/metroid.yaml --cells 150",
+    "cells_probed": 300,
+    "candidates": 1692,
+    "elapsed_s": 134,
+    "top10_candidate_mode_bytes": [
+      {"predicate": "0x0201 == 206", "cond_MI": 19.5125, "support_full": 69, "best_probe": "up"},
+      {"predicate": "0x0082 == 152", "cond_MI": 16.3632, "support_full": 51, "best_probe": "up"},
+      {"predicate": "0x0426 == 12", "cond_MI": 15.5207, "support_full": 25, "best_probe": "up"},
+      {"predicate": "0x0202 == 34", "cond_MI": 14.5159, "support_full": 146, "best_probe": "up"},
+      {"predicate": "0x024D == 58", "cond_MI": 13.5924, "support_full": 146, "best_probe": "up"},
+      {"predicate": "0x024F == 40", "cond_MI": 13.1078, "support_full": 192, "best_probe": "up"},
+      {"predicate": "0x0425 == 27", "cond_MI": 11.7556, "support_full": 19, "best_probe": "up"},
+      {"predicate": "0x0206 == 34", "cond_MI": 11.6088, "support_full": 128, "best_probe": "up"},
+      {"predicate": "0x020A == 34", "cond_MI": 11.6088, "support_full": 128, "best_probe": "up"},
+      {"predicate": "0x0205 == 207", "cond_MI": 10.9031, "support_full": 49, "best_probe": "up"}
+    ],
+    "interpretation": "top candidates cluster in the OAM shadow / object-state region ($0200-$04FF) -- sprite/enemy/projectile positions correlated with the aim-up probe. $0082 (zero-page, adjacent to the player X-subpixel bytes $0081) is the most interesting non-OAM candidate for a future state_sig refinement. None is required for the coverage baseline; each still needs the verify-then-add process before entering the profile.",
+    "receipt": "runs/metroid/metroid_bootstrap/observatory_v2.json"
+  },
+
+  "purity": "every number above is from a run executed here; all addresses from our own rollouts + the profile's own verified ram_mapping; no external maps/disassembly"
+}

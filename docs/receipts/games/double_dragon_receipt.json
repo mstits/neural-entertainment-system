@@ -1,0 +1,307 @@
+{
+  "game": "Double Dragon (USA)",
+  "rom": "roms/Double Dragon (USA).nes",
+  "rom_md5": "79aa819580967ffb27a9698efbf493b9",
+  "start_state": "roms/Double Dragon (USA)_start.state.bin",
+  "method": "own scripted + random rollouts only via nes_core.Pool / NESEnvironment (no external RAM maps / disassembly). Full 2KB CPU RAM ($0000-$07FF) scanned, not just zero-page.",
+  "step1_capture": {
+    "boot_sequence": "NOOP x120, SELECT x6, NOOP x20, START x8, NOOP x1000 (config-documented Mode-A 1P Mission-1 boot; the generic capture_start_state.py masher does not work on this title screen).",
+    "controllability_test": "save_state at post-boot frame; RIGHT-vs-LEFT RAM diff over 90 steps.",
+    "result": {
+      "right_vs_left_diff_bytes": 61,
+      "right_vs_base_diff_bytes": 328,
+      "threshold": 25,
+      "verdict": "PASS -- controllable gameplay"
+    },
+    "post_boot_ram": {
+      "player_x_0x5A": 72,
+      "mission_0x30": 1,
+      "lives_0x43": 2,
+      "health_0x3B4": 64
+    },
+    "written": "roms/Double Dragon (USA)_start.state.bin (144049 bytes)"
+  },
+  "step2_discovery": {
+    "progress": {
+      "chosen": {
+        "lo": "0x005A",
+        "hi": "0x00B2",
+        "formula": "ram[0x005A] | (ram[0x00B2] << 8)"
+      },
+      "player_x_0x5A_alone_REJECTED": {
+        "reason": "SATURATION (Kirby-lesson camera-clamp pattern): climbs 72->232-254 under hold-right then CAPS at each enemy gate (locked screen) regardless of continued forward input; a combat-biased probe showed 0x5A oscillating 232<->254 for hundreds of steps at a gate before any wrap.",
+        "hold_right_1400_steps_series_sample": [
+          74,
+          234,
+          234,
+          234,
+          234,
+          232,
+          217,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232,
+          232
+        ]
+      },
+      "room_counter_0xB2_discovery": {
+        "method": "diffed FULL RAM at the exact frame player_x wraps from near-max (232-254) down to a low value (0-72), filtered to events where health/lives are UNCHANGED (i.e. a real forward screen transition, not a death) -- 3-worker combat-biased rollout, 9000 steps.",
+        "forward_transition_events": [
+          {
+            "worker": 0,
+            "step": 1235,
+            "px": "252->0",
+            "health": "59->59",
+            "lives": "1->1",
+            "0xB2": "0->1",
+            "0x62": "0->1"
+          },
+          {
+            "worker": 2,
+            "step": 1333,
+            "px": "254->0",
+            "health": "57->57",
+            "lives": "1->1",
+            "0xB2": "2->3",
+            "0x62": "0->1"
+          },
+          {
+            "worker": 2,
+            "step": 2482,
+            "px": "253->1",
+            "health": "58->58",
+            "lives": "0->0",
+            "0xB2": "1->3",
+            "0x62": "1->2"
+          }
+        ],
+        "coupling_rate": "2/3 events show a clean +1 step in lockstep with the px wrap; 1/3 shows +2 (attributed to frame_skip=4 aliasing collapsing a short room into one grouped step). No competing frame-counter address matched this pattern (the naive whole-RAM wrap-partner scan on the pure hold-right-only probe was dominated by high-churn free-running timers at 0x705/0x706/0x715/0x716/0x718/0x738/0xE3/0xE4 -- all REJECTED: churn ~1000/1k steps even under pure NOOP, the exact $001C-class trap).",
+        "death_regression_note": "0xB2 legitimately DROPS toward 0 on death/respawn (own probe: health 51->0 death frame shows 0xB2 2->0). This is a real attempt-reset, not a progress-signal defect; handled by the lives-decrement death check."
+      },
+      "saturation_test": {
+        "method": "3-worker, 180s checkpoint-and-retry random probe: each worker keeps its best (room, x) checkpoint and restores it on death instead of restarting cold -- no hand-authored route, pure right/attack-biased random sampling.",
+        "result": {
+          "max_room_0xB2_seen_per_worker": [
+            16,
+            16,
+            15
+          ],
+          "max_room_0x62_seen_per_worker": [
+            1,
+            2,
+            1
+          ],
+          "elapsed_s": 180.5
+        },
+        "verdict": "PASS -- 0xB2 climbed steadily to 15-16 with NO ceiling in sight in just 3 minutes of undirected play (vs. player_x alone, which caps every single screen at ~232-254). 0x62 (the other +1-at-transition candidate) plateaued at 1-2 and is REJECTED as the hi byte -- it does not accumulate."
+      },
+      "wrap_test_gameplay_locked": {
+        "noop_flat": "0x005A and 0x00B2 both static under pure NOOP from the start state (no free-running drift).",
+        "reversible": "0x005A falls under hold-LEFT (net -X vs hold-RIGHT net +X from the same root)."
+      },
+      "rejected_scroll_bytes": {
+        "0x03B0_scroll_fine": "churns 210/1k steps even before the player moves (own NOOP-adjacent probe) -- 'jitters under lock' per the existing ram_mapping comment; no clean wrap-partner in the full-RAM scan.",
+        "0x03B2_scroll_coarse": "mono=1.0 on a coarse per-step diff stat but the raw sampled series is NON-monotonic (16,16,32,32,96,48,160,176,96,32,240,48,...) -- camera/parallax jitter that only LOOKS monotone under the wraparound-correction stat, not a real position counter. NOTE: this is a DIFFERENT address from the 0x00B2 room counter chosen above; do not confuse the two."
+      }
+    },
+    "y_z_depth": {
+      "chosen": "0x0072",
+      "rationale": "This is a 2.5D beat-'em-up: UP/DOWN move the player along the street's DEPTH axis (per the profile's own action_space comments), which is the correct analog of platformer 'y' here, not a jump-height byte.",
+      "tests": {
+        "noop_flat": {
+          "first": 64,
+          "last": 64,
+          "min": 64,
+          "max": 64,
+          "verdict": "PASS -- dead flat over 200 NOOP steps"
+        },
+        "hold_up_200": {
+          "first": 66,
+          "last": 96,
+          "max": 96,
+          "verdict": "rises to a hard lane ceiling (96)"
+        },
+        "hold_down_200": {
+          "first": 62,
+          "last": 48,
+          "min": 48,
+          "verdict": "falls to a hard lane floor (48)"
+        },
+        "reversibility_single_trajectory": [
+          66,
+          96,
+          48,
+          96
+        ],
+        "verdict": "PASS -- flat under NOOP, reversible, bounded by the street width (a real depth-lane position, not a camera artifact)"
+      },
+      "true_jump_ballistic_search": "Searched for a classic platformer dip-then-return signature under the A+B 'jump' input (profile's action_space comment). None found clean within the probe window: candidates 0x005B/0x0037F/0x0037E moved under repeated A+B holds but did NOT return to baseline after release (monotone drift, not a ballistic arc) -- consistent with A+B triggering a directional lunge/kick animation rather than a vertical hop. Not used; the Z-depth axis (0x0072) is the game's real vertical-equivalent dimension and is what the action_space exposes as controllable 'vertical' movement."
+    },
+    "lives": {
+      "addr": "0x0043",
+      "test": "3-worker combat rollout: sequence 2->1->0->255 observed (255 = the documented GAME OVER wraparound). is_dead fires on the FIRST decrement (2->1), well before any lineage could reach the 255 wrap, so the wraparound is a non-issue for the solver in practice."
+    },
+    "health": {
+      "addr": "0x03B4",
+      "test": "64 at start; decreases in combat (including under pure NOOP once enemies reach the player); hits exactly 0 at death and resets to 64 on respawn. Not used directly by the solve: block (lives decrement is the death signal) but corroborates every death event used above."
+    },
+    "mission": {
+      "addr": "0x0030",
+      "note": "Rock-stable at 1 throughout Mission 1 across all probes (including through deaths); its increment on a real mission clear could not be produced by a scripted/random bot (matches the config's pre-existing documentation). level_key left [] (coverage baseline) per task guidance."
+    }
+  },
+  "step3_solve_section_written": {
+    "file": "configs/double_dragon.yaml",
+    "solve": {
+      "rom": "roms/Double Dragon (USA).nes",
+      "progress": {
+        "lo": "0x005A",
+        "hi": "0x00B2"
+      },
+      "progress_cap": 10000,
+      "y": "0x0072",
+      "level_key": [],
+      "lives": "0x0043"
+    },
+    "kept_intact": [
+      "name",
+      "start_state_path",
+      "frame_skip",
+      "action_space",
+      "ram_mapping",
+      "reward_weights",
+      "reinforce"
+    ]
+  },
+  "step4_smoke": {
+    "command": "in-process make_game(profile) + nes_core.Pool(num_workers=3) loading the captured start state on all 3 workers",
+    "result": {
+      "adapter": "GenericGame",
+      "cell_fn_t0": [
+        0,
+        0,
+        0,
+        2,
+        4
+      ],
+      "cell_fn_arity": 5,
+      "progress_t0": 72,
+      "y_t0": 64,
+      "lives_t0": 2,
+      "level_key_t0": [],
+      "is_dead_t0": false,
+      "is_clear_t0": false,
+      "rollout": "400 steps of right+B mash across all 3 workers (deterministic, no restarts)",
+      "max_progress_after_400_steps": [
+        4072,
+        4072,
+        4072
+      ],
+      "verdict": "PASS -- make_game builds GenericGame, Pool loads the start state and steps cleanly, cell_fn returns a sane 5-tuple, and progress climbed 72 -> 4072 (room 0 -> room 15) from pure scripted play with zero restarts."
+    }
+  },
+  "step5_solve": {
+    "command": "scripts/go_explore_solve.py --out runs/double_dragon/double_dragon_bootstrap --root-state 'roms/Double Dragon (USA)_start.state.bin' --profile configs/double_dragon.yaml --workers 3 --minutes 6 --sel-mode count",
+    "archive_stats": {
+      "cells": 2103,
+      "frontier": 637,
+      "best_score": 4008,
+      "records": 19046,
+      "new_cells": 2103,
+      "improvements": 1348,
+      "total_steps_across_3_workers": 325473,
+      "steps_per_worker_approx": 108491,
+      "sps_total": 904,
+      "solutions": 0
+    },
+    "max_progress_reached": {
+      "value": 4072,
+      "decoded": "room 15 (0x00B2=15), x=232 (0x005A=232)",
+      "note": "max_gx_in_max_area (the solver's own live telemetry) plateaued at 4072 from the FIRST 60s checkpoint through the full 6 minutes -- a hard combat gate at room 15/16 that the default hyperparameters (burst=64, sticky=0.5, deep-bias=0.4) did not break through in this budget. cells kept growing throughout (805 -> 2103), i.e. the archive kept finding NEW diverse states below the frontier even while the frontier itself was pinned."
+    },
+    "out_travels_random": {
+      "method": "A matched-budget (108491 steps/worker, 3 workers -- identical total step count to the go_explore run) PURE RANDOM baseline: uniform action sampling, restore the single best (progress) checkpoint on death (no archive, no cell selection, no directed bias). Own script, own rollout, same start state / same profile.",
+      "random_baseline_best_progress": 4328,
+      "random_baseline_decoded": "room 16 (0x00B2=16), x=232 (0x005A=232)",
+      "go_explore_best_progress": 4072,
+      "verdict": "HONEST NEGATIVE RESULT: in this bounded 6-minute / ~325k-step budget, Go-Explore did NOT out-travel the matched-budget random-restart baseline on raw frontier distance -- random (greedy single-checkpoint restore) reached room 16 (progress 4328) vs. Go-Explore's room 15 (progress 4072), a difference of about one room. This is plausible for a game whose bottleneck is a single combat gate with little need for backtracking: a greedy hill-climb spends 100% of its step budget pushing the ONE current-best checkpoint forward, while Go-Explore's archive deliberately spends budget returning to and diversifying EARLIER cells (2103 distinct cells cataloged, vs. zero for the random baseline, which keeps no archive at all). That breadth is Go-Explore's actual product for the downstream BC/DAgger distillation step (many diverse states to learn from, not just one lucky line) -- it is just not reflected in a bare max-progress number over a short run. Reported honestly per task instructions rather than reframed as a win; a longer budget and/or a higher deep-bias/lower burst may change this."
+    }
+  },
+  "step6_observatory": {
+    "command": ".venv/bin/python scripts/observatory.py --run runs/double_dragon/double_dragon_bootstrap --profile configs/double_dragon.yaml --cells 150",
+    "archive_probed": {
+      "cells_with_states": 2103,
+      "pass1_cells": 150,
+      "pass2_cells": 150,
+      "total_probed": 300,
+      "candidates": 2278,
+      "elapsed_s": 151
+    },
+    "top_10_candidate_mode_bytes": [
+      {
+        "rank": 1,
+        "predicate": "0x0003 == 3",
+        "cond_MI": 14.37,
+        "best_probe": "jump"
+      },
+      {
+        "rank": 2,
+        "predicate": "0x0028 == 129",
+        "cond_MI": 13.401,
+        "best_probe": "jump"
+      },
+      {
+        "rank": 3,
+        "predicate": "0x0009 == 129",
+        "cond_MI": 12.387,
+        "best_probe": "jump"
+      },
+      {
+        "rank": 4,
+        "predicate": "0x0003 == 1",
+        "cond_MI": 11.882,
+        "best_probe": "jump"
+      },
+      {
+        "rank": 5,
+        "predicate": "0x0503 == 132",
+        "cond_MI": 10.642,
+        "best_probe": "jump"
+      },
+      {
+        "rank": 6,
+        "predicate": "0x0416 == 8",
+        "cond_MI": 10.267,
+        "best_probe": "jump"
+      },
+      {
+        "rank": 7,
+        "predicate": "0x002B == 229",
+        "cond_MI": 9.231,
+        "best_probe": "jump"
+      },
+      {
+        "rank": 8,
+        "predicate": "0x002C == 128",
+        "cond_MI": 9.116,
+        "best_probe": "jump"
+      },
+      {
+        "rank": 9,
+        "predicate": "0x03F5 == 0",
+        "cond_MI": 8.995,
+        "best_probe": "jump"
+      },
+      {
+        "rank": 10,
+        "predicate": "0x03F6 == 0",
+        "cond_MI": 8.904,
+        "best_probe": "jump"
+      }
+    ],
+    "interpretation": "ALL top-10 predicates gate on the 'jump' (A+B) probe -- corroborating step2's own finding that A+B's effect on position is CONDITIONAL on some player-state/action-mode byte (0x0003, 0x0028, 0x0009, 0x002B/0x002C look like a correlated family of animation/action-state bytes; 0x0503/0x0416/0x03F5-6 are candidate secondary mode flags). This matches the 'true_jump_ballistic_search' rejection in step2: A+B is a context-sensitive attack/lunge, not a free hop, and these bytes are the gating condition. Good candidates for a future state_sig: entry if the archive stalls on an attack-timing gate."
+  }
+}

@@ -118,3 +118,66 @@ reinforce:
   # the agent discover "hold throttle + survive + manage turbo". 0.0 = off.
   rnd_intrinsic_coef: 0.5
   rnd_loss_coef: 1.0
+
+# Go-Explore solver adapter (bootstrap 2026-08-03). Every address below was
+# (re)verified live from THIS core's start state via scripted + differential
+# rollouts only (no external maps/disassembly). Receipt:
+# runs/excitebike/excitebike_receipt.json.
+#
+# IN-GAMEPLAY (not attract demo): A-vs-NOOP diverges 57 RAM bytes over 40
+# frames (>25). NOTE the standard right-vs-left liveness reads only 3 bytes
+# here because Excitebike's LEFT/RIGHT are air-lean controls that do nothing
+# on the grounded start bike; the racing-game liveness proof is THROTTLE-vs-idle.
+#
+# PROGRESS design — a racing game with NO 16-bit position odometer.
+# The player sprite is camera-fixed and the TRACK scrolls, so there is no
+# monotone world-X byte: a wrap-test over every wrapping low-byte candidate
+# (0x0012/0x0050/0x00C8...) found ZERO with a monotone hi-byte partner (they
+# are sub-pixel/physics accumulators). Instead the game exposes a per-section
+# distance that RESETS each section (0x00ED, 0..129) plus a SECTION/room
+# counter that steps 0->1->2->3 at each boundary and hits 3 at the finish
+# (0x03A4). Encoding progress = section_index*256 + section_dist (GenericGame
+# lo|hi<<8) yields a MONOTONE signal (99.9%) that climbs 0->773 across ALL 4
+# sections to the finish. SATURATION-TEST PASS: it does NOT cap at a scroll
+# window — section_dist alone briefly plateaus at its per-section max (~1.7% of
+# a section's steps near each boundary), but the section_index hi-byte (a true
+# room counter) steps at the boundary so the PRIMARY progress keeps advancing.
+solve:
+  rom: "roms/Excitebike (Japan, USA).nes"
+  # progress = section_index(0x03A4)<<8 | section_dist(0x00ED). Monotone 99.9%,
+  # 0->773 full track; flat under NOOP (bike must be throttled to move).
+  progress: {lo: 0x00ED, hi: 0x03A4}
+  # Max legit combined progress ~897 (section 3 + dist 129); the cap guards
+  # transition-frame garbage (a mid-load section byte reading huge -> progress
+  # in the tens of thousands).
+  progress_cap: 1200
+  # y = bike sprite Y (OAM shadow). VERIFIED-LIVE range 10..166: separates the
+  # 4 lanes (grounded Y clusters ~10-41 top / ~114-166 bottom) AND traces jump
+  # arcs, so //Y_BAND gives ~5 y-bands (a pixel-scale vertical; the zero-page
+  # verticals are camera-fixed at ~128 and the lane index 0x0060 is 0..3 which
+  # //32 collapses to one band). VERIFIED byte-identical across save/restore
+  # (2048/2048 RAM match) so the deterministic archive return is exact.
+  y: 0x0275
+  # Cell FIRST coordinate = section_index (== progress hi-byte). max_area follows
+  # the bike down the track section-by-section (0..3).
+  area: 0x03A4
+  # Coverage baseline: NO byte counts CLEARED races monotonically (section_index
+  # resets 3->0 at the finish, so it is section progress, not a clear counter).
+  # The finish is captured by the finale hook below, not level_key.
+  level_key: []
+  # Excitebike has NO lives. GenericGame requires a lives key, so this points at
+  # a constant anchor (==26 across throttle/overheat/crash/lane-change/finish)
+  # making the `lives<start_lives` clause inert -> death is driven purely by
+  # player_state 0x00F2 below.
+  lives: 0x0011
+  # DEATH = the bike is DOWN. bike_status 0x00F2: 0 = racing OK (the ONLY
+  # healthy value), 1 = crash-onset/stall, 2 = crash/tumble, 4 = overheat
+  # stall/remount (temp==32) — all three drop speed to 0. VERIFIED: normal ramp
+  # jumps keep 0x00F2==0 (jump run uniques {0,4}, the 4 = an incidental
+  # overheat), so jumps are NOT flagged as death; only crashes/overheat are.
+  player_state: 0x00F2
+  death_states: [1, 2, 4]
+  # WIN = crossing the finish line. ready_flag 0x000E: 0 racing, 1 staged/remount,
+  # 2 = FINISHED — ==2 appears ONLY at/after the finish (section_index=3, never
+  # mid-race), so this finale hook DUMPS A SOLUTION the instant the race is won.
+  finale: {addr: 0x000E, value: 2, level_key: []}
