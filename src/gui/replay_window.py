@@ -145,7 +145,25 @@ class ReplayWindow(QMainWindow):
             data = torch.load(
                 checkpoint_path, map_location="cpu", weights_only=False
             )
-        genomes = data["population"]
+        if "population" in data:
+            genomes = data["population"]
+        elif "net_state_dict" in data:
+            # vanilla_ppo format (the default trainer since 2026-07-06):
+            # one policy, not a population. Wrap it as a single synthetic
+            # "genome" so the rest of this window (combo box, fitness
+            # label, _load_selected) works unchanged — there's just one
+            # entry to pick from.
+            genomes = [{
+                "genome_id": f"vanilla_ppo iter={data.get('iter', '?')}",
+                "fitness": float("-inf"),
+                "state_dict": data["net_state_dict"],
+            }]
+        else:
+            raise ValueError(
+                f"unrecognized checkpoint format (expected a GA checkpoint "
+                f"with a 'population' key or a vanilla_ppo checkpoint with "
+                f"a 'net_state_dict' key); found keys: {sorted(data.keys())}"
+            )
         # Sort by fitness descending; -inf genomes (unevaluated children) go last.
         genomes.sort(key=lambda g: g.get("fitness", float("-inf")), reverse=True)
         self._genomes = genomes
