@@ -269,17 +269,27 @@ class GoExploreArchive:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        prev_size = path.stat().st_size if path.exists() else 0
-        free = shutil.disk_usage(path.parent).free
-        # Archives grow monotonically but not by huge jumps between
-        # flushes; the previous file's size is the best size estimate for
-        # the next write. Require headroom for a full rewrite plus slack.
-        required = max(prev_size * 1.2, 500_000_000)
-        if free < required:
-            print(f"[go_explore_archive] SKIPPING save to {path}: only "
-                  f"{free/1e9:.1f}GB free, need ~{required/1e9:.1f}GB — "
-                  f"keeping the last good archive on disk.", flush=True)
-            return
+        # The guard itself must never be the reason a save is lost: an
+        # OSError from stat()/disk_usage() (a transient FS hiccup, a
+        # racing rename) would otherwise crash the exact flush this
+        # exists to protect. Fail OPEN (proceed with the write) rather
+        # than skip it on a guard failure.
+        try:
+            prev_size = path.stat().st_size if path.exists() else 0
+            free = shutil.disk_usage(path.parent).free
+            # Archives grow monotonically but not by huge jumps between
+            # flushes; the previous file's size is the best size estimate
+            # for the next write. Require headroom for a full rewrite
+            # plus slack.
+            required = max(prev_size * 1.2, 500_000_000)
+            if free < required:
+                print(f"[go_explore_archive] SKIPPING save to {path}: only "
+                      f"{free/1e9:.1f}GB free, need ~{required/1e9:.1f}GB — "
+                      f"keeping the last good archive on disk.", flush=True)
+                return
+        except OSError as e:
+            print(f"[go_explore_archive] disk-space guard failed ({e}); "
+                  f"proceeding with the save anyway.", flush=True)
 
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         with open(tmp_path, "wb") as f:

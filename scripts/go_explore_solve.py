@@ -1283,6 +1283,14 @@ class Solver:
         print(f"[go_explore_solve] {json.dumps(line)}", flush=True)
 
     def flush(self) -> None:
+        # A background _flush_async_qos daemon (see _maybe_flush_async) may
+        # still be mid-write to the SAME archive.pkl.tmp path this writes
+        # to — join it first so the two writers never race the same inode
+        # (found by adversarial review, 2026-08-06: explore() can break
+        # with a flush thread in flight, and this synchronous flush is the
+        # last-chance persist on exit, so it's always correct to wait).
+        if self._flush_thread is not None and self._flush_thread.is_alive():
+            self._flush_thread.join()
         self.archive.save(self.out / "archive.pkl")
         with open(self.out / "traces.pkl", "wb") as f:
             pickle.dump(self.traces, f, protocol=pickle.HIGHEST_PROTOCOL)
