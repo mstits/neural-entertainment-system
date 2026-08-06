@@ -52,7 +52,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 import nes_core  # noqa: E402
-from scripts.go_explore_solve import Solver, make_game  # noqa: E402
+from scripts.go_explore_solve import Solver, make_game, update_stall  # noqa: E402
 from scripts.go_explore_chain import extract_next_entrance  # noqa: E402
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
 
@@ -812,10 +812,7 @@ class Show:
                 frontier_gx = sv.max_gx_in_area.get(sv.max_area, 0)
                 n_cells = len(sv.archive)
                 if now - stall["last_t"] >= 60.0:
-                    stall["flat_windows"] = (stall["flat_windows"] + 1
-                                             if n_cells <= stall["last_cells"]
-                                             else 0)
-                    stall["last_cells"], stall["last_t"] = n_cells, now
+                    update_stall(stall, n_cells, now)
                     if stall["flat_windows"] >= 2:
                         sys.stderr.write(
                             f"[show] STALL WARNING: {_self.level} stuck at "

@@ -514,6 +514,17 @@ def derive_transition_macros(action_space: list, room_advance: dict | None) -> l
     return out
 
 
+def update_stall(stall: dict, n_cells: int, now: float) -> None:
+    """Pure state transition for the flat-archive stall watchdog: bumps
+    `flat_windows` when the archive hasn't grown since the last call,
+    resets it otherwise. Caller decides the polling cadence and what to
+    do once flat_windows crosses its own threshold (>=2 == 2+ minutes
+    with zero new cells, matching live_solve_show.py's convention)."""
+    stall["flat_windows"] = (stall["flat_windows"] + 1
+                             if n_cells <= stall["last_cells"] else 0)
+    stall["last_cells"], stall["last_t"] = n_cells, now
+
+
 class Solver:
     def __init__(self, args) -> None:
         # Cell granularity globals are consumed by cell_fn at call time.
@@ -1096,6 +1107,7 @@ class Solver:
         ctx = [self._assign(i) for i in range(args.workers)]
         acts = np.zeros(args.workers, dtype=np.uint8)
         self.t0 = last_progress = last_flush = time.time()
+        self._stall = {"last_cells": 0, "last_t": self.t0, "flat_windows": 0}
         deadline = self.t0 + args.minutes * 60 if args.minutes > 0 else None
         while not self.stop:
             for i, c in enumerate(ctx):
@@ -1259,10 +1271,25 @@ class Solver:
     # ---- reporting / persistence -------------------------------------
 
     def progress_line(self, elapsed: float) -> None:
+        # Flat-archive stall watchdog (ported from live_solve_show.py,
+        # 2026-08-06): this standalone driver runs most of the fleet's
+        # actual compute but had no equivalent — a run in this exact
+        # 60s-cadence path died silently and went unnoticed for 32+ min
+        # during the review that flagged this gap. Two consecutive 60s
+        # windows (this method's own cadence) with zero new cells warns
+        # loudly; it cannot detect the process dying outright (nothing
+        # runs after that), only an in-process hang/freeze while alive.
+        n_cells = len(self.archive)
+        update_stall(self._stall, n_cells, time.time())
+        if self._stall["flat_windows"] >= 2:
+            sys.stderr.write(
+                f"[go_explore_solve] STALL WARNING: stuck at {n_cells} "
+                f"cells for {self._stall['flat_windows']} min straight — "
+                f"possible frozen/dead state\n")
         line = {
             "t": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "elapsed_s": round(elapsed),
-            "cells": len(self.archive),
+            "cells": n_cells,
             "max_area": self.max_area,
             "max_gx_in_max_area": self.max_gx_in_area.get(self.max_area, 0),
             "max_sect": self.max_sect,
@@ -1270,6 +1297,7 @@ class Solver:
             "best_sol_actions": (self.best_sol_len if self.n_solutions else None),
             "steps": self.steps_done,
             "sps": round(self.steps_done / max(elapsed, 1e-9)),
+            "stall_flat_windows": stall["flat_windows"],
         }
         if self.door_weight > 0:
             line["doors"] = len(self._doors)
