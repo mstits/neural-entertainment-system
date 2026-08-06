@@ -637,6 +637,7 @@ class Solver:
         self._door_lock = threading.Lock()
         self._door_thread: threading.Thread | None = None
         self._last_door_t = time.time()
+        self._flush_thread: threading.Thread | None = None
         self._recorded_new = False
         # Optional spectator hook: called every pool step with
         # (results, solver) — the FULL per-worker results list, so the
@@ -1180,7 +1181,7 @@ class Solver:
                             c["kills"] = 0
                 _rid = game.room_id(ram)
                 _transit = (c["p0750"] is not None and _rid != c["p0750"])
-                if _transit and c["sect"] < 16:
+                if _transit and c["sect"] < self.args.sect_cap:
                     c["sect"] += 1
                     c["psig"] = _rid
                 c["p0750"] = _rid
@@ -1224,7 +1225,7 @@ class Solver:
                 self.progress_line(now - self.t0)
             if now - last_flush >= args.flush_secs:
                 last_flush = now
-                self.flush()
+                self._maybe_flush_async()
             if deadline and now >= deadline:
                 break
             if not keep_exploring(self.n_solutions, args.want_solutions):
@@ -1262,6 +1263,49 @@ class Solver:
             pickle.dump(self.traces, f, protocol=pickle.HIGHEST_PROTOCOL)
         (self.out / "roots.json").write_text(json.dumps(self.roots, indent=2) + "\n")
 
+    def _maybe_flush_async(self) -> None:
+        """Non-blocking periodic flush: a multi-GB archive.pkl pickle dump
+        run synchronously on the hot loop is the receipted cause of a
+        1563->322 sps stall (src/training/qos.py's docstring). Take a
+        cheap shallow-copy snapshot HERE on the solve thread (a dict()
+        copy is a single bulk operation under the GIL — safe against the
+        'dict changed size during iteration' race a live multi-GB dict
+        would hit if handed directly to another thread), then do the slow
+        pickling on a QOS_CLASS_BACKGROUND daemon thread so it lands on
+        the E-cores and never evicts a P-core worker's cache lines. Skips
+        (rather than queuing) if the previous flush hasn't finished yet —
+        the search keeps running either way; the next interval tries
+        again with fresher data."""
+        if self._flush_thread is not None and self._flush_thread.is_alive():
+            return
+        cells_snapshot = dict(self.archive.cells)
+        traces_snapshot = dict(self.traces)
+        roots_snapshot = dict(self.roots)
+        counters = (self.archive.total_records, self.archive.total_new_cells,
+                    self.archive.total_improvements)
+        self._flush_thread = threading.Thread(
+            target=self._flush_async_qos,
+            args=(cells_snapshot, traces_snapshot, roots_snapshot, counters),
+            daemon=True)
+        self._flush_thread.start()
+
+    def _flush_async_qos(self, cells_snapshot, traces_snapshot,
+                         roots_snapshot, counters) -> None:
+        from src.training.qos import demote_current_thread
+        demote_current_thread()
+        try:
+            snap = GoExploreArchive(self.game.cell_fn, seed=self.args.seed)
+            snap._cells = cells_snapshot
+            snap.total_records, snap.total_new_cells, snap.total_improvements = counters
+            snap.save(self.out / "archive.pkl")
+            with open(self.out / "traces.pkl", "wb") as f:
+                pickle.dump(traces_snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
+            (self.out / "roots.json").write_text(
+                json.dumps(roots_snapshot, indent=2) + "\n")
+        except Exception as e:
+            print(f"[go_explore_solve] background flush failed (search "
+                  f"continues, will retry next interval): {e}", flush=True)
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -1285,6 +1329,18 @@ def main() -> int:
                          "this gx are terminated — forces attempt density "
                          "onto the section's floor pipes instead of the "
                          "scroll-buffer wrap (8-4 water separating expt).")
+    ap.add_argument("--sect-cap", type=int, default=16,
+                    help="Cap on the room-transition counter (`sect`, part "
+                         "of the cell key) a lineage can accumulate; room_id() "
+                         "stops updating `psig` past this count. Sized for "
+                         "SMB1's 8-4 (~5 rooms, room_id churns 0.67/1k steps) "
+                         "— default preserves the exact byte-identical "
+                         "behavior of the verified 32-level SMB clear. Raise "
+                         "this for ROMs where room_id() churns faster (e.g. "
+                         "Lost Levels measured 1.15-8.8/1k steps), or the cap "
+                         "saturates within the first burst and every "
+                         "post-saturation state collapses onto one frozen "
+                         "cell-key slot for the rest of the run.")
     ap.add_argument("--gx-bucket", type=int, default=16,
                     help="Cell gx granularity px (micro-search: 8).")
     ap.add_argument("--y-band", type=int, default=32,

@@ -172,9 +172,15 @@ solve:
   # Coverage baseline: no in-level stage counter advances on a REAL clear
   # (clearing the Amazon returns to LAND SELECT, unreachable under bootstrap
   # play — untested). The true clear is the boss main-treasure single-step
-  # money jump >= $1,000,000 (see DuckTalesReward.win_treasure_value); wire it
-  # into a future custom is_clear when the 7-tile decode is available.
+  # money jump >= $1,000,000 (see DuckTalesReward.win_treasure_value).
   level_key: []
+  # WIN-CONDITION: score_jump on the decoded-money progress (now available —
+  # see progress: above). Threshold 5000 = $500,000 in real money (progress
+  # is scaled /100): comfortably above the largest ordinary gem (~$50k = 500
+  # progress units, can never false-fire) and comfortably below the actual
+  # $1,000,000 boss-treasure jump (10000 progress units), so it fires
+  # unambiguously on the real clear with margin either side.
+  clear: {mode: score_jump, threshold: 5000}
   # Death. HP hearts ($00DD). VERIFIED-LIVE: 3 at spawn; empirically BIMODAL
   # {3,0} in play (never observed dwelling at 1-2 across 60+ rollouts) and it
   # RESETS to 3 a few frames after death — so `lives<start_lives` (HP<3) fires

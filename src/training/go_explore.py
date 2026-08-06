@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import pickle
 import random
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Hashable, Optional, Sequence, Union
@@ -254,13 +256,45 @@ class GoExploreArchive:
     def save(self, path: str | Path) -> None:
         """Persist the archive (cells + state blobs) to disk. Pickle is
         used because cell keys can be arbitrary hashables and state blobs
-        are raw bytes; a sidecar JSON holds human-readable stats."""
+        are raw bytes; a sidecar JSON holds human-readable stats.
+
+        Multi-GB archives (a long search can reach 10+ GB) are written to a
+        `.tmp` sibling, fsync'd, then atomically renamed onto `path` — a
+        crash or ENOSPC mid-write leaves the PREVIOUS good archive intact
+        instead of a truncated, unreadable one (the same pattern as
+        src/training/checkpointing.py's save_checkpoint_atomic). A disk-
+        space guard skips the write entirely (keeping the last good
+        archive) rather than risk a partial write when free space looks
+        too tight for this archive's size."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "wb") as f:
+
+        prev_size = path.stat().st_size if path.exists() else 0
+        free = shutil.disk_usage(path.parent).free
+        # Archives grow monotonically but not by huge jumps between
+        # flushes; the previous file's size is the best size estimate for
+        # the next write. Require headroom for a full rewrite plus slack.
+        required = max(prev_size * 1.2, 500_000_000)
+        if free < required:
+            print(f"[go_explore_archive] SKIPPING save to {path}: only "
+                  f"{free/1e9:.1f}GB free, need ~{required/1e9:.1f}GB — "
+                  f"keeping the last good archive on disk.", flush=True)
+            return
+
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp_path, "wb") as f:
             pickle.dump(self._cells, f, protocol=pickle.HIGHEST_PROTOCOL)
-        with open(path.with_suffix(".stats.json"), "w") as f:
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass  # best-effort; the rename below still leaves a consistent file
+        os.replace(tmp_path, path)
+
+        stats_tmp = path.with_suffix(".stats.json.tmp")
+        with open(stats_tmp, "w") as f:
             json.dump(self.stats(), f, indent=2)
+        os.replace(stats_tmp, path.with_suffix(".stats.json"))
 
     def load(self, path: str | Path) -> None:
         with open(Path(path), "rb") as f:

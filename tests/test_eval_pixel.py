@@ -73,15 +73,17 @@ _TILE_CFG = _ROOT / "configs" / "smb_oneshot_tiles.yaml"
 _HAVE_EMU = _ROM is not None and _START is not None
 
 
-# All the JSON fields eval_game emits for a `--sequential` run. The pixel path
-# must fill exactly this surface — the cold probe and scoreboard depend on it.
+# All the JSON fields eval_game emits for a `--sequential` run. `level_clear`
+# is always set once `sequential=True` (scripts/eval_game.py); `start_state`
+# is NOT — it's only emitted under the separate `--start-state` CLI probe
+# (gated on `if start_state is not None`, independent of `--sequential`),
+# which `_run_eval` never passes.
 _SEQ_KEYS = {
     "game", "status", "checkpoint", "recurrent", "stage", "n_episodes",
     "mean_return", "mean_length", "max_byte_seen", "mean_max_byte",
     "clear_rate", "timestamp", "sequential", "seq_clear_rate", "warp_rate",
     "furthest_seq_level", "furthest_any_level", "furthest_seq", "furthest_any",
-    # Level-scoped probe surface (eval_game --level-clear / --start-state).
-    "level_clear", "start_state",
+    "max_gx_per_episode", "level_clear",
 }
 
 

@@ -135,6 +135,17 @@ solve:
   progress: {lo: 0x0065, hi: 0x0064}
   y: 0x031A
   level_key: []
+  # WIN-CONDITION: level_key is empty (coverage baseline — Contra has no
+  # clean stage counter), so without this a "clear" can never fire. The
+  # multi-modal confluence detector (clear_detect.StreamingConfluenceDetector)
+  # votes on two purely-RAM-derivable signals — a timer->score tally cadence
+  # and a position-reset-with-entity-wipe (a fresh room/level loading in) —
+  # and only fires when BOTH agree in the same rolling window, so an ordinary
+  # in-level score tick or scroll can't fake it. Untried on a real Contra
+  # clear to date; if it never fires, raise stride/window before assuming
+  # the signals don't apply to this game's actual level-transition RAM
+  # shape.
+  clear: {mode: confluence}
   lives: 0x0032
   player_state: 0x002C
   death_states: [1, 2]

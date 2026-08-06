@@ -385,7 +385,15 @@ class StreamingConfluenceDetector:
         (and stays True thereafter -- the clear is a latching event)."""
         if self._fired:
             return True
-        self._ram.append(np.asarray(ram, dtype=np.uint8))
+        # The solver hands raw `bytes` in the live hot loop (pool step
+        # results), not an ndarray -- np.asarray(bytes_obj, dtype=uint8)
+        # treats the whole blob as a single string-like scalar and tries
+        # to int()-parse it (fails on any non-ASCII-digit byte); frombuffer
+        # correctly unpacks it into individual byte values instead.
+        arr = (np.frombuffer(ram, dtype=np.uint8)
+               if isinstance(ram, (bytes, bytearray)) else
+               np.asarray(ram, dtype=np.uint8))
+        self._ram.append(arr)
         self._gx.append(int(self._progress(ram)))
         if len(self._ram) > self.window:
             self._ram.pop(0)
