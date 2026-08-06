@@ -323,8 +323,10 @@ class Show:
         self.bm = action_space_to_bitmasks(self.profile["action_space"])
         self.fs = int(self.profile.get("frame_skip", 4))
         self.mode = "boot"          # boot | search | lap | done
+        self.phase_started_t = time.time()
         self.level = "?"
         self.status = "starting"
+        self.clear_log = []        # [{level, arm_name, attempt, elapsed_s, t}, ...]
         self.frame = None           # hero-cam frame (big view)
         self.frames = None          # per-worker frames (swarm grid)
         self.stop = False
@@ -456,6 +458,17 @@ class Show:
         if self.stats is not None:
             self.stats.reset()
 
+    def _set_mode(self, mode: str) -> None:
+        """Set self.mode and stamp when this phase began. _render_impl
+        reads phase_started_t on its own independent QTimer tick to show
+        a live elapsed clock — covering hangs the search hook's own
+        status updates can't see at all (Solver construction, the
+        extract_next_entrance replay-settle, the victory-lap wait), the
+        same blind spot that let a real ~90-minute stall go unnoticed on
+        2026-08-06 before the flat-archive stall watchdog existed."""
+        self.mode = mode
+        self.phase_started_t = time.time()
+
     def _clip_trigger(self, name: str, extra_seconds: float = 12.0) -> None:
         """Fire a highlight-clip capture on a show event (<1 ms hand-off;
         the encode runs on the recorder's own thread). No-op unless --clips
@@ -518,7 +531,7 @@ class Show:
         fresh seed to mint a different legitimate entrance for the
         current one (different hidden-state stream, same maze). Returns
         the new entrance path or None."""
-        self.mode = "search"
+        self._set_mode("search")
         self._apply_mix("search")
         self.status = (f"re-solving {prev_level} for a fresh "
                        f"{self.level} entrance [re-entrance arm]")
@@ -625,7 +638,7 @@ class Show:
                 attempt += 1                  # no prev info / re-solve failed
                 bank(attempt)
                 continue
-            self.mode = "search"
+            self._set_mode("search")
             self._apply_mix("search")
             out = self.show_dir / f"lvl_{self.level}"
             # A prior session may have dumped a solution and died before
@@ -634,9 +647,12 @@ class Show:
             stale = sorted(out.glob("solutions/sol_*.actions.npy"))
             if stale:
                 actions = np.load(stale[-1]).astype(int)
-                self.mode = "lap"
+                self._set_mode("lap")
                 self.status = (f"{self.level}: banked solution found — "
                                "victory lap")
+                self.clear_log.append({
+                    "level": self.level, "arm_name": None,
+                    "attempt": attempt, "elapsed_s": None, "t": time.time()})
                 self._apply_mix("lap")
                 self._clip_trigger(f"solution_{self.level}")
                 finale = self.is_smb and self.level == SMB_FINALE_LABEL
@@ -646,7 +662,7 @@ class Show:
                     if self.stop:
                         break
                 if self.is_smb and self.level == SMB_FINALE_LABEL:
-                    self.mode = "done"
+                    self._set_mode("done")
                     self.status = "THE GAME IS COMPLETE"
                     break
                 nxt, key = extract_next_entrance(
@@ -805,7 +821,8 @@ class Show:
                 # decays slowly and masked full stalls on stream (the
                 # audit found 640s windows at ~0 sps shown as "300+").
                 now = time.time()
-                if now - inst["t"] >= 2.0:
+                _tick_2s = now - inst["t"] >= 2.0
+                if _tick_2s:
                     inst["sps"] = int((sv.steps_done - inst["steps"])
                                       / (now - inst["t"]))
                     inst["t"], inst["steps"] = now, sv.steps_done
@@ -826,7 +843,12 @@ class Show:
                     f"[attempt {attempt + 1}: {arm_name}] — "
                     f"{sv.steps_done/1e6:.1f}M steps @ {inst['sps']}/s, "
                     f"frontier gx {frontier_gx}, {n_cells} cells{stall_tag}")
-                if _self.stats is not None:
+                # Throttled to the same 2s wall-clock window as inst["sps"]
+                # above, not once per raw hook call (~185 Hz at 8 workers):
+                # unthrottled, the 240-point rolling buffer held ~1.3s of
+                # real history instead of the multi-minute trend its own
+                # docstring promises (found 2026-08-06 review).
+                if _self.stats is not None and _tick_2s:
                     _self.stats.push(frontier_gx, n_cells)
 
             s.step_hook = hook
@@ -844,7 +866,12 @@ class Show:
                                f"to attempt {attempt + 1} ({nxt_arm})")
                 continue
             actions = np.load(sols[0]).astype(int)
-            self.mode = "lap"
+            self.clear_log.append({
+                "level": self.level, "arm_name": arm_name,
+                "attempt": attempt,
+                "elapsed_s": round(time.time() - self.phase_started_t),
+                "t": time.time()})
+            self._set_mode("lap")
             self.status = f"{self.level} SOLVED — victory lap"
             self._apply_mix("lap")
             self._clip_trigger(f"solution_{self.level}")
@@ -855,14 +882,14 @@ class Show:
                 if self.stop:
                     break
             if self.is_smb and self.level == SMB_FINALE_LABEL:
-                self.mode = "done"
+                self._set_mode("done")
                 self.status = "THE GAME IS COMPLETE"
                 break
             nxt, key = extract_next_entrance(
                 self.profile, root_bytes, actions,
                 self.show_dir / f"entrance_after_{self.level}.state")
             if nxt is None:
-                self.mode = "done"
+                self._set_mode("done")
                 self.status = (f"{self.level} SOLVED — no onward level "
                                "found (campaign end?)")
                 break
@@ -884,7 +911,7 @@ class Show:
         root_path = getattr(self.args, "_replay_root", None)
         actions = getattr(self.args, "_replay_actions", None)
         if root_path is None or actions is None:
-            self.mode = "done"
+            self._set_mode("done")
             self.status = "replay: no solution loaded"
             return
         root_bytes = Path(root_path).read_bytes()
@@ -896,7 +923,7 @@ class Show:
         self.hero.start()
         # Idle at the entrance briefly (ambient), then lap it — the hero cam
         # feeds the featured 1x audio just like a live victory lap.
-        self.mode = "lap"
+        self._set_mode("lap")
         self._apply_mix("lap")
         self.status = (f"REPLAY — {self.level}: banked solution "
                        f"({len(actions)} actions)")
@@ -1318,7 +1345,23 @@ class LiveSolveWindow(QMainWindow):
         self.hero_tag.setText(hero_tags.get(st.mode, ""))
         tag = {"search": "swarm: full machine speed",
                "lap": "SOLVED", "boot": "booting", "done": ""}.get(st.mode, "")
-        self.caption.setText(f"[{tag}]  {st.status}")
+        # Phase-elapsed clock: computed HERE on this independent QTimer tick,
+        # not inside the solver hook — so it keeps advancing through hangs
+        # the hook can never see (Solver construction, the
+        # extract_next_entrance replay-settle, the victory-lap wait) and
+        # even if a future bug silently stops the hook from firing at all.
+        # Paired with a per-campaign clear ledger (self.clear_log) so a long
+        # grind reads as "visibly still working", not "looks frozen" — the
+        # ambiguity that let a real ~90-minute stall go unnoticed on
+        # 2026-08-06 before either of these existed.
+        m, s = divmod(int(time.time() - st.phase_started_t), 60)
+        ledger = ""
+        if st.clear_log:
+            lm, ls = divmod(int(time.time() - st.clear_log[-1]["t"]), 60)
+            ledger = (f"  ·  {len(st.clear_log)} cleared this campaign, "
+                      f"last {lm}m{ls:02d}s ago")
+        self.caption.setText(
+            f"[{tag}]  {st.status}  — {m}m{s:02d}s in phase{ledger}")
 
     # -- LIVE CONTROL: poll the panel's JSON control file and apply the
     #    live-changeable subset to the running show. Same swallow-and-log
