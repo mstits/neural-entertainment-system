@@ -198,8 +198,20 @@ class SmbGame:
         return is_forward_clear(start_key, ram)
 
     def is_dead(self, ram, start_lives: int) -> bool:
+        # $00B5 = vertical screen page: 1 on-screen, 0 above (vines — legit),
+        # >= 2 fallen below the screen. A pit fall reads B5=2..4 for ~120
+        # frames BEFORE lives decrements (measured live, Lost Levels 2-2), so
+        # without this check every frame of the fall is archivable as a
+        # live cell — at 2-2 the deepest-gx frontier was ~entirely such
+        # corpses (observatory receipt runs/lost_levels/ll_2_2_sectcap_fix/
+        # observatory_v2.json: top predicate = the death timer $0795), and
+        # every burst selected from them was doomed on arrival. Verified
+        # zero false positives across the full receipted 8-4 clear replay
+        # (1,735 actions incl. hold-Down pipe entries + the water section):
+        # legit play never reads B5 >= 2.
         return (int(ram[R_LIVES]) < start_lives
-                or int(ram[R_PSTATE]) in DEATH_STATES)
+                or int(ram[R_PSTATE]) in DEATH_STATES
+                or int(ram[0xB5]) >= 2)
 
     def is_finale(self, start_key: tuple, ram) -> bool:
         # GAME-COMPLETE (8-4): the ending never advances the world/level
