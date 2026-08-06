@@ -655,6 +655,18 @@ class Show:
             self._stats_reset()
             root_bytes = Path(entrance).read_bytes()
 
+            # Worker voice indices (0..workers-1) are REUSED by this fresh
+            # Pool — without clearing each voice's mixer buffer/resampler
+            # carry, the first pushed samples of the new level splice onto
+            # the previous level's leftover waveform (audible deep/buzzy
+            # transient on every level change, reported live 2026-08-06).
+            if self.mixer is not None:
+                for _i in range(self.args.workers):
+                    try:
+                        self.mixer.reset_instance(_i)
+                    except Exception:
+                        pass
+
             def desired_voices(_self=self):
                 cv = int(getattr(_self.args, "chorus_voices", -1))
                 return (_self.args.workers if cv < 0

@@ -294,6 +294,30 @@ impl AudioMixer {
         self.num_instances
     }
 
+    /// Clear a voice's buffered PCM and resampler carry state. Worker
+    /// voice indices are REUSED across level transitions (a new Solver
+    /// spins up a fresh Pool on the same 0..workers slots); without this,
+    /// the first push of the new level's audio linearly interpolates from
+    /// `mono_carry` — the last sample of the PREVIOUS level's unrelated
+    /// waveform — producing an audible splice artifact (a brief
+    /// deep/buzzy transient, live-show report 2026-08-06). Leaves
+    /// `intensity_target`/`intensity_smoothed` untouched — those track
+    /// the current mix level (set by `set_instance_intensity`), not
+    /// stream content.
+    pub fn reset_instance(&self, instance_id: usize) {
+        if instance_id >= self.num_instances {
+            return;
+        }
+        let mut s = self.state.lock().unwrap();
+        let inst = &mut s.instances[instance_id];
+        inst.ring.clear();
+        inst.has_pcm = false;
+        inst.last_sample = (0.0, 0.0);
+        inst.fade_remaining = 0;
+        inst.mono_carry = None;
+        inst.channel_carries = [None; 5];
+    }
+
     /// Current mode as a string compatible with the GUI + trainer
     /// callers: `"mute"`, `"solo-<n>"`, or `"all"`.
     pub fn mode_str(&self) -> String {

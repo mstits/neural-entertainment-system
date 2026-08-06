@@ -1253,6 +1253,14 @@ impl AudioMixer {
         self.inner.set_instance_intensity(instance_id, intensity);
     }
 
+    /// Clear a voice's buffered audio + resampler state. Call when a NEW
+    /// emulator instance takes over a worker voice slot (e.g. a fresh
+    /// Pool spun up for the next level) so its first pushed samples don't
+    /// splice onto the previous occupant's leftover waveform.
+    fn reset_instance(&self, instance_id: usize) {
+        self.inner.reset_instance(instance_id);
+    }
+
     /// Push int16 mono PCM samples produced by one worker's emulator.
     /// `audio_rate` is the source sample rate (typically 43_653 from
     /// nes_core's APU); the mixer's internal resampler converts to
