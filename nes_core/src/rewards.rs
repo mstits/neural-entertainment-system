@@ -1591,8 +1591,24 @@ pub struct ContraReward {
 }
 
 impl ContraReward {
-    const RAM_PLAYER_X: usize = 0x0031;
+    // Fine-scroll position within the current screen — pairs with
+    // RAM_SCREEN exactly as this formula's `screen*256 + x` assumes:
+    // verified live, $0065 wraps 255->0 on every $0064 increment. WAS
+    // 0x0031 (confirmed live: constant 0 across 2000 frames of varied
+    // real play — the same dead byte configs/contra.yaml's solve.progress
+    // and ram_mapping.player_x were already independently corrected away
+    // from; this struct's own copy was never updated). Before this fix,
+    // `forward` reduced to `screen_delta*256` — every within-screen
+    // pixel of movement (the vast majority of real gameplay) scored zero
+    // forward reward; only full-screen-boundary crossings counted.
+    const RAM_PLAYER_X: usize = 0x0065;
     const RAM_SCREEN: usize = 0x0064;
+    // NOT the same "corrected" byte configs/contra.yaml's ram_mapping
+    // uses (0x0090) — that byte was independently verified THIS SESSION
+    // to free-run a 0->1->2 animation cycle even after lives hits 0,
+    // making it unusable for death detection. Left at the historical
+    // (also-nonfunctional but harmless) 0x002C: death is already caught
+    // correctly below via the `lives < self.prev_lives` OR-clause alone.
     const RAM_PLAYER_STATE: usize = 0x002C;
     const RAM_LIVES: usize = 0x0032;
     const RAM_WEAPON: usize = 0x00AA;
@@ -6265,5 +6281,42 @@ fn double_dragon_forward_is_high_water_not_farmable() {
         ram[0x00AA] = 1;
         let o = r.compute(&ram, 0, false);
         assert!(o.reward >= 5.0 - 0.01);
+    }
+
+    #[test]
+    fn contra_forward_reward_tracks_fine_scroll_not_the_dead_byte() {
+        // RAM_PLAYER_X was 0x0031 (verified live: constant 0 across 2000
+        // frames of real varied play) until this fix moved it to 0x0065,
+        // the fine-scroll register that empirically wraps 255->0 exactly
+        // on every $0064 screen increment — matching the `screen*256 + x`
+        // formula's own assumption. Before the fix this test's within-
+        // screen movement would have scored zero forward reward.
+        let mut weights = HashMap::new();
+        weights.insert("forward_progress".to_string(), 1.0);
+        weights.insert("score_delta".to_string(), 0.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        weights.insert("death_penalty".to_string(), 0.0);
+        let mut r = build_reward("contra", &weights).unwrap();
+        let mut ram = zram();
+        ram[0x0032] = 3; // lives
+        ram[0x0064] = 0; // screen
+        ram[0x0065] = 10; // fine-scroll x
+        let _ = r.compute(&ram, 0, false); // seeds prev_x/prev_screen
+
+        // Within-screen movement (no screen-boundary crossing) must reward.
+        ram[0x0065] = 40;
+        let o1 = r.compute(&ram, 0, false);
+        assert!((o1.reward - 30.0).abs() < 1e-6,
+                "within-screen fine-scroll movement should reward +30, got {}",
+                o1.reward);
+
+        // A screen-boundary crossing (fine wraps low, screen increments)
+        // must still reward the full 256*screen_delta + new-x amount.
+        ram[0x0064] = 1;
+        ram[0x0065] = 5;
+        let o2 = r.compute(&ram, 0, false);
+        assert!((o2.reward - (256.0 + 5.0 - 40.0)).abs() < 1e-6,
+                "screen-boundary crossing should reward 256+5-40=221, got {}",
+                o2.reward);
     }
 }
