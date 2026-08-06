@@ -145,6 +145,13 @@ def main() -> int:
     # but cleared on seed 1 with identical params. 0 = no retries (old
     # behavior).
     ap.add_argument("--seed-retries", type=int, default=0)
+    # Room-transition domination cap passthrough (see go_explore_solve.py's
+    # --sect-cap). Default 16 = byte-identical to every existing SMB1
+    # caller. This chain driver is the primary unattended-multi-level
+    # caller the knob needs to reach but didn't (found by adversarial
+    # review, 2026-08-06) — Lost Levels needed --sect-cap 64 by hand
+    # outside the chain to avoid silently freezing half the cell key.
+    ap.add_argument("--sect-cap", type=int, default=16)
     args = ap.parse_args()
 
     profile = yaml.safe_load(Path(args.profile).read_text())
@@ -181,6 +188,7 @@ def main() -> int:
                 "--gx-bucket", str(args.gx_bucket),
                 "--y-band", str(args.y_band),
                 "--burst", str(args.burst),
+                "--sect-cap", str(args.sect_cap),
             ]
             subprocess.run(cmd, check=False)
             sols = sorted(lvl_out.glob("solutions/sol_*.actions.npy"))
