@@ -201,6 +201,19 @@ class HeroCam(threading.Thread):
         self._lap = (root_bytes, np.asarray(actions, dtype=np.int64), linger)
 
     # -- internals -------------------------------------------------------
+    def _reset_voice(self):
+        """Clear the hero voice's mixer buffer/resampler carry right after
+        an env.load_state() jump — the identical unreset-carry seam that
+        caused the worker-voice audio splice (f42b6b0), just never
+        triggered on this single persistent voice/thread before (found by
+        adversarial review, 2026-08-06)."""
+        mixer = self.show.mixer
+        if mixer is not None:
+            try:
+                mixer.reset_instance(self.show.hero_voice)
+            except Exception:
+                pass
+
     def _pace(self, frames: int):
         """Hold 1x wall time with a GIL-releasing Python sleep."""
         self._next_frame_t += frames / 60.0
@@ -239,6 +252,7 @@ class HeroCam(threading.Thread):
     def _play(self, root: bytes, actions, tag: str) -> bool:
         """Replay actions at 1x; returns False if interrupted."""
         self.env.load_state(root)
+        self._reset_voice()
         # Rooting convention no-op = ONE POOL STEP = frame_skip frames.
         # A single-frame no-op leaves the replay 3 frames out of phase
         # with the solver's trajectory — enough to kill Mario mid-lap
@@ -279,6 +293,7 @@ class HeroCam(threading.Thread):
                 continue
             if self._root is not None:    # idle at the entrance
                 self.env.load_state(self._root)
+                self._reset_voice()
                 self._emit()
                 for _ in range(240):
                     if self.stop or self._lap is not None or (
