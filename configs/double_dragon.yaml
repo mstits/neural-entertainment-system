@@ -216,6 +216,18 @@ solve:
   # a scripted/random bot cannot produce). The room counter above already
   # gives the archive a real per-screen frontier within one mission.
   level_key: []
+  # TRIED AND REJECTED (2026-08-06): wired clear: {mode: confluence} (the
+  # same generic detector used for Contra) to fix real unattended search
+  # time that could never bank a win. Verified UNSAFE by direct replay
+  # before shipping: it fired at 27 actions on a trajectory where progress
+  # spiked 72->846 then collapsed back to 88 in the next 5 steps — a
+  # transient RAM blip during combat (a hit/knockback/tally event, not any
+  # real mission advance) — no death, no real progress, nothing that looks
+  # like a clear. is_clear() is checked before is_dead() in
+  # Solver.observe(), so any such false fire wins the race unconditionally.
+  # Do not re-wire without a stricter confluence config (a longer window,
+  # or more of the four signals required to agree) validated against
+  # several real combat encounters first.
   # 2 at Mission-1 start; decrements 2->1->0 at deaths (own probe: 3-worker
   # combat rollout observed exactly this sequence, including the 0->255
   # GAME OVER wrap noted in ram_mapping.lives above). is_dead fires on the

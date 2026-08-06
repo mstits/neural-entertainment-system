@@ -115,6 +115,16 @@ solve:
   # yet (the start-state strip is a single robot-master stage; a room counter
   # would be discovered from deep arrival states before chaining).
   level_key: []
+  # NOT wired (2026-08-06): considered clear: {mode: confluence} (the
+  # generic detector used for Contra) but did not ship it here. Direct
+  # replay testing of the SAME wiring on 3 other secondary games (Gradius,
+  # Double Dragon, Kirby) found it CONFIRMED UNSAFE in each case — fires on
+  # a real death (Gradius), a combat RAM blip (Double Dragon), or an
+  # ordinary room transition (Kirby) — before a single false-positive-free
+  # case was found. A short smoke run here didn't happen to trigger it,
+  # but "didn't fire yet" isn't evidence of safety given that pattern.
+  # Revisit once the detector has a lives-drop veto or a per-game
+  # validated config, not before.
   # 0x00A8 = lives (3 at start, decrements 3->2->1->0 at deaths). Death signal.
   lives: 0x00A8
   # player_state/death_states OMITTED: no clean death byte confirmed. 0x0020

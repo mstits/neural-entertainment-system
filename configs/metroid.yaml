@@ -176,6 +176,18 @@ solve:
   # No reachable per-level clear byte (item/boss state is unreachable
   # PRG-RAM): coverage baseline, level_key empty.
   level_key: []
+  # NOT wired (2026-08-06): considered clear: {mode: confluence} (the
+  # generic detector used for Contra) but did not ship it here. Direct
+  # replay testing of the SAME wiring on 3 other secondary games (Gradius,
+  # Double Dragon, Kirby) found it CONFIRMED UNSAFE in each case — fires on
+  # a real death (Gradius), a combat RAM blip (Double Dragon), or an
+  # ordinary room transition (Kirby) — before a single false-positive-free
+  # case was found. A short smoke run here didn't happen to trigger it,
+  # but "didn't fire yet" isn't evidence of safety given that pattern.
+  # Metroid also has no discrete per-level clear at all (one connected
+  # map; the real win is Mother Brain/escape, far beyond this bootstrap's
+  # reach), so there may be no honest use for this hook here regardless.
+  # Revisit only alongside a lives-drop veto or per-game validated config.
   # HP-decrease death proxy: 0x0107 = energy tens digit + filled-tank
   # nibble (verified ram_mapping; start 3 = 30 energy). A DECREASE means
   # Samus lost >=10 energy (or a tank) = took a real hit; the lineage is

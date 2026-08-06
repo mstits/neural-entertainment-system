@@ -191,6 +191,16 @@ solve:
   # the receipt), not room-based, so no `area` counter is structurally
   # needed the way Kirby/Zelda need one.
   level_key: []
+  # NOT wired (2026-08-06): considered clear: {mode: confluence} (the
+  # generic detector used for Contra) but did not ship it here. Direct
+  # replay testing of the SAME wiring on 3 other secondary games (Gradius,
+  # Double Dragon, Kirby) found it CONFIRMED UNSAFE in each case — fires on
+  # a real death (Gradius), a combat RAM blip (Double Dragon), or an
+  # ordinary room transition (Kirby) — before a single false-positive-free
+  # case was found. A short smoke run here didn't happen to trigger it,
+  # but "didn't fire yet" isn't evidence of safety given that pattern, and
+  # GnG is combat-heavy like Double Dragon. Revisit once the detector has
+  # a lives-drop veto or a per-game validated config, not before.
   # VERIFIED-LIVE — decrements 2->1 reliably at death across dozens of
   # independent trials (noop/right/left holds and hundreds of random-walk
   # restarts). Primary (and sole) death signal; no player_state byte was

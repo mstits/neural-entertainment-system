@@ -80,6 +80,16 @@ solve:
   y: 0x001E
   # Coverage baseline (no verified stage-advance counter from bootstrap play).
   level_key: []
+  # TRIED AND REJECTED (2026-08-06): wired clear: {mode: confluence} (the
+  # same generic detector used for Contra) to fix real unattended search
+  # time that could never bank a win. Verified UNSAFE by direct replay
+  # before shipping: it fired 3 times in a 24s smoke run, each on an
+  # ordinary ROOM transition (area 58->62 mid-trajectory), not a full
+  # stage clear — Kirby's rooms-per-level ratio means "a fresh room
+  # loading in" (the detector's own documented "coord" signal target)
+  # fires far more often than "the level is actually done." Do not
+  # re-wire for room-based games without a mechanism that distinguishes
+  # a room transition from the terminal one.
   # Death proxy = HEALTH. 0x0025 == 6 == the six HUD health orbs on the title
   # card, with five HUD display-mirror tiles at 0x06B4-0x06B8; rock-stable at 6
   # across ~70,000 scripted+random steps. Its decrement could NOT be triggered:

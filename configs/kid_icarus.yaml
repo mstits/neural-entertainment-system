@@ -228,12 +228,16 @@ solve:
   # Self-labels the stage (0x0130 = stage index, VERIFIED-STABLE at 0). = 0
   # throughout this Stage-1 bootstrap; splits cells per stage on a real clear.
   area: 0x0130
-  # Coverage baseline: no clean stage-advance byte is reachable under bootstrap
-  # play (0x0130's 0->1 increment was never triggered — blind/search play never
-  # cleared Stage 1-1). The true clear IS a strict increase of 0x0130 (held 0
-  # across 300k+ frames AND on death, so never a false positive); wire
-  # level_key: [0x0130] the day a solve trajectory actually clears the stage.
-  level_key: []
+  # 0x0130's 0->1 increment was never triggered under bootstrap play (blind/
+  # search play never cleared Stage 1-1), but it's PROVABLY SAFE to wire now
+  # rather than wait: held at a rock-stable 0 across 300k+ frames AND on
+  # death (never a false positive), so this is behaviorally IDENTICAL to
+  # level_key: [] for every frame observed to date — it only starts to
+  # matter, and become the real clear signal, the moment a real stage clear
+  # happens (2026-08-06: wired ahead of that day rather than waiting for it,
+  # since staying at level_key: [] meant real search time could structurally
+  # never bank a win — the same gap flagged across 7 other secondary games).
+  level_key: [0x0130]
   # Monotone no-op sentinel (see DEATH note above). 0x0130 only ever increases
   # (stage clear), so lives<start_lives never false-fires on a hit; death is
   # governed solely by player_state below.
