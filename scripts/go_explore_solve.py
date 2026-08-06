@@ -1297,7 +1297,7 @@ class Solver:
             "best_sol_actions": (self.best_sol_len if self.n_solutions else None),
             "steps": self.steps_done,
             "sps": round(self.steps_done / max(elapsed, 1e-9)),
-            "stall_flat_windows": stall["flat_windows"],
+            "stall_flat_windows": self._stall["flat_windows"],
         }
         if self.door_weight > 0:
             line["doors"] = len(self._doors)
