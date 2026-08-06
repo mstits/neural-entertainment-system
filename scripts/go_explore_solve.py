@@ -681,9 +681,22 @@ class Solver:
             return "dead"
         # A level-key change that ISN'T a forward clear = a warp (or a
         # backward reload / game-over reset): do not record it (would
-        # poison the archive with off-level cells).
+        # poison the archive with off-level cells). DEBOUNCED (2026-08-06):
+        # transition animations can blip the key byte through stale values
+        # — Bubble Bobble's umbrella-warp counter dips to the PREVIOUS
+        # round mid-animation, and the un-debounced kill executed every
+        # lineage ~6 steps into the warp (round 52: 1,666 kills, 0 cells,
+        # 0 solutions across 3 runs). A momentary blip now survives
+        # (nothing is recorded during it); only a PERSISTENT off-key state
+        # (a real reset/warp, >= 3 consecutive observations) still dies.
         if game.level_key(ram) != self.start_wd:
+            if ctx is not None:
+                n = ctx["_key_mm"] = ctx.get("_key_mm", 0) + 1
+                if n < 3:
+                    return "live"   # blip: keep stepping, record nothing
             return "dead"
+        elif ctx is not None:
+            ctx["_key_mm"] = 0
         gx = game.progress(ram)
         if gx > game.progress_cap:
             # Transition-frame garbage read (page byte mid-load reads huge);
