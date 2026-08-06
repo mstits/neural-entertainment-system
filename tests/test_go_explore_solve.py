@@ -1,9 +1,10 @@
-"""Tests for scripts/go_explore_solve.py's pure helper functions.
+"""Tests for scripts/go_explore_solve.py's pure helpers and GenericGame.
 
 Kept separate from tests/test_go_explore.py (which covers the archive
-in src/training/go_explore.py) since this module's Solver class needs a
-real ROM/Pool to construct — only the standalone pure functions are
-covered here.
+in src/training/go_explore.py). GenericGame's __init__ only reads the
+profile dict (no ROM/Pool I/O), so it's constructible here with a
+minimal in-memory profile; Solver itself needs a real ROM/Pool and is
+only exercised via progress_line() through a duck-typed stand-in.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from scripts.go_explore_solve import Solver, update_stall
+from scripts.go_explore_solve import GenericGame, Solver, update_stall
 
 
 def _fresh_stall() -> dict:
@@ -82,3 +83,62 @@ def test_progress_line_does_not_crash_and_reports_stall_state(tmp_path) -> None:
     Solver.progress_line(fake, 10.0)
     lines = (tmp_path / "progress.jsonl").read_text().splitlines()
     assert json.loads(lines[-1])["stall_flat_windows"] == 0
+
+
+def _confluence_game(lives_addr: int = 0x00) -> GenericGame:
+    # GenericGame.__init__ only reads the profile dict (no ROM/Pool I/O),
+    # so a minimal in-memory profile is enough to exercise is_clear().
+    profile = {
+        "solve": {
+            "rom": "roms/does-not-need-to-exist.nes",
+            "progress": {"lo": 0x01},
+            "y": 0x02,
+            "level_key": [],
+            "lives": lives_addr,
+            "clear": {"mode": "confluence"},
+        }
+    }
+    return GenericGame(profile)
+
+
+class _FakeDetector:
+    """Stands in for clear_detect.StreamingConfluenceDetector: fires on
+    every push(), so the test isolates is_clear()'s lives-drop veto
+    rather than the real detector's own signal logic."""
+
+    def push(self, ram) -> bool:
+        return True
+
+
+def _ram(lives: int) -> bytearray:
+    buf = bytearray(2048)
+    buf[0x00] = lives
+    return buf
+
+
+def test_confluence_clear_fires_when_lives_are_unchanged() -> None:
+    # Regression coverage for the Gradius false-positive (2026-08-06): a
+    # real death was recorded as a fake win because is_clear() is checked
+    # before is_dead() in Solver.observe(). Verify the non-death path
+    # still fires — the fix must not turn the detector into a permanent
+    # no-op.
+    game = _confluence_game()
+    ctx = {"_clear_det": _FakeDetector()}
+    game.is_clear((), _ram(lives=3), ctx)   # first call establishes prev_lives
+    assert game.is_clear((), _ram(lives=3), ctx) is True
+
+
+def test_confluence_clear_is_vetoed_on_the_same_step_lives_drop() -> None:
+    game = _confluence_game()
+    ctx = {"_clear_det": _FakeDetector()}
+    game.is_clear((), _ram(lives=3), ctx)   # establish prev_lives=3
+    assert game.is_clear((), _ram(lives=2), ctx) is False   # died this step
+
+
+def test_confluence_clear_fires_again_once_lives_stabilize_post_death() -> None:
+    game = _confluence_game()
+    ctx = {"_clear_det": _FakeDetector()}
+    game.is_clear((), _ram(lives=3), ctx)
+    assert game.is_clear((), _ram(lives=2), ctx) is False   # vetoed
+    # lives no longer DROPPING (2 -> 2): the veto is per-step, not sticky.
+    assert game.is_clear((), _ram(lives=2), ctx) is True

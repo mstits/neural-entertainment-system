@@ -451,7 +451,23 @@ class GenericGame:
                 det = ctx["_clear_det"] = StreamingConfluenceDetector(
                     self.progress, window=self._conf_window,
                     stride=self._conf_stride, min_signals=self._conf_min_signals)
-            return det.push(ram)
+            fired = det.push(ram)
+            # Lives-drop veto (2026-08-06): confirmed empirically on
+            # Gradius that a real death (explosion + entity-slot wipe +
+            # respawn) trips this detector's "coord" signal identically
+            # to a real level load, and since is_clear() is checked
+            # before is_dead() in Solver.observe(), an unvetoed fire
+            # would record the death itself as a fake win. Track this
+            # worker's own lives across steps (not the archive-wide
+            # start_lives baseline, which only bounds a whole lineage,
+            # not a single frame) and refuse to fire the same step lives
+            # just dropped.
+            cur_lives = self.lives(ram)
+            prev_lives = ctx.get("_clear_prev_lives")
+            ctx["_clear_prev_lives"] = cur_lives
+            if fired and prev_lives is not None and cur_lives < prev_lives:
+                return False
+            return fired
         return False
 
     def is_dead(self, ram, start_lives: int) -> bool:

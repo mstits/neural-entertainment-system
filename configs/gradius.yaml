@@ -183,17 +183,22 @@ solve:
   # ram_mapping). The Big-Core boss defeat is the true clear; wire a stage
   # byte here once it is read off a genuine stage-1->2 transition.
   level_key: []
-  # TRIED AND REJECTED (2026-08-06): wired clear: {mode: confluence} (the
+  # WIN-CONDITION (2026-08-06): first wired clear: {mode: confluence} (the
   # same generic detector used for Contra) to fix real unattended search
-  # time (54+ min today) that could never bank a win. Verified UNSAFE by
-  # direct replay before shipping: it fired at 205 actions on a trajectory
-  # that was a real DEATH (lives 3->2, progress reset to 0), not a clear —
-  # is_clear() is checked before is_dead() in Solver.observe(), so this
-  # would have recorded every death as a fake win. The "coord" signal
+  # time (54+ min that day) that could never bank a win — but direct
+  # replay found it UNSAFE as shipped: it fired at 205 actions on a real
+  # DEATH (lives 3->2, progress reset to 0), because is_clear() is checked
+  # before is_dead() in Solver.observe() and the detector's "coord" signal
   # (position reset + entity-slot wipe = "fresh level loading in") reads a
   # death-and-respawn in a scrolling shmup identically to a real stage
-  # transition. Do not re-wire confluence here without either reordering
-  # the death check ahead of it or adding a lives-drop veto to is_clear().
+  # transition. Fixed at the root (is_clear()'s confluence branch now
+  # vetoes any fire on the same step lives just dropped) and re-verified:
+  # the exact reproducing seed now produces 0 false fires, and a separate
+  # 90s/4-worker/~110k-step run (certainly containing several real deaths
+  # under random exploration) produced none either. Still untried on a
+  # real Gradius boss-clear — the veto only closes the death failure
+  # mode, not a hypothetical unrelated one.
+  clear: {mode: confluence}
   # Remaining ships. VERIFIED-LIVE: 3 at spawn, steps 3->2->1->0 exactly on
   # each death (then wraps to 255 at game-over). start_lives=3 => is_dead
   # fires on the first life lost. Robust across bullet/collision/terrain deaths.
