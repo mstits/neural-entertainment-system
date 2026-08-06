@@ -782,8 +782,18 @@ class Show:
             self.hero.set_level(root_bytes, get_best)
 
             inst = {"t": time.time(), "steps": 0, "sps": 0}
+            # Stall watchdog: the archive growing at all is the one signal
+            # that survives every wall class (hard-exploration, maze,
+            # fixed-camera fight) EXCEPT a genuinely stuck/frozen state —
+            # which is exactly the failure mode a human has to notice by
+            # eye today (a corrupted entrance sat on a frozen GAME OVER
+            # screen for ~90 real minutes, 1 cell the whole time, before
+            # anyone caught it — 2026-08-06). Two consecutive 60s windows
+            # with zero new cells flags it loudly in both the on-screen
+            # caption and stderr, using data this hook already computes.
+            stall = {"last_cells": 0, "last_t": time.time(), "flat_windows": 0}
 
-            def hook(rs, sv, _self=self, inst=inst):
+            def hook(rs, sv, _self=self, inst=inst, stall=stall):
                 if _self.stop:
                     sv.stop = True
                 _self._ingest_frames(rs, sv)
@@ -801,11 +811,24 @@ class Show:
                     inst["t"], inst["steps"] = now, sv.steps_done
                 frontier_gx = sv.max_gx_in_area.get(sv.max_area, 0)
                 n_cells = len(sv.archive)
+                if now - stall["last_t"] >= 60.0:
+                    stall["flat_windows"] = (stall["flat_windows"] + 1
+                                             if n_cells <= stall["last_cells"]
+                                             else 0)
+                    stall["last_cells"], stall["last_t"] = n_cells, now
+                    if stall["flat_windows"] >= 2:
+                        sys.stderr.write(
+                            f"[show] STALL WARNING: {_self.level} stuck at "
+                            f"{n_cells} cells for {stall['flat_windows']} min "
+                            f"straight — possible frozen/dead state\n")
+                stalled = stall["flat_windows"] >= 2
+                stall_tag = (f" [STALLED {stall['flat_windows']}min — "
+                            f"0 new cells]" if stalled else "")
                 _self.status = (
                     f"searching {_self.level} "
                     f"[attempt {attempt + 1}: {arm_name}] — "
                     f"{sv.steps_done/1e6:.1f}M steps @ {inst['sps']}/s, "
-                    f"frontier gx {frontier_gx}, {n_cells} cells")
+                    f"frontier gx {frontier_gx}, {n_cells} cells{stall_tag}")
                 if _self.stats is not None:
                     _self.stats.push(frontier_gx, n_cells)
 
