@@ -39,10 +39,34 @@ SOLVE = str(REPO / "scripts" / "go_explore_solve.py")
 
 
 def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
-                          settle: int = 8):
-    """Replay `actions` from the root; at the first level-key transition,
-    settle `settle` no-op frames and snapshot the next level's entrance.
-    Returns (path, next_key) or (None, None) if no transition seen."""
+                          settle: int = 8, stable_for: int = 45,
+                          settle_cap: int = 600):
+    """Replay `actions` from the root; at the first level-key transition
+    that lands on a genuinely NEW, ALIVE, stable state, snapshot it as the
+    next level's entrance. Returns (path, next_key) or (None, None) if no
+    such transition is ever reached.
+
+    The old fixed 8-step settle could snapshot MID-TRANSITION: Bubble
+    Bobble's umbrella warp animates ~400 frames with the round counter
+    ticking through values, and a mid-warp "entrance" seeded the next
+    solve inside an animation whose counter blips stalled it outright
+    (round 52, 2026-08-06). Stability-settling lands the snapshot in the
+    destination level's actual play. `settle` no-ops still run first
+    (rendering-stability, the original purpose).
+
+    Two more failure shapes surfaced the same day settling on Bubble
+    Bobble round 9's arcade GAME OVER / PASSWORD screen (a live-show
+    stream stall of several minutes): (1) a transient level-key blip
+    during a death animation can drift back to the SAME value it started
+    at, which settles "stable" but isn't a forward transition at all —
+    reject and keep scanning if the settled key == start_key; (2) the
+    settled state can be dead (GAME OVER: the round HUD digit freezes at
+    whatever it last showed, satisfying both the not-equal-to-start check
+    on the transient blip and the later stability check, while lives has
+    already hit 0) — reject via the game adapter's own is_dead() using
+    lives captured at the true root, before any transition. A doomed
+    landing is treated as if no transition were seen on this action
+    range; the search resumes scanning the rest of `actions`."""
     game = make_game(profile)
     bm = action_space_to_bitmasks(profile["action_space"])
     pool = Pool(rom_path=game.rom, num_workers=1,
@@ -58,15 +82,31 @@ def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
 
     r = step(0)
     start_key = game.level_key(r)
+    start_lives = game.lives(r)
     result = (None, None)
     for a in actions:
         r = step(int(a))
         if game.level_key(r) != start_key:
             for _ in range(settle):
                 r = step(0)
+            # Settle until the key stops moving (transition fully over).
+            key = game.level_key(r)
+            stable = 0
+            for _ in range(settle_cap):
+                if stable >= stable_for:
+                    break
+                r = step(0)
+                k = game.level_key(r)
+                if k == key:
+                    stable += 1
+                else:
+                    key, stable = k, 0
+            settled_key = game.level_key(r)
+            if settled_key == start_key or game.is_dead(r, start_lives):
+                continue   # false/doomed transition — keep scanning `actions`
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_bytes(pool.save_worker_state(0))
-            result = (str(out_path), game.level_key(r))
+            result = (str(out_path), settled_key)
             break
     pool.shutdown()
     return result
@@ -90,6 +130,13 @@ def main() -> int:
     ap.add_argument("--sel-mode", choices=("legacy", "count"), default="legacy")
     ap.add_argument("--gx-bucket", type=int, default=16)
     ap.add_argument("--y-band", type=int, default=32)
+    # Burst length (steps) per exploration rollout. Default 64 = the solver
+    # default. Raise for games with long uncontrollable transition
+    # animations: Bubble Bobble's umbrella item warps forward across a
+    # ~400-frame animation, and a 64-step (256-frame at frame_skip 4)
+    # burst ends INSIDE it — every burst re-archives the same mid-warp
+    # cell and the chain stalls at 1 cell forever (round 52, 2026-08-06).
+    ap.add_argument("--burst", type=int, default=64)
     # On a per-level stall, retry the SAME level with a fresh seed
     # (seed+1, seed+2, ...) up to this many times before declaring a real
     # stall. A coverage-reachable wall the solver freezes at is often a
@@ -133,6 +180,7 @@ def main() -> int:
                 "--sel-mode", args.sel_mode,
                 "--gx-bucket", str(args.gx_bucket),
                 "--y-band", str(args.y_band),
+                "--burst", str(args.burst),
             ]
             subprocess.run(cmd, check=False)
             sols = sorted(lvl_out.glob("solutions/sol_*.actions.npy"))
