@@ -124,3 +124,25 @@ progress via `scripts/robustify_level.py --sticky-prob`.
 `scripts/eval_composite.py --manifest configs/composite_learned.yaml
 --sticky-prob 0.25 --start-jitter 16 --episodes 50` (the honest number) ·
 benchmarks in `runs/*_2026-07-20.json`.
+
+## Addendum, 2026-08-06 — the direct-PPO learning track is shelved
+
+The framing above ("a learning engine ... this is the product") describes
+the intent as of 2026-07-20, not the last 17 days of actual work. On
+2026-07-30 the direct-PPO track (PR-MDP → SHAPO/SAM-PPO on 1-2) was
+stopped after its two pre-registered gates both failed — six method
+families total have now walled on learned-sticky-1-2 — with no fourth
+pivot recommended. `trainer.py`'s PPO path has had zero commits and no
+training run since (`vanilla_ppo_iter_25630.pt`, 2026-07-30 22:39, is
+still the newest PPO checkpoint anywhere). Every commit since has been
+search/solver/show/adapter work — see the `[GAME COMPLETE 2026-07-27]`,
+`[Multi-game product vision 2026-07-27]`, and world-by-world memory notes
+for what actually shipped in that window.
+
+This is not a retraction — the item-2 forward-roadmap goal (a learned
+policy passing the honest sticky test) is still the ceiling this project
+would need to hit to earn the grades above. It just hasn't been the
+active work, and won't be revisited without a genuinely new idea per the
+2026-07-30 call. Read this addendum before assuming the scorecard above
+describes current effort, and update it again the day the learning track
+either resumes or is formally retired rather than paused.
