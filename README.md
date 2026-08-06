@@ -267,7 +267,7 @@ deterministic core. Artifacts: `docs/receipts/full_run/`.
 
 ## What this is
 
-- A Rust NES core — 6502 CPU, PPU, APU, and 36 mappers. The **pure-Rust
+- A Rust NES core — 6502 CPU, PPU, APU, and 37 mappers. The **pure-Rust
   interpreter is the correctness reference** and what gates fidelity:
   **nestest** validates 8,991 CPU instructions byte-for-byte — registers *and*
   cycle count (CYC) — against the Nintendulator golden trace, and a **31-ROM
@@ -280,7 +280,7 @@ deterministic core. Artifacts: `docs/receipts/full_run/`.
   full public blargg CPU/PPU/APU test-ROM gauntlet is **not yet run** end-to-end
   — see *Accuracy status* below.)
 - Broad compatibility: as of the latest library scan, **793 of 794 tested ROMs
-  (~99.9%)** boot cleanly across **36 mappers**. Unsupported mappers and
+  (~99.9%)** boot cleanly across **37 mappers**. Unsupported mappers and
   malformed headers fail cleanly at load time with a `RuntimeError` instead of
   crashing the trainer.
 - A reinforcement-learning trainer that runs many NES instances in parallel
@@ -708,7 +708,7 @@ events), so the median/p99 above — not the mean — describe the common case.
 
 The full matrix lives in `reports/full_library.md`. A summary:
 
-- **36 mappers** implemented, covering **~99.9%** of the tested 794-ROM library.
+- **37 mappers** implemented, covering **~99.9%** of the tested 794-ROM library.
   Every supported mapper passes at 100% on its carts.
 - Discrete logic: NROM (0), UxROM (2), CNROM (3), AxROM (7), Colordreams (11,
   66), CPROM (13), BNROM / NINA-001 (34), Caltron 6-in-1 (41), NINA-06 / HES
@@ -726,7 +726,7 @@ The full matrix lives in `reports/full_library.md`. A summary:
 ## Features
 
 **Emulator core**
-- Full Rust NES core: 6502 CPU, PPU, APU, 36 mappers, versioned save state
+- Full Rust NES core: 6502 CPU, PPU, APU, 37 mappers, versioned save state
   (`NCST\x01` magic).
 - AArch64 assembly 6502 core behind `asm_cpu`. 99.97% hit rate on real ROMs;
   falls back to the pure-Rust core for unported opcodes.
@@ -803,7 +803,7 @@ latest soak numbers.
 
 What this release **does** ship:
 
-- A fast Rust NES emulator with 36 mappers (793/794 ROMs boot), byte-exact CPU
+- A fast Rust NES emulator with 37 mappers (793/794 ROMs boot), byte-exact CPU
   validation via nestest (8,991 instructions, registers + cycle count) and a
   31-ROM Mesen-oracle lockstep, plus an AArch64 ASM 6502 core
   (differential-fuzzed against the pure-Rust interpreter for 240M+ instructions,

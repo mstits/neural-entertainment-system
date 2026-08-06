@@ -10,6 +10,130 @@ System). The original Nintendo Entertainment System hardware is named in full.
 
 ## [Unreleased]
 
+### Stability + hardware-utilization hardening (2026-08-05)
+
+A three-pass adversarial review (project health, Apple-Silicon hardware
+utilization vs. prior commissioned research, and a research-completeness
+sweep) surfaced and closed several real, receipted defects — a
+"fix the cheap adopted-but-unbuilt items before the next research round"
+pass rather than new features.
+
+- **Go-Explore archive writes are now atomic and disk-guarded**
+  (`src/training/go_explore.py`): `GoExploreArchive.save()` previously
+  truncated `archive.pkl` in place — a crash or ENOSPC mid-write (real
+  risk: single archives now reach 8-11GB, host disk at ~92% capacity)
+  destroyed the artifact outright. Now writes to a `.tmp` sibling,
+  fsyncs, and `os.replace`s (matching `checkpointing.py`'s existing
+  pattern); skips the write entirely (keeping the last good archive) if
+  free space looks too tight for the estimated size.
+- **Archive flush moved off the solver's hot loop** onto a
+  QOS_CLASS_BACKGROUND daemon thread (`scripts/go_explore_solve.py`): a
+  multi-GB synchronous pickle dump every `--flush-secs` was the receipted
+  cause of a 1563→322 sps stall. A cheap main-thread `dict()` snapshot
+  hands the slow pickling to an E-core-scheduled background thread;
+  verified live (15+ flushes, zero corruption, artifacts load correctly).
+- **Fixed a hardcoded `sect < 16` domination-tie-break cap** that
+  silently froze half the Go-Explore cell key on any ROM whose room-id
+  byte tuple churns faster than vanilla SMB1 (0.67/1k steps, the value it
+  was tuned against). Lost Levels churns 1.15-8.8/1k steps and saturated
+  the cap within the first burst of every run. Now `--sect-cap`
+  (default 16, byte-identical for existing SMB1 profiles); verified live
+  on the stuck Lost Levels 2-2 archive (`max_sect` 16 → 37 with the cap
+  raised).
+- **`nes_core::supported_mappers()` now lists mapper 40** (NTDEC 2722) —
+  it dispatched correctly but was missing from the API README tells
+  readers to call; README's mapper count corrected 36 → 37 throughout.
+- **`-C target-cpu=native` pinned to `target-cpu=apple-m4`** for the
+  `aarch64-apple-darwin` build target and both PGO stages (the PGO
+  script's `RUSTFLAGS` env var was silently overriding `.cargo/config.toml`'s
+  setting entirely) — byte-identical codegen on this machine's toolchain
+  today (rustc 1.95.0/LLVM 22.1.2), but now a compile-time-enforced
+  contract instead of a toolchain-version-dependent auto-detection.
+- **Fixed a silently-red `make test` gate**: `tests/test_eval_pixel.py`'s
+  frozen `_SEQ_KEYS` contract set was missing `max_gx_per_episode`
+  (added 2026-07-18, never back-filled) and incorrectly required
+  `start_state`/`level_clear` for `--sequential` runs, which only emit
+  under the separate `--start-state` probe mode.
+- **Retired `make smoke`**: the whole script imported
+  `src.emulation.parallel_pool`/`fake_environment`, modules that never
+  existed in this repo's history — day-zero dead code. `make test` +
+  `make parity` remain the two real gates (`CONTRIBUTING.md` updated).
+
+### Lost Levels transfer + mapper 40 (2026-08-03 — 2026-08-05)
+
+Proved the SMB solving method (byte-exact `SmbGame` adapter + Go-Explore +
+the coverage-recipe escalation ladder) generalizes to a new ROM with zero
+new solver code, by pointing it at *Super Mario Bros. 2 (Japan) — The Lost
+Levels* — a mapper-40 (NTDEC 2722) FDS-to-cartridge bootleg the core
+didn't support at all going in.
+
+- **Mapper 40 shipped** (`nes_core/src/mapper/mapper40.rs`): the tricky
+  part was a CD4020 *self-acknowledging* IRQ counter — the bootleg reuses
+  unpatched FDS code that acks via a `$4030` read, not the `$8000` write
+  a naive implementation would use, so an incorrect "latch forever until
+  acked" IRQ left the game's NMI dead and the screen gray. PRG layout and
+  IRQ semantics verified against the authoritative NesDev page (an older
+  reference doc had the wrong PRG layout). 5 targeted unit tests.
+- **World 1 + 2-1 cleared cold** via the unmodified `go_explore_chain.py`
+  driver: 1-1 in 14s, harder levels (1-2, the level that also walled SMB
+  for months; 2-1) needed the coverage-recipe ladder
+  (`--sel-mode count`, finer `--gx-bucket`/`--y-band`) and, for 2-1
+  specifically, a fresh seed — the chain driver gained `--seed-retries`
+  to automate that recovery. 2-2 is the current open frontier (see the
+  hardening-pass note above; multiple root-cause hypotheses ruled in/out
+  by direct archive forensics).
+- **Demo catalog + live show wired up**: `lost_levels` added to
+  `EXTRA_GAMES`; `resolve_rom()` now honors a profile's top-level `rom:`
+  override (the convention any future SMB-engine ROM will use).
+  `make show GAME=lost_levels` verified live (headless smoke: solver
+  seeds correctly at the real entrance, runs without crashing).
+- **Show visual pass**: the exploration-heatmap and every other panel
+  (hero cam, swarm tiles, spectator mosaic) were `setFixedSize` with no
+  `resizeEvent` — the window never grew to fill the screen when
+  resized/maximized for streaming. Now rescales every panel
+  proportionally off a captured native-layout reference (aspect ratios
+  preserved). Added a live search-progress graph (frontier depth / cells
+  discovered, `scripts/show_stats.py`) under the hero cam, default on.
+
+### Full-game completion + the research-grounded pivot (2026-07-21 — 2026-07-27)
+
+The project's headline result: **the search system clears Super Mario
+Bros. power-on through 8-4** ("THANK YOU MARIO"), the full 32-level
+chain, cold-booted with zero mid-run state loads (commit `db44fc7`;
+receipts in `docs/receipts/full_run/receipts.json` and independently
+reproduced in `runs/live_show/smb_4_4_micro/chain_verify.json`). This is
+an **EXHIBITION-ledger** result — Go-Explore search, not a trained
+policy; see `CLAIMS.md`'s two-ledger policy below.
+
+- **The pivot** (2026-07-21): after months of direct model-free PPO
+  plateauing on SMB's hard-exploration levels (1-2 above all), the
+  project adopted the field-standard split — Go-Explore *search* solves
+  a level and banks a trajectory/entrance; a (future) BC/DAgger step
+  distills solved trajectories into a learned generalist. Direct PPO on
+  1-2 was formally falsified under the honest sticky-action protocol
+  with three concurring pre-registered seeds
+  (`docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`) — reported
+  as a negative result, not hidden.
+- **CLAIMS.md two-ledger policy** (commit `8f2248c`): every public number
+  and stream overlay is either **LEARNED** (a trained RL policy, honest
+  sticky-eval protocol: cold power-on, zero state loads, sticky actions
+  0.25 + start jitter, ≥50 episodes/2 seeds) or **EXHIBITION** (search
+  output — Go-Explore, BC clones of single trajectories, routed replay —
+  always labeled as search, never as "learning"), with a quarantine +
+  allowlist mechanism (`scripts/provenance_check.py`) enforcing the
+  boundary in code, not just prose.
+- **The castle mazes fell**: 4-4 and 7-4 to a heuristic-inversion search
+  recipe (velocity-signed cells + inverted action-sampling weights in a
+  self-measured saturation window — a generic mechanism, no route
+  knowledge); 8-4 to a discovered pipe-entry macro. Full dossier in
+  `docs/research/` (Thread 2).
+- **"No game internals" course correction** (2026-07-19, binding): the
+  solving path must never hardcode disassembly/community-map knowledge;
+  diagnostic-only tooling (Mesen oracle traces, RAM-map discovery
+  scripts) is exempt. Consulted research recommending a hardcoded
+  activation window/sprite discriminator for 8-4 was deliberately
+  *not* adopted verbatim in favor of a generic, telemetry-derived pin.
+
 ### Performance (2026-07-14 integration pass)
 
 Measure-first campaign over the emulator core, trainer, and PGO

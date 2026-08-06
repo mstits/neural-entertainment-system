@@ -23,8 +23,12 @@ jitter — Machado et al. 2018)?
 ## Thread 2 — Search in silently-looping castle mazes
 
 The question: can Go-Explore search solve SMB's aliasing mazes (4-4, 7-4,
-8-4) without game internals? Score so far: 4-4 and 7-4 solved by the
-consultation's heuristic-inversion recipe; 8-4 open.
+8-4) without game internals? **Resolved 2026-07-27: 4-4, 7-4, and 8-4 all
+fell** (8-4 to the pipe-entry macro), completing the full 32-level
+power-on-to-victory chain (commit db44fc7; see
+`docs/receipts/full_run/receipts.json` and
+`runs/live_show/smb_4_4_micro/chain_verify.json`) — an EXHIBITION-ledger
+result (search, not a learned policy; see `../../CLAIMS.md`).
 
 | Doc | What it is |
 |---|---|
@@ -32,7 +36,7 @@ consultation's heuristic-inversion recipe; 8-4 open.
 | `MAZE_PROMPT_2026-07-24.md` | v1 driving prompt |
 | `MAZE_DOSSIER_V2_2026-07-24.md` | v2: the route-byte probe protocol executed; channel-leakage caught by its own causal filter; root hypothesis killed |
 | `MAZE_DOSSIER_V3_2026-07-26.md` | v3: the 8-4 campaign (eight attempts, ~110M steps); the $0750 semantics reckoning; the water-exit wall, precisely characterized |
-| `MAZE_PROMPT_V3_2026-07-26.md` | v3 driving prompt (current open consult) |
+| `MAZE_PROMPT_V3_2026-07-26.md` | v3 driving prompt — led to the recipe that closed 8-4 and the full game |
 
 ## Process rules (learned the hard way, kept on purpose)
 

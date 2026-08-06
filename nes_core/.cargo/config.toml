@@ -3,9 +3,18 @@
 [build]
 rustflags = []
 
+# Pinned to the exact dev machine's chip (M4 Max) rather than `native`:
+# LLVM has historically defaulted unrecognized/older-toolchain Apple-Silicon
+# targets to a legacy Cyclone (2013 A7-era) scheduling model, silently
+# leaving real throughput on the table with no build-time signal (verified
+# 2026-08-05: rustc 1.95.0/LLVM 22.1.2 currently resolves `native` and
+# `apple-m4` to byte-identical target_feature sets on this machine, so this
+# is a zero-perf-change, compile-time-enforced contract today, not a fix
+# for an active bug). Tradeoff: this repo is built and run on ONE machine
+# (this M4 Max) — if that ever changes, revert to `target-cpu=native` first.
 [target.aarch64-apple-darwin]
 rustflags = [
-    "-C", "target-cpu=native",
+    "-C", "target-cpu=apple-m4",
     "-C", "link-arg=-undefined",
     "-C", "link-arg=dynamic_lookup",
 ]

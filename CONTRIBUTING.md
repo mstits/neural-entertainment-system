@@ -33,12 +33,11 @@ the change to reach Python.
 
 ## Test
 
-The whole tree is gated by tests. Three levels:
+The whole tree is gated by tests. Two levels:
 
 ```bash
-make test    # pytest, ~10 s — Python trainer + utils
+make test    # pytest, incl. slow real-emulator guards — Python trainer + utils
 make parity  # nes_core vs reference oracle, ~110 s — the fidelity gate
-make smoke   # 60-second full-stack CLI checks
 
 # Rust-side
 cd nes_core && cargo test --all-features

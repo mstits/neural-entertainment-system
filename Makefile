@@ -1,4 +1,4 @@
-.PHONY: help test smoke parity show launcher control-panel bench bench-hot bench-scaling bench-phases bench-all \
+.PHONY: help test parity show launcher control-panel bench bench-hot bench-scaling bench-phases bench-all \
         build build-pgo build-pgo-apply selftest clean train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
         ppu_layout_check ppu-batch-profile
@@ -35,7 +35,6 @@ help:
 	@echo "    make test              - pytest suite (incl. slow real-emulator guards)"
 	@echo "    make test-fast         - pytest suite minus slow tests (fast inner loop)"
 	@echo "    make selftest-learning - real-loop guard: vanilla_ppo learns SMB (~25s)"
-	@echo "    make smoke             - 60-second full-stack CLI checks"
 	@echo "    make selftest          - GUI widget construction (headless)"
 	@echo "    make parity            - nes_core vs nes-py diff harness (under 2 min)"
 	@echo ""
@@ -101,9 +100,6 @@ test-fast:
 
 selftest-learning:
 	. .venv/bin/activate && pytest tests/test_learning_regression.py -q -m slow --timeout=180 -s
-
-smoke:
-	. .venv/bin/activate && bash scripts/smoke.sh
 
 parity:
 	. .venv/bin/activate && pytest tests/parity/ -q -m parity --timeout=60
