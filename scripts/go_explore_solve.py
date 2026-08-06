@@ -87,7 +87,12 @@ def cell_fn(ram) -> tuple:
     # previously-visited coordinates is a DISTINCT cell, so the archive
     # explores backtracking maneuvers instead of pruning them as loops
     # (heuristic-inversion recipe, maze consultation 2026-07-24).
-    vx = int(np.int8(ram[0x57]))
+    # $0057 is a signed velocity byte; take the two's-complement in pure
+    # Python so an out-of-int8-range value (e.g. 252 = -4) casts cleanly
+    # (np.int8(252) now raises a NumPy out-of-bound DeprecationWarning).
+    vx = int(ram[0x57])
+    if vx >= 128:
+        vx -= 256
     vsign = 0 if vx == 0 else (1 if vx > 0 else 2)
     return (int(ram[R_AREA]), (int(ram[R_PHASE]) >> 2) & 7, vsign,
             int(ram[R_YPOS]) // Y_BAND, _gx(ram) // GX_BUCKET)

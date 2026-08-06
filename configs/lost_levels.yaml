@@ -5,16 +5,17 @@ name: "Super Mario Bros. 2 (Japan) — The Lost Levels"
 # 1-1 -> 8-4. Only the ROM differs. Harder layouts, same difficulty
 # CLASS as SMB's castle mazes / 8-4, which we already cracked.
 #
-# TO ARM (once the ROM is dropped into roms/):
-#   1. set `rom:` below to the actual Lost Levels filename you added
-#      (e.g. "roms/Super Mario Bros. 2 (Japan).nes" or the FDS->nes name).
-#   2. capture a start state:
-#        .venv/bin/python scripts/capture_start_state.py --game lost_levels \
-#            --rom "roms/<your file>.nes"
-#      then set start_state_path to roms/<stem>_start.state.bin
-#   3. run it:  make show GAME=lost_levels   (or a headless solve)
-rom: "roms/Super Mario Bros. 2 (Japan).nes"   # <-- set to the file you add
-start_state_path: "roms/Super Mario Bros. 2 (Japan)_start.state.bin"  # <-- capture after ROM lands
+# ARMED. The ROM is a mapper-40 (NTDEC 2722) FDS-to-cartridge bootleg;
+# nes_core gained mapper-40 support (CD4020 self-acknowledging IRQ + the
+# fixed-6/4/5 + switchable-$C000 PRG layout) so it boots + renders 1-1
+# correctly. The start state below was captured with
+#   scripts/capture_start_state.py --game lost_levels --rom "<rom>"
+# and the SmbGame adapter reads world/level/area/x/lives byte-exact off
+# it (Mario runs right, x climbs). A Go-Explore transfer solve clears
+# 1-1 (area 0 -> 1) in seconds. Run:  make show GAME=lost_levels
+# (or scripts/go_explore_solve.py with this profile).
+rom: "roms/Super Mario Bros. 2; The Lost Levels (Japan).nes"
+start_state_path: "roms/Super Mario Bros. 2; The Lost Levels (Japan)_start.state.bin"
 frame_skip: 4
 max_episode_steps: 3000
 

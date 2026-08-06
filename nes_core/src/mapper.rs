@@ -13,6 +13,7 @@ mod mapper13;
 mod mapper19;
 mod mapper34;
 mod mapper37;
+mod mapper40;
 mod mapper41;
 mod mapper47;
 mod mapper64;
@@ -45,6 +46,7 @@ use self::mapper13::Mapper13;
 use self::mapper19::Mapper19;
 use self::mapper34::Mapper34;
 use self::mapper37::Mapper37;
+use self::mapper40::Mapper40;
 use self::mapper41::Mapper41;
 use self::mapper47::Mapper47;
 use self::mapper64::Mapper64;
@@ -219,6 +221,7 @@ pub enum MapperEnum {
     Mapper26,
     Mapper34,
     Mapper37,
+    Mapper40,
     Mapper41,
     Mapper47,
     Mapper64,
@@ -258,6 +261,7 @@ impl MapperEnum {
             26 => Mapper26::new(cartridge).into(),
             34 => Mapper34::new(cartridge).into(),
             37 => Mapper37::new(cartridge).into(),
+            40 => Mapper40::new(cartridge).into(),
             41 => Mapper41::new(cartridge).into(),
             47 => Mapper47::new(cartridge).into(),
             64 => Mapper64::new(cartridge).into(),
@@ -301,6 +305,7 @@ pub enum State {
     State26(vrc6::State),
     State34(mapper34::State),
     State37(mapper37::State),
+    State40(mapper40::State),
     State41(mapper41::State),
     State47(mapper47::State),
     State64(mapper64::State),

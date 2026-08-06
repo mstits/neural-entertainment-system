@@ -48,7 +48,7 @@ except Exception:
 # demo console should still list (has_adapter=False until a solve adapter is
 # written for them). "mario" is the one built-in-adapter exception -- see
 # module docstring.
-EXTRA_GAMES = ["mario", "zelda", "tetris", "punchout"]
+EXTRA_GAMES = ["mario", "zelda", "tetris", "punchout", "lost_levels"]
 
 # Human display names for banked-entry labels. Falls back to the profile's
 # own `name:` field, then a title-cased slug, when a game isn't listed here.
@@ -149,6 +149,11 @@ def resolve_rom(name: str, profile: dict) -> str:
         return str(solve["rom"])
     if profile.get("rom_path"):
         return str(profile["rom_path"])
+    # Top-level `rom:` override (the SmbGame adapter's convention: an
+    # SMB1-engine game like Lost Levels carries no solve: section but
+    # points at its own ROM).
+    if profile.get("rom"):
+        return str(profile["rom"])
     return DEFAULT_ROMS.get(name, "")
 
 

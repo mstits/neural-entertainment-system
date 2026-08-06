@@ -82,6 +82,22 @@ def main() -> int:
     ap.add_argument("--minutes-per-level", type=float, default=20)
     ap.add_argument("--workers", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
+    # Coverage-recipe passthrough to each per-level solve. Defaults
+    # reproduce the plain solver exactly (sel-mode legacy, gx-bucket 16,
+    # y-band 32); pass --sel-mode count (+ finer buckets) to grind the
+    # hard-exploration levels that walled the plain chain (e.g. Lost
+    # Levels 1-2, which the coverage ladder cracked where defaults froze).
+    ap.add_argument("--sel-mode", choices=("legacy", "count"), default="legacy")
+    ap.add_argument("--gx-bucket", type=int, default=16)
+    ap.add_argument("--y-band", type=int, default=32)
+    # On a per-level stall, retry the SAME level with a fresh seed
+    # (seed+1, seed+2, ...) up to this many times before declaring a real
+    # stall. A coverage-reachable wall the solver freezes at is often a
+    # low-probability stochastic passage that different exploration
+    # randomness finds — e.g. Lost Levels 2-1 froze at gx~2985 on seed 0
+    # but cleared on seed 1 with identical params. 0 = no retries (old
+    # behavior).
+    ap.add_argument("--seed-retries", type=int, default=0)
     args = ap.parse_args()
 
     profile = yaml.safe_load(Path(args.profile).read_text())
@@ -94,22 +110,38 @@ def main() -> int:
     cur_label = args.start_label
     solved = []
     for i in range(args.max_levels):
-        lvl_out = out / f"lvl_{i:02d}_{cur_label}"
+        base_out = out / f"lvl_{i:02d}_{cur_label}"
         print(f"\n===== CHAIN level {i}: solving {cur_label} from "
               f"{cur_state} =====", flush=True)
-        cmd = [
-            sys.executable, SOLVE, "--out", str(lvl_out),
-            "--root-state", cur_state, "--profile", args.profile,
-            "--workers", str(args.workers),
-            "--minutes", str(args.minutes_per_level),
-            "--want-solutions", "1", "--seed", str(args.seed),
-        ]
-        subprocess.run(cmd, check=False)
-        sols = sorted(lvl_out.glob("solutions/sol_*.actions.npy"))
+        # Try seed, then seed+1..seed+seed_retries on a stall. Each attempt
+        # gets its own out dir so a fresh seed searches from scratch (no
+        # archive carry-over from the frozen attempt).
+        sols = []
+        lvl_out = base_out
+        for attempt in range(args.seed_retries + 1):
+            seed = args.seed + attempt
+            lvl_out = base_out if attempt == 0 else Path(f"{base_out}_s{seed}")
+            if attempt > 0:
+                print(f"[chain] {cur_label} stalled; retry {attempt}/"
+                      f"{args.seed_retries} with seed {seed}", flush=True)
+            cmd = [
+                sys.executable, SOLVE, "--out", str(lvl_out),
+                "--root-state", cur_state, "--profile", args.profile,
+                "--workers", str(args.workers),
+                "--minutes", str(args.minutes_per_level),
+                "--want-solutions", "1", "--seed", str(seed),
+                "--sel-mode", args.sel_mode,
+                "--gx-bucket", str(args.gx_bucket),
+                "--y-band", str(args.y_band),
+            ]
+            subprocess.run(cmd, check=False)
+            sols = sorted(lvl_out.glob("solutions/sol_*.actions.npy"))
+            if sols:
+                break
         if not sols:
             print(f"[chain] STALL: {cur_label} not solved in "
-                  f"{args.minutes_per_level} min — chain stops at {len(solved)} "
-                  f"levels.", flush=True)
+                  f"{args.minutes_per_level} min x {args.seed_retries + 1} seed(s) "
+                  f"— chain stops at {len(solved)} levels.", flush=True)
             with open(chain_log, "a") as f:
                 f.write(json.dumps({"level": cur_label, "status": "stall"}) + "\n")
             break
