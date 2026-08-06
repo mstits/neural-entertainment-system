@@ -130,6 +130,7 @@ def solver_args(profile_path: str, root_state: str, out: Path,
         sel_mode=str(arm.get("sel_mode", "legacy")),
         frontier_throttle=int(arm.get("frontier_throttle", 0)),
         swim_gx_ceiling=0,
+        sect_cap=int(arm.get("sect_cap", 16)),
         # NO mid-level archive flushes on stream: pickling a multi-GB
         # archive on the solver thread froze every swarm tile for
         # minutes (observed live: 6.5-min stall at 1.9 GB). The show
@@ -151,7 +152,7 @@ def default_args(**overrides) -> SimpleNamespace:
                          # optional show-lane panels/effects — all OFF by
                          # default; the base show is byte-identical unless set.
                          heatmap=False, clips=False, fx="off",
-                         spectator_lite=False,
+                         spectator_lite=False, stats=True,
                          # live-control channel — off unless a control file is
                          # named; when None no poll timer is ever installed.
                          control_file=None)
@@ -347,6 +348,14 @@ class Show:
             except Exception as e:
                 sys.stderr.write(f"heatmap panel unavailable: {e}\n")
 
+        self.stats = None                  # live cells/frontier trend graph
+        if getattr(args, "stats", True):
+            try:
+                from scripts.show_stats import StatsGraphRenderer
+                self.stats = StatsGraphRenderer(width=512, height=96)
+            except Exception as e:
+                sys.stderr.write(f"stats panel unavailable: {e}\n")
+
         self.clips = None                  # rolling hardware-encoded clips
         if getattr(args, "clips", False):
             try:
@@ -426,6 +435,11 @@ class Show:
         with self._hm_lock:
             self.heatmap = self._HeatmapCls(width=512, height=128)
             self._hm_cursor = 0
+
+    def _stats_reset(self) -> None:
+        """New level/search: clear the trend graph to the fresh archive."""
+        if self.stats is not None:
+            self.stats.reset()
 
     def _clip_trigger(self, name: str, extra_seconds: float = 12.0) -> None:
         """Fire a highlight-clip capture on a show event (<1 ms hand-off;
@@ -638,6 +652,7 @@ class Show:
                            f"[attempt {attempt + 1}: {arm_name}]")
             s = Solver(sargs)
             self._heatmap_reset()
+            self._stats_reset()
             root_bytes = Path(entrance).read_bytes()
 
             def desired_voices(_self=self):
@@ -757,12 +772,15 @@ class Show:
                     inst["sps"] = int((sv.steps_done - inst["steps"])
                                       / (now - inst["t"]))
                     inst["t"], inst["steps"] = now, sv.steps_done
+                frontier_gx = sv.max_gx_in_area.get(sv.max_area, 0)
+                n_cells = len(sv.archive)
                 _self.status = (
                     f"searching {_self.level} "
                     f"[attempt {attempt + 1}: {arm_name}] — "
                     f"{sv.steps_done/1e6:.1f}M steps @ {inst['sps']}/s, "
-                    f"frontier gx {sv.max_gx_in_area.get(sv.max_area, 0)}, "
-                    f"{len(sv.archive)} cells")
+                    f"frontier gx {frontier_gx}, {n_cells} cells")
+                if _self.stats is not None:
+                    _self.stats.push(frontier_gx, n_cells)
 
             s.step_hook = hook
             # spectator-lite keeps the pool headless (frames rendered
@@ -936,7 +954,7 @@ def _handle_list() -> int:
     return 0
 
 
-from PyQt6.QtCore import Qt, QTimer  # noqa: E402
+from PyQt6.QtCore import Qt, QSize, QTimer  # noqa: E402
 from PyQt6.QtGui import QImage, QPixmap  # noqa: E402
 from PyQt6.QtWidgets import (QApplication, QGridLayout, QHBoxLayout,  # noqa: E402
                              QLabel, QMainWindow, QVBoxLayout, QWidget)
@@ -964,7 +982,8 @@ class LiveSolveWindow(QMainWindow):
         self.setWindowTitle(f"{game_name} — live solve")
 
         self.hero_view = QLabel()
-        self.hero_view.setFixedSize(256 * args.scale, 240 * args.scale)
+        self._base_hero = (256 * args.scale, 240 * args.scale)
+        self.hero_view.setFixedSize(*self._base_hero)
         self.hero_tag = QLabel("")
         self.hero_tag.setStyleSheet(
             "font-family: Menlo; font-size: 13px; padding: 4px;")
@@ -986,17 +1005,38 @@ class LiveSolveWindow(QMainWindow):
 
         # -- optional exploration-heatmap panel (--heatmap) under the hero.
         self.heatmap_view = None
+        self._base_heatmap = None
         if self.show_state.heatmap is not None:
             htag = QLabel("EXPLORATION — search coverage (live)")
             htag.setStyleSheet(
                 "font-family: Menlo; font-size: 11px; padding: 2px;")
             self.heatmap_view = QLabel()
-            self.heatmap_view.setFixedSize(256 * args.scale, 64 * args.scale)
+            self._base_heatmap = (256 * args.scale, 64 * args.scale)
+            self.heatmap_view.setFixedSize(*self._base_heatmap)
             self.heatmap_view.setStyleSheet("background: #06070c;")
             lv.addWidget(htag); lv.addWidget(self.heatmap_view)
 
+        # -- optional search-progress graph (--stats, default ON) under the
+        #    heatmap: frontier depth + cells discovered, trending over the
+        #    current attempt — the number that says "is it working" during
+        #    a long wall-grinding stretch where the tiles look identical.
+        self.stats_view = None
+        self._base_stats = None
+        if self.show_state.stats is not None:
+            stag = QLabel("SEARCH PROGRESS — frontier depth / cells discovered")
+            stag.setStyleSheet(
+                "font-family: Menlo; font-size: 11px; padding: 2px;")
+            self.stats_view = QLabel()
+            self._base_stats = (256 * args.scale, 48 * args.scale)
+            self.stats_view.setFixedSize(*self._base_stats)
+            self.stats_view.setStyleSheet("background: #06070c;")
+            lv.addWidget(stag); lv.addWidget(self.stats_view)
+
         self.tiles: list[QLabel] = []
         self.spectator_view = None
+        self._base_spectator = None
+        self._base_tile = None
+        self._base_tile_grid_wh = (0, 0)
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0); row.setSpacing(4)
         row.addWidget(left)
@@ -1008,7 +1048,8 @@ class LiveSolveWindow(QMainWindow):
                 tile_h = 240 * args.scale
                 lw = max(1, int(sr.W / sr.H * tile_h))
                 self.spectator_view = QLabel()
-                self.spectator_view.setFixedSize(lw, tile_h)
+                self._base_spectator = (lw, tile_h)
+                self.spectator_view.setFixedSize(*self._base_spectator)
                 self.spectator_view.setStyleSheet("background: #111;")
                 row.addWidget(self.spectator_view)
             else:
@@ -1025,6 +1066,8 @@ class LiveSolveWindow(QMainWindow):
                     grid.addWidget(t, i // cols, i % cols)
                     self.tiles.append(t)
                 row.addWidget(gridw)
+                self._base_tile = (tile_w, tile_h)
+                self._base_tile_grid_wh = (tile_w * cols, tile_h * rows)
 
         box = QWidget(); root = QVBoxLayout(box)
         root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
@@ -1035,6 +1078,34 @@ class LiveSolveWindow(QMainWindow):
             "font-family: Menlo; font-size: 14px; padding: 6px;")
         root.addWidget(self.caption)
         self.setCentralWidget(box)
+
+        # -- responsive scaling. Every panel above uses a fixed pixel size
+        #    (needed for aspect-correct nearest-neighbour NES upscaling), so
+        #    without this the content never grows past its native size when
+        #    the window is resized/maximized for streaming — the map/heatmap
+        #    and everything else stays pinned at native size with dead space
+        #    around it. _apply_scale (below) rescales every panel together,
+        #    proportionally, off this native 1x reference.
+        heatmap_h = (self._base_heatmap[1] + 20) if self._base_heatmap else 0
+        stats_h = (self._base_stats[1] + 20) if self._base_stats else 0
+        left_col_h = self._base_hero[1] + 24 + heatmap_h + stats_h
+        right_w, right_h = (self._base_spectator if self._base_spectator
+                             else self._base_tile_grid_wh)
+        native_w = max(1, int(self._base_hero[0] + 4 + right_w))
+        native_h = max(1, int(max(left_col_h, right_h) + 30))
+        self._native_size = QSize(native_w, native_h)
+        self.setMinimumSize(self._native_size)
+
+        # Default to a size that actually fills a reasonable share of the
+        # screen out of the box, instead of the tiny native layout size.
+        screen = QApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen is not None else None
+        if avail is not None:
+            target = QSize(
+                max(native_w, min(int(native_w * 1.6), int(avail.width() * 0.92))),
+                max(native_h, min(int(native_h * 1.6), int(avail.height() * 0.92))))
+            self._apply_scale(target)
+            self.resize(target)
 
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -1086,6 +1157,36 @@ class LiveSolveWindow(QMainWindow):
             if st.clips is not None:
                 st._clip_trigger("manual", extra_seconds=10.0)
                 self.caption.setText("[highlight clip captured]")
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._apply_scale(ev.size())
+
+    def _apply_scale(self, size):
+        """Rescale hero/heatmap/stats/swarm panels together, proportionally,
+        off the native 1x layout captured in __init__ — keeps every panel's
+        NES aspect ratio exact while letting the whole show fill whatever
+        window size streaming actually uses (windowed or maximized)."""
+        nw, nh = self._native_size.width(), self._native_size.height()
+        if nw <= 0 or nh <= 0:
+            return
+        factor = min(size.width() / nw, size.height() / nh)
+        factor = max(1.0, min(factor, 4.0))
+        self.hero_view.setFixedSize(int(self._base_hero[0] * factor),
+                                    int(self._base_hero[1] * factor))
+        if self.heatmap_view is not None and self._base_heatmap:
+            self.heatmap_view.setFixedSize(int(self._base_heatmap[0] * factor),
+                                           int(self._base_heatmap[1] * factor))
+        if self.stats_view is not None and self._base_stats:
+            self.stats_view.setFixedSize(int(self._base_stats[0] * factor),
+                                         int(self._base_stats[1] * factor))
+        if self.spectator_view is not None and self._base_spectator:
+            self.spectator_view.setFixedSize(int(self._base_spectator[0] * factor),
+                                             int(self._base_spectator[1] * factor))
+        elif self.tiles and self._base_tile:
+            tw, th = self._base_tile
+            for t in self.tiles:
+                t.setFixedSize(int(tw * factor), int(th * factor))
 
     def closeEvent(self, ev):
         self.show_state.stop = True   # progress banked; --resume continues
@@ -1149,6 +1250,15 @@ class LiveSolveWindow(QMainWindow):
                     pm = QPixmap.fromImage(st.heatmap.qimage())
                 self.heatmap_view.setPixmap(pm.scaled(
                     self.heatmap_view.width(), self.heatmap_view.height(),
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
+                    Qt.TransformationMode.FastTransformation))
+            except Exception:
+                pass
+        if self.stats_view is not None and st.stats is not None:
+            try:
+                pm = QPixmap.fromImage(st.stats.qimage())
+                self.stats_view.setPixmap(pm.scaled(
+                    self.stats_view.width(), self.stats_view.height(),
                     Qt.AspectRatioMode.IgnoreAspectRatio,
                     Qt.TransformationMode.FastTransformation))
             except Exception:
@@ -1322,6 +1432,11 @@ def main() -> int:
                          "save-state snapshots so the pool stays headless at "
                          "full search speed, instead of paying the "
                          "worker-render tax. Off by default.")
+    ap.add_argument("--stats", dest="stats", action="store_true", default=True,
+                    help="Live search-progress graph (frontier depth / cells "
+                         "discovered) below the hero cam. On by default.")
+    ap.add_argument("--no-stats", dest="stats", action="store_false",
+                    help="Disable the search-progress graph.")
     ap.add_argument("--control-file", default=None,
                     help="Path to a JSON live-control file the show polls "
                          "(~5 Hz) to apply volume/mute/fx/chorus-voices/audio/"
