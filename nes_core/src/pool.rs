@@ -1168,6 +1168,18 @@ impl Pool {
         }
     }
 
+    /// Hardware-true NMI-line sample phase (φ2 latch) on every worker
+    /// — single-env mirror is
+    /// `NESEnvironment::set_hw_nmi_subcycle_phase`; see the `Nes`
+    /// field doc. Disables ASM/bulk fast paths while on. Default OFF.
+    fn set_hw_nmi_subcycle_phase(&self, on: bool) {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.hw_nmi_subcycle_phase = on;
+        }
+    }
+
     /// Hardware-true PPU-register write timing on every worker —
     /// single-env mirror is `NESEnvironment::set_hw_mmio_write_timing`.
     fn set_hw_mmio_write_timing(&self, on: bool) {

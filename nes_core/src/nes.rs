@@ -87,6 +87,28 @@ pub struct Nes {
     pub ppu_read_dot_offset: u8,
     pub ppu_write_dot_offset: u8,
 
+    /// Hardware-true NMI-line sample phase (config, not savestate).
+    /// The physical 6502 samples its NMI input on φ2 — 2 PPU dots into
+    /// each 3-dot CPU cycle — while the bulk 3:1 interleave lets the
+    /// sample after the cycle's LAST dot reach the edge latch, so a
+    /// dot-2 edge becomes CPU-visible one cycle early. When set,
+    /// `Nes::tick` suppresses the `set_nmi_line` call after dot
+    /// index 2 (0-indexed); the edge is then picked up by the NEXT
+    /// cycle's dot-0 sample — the φ2 point, the NMI-pin manifestation
+    /// of `ppu_read_dot_offset = 1`. External research round
+    /// (2026-08-06) root-caused the residual ±2-3-cycle NMI-taken
+    /// quantization vs Mesen (the CV-tape fork past frame 4884) to
+    /// the end-of-cycle sample. Forces the per-cycle path: the
+    /// ASM/bulk batchers sample the line once per batch and cannot
+    /// place a mid-cycle latch. This flag moves WHEN an edge becomes
+    /// visible; WHICH boundary snapshot the service poll consumes
+    /// stays `cpu.hw_nmi_poll_timing`'s call — the two compose in the
+    /// lockstep lane, and the φ2 latch also acts standalone (a dot-2
+    /// edge on an instruction's final cycle defers service by one
+    /// instruction even on the legacy live-`nmi_pended` poll).
+    /// Default OFF: byte-identical to the shipped interleave.
+    pub hw_nmi_subcycle_phase: bool,
+
     /// Cached `mapper.prg_asm_ptr()` result. Stable for the mapper's
     /// lifetime — all mapper PRG-ASM windows are fixed-size 32 KB
     /// `Vec<u8>`s mutated only via slice indexing (never resized),
@@ -154,6 +176,7 @@ impl Nes {
             hw_event_ppu: false,
             ppu_read_dot_offset: 2,
             ppu_write_dot_offset: 2,
+            hw_nmi_subcycle_phase: false,
             cached_prg_asm_ptr: None,
             cached_asm_bulk_cycles: 1,
             cached_ppu_batchable: false,
@@ -231,6 +254,12 @@ impl Nes {
             // and would take NMIs at the wrong boundary. Fidelity
             // lane trades speed for exactness.
             && !self.cpu.hw_nmi_poll_timing
+            // φ2 NMI-line sampling needs the per-dot interleave in
+            // Nes::tick: the ASM/bulk paths sample the line once at
+            // batch end — coarser even than end-of-cycle — and cannot
+            // place the latch 2 dots into a cycle. See the
+            // `hw_nmi_subcycle_phase` field doc.
+            && !self.hw_nmi_subcycle_phase
         {
             let pc = self.cpu.regs.pc;
             // Fast opcode peek. Almost all code executes from PRG
@@ -608,14 +637,34 @@ impl Nes {
             while self.ppu.cycles < target {
                 self.ppu
                     .advance_to(self.ppu.cycles + 1, &mut self.mapper, video_frame_sink);
-                self.cpu
-                    .set_nmi_line(self.ppu.nmi_output && self.ppu.nmi_occurred);
+                // φ2 sample phase (see the else branch): the cycle's
+                // dot index 2 lands in THIS loop only when lead == 3
+                // (no deferred access splits the cycle) and this is
+                // the last iteration; lead < 3 cycles reach index 2
+                // in the catch-up tail below.
+                if lead < 3 || self.ppu.cycles < target || !self.hw_nmi_subcycle_phase {
+                    self.cpu
+                        .set_nmi_line(self.ppu.nmi_output && self.ppu.nmi_occurred);
+                }
             }
         } else {
-            for _ in 0..3 {
+            // φ2 NMI-line sample phase: the physical 6502 latches its
+            // NMI input on φ2 — 2 PPU dots into the 3-dot CPU cycle —
+            // so under `hw_nmi_subcycle_phase` the sample after the
+            // cycle's LAST dot (index 2) must not reach the edge
+            // latch; an edge asserting on that dot becomes visible at
+            // the NEXT cycle's dot-0 sample, one CPU cycle later.
+            // Keeping the dot-0/1 samples is equivalent to a single
+            // φ2 sample: the line cannot both assert (241,1) and
+            // deassert (261,1 / `$2002` read — which happens inside
+            // `cpu.tick`, not between dots) within one CPU cycle.
+            // Flag OFF short-circuits to the identical call sequence.
+            for dot in 0..3 {
                 self.ppu.tick(&mut self.mapper, video_frame_sink);
-                self.cpu
-                    .set_nmi_line(self.ppu.nmi_output && self.ppu.nmi_occurred);
+                if dot < 2 || !self.hw_nmi_subcycle_phase {
+                    self.cpu
+                        .set_nmi_line(self.ppu.nmi_output && self.ppu.nmi_occurred);
+                }
             }
         }
 
@@ -651,8 +700,18 @@ impl Nes {
             while self.ppu.cycles < target {
                 self.ppu
                     .advance_to(self.ppu.cycles + 1, &mut self.mapper, video_frame_sink);
-                self.cpu
-                    .set_nmi_line(self.ppu.nmi_output && self.ppu.nmi_occurred);
+                // φ2 sample phase: the tail's final dot is the cycle's
+                // dot index 2 — suppress its sample when the flag is
+                // on. These tail dots run after `cpu.tick` already
+                // took this cycle's `nmi_poll_latch`, so the
+                // suppression is latch-invisible under
+                // `hw_nmi_poll_timing`; it keeps `nmi_line_low`
+                // dot-exact so the NEXT cycle's edge detection matches
+                // the φ2 model.
+                if self.ppu.cycles < target || !self.hw_nmi_subcycle_phase {
+                    self.cpu
+                        .set_nmi_line(self.ppu.nmi_output && self.ppu.nmi_occurred);
+                }
             }
         }
 
@@ -1563,5 +1622,301 @@ mod event_ppu_routing_tests {
             Some(false),
             "the handle must land on the LAST cycle and be a read; saw {seen:?}"
         );
+    }
+
+    // ================================================================
+    // φ2 NMI-line sample phase (hw_nmi_subcycle_phase).
+    // ================================================================
+
+    /// Synthetic 32 KB NROM for the φ2 NMI-phase tests. The reset
+    /// routine at $C000 (PRG offset 0x4000 — NROM-256 decodes
+    /// `addr & 0x7FFF`) waits out three vblanks with the idiomatic
+    /// `BIT $2002 / BPL` loops — PPUCTRL writes land ~57-87k cycles in,
+    /// safely past the PPU warm-up gate that silently drops them below
+    /// 3×29658 dots (`Ppu::write_register`) — then enables the vblank
+    /// NMI (`LDA #$80 ; STA $2000`) and parks in a 3-cycle `JMP $C014`
+    /// self-loop. The NMI handler at $E000 (offset 0x6000) is a bare
+    /// `RTI`, and the CPU reaches $E000 ONLY through the NMI vector
+    /// (IRQ shares the vector but is never taken: reset sets the I
+    /// flag and nothing CLIs), making `pc == $E000` after a step an
+    /// unambiguous "NMI sequence just completed" marker for
+    /// cycle-stamping the service point. With rendering off there is
+    /// no odd-frame dot skip, so each frame is 89342 dots ≡ 2 (mod 3)
+    /// and the vblank edge's dot slot within its CPU cycle rotates
+    /// across frames — every slot, including the φ2-critical slot 2,
+    /// recurs every 3 NMIs.
+    fn build_nmi_spin_rom() -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 32 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // PRG = 2 × 16 KB = 32 KB
+        rom.push(1); // CHR = 1 × 8 KB
+        rom.push(0); // flags6: mapper 0, H-mirror
+        rom.push(0); // flags7: mapper 0 (iNES 1.0)
+        rom.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0xEAu8; 32 * 1024]; // NOP fill (never executed)
+        // Reset routine at $C000 (PRG offset 0x4000): three vblank
+        // waits (3rd guards the case where the flag is already set at
+        // entry, which would collapse a wait to zero frames and land
+        // the PPUCTRL write back under the warm-up gate).
+        for w in 0..3usize {
+            let base = 0x4000 + w * 5;
+            prg[base] = 0x2C; // BIT abs
+            prg[base + 1] = 0x02; // $2002 lo
+            prg[base + 2] = 0x20; // $2002 hi
+            prg[base + 3] = 0x10; // BPL (bit 7 → N: loop until vblank)
+            prg[base + 4] = 0xFB; // -5 → back to the BIT
+        }
+        prg[0x400F] = 0xA9; // LDA #imm
+        prg[0x4010] = 0x80; // #$80 — PPUCTRL bit 7 (NMI enable)
+        prg[0x4011] = 0x8D; // STA abs
+        prg[0x4012] = 0x00; // $2000 lo
+        prg[0x4013] = 0x20; // $2000 hi
+        prg[0x4014] = 0x4C; // JMP abs — 3-cycle self-loop
+        prg[0x4015] = 0x14; // $C014 lo
+        prg[0x4016] = 0xC0; // $C014 hi
+        // NMI handler at $E000 (PRG offset 0x6000): RTI.
+        prg[0x6000] = 0x40;
+        // Vectors at $FFFA-$FFFF (PRG offsets 0x7FFA..0x7FFF).
+        prg[0x7FFA] = 0x00; // NMI  → $E000
+        prg[0x7FFB] = 0xE0;
+        prg[0x7FFC] = 0x00; // RESET → $C000
+        prg[0x7FFD] = 0xC0;
+        prg[0x7FFE] = 0x00; // IRQ  → $E000 (I stays set — never taken)
+        prg[0x7FFF] = 0xE0;
+        let chr = vec![0u8; 8 * 1024];
+        rom.extend(prg);
+        rom.extend(chr);
+        rom
+    }
+
+    fn build_spin_nes(subcycle: bool) -> Nes {
+        let cart = Cartridge::load(&mut std::io::Cursor::new(build_nmi_spin_rom()))
+            .expect("synthetic NMI-spin NROM should parse");
+        let mut nes = Nes::new(cart);
+        nes.hw_nmi_subcycle_phase = subcycle;
+        nes.set_skip_render(true);
+        nes
+    }
+
+    /// Run the spin ROM and stamp `nes.cycles` at each completed NMI
+    /// service (the step after which PC sits at the $E000 handler
+    /// entry), returning the first `n` stamps. `poll_timing` picks
+    /// which boundary snapshot `poll_interrupts` consumes, so the φ2
+    /// flag is exercised against both service models; either flag
+    /// forces the per-cycle path via the `Nes::step` guard.
+    fn nmi_service_stamps(subcycle: bool, poll_timing: bool, n: usize) -> Vec<usize> {
+        let mut nes = build_spin_nes(subcycle);
+        nes.cpu.hw_nmi_poll_timing = poll_timing;
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        let mut stamps = Vec::with_capacity(n);
+        for _ in 0..2_000_000usize {
+            nes.step(&mut v, &mut a);
+            if nes.cpu.regs.pc == 0xE000 {
+                stamps.push(nes.cycles);
+                if stamps.len() == n {
+                    return stamps;
+                }
+            }
+        }
+        panic!(
+            "expected {n} NMI services, saw {} — the spin ROM's NMI enable \
+             never took effect",
+            stamps.len()
+        );
+    }
+
+    /// Shared assertions for the φ2 A/B: in the homogeneous 3-cycle
+    /// JMP loop the modeled shift is exactly one instruction — pended
+    /// visibility moves one cycle later, crossing at most one poll
+    /// latch point, deferring service by one JMP (+3 cycles) — and
+    /// only for edges on the critical dot slot; slot-0/1 edges are
+    /// untouched (+0). Phases realign after each NMI (the deferral is
+    /// exactly one loop period), so the deltas stay per-edge.
+    fn assert_phi2_shift_profile(on: &[usize], off: &[usize], label: &str) {
+        assert_ne!(
+            on, off,
+            "{label}: φ2 latch never moved an NMI service point — the flag \
+             is not reaching the per-dot sample suppression"
+        );
+        let mut zeros = 0usize;
+        let mut threes = 0usize;
+        for (i, (&s_on, &s_off)) in on.iter().zip(off.iter()).enumerate() {
+            assert!(
+                s_on >= s_off,
+                "{label}: φ2 sampling can only defer edge visibility, never \
+                 advance it (nmi {i}: on={s_on} off={s_off})"
+            );
+            match s_on - s_off {
+                0 => zeros += 1,
+                3 => threes += 1,
+                d => panic!(
+                    "{label}: nmi {i} shifted by {d} cycles (on={s_on} \
+                     off={s_off}); the φ2 model predicts exactly 0 or one \
+                     3-cycle JMP deferral"
+                ),
+            }
+        }
+        assert!(
+            threes >= 1,
+            "{label}: no NMI deferred by one JMP — the dot-2 edge slot was \
+             never suppressed (zeros={zeros})"
+        );
+        assert!(
+            zeros >= 1,
+            "{label}: every NMI shifted — slot-0/1 edges must be untouched \
+             (threes={threes})"
+        );
+    }
+
+    #[test]
+    fn nmi_subcycle_phase_shifts_service_under_poll_timing() {
+        // Both machines on the per-cycle path with hardware poll timing
+        // (the lockstep-lane composition); the ONLY difference is the
+        // φ2 latch. The edge slot rotates across frames (see
+        // build_nmi_spin_rom), so 12 NMIs cover the critical slot 2
+        // several times.
+        let n = 12;
+        let off = nmi_service_stamps(false, true, n);
+        let on = nmi_service_stamps(true, true, n);
+        assert_phi2_shift_profile(&on, &off, "poll_timing=on");
+    }
+
+    #[test]
+    fn nmi_subcycle_phase_shifts_service_standalone() {
+        // Unlike the Stage-3 dot offsets (inert without their
+        // hw_mmio_* prerequisite), the φ2 latch acts standalone on the
+        // legacy live-`nmi_pended` poll: a dot-2 edge on an
+        // instruction's FINAL cycle is visible to the boundary poll
+        // when sampled end-of-cycle but not at φ2, deferring service
+        // by one instruction. The critical cycle differs from the
+        // poll-timing case (final vs second-to-last), but the shift
+        // profile is the same {0, +3}.
+        let n = 12;
+        let off = nmi_service_stamps(false, false, n);
+        let on = nmi_service_stamps(true, false, n);
+        assert_phi2_shift_profile(&on, &off, "poll_timing=off");
+    }
+
+    #[test]
+    fn nmi_subcycle_event_ppu_twin_matches_legacy() {
+        // The φ2 suppression must be identical through the
+        // hw_event_ppu per-dot twin loops (lead loop + Stage-3 tail)
+        // and the legacy `3× ppu.tick` loop: flag ON with event
+        // routing ON vs OFF must stay byte-identical across several
+        // NMIs. At default offsets `lead` is always 3 (tail empty), so
+        // the suppression lands on the lead loop's last iteration —
+        // the exact branch this test pins.
+        let mut on = build_spin_nes(true);
+        let mut off = build_spin_nes(true);
+        on.hw_event_ppu = true;
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        // ~60k JMP-loop instructions ≈ 6 frames — two full rotations
+        // of the edge's dot slot, so the suppressed slot-2 sample is
+        // exercised on both routings.
+        for i in 0..60_000usize {
+            on.step(&mut v, &mut a);
+            off.step(&mut v, &mut a);
+            if i < 6000 || i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&on),
+                    state_digest(&off),
+                    "hw_event_ppu twin diverged from legacy interleave at \
+                     instruction {i} with hw_nmi_subcycle_phase on: the φ2 \
+                     suppression is not routing-invariant"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nmi_subcycle_inert_without_nmi_edges() {
+        // build_status_poll_rom never writes $2000, so `nmi_output`
+        // stays false and the NMI line never rises: with no edge to
+        // sample, the φ2 latch must be a pure no-op. Flag ON (which
+        // also forces the per-cycle path via the `Nes::step` guard)
+        // must stay byte-identical to flag OFF — locking that the
+        // flag's ONLY observable is NMI-line sample placement (cycle
+        // accounting and `$2002` polling cancel out).
+        //
+        // `disable_asm_cpu` on BOTH machines: under `--features
+        // asm_cpu` the flag-OFF machine would otherwise run `LDA
+        // $2002` through `try_step_asm`, which does not maintain the
+        // interpreter's serialized mid-instruction scratch fields
+        // (`opcode`/`addr_abs`/`fetched_data` — cpu_asm leaves them at
+        // defaults), so a cross-path full-digest comparison diverges
+        // by construction with or without this flag. ASM-vs-slow
+        // parity is the asm_vs_slow_* suites' jurisdiction; this test
+        // isolates the φ2 flag on a single execution path.
+        let load = |flag: bool| {
+            let cart =
+                Cartridge::load(&mut std::io::Cursor::new(build_status_poll_rom()))
+                    .expect("synthetic status-poll NROM should parse");
+            let mut nes = Nes::new(cart);
+            nes.hw_nmi_subcycle_phase = flag;
+            nes.disable_asm_cpu = true;
+            nes.set_skip_render(true);
+            nes
+        };
+        let mut on = load(true);
+        let mut off = load(false);
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        for i in 0..15_000usize {
+            on.step(&mut v, &mut a);
+            off.step(&mut v, &mut a);
+            if i < 4000 || i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&on),
+                    state_digest(&off),
+                    "hw_nmi_subcycle_phase ON diverged from OFF at {i} with \
+                     no NMI edge in the stream: the flag has an observable \
+                     beyond NMI-line sampling"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nmi_subcycle_off_is_default_and_byte_identical() {
+        // Flag-OFF contract: `hw_nmi_subcycle_phase` defaults to false,
+        // and OFF is the untouched legacy interleave — the suppression
+        // conditions short-circuit on `!flag` and the `Nes::step` guard
+        // term passes through, so OFF compiles to the identical call
+        // sequence. Within one build the strongest expressible lock is
+        // default-constructed vs explicitly-OFF digest lockstep across
+        // many NMIs; the cross-build OFF gates are every other test in
+        // this suite (all flag-OFF: nestest CYC lock, the routing
+        // tests, the parity fleets) plus the line-[1] trajectory SHA of
+        // scripts/verify_subcycle_offset.py compared across .so builds.
+        let mut default_nes = {
+            let cart =
+                Cartridge::load(&mut std::io::Cursor::new(build_nmi_spin_rom()))
+                    .expect("synthetic NMI-spin NROM should parse");
+            let mut nes = Nes::new(cart);
+            nes.set_skip_render(true);
+            nes
+        };
+        assert!(
+            !default_nes.hw_nmi_subcycle_phase,
+            "hw_nmi_subcycle_phase must default OFF"
+        );
+        let mut off = build_spin_nes(false);
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        // ~45k JMP-loop instructions ≈ 4-5 frames — several NMI edges.
+        for i in 0..45_000usize {
+            default_nes.step(&mut v, &mut a);
+            off.step(&mut v, &mut a);
+            if i < 4000 || i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&default_nes),
+                    state_digest(&off),
+                    "explicit flag-OFF diverged from a default-constructed \
+                     machine at instruction {i}"
+                );
+            }
+        }
     }
 }

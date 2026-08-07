@@ -41,6 +41,13 @@ def main() -> int:
     p.add_argument("--hw-all", action="store_true",
                    help="Enable every hardware-true flag (mmio read, boot, "
                         "DMC stall, frame anchor, NMI poll)")
+    p.add_argument("--hw-nmi-subcycle", action="store_true",
+                   help="Enable hardware-true NMI-line sample phase (phi-2 "
+                        "latch, 2 dots into the CPU cycle). Deliberately NOT "
+                        "folded into --hw-all so banked --hw-all receipts "
+                        "(CV stage changes 2872/9322, fork 3992->4884) stay "
+                        "reproducible; combine with --hw-all for the full "
+                        "fidelity lane and A/B the flag by toggling this")
     args = p.parse_args()
 
     env = nes_core.NESEnvironment(rom_path=str(args.rom), frame_skip=1)
@@ -51,6 +58,8 @@ def main() -> int:
         env.set_hw_frame_anchor(True)
         env.set_hw_nmi_poll_timing(True)
         env.set_hw_mmio_write_timing(True)
+    if args.hw_nmi_subcycle:
+        env.set_hw_nmi_subcycle_phase(True)
     # True power-on alignment for cross-emulator diffs: reset() advances a
     # frame before returning (Mesen traces from CYC 7); with no tape we
     # want instruction 1 of the reset vector.

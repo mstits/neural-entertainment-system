@@ -509,6 +509,20 @@ impl NESEnvironment {
         self.nes.cpu.hw_nmi_poll_timing = on;
     }
 
+    /// Hardware-true NMI-line sample phase: latch the CPU-visible NMI
+    /// line at φ2 — 2 PPU dots into the CPU cycle's 3-dot interleave —
+    /// instead of after the cycle's last dot, so an edge asserting on
+    /// the final dot becomes visible one CPU cycle later, as on the
+    /// physical 6502. Root cause of the residual ±2-3-cycle NMI-taken
+    /// jitter vs Mesen (external research round 2026-08-06); see the
+    /// `Nes` field doc. Disables the ASM/bulk CPU fast paths while on;
+    /// composes with `set_hw_nmi_poll_timing` (which picks the service
+    /// poll's snapshot — this picks when the edge is visible).
+    /// Default OFF. Config, not state.
+    fn set_hw_nmi_subcycle_phase(&mut self, on: bool) {
+        self.nes.hw_nmi_subcycle_phase = on;
+    }
+
     /// Hardware-true PPU-register write timing: absolute-mode stores
     /// to $2000-$3FFF commit on the instruction's final cycle. See
     /// the Cpu field doc for the CV frame-11 NMI-enable receipt.
