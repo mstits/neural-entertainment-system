@@ -16,6 +16,34 @@ use serde_derive::{Deserialize, Serialize};
 
 use std::collections::HashMap;
 
+/// The ONLY `ppu_bus_dot_lead` at which `hw_vblank_read_race` arms: the
+/// bus access is serviced after exactly ONE of the CPU cycle's three PPU
+/// dots.
+///
+/// The race's PPU-side rule — "the next dot to run is the (241,1) set
+/// dot" — is satisfiable at every bus phase, but at lead L it names the
+/// CPU cycle whose base dot is `set_dot - L`, a different cycle at every
+/// phase. Mesen2 services a CPU read after one dot has elapsed
+/// (`StartCpuCycle` runs the PPU to masterClock+5 of 12) and arms
+/// `_preventVblFlag` when the last-processed dot is (241,0) — the CPU
+/// cycle based at `set_dot - 1`. Only `lead == 1` puts our racing cycle
+/// there. At the shipped end-of-cycle lead of 3 the set dot has already
+/// executed when the read is serviced, so a prospective suppression
+/// cannot model the race at all (undoing it would need the CPU-side
+/// retraction this flag explicitly does not model) — the flag stays
+/// inert instead of firing on the wrong CPU cycle, and hence (frame =
+/// 89342 ≡ 2 mod 3 dots) on a disjoint set of frames.
+///
+/// `lead == 1` is produced by exactly one configuration: `hw_event_ppu`
+/// (only the event-driven routing splits a CPU cycle) + a final-cycle
+/// read pin via `cpu.hw_mmio_read_timing` (only a deferred access has a
+/// handle for `ppu_bus_dot_lead` to see) + `ppu_read_dot_offset == 0`
+/// (`lead = offset + 1`). If that offset is ever recalibrated — the
+/// repo's φ2 model puts a bus access at offset 1, which is NOT Mesen's
+/// phase — this constant moves with it, and the flag fails safe (inert)
+/// in the meantime. See `Nes::vblank_read_race_prereqs_met`.
+const VBL_RACE_BUS_ACCESS_DOT_LEAD: u64 = 1;
+
 pub struct Nes {
     ram: Ram,
     pub mapper: MapperEnum,
@@ -117,6 +145,53 @@ pub struct Nes {
     /// Default OFF: byte-identical to the shipped interleave.
     pub hw_nmi_subcycle_phase: bool,
 
+    /// Hardware-true `$2002`/vblank read race (config, not savestate).
+    /// The vblank flag bit and the CPU's PPUSTATUS read share one latch,
+    /// so a read that resolves immediately before the (241,1) set dot
+    /// drains it on the very tick the PPU would raise it: the flag reads
+    /// clear, never comes up for the rest of that frame, and the vblank
+    /// NMI it would have driven is never generated. This is Mesen2's
+    /// `_preventVblFlag`. Set it through `set_hw_vblank_read_race`.
+    ///
+    /// **BUS-PHASE PREREQUISITE — the flag is INERT without it.** The
+    /// PPU-side rule ("the next dot to run is the set dot",
+    /// `ppu.cycles == ppu.vblank_set_dot()` at the instant the read is
+    /// serviced) is satisfiable at every bus phase, but at a lead of L
+    /// dots it names the CPU cycle whose base dot is `set_dot - L` — a
+    /// different cycle at every phase. Because an NTSC frame is
+    /// 89342 ≡ 2 (mod 3) dots, the CPU-cycle grid's residue against the
+    /// set dot rotates every frame, so a mis-phased anchor does not fire
+    /// late: it fires on an entirely DISJOINT set of frames from the
+    /// hardware's, i.e. it would inject a lockstep fork rather than close
+    /// one. The race therefore also requires a lead of exactly
+    /// `VBL_RACE_BUS_ACCESS_DOT_LEAD` = 1, which exactly one
+    /// configuration produces: `hw_event_ppu` and
+    /// `cpu.hw_mmio_read_timing` both on with `ppu_read_dot_offset == 0`.
+    /// That is the phase Mesen2 services a CPU read at (`StartCpuCycle`
+    /// runs the PPU to masterClock+5 of a 12-clock cycle = one dot
+    /// elapsed), and it makes our racing CPU cycle the same one Mesen
+    /// arms `_preventVblFlag` on.
+    /// `vblank_read_race_prereqs_met` reports whether it holds; the
+    /// Python setters refuse an enable that would be inert. At the
+    /// shipped end-of-cycle phase the set dot has ALREADY executed by the
+    /// time the read is serviced, so no prospective suppression can model
+    /// the race there at all — hence inert, not approximate.
+    ///
+    /// Implemented entirely in `Nes::tick`'s sub-cycle catch-up tail, on
+    /// purpose: `Ppu::tick` is fingerprinted by
+    /// scripts/ppu_layout_check.sh and this flag adds nothing to it and
+    /// no field to `Ppu`, so the shipped hot path is byte-identical by
+    /// construction rather than by measurement.
+    ///
+    /// Scope: this is the PPU-side half of the race. The CPU-side half —
+    /// a read landing AFTER the set but inside the same CPU cycle, which
+    /// on a 6502 clears the line before the φ2 edge detector samples it —
+    /// is not modeled: `tick` samples the NMI line after every PPU dot,
+    /// i.e. before the cycle's bus access, so that edge is already
+    /// latched in `cpu.nmi_pended` by the time the read runs. Retracting
+    /// it needs a CPU-side hook. Default OFF.
+    hw_vblank_read_race: bool,
+
     /// Cached `mapper.prg_asm_ptr()` result. Stable for the mapper's
     /// lifetime — all mapper PRG-ASM windows are fixed-size 32 KB
     /// `Vec<u8>`s mutated only via slice indexing (never resized),
@@ -185,6 +260,7 @@ impl Nes {
             ppu_read_dot_offset: 2,
             ppu_write_dot_offset: 2,
             hw_nmi_subcycle_phase: false,
+            hw_vblank_read_race: false,
             cached_prg_asm_ptr: None,
             cached_asm_bulk_cycles: 1,
             cached_ppu_batchable: false,
@@ -687,6 +763,20 @@ impl Nes {
 
         self.update_irq_line();
 
+        // `$2002`/vblank read race arming point (`hw_vblank_read_race`).
+        // Evaluated HERE — after this cycle's lead dots, before the CPU
+        // touches the bus — because that is the instant the PPUSTATUS
+        // read resolves at, and the whole race is about which dot that
+        // instant sits on. `lead == VBL_RACE_BUS_ACCESS_DOT_LEAD` is
+        // tested first: it is a register compare against a value that is
+        // 3 on every non-sub-cycle cycle, so the default path pays one
+        // never-taken branch and never loads the flag. See the field doc
+        // for why every other lead must be inert rather than approximate.
+        let vbl_read_race = lead == VBL_RACE_BUS_ACCESS_DOT_LEAD
+            && self.hw_vblank_read_race
+            && self.ppu.cycles == self.ppu.vblank_set_dot()
+            && self.cpu.pending_deferred_status_read();
+
         let completed_instruction = if self.oam_dma.active {
             self.handle_oam_dma();
             false
@@ -713,6 +803,20 @@ impl Nes {
             while self.ppu.cycles < target {
                 self.ppu
                     .advance_to(self.ppu.cycles + 1, &mut self.mapper, video_frame_sink);
+                // `$2002`/vblank read race: the PPUSTATUS read that just
+                // ran resolved on the dot immediately before this
+                // cycle's (241,1) set tick and drained the shared latch,
+                // so the flag the tick just raised never existed. Clear
+                // it BEFORE the NMI-line sample below — that is the
+                // whole point: no flag, no edge, no vblank NMI for this
+                // frame. It stays clear for the rest of the frame with
+                // no further bookkeeping: `set_vblank` fires once per
+                // frame and `clear_vblank` at (261,1) is the next writer,
+                // so a later `$2002` read in the same frame still reads
+                // bit 7 clear. `Ppu::tick` is untouched by all of this.
+                if vbl_read_race {
+                    self.ppu.nmi_occurred = false;
+                }
                 // φ2 sample phase: the tail's final dot is the cycle's
                 // dot index 2 — suppress its sample when the flag is
                 // on. These tail dots run after `cpu.tick` already
@@ -922,6 +1026,37 @@ impl Nes {
 
     pub fn set_skip_render(&mut self, skip: bool) {
         self.ppu.set_skip_render(skip);
+    }
+
+    /// Do the bus-phase prerequisites for `hw_vblank_read_race`
+    /// currently hold? See that field: the race only reproduces
+    /// hardware/Mesen when a deferred PPUSTATUS read is serviced one PPU
+    /// dot into its CPU cycle, i.e. `hw_event_ppu` + a final-cycle read
+    /// pin + `ppu_read_dot_offset == 0`. The flag is inert — never
+    /// wrong, just absent — whenever this is false, so callers can
+    /// enable/disable the prerequisites in any order; this is the query
+    /// that lets the Python setters REFUSE an enable that would silently
+    /// do nothing.
+    ///
+    /// Necessary, not sufficient, for one further reason the campaign
+    /// lane already handles: only the per-cycle path positions a
+    /// sub-cycle access, so instructions taken by the ASM/bulk batchers
+    /// cannot race. `hw_nmi_poll_timing` (which `--hw-all` sets) turns
+    /// those batchers off; it is not required here because batchability
+    /// is mapper- and instruction-dependent rather than a config bit.
+    pub fn vblank_read_race_prereqs_met(&self) -> bool {
+        // `ppu_bus_dot_lead` computes the read lead as `offset.min(2) + 1`.
+        self.hw_event_ppu
+            && self.cpu.hw_mmio_read_timing
+            && (self.ppu_read_dot_offset.min(2) as u64) + 1 == VBL_RACE_BUS_ACCESS_DOT_LEAD
+    }
+
+    pub fn set_hw_vblank_read_race(&mut self, on: bool) {
+        self.hw_vblank_read_race = on;
+    }
+
+    pub fn hw_vblank_read_race(&self) -> bool {
+        self.hw_vblank_read_race
     }
 
     /// Forward to `Mapper::set_asm_bulk_cycles_override`. Opt-in ASM
@@ -1263,7 +1398,7 @@ mod event_ppu_routing_tests {
     use super::*;
     use crate::cartridge::Cartridge;
 
-    struct NullSinks;
+    pub(super) struct NullSinks;
     impl VideoSink for NullSinks {
         fn write_frame(&mut self, _: &[u8]) {}
         fn frame_written(&self) -> bool {
@@ -1286,7 +1421,7 @@ mod event_ppu_routing_tests {
     /// keeps the CPU emitting bulk/ASM-eligible opcodes (so the catch-up
     /// loops run) while forcing a real NMI edge every frame (so the
     /// routing's edge handling is exercised).
-    fn build_nop_rom() -> Vec<u8> {
+    pub(super) fn build_nop_rom() -> Vec<u8> {
         let mut rom = Vec::with_capacity(16 + 32 * 1024);
         rom.extend_from_slice(b"NES\x1a");
         rom.push(2); // PRG = 2 × 16 KB = 32 KB
@@ -1328,7 +1463,7 @@ mod event_ppu_routing_tests {
         nes
     }
 
-    fn state_digest(nes: &Nes) -> Vec<u8> {
+    pub(super) fn state_digest(nes: &Nes) -> Vec<u8> {
         bincode::serialize(&nes.get_state()).expect("serialize nes state")
     }
 
@@ -1493,7 +1628,7 @@ mod event_ppu_routing_tests {
     /// stream is fully deterministic and independent of the sub-cycle
     /// offset — letting the tests attribute any change in the read's PPU
     /// dot purely to the offset.
-    fn build_status_poll_rom() -> Vec<u8> {
+    pub(super) fn build_status_poll_rom() -> Vec<u8> {
         let mut rom = Vec::with_capacity(16 + 32 * 1024);
         rom.extend_from_slice(b"NES\x1a");
         rom.push(2); // PRG = 2 × 16 KB = 32 KB
@@ -1945,5 +2080,735 @@ mod event_ppu_routing_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod vblank_read_race_tests {
+    //! `hw_vblank_read_race` models the PPU-side half of the
+    //! `$2002`/vblank latch race: the flag bit and the CPU's read share
+    //! one latch, so a PPUSTATUS read that resolves immediately before
+    //! the (241,1) set dot drains it on the very tick the PPU would
+    //! raise it — the flag reads clear, stays clear for the rest of that
+    //! frame, and the vblank NMI it would have driven never fires.
+    //!
+    //! The race has TWO conditions and these tests separate them:
+    //!
+    //!   1. the PPU-side rule — at the instant the read is serviced, the
+    //!      next dot to run is the set dot; and
+    //!   2. the BUS PHASE, `lead == VBL_RACE_BUS_ACCESS_DOT_LEAD`. Rule
+    //!      1 is satisfiable at every phase, but at lead L it names the
+    //!      CPU cycle based at `set_dot - L`; only L = 1 names the cycle
+    //!      the hardware (and Mesen) race on. Because an NTSC frame is
+    //!      89342 ≡ 2 (mod 3) dots, a mis-phased anchor does not fire
+    //!      late — it fires on a disjoint set of FRAMES, i.e. it injects
+    //!      a lockstep fork. So the flag must be provably inert at every
+    //!      other phase.
+    //!
+    //! Everything is driven end-to-end through `Nes::step` on a real
+    //! instruction stream: the race lives in `Nes::tick`'s sub-cycle
+    //! catch-up tail (`Ppu` gains no field and `Ppu::tick` no
+    //! instruction — see scripts/ppu_layout_check.sh), so there is no
+    //! PPU-level seam to probe and none is faked.
+    use super::event_ppu_routing_tests::{
+        NullSinks, build_nop_rom, build_status_poll_rom, state_digest,
+    };
+    use super::*;
+    use crate::cartridge::Cartridge;
+    use std::collections::{HashMap, HashSet};
+
+    /// Frozen five-point profile of the race, keyed by
+    /// `read_landing_dot - vblank_set_dot` and read as
+    /// `(status bit 7, was this frame's vblank flag raised at all)`,
+    /// with the flag ON in the racing lane. `Ppu::cycles` at the instant of the
+    /// read names the NEXT dot to run, so delta 0 is "the read resolved
+    /// immediately before the set tick" — Mesen2's
+    /// `NesPpu::GetStatusFlag` arm (`_scanline == _nmiScanline &&
+    /// _cycle == 0`, its `_cycle` being the last-processed dot).
+    ///   * -2 / -1 — two or three dots early: too early to reach the
+    ///     latch, bit 7 clear, and the flag comes up normally.
+    ///   *  0 — the raced read: bit 7 clear AND the latch is drained, so
+    ///     the flag never comes up at all this frame (and so the vblank
+    ///     NMI it would have driven never fires — see
+    ///     `..._window_is_exactly_one_landing_dot`).
+    ///   * +1 / +2 — the set tick already ran: bit 7 set, the read
+    ///     clears it as always, the frame's edge already happened.
+    /// NOT yet cross-checked against a Mesen probe ROM; the CPU-side
+    /// half of the race (see the `Nes` field doc) is out of scope and is
+    /// why +1/+2 stay legacy.
+    const RACE_ON_PROFILE: [(i64, u8, bool); 5] = [
+        (-2, 0x00, true),
+        (-1, 0x00, true),
+        (0, 0x00, false),
+        (1, 0x80, true),
+        (2, 0x80, true),
+    ];
+
+    /// Synthetic 32 KB NROM: a ~38.6k-cycle delay to clear the PPU's
+    /// 88974-dot `$2000` write gate, `LDA #$80 ; STA $2000` to arm the
+    /// vblank NMI, then a 7-cycle `LDA $2002 ; JMP` poll loop. 7 CPU
+    /// cycles is 21 dots and the frame is 89342 dots, so the read
+    /// grid's phase against the (241,1) set dot walks frame to frame
+    /// and sweeps the whole neighbourhood of the set dot. The NMI
+    /// handler is a bare `RTI` at $E000 reachable only through the NMI
+    /// vector (reset leaves I set and nothing CLIs), so `pc == $E000`
+    /// after a step is an unambiguous NMI-service stamp, and `regs.a`
+    /// after the polling step is the byte the read returned.
+    fn build_nmi_poll_rom() -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 32 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // PRG = 2 × 16 KB = 32 KB
+        rom.push(1); // CHR = 1 × 8 KB
+        rom.push(0); // flags6: mapper 0, H-mirror
+        rom.push(0); // flags7: mapper 0 (iNES 1.0)
+        rom.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0xEAu8; 32 * 1024]; // NOP fill (never executed)
+        // Reset routine at $C000 (PRG offset 0x4000 — NROM-256 decodes
+        // `addr & 0x7FFF`). Nested DEX/DEY delay: 30 × (2 + 1279 + 5)
+        // = 38580 CPU cycles = 115740 dots, comfortably past the gate.
+        prg[0x4000] = 0xA0; // LDY #imm
+        prg[0x4001] = 0x1E; // 30 outer iterations
+        prg[0x4002] = 0xA2; // LDX #imm      <- outer
+        prg[0x4003] = 0x00; // 256 inner iterations
+        prg[0x4004] = 0xCA; // DEX           <- inner
+        prg[0x4005] = 0xD0; // BNE
+        prg[0x4006] = 0xFD; // -3 → inner
+        prg[0x4007] = 0x88; // DEY
+        prg[0x4008] = 0xD0; // BNE
+        prg[0x4009] = 0xF8; // -8 → outer
+        prg[0x400A] = 0xA9; // LDA #imm
+        prg[0x400B] = 0x80; // #$80 — PPUCTRL bit 7 (NMI enable)
+        prg[0x400C] = 0x8D; // STA abs
+        prg[0x400D] = 0x00; // $2000 lo
+        prg[0x400E] = 0x20; // $2000 hi
+        prg[0x400F] = 0xAD; // LDA abs       <- poll ($C00F)
+        prg[0x4010] = 0x02; // $2002 lo
+        prg[0x4011] = 0x20; // $2002 hi
+        prg[0x4012] = 0x4C; // JMP abs
+        prg[0x4013] = 0x0F; // $C00F lo
+        prg[0x4014] = 0xC0; // $C00F hi
+        prg[0x6000] = 0x40; // RTI — NMI handler at $E000
+        prg[0x7FFA] = 0x00; // NMI  → $E000
+        prg[0x7FFB] = 0xE0;
+        prg[0x7FFC] = 0x00; // RESET → $C000
+        prg[0x7FFD] = 0xC0;
+        prg[0x7FFE] = 0x00; // IRQ  → $E000 (I stays set — never taken)
+        prg[0x7FFF] = 0xE0;
+        let chr = vec![0u8; 8 * 1024];
+        rom.extend(prg);
+        rom.extend(chr);
+        rom
+    }
+
+    /// Build the poll-ROM machine. `read_offset` = `Some(off)` installs
+    /// the sub-cycle read lane — `hw_event_ppu` routes each CPU cycle's
+    /// dots through `advance_to`, `hw_mmio_read_timing` pins the
+    /// `LDA $2002` read to the instruction's final cycle so it has a
+    /// deferred handle at all, `hw_nmi_poll_timing` forces the per-cycle
+    /// path (the ASM/bulk batchers cannot place a sub-cycle access), and
+    /// the offset sets the lead to `off + 1`. `None` is the shipped
+    /// lane: end-of-cycle reads, lead 3.
+    fn build_poll_nes(race: bool, read_offset: Option<u8>) -> Nes {
+        build_poll_nes_phased(race, read_offset, 0)
+    }
+
+    /// `phase` pre-ticks the PPU that many dots before the CPU starts,
+    /// shifting the whole CPU/PPU dot alignment — the same lever
+    /// `hw_reset_alignment` moves. It is needed to sweep the profile:
+    /// the poll loop is 7 CPU cycles and the NMI service 13, so between
+    /// consecutive frames the read grid slides against the set dot by a
+    /// MULTIPLE OF 3 dots and a single alignment can only ever sample
+    /// one residue class mod 3. Phases 0/1/2 cover all three.
+    fn build_poll_nes_phased(race: bool, read_offset: Option<u8>, phase: u64) -> Nes {
+        let cart = Cartridge::load(&mut std::io::Cursor::new(build_nmi_poll_rom()))
+            .expect("synthetic NMI-poll NROM should parse");
+        let mut nes = Nes::new(cart);
+        if let Some(off) = read_offset {
+            nes.hw_event_ppu = true;
+            nes.cpu.hw_mmio_read_timing = true;
+            nes.cpu.hw_nmi_poll_timing = true;
+            nes.ppu_read_dot_offset = off;
+        }
+        nes.set_hw_vblank_read_race(race);
+        nes.set_skip_render(true);
+        let mut v = NullSinks;
+        for _ in 0..phase {
+            nes.ppu.tick(&mut nes.mapper, &mut v);
+        }
+        nes
+    }
+
+    /// The poll ROM with the PPUCTRL write neutered (`LDA #$00` instead
+    /// of `#$80`), so the vblank NMI is never enabled.
+    ///
+    /// WHY THE PROFILE NEEDS THIS. With the NMI armed, dropping one
+    /// removes its 13-cycle service from the stream, which slides every
+    /// later read by 39 dots — and 39 ≡ 18 (mod 21), against a natural
+    /// walk of −1 dot per frame. The ON run therefore falls into a
+    /// {2, 1, 0} limit cycle the instant it first races, and landing
+    /// offsets −1 and −2 become unreachable: the profile could only ever
+    /// be measured on three of its five rows. With the NMI disabled the
+    /// race changes no control flow at all, the walk sweeps every offset
+    /// (verified: all of −14..=13 occur), and the flag's rise is still
+    /// fully observable — through bit 7 of the byte the read returned and
+    /// through `Ppu::nmi_occurred` between the set tick and the next
+    /// read. The NMI-armed consequences are pinned separately by
+    /// `..._window_is_exactly_one_landing_dot` and
+    /// `..._drops_the_frame_nmi_not_shifts_it`.
+    fn build_poll_nes_no_nmi(race: bool) -> Nes {
+        let mut rom = build_nmi_poll_rom();
+        assert_eq!(rom[16 + 0x400B], 0x80, "PPUCTRL immediate moved");
+        rom[16 + 0x400B] = 0x00; // LDA #$80 -> #$00: NMI never enabled
+        let cart = Cartridge::load(&mut std::io::Cursor::new(rom))
+            .expect("synthetic NMI-poll NROM should parse");
+        let mut nes = Nes::new(cart);
+        nes.hw_event_ppu = true;
+        nes.cpu.hw_mmio_read_timing = true;
+        nes.cpu.hw_nmi_poll_timing = true;
+        nes.ppu_read_dot_offset = 0;
+        nes.set_hw_vblank_read_race(race);
+        nes.set_skip_render(true);
+        nes
+    }
+
+    /// One PPUSTATUS read that resolved within ±2 dots of its frame's
+    /// (241,1) set tick.
+    #[derive(Debug, PartialEq, Eq)]
+    struct NearSetRead {
+        ppu_frame: u64,
+        /// `landing_dot - vblank_set_dot()`.
+        delta: i64,
+        /// Bit 7 of the byte the read returned (out of `A`).
+        bit7: u8,
+    }
+
+    struct PollRun {
+        near_set_reads: Vec<NearSetRead>,
+        /// PPU frames in which the NMI handler was entered.
+        nmi_frames: HashSet<u64>,
+        status_reads: usize,
+    }
+
+    /// Run the poll ROM for `steps` instructions, logging every
+    /// PPUSTATUS read that landed within ±2 dots of its frame's set
+    /// tick and every PPU frame whose vblank NMI was serviced.
+    fn run_poll_rom(nes: &mut Nes, steps: usize) -> PollRun {
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        let mut run = PollRun {
+            near_set_reads: Vec::new(),
+            nmi_frames: HashSet::new(),
+            status_reads: 0,
+        };
+        let mut last_read_dot = nes.ppu.last_status_read_dot;
+        for _ in 0..steps {
+            nes.step(&mut v, &mut a);
+            if nes.cpu.regs.pc == 0xE000 {
+                run.nmi_frames.insert(nes.ppu.frame);
+            }
+            let dot = nes.ppu.last_status_read_dot;
+            if dot == last_read_dot {
+                continue;
+            }
+            last_read_dot = dot;
+            run.status_reads += 1;
+            // A step is at most 7 CPU cycles (21 dots) and the frame
+            // wraps at (261,340), ~6800 dots past the set tick, so the
+            // frame origin cannot have moved between the read and here.
+            let delta = dot as i64 - nes.ppu.vblank_set_dot() as i64;
+            if (-2..=2).contains(&delta) {
+                run.near_set_reads.push(NearSetRead {
+                    ppu_frame: nes.ppu.frame,
+                    delta,
+                    // `LDA $2002` leaves the byte in A and neither the
+                    // NMI sequence nor `RTI` touches A.
+                    bit7: nes.cpu.regs.a & 0x80,
+                });
+            }
+        }
+        run
+    }
+
+    /// Enough instructions for the 21-dot read grid to walk the whole
+    /// ±2-dot neighbourhood of the set dot: the frame origin advances
+    /// 89342 mod 21 = 8 dots per frame and gcd(8, 21) = 1, so every
+    /// offset recurs, and NMI services perturb the walk further.
+    const SWEEP_STEPS: usize = 900_000;
+
+    /// Sweep the NMI-disabled poll stream, returning every read that
+    /// landed within ±2 dots of its frame's set tick and the set of PPU
+    /// frames whose vblank flag was observably up — either a read
+    /// returned bit 7 set, or `nmi_occurred` was true at an instruction
+    /// boundary before the next read cleared it.
+    fn sweep_profile(race: bool) -> (Vec<NearSetRead>, HashSet<u64>) {
+        let mut nes = build_poll_nes_no_nmi(race);
+        assert!(
+            nes.vblank_read_race_prereqs_met(),
+            "the sub-cycle lane must satisfy the race's bus-phase \
+             prerequisites"
+        );
+        let mut v = NullSinks;
+        let mut a = NullSinks;
+        let mut near: Vec<NearSetRead> = Vec::new();
+        let mut flag_frames: HashSet<u64> = HashSet::new();
+        let mut last_read_dot = nes.ppu.last_status_read_dot;
+        for _ in 0..SWEEP_STEPS {
+            nes.step(&mut v, &mut a);
+            if nes.ppu.nmi_occurred {
+                flag_frames.insert(nes.ppu.frame);
+            }
+            let dot = nes.ppu.last_status_read_dot;
+            if dot == last_read_dot {
+                continue;
+            }
+            last_read_dot = dot;
+            // `LDA $2002` leaves the byte in A and nothing else in the
+            // loop touches A.
+            let bit7 = nes.cpu.regs.a & 0x80;
+            if bit7 != 0 {
+                flag_frames.insert(nes.ppu.frame);
+            }
+            let delta = dot as i64 - nes.ppu.vblank_set_dot() as i64;
+            if (-2..=2).contains(&delta) {
+                near.push(NearSetRead {
+                    ppu_frame: nes.ppu.frame,
+                    delta,
+                    bit7,
+                });
+            }
+        }
+        (near, flag_frames)
+    }
+
+    fn assert_profile(
+        near: &[NearSetRead],
+        flag_frames: &HashSet<u64>,
+        table: &[(i64, u8, bool); 5],
+        what: &str,
+    ) {
+        let expected: HashMap<i64, (u8, bool)> = table
+            .iter()
+            .map(|&(d, bit7, raised)| (d, (bit7, raised)))
+            .collect();
+        let mut seen: HashSet<i64> = HashSet::new();
+        for r in near {
+            let &(bit7, raised) = expected
+                .get(&r.delta)
+                .expect("delta was filtered to -2..=2");
+            assert_eq!(
+                (r.bit7, flag_frames.contains(&r.ppu_frame)),
+                (bit7, raised),
+                "{what}: wrong (bit7, frame flag raised) for a $2002 read \
+                 landing {} dot(s) from its frame's set tick (ppu frame \
+                 {})",
+                r.delta,
+                r.ppu_frame,
+            );
+            seen.insert(r.delta);
+        }
+        let mut seen: Vec<i64> = seen.into_iter().collect();
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec![-2, -1, 0, 1, 2],
+            "{what}: the sweep did not reach every landing offset — the \
+             table would be vacuously satisfied ({} near-set reads over \
+             {SWEEP_STEPS} instructions)",
+            near.len(),
+        );
+    }
+
+    #[test]
+    fn vblank_read_race_five_point_profile() {
+        // THE FROZEN TABLE, measured feedback-free (see
+        // `build_poll_nes_no_nmi`).
+        let (near, flag_frames) = sweep_profile(true);
+        assert_profile(&near, &flag_frames, &RACE_ON_PROFILE, "flag ON");
+    }
+
+    #[test]
+    fn vblank_read_race_off_leaves_the_whole_profile_legacy() {
+        // The delta-0 row is a property of the FLAG, not of the dot:
+        // with the race off, the frame's vblank flag comes up at every
+        // landing offset and bit 7 tracks only whether the set tick had
+        // already run.
+        const LEGACY_PROFILE: [(i64, u8, bool); 5] = [
+            (-2, 0x00, true),
+            (-1, 0x00, true),
+            (0, 0x00, true),
+            (1, 0x80, true),
+            (2, 0x80, true),
+        ];
+        let (near, flag_frames) = sweep_profile(false);
+        assert_profile(&near, &flag_frames, &LEGACY_PROFILE, "flag OFF");
+    }
+
+    #[test]
+    fn vblank_read_race_window_is_exactly_one_landing_dot() {
+        // Guards against a `<=` / `±1` slip in the landing compare: with
+        // the flag ON, the frames whose vblank NMI goes missing are
+        // exactly the frames that had a delta-0 read, and nothing else
+        // changes about which frames service an NMI.
+        let mut on = build_poll_nes(true, Some(0));
+        let mut off = build_poll_nes(false, Some(0));
+        let on_run = run_poll_rom(&mut on, SWEEP_STEPS);
+        let off_run = run_poll_rom(&mut off, SWEEP_STEPS);
+        let raced_frames: HashSet<u64> = on_run
+            .near_set_reads
+            .iter()
+            .filter(|r| r.delta == 0)
+            .map(|r| r.ppu_frame)
+            .collect();
+        assert!(
+            !raced_frames.is_empty(),
+            "the sweep never landed a read on a set dot; the test cannot \
+             discriminate"
+        );
+        // Compare only over frames both runs reached: dropping an NMI
+        // shifts the instruction stream, so the ON run covers slightly
+        // fewer/more frames by the step budget.
+        let horizon = on_run
+            .nmi_frames
+            .iter()
+            .chain(off_run.nmi_frames.iter())
+            .copied()
+            .min()
+            .unwrap()
+            ..=raced_frames.iter().copied().max().unwrap();
+        let missing: Vec<u64> = horizon
+            .clone()
+            .filter(|f| off_run.nmi_frames.contains(f) && !on_run.nmi_frames.contains(f))
+            .collect();
+        let mut expected: Vec<u64> = raced_frames.into_iter().collect();
+        expected.sort();
+        assert_eq!(
+            missing, expected,
+            "the frames whose NMI the race dropped are not exactly the \
+             frames with a delta-0 read"
+        );
+    }
+
+    #[test]
+    fn vblank_read_race_is_scoped_to_one_frame() {
+        // The drained latch is scoped to the frame it was drained in:
+        // the run must keep servicing NMIs on later frames, and the
+        // suppression must never be the tail of the log.
+        let mut nes = build_poll_nes(true, Some(0));
+        let run = run_poll_rom(&mut nes, SWEEP_STEPS);
+        let raced: Vec<u64> = run
+            .near_set_reads
+            .iter()
+            .filter(|r| r.delta == 0)
+            .map(|r| r.ppu_frame)
+            .collect();
+        assert!(!raced.is_empty(), "the sweep never raced a set dot");
+        for f in raced {
+            assert!(
+                !run.nmi_frames.contains(&f),
+                "frame {f} serviced an NMI despite its latch being drained"
+            );
+            assert!(
+                run.nmi_frames.iter().any(|&g| g > f),
+                "the suppression leaked past frame {f} — no later frame \
+                 serviced an NMI"
+            );
+        }
+    }
+
+    #[test]
+    fn vblank_read_race_drops_the_frame_nmi_not_shifts_it() {
+        // The dropped NMI must not resurface early or late: the run with
+        // the flag ON services strictly fewer NMIs, and the first NMI
+        // that moves slips by exactly one frame's worth of CPU cycles.
+        let mut on = build_poll_nes(true, Some(0));
+        let mut off = build_poll_nes(false, Some(0));
+        let (mut v, mut a) = (NullSinks, NullSinks);
+        let mut stamps = [Vec::new(), Vec::new()];
+        for (i, nes) in [&mut on, &mut off].into_iter().enumerate() {
+            for _ in 0..SWEEP_STEPS {
+                nes.step(&mut v, &mut a);
+                if nes.cpu.regs.pc == 0xE000 {
+                    stamps[i].push(nes.cycles);
+                }
+            }
+        }
+        assert!(
+            stamps[0].len() < stamps[1].len(),
+            "flag ON serviced {} NMIs vs {} with it OFF — a raced set dot \
+             must DROP that frame's NMI, never add one",
+            stamps[0].len(),
+            stamps[1].len(),
+        );
+        let split = stamps[0]
+            .iter()
+            .zip(stamps[1].iter())
+            .position(|(x, y)| x != y)
+            .expect("the shorter stamp list must diverge, not just end early");
+        let skipped = stamps[0][split] as i64 - stamps[1][split] as i64;
+        // One NTSC frame is 89342 dots ≈ 29780.67 CPU cycles.
+        assert!(
+            (29_700..=29_900).contains(&skipped),
+            "the first moved NMI slipped {skipped} cycles, not one frame \
+             (on={} off={})",
+            stamps[0][split],
+            stamps[1][split],
+        );
+    }
+
+    // ================================================================
+    // The bus-phase anchor: inert everywhere except lead 1.
+    // ================================================================
+
+    /// Flag ON must be byte-identical to flag OFF over `steps`
+    /// instructions of the poll stream in the given lane.
+    fn assert_race_is_inert(read_offset: Option<u8>, steps: usize, lane: &str) {
+        let mut on = build_poll_nes(true, read_offset);
+        let mut off = build_poll_nes(false, read_offset);
+        assert!(
+            !on.vblank_read_race_prereqs_met(),
+            "{lane}: this lane must NOT satisfy the race's prerequisites"
+        );
+        let (mut v, mut a) = (NullSinks, NullSinks);
+        let mut reads = 0usize;
+        let mut last_read_dot = on.ppu.last_status_read_dot;
+        for i in 0..steps {
+            on.step(&mut v, &mut a);
+            off.step(&mut v, &mut a);
+            if on.ppu.last_status_read_dot != last_read_dot {
+                last_read_dot = on.ppu.last_status_read_dot;
+                reads += 1;
+            }
+            if i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&on),
+                    state_digest(&off),
+                    "{lane}: hw_vblank_read_race forced ON diverged from \
+                     OFF at instruction {i} — a mis-phased anchor would \
+                     suppress frame NMIs the hardware does not, injecting \
+                     a lockstep fork"
+                );
+            }
+        }
+        assert!(
+            reads > 10_000,
+            "{lane}: sanity — the stream must actually be polling $2002 \
+             (saw {reads} reads)"
+        );
+    }
+
+    #[test]
+    fn vblank_read_race_is_inert_at_the_legacy_end_of_cycle_phase() {
+        // THE CAMPAIGN'S CONFIGURATION. `--hw-all` does NOT set
+        // `hw_event_ppu` and leaves `ppu_read_dot_offset` at 2, so every
+        // read is serviced at the end of its CPU cycle (lead 3) — where
+        // the set dot has already run when the read happens. Even
+        // force-armed at the `Nes` level, bypassing the Python setter's
+        // refusal, the race must be byte-invisible there.
+        assert_race_is_inert(None, 200_000, "legacy end-of-cycle (lead 3)");
+    }
+
+    #[test]
+    fn vblank_read_race_is_inert_at_the_phi2_and_end_of_cycle_offsets() {
+        // The sub-cycle lane at the two non-racing offsets: offset 1 is
+        // the repo's own φ2 model (lead 2) and offset 2 is end-of-cycle
+        // (lead 3). Both satisfy the PPU-side rule on SOME CPU cycle —
+        // just not the one the hardware races on — so both must be inert.
+        assert_race_is_inert(Some(1), 200_000, "sub-cycle φ2 (lead 2)");
+        assert_race_is_inert(Some(2), 200_000, "sub-cycle end-of-cycle (lead 3)");
+    }
+
+    #[test]
+    fn vblank_read_race_prereqs_are_exactly_the_racing_lead() {
+        // The gate the Python setters refuse on must agree, knob for
+        // knob, with the lead `Nes::tick` will actually publish.
+        let mut nes = build_poll_nes(false, None);
+        assert!(!nes.vblank_read_race_prereqs_met(), "default lane");
+        nes.hw_event_ppu = true;
+        assert!(!nes.vblank_read_race_prereqs_met(), "offset still 2");
+        nes.ppu_read_dot_offset = 0;
+        assert!(
+            !nes.vblank_read_race_prereqs_met(),
+            "without hw_mmio_read_timing the read is early-committed at \
+             cycle 0, so it has no deferred handle to sub-cycle"
+        );
+        nes.cpu.hw_mmio_read_timing = true;
+        assert!(nes.vblank_read_race_prereqs_met(), "the racing lane");
+        nes.ppu_read_dot_offset = 1;
+        assert!(
+            !nes.vblank_read_race_prereqs_met(),
+            "offset 1 is the repo's φ2 lead (2), one CPU cycle off Mesen's"
+        );
+    }
+
+    #[test]
+    fn vblank_read_race_only_a_status_read_drains_the_latch() {
+        // `$2002` specifically, not "any deferred $2000-$3FFF read at
+        // that dot": `LDA $2004` (OAMDATA — a deferred PPU-register read
+        // with no vblank-latch side effect) polled at the same grid must
+        // never suppress anything. Same ROM with the poll address
+        // patched.
+        let mut rom = build_nmi_poll_rom();
+        // iNES header is 16 bytes; poll operand lo byte at PRG 0x4010.
+        assert_eq!(rom[16 + 0x4010], 0x02, "poll operand moved");
+        rom[16 + 0x4010] = 0x04; // $2002 -> $2004 (OAMDATA)
+        let load = |race: bool| {
+            let cart = Cartridge::load(&mut std::io::Cursor::new(rom.clone()))
+                .expect("synthetic NMI-poll NROM should parse");
+            let mut nes = Nes::new(cart);
+            nes.hw_event_ppu = true;
+            nes.cpu.hw_mmio_read_timing = true;
+            nes.cpu.hw_nmi_poll_timing = true;
+            nes.ppu_read_dot_offset = 0;
+            nes.set_hw_vblank_read_race(race);
+            nes.set_skip_render(true);
+            nes
+        };
+        let mut on = load(true);
+        let mut off = load(false);
+        let (mut v, mut a) = (NullSinks, NullSinks);
+        for i in 0..200_000usize {
+            on.step(&mut v, &mut a);
+            off.step(&mut v, &mut a);
+            if i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&on),
+                    state_digest(&off),
+                    "a deferred $2004 read on the set dot drained the \
+                     PPUSTATUS latch at instruction {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn vblank_read_race_routing_invariant_at_the_default_offset() {
+        // The `hw_event_ppu` contract: ON must be byte-identical to OFF
+        // at the default end-of-cycle offset. Re-run it with the race
+        // flag force-armed, so the flag's presence cannot break the
+        // contract the whole event-driven campaign rests on.
+        const STEPS: usize = 60_000;
+        let mut machines = [true, false].map(|event_ppu| {
+            let mut nes = build_poll_nes(true, None);
+            nes.hw_event_ppu = event_ppu;
+            nes
+        });
+        let (mut v, mut a) = (NullSinks, NullSinks);
+        for i in 0..STEPS {
+            for nes in machines.iter_mut() {
+                nes.step(&mut v, &mut a);
+            }
+            if i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&machines[0]),
+                    state_digest(&machines[1]),
+                    "hw_event_ppu ON diverged from OFF at instruction {i} \
+                     with hw_vblank_read_race armed"
+                );
+            }
+        }
+    }
+
+    // ================================================================
+    // Flag-OFF and config-lifetime contracts.
+    // ================================================================
+
+    #[test]
+    fn vblank_read_race_off_is_default_and_byte_identical() {
+        // Flag-OFF contract: the field defaults to false, and OFF is the
+        // untouched legacy path. Locked as digest lockstep between a
+        // default-constructed machine and an explicitly-OFF one over a
+        // stream that reads `$2002` every four cycles, i.e. that sweeps
+        // the whole vblank neighbourhood many times.
+        let load = |explicit_off: bool| {
+            let cart = Cartridge::load(&mut std::io::Cursor::new(build_status_poll_rom()))
+                .expect("synthetic status-poll NROM should parse");
+            let mut nes = Nes::new(cart);
+            if explicit_off {
+                nes.set_hw_vblank_read_race(false);
+            }
+            nes.set_skip_render(true);
+            nes
+        };
+        let mut default_nes = load(false);
+        assert!(
+            !default_nes.hw_vblank_read_race(),
+            "hw_vblank_read_race must default OFF"
+        );
+        let mut off = load(true);
+        let (mut v, mut a) = (NullSinks, NullSinks);
+        for i in 0..90_000usize {
+            default_nes.step(&mut v, &mut a);
+            off.step(&mut v, &mut a);
+            if i < 4000 || i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&default_nes),
+                    state_digest(&off),
+                    "explicit flag-OFF diverged from a default-constructed \
+                     machine at instruction {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn vblank_read_race_inert_without_status_reads() {
+        // `build_nop_rom` enables the vblank NMI and then never reads
+        // `$2002`, so there is no read to win the latch: in the racing
+        // lane, flag ON must be byte-identical to flag OFF across many
+        // frames. Locks that the flag's ONLY observable is a PPUSTATUS
+        // read resolving immediately before the set tick.
+        let load = |race: bool| {
+            let cart = Cartridge::load(&mut std::io::Cursor::new(build_nop_rom()))
+                .expect("synthetic NROM should parse");
+            let mut nes = Nes::new(cart);
+            nes.hw_event_ppu = true;
+            nes.cpu.hw_mmio_read_timing = true;
+            nes.cpu.hw_nmi_poll_timing = true;
+            nes.ppu_read_dot_offset = 0;
+            nes.set_hw_vblank_read_race(race);
+            nes.set_skip_render(true);
+            nes
+        };
+        let mut on = load(true);
+        let mut off = load(false);
+        let (mut v, mut a) = (NullSinks, NullSinks);
+        for i in 0..90_000usize {
+            on.step(&mut v, &mut a);
+            off.step(&mut v, &mut a);
+            if i < 4000 || i % 37 == 0 {
+                assert_eq!(
+                    state_digest(&on),
+                    state_digest(&off),
+                    "hw_vblank_read_race ON diverged from OFF at {i} with \
+                     no $2002 read in the stream"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn vblank_read_race_is_config_not_savestate() {
+        // Config, not state: `reset()` must leave the flag armed (the
+        // hw-flag contract every other `hw_*` knob holds to), and so
+        // must a savestate round trip — a snapshot carries the machine,
+        // not the fidelity configuration it was run under.
+        let mut nes = build_poll_nes(true, Some(0));
+        nes.reset();
+        assert!(
+            nes.hw_vblank_read_race(),
+            "reset() cleared hw_vblank_read_race — it is config, not state"
+        );
+        let snapshot = nes.get_state();
+        let mut plain = build_poll_nes(false, Some(0));
+        plain.apply_state(&snapshot);
+        assert!(
+            !plain.hw_vblank_read_race(),
+            "apply_state imported the source machine's fidelity config"
+        );
+        nes.apply_state(&snapshot);
+        assert!(
+            nes.hw_vblank_read_race(),
+            "apply_state cleared hw_vblank_read_race"
+        );
     }
 }

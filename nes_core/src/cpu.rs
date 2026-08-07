@@ -1866,6 +1866,18 @@ impl Cpu {
         self.hw_mmio_read_timing && (0x2000..=0x3FFF).contains(&self.addr_abs)
     }
 
+    /// True when the deferred access this cycle is a READ of PPUSTATUS
+    /// (`$2002`, including its every-8-bytes mirrors up to `$3FFF`).
+    /// Narrower than `pending_deferred_ppu_access`, which reports any
+    /// `$2000-$3FFF` access: the `$2002`/vblank read race
+    /// (`Nes::hw_vblank_read_race`) is a property of the PPUSTATUS latch
+    /// specifically — a deferred `$2007` read at the same dot must not
+    /// drain it.
+    #[inline]
+    pub(crate) fn pending_deferred_status_read(&self) -> bool {
+        self.pending_deferred_ppu_access() == Some(false) && (self.addr_abs & 0x2007) == 0x2002
+    }
+
     /// Write-side mirror of `defer_ppu_read` — see the
     /// `hw_mmio_write_timing` field doc.
     fn defer_ppu_write(&self) -> bool {

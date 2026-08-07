@@ -1180,6 +1180,50 @@ impl Pool {
         }
     }
 
+    /// Hardware-true `$2002`/vblank read race on every worker —
+    /// single-env mirror is
+    /// `NESEnvironment::set_hw_vblank_read_race`; see the `Nes` field
+    /// doc for the modeled window. Default OFF. Refuses an enable whose
+    /// bus phase would make the race inert, for the same reason the
+    /// single-env setter does; the prerequisites are checked on every
+    /// worker BEFORE any worker is mutated, so a refusal leaves the pool
+    /// uniformly configured.
+    fn set_hw_vblank_read_race(&self, on: bool) -> PyResult<()> {
+        // SAFETY: as above — sequential from Python.
+        if on {
+            for (i, cell) in self.workers.iter().enumerate() {
+                let w = unsafe { worker_mut(cell) };
+                if !w.nes.vblank_read_race_prereqs_met() {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "hw_vblank_read_race needs the sub-cycle read phase, \
+                         missing on worker {i}: enable hw_event_ppu + \
+                         hw_mmio_read_timing and set ppu_read_dot_offset=0 \
+                         FIRST (see NESEnvironment.set_hw_vblank_read_race)"
+                    )));
+                }
+            }
+        }
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.nes.set_hw_vblank_read_race(on);
+        }
+        Ok(())
+    }
+
+    /// Do the bus-phase prerequisites for `set_hw_vblank_read_race` hold
+    /// on every worker? Single-env mirror is
+    /// `NESEnvironment::vblank_read_race_prereqs_met`.
+    fn vblank_read_race_prereqs_met(&self) -> bool {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            if !w.nes.vblank_read_race_prereqs_met() {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Hardware-true PPU-register write timing on every worker —
     /// single-env mirror is `NESEnvironment::set_hw_mmio_write_timing`.
     fn set_hw_mmio_write_timing(&self, on: bool) {

@@ -2442,6 +2442,21 @@ impl Ppu {
         self.cycles - within
     }
 
+    /// The absolute dot of THIS frame's vblank set tick (scanline 241,
+    /// cycle 1) — the dot `set_vblank()` runs on. Never rolls forward:
+    /// the `$2002` read race (`Nes::hw_vblank_read_race`) is defined
+    /// against the set tick of the frame the read lands in, so a read
+    /// landing AFTER that tick must still compare against it, not
+    /// against the next frame's.
+    ///
+    /// Callers outside the PPU only: `Ppu::tick` has the (241,1) test
+    /// inline and must not grow a call here (it is the fingerprinted hot
+    /// body — scripts/ppu_layout_check.sh).
+    #[inline(always)]
+    pub fn vblank_set_dot(&self) -> u64 {
+        self.frame_base_dot() + (VBLANK_START_SCANLINE as u64) * CYCLES_PER_SCANLINE + 1
+    }
+
     /// §1.1 — the soonest absolute dot at which `set_vblank()` fires
     /// (scanline 241, cycle 1). Closed form, independent of scroll/mask.
     /// If the current position is already past this frame's set tick, the
@@ -2449,8 +2464,7 @@ impl Ppu {
     /// the skip lands on pre-render 261, after the vblank set at 241).
     #[inline(never)]
     pub fn next_vblank_set_dot(&self) -> u64 {
-        let base = self.frame_base_dot();
-        let set = base + (VBLANK_START_SCANLINE as u64) * CYCLES_PER_SCANLINE + 1;
+        let set = self.vblank_set_dot();
         if self.cycles <= set {
             set
         } else {

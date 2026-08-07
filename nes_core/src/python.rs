@@ -523,6 +523,45 @@ impl NESEnvironment {
         self.nes.hw_nmi_subcycle_phase = on;
     }
 
+    /// Hardware-true `$2002`/vblank read race: a PPUSTATUS read that
+    /// resolves immediately before the (241,1) set dot drains the shared
+    /// latch before the PPU raises it, so the flag reads clear, stays
+    /// clear for the rest of the frame, and that frame's vblank NMI
+    /// never fires. See the `Nes` field doc for the modeled window and
+    /// for the CPU-side half that is deliberately out of scope. Default
+    /// OFF. Config, not state.
+    ///
+    /// REFUSES an enable whose bus phase would make it inert: the race
+    /// only names the same CPU cycle as the hardware when a deferred
+    /// PPUSTATUS read is serviced one PPU dot into its cycle, so
+    /// `set_hw_event_ppu(True)`, `set_hw_mmio_read_timing(True)` and
+    /// `set_ppu_read_dot_offset(0)` must already be in effect. Raising
+    /// here rather than silently no-op'ing is deliberate: a fidelity
+    /// flag that reports success and does nothing is how a lockstep
+    /// campaign mis-attributes a result.
+    fn set_hw_vblank_read_race(&mut self, on: bool) -> PyResult<()> {
+        if on && !self.nes.vblank_read_race_prereqs_met() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "hw_vblank_read_race needs the sub-cycle read phase: enable \
+                 hw_event_ppu + hw_mmio_read_timing and set \
+                 ppu_read_dot_offset=0 FIRST (the race is modeled only at \
+                 the bus phase where it names the same CPU cycle as the \
+                 hardware; at the shipped end-of-cycle phase the vblank set \
+                 dot has already run when the read is serviced)",
+            ));
+        }
+        self.nes.set_hw_vblank_read_race(on);
+        Ok(())
+    }
+
+    /// Do the bus-phase prerequisites for `set_hw_vblank_read_race` hold
+    /// right now? Lets a harness assert the fidelity lane it thinks it
+    /// configured instead of discovering an inert flag from a null
+    /// result.
+    fn vblank_read_race_prereqs_met(&self) -> bool {
+        self.nes.vblank_read_race_prereqs_met()
+    }
+
     /// Hardware-true PPU-register write timing: absolute-mode stores
     /// to $2000-$3FFF commit on the instruction's final cycle. See
     /// the Cpu field doc for the CV frame-11 NMI-enable receipt.
