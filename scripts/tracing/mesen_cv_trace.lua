@@ -7,8 +7,8 @@
 
 local TAPE_PATH = "/tmp/cv_tape.bin"
 local LOG_PATH = "/tmp/mesen_cv_trace.txt"
-local TRACE_START = 3790
-local TRACE_END = 3800
+local TRACE_START = 4112
+local TRACE_END = 4121
 local MAX_INSTR = 400000
 
 local tf = io.open(TAPE_PATH, "rb")
