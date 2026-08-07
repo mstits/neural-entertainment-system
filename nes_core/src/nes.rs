@@ -101,11 +101,19 @@ pub struct Nes {
     /// the end-of-cycle sample. Forces the per-cycle path: the
     /// ASM/bulk batchers sample the line once per batch and cannot
     /// place a mid-cycle latch. This flag moves WHEN an edge becomes
-    /// visible; WHICH boundary snapshot the service poll consumes
-    /// stays `cpu.hw_nmi_poll_timing`'s call — the two compose in the
-    /// lockstep lane, and the φ2 latch also acts standalone (a dot-2
-    /// edge on an instruction's final cycle defers service by one
-    /// instruction even on the legacy live-`nmi_pended` poll).
+    /// visible AND, when on, which boundary snapshot the service poll
+    /// consumes: the live `nmi_pended` — which under the φ2 latch is
+    /// exactly the pended state as of φ2 of the FINAL cycle, the
+    /// snapshot Mesen's before-every-bus-transaction catch-up reads at
+    /// its end-of-instruction check. Stacking the second-to-last-cycle
+    /// `nmi_poll_latch` on top of the φ2 latch double-quantizes —
+    /// measured (2026-08-07) as a constant +1-cycle NMI-entry offset
+    /// vs Mesen with anti-phase OAM-DMA start parities from CV tape
+    /// frame 3423, the feedback loop behind the frame-3435 state fork
+    /// — so `poll_interrupts` bypasses the latch while this flag is
+    /// set; `cpu.hw_nmi_poll_timing`'s latch convention applies only
+    /// without it. Standalone (poll timing off) the φ2 latch still
+    /// defers a dot-2 final-cycle edge by one instruction vs legacy.
     /// Default OFF: byte-identical to the shipped interleave.
     pub hw_nmi_subcycle_phase: bool,
 
@@ -608,6 +616,11 @@ impl Nes {
         video_frame_sink: &mut V,
         audio_frame_sink: &mut A,
     ) -> bool {
+        // Keep the CPU's φ2-latch mirror in sync (tests and tools set
+        // the `Nes` field directly, so setters can't be the sync
+        // point). Unconditional store: cheaper than the branch.
+        self.cpu.hw_nmi_subcycle_phase = self.hw_nmi_subcycle_phase;
+
         // There is 1 APU cycle per CPU cycle.
         let cpu_stall_cycles = self.apu.tick(&mut self.mapper, audio_frame_sink);
         if cpu_stall_cycles > 0 {
@@ -1727,45 +1740,53 @@ mod event_ppu_routing_tests {
     }
 
     /// Shared assertions for the φ2 A/B: in the homogeneous 3-cycle
-    /// JMP loop the modeled shift is exactly one instruction — pended
-    /// visibility moves one cycle later, crossing at most one poll
-    /// latch point, deferring service by one JMP (+3 cycles) — and
-    /// only for edges on the critical dot slot; slot-0/1 edges are
-    /// untouched (+0). Phases realign after each NMI (the deferral is
-    /// exactly one loop period), so the deltas stay per-edge.
-    fn assert_phi2_shift_profile(on: &[usize], off: &[usize], label: &str) {
+    /// JMP loop the modeled shift is exactly one instruction (one JMP
+    /// = 3 cycles), and only for edges on the model's critical dot
+    /// slot; the other slots are untouched (+0). The DIRECTION is the
+    /// caller's call: standalone (poll timing off) the φ2 latch can
+    /// only defer (+3, a dot-2 final-cycle edge loses its end-of-cycle
+    /// visibility); composed with `hw_nmi_poll_timing` the flag also
+    /// switches the boundary poll from the second-to-last-cycle latch
+    /// to the φ2-of-final-cycle live value, so a final-cycle dot-0/1
+    /// edge is serviced one JMP EARLIER (-3). Phases realign after
+    /// each NMI (the shift is exactly one loop period), so the deltas
+    /// stay per-edge.
+    fn assert_phi2_shift_profile(
+        on: &[usize],
+        off: &[usize],
+        moved: i64,
+        label: &str,
+    ) {
         assert_ne!(
             on, off,
             "{label}: φ2 latch never moved an NMI service point — the flag \
              is not reaching the per-dot sample suppression"
         );
         let mut zeros = 0usize;
-        let mut threes = 0usize;
+        let mut moves = 0usize;
         for (i, (&s_on, &s_off)) in on.iter().zip(off.iter()).enumerate() {
-            assert!(
-                s_on >= s_off,
-                "{label}: φ2 sampling can only defer edge visibility, never \
-                 advance it (nmi {i}: on={s_on} off={s_off})"
-            );
-            match s_on - s_off {
-                0 => zeros += 1,
-                3 => threes += 1,
-                d => panic!(
+            let d = s_on as i64 - s_off as i64;
+            if d == 0 {
+                zeros += 1;
+            } else if d == moved {
+                moves += 1;
+            } else {
+                panic!(
                     "{label}: nmi {i} shifted by {d} cycles (on={s_on} \
                      off={s_off}); the φ2 model predicts exactly 0 or one \
-                     3-cycle JMP deferral"
-                ),
+                     JMP ({moved:+})"
+                );
             }
         }
         assert!(
-            threes >= 1,
-            "{label}: no NMI deferred by one JMP — the dot-2 edge slot was \
-             never suppressed (zeros={zeros})"
+            moves >= 1,
+            "{label}: no NMI moved by one JMP ({moved:+}) — the critical \
+             edge slot was never exercised (zeros={zeros})"
         );
         assert!(
             zeros >= 1,
-            "{label}: every NMI shifted — slot-0/1 edges must be untouched \
-             (threes={threes})"
+            "{label}: every NMI shifted — non-critical edge slots must be \
+             untouched (moves={moves})"
         );
     }
 
@@ -1773,13 +1794,19 @@ mod event_ppu_routing_tests {
     fn nmi_subcycle_phase_shifts_service_under_poll_timing() {
         // Both machines on the per-cycle path with hardware poll timing
         // (the lockstep-lane composition); the ONLY difference is the
-        // φ2 latch. The edge slot rotates across frames (see
-        // build_nmi_spin_rom), so 12 NMIs cover the critical slot 2
-        // several times.
+        // φ2 flag — which here both suppresses the dot-2 sample AND
+        // switches the boundary poll to the φ2-of-final-cycle live
+        // value (Mesen's snapshot). Net vs the second-to-last-cycle
+        // latch: a final-cycle dot-0/1 edge is serviced one JMP
+        // EARLIER (-3); a second-to-last-cycle dot-2 edge — deferred
+        // +3 by suppression alone — is caught back by the later poll
+        // point (net 0). The edge slot rotates across frames (see
+        // build_nmi_spin_rom), so 12 NMIs cover every slot several
+        // times.
         let n = 12;
         let off = nmi_service_stamps(false, true, n);
         let on = nmi_service_stamps(true, true, n);
-        assert_phi2_shift_profile(&on, &off, "poll_timing=on");
+        assert_phi2_shift_profile(&on, &off, -3, "poll_timing=on");
     }
 
     #[test]
@@ -1789,13 +1816,13 @@ mod event_ppu_routing_tests {
         // legacy live-`nmi_pended` poll: a dot-2 edge on an
         // instruction's FINAL cycle is visible to the boundary poll
         // when sampled end-of-cycle but not at φ2, deferring service
-        // by one instruction. The critical cycle differs from the
-        // poll-timing case (final vs second-to-last), but the shift
-        // profile is the same {0, +3}.
+        // by one instruction: shift profile {0, +3}. (Both machines
+        // use the live boundary poll here, so unlike the poll-timing
+        // composition there is no snapshot switch to advance service.)
         let n = 12;
         let off = nmi_service_stamps(false, false, n);
         let on = nmi_service_stamps(true, false, n);
-        assert_phi2_shift_profile(&on, &off, "poll_timing=off");
+        assert_phi2_shift_profile(&on, &off, 3, "poll_timing=off");
     }
 
     #[test]

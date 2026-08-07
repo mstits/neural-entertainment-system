@@ -292,6 +292,21 @@ pub struct Cpu {
     /// OAM-DMA parity and forks long tape replays. Default OFF.
     pub hw_nmi_poll_timing: bool,
 
+    /// Mirror of `Nes::hw_nmi_subcycle_phase` (config, not savestate;
+    /// synced every `Nes::tick`). When the φ2 latch is active, the
+    /// live `nmi_pended` at an instruction boundary IS the value as of
+    /// φ2 of the final cycle — the cycle's three dots run before its
+    /// execution and the dot-2 sample is suppressed — and that is the
+    /// snapshot Mesen's before-every-bus-transaction PPU catch-up
+    /// consumes at its end-of-instruction check. Consuming the
+    /// second-to-last-cycle `nmi_poll_latch` on top of the φ2 latch
+    /// double-quantizes: measured as a CONSTANT +1-cycle NMI-entry
+    /// offset vs Mesen and anti-phase OAM-DMA start parities from CV
+    /// tape frame 3423 (2026-08-07, dma_parity_probe.py), the feedback
+    /// loop behind the frame-3435 state fork. So `poll_interrupts`
+    /// uses the live value whenever this is set.
+    pub hw_nmi_subcycle_phase: bool,
+
     /// `nmi_pended` as of the end of the previous CPU cycle — the
     /// value the hardware poll point actually sees. Runtime latch,
     /// deliberately not serialized: at savestate boundaries the CPU
@@ -564,8 +579,13 @@ impl Cpu {
         // decision uses `nmi_poll_latch` (the pended state as of the
         // end of the PREVIOUS cycle), so an edge landing during the
         // final cycle defers service by one instruction. Legacy path
-        // uses the live `nmi_pended` (immediate service).
-        let take_nmi = if self.hw_nmi_poll_timing {
+        // uses the live `nmi_pended` (immediate service). Under the φ2
+        // latch (`hw_nmi_subcycle_phase`) the live value already
+        // carries the sub-cycle quantization — it equals pended as of
+        // φ2 of the FINAL cycle, the snapshot Mesen consumes — so the
+        // second-to-last-cycle latch must NOT stack on top of it (see
+        // the field doc for the CV receipt).
+        let take_nmi = if self.hw_nmi_poll_timing && !self.hw_nmi_subcycle_phase {
             self.nmi_poll_latch
         } else {
             self.nmi_pended
