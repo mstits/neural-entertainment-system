@@ -16,6 +16,12 @@ override and what log-prob to record:
   sticky fires (PPO importance ratio consistency).
 * The `last_action_per_genome` slot tracks what was actually
   executed, not what was sampled.
+
+The second block pins `StickyBoundary`, the vanilla-PPO path's
+episode-boundary guard: a mid-rollout in-place restart begins a new
+episode, and the carried action must not cross it (eval gates the roll
+on `step > 0` per episode — scripts/eval_game.py). Opt-in, so the
+disabled guard must stay bit-identical to the pre-flag roll.
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from src.training.trainer import Trainer
+from src.training.trainer import StickyBoundary, Trainer
 
 
 def _stub(sticky_prob: float) -> Trainer:
@@ -173,3 +179,123 @@ def test_sticky_logprob_clamped_at_floor():
     assert actions == [5]
     assert log_probs_old[0] == pytest.approx(-13.0), \
         "stuck-action log-prob must be floored at -13.0, not recorded raw"
+
+
+# ===== StickyBoundary: no carry-over across an episode boundary =====
+
+
+def _simulate_rollout(
+    enabled: bool, death_step: int, n_steps: int = 5
+) -> list[int]:
+    """Replay the vanilla-PPO rollout's sticky bookkeeping, in order.
+
+    Per step the loop rolls sticky (skipped at t == 0), writes the
+    EXECUTED action into the carry slot, consumes the boundary
+    suppression, steps the env, and — if the env died — restarts it in
+    place. One env, sticky p = 1.0, so every post-t0 action either
+    repeats the carry slot or proves it did not.
+
+    Returns the executed action per step; the sampled action at step t
+    is t + 1, so a repeat is visible by value.
+    """
+    guard = StickyBoundary(1, enabled)
+    prev = np.zeros(1, dtype=np.int64)
+    p_env = np.ones(1, dtype=np.float64)
+    executed: list[int] = []
+    for t in range(n_steps):
+        act = np.array([t + 1], dtype=np.int64)
+        if t > 0:
+            rows = guard.override_rows(p_env)
+            if rows.size:
+                act[rows] = prev[rows]
+        prev[:] = act
+        guard.consume()
+        executed.append(int(act[0]))
+        if t == death_step:
+            guard.mark_restart(0, prev)
+    return executed
+
+
+def test_no_sticky_override_on_first_step_after_restart() -> None:
+    """The step after an in-place restart is an episode's FIRST step:
+    it must run the freshly sampled action, not the input the previous
+    life died holding. Matches eval's per-episode `step > 0` gate."""
+    executed = _simulate_rollout(enabled=True, death_step=2)
+    # t0 sampled (no roll at t == 0), t1/t2 stick to the carry slot,
+    # t3 is the post-restart first step (sampled 4 wins), t4 sticks to it.
+    assert executed == [1, 1, 1, 4, 4]
+
+
+def test_boundary_suppression_lasts_exactly_one_step() -> None:
+    """The guard suppresses one step, not the rest of the episode —
+    sticky training is the point, the boundary is the exception."""
+    guard = StickyBoundary(3, True)
+    prev = np.array([5, 6, 7], dtype=np.int64)
+    p_env = np.ones(3, dtype=np.float64)
+    guard.mark_restart(1, prev)
+    assert guard.override_rows(p_env).tolist() == [0, 2]
+    guard.consume()
+    assert guard.override_rows(p_env).tolist() == [0, 1, 2]
+
+
+def test_restart_zeroes_the_carried_action() -> None:
+    """Belt and braces: the carry slot itself is cleared at the restart,
+    so no consumer downstream of the guard can replay a pre-death input."""
+    guard = StickyBoundary(2, True)
+    prev = np.array([5, 6], dtype=np.int64)
+    guard.mark_restart(1, prev)
+    assert prev.tolist() == [5, 0]
+
+
+def test_disabled_guard_is_a_pure_noop() -> None:
+    """Flag off = the pre-flag behavior, carry-over across the boundary
+    included. Existing lineages and honest baselines must not move."""
+    guard = StickyBoundary(2, False)
+    prev = np.array([5, 6], dtype=np.int64)
+    guard.mark_restart(1, prev)
+    assert prev.tolist() == [5, 6], "disabled guard must not touch the slot"
+    assert guard.override_rows(np.ones(2)).tolist() == [0, 1]
+    assert _simulate_rollout(enabled=False, death_step=2) == [1, 1, 1, 1, 1]
+
+
+def test_disabled_guard_draws_the_same_rng_as_the_inline_roll() -> None:
+    """The roll this replaced was `np.random.random(n) < p_env`. Same
+    generator, same draw count, same rows — a seeded run trained before
+    the flag existed reproduces step for step."""
+    p_env = np.full(6, 0.25)
+    np.random.seed(1234)
+    legacy = np.nonzero(np.random.random(6) < p_env)[0]
+    np.random.seed(1234)
+    got = StickyBoundary(6, False).override_rows(p_env)
+    assert got.tolist() == legacy.tolist()
+    np.random.seed(1234)
+    guard_on = StickyBoundary(6, True)  # nothing marked → identical rows
+    assert guard_on.override_rows(p_env).tolist() == legacy.tolist()
+
+
+def test_override_rows_honors_per_env_probabilities() -> None:
+    """CGSA gives each env its restart cell's noise; the guard must not
+    flatten that vector."""
+    guard = StickyBoundary(3, True)
+    p_env = np.array([1.0, 0.0, 1.0])
+    rows = guard.override_rows(p_env, rng_vals=np.array([0.5, 0.5, 0.5]))
+    assert rows.tolist() == [0, 2]
+
+
+def test_boundary_reset_key_is_registered() -> None:
+    """A knob the trainer reads but the schema doesn't know about is the
+    silent-default bug class — keep the registry honest."""
+    from src.training.config_schema import (
+        KNOWN_REINFORCE_KEYS,
+        validate_profile,
+    )
+
+    assert "sticky_episode_boundary_reset" in KNOWN_REINFORCE_KEYS
+    prof = {
+        "name": "x",
+        "reinforce": {
+            "sticky_action_prob": 0.25,
+            "sticky_episode_boundary_reset": True,
+        },
+    }
+    assert validate_profile(prof) == []

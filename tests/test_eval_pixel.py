@@ -84,6 +84,10 @@ _SEQ_KEYS = {
     "clear_rate", "timestamp", "sequential", "seq_clear_rate", "warp_rate",
     "furthest_seq_level", "furthest_any_level", "furthest_seq", "furthest_any",
     "max_gx_per_episode", "level_clear",
+    # Action-draw provenance — always emitted so a clear rate can never be
+    # read without knowing whether it came from argmax or the policy's own
+    # distribution (see tests/test_eval_action_select.py).
+    "action_select", "temperature",
 }
 
 

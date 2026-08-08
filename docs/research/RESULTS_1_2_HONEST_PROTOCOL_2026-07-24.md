@@ -6,6 +6,13 @@ concurring** (seed 0: S3 0/30, deaths by gx 1827, 1,940 welds; seed 1:
 welds; every seed's curriculum mechanically healthy, every gauntlet
 residual core stuck at local sticky ceiling p≈0.01–0.03). Under the
 pre-registered criteria the policy class is **formally falsified**.
+**⚠ See "Correction (2026-08-08)" at the end: the p≈0.01–0.03 gauntlet
+figures quoted throughout this document are frontier-only (welded zones
+censored out). **At end of run** the uncensored gauntlet reads 0.165 /
+0.148 with 64% / 73% of zones welded, so "the curriculum could not anneal
+the gauntlet" is the wrong description of the residual. No verdict moves:
+the Signpost-2 FAIL (0.054 uncensored on seed 1, derived) and the
+Signpost-3 0/30 both stand.**
 **Ledger:** LEARNED (documented negative). **Companion documents:** `DOSSIER_V3_2026-07-23.md` (the
 elimination record), the SMB 1-2 consulting report (external), and the
 CGSA-PPO implementation (`configs/mario_1_2_cgsa.yaml`,
@@ -108,3 +115,112 @@ per CLAIMS.md.
 3. The robustness profile should be re-measured per-level as other levels
    get learned policies, making the level-by-level noise-ceiling map the
    project's standing scientific artifact.
+
+## Correction (2026-08-08): the gauntlet noise figures were censored
+
+The gauntlet noise numbers quoted above (p≈0.01–0.03) are **frontier-only
+averages** — they average `p` over zones that have *not* yet welded. A zone
+leaves the frontier exactly when the SPRT accepts it as locally
+sticky-robust at its annealed noise, so a curriculum that is succeeding
+retires its highest-`p` zones and drives the frontier average toward zero.
+The figure a healthy curriculum produces is therefore indistinguishable
+from the figure a dead one produces, and the run logs reported only the
+former.
+
+**These are end-of-run figures, not the Signpost-2 measurement.**
+`cgsa_stats.json` is overwritten at every telemetry sample, so the archived
+file is the *final* dump only — seed 1 at iter 5975 (last checkpoint
+`vanilla_ppo_iter_05990.pt`), seed 2 at iter 13695 (`..._13710.pt`). The
+frontier-only column below is what the `[cgsa]` line logged **at that same
+final iteration**; it is not the it800 verdict figure.
+
+| seed | iter (end of run) | zones | welded | welded_frac | gauntlet n (all / frontier) | gauntlet avg_p (frontier-only, **as logged at this iter**) | gauntlet avg_p (**uncensored**) | all-zone avg_p |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 5975 | 2,586 | 1,648 | 0.637 | 505 / 187 | 0.022 | **0.165** | 0.176 |
+| 2 | 13695 | 2,686 | 1,967 | 0.732 | 541 / 198 | 0.009 | **0.148** | 0.180 |
+
+Sources: `checkpoints/mario_1_2_cgsa_s1/cgsa_stats.json`,
+`checkpoints/mario_1_2_cgsa_s2/cgsa_stats.json`. Recompute is pinned by
+`src.training.trainer.cgsa_zone_summary` and regression-tested in
+`tests/test_cgsa_zone_summary.py`; the run logs now print the uncensored
+figures beside the frontier-only ones.
+
+### Signpost 2 is *not* rehabilitated — its FAIL stands
+
+The Signpost-2 verdicts keyed on **0.054** (seed 1,
+`checkpoints/mario_1_2_cgsa_s1/run.log:1737`) and **0.020** (seed 2,
+`run.log:1744`), both logged `FAIL`. The 0.022 / 0.009 pair in the table
+above is end-of-run telemetry and was never a signpost verdict; no
+uncensored it800 figure survives in the archive. For seed 1 it is
+nonetheless *derivable*, and it does not move:
+
+- **Seed 1 — provably FAIL at 0.054, uncensored.** `run.log:1736` at it800
+  logs `cells=2273 welded=235 frontier_avg_p=0.061
+  gauntlet(n=505)_avg_p=0.054`, where `n=505` is the **frontier** gauntlet
+  count (the pre-correction code built `_gaunt` out of `_front`). The final
+  archive has 505 gauntlet zones *in total*. `cg_stats` is append-only —
+  no `del`/`pop`/`clear` against it anywhere in `trainer.py` (only
+  `_cg_entry` insertion and in-place field updates), `gx` is written once via
+  `setdefault` so window membership is fixed, and `welded` is only ever set
+  `True` — so the gauntlet population is monotone non-decreasing:
+  `gaunt_all(it800) ≤ 505`, while `gaunt_frontier(it800) = 505` forces
+  `gaunt_all(it800) ≥ 505`. Hence exactly 505, **zero** gauntlet zones
+  welded at it800, and uncensored == frontier-only == **0.054** — inside
+  the `<0.10` terminate band. Censoring removed nothing at that
+  measurement. Cross-check: only 235 zones had welded level-wide at it800
+  against 318 gauntlet welds at end of run, so the gauntlet welds
+  necessarily landed later; and even the arithmetically impossible worst
+  case — pretending all 235 level-wide welds sat in-window at the 0.25
+  target — gives (505·0.054 + 235·0.25)/740 = 0.116, still under the 0.15
+  bar.
+- **Seed 2 — not recoverable; MARGINAL at best, never a PASS.** Its it800
+  fired at global iter 8520 (resumed run) and logs `cells=2682 welded=1909
+  frontier_avg_p=0.016 gauntlet(n=216)_avg_p=0.020` (`run.log:1743`). Only
+  4 zones were added anywhere after it800, so `gaunt_all(it800) ∈ [537,
+  541]` and 321–325 gauntlet zones had already welded. Their it800 `p`
+  values are *not* recoverable from the final dump, because a welded zone's
+  `p` keeps moving — the `rate < 0.30` back-off in `_cg_finish_episode` has
+  no welded guard (hence welded zones in the archive with `p = 0.0`). The
+  arithmetic bound is therefore **[0.008, 0.158]**; plugging the final
+  welded-gauntlet mean (0.229) gives ≈**0.145**, i.e. MARGINAL. The
+  favourable end of the bound only just touches the 0.15 bar, so no PASS
+  can be claimed on seed 2 either.
+
+The verdict logic is deliberately unchanged (it stays on the frontier-only
+figure it was pre-registered against) so this correction stays visible
+rather than retrofitted onto the criterion.
+
+What the uncensored recompute *does* establish is **end-of-run curriculum
+health**: 64% and 73% of tracked zones welded, the welded gauntlet
+population sitting at p ≈ 0.23–0.25, and a genuine residual frontier core
+(187 / 198 zones) stuck at 0.022 / 0.009. The "measured local sticky
+ceiling ≈0.03–0.05" claim earlier in this document is a statement about
+that **residual core**, not about the gauntlet as a population — read it
+that way.
+
+Related: `configs/mario_1_2_cgsa{,_s1,_s2}.yaml` each carried a **duplicate
+`maintenance_weight` key** (0.003 followed by a stale 0.01). YAML is
+last-wins, so all three protocol seeds silently ran at 0.01 — the value the
+documented v6 fix had replaced because it leaked ~1/3 of attempts to
+welded/waiting zones. The duplicate is now deleted.
+
+**What this does and does not change.** No verdict moves. The
+falsification stands on the evidence it always stood on: **Signpost 2**
+FAIL (0.054 uncensored at seed 1, derived above; 0.020 frontier-only /
+≈0.145 estimated at seed 2) and **Signpost 3** composition 0/30 at every
+seed with deaths clustered at gx 1635–1827. That remains the finding —
+verified local sticky-robustness does not compose into segment traversal.
+
+What the correction changes is the *characterization* of the curriculum,
+and two hygiene items for the next run:
+
+1. "The curriculum could not anneal the gauntlet" is wrong as a
+   description of the run as a whole — two-thirds of zones welded, at or
+   near the 0.25 target. The stall is confined to the residual frontier
+   core.
+2. Log **both** censorings from iteration 0 (`cgsa_zone_summary` now does)
+   and snapshot the curriculum per signpost instead of overwriting one
+   `cgsa_stats.json`, so an it800 uncensored figure exists next time
+   instead of having to be bounded after the fact.
+3. Re-run with `maintenance_weight` at the intended 0.003 before any
+   curriculum-health comparison against these seeds.

@@ -204,6 +204,9 @@ def probe(
     game: Optional[str] = None,
     sticky_prob: float = 0.0,
     start_jitter: int = 0,
+    action_select: str = "greedy",
+    temperature: float = 1.0,
+    eval_seed: Optional[int] = None,
     eval_script: Optional[str] = None,
     python_exe: Optional[str] = None,
 ) -> dict:
@@ -234,6 +237,16 @@ def probe(
             in" (``cold_seq_clear_rate`` becomes the per-level clear rate)
             instead of the full World-1 chain — the number the gate accepts /
             rolls back on. Requires the ``--level-clear`` flag on ``eval_game.py``.
+        action_select: how the eval draws each action — ``"greedy"`` (argmax,
+            the default and the historical behavior) or ``"sampled"`` (a draw
+            from the policy's own softmax). The honest protocol wants BOTH
+            reported, which a gate does by probing twice and labelling the two
+            result dicts; nothing here mutates when the default is left alone.
+        temperature: softmax temperature for ``action_select="sampled"``
+            (ignored when greedy). Must be > 0.
+        eval_seed: seed for the eval's sticky / no-op-start / sampling streams.
+            ``None`` (default) leaves ``eval_game.py``'s own default in place
+            so the emitted command line is unchanged.
         timeout: seconds before the subprocess is killed (failure, not crash).
         rom_path: ROM path; falls back to ``cfg['rom_path']`` / ``cfg['rom']``.
         game: cosmetic ``--game`` label for the subprocess (defaults to the
@@ -300,6 +313,18 @@ def probe(
                 extra_args += ["--sticky-prob", str(float(sticky_prob))]
             if start_jitter > 0:
                 extra_args += ["--start-jitter", str(int(start_jitter))]
+            # Sampled-action eval: the other half of the mandated greedy/sampled
+            # pair. These go on `cmd`, NOT `extra_args` — extra_args ride only
+            # with the sequential predicate and are dropped on the degrade path,
+            # and a silently-dropped --action-select would report a greedy
+            # number labelled "sampled", the exact fabrication this pair exists
+            # to prevent. At their defaults nothing is appended, so the greedy
+            # probe's command line is byte-identical to before.
+            if str(action_select) != "greedy":
+                cmd += ["--action-select", str(action_select),
+                        "--temperature", str(float(temperature))]
+            if eval_seed is not None:
+                cmd += ["--eval-seed", str(int(eval_seed))]
             try:
                 proc, seq_ran = _run_eval(
                     cmd, sequential, timeout, str(td_path), extra_args=extra_args,

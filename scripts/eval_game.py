@@ -71,6 +71,36 @@ from train_game import DEFAULT_PROFILES, DEFAULT_ROMS, resolve_profile_path  # n
 # genuinely unsupported.
 PIXEL_ENCODERS: tuple[str, ...] = ("nature_dqn", "impala")
 
+# How an action is drawn from the policy's logits. `greedy` is argmax — the
+# only behavior this script ever had, and still the default, so every existing
+# caller is byte-identical. `sampled` draws from softmax(logits / T), which is
+# what the honest protocol actually mandates reporting ALONGSIDE greedy: a
+# policy whose argmax clears a level while its own action distribution does
+# not is a Brute, not a learner, and greedy-only eval cannot see the
+# difference.
+_ACTION_SELECT_MODES: tuple[str, ...] = ("greedy", "sampled")
+
+
+def select_action(
+    logits: torch.Tensor,
+    mode: str = "greedy",
+    temperature: float = 1.0,
+    generator: Optional[torch.Generator] = None,
+) -> int:
+    """Pick one action index from a (1, n_actions) logits tensor.
+
+    `greedy` is argmax (bit-identical to the historical inline call).
+    `sampled` draws once from softmax(logits / temperature) via
+    `torch.multinomial`, taking its randomness from `generator` so a sampled
+    eval is reproducible from `--eval-seed` and never touches global torch RNG.
+    """
+    if mode == "greedy":
+        return int(torch.argmax(logits[0]).item())
+    if mode != "sampled":
+        raise ValueError(f"unknown action_select mode: {mode!r}")
+    probs = torch.softmax(logits[0].float() / float(temperature), dim=-1)
+    return int(torch.multinomial(probs, 1, generator=generator).item())
+
 
 def resolve_pixel_encoder(profile: dict) -> Optional[str]:
     """Return `reinforce.encoder` iff it names a pixel encoder the trainer's
@@ -206,10 +236,26 @@ def eval_one_game(
     sticky_prob: float = 0.0,
     start_jitter: int = 0,
     eval_seed: int = 0,
+    action_select: str = "greedy",
+    temperature: float = 1.0,
 ) -> dict:
     """Run N episodes; return a dict of eval stats."""
     import numpy as _np
+    if action_select not in _ACTION_SELECT_MODES:
+        raise ValueError(
+            f"action_select must be one of {sorted(_ACTION_SELECT_MODES)}, "
+            f"got {action_select!r}"
+        )
+    if not (float(temperature) > 0.0):
+        raise ValueError(f"temperature must be > 0, got {temperature!r}")
     _sticky_rng = _np.random.RandomState(eval_seed)
+    # Sampled-action selection draws from its OWN torch generator, seeded from
+    # --eval-seed, so (a) sampled runs are reproducible and (b) the sticky /
+    # jitter numpy stream is byte-identical to the greedy path — a greedy and
+    # a sampled run at the same seed see the same no-op starts and the same
+    # sticky-repeat decisions, so the pair differs only in the policy draw.
+    _action_gen = torch.Generator(device="cpu")
+    _action_gen.manual_seed(int(eval_seed))
     with open(profile_path) as f:
         profile = yaml.safe_load(f)
     ckpt_dir = derive_checkpoint_dir("./checkpoints", profile.get("name"))
@@ -458,13 +504,16 @@ def eval_one_game(
         step = 0
         _prev_action_idx = 0
         for step in range(max_steps):
-            # Obs -> greedy argmax action. The policy object supplies the
-            # (obs -> logits) mapping; everything else in this loop (reward,
-            # RAM byte proxy, sequential tracker, JSON) is obs-agnostic and
-            # identical for tile and pixel.
+            # Obs -> action. The policy object supplies the (obs -> logits)
+            # mapping; everything else in this loop (reward, RAM byte proxy,
+            # sequential tracker, JSON) is obs-agnostic and identical for tile
+            # and pixel. `action_select` picks argmax (default) or a seeded
+            # draw from the policy's own softmax.
             with torch.no_grad():
                 logits, hidden = pol.logits(obs, hidden)
-                action_idx = int(torch.argmax(logits[0]).item())
+                action_idx = select_action(
+                    logits, action_select, temperature, _action_gen,
+                )
             # Sticky-actions eval (Machado et al. 2018): with prob
             # sticky_prob repeat the previous executed action. On the
             # TRUSTWORTHY-obs harness (eval_game's obs matches training,
@@ -539,6 +588,11 @@ def eval_one_game(
         "mean_max_byte": float(np.mean(max_bytes)) if max_bytes else 0.0,
         "max_gx_per_episode": max_gxs,
         "clear_rate": clears / max(1, n_episodes),
+        # Provenance for the honest protocol: a clear rate is only readable
+        # next to HOW the actions were drawn. Always emitted so a receipt can
+        # never be mistaken for the other mode's number.
+        "action_select": str(action_select),
+        "temperature": float(temperature),
         "timestamp": time.time(),
     }
     if start_state is not None:
@@ -611,12 +665,33 @@ def main() -> int:
     parser.add_argument("--start-jitter", type=int, default=0, dest="start_jitter",
                         help="Machado no-op starts: up to this many no-op frames before control.")
     parser.add_argument("--eval-seed", type=int, default=0, dest="eval_seed")
+    parser.add_argument("--action-select", type=str, default="greedy",
+                        dest="action_select", choices=list(_ACTION_SELECT_MODES),
+                        help="How to draw each action from the policy logits: "
+                             "'greedy' (argmax, the default and the historical "
+                             "behavior) or 'sampled' (one draw from "
+                             "softmax(logits/T), seeded from --eval-seed). The "
+                             "honest protocol reports BOTH.")
+    parser.add_argument("--temperature", type=float, default=1.0,
+                        dest="temperature",
+                        help="Softmax temperature for --action-select sampled. "
+                             "Ignored when greedy. Must be > 0.")
     parser.add_argument("--level-clear", action="store_true", dest="level_clear",
                         help="With --sequential, score 'cleared the level it "
                              "STARTED in' (a forward area/level transition out "
                              "of the warm-start level, warp-guarded) instead of "
                              "the full World-1 chain. The per-level gate metric.")
     args = parser.parse_args()
+
+    if not (args.temperature > 0.0):
+        # argparse cannot express "positive float"; surface it as the same
+        # single-JSON-line contract every other early exit uses rather than a
+        # traceback the cold probe would have to parse out of stderr.
+        print(json.dumps({
+            "game": args.game, "status": "bad_args",
+            "detail": f"--temperature must be > 0, got {args.temperature}",
+        }))
+        return 1
 
     profile_path = resolve_profile_path(args.game, args.profile)
     rom_path = args.rom or DEFAULT_ROMS.get(args.game.lower().strip())
@@ -634,7 +709,8 @@ def main() -> int:
         checkpoint=args.checkpoint, sequential=args.sequential,
         start_state=args.start_state, level_clear=args.level_clear,
         sticky_prob=args.sticky_prob, start_jitter=args.start_jitter,
-        eval_seed=args.eval_seed,
+        eval_seed=args.eval_seed, action_select=args.action_select,
+        temperature=args.temperature,
     )
     print(json.dumps(result, indent=2))
     return 0

@@ -31,6 +31,7 @@ from typing import Any
 # at the top level here; their internals are owned by their own readers.
 KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     "advance", "asm_bulk_cycles", "async_pipeline", "autocast_fp16",
+    "backward_curriculum",
     "batched_render", "bc_demo_path", "bc_epochs", "bc_replay_enabled",
     "bc_replay_epochs", "bc_replay_every_gens", "bc_replay_max_buffer",
     "bc_replay_train_window", "cold_eval", "consolidate",
@@ -47,7 +48,8 @@ KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     "ppo_minibatch_size", "preprocess_f16", "preserve_elite_diversity",
     "prmdp", "recurrent", "recurrent_env_minibatch", "rnd_intrinsic_coef",
     "rnd_loss_coef", "rnd_predictor_update_fraction", "rollout_steps",
-    "sam_rho", "smb_curriculum", "steps", "sticky_action_prob", "substage_ladder",
+    "sam_rho", "smb_curriculum", "steps", "sticky_action_prob",
+    "sticky_episode_boundary_reset", "substage_ladder",
     "symlog_rewards", "tile_frame_stack", "tile_hidden_dim", "tile_trunk_dim",
     "top_k", "torch_compile",
     "trainer_mode", "value_coef", "value_loss", "vmap_forward",

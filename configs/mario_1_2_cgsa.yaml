@@ -118,7 +118,6 @@ reinforce:
     zone_px: 32
     priority_alpha: 2.0
     priority_floor: 0.1
-    maintenance_weight: 0.01
   # Non-farmable wavefront + lost-cut stay (clean, reclaims off-path waste).
   wavefront_reward:
     enabled: true

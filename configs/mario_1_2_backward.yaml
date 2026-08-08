@@ -1,0 +1,233 @@
+# Mario 1-2 BACKWARD start-state curriculum — the CGSA tile/PPO block with
+# the CGSA curriculum removed and a reverse curriculum in its place.
+#
+# WHAT THIS IS. 1-2 is the wall. Direct PPO plateaus at ~36% training success
+# and 0/400 honest entrance clears (Dossier v3, 2026-07-23); imitation on the
+# solver tapes was eliminated the same day (clone accuracy 1.0 -> 0.00 under
+# sticky); CGSA-PPO proved its machinery (137 welds, monotone) but its S2
+# reading was a throughput artifact and never got a clean rerun. This run
+# tries the one mechanism from the 2026-07-21 plan that was never actually
+# built: Salimans & Chen's reverse curriculum (arXiv:1812.03381) — the solved
+# tape supplies START STATES ONLY, the reward supplies all learning signal,
+# and the restart cursor walks backward from the flag to the entrance.
+#
+# DIFFS FROM configs/mario_1_2_cgsa.yaml (which this borrows its PPO block
+# from), each deliberate:
+#   * `cgsa:` REMOVED. It owns the same restart site; the two curricula are
+#     mutually exclusive and running both would make attribution impossible.
+#   * `go_explore.enabled: false`. Its inline-return restart is the third
+#     claimant on that site. The backward curriculum is the single
+#     independent variable of this run.
+#   * `wavefront_reward.enabled: false`. Its non-clear terminals charge
+#     -PEAK(Phi), and a restart deep on the tape BEGINS at high Phi — every
+#     failed deep-rung attempt would eat a large fixed penalty purely for
+#     having been restarted late. The shaping and the curriculum fight.
+#     Reward is back to the generic four-term set.
+#   * `sticky_action_prob: 0.25` is now the real training noise (under CGSA
+#     it only seeded the per-zone target and eval parity).
+#   * `rollout_steps`/`ppo_minibatch_size`/`steps` keep the CGSA values: T=128
+#     means frequent restarts, which is exactly what a rung curriculum wants.
+#
+# START STATE. `start_state_path` is the TAPE'S OWN ROOT
+# (entrance_after_1-1.state), NOT the CGSA runs' stage_03.state. The tape and
+# the entrance must be one lineage — the entrance rides in the per-episode
+# draw, so a mismatched pair trains on a two-lineage mixture. Consequence: the
+# 0/400 CGSA-era honest baseline was measured on a DIFFERENT 1-2 entrance and
+# is not directly comparable; re-baseline on this one, and pass the same
+# `--start-state` to every eval.
+#
+# MINT FIRST:
+#   python scripts/mint_backward_states.py --level 1-2
+# (1215 states, 3 segments — 1-2 re-bases its progress coordinate twice, once
+# with the area byte and once without; the minter's gate knows about both.)
+#
+# ORDER: do NOT launch this before GATE B4 (configs/mario_1_1_backward.yaml)
+# passes. B4 is the control; a B5 number from broken machinery is noise.
+#
+# ================== PRE-REGISTERED GATES (2026-08-08) ==================
+# Registered BEFORE launch. Protocol for every number below: cold start from
+# `start_state_path`, sticky-action p=0.25 + no-op start-jitter-16, >= 30
+# episodes, TWO seeds, greedy AND sampled both reported. Three-episode gates
+# are known mirages on this project (a "passing" 3-ep gate once hid a true
+# success rate under 1/400) — no gate here may be read off fewer than 30.
+#
+#   scripts/eval_game.py --game mario_1_2_backward --checkpoint <ckpt> \
+#     --start-state runs/live_show/smb_4_4_micro/entrance_after_1-1.state \
+#     --episodes 30 --sticky-prob 0.25 --start-jitter 16 --eval-seed {0,1} \
+#     --action-select {greedy,sample}
+#
+# GATE B5 (the real question: does a reverse curriculum crack 1-2?).
+# PASS iff, on both seeds:
+#   (a) the cursor reaches tau 0 (`[backward] ... AT-ENTRANCE` in the log),
+#       AND
+#   (b) cold-greedy clear_rate >= 0.30 from the true entrance, AND
+#   (c) warp_rate == 0.0 — the pipe warp is not a clear.
+# The 0.30 bar is deliberately below 1-1's 0.60: anything strictly above the
+# 0/400 prior, reproduced on two seeds under the full protocol, is the first
+# honest learned 1-2 clear this project has ever recorded. Below 0.30 but
+# strictly above 0 on both seeds = MARGINAL: report it as "first non-zero,
+# not a solve", and do not round it up.
+# FAIL if cold-greedy is 0/30 on both seeds with tau at 0.
+#
+# SIGNPOSTS (abandonment criteria, read off the per-iter `[backward]` line):
+#   S1  it200: tau has advanced at least 5 rungs (abandon at 0).
+#   S2  it600: tau has crossed the underground gauntlet, i.e. the logged
+#              rung gx has fallen below 1600 (terminate if tau's gx is still
+#              above 2200 — the curriculum is stuck in the easy tail and the
+#              run is not testing anything).
+#   S3  it1000: tau <= 25% of its initial value AND the in-training
+#              `entrance` column is non-zero (if tau is walking back but the
+#              entrance column stays 0/N with N in the hundreds, the policy
+#              is learning rungs it cannot chain — the exact failure mode the
+#              welded-CGSA run could not see).
+# FALSIFICATION: tau reaches 0 on both seeds, B4 passed, and 1-2 cold-greedy
+# is still 0/60 -> reverse curricula do not cross this level's exploration
+# wall either, and the remaining honest lever is not a curriculum at all.
+
+name: Mario 1-2 backward
+rom_path: "roms/Super Mario Bros. (World).nes"
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+# The tape's own root (see START STATE above). Eval with the SAME blob.
+start_state_path: "runs/live_show/smb_4_4_micro/entrance_after_1-1.state"
+description: >
+  Reverse start-state curriculum on SMB 1-2 over the banked solver tape,
+  CGSA's PPO block with the CGSA curriculum, Go-Explore restarts and the
+  wavefront shaping removed. Honest gate: cold greedy sticky-0.25 +
+  jitter-16 from the 1-2 entrance, 30 episodes, 2 seeds.
+
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+
+reinforce:
+  # ---- CGSA's tile/PPO block, unchanged ----
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos
+  recurrent: false
+  tile_hidden_dim: 128
+  tile_trunk_dim: 32
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  symlog_rewards: true
+  value_loss: huber
+  value_coef: 0.5
+  gae_lambda: 0.95
+  gamma: 0.99
+  bc_epochs: 0
+  warmup_gens_ga_only: 10
+  # RAISED from CGSA's 128. The iter boundary calls reset_all, so every
+  # episode still running is truncated and scores nothing; an attempt from
+  # rung tau only resolves if the tape's remaining tail — up to 1215 steps
+  # at tau 0 — fits inside one rollout. At 128 the cursor would stall
+  # around tau 1087 (the `[backward] REACHABILITY` warning names the rung);
+  # 1536 covers the whole tape. CGSA could afford T=128 because its cells
+  # are segment-local and it never needed an episode to finish the level.
+  # Cost: ~12x samples/iter vs the CGSA runs — expect ~20 s/iter at 60
+  # envs, and read the signpost iteration numbers accordingly.
+  rollout_steps: 1536
+  ppo_minibatch_size: 256
+  steps: 3
+  lr: 0.0003
+  ppo_clip_eps: 0.2
+  async_pipeline: false        # 1-step obs lag destroys frame-perfect SMB
+  device: cpu
+  panic_isolation: false
+  entropy_coef: 0.01
+  entropy_floor: 0.02
+  entropy_coef_max: 0.05
+  rnd_intrinsic_coef: 0.0
+  rnd_loss_coef: 0.0
+  demo_anchor_enabled: false   # imitation eliminated (Dossier v3 section 3)
+  bc_replay_enabled: false
+  preprocess_f16: false
+  smb_curriculum: false        # required: the stage-0 inline restart path
+  num_envs: 60
+
+  # Real training noise now, not just an eval-parity seed.
+  sticky_action_prob: 0.25
+  # REQUIRED whenever sticky > 0 AND the backward block is on. Every rung
+  # restart is an episode boundary, and this curriculum manufactures
+  # hundreds of them per rollout. Without this the sticky roll on the
+  # first step of a fresh attempt replays the action the previous life
+  # died holding (~25% of restarts), contaminating the exact statistic
+  # the advance gate reads. The honest eval harness gates its roll on
+  # step > 0 per episode (scripts/eval_game.py); this is the knob that
+  # makes training agree with it.
+  sticky_episode_boundary_reset: true
+
+  # ---- removed on purpose (see the header) ----
+  # cgsa: owns the same restart site
+  go_explore:
+    enabled: false             # inline returns own the same restart site
+  wavefront_reward:
+    enabled: false             # -PEAK(Phi) taxes every deep-rung restart
+
+  # ---- the mechanism under test ----
+  # Reverse curriculum over checkpoints/backward_states/1-2 (1215 states, one
+  # per action step). tau starts at the last state (-1, right before the
+  # flag) and walks back 40 tape steps whenever the trailing window at the
+  # current rung holds >= 30 attempts at >= 20% success. Each episode draws
+  # its restart uniformly from the 160-frame window ending at tau, with the
+  # true entrance carrying one entry's worth of mass — so ~2% of episodes
+  # start honestly all run long (the `entrance` column in the `[backward]`
+  # log, and the early read on the gate), and at tau 0 the draw IS the
+  # honest start distribution with no hand-off step.
+  backward_curriculum:
+    states_dir: "checkpoints/backward_states/1-2"
+    tau_init: -1
+    window_frames: 160
+    advance_threshold: 0.2
+    advance_actions: 40
+    min_attempts: 30
+    entrance_weight: 1.0
+    # Truncated (boundary-cut) attempts are censored data — neither a
+    # clear nor a death. Dropped by default, which keeps the rung rate an
+    # honest "of the attempts that RESOLVED, how many cleared"; the
+    # `truncated N` column in the log says how much is being censored.
+    truncation_is_failure: false
+    pin_entrance: false        # true = zero-diff guard only, never a real run
+
+ga_params:
+  mutation_rate: 0.8
+  mutation_std: 0.001
+  adaptive_mutation_scale: false
+  elite_fraction: 0.4
+  stale_gens_before_restart: 50
+  restart_fraction: 0.5
+
+max_episode_steps: 2400

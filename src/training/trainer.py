@@ -143,6 +143,126 @@ def _safe_sample_from_logits(
     return sampled, chosen_lp, log_probs_all
 
 
+# The 1-2 "gauntlet": the residual hard core of the level in global-x
+# pixels. Every CGSA report scopes its noise figure to this window.
+CGSA_GAUNTLET_GX: tuple[int, int] = (1600, 2200)
+
+
+def cgsa_zone_summary(
+    cg_stats: dict,
+    gauntlet_gx: tuple[int, int] = CGSA_GAUNTLET_GX,
+) -> dict[str, float]:
+    """Summarise a CGSA curriculum's per-zone state for telemetry.
+
+    Returns the frontier-only figures the run logs have always carried
+    AND their uncensored counterparts (every tracked zone, welded or
+    not), plus the welded fraction.
+
+    The frontier-only averages are structurally misleading as a progress
+    signal. A zone leaves the frontier exactly when the SPRT accepts it
+    as locally sticky-robust at its annealed noise, so a curriculum that
+    is *succeeding* retires its high-`p` zones and drives
+    `frontier_avg_p` toward zero — the same trace a curriculum that
+    never annealed anything produces. `avg_p_all` and
+    `gauntlet_avg_p_all` do not censor the welds; `welded_frac` says how
+    much of the population the frontier figure is ignoring. At the END OF
+    the two archived 1-2 protocol runs (seed 1 iter 5975, seed 2 iter
+    13695) the gauntlet reads 0.022 / 0.009 frontier-only and 0.165 /
+    0.148 uncensored, with 64% / 73% of zones already welded. Earlier in
+    those runs the two censorings coincided — at seed 1's it800 signpost
+    no gauntlet zone had welded yet, so its 0.054 FAIL was uncensored.
+
+    Pure and side-effect free so the archived `cgsa_stats.json` files
+    can be re-scored offline with the exact code the run logged with.
+    """
+    lo, hi = gauntlet_gx
+    tracked = [s for s in cg_stats.values() if "gx" in s]
+    welded = [s for s in tracked if s["welded"]]
+    frontier = [s for s in tracked if not s["welded"]]
+    gaunt_all = [s for s in tracked if lo <= s.get("gx", -1) <= hi]
+    gaunt_front = [s for s in frontier if lo <= s.get("gx", -1) <= hi]
+    # Rate distribution over MEASURED zones (>=1 completed window) — the
+    # leading indicator the v1/v2 runs lacked: tells apart "windows never
+    # fill" from "rates below bar".
+    measured = [s for s in tracked if s.get("windows", 0) > 0]
+    rates = sorted(s["rate"] for s in measured)
+
+    def _mean_p(zones: list) -> float:
+        return float(np.mean([s["p"] for s in zones])) if zones else 0.0
+
+    return {
+        "cells": len(tracked),
+        "welded": len(welded),
+        "welded_frac": len(welded) / max(1, len(tracked)),
+        "frontier_avg_p": _mean_p(frontier),
+        "avg_p_all": _mean_p(tracked),
+        "gauntlet_n": len(gaunt_front),
+        "gauntlet_avg_p": _mean_p(gaunt_front),
+        "gauntlet_n_all": len(gaunt_all),
+        "gauntlet_avg_p_all": _mean_p(gaunt_all),
+        "gx_max": max((s.get("gx", 0) for s in tracked), default=0),
+        "measured": len(measured),
+        "rate_p50": rates[len(rates) // 2] if rates else 0.0,
+        "rate_p90": rates[int(len(rates) * 0.9)] if rates else 0.0,
+        "zones_p_gt0": sum(1 for s in tracked if s["p"] > 0.0),
+    }
+
+
+class StickyBoundary:
+    """One-step sticky-action suppression across an episode boundary.
+
+    Sticky training repeats the previous step's EXECUTED action with
+    probability p. The vanilla-PPO rollout restarts a dead env IN PLACE
+    mid-rollout (curriculum warm-state, stage-0 start bytes, CGSA /
+    Go-Explore cell), and the carried action survives that restart: the
+    first step of the fresh episode can execute the input the previous
+    life died holding. The honest eval harness never does that — it
+    gates the roll on `step > 0` per episode (scripts/eval_game.py) — so
+    train and eval disagreed exactly at the boundary the restart makes,
+    and every restarted episode started from a slightly different
+    distribution than the one the gate measures.
+
+    Opt-in via `reinforce.sticky_episode_boundary_reset`. Disabled it is
+    a no-op: `override_rows` draws the same one `np.random.random(n)`
+    the inline roll always drew, so existing lineages are bit-identical.
+    """
+
+    __slots__ = ("enabled", "_restarted")
+
+    def __init__(self, num_envs: int, enabled: bool) -> None:
+        self.enabled = bool(enabled)
+        self._restarted = np.zeros(int(num_envs), dtype=bool)
+
+    def mark_restart(self, i: int, prev_exec_action: np.ndarray) -> None:
+        """Note that env `i` began a fresh episode on this step.
+
+        Zeroes the carried action too, so nothing downstream can replay
+        a pre-death input even if the suppression is consumed elsewhere.
+        """
+        if not self.enabled:
+            return
+        self._restarted[i] = True
+        prev_exec_action[i] = 0
+
+    def override_rows(
+        self,
+        sticky_p_env: np.ndarray,
+        rng_vals: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Env rows whose action the sticky protocol overrides this step."""
+        if rng_vals is None:
+            rng_vals = np.random.random(len(sticky_p_env))
+        rows = rng_vals < sticky_p_env
+        if self.enabled:
+            rows = rows & ~self._restarted
+        return np.nonzero(rows)[0]
+
+    def consume(self) -> None:
+        """Drop the suppression once the roll that owed it has run."""
+        if self.enabled:
+            self._restarted[:] = False
+
+
 class Trainer:
     """Top-level training loop."""
 
@@ -423,6 +543,17 @@ class Trainer:
         # so PPO's importance-ratio computation stays consistent
         # with what the env actually executed. 0.0 disables.
         self.sticky_action_prob: float = float(rl_cfg.get("sticky_action_prob", 0.0))
+        # Sticky at an episode boundary. The vanilla-PPO rollout restarts
+        # dead envs in place mid-rollout, and the carried action crosses
+        # that restart: the fresh episode's first step can execute the
+        # input the previous life died holding. Eval never does that (it
+        # gates the roll on step > 0 per episode), so the training
+        # distribution and the honest gate disagree exactly at the
+        # boundary. Opt-in — off, the roll is bit-identical to every
+        # lineage trained before this flag existed.
+        self.sticky_episode_boundary_reset: bool = bool(
+            rl_cfg.get("sticky_episode_boundary_reset", False)
+        )
         # Live BC replay: when a genome achieves a successful (level-clear)
         # episode during training, capture its trajectory and periodically
         # retrain a fresh policy via supervised behavior cloning on the
@@ -5372,6 +5503,150 @@ class Trainer:
                 _cell_type, "max_x" if _use_max_x else "ep_return",
             )
 
+        # ========= BACKWARD START-STATE CURRICULUM (opt-in) =========
+        # Salimans & Chen (arXiv:1812.03381): a solved tape supplies START
+        # STATES, never labels. Episodes restart from a trailing window
+        # ending at a cursor `tau` that walks BACKWARD along the tape as
+        # the policy earns each rung; the reward is the only learning
+        # signal at every rung. That is what separates it from behavior
+        # cloning, which this stack already eliminated on these very tapes
+        # (Dossier v3, 2026-07-23: clone accuracy 1.0 -> 0.00 honest
+        # success). The true entrance always rides in the per-episode draw
+        # with length-balanced mass, so (a) the honest start rate is
+        # measurable throughout the run and (b) the terminal curriculum
+        # (tau 0) IS the honest start distribution — no hand-off step.
+        #
+        # Inert unless `reinforce.backward_curriculum.states_dir` is set;
+        # mutually exclusive with CGSA and the Go-Explore inline return,
+        # which own the same restart site.
+        _bwd_cfg = dict(_rl_cfg.get("backward_curriculum", {}) or {})
+        bwd_on = bool(
+            _bwd_cfg.get("enabled", True)
+            and _bwd_cfg.get("states_dir")
+            and self._is_tile_mode
+            and _start_bytes is not None
+        )
+        bwd_sched = None
+        bwd_entries: list = []
+        bwd_blobs: list = []
+        bwd_tape: list = []           # entry indices; the start_window seq
+        bwd_window_frames = int(_bwd_cfg.get("window_frames", 160))
+        bwd_frames_per_entry = 4
+        bwd_entrance_w = float(_bwd_cfg.get("entrance_weight", 1.0))
+        # Episodes still running when the iter boundary calls reset_all are
+        # TRUNCATED, and a truncated attempt is censored data: the policy
+        # neither cleared nor died. Dropping it (default) keeps the rung's
+        # rate an honest "of the attempts that resolved, how many cleared",
+        # but censors long episodes — and an episode from a deep rung
+        # cannot resolve at all when the remaining tape is longer than
+        # `rollout_steps` (see the reachability note logged below).
+        # Counting truncations as failures is the Salimans & Chen timeout
+        # convention; it makes the cursor stall visibly instead of stalling
+        # on an empty window.
+        bwd_trunc_fail = bool(_bwd_cfg.get("truncation_is_failure", False))
+        bwd_trunc_dropped = 0
+        # Dev/guard knob: freeze every restart at the profile start state.
+        # With sticky off this reproduces the pre-flag run bit-for-bit (no
+        # extra RNG is drawn), which is how the zero-diff gate is checked.
+        bwd_pin = bool(_bwd_cfg.get("pin_entrance", False))
+        # Per-env provenance of the LIVE episode: the cursor it started
+        # under, whether it was drawn from the window (1), the entrance
+        # (0) or not by this curriculum at all (-1), and whether it has
+        # cleared. Attempts the draw did not create are never scored
+        # against a rung — an iter-boundary warm start is a different
+        # distribution and would drag the rung's rate down.
+        _bwd_env_tau = np.zeros(num_envs, dtype=np.int64)
+        _bwd_env_src = np.full(num_envs, -1, dtype=np.int8)
+        _bwd_env_clear = np.zeros(num_envs, dtype=bool)
+        if bwd_on:
+            try:
+                from src.training import backward_curriculum as bwd
+                from src.training.go_explore import start_window as _bwd_window
+                bwd_entries, _bwd_meta = bwd.load_index(_bwd_cfg["states_dir"])
+                bwd_blobs = bwd.load_blobs(_bwd_cfg["states_dir"], bwd_entries)
+                bwd_tape = list(range(len(bwd_entries)))
+                bwd_frames_per_entry = max(
+                    1, int(_bwd_meta.get("every_frames", 4))
+                )
+                _bwd_stride = max(1, int(_bwd_meta.get("stride_steps", 1)))
+                bwd_sched = bwd.TauScheduler(
+                    len(bwd_entries),
+                    tau_init=int(_bwd_cfg.get("tau_init", -1)),
+                    advance_entries=max(1, int(_bwd_cfg.get(
+                        "advance_actions", bwd.DEFAULT_ADVANCE_ACTIONS
+                    )) // _bwd_stride),
+                    advance_threshold=float(_bwd_cfg.get(
+                        "advance_threshold", bwd.DEFAULT_ADVANCE_THRESHOLD
+                    )),
+                    min_attempts=int(_bwd_cfg.get(
+                        "min_attempts", bwd.DEFAULT_MIN_ATTEMPTS
+                    )),
+                )
+                _bwd_env_tau[:] = bwd_sched.tau
+                log.info(
+                    "[backward] ENABLED: %d states (%d MB) from %s | tau0=%d "
+                    "window=%d frames (%d entries) advance=+%d entries at "
+                    ">=%.2f over %d attempts | entrance_weight=%.2f%s",
+                    len(bwd_entries),
+                    sum(len(b) for b in bwd_blobs) >> 20,
+                    _bwd_cfg["states_dir"], bwd_sched.tau, bwd_window_frames,
+                    bwd_window_frames // bwd_frames_per_entry,
+                    bwd_sched.advance_entries, bwd_sched.advance_threshold,
+                    bwd_sched.min_attempts, bwd_entrance_w,
+                    "  [PINNED AT ENTRANCE]" if bwd_pin else "",
+                )
+                # Reachability: an attempt only resolves if the tape's
+                # remaining tail fits inside one rollout, because the iter
+                # boundary truncates everything still running. Name the
+                # deepest rung this rollout length can actually score, so
+                # a cursor that stalls there is diagnosed in one line
+                # instead of one overnight run.
+                _bwd_reach = len(bwd_entries) - (rollout_steps // _bwd_stride)
+                if _bwd_reach > 0:
+                    log.warning(
+                        "[backward] REACHABILITY: rollout_steps=%d covers "
+                        "the last %d of %d rungs. Below tau=%d an episode "
+                        "cannot finish the tape inside one rollout and is "
+                        "truncated (%s). Raise rollout_steps to walk "
+                        "further back.",
+                        rollout_steps, len(bwd_entries) - _bwd_reach,
+                        len(bwd_entries), _bwd_reach,
+                        "scored as failure" if bwd_trunc_fail else "dropped",
+                    )
+                # Every rung restart is an episode boundary, and this
+                # curriculum makes hundreds of them per rollout. With
+                # sticky on and the boundary guard off, the roll on the
+                # first step of a fresh attempt replays the action the
+                # previous life died holding — contaminating the very
+                # success rate the advance gate consumes, at its most
+                # decisive step. Not fatal (a p=0 lineage is fine), so
+                # this is loud rather than hard.
+                if (
+                    self.sticky_action_prob > 0.0
+                    and not self.sticky_episode_boundary_reset
+                ):
+                    log.warning(
+                        "[backward] CONTAMINATED: sticky_action_prob=%.2f "
+                        "with sticky_episode_boundary_reset=false. Every "
+                        "rung restart can replay the dead life's held "
+                        "action on the fresh attempt's first step, and "
+                        "that lands in the rate the advance gate reads. "
+                        "Set reinforce.sticky_episode_boundary_reset: "
+                        "true.", self.sticky_action_prob,
+                    )
+            except Exception as e:
+                log.warning(
+                    "[backward] disabled — could not load %s: %s",
+                    _bwd_cfg.get("states_dir"), e,
+                )
+                bwd_on = False
+        elif _bwd_cfg.get("states_dir"):
+            log.warning(
+                "[backward] configured but INERT: needs a tile-mode encoder "
+                "(is=%s) and a start_state_path (have=%s).",
+                self._is_tile_mode, _start_bytes is not None,
+            )
+
         # Initial reset.
         init_results = self.pool.reset_all()
         self._emit_frame_sink(init_results)
@@ -5407,11 +5682,23 @@ class Trainer:
         # Nature 2021, robustification phase).
         _sticky_p = float(self.sticky_action_prob)
         _prev_exec_action = np.zeros(num_envs, dtype=np.int64)
+        # Episode-boundary guard for the carried action (opt-in). Every
+        # mid-rollout restart site calls _sticky_restart(i); the roll on
+        # the following step skips those envs, matching eval's per-episode
+        # `step > 0` gate. Disabled it is a no-op on both paths.
+        _sticky_boundary = StickyBoundary(
+            num_envs, self.sticky_episode_boundary_reset
+        )
         if _sticky_p > 0.0:
             log.info(
                 "[vanilla_ppo] STICKY TRAINING on: p=%.2f (executed-action "
-                "log-probs; eval protocol parity)", _sticky_p,
+                "log-probs; eval protocol parity) boundary_reset=%s",
+                _sticky_p, _sticky_boundary.enabled,
             )
+
+        def _sticky_restart(i: int) -> None:
+            """Mark env `i` as having just begun a fresh episode."""
+            _sticky_boundary.mark_restart(i, _prev_exec_action)
 
         # ===== PR-MDP: Probabilistic Action Robust MDP =====
         # (Tessler, Efroni & Mannor, ICML 2019; deep-research candidate 1,
@@ -5772,9 +6059,12 @@ class Trainer:
                         # Per-env sticky: with CGSA each env rolls at its
                         # restart cell's curriculum noise; without it the
                         # vector holds the scalar everywhere (unchanged).
-                        _stick_rows = np.nonzero(
-                            np.random.random(num_envs) < _sticky_p_env
-                        )[0]
+                        # Envs that restarted on the previous step are
+                        # dropped from the roll when the boundary guard is
+                        # on (same single RNG draw either way).
+                        _stick_rows = _sticky_boundary.override_rows(
+                            _sticky_p_env
+                        )
                         if _stick_rows.size:
                             _rows_t = torch.from_numpy(_stick_rows)
                             _prev_t = torch.from_numpy(
@@ -5792,6 +6082,10 @@ class Trainer:
                             )
                     if _sticky_p > 0.0 or cgsa_on:
                         _prev_exec_action[:] = actions.numpy()
+                        # The roll above (or, at t == 0, the absence of
+                        # one) has spent the suppression these envs were
+                        # owed — clear it so the NEXT step sticks normally.
+                        _sticky_boundary.consume()
 
                     if prmdp_on:
                         # Adversary forward on the same obs; its action
@@ -6124,6 +6418,11 @@ class Trainer:
                             )
                             if cur_comp > prev_completion_total[i] + 1e-6:
                                 n_clears_this_iter += 1
+                                # Same trusted signal for the backward
+                                # cursor's rung statistics (scored at the
+                                # restart, which is where the episode's
+                                # provenance is still known).
+                                _bwd_env_clear[i] = True
                                 # Flag touched this step = this episode cleared
                                 # its level. Record the PLR success NOW (a clear
                                 # may never reach `done`), once per episode.
@@ -6215,6 +6514,7 @@ class Trainer:
                                     self.pool.load_worker_state(
                                         i, current_stage_state_inline,
                                     )
+                                    _sticky_restart(i)
                                     reward_fns[i].reset()
                                     # reset() zeroes the cumulative
                                     # `completion` breakdown, so re-arm the
@@ -6304,6 +6604,50 @@ class Trainer:
                                             "__ENTRANCE__"
                                         )["p"]
                                     cg_env_start_gx[i] = -1
+                                elif bwd_on:
+                                    # Reverse curriculum: score the life
+                                    # that just ended against the rung it
+                                    # started on, walk the cursor back if
+                                    # that rung is earned, then draw this
+                                    # life's restart UNIFORMLY from the
+                                    # window behind the cursor — with the
+                                    # true entrance in the pool, so the
+                                    # honest start is sampled all run and
+                                    # tau 0 needs no hand-off. (The sticky
+                                    # boundary is handled once for every
+                                    # branch by _sticky_restart below.)
+                                    if _bwd_env_src[i] == 1:
+                                        bwd_sched.record(
+                                            bool(_bwd_env_clear[i]),
+                                            tau=int(_bwd_env_tau[i]),
+                                        )
+                                    elif _bwd_env_src[i] == 0:
+                                        bwd_sched.record_entrance(
+                                            bool(_bwd_env_clear[i])
+                                        )
+                                    _bwd_env_clear[i] = False
+                                    bwd_sched.maybe_advance()
+                                    _bwd_pick = bwd.ENTRANCE
+                                    if not bwd_pin:
+                                        _bwd_win = _bwd_window(
+                                            bwd_tape, bwd_sched.tau,
+                                            window_frames=bwd_window_frames,
+                                            frames_per_step=(
+                                                bwd_frames_per_entry
+                                            ),
+                                        )
+                                        _bwd_pick = bwd.draw_restart(
+                                            len(_bwd_win), bwd_entrance_w,
+                                            float(np.random.random()),
+                                        )
+                                        if _bwd_pick != bwd.ENTRANCE:
+                                            _restart_bytes = bwd_blobs[
+                                                _bwd_win[_bwd_pick]
+                                            ]
+                                    _bwd_env_tau[i] = bwd_sched.tau
+                                    _bwd_env_src[i] = (
+                                        0 if _bwd_pick == bwd.ENTRANCE else 1
+                                    )
                                 elif (
                                     go_explore_archive is not None
                                     and _ge_inline_p > 0.0
@@ -6328,6 +6672,7 @@ class Trainer:
                                         _restart_bytes = _ge_blob
                                 try:
                                     self.pool.load_worker_state(i, _restart_bytes)
+                                    _sticky_restart(i)
                                     reward_fns[i].reset()
                                     prev_completion_total[i] = 0.0
                                     _stage0_reseed[i] = True
@@ -7227,32 +7572,52 @@ class Trainer:
                 "%.0f NES-fps | %.0fx realtime | %.2f s/iter",
                 global_it, samples_per_sec, nes_fps, realtime_x, _iter_dt,
             )
+            # ===== BACKWARD CURRICULUM telemetry =====
+            # Every iter, not sampled: tau is the run's whole story, and
+            # the entrance columns are the only in-training number that
+            # speaks the same language as the honest gate.
+            if bwd_on and bwd_sched is not None:
+                _bs = bwd_sched.snapshot()
+                _bt = bwd_entries[_bs["tau"]]
+                log.info(
+                    "[backward] iter %d: tau=%d/%d (step %d frame %d gx %d) "
+                    "trailing %d/%d=%.2f (advance at >=%.2f over %d) "
+                    "advances=%d%s | entrance %d/%d=%.3f | truncated %d",
+                    global_it, _bs["tau"], _bs["n_entries"] - 1,
+                    _bt.step, _bt.frame, _bt.gx,
+                    _bs["successes"], _bs["attempts"], _bs["rate"],
+                    bwd_sched.advance_threshold, bwd_sched.min_attempts,
+                    _bs["advances"],
+                    "  AT-ENTRANCE" if _bs["at_entrance"] else "",
+                    _bs["entrance_successes"], _bs["entrance_attempts"],
+                    _bs["entrance_rate"], bwd_trunc_dropped,
+                )
+
             # ===== CGSA telemetry + research signposts =====
             if cgsa_on and (it % 25 == 0 or it in (350, 800, 1150)):
-                _tracked = [s for s in cg_stats.values() if "gx" in s]
-                _welded_n = sum(1 for s in _tracked if s["welded"])
-                _front = [s for s in _tracked if not s["welded"]]
-                _avg_p = (np.mean([s["p"] for s in _front])
-                          if _front else 0.0)
-                _gaunt = [s for s in _front if 1600 <= s.get("gx", -1) <= 2200]
-                _gaunt_p = (np.mean([s["p"] for s in _gaunt])
-                            if _gaunt else 0.0)
-                _gx_arch = max((s.get("gx", 0) for s in _tracked), default=0)
-                # Rate distribution over MEASURED zones (>=1 completed
-                # window) — the leading indicator the v1/v2 runs lacked:
-                # tells apart "windows never fill" from "rates below bar".
-                _meas = [s for s in _tracked if s.get("windows", 0) > 0]
-                _rates = sorted(s["rate"] for s in _meas)
-                _p50 = _rates[len(_rates) // 2] if _rates else 0.0
-                _p90 = _rates[int(len(_rates) * 0.9)] if _rates else 0.0
-                _n_annealed = sum(1 for s in _tracked if s["p"] > 0.0)
+                _cg = cgsa_zone_summary(cg_stats)
+                _gaunt_p = _cg["gauntlet_avg_p"]
+                _gaunt_p_all = _cg["gauntlet_avg_p_all"]
+                _gx_arch = _cg["gx_max"]
+                # Both censorings on one line. The `frontier_*` figures
+                # exclude welded zones by construction, so a curriculum
+                # that is succeeding reads identically to one that never
+                # annealed; the `uncensored` group is the honest
+                # population average and `welded_frac` is how much of it
+                # the frontier figures drop.
                 log.info(
                     "[cgsa] iter %d: cells=%d welded=%d frontier_avg_p=%.3f "
                     "gauntlet(n=%d)_avg_p=%.3f archive_gx_max>=%d | "
-                    "measured=%d rate_p50=%.2f rate_p90=%.2f zones_p>0=%d",
-                    global_it, len(_tracked), _welded_n, _avg_p,
-                    len(_gaunt), _gaunt_p, _gx_arch,
-                    len(_meas), _p50, _p90, _n_annealed,
+                    "measured=%d rate_p50=%.2f rate_p90=%.2f zones_p>0=%d | "
+                    "uncensored avg_p_all=%.3f "
+                    "gauntlet_all(n=%d)_avg_p=%.3f welded_frac=%.3f",
+                    global_it, _cg["cells"], _cg["welded"],
+                    _cg["frontier_avg_p"],
+                    _cg["gauntlet_n"], _gaunt_p, _gx_arch,
+                    _cg["measured"], _cg["rate_p50"], _cg["rate_p90"],
+                    _cg["zones_p_gt0"],
+                    _cg["avg_p_all"], _cg["gauntlet_n_all"], _gaunt_p_all,
+                    _cg["welded_frac"],
                 )
                 # Persist curriculum state for post-run analysis (the v1
                 # run's stats died with the process).
@@ -7274,12 +7639,26 @@ class Trainer:
                                             else "MARGINAL"),
                     )
                 if it == 800:
+                    # Verdict stays on the frontier-only figure the
+                    # signpost was pre-registered against — changing the
+                    # criterion mid-record would be moving the goalposts.
+                    # The uncensored figure rides alongside so a future
+                    # low frontier reading can be told apart from a real
+                    # stall: if welded_frac is high the frontier average
+                    # is just reporting the zones that have not retired
+                    # yet. (On the 2026-07 seeds it was NOT that — seed 1
+                    # had zero welded gauntlet zones at it800, so its
+                    # 0.054 FAIL was already uncensored.)
                     log.info(
                         "[cgsa] SIGNPOST 2 (it800) gauntlet noise: "
-                        "avg_p=%.3f %s (need >=0.15; terminate if <0.10)",
+                        "avg_p=%.3f %s (need >=0.15; terminate if <0.10) "
+                        "| uncensored gauntlet_avg_p_all=%.3f "
+                        "welded_frac=%.3f "
+                        "(report-only, verdict is frontier-only)",
                         _gaunt_p,
                         "PASS" if _gaunt_p >= 0.15 else (
                             "FAIL" if _gaunt_p < 0.10 else "MARGINAL"),
+                        _gaunt_p_all, _cg["welded_frac"],
                     )
                 if it == 1150:
                     log.info(
@@ -8293,6 +8672,81 @@ class Trainer:
             # n_clears and the PLR clear flag. Sync them here.
             prev_completion_total[:] = 0.0
             episode_recorded[:] = False
+            # ===== BACKWARD CURRICULUM: the iter-boundary restart =====
+            # `reset_all` above truncated every live episode and put each
+            # env back at the profile start state. Two consequences the
+            # curriculum has to handle:
+            #
+            # 1. A truncated attempt is not evidence either way, so its
+            #    rung provenance is DROPPED — except when it had already
+            #    cleared, which is a completed outcome and keeps its
+            #    rung's credit.
+            # 2. Left alone, every env would begin the next rollout at the
+            #    entrance, and tau would describe a distribution the
+            #    policy hardly ever trains on. So the draw owns this
+            #    restart exactly as it owns the mid-rollout one. Only
+            #    stage-0 envs are touched — a curriculum/PLR warm start
+            #    (env_stage > 0) keeps its own level, same rule the inline
+            #    branch follows.
+            if bwd_on:
+                for _bi in range(num_envs):
+                    _bwd_src = int(_bwd_env_src[_bi])
+                    if _bwd_src < 0:
+                        continue
+                    if not _bwd_env_clear[_bi]:
+                        if not bwd_trunc_fail:
+                            bwd_trunc_dropped += 1
+                            continue
+                    _bwd_ok = bool(_bwd_env_clear[_bi])
+                    if _bwd_src == 1:
+                        bwd_sched.record(_bwd_ok, tau=int(_bwd_env_tau[_bi]))
+                    else:
+                        bwd_sched.record_entrance(_bwd_ok)
+                bwd_sched.maybe_advance()
+            _bwd_env_src[:] = -1
+            _bwd_env_clear[:] = False
+            if bwd_on:
+                _bwd_any = False
+                for _bi in range(num_envs):
+                    if int(env_stage[_bi]) != 0:
+                        continue
+                    _bwd_pick = bwd.ENTRANCE
+                    if not bwd_pin:
+                        _bwd_win = _bwd_window(
+                            bwd_tape, bwd_sched.tau,
+                            window_frames=bwd_window_frames,
+                            frames_per_step=bwd_frames_per_entry,
+                        )
+                        _bwd_pick = bwd.draw_restart(
+                            len(_bwd_win), bwd_entrance_w,
+                            float(np.random.random()),
+                        )
+                    if _bwd_pick != bwd.ENTRANCE:
+                        try:
+                            self.pool.load_worker_state(
+                                _bi, bwd_blobs[_bwd_win[_bwd_pick]]
+                            )
+                            _sticky_restart(_bi)
+                            _bwd_any = True
+                        except Exception as e:
+                            log.warning(
+                                "[backward] env %d restart at tau %d "
+                                "failed: %s — entrance.", _bi,
+                                bwd_sched.tau, e,
+                            )
+                            _bwd_pick = bwd.ENTRANCE
+                    _bwd_env_tau[_bi] = bwd_sched.tau
+                    _bwd_env_src[_bi] = (
+                        0 if _bwd_pick == bwd.ENTRANCE else 1
+                    )
+                if _bwd_any:
+                    # Flush the post-restore frames into init_results, the
+                    # same no-op step the curriculum warm start takes; the
+                    # stacker re-seed at the end of this block reads it.
+                    init_results = self.pool.step_all(
+                        np.zeros(self.pool.num_workers, dtype=np.uint8)
+                    )
+                    self._emit_frame_sink(init_results)
             for _wi in range(num_envs):
                 wave_prev_phi[_wi] = None  # fresh episodes, no shaping carryover
             wave_peak_phi[:] = 0.0
