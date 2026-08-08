@@ -108,6 +108,21 @@ struct Worker {
     // that the cycle-lock fix closed for Play-window / parity. See
     // `python.rs::advance_one_frame` for the rationale.
     frame_cycle_target: Option<usize>,
+    // Hardware-true frame anchoring (config): when set,
+    // `advance_one_frame` runs to the next real PPU frame boundary
+    // (29,780/29,781 CPU cycles alternating with the odd-frame dot
+    // skip) instead of the legacy fixed 29,781-cycle block. Mirror of
+    // `NESEnvironment::hw_frame_anchor` — see that field's doc for the
+    // drift receipt. Pool needs its own copy because the anchor is a
+    // frame-advance policy, not `Nes` state: without it a tape built
+    // or replayed on a Pool structurally cannot match Mesen's
+    // inputPolled schedule, so a Pool-built tape can never be
+    // certified against Mesen on its own machine. Worker field, not
+    // `Nes` field, so it is deliberately NOT part of `State` and
+    // survives `load_worker_state` as sticky config — same semantics
+    // as every other hw flag. Default OFF: training/parity paths
+    // depend on the cycle-locked step.
+    hw_frame_anchor: bool,
     /// Peak SMB world-x position seen during the most recent
     /// `step()` call. Computed inside the frame_skip loop so we
     /// capture transient peaks that a final-frame-only RAM read
@@ -140,6 +155,7 @@ impl Worker {
             dead: false,
             gray_scratch: vec![0u8; FRAME_PIXELS],
             frame_cycle_target: None,
+            hw_frame_anchor: false,
             last_max_x: 0,
         }
     }
@@ -189,6 +205,26 @@ impl Worker {
         // frame, breaking cycle alignment between training workers
         // and the parity reference.
         const CPU_CYCLES_PER_FRAME: usize = 29781;
+        if self.hw_frame_anchor {
+            // Hardware-true frame boundary: run to the next PPU frame
+            // increment (29,780/29,781 CPU cycles alternating). Input
+            // bytes then land on real frames, matching Mesen's
+            // inputPolled schedule on tape replays. Cap at ~2 frames
+            // of cycles so a wedged PPU can't loop forever. Verbatim
+            // port of `python.rs::advance_one_frame`'s anchored branch
+            // — keep the two in sync.
+            let start_frame = self.nes.ppu.frame;
+            let cap = self.nes.cycles + 2 * CPU_CYCLES_PER_FRAME + 64;
+            while self.nes.ppu.frame == start_frame && self.nes.cycles < cap {
+                if self.nes.oam_dma.active {
+                    self.nes.tick(&mut video, &mut sink);
+                } else {
+                    self.nes.step(&mut video, &mut sink);
+                }
+            }
+            self.frame_cycle_target = None;
+            return;
+        }
         let target = self
             .frame_cycle_target
             .map(|t| t + CPU_CYCLES_PER_FRAME)
@@ -1154,6 +1190,22 @@ impl Pool {
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
             w.nes.apu.hw_dmc_stall_timing = on;
+        }
+    }
+
+    /// Hardware-true frame anchoring on every worker — single-env
+    /// mirror is `NESEnvironment::set_hw_frame_anchor`; see the
+    /// `Worker` field doc. Each `step()` sub-frame then advances to a
+    /// real PPU frame boundary instead of a fixed 29,781-cycle block,
+    /// which is what a tape replay needs to line up with Mesen's
+    /// inputPolled schedule. Config, not state: survives
+    /// `load_worker_state`. Default OFF.
+    fn set_hw_frame_anchor(&self, on: bool) {
+        // SAFETY: as above — sequential from Python.
+        for cell in &self.workers {
+            let w = unsafe { worker_mut(cell) };
+            w.hw_frame_anchor = on;
+            w.frame_cycle_target = None;
         }
     }
 
@@ -2406,5 +2458,211 @@ mod spectator_tests {
             px_diff, 0,
             "final framebuffer diverged on {px_diff} / {FRAME_PIXELS} pixels",
         );
+    }
+}
+
+/// Pool-side hardware-true frame anchoring.
+///
+/// `set_hw_frame_anchor` existed only on `NESEnvironment`, so a Pool
+/// always ran the legacy fixed-29,781-cycle frame block. That block
+/// drifts ~+1/3 CPU cycle per frame against the true PPU frame, which
+/// means a tape built or replayed on a Pool structurally cannot line
+/// up with Mesen's `inputPolled` schedule — a Pool-built tape can
+/// never be certified against Mesen on its own machine. These tests
+/// pin both halves of the fix: the anchored path really tracks PPU
+/// frame boundaries, and the default (flag never touched) path is
+/// byte-identical to the pre-change cycle lock.
+#[cfg(test)]
+mod frame_anchor_tests {
+    use super::bugfix_tests::{build_nrom, worker_from_rom};
+    use super::*;
+
+    const CPU_CYCLES_PER_FRAME: usize = 29781;
+
+    fn pool_from_nrom(num_workers: usize, tag: &str) -> Pool {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-scratch");
+        std::fs::create_dir_all(&dir).expect("create test-scratch dir");
+        let path = dir.join(format!("frame_anchor_{tag}.nes"));
+        std::fs::write(&path, build_nrom(&[0xEA])).expect("write synthetic NROM");
+        Pool::new(path, num_workers, 1, None).expect("Pool::new")
+    }
+
+    /// The new field must not perturb the default path. A worker that
+    /// never sees `set_hw_frame_anchor` still consumes EXACTLY 29,781
+    /// CPU cycles per `advance_one_frame`, DMA in flight or not — the
+    /// same invariant `advance_one_frame_stays_cycle_locked_across_oam_dma`
+    /// pins, re-asserted here because the anchored branch sits directly
+    /// above the cycle-lock code it must not disturb.
+    #[test]
+    fn default_path_is_still_exactly_cycle_locked() {
+        for fill in [&[0xEA][..], &[0x8D, 0x14, 0x40][..]] {
+            let mut w = worker_from_rom(build_nrom(fill));
+            assert!(!w.hw_frame_anchor, "frame anchor must default OFF");
+            let start = w.nes.cycles;
+            for k in 1..=8usize {
+                w.advance_one_frame();
+                assert_eq!(
+                    w.nes.cycles,
+                    start + k * CPU_CYCLES_PER_FRAME,
+                    "fill {fill:02X?} frame {k}: default path left the cycle lock",
+                );
+            }
+        }
+    }
+
+    /// With the anchor ON, every call crosses exactly one PPU frame,
+    /// and the cycle budget tracks the real 89,342-dot frame
+    /// (29,780.67 CPU cycles) instead of the fixed 29,781 block.
+    ///
+    /// This is the whole point of the flag: over 180 frames (a
+    /// multiple of 3, so the true frame is a whole 5,360,520 cycles)
+    /// the fixed block spends 5,360,580 — 60 cycles of drift, ~+1/3
+    /// per frame. Per-frame deltas can't be asserted tightly because
+    /// `nes.step()` runs a whole instruction and overshoots the
+    /// boundary by 0-6 cycles; the accumulated total can, and it is
+    /// the quantity that desynced the CV tape from Mesen's
+    /// `inputPolled` schedule.
+    #[test]
+    fn anchored_path_tracks_the_real_ppu_frame_not_a_fixed_block() {
+        const FRAMES: usize = 180;
+        // 3 PPU frames = 3 × 89,342 dots = 89,342 CPU cycles exactly.
+        const TRUE_CYCLES: usize = FRAMES / 3 * 89_342;
+        // Worst-case instruction overshoot at each end of the window.
+        const SLOP: i64 = 8;
+
+        let mut w = worker_from_rom(build_nrom(&[0xEA]));
+        w.hw_frame_anchor = true;
+        // First call re-syncs from wherever boot left the PPU to the
+        // next frame boundary; measure from there.
+        w.advance_one_frame();
+
+        let f0 = w.nes.ppu.frame;
+        let c0 = w.nes.cycles;
+        for k in 1..=FRAMES {
+            let before = w.nes.ppu.frame;
+            w.advance_one_frame();
+            assert_eq!(
+                w.nes.ppu.frame,
+                before + 1,
+                "frame {k}: anchored advance did not cross exactly one PPU frame",
+            );
+        }
+        assert_eq!(w.nes.ppu.frame, f0 + FRAMES as u64);
+
+        let spent = (w.nes.cycles - c0) as i64;
+        assert!(
+            (spent - TRUE_CYCLES as i64).abs() <= SLOP,
+            "anchored {FRAMES} frames spent {spent} CPU cycles, expected \
+             {TRUE_CYCLES} ± {SLOP}",
+        );
+        // And it is measurably NOT the fixed block the default path runs.
+        let fixed = (FRAMES * CPU_CYCLES_PER_FRAME) as i64;
+        assert!(
+            fixed - spent > SLOP,
+            "anchored total {spent} is indistinguishable from the fixed \
+             block {fixed} — the anchor is not tracking the PPU",
+        );
+    }
+
+    /// The anchored branch must drain an in-flight OAM DMA one CPU
+    /// cycle at a time, exactly like the cycle-locked branch does, so
+    /// a DMA straddling the frame boundary can't run the PPU past it.
+    #[test]
+    fn anchored_path_crosses_one_frame_with_oam_dma_in_flight() {
+        let mut w = worker_from_rom(build_nrom(&[0x8D, 0x14, 0x40]));
+        w.hw_frame_anchor = true;
+        for k in 1..=8usize {
+            let f0 = w.nes.ppu.frame;
+            w.advance_one_frame();
+            assert_eq!(
+                w.nes.ppu.frame,
+                f0 + 1,
+                "frame {k}: OAM DMA overshot the anchored frame boundary",
+            );
+        }
+        assert!(
+            w.nes.oam_dma.active || w.nes.oam_dma.count > 0,
+            "expected OAM DMA activity from the STA $4014 loop",
+        );
+    }
+
+    /// The anchor lives on `Worker`, not on `Nes`, so it is
+    /// deliberately absent from `State` — it must survive an
+    /// `apply_state` (the `load_worker_state` path) as sticky config,
+    /// matching every other hw flag. If someone ever moves it into
+    /// `Nes`/`State` this test fails and tells them the savestate
+    /// format just grew a config field.
+    #[test]
+    fn frame_anchor_is_config_not_state() {
+        let mut w = worker_from_rom(build_nrom(&[0xEA]));
+        w.hw_frame_anchor = true;
+        w.advance_one_frame();
+        let snapshot = w.nes.get_state();
+
+        // A state captured on an anchored machine must not carry the
+        // flag back into an unanchored one.
+        let mut fresh = worker_from_rom(build_nrom(&[0xEA]));
+        fresh.nes.apply_state(&snapshot);
+        assert!(
+            !fresh.hw_frame_anchor,
+            "apply_state leaked frame-anchor config out of a savestate",
+        );
+
+        // ...and loading a state into an anchored worker must not
+        // silently clear the flag.
+        w.nes.apply_state(&snapshot);
+        assert!(
+            w.hw_frame_anchor,
+            "apply_state clobbered sticky frame-anchor config",
+        );
+    }
+
+    /// `Pool::set_hw_frame_anchor` sets every worker, and clears the
+    /// stale `frame_cycle_target` so a mid-run flip can't compute a
+    /// target from the other policy's bookkeeping.
+    #[test]
+    fn pool_setter_reaches_every_worker() {
+        let pool = pool_from_nrom(4, "setter");
+        let actions = vec![0u8; pool.num_workers];
+        let _ = pool.step_all_native(&actions);
+        for cell in &pool.workers {
+            let w = unsafe { worker_mut(cell) };
+            assert!(!w.hw_frame_anchor, "flag must default OFF on every worker");
+            assert!(w.frame_cycle_target.is_some(), "cycle-locked path sets a target");
+        }
+
+        pool.set_hw_frame_anchor(true);
+        for cell in &pool.workers {
+            let w = unsafe { worker_mut(cell) };
+            assert!(w.hw_frame_anchor, "setter missed a worker");
+            assert!(
+                w.frame_cycle_target.is_none(),
+                "setter left a stale cycle target behind",
+            );
+        }
+
+        // Anchored stepping keeps every worker on real frame boundaries.
+        let before: Vec<u64> = pool
+            .workers
+            .iter()
+            .map(|c| unsafe { worker_mut(c) }.nes.ppu.frame)
+            .collect();
+        let _ = pool.step_all_native(&actions);
+        for (i, cell) in pool.workers.iter().enumerate() {
+            let w = unsafe { worker_mut(cell) };
+            assert_eq!(
+                w.nes.ppu.frame,
+                before[i] + 1,
+                "worker {i}: anchored step_all did not advance exactly one frame",
+            );
+        }
+
+        pool.set_hw_frame_anchor(false);
+        for cell in &pool.workers {
+            let w = unsafe { worker_mut(cell) };
+            assert!(!w.hw_frame_anchor, "setter could not turn the flag back off");
+        }
     }
 }

@@ -104,6 +104,17 @@ selftest-learning:
 parity:
 	. .venv/bin/activate && pytest tests/parity/ -q -m parity --timeout=60
 
+# Pool/spectator/frame-anchor lib tests live behind `--features python`,
+# whose extension-module linking drops libpython from test binaries —
+# they are invisible to plain `cargo test --lib`. This target links with
+# dynamic_lookup and preloads the venv's libpython so they actually run.
+# Single-threaded: the spectator pacing tests assert wall-clock bands.
+pool-test:
+	CARGO_TARGET_DIR=/tmp/nes_pool_test_target \
+	RUSTFLAGS="-C link-arg=-undefined -C link-arg=dynamic_lookup" \
+	DYLD_INSERT_LIBRARIES=$$(.venv/bin/python -c "import sysconfig;print(sysconfig.get_config_var('LIBDIR'))")/libpython3.11.dylib \
+	cargo test --manifest-path nes_core/Cargo.toml --lib --features python -- --test-threads=1
+
 build:
 	(cd nes_core && ../.venv/bin/maturin develop --release --features "python,asm_cpu")
 

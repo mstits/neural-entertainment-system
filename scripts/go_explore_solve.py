@@ -32,7 +32,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import pickle
 import signal
 import sys
@@ -63,6 +65,199 @@ R_AREA = 0x0760
 R_WORLD = 0x075F
 R_LEVEL = 0x075C
 R_LIVES = 0x075A
+
+
+# ---------------------------------------------------------------------
+# Hardware-flag selection + lineage provenance.
+#
+# A save-state blob records the machine's STATE, never the machine's
+# TIMING CONFIGURATION — `Nes::State` carries {ram, mapper, cpu, ppu,
+# apu, input, cycles} and nothing else, and every `set_hw_*` flag is
+# sticky config that survives `load_worker_state` untouched. So loading
+# someone else's entrance blob into a stock Pool silently runs a
+# DIFFERENT machine than the one that produced it, and the divergence
+# looks like a game/AI mystery rather than a config mismatch.
+#
+# That is not hypothetical: the Castlevania `cv_chain_hw2` lineage was
+# built by a scratch driver under four hw flags that no committed code
+# path reproduced, and replaying its block-3 entrance on a stock Pool
+# dies in the hall around frame ~15,900 where the lineage survives — the
+# whole "bat-wake mystery". Flags are opt-in here (DEFAULT EMPTY, so
+# every existing seeded solve is bit-identical) and the resolved set is
+# recorded under the key `hw_provenance` in roots.json,
+# archive.stats.json and every solution receipt, plus a flattened
+# `<blob>.state.json` sidecar next to every state this code writes.
+#
+# `hw_provenance`, NOT `provenance`: `provenance` is RESERVED for the
+# honest-origin string marker (`"search"`) that solution receipts carry
+# and CLAIMS.md audits compare against literally. Do not reuse it here
+# — a dict literal that binds one key twice keeps only the last value,
+# which silently deleted that marker once already (2026-08-07).
+# ---------------------------------------------------------------------
+
+def available_hw_flags() -> tuple:
+    """Flag names the INSTALLED nes_core exposes, derived from `Pool`'s
+    `set_hw_*` methods so this list can never go stale against the
+    wheel — a name that needs a rebuild (e.g. `frame_anchor` before the
+    Pool-side port lands) is reported as unavailable rather than dying
+    in an AttributeError halfway through a run."""
+    return tuple(sorted(n[len("set_hw_"):] for n in dir(Pool)
+                        if n.startswith("set_hw_")))
+
+
+def resolve_hw_flags(profile: dict, cli: str | None = None) -> list:
+    """Resolve the hw-flag set for this run: `--hw-flags` wins over the
+    profile's `solve.hw_flags:` list, and the DEFAULT IS EMPTY.
+
+    `--hw-flags none` (or an empty string) forces the empty set even
+    when the profile pins one. Names are validated against the
+    installed core and de-duplicated with order preserved."""
+    if cli is not None:
+        raw = cli.strip()
+        names = ([] if raw.lower() in ("", "none")
+                 else [p.strip() for p in raw.split(",") if p.strip()])
+    else:
+        names = list(profile.get("solve", {}).get("hw_flags") or [])
+    out, seen = [], set()
+    for n in names:
+        n = str(n).strip()
+        if n.startswith("set_hw_"):        # tolerate the method spelling
+            n = n[len("set_hw_"):]
+        if n in seen:
+            continue
+        if n not in available_hw_flags():
+            raise SystemExit(
+                f"[go_explore_solve] unknown hw flag {n!r}. The installed "
+                f"nes_core exposes: {', '.join(available_hw_flags())}. "
+                f"(A flag that exists in nes_core/src but not here needs a "
+                f"wheel rebuild + the stale-.so copy step.)")
+        seen.add(n)
+        out.append(n)
+    return out
+
+
+def apply_hw_flags(pool, flags) -> None:
+    """Apply resolved hw flags to a freshly-constructed Pool.
+
+    ORDER IS LOAD-BEARING: call this after `Pool(...)` and BEFORE
+    `reset_all()`. `reset_alignment` changes boot cycle accounting, so
+    setting it after the reset boots a different power-on lineage
+    (measured 2026-08-07: RAM diverges at frame 11, $006F/$01FE). The
+    other flags are order-insensitive; they are applied together here
+    so there is exactly one ordering rule to remember. This is the same
+    recipe scripts/tracing/build_cv_tape.py documents for the CV tape."""
+    for name in flags:
+        getattr(pool, f"set_hw_{name}")(True)
+
+
+def _core_build_id() -> dict:
+    """Identify the nes_core binary actually loaded. The dist version is
+    static across rebuilds, so the extension module's digest is what
+    actually pins the machine a lineage was produced on."""
+    if _core_build_id._cache is None:
+        import importlib.metadata as md
+
+        import nes_core
+        info = {"dist_version": None, "module": None, "sha256_16": None}
+        try:
+            info["dist_version"] = md.version("nes_core")
+        except Exception:
+            pass
+        try:
+            so = Path(nes_core.__file__).with_name("nes_core.abi3.so")
+            if not so.exists():
+                so = Path(nes_core.nes_core.__file__)
+            info["module"] = so.name
+            info["sha256_16"] = hashlib.sha256(so.read_bytes()).hexdigest()[:16]
+        except Exception:
+            pass
+        _core_build_id._cache = info
+    return dict(_core_build_id._cache)
+
+
+_core_build_id._cache = None
+
+
+def hw_provenance(flags, frame_skip: int) -> dict:
+    """The machine description that must travel with any state blob."""
+    return {"hw_flags": list(flags), "frame_skip": int(frame_skip),
+            "nes_core": _core_build_id()}
+
+
+def sidecar_path(state_path) -> Path:
+    """`foo.state` -> `foo.state.json`. Sidecar, NOT the blob: the
+    savestate format stays frozen and config never enters it."""
+    p = Path(state_path)
+    return p.with_name(p.name + ".json")
+
+
+def write_state_sidecar(state_path, provenance: dict, extra: dict | None = None):
+    """Record the machine a state blob was produced on, next to it."""
+    rec = dict(provenance)
+    if extra:
+        rec.update(extra)
+    rec["blob"] = Path(state_path).name
+    path = sidecar_path(state_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rec, indent=2) + "\n")
+    return path
+
+
+def check_state_sidecar(state_path, flags) -> bool:
+    """Warn LOUDLY when a root blob's recorded lineage disagrees with the
+    flags this run is about to use. Returns True when they agree (or no
+    sidecar exists to check against). Deliberately non-fatal: an
+    unlabelled blob is the common case until backfill catches up, and a
+    warning that names both sets is what turns an invisible config
+    mismatch into a five-second diagnosis."""
+    path = sidecar_path(state_path)
+    if not path.exists():
+        return True
+    try:
+        want = list(json.loads(path.read_text()).get("hw_flags", []))
+    except (OSError, ValueError) as e:
+        print(f"[go_explore_solve] unreadable state sidecar {path}: {e}",
+              flush=True)
+        return True
+    if sorted(want) == sorted(flags):
+        return True
+    print(f"[go_explore_solve] *** HW-FLAG LINEAGE MISMATCH *** "
+          f"{Path(state_path).name} was built with {want or '[]'} but this "
+          f"run uses {list(flags) or '[]'}. The restored machine is not the "
+          f"machine that produced this state; expect divergence that looks "
+          f"like nondeterminism. Pass --hw-flags {','.join(want) or 'none'} "
+          f"to match the lineage.", flush=True)
+    return False
+
+
+def stamp_stats_provenance(archive_path, provenance: dict) -> None:
+    """Merge run provenance into the archive's stats sidecar.
+
+    `GoExploreArchive.save()` owns archive.stats.json; this re-opens it
+    right after and adds the machine description under `hw_provenance`,
+    so a banked run can be re-created without guessing which flags it
+    ran under. Uses its own `.prov.tmp` scratch name so it can never
+    race the archive's own `.stats.json.tmp`.
+
+    The key is `hw_provenance`, never `provenance`: `provenance` is the
+    reserved honest-origin marker (`"search"`) on solution receipts, and
+    one token must not mean a string in one artifact and a dict in its
+    sibling."""
+    p = Path(archive_path).with_suffix(".stats.json")
+    try:
+        stats = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return
+    if stats.get("hw_provenance") == provenance:
+        return
+    stats["hw_provenance"] = provenance
+    tmp = p.with_name(p.name + ".prov.tmp")
+    try:
+        tmp.write_text(json.dumps(stats, indent=2))
+        os.replace(tmp, p)
+    except OSError as e:
+        print(f"[go_explore_solve] could not stamp provenance into {p}: {e}",
+              flush=True)
 
 
 def _gx(ram) -> int:
@@ -562,11 +757,22 @@ class Solver:
         self.inv_weights = np.array(inverted_weights(profile["action_space"]))
         self.inv_weights /= self.inv_weights.sum()
         self.game = make_game(profile)
+        # Hardware-flag selection (opt-in; empty by default, so a run
+        # with neither --hw-flags nor solve.hw_flags: is bit-identical
+        # to every pre-existing seeded solve). Resolved BEFORE the pool
+        # exists so a bad name fails before any work is done.
+        self.hw_flags = resolve_hw_flags(profile, getattr(args, "hw_flags", None))
+        self.frame_skip = int(profile.get("frame_skip", 4))
         self.pool = Pool(rom_path=self.game.rom, num_workers=args.workers,
-                         frame_skip=int(profile.get("frame_skip", 4)))
+                         frame_skip=self.frame_skip)
+        # MUST precede reset_all() — see apply_hw_flags' docstring.
+        apply_hw_flags(self.pool, self.hw_flags)
         self.pool.set_headless(True)
         self.pool.set_skip_preprocess(True)
         self.pool.reset_all()
+        self.provenance = hw_provenance(self.hw_flags, self.frame_skip)
+        if self.hw_flags:
+            print(f"[go_explore_solve] hw flags: {self.hw_flags}", flush=True)
         self.rng = np.random.default_rng(args.seed)
         # Sustained-hold macros (generic mechanism, profile-selected): at a
         # small per-step probability a worker settles briefly then HOLDS one
@@ -858,6 +1064,20 @@ class Solver:
                             if isinstance(v, (str, int, float, bool))},
             "root_id": root_id,
             "root_state": self.roots[root_id]["path"],
+            # The machine this trace was produced on. A solution replayed
+            # under different hw flags is not the same trajectory.
+            #
+            # NAMED `hw_provenance`, NOT `provenance`: `"provenance":
+            # "search"` above is the honest-origin marker every banked
+            # receipt carries and that CLAIMS.md audits compare against
+            # the literal string (docs/proposals/smb_oneshot_campaign.md
+            # 543/596). Reusing the key here shadowed it silently — a
+            # dict literal keeps the LAST binding, so the marker was
+            # deleted with no error. The token `provenance` means
+            # exactly one thing corpus-wide: origin. The machine
+            # description travels under `hw_provenance` everywhere
+            # (receipts, roots.json, archive.stats.json).
+            "hw_provenance": self.provenance,
             "start_wd": list(self.start_wd),
             "clear_wd": list(self.game.level_key(ram)),
             "steps": steps, "actions": len(trace),
@@ -870,6 +1090,10 @@ class Solver:
 
     def seed(self) -> None:
         path = self.args.root_state
+        # The root blob carries no timing config of its own; if a
+        # sidecar records the lineage it was built under, say so before
+        # a mismatch turns into hours of "the game behaves differently".
+        check_state_sidecar(path, self.hw_flags)
         self.pool.load_worker_state(0, Path(path).read_bytes())
         r = self._step0(NOOP)  # convention: load root, one NOOP, then actions
         self.start_wd = self.game.level_key(r)
@@ -881,7 +1105,8 @@ class Solver:
             self.game.note_start(r)
         self.roots["entrance"] = {"path": str(path),
                                   "start_wd": list(self.start_wd),
-                                  "lives": self.start_lives}
+                                  "lives": self.start_lives,
+                                  "hw_provenance": self.provenance}
         self.observe(0, r, [], 0, "entrance")
         prev = getattr(self.args, "resume_archive", None)
         if prev:
@@ -1336,6 +1561,7 @@ class Solver:
         if self._flush_thread is not None and self._flush_thread.is_alive():
             self._flush_thread.join()
         self.archive.save(self.out / "archive.pkl")
+        stamp_stats_provenance(self.out / "archive.pkl", self.provenance)
         with open(self.out / "traces.pkl", "wb") as f:
             pickle.dump(self.traces, f, protocol=pickle.HIGHEST_PROTOCOL)
         (self.out / "roots.json").write_text(json.dumps(self.roots, indent=2) + "\n")
@@ -1375,6 +1601,7 @@ class Solver:
             snap._cells = cells_snapshot
             snap.total_records, snap.total_new_cells, snap.total_improvements = counters
             snap.save(self.out / "archive.pkl")
+            stamp_stats_provenance(self.out / "archive.pkl", self.provenance)
             with open(self.out / "traces.pkl", "wb") as f:
                 pickle.dump(traces_snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
             (self.out / "roots.json").write_text(
@@ -1391,6 +1618,15 @@ def main() -> int:
                     help="Level ENTRANCE save-state (honest root; no prefix).")
     ap.add_argument("--profile", required=True,
                     help="Source of action_space + frame_skip only.")
+    ap.add_argument("--hw-flags", type=str, default=None, metavar="a,b,c",
+                    help="Comma-separated nes_core hw timing flags to set on "
+                         "the pool (e.g. mmio_read_timing,nmi_poll_timing), "
+                         "overriding the profile's solve.hw_flags. "
+                         "'none' forces the empty set. DEFAULT: whatever the "
+                         "profile pins, else NONE — a state blob records no "
+                         "timing config, so a lineage built under flags must "
+                         "be re-solved under the same flags or the restored "
+                         "machine is not the machine that produced it.")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--burst", type=int, default=64)
     ap.add_argument("--sticky", type=float, default=0.5)

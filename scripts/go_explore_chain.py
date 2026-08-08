@@ -32,7 +32,10 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from nes_core import Pool  # noqa: E402
-from scripts.go_explore_solve import make_game  # noqa: E402
+from scripts.go_explore_solve import (  # noqa: E402
+    apply_hw_flags, hw_provenance, make_game, resolve_hw_flags,
+    write_state_sidecar,
+)
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
 
 SOLVE = str(REPO / "scripts" / "go_explore_solve.py")
@@ -40,7 +43,7 @@ SOLVE = str(REPO / "scripts" / "go_explore_solve.py")
 
 def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
                           settle: int = 8, stable_for: int = 45,
-                          settle_cap: int = 600):
+                          settle_cap: int = 600, hw_flags=()):
     """Replay `actions` from the root; at the first level-key transition
     that lands on a genuinely NEW, ALIVE, stable state, snapshot it as the
     next level's entrance. Returns (path, next_key) or (None, None) if no
@@ -66,11 +69,18 @@ def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
     already hit 0) — reject via the game adapter's own is_dead() using
     lives captured at the true root, before any transition. A doomed
     landing is treated as if no transition were seen on this action
-    range; the search resumes scanning the rest of `actions`."""
+    range; the search resumes scanning the rest of `actions`.
+
+    `hw_flags` must be the SAME set the solve ran under: this replay
+    machine is what stamps the next level's entrance blob, so a
+    mismatch bakes a foreign-machine state into the chain and every
+    downstream level inherits it. Empty (the default) reproduces the
+    pre-existing behavior exactly."""
     game = make_game(profile)
     bm = action_space_to_bitmasks(profile["action_space"])
-    pool = Pool(rom_path=game.rom, num_workers=1,
-                frame_skip=int(profile.get("frame_skip", 4)))
+    fs = int(profile.get("frame_skip", 4))
+    pool = Pool(rom_path=game.rom, num_workers=1, frame_skip=fs)
+    apply_hw_flags(pool, hw_flags)   # before reset_all(); order is load-bearing
     pool.set_headless(True)
     pool.reset_all()
     pool.load_worker_state(0, root_bytes)
@@ -106,6 +116,10 @@ def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
                 continue   # false/doomed transition — keep scanning `actions`
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_bytes(pool.save_worker_state(0))
+            # Sidecar, not blob: record the machine this entrance was
+            # produced on so the next solve can be run on the same one.
+            write_state_sidecar(out_path, hw_provenance(hw_flags, fs),
+                                {"settled_key": list(settled_key)})
             result = (str(out_path), settled_key)
             break
     pool.shutdown()
@@ -152,9 +166,19 @@ def main() -> int:
     # review, 2026-08-06) — Lost Levels needed --sect-cap 64 by hand
     # outside the chain to avoid silently freezing half the cell key.
     ap.add_argument("--sect-cap", type=int, default=16)
+    # nes_core hw timing flags for the WHOLE chain — the per-level solves
+    # and this driver's own entrance-extraction replay must run the same
+    # machine, or the entrance blob this banks came from a machine the
+    # next solve never reproduces (the CV cv_chain_hw2 failure mode).
+    # Default: whatever the profile pins, else NONE (byte-identical to
+    # every existing chain run). See go_explore_solve.py --hw-flags.
+    ap.add_argument("--hw-flags", type=str, default=None, metavar="a,b,c")
     args = ap.parse_args()
 
     profile = yaml.safe_load(Path(args.profile).read_text())
+    hw_flags = resolve_hw_flags(profile, args.hw_flags)
+    if hw_flags:
+        print(f"[chain] hw flags: {hw_flags}", flush=True)
     game = make_game(profile)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -189,6 +213,12 @@ def main() -> int:
                 "--y-band", str(args.y_band),
                 "--burst", str(args.burst),
                 "--sect-cap", str(args.sect_cap),
+                # Pass the RESOLVED set explicitly rather than the raw
+                # CLI string: the subprocess then cannot re-resolve to
+                # something different from the machine this driver uses
+                # for entrance extraction. Empty resolves to 'none',
+                # which sets nothing (the pre-existing behavior).
+                "--hw-flags", ",".join(hw_flags) or "none",
             ]
             subprocess.run(cmd, check=False)
             sols = sorted(lvl_out.glob("solutions/sol_*.actions.npy"))
@@ -204,9 +234,11 @@ def main() -> int:
         actions = np.load(sols[0]).astype(np.int64)
         nxt_path = out / "entrances" / f"entrance_after_{cur_label}.state"
         npath, nwd = extract_next_entrance(profile, Path(cur_state).read_bytes(),
-                                           actions, nxt_path)
+                                           actions, nxt_path,
+                                           hw_flags=hw_flags)
         rec = {"level": cur_label, "status": "solved",
-               "actions": int(len(actions)), "solution": str(sols[0])}
+               "actions": int(len(actions)), "solution": str(sols[0]),
+               "hw_flags": list(hw_flags)}
         solved.append(cur_label)
         print(f"[chain] SOLVED {cur_label} ({len(actions)} actions)", flush=True)
         if npath is None:
