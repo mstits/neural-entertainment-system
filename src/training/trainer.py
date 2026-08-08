@@ -8935,14 +8935,33 @@ class Trainer:
                                 source_iter=global_it,
                             )
                     else:
-                        save_winner(
-                            {k: v.detach().cpu() for k, v in net.state_dict().items()},
-                            game=str(self.game_profile.get("name", "game")),
-                            metric_value=float(vppo_success_rate),
-                            out_dir=self.checkpoint_dir,
-                            metric_name="clear_rate",
-                            source_iter=global_it,
-                        )
+                        # BACKWARD MODE re-keys the winner on the TRAILING
+                        # entrance success rate, and only once tau has
+                        # reached the entrance: the raw in-training
+                        # clear_rate is inflated by near-flag rung restarts
+                        # (B4 v1 receipt: best.pt landed at iter 80, mid-
+                        # ladder, and cold-entrance greedy scored 0.02
+                        # while the never-snapshotted entrance-era policy
+                        # trained at 0.25). Pre-entrance nets are never
+                        # the deliverable.
+                        _wm_val = float(vppo_success_rate)
+                        _wm_name = "clear_rate"
+                        if bwd_on and bwd_sched is not None:
+                            _wbs = bwd_sched.snapshot()
+                            if _wbs["at_entrance"]:
+                                _wm_val = float(_wbs["rate"])
+                                _wm_name = "entrance_trailing_rate"
+                            else:
+                                _wm_val = None
+                        if _wm_val is not None:
+                            save_winner(
+                                {k: v.detach().cpu() for k, v in net.state_dict().items()},
+                                game=str(self.game_profile.get("name", "game")),
+                                metric_value=_wm_val,
+                                out_dir=self.checkpoint_dir,
+                                metric_name=_wm_name,
+                                source_iter=global_it,
+                            )
                 except Exception as exc:
                     log.warning("[vanilla_ppo] winner retention failed: %s", exc)
 
