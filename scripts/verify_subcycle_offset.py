@@ -5,9 +5,11 @@ ANSWERED 2026-08-07 — the open calibration question this script was
 built to stage ("read offset 0/1/2 can only be settled against Mesen")
 is settled, against full-tape state lockstep rather than a trace window:
 on the 14,401-frame CV tape with the input-aligned harness
-(nes_core_cv_ram_dump.py --mesen-align), ppu_read_dot_offset=2 (the
-shipped end-of-cycle default) holds state lockstep with Mesen to tape
-end, while offsets 0 and 1 both fork identically at frame 4057
+(nes_core_cv_ram_dump.py --mesen-align; scope caveat in that script's
+docstring — the compared trajectory covers blocks 0-2 gameplay to a
+frame-12,306 death plus aftermath, no block 3), ppu_read_dot_offset=2
+(the shipped end-of-cycle default) holds state lockstep with Mesen to
+tape end, while offsets 0 and 1 both fork identically at frame 4057
 ($32B/$4CF/$593). END-OF-CYCLE READ SAMPLING (offset 2) IS THE
 CONFIGURATION THAT MATCHES MESEN over real gameplay; the phi-2
 (offset-1) story applies to the NMI-line latch (hw_nmi_subcycle_phase),

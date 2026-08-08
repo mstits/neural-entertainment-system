@@ -12,7 +12,21 @@ persistent divergence, phi-2 flag on or off), where the UNALIGNED run
 "forks" at frame 3435. That fork, the OAM-DMA parity anti-phase and the
 post-11370 counter chaos were all downstream of the one-frame input
 phase, not emulator behavior. Default remains unaligned so the banked
-byte-identity receipts stay reproducible."""
+byte-identity receipts stay reproducible.
+
+TRAJECTORY SCOPE (2026-08-07 late correction, do not overclaim): this
+harness's flag set (frame_anchor + mmio_write included) is NOT the
+tape's build lineage (a 4-flag Pool). Under THIS harness the tape's
+open-loop actions desync from the game: Simon dies in BLOCK 2 at frame
+~12,306 on BOTH machines and $0028 never reaches 3 — the lockstep
+receipts are genuine machine-agreement (both sides agree byte-for-byte
+through the death and its aftermath) but contain ZERO block-3/hall
+frames. Replayed on its true Pool lineage the tape DOES reach block 3
+(stage 3 at frame 14,366, hall to gx 767, no deaths) — and that lane
+forks vs Mesen at ~11,102, the expected open-loop brittleness of
+unanchored frame slicing. No Mesen-lockstep coverage of block 3 exists
+yet; producing it needs a tape recorded on an anchored lane
+(Pool.set_hw_frame_anchor shipped for exactly that)."""
 from __future__ import annotations
 
 import argparse

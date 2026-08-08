@@ -34,10 +34,13 @@ use std::collections::HashMap;
 /// inert instead of firing on the wrong CPU cycle, and hence (frame =
 /// 89342 ≡ 2 mod 3 dots) on a disjoint set of frames.
 ///
-/// Empirical status (2026-08-07, input-aligned CV tape): the lead-1
-/// lane as a whole does NOT yet hold lockstep with Mesen — it forks at
-/// frame 4057 ($32B/$4CF/$593) while the shipped lead-3 path holds
-/// full 17,509-frame state lockstep. Since Mesen services reads at
+/// Empirical status (2026-08-07, input-aligned CV tape; trajectory
+/// scope in nes_core_cv_ram_dump.py's docstring — the compared run
+/// covers blocks 0-2 to a frame-12,306 death plus aftermath, no
+/// block 3): the lead-1 lane as a whole does NOT yet hold lockstep
+/// with Mesen — it forks at frame 4057 ($32B/$4CF/$593) while the
+/// shipped lead-3 path holds 17,509-frame state lockstep on that same
+/// trajectory. Since Mesen services reads at
 /// lead 1, our lead-1 read model must differ from Mesen's elsewhere;
 /// until that is calibrated (scripts/verify_subcycle_offset.py has the
 /// receipt), this flag is diagnostic-only — no lockstep-holding
