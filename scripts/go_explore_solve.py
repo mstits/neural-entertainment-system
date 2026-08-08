@@ -309,6 +309,39 @@ def is_forward_clear(start_wd: tuple, ram) -> bool:
     return False
 
 
+def resolve_inversion_pin_secs(args) -> float:
+    """Seconds the deep frontier must sit pinned before the heuristic-
+    inversion arm engages (--inversion-pin-secs).
+
+    Absent attribute — in-process constructions (the live show) that
+    predate the flag — resolves to 180.0, the constant the receipted
+    32-level SMB clear ran under, so those callers are unchanged. A
+    NEGATIVE value disables the arm outright: the sampler then never
+    flips to inverted weights, whatever the frontier does."""
+    v = getattr(args, "inversion_pin_secs", None)
+    return 180.0 if v is None else float(v)
+
+
+def inversion_armed(pin_secs: float, pin_gx: int, gx: int, floor: float,
+                    elapsed: float) -> bool:
+    """Whether a worker sitting at `gx` should sample from the INVERTED
+    weights this step.
+
+    Four independent conditions, all measured off our own telemetry:
+    the arm is enabled (`pin_secs` non-negative — a negative value is the
+    --inversion-pin-secs disable sentinel, and it short-circuits FIRST
+    because `elapsed >= -1` would otherwise always hold); the run has a
+    real frontier to be pinned at (`pin_gx > 400`); the worker is inside
+    the saturation window [floor, pin_gx+60] on a non-garbage gx; and the
+    frontier has sat unmoved for at least `pin_secs`.
+
+    A free function, not an inline expression, so the disable sentinel
+    and the window boundaries are testable without a ROM and a Pool —
+    the wiring is the whole deliverable of the flag."""
+    return (pin_secs >= 0.0 and pin_gx > 400 and gx >= 0
+            and floor <= gx <= pin_gx + 60 and elapsed >= pin_secs)
+
+
 def inverted_weights(action_space) -> list:
     """Exploration bias for the saturation window: reward the maneuvers the
     forward heuristic structurally prunes (leftward, downward)."""
@@ -736,6 +769,49 @@ def update_stall(stall: dict, n_cells: int, now: float) -> None:
     stall["last_cells"], stall["last_t"] = n_cells, now
 
 
+def column_extremes(keys, mode: str) -> dict:
+    """Per-gx-column ceiling (mode 'up') or floor (mode 'down') of the
+    ORTHOGONAL axis: {gx bucket -> extreme y-band} over the given cell
+    keys. key[-1] is the gx bucket, key[-2] the y-band (both SmbGame and
+    GenericGame cells end (..., y_band, gx_bucket)). 'up' is min because
+    the NES y axis grows downward — a smaller band is higher up."""
+    pick = min if mode == "up" else max
+    ext: dict = {}
+    for k in keys:
+        col, yb = k[-1], k[-2]
+        cur = ext.get(col)
+        ext[col] = yb if cur is None else pick(cur, yb)
+    return ext
+
+
+def ortho_pool(cells, mode: str, band: int) -> list:
+    """The orthogonal frontier: cells within `band` y-bands of THEIR OWN
+    column's extreme. Per-column, not global — a global cutoff would let
+    one tall column's ceiling define the whole level and silently drop
+    every other column's top-of-stack cell (the aliasing trap)."""
+    ext = column_extremes([c.key for c in cells], mode)
+    return [c for c in cells if abs(c.key[-2] - ext[c.key[-1]]) <= band]
+
+
+def ortho_armed(mode: str, pin_time: float, now: float,
+                pin_secs: float) -> bool:
+    """Whether the orthogonal arm is live: a mode is selected AND the
+    primary (x) frontier has been pinned at least `pin_secs`. Reuses the
+    solver's own self-measured `_pin_time` — the same saturation signal
+    the heuristic-inversion window already runs on, no new machinery and
+    no external map."""
+    return mode not in (None, "", "off") and now - pin_time >= pin_secs
+
+
+def count_wmax(door_weight: float, ortho_weight: float) -> float:
+    """Exact Wmax for the count arm's O(1) rejection sampling. The prior
+    is W = 1/sqrt(times_chosen+1) * (score_norm + 0.1) <= 1.1, times any
+    armed multiplier (R4 doors, orthogonal frontier). Under-stating it
+    would silently truncate the prior; 1.1 is the legacy value both
+    multipliers reduce to when off."""
+    return 1.1 * max(door_weight, 1.0) * max(ortho_weight, 1.0)
+
+
 class Solver:
     def __init__(self, args) -> None:
         # Cell granularity globals are consumed by cell_fn at call time.
@@ -827,6 +903,8 @@ class Solver:
         self.max_area = 0
         self.max_gx_in_area: dict = {}    # area -> max gx seen
         self._pin_time = time.time()      # last frontier advance (inversion gate)
+        # Resolved once (the gate is read per worker per step).
+        self._inv_pin_secs = resolve_inversion_pin_secs(args)
         self._loop_dest_min = None        # min gx observed right after a loop
         self.max_sect = 0                 # deepest section-transit count seen
         self.n_solutions = 0
@@ -856,6 +934,34 @@ class Solver:
         # the default path stays byte-identical to the receipted campaign.
         self.door_weight = float(getattr(args, "door_weight", 0.0))
         self.door_interval = float(getattr(args, "door_interval", 45.0))
+        # ORTHOGONAL-FRONTIER arm (CV hall diagnosis, 2026-08-08), flag-
+        # gated, default off => byte-identical to the receipted SMB
+        # lineage. The solver's only reward axis is x (score = sect*10000
+        # + gx, and CV's sect never moves), so the deep arm samples only
+        # the deepest gx buckets while every climbing cell sits at LOW gx:
+        # a vertical frontier is unreachable by construction, and the
+        # count arm's score term penalizes it a second time. When the x
+        # frontier has been pinned for `ortho_pin_secs` (the same self-
+        # measured _pin_time the inversion window uses), a third arm
+        # samples the top-of-column cells of the orthogonal axis with a
+        # PURE count prior — no score term, so the x-axis score cannot
+        # suppress a climb. SELECTION-SIDE ONLY: `score` and the cell key
+        # are untouched, so domination, solution receipts, cross-run
+        # comparability and --resume-archive all keep working.
+        self.ortho_mode = str(getattr(args, "ortho", "off"))
+        self.ortho_pin_secs = float(getattr(args, "ortho_pin_secs", 120.0))
+        self.ortho_bias = float(getattr(args, "ortho_bias", 0.30))
+        self.ortho_band = int(getattr(args, "ortho_band", 1))
+        self.ortho_weight = float(getattr(args, "ortho_weight", 4.0))
+        self.ortho_macro_p = float(getattr(args, "ortho_macro_p", 0.0))
+        self._ortho_pool: list = []       # cached top-of-column cells
+        self._ortho_ids: set = set()      # their keys, for O(1) membership
+        self._ortho_ext: dict = {}        # gx bucket -> column extreme
+        self._ortho_best = None           # best y-band any worker reached
+        self._ortho_time = time.time()    # last orthogonal improvement
+        self._ortho_deep_yband = None     # extreme y-band AT the x frontier
+        self._ortho_selections = 0
+        self._ortho_cols_improved = 0
         # v6-report recipes (2026-07-30), flag-gated, default byte-identical:
         # time_bins: append floor(log2(steps+1)) to the key prefix (after
         # sect, so key[0]/key[-N] indexing is untouched). Time-Myopic
@@ -954,6 +1060,19 @@ class Solver:
             self._pin_time = time.time()  # frontier moved: inversion stays off
         if area > self.max_area:
             self.max_area = area
+        # Orthogonal frontier: a NEW best y-band forces a selection-cache
+        # rebuild immediately. The cache otherwise waits for the 2%-growth
+        # trigger (~2 min at CV's ~700 cells/min), so a freshly-climbed
+        # cell would sit unselectable for exactly as long as the climb
+        # takes to decay — the arm would never compound its own progress.
+        if self.ortho_mode != "off":
+            yb = game.y(ram) // Y_BAND
+            best = self._ortho_best
+            if best is None or (yb < best if self.ortho_mode == "up"
+                                else yb > best):
+                self._ortho_best = yb
+                self._ortho_time = time.time()
+                self._sel_cells = None
         # Domination score = gx within the cell; deeper-x wins, ties to fewer
         # steps (elites keep shortening). Peek-then-record: only pay
         # save_worker_state for a new/dominating cell.
@@ -1145,6 +1264,47 @@ class Solver:
         the archive grows 2% or the deepest area advances."""
         self._sel_cells = [c for c in self.archive.cells.values()
                            if c.state is not None]
+        deep_area = self._sel_cells
+        if self.ortho_mode != "off":
+            # Restrict the ORTHO POOL — and only it — to the DEEPEST area:
+            # an earlier area's column ceilings are not the wall being
+            # climbed, and mixing them would let a tall stale column
+            # define this one's frontier. Keyed on the MODE (static), not
+            # on armed-ness (time-varying) — a cache whose contents depend
+            # on when it happened to be rebuilt is not reproducible.
+            #
+            # SCOPED TO THE ARM (fix): this filter used to overwrite
+            # self._sel_cells, i.e. it restricted the ENTIRE selection
+            # pool. record() bumps self.max_area BEFORE the `loops > 6`
+            # archive-eligibility early-out, so a castle-maze spiral
+            # (4-4/7-4/8-4 — the exact case the loop counter exists for)
+            # that crosses an area boundary advances max_area with ZERO
+            # state-bearing cells in that area. The pool then emptied,
+            # select() returned None, and _assign reset EVERY worker to
+            # the entrance root — permanently, because entrance bursts
+            # archive into the earlier area that the same filter discards.
+            # Reproduced against snapshot e0f59e9 (6 cells in area 3,
+            # max_area 4: mode=off -> 6 cells; mode=up -> 0, select None).
+            # The ortho arm is additive: an empty deep-area subset now
+            # just makes the arm fall through, exactly as an evicted pool
+            # already did, and the count/legacy arms keep the full pool.
+            deep_area = [c for c in self._sel_cells
+                         if c.key[-5] == self.max_area]
+            ext = column_extremes([c.key for c in deep_area],
+                                  self.ortho_mode)
+            better = min if self.ortho_mode == "up" else max
+            prev = self._ortho_ext
+            # Cumulative (monotone) count of column ceilings this run has
+            # pushed — the arm's own partial-progress signal, independent
+            # of whether a solution ever lands.
+            self._ortho_cols_improved += sum(
+                1 for col, yb in ext.items()
+                if col in prev and yb != prev[col]
+                and better(yb, prev[col]) == yb)
+            self._ortho_ext = ext
+            self._ortho_pool = ortho_pool(deep_area, self.ortho_mode,
+                                          self.ortho_band)
+            self._ortho_ids = {c.key for c in self._ortho_pool}
         self._sel_n = len(self.archive.cells)
         self._sel_area = self.max_area
         self._sel_maxscore = max(
@@ -1165,6 +1325,20 @@ class Solver:
             self._sel_topgx = 0
             self._sel_band24 = []
             self._sel_lowl_band24 = []
+        if self.ortho_mode != "off":
+            # The literal figure the pre-registered gate names: the
+            # extreme y-band reached inside the deep band the primary arm
+            # actually samples (gx buckets >= topgx-24), inside the
+            # deepest area (the arm's own subset, not the whole pool).
+            ybs = [c.key[-2] for c in deep_area
+                   if c.key[-1] >= self._sel_topgx - 24]
+            self._ortho_deep_yband = (
+                (min(ybs) if self.ortho_mode == "up" else max(ybs))
+                if ybs else None)
+
+    def _ortho_armed(self) -> bool:
+        return ortho_armed(self.ortho_mode, self._pin_time, time.time(),
+                           self.ortho_pin_secs)
 
     def select(self):
         if (getattr(self, "_sel_cells", None) is None
@@ -1195,6 +1369,31 @@ class Solver:
                     cell.times_chosen += 1
                     cell.explored = True
                     return cell
+        # Orthogonal-frontier arm (between the deep and count arms so
+        # deep_bias semantics are unchanged): once the x frontier is
+        # pinned, spend `ortho_bias` of the remaining budget on the
+        # top-of-column cells with a PURE count prior W =
+        # 1/sqrt(times_chosen+1) (Wmax 1.0) — deliberately no score term,
+        # since the score is exactly what makes a climb look worthless.
+        # Same O(1) rejection sampling and same barren skip as the other
+        # arms; an empty pool, or one that is all wall, falls through.
+        armed = self._ortho_armed()
+        if armed and self._ortho_pool and self.rng.random() < self.ortho_bias:
+            opool = self._ortho_pool
+            pick = None
+            for _ in range(64):
+                cand = opool[int(self.rng.integers(len(opool)))]
+                if (self.frontier_throttle > 0
+                        and getattr(cand, "barren", 0) >= self.frontier_throttle):
+                    continue
+                pick = cand
+                if self.rng.random() < 1.0 / (cand.times_chosen + 1) ** 0.5:
+                    break
+            if pick is not None:
+                pick.times_chosen += 1
+                pick.explored = True
+                self._ortho_selections += 1
+                return pick
         if self.sel_mode == "count":
             # Count-based prior via O(1) rejection sampling: accept cell
             # with prob W/Wmax, W = 1/sqrt(times_chosen+1) * (score_norm
@@ -1204,7 +1403,11 @@ class Solver:
             ms = self._sel_maxscore
             doors = self._doors
             dw = self.door_weight if doors else 0.0
-            wmax = 1.1 * max(dw, 1.0)
+            # Orthogonal frontier gets the same treatment as doors: an
+            # up-weight inside the count arm, with Wmax scaled so the
+            # rejection sampling stays EXACT when both multipliers arm.
+            ow = self.ortho_weight if armed else 1.0
+            wmax = count_wmax(dw, ow)
             pick = None
             for _ in range(64):
                 pick = cells[int(self.rng.integers(len(cells)))]
@@ -1220,6 +1423,8 @@ class Solver:
                      * (pick.best_score / ms + 0.1))
                 if dw > 0 and self._key_ids.get(pick.key) in doors:
                     w *= dw
+                if ow > 1.0 and pick.key in self._ortho_ids:
+                    w *= ow
                 if self.rng.random() < w / wmax:
                     break
             pick.times_chosen += 1
@@ -1325,7 +1530,7 @@ class Solver:
             return {"key": None, "root": "entrance", "trace": [], "steps": 0,
                     "left": self.args.burst, "loops": 0, "prev_gx": -1,
                     "sig": (), "sect": 0, "p0750": None, "psig": (),
-                    "kills": 0, "eslots": None,
+                    "kills": 0, "eslots": None, "ortho": False,
                     "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
         self.pool.load_worker_state(wid, cell.state)
         rec = self.traces[cell.key]
@@ -1339,6 +1544,9 @@ class Solver:
                 "loops": loops, "prev_gx": -1, "sig": sig,
                 "sect": sect, "p0750": None, "psig": psig, "cur_key": cell.key,
                 "kills": rec[6] if len(rec) > 6 else 0, "eslots": None,
+                # Burst rooted at an orthogonal-frontier cell: explore()
+                # rolls the hold-macro at ortho_macro_p for these.
+                "ortho": cell.key in self._ortho_ids,
                 "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
 
     def explore(self) -> None:
@@ -1351,6 +1559,12 @@ class Solver:
         self._stall = {"last_cells": 0, "last_t": self.t0, "flat_windows": 0}
         deadline = self.t0 + args.minutes * 60 if args.minutes > 0 else None
         while not self.stop:
+            # Pin clock read ONCE per step rather than once per worker:
+            # the inversion gate is a call now, so it can no longer
+            # short-circuit the time.time() away. Against a 180 s
+            # threshold a one-step-stale reading is noise, and this is
+            # strictly cheaper than the per-worker read it replaces.
+            _pin_elapsed = time.time() - self._pin_time
             for i, c in enumerate(ctx):
                 # Heuristic inversion inside the self-measured saturation
                 # window [pin-300, pin+60]: the frontier pin is where OUR
@@ -1361,15 +1575,17 @@ class Solver:
                 # inversion sabotaged standard levels — at 5-3's frontier the
                 # solver sampled left/down exactly where a full-speed rightward
                 # jump was needed (chain stall). The maze maneuver hunt now
-                # arms only after the frontier has been pinned >=180 s.
+                # arms only after the frontier has been pinned for
+                # --inversion-pin-secs (default 180 s = the receipted
+                # constant; negative disables the arm outright).
                 _pin = self.max_gx_in_area.get(self.max_area, 0)
                 _floor = (self._loop_dest_min
                           if self._loop_dest_min is not None
                           else _pin - 300)
                 _w = (self.inv_weights
-                      if (_pin > 400 and c.get("gx", -1) >= 0
-                          and _floor <= c["gx"] <= _pin + 60
-                          and time.time() - self._pin_time >= 180.0)
+                      if inversion_armed(self._inv_pin_secs, _pin,
+                                         c.get("gx", -1), _floor,
+                                         _pin_elapsed)
                       else self.weights)
                 # Discrete-transition gate (Kirby lesson): at the deep frontier,
                 # inject an auto-derived door-entry maneuver (settle then HOLD
@@ -1383,8 +1599,19 @@ class Solver:
                     c["macro_a"], c["macro_hold"] = self.transition_macros[ti]
                     c["macro_left"] = c["macro_hold"] + 6
                     self._transition_injections += 1
+                # Bursts rooted at an orthogonal-frontier cell roll the
+                # hold macro at ortho_macro_p instead of the profile's own
+                # rate: a stair mount IS a sustained up/up+right hold, and
+                # the profile-declared macros fire at p=0.02, so the one
+                # maneuver the climb needs is the rarest thing the sampler
+                # emits exactly where it matters. Cheap checks first —
+                # with the arm off (macro_p 0) this costs one comparison.
+                _mp = (self.ortho_macro_p
+                       if (self.ortho_macro_p > 0 and c.get("ortho")
+                           and self._ortho_armed())
+                       else self.macro_p)
                 if (c.get("macro_left", 0) <= 0 and self.macros
-                        and self.rng.random() < self.macro_p):
+                        and self.rng.random() < _mp):
                     mi = int(self.rng.choice(len(self.macros),
                                              p=self._macro_weights))
                     c["macro_a"], c["macro_hold"] = self.macros[mi][:2]
@@ -1540,6 +1767,18 @@ class Solver:
             "sps": round(self.steps_done / max(elapsed, 1e-9)),
             "stall_flat_windows": self._stall["flat_windows"],
         }
+        if self.ortho_mode != "off":
+            # ortho_deep_yband is the pre-registered gate figure: the
+            # extreme y-band inside the band the PRIMARY arm samples, so
+            # a climb that only happens off-frontier cannot flatter it.
+            # pinned_secs is the arm's own arming clock, printed so a log
+            # reader can tell "inert" from "armed and not working".
+            line["ortho_best_yband"] = self._ortho_best
+            line["ortho_deep_yband"] = self._ortho_deep_yband
+            line["ortho_pool"] = len(self._ortho_pool)
+            line["ortho_selections"] = self._ortho_selections
+            line["ortho_cols_improved"] = self._ortho_cols_improved
+            line["pinned_secs"] = round(time.time() - self._pin_time)
         if self.door_weight > 0:
             line["doors"] = len(self._doors)
             line["edges"] = sum(len(v) for v in self._adj.values()) // 2
@@ -1692,6 +1931,63 @@ def main() -> int:
                          "exploring instead of starting from one root cell. "
                          "Iterating on a single wall keeps every hard-won "
                          "frontier cell (e.g. CV block-3's stair funnel).")
+    ap.add_argument("--inversion-pin-secs", type=float, default=180.0,
+                    metavar="SECS",
+                    help="Seconds the deep frontier must sit pinned before "
+                         "the heuristic-inversion arm engages (leftward/"
+                         "downward sampling inside the self-measured "
+                         "saturation window). DEFAULT 180 = the constant "
+                         "the verified 32-level SMB clear ran under, so the "
+                         "banked receipts stay reproducible. Lower it on "
+                         "walls that saturate early; -1 (any negative) "
+                         "disables the arm entirely — the sampler keeps the "
+                         "forward weights no matter how long the frontier "
+                         "stays pinned.")
+    # --- orthogonal (vertical) progress arm ------------------------------
+    # The inversion arm above is horizontal: it un-prunes left/down when
+    # gx saturates. On vertically-structured walls (shafts, climbs) the
+    # search needs the mirror image — treat one vertical direction as the
+    # progress axis. Every knob below is inert while --ortho is off (the
+    # default), so a run that omits them samples exactly as before and
+    # every banked SMB receipt's solver_args replays unchanged.
+    ap.add_argument("--ortho", choices=("off", "up", "down"), default="off",
+                    help="Orthogonal (vertical) progress axis for the "
+                         "saturation arm: 'up' or 'down' names the "
+                         "direction to treat as forward once horizontal "
+                         "progress is pinned. DEFAULT off = no vertical "
+                         "arm, sampling is bit-identical to the receipted "
+                         "campaign.")
+    ap.add_argument("--ortho-pin-secs", type=float, default=120.0,
+                    metavar="SECS",
+                    help="Seconds the frontier must sit pinned before the "
+                         "ortho arm engages (the vertical counterpart of "
+                         "--inversion-pin-secs; shorter by default because "
+                         "a shaft saturates faster than a run of ground).")
+    ap.add_argument("--ortho-bias", type=float, default=0.30, metavar="P",
+                    help="Probability that an armed selection restarts a "
+                         "worker from the ortho pool (top-of-column cells) "
+                         "instead of falling through to the ordinary arms. "
+                         "Sampled with a PURE count prior — no score term, "
+                         "since the score is what buries a climb. 0 = "
+                         "never.")
+    ap.add_argument("--ortho-band", type=int, default=1, metavar="N",
+                    help="Half-width, in y-bands (--y-band px each), of the "
+                         "window around EACH gx column's own ortho extreme "
+                         "that enters the pool. 1 = the column's frontier "
+                         "band plus its two neighbours.")
+    ap.add_argument("--ortho-weight", type=float, default=4.0, metavar="W",
+                    help="Multiplier applied to pooled cells inside the "
+                         "count arm's rejection sampling while the ortho "
+                         "arm is armed (Wmax scales with it, so the prior "
+                         "stays exact). 1.0 = no bias. Needs --sel-mode "
+                         "count to have any effect.")
+    ap.add_argument("--ortho-macro-p", type=float, default=0.0, metavar="P",
+                    help="Per-step probability of injecting a profile-"
+                         "declared sustained-hold macro in bursts ROOTED at "
+                         "an ortho-pool cell (the long consecutive holds a "
+                         "climb needs and stochastic sampling almost never "
+                         "emits; profile rates are ~0.02). DEFAULT 0 = off, "
+                         "so the macro slot behaves exactly as today.")
     args = ap.parse_args()
     global GX_BUCKET, Y_BAND
     GX_BUCKET, Y_BAND = args.gx_bucket, args.y_band
