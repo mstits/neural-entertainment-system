@@ -23,16 +23,32 @@ silently misloading into the stateless net.
 
 Output is a single JSON line on stdout and a row appended to
 `checkpoints/<game_slug>/eval.jsonl` for later scoreboarding.
+
+Episodes run serially in one worker by default. `--eval-workers K` runs K
+episodes concurrently in a K-worker pool with per-lane bookkeeping; see
+`_run_episodes_parallel` and the `--eval-rng` note on why the parallel branch
+needs a per-episode RNG derivation to stay reproducible.
+
+The effective worker count — and ONLY that — picks the executor: an effective
+1 is always `_run_episodes_serial` (the historical loop), anything wider is
+always `_run_episodes_parallel`. Both honor both `--eval-rng` modes, so
+`--eval-workers 1 --eval-rng per-episode` vs
+`--eval-workers K --eval-rng per-episode` is a genuine serial-vs-parallel
+differential — that is what the ROM-gated test in tests/test_eval_parallel.py
+asserts on, and it is why the stub suite there can catch a bug in the parallel
+branch's honest-protocol constants instead of applying it to both sides of its
+own comparison.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
@@ -79,6 +95,71 @@ PIXEL_ENCODERS: tuple[str, ...] = ("nature_dqn", "impala")
 # not is a Brute, not a learner, and greedy-only eval cannot see the
 # difference.
 _ACTION_SELECT_MODES: tuple[str, ...] = ("greedy", "sampled")
+
+# How the stochastic-eval randomness (Machado no-op starts, sticky repeats,
+# sampled action draws) is derived.
+#
+#   shared-stream  the historical behavior and the DEFAULT: ONE
+#                  `np.random.RandomState(eval_seed)` and ONE
+#                  `torch.Generator(eval_seed)` are threaded through every
+#                  episode in order. Episode i's stream position therefore
+#                  depends on how many draws episodes 0..i-1 consumed, which
+#                  depends on how long they ran — data-dependent, so episode i
+#                  is NOT a function of (eval_seed, i) alone. Every receipt
+#                  ever written by this script is a shared-stream receipt and
+#                  reproduces bit-for-bit under this mode.
+#
+#   per-episode    each episode's numpy + torch streams are seeded from
+#                  `np.random.SeedSequence([eval_seed, episode_index])`, so
+#                  episode i is a pure function of (eval_seed, i). This is the
+#                  ONLY mode in which the answer is invariant to how the
+#                  episodes are distributed over workers — and therefore the
+#                  only mode `--eval-workers > 1` can run a stochastic eval in.
+#                  Its numbers are NOT comparable byte-for-byte to
+#                  shared-stream receipts (same distribution, different draws).
+#
+# When the run draws no randomness at all (greedy + no sticky + no jitter) the
+# two modes are provably identical because neither stream is ever touched;
+# `run_consumes_randomness` is the predicate that decides that, and it is what
+# lets `--eval-workers > 1` run under the default mode in that case.
+#
+# BOTH executors implement BOTH modes. The mode does not select an executor —
+# the worker count does — so the per-episode mode at one worker is the serial
+# loop with its streams re-seeded per episode, which is exactly the reference a
+# K-worker run must reproduce.
+_EVAL_RNG_MODES: tuple[str, ...] = ("shared-stream", "per-episode")
+
+
+def run_consumes_randomness(
+    sticky_prob: float, start_jitter: int, action_select: str,
+) -> bool:
+    """Does the episode loop draw from either RNG stream at all?
+
+    Mirrors the exact guards in the step loop: the jitter draw is gated on
+    `start_jitter > 0`, the sticky draw short-circuits on `sticky_prob > 0.0`,
+    and `select_action` never touches the generator in greedy mode. If all
+    three are off, both streams stay untouched for the whole run and every
+    episode is a deterministic replay of the same trajectory.
+    """
+    return (
+        float(sticky_prob) > 0.0
+        or int(start_jitter) > 0
+        or str(action_select) != "greedy"
+    )
+
+
+def episode_rng_seeds(eval_seed: int, episode_index: int) -> tuple[int, int]:
+    """Per-episode `(numpy_seed, torch_seed)` derived from (seed, index).
+
+    `SeedSequence` gives two decorrelated 32-bit seeds per episode from the
+    pair, so episode i's jitter/sticky stream and its sampled-action stream are
+    independent of each other AND of every other episode — the property the
+    parallel executor needs, since a lane cannot know what the episodes
+    scheduled before it consumed.
+    """
+    ss = np.random.SeedSequence([int(eval_seed), int(episode_index)])
+    np_seed, torch_seed = (int(x) for x in ss.generate_state(2, dtype=np.uint32))
+    return np_seed, torch_seed
 
 
 def select_action(
@@ -192,6 +273,381 @@ class _PixelPolicy:
         return logits, hidden
 
 
+class _Lane:
+    """One pool worker's slice of the parallel eval: the episode it is
+    currently playing plus every piece of per-episode state the serial loop
+    keeps in local variables.
+
+    The serial loop's locals map 1:1 onto these fields — `obs`/`hidden`,
+    `ep_return`/`ep_max_byte`/`ep_max_gx`/`ep_cleared`, `step`,
+    `_prev_action_idx` — which is what makes the two branches comparable line
+    by line. `noops_left` is the one addition: the serial loop can afford to
+    burn its no-op frames in a tight pre-loop because it owns the pool, while a
+    lane must interleave its no-ops with lanes that are already acting.
+    """
+
+    __slots__ = (
+        "episode", "worker", "pol", "reward_fn", "tracker", "rng", "gen",
+        "noops_left", "obs", "hidden", "step", "prev_action", "action_idx",
+        "ret", "max_byte", "max_gx", "cleared", "done",
+    )
+
+    def __init__(self, episode: int, worker: int) -> None:
+        self.episode = episode
+        self.worker = worker
+        self.pol: Any = None
+        self.reward_fn: Any = None
+        self.tracker: Any = None
+        self.rng: Any = None
+        self.gen: Any = None
+        self.noops_left = 1
+        self.obs: Any = None
+        self.hidden: Any = None
+        self.step = 0
+        self.prev_action = 0
+        self.action_idx = 0
+        self.ret = 0.0
+        self.max_byte = 0
+        self.max_gx = 0
+        self.cleared = False
+        self.done = False
+
+    def record(self) -> dict:
+        """The finished episode's contribution to the aggregate stats.
+
+        Same fields the serial loop folds into its accumulators, in the same
+        units, so the two branches share one aggregation site.
+        """
+        tr = self.tracker
+        return {
+            "ep_return": self.ret,
+            "length": self.step + 1,
+            "max_byte": self.max_byte,
+            "max_gx": self.max_gx,
+            "cleared": self.cleared,
+            "seq_clear": bool(tr.seq_clear) if tr is not None else False,
+            "warp_taken": bool(tr.warp_taken) if tr is not None else False,
+            "furthest_seq": tr.furthest_seq if tr is not None else None,
+            "furthest_any": tr.furthest_any if tr is not None else None,
+        }
+
+
+def _run_episodes_parallel(
+    pool,
+    *,
+    lanes: int,
+    n_episodes: int,
+    max_steps: int,
+    bitmasks,
+    make_policy: Callable[[], Any],
+    make_reward_fn: Callable[[], Any],
+    make_tracker: Callable[[], Any],
+    stage_blob: Optional[bytes],
+    device,
+    sticky_prob: float,
+    start_jitter: int,
+    eval_seed: int,
+    action_select: str,
+    temperature: float,
+) -> list[dict]:
+    """Play `n_episodes` across `lanes` pool workers; return one record per
+    episode, in episode order.
+
+    Scheduling is by WAVE: episodes are handed out in blocks of `lanes`, and a
+    wave starts with one `reset_all()` (plus the same per-worker
+    `load_worker_state` warm-start the serial loop does). Nothing carries from
+    one wave to the next, so an episode's start state is bit-identical to the
+    state the serial loop would have handed it — the alternative (refilling a
+    finished lane in place from a saved blob) would make an episode's start
+    depend on save/load fidelity rather than on `reset_all`.
+
+    Each lane owns its policy wrapper (hence its own frame/tile stacker), its
+    own reward function, its own tracker and its own pair of RNG streams keyed
+    on (eval_seed, episode index). Because none of that is shared and the pool
+    workers are independent emulators, an episode's trajectory does not depend
+    on which lane ran it or on what the other lanes were doing: the returned
+    records are identical for any `lanes`, and identical to what
+    `_run_episodes_serial` returns for the same arguments under
+    `eval_rng="per-episode"`. That last claim is the one that matters and it is
+    NOT self-evident, so it is asserted directly — stubbed in
+    tests/test_eval_parallel.py and on real emulation in the ROM-gated
+    differential there. Under `eval_rng="shared-stream"` there is no such
+    claim to make: the serial loop's draws depend on episode order, which is
+    why `eval_one_game` refuses that combination.
+
+    Finished lanes are flagged `set_worker_done` so the pool skips their
+    emulation for the rest of the wave instead of burning cycles on a
+    trajectory nobody reads.
+    """
+    records: list[Optional[dict]] = [None] * n_episodes
+    n_workers = int(pool.num_workers)
+
+    def _finish(lane: _Lane) -> None:
+        lane.done = True
+        records[lane.episode] = lane.record()
+        pool.set_worker_done(lane.worker, True)
+
+    for wave_start in range(0, n_episodes, lanes):
+        batch = list(range(wave_start, min(wave_start + lanes, n_episodes)))
+        pool.reset_all()
+        active: list[_Lane] = []
+        for worker, ep in enumerate(batch):
+            if stage_blob is not None:
+                pool.load_worker_state(worker, stage_blob)
+            lane = _Lane(ep, worker)
+            np_seed, torch_seed = episode_rng_seeds(eval_seed, ep)
+            lane.rng = np.random.RandomState(np_seed)
+            lane.gen = torch.Generator(device="cpu")
+            lane.gen.manual_seed(torch_seed)
+            lane.pol = make_policy()
+            lane.reward_fn = make_reward_fn()
+            lane.reward_fn.reset()
+            lane.tracker = make_tracker()
+            # 1 mandatory no-op step to flush the post-reset frame, then the
+            # Machado no-op start. Same count, same order, same draw as the
+            # serial pre-loop.
+            jitter = (
+                int(lane.rng.randint(0, start_jitter + 1)) if start_jitter > 0 else 0
+            )
+            lane.noops_left = 1 + jitter
+            active.append(lane)
+        # Trailing workers with no episode this wave (final short wave): park
+        # them so the pool does not emulate dead slots.
+        for worker in range(len(batch), n_workers):
+            pool.set_worker_done(worker, True)
+
+        while any(not lane.done for lane in active):
+            actions = np.zeros(n_workers, dtype=np.uint8)
+            for lane in active:
+                if lane.done or lane.noops_left > 0:
+                    continue  # no-op: action 0, exactly as the serial pre-loop
+                with torch.no_grad():
+                    logits, lane.hidden = lane.pol.logits(lane.obs, lane.hidden)
+                    action_idx = select_action(
+                        logits, action_select, temperature, lane.gen,
+                    )
+                if (
+                    sticky_prob > 0.0
+                    and lane.step > 0
+                    and lane.rng.random() < sticky_prob
+                ):
+                    action_idx = lane.prev_action
+                lane.prev_action = action_idx
+                lane.action_idx = action_idx
+                actions[lane.worker] = bitmasks[action_idx]
+            r = pool.step_all(actions)
+            for lane in active:
+                if lane.done:
+                    continue
+                out = r[lane.worker]
+                if lane.noops_left > 0:
+                    lane.noops_left -= 1
+                    if lane.noops_left == 0:
+                        lane.obs = lane.pol.reset(out)
+                        lane.hidden = lane.pol.initial_hidden(device)
+                        if lane.tracker is not None:
+                            lane.tracker.update(out[2])
+                        if max_steps <= 0:
+                            # `for step in range(0)` never runs; the serial
+                            # loop still reports length 1 off its pre-loop
+                            # `step = 0`.
+                            _finish(lane)
+                    continue
+                ram = out[2]
+                bitmask = bitmasks[lane.action_idx]
+                reward, rew_done, _ = lane.reward_fn.compute(ram, action=int(bitmask))
+                lane.ret += float(reward)
+                byte = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)
+                if byte > lane.max_byte:
+                    lane.max_byte = byte
+                gx_now = (int(ram[0x006D]) << 8) | int(ram[0x0086])
+                if gx_now > lane.max_gx:
+                    lane.max_gx = gx_now
+                lane.obs = lane.pol.push(out)
+                if lane.reward_fn.episode_success():
+                    lane.cleared = True
+                if lane.tracker is not None:
+                    lane.tracker.update(ram)
+                    ended = rew_done or bool(out[3]) or lane.tracker.seq_clear
+                else:
+                    ended = rew_done or bool(out[3]) or lane.cleared
+                if ended or lane.step + 1 >= max_steps:
+                    _finish(lane)
+                else:
+                    lane.step += 1
+
+    missing = [i for i, rec in enumerate(records) if rec is None]
+    if missing:  # pragma: no cover - defensive; the wave loop covers every index
+        raise RuntimeError(f"parallel eval lost episodes {missing}")
+    return [rec for rec in records if rec is not None]
+
+
+def _run_episodes_serial(
+    pool,
+    *,
+    n_episodes: int,
+    max_steps: int,
+    bitmasks,
+    make_policy: Callable[[], Any],
+    make_reward_fn: Callable[[], Any],
+    make_tracker: Callable[[], Any],
+    stage_blob: Optional[bytes],
+    device,
+    sticky_prob: float,
+    start_jitter: int,
+    eval_seed: int,
+    action_select: str,
+    temperature: float,
+    eval_rng: str = "shared-stream",
+) -> list[dict]:
+    """Play `n_episodes` one after another in worker 0; return one record per
+    episode, in episode order.
+
+    This IS the historical eval loop — the pre-parallel code, lifted out of
+    `eval_one_game` so that the thing `_run_episodes_parallel` claims to
+    reproduce is a callable object that can be diffed against it. The stub
+    suite drives BOTH through the same fake pool and asserts the records are
+    byte-identical; without that, every "invariance" test is
+    parallel-vs-parallel and an off-by-one in the parallel branch's jitter
+    range or sticky guard (i.e. the two numbers that DEFINE the honest
+    protocol) passes unnoticed.
+
+    `eval_rng` is the only behavioral addition over the pre-parallel loop:
+
+      shared-stream  one `RandomState(eval_seed)` plus one
+                     `Generator(eval_seed)` threaded through every episode in
+                     order — bit-identical to every receipt this script has
+                     ever written, and the default.
+      per-episode    both streams re-seeded from
+                     `episode_rng_seeds(eval_seed, ep)` at the top of each
+                     episode, so episode i is a pure function of
+                     (eval_seed, i). That is what makes the answer independent
+                     of how the episodes are scheduled, and therefore what
+                     makes this loop and the parallel one comparable at all.
+
+    One policy wrapper and one reward function are built here and reused
+    across episodes (reset per episode), exactly as before — the parallel
+    branch builds one per lane instead, and the stub/ROM differentials are
+    what prove those two are the same thing.
+    """
+    pol = make_policy()
+    reward_fn = make_reward_fn()
+    _sticky_rng = np.random.RandomState(eval_seed)
+    # Sampled-action selection draws from its OWN torch generator, seeded from
+    # --eval-seed, so (a) sampled runs are reproducible and (b) the sticky /
+    # jitter numpy stream is byte-identical to the greedy path — a greedy and
+    # a sampled run at the same seed see the same no-op starts and the same
+    # sticky-repeat decisions, so the pair differs only in the policy draw.
+    _action_gen = torch.Generator(device="cpu")
+    _action_gen.manual_seed(int(eval_seed))
+    records: list[dict] = []
+    for ep in range(n_episodes):
+        if eval_rng == "per-episode":
+            _np_seed, _torch_seed = episode_rng_seeds(eval_seed, ep)
+            _sticky_rng = np.random.RandomState(_np_seed)
+            _action_gen.manual_seed(_torch_seed)
+        pool.reset_all()
+        if stage_blob is not None:
+            # Warm-start into the curriculum stage. load_worker_state
+            # restores RAM but produces no frame until the next step,
+            # so the noop step below flushes the post-restore frame for
+            # the stacker seed (same pattern the trainer uses).
+            pool.load_worker_state(0, stage_blob)
+        reward_fn.reset()
+        init = pool.step_all(np.zeros(1, dtype=np.uint8))
+        # Machado no-op starts: hold up to start_jitter no-op frames before
+        # control begins, desynchronizing enemy/timer phase from the trained
+        # trajectory (the other half of the honest stochastic-eval protocol).
+        if start_jitter > 0:
+            for _ in range(int(_sticky_rng.randint(0, start_jitter + 1))):
+                init = pool.step_all(np.zeros(1, dtype=np.uint8))
+        obs = pol.reset(init[0])
+        # Fresh hidden state per episode — the GRU must not carry memory
+        # across episode boundaries.
+        hidden = pol.initial_hidden(device)
+        # In --sequential mode reconstruct World-1 progression from RAM
+        # independently of episode_success(). episode_success() latches on
+        # `cleared_any` at the FIRST 1-1 flagpole, so it can never observe a
+        # sequential 1-4 clear; the tracker's `won` semantics can. With
+        # --level-clear the predicate is instead "cleared the level it STARTED
+        # in" (a forward area/level transition out of the warm-start level,
+        # warp-guarded) — the notion the level-scoped consolidation gate probes
+        # each level from its entry with. The tracker is seeded with the
+        # warm-start frame (init RAM) so its start level locks to where the
+        # episode actually began, not the first post-action frame.
+        tracker = make_tracker()
+        if tracker is not None:
+            tracker.update(init[0][2])
+        ep_return = 0.0
+        ep_max_byte = 0
+        ep_max_gx = 0
+        ep_cleared = False
+        step = 0
+        _prev_action_idx = 0
+        for step in range(max_steps):
+            # Obs -> action. The policy object supplies the (obs -> logits)
+            # mapping; everything else in this loop (reward, RAM byte proxy,
+            # sequential tracker, JSON) is obs-agnostic and identical for tile
+            # and pixel. `action_select` picks argmax (default) or a seeded
+            # draw from the policy's own softmax.
+            with torch.no_grad():
+                logits, hidden = pol.logits(obs, hidden)
+                action_idx = select_action(
+                    logits, action_select, temperature, _action_gen,
+                )
+            # Sticky-actions eval (Machado et al. 2018): with prob
+            # sticky_prob repeat the previous executed action. On the
+            # TRUSTWORTHY-obs harness (eval_game's obs matches training,
+            # unlike eval_composite's tile adapter) this is the honest
+            # perturbation test.
+            if sticky_prob > 0.0 and step > 0 and _sticky_rng.random() < sticky_prob:
+                action_idx = _prev_action_idx
+            _prev_action_idx = action_idx
+            bitmask = bitmasks[action_idx]
+            r = pool.step_all(np.array([bitmask], dtype=np.uint8))
+            ram = r[0][2]
+            reward, rew_done, _ = reward_fn.compute(ram, action=int(bitmask))
+            ep_return += float(reward)
+            # SMB world/level packing as a coarse "furthest stage"
+            # proxy. Not a success signal — that's episode_success().
+            byte = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)
+            if byte > ep_max_byte:
+                ep_max_byte = byte
+            # Death-gx telemetry (SMB addresses; benign reads elsewhere,
+            # like the byte proxy above): where each episode's horizontal
+            # frontier stalled — THE localization signal when a level
+            # trains but a cold probe still reads 0.0.
+            gx_now = (int(ram[0x006D]) << 8) | int(ram[0x0086])
+            if gx_now > ep_max_gx:
+                ep_max_gx = gx_now
+            obs = pol.push(r[0])
+            if reward_fn.episode_success():
+                ep_cleared = True
+            if tracker is not None:
+                tracker.update(ram)
+                # Sequential mode: do NOT stop at the 1-1 flag (ep_cleared).
+                # Run until a real World-1 castle clear (seq_clear), a death /
+                # pool-done, or max_steps.
+                if rew_done or bool(r[0][3]) or tracker.seq_clear:
+                    break
+            # End the episode on the reward fn's terminal signal, the
+            # pool's done flag, or once the game is cleared.
+            elif rew_done or bool(r[0][3]) or ep_cleared:
+                break
+        records.append({
+            "ep_return": ep_return,
+            "length": step + 1,
+            "max_byte": ep_max_byte,
+            "max_gx": ep_max_gx,
+            "cleared": ep_cleared,
+            "seq_clear": bool(tracker.seq_clear) if tracker is not None else False,
+            "warp_taken": bool(tracker.warp_taken) if tracker is not None else False,
+            "furthest_seq": tracker.furthest_seq if tracker is not None else None,
+            "furthest_any": tracker.furthest_any if tracker is not None else None,
+        })
+    return records
+
+
 def resolve_eval_checkpoint(
     ckpt_dir: Path,
     game: str,
@@ -238,9 +694,10 @@ def eval_one_game(
     eval_seed: int = 0,
     action_select: str = "greedy",
     temperature: float = 1.0,
+    eval_workers: int = 1,
+    eval_rng: str = "shared-stream",
 ) -> dict:
     """Run N episodes; return a dict of eval stats."""
-    import numpy as _np
     if action_select not in _ACTION_SELECT_MODES:
         raise ValueError(
             f"action_select must be one of {sorted(_ACTION_SELECT_MODES)}, "
@@ -248,14 +705,36 @@ def eval_one_game(
         )
     if not (float(temperature) > 0.0):
         raise ValueError(f"temperature must be > 0, got {temperature!r}")
-    _sticky_rng = _np.random.RandomState(eval_seed)
-    # Sampled-action selection draws from its OWN torch generator, seeded from
-    # --eval-seed, so (a) sampled runs are reproducible and (b) the sticky /
-    # jitter numpy stream is byte-identical to the greedy path — a greedy and
-    # a sampled run at the same seed see the same no-op starts and the same
-    # sticky-repeat decisions, so the pair differs only in the policy draw.
-    _action_gen = torch.Generator(device="cpu")
-    _action_gen.manual_seed(int(eval_seed))
+    if eval_rng not in _EVAL_RNG_MODES:
+        raise ValueError(
+            f"eval_rng must be one of {sorted(_EVAL_RNG_MODES)}, got {eval_rng!r}"
+        )
+    if int(eval_workers) < 1:
+        raise ValueError(f"eval_workers must be >= 1, got {eval_workers!r}")
+    # Concurrency is only sound where the answer does not depend on the
+    # schedule. Under shared-stream a stochastic episode's draws depend on how
+    # many draws the episodes BEFORE it consumed — a data-dependent count no
+    # lane can know — so running such a run on >1 worker cannot reproduce the
+    # serial number and must not silently return a different one.
+    _stochastic = run_consumes_randomness(sticky_prob, start_jitter, action_select)
+    if int(eval_workers) > 1 and eval_rng == "shared-stream" and _stochastic:
+        raise ValueError(
+            "eval_workers > 1 needs eval_rng='per-episode' for a stochastic "
+            "run (sticky_prob > 0, start_jitter > 0, or action_select="
+            "'sampled'): the shared-stream RNG is threaded through the "
+            "episodes in order, so episode i's draws depend on how many draws "
+            "episodes 0..i-1 consumed and cannot be re-derived per episode. "
+            "Pass eval_rng='per-episode' (results are invariant to worker "
+            "count but are NOT byte-comparable to shared-stream receipts), or "
+            "keep eval_workers=1."
+        )
+    # ONE thing decides which executor runs: the EFFECTIVE worker count, after
+    # the episodes/CPU clamp below. `--eval-rng` only changes where the
+    # randomness comes from, and BOTH executors honor both modes — so a receipt
+    # that reads `eval_workers: 1` always came out of the serial loop, and the
+    # 1-worker-vs-K-worker comparison is a real serial-vs-parallel differential
+    # rather than the parallel branch grading its own homework.
+    _wide_requested = int(eval_workers) > 1
     with open(profile_path) as f:
         profile = yaml.safe_load(f)
     ckpt_dir = derive_checkpoint_dir("./checkpoints", profile.get("name"))
@@ -343,8 +822,17 @@ def eval_one_game(
                 ),
             }
         net.eval()
-        stacker = TileFeatureStacker(stack_size=stack_size, feature_dim=feature_dim)
-        pol = _TilePolicy(net, stacker, extractor, is_recurrent)
+
+        def make_policy() -> _TilePolicy:
+            # One stacker PER policy wrapper: the stacker is the only stateful
+            # piece, so a parallel lane must not share one. Constructed with
+            # the same arguments the serial path always used.
+            return _TilePolicy(
+                net,
+                TileFeatureStacker(stack_size=stack_size, feature_dim=feature_dim),
+                extractor,
+                is_recurrent,
+            )
     else:
         # === PIXEL PATH (CNN) ===
         # Build the SAME PolicyNetwork the trainer builds — frame_stack=4 /
@@ -383,8 +871,13 @@ def eval_one_game(
             }
         net.eval()
         obs_dtype = np.float16 if pool_preprocess_f16 else np.uint8
-        stacker = FrameStacker(stack_size=frame_stack, dtype=obs_dtype)
-        pol = _PixelPolicy(net, stacker, pool_preprocess_f16)
+
+        def make_policy() -> _PixelPolicy:  # type: ignore[misc]
+            return _PixelPolicy(
+                net,
+                FrameStacker(stack_size=frame_stack, dtype=obs_dtype),
+                pool_preprocess_f16,
+            )
 
     # The profile's start state seeds the POOL (cold-boot default). It
     # must not clobber the `start_state` CLI param: this line previously
@@ -395,8 +888,20 @@ def eval_one_game(
     profile_start = profile.get("start_state_path") or (
         Path(rom_path).with_name(Path(rom_path).stem + "_start.state.bin")
     )
+    # Serial keeps the historical single worker. Parallel takes the smallest of
+    # what was asked for, what there is to run, and what the box has: more
+    # workers than episodes would idle, and oversubscribing cores slows the
+    # whole pool down without changing the answer. If the clamp lands on 1 the
+    # serial loop runs — asking for 8 workers to play 1 episode should not put
+    # a "parallel" run in the receipt.
+    lanes = 1
+    if _wide_requested:
+        lanes = max(1, min(
+            int(eval_workers), int(n_episodes), int(os.cpu_count() or 1),
+        ))
+    _parallel = lanes > 1
     pool = Pool(
-        rom_path=rom_path, num_workers=1, frame_skip=4,
+        rom_path=rom_path, num_workers=lanes, frame_skip=4,
         start_state_path=(
             str(profile_start) if Path(str(profile_start)).exists() else None
         ),
@@ -444,8 +949,20 @@ def eval_one_game(
     # The reward function is the SAME Rust object the trainer uses, so
     # the eval's notion of "cleared" (episode_success) and "return"
     # (sum of per-step rewards) matches training exactly — no separate
-    # heuristic to drift out of sync.
-    reward_fn = build_reward_function(profile)
+    # heuristic to drift out of sync. A factory, not an instance: the serial
+    # loop builds one and resets it per episode (as it always did), a parallel
+    # lane builds its own.
+    def _make_reward_fn():
+        return build_reward_function(profile)
+
+    def _make_tracker():
+        """Same tracker choice the serial loop makes per episode; hoisted so
+        the parallel executor can give every lane its own."""
+        if sequential and level_clear:
+            return LevelClearTracker()
+        if sequential:
+            return SequentialTracker()
+        return None
 
     returns: list[float] = []
     lengths: list[int] = []
@@ -459,119 +976,50 @@ def eval_one_game(
     best_seq: Optional[tuple] = None
     best_any: Optional[tuple] = None
 
-    for ep in range(n_episodes):
-        pool.reset_all()
-        if stage_blob is not None:
-            # Warm-start into the curriculum stage. load_worker_state
-            # restores RAM but produces no frame until the next step,
-            # so the noop step below flushes the post-restore frame for
-            # the stacker seed (same pattern the trainer uses).
-            pool.load_worker_state(0, stage_blob)
-        reward_fn.reset()
-        init = pool.step_all(np.zeros(1, dtype=np.uint8))
-        # Machado no-op starts: hold up to start_jitter no-op frames before
-        # control begins, desynchronizing enemy/timer phase from the trained
-        # trajectory (the other half of the honest stochastic-eval protocol).
-        if start_jitter > 0:
-            for _ in range(int(_sticky_rng.randint(0, start_jitter + 1))):
-                init = pool.step_all(np.zeros(1, dtype=np.uint8))
-        obs = pol.reset(init[0])
-        # Fresh hidden state per episode — the GRU must not carry memory
-        # across episode boundaries.
-        hidden = pol.initial_hidden(device)
-        # In --sequential mode reconstruct World-1 progression from RAM
-        # independently of episode_success(). episode_success() latches on
-        # `cleared_any` at the FIRST 1-1 flagpole, so it can never observe a
-        # sequential 1-4 clear; the tracker's `won` semantics can. With
-        # --level-clear the predicate is instead "cleared the level it STARTED
-        # in" (a forward area/level transition out of the warm-start level,
-        # warp-guarded) — the notion the level-scoped consolidation gate probes
-        # each level from its entry with. The tracker is seeded with the
-        # warm-start frame (init RAM) so its start level locks to where the
-        # episode actually began, not the first post-action frame.
-        if sequential and level_clear:
-            tracker = LevelClearTracker()
-        elif sequential:
-            tracker = SequentialTracker()
-        else:
-            tracker = None
-        if tracker is not None:
-            tracker.update(init[0][2])
-        ep_return = 0.0
-        ep_max_byte = 0
-        ep_max_gx = 0
-        ep_cleared = False
-        step = 0
-        _prev_action_idx = 0
-        for step in range(max_steps):
-            # Obs -> action. The policy object supplies the (obs -> logits)
-            # mapping; everything else in this loop (reward, RAM byte proxy,
-            # sequential tracker, JSON) is obs-agnostic and identical for tile
-            # and pixel. `action_select` picks argmax (default) or a seeded
-            # draw from the policy's own softmax.
-            with torch.no_grad():
-                logits, hidden = pol.logits(obs, hidden)
-                action_idx = select_action(
-                    logits, action_select, temperature, _action_gen,
-                )
-            # Sticky-actions eval (Machado et al. 2018): with prob
-            # sticky_prob repeat the previous executed action. On the
-            # TRUSTWORTHY-obs harness (eval_game's obs matches training,
-            # unlike eval_composite's tile adapter) this is the honest
-            # perturbation test.
-            if sticky_prob > 0.0 and step > 0 and _sticky_rng.random() < sticky_prob:
-                action_idx = _prev_action_idx
-            _prev_action_idx = action_idx
-            bitmask = bitmasks[action_idx]
-            r = pool.step_all(np.array([bitmask], dtype=np.uint8))
-            ram = r[0][2]
-            reward, rew_done, _ = reward_fn.compute(ram, action=int(bitmask))
-            ep_return += float(reward)
-            # SMB world/level packing as a coarse "furthest stage"
-            # proxy. Not a success signal — that's episode_success().
-            byte = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)
-            if byte > ep_max_byte:
-                ep_max_byte = byte
-            # Death-gx telemetry (SMB addresses; benign reads elsewhere,
-            # like the byte proxy above): where each episode's horizontal
-            # frontier stalled — THE localization signal when a level
-            # trains but a cold probe still reads 0.0.
-            gx_now = (int(ram[0x006D]) << 8) | int(ram[0x0086])
-            if gx_now > ep_max_gx:
-                ep_max_gx = gx_now
-            obs = pol.push(r[0])
-            if reward_fn.episode_success():
-                ep_cleared = True
-            if tracker is not None:
-                tracker.update(ram)
-                # Sequential mode: do NOT stop at the 1-1 flag (ep_cleared).
-                # Run until a real World-1 castle clear (seq_clear), a death /
-                # pool-done, or max_steps.
-                if rew_done or bool(r[0][3]) or tracker.seq_clear:
-                    break
-            # End the episode on the reward fn's terminal signal, the
-            # pool's done flag, or once the game is cleared.
-            elif rew_done or bool(r[0][3]) or ep_cleared:
-                break
-        returns.append(ep_return)
-        lengths.append(step + 1)
-        max_bytes.append(ep_max_byte)
-        max_gxs.append(ep_max_gx)
-        if ep_cleared:
+    # ONE call site, ONE fold. Both executors take the same arguments and
+    # return the same per-episode records, which is what lets the stub suite
+    # (and the ROM differential) assert that swapping one for the other cannot
+    # change the answer.
+    _executor_kwargs = dict(
+        n_episodes=n_episodes,
+        max_steps=max_steps,
+        bitmasks=bitmasks,
+        make_policy=make_policy,
+        make_reward_fn=_make_reward_fn,
+        make_tracker=_make_tracker,
+        stage_blob=stage_blob,
+        device=device,
+        sticky_prob=sticky_prob,
+        start_jitter=start_jitter,
+        eval_seed=eval_seed,
+        action_select=action_select,
+        temperature=temperature,
+    )
+    if _parallel:
+        _records = _run_episodes_parallel(pool, lanes=lanes, **_executor_kwargs)
+    else:
+        _records = _run_episodes_serial(pool, eval_rng=eval_rng, **_executor_kwargs)
+
+    for _rec in _records:
+        returns.append(_rec["ep_return"])
+        lengths.append(_rec["length"])
+        max_bytes.append(_rec["max_byte"])
+        max_gxs.append(_rec["max_gx"])
+        if _rec["cleared"]:
             clears += 1
-        if tracker is not None:
-            if tracker.seq_clear:
+        if sequential:
+            if _rec["seq_clear"]:
                 seq_clears += 1
-            if tracker.warp_taken:
+            if _rec["warp_taken"]:
                 warps += 1
-            if tracker.furthest_seq is not None and (
-                best_seq is None or tracker.furthest_seq > best_seq
+            if _rec["furthest_seq"] is not None and (
+                best_seq is None or _rec["furthest_seq"] > best_seq
             ):
-                best_seq = tracker.furthest_seq
-            if tracker.furthest_any is not None and (
-                best_any is None or tracker.furthest_any > best_any
+                best_seq = _rec["furthest_seq"]
+            if _rec["furthest_any"] is not None and (
+                best_any is None or _rec["furthest_any"] > best_any
             ):
-                best_any = tracker.furthest_any
+                best_any = _rec["furthest_any"]
 
     pool.shutdown()
 
@@ -593,6 +1041,14 @@ def eval_one_game(
         # never be mistaken for the other mode's number.
         "action_select": str(action_select),
         "temperature": float(temperature),
+        # How the episodes were scheduled and where their randomness came
+        # from. `eval_workers` is the EFFECTIVE lane count (after the
+        # episodes/cpu clamp), not what was asked for. Both belong next to the
+        # clear rate for the same reason `action_select` does: a per-episode
+        # number and a shared-stream number are different draws of the same
+        # protocol and must never be compared as if they were the same run.
+        "eval_workers": int(lanes),
+        "eval_rng": str(eval_rng),
         "timestamp": time.time(),
     }
     if start_state is not None:
@@ -676,6 +1132,24 @@ def main() -> int:
                         dest="temperature",
                         help="Softmax temperature for --action-select sampled. "
                              "Ignored when greedy. Must be > 0.")
+    parser.add_argument("--eval-workers", type=int, default=1, dest="eval_workers",
+                        metavar="K",
+                        help="Run K episodes concurrently in a K-worker pool "
+                             "(clamped to --episodes and the CPU count). "
+                             "Default 1 = the historical serial path. A "
+                             "stochastic run (sticky / jitter / sampled) also "
+                             "needs --eval-rng per-episode.")
+    parser.add_argument("--eval-rng", type=str, default="shared-stream",
+                        dest="eval_rng", choices=list(_EVAL_RNG_MODES),
+                        help="Where the jitter/sticky/sampling randomness "
+                             "comes from. 'shared-stream' (default, the "
+                             "historical behavior) threads one stream through "
+                             "the episodes in order, so episode i depends on "
+                             "how long episodes 0..i-1 ran. 'per-episode' "
+                             "seeds each episode from (--eval-seed, episode "
+                             "index), which makes the result invariant to "
+                             "--eval-workers but NOT byte-comparable to "
+                             "shared-stream receipts.")
     parser.add_argument("--level-clear", action="store_true", dest="level_clear",
                         help="With --sequential, score 'cleared the level it "
                              "STARTED in' (a forward area/level transition out "
@@ -690,6 +1164,38 @@ def main() -> int:
         print(json.dumps({
             "game": args.game, "status": "bad_args",
             "detail": f"--temperature must be > 0, got {args.temperature}",
+        }))
+        return 1
+
+    if args.eval_workers < 1:
+        print(json.dumps({
+            "game": args.game, "status": "bad_args",
+            "detail": f"--eval-workers must be >= 1, got {args.eval_workers}",
+        }))
+        return 1
+
+    if (
+        args.eval_workers > 1
+        and args.eval_rng == "shared-stream"
+        and run_consumes_randomness(
+            args.sticky_prob, args.start_jitter, args.action_select,
+        )
+    ):
+        # Refuse rather than quietly returning a different (but equally valid)
+        # set of draws: a receipt whose numbers depend on the worker count is
+        # not a receipt. Same single-JSON-line contract as above.
+        print(json.dumps({
+            "game": args.game, "status": "bad_args",
+            "detail": (
+                "--eval-workers > 1 needs --eval-rng per-episode for a "
+                "stochastic run (--sticky-prob > 0, --start-jitter > 0, or "
+                "--action-select sampled): the default shared-stream RNG is "
+                "threaded through the episodes in order, so episode i's draws "
+                "depend on how many draws episodes 0..i-1 consumed and cannot "
+                "be re-derived per episode. Per-episode results are invariant "
+                "to worker count but are NOT byte-comparable to shared-stream "
+                "receipts."
+            ),
         }))
         return 1
 
@@ -710,7 +1216,8 @@ def main() -> int:
         start_state=args.start_state, level_clear=args.level_clear,
         sticky_prob=args.sticky_prob, start_jitter=args.start_jitter,
         eval_seed=args.eval_seed, action_select=args.action_select,
-        temperature=args.temperature,
+        temperature=args.temperature, eval_workers=args.eval_workers,
+        eval_rng=args.eval_rng,
     )
     print(json.dumps(result, indent=2))
     return 0

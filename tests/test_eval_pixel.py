@@ -88,6 +88,9 @@ _SEQ_KEYS = {
     # read without knowing whether it came from argmax or the policy's own
     # distribution (see tests/test_eval_action_select.py).
     "action_select", "temperature",
+    # Schedule + randomness provenance — the effective worker count and which
+    # RNG derivation produced the episodes (see tests/test_eval_parallel.py).
+    "eval_workers", "eval_rng",
 }
 
 
