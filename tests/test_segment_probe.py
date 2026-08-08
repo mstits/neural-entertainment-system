@@ -7,7 +7,9 @@ pins the restored version down so it cannot be lost or silently drift again.
 Layers:
   * pure bank parsing / nearest-rung selection (no emulator) — including the
     naming-scheme trap where an act-indexed rung's action count looks like an
-    area index;
+    area index, and the minted-`index.json` reader whose rungs are measured
+    rather than hinted (both bank layouts, and the ambiguity a re-basing gx
+    odometer creates in the minted one);
   * pure statistics (Wilson interval, episode summarization) — the numbers a
     published negative is quoted from;
   * `run_segment` — the loop that actually produces the verdict — driven off a
@@ -42,10 +44,15 @@ from scripts.segment_probe import (  # noqa: E402
     alive,
     bank_area,
     bank_gx,
+    default_bank_area,
     gx_of,
+    is_minted,
+    read_index_bank,
     run_segment,
     scan_bank,
     select_bank_state,
+    select_index_state,
+    stamp_segments,
     summarize_episodes,
     wilson_interval,
 )
@@ -65,6 +72,7 @@ def _find(rel_candidates: list[str]) -> Path | None:
 _ROM = _find(["roms/Super Mario Bros. (World).nes"])
 _START = _find(["roms/Super Mario Bros. (World)_start.state.bin"])
 _BANK = _find(["checkpoints/ge_1_2_rungs_gx"])
+_MINTED_1_2 = _find(["checkpoints/backward_states/1-2"])
 _CKPT_1_2 = _find([
     "checkpoints/mario_1_2_cgsa_s1/vanilla_ppo_iter_*.pt",
     "checkpoints/mario_1_2_cgsa_s2/vanilla_ppo_iter_*.pt",
@@ -143,6 +151,180 @@ def test_select_bank_state_tie_breaks_to_the_shallower_rung():
     """Equidistant rungs must not hand a repeat probe an easier start."""
     e = _entries((1400, 2), (1600, 2))
     assert select_bank_state(e, 1500)["gx"] == 1400
+
+
+# --- minted banks (scripts/mint_backward_states.py index.json) --------------
+#
+# The minter writes `s_NNNNNN.state` + an `index.json` of MEASURED rungs
+# ({step, frame, gx, area, file}); the filenames carry no gx at all, so the
+# filename-hint reader sees a minted bank as empty. These tests pin the index
+# reader, the at-or-below selection a backward curriculum needs, and the two
+# ambiguities a solver tape's gx odometer creates: it re-bases to 0 both when
+# the area byte changes (1-2 step 115, area 1 -> 2) and when it does not
+# (1-2 step 971, area 2 throughout), so one gx names up to three places.
+
+# A scale model of the real 1-2 tape: overworld stub (area 1), the underground
+# run, then the post-pipe stretch that re-bases inside the SAME area.
+_TAPE_1_2 = [
+    (0, 0, 1), (1, 40, 1), (2, 100, 1), (3, 160, 1),
+    (4, 0, 2), (5, 500, 2), (6, 1000, 2), (7, 1500, 2), (8, 2000, 2),
+    (9, 2600, 2),
+    (10, 0, 2), (11, 700, 2), (12, 1500, 2), (13, 2400, 2), (14, 3200, 2),
+]
+
+
+def _mint_bank(d: Path, rows=_TAPE_1_2, **meta) -> Path:
+    """Write a minter-shaped bank at `d`: one state file per rung plus the
+    index.json that describes them. `rows` are (step, gx, area), tape order."""
+    d.mkdir(parents=True, exist_ok=True)
+    entries = []
+    for step, gx, area in rows:
+        name = f"s_{step:06d}.state"
+        (d / name).write_bytes(b"")
+        entries.append({"step": step, "frame": step * 4, "gx": gx,
+                        "area": area, "file": name})
+    rec = {"level": "1-2", "provenance": "solver_tape", "frame_skip": 4,
+           **meta, "entries": entries}
+    (d / "index.json").write_text(json.dumps(rec))
+    return d
+
+
+def test_read_index_bank_reads_measured_rungs_not_filenames(tmp_path):
+    """`s_000007.state` carries no gx hint whatsoever — the index is the only
+    thing that knows where that rung is."""
+    d = _mint_bank(tmp_path / "minted")
+    assert bank_gx(d / "s_000007.state") is None, "fixture must not be hinted"
+    rungs = read_index_bank(d)
+    assert [r["step"] for r in rungs] == [r[0] for r in _TAPE_1_2]
+    assert [r["gx"] for r in rungs] == [r[1] for r in _TAPE_1_2]
+    assert [r["area"] for r in rungs] == [r[2] for r in _TAPE_1_2]
+    assert rungs[7]["path"] == str(d / "s_000007.state")
+    assert rungs[7]["frame"] == 28
+    assert all(is_minted(r) for r in rungs)
+    # A legacy dir has no index and reports so, rather than an empty bank.
+    _touch_states(tmp_path / "legacy", ["r_p05490_a2_gx1490.state"])
+    assert read_index_bank(tmp_path / "legacy") is None
+    assert is_minted({"path": "x", "gx": 1, "area": 2}) is False
+
+
+def test_read_index_bank_distinguishes_an_empty_index_from_a_broken_one(tmp_path):
+    """An index with no rungs is an empty bank (a status the caller reports);
+    one that cannot be parsed is an error — falling back to a filename scan
+    there would probe a bank nobody minted, from a rung nobody measured."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    (empty / "index.json").write_text(json.dumps({"level": "1-2",
+                                                  "entries": []}))
+    assert read_index_bank(empty) == []
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "index.json").write_text("{not json")     # a truncated mint
+    with pytest.raises(ValueError):
+        read_index_bank(broken)
+    malformed = tmp_path / "malformed"
+    malformed.mkdir()
+    (malformed / "index.json").write_text(
+        json.dumps({"entries": [{"step": 0, "gx": 0}]}))    # no "file"
+    with pytest.raises(ValueError):
+        read_index_bank(malformed)
+
+
+def test_read_index_bank_ignores_an_index_json_that_is_not_a_mint(tmp_path):
+    """`index.json` is not a reserved name — the default --bank is the
+    profile's checkpoint dir. A file there that carries no "entries" belongs
+    to something else and must not disable the dir's filename hints."""
+    d = tmp_path / "legacy"
+    _touch_states(d, ["r_p05490_a2_gx1490.state"])
+    (d / "index.json").write_text(json.dumps({"written_by": "something else"}))
+    assert read_index_bank(d) is None
+    entries = scan_bank([d])
+    assert [e["gx"] for e in entries] == [1490]
+    assert not any(is_minted(e) for e in entries)
+
+
+def test_stamp_segments_splits_on_area_change_and_on_an_in_area_rebase(tmp_path):
+    """Both re-basings must open a segment. Missing the in-area one (1-2 step
+    971: area 2 throughout, gx 2656 -> 0) makes the tape look like one long
+    monotone run and silently merges two different gx 1500s."""
+    rungs = read_index_bank(_mint_bank(tmp_path / "m"))
+    nxt = stamp_segments(rungs)
+    assert [r["segment"] for r in rungs] == [0] * 4 + [1] * 6 + [2] * 5
+    assert nxt == 3
+    # A dip inside the tolerance is jitter, not a re-base; a big drop that
+    # lands high is a real regression, not a re-base either.
+    jitter = [{"gx": 1000, "area": 2}, {"gx": 996, "area": 2},
+              {"gx": 1010, "area": 2}]
+    stamp_segments(jitter)
+    assert [r["segment"] for r in jitter] == [0, 0, 0]
+    backtrack = [{"gx": 2000, "area": 2}, {"gx": 900, "area": 2}]
+    stamp_segments(backtrack)
+    assert [r["segment"] for r in backtrack] == [0, 0]
+    assert stamp_segments([], first=5) == 5
+
+
+def test_scan_bank_prefers_a_minted_index_over_filename_hints(tmp_path):
+    """A minted dir is read through its index even when it also happens to
+    hold gx-hinted filenames, and a legacy dir in the same --bank list keeps
+    working. Segment ids stay unique across dirs."""
+    d = _mint_bank(tmp_path / "minted")
+    (d / "r_p09999_a2_gx9999.state").write_bytes(b"")   # a hinted decoy
+    _touch_states(tmp_path / "legacy", ["r_p05490_a2_gx1490.state"])
+    entries = scan_bank([d, tmp_path / "legacy"])
+    assert 9999 not in [e["gx"] for e in entries], "index must win, not merge"
+    assert len(entries) == len(_TAPE_1_2) + 1
+    assert [e["gx"] for e in entries] == sorted(e["gx"] for e in entries)
+    minted = [e for e in entries if is_minted(e)]
+    assert len(minted) == len(_TAPE_1_2)
+    assert sorted({e["segment"] for e in minted}) == [0, 1, 2]
+    legacy = [e for e in entries if not is_minted(e)]
+    assert len(legacy) == 1 and legacy[0]["gx"] == 1490
+    # Two minted banks in one list must not share segment ids.
+    d2 = _mint_bank(tmp_path / "minted2")
+    both = [e for e in scan_bank([d, d2]) if is_minted(e)]
+    assert sorted({e["segment"] for e in both}) == [0, 1, 2, 3, 4, 5]
+
+
+def test_select_index_state_takes_the_deepest_rung_at_or_below(tmp_path):
+    """At-or-below, never nearest: a rung PAST the request hands the probe a
+    start further along the tape than it asked for."""
+    rungs = scan_bank([_mint_bank(tmp_path / "m")])
+    pick = select_index_state(rungs, 1400)
+    assert (pick["gx"], pick["step"]) == (1000, 6)      # not 1500, though nearer
+    # ...and the closest at-or-below rung outranks the last-segment
+    # preference: segment 2's nearest rung below 1400 is gx 700.
+    assert pick["segment"] == 1
+    assert select_index_state(rungs, 1000)["step"] == 6     # exact rung
+    assert select_index_state(rungs, 99999)["gx"] == 3200   # deepest rung
+    assert select_index_state([], 1400) is None
+
+
+def test_select_index_state_defaults_to_the_area_owning_the_largest_gx(tmp_path):
+    """1-2's tape opens with a 160-pixel overworld stub (area 1) and then
+    restarts gx underground (area 2), so `--from-gx 100` matches both. Left to
+    the stub, a probe would measure a dead end and report it as 1-2."""
+    rungs = scan_bank([_mint_bank(tmp_path / "m")])
+    assert default_bank_area(rungs) == 2
+    pick = select_index_state(rungs, 100)
+    assert pick["area"] == 2 and pick["gx"] == 0
+    stub = select_index_state(rungs, 100, area=1)
+    assert (stub["area"], stub["gx"], stub["step"]) == (1, 100, 2)
+    assert select_index_state(rungs, 100, area=7) is None
+    assert default_bank_area([]) is None
+
+
+def test_select_index_state_prefers_the_last_segment_when_a_gx_recurs(tmp_path):
+    """gx 1500 exists twice inside area 2 (steps 7 and 12, either side of the
+    in-area odometer re-base). The ambiguity resolves to the LAST segment, and
+    the chosen rung says which one it was."""
+    rungs = scan_bank([_mint_bank(tmp_path / "m")])
+    pick = select_index_state(rungs, 1500)
+    assert (pick["step"], pick["segment"]) == (12, 2)
+    assert pick["gx"] == 1500
+    # ...and with nothing at or below, the shallowest rung of the last
+    # segment, so the fallback cannot silently jump tape segments either.
+    below = select_index_state(rungs, -1)
+    assert (below["gx"], below["step"], below["segment"]) == (0, 10, 2)
+    assert select_index_state(rungs, -1, area=1)["step"] == 0
 
 
 # --- statistics -------------------------------------------------------------
@@ -583,6 +765,77 @@ def test_probe_refuses_a_bank_with_nothing_near_the_requested_gx(monkeypatch, tm
     assert out["status"] != "no_bank_state_near_gx"
 
 
+def test_probe_resolves_from_gx_through_a_minted_index(monkeypatch, tmp_path):
+    """End-to-end through `probe()`: a bank whose filenames carry no gx hint
+    at all must still resolve, and it must resolve to the index's rung. The
+    `no_bank_state_near_gx` guard is the observation point — it reports the
+    rung it picked."""
+    _stub_ckpt(monkeypatch, tmp_path)
+    bank = _mint_bank(tmp_path / "minted")
+    out = segment_probe.probe("mario", _profile(tmp_path), "rom.nes",
+                              to_gx=2200, from_gx=1501,
+                              banks=[str(bank)], max_gx_delta=0)
+    assert out["status"] == "no_bank_state_near_gx"
+    assert out["nearest"]["step"] == 12          # area 2, LAST segment
+    assert out["nearest"]["gx"] == 1500
+    assert out["nearest"]["path"] == str(bank / "s_000012.state")
+    # --from-area still overrides the default area through probe().
+    out = segment_probe.probe("mario", _profile(tmp_path), "rom.nes",
+                              to_gx=2200, from_gx=1501, from_area=1,
+                              banks=[str(bank)], max_gx_delta=0)
+    assert out["nearest"]["area"] == 1 and out["nearest"]["step"] == 3
+
+
+def test_probe_reads_the_state_file_named_by_the_index(monkeypatch, tmp_path):
+    """The rung's path is `<bank>/<entry.file>`; get that wrong and the probe
+    reports a start state that exists nowhere."""
+    _stub_ckpt(monkeypatch, tmp_path)
+    bank = _mint_bank(tmp_path / "minted")
+    (bank / "s_000012.state").unlink()
+    out = segment_probe.probe("mario", _profile(tmp_path), "rom.nes",
+                              to_gx=2200, from_gx=1500, banks=[str(bank)])
+    assert out["status"] == "no_such_start_state"
+    assert out["start_state"] == str(bank / "s_000012.state")
+
+
+def test_probe_reports_an_empty_minted_index_as_an_empty_bank(monkeypatch, tmp_path):
+    """A minted dir with no rungs is `empty_bank`, exactly like a legacy dir
+    with no gx-hinted files — never a silent probe from gx 0."""
+    _stub_ckpt(monkeypatch, tmp_path)
+    bank = tmp_path / "minted"
+    bank.mkdir()
+    (bank / "index.json").write_text(json.dumps({"level": "1-2",
+                                                 "entries": []}))
+    out = segment_probe.probe("mario", _profile(tmp_path), "rom.nes",
+                              to_gx=2200, from_gx=1500, banks=[str(bank)])
+    assert out["status"] == "empty_bank"
+    # An area nobody minted is empty too, and says which area it was.
+    out = segment_probe.probe("mario", _profile(tmp_path), "rom.nes",
+                              to_gx=2200, from_gx=1500, from_area=9,
+                              banks=[str(_mint_bank(tmp_path / "m2"))])
+    assert out["status"] == "empty_bank" and out["from_area"] == 9
+    # A dir that exists but holds nothing at all is still empty_bank.
+    (tmp_path / "bare").mkdir()
+    out = segment_probe.probe("mario", _profile(tmp_path), "rom.nes",
+                              to_gx=2200, from_gx=1500,
+                              banks=[str(tmp_path / "bare")])
+    assert out["status"] == "empty_bank"
+
+
+def test_probe_refuses_a_corrupt_minted_index(monkeypatch, tmp_path):
+    """A bank whose index cannot be read must fail loud, not fall through to
+    the filename scan and probe from whatever happens to be lying there."""
+    _stub_ckpt(monkeypatch, tmp_path)
+    bank = tmp_path / "minted"
+    bank.mkdir()
+    (bank / "index.json").write_text("{truncated")
+    (bank / "r_p04000_a2_gx1500.state").write_bytes(b"")
+    out = segment_probe.probe("mario", _profile(tmp_path), "rom.nes",
+                              to_gx=2200, from_gx=1500, banks=[str(bank)])
+    assert out["status"] == "bad_bank_index"
+    assert "index.json" in out["detail"]
+
+
 def test_probe_requires_a_start_state_or_from_gx(monkeypatch, tmp_path):
     _stub_ckpt(monkeypatch, tmp_path)
     out = segment_probe.probe("mario", _profile(tmp_path), "rom.nes", to_gx=2200)
@@ -624,6 +877,42 @@ def test_real_1_2_bank_resolves_the_published_s3_start():
     assert pick["area"] == 2
     # And the destination rung exists, so the segment is bank-representable.
     assert select_bank_state(entries, 2200, area=2)["gx"] == pytest.approx(2200, abs=30)
+
+
+@pytest.mark.skipif(_MINTED_1_2 is None,
+                    reason="needs the minted 1-2 backward state bank")
+def test_real_minted_1_2_bank_resolves_without_an_area_flag():
+    """The shipped minted 1-2 tape (1,215 rungs, one per step): every rung is
+    measured, so `--from-gx 1500` alone must land underground within a step of
+    the request — no `--from-area`, no filename hints."""
+    entries = scan_bank([_MINTED_1_2])
+    assert len(entries) > 1000
+    assert all(is_minted(e) for e in entries)
+    assert sorted({e["area"] for e in entries}) == [1, 2]
+    assert default_bank_area(entries) == 2
+    pick = select_index_state(entries, 1500)
+    assert pick["area"] == 2
+    assert pick["gx"] <= 1500 and 1500 - pick["gx"] <= 16, pick
+    assert Path(pick["path"]).exists()
+    # The stub is still reachable on request, and it is genuinely a different
+    # place at the same gx — which is exactly why the default matters.
+    stub = select_index_state(entries, 100, area=1)
+    assert stub["area"] == 1 and stub["gx"] <= 100
+    assert stub["path"] != select_index_state(entries, 100)["path"]
+    # Nothing between the pick and the request was skipped over.
+    assert pick["gx"] == max(e["gx"] for e in entries
+                             if e["area"] == 2 and e["gx"] <= 1500)
+    # The tape re-bases inside area 2 too (steps 116.. and 972.., both area 2),
+    # so area 2 owns two segments and gx 1500 falls inside both spans.
+    area2_segments = {e["segment"] for e in entries if e["area"] == 2}
+    assert len(area2_segments) == 2
+    assert all(max(e["gx"] for e in entries if e["segment"] == s) > 1500
+               for s in area2_segments)
+    # Even so the pick is in the FIRST of them — the underground run the
+    # published S3 probe measured. The last-segment preference is only a
+    # tie-break: it must never drag the start to the far end of the tape when
+    # an earlier rung sits closer at or below the request.
+    assert pick["segment"] == min(area2_segments), pick
 
 
 # --- ROM-gated end-to-end ----------------------------------------------------

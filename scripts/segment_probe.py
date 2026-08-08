@@ -18,9 +18,23 @@ observation assembly and the action-selection vocabulary can never drift.
 
 Start state selection:
   --start-state PATH   probe from an exact save-state file, or
-  --from-gx N          pick the NEAREST state in --bank whose measured gx is
-                       closest to N. Bank filenames only hint (`..._a2_gx1490
-                       .state`); the chosen state's gx/area are re-measured
+  --from-gx N          pick a rung out of --bank. Two bank layouts are read:
+
+    * MINTED banks (`scripts/mint_backward_states.py`) carry an `index.json`
+      whose entries record each rung's measured (step, frame, gx, area). When
+      a bank dir has one it is authoritative and the `*.state` filenames
+      (`s_000116.state`) are never parsed. Selection is the DEEPEST rung at or
+      below N — a backward curriculum must never be handed a start that is
+      further along than asked for. A tape's gx odometer re-bases at pipes and
+      area changes, so the same gx recurs: `--area` picks the area (default:
+      the area owning the largest gx in the bank, i.e. 1-2's underground main
+      area, not its 116-step overworld stub), and an exactly repeated gx
+      inside one area breaks the tie toward the LAST segment.
+    * LEGACY banks are a flat dir of gx-hinted filenames (`..._a2_gx1490
+      .state`); selection is the NEAREST gx either side, ties to the
+      shallower. Filenames only hint.
+
+                       Either way the chosen state's gx/area are re-measured
                        from RAM after loading and both the requested and the
                        measured values are reported.
 
@@ -34,6 +48,14 @@ Reproducing the published 1-2 negative (the B3 control):
         --profile configs/mario_1_2_cgsa.yaml \\
         --checkpoint checkpoints/mario_1_2_cgsa_s1/vanilla_ppo_iter_05990.pt \\
         --bank checkpoints/ge_1_2_rungs_gx --from-gx 1500 --from-area 2 \\
+        --to-gx 2200 --episodes 30 --sticky-prob 0.25 --action-select greedy
+
+The same segment against the minted 1-2 tape bank (1,215 rungs, one per tape
+step) needs no area flag — the default resolves underground:
+
+    python scripts/segment_probe.py --game mario \\
+        --profile configs/mario_1_2_backward.yaml \\
+        --bank checkpoints/backward_states/1-2 --from-gx 1500 \\
         --to-gx 2200 --episodes 30 --sticky-prob 0.25 --action-select greedy
 
 Output is a single JSON object on stdout (progress goes to stderr) and a row
@@ -63,6 +85,9 @@ from nes_core import Pool  # noqa: E402
 from src.emulation.frame_utils import FrameStacker, TileFeatureStacker  # noqa: E402
 from src.models.policy_network import PolicyNetwork  # noqa: E402
 from src.models.tile_policy import build_tile_policy_from_checkpoint  # noqa: E402
+from src.training.backward_curriculum import (  # noqa: E402
+    DEFAULT_GX_RESET_MAX, DEFAULT_GX_TOLERANCE, INDEX_NAME, load_index,
+)
 from src.training.profile_utils import (  # noqa: E402
     action_space_to_bitmasks, derive_checkpoint_dir, resolve_encoder,
 )
@@ -121,14 +146,96 @@ def bank_area(path) -> Optional[int]:
     return None
 
 
+def is_minted(entry: dict) -> bool:
+    """True for a rung that came from a minted `index.json` (it knows its own
+    tape step), false for one recovered from a filename hint."""
+    return entry.get("step") is not None
+
+
+def read_index_bank(d) -> Optional[list[dict]]:
+    """Rungs from a minted bank's `index.json`, in tape order.
+
+    Returns None when `d` is not a minted bank — no index at all, or an
+    index.json that belongs to something else (no "entries" key) — and the
+    caller falls back to filename hints. Returns [] for a minted index that
+    carries no rungs, which is an empty bank, not an error.
+
+    `backward_curriculum.load_index` stays the only parser of the entry rows,
+    so the probe can never drift from the minter. An index that IS a minted
+    one but cannot be read raises: silently degrading to a filename scan there
+    would probe a bank nobody minted, from a rung nobody measured.
+    """
+    path = Path(d) / INDEX_NAME
+    if not path.is_file():
+        return None
+    try:
+        rec = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        # Cannot even tell whose file this is — a truncated minted index looks
+        # exactly like this, so refuse rather than guess.
+        raise ValueError(f"{path}: unreadable index ({e})") from e
+    if not isinstance(rec, dict) or "entries" not in rec:
+        return None
+    if not rec["entries"]:
+        return []
+    try:
+        entries, _meta = load_index(d)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise ValueError(f"{path}: unreadable minted index ({e})") from e
+    return [{"path": str(Path(d) / e.file), "gx": int(e.gx),
+             "area": int(e.area), "step": int(e.step), "frame": int(e.frame)}
+            for e in entries]
+
+
+def stamp_segments(entries: list[dict], *, first: int = 0,
+                   tolerance: int = DEFAULT_GX_TOLERANCE,
+                   reset_max: int = DEFAULT_GX_RESET_MAX) -> int:
+    """Stamp each minted rung with its tape segment, in place; return the next
+    free segment id.
+
+    Same re-basing rule as `backward_curriculum.gx_report`: an area change, or
+    a gx drop beyond `tolerance` that LANDS at or below `reset_max`, means the
+    odometer restarted (pipe / vine / castle) and a new segment opens. The
+    minted 1-2 tape has three: the overworld stub (steps 0..115, area 1,
+    gx 0..160), the underground run (steps 116..971, area 2, gx 0..2674) and
+    the stretch after it (steps 972..1214, area 2 AGAIN, gx 0..3267). So
+    inside one area a gx like 1500 names two different places, and the segment
+    id is what makes the choice between them visible in the result.
+
+    `entries` must be in tape order.
+    """
+    seg = first
+    prev: Optional[dict] = None
+    for e in entries:
+        if prev is not None:
+            drop = prev["gx"] - e["gx"]
+            if (prev["area"] != e["area"]
+                    or (drop > tolerance and e["gx"] <= reset_max)):
+                seg += 1
+        e["segment"] = seg
+        prev = e
+    return seg + 1 if entries else first
+
+
 def scan_bank(dirs) -> list[dict]:
-    """Every `*.state` under `dirs` that carries a gx hint, as
-    `{"path", "gx", "area"}` sorted by (gx, path). Non-recursive per dir —
-    a bank is a flat rung directory."""
+    """Every rung under `dirs` as `{"path", "gx", "area", ...}` sorted by
+    (gx, path). Non-recursive per dir — a bank is a flat rung directory.
+
+    A dir holding a minted `index.json` is read through it (rungs additionally
+    carry "step", "frame" and "segment"); a dir without one falls back to
+    parsing gx/area hints out of `*.state` filenames. Raises ValueError on an
+    index that exists but cannot be read.
+    """
     out: list[dict] = []
+    next_segment = 0
     for d in dirs:
         p = Path(d)
         if not p.is_dir():
+            continue
+        minted = read_index_bank(p)
+        if minted is not None:
+            next_segment = stamp_segments(minted, first=next_segment)
+            out.extend(minted)
             continue
         for f in sorted(p.glob("*.state")):
             gx = bank_gx(f)
@@ -151,6 +258,55 @@ def select_bank_state(entries, from_gx: int,
     if not pool:
         return None
     return min(pool, key=lambda e: (abs(e["gx"] - from_gx), e["gx"], e["path"]))
+
+
+def default_bank_area(entries) -> Optional[int]:
+    """The area a minted bank's DEEPEST rung sits in — the one owning the
+    largest gx.
+
+    1-2's tape spends its first 116 steps in the overworld stub (area 1,
+    gx 0..160) and its remaining 1,099 underground (area 2, gx 0..3267). Both
+    ranges start at 0, so an unqualified `--from-gx 100` is genuinely
+    ambiguous; resolving it against the stub would probe a 160-pixel dead end
+    and report it as 1-2. Defaulting to the area that owns the tape's largest
+    gx picks the main area, and `--area` overrides when the stub is the point.
+    """
+    if not entries:
+        return None
+    best = max(entries, key=lambda e: (e["gx"], e.get("segment", 0),
+                                       e.get("step", 0)))
+    return int(best["area"])
+
+
+def select_index_state(entries, from_gx: int,
+                       area: Optional[int] = None) -> Optional[dict]:
+    """Deepest minted rung at or BELOW `from_gx`, within one area.
+
+    At-or-below rather than nearest: overshooting hands a probe (or a backward
+    curriculum) a start further along the tape than it asked for, which
+    inflates every number downstream of it. When nothing is at or below —
+    `from_gx` sits under the area's first rung — the shallowest rung is
+    returned and `--max-gx-delta` decides whether that distance is acceptable.
+
+    `area` defaults to `default_bank_area`. Inside one area a gx can still
+    recur across an odometer re-base; an EXACT repeat resolves to the LAST
+    segment (then the last step, then path, so the choice is deterministic).
+    That is only a tie-break — the closest rung at or below wins first, so a
+    request never jumps to the far end of the tape just because the last
+    segment also passes through that gx.
+    """
+    if area is None:
+        area = default_bank_area(entries)
+    pool = [e for e in entries if area is None or e["area"] == area]
+    if not pool:
+        return None
+    at_or_below = [e for e in pool if e["gx"] <= from_gx]
+    reach = at_or_below or pool
+    target = max(e["gx"] for e in at_or_below) if at_or_below else min(
+        e["gx"] for e in pool)
+    cands = [e for e in reach if e["gx"] == target]
+    return max(cands, key=lambda e: (e.get("segment", 0), e.get("step", 0),
+                                     e["path"]))
 
 
 def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -382,12 +538,25 @@ def probe(game: str, profile_path: Path, rom_path: str, *, to_gx: int,
         if from_gx is None:
             return {"game": game, "status": "no_start_state",
                     "detail": "pass --start-state PATH or --from-gx N (+ --bank DIR)"}
-        entries = scan_bank(banks or [])
+        try:
+            entries = scan_bank(banks or [])
+        except ValueError as e:
+            return {"game": game, "status": "bad_bank_index",
+                    "banks": list(banks or []), "detail": str(e)}
         if not entries:
             return {"game": game, "status": "empty_bank",
                     "banks": list(banks or []),
-                    "detail": "no *.state files with a gx hint in --bank"}
-        bank_entry = select_bank_state(entries, from_gx, area=from_area)
+                    "detail": "no index.json rungs and no *.state files with "
+                              "a gx hint in --bank"}
+        # A minted index knows each rung's measured gx/area/step, so when one
+        # is present it decides; filename hints are only for banks that predate
+        # the minter. Never both: a mixed --bank list resolves against the
+        # minted rungs alone rather than silently comparing hints to measurements.
+        minted = [e for e in entries if is_minted(e)]
+        if minted:
+            bank_entry = select_index_state(minted, from_gx, area=from_area)
+        else:
+            bank_entry = select_bank_state(entries, from_gx, area=from_area)
         if bank_entry is None:
             return {"game": game, "status": "empty_bank",
                     "banks": list(banks or []), "from_area": from_area,
@@ -463,6 +632,10 @@ def probe(game: str, profile_path: Path, rom_path: str, *, to_gx: int,
     }
     if bank_entry is not None:
         result["bank_entry"] = bank_entry
+        # Which area the selection actually ran against: `from_area` when it
+        # was passed, otherwise the minted bank's default. Reported so a run
+        # that took the default is never mistaken for one that was told.
+        result["from_area_used"] = bank_entry.get("area")
     result.update(summarize_episodes(records, to_gx=to_gx))
     if from_area is not None and start_info.get("start_area") != from_area:
         # The bank's filename hint disagreed with RAM: the probe ran, but it
@@ -490,15 +663,20 @@ def main() -> int:
                     help="Probe the freshest trained checkpoint instead of the "
                          "retained winner.")
     ap.add_argument("--from-gx", type=int, default=None, dest="from_gx",
-                    help="Start from the banked state whose gx is nearest N.")
-    ap.add_argument("--from-area", type=int, default=None, dest="from_area",
+                    help="Start from a banked rung at gx N: the deepest rung "
+                         "at or below N in a minted bank, the nearest rung "
+                         "either side in a legacy filename-hinted one.")
+    ap.add_argument("--from-area", "--area", type=int, default=None,
+                    dest="from_area",
                     help="Restrict the bank to this area index (banks mix the "
                          "1-2 overworld stub and the underground main area at "
-                         "overlapping gx).")
+                         "overlapping gx). Minted banks default to the area "
+                         "owning the bank's largest gx.")
     ap.add_argument("--bank", type=str, action="append", default=None,
                     metavar="DIR",
-                    help="Directory of banked *.state rungs (repeatable). "
-                         "Default: the profile's checkpoint dir.")
+                    help="Directory of banked rungs (repeatable): a minted dir "
+                         "with an index.json, or a legacy dir of gx-hinted "
+                         "*.state files. Default: the profile's checkpoint dir.")
     ap.add_argument("--start-state", type=str, default=None, dest="start_state",
                     metavar="PATH",
                     help="Probe from an exact save-state file (bypasses --from-gx).")
