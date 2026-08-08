@@ -1,6 +1,24 @@
 #!/usr/bin/env python3
 """Post-rebuild gate for event-driven-PPU Stage 3 (sub-cycle bus catch-up).
 
+ANSWERED 2026-08-07 — the open calibration question this script was
+built to stage ("read offset 0/1/2 can only be settled against Mesen")
+is settled, against full-tape state lockstep rather than a trace window:
+on the 14,401-frame CV tape with the input-aligned harness
+(nes_core_cv_ram_dump.py --mesen-align), ppu_read_dot_offset=2 (the
+shipped end-of-cycle default) holds state lockstep with Mesen to tape
+end, while offsets 0 and 1 both fork identically at frame 4057
+($32B/$4CF/$593). END-OF-CYCLE READ SAMPLING (offset 2) IS THE
+CONFIGURATION THAT MATCHES MESEN over real gameplay; the phi-2
+(offset-1) story applies to the NMI-line latch (hw_nmi_subcycle_phase),
+not to PPU-register reads. Nuance: Mesen itself services reads at
+lead 1 (see the hw_vblank_read_race doc block in nes.rs), so our lead-1
+implementation must differ from Mesen's read model somewhere else —
+the 4057 fork is the calibration target for any future lead-1 work.
+Until that lane is calibrated, hw_vblank_read_race (which arms only at
+lead 1, by derivation) is diagnostic-only: no lockstep-holding
+configuration can currently enable it.
+
 Run AFTER the next attributed maturin rebuild installs the new .so:
 
     .venv/bin/python scripts/verify_subcycle_offset.py \

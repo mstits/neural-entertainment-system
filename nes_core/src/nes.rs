@@ -34,6 +34,15 @@ use std::collections::HashMap;
 /// inert instead of firing on the wrong CPU cycle, and hence (frame =
 /// 89342 ≡ 2 mod 3 dots) on a disjoint set of frames.
 ///
+/// Empirical status (2026-08-07, input-aligned CV tape): the lead-1
+/// lane as a whole does NOT yet hold lockstep with Mesen — it forks at
+/// frame 4057 ($32B/$4CF/$593) while the shipped lead-3 path holds
+/// full 17,509-frame state lockstep. Since Mesen services reads at
+/// lead 1, our lead-1 read model must differ from Mesen's elsewhere;
+/// until that is calibrated (scripts/verify_subcycle_offset.py has the
+/// receipt), this flag is diagnostic-only — no lockstep-holding
+/// configuration can enable it.
+///
 /// `lead == 1` is produced by exactly one configuration: `hw_event_ppu`
 /// (only the event-driven routing splits a CPU cycle) + a final-cycle
 /// read pin via `cpu.hw_mmio_read_timing` (only a deferred access has a
