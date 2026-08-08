@@ -166,6 +166,10 @@ def main() -> int:
                          "jitter by the monotonicity gate (default one tile).")
     ap.add_argument("--allow-nonmonotone", action="store_true",
                     help="Mint even when the per-area gx gate fails.")
+    ap.add_argument("--rom", default=None,
+                    help="ROM path. Required when the profile carries no "
+                         "rom_path key (solve profiles pass the ROM on the "
+                         "solver CLI instead).")
     args = ap.parse_args()
 
     run_dir = Path(args.run)
@@ -173,7 +177,11 @@ def main() -> int:
     if args.actions:
         act_path = Path(args.actions)
     profile = yaml.safe_load(Path(args.profile).read_text())
-    rom = str(REPO / profile["rom_path"])
+    rom_rel = args.rom or profile.get("rom_path") or profile.get("rom")
+    if not rom_rel:
+        raise SystemExit(f"[mint] {args.profile} has no rom_path/rom key — "
+                         f"pass --rom explicitly")
+    rom = str(REPO / rom_rel)
     frame_skip = int(profile.get("frame_skip", 4))
     bitmasks = action_space_to_bitmasks(profile["action_space"])
     hw_flags = tuple(resolve_hw_flags(profile, args.hw_flags))
