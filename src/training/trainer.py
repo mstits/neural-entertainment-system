@@ -28,6 +28,7 @@ import os
 import queue as _queue
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -261,6 +262,204 @@ class StickyBoundary:
         """Drop the suppression once the roll that owed it has run."""
         if self.enabled:
             self._restarted[:] = False
+
+
+# Transitions returned by `BackwardEntropyGuard.observe`. Returned rather
+# than logged inside the guard so the decision stays pure and the caller
+# owns the log line (and the iteration number it needs).
+GUARD_ARM = "arm"
+GUARD_DISARM = "disarm"
+
+
+class BackwardEntropyGuard:
+    """Trailing-entropy floor scoped to the backward start-state curriculum.
+
+    THE RECEIPT (B4 v1, 2026-08-08). On the 1-1 reverse curriculum the
+    policy entropy fell 0.19 -> 0.04 after ~iter 130, and the collapsed
+    argmax then refused the final flag jump the sampled policy still
+    took: cold-entrance greedy 0.02 against sampled 0.50/0.63, with the
+    greedy episodes stalling at gx 3154-3157 — ten pixels short of the
+    pole. A reverse curriculum manufactures exactly that. The deep rungs
+    it starts on are nearly solved, so their advantage signal is small
+    and sharply peaked and the policy sharpens there, long before tau
+    reaches the entrance where the same policy still needs to explore.
+
+    Neither existing mechanism covers it. The anti-collapse rollback
+    (`SMB_ENTROPY_COLLAPSE_FRAC`) fires on entropy near ln(A) — a
+    MELTING policy, the opposite failure. The adaptive `entropy_floor`
+    controller does chase a low floor, but it is a whole-run knob: set
+    high enough to stop the entrance-era collapse it also fights the
+    early near-flag rungs, where sharpening is what the curriculum
+    wants. This guard is scoped to backward mode, keyed on a TRAILING
+    mean (one noisy minibatch entropy must never arm it), and hysteretic
+    (it disarms on a real recovery above `floor * recover_mult`, not on
+    the first iter that poked back over the line).
+
+    Pure and side-effect free: it decides, the caller applies the
+    multiplier to `entropy_coef` and writes the log line. Opt-in via
+    ``reinforce.backward_curriculum.entropy_guard: {floor, boost}``; with
+    the key absent no instance is built and the loop is byte-identical
+    to a run without the feature.
+    """
+
+    __slots__ = ("floor", "boost", "trailing", "min_samples",
+                 "recover_mult", "_window", "_armed", "_armed_hist",
+                 "_arms")
+
+    def __init__(
+        self,
+        floor: float,
+        boost: float,
+        *,
+        trailing: int = 10,
+        min_samples: int = 5,
+        recover_mult: float = 1.25,
+        armed_history: int = 50,
+    ) -> None:
+        floor = float(floor)
+        boost = float(boost)
+        recover_mult = float(recover_mult)
+        trailing = int(trailing)
+        min_samples = int(min_samples)
+        armed_history = int(armed_history)
+        if not floor > 0.0:
+            raise ValueError(f"entropy_guard.floor must be > 0, got {floor}")
+        if boost < 1.0:
+            raise ValueError(
+                f"entropy_guard.boost must be >= 1.0 (a boost below 1 would "
+                f"SHARPEN a collapsing policy), got {boost}")
+        if trailing < 1:
+            raise ValueError(
+                f"entropy_guard.trailing must be >= 1, got {trailing}")
+        if min_samples < 1:
+            raise ValueError(
+                f"entropy_guard.min_samples must be >= 1, got {min_samples}")
+        if recover_mult < 1.0:
+            raise ValueError(
+                f"entropy_guard.recover_mult must be >= 1.0 (below 1 the "
+                f"disarm band sits under the arm band and the guard "
+                f"flaps), got {recover_mult}")
+        if armed_history < 1:
+            raise ValueError(
+                f"entropy_guard.armed_history must be >= 1, got "
+                f"{armed_history}")
+        self.floor = floor
+        self.boost = boost
+        self.trailing = trailing
+        # A sample floor longer than the window can never be met.
+        self.min_samples = min(min_samples, trailing)
+        self.recover_mult = recover_mult
+        self._window: deque = deque(maxlen=trailing)
+        self._armed = False
+        # Rolling armed/disarmed history — the kill criterion registered
+        # for B5 reads "armed for more than half of 50 consecutive
+        # iters", so the run log must be able to state that directly.
+        self._armed_hist: deque = deque(maxlen=armed_history)
+        self._arms = 0
+
+    @classmethod
+    def from_config(cls, cfg) -> Optional["BackwardEntropyGuard"]:
+        """Build from an `entropy_guard` sub-block, or None when absent.
+
+        None means "not configured", and the caller must then leave
+        `entropy_coef` alone — that is the byte-identical default path.
+        `enabled: false` is honored so a profile can keep the block
+        documented while turning it off. A block that IS present but
+        malformed raises: a pre-registered run must not spend hours on a
+        knob that silently did nothing (this project's dead-knob bug
+        class, see config_schema.py).
+        """
+        if not isinstance(cfg, dict) or not cfg:
+            return None
+        if not bool(cfg.get("enabled", True)):
+            return None
+        missing = [k for k in ("floor", "boost") if k not in cfg]
+        if missing:
+            raise ValueError(
+                f"entropy_guard is configured but missing {missing}; it "
+                f"needs both `floor` and `boost`")
+        return cls(
+            floor=float(cfg["floor"]),
+            boost=float(cfg["boost"]),
+            trailing=int(cfg.get("trailing", 10)),
+            min_samples=int(cfg.get("min_samples", 5)),
+            recover_mult=float(cfg.get("recover_mult", 1.25)),
+            armed_history=int(cfg.get("armed_history", 50)),
+        )
+
+    # -- state --------------------------------------------------------
+
+    @property
+    def armed(self) -> bool:
+        return self._armed
+
+    @property
+    def multiplier(self) -> float:
+        """What `entropy_coef` should be multiplied by right now."""
+        return self.boost if self._armed else 1.0
+
+    @property
+    def samples(self) -> int:
+        return len(self._window)
+
+    @property
+    def trailing_mean(self) -> float:
+        """Mean entropy over the trailing window (0.0 before any sample).
+
+        Only meaningful once `samples >= min_samples`; the arm test is
+        gated on that, so the empty-window 0.0 can never arm the guard.
+        """
+        return (sum(self._window) / len(self._window)) if self._window else 0.0
+
+    @property
+    def recover_floor(self) -> float:
+        """Trailing mean the policy must clear to disarm the guard."""
+        return self.floor * self.recover_mult
+
+    @property
+    def arms(self) -> int:
+        """How many times the guard has armed over the whole run."""
+        return self._arms
+
+    @property
+    def armed_recent(self) -> int:
+        """Armed iters inside the rolling history window."""
+        return sum(self._armed_hist)
+
+    @property
+    def history_len(self) -> int:
+        return len(self._armed_hist)
+
+    @property
+    def armed_frac(self) -> float:
+        """Armed fraction over the rolling history (0.0 when empty)."""
+        return (self.armed_recent / len(self._armed_hist)
+                if self._armed_hist else 0.0)
+
+    # -- the decision -------------------------------------------------
+
+    def observe(self, entropy: float) -> Optional[str]:
+        """Feed one iteration's policy entropy; return the transition.
+
+        Returns `GUARD_ARM` on the iter the guard arms, `GUARD_DISARM` on
+        the iter it releases, and None when nothing changed (including
+        every iter it stays armed). Idempotent in the sense that only
+        transitions are reported — the caller applies `multiplier` every
+        iter regardless.
+        """
+        self._window.append(float(entropy))
+        event: Optional[str] = None
+        if len(self._window) >= self.min_samples:
+            mean = self.trailing_mean
+            if not self._armed and mean < self.floor:
+                self._armed = True
+                self._arms += 1
+                event = GUARD_ARM
+            elif self._armed and mean >= self.recover_floor:
+                self._armed = False
+                event = GUARD_DISARM
+        self._armed_hist.append(self._armed)
+        return event
 
 
 class Trainer:
@@ -5549,6 +5748,24 @@ class Trainer:
         # With sticky off this reproduces the pre-flag run bit-for-bit (no
         # extra RNG is drawn), which is how the zero-diff gate is checked.
         bwd_pin = bool(_bwd_cfg.get("pin_entrance", False))
+        # OPT-IN trailing-entropy guard (see BackwardEntropyGuard for the
+        # B4 v1 receipt it exists for). Built only when the curriculum is
+        # actually armed; an absent block yields None and the entropy_coef
+        # path below is byte-identical to a run without the feature. A
+        # block that is present but malformed raises HERE, seconds into
+        # the run, rather than after hours on a dead knob.
+        bwd_guard = (
+            BackwardEntropyGuard.from_config(_bwd_cfg.get("entropy_guard"))
+            if bwd_on else None
+        )
+        # The exact coefficient the guard last wrote, and the unboosted
+        # value it was computed from. Both None while disarmed. Storing
+        # the written value (not just the multiplier) lets the strip
+        # below confirm nobody else moved the coefficient in between — a
+        # consolidation schedule ASSIGNS entropy_coef outright — instead
+        # of blindly dividing a boost back out of an unrelated number.
+        _bwd_guard_base: Optional[float] = None
+        _bwd_guard_applied: Optional[float] = None
         # Per-env provenance of the LIVE episode: the cursor it started
         # under, whether it was drawn from the window (1), the entrance
         # (0) or not by this curriculum at all (-1), and whether it has
@@ -5595,6 +5812,16 @@ class Trainer:
                     bwd_sched.min_attempts, bwd_entrance_w,
                     "  [PINNED AT ENTRANCE]" if bwd_pin else "",
                 )
+                if bwd_guard is not None:
+                    log.info(
+                        "[backward-guard] configured: arm when the %d-iter "
+                        "trailing policy entropy falls below %.3f (needs "
+                        "%d samples), entropy_coef x%.2f while armed, "
+                        "disarm above %.3f.",
+                        bwd_guard.trailing, bwd_guard.floor,
+                        bwd_guard.min_samples, bwd_guard.boost,
+                        bwd_guard.recover_floor,
+                    )
                 # Reachability: an attempt only resolves if the tape's
                 # remaining tail fits inside one rollout, because the iter
                 # boundary truncates everything still running. Name the
@@ -5640,6 +5867,7 @@ class Trainer:
                     _bwd_cfg.get("states_dir"), e,
                 )
                 bwd_on = False
+                bwd_guard = None
         elif _bwd_cfg.get("states_dir"):
             log.warning(
                 "[backward] configured but INERT: needs a tile-mode encoder "
@@ -7579,10 +7807,34 @@ class Trainer:
             if bwd_on and bwd_sched is not None:
                 _bs = bwd_sched.snapshot()
                 _bt = bwd_entries[_bs["tau"]]
+                # The guard suffix is empty unless entropy_guard is
+                # configured, so an unguarded run's log line is
+                # character-identical to before the guard existed. Armed
+                # fraction is here because the registered B5 kill
+                # criterion ("armed >50% of 50 consecutive iters") is
+                # read off it directly.
+                #
+                # The guard observes at the END of an iter (below, after
+                # the entropy-floor controller), so what this line prints
+                # is the guard state and coefficient that GOVERNED THIS
+                # ITER'S UPDATE — decided one iter ago. That is the
+                # honest pairing: the `entropy=` figure on the
+                # `[vanilla_ppo] iter` line above was produced under
+                # exactly this coefficient. The arm/disarm `[backward-
+                # guard]` lines are emitted at the iter they happen.
+                _bg_sfx = ""
+                if bwd_guard is not None:
+                    _bg_sfx = (
+                        " | guard %s ent~%.4f armed %d/%d coef %.5f" % (
+                            "ARMED" if bwd_guard.armed else "off",
+                            bwd_guard.trailing_mean, bwd_guard.armed_recent,
+                            bwd_guard.history_len, self.entropy_coef,
+                        )
+                    )
                 log.info(
                     "[backward] iter %d: tau=%d/%d (step %d frame %d gx %d) "
                     "trailing %d/%d=%.2f (advance at >=%.2f over %d) "
-                    "advances=%d%s | entrance %d/%d=%.3f | truncated %d",
+                    "advances=%d%s | entrance %d/%d=%.3f | truncated %d%s",
                     global_it, _bs["tau"], _bs["n_entries"] - 1,
                     _bt.step, _bt.frame, _bt.gx,
                     _bs["successes"], _bs["attempts"], _bs["rate"],
@@ -7590,7 +7842,7 @@ class Trainer:
                     _bs["advances"],
                     "  AT-ENTRANCE" if _bs["at_entrance"] else "",
                     _bs["entrance_successes"], _bs["entrance_attempts"],
-                    _bs["entrance_rate"], bwd_trunc_dropped,
+                    _bs["entrance_rate"], bwd_trunc_dropped, _bg_sfx,
                 )
 
             # ===== CGSA telemetry + research signposts =====
@@ -8353,6 +8605,29 @@ class Trainer:
             else:
                 collapse_strikes = 0
 
+            # Backward entropy guard, half 1 of 2: STRIP last iter's boost
+            # so every other controller below reads the unboosted
+            # coefficient and the boost can never compound across iters.
+            # Only strips a value this guard itself wrote — if a
+            # consolidation schedule reassigned entropy_coef in between,
+            # the record is simply dropped.
+            #
+            # ORDER IS LOAD-BEARING: this block must stay ABOVE the
+            # entropy-floor controller. That controller rescales
+            # entropy_coef, which would break the float-equality check
+            # below, silently drop the record, and leave the boost
+            # multiplying an already-boosted coefficient every iter,
+            # without bound. Enforced by
+            # tests/test_vanilla_ppo_backward_guard_smoke.py::
+            # test_guard_survives_an_active_entropy_floor_controller
+            # (the profile that ships the guard runs the controller at
+            # entropy_floor 0.02; the 1-1 profile has it off, so the
+            # other smokes in that file cannot see this).
+            if bwd_guard is not None and _bwd_guard_applied is not None:
+                if self.entropy_coef == _bwd_guard_applied:
+                    self.entropy_coef = _bwd_guard_base
+                _bwd_guard_base = _bwd_guard_applied = None
+
             # Adaptive entropy-floor controller (opt-in via entropy_floor).
             # Keeps the policy from collapsing to a brittle deterministic
             # trajectory under sticky/jitter training — the mechanism that
@@ -8367,6 +8642,44 @@ class Trainer:
                     self.entropy_coef = max(
                         self.entropy_coef * 0.9, self._entropy_coef_base
                     )
+
+            # Backward entropy guard, half 2 of 2: OBSERVE this iter's
+            # entropy and re-apply the multiplier on top of whatever the
+            # controllers above just decided. Runs last so the boost is
+            # the outermost factor; note the effective ceiling while
+            # armed is therefore entropy_coef_max * boost, by design —
+            # the floor controller's clamp bounds the base, not the
+            # emergency response to a collapse.
+            if bwd_guard is not None:
+                _bg_event = bwd_guard.observe(last_entropy)
+                if _bg_event == GUARD_ARM:
+                    log.warning(
+                        "[backward-guard] ARMED at iter %d: trailing "
+                        "entropy %.4f over %d iters < floor %.3f "
+                        "(B4 v1 collapsed 0.19 -> 0.04 here). "
+                        "entropy_coef %.5f -> %.5f (x%.2f) until the "
+                        "trailing mean recovers above %.3f.",
+                        global_it, bwd_guard.trailing_mean,
+                        bwd_guard.samples, bwd_guard.floor,
+                        self.entropy_coef,
+                        self.entropy_coef * bwd_guard.boost,
+                        bwd_guard.boost, bwd_guard.recover_floor,
+                    )
+                elif _bg_event == GUARD_DISARM:
+                    log.info(
+                        "[backward-guard] disarmed at iter %d: trailing "
+                        "entropy %.4f >= %.3f. entropy_coef back to "
+                        "%.5f (armed %d/%d of the last iters, %d arms "
+                        "this run).",
+                        global_it, bwd_guard.trailing_mean,
+                        bwd_guard.recover_floor, self.entropy_coef,
+                        bwd_guard.armed_recent, bwd_guard.history_len,
+                        bwd_guard.arms,
+                    )
+                if bwd_guard.armed:
+                    _bwd_guard_base = self.entropy_coef
+                    _bwd_guard_applied = self.entropy_coef * bwd_guard.boost
+                    self.entropy_coef = _bwd_guard_applied
 
             # Clear per-iteration episode-completion buffer so the next
             # iter reports against fresh episode data only.

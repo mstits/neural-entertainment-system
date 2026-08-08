@@ -51,10 +51,17 @@
 # are known mirages on this project (a "passing" 3-ep gate once hid a true
 # success rate under 1/400) — no gate here may be read off fewer than 30.
 #
-#   scripts/eval_game.py --game mario_1_2_backward --checkpoint <ckpt> \
+#   .venv/bin/python scripts/eval_game.py --game mario \
+#     --profile configs/mario_1_2_backward.yaml --checkpoint <ckpt> \
 #     --start-state runs/live_show/smb_4_4_micro/entrance_after_1-1.state \
 #     --episodes 30 --sticky-prob 0.25 --start-jitter 16 --eval-seed {0,1} \
-#     --action-select {greedy,sample}
+#     --action-select {greedy,sampled}
+#
+# (CORRECTED 2026-08-08, before any B5 number existed. `--game` indexes
+# train_game.DEFAULT_PROFILES / DEFAULT_ROMS, which have no
+# `mario_1_2_backward` key — that spelling exits `no_rom` without running an
+# episode. `--game mario --profile <this file>` is the form the B4 evals
+# actually ran under, and `sampled` is the mode name eval_game accepts.)
 #
 # GATE B5 (the real question: does a reverse curriculum crack 1-2?).
 # PASS iff, on both seeds:
@@ -83,6 +90,29 @@
 # FALSIFICATION: tau reaches 0 on both seeds, B4 passed, and 1-2 cold-greedy
 # is still 0/60 -> reverse curricula do not cross this level's exploration
 # wall either, and the remaining honest lever is not a curriculum at all.
+#
+# ---- AMENDMENT 2026-08-08 (still before any B5 episode was run) ----
+# The OPERATIVE pre-registration for the run is now
+# docs/research/B5_PREREG_2026-08-08.md. It restates the above as a TWO-TIER
+# gate — an interim tier read at ~iter 300 (tau past the gauntlet head with
+# a trailing rate >= 0.20) and a headline tier (>= 1/30 cold-entrance clears
+# under sticky 0.25 + jitter-16) — and it budgets --iters against measured
+# throughput instead of the it200/it600/it1000 signposts above, which were
+# written before 19.3 s/iter at 60 envs was measured. The GATE B5 bar in
+# this header (cold-greedy >= 0.30, warp_rate 0, both seeds) is UNCHANGED
+# and remains the bar for calling 1-2 solved; the headline tier below it is
+# the weaker "first non-zero under the honest protocol" claim, which the
+# text above already named MARGINAL. Nothing here was relaxed after seeing
+# data — there is no B5 data yet.
+#
+# Two B4-driven changes landed with that amendment:
+#   * WINNER KEY (code-side, a580f99). In backward mode the retained winner
+#     is keyed on the TauScheduler's trailing entrance rate and only once
+#     the cursor is at the entrance. B4 v1's best.pt was keyed on the raw
+#     in-training clear_rate, which near-flag rung restarts inflate, so it
+#     landed at iter 80 — mid-ladder — and cold-scored 0.02 greedy. No
+#     config key: the fix is unconditional for backward runs.
+#   * ENTROPY GUARD (this file, see backward_curriculum.entropy_guard).
 
 name: Mario 1-2 backward
 rom_path: "roms/Super Mario Bros. (World).nes"
@@ -221,6 +251,42 @@ reinforce:
     # `truncated N` column in the log says how much is being censored.
     truncation_is_failure: false
     pin_entrance: false        # true = zero-diff guard only, never a real run
+
+    # ---- entropy guard (added 2026-08-08 on the B4 v1 receipt) ----
+    # THE RECEIPT. B4 v1 (1-1, the control) collapsed: policy entropy fell
+    # 0.19 -> 0.04 after ~iter 130, and the collapsed argmax then refused
+    # the final flag jump the sampled policy still took — cold-entrance
+    # greedy 0.02 against sampled 0.50/0.63, with greedy episodes stalling
+    # at gx 3154-3157, ten pixels short of the pole. That is a reverse
+    # curriculum's characteristic failure, not a 1-1 quirk: the deep rungs
+    # it starts on are nearly solved, their advantage signal is small and
+    # sharply peaked, and the policy sharpens there long before tau reaches
+    # the entrance where it still needs to explore. 1-2's ladder is 60%
+    # longer, so it spends 60% more iters in exactly that regime.
+    #
+    # Arms when the 10-iter TRAILING mean policy entropy falls below 0.08
+    # (B4's healthy plateau was ~0.19, its collapse ~0.04 — the floor sits
+    # between them, nearer the collapse, so a merely-consolidating policy
+    # is left alone), multiplies entropy_coef by 3.0 while armed, and
+    # disarms once the trailing mean recovers above 0.10 (floor x 1.25
+    # hysteresis, so it cannot flap once per iter around the boundary).
+    # Arm/disarm are logged as `[backward-guard]` lines and the armed
+    # fraction rides the per-iter `[backward]` line — the registered kill
+    # criterion "armed >50% of 50 consecutive iters" is read straight off
+    # it. Opt-in: with this block absent the loop is byte-identical, which
+    # is why B1-B4's lineages stay comparable.
+    #
+    # Interaction with `entropy_floor: 0.02` above (both are on, and they
+    # are NOT redundant): the floor controller is the slow whole-run knob
+    # and owns the BASE coefficient — the guard strips its own multiplier
+    # before that controller reads anything, so the boost never compounds
+    # and never contaminates the base. The guard is the fast scoped
+    # response and applies last, so while armed the effective ceiling is
+    # entropy_coef_max x boost = 0.15. That is deliberate: entropy_coef_max
+    # bounds the steady state, not the emergency.
+    entropy_guard:
+      floor: 0.08
+      boost: 3.0
 
 ga_params:
   mutation_rate: 0.8

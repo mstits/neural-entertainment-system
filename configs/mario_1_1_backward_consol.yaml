@@ -1,0 +1,210 @@
+# Mario 1-1 BACKWARD start-state curriculum — the Phase-A recipe, unchanged,
+# with a reverse curriculum bolted onto the restart site.
+#
+# WHAT THIS IS. Salimans & Chen (arXiv:1812.03381) use a solved trajectory as
+# a source of START STATES, never of labels: training begins a few frames from
+# the goal and the restart cursor `tau` walks BACKWARD along the tape as the
+# policy earns each rung, until it is starting from the true entrance. Every
+# rung is learned from the REWARD alone. This is the Day-2 item the
+# 2026-07-21 research-grounded plan skipped, and it is the honest half of that
+# plan: the imitation half (naive BC / DAgger on these same tapes) was
+# ELIMINATED in Dossier v3 (2026-07-23) — clone accuracy 1.0 collapsed to 0.00
+# under the sticky protocol.
+#
+# WHY 1-1 FIRST. 1-1 is the only level this stack has ever cleared honestly
+# (Phase-A #2, iter-130: cold-greedy 0.667 / 0.633 across two seeds under
+# sticky-0.25 + jitter-16). It is therefore the CONTROL, not the target: the
+# backward machinery must reproduce that number before anything it reports on
+# 1-2 means a thing. The PPO block below is Phase-A's verbatim
+# (checkpoints/mario_1_1_tile_gate_v2/profile.yaml) so the only moving part is
+# the curriculum.
+#
+# START STATE. `start_state_path` is the TAPE'S OWN ROOT, not the blob
+# Phase-A trained from (roms/Super Mario Bros. (World)_start.state.bin, which
+# sits a few frames earlier: gx 0 / timer 399 vs gx 40 / timer 400). The tape
+# and the entrance MUST be one lineage — the entrance rides in the per-episode
+# draw, so a mismatched pair silently trains on a two-lineage mixture. The
+# consequence: any comparison against the 0.667/0.633 Phase-A figures must be
+# re-baselined on THIS entrance, and every eval must pass the same
+# `--start-state`.
+#
+# MINT FIRST:
+#   python scripts/mint_backward_states.py --level 1-1
+#
+# ================== PRE-REGISTERED GATES (2026-08-08) ==================
+# Registered BEFORE launch. Protocol for every number below: cold start from
+# `start_state_path`, sticky-action p=0.25 + no-op start-jitter-16, >= 30
+# episodes, TWO seeds, greedy AND sampled both reported. Three-episode gates
+# are known mirages on this project (a "passing" 3-ep gate once hid a true
+# success rate under 1/400) — no gate here may be read off fewer than 30.
+#
+#   scripts/eval_game.py --game mario_1_1_backward --checkpoint <ckpt> \
+#     --start-state runs/live_show/smb_4_4_micro/entrance_start.state \
+#     --episodes 30 --sticky-prob 0.25 --start-jitter 16 --eval-seed {0,1} \
+#     --action-select {greedy,sample}
+#
+# GATE B4 (this config, the control). PASS iff, on both seeds:
+#   (a) the cursor reaches tau 0 (`[backward] ... AT-ENTRANCE` in the log),
+#       AND
+#   (b) cold-greedy clear_rate >= 0.60 from the true entrance — the Phase-A
+#       bar, re-measured on this entrance, AND
+#   (c) warp_rate == 0.0 (legitimate flagpole, no pipe shortcut).
+# FAIL if (b) < 0.40: the curriculum has cost more than it bought and the
+# backward machinery is not carrying 1-1 — do not run B5 on a broken control.
+# MARGINAL in [0.40, 0.60): report, do not launch B5 without a diagnosis.
+#
+# SIGNPOSTS (abandonment criteria, read off the per-iter `[backward]` line):
+#   S1  it150: tau has advanced at least 5 rungs (abandon at 0 — the trailing
+#              window is never clearing 0.20, i.e. the rungs are not
+#              learnable at this window/threshold and the knobs are wrong).
+#   S2  it400: tau <= 50% of its initial value (terminate if the cursor has
+#              moved less than 20% — a curriculum that cannot walk back on
+#              the one level this stack has already solved will not walk back
+#              on 1-2).
+#   S3  it600: the in-training entrance column (`entrance N/M`) is non-zero
+#              (a policy that never clears the honest start during training
+#              will not clear it in eval; this is the early read on B4b).
+# FALSIFICATION: tau reaches 0 on both seeds and cold-greedy is still < 0.40
+# -> the backward curriculum does not transfer to the honest start on the
+# EASIEST level, and the reverse-curriculum line is dead for this stack.
+
+name: Mario 1-1 backward consol
+rom_path: "roms/Super Mario Bros. (World).nes"
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+# The tape's own root (see START STATE above). Eval with the SAME blob.
+start_state_path: "runs/live_show/smb_4_4_micro/entrance_start.state"
+description: >
+  Reverse start-state curriculum on SMB 1-1 over the banked solver tape,
+  Phase-A PPO recipe unchanged. Control experiment for the 1-2 run: the
+  machinery must reproduce Phase-A's honest 1-1 number before its 1-2
+  result means anything. Honest gate: cold greedy sticky-0.25 + jitter-16
+  from the tape's entrance, 30 episodes, 2 seeds.
+
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+
+# Phase-A reward weights, verbatim (generic: progress + time + death +
+# completion; no per-level checkpoint ladder, no air/jump/survival carrots).
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+
+reinforce:
+  # ---- Phase-A recipe, verbatim (mario_1_1_tile_gate_v2/profile.yaml) ----
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  symlog_rewards: true
+  value_loss: huber
+  value_coef: 0.25
+  bc_epochs: 30
+  warmup_gens_ga_only: 10
+  steps: 10
+  # THE ONE DEVIATION FROM PHASE-A (which took the 512 default). The iter
+  # boundary calls reset_all, so every episode still running is truncated
+  # and scores nothing. An attempt from rung tau therefore only resolves
+  # if the tape's remaining tail — up to 903 steps at tau 0 — fits inside
+  # one rollout. At 512 the cursor would stall around tau 391 with the
+  # `[backward] REACHABILITY` warning in the log; 1024 covers the whole
+  # tape. Costs ~2x samples/iter vs Phase-A.
+  rollout_steps: 1024
+  lr: 0.0003
+  async_pipeline: false      # 1-step obs lag destroys frame-perfect SMB
+  device: cpu
+  panic_isolation: false
+  entropy_coef: 0.002      # consolidation leg: June recipe (0.01->0.002) — convert sampled clears into greedy clears
+  entropy_floor: 0.0
+  entropy_coef_max: 0.05
+  rnd_intrinsic_coef: 0.1
+  rnd_loss_coef: 1.0
+  sticky_action_prob: 0.25   # train under the protocol the gate measures
+  # REQUIRED whenever sticky > 0 AND the backward block is on. Every rung
+  # restart is an episode boundary, and this curriculum manufactures
+  # hundreds of them per rollout. Without this the sticky roll on the
+  # first step of a fresh attempt replays the action the previous life
+  # died holding (~25% of restarts) — a stale held right+A+B at a mid-air
+  # rung start kills the attempt before the policy acts, and that lands
+  # directly in the success rate the advance gate consumes. The honest
+  # eval harness gates its roll on step > 0 per episode
+  # (scripts/eval_game.py); this is the knob that makes training agree.
+  sticky_episode_boundary_reset: true
+  bc_replay_enabled: true
+  bc_replay_every_gens: 20
+  bc_replay_epochs: 5
+  bc_replay_max_buffer: 16
+  bc_replay_train_window: 1
+  preprocess_f16: false
+  smb_curriculum: false      # required: the stage-0 inline restart path
+  num_envs: 60
+
+  # ---- the only new machinery ----
+  # Reverse curriculum over checkpoints/backward_states/1-1 (903 states, one
+  # per action step). tau starts at the last state (-1, right before the
+  # flag) and walks back 40 tape steps whenever the trailing window at the
+  # current rung holds >= 30 attempts at >= 20% success. Each episode draws
+  # its restart uniformly from the 160-frame window ending at tau, with the
+  # true entrance carrying one entry's worth of mass — so ~2% of episodes
+  # start honestly all run long (that is the `entrance` column in the
+  # `[backward]` log, and the early read on the gate), and at tau 0 the draw
+  # IS the honest start distribution with no hand-off step.
+  backward_curriculum:
+    states_dir: "checkpoints/backward_states/1-1"
+    tau_init: -1
+    window_frames: 160
+    advance_threshold: 0.2
+    advance_actions: 40
+    min_attempts: 30
+    entrance_weight: 1.0
+    # Truncated (boundary-cut) attempts are censored data — neither a
+    # clear nor a death. Dropped by default, which keeps the rung rate an
+    # honest "of the attempts that RESOLVED, how many cleared"; the
+    # `truncated N` column in the log says how much is being censored.
+    # Flip to true for the Salimans & Chen timeout convention.
+    truncation_is_failure: false
+    # pin_entrance: true freezes every restart at start_state_path and is
+    # the zero-diff guard (with sticky 0 it draws no extra RNG, so a run
+    # reproduces one without this block bit-for-bit). Never for a real run.
+    pin_entrance: true
+
+ga_params:
+  mutation_rate: 0.8
+  mutation_std: 0.001
+  adaptive_mutation_scale: false
+  elite_fraction: 0.4
+  stale_gens_before_restart: 50
+  restart_fraction: 0.5
+
+max_episode_steps: 2400
