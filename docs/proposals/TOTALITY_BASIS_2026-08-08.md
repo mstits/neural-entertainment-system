@@ -61,3 +61,35 @@ content, not a new axiom.
 
 Classes 1-2 took ~6 weeks including all infrastructure. 3-7 reuse that
 infrastructure; 8 is the one genuine research unknown remaining.
+
+## The dispatch architecture (the "tree")
+
+The operational form of totality is a diagnosis-dispatch loop, and the
+key design decision is WHAT gets classified: not the game, the WALL.
+Game-level classification is a lookup table that ends at 793 rows;
+wall-level classification generalizes to games nobody profiled.
+
+The system already half-implements this, self-measured (purity-safe —
+it diagnoses its own telemetry, never the game's internals):
+
+  telemetry signal            -> wall class          -> mechanism armed
+  frontier saturation window  -> momentum wall       -> heuristic-inversion
+  cell-key churn/self-similar -> coverage wall       -> coverage recipes
+  gx pinned, y-bands starved  -> orthogonal wall     -> --ortho arm
+  deep tips die at fixed +N   -> doomed-tip drain    -> barren filter
+  room byte + no gradient     -> discrete transition -> derived hold-macros
+
+What is missing for totality: (1) SELF-ARMING — several arms are still
+opt-in flags a human sets per run; the dispatcher should arm them from
+the same telemetry that motivated them, and log the arming as part of
+the show ("the AI noticed it was stuck sideways and started climbing").
+(2) The NO-ARM branch: when telemetry matches no known wall class,
+that IS the research queue — the hall was exactly this. Each new arm
+joins the library permanently; capability compounds. The League
+measures how complete the arm library is; the basis games are how new
+arms get forged.
+
+The learning track is the same pattern one level up: search AI (solver)
+manufactures demonstrations and state ladders -> curriculum/distillation
+AI turns them into policies -> PPO consolidates -> honest eval gates.
+Different AI per phase, dispatched by where the pipeline is stuck.
