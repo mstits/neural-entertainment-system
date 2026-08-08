@@ -93,3 +93,23 @@ The learning track is the same pattern one level up: search AI (solver)
 manufactures demonstrations and state ladders -> curriculum/distillation
 AI turns them into policies -> PPO consolidates -> honest eval gates.
 Different AI per phase, dispatched by where the pipeline is stuck.
+
+## The three tiers of unsticking
+
+  T0 REFLEX (in-engine, ms):    telemetry -> known wall class -> arm.
+     Hardcoded dispatch, runs inside the solver loop. Exists today.
+  T1 DIAGNOSIS (agentic, min):  reflexes failed -> an agent reads the
+     run's telemetry/receipts, classifies the wall (or declares it
+     novel), tunes/combines existing arms, relaunches. This is what
+     the operator + workflows do manually today; productizing it means
+     a stuck run auto-emits a diagnosis bundle and invokes the agent
+     pipeline — narratable live ("consulting the strategist").
+  T2 FORGE (agentic research, hrs): novel wall -> the full workflow
+     pattern (recon -> design -> implement -> adversarial review ->
+     gated validation) builds a NEW arm that joins T0 permanently.
+     The hall/--ortho campaign was T2 run by agents end-to-end.
+
+Two invariants keep it honest at every tier: agents consume only
+SELF-MEASURED telemetry (never game internals/disassembly — purity),
+and no arm joins T0 without default-off byte-identity + its validation
+gate (the same discipline every arm shipped under so far).
