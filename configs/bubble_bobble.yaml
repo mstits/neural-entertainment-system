@@ -111,7 +111,7 @@ solve:
   # the ground, dips to a 37 apex across a jump-in-place burst, returns to 88
   # and stays flat -- the standard dip-and-return arc. Tracks the OAM sprite
   # Y ($0200) within 1-2 frames.
-  y: 0x0021
+  y: 0x0200   # validated player-Y (agent probe 2026-08-09: flat at rest, ballistic on jump); 0x0021 was object-loop scratch, 58.9% band-flip at rest
   # level_key = [$0401], NOT the usual coverage-baseline empty list. Unlike
   # most bootstraps (Contra/Kirby/DuckTales all ship level_key: [] because no
   # receipted stage-advance byte exists yet), Bubble Bobble's round counter
@@ -132,9 +132,9 @@ solve:
   # (confirmed at 4 separate kills), resets to a fresh count after every
   # round transition (round 1 starts at 3; rounds 2 and 3 both start at 4),
   # and reads exactly 0 immediately before both observed round-clear
-  # transitions. `start: 4` uses the higher observed count; score_bonus clips
+  # transitions. `start: 7   # round 68 receipts: rounds start with 7 enemies; 4 clipped the first 3 kills to zero credit` uses the higher observed count; score_bonus clips
   # at 0 so round 1's smaller true start (3) just reads as "one kill in"
   # rather than going negative.
   boss:
     hp: 0x0496
-    start: 4
+    start: 7   # round 68 receipts: rounds start with 7 enemies; 4 clipped the first 3 kills to zero credit
