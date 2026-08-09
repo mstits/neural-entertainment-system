@@ -43,7 +43,8 @@ SOLVE = str(REPO / "scripts" / "go_explore_solve.py")
 
 def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
                           settle: int = 8, stable_for: int = 45,
-                          settle_cap: int = 600, hw_flags=()):
+                          settle_cap: int = 600, hw_flags=(),
+                          transit_timeout_frames: int = 0):
     """Replay `actions` from the root; at the first level-key transition
     that lands on a genuinely NEW, ALIVE, stable state, snapshot it as the
     next level's entrance. Returns (path, next_key) or (None, None) if no
@@ -71,6 +72,28 @@ def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
     landing is treated as if no transition were seen on this action
     range; the search resumes scanning the rest of `actions`.
 
+    REJECTION MUST REWIND. Settling is destructive: it steps up to
+    `settle + settle_cap` NOOPs into the pool. When the settle is then
+    REJECTED, "keep scanning `actions`" is only honest if the pool is
+    put back where the blip fired — otherwise the remaining actions
+    replay against a machine that idled for hundreds of steps and the
+    real clear never reproduces. Measured on Bubble Bobble round 67
+    (2026-08-09): the round counter $0401 blips DOWN one step to the
+    previous round's value at replay step 3, the settle burned 53 steps,
+    settled back on the start key, and the 200 remaining actions then
+    ran desynchronised — the genuine 67->68 transition on the very last
+    action was invisible and the chain reported "no forward transition
+    captured after 67". Round 66 survived the same blip only by luck:
+    its blip landed at action 438 of 440, so the destructive settle
+    coasted into the next round instead of wrecking a replay tail. The
+    rewind is a save/restore round-trip around the settle.
+
+    `transit_timeout_frames` extends the scan PAST the end of `actions`
+    with NOOPs (converted to steps by `frame_skip`) for games whose
+    level/round byte only turns over after an uncontrollable interlude
+    that outlasts the solution trace. 0 (the default) stops at the last
+    action, exactly as before.
+
     `hw_flags` must be the SAME set the solve ran under: this replay
     machine is what stamps the next level's entrance blob, so a
     mismatch bakes a foreign-machine state into the chain and every
@@ -93,27 +116,45 @@ def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
     r = step(0)
     start_key = game.level_key(r)
     start_lives = game.lives(r)
+
+    def judge_transition():
+        """NOOP-settle the candidate transition and rule on it. Returns
+        the settled key on acceptance; None on rejection, having REWOUND
+        the pool to the pre-settle point so the caller's replay of the
+        remaining actions stays in sync."""
+        mark = pool.save_worker_state(0)
+        rr = None
+        for _ in range(settle):
+            rr = step(0)
+        # Settle until the key stops moving (transition fully over).
+        key = game.level_key(rr)
+        stable = 0
+        for _ in range(settle_cap):
+            if stable >= stable_for:
+                break
+            rr = step(0)
+            k = game.level_key(rr)
+            if k == key:
+                stable += 1
+            else:
+                key, stable = k, 0
+        settled_key = game.level_key(rr)
+        if settled_key == start_key or game.is_dead(rr, start_lives):
+            pool.load_worker_state(0, mark)
+            return None    # false/doomed transition — scan resumes in sync
+        return settled_key
+
+    # NOOP tail past the end of the trace, for level bytes that only turn
+    # over after an interlude the solution does not cover. 0 = stop at the
+    # last action (the pre-existing behavior).
+    tail = max(0, int(transit_timeout_frames)) // max(1, fs)
     result = (None, None)
-    for a in actions:
+    for a in list(actions) + [0] * tail:
         r = step(int(a))
         if game.level_key(r) != start_key:
-            for _ in range(settle):
-                r = step(0)
-            # Settle until the key stops moving (transition fully over).
-            key = game.level_key(r)
-            stable = 0
-            for _ in range(settle_cap):
-                if stable >= stable_for:
-                    break
-                r = step(0)
-                k = game.level_key(r)
-                if k == key:
-                    stable += 1
-                else:
-                    key, stable = k, 0
-            settled_key = game.level_key(r)
-            if settled_key == start_key or game.is_dead(r, start_lives):
-                continue   # false/doomed transition — keep scanning `actions`
+            settled_key = judge_transition()
+            if settled_key is None:
+                continue
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_bytes(pool.save_worker_state(0))
             # Sidecar, not blob: record the machine this entrance was
@@ -173,6 +214,13 @@ def main() -> int:
     # Default: whatever the profile pins, else NONE (byte-identical to
     # every existing chain run). See go_explore_solve.py --hw-flags.
     ap.add_argument("--hw-flags", type=str, default=None, metavar="a,b,c")
+    # Entrance extraction keeps scanning for the forward level-key
+    # transition this many FRAMES past the end of the solution trace,
+    # stepping NOOPs. For games that end a level on an uncontrollable
+    # interlude (bonus/round-clear screens) the byte can turn over after
+    # the trace stops. 0 = stop at the last action (pre-existing
+    # behavior). Frames, not steps: divided by the profile's frame_skip.
+    ap.add_argument("--transit-timeout-frames", type=int, default=0)
     args = ap.parse_args()
 
     profile = yaml.safe_load(Path(args.profile).read_text())
@@ -233,9 +281,10 @@ def main() -> int:
             break
         actions = np.load(sols[0]).astype(np.int64)
         nxt_path = out / "entrances" / f"entrance_after_{cur_label}.state"
-        npath, nwd = extract_next_entrance(profile, Path(cur_state).read_bytes(),
-                                           actions, nxt_path,
-                                           hw_flags=hw_flags)
+        npath, nwd = extract_next_entrance(
+            profile, Path(cur_state).read_bytes(), actions, nxt_path,
+            hw_flags=hw_flags,
+            transit_timeout_frames=args.transit_timeout_frames)
         rec = {"level": cur_label, "status": "solved",
                "actions": int(len(actions)), "solution": str(sols[0]),
                "hw_flags": list(hw_flags)}
