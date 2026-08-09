@@ -1254,3 +1254,237 @@ def test_progress_line_stays_silent_about_ortho_when_the_arm_is_off(tmp_path):
         (tmp_path / "progress.jsonl").read_text().splitlines()[-1])
     assert not [k for k in line if k.startswith("ortho")]
     assert "pinned_secs" not in line
+
+
+# ---------------------------------------------------------------------
+# R2 barren bookkeeping: the CREDIT half of the frontier throttle
+#
+# --frontier-throttle N retires a cell "whose bursts came back empty N
+# times IN A ROW". _assign() debits the source cell on every burst and
+# reads prev["yielded"] to credit the productive ones — but nothing in
+# the solver ever WROTE that key, so the credit branch was dead and
+# `barren` was really "times this cell was ever selected". Every cell in
+# the archive therefore went permanently barren after N selections,
+# which silently retired the deep-frontier band AND the orthogonal arm:
+# the ortho candidate loop skips barren cells and then has no pick left
+# to return, so it falls through with zero selections, forever.
+#
+# Receipt: runs/bubble_bobble/r68_retry_ortho.log — --sel-mode count
+# --frontier-throttle 3 --ortho up --ortho-pin-secs 60, armed for the
+# full 1,800 s with ortho_pool 18, and ortho_selections 0 in every one
+# of the 30 progress lines. Nothing about it was count-specific: the arm
+# sits above the sel_mode dispatch and starved identically in both.
+# ---------------------------------------------------------------------
+
+SEL_MODES = ("legacy", "count")
+
+
+class _StubArchive:
+    """Archive stand-in for the burst loop: holds the duck-typed cells
+    select() samples, and reports "the archive learned something" on
+    every `learn_every`-th record. learn_every 25 is the receipt's own
+    regime — an archive flat at 96 cells that was still banking ~670
+    dominating improvements; 0 is a genuinely dead frontier."""
+
+    def __init__(self, cells, learn_every: int) -> None:
+        self.cells = {c.key: c for c in cells}
+        self.learn_every = learn_every
+        self.records = 0
+
+    def record(self, ram, state, score, steps, key=None) -> bool:
+        self.records += 1
+        return self.learn_every > 0 and self.records % self.learn_every == 0
+
+
+# observe() calls exactly these. A profile-backed GenericGame would drag
+# a ROM-shaped RAM map in for no extra coverage: cell_fn returns the same
+# key _ocell(4, 0) carries, so each burst re-reaches a known cell and the
+# credit is decided by the archive, which is the half under test.
+_BURST_GAME = SimpleNamespace(
+    is_dead=lambda ram, lives: False,
+    is_finale=lambda wd, ram: False,
+    is_clear=lambda wd, ram, ctx: False,
+    level_key=lambda ram: (0,),
+    progress=lambda ram: 68,
+    progress_cap=10_000,
+    area=lambda ram: 0,
+    y=lambda ram: 0,
+    cell_fn=lambda ram: (0, 3, 1, 0, 4),
+    score_bonus=lambda ram: 0.0,
+)
+
+
+def _burst_cells():
+    """The receipt's shape: a dozen columns, eight bands deep, one area."""
+    return [_ocell(gx, yb) for gx in range(12) for yb in range(8)]
+
+
+def _burst_solver(cells, *, learn_every: int = 25, **over):
+    """_ortho_solver plus the burst loop the credit actually flows
+    through: observe() produces it, _assign() consumes it. max_gx_in_area
+    is pre-seeded past the stub's progress so observe() never re-arms the
+    pin clock mid-test (a moving frontier would disarm the arm for its
+    own, legitimate reason and mask the one under test)."""
+    f = _ortho_solver(cells, **over)
+    f.archive = _StubArchive(cells, learn_every)
+    f.traces = {c.key: ("entrance", b"", 0, (), 0, (), 0) for c in cells}
+    f.pool = SimpleNamespace(load_worker_state=lambda *a: None,
+                             save_worker_state=lambda wid: b"blob")
+    f.weights = np.array([0.5, 0.5])
+    f.args.burst = 200
+    f.args.root_state = "unused.state"
+    f.game = _BURST_GAME
+    f.start_wd, f.start_lives = (0,), 5
+    f.max_gx_in_area = {0: 1000}
+    f.time_bins = f.kill_key = False
+    f._recorded_new = False
+    f._ortho_best, f._ortho_time = None, 0.0
+    for name in ("_assign", "observe"):
+        setattr(f, name, MethodType(getattr(Solver, name), f))
+    return f
+
+
+def _run_bursts(f, bursts: int, *, burst_len: int = 4,
+                strip_credit: bool = False) -> list:
+    """Drive observe() -> _assign() the way explore() does: one ctx per
+    burst, novelty credited through the ctx that burst carries, a fresh
+    ctx on reassignment. `strip_credit` deletes the key on the way out,
+    which is precisely the pre-fix code path — so the same harness
+    measures both sides of the defect. Returns the keys picked."""
+    ram = bytes(2048)
+    picked = []
+    ctx = f._assign(0)
+    for _ in range(bursts):
+        for step in range(burst_len):
+            f.observe(0, ram, ctx["trace"], step, ctx["root"], ctx["loops"],
+                      ctx["sig"], ctx["sect"], ctx["psig"], ctx=ctx)
+        if strip_credit:
+            ctx.pop("yielded", None)
+        ctx = f._assign(0, prev=ctx)
+        picked.append(ctx["key"])
+    return picked
+
+
+def test_assign_credits_a_productive_burst_and_debits_a_dry_one():
+    # The consumer half of the contract, stated on its own: "N times IN A
+    # ROW" is a run length, so any novelty has to zero the counter rather
+    # than merely stop incrementing it.
+    cell = _ocell(4, 0)
+    f = _burst_solver([cell])
+    dry = {"key": cell.key}
+    f._assign(0, prev=dry)
+    f._assign(0, prev=dry)
+    assert cell.barren == 2
+    f._assign(0, prev=dict(dry, yielded=True))
+    assert cell.barren == 0
+    f._assign(0, prev=dry)
+    assert cell.barren == 1
+
+
+def test_observe_credits_the_burst_that_taught_the_archive_something():
+    # THE producer, and THE bug: `yielded` had a reader and no writer, so
+    # the counter above could only ever climb. Novelty is exactly what
+    # the archive reports back — a new cell or a dominating improvement.
+    f = _burst_solver([_ocell(4, 0)], learn_every=1)
+    ctx: dict = {}
+    assert f.observe(0, bytes(2048), [0], 1, "entrance", ctx=ctx) == "live"
+    assert ctx.get("yielded") is True
+
+    # A burst that only re-visits: no credit, so the debit stands.
+    g = _burst_solver([_ocell(4, 0)], learn_every=0)
+    dry: dict = {}
+    assert g.observe(0, bytes(2048), [0], 1, "entrance", ctx=dry) == "live"
+    assert "yielded" not in dry
+
+    # The seed call passes ctx=None (scripts/go_explore_solve.py:1597).
+    assert f.observe(0, bytes(2048), [0], 1, "entrance") == "live"
+
+
+@pytest.mark.parametrize("sel_mode", SEL_MODES)
+def test_the_throttle_does_not_permanently_retire_the_ortho_arm(sel_mode):
+    # THE reproduction, end to end at the layer the receipt measured:
+    # observe -> ctx -> _assign -> select, under the r68 flags. The
+    # warm-up is long enough that every cell has been picked well past
+    # the throttle, which is the state the live run reached inside its
+    # first 60 s — i.e. before the pin gate even opened.
+    f = _burst_solver(_burst_cells(), sel_mode=sel_mode,
+                      frontier_throttle=3, ortho_band=2, learn_every=25)
+    _run_bursts(f, 1000)
+    warm = f._ortho_selections
+    _run_bursts(f, 3000)
+    assert f._ortho_selections > warm, (
+        f"{sel_mode}: the ortho arm made no selection after warm-up "
+        "while the archive was still learning")
+
+    # And the pre-fix path through the identical harness: zero, forever,
+    # in both sel modes — the receipt's signature.
+    g = _burst_solver(_burst_cells(), sel_mode=sel_mode,
+                      frontier_throttle=3, ortho_band=2, learn_every=25)
+    _run_bursts(g, 1000, strip_credit=True)
+    stalled = g._ortho_selections
+    _run_bursts(g, 3000, strip_credit=True)
+    assert g._ortho_selections == stalled
+    assert g._ortho_armed() is True and g._ortho_pool
+
+
+@pytest.mark.parametrize("sel_mode", SEL_MODES)
+def test_a_genuinely_barren_frontier_still_retires_the_arm(sel_mode):
+    # The other direction: the throttle is not being disabled. An archive
+    # that learns NOTHING is a real wall, and the arm must still stop
+    # pounding it — otherwise the fix would just delete R2.
+    f = _burst_solver(_burst_cells(), sel_mode=sel_mode,
+                      frontier_throttle=3, ortho_band=2, learn_every=0)
+    _run_bursts(f, 1000)
+    warm = f._ortho_selections
+    _run_bursts(f, 2000)
+    assert f._ortho_selections == warm
+
+
+@pytest.mark.parametrize("sel_mode", SEL_MODES)
+def test_the_armed_ortho_arm_fires_under_every_sel_mode(sel_mode):
+    # The hypothesis the receipt invited — "the arm is only wired into
+    # the legacy path" — pinned false. The arm sits ABOVE the sel_mode
+    # dispatch in select(), so both modes reach it identically.
+    cells = [_ocell(4, 0), _ocell(9, 0), _ocell(4, 6), _ocell(9, 6)]
+    f = _ortho_solver(cells, sel_mode=sel_mode)
+    picks = [f.select() for _ in range(200)]
+    assert f._ortho_selections == 200
+    assert all(p is not None and p.key[-2] == 0 for p in picks)
+
+
+def test_the_arming_matrix_covers_every_sel_mode_the_cli_offers():
+    # A third mode added without extending SEL_MODES would ship an arm
+    # nobody proved fires there — which is the exact class of gap the
+    # r68 log took 30 minutes of live compute to surface.
+    import scripts.go_explore_solve as ges
+
+    tree = ast.parse(Path(ges.__file__).read_text())
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "--sel-mode"):
+            choices = next(k.value for k in node.keywords
+                           if k.arg == "choices")
+            assert tuple(ast.literal_eval(choices)) == SEL_MODES
+            break
+    else:
+        pytest.fail("--sel-mode is no longer a CLI flag")
+
+
+@pytest.mark.parametrize("sel_mode", SEL_MODES)
+def test_the_credit_is_inert_at_the_shipped_throttle_default(
+        monkeypatch, sel_mode):
+    # Default-off identity for the credit itself: --frontier-throttle
+    # defaults to 0, and nothing reads `barren` at 0, so writing the key
+    # cannot move a single pick on any run that did not opt into R2.
+    # Same seed, same archive, credit on vs credit stripped: identical
+    # pick sequences, not merely similar ones.
+    args = _parse_solver_argv(monkeypatch)
+    assert args.frontier_throttle == 0
+
+    def _picks(strip: bool) -> list:
+        f = _burst_solver(_burst_cells(), sel_mode=sel_mode,
+                          frontier_throttle=args.frontier_throttle)
+        return _run_bursts(f, 400, strip_credit=strip)
+
+    assert _picks(True) == _picks(False)

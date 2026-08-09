@@ -1409,6 +1409,21 @@ class Solver:
                 self.traces[key] = (root_id, bytes(trace), loops, route_sig,
                                     sect, psig, kills)
                 self._recorded_new = True
+                # R2 credit signal (fix 2026-08-09): _assign() debits the
+                # source cell's `barren` counter for every burst and reads
+                # `prev["yielded"]` to credit the productive ones — but
+                # NOTHING ever wrote that key, so the credit branch was
+                # dead and `barren` was really "times ever selected". With
+                # --frontier-throttle N every archive cell went permanently
+                # barren after N selections, which silently retired the
+                # deep-frontier band AND the orthogonal arm (its candidate
+                # loop skips barren cells and then has no pick to return).
+                # Receipt: runs/bubble_bobble/r68_retry_ortho.log — armed
+                # 1,800 s, ortho_pool 18, ortho_selections 0. The burst
+                # taught the archive something (a new cell or a dominating
+                # improvement), so its root is not a wall.
+                if ctx is not None:
+                    ctx["yielded"] = True
         else:
             self.archive.record(ram, None, score, steps, key=key)
         return "live"
