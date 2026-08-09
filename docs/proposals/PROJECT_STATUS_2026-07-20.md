@@ -1,5 +1,12 @@
 # Project status — authoritative snapshot, 2026-07-20
 
+> **Addendum, 2026-08-08:** this snapshot is now stale as a status
+> report. For current plan, priorities, and gates, read
+> `docs/proposals/STRATEGY_2026-08-08.md` ("Final Determination, post
+> red-team") — it supersedes the roadmap/priority sections below. The
+> scorecard, drift-and-correction record, and the 2026-08-06 addendum
+> underneath remain accurate as history and are not retracted.
+
 One honest place to understand where this project actually stands, after
 the drift-and-correction, the stability audit, and the PhD/E8 review.
 Supersedes scattered claims in older campaign docs where they conflict.

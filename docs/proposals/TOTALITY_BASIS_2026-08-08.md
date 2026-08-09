@@ -4,6 +4,10 @@
 beating them certifies the system can beat (nearly) any NES game in
 show mode, and how do we measure true progress toward that?*
 
+*Companion doc: `STRATEGY_2026-08-08.md` sequences this basis into the
+30/90-day plan and is the source of truth on current allocations and
+figures (e.g. the Castlevania status below).*
+
 ## Games are not the unit — mechanism classes are
 
 "Beat N famous games" is the wrong target; games are bundles of
@@ -14,7 +18,7 @@ library decomposes into roughly ten:
 |---|---|---|---|
 | 1 | Linear momentum platforming (dense progress axis, frame precision) | SMB1 | **CERTIFIED** (beaten live, 32/32) |
 | 2 | Coverage/maze (momentum-vs-coverage taxonomy) | SMB 4-4 / 8-4 | **CERTIFIED** (coverage recipes, live) |
-| 3 | Committed-action combat platforming (knockback punish, holds) | Castlevania | 90% — hall = last mile |
+| 3 | Committed-action combat platforming (knockback punish, holds) | Castlevania | blocks 0-2 of ~18 clear; hall (block 3) is the active wall — the old "90%" figure is retired, see `STRATEGY_2026-08-08.md` |
 | 4 | Vertical/orthogonal progress (scoring axis ⊥ progress) | CV block-3 hall; Kid Icarus | IN FLIGHT (--ortho arm) |
 | 5 | Boss state machines + projectile pressure | Contra; Mega Man | open (adapter partly built) |
 | 6 | Pure reactive pattern timing (zero navigation) | Punch-Out!! | open (ASM path exists) |
@@ -45,7 +49,10 @@ content, not a new axiom.
 
 ## Dependency-ordered path (each unlocks the next)
 
-1. **CV hall** (class 4) — in flight; certifies 3+4 together.
+1. **CV hall** (class 4) — in flight; a receipted clear certifies 4
+   (the hall is that class's exemplar). Class 3 is not certified with
+   it: its exemplar is Castlevania entire, and the blocks past the hall
+   still have to fall.
 2. **Confluence clear-detector v2** (combat-blip + room-transition
    modes still unfixed) — THE league prerequisite: unattended totality
    is unmeasurable without trustworthy generic clear detection. This,
