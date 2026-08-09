@@ -119,6 +119,51 @@ solve:
     - {addr: 0x0203, mod: 64, match: [32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63]}
     - {addr: 0x0203, mod: 128, match: [64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127]}
     - {addr: 0x0203, mod: 0, match: [128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255]}   # validated player-Y (agent probe 2026-08-09: flat at rest, ballistic on jump); 0x0021 was object-loop scratch, 58.9% band-flip at rest
+    # FIGHT BITS -- the (99,1) boss-room fix (probe 2026-08-09). That room's
+    # cell key was DEGENERATE: area 0, hp 7 (frozen, see boss: below),
+    # progress 99//16 = 6 (frozen), sect 0 (the room never transitions), so
+    # the whole reachable product was 8 player-x bins x 8 player-y bands =
+    # EXACTLY 64 cells -- which is precisely where the 20-min chain run
+    # saturated (chain_day2g_resume.log: "stuck at 64 cells", 2,302,530 steps,
+    # frontier 0, 0 solutions). Nothing was left to explore.
+    #
+    # $0213/$0210 = OAM slot 4's x/y. Slots 4-21 are ONE 18-sprite object (3
+    # rows x 6 columns, measured by clustering our own OAM logs: they share
+    # x within +-8 and y in three 16px rows and translate together) -- the
+    # big boss-class entity of the (99,1) room. Two bits each = its x//64 and
+    # y//64, so the archive finally keys on the JOINT (player, big-object)
+    # configuration, which in a dodge fight is the state that matters.
+    #
+    # MEASURED-INERT for rounds 1-99, so the banked chain keeps its key: over
+    # 6,000 steps of round-99 play the //64 bin of $0213 changes on 0.000 of
+    # steps and $0210 on 0.002 (slot 4 holds a stationary object there),
+    # against 0.045 / 0.042 in the boss room. Both bytes are smooth, not
+    # scratch: |delta| <= 4 on 98-100% of steps in both rooms.
+    - {addr: 0x0213, mod: 128, match: [64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127]}
+    - {addr: 0x0213, mod: 0, match: [128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255]}
+    - {addr: 0x0210, mod: 128, match: [64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127]}
+    - {addr: 0x0210, mod: 0, match: [128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255]}
+  # WIN-CONDITION TRIPWIRE for the terminal room (probe 2026-08-09).
+  # $04A1 is the game-state byte: it reads 4 for EVERY in-play step measured
+  # anywhere -- 15,775 steps in the (99,1) room, 12,000 steps of round-99 and
+  # round-90 play, and all 756 steps of the banked round-99 clear replay
+  # INCLUDING the round transition itself -- and the ONLY other value ever
+  # observed is 0, which is GAME OVER: it fired on 20/20 fifth-life losses and
+  # on 0/99 ordinary life losses (base change rate 0.0013/step). So $04A1 > 4
+  # is a value the game has never entered under ~28,500 measured steps of
+  # normal play or dying.
+  #
+  # This is a TRIPWIRE, not a receipted finale: the round counter is pinned
+  # (level_key can no longer advance -- the 8-4 blindness class), no victory
+  # has ever been observed, and its $04A1 value is therefore UNKNOWN. Rather
+  # than guess a value, byte_change/up fires on ANY upward move off the
+  # entrance baseline (4). It cannot alias game over (that is strictly
+  # downward, 4 -> 0), it is inert for rounds 1-99 by the measurement above,
+  # and --verify-bank (default ON) replays anything it does fire before a
+  # solution is banked. THE MOMENT a victory is actually observed, replace
+  # this with the exact-value, level-key-scoped form:
+  #   finale: {addr: 0x04A1, value: <observed>, level_key: [99, 1]}
+  clear: {mode: byte_change, addr: 0x04A1, direction: up}
   # level_key = [$0401, $0462], NOT the usual coverage-baseline empty list.
   # Unlike most bootstraps (Contra/Kirby/DuckTales all ship level_key: []
   # because no receipted stage-advance byte exists yet), Bubble Bobble's round
@@ -163,6 +208,27 @@ solve:
   # transitions. `start: 7   # round 68 receipts: rounds start with 7 enemies; 4 clipped the first 3 kills to zero credit` uses the higher observed count; score_bonus clips
   # at 0 so round 1's smaller true start (3) just reads as "one kill in"
   # rather than going negative.
+  #
+  # KEPT, BUT KNOWN INERT IN THE TERMINAL (99,1) ROOM (probe 2026-08-09).
+  # $0496 is a genuine kill counter for the ordinary rounds -- re-measured
+  # today on the round-99 and round-90 entrances, it fell 7->5 (1-2 kills) in
+  # 8 of 8 six-hundred-step attack rollouts. In the (99,1) room it NEVER
+  # moves: 17,560 steps across four policy families from the banked entrance
+  # (uniform random, fire-biased random, seven scripted attack patterns, and
+  # an OAM-cluster aiming controller) left it pinned at 7, and the solver's
+  # own 2,302,530-step run agrees -- its best_score stayed at 99 = sect 0 *
+  # 10000 + gx 99 + score_bonus 0, i.e. max(0, 7 - hp) * 2000 was zero for
+  # every one of those steps. So in that room this hook contributes NO score
+  # gradient and a CONSTANT hp dimension to the cell key.
+  #
+  # NO REPLACEMENT ADDRESS IS SHIPPED because none was found: over the same
+  # 17,560 steps not one byte of the 2 KB behaves like boss health. The only
+  # monotone one-way counter that is flat under NOOP is $0437, and it is
+  # farmable -- it moves only on score events, which are the player's own
+  # 10-point bubble pops ($003D is the score's units digit; it changed on
+  # 72/72 score steps, precision 1.00). Pointing `hp:` at anything here would
+  # be a fabricated address, so the room is instead given real exploration
+  # dimensions (see the FIGHT BITS in state_sig) rather than a fake gradient.
   boss:
     hp: 0x0496
     start: 7   # round 68 receipts: rounds start with 7 enemies; 4 clipped the first 3 kills to zero credit
