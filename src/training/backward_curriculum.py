@@ -70,6 +70,10 @@ DEFAULT_GX_RESET_MAX = 256
 # Sentinel returned by `draw_restart` for "use the true level entrance".
 ENTRANCE = -1
 
+# Schema tag on `TauScheduler.state_dict()`. Bumped only if the meaning of
+# a field changes; readers tolerate its absence.
+STATE_VERSION = 1
+
 
 @dataclass(frozen=True)
 class StateEntry:
@@ -360,6 +364,89 @@ class TauScheduler:
         self._window.clear()
         self._advances += 1
         return True
+
+    # -- persistence ---------------------------------------------------
+
+    def state_dict(self) -> dict:
+        """Everything a resume needs to land back on the same rung.
+
+        A curriculum whose cursor is not checkpointed is a curriculum that
+        restarts at the ladder top on every relaunch: B4 v3 resumed from
+        iter 80 with tau back at 757/757, so the at-entrance winner gate
+        (the mode's deliverable selector) never fired again for the rest
+        of the run. Everything the advance rule and the entrance telemetry
+        read lives here — the cursor, the trailing window's CONTENTS (not
+        just its rate; a half-full window must resume half-full or the
+        attempt floor is silently re-armed), the advance count and the
+        entrance counters.
+
+        Pure JSON/pickle-safe types only, and every container is a fresh
+        copy: the caller may keep, mutate or torch.save the result without
+        reaching back into the live cursor.
+
+        Config (`advance_entries`, `advance_threshold`, `min_attempts`,
+        `trailing`) is deliberately NOT stored — it comes from the config
+        file, so a resume picks up retuned gates instead of freezing the
+        ones the run started with. `n_entries` IS stored, as the identity
+        of the tape tau indexes: see `load_state_dict`.
+        """
+        return {
+            "version": STATE_VERSION,
+            "tau": int(self._tau),
+            "n_entries": int(self.n_entries),
+            "window": [bool(x) for x in self._window],
+            "advances": int(self._advances),
+            "entrance_attempts": int(self._ent_att),
+            "entrance_successes": int(self._ent_succ),
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore a cursor saved by `state_dict`. Raises on nonsense.
+
+        Validation is strict and the caller is expected to catch: a
+        checkpoint whose tape had a different number of entries makes tau
+        meaningless (entry 400 of a 757-rung tape is not entry 400 of a
+        re-minted 900-rung one), and silently honoring it would restart
+        the curriculum at an arbitrary point in the level. Failing loudly
+        lets the trainer log it and fall back to the configured `tau_init`
+        — the same place a run with no checkpoint starts.
+
+        The window is re-bound to THIS scheduler's `trailing` length, so a
+        retuned `min_attempts` takes effect on resume (an over-long saved
+        window keeps its most recent attempts, as the live deque would).
+        """
+        try:
+            tau = int(state["tau"])
+        except (KeyError, TypeError) as e:
+            raise KeyError(f"backward curriculum state has no usable 'tau': {e}")
+        n_entries = int(state.get("n_entries", self.n_entries))
+        if n_entries != self.n_entries:
+            raise ValueError(
+                f"state was saved against a {n_entries}-entry tape but this "
+                f"scheduler has {self.n_entries}: tau is not comparable — "
+                "the tape was re-minted"
+            )
+        if not 0 <= tau < self.n_entries:
+            raise ValueError(
+                f"tau {tau} out of range for {self.n_entries} entries")
+        window = [bool(x) for x in (state.get("window") or ())]
+        advances = int(state.get("advances", 0))
+        ent_att = int(state.get("entrance_attempts", 0))
+        ent_succ = int(state.get("entrance_successes", 0))
+        if advances < 0 or ent_att < 0 or ent_succ < 0:
+            raise ValueError(
+                f"negative counters in state: advances={advances}, "
+                f"entrance={ent_succ}/{ent_att}")
+        if ent_succ > ent_att:
+            raise ValueError(
+                f"entrance successes {ent_succ} exceed attempts {ent_att}")
+        # Commit only after every field validated, so a rejected state
+        # leaves the cursor exactly as it was.
+        self._tau = tau
+        self._window = deque(window, maxlen=self.trailing)
+        self._advances = advances
+        self._ent_att = ent_att
+        self._ent_succ = ent_succ
 
     def snapshot(self) -> dict:
         """Loggable state. Pure — safe to call every iter."""

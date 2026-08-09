@@ -14,6 +14,7 @@ from src.training.backward_curriculum import (
     DEFAULT_GX_TOLERANCE,
     ENTRANCE,
     INDEX_NAME,
+    STATE_VERSION,
     StateEntry,
     TauScheduler,
     draw_restart,
@@ -290,6 +291,170 @@ def test_snapshot_reports_the_cursor_state() -> None:
     assert snap["n_entries"] == 100
     assert snap["advances"] == 1
     assert snap["at_entrance"] is False
+
+
+# ---- cursor persistence (resume) ------------------------------------
+#
+# A curriculum whose cursor is not checkpointed restarts at the ladder top
+# on every relaunch (B4 v3: resumed at iter 80 with tau back at 757/757,
+# so the at-entrance winner gate never fired again).
+
+
+def _mid_ladder(**kw) -> TauScheduler:
+    """A cursor that has advanced twice and is part-way up a third rung."""
+    s = _sched(**kw)
+    for _ in range(60):
+        s.record(True)
+        s.maybe_advance()
+    for _ in range(7):
+        s.record(True)
+    for _ in range(3):
+        s.record(False)
+    for _ in range(5):
+        s.record_entrance(False)
+    s.record_entrance(True)
+    return s
+
+
+def test_state_dict_round_trips_the_whole_cursor() -> None:
+    s = _mid_ladder()
+    fresh = _sched()                      # would start at the ladder top
+    assert fresh.tau != s.tau
+    fresh.load_state_dict(s.state_dict())
+    assert fresh.snapshot() == s.snapshot()
+
+
+def test_state_dict_survives_a_json_round_trip() -> None:
+    # The payload rides inside a torch.save'd checkpoint; keeping it plain
+    # data (no deque, no numpy) is what makes it inspectable and portable.
+    s = _mid_ladder()
+    revived = json.loads(json.dumps(s.state_dict()))
+    fresh = _sched()
+    fresh.load_state_dict(revived)
+    assert fresh.snapshot() == s.snapshot()
+
+
+def test_restore_keeps_the_partial_window_not_just_the_rate() -> None:
+    """The attempt floor must not be silently re-armed by a resume.
+
+    A rung 20 attempts into its 30-attempt floor resumes 20 attempts in —
+    10 more decide it. Restoring only tau (or an empty window) would make
+    every relaunch re-pay the full floor at the current rung.
+    """
+    s = _sched(min_attempts=30)
+    for _ in range(20):
+        s.record(True)
+    resumed = _sched(min_attempts=30)
+    resumed.load_state_dict(s.state_dict())
+    assert resumed.attempts == 20 and resumed.rate == 1.0
+    for _ in range(9):
+        resumed.record(True)
+    assert resumed.maybe_advance() is False       # 29 < 30
+    resumed.record(True)
+    assert resumed.maybe_advance() is True
+    assert resumed.tau == 89
+
+
+def test_restore_advances_from_the_restored_rung() -> None:
+    s = _mid_ladder()
+    resumed = _sched()
+    resumed.load_state_dict(s.state_dict())
+    for _ in range(30):
+        s.record(True)
+        resumed.record(True)
+    assert s.maybe_advance() is True
+    assert resumed.maybe_advance() is True
+    assert resumed.tau == s.tau
+    assert resumed.snapshot()["advances"] == s.snapshot()["advances"]
+
+
+def test_state_dict_is_a_detached_copy() -> None:
+    s = _mid_ladder()
+    state = s.state_dict()
+    before = s.snapshot()
+    state["window"].append(True)
+    state["tau"] = 0
+    state["advances"] = 999
+    assert s.snapshot() == before
+
+
+def test_loaded_state_is_not_aliased_by_the_caller() -> None:
+    s = _mid_ladder()
+    state = s.state_dict()
+    resumed = _sched()
+    resumed.load_state_dict(state)
+    after = resumed.snapshot()
+    state["window"].clear()
+    state["window"].extend([False] * 5)
+    assert resumed.snapshot() == after
+
+
+def test_restored_window_is_rebound_to_the_current_trailing_length() -> None:
+    # Retuning min_attempts between runs must take effect on resume: the
+    # window is a trailing view, so it keeps the most recent attempts.
+    s = _sched(min_attempts=30)
+    for i in range(30):
+        s.record(i >= 25)                 # last 5 are the successes
+    resumed = _sched(min_attempts=5)
+    resumed.load_state_dict(s.state_dict())
+    assert resumed.attempts == 5 and resumed.successes == 5
+
+
+def test_config_is_not_frozen_into_the_state() -> None:
+    # Gates come from the config file, so a retuned run picks them up.
+    s = _sched(advance_threshold=0.2, min_attempts=30, advance_entries=10)
+    state = s.state_dict()
+    assert not ({"advance_threshold", "min_attempts", "advance_entries",
+                 "trailing"} & set(state))
+    resumed = _sched(advance_threshold=0.9, min_attempts=5, advance_entries=3)
+    resumed.load_state_dict(state)
+    assert resumed.advance_threshold == 0.9
+    assert resumed.min_attempts == 5
+    assert resumed.advance_entries == 3
+
+
+def test_load_rejects_a_state_from_a_different_tape() -> None:
+    # Entry 400 of a 757-rung tape is not entry 400 of a re-minted one.
+    s = _sched(n_entries=100)
+    for _ in range(30):
+        s.record(True)
+    s.maybe_advance()
+    other = _sched(n_entries=150)
+    with pytest.raises(ValueError):
+        other.load_state_dict(s.state_dict())
+
+
+@pytest.mark.parametrize("bad", [
+    {"tau": 100},                                     # off the end
+    {"tau": -1},                                      # not a sentinel here
+    {"advances": -1},
+    {"entrance_attempts": 2, "entrance_successes": 5},
+])
+def test_load_rejects_nonsense(bad) -> None:
+    s = _sched()
+    with pytest.raises(ValueError):
+        s.load_state_dict({**s.state_dict(), **bad})
+
+
+def test_load_requires_a_tau() -> None:
+    with pytest.raises(KeyError):
+        _sched().load_state_dict({"n_entries": 100, "window": []})
+    with pytest.raises(KeyError):
+        _sched().load_state_dict(None)
+
+
+def test_a_rejected_load_leaves_the_cursor_untouched() -> None:
+    s = _mid_ladder()
+    before = s.snapshot()
+    with pytest.raises(ValueError):
+        s.load_state_dict({**s.state_dict(), "tau": 5, "n_entries": 7})
+    with pytest.raises(ValueError):
+        s.load_state_dict({**s.state_dict(), "tau": 12, "advances": -4})
+    assert s.snapshot() == before
+
+
+def test_state_dict_carries_a_schema_tag() -> None:
+    assert _sched().state_dict()["version"] == STATE_VERSION
 
 
 # ---- the restart draw -----------------------------------------------

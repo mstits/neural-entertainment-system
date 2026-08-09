@@ -11,6 +11,9 @@ profile start state), the cursor's rung statistics accumulate, and the
 The tape here is synthetic — a dozen states harvested by stepping the SMB
 entrance forward with no-ops. It only has to be a valid state ladder; the
 real tapes are minted by scripts/mint_backward_states.py.
+
+The checkpoint-resume wiring at the bottom needs neither: it drives the
+save/load path with a duck-typed net and optimizer, so it runs everywhere.
 """
 
 from __future__ import annotations
@@ -22,13 +25,16 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 _SMB_ROM = ROOT / "roms" / "Super Mario Bros. (World).nes"
 _PROFILE = ROOT / "configs" / "mario_1_1_backward.yaml"
 
-pytestmark = pytest.mark.skipif(
+# Per-test rather than module-wide: the pure resume-wiring smokes below
+# never touch the emulator and must not be skipped with the ROM.
+needs_rom = pytest.mark.skipif(
     not _SMB_ROM.exists() or not _PROFILE.exists(),
     reason="SMB ROM / backward profile not present.",
 )
@@ -122,6 +128,7 @@ def _run(profile: dict, tmp: str, caplog, *, prefix="[backward]",
             if r.getMessage().startswith(prefix)]
 
 
+@needs_rom
 def test_backward_curriculum_loads_and_scores_rungs(caplog) -> None:
     with tempfile.TemporaryDirectory(prefix="bwd_smoke_") as tmp:
         states = Path(tmp) / "tape"
@@ -144,6 +151,7 @@ def test_backward_curriculum_loads_and_scores_rungs(caplog) -> None:
     assert not any("CONTAMINATED" in m for m in lines), lines
 
 
+@needs_rom
 def test_sticky_without_boundary_guard_is_called_out(caplog) -> None:
     """The guard that would have caught the shipped-config defect.
 
@@ -164,6 +172,7 @@ def test_sticky_without_boundary_guard_is_called_out(caplog) -> None:
     assert any("[backward] CONTAMINATED" in m for m in lines), lines
 
 
+@needs_rom
 def test_pin_entrance_reports_the_entrance_rung_only(caplog) -> None:
     """The zero-diff guard: pinned, every restart is the profile start
     state, so the cursor never leaves tau 0's accounting for the window."""
@@ -183,6 +192,7 @@ def test_pin_entrance_reports_the_entrance_rung_only(caplog) -> None:
     assert all("tau=0/" in m for m in iters), iters
 
 
+@needs_rom
 def test_pinned_run_is_identical_to_one_without_the_flag(caplog) -> None:
     """Zero-diff guard.
 
@@ -222,6 +232,7 @@ def test_pinned_run_is_identical_to_one_without_the_flag(caplog) -> None:
     assert a == b, "\n".join(f"{x}\n{y}" for x, y in zip(a, b) if x != y)
 
 
+@needs_rom
 def test_backward_curriculum_is_inert_without_tile_mode(caplog) -> None:
     """A pixel encoder never reaches the tile restart branch, so the
     curriculum must refuse to arm rather than half-arm."""
@@ -235,3 +246,157 @@ def test_backward_curriculum_is_inert_without_tile_mode(caplog) -> None:
 
     assert any("INERT" in m for m in lines), lines
     assert not [m for m in lines if m.startswith("[backward] iter")]
+
+
+# ---- checkpoint / resume wiring (no ROM, no pool) --------------------
+#
+# The cursor used to be absent from the checkpoint payload, so `--resume`
+# silently reset tau to the ladder top: B4 v3 came back at iter 80 with
+# tau=757/757 and the at-entrance winner gate never fired for the rest of
+# the run. These drive the real save/load path with duck-typed stand-ins
+# for the net and the optimizer.
+
+
+class _FakeModule:
+    """Enough of nn.Module for the resume path: it only loads."""
+
+    def __init__(self) -> None:
+        self.loaded = None
+
+    def load_state_dict(self, sd, strict=True) -> None:
+        self.loaded = sd
+
+
+def _shell_trainer(ckpt_dir: Path):
+    """A Trainer with only the attributes the resume path reads.
+
+    Constructing a real one wants a ROM, a worker pool and a profile;
+    `_maybe_resume_vanilla_ppo` wants a checkpoint dir and a device.
+    """
+    from src.training.trainer import Trainer
+
+    t = Trainer.__new__(Trainer)
+    t.checkpoint_dir = Path(ckpt_dir)
+    t.device = torch.device("cpu")
+    t._pending_rnd_state = None
+    t._pending_backward_curriculum = None
+    t._gx_counts = {}
+    t._vppo_resumed_from_iter = None
+    return t
+
+
+def _sched(n_entries=757, **kw):
+    from src.training.backward_curriculum import TauScheduler
+
+    kw.setdefault("advance_entries", 10)
+    kw.setdefault("advance_threshold", 0.2)
+    kw.setdefault("min_attempts", 5)
+    return TauScheduler(n_entries, **kw)
+
+
+def _write_ckpt(ckpt_dir: Path, it: int, **extra) -> Path:
+    """A checkpoint payload shaped like the one the trainer saves."""
+    path = Path(ckpt_dir) / f"vanilla_ppo_iter_{it:05d}.pt"
+    torch.save({"iter": it, "net_state_dict": {}, "optimizer_state_dict": {},
+                **extra}, str(path))
+    return path
+
+
+def test_tau_survives_a_checkpoint_save_load_cycle(tmp_path, caplog) -> None:
+    saved = _sched()
+    for _ in range(20):                    # walk a few rungs up the ladder
+        saved.record(True)
+        saved.maybe_advance()
+    for _ in range(3):
+        saved.record(True)
+    saved.record_entrance(False)
+    assert saved.tau < saved.n_entries - 1
+
+    _write_ckpt(tmp_path, 80, backward_curriculum=saved.state_dict())
+    trainer = _shell_trainer(tmp_path)
+    assert trainer._maybe_resume_vanilla_ppo(_FakeModule(), _FakeModule()) == 80
+
+    resumed = _sched()
+    assert resumed.tau == 756            # a fresh cursor is at the top
+    with caplog.at_level(logging.INFO, logger="src.training.trainer"):
+        trainer._apply_pending_backward_state(resumed)
+
+    assert resumed.snapshot() == saved.snapshot()
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("RESUMED cursor" in m and f"tau={saved.tau}/756" in m
+               for m in msgs), msgs
+    # Consumed, so a later rebuild in the same process can't re-apply it.
+    assert trainer._pending_backward_curriculum is None
+
+
+def test_a_checkpoint_without_the_key_keeps_todays_behavior(
+    tmp_path, caplog,
+) -> None:
+    """Old checkpoints predate the cursor and must still load — at the
+    configured tau_init, exactly as they did before this existed."""
+    _write_ckpt(tmp_path, 80)
+    trainer = _shell_trainer(tmp_path)
+    assert trainer._maybe_resume_vanilla_ppo(_FakeModule(), _FakeModule()) == 80
+    assert trainer._pending_backward_curriculum is None
+
+    sched = _sched(tau_init=100)
+    with caplog.at_level(logging.INFO, logger="src.training.trainer"):
+        trainer._apply_pending_backward_state(sched)
+    assert sched.tau == 100
+    assert not [r for r in caplog.records if "RESUMED cursor" in r.getMessage()]
+
+
+def test_a_cursor_from_a_different_tape_is_refused_not_fatal(
+    tmp_path, caplog,
+) -> None:
+    """A re-minted tape makes tau meaningless. The run must say so and
+    keep going from the configured rung, not die and not adopt it."""
+    stale = _sched(n_entries=400)
+    for _ in range(10):
+        stale.record(True)
+        stale.maybe_advance()
+    _write_ckpt(tmp_path, 80, backward_curriculum=stale.state_dict())
+    trainer = _shell_trainer(tmp_path)
+    trainer._maybe_resume_vanilla_ppo(_FakeModule(), _FakeModule())
+
+    sched = _sched(n_entries=757, tau_init=-1)
+    with caplog.at_level(logging.INFO, logger="src.training.trainer"):
+        trainer._apply_pending_backward_state(sched)
+    assert sched.tau == 756
+    assert sched.attempts == 0
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("cursor NOT restored" in m for m in msgs), msgs
+
+
+@needs_rom
+def test_a_real_run_checkpoints_the_cursor_and_resumes_it(caplog) -> None:
+    """End to end: the trainer's own save writes the cursor, and its own
+    resume adopts it. The saved cursor is rewritten mid-ladder between the
+    two runs so the second run's tau can only have come from the file."""
+    with tempfile.TemporaryDirectory(prefix="bwd_resume_") as tmp:
+        states = Path(tmp) / "tape"
+        profile = yaml.safe_load(_PROFILE.read_text())
+        _mint_synthetic_tape(states, ROOT / profile["start_state_path"])
+        prof = _tiny_profile(states)
+        _run(prof, tmp, caplog, iters=11)      # checkpoints at iter 10
+
+        ckpts = sorted(Path(tmp).glob("vanilla_ppo_iter_*.pt"))
+        assert ckpts, sorted(p.name for p in Path(tmp).iterdir())
+        payload = torch.load(str(ckpts[-1]), map_location="cpu",
+                             weights_only=False)
+        assert "backward_curriculum" in payload, sorted(payload)
+        cursor = payload["backward_curriculum"]
+        assert cursor["n_entries"] == N_STATES
+        cursor.update(tau=3, advances=2, window=[False, True],
+                      entrance_attempts=9, entrance_successes=1)
+        torch.save(payload, str(ckpts[-1]))
+
+        lines = _run(prof, tmp, caplog, iters=1)
+
+    restored = [m for m in lines if "RESUMED cursor" in m]
+    assert restored, lines
+    assert f"tau=3/{N_STATES - 1}" in restored[0], restored[0]
+    iters = [m for m in lines if m.startswith("[backward] iter")]
+    assert iters and f"tau=3/{N_STATES - 1}" in iters[0], iters
+    # The trailing window came back too — not just the cursor.
+    assert "trailing 1/2" in iters[0], iters[0]

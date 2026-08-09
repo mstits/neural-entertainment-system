@@ -1197,6 +1197,11 @@ class Trainer:
         # keeps the "what have I already explored" novelty memory instead
         # of re-rewarding every visited state as maximally novel.
         self._pending_rnd_state: Optional[dict] = None
+        # Backward-curriculum cursor (tau + trailing window + entrance
+        # counters) read from a resumed checkpoint. Applied when the
+        # TauScheduler is built in _run_vanilla_ppo — the states dir has
+        # to load first, since tau only means something against a tape.
+        self._pending_backward_curriculum: Optional[dict] = None
         # Go-Explore archive — opt-in via reinforce.go_explore.enabled and
         # built per-run in _run_vanilla_ppo only when the SMB curriculum is
         # off (mutually exclusive). Stays None otherwise; exposed for tests.
@@ -4677,6 +4682,8 @@ class Trainer:
                 )
             if "anticollapse" in state:
                 self._pending_anticollapse = state["anticollapse"]
+            if "backward_curriculum" in state:
+                self._pending_backward_curriculum = state["backward_curriculum"]
             if "gx_counts" in state:
                 self._gx_counts = {
                     int(k): int(v) for k, v in state["gx_counts"].items()
@@ -5799,7 +5806,6 @@ class Trainer:
                         "min_attempts", bwd.DEFAULT_MIN_ATTEMPTS
                     )),
                 )
-                _bwd_env_tau[:] = bwd_sched.tau
                 log.info(
                     "[backward] ENABLED: %d states (%d MB) from %s | tau0=%d "
                     "window=%d frames (%d entries) advance=+%d entries at "
@@ -5812,6 +5818,15 @@ class Trainer:
                     bwd_sched.min_attempts, bwd_entrance_w,
                     "  [PINNED AT ENTRANCE]" if bwd_pin else "",
                 )
+                # A resumed run continues its ladder from where it stopped
+                # instead of re-walking rungs it already earned. Restored
+                # AFTER the line above (so `tau0=` keeps meaning "what the
+                # config asked for") but BEFORE the per-env cursor is
+                # seeded, or every env would carry the config's tau while
+                # the scheduler sat elsewhere and dropped their attempts
+                # as stale.
+                self._apply_pending_backward_state(bwd_sched)
+                _bwd_env_tau[:] = bwd_sched.tau
                 if bwd_guard is not None:
                     log.info(
                         "[backward-guard] configured: arm when the %d-iter "
@@ -9188,6 +9203,17 @@ class Trainer:
                     # re-inflate already-trodden buckets' bonuses.
                     if self._gx_counts:
                         _ckpt_payload["gx_counts"] = self._gx_counts
+                    # Persist the backward cursor (tau + the trailing rung
+                    # window + entrance counters) so a resume continues the
+                    # ladder where it stopped. Without it, --resume put tau
+                    # back at the ladder top and the run re-walked ground it
+                    # had already earned — B4 v3 resumed at iter 80 with
+                    # tau=757/757, so the at-entrance winner gate (which
+                    # selects this mode's deliverable) never fired again.
+                    if bwd_on and bwd_sched is not None:
+                        _ckpt_payload["backward_curriculum"] = (
+                            bwd_sched.state_dict()
+                        )
                     # Persist the anti-collapse rollback baseline (best-ever
                     # healthy snapshot + its fitness + strike count) so a
                     # resumed run keeps its collapse-recovery memory. The
@@ -9350,6 +9376,44 @@ class Trainer:
                 "[vanilla_ppo] RND state restore failed (fresh init): %s", exc
             )
         self._pending_rnd_state = None
+
+    def _apply_pending_backward_state(self, sched) -> None:
+        """Load a resumed checkpoint's backward cursor into `sched`.
+
+        Called once, right after the TauScheduler is built (tau only means
+        something against a loaded tape, so this cannot happen at
+        checkpoint-load time). No-op when nothing was stashed — which is
+        the case for every checkpoint written before the cursor was
+        persisted, so old checkpoints resume exactly as they did before:
+        at the configured `tau_init`.
+
+        A state the scheduler rejects (re-minted tape, corrupt counters)
+        is a warning, not a crash: the run continues from the configured
+        rung, which is strictly what it did before this restore existed.
+        """
+        state = getattr(self, "_pending_backward_curriculum", None)
+        self._pending_backward_curriculum = None
+        if not state:
+            return
+        before = sched.tau
+        try:
+            sched.load_state_dict(state)
+        except Exception as exc:
+            log.warning(
+                "[backward] cursor NOT restored from checkpoint (%s) — "
+                "starting at tau=%d as configured", exc, before,
+            )
+            return
+        snap = sched.snapshot()
+        log.info(
+            "[backward] RESUMED cursor from checkpoint: tau=%d/%d "
+            "(config would have started at %d) | trailing %d/%d | "
+            "advances=%d | entrance %d/%d%s",
+            snap["tau"], snap["n_entries"] - 1, before,
+            snap["successes"], snap["attempts"], snap["advances"],
+            snap["entrance_successes"], snap["entrance_attempts"],
+            "  AT-ENTRANCE" if snap["at_entrance"] else "",
+        )
 
     def _build_ppo_optimizer(self, net) -> "torch.optim.Optimizer":
         """Build the PPO Adam over the policy net + (when RND is enabled)
