@@ -309,6 +309,21 @@ def is_forward_clear(start_wd: tuple, ram) -> bool:
     return False
 
 
+def resolve_verify_bank(args) -> bool:
+    """Whether a clear candidate must reproduce from its root, in a fresh
+    pool, before it is written to solutions/ (--verify-bank /
+    --no-verify-bank).
+
+    DEFAULTS TRUE, including when the attribute is absent — in-process
+    constructions that predate the flag (the live show's hand-built args
+    namespace) get verification too. That direction is deliberate and the
+    opposite of the hw-flag/ortho knobs' "absent means off": those change what
+    the search DOES, this only decides whether a claimed win is checked before
+    it becomes a receipt, and banking trust must not be something a stale call
+    site opts out of by omission."""
+    return bool(getattr(args, "verify_bank", True))
+
+
 def resolve_inversion_pin_secs(args) -> float:
     """Seconds the deep frontier must sit pinned before the heuristic-
     inversion arm engages (--inversion-pin-secs).
@@ -452,6 +467,17 @@ class SmbGame:
         bw = 1 if 0x2D in bytes(ram[0x14:0x1C]) else 0
         return (int(ram[0x74E]), int(ram[0x1D]), bw)
 
+    def clear_verify_margin(self) -> int:
+        """No NOOP margin: SMB's clear hooks (a level_key advance, and the
+        $0770==2 finale) are STATELESS — pure functions of the current frame
+        — so a replay's verdict lands on exactly the frame the live one did.
+        See GenericGame.clear_verify_margin for the windowed case and why it
+        needs one. Every adapter must define this; Solver.replay_verify calls
+        it unconditionally, and its broad except would otherwise turn a
+        missing method into a blanket 'error' verdict that rejects every real
+        clear the game ever finds."""
+        return 0
+
     @staticmethod
     def label(key: tuple) -> str:
         return f"{key[0] + 1}-{key[1] + 1}"
@@ -558,10 +584,54 @@ class GenericGame:
         #     given direction (default up): a stage/level counter incrementing
         #     on a real clear, without making it the level_key (which also gates
         #     the warp/dead machinery). `target` requires a specific landing.
-        #   confluence  {[window][stride][min_signals]} — the multi-signal
-        #     clear_detect confluence, streamed over a bounded rolling window
-        #     (clear_detect.StreamingConfluenceDetector; see its docstring for
-        #     which signals are RAM-derivable in the hot loop).
+        #   confluence  {[window][stride][min_signals][persist_checks]
+        #                [progress_median]
+        #                [room_veto: {steps[, addrs][, min_progress]}]} — the
+        #     multi-signal clear_detect confluence, streamed over a bounded
+        #     rolling window (clear_detect.StreamingConfluenceDetector; see its
+        #     docstring for which signals are RAM-derivable in the hot loop).
+        #
+        #     DETECTOR v2 (2026-08-08) adds three knobs on top of the
+        #     2026-08-06 lives-drop veto. ALL DEFAULT-INERT, so an existing
+        #     `clear: {mode: confluence}` profile (contra, gradius) is
+        #     byte-identical until it opts in:
+        #       progress_median: K — median-filter the progress series over K
+        #         trailing samples before the coord test. THE combat-blip fix
+        #         (Double Dragon: 72 -> 846 -> 88 in 5 steps read as a level
+        #         load). K=5 erases any impulse under ~2 samples and leaves a
+        #         real load's step change intact. Default 1 = off.
+        #       persist_checks: N — the confluence must additionally hold N
+        #         consecutive checks before the latch closes. Second, cheaper
+        #         filter; NOT sufficient alone (see the detector docstring for
+        #         the window arithmetic). Default 1 = shipped behavior.
+        #       room_veto: {steps: M[, addrs: [..]][, min_progress: P]} — a
+        #         change of the room observable within the last M observations
+        #         VETOES a fire unless `progress` has advanced by >= P (default
+        #         1) measured from just before that change. This is the Kirby
+        #         fix: a room-based game loads a fresh room far more often than
+        #         it finishes a stage, and "a fresh room loading in" is
+        #         literally what the coord signal fingerprints, so the only
+        #         generic discriminator is whether the game's own progress
+        #         observable actually moved forward across the transition.
+        #         `addrs` names the room bytes explicitly; omitted, it uses the
+        #         adapter's already-verified room identity (level_key + area +
+        #         room_sig) — no new addresses either way. steps: 0 = disarmed
+        #         (default). Progress samples above progress_cap are dropped
+        #         rather than believed: a room load is exactly when the page
+        #         byte reads transitional garbage, and one such sample used to
+        #         satisfy the advance test in the very call that armed the
+        #         veto — permanently disarming it. Set progress_cap for the
+        #         game if the default 30000 is not right for its scale.
+        #         PRECISION OVER RECALL, deliberately: on a game whose TERMINAL
+        #         transition is observationally identical to an internal one
+        #         (same room-byte change, same progress reset) this suppresses
+        #         the terminal one too, and the hook degenerates toward "never
+        #         fires". That is the intended failure direction — a missed
+        #         clear costs one re-search, a fabricated one poisons
+        #         go_explore_chain's next-entrance extraction and the receipt
+        #         corpus. Raise recall by pointing `progress` at an observable
+        #         that really does advance across the terminal transition, not
+        #         by disarming the veto.
         cl = s.get("clear") or {}
         self._clear_mode = cl.get("mode")
         self._clear_threshold = float(cl.get("threshold", 0))
@@ -572,6 +642,44 @@ class GenericGame:
         self._conf_window = int(cl.get("window", 240))
         self._conf_stride = int(cl.get("stride", 20))
         self._conf_min_signals = cl.get("min_signals")
+        self._conf_persist = cl.get("persist_checks")
+        self._conf_median = cl.get("progress_median")
+        rv = cl.get("room_veto") or {}
+        self._rv_steps = int(rv.get("steps", 0))
+        self._rv_addrs = tuple(int(a) for a in rv.get("addrs", ()))
+        self._rv_min_progress = int(rv.get("min_progress", 1))
+
+    def clear_verify_margin(self) -> int:
+        """Extra NOOP observations a replay must feed the clear hook, past the
+        end of the trace, before "it did not reproduce" means anything.
+
+        Zero for every STATELESS hook (level_key, finale, byte_change,
+        score_jump): those fire on the exact frame the RAM satisfies them, so
+        the replay's verdict lands on the same frame the live one did.
+
+        NON-ZERO only for `confluence`, which is windowed AND phase-dependent.
+        The streaming detector evaluates only when its own observation counter
+        satisfies `_n % stride == 0`, and that counter starts when the ctx is
+        created. Live, _assign() builds a fresh ctx per BURST, so the fire
+        lands at (F - burst_start) % stride == 0; a replay from the ROOT builds
+        its ctx at index 0, so its checks sit at multiples of stride from
+        there. The two phases agree only when burst_start % stride == 0, and
+        because the banked trace is cut exactly at F there are no steps left
+        for the phase to re-align in — the replay's last check falls BEFORE the
+        level-load signature and returns 'no_clear'. Measured over the real
+        detector on a genuine no-life-lost clear: 136 of 200 burst alignments
+        (68%) were rejected with no margin, 0 of 200 with a margin of
+        stride-1 or more. Without this, --verify-bank being ON by default
+        would have made the four-game confluence gate report zero solutions,
+        with 'this is a fabricated clear' printed over every real win.
+
+        stride * persist_checks, so the replay gets a full check period per
+        consecutive confluence the live latch required. At the defaults that
+        is 20 actions (~54 ms), against candidates of 500-1,700."""
+        if self._clear_mode != "confluence":
+            return 0
+        persist = max(1, int(self._conf_persist or 1))
+        return max(0, self._conf_stride) * persist
 
     def note_start(self, ram) -> None:
         """Record the level-entrance baseline the byte_change WIN-CONDITION
@@ -641,6 +749,87 @@ class GenericGame:
             return 0
         return max(0, self._boss_start - int(ram[self._boss_hp])) * 2000
 
+    def room_veto_key(self, ram) -> tuple:
+        """The observable whose CHANGE means 'a different room/level just
+        loaded'. `clear.room_veto.addrs` when the profile names bytes
+        explicitly; otherwise this adapter's own already-verified room
+        identity (level_key + area + room_sig). No new addresses either way."""
+        if self._rv_addrs:
+            return tuple(int(ram[a]) for a in self._rv_addrs)
+        return self.room_id(ram)
+
+    # Room-veto verdicts (see room_veto_step).
+    RV_NONE, RV_HOLD, RV_DISCARD = "none", "hold", "discard"
+
+    def room_veto_step(self, ram, ctx: dict) -> str:
+        """Advance this worker's room/progress bookkeeping by ONE observation
+        and say what the room veto wants done with a clear vote right now.
+
+        Must be called on every observation, not only the ones that fire: it
+        IS the history.
+
+          RV_NONE     nothing to veto — no room change is pending, or progress
+                      has since advanced past where it stood just before one.
+          RV_HOLD     a room change is pending and progress has not advanced
+                      yet: suppress a fire but KEEP the evidence; the advance
+                      may still arrive inside the window.
+          RV_DISCARD  the window expired with no advance, so that was an
+                      ordinary room transition: suppress AND throw the
+                      evidence away. Fires exactly once per room change.
+
+        The three-state shape is load-bearing, and a plain boolean is not
+        enough in either direction. Suppress-only leaks: the samples that
+        produced the fire sit in the detector's rolling window, so the same
+        false fire simply lands again the moment the window expires.
+        Discard-immediately over-blocks: it destroys the evidence before the
+        progress advance that would have EXONERATED the transition has had its
+        `steps` observations to show up, which would make the escape clause
+        unreachable and the veto a blanket mute.
+
+        GARBAGE-READ GUARD (2026-08-08): every progress sample is filtered
+        through progress_cap before it is used or stored. A room load is
+        precisely when the page byte reads transitional garbage, and the escape
+        clause runs on the arming frame too — so an unguarded read let ONE
+        garbage sample satisfy `prog - prog_before >= min_progress` in the very
+        call that armed the veto, permanently disarming it and re-banking the
+        Kirby false positive. Replay verification cannot catch that: the
+        emulator is deterministic, so the replay reproduces the same garbage
+        read and the same fabricated verdict. Every other consumer of
+        progress() in this file already guards it the same way (observe()'s
+        `gx > game.progress_cap` skip, explore()'s cap clamp); this is the one
+        that did not."""
+        n = ctx["_rv_n"] = ctx.get("_rv_n", 0) + 1
+        key = self.room_veto_key(ram)
+        raw = self.progress(ram)
+        # None == "not an observation of progress at all", not "zero": a
+        # garbage sample must neither advance the escape test nor become the
+        # baseline a later escape is measured from.
+        prog = None if raw > self.progress_cap else raw
+        prev_key = ctx.get("_rv_key")
+        prev_prog = ctx.get("_rv_prog_prev")
+        ctx["_rv_key"] = key
+        if prog is not None:
+            ctx["_rv_prog_prev"] = prog     # last GOOD sample, never garbage
+        if prev_key is not None and key != prev_key:
+            ctx["_rv_at"] = n
+            # Progress as it read on the step BEFORE the room changed — the
+            # transition frame itself already reads the new room's value.
+            # Both may be garbage (None); the veto then arms with no baseline
+            # and simply cannot be escaped, which is the safe direction.
+            ctx["_rv_prog_before"] = prev_prog if prev_prog is not None else prog
+        at = ctx.get("_rv_at")
+        if at is None:
+            return self.RV_NONE
+        before = ctx.get("_rv_prog_before")
+        if (prog is not None and before is not None
+                and prog - int(before) >= self._rv_min_progress):
+            ctx["_rv_at"] = None          # the transition earned its keep
+            return self.RV_NONE
+        if n - at <= self._rv_steps:
+            return self.RV_HOLD
+        ctx["_rv_at"] = None              # act once per room change
+        return self.RV_DISCARD
+
     def is_clear(self, start_key: tuple, ram, ctx: dict | None = None) -> bool:
         # Forward = lexicographic advance of the level key (stage counters
         # increment; a game-over reset reads backward and lands in `dead`).
@@ -678,24 +867,52 @@ class GenericGame:
                 from clear_detect import StreamingConfluenceDetector
                 det = ctx["_clear_det"] = StreamingConfluenceDetector(
                     self.progress, window=self._conf_window,
-                    stride=self._conf_stride, min_signals=self._conf_min_signals)
+                    stride=self._conf_stride,
+                    min_signals=self._conf_min_signals,
+                    persist_checks=self._conf_persist,
+                    progress_median=self._conf_median)
             fired = det.push(ram)
+            # ROOM-TRANSITION VETO (v2, 2026-08-08). Bookkeeping runs on
+            # every observation, so it is evaluated before the early
+            # returns below; disarmed profiles (room_veto.steps 0, the
+            # default) skip it entirely and stay byte-identical.
+            rv = (self.room_veto_step(ram, ctx) if self._rv_steps > 0
+                  else self.RV_NONE)
             # Lives-drop veto (2026-08-06): confirmed empirically on
             # Gradius that a real death (explosion + entity-slot wipe +
             # respawn) trips this detector's "coord" signal identically
-            # to a real level load, and since is_clear() is checked
-            # before is_dead() in Solver.observe(), an unvetoed fire
-            # would record the death itself as a fake win. Track this
-            # worker's own lives across steps (not the archive-wide
+            # to a real level load. Solver.observe() now resolves
+            # is_dead() BEFORE is_clear() (v2), so this is belt-and-
+            # braces for that path — but it is also the only guard for
+            # any caller that checks the clear hook on its own. Track
+            # this worker's own lives across steps (not the archive-wide
             # start_lives baseline, which only bounds a whole lineage,
             # not a single frame) and refuse to fire the same step lives
             # just dropped.
             cur_lives = self.lives(ram)
             prev_lives = ctx.get("_clear_prev_lives")
             ctx["_clear_prev_lives"] = cur_lives
-            if fired and prev_lives is not None and cur_lives < prev_lives:
+            # ---- every per-step bookkeeping side effect is now done; only
+            # verdicts below this line, so no early return can leave a
+            # tracker one step stale.
+            if rv == self.RV_DISCARD:
+                # Drop the evidence with the verdict — including evidence
+                # that has not fired yet. The samples spanning an ordinary
+                # room load ARE the coord signature, and they stay in the
+                # detector's rolling window for another ~window/stride
+                # checks; leaving them there only postpones the same false
+                # fire past the veto's own horizon.
+                det.reset()
                 return False
-            return fired
+            if not fired:
+                return False
+            if prev_lives is not None and cur_lives < prev_lives:
+                return False
+            if rv == self.RV_HOLD:
+                # Suppress, but keep the window: a progress advance inside
+                # the remaining veto steps still exonerates this fire.
+                return False
+            return True
         return False
 
     def is_dead(self, ram, start_lives: int) -> bool:
@@ -910,6 +1127,15 @@ class Solver:
         self.n_solutions = 0
         self.sol_counter = 0
         self.best_sol_len = 10 ** 9
+        # REPLAY-VERIFIED BANKING (v2, 2026-08-08). Default ON — measured
+        # cost is ~2.7 ms per action of one candidate (see replay_verify),
+        # i.e. seconds against a 25-45 minute solve. Absent attribute (the
+        # live show's in-process SimpleNamespace) also resolves ON: banking
+        # trust is not something an older call site should silently opt out
+        # of. --no-verify-bank is the explicit escape.
+        self.verify_bank = resolve_verify_bank(args)
+        self.verify_checks = 0
+        self.verify_rejections = 0
         self.steps_done = 0
         self.t0 = time.time()
         self.stop = False
@@ -1009,27 +1235,49 @@ class Solver:
                 psig: tuple = (), ctx: dict | None = None,
                 kills: int = 0) -> str:
         """Record one reached state. Returns 'dead' | 'clear' | 'live'."""
+        game = self.game
+        # DEATH IS RESOLVED FIRST (v2, 2026-08-08). Any life lost, or an
+        # explicit dying state = death; lives-based detection is robust
+        # across enemy/pit/time deaths and multi-area levels.
+        #
+        # This used to run LAST, after is_finale and is_clear, which made
+        # every clear-detector false positive win the race unconditionally:
+        # on Gradius a real death (lives 3->2, progress reset to 0) was
+        # banked as a win at 205 actions, and go_explore_chain.py would then
+        # have extracted the next level's "entrance" out of a corpse. A step
+        # that reads as BOTH dead and clear now resolves dead — a missed real
+        # clear costs one re-search, a fabricated one poisons the chain and
+        # the receipt corpus.
+        #
+        # Verified against every banked receipt this reorder could touch
+        # before shipping it, so it is unconditional rather than flag-gated:
+        # replaying regress_pre 1-1, ge_1_2/1_3/1_4/2_1 sol_000, the 4-4 maze
+        # solve (1,104 actions) and the 8-4 FINALE (1,735 actions) from their
+        # own roots reproduces the clear at exactly the recorded action count
+        # with is_dead() FALSE at that frame in all 7 cases. Nothing banked
+        # depends on the old order.
+        if game.is_dead(ram, self.start_lives):
+            return "dead"
         # GAME-COMPLETE check (8-4 finale): the ending never advances the
         # world/level bytes (there is no next level) — the victory state is
         # operating mode $0770 == 2 with inputs locked (verified 2026-07-27,
         # THANK YOU MARIO screen). Without this the winning trajectory sits
         # in the archive invisible, as it did for 1.5 hours on the night the
         # game was first beaten.
-        game = self.game
+        #
+        # Then the warp-guarded clear. ctx carries the per-worker state the
+        # optional WIN-CONDITION hook needs (score_jump prev value, streaming-
+        # confluence window); None at seed = level_key-only. Both go through
+        # _dump_solution, which replay-verifies the candidate before anything
+        # is written; a candidate that fails to reproduce is NOT a clear, so
+        # the lineage is abandoned as dead rather than left to re-fire on the
+        # same latched evidence next step.
         if game.is_finale(self.start_wd, ram):
-            self._dump_solution(root_id, trace, ram, steps)
-            return "clear"
-        # Clear (warp-guarded) is checked FIRST. ctx carries the per-worker
-        # state the optional WIN-CONDITION hook needs (score_jump prev value,
-        # streaming-confluence window); None at seed = level_key-only.
+            return ("clear" if self._dump_solution(root_id, trace, ram, steps)
+                    else "dead")
         if game.is_clear(self.start_wd, ram, ctx):
-            self._dump_solution(root_id, trace, ram, steps)
-            return "clear"
-        # Any life lost, or an explicit dying state = death. Lives-based
-        # detection is robust across enemy/pit/time deaths and multi-area
-        # levels.
-        if game.is_dead(ram, self.start_lives):
-            return "dead"
+            return ("clear" if self._dump_solution(root_id, trace, ram, steps)
+                    else "dead")
         # A level-key change that ISN'T a forward clear = a warp (or a
         # backward reload / game-over reset): do not record it (would
         # poison the archive with off-level cells). DEBOUNCED (2026-08-06):
@@ -1165,9 +1413,123 @@ class Solver:
             self.archive.record(ram, None, score, steps, key=key)
         return "live"
 
-    def _dump_solution(self, root_id: str, trace: list, ram, steps) -> None:
+    def replay_verify(self, root_id: str, trace) -> dict:
+        """Re-simulate `trace` from its own root in a FRESH single-worker pool
+        and report whether the clear reproduces.
+
+        The whole banking chain — go_explore_chain.py's next-entrance
+        extraction, CLAIMS.md receipts, the show ledger — trusts one bit
+        produced by a detector that has fabricated wins on three of seven
+        games (2026-08-06: a Gradius death, a Double Dragon combat blip, a
+        Kirby room transition). A clear that cannot be reproduced from the
+        root is not a clear, and the check is cheap enough to be
+        unconditional: measured on this machine, a full replay of a banked
+        solution costs ~2.7 ms per action (887 actions 2.4 s, 1,104 actions
+        3.3 s, 1,735 actions 4.7 s; pool construction is not measurable
+        against it), against solve runs of 25-45 minutes that dump a handful
+        of candidates. Hence --verify-bank defaults ON, with --no-verify-bank
+        as the escape hatch.
+
+        FRESH pool, never the search pool: the search pool's workers hold live
+        lineage state and its worker 0 is mid-burst. Verdict is judged against
+        the SAME start_wd/start_lives baseline the live hook used, so this
+        reproduces the live judgement rather than inventing a second one.
+        A fresh ctx is used so the streaming detector must re-earn its own
+        evidence rather than inheriting the latch that produced the fire.
+
+        A windowed clear hook also gets a NOOP MARGIN past the end of the
+        trace (GenericGame.clear_verify_margin, 0 for every stateless hook, so
+        SMB/CV replays are unchanged). The live and replayed detectors count
+        their evaluation stride from different origins — per-burst vs. root —
+        and the trace ends on the live fire frame, so without a margin a
+        genuine confluence clear fails to reproduce ~68% of the time purely on
+        phase. Only the CLEAR check runs in the margin: is_dead stays bounded
+        to the trace, because what happens to an idle player AFTER the win is
+        not evidence against it.
+
+        Returns {"ok": bool, "verdict": str, "at": int|None, "elapsed_s":
+        float, "n_actions": int, "margin": int[, "error": str]} — never
+        raises: an infrastructure failure is reported as a non-reproduction
+        (fail closed), because banking an unverified clear is the outcome this
+        exists to prevent. `at` > n_actions means the clear reproduced inside
+        the margin (a phase difference, not a different trajectory)."""
+        t0 = time.time()
+        out = {"ok": False, "verdict": "error", "at": None,
+               "n_actions": len(trace), "margin": 0, "elapsed_s": 0.0}
+        pool = None
+        try:
+            root = self.roots.get(root_id)
+            if root is None:
+                raise KeyError(f"unknown root_id {root_id!r}")
+            blob = Path(root["path"]).read_bytes()
+            pool = Pool(rom_path=self.game.rom, num_workers=1,
+                        frame_skip=self.frame_skip)
+            # Same recipe (and the same load-bearing ordering) as the
+            # search pool, so the replay runs the SAME machine.
+            apply_hw_flags(pool, self.hw_flags)
+            pool.set_headless(True)
+            pool.set_skip_preprocess(True)
+            pool.reset_all()
+            pool.load_worker_state(0, blob)
+            acts = np.zeros(1, dtype=np.uint8)
+            pool.step_all(acts)          # rooting NOOP, exactly as seed() does
+            ctx: dict = {}
+            n = len(trace)
+            margin = self.game.clear_verify_margin()
+            out["margin"] = margin
+            # NOOP tail, exactly as clear_detect.run_episode pads an episode
+            # for the same reason. The trajectory is not extended; the hook is
+            # only given the observations it needs to reach the verdict it
+            # already reached live.
+            for i, a in enumerate(list(trace) + [0] * margin):
+                acts[0] = self.bitmasks[int(a)]
+                ram = pool.step_all(acts)[0][2]
+                if i < n and self.game.is_dead(ram, self.start_lives):
+                    out.update(verdict="dead", at=i + 1)
+                    break
+                if (self.game.is_finale(self.start_wd, ram)
+                        or self.game.is_clear(self.start_wd, ram, ctx)):
+                    out.update(ok=True, verdict="clear", at=i + 1)
+                    break
+            else:
+                out.update(verdict="no_clear", at=None)
+        except Exception as exc:                      # noqa: BLE001
+            out["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            if pool is not None:
+                try:
+                    pool.shutdown()
+                except Exception:                     # noqa: BLE001
+                    pass
+        out["elapsed_s"] = round(time.time() - t0, 3)
+        return out
+
+    def _dump_solution(self, root_id: str, trace: list, ram, steps) -> bool:
+        """Bank a solution. Returns whether the event counts as a REAL clear.
+
+        False means the candidate failed replay verification — it was not a
+        clear at all, so observe() abandons the lineage instead of reporting
+        one. True with nothing written is the ordinary "re-clear that isn't
+        materially shorter" case: real, just not worth another receipt."""
         if len(trace) >= self.best_sol_len - 8:
-            return  # keep only materially-shorter re-clears
+            return True  # keep only materially-shorter re-clears
+        if self.verify_bank:
+            v = self.replay_verify(root_id, list(trace))
+            self.verify_checks += 1
+            if not v["ok"]:
+                self.verify_rejections += 1
+                sys.stderr.write(
+                    f"[go_explore_solve] *** CLEAR REJECTED (replay "
+                    f"verification) *** root={root_id} {len(trace)} actions "
+                    f"did NOT reproduce: {json.dumps(v)} — NOTHING banked. "
+                    f"This is a fabricated clear, not a near miss: treat the "
+                    f"profile's clear hook as unsafe until it is explained.\n")
+                sys.stderr.flush()
+                print(f"[go_explore_solve] CLEAR REJECTED {json.dumps(v)}",
+                      flush=True)
+                return False
+            print(f"[go_explore_solve] replay-verified clear "
+                  f"{json.dumps(v)}", flush=True)
         self.best_sol_len = len(trace)
         n = self.sol_counter
         self.sol_counter += 1
@@ -1200,10 +1562,16 @@ class Solver:
             "start_wd": list(self.start_wd),
             "clear_wd": list(self.game.level_key(ram)),
             "steps": steps, "actions": len(trace),
+            # Whether this receipt's clear was re-simulated from the root in a
+            # fresh pool before it was written. Recorded so an audit can tell a
+            # verified receipt from a pre-v2 (or --no-verify-bank) one without
+            # re-running anything.
+            "replay_verified": bool(self.verify_bank),
         }, indent=2) + "\n")
         print(f"[go_explore_solve] *** SOLUTION {n} *** root={root_id} "
               f"{len(trace)} actions, {self.start_wd}->"
               f"{self.game.level_key(ram)}", flush=True)
+        return True
 
     # ---- seeding: root ONLY (honest) ---------------------------------
 
@@ -1786,6 +2154,13 @@ class Solver:
             line["door_macros_injected"] = self._transition_injections
             if self.room_advance_addr is not None:
                 line["max_room"] = self.max_room
+        # Fabricated-clear telemetry: silent while nothing has been rejected
+        # (so ordinary runs' progress lines are unchanged), loud the moment a
+        # candidate fails to reproduce — the four-game detector gate reads
+        # exactly this number.
+        if getattr(self, "verify_rejections", 0):
+            line["verify_checks"] = self.verify_checks
+            line["verify_rejections"] = self.verify_rejections
         with open(self.out / "progress.jsonl", "a") as f:
             f.write(json.dumps(line) + "\n")
         print(f"[go_explore_solve] {json.dumps(line)}", flush=True)
@@ -1876,6 +2251,18 @@ def main() -> int:
     ap.add_argument("--max-steps", type=int, default=4000)
     ap.add_argument("--flush-secs", type=float, default=120)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--verify-bank", dest="verify_bank", action="store_true",
+                    default=True,
+                    help="Re-simulate every clear candidate from its root in "
+                         "a fresh pool and refuse to bank it unless the clear "
+                         "reproduces (DEFAULT ON; measured ~2.7 ms/action, "
+                         "i.e. seconds per candidate against a 25-45 min "
+                         "solve).")
+    ap.add_argument("--no-verify-bank", dest="verify_bank",
+                    action="store_false",
+                    help="Bank clear candidates unverified (pre-2026-08-08 "
+                         "behavior). Receipts written this way record "
+                         "replay_verified: false.")
     ap.add_argument("--swim-gx-ceiling", type=int, default=0,
                     help="If >0: in swim rooms ($001D=1), lineages crossing "
                          "this gx are terminated — forces attempt density "

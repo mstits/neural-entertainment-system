@@ -340,6 +340,27 @@ def coord_entity_windows(ram_hist: np.ndarray, gx_series: np.ndarray,
     return hits
 
 
+def trailing_median(x: np.ndarray, k: int) -> np.ndarray:
+    """Trailing k-sample median of a 1-D series (k <= 1 returns it unchanged).
+
+    Edge-preserving by construction: a step change survives it (delayed by
+    k//2 samples), an impulse shorter than k/2 samples does not. That is
+    exactly the discrimination the coord signal needs and cannot make on its
+    own, since it compares the FIRST and LAST sample of a sub-window and a
+    2-sample spike parked on a sub-window boundary reads identically to a
+    sustained level.
+
+    The leading k-1 positions are back-filled with x[0] so the output is the
+    same length as the input and the series' own first value, not a zero,
+    seeds the filter."""
+    if k <= 1 or x.size == 0:
+        return x
+    k = min(int(k), int(x.size))
+    pad = np.concatenate([np.full(k - 1, x[0], dtype=x.dtype), x])
+    win = np.lib.stride_tricks.sliding_window_view(pad, k)
+    return np.median(win, axis=1)
+
+
 # ===========================================================================
 # Streaming confluence detector (live solver hot-loop form)
 # ===========================================================================
@@ -367,22 +388,76 @@ class StreamingConfluenceDetector:
     the RAM fingerprint of a level load). It never fires on either signal alone,
     so an ordinary tally (an in-level 1-up) or an ordinary scroll cannot fake a
     clear. The full weighted-0.75 four-signal detector remains the authority for
-    offline verification (clear_detect.py --test)."""
+    offline verification (clear_detect.py --test).
+
+    v2 (2026-08-08) -- THE COMBAT-BLIP FIX, two knobs, both default-inert:
+
+      persist_checks: N -- the confluence must hold for N CONSECUTIVE checks
+        before the latch closes. Default 1 == the shipped behavior,
+        byte-identical. Cheap insurance against a one-off evaluation.
+
+      progress_median: K -- median-filter the progress series over K trailing
+        samples before the coord test. Default 0/1 = off.
+
+    Two knobs and not one because persistence ALONE provably does not deliver
+    "a 1-2 sample RAM spike must not clear" (the Double Dragon failure:
+    progress 72 -> 846 -> 88 inside 5 steps at 27 actions, no advance, no
+    death). coord scans sub-windows of 60 at stride 15 and compares each
+    sub-window's FIRST and LAST sample, so when a spike happens to land on a
+    sub-window boundary it reproduces the high->low endpoint signature at
+    EIGHT consecutive checks (worked out over the exact window arithmetic:
+    window 240 / stride 20 / sub 60 / sub-stride 15, spike at relative index
+    30 fires checks 100..240). Defeating that with persistence alone needs
+    N >= 9, which is more checks than a genuine level load's evidence even
+    survives in the rolling window (~window/stride = 12) and delays every real
+    detection by 9*stride steps. The median filter kills the impulse outright
+    and is alignment-independent, while leaving a real load's step change
+    intact; persistence then rides on top as a second, cheaper filter.
+
+    Neither knob addresses a ROOM transition, whose position reset is just as
+    sustained and just as step-shaped as a stage clear's -- that one needs the
+    progress-aware room veto in the caller (GenericGame.is_clear)."""
 
     def __init__(self, progress_fn, window: int = 240, stride: int = 20,
-                 min_signals: int | None = None):
+                 min_signals: int | None = None,
+                 persist_checks: int | None = None,
+                 progress_median: int | None = None):
         self._progress = progress_fn
         self.window = int(window)
         self.stride = int(stride)
         self.min_signals = 2 if min_signals is None else int(min_signals)
+        self.persist_checks = (1 if persist_checks is None
+                               else max(1, int(persist_checks)))
+        self.progress_median = (1 if progress_median is None
+                                else max(1, int(progress_median)))
         self._ram: list[np.ndarray] = []
         self._gx: list[int] = []
         self._n = 0
         self._fired = False
+        self._streak = 0
+        # Telemetry (read by tests / receipts; never by the vote).
+        self.n_checks = 0
+        self.n_votes = 0
+
+    def reset(self) -> None:
+        """Un-latch AND discard the rolling evidence window.
+
+        A veto that only suppresses the return value is a no-op in practice:
+        the samples that produced the fire are still inside the window, so the
+        very next check re-fires on the same stale evidence the moment the veto
+        window expires. A vetoed fire therefore throws its evidence away with
+        it -- the detector has to earn a fresh confluence out of samples
+        observed AFTER the veto."""
+        self._fired = False
+        self._streak = 0
+        self._ram.clear()
+        self._gx.clear()
+        self._n = 0
 
     def push(self, ram) -> bool:
         """Feed one RAM snapshot; returns True once the confluence has fired
-        (and stays True thereafter -- the clear is a latching event)."""
+        (and stays True thereafter -- the clear is a latching event, until
+        reset() explicitly drops the latch)."""
         if self._fired:
             return True
         # The solver hands raw `bytes` in the live hot loop (pool step
@@ -403,9 +478,17 @@ class StreamingConfluenceDetector:
             return False
         hist = np.stack(self._ram)
         gx = np.array(self._gx, dtype=np.int64)
+        if self.progress_median > 1:
+            gx = trailing_median(gx, self.progress_median)
         tally = 1 if score_tally_windows(hist) else 0
         coord = 1 if coord_entity_windows(hist, gx) else 0
+        self.n_checks += 1
         if tally + coord >= self.min_signals:
+            self.n_votes += 1
+            self._streak += 1
+        else:
+            self._streak = 0
+        if self._streak >= self.persist_checks:
             self._fired = True
         return self._fired
 

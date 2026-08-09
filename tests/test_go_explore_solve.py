@@ -32,6 +32,7 @@ from scripts.go_explore_solve import (
     ortho_pool,
     resolve_hw_flags,
     resolve_inversion_pin_secs,
+    resolve_verify_bank,
     stamp_stats_provenance,
     update_stall,
     write_state_sidecar,
@@ -376,13 +377,17 @@ def test_solver_cli_hw_flags_defaults_to_none_so_nothing_is_set():
 # failing test. Nothing in the suite read _dump_solution's JSON.
 # ---------------------------------------------------------------------
 
-def _dump_one_solution(tmp_path, flags=("mmio_read_timing",)) -> dict:
+def _dump_one_solution(tmp_path, flags=("mmio_read_timing",),
+                       verify_bank=False) -> dict:
     """Drive Solver._dump_solution through a duck-typed stand-in and
     return the receipt it wrote. Only the attributes the method actually
-    reads are supplied."""
+    reads are supplied. verify_bank=False keeps these receipt-shape tests
+    off the replay path (which needs a real ROM/Pool); the verification
+    behavior itself is covered in tests/test_confluence_v2.py."""
     (tmp_path / "solutions").mkdir(parents=True, exist_ok=True)
     fake = SimpleNamespace(
         best_sol_len=10**9, sol_counter=0, n_solutions=0,
+        verify_bank=verify_bank, verify_checks=0, verify_rejections=0,
         out=tmp_path,
         args=SimpleNamespace(profile="configs/castlevania.yaml", workers=8,
                              hw_flags=",".join(flags) or None),
@@ -422,6 +427,60 @@ def test_solution_receipt_is_type_compatible_with_the_banked_corpus(tmp_path):
     for key in ("solver_args", "root_id", "root_state", "start_wd",
                 "clear_wd", "steps", "actions"):
         assert key in rec, key
+
+
+def test_solution_receipt_records_whether_the_clear_was_replay_verified(
+        tmp_path):
+    # An audit has to be able to separate a v2 verified receipt from a
+    # pre-v2 (or --no-verify-bank) one without re-running anything.
+    assert _dump_one_solution(tmp_path)["replay_verified"] is False
+
+
+# ---------------------------------------------------------------------
+# banking trust: --verify-bank
+#
+# The detector fabricated wins on 3 of 7 games (2026-08-06). Replaying a
+# candidate from its root before writing it is the gate; it is default ON
+# because it is cheap (measured ~2.7 ms/action: 887 actions 2.4 s, 1,735
+# actions 4.7 s) against 25-45 minute solves.
+# ---------------------------------------------------------------------
+
+def test_solver_cli_verify_bank_defaults_on(monkeypatch):
+    assert _parse_solver_argv(monkeypatch).verify_bank is True
+
+
+def test_solver_cli_no_verify_bank_is_the_explicit_escape(monkeypatch):
+    assert _parse_solver_argv(monkeypatch, "--no-verify-bank").verify_bank is False
+
+
+def test_verify_bank_is_a_json_type_so_receipts_keep_recording_it(monkeypatch):
+    # solver_args in every receipt is filtered to (str, int, float, bool);
+    # a flag that falls out of that filter is unverifiable after the fact.
+    args = _parse_solver_argv(monkeypatch)
+    assert isinstance(args.verify_bank, bool)
+
+
+def test_resolve_verify_bank_defaults_on_when_the_attribute_is_absent():
+    # THE direction that matters, and the opposite of every other opt-in knob
+    # in this file: an args namespace that predates the flag must still be
+    # verified. Flipping this default silently un-gates the show's own solver.
+    assert resolve_verify_bank(SimpleNamespace()) is True
+
+
+def test_resolve_verify_bank_honors_an_explicit_opt_out():
+    assert resolve_verify_bank(SimpleNamespace(verify_bank=False)) is False
+    assert resolve_verify_bank(SimpleNamespace(verify_bank=True)) is True
+
+
+def test_an_older_in_process_call_site_still_gets_verification():
+    # scripts/live_solve_show.py builds the args namespace by hand and does
+    # not know about this flag. Banking trust must not be something a stale
+    # call site opts out of by omission.
+    from scripts.live_solve_show import solver_args
+
+    ns, _ = solver_args("configs/mario.yaml", "root.state", Path("/tmp/x"),
+                        minutes=1.0, workers=2)
+    assert resolve_verify_bank(ns) is True
 
 
 # ---------------------------------------------------------------------
