@@ -1,0 +1,422 @@
+# ===========================================================================
+# B4-v4 — CONSOLIDATE 1-1 (the REAL consolidate_level machinery)
+# ===========================================================================
+# WHAT THIS IS. The backward-curriculum run banked a policy that TRAVELS 1-1
+# but cannot finish it deterministically:
+#
+#   checkpoints/mario_1_1_backward/vanilla_ppo_iter_00080.pt
+#     cold sampled  ~0.50 / 0.63 (two seeds, sticky-0.25 + jitter-16)
+#     cold greedy    0.02          <-- argmax tie at the flagpole
+#
+# MEASURED HERE (2026-08-10), the sharpest statement of the same defect —
+# deterministic greedy from the tape entrance, no sticky, no jitter:
+#
+#   .venv/bin/python scripts/eval_game.py --game mario_1_1_backward \
+#     --profile configs/mario_1_1_backward.yaml \
+#     --checkpoint checkpoints/mario_1_1_backward/vanilla_ppo_iter_00080.pt \
+#     --episodes 4 --max-steps 1500 --sequential --level-clear \
+#     --start-state runs/live_show/smb_4_4_micro/entrance_start.state
+#   -> seq_clear_rate 0.0, mean_length 1500.0  (i.e. it does NOT die — it
+#      runs the FULL step cap; the argmax is stuck in a loop, not failing a
+#      jump). The same command with --sticky-prob 0.25 --start-jitter 16
+#      returns clear_rate 0.333 at mean_length 279. Perturbation RESCUES it;
+#      the deterministic branch is the broken one.
+#
+# This profile points the June weld recipe — `consolidate_level`, i.e.
+# greedy-probe acceptance gates + protect/rollback + a decaying entropy/RND
+# schedule — at exactly that defect, starting from that checkpoint.
+#
+# ---------------------------------------------------------------------------
+# WHY NOT v3 (configs/mario_1_1_backward_consol.yaml)  — THE FAILURE RECEIPT
+# ---------------------------------------------------------------------------
+# v3 was NOT consolidate mode. Read its run log
+# (checkpoints/mario_1_1_backward_consol/run.log): there is not one
+# `CONSOLIDATE` line in it. v3 was the backward config with two edits:
+#
+#   entropy_coef: 0.002        # a HARD FLOOR from iter 0, no decay
+#   backward_curriculum.pin_entrance: true
+#
+# and it produced 0.0 greedy. Three things it got wrong, each fixed below:
+#
+#   (v3-1) A hard 0.002 from the first update. The June recipe that
+#          historically converted sampled clears into greedy clears is a
+#          DECAY (0.01 -> 0.002), not a floor: the policy needs live
+#          exploration to separate the tied actions before the softmax is
+#          sharpened onto the winner. Slamming the coefficient to the
+#          terminal value freezes the tie in place. -> `schedule.entropy`
+#          below.
+#   (v3-2) No acceptance gate. Nothing measured greedy clear-rate during
+#          the run, so nothing could snapshot the moment the argmax
+#          started finishing the level, and nothing could stop. -> the
+#          whole `consolidate_level` block below.
+#   (v3-3) It kept `backward_curriculum` on (pinned). The curriculum owns
+#          the restart site; consolidation wants EVERY restart at the
+#          entrance under the ordinary inline-restart path. Pinning is a
+#          dev/zero-diff guard, not a training mode. -> the block is GONE
+#          here (see NO BACKWARD BLOCK below).
+#
+# v3 also hit the then-unfixed tau-checkpoint-resume bug. That bug is fixed
+# (TauScheduler state now persists and restores), but it is MOOT for v4:
+# with no `backward_curriculum` block the TauScheduler is never built, so
+# `_apply_pending_backward_state` is never called and the cursor payload
+# carried inside the iter-80 checkpoint is simply never consumed. Verified
+# non-fatal in trainer.py: `_maybe_resume_vanilla_ppo` only stashes it into
+# `self._pending_backward_curriculum`, and nothing reads it unless the
+# scheduler exists.
+#
+# ---------------------------------------------------------------------------
+# HOW THE RUN ADOPTS THE PRE-EXISTING POLICY
+# ---------------------------------------------------------------------------
+# Same convention v3 used and this run re-verifies: the checkpoint dir is
+# derived from the profile NAME (`profile_slug` -> checkpoints/<slug>), so
+# this profile banks into `checkpoints/mario_1_1_backward_v4/`. Stage the
+# donor checkpoint IN that dir under its own iter number and launch with
+# `--resume` (the launcher default):
+#
+#   mkdir -p checkpoints/mario_1_1_backward_v4
+#   cp checkpoints/mario_1_1_backward/vanilla_ppo_iter_00080.pt \
+#      checkpoints/mario_1_1_backward_v4/
+#
+# `_maybe_resume_vanilla_ppo` takes the HIGHEST-numbered
+# `vanilla_ppo_iter_*.pt` in the dir, loads net + optimizer, and continues
+# checkpoint numbering from iter 80 — so nothing overwrites the donor.
+#
+# LOAD-BEARING, DO NOT EDIT: `action_space` (6 actions) and `encoder`
+# (smb_tiles_pos) must stay byte-identical to configs/mario_1_1_backward.yaml.
+# The resume calls `load_state_dict(..., strict=False)`; a changed head width
+# or feature dim does not raise, it SILENTLY drops the mismatched tensors and
+# you train a half-random net that looks like it resumed. The reward block,
+# frame_skip, ram_mapping and start_state_path are kept verbatim for the same
+# reason at the value-function level: the critic transferring is the point.
+#
+# ---------------------------------------------------------------------------
+# THE ONE STRUCTURAL DEVIATION FROM THE BACKWARD RECIPE: smb_curriculum
+# ---------------------------------------------------------------------------
+# configs/mario_1_1_backward.yaml sets `smb_curriculum: false`. This profile
+# MUST set it TRUE, because trainer.py gates the mode on it:
+#
+#   consolidate_on = bool(self._smb_curriculum_active
+#                         and _clevel_cfg.get("enabled", False))
+#   self._smb_curriculum_active = "mario" in name.lower()
+#                                 and bool(rl_cfg.get("smb_curriculum", True))
+#
+# With `smb_curriculum: false` the whole `consolidate_level` block is inert
+# and the run silently degrades to plain PPO — the exact dead-knob class the
+# schema validator exists for, except this one IS registered so
+# --strict-config would not catch it.
+#
+# Turning it on does NOT re-introduce the staged area-byte curriculum here,
+# because consolidate mode overwrites the stage array with the (unseeded)
+# sub-stage ladder and hard-blocks every advance/capture path
+# (`should_advance ... and not consolidate_on`; the capture branch is
+# `_smb_curriculum_active and not consolidate_on`). Traced end to end:
+#
+#   * no `seed_globs` -> `build_ladder(None)` returns the STRUCTURAL ladder,
+#     every rung `seed_blob=None`, so `smb_curriculum_states` is all-None;
+#   * 1-1 owns ladder rungs [0, 1, 2], so `consolidate_assignment`
+#     round-robins the 60 envs over those three rungs;
+#   * the iter-boundary warm-start only loads a rung blob when `k > 0 and
+#     blob is not None` -> nothing is loaded, and `pool.reset_all()` has
+#     already put every worker at `start_state_path`;
+#   * the mid-rollout death path finds `current_stage_state_inline is None`
+#     for every rung and falls through to
+#     `elif _start_bytes is not None and self._is_tile_mode` -> inline
+#     restart at `start_state_path`.
+#
+# Net effect: 100% of the pool trains from the tape entrance, with inline
+# restart at the entrance on death — "consolidation trains from the entrance,
+# not the ladder", which is the whole point. Adding `seed_globs` would bind
+# rungs 1-2 to campaign disk seeds from a DIFFERENT lineage (gx 0 / timer 399
+# blobs vs this tape's gx 40 / timer 400 entrance) and put two thirds of the
+# pool on states the gate never probes. Deliberately omitted.
+#
+# ---------------------------------------------------------------------------
+# THE ACCEPTANCE GATE — SEMANTICS, AND WHY `probe.episodes: 1`
+# ---------------------------------------------------------------------------
+# Every `probe.every` iters the trainer runs `cold_probe.probe(...)` on the
+# live weights: an isolated subprocess `scripts/eval_game.py --sequential
+# --level-clear --start-state <entry>`, i.e. "greedy from this state, did it
+# clear the level it started in". Then `oneshot_curriculum.gate_step`:
+#
+#   rollback  a PROTECT level fell below its mode-start baseline
+#             -> restore the last accepted snapshot, rebuild the optimizer,
+#                freeze entropy at `schedule.entropy.from` for `cooldown`
+#                iters. INERT HERE: `protect: []` means `protect_regressed`
+#                iterates an empty baseline dict and can only return None.
+#   accept    protect held AND target rate STRICTLY improved on the best so
+#             far -> re-snapshot and overwrite `best_1-1.pt`.
+#   hold      neither.
+#   done      target rate >= `accept_bar` on `accept_probes` CONSECUTIVE
+#             probes -> write `best_1-1.pt` + `consolidate_1-1.DONE` and
+#             break out of the training loop cleanly.
+#
+# `best_1-1.pt` is written ONCE at mode start with the pristine donor weights
+# (metric_value 0.0), so the file always exists; after that only an accept
+# rewrites it. Gate state is mirrored to `consolidate_1-1.json` every probe.
+#
+# MEASURED, AND IT DRIVES `episodes: 1`: this gate's probe is FULLY
+# DETERMINISTIC. The two call sites in trainer.py
+# (`_clevel_probe_level` at mode start, `_gate_probe` at each cycle) pass
+# neither `sticky_prob` nor `start_jitter`, and `action_select` defaults to
+# greedy, so `eval_game.run_consumes_randomness(...)` is False and every
+# episode is the SAME replay. Receipt: the 4-episode command at the top of
+# this file returned `seq_clear_rate 0.0` with `mean_length` exactly
+# `1500.0` — four identical episodes. The reference profile's
+# `episodes: 8` would therefore burn 8x the wall clock for zero extra
+# information. One episode, ~5 s per probe.
+#
+# CONSEQUENCE, STATE IT PLAINLY: the gate metric is BINARY (0.0 or 1.0).
+#   * `accept_bar: 1.0` is the only honest bar (any bar in (0, 1] behaves
+#     identically; 1.0 says what is actually required).
+#   * `target_improved` can fire AT MOST ONCE (0.0 -> 1.0). After the first
+#     accept, `best_1-1.pt` is frozen at that snapshot even if later
+#     policies are more robust. MITIGATION: the run still writes
+#     `vanilla_ppo_iter_*.pt` every 10 iters, so the post-run cold gate must
+#     score `best_1-1.pt` AND the late iter checkpoints, not just the winner.
+#   * the ONLY variance control left is the sustain count, hence
+#     `accept_probes: 4` (see below).
+#   * this gate is a PROXY. It is not the honest gate. The honest gate stays
+#     scripts/eval_game.py at sticky-0.25 + jitter-16, >= 30 episodes, two
+#     seeds, greedy AND sampled — run it after the box (command at the
+#     bottom of this file).
+
+name: Mario 1-1 backward v4
+rom_path: "roms/Super Mario Bros. (World).nes"
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+
+# The tape's own root — IDENTICAL to configs/mario_1_1_backward.yaml, which
+# is what makes the donor checkpoint's critic transfer and what makes the
+# gate probe, the training restarts and the post-run honest eval all one
+# lineage. (gx 40 / timer 400; NOT roms/..._start.state.bin, which is a few
+# frames earlier at gx 0 / timer 399.)
+start_state_path: "runs/live_show/smb_4_4_micro/entrance_start.state"
+
+description: >
+  B4-v4: level-scoped consolidation of SMB 1-1 from the backward-curriculum
+  iter-80 policy. No reverse curriculum — 100% of the pool trains from the
+  tape entrance while a greedy cold probe from that same entrance gates
+  accept / rollback and a decaying entropy+RND schedule sharpens the argmax.
+  Target defect: cold greedy 0.02 vs sampled 0.50/0.63 (argmax tie at the
+  flagpole). Winner banks as best_1-1.pt; the honest gate is run afterwards.
+
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+
+# Phase-A reward weights, VERBATIM from configs/mario_1_1_backward.yaml.
+# Deliberately NOT the reference consolidate profile's smb_1_4_dense block
+# (forward_progress 3.0 / checkpoint_scale 1.0 / jump_clear_bonus 50 /
+# completion_bonus 2000): changing the reward scale mid-consolidation
+# invalidates the donor's value function, which is the one thing this run
+# needs to keep.
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+
+# LOAD-BEARING — 6 actions, byte-identical to the donor's profile. A width
+# change is silently dropped by the strict=False resume.
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+
+reinforce:
+  # ---- Phase-A / backward recipe, verbatim ----
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos     # LOAD-BEARING (see resume note in the header)
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  symlog_rewards: true
+  value_loss: huber
+  value_coef: 0.25
+  bc_epochs: 30
+  warmup_gens_ga_only: 10
+  steps: 10
+  # Kept at 1024 (the backward run's one deviation from Phase-A's 512). The
+  # iter boundary calls reset_all, so an episode only SCORES if it resolves
+  # inside one rollout — and a full entrance-to-flagpole run of 1-1 is ~760
+  # policy steps (the tape is 758 states / 3028 frames at frame_skip 4). At
+  # 512 the flagpole would be outside the rollout and consolidation would be
+  # training on truncated episodes that never see the terminal reward, which
+  # is precisely the credit this run has to sharpen. Also holds s/iter at the
+  # measured 18.8 s so the cadence arithmetic below stays valid.
+  rollout_steps: 1024
+  lr: 0.0003
+  async_pipeline: false      # 1-step obs lag destroys frame-perfect SMB
+  device: cpu
+  panic_isolation: false
+  # Initial value only — `consolidate_level.schedule` ASSIGNS entropy_coef
+  # and rnd_intrinsic_coef at the end of every iter, so from iter 0 onward
+  # the schedule owns both. Left at the donor's 0.005 so the first rollout
+  # (collected before the first schedule write) matches the lineage.
+  entropy_coef: 0.005
+  # MUST stay 0.0. A non-zero entropy_floor arms the adaptive floor
+  # controller, which runs AFTER the consolidate schedule in the iter body
+  # and would rescale the coefficient the schedule just wrote — the decay
+  # would never reach 0.002.
+  entropy_floor: 0.0
+  entropy_coef_max: 0.05     # inert while entropy_floor is 0.0
+  rnd_intrinsic_coef: 0.1    # initial only; schedule decays it to 0.0
+  rnd_loss_coef: 1.0
+  # Keep training under the protocol the HONEST gate measures. The
+  # consolidate probe is sticky-free (see header), but the deliverable is
+  # graded at sticky-0.25 + jitter-16, and dropping sticky here would
+  # over-fit to the proxy. `boundary_reset` matters more than usual now:
+  # every death is an inline entrance restart, i.e. an episode boundary, and
+  # without it ~25% of restarts replay the action the previous life died
+  # holding.
+  sticky_action_prob: 0.25
+  sticky_episode_boundary_reset: true
+  bc_replay_enabled: true    # GA-path knobs; inert on the vanilla_ppo path.
+  bc_replay_every_gens: 20   # Kept verbatim rather than flipped to false so
+  bc_replay_epochs: 5        # this profile diffs cleanly against the donor's.
+  bc_replay_max_buffer: 16
+  bc_replay_train_window: 1
+  preprocess_f16: false
+  num_envs: 60
+
+  # REQUIRED for consolidate_level to arm at all — see the smb_curriculum
+  # section in the header. This is the one structural flip vs the backward
+  # profile (which sets false). It does NOT restore the staged curriculum:
+  # consolidate mode overwrites the stage array and blocks every advance and
+  # capture path.
+  smb_curriculum: true
+
+  # NO `backward_curriculum` BLOCK. Consolidation trains from the entrance,
+  # not the ladder, and the curriculum owns the same restart site. Absent
+  # (not `enabled: false`) so no TauScheduler is built at all: the cursor
+  # payload inside the donor checkpoint is stashed and never read, which is
+  # the intended no-op. See (v3-3) in the header.
+
+  # ======================================================================
+  # THE MACHINERY
+  # ======================================================================
+  consolidate_level:
+    enabled: true
+    target: "1-1"
+
+    # Probe the target from the SAME blob the pool trains from and the same
+    # blob the honest eval will use. Explicit rather than relying on the
+    # `_resolve_entry` fallback chain (explicit path -> level's entry-rung
+    # disk seed -> profile start state) so the resolution shows up in the
+    # `LEVEL CONSOLIDATION on: ... entry=...` log line as a receipt.
+    target_entry_state: "runs/live_show/smb_4_4_micro/entrance_start.state"
+
+    # Nothing else has been welded on this lineage, so there is nothing to
+    # protect. Empty => `protect_regressed` always returns None => the
+    # rollback arm and `cooldown` are structurally unreachable this run.
+    # (Listing "1-1" here would be worse than useless: it would probe the
+    # identical state a second time each cycle, doubling probe cost, against
+    # a baseline of 0.0 that nothing can fall below.)
+    protect: []
+
+    # NO seed_globs — keep the ladder structural so every rung is unseeded
+    # and the whole pool sits at the entrance. See the header.
+
+    # The June weld schedule, per the reference profile
+    # (configs/smb_consolidate_level_tiles.yaml), applied via the shared
+    # `lerp_coef` at the end of every iter.
+    #
+    # entropy 0.01 -> 0.002 is the DECAY that v3 replaced with a hard 0.002
+    # floor (v3-1). Starting ABOVE the donor's own 0.005 is deliberate and is
+    # the mechanism, not an oversight: the defect is an argmax TIE, and a tie
+    # is only broken by visiting the losing branch often enough to earn an
+    # advantage estimate that separates the two. Extra probability mass early
+    # buys those visits; the decay then sharpens whichever branch won. Holding
+    # at 0.005 preserves the tie, and 0.002 from iter 0 freezes it — which is
+    # the v3 result.
+    #
+    # 80 iters lands the floor ~25 min into a 1 h box (at the measured 18.8
+    # s/iter), leaving ~110 iters of sharpened training after it.
+    #
+    # RND to 0.0 on the same clock: intrinsic novelty reward is an
+    # exploration term, and consolidation is the phase where the objective
+    # should become the extrinsic one.
+    schedule:
+      entropy: {from: 0.01, to: 0.002, iters: 80}
+      rnd:     {from: 0.1,  to: 0.0}
+
+    probe:
+      # 12 iters x 18.8 s = ~226 s of training + ~5 s of probe = ~3.8 min per
+      # accept/reject cycle, i.e. ~15 cycles in a 1 h box. (Every 8 would be
+      # ~2.6 min / ~23 cycles; every 12 keeps each cycle's training block long
+      # enough that consecutive probes are not measuring the same policy.)
+      every: 12
+      # ONE. The probe is deterministic — N episodes are N identical replays.
+      # Measured receipt in the header. This is a deliberate deviation from
+      # the reference profile's 8.
+      episodes: 1
+      # Generous cap: a legitimate greedy clear is ~760 steps, and truncating
+      # a real clear is the expensive error. The current stuck argmax burns
+      # the whole cap (~4.5 s); once it clears, probes get cheaper.
+      max_steps: 1500
+
+    # Binary metric (see header) -> 1.0 is the only honest bar.
+    accept_bar: 1.0
+    # 4 CONSECUTIVE deterministic clears, i.e. the argmax must finish 1-1
+    # across 48 iters of continued training. The reference uses 3, but its
+    # metric was graded over 8 stochastic episodes; here a single probe is
+    # one bit, so the sustain count is the only variance control there is.
+    # 4 also keeps an early DONE from cutting the box short at ~30 min.
+    accept_probes: 4
+    # Unreachable with `protect: []` (no rollback arm). Kept at the reference
+    # value so the knob is not silently redefined if a protect level is ever
+    # added.
+    cooldown: 40
+
+ga_params:
+  mutation_rate: 0.8
+  mutation_std: 0.001
+  adaptive_mutation_scale: false
+  elite_fraction: 0.4
+  stale_gens_before_restart: 50
+  restart_fraction: 0.5
+
+max_episode_steps: 2400
+
+# ===========================================================================
+# POST-RUN HONEST GATE (this is the number that counts; the in-run probe is
+# a proxy). Pooled cold greedy over 50 x 2 seeds must reach >= 0.63.
+#
+#   for S in 0 1; do
+#     .venv/bin/python scripts/eval_game.py --game mario_1_1_backward_v4 \
+#       --profile configs/mario_1_1_backward_v4.yaml \
+#       --rom "roms/Super Mario Bros. (World).nes" \
+#       --checkpoint checkpoints/mario_1_1_backward_v4/best_1-1.pt \
+#       --start-state runs/live_show/smb_4_4_micro/entrance_start.state \
+#       --episodes 50 --max-steps 1500 --sequential --level-clear \
+#       --sticky-prob 0.25 --start-jitter 16 --eval-seed $S \
+#       --action-select greedy
+#   done
+#
+# then the sampled arm at 30 x 2 (--episodes 30 --action-select sampled).
+# Score the late `vanilla_ppo_iter_*.pt` checkpoints too — the binary accept
+# gate can only re-snapshot once, so the winner file is not guaranteed to be
+# the best policy the run produced.
+# ===========================================================================
