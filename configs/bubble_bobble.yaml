@@ -143,6 +143,37 @@ solve:
     - {addr: 0x0213, mod: 0, match: [128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255]}
     - {addr: 0x0210, mod: 128, match: [64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127]}
     - {addr: 0x0210, mod: 0, match: [128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255]}
+    # POSSESSION BIT -- the one thing the 3.2M-step (99,1) search could not
+    # see (contact-probe campaign 2026-08-09). $0030 is the held-item id.
+    # It reads 0 for ordinary play, and in the boss room it flips 0 -> 69
+    # when the player touches the item that sits on the top-LEFT platform
+    # (measured pickup box: player OAM x 61..81, y 37..60). While it reads
+    # 69 -- a ~190-frame window -- EVERY bubble the player fires spawns as
+    # a different object class: OAM tile 48/50 (a bubble with an item
+    # inside) instead of the ordinary 38/40, decided at spawn and visible
+    # from the end of the 23-frame spawn animation onward. Receipts:
+    #   * 104/104 independent 0->69 onsets across 480,000 random frames
+    #     put the player inside that one box (x range 61..81, y 37..60);
+    #     nowhere else in the room does $0030 leave 0.
+    #   * tile-48 bubbles appear in exactly the arms where $0030 hits 69
+    #     and in no other arm (24 scripted arms x 20,000 frames: only the
+    #     `random` arms produced either, and they produced both).
+    #   * 24 savestates banked at the 0->69 edge; stepping each 420 NOOP
+    #     frames, $0030 reverts 69 -> 0 in 22/24 and the bubble class
+    #     reverts with it. It is a real timed possession state, not an
+    #     animation code.
+    # MEASURED-INERT for the banked chain, so rounds 69..98 keep their key
+    # bit-for-bit: over 48,000 random steps from each of the round-1 start
+    # state and the after-95/96/97/98 entrances, $0030 takes only {0, 7}
+    # (7 on 8.0-20.6% of steps -- ordinary rounds have their own item) and
+    # NEVER 69. `match: [69]` therefore contributes a constant 0 bit
+    # everywhere the chain has ever run. Appended LAST on purpose: bit
+    # index is list position, so bits 0-6 keep their meaning.
+    # NOT ADDED: `entity_slots`. The bubble slots are a real object array,
+    # but bubble pops are the player's own farmable 10-point score event
+    # (see the boss: note on $0437), so a kill_key built on them would be
+    # a farmable gradient, not progress.
+    - {addr: 0x0030, match: [69]}
   # WIN-CONDITION TRIPWIRE for the terminal room (probe 2026-08-09).
   # $04A1 is the game-state byte: it reads 4 for EVERY in-play step measured
   # anywhere -- 15,775 steps in the (99,1) room, 12,000 steps of round-99 and
@@ -229,6 +260,41 @@ solve:
   # 72/72 score steps, precision 1.00). Pointing `hp:` at anything here would
   # be a fabricated address, so the room is instead given real exploration
   # dimensions (see the FIGHT BITS in state_sig) rather than a fake gradient.
+  #
+  # CONTACT-PROBE VERDICT, 2026-08-09 (~3.1M additional frame_skip-1 frames
+  # in the (99,1) room, ~24 policy families, all off the banked entrance,
+  # every arm auto-restarted on the game-over byte so the frames are real
+  # in-fight frames). The differential-contact hypotheses were tested and
+  # only ONE of them paid out:
+  #   (a) POSSESSION -- CONFIRMED, and shipped as the $0030 state_sig bit
+  #       above. There IS a pickup (top-left platform) and it DOES change
+  #       player state (bubble object class 38/40 -> 48/50).
+  #   (b) REFLECTED / CAUGHT PROJECTILES -- NOT FOUND. Despawn-hazard
+  #       ratios, P(entity ends | overlapping) / P(entity ends | not),
+  #       measured over the pooled rollouts: player<-bubble 6.46 (real:
+  #       the player pops bubbles), player<-thrown-bottle 2.67 (real but
+  #       inert: the bottle vanishes, nothing else moves, no score, no
+  #       damage, no death), bubble<-bottle 1.89, bottle<-bubble 0.48,
+  #       bubble<-BOSS 0.28 and BOSS<-bubble ~1 on a 3e-4 base -- i.e.
+  #       bubbles pass straight THROUGH the boss. The boss is not
+  #       bubble-collidable, so there is nothing to reflect back at it.
+  #   (c) CONTACT PATTERN THAT ADVANCES THE FIGHT -- NOT FOUND. Attacking
+  #       while holding the item does nothing: from 12 banked possession
+  #       states x 6 arms (incl. thunder-bubbles-into-the-boss and
+  #       pop-the-filled-bubble) $0496 stayed 7, $0401 99, $0462 1, the
+  #       boss's 18 sprites stayed on screen 100% with an identical
+  #       33-tile repertoire in every arm. 24 filled bubbles were popped
+  #       adjacent to the player; the only lift is $0041 (a ~20-frame
+  #       pop-effect timer) and the bubble's own OAM.
+  # ALSO MEASURED, and worth knowing before anyone re-reads a death log:
+  # the room's deaths are the BOSS BODY sweeping the room, not projectiles.
+  # Lives decrement at RESPAWN (player always back at OAM 24,192), ~100
+  # frames after the kill, which is why the naive "what was near the player
+  # when lives dropped" scan reads 52-125 px of empty space every time.
+  # STRUCTURAL CAVEAT for the ledger: the pool drives controller 1 only
+  # (NESEnvironment.set_buttons is P1), and OAM slots 2/3 -- a second
+  # player's sprite pair -- were live in 0 of ~3.1M measured frames. A
+  # 2P-dependent mechanic is therefore UNTESTED here, not ruled out.
   boss:
     hp: 0x0496
     start: 7   # round 68 receipts: rounds start with 7 enemies; 4 clipped the first 3 kills to zero credit
