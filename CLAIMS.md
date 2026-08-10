@@ -170,7 +170,26 @@ default-off byte-identity, covered by fifteen cases naming the arm in
 `tests/test_go_explore_solve.py`, including a runtime inertness mirror
 at the shipped CLI defaults.
 
-*Status, stated plainly: no validation run has been performed.* The arm
+*Status, updated 2026-08-10 — the pre-registered A/B validation ran
+(seed 303, 90 min each, both resuming the 92,785-cell stairkey
+archive; receipts `runs/cv_hall_ortho_a/` vs `runs/cv_hall_ortho_ctrl/`).*
+**Split verdict.** MECHANISM VALIDATED: the arm engaged (37,345
+selections) and redirected exploration upward exactly as designed —
+2,514 new cells above the old y-band-9 frontier vs the control's 1,471
+(1.7×), heavier in every high band, at a 31% cost in total new cells
+(38,776 vs 56,368). PREMISE STALE: the control ALSO reached y-band 7
+without the arm — vertical starvation is no longer the hall's binding
+constraint on a resumed stairkey archive; both runs pinned at gx 767,
+0 solutions, and the pre-registered partial gate (ortho_cols_improved
+≥ 8) failed in both (3). The freshly calibrated wall-taxonomy
+discriminator classifies both runs GATED. Citable as: *agent-forged;
+validated as a selection-pressure mechanism; not validated as a
+wall-cracking mechanism; the hall's wall class has migrated from
+orthogonal-starvation to gated.* No clear may be attributed to it.
+The prior text follows for the record.
+
+*Status at forging, stated plainly: no validation run had been
+performed.* The arm
 is forged and reviewed; it has not been shown to help. The hall remains
 unsolved, the standing prior is ~110M steps and 0 solutions across five
 arms, and the validation is the pre-registered fidelity-corrected +
