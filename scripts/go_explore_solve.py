@@ -340,6 +340,15 @@ def resolve_counterfactual_gate(args) -> bool:
     return bool(getattr(args, "counterfactual_gate", False))
 
 
+#: How much deeper Solver.counterfactual_probe re-snapshots when its CONTROL
+#: branch could not see the clear (the DEEP RETRY). One retry at 4x the
+#: requested pre-steps: far enough back to step over a commit point that
+#: predates the first snapshot (the case the retry exists to rescue), small
+#: enough that the probe stays a seconds-scale banking-path check instead of
+#: K full replays of a 1,700-action candidate.
+CF_RETRY_FACTOR = 4
+
+
 def resolve_apu_sampling(game, pool) -> bool:
     """Whether the per-step 5-bit APU channel-activity mask must be sampled
     and threaded into the clear hook's ctx.
@@ -712,6 +721,19 @@ class GenericGame:
         #         (warn_if_burst_starves_clear_hook). Bounded replays budget
         #         for it themselves: the counterfactual gate raises its
         #         pre-steps to cover it.
+        #
+        #     WHAT A WINDOWED HOOK COSTS YOU AT BANKING TIME (2026-08-10).
+        #     Every mode in this block except `confluence` is STATELESS — it
+        #     reads the current frame, so a replay of any length sees exactly
+        #     what the live hook saw. A rolling detector can instead fire on
+        #     evidence it accumulated over the whole trajectory, and that
+        #     fire is reproduced perfectly by --verify-bank (same actions,
+        #     same root, same accumulated state) while corresponding to
+        #     nothing the game did. --counterfactual-gate is the check that
+        #     catches it: a clear no snapshot INSIDE the trajectory can
+        #     reproduce is refused with verdict `state_artifact` (receipted
+        #     on Double Dragon, runs/detector_gate_20260810/). Configure a
+        #     confluence hook expecting that gate to be on.
         #       room_veto: {steps: M[, addrs: [..]][, min_progress: P]} — a
         #         change of the room observable within the last M observations
         #         VETOES a fire unless `progress` has advanced by >= P (default
@@ -1351,6 +1373,13 @@ class Solver:
         self.cf_seed = int(getattr(args, "seed", 0) if _cfs is None else _cfs)
         self.cf_checks = 0
         self.cf_rejections = 0
+        # Split out of cf_rejections (2026-08-10): a candidate refused as a
+        # STATE ARTIFACT is not a contingent clear that lost a vote, it is a
+        # clear hook firing on its own accumulated state — the number a
+        # detector-safety review actually wants, and the one that says the
+        # profile's hook needs explaining rather than the search needs luck.
+        self.cf_state_artifacts = 0
+        self.cf_retries = 0        # deep re-snapshots actually run
         self.steps_done = 0
         self.t0 = time.time()
         self.stop = False
@@ -1800,6 +1829,59 @@ class Solver:
         calling the result a fabricated clear is how a gate turns into a
         blanket mute.
 
+        ...WHICH WAS ALSO AN OPEN FABRICATION ESCAPE (fix, 2026-08-10). A
+        blind control has two causes and they are not the same event:
+
+          * the clear COMMITTED BEFORE the snapshot — a flag slide or tally
+            that latched 40 actions back is simply not inside the last 32, so
+            no branch, control included, can watch it happen; or
+          * there was never a game transition at all and the "clear" is an
+            artifact of the DETECTOR'S OWN ROLLING STATE — a windowed
+            confluence that exists only when the detector has been fed this
+            candidate's entire observation history from the root, at that
+            exact phase.
+
+        Reporting `inconclusive` on both banked the second one. Receipted on
+        Double Dragon (runs/detector_gate_20260810/double_dragon_cf.log): an
+        88-action candidate whose control saw nothing, whose eight perturbed
+        branches saw nothing, and which was banked anyway. Replay
+        verification cannot catch that class BY CONSTRUCTION — it replays the
+        same actions from the same root and therefore rebuilds the identical
+        detector state, so the artifact reproduces perfectly every time.
+
+        THE DEEP RETRY separates the two. On `control_blind` the probe
+        re-snapshots ONCE at CF_RETRY_FACTOR x the requested pre-steps
+        (capped at the trace) and re-runs the control and the branches from
+        there. A commit that predates the first snapshot is INSIDE the deeper
+        one: the deeper control replays through the commit point, sees the
+        clear, and the candidate is then judged normally on branch agreement
+        — Kirby-class candidates survive. A rolling-state artifact does not
+        come back: no bounded fresh-context replay reproduces it, so the
+        verdict becomes `state_artifact` with ok=False and the gate REFUSES.
+        Every OTHER inconclusive reason still refuses nothing.
+
+        WHEN THE DEEPER SNAPSHOT WOULD BE THE ROOT ITSELF (the trace is
+        shorter than the retry depth, which is the Double Dragon case: 88
+        actions against 4 x 32) the retry is not run, and the verdict is
+        `state_artifact` with reason `root_pivot`. That is not a shortcut, it
+        is the whole point: a control replaying from the root IS replay
+        verification, which already passed by construction on exactly the
+        candidates this refuses. Re-running it and calling the result a
+        second, independent opinion would launder one check's known blind
+        spot into two green ticks. The only replay that can exonerate a blind
+        control is one that starts from a state INSIDE the trajectory, where
+        the hook has to re-earn its evidence.
+
+        PRECISION OVER RECALL, deliberately, and in the same direction as the
+        detector's own room_veto: a genuine clear on a trace too short to
+        snapshot into can be refused here, costing one re-search. Note what
+        it takes to land in that case — a hook that fires from the root but
+        not from a snapshot 32 actions before the end, which no STATELESS
+        hook can do (level_key, byte_change, score_jump and finale all read
+        the current frame, so their control sees exactly what the live hook
+        saw). It is a windowed-confluence-only failure mode, which is
+        precisely where the fabricated clears live.
+
         EVERY BRANCH GETS THE HOOK'S OWN WARM-UP (fix, 2026-08-10). A branch
         is a bounded replay into a FRESH ctx, so a windowed hook starts from
         zero evidence in it; `cf_pre_steps` alone therefore does not describe
@@ -1825,7 +1907,14 @@ class Solver:
         Returns {"ok", "verdict", "agree", "k", "agreement", "threshold",
         "pre_steps", "pre_steps_requested", "warmup_budget", "margin",
         "perturb_p", "n_actions", "control", "branches", "elapsed_s"[,
-        "reason"][, "warmup_short"][, "error"]}. Never raises; an
+        "reason"][, "warmup_short"][, "retry"][, "first_pass"][, "error"]}.
+        `verdict` is one of commits / contingent / state_artifact /
+        inconclusive / error. The top-level control, branches, agree,
+        agreement and pre_steps always describe the pass that PRODUCED the
+        verdict, so a receipt never has to be read in two places to know what
+        was measured; when a deep retry ran, the superseded shallow pass is
+        kept verbatim under `first_pass` and `retry` records the depth it was
+        re-snapshotted at (and, when it was not run, why). Never raises; an
         infrastructure failure is reported as ok=False (fail closed, same rule
         as replay_verify)."""
         t0 = time.time()
@@ -1886,13 +1975,9 @@ class Solver:
             acts = np.zeros(1, dtype=np.uint8)
             pool.step_all(acts)                   # rooting NOOP, as seed() does
             needs_apu = bool(getattr(self, "_needs_apu", False))
-            head, tail = trace[: n - pre], trace[n - pre:]
-            for a in head:
-                acts[0] = self.bitmasks[a]
-                pool.step_all(acts)
-            pivot = pool.save_worker_state(0)
+            n_act = len(self.bitmasks)
 
-            def _branch(actions: list) -> dict:
+            def _branch(pivot: bytes, actions: list) -> dict:
                 pool.load_worker_state(0, pivot)
                 ctx: dict = {}
                 verdict, at = "no_clear", None
@@ -1911,37 +1996,120 @@ class Solver:
                         break
                 return {"verdict": verdict, "at": at}
 
-            control = _branch(tail)
-            control["perturbed"] = 0
-            out["control"] = control
-            n_act = len(self.bitmasks)
-            for b in range(k):
-                rng = np.random.default_rng([seed, b, n])
-                branch = [int(rng.integers(n_act))
-                          if (n_act > 1 and rng.random() < p) else a
-                          for a in tail]
-                res = _branch(branch)
-                res["branch"] = b
-                res["perturbed"] = sum(1 for x, y in zip(branch, tail)
-                                       if x != y)
-                out["branches"].append(res)
-            agree = sum(1 for r in out["branches"] if r["verdict"] == "clear")
-            out["agree"] = agree
-            out["agreement"] = round(agree / float(k), 4)
-            if control["verdict"] != "clear":
-                # Cannot judge: see THE CONTROL BRANCH IS A GUARD above. The
-                # reason is recorded because the two causes are not equally
-                # acceptable — a hook the branch was too short to warm up is
-                # a hole in the harness (and already printed above), while a
-                # control that looked and did not see it is a property of the
-                # candidate.
-                out.update(ok=True, verdict="inconclusive",
-                           reason=("warmup_short" if out.get("warmup_short")
-                                   else "control_blind"))
-            elif out["agreement"] >= need - 1e-9:
-                out.update(ok=True, verdict="commits")
+            def _pass(pre: int, reroot: bool) -> dict:
+                """One full probe at snapshot depth `pre`: replay the head,
+                snapshot it, then run the control and the K perturbed
+                branches from that snapshot.
+
+                `reroot` re-loads the root state first — the deep retry
+                snapshots EARLIER than the pass before it, so it cannot walk
+                forward from where that one left the emulator. The first
+                pass never re-roots, so the no-retry path is exactly the
+                sequence of pool calls it has always been."""
+                if reroot:
+                    pool.load_worker_state(0, blob)
+                    acts[0] = 0
+                    pool.step_all(acts)           # rooting NOOP, as above
+                head, tail = trace[: n - pre], trace[n - pre:]
+                for a in head:
+                    acts[0] = self.bitmasks[a]
+                    pool.step_all(acts)
+                pivot = pool.save_worker_state(0)
+                control = _branch(pivot, tail)
+                control["perturbed"] = 0
+                branches = []
+                for b in range(k):
+                    rng = np.random.default_rng([seed, b, n])
+                    branch = [int(rng.integers(n_act))
+                              if (n_act > 1 and rng.random() < p) else a
+                              for a in tail]
+                    res = _branch(pivot, branch)
+                    res["branch"] = b
+                    res["perturbed"] = sum(1 for x, y in zip(branch, tail)
+                                           if x != y)
+                    branches.append(res)
+                agree = sum(1 for r in branches if r["verdict"] == "clear")
+                return {"pre_steps": pre, "control": control,
+                        "branches": branches, "agree": agree,
+                        "agreement": round(agree / float(k), 4)}
+
+            def _judge(res: dict) -> None:
+                """Promote a pass to the top level and read its verdict off
+                the branch agreement (only ever called with a control that
+                saw the clear, i.e. with a probe that could discriminate)."""
+                out.update(pre_steps=res["pre_steps"], control=res["control"],
+                           branches=res["branches"], agree=res["agree"],
+                           agreement=res["agreement"])
+                if res["agreement"] >= need - 1e-9:
+                    out.update(ok=True, verdict="commits")
+                else:
+                    out.update(ok=False, verdict="contingent")
+
+            first = _pass(pre, reroot=False)
+            if first["control"]["verdict"] == "clear":
+                _judge(first)
+            elif out.get("warmup_short"):
+                # The hook never got enough observations to look — a hole in
+                # the harness, already printed above, and NOT evidence about
+                # this candidate. Refuses nothing, as it always has. There is
+                # nothing to retry either: warmup_short means the whole trace
+                # is already inside the snapshot.
+                out.update(pre_steps=first["pre_steps"],
+                           control=first["control"],
+                           branches=first["branches"], agree=first["agree"],
+                           agreement=first["agreement"],
+                           ok=True, verdict="inconclusive",
+                           reason="warmup_short")
             else:
-                out.update(ok=False, verdict="contingent")
+                # CONTROL BLIND -> DEEP RETRY (see the docstring). Either the
+                # clear committed before this snapshot, or it is an artifact
+                # of the detector's rolling state; one snapshot at
+                # CF_RETRY_FACTOR x the depth tells the two apart.
+                out.update(pre_steps=first["pre_steps"],
+                           control=first["control"],
+                           branches=first["branches"], agree=first["agree"],
+                           agreement=first["agreement"])
+                req2 = req * CF_RETRY_FACTOR
+                pre2 = min(max(req2, budget - margin), n)
+                retry = {"pre_steps_requested": req2, "pre_steps": pre2,
+                         "ran": False}
+                out["retry"] = retry
+                if pre2 >= n:
+                    # The deeper snapshot IS the root: its control would be
+                    # replay verification, which passed by construction on
+                    # exactly this class of candidate. Not run, not believed.
+                    retry["reason"] = "root_pivot"
+                elif pre2 <= first["pre_steps"]:
+                    # The warm-up floor already pinned the snapshot as deep
+                    # as it goes; a second identical pass would re-measure a
+                    # blind control and learn nothing.
+                    retry["reason"] = "no_deeper"
+                else:
+                    retry["ran"] = True
+                    deep = _pass(pre2, reroot=True)
+                    # The superseded pass is kept verbatim: a reader has to
+                    # be able to see that the shallow control was blind and
+                    # the deeper one was not, which is the whole argument.
+                    out["first_pass"] = {f: first[f] for f in (
+                        "pre_steps", "control", "branches", "agree",
+                        "agreement")}
+                    if deep["control"]["verdict"] == "clear":
+                        # The commit predated the first snapshot; the deeper
+                        # control replayed through it. Judge normally.
+                        _judge(deep)
+                    else:
+                        out.update(pre_steps=deep["pre_steps"],
+                                   control=deep["control"],
+                                   branches=deep["branches"],
+                                   agree=deep["agree"],
+                                   agreement=deep["agreement"])
+                        retry["reason"] = "control_blind_at_depth"
+                # `reason` is set in exactly the three cases the retry could
+                # not exonerate the candidate — and in none of the ones it
+                # could.
+                if retry.get("reason"):
+                    out.update(ok=False, verdict="state_artifact",
+                               reason=retry["reason"])
         except Exception as exc:                      # noqa: BLE001
             out["error"] = f"{type(exc).__name__}: {exc}"
         finally:
@@ -1988,19 +2156,42 @@ class Solver:
         if getattr(self, "cf_gate", False):
             cf = self.counterfactual_probe(root_id, list(trace))
             self.cf_checks = getattr(self, "cf_checks", 0) + 1
+            if (cf.get("retry") or {}).get("ran"):
+                self.cf_retries = getattr(self, "cf_retries", 0) + 1
             print(f"[go_explore_solve] counterfactual probe "
                   f"{json.dumps(cf)}", flush=True)
             if not cf["ok"]:
                 self.cf_rejections = getattr(self, "cf_rejections", 0) + 1
-                sys.stderr.write(
-                    f"[go_explore_solve] *** CLEAR REJECTED (counterfactual "
-                    f"gate) *** root={root_id} {len(trace)} actions: the "
-                    f"clear did NOT survive input perturbation "
-                    f"({cf['agree']}/{cf['k']} branches, threshold "
-                    f"{cf['threshold']}) — NOTHING banked. The transition was "
-                    f"contingent on the exact inputs, which is what a combat "
-                    f"blip or a one-off RAM coincidence looks like and what a "
-                    f"committed stage transition does not.\n")
+                if cf.get("verdict") == "state_artifact":
+                    # A DIFFERENT failure from a contingent clear, and it is
+                    # worth its own words: nothing about the game happened
+                    # here, so quoting a branch count would misdescribe it.
+                    self.cf_state_artifacts = getattr(
+                        self, "cf_state_artifacts", 0) + 1
+                    sys.stderr.write(
+                        f"[go_explore_solve] *** CLEAR REJECTED "
+                        f"(counterfactual gate: STATE ARTIFACT) *** "
+                        f"root={root_id} {len(trace)} actions: no bounded "
+                        f"replay from inside the trajectory reproduces this "
+                        f"clear ({cf.get('reason')}, retry "
+                        f"{json.dumps(cf.get('retry'))}) — NOTHING banked. "
+                        f"It is not a transition the game committed to but "
+                        f"an artifact of the clear hook's own accumulated "
+                        f"state, and replay verification passes it BY "
+                        f"CONSTRUCTION because it rebuilds that state from "
+                        f"the same root. Treat this profile's clear hook as "
+                        f"unsafe until it is explained.\n")
+                else:
+                    sys.stderr.write(
+                        f"[go_explore_solve] *** CLEAR REJECTED "
+                        f"(counterfactual gate) *** root={root_id} "
+                        f"{len(trace)} actions: the clear did NOT survive "
+                        f"input perturbation ({cf['agree']}/{cf['k']} "
+                        f"branches, threshold {cf['threshold']}) — NOTHING "
+                        f"banked. The transition was contingent on the exact "
+                        f"inputs, which is what a combat blip or a one-off "
+                        f"RAM coincidence looks like and what a committed "
+                        f"stage transition does not.\n")
                 sys.stderr.flush()
                 return False
         self.best_sol_len = len(trace)
@@ -2656,6 +2847,13 @@ class Solver:
         if getattr(self, "cf_checks", 0):
             line["cf_checks"] = self.cf_checks
             line["cf_rejections"] = self.cf_rejections
+            # Of those rejections, the ones where the hook fired on its own
+            # rolling state rather than on a game event (verdict
+            # state_artifact) — and how many candidates needed the deep
+            # re-snapshot at all, so "the retry never runs" is visible
+            # instead of inferred.
+            line["cf_state_artifacts"] = getattr(self, "cf_state_artifacts", 0)
+            line["cf_retries"] = getattr(self, "cf_retries", 0)
         with open(self.out / "progress.jsonl", "a") as f:
             f.write(json.dumps(line) + "\n")
         print(f"[go_explore_solve] {json.dumps(line)}", flush=True)
@@ -2779,7 +2977,12 @@ def main() -> int:
                     help="Actions before the end of the trace at which the "
                          "pre-clear snapshot is taken; the branches perturb "
                          "exactly this tail (default 32 ~= 2.1 s at "
-                         "frame_skip 4).")
+                         "frame_skip 4). Raised automatically to cover a "
+                         "windowed hook's warm-up, and re-taken ONCE at 4x "
+                         "this depth if the unperturbed control could not "
+                         "see the clear from it: a clear that no snapshot "
+                         "inside the trajectory can reproduce is refused as "
+                         "a state_artifact.")
     ap.add_argument("--cf-perturb-p", type=float, default=0.25,
                     help="Per-action probability that a branch replaces the "
                          "trace's action with a random one (default 0.25). "

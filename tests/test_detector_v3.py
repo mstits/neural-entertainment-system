@@ -752,25 +752,216 @@ def test_the_branches_get_the_same_noop_margin_replay_verification_uses(
 
 # -- the control branch is a guard, not a vote -----------------------------
 
-def test_a_control_that_cannot_see_the_clear_reports_inconclusive(
-        cf_root) -> None:
+def _starved_probe(cf_root):
+    """A probe whose hook is starved of its warm-up: still inconclusive, still
+    refuses nothing (the reason that is a hole in OUR harness)."""
+    _CfPool.script = staticmethod(_never)
+    return Solver.counterfactual_probe(
+        _cf_solver(cf_root, game=_CfGame(margin=0, budget=100)),
+        "entrance", [1] * 30)
+
+
+def test_a_probe_that_could_not_look_reports_inconclusive(cf_root) -> None:
     # The probe could not judge -- refusing here would be reporting a verdict
     # about our own instrument as if it were a verdict about the candidate.
-    _CfPool.script = staticmethod(_never)
-    out = Solver.counterfactual_probe(_cf_solver(cf_root), "entrance", TRACE)
+    out = _starved_probe(cf_root)
     assert out["verdict"] == "inconclusive" and out["ok"] is True
-    assert out["agree"] == 0
+    assert out["reason"] == "warmup_short" and out["agree"] == 0
 
 
 def test_inconclusive_does_not_block_banking(cf_root, tmp_path) -> None:
-    _CfPool.script = staticmethod(_never)
     fake = _bank_solver(tmp_path, verdict_ok=True, cf_gate=True)
-    fake.counterfactual_probe = lambda root_id, trace: Solver.counterfactual_probe(
-        _cf_solver(cf_root), root_id, trace)
-    assert Solver._dump_solution(fake, "entrance", TRACE,
-                                 bytearray(2048), 12) is True
+    fake.counterfactual_probe = lambda root_id, trace: _starved_probe(cf_root)
+    assert Solver._dump_solution(fake, "entrance", [1] * 30,
+                                 bytearray(2048), 30) is True
     rec = json.loads((tmp_path / "solutions" / "sol_000.json").read_text())
     assert rec["counterfactual_gate"]["verdict"] == "inconclusive"
+
+
+# -- the deep retry: a blind control is not a free pass --------------------
+#
+# Receipt for the escape this closes:
+# runs/detector_gate_20260810/double_dragon_cf.log -- an 88-action Double
+# Dragon candidate whose control saw nothing, whose eight branches saw
+# nothing, and which was banked anyway on verdict inconclusive/control_blind.
+
+def _root_state_artifact(acts) -> int:
+    """The Double Dragon shape: the 'clear' is not a game event at all, it is
+    the clear hook's own rolling state reaching a coincidence after it has
+    been fed this candidate's whole observation history FROM THE ROOT.
+
+    Only a replay that starts at the root ever sees it -- which is exactly
+    what replay verification does, so that check passes it by construction.
+    No snapshot inside the trajectory can reproduce it.
+    """
+    pool = _CfPool.instances[-1]
+    return 1 if pool.loaded[-1] == b"rootblob" and len(acts) >= 12 else 0
+
+
+def _commit_before_the_snapshot(acts) -> int:
+    """The Kirby shape: a real transition that latched EARLIER than the first
+    snapshot. It needs ten observations of the transition running itself out,
+    so a four-action branch cannot see it however faithful the inputs -- but
+    it is committed, so any branch long enough to replay through the commit
+    point reaches it whatever the pad does."""
+    return 1 if len(acts) >= 10 else 0
+
+
+def test_replay_verification_passes_the_artifact_this_probe_refuses(
+        cf_root) -> None:
+    # The two checks side by side on the SAME candidate. If they agreed there
+    # would be nothing here to add.
+    _CfPool.script = staticmethod(_root_state_artifact)
+    fake = _cf_solver(cf_root)
+    assert Solver.replay_verify(fake, "entrance", TRACE)["ok"] is True
+    out = Solver.counterfactual_probe(fake, "entrance", TRACE)
+    assert out["ok"] is False and out["verdict"] == "state_artifact"
+
+
+def test_a_state_artifact_is_refused_rather_than_called_inconclusive(
+        cf_root) -> None:
+    _CfPool.script = staticmethod(_root_state_artifact)
+    out = Solver.counterfactual_probe(_cf_solver(cf_root), "entrance", TRACE)
+    assert out["ok"] is False and out["verdict"] == "state_artifact"
+    assert out["control"]["verdict"] == "no_clear" and out["agree"] == 0
+    # ...and the receipt says which snapshot was tried, and why the deeper one
+    # could not be believed.
+    assert out["retry"] == {"pre_steps_requested": 16, "pre_steps": 12,
+                            "ran": False, "reason": "root_pivot"}
+    assert out["reason"] == "root_pivot"
+
+
+def test_the_deep_retry_rescues_a_commit_that_predates_the_snapshot(
+        cf_root) -> None:
+    # THE NUANCE. A real clear can be invisible from a shallow snapshot simply
+    # because it latched before it. Re-snapshot four times deeper and the
+    # control replays through the commit point -- Kirby-class candidates must
+    # survive this gate, or it is a blanket mute with extra steps.
+    _CfPool.script = staticmethod(_commit_before_the_snapshot)
+    out = Solver.counterfactual_probe(
+        _cf_solver(cf_root), "entrance", [1] * 100)
+    assert out["ok"] is True and out["verdict"] == "commits"
+    assert out["retry"] == {"pre_steps_requested": 16, "pre_steps": 16,
+                            "ran": True}
+    assert out["pre_steps"] == 16 and out["control"]["verdict"] == "clear"
+    # The superseded shallow pass is kept, blindness and all.
+    assert out["first_pass"]["pre_steps"] == 4
+    assert out["first_pass"]["control"]["verdict"] == "no_clear"
+    assert "reason" not in out
+
+
+def test_the_deep_retry_re_snapshots_rather_than_walking_forward(
+        cf_root) -> None:
+    # It has to go BACKWARD from the first snapshot, which no amount of
+    # stepping can do: the retry must re-root and replay a shorter head.
+    _CfPool.script = staticmethod(_commit_before_the_snapshot)
+    Solver.counterfactual_probe(_cf_solver(cf_root, cf_branches=2),
+                                "entrance", [1] * 100)
+    pool = _CfPool.instances[-1]
+    assert pool.loaded == ([b"rootblob"] + [b"pivot"] * 3     # first pass
+                           + [b"rootblob"] + [b"pivot"] * 3)  # deep retry
+    assert pool.saves == 2
+    assert _segments(pool) == [1 + 96, 4, 4, 4,      # head, control, 2 branches
+                               1 + 84, 10, 10, 10]   # deeper head, then 10s
+
+
+def test_a_still_blind_deeper_control_is_a_state_artifact(cf_root) -> None:
+    # The retry ran, looked from four times further back, and still saw
+    # nothing: that is the refusal, and the receipt says which of the three
+    # ways the retry failed to exonerate the candidate this was.
+    _CfPool.script = staticmethod(_never)
+    out = Solver.counterfactual_probe(
+        _cf_solver(cf_root), "entrance", [1] * 100)
+    assert out["ok"] is False and out["verdict"] == "state_artifact"
+    assert out["reason"] == "control_blind_at_depth"
+    assert out["retry"]["ran"] is True and out["pre_steps"] == 16
+
+
+def test_the_retry_is_capped_at_the_trace_length(cf_root) -> None:
+    # 4 x 32 pre-steps against an 88-action candidate (the Double Dragon
+    # arithmetic): the deeper snapshot would BE the root, where the control is
+    # just replay verification -- which already passed by construction on
+    # exactly this class. Capped, not run, not believed.
+    _CfPool.script = staticmethod(_root_state_artifact)
+    out = Solver.counterfactual_probe(
+        _cf_solver(cf_root, cf_pre_steps=32), "entrance", [1] * 88)
+    assert out["retry"]["pre_steps_requested"] == 128
+    assert out["retry"]["pre_steps"] == 88 == out["n_actions"]
+    assert out["retry"]["ran"] is False
+    assert out["verdict"] == "state_artifact" and out["ok"] is False
+    # One pass' worth of emulator, not two: the retry that cannot help is not
+    # paid for either.
+    assert _CfPool.instances[-1].saves == 1
+
+
+def test_the_retry_is_skipped_when_the_floor_already_pinned_the_snapshot(
+        cf_root) -> None:
+    # The warm-up floor can already sit deeper than 4x the request; re-running
+    # the identical pass would re-measure the same blind control.
+    _CfPool.script = staticmethod(_never)
+    out = Solver.counterfactual_probe(
+        _cf_solver(cf_root, game=_CfGame(margin=0, budget=40)),
+        "entrance", [1] * 100)
+    assert out["pre_steps"] == 40
+    assert out["retry"] == {"pre_steps_requested": 16, "pre_steps": 40,
+                            "ran": False, "reason": "no_deeper"}
+    assert out["verdict"] == "state_artifact"
+
+
+def test_the_double_dragon_receipt_shape(cf_root, tmp_path) -> None:
+    # End to end on the banking path, in the shape the re-run receipt has to
+    # have: replay verification passes, the gate refuses, nothing is banked,
+    # and the counters name the failure class.
+    _CfPool.script = staticmethod(_root_state_artifact)
+    fake = _bank_solver(tmp_path, verdict_ok=True, cf_gate=True)
+    fake.counterfactual_probe = lambda root_id, trace: (
+        Solver.counterfactual_probe(_cf_solver(cf_root), root_id, trace))
+    assert Solver._dump_solution(fake, "entrance", TRACE,
+                                 bytearray(2048), 12) is False
+    assert not list((tmp_path / "solutions").glob("sol_*"))
+    assert fake.cf_checks == 1 and fake.cf_rejections == 1
+    assert fake.cf_state_artifacts == 1
+    assert getattr(fake, "cf_retries", 0) == 0   # the retry could not help
+
+
+def test_a_state_artifact_rejection_is_logged_as_its_own_failure(
+        cf_root, tmp_path, capsys) -> None:
+    _CfPool.script = staticmethod(_root_state_artifact)
+    fake = _bank_solver(tmp_path, verdict_ok=True, cf_gate=True)
+    fake.counterfactual_probe = lambda root_id, trace: (
+        Solver.counterfactual_probe(_cf_solver(cf_root), root_id, trace))
+    Solver._dump_solution(fake, "entrance", TRACE, bytearray(2048), 12)
+    err = capsys.readouterr().err
+    # Not "the clear did not survive perturbation" -- nothing about the game
+    # happened here at all, and a branch count would misdescribe it.
+    assert "STATE ARTIFACT" in err and "root_pivot" in err
+    assert "BY CONSTRUCTION" in err
+
+
+def test_the_deep_retry_is_counted_separately_from_the_rejection(
+        cf_root, tmp_path) -> None:
+    _CfPool.script = staticmethod(_never)
+    fake = _bank_solver(tmp_path, verdict_ok=True, cf_gate=True)
+    fake.counterfactual_probe = lambda root_id, trace: (
+        Solver.counterfactual_probe(_cf_solver(cf_root), root_id, trace))
+    Solver._dump_solution(fake, "entrance", [1] * 100, bytearray(2048), 100)
+    assert (fake.cf_retries, fake.cf_state_artifacts) == (1, 1)
+
+
+def test_the_progress_line_reports_the_new_counters(tmp_path) -> None:
+    fake = SimpleNamespace(
+        archive=[0] * 7,
+        _stall={"last_cells": 0, "last_t": 0.0, "flat_windows": 0},
+        max_area=0, max_gx_in_area={}, max_sect=0, n_solutions=0,
+        best_sol_len=10 ** 9, steps_done=100, ortho_mode="off",
+        door_weight=0.0, transition_macros=[], verify_rejections=0,
+        cf_checks=3, cf_rejections=2, cf_state_artifacts=2, cf_retries=1,
+        out=tmp_path)
+    Solver.progress_line(fake, 10.0)
+    line = json.loads(
+        (tmp_path / "progress.jsonl").read_text().splitlines()[-1])
+    assert line["cf_checks"] == 3 and line["cf_rejections"] == 2
+    assert line["cf_state_artifacts"] == 2 and line["cf_retries"] == 1
 
 
 # -- failure handling ------------------------------------------------------
@@ -1220,10 +1411,15 @@ def test_the_probe_buys_the_hook_the_observations_it_needs(cf_root) -> None:
     fake = _cf_solver(cf_root, game=_CfGame(margin=20, budget=100),
                       cf_pre_steps=32, cf_branches=3)
     out = Solver.counterfactual_probe(fake, "entrance", [1] * 200)
-    assert out["pre_steps"] == 80 and out["pre_steps_requested"] == 32
+    assert out["pre_steps_requested"] == 32
+    assert out["first_pass"]["pre_steps"] == 80
     assert out["warmup_budget"] == 100 and out["margin"] == 20
     assert out.get("warmup_short") is None
-    assert _segments(_CfPool.instances[-1])[1:] == [100] * 4
+    # head, then the control and the three branches of the FIRST pass -- the
+    # blind control then triggers the deep retry, whose segments are longer
+    # still (its own test); what is pinned here is that no branch of the pass
+    # the floor sized was ever handed less than the hook's 100 observations.
+    assert _segments(_CfPool.instances[-1])[1:5] == [100] * 4
 
 
 def test_the_floor_only_ever_raises_the_budget(cf_root) -> None:
@@ -1259,19 +1455,21 @@ def test_a_trace_too_short_for_the_warm_up_says_so_out_loud(
 
 def test_a_starved_probe_is_labelled_differently_from_a_blind_control(
         cf_root) -> None:
-    # Both are 'inconclusive' and neither refuses, but one is a hole in the
-    # harness and the other is a property of the candidate. A receipt that
-    # cannot tell them apart is how the no-op stayed invisible.
+    # One is a hole in the harness -- the hook was never fed enough to look --
+    # and the other is a property of the candidate: it looked and saw nothing.
+    # A receipt that cannot tell them apart is how the no-op stayed invisible,
+    # and since 2026-08-10 they do not even share a verdict.
     _CfPool.script = staticmethod(_never)
     starved = Solver.counterfactual_probe(
         _cf_solver(cf_root, game=_CfGame(margin=0, budget=100),
                    cf_branches=1), "entrance", [1] * 30)
     blind = Solver.counterfactual_probe(
         _cf_solver(cf_root, cf_branches=1), "entrance", TRACE)
-    assert starved["verdict"] == blind["verdict"] == "inconclusive"
-    assert starved["ok"] is blind["ok"] is True
+    assert starved["verdict"] == "inconclusive" and starved["ok"] is True
     assert starved["reason"] == "warmup_short"
-    assert blind["reason"] == "control_blind" and "warmup_short" not in blind
+    assert "retry" not in starved, "a starved probe has nothing to re-snapshot"
+    assert blind["verdict"] == "state_artifact" and blind["ok"] is False
+    assert "warmup_short" not in blind
 
 
 def test_an_adapter_that_cannot_state_its_budget_fails_closed(
