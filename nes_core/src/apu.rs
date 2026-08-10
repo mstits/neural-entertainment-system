@@ -54,6 +54,13 @@ static TND_TABLE: Lazy<[f32; 203]> = Lazy::new(|| {
     tnd_table
 });
 
+/// Bits of the $4015 status byte that describe per-channel activity:
+/// pulse 1, pulse 2, triangle, noise (length counter > 0) and DMC
+/// (bytes remaining > 0). The two IRQ bits ($40 frame, $80 DMC) are
+/// deliberately excluded — they report interrupt plumbing, not
+/// whether a voice is sounding.
+pub const CHANNEL_ACTIVITY_MASK: u8 = 0x1F;
+
 pub struct Apu {
     cycles: u64,
 
@@ -148,6 +155,19 @@ impl Apu {
         } else {
             0
         }
+    }
+
+    /// Per-channel activity vector: the low 5 bits of $4015
+    /// (pulse 1, pulse 2, triangle, noise, DMC), with the frame-IRQ
+    /// and DMC-IRQ bits masked off.
+    ///
+    /// Side-effect-free by construction — it goes through the same
+    /// `read_status` builder as `peek_byte`, NOT the `Memory::read_byte`
+    /// path, so it never clears the frame-interrupt flag. An observer
+    /// can sample this every step without perturbing the game's IRQ
+    /// handling, which a bus read of $4015 would.
+    pub fn channel_activity(&self) -> u8 {
+        self.read_status() & CHANNEL_ACTIVITY_MASK
     }
 
     pub fn reset(&mut self) {
@@ -1388,5 +1408,145 @@ mod sweep_lowpass_tests {
             "output must move toward the input, not away from it, got {}",
             y
         );
+    }
+}
+
+/// `channel_activity` — the second observation modality exposed to
+/// the Python side. It must be (a) exactly the low 5 bits of the
+/// $4015 status byte, (b) free of the two IRQ bits, and (c) free of
+/// the read side effect that a real $4015 bus read carries.
+#[cfg(test)]
+mod channel_activity_tests {
+    use super::*;
+
+    /// Enable every channel and give each a non-zero length counter /
+    /// DMC byte count, so all five activity bits should be set.
+    fn enable_all_channels(apu: &mut Apu) {
+        // DMC sample length must be programmed BEFORE the $4015
+        // enable — `restart()` copies sample_length into
+        // current_length, and a zero length leaves bit 4 clear.
+        apu.write_byte(0x4013, 0x01); // sample_length = 0x11 bytes
+        apu.write_byte(0x4015, 0x1F); // enable pulse1/2, tri, noise, DMC
+        // Length-counter loads (top 5 bits index the length table).
+        apu.write_byte(0x4003, 0x08); // pulse 1
+        apu.write_byte(0x4007, 0x08); // pulse 2
+        apu.write_byte(0x400B, 0x08); // triangle
+        apu.write_byte(0x400F, 0x08); // noise
+    }
+
+    #[test]
+    fn silent_apu_reports_no_active_channels() {
+        let apu = Apu::new();
+        assert_eq!(apu.channel_activity(), 0x00);
+    }
+
+    #[test]
+    fn all_five_channels_report_active() {
+        let mut apu = Apu::new();
+        enable_all_channels(&mut apu);
+        assert_eq!(
+            apu.channel_activity(),
+            0x1F,
+            "expected all five channel bits set; got {:#04x} (status {:#04x})",
+            apu.channel_activity(),
+            apu.peek_byte(0x4015),
+        );
+    }
+
+    /// Each channel owns exactly one bit, in $4015 order. Disabling a
+    /// single channel must clear exactly that bit and nothing else —
+    /// the property a per-channel observation vector depends on.
+    #[test]
+    fn each_channel_owns_exactly_one_bit() {
+        for (disable_bit, name) in [
+            (0x01u8, "pulse 1"),
+            (0x02, "pulse 2"),
+            (0x04, "triangle"),
+            (0x08, "noise"),
+            (0x10, "dmc"),
+        ] {
+            let mut apu = Apu::new();
+            enable_all_channels(&mut apu);
+            // Re-write $4015 with this one channel's enable cleared;
+            // that resets its length counter (or DMC byte count).
+            apu.write_byte(0x4015, 0x1F & !disable_bit);
+            assert_eq!(
+                apu.channel_activity(),
+                0x1F & !disable_bit,
+                "disabling {name} should clear only bit {disable_bit:#04x}",
+            );
+        }
+    }
+
+    /// Bits 6 (frame IRQ) and 7 (DMC IRQ) are part of $4015 but are
+    /// NOT channel activity. They must never leak into the vector.
+    #[test]
+    fn irq_bits_are_masked_out() {
+        let mut apu = Apu::new();
+        apu.frame_counter.irq_pending = true;
+        apu.dmc.irq_pending = true;
+
+        assert_eq!(
+            apu.peek_byte(0x4015) & 0xC0,
+            0xC0,
+            "precondition: both IRQ bits are set in the raw status byte",
+        );
+        assert_eq!(
+            apu.channel_activity(),
+            0x00,
+            "IRQ bits leaked into the channel-activity vector",
+        );
+    }
+
+    /// The vector must agree with `peek_byte(0x4015) & 0x1F` at every
+    /// point — it is defined as that projection, and callers that
+    /// already peek $4015 must see the same answer.
+    #[test]
+    fn agrees_with_peek_status_projection() {
+        let mut apu = Apu::new();
+        assert_eq!(apu.channel_activity(), apu.peek_byte(0x4015) & 0x1F);
+        enable_all_channels(&mut apu);
+        assert_eq!(apu.channel_activity(), apu.peek_byte(0x4015) & 0x1F);
+        apu.frame_counter.irq_pending = true;
+        assert_eq!(apu.channel_activity(), apu.peek_byte(0x4015) & 0x1F);
+    }
+
+    /// Sampling the vector must NOT clear the frame-interrupt flag —
+    /// that side effect belongs to a real bus read of $4015. An
+    /// observer polling this every step would otherwise silently eat
+    /// the game's frame IRQs.
+    #[test]
+    fn sampling_does_not_clear_frame_irq() {
+        let mut apu = Apu::new();
+        apu.frame_counter.irq_pending = true;
+
+        for _ in 0..8 {
+            let _ = apu.channel_activity();
+        }
+        assert!(
+            apu.frame_counter.irq_pending,
+            "channel_activity must be side-effect-free",
+        );
+
+        // Contrast: the real bus read DOES clear it. If this ever
+        // stops being true the side-effect-freeness above is vacuous.
+        let _ = apu.read_byte(0x4015);
+        assert!(!apu.frame_counter.irq_pending);
+    }
+
+    /// Channel activity survives a state round trip, so a solver that
+    /// restores a savestate observes the same audio modality it saw
+    /// when the snapshot was taken.
+    #[test]
+    fn survives_state_round_trip() {
+        let mut apu = Apu::new();
+        enable_all_channels(&mut apu);
+        let before = apu.channel_activity();
+        assert_ne!(before, 0x00);
+
+        let saved = apu.get_state();
+        let mut restored = Apu::new();
+        restored.apply_state(&saved);
+        assert_eq!(restored.channel_activity(), before);
     }
 }

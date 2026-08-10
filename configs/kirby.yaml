@@ -113,3 +113,39 @@ solve:
     - {buttons: ["up"], steps: 20, p: 0.03}
     - {buttons: ["up", "A"], steps: 16, p: 0.015}
     - {buttons: ["right", "up"], steps: 16, p: 0.015}
+  # DISCRETE-TRANSITION GATE (first shipped profile to configure it, 2026-08-10).
+  # The hold_macros above fire UNIFORMLY along a trajectory; this gate fires the
+  # same settle-then-HOLD maneuver only where it can pay — when a worker sits at
+  # the DEEP frontier (deepest area reached, and within `near` gx buckets of that
+  # area's own max world-X). That is exactly the Kirby stall: the camera clamps at
+  # the scroll limit, so world-X stops gradienting and the only remaining progress
+  # is the discrete "grounded + UP through the door" event.
+  #
+  # Kirby is the game whose ROOM-TRANSITION lesson is already receipted here: the
+  # confluence clear-detector was tried and rejected above precisely because room
+  # loads (area 58 -> 62) are frequent and ordinary. That cuts both ways — if a
+  # room transition is common enough to fool a clear detector, then PROVOKING one
+  # is the cheapest real progress the search can buy, which is what this gate does.
+  #
+  # addr = 0x004F, the SAME per-room scene id already declared as `area:` five
+  # lines up. No new observable, no external RAM map: the byte's derivation and
+  # verification are the ones in this file's ROOM ADVANCE note. The solver reads it
+  # for telemetry only (`max_room` on the progress line) — the gate's behaviour
+  # comes from the macros.
+  #
+  # DERIVATION (derive_transition_macros, scripts/go_explore_solve.py): the macro
+  # list is auto-built from THIS profile's action_space by selecting every combo
+  # containing "up" and holding it `steps` frames — no hand-authored buttons list.
+  # With the action_space above that derives exactly ONE macro: index 6 (["up"])
+  # held 20 steps. The canonical up+jump / up+right variants do NOT derive here
+  # because this action_space declares no ["up","A"] or ["right","up"] combo (the
+  # same reason the two hold_macros naming those combos are skipped at solver
+  # init). Adding them would change the sampled action distribution for this
+  # profile, so that is left alone; `buttons:` is deliberately not set, so the gate
+  # stays derived-from-the-space rather than hand-authored.
+  #
+  # p 0.05 = per-step injection chance while at the frontier (vs 0.03 uniform for
+  # the plain up hold); near 24 = 24 gx buckets * GX_BUCKET 16 = 384 world-X units
+  # behind the frontier still counts as "at" it. Receipt for the derived list:
+  # tests/test_kirby_room_advance.py (asserts [(6, 20)] from this exact block).
+  room_advance: {addr: 0x004F, steps: 20, p: 0.05, near: 24}

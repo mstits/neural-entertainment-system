@@ -27,7 +27,6 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Once;
 
 use crate::cartridge::Cartridge;
-use crate::input::Button;
 use crate::nes::Nes;
 use crate::ppu::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::sink::{AudioSink, Xrgb8888VideoSink};
@@ -46,15 +45,11 @@ const POOL_STATE_MAGIC: &[u8; 5] = b"NCST\x01";
 // recordings). Bit order reads "right→A" high-to-low. Historical
 // pre-alignment: nes_core used the reversed layout (A=bit0,
 // right=bit7). That silently swapped every button in the trainer →
-// pool path. Fixed 2026-04-21 in the audit sweep.
-const BUTTON_RIGHT: u8 = 1 << 7;
-const BUTTON_LEFT: u8 = 1 << 6;
-const BUTTON_DOWN: u8 = 1 << 5;
-const BUTTON_UP: u8 = 1 << 4;
-const BUTTON_START: u8 = 1 << 3;
-const BUTTON_SELECT: u8 = 1 << 2;
-const BUTTON_B: u8 = 1 << 1;
-const BUTTON_A: u8 = 1 << 0;
+// pool path. Fixed 2026-04-21 in the audit sweep. The constants and
+// the mask→pad decode now live in `input.rs`, so the controller-1 and
+// controller-2 lanes physically cannot drift apart.
+#[cfg(test)]
+use crate::input::{BUTTON_A, BUTTON_RIGHT, BUTTON_START};
 
 /// Per-worker state. Stored in `UnsafeCell` so rayon's `par_iter`
 /// can hand out exclusive per-index access without paying the
@@ -303,15 +298,15 @@ impl Worker {
     }
 
     fn apply_buttons(&mut self, mask: u8) {
-        let pad = self.nes.game_pad_1();
-        pad.set_button_pressed(Button::Right, mask & BUTTON_RIGHT != 0);
-        pad.set_button_pressed(Button::Left, mask & BUTTON_LEFT != 0);
-        pad.set_button_pressed(Button::Down, mask & BUTTON_DOWN != 0);
-        pad.set_button_pressed(Button::Up, mask & BUTTON_UP != 0);
-        pad.set_button_pressed(Button::Start, mask & BUTTON_START != 0);
-        pad.set_button_pressed(Button::Select, mask & BUTTON_SELECT != 0);
-        pad.set_button_pressed(Button::B, mask & BUTTON_B != 0);
-        pad.set_button_pressed(Button::A, mask & BUTTON_A != 0);
+        self.nes.game_pad_1().set_mask(mask);
+    }
+
+    /// Controller-2 lane. Only reached when the caller uses the
+    /// explicit 2P step entry point (`Pool::step_all_2p`); the
+    /// single-player `step_all` never calls this, so pad 2 stays at
+    /// its boot state (all released) and $4017 reads are unchanged.
+    fn apply_buttons_p2(&mut self, mask: u8) {
+        self.nes.game_pad_2().set_mask(mask);
     }
 }
 
@@ -855,35 +850,7 @@ impl Pool {
         py: Python<'py>,
         actions: Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyList>> {
-        // Zero-copy fast path: numpy uint8 array. Borrows the underlying
-        // buffer for the duration of this call — no Vec alloc, no
-        // per-element PyLong unbox. `to_vec()` copies into a local
-        // owned buffer so we can drop the readonly guard before the
-        // `py.allow_threads` block (numpy guards touch the GIL on drop).
-        // The copy is still cheap — 16 bytes — and keeps the rayon
-        // closure from having to hold onto the numpy guard.
-        let actions_vec: Vec<u8> = if let Ok(arr) =
-            actions.extract::<numpy::PyReadonlyArray1<'py, u8>>()
-        {
-            arr.as_slice()
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "actions numpy array not contiguous: {e}"
-                    ))
-                })?
-                .to_vec()
-        } else {
-            // Fallback: list / sequence of ints. Keeps legacy callers
-            // (tests, bench scripts passing `[0]*16`) working.
-            actions.extract::<Vec<u8>>()?
-        };
-        if actions_vec.len() != self.num_workers {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "actions length {} != num_workers {}",
-                actions_vec.len(),
-                self.num_workers
-            )));
-        }
+        let actions_vec = self.extract_action_masks(&actions, "actions")?;
         // The heavy lifting (rayon dispatch + pool pacing) lives in
         // `step_all_native` so cargo tests can drive it without a
         // Python interpreter. GIL released for the whole native step —
@@ -891,6 +858,65 @@ impl Pool {
         // aren't starved while a spectator pool paces at realtime.
         let collected = py.allow_threads(|| self.step_all_native(&actions_vec));
         self.build_result_list(py, collected)
+    }
+
+    /// Two-player step: `actions` drives controller 1, `actions_p2`
+    /// drives controller 2. Identical return shape to `step_all` —
+    /// `num_workers` tuples of `(frame, preprocessed, ram, done)`.
+    ///
+    /// Why a separate entry point rather than a `set_p2_masks(...)`
+    /// pre-step call or an extra optional argument on `step_all`:
+    ///
+    /// * `step_all` is the training hot path (thousands of calls/s).
+    ///   Its signature, its numpy fast path and its return shape stay
+    ///   byte-for-byte untouched, so no existing caller — trainer,
+    ///   solver, GUI, bench — changes or pays anything.
+    /// * A sticky `set_p2_masks` would be pool-lifetime state that
+    ///   silently rides along on every later `step_all`, which is the
+    ///   opposite of default-inert and a nasty source of "why is
+    ///   player 2 holding Start" bugs across episode boundaries.
+    ///   Here the P2 masks are arguments: they apply to exactly the
+    ///   step you passed them to.
+    ///
+    /// Both arguments accept the same types as `step_all` (numpy
+    /// uint8 1-D array preferred, list/sequence fallback) and must
+    /// both be `num_workers` long. Passing all-zero `actions_p2` is
+    /// exactly equivalent to `step_all(actions)` — pad 2 boots
+    /// released and an all-zero mask re-releases it.
+    ///
+    /// Workers that are dead or flagged done short-circuit before any
+    /// input is applied, so they ignore BOTH masks — same rule pad 1
+    /// has always followed.
+    fn step_all_2p<'py>(
+        &self,
+        py: Python<'py>,
+        actions: Bound<'py, PyAny>,
+        actions_p2: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let actions_vec = self.extract_action_masks(&actions, "actions")?;
+        let actions_p2_vec = self.extract_action_masks(&actions_p2, "actions_p2")?;
+        let collected =
+            py.allow_threads(|| self.step_all_native_2p(&actions_vec, Some(&actions_p2_vec)));
+        self.build_result_list(py, collected)
+    }
+
+    /// APU channel-activity vector for every worker: one byte per
+    /// worker, in worker-id order. Each byte is the low 5 bits of
+    /// that worker's $4015 — bit 0 pulse 1, bit 1 pulse 2, bit 2
+    /// triangle, bit 3 noise, bit 4 DMC — set while the channel's
+    /// length counter (DMC: bytes remaining) is non-zero.
+    ///
+    /// An explicit accessor rather than a new field on the `step_all`
+    /// tuple: the step return shape is consumed positionally by the
+    /// trainer, the GUI adapter and the solver, and widening it would
+    /// break all three for a modality only some runs want. Callers
+    /// that want the audio modality call this right after `step_all`
+    /// (it reads current state — no stepping, no side effects, and
+    /// unlike a real $4015 bus read it does NOT clear pending frame
+    /// IRQs). Reinterpret in Python via
+    /// `np.frombuffer(pool.apu_activity_all(), dtype=np.uint8)`.
+    fn apu_activity_all<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new_bound(py, &self.apu_activity_all_native())
     }
 
     /// Dump a worker's current 32-byte PPU palette RAM for diagnostic
@@ -1486,13 +1512,89 @@ impl Pool {
 }
 
 impl Pool {
+    /// Decode one Python action argument into `num_workers` button
+    /// masks. `what` names the argument in error messages so a 2P
+    /// caller can tell which of the two lanes was malformed.
+    ///
+    /// Zero-copy fast path: numpy uint8 array. Borrows the underlying
+    /// buffer for the duration of this call — no Vec alloc, no
+    /// per-element PyLong unbox. `to_vec()` copies into a local owned
+    /// buffer so the caller can drop the readonly guard before its
+    /// `py.allow_threads` block (numpy guards touch the GIL on drop).
+    /// The copy is still cheap — 16 bytes — and keeps the rayon
+    /// closure from having to hold onto the numpy guard.
+    fn extract_action_masks(&self, actions: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<u8>> {
+        let actions_vec: Vec<u8> =
+            if let Ok(arr) = actions.extract::<numpy::PyReadonlyArray1<'_, u8>>() {
+                arr.as_slice()
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "{what} numpy array not contiguous: {e}"
+                        ))
+                    })?
+                    .to_vec()
+            } else {
+                // Fallback: list / sequence of ints. Keeps legacy callers
+                // (tests, bench scripts passing `[0]*16`) working.
+                actions.extract::<Vec<u8>>()?
+            };
+        if actions_vec.len() != self.num_workers {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "{what} length {} != num_workers {}",
+                actions_vec.len(),
+                self.num_workers
+            )));
+        }
+        Ok(actions_vec)
+    }
+
+    /// One APU channel-activity byte per worker, in worker-id order.
+    /// Python-free core of `apu_activity_all`. Dead workers report
+    /// 0x00 (nothing is sounding in a worker that isn't running).
+    fn apu_activity_all_native(&self) -> Vec<u8> {
+        (0..self.num_workers)
+            .map(|idx| {
+                // SAFETY: called sequentially from Python (or a test) —
+                // never overlaps an in-flight step_all/reset_all rayon
+                // dispatch, per the `Pool` SAFETY note. Shared read.
+                let w = unsafe { worker_mut(&self.workers[idx]) };
+                if w.dead {
+                    0
+                } else {
+                    w.nes.apu.channel_activity()
+                }
+            })
+            .collect()
+    }
+
     /// Rayon-parallel step across all workers + pool-level pacing.
     /// Python-free core of `step_all` — factored out so cargo tests
     /// can exercise stepping/pacing without a live interpreter. Must
     /// be called with the GIL released (`py.allow_threads`) from the
     /// Python entry point; the pacing sleep happens here.
+    ///
+    /// Controller 1 only — the historical single-player path. Exactly
+    /// `step_all_native_2p(actions, None)`; kept as its own name so
+    /// every existing caller and test reads unchanged.
     fn step_all_native(&self, actions_vec: &[u8]) -> Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> {
+        self.step_all_native_2p(actions_vec, None)
+    }
+
+    /// `step_all_native` with an optional controller-2 lane.
+    ///
+    /// `actions_p2 = None` is the single-player path: pad 2 is never
+    /// written, so its state stays exactly where it was (all released
+    /// at boot) and the emulation is bit-identical to the pre-2P
+    /// code. `Some(masks)` applies `masks[idx]` to worker `idx`'s pad
+    /// 2 immediately before that worker steps, alongside the pad-1
+    /// mask — same frame, same ordering guarantees.
+    fn step_all_native_2p(
+        &self,
+        actions_vec: &[u8],
+        actions_p2: Option<&[u8]>,
+    ) -> Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> {
         debug_assert_eq!(actions_vec.len(), self.num_workers);
+        debug_assert!(actions_p2.map_or(true, |p2| p2.len() == self.num_workers));
         let frame_skip = self.frame_skip;
         let pp_dim = crate::preprocess::PP_SIZE;
         let headless = self.headless.load(std::sync::atomic::Ordering::Acquire);
@@ -1578,11 +1680,23 @@ impl Pool {
                     );
                 }
                 let action = *a;
+                // Controller-2 lane. `None` on the single-player
+                // path, so pad 2 is never written and the emulation
+                // below is bit-identical to the pre-2P code. Applied
+                // here rather than inside `Worker::step` so that
+                // method's signature (and its other callers) stay
+                // untouched; both pads are set before any cycle of
+                // this step runs, which is all the ordering that
+                // matters.
+                let action_p2 = actions_p2.map(|p2| p2[idx]);
                 // The worker body is identical in both branches;
                 // only the `catch_unwind` wrap differs. Both
                 // branches produce the same `res` type so the
                 // downstream match arms stay unchanged.
                 let mut work = || {
+                    if let Some(mask) = action_p2 {
+                        w.apply_buttons_p2(mask);
+                    }
                     w.step(action, frame_skip, spectator_subframe_skip);
                     // Tile-encoder games read `ram_snapshot`, not
                     // `preprocessed`, so in skip mode the buffer is a
@@ -2664,5 +2778,327 @@ mod frame_anchor_tests {
             let w = unsafe { worker_mut(cell) };
             assert!(!w.hw_frame_anchor, "setter could not turn the flag back off");
         }
+    }
+}
+
+/// Controller-2 lane + APU channel-activity accessor.
+///
+/// Both are additive and default-inert: `step_all` is untouched and
+/// never writes pad 2, and `apu_activity_all` is a read-only
+/// accessor that does not change the step return shape. The
+/// load-bearing tests here are the two identity checks —
+/// `step_all_native` and `step_all_native_2p(.., None)` /
+/// `Some(zeros)` must produce byte-identical results — plus the
+/// mutation checks that prove the lane is real and not silently
+/// dropping the P2 masks.
+#[cfg(test)]
+mod two_player_and_apu_tests {
+    use super::bugfix_tests::build_nrom;
+    use super::*;
+
+    /// Latch both controllers, shift one bit out of each, and stash
+    /// them in RAM: $0201 = pad 1's A button, $0200 = pad 2's A
+    /// button. Loops forever, so the bytes always reflect the pad
+    /// state as of the last poll before the frame boundary.
+    ///
+    /// ```text
+    ///   SEI                 ; IRQs off (reset already does this;
+    ///                       ;  explicit so an APU frame IRQ can
+    ///                       ;  never vector through the zero-filled
+    ///                       ;  $FFFE and derail the loop)
+    ///   LDA #$01 / STA $4016
+    ///   LDA #$00 / STA $4016   ; strobe 1->0 latches both pads
+    ///   LDA $4016 / STA $0201  ; pad 1 bit 0 = A
+    ///   LDA $4017 / STA $0200  ; pad 2 bit 0 = A
+    ///   JMP $8000
+    /// ```
+    const POLL_BOTH_PADS: &[u8] = &[
+        0x78, // SEI
+        0xA9, 0x01, // LDA #$01
+        0x8D, 0x16, 0x40, // STA $4016
+        0xA9, 0x00, // LDA #$00
+        0x8D, 0x16, 0x40, // STA $4016
+        0xAD, 0x16, 0x40, // LDA $4016
+        0x8D, 0x01, 0x02, // STA $0201
+        0xAD, 0x17, 0x40, // LDA $4017
+        0x8D, 0x00, 0x02, // STA $0200
+        0x4C, 0x00, 0x80, // JMP $8000
+    ];
+
+    /// Enable all five APU channels and keep their length counters
+    /// (and the DMC byte counter) reloaded, so $4015's low nibble
+    /// reads as active whenever we sample it.
+    const DRIVE_APU_CHANNELS: &[u8] = &[
+        0x78, // SEI
+        0xA9, 0x01, // LDA #$01
+        0x8D, 0x13, 0x40, // STA $4013  DMC sample length
+        0xA9, 0x1F, // LDA #$1F
+        0x8D, 0x15, 0x40, // STA $4015  enable pulse1/2, tri, noise, DMC
+        0xA9, 0x08, // LDA #$08
+        0x8D, 0x03, 0x40, // STA $4003  pulse 1 length load
+        0x8D, 0x07, 0x40, // STA $4007  pulse 2 length load
+        0x8D, 0x0B, 0x40, // STA $400B  triangle length load
+        0x8D, 0x0F, 0x40, // STA $400F  noise length load
+        0x4C, 0x00, 0x80, // JMP $8000
+    ];
+
+    fn pool_from_program(program: &[u8], num_workers: usize, tag: &str) -> Pool {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-scratch");
+        std::fs::create_dir_all(&dir).expect("create test-scratch dir");
+        let path = dir.join(format!("two_player_{tag}.nes"));
+        std::fs::write(&path, build_nrom(program)).expect("write synthetic NROM");
+        Pool::new(path, num_workers, 4, None).expect("Pool::new")
+    }
+
+    type Collected = Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)>;
+
+    /// RAM byte the ROM wrote for pad 2's A button on worker `idx`.
+    fn p2_bit(collected: &Collected, idx: usize) -> u8 {
+        collected[idx].2[0x0200]
+    }
+
+    /// RAM byte the ROM wrote for pad 1's A button on worker `idx`.
+    fn p1_bit(collected: &Collected, idx: usize) -> u8 {
+        collected[idx].2[0x0201]
+    }
+
+    /// THE default-inert proof. Same ROM, same pad-1 actions, run
+    /// twice: once through the historical single-player entry point
+    /// and once through the 2P entry point with an all-zero P2 lane.
+    /// Every returned byte — frame, preprocessed, RAM, done — must
+    /// match on every worker on every step. If the P2 plumbing
+    /// perturbed emulation in any way (an extra bus write, a strobe
+    /// side effect, a reordered pad apply), this diverges.
+    #[test]
+    fn zero_p2_masks_are_byte_identical_to_single_player_step() {
+        const WORKERS: usize = 3;
+        let legacy = pool_from_program(POLL_BOTH_PADS, WORKERS, "identity_legacy");
+        let two_p = pool_from_program(POLL_BOTH_PADS, WORKERS, "identity_2p");
+        let zeros = vec![0u8; WORKERS];
+
+        for step in 0..12usize {
+            // A pad-1 pattern with real structure so the comparison
+            // isn't over a constant-input trajectory.
+            let actions: Vec<u8> = (0..WORKERS)
+                .map(|w| if (step + w) % 3 == 0 { BUTTON_A } else { BUTTON_RIGHT })
+                .collect();
+
+            let a = legacy.step_all_native(&actions);
+            let b = two_p.step_all_native_2p(&actions, Some(&zeros));
+
+            assert_eq!(a.len(), b.len(), "step {step}: worker count changed");
+            for idx in 0..WORKERS {
+                assert_eq!(a[idx].0, b[idx].0, "step {step} worker {idx}: frame differs");
+                assert_eq!(a[idx].1, b[idx].1, "step {step} worker {idx}: preprocessed differs");
+                assert_eq!(a[idx].2, b[idx].2, "step {step} worker {idx}: RAM differs");
+                assert_eq!(a[idx].3, b[idx].3, "step {step} worker {idx}: done differs");
+            }
+        }
+    }
+
+    /// `step_all_native_2p(.., None)` is the exact code path
+    /// `step_all_native` delegates to — pin that it stays a pure
+    /// pass-through, so the single-player hot path can never acquire
+    /// a stray pad-2 write.
+    #[test]
+    fn none_p2_lane_matches_single_player_step() {
+        const WORKERS: usize = 2;
+        let via_wrapper = pool_from_program(POLL_BOTH_PADS, WORKERS, "none_wrapper");
+        let via_direct = pool_from_program(POLL_BOTH_PADS, WORKERS, "none_direct");
+        let actions = vec![BUTTON_A, BUTTON_START];
+
+        for step in 0..6usize {
+            let a = via_wrapper.step_all_native(&actions);
+            let b = via_direct.step_all_native_2p(&actions, None);
+            for idx in 0..WORKERS {
+                assert_eq!(a[idx].2, b[idx].2, "step {step} worker {idx}: RAM differs");
+            }
+        }
+    }
+
+    /// Mutation check for the identity tests above: the P2 lane must
+    /// actually reach $4017. Without this, an implementation that
+    /// silently discarded the P2 masks would pass every identity
+    /// assertion.
+    #[test]
+    fn p2_mask_reaches_controller_two() {
+        const WORKERS: usize = 2;
+        let pool = pool_from_program(POLL_BOTH_PADS, WORKERS, "p2_reaches");
+        let no_input = vec![0u8; WORKERS];
+        let p2_a = vec![BUTTON_A; WORKERS];
+
+        // Warm up so the ROM has polled at least once.
+        let baseline = pool.step_all_native(&no_input);
+        for idx in 0..WORKERS {
+            assert_eq!(p2_bit(&baseline, idx), 0, "pad 2 must start released");
+        }
+
+        let held = pool.step_all_native_2p(&no_input, Some(&p2_a));
+        for idx in 0..WORKERS {
+            assert_eq!(
+                p2_bit(&held, idx),
+                1,
+                "worker {idx}: pad 2 A press never reached $4017",
+            );
+            assert_eq!(
+                p1_bit(&held, idx),
+                0,
+                "worker {idx}: pad 2 input leaked onto controller 1",
+            );
+        }
+    }
+
+    /// The pads are independent in both directions: driving pad 1
+    /// must not light up $4017.
+    #[test]
+    fn p1_mask_does_not_reach_controller_two() {
+        const WORKERS: usize = 2;
+        let pool = pool_from_program(POLL_BOTH_PADS, WORKERS, "p1_isolated");
+        let p1_a = vec![BUTTON_A; WORKERS];
+        let zeros = vec![0u8; WORKERS];
+
+        let out = pool.step_all_native_2p(&p1_a, Some(&zeros));
+        for idx in 0..WORKERS {
+            assert_eq!(p1_bit(&out, idx), 1, "worker {idx}: pad 1 A press lost");
+            assert_eq!(p2_bit(&out, idx), 0, "worker {idx}: pad 1 input leaked onto $4017");
+        }
+    }
+
+    /// Per-worker routing: worker `i` gets `masks[i]`, not a
+    /// broadcast of element 0. A transposed/broadcast bug is
+    /// invisible when every worker gets the same mask.
+    #[test]
+    fn p2_masks_are_per_worker() {
+        const WORKERS: usize = 4;
+        let pool = pool_from_program(POLL_BOTH_PADS, WORKERS, "p2_per_worker");
+        let zeros = vec![0u8; WORKERS];
+        // Only the odd workers hold A on pad 2.
+        let p2: Vec<u8> = (0..WORKERS)
+            .map(|i| if i % 2 == 1 { BUTTON_A } else { 0 })
+            .collect();
+
+        let out = pool.step_all_native_2p(&zeros, Some(&p2));
+        for idx in 0..WORKERS {
+            let expected = u8::from(idx % 2 == 1);
+            assert_eq!(
+                p2_bit(&out, idx),
+                expected,
+                "worker {idx}: P2 mask routed to the wrong worker",
+            );
+        }
+    }
+
+    /// A P2 mask applies to the step it was passed to and nothing
+    /// else. Releasing it on the next step must actually release
+    /// (the decode clears as well as sets), and a following
+    /// single-player `step_all_native` must not resurrect it.
+    #[test]
+    fn p2_mask_does_not_persist_after_release() {
+        const WORKERS: usize = 2;
+        let pool = pool_from_program(POLL_BOTH_PADS, WORKERS, "p2_release");
+        let zeros = vec![0u8; WORKERS];
+        let p2_a = vec![BUTTON_A; WORKERS];
+
+        let held = pool.step_all_native_2p(&zeros, Some(&p2_a));
+        assert_eq!(p2_bit(&held, 0), 1, "precondition: pad 2 held");
+
+        let released = pool.step_all_native_2p(&zeros, Some(&zeros));
+        for idx in 0..WORKERS {
+            assert_eq!(p2_bit(&released, idx), 0, "worker {idx}: pad 2 stuck held");
+        }
+
+        // And the single-player path leaves it released too.
+        let single = pool.step_all_native(&zeros);
+        for idx in 0..WORKERS {
+            assert_eq!(p2_bit(&single, idx), 0, "worker {idx}: pad 2 revived by step_all");
+        }
+    }
+
+    /// A quiet ROM reports no channel activity on any worker, and the
+    /// accessor returns exactly one byte per worker.
+    #[test]
+    fn apu_activity_is_zero_for_a_silent_rom() {
+        const WORKERS: usize = 3;
+        let pool = pool_from_program(&[0xEA], WORKERS, "apu_silent");
+        let zeros = vec![0u8; WORKERS];
+        pool.step_all_native(&zeros);
+
+        let activity = pool.apu_activity_all_native();
+        assert_eq!(activity.len(), WORKERS, "one byte per worker");
+        assert_eq!(activity, vec![0u8; WORKERS], "silent ROM reported activity");
+    }
+
+    /// Mutation check for the above: a ROM that actually drives the
+    /// APU must light up the length-counter channels on every worker.
+    /// DMC (bit 4) is deliberately not asserted — its byte counter
+    /// drains and restarts continuously, so its value at an arbitrary
+    /// frame boundary is not a stable expectation.
+    #[test]
+    fn apu_activity_reports_driven_channels() {
+        const WORKERS: usize = 3;
+        let pool = pool_from_program(DRIVE_APU_CHANNELS, WORKERS, "apu_driven");
+        let zeros = vec![0u8; WORKERS];
+        pool.step_all_native(&zeros);
+
+        let activity = pool.apu_activity_all_native();
+        for (idx, byte) in activity.iter().enumerate() {
+            assert_eq!(
+                byte & 0x0F,
+                0x0F,
+                "worker {idx}: expected pulse1/pulse2/triangle/noise active, got {byte:#04x}",
+            );
+            assert_eq!(
+                byte & 0xE0,
+                0x00,
+                "worker {idx}: bits above the 5-bit channel vector must be clear ({byte:#04x})",
+            );
+        }
+    }
+
+    /// Sampling channel activity must not disturb emulation: it is a
+    /// peek, not a $4015 bus read (which would clear the pending
+    /// frame IRQ). Two identical pools, one polled every step, must
+    /// stay bit-identical.
+    #[test]
+    fn sampling_apu_activity_does_not_perturb_emulation() {
+        const WORKERS: usize = 2;
+        let polled = pool_from_program(DRIVE_APU_CHANNELS, WORKERS, "apu_polled");
+        let quiet = pool_from_program(DRIVE_APU_CHANNELS, WORKERS, "apu_unpolled");
+        let zeros = vec![0u8; WORKERS];
+
+        for step in 0..10usize {
+            let a = polled.step_all_native(&zeros);
+            let _ = polled.apu_activity_all_native();
+            let b = quiet.step_all_native(&zeros);
+            for idx in 0..WORKERS {
+                assert_eq!(
+                    a[idx].2, b[idx].2,
+                    "step {step} worker {idx}: polling apu_activity changed RAM",
+                );
+            }
+        }
+    }
+
+    /// A dead worker reports 0x00 rather than reading through to a
+    /// half-initialized NES.
+    #[test]
+    fn dead_worker_reports_no_activity() {
+        const WORKERS: usize = 2;
+        let pool = pool_from_program(DRIVE_APU_CHANNELS, WORKERS, "apu_dead");
+        let zeros = vec![0u8; WORKERS];
+        pool.step_all_native(&zeros);
+        assert_ne!(
+            pool.apu_activity_all_native()[0],
+            0,
+            "precondition: worker 0 is sounding before we kill it",
+        );
+
+        // SAFETY: sequential test access, no in-flight rayon dispatch.
+        unsafe { worker_mut(&pool.workers[0]) }.dead = true;
+        let activity = pool.apu_activity_all_native();
+        assert_eq!(activity[0], 0, "dead worker must report no activity");
+        assert_ne!(activity[1], 0, "live worker must still report activity");
     }
 }

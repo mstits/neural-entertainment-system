@@ -18,15 +18,26 @@ description: >
   Training profile for Metroid (NES, 1986). Non-linear Metroidvania — a
   hard-exploration problem. The ONLY reward channels wired to reachable
   RAM today are exploration (new map cells) + health/death/time. Item,
-  missile, energy-tank, and boss channels are DISARMED (weight 0.0)
-  because they read cartridge PRG-RAM ($6878/$6879) that nes_core does
-  not expose — see the note on reward_weights below.
+  missile, energy-tank, and boss channels are DISARMED (weight 0.0) on
+  two independent grounds: they read cartridge PRG-RAM that nes_core
+  does not expose, AND the only addresses ever written down for them
+  came from an external RAM map rather than our own measurement. Those
+  addresses are quarantined at the bottom of the RAM section and are
+  not usable — see the note on reward_weights and the
+  `quarantined_external_knowledge` block.
 
 # =====================================================================
-# RAM mapping — VERIFIED against datacrystal + empirical differential
-# scan. nes_core.get_ram()/the reward snapshot only expose the 2 KB
-# system RAM ($0000-$07FF, mirrored); addresses in cartridge PRG-RAM
-# ($6000-$7FFF) are UNREACHABLE (get_ram masks to $07FF).
+# RAM mapping — every key below stands on its OWN empirical differential
+# receipt: the bracketed [VERIFIED: ...] tag records the input we drove
+# and the movement we watched on THIS ROM. The external RAM-map material
+# that used to share this block (the cartridge item/missile bytes and
+# their claimed bitfield semantics) has been moved to
+# `quarantined_external_knowledge` below and may not be read back in
+# without re-derivation — that section carries the rule.
+#
+# nes_core.get_ram()/the reward snapshot only expose the 2 KB system RAM
+# ($0000-$07FF, mirrored); addresses in cartridge PRG-RAM ($6000-$7FFF)
+# are UNREACHABLE (get_ram masks to $07FF).
 #
 # NOTE: MetroidReward in rewards.rs uses HARDCODED address constants;
 # this ram_mapping block is documentation only (the Rust reward does
@@ -39,17 +50,74 @@ ram_mapping:
   samus_y_screen:  0x0052   # Y on screen                 [VERIFIED]
   samus_y_map:     0x004F   # Y on map                    [VERIFIED]
   samus_health:    0x0106   # BCD low: tenths | ones      [VERIFIED: reads 30 at start, 30->20 on damage]
-  samus_health_hi: 0x0107   # BCD hi: tens | filled-tanks nibble
-  area_number:     0x0074   # region index (start value 0 in Brinstar) [reward RAM_AREA]
-  # --- UNREACHABLE (cartridge PRG-RAM $6000-$7FFF; get_ram cannot read) ---
-  # missiles:      0x6879   # live missile count      — NOT reachable
-  # missile_cap:   0x687A   # missile tanks           — NOT reachable
-  # energy_tanks:  0x6877   # energy-tank count       — NOT reachable
-  # item_flags:    0x6878   # equipment bitfield: bit4=Morph Ball, bit0=Bombs,
-  #                         #   bit1=HighJump, bit2=LongBeam, bit3=ScrewAttack,
-  #                         #   bit5=Varia, bit6=Wave, bit7=Ice — NOT reachable
-  # NOTE: partial energy-tank progress IS reachable via the upper nibble
-  # of 0x0107 (filled-tank count), the one item-ish signal in system RAM.
+  samus_health_hi: 0x0107   # energy TENS digit           [VERIFIED: start 3 = 30 energy; decrements 3->0 under enemy damage]
+  #                         # (the "upper nibble = filled energy-tank count"
+  #                         #  reading of this same byte is EXTERNAL and was
+  #                         #  never observed by us — quarantined below. Only
+  #                         #  the verified tens-digit behaviour is relied on.)
+  area_number:     0x0074   # region index                [MEASURED: constant 0 across every scripted probe and the 4-min solve; the "region index" LABEL is not yet re-derived]
+  # --- UNREACHABLE cartridge PRG-RAM ($6000-$7FFF; get_ram cannot read) ---
+  # The item / missile / energy-tank addresses and their claimed equipment
+  # bitfield that used to be listed here as comments were external RAM-map
+  # material, not our measurement. They now live in
+  # `quarantined_external_knowledge` below, barred from every consuming
+  # path until re-derived by our own differential protocol.
+
+# =====================================================================
+# QUARANTINE — external RAM-map knowledge. This is NOT part of the
+# working profile: no loader, trainer, reward, solver or discovery tool
+# reads this key, and nothing in it may be promoted into one that does.
+# It exists so the contamination is recorded in the open instead of
+# sitting unlabelled inside ram_mapping, where it looked like our own
+# measurement.
+#
+# Why it is here: the purity line bans knowledge we did not derive
+# ourselves — external RAM maps, disassembly, route lore — from any
+# path that solves or scores the game. These bytes and semantics came
+# from a third-party community RAM map and were never re-derived on
+# this ROM, so they are dead weight until they are.
+# =====================================================================
+quarantined_external_knowledge:
+  provenance: >
+    Third-party community RAM map (datacrystal-class), copied into this
+    profile before the purity line was enforced here. Never re-derived
+    on this ROM by our own differential protocol.
+  status: >
+    UNVERIFIED_EXTERNAL — barred from solve:, reward_weights,
+    ram_mapping, and every other consuming path.
+  rediscovery_rule: >
+    Any byte named in this section is DEAD until it is re-derived from
+    scratch by our own differential protocol on this ROM: drive the
+    input from the verified start state, watch the byte move, and record
+    the wrap / reversibility / saturation-and-persistence evidence in a
+    receipt. A byte that passes enters the profile as a NEW entry under
+    ram_mapping or solve: carrying its own [VERIFIED: ...] tag and its
+    receipt path. The entry here is never promoted in place, never
+    edited into a working block, and never cited as the reason a byte
+    was chosen. Copying an address out of this section into a solve:
+    block is exactly the contamination the quarantine exists to stop.
+  # Values below are deliberately STRINGS, not ints. Any tool that tries
+  # to fold this section into a name->address map (the way
+  # scripts/observatory.py does `int(a)` over ram_mapping) fails loudly
+  # instead of silently consuming banned knowledge.
+  q_unverified_prg_ram_bytes:
+    q_missiles:     "0x6879 UNVERIFIED-EXTERNAL — claimed live missile count"
+    q_missile_cap:  "0x687A UNVERIFIED-EXTERNAL — claimed missile-tank count"
+    q_energy_tanks: "0x6877 UNVERIFIED-EXTERNAL — claimed energy-tank count"
+    q_item_flags:   "0x6878 UNVERIFIED-EXTERNAL — claimed equipment bitfield"
+  q_unverified_semantics:
+    q_item_flags_bits: >
+      Claimed bit assignment of the 0x6878 equipment bitfield (morph
+      ball / bombs / high jump / long beam / screw attack / varia /
+      wave / ice). Never observed by us, and the byte is unreachable
+      through get_ram anyway.
+    q_health_hi_tank_nibble: >
+      Claimed "upper nibble of 0x0107 = filled energy-tank count".
+      0x0107 IS reachable and its TENS-DIGIT behaviour is independently
+      verified (start 3 = 30 energy, decrements under damage) — that
+      verified part alone is what solve.lives rests on. The tank-nibble
+      reading is external and unverified; no reward or solver rule may
+      depend on it.
 
 # =====================================================================
 # Reward weights.
@@ -61,9 +129,12 @@ ram_mapping:
 # non-zero weights, fired on the WRONG byte (ram[0x006A]) — an empirical
 # run awarded +270 phantom "new_item" reward over one episode while
 # Samus collected ZERO items, drowning the real +16 exploration signal
-# 17:1. They MUST stay 0.0 until nes_core exposes PRG-RAM AND
-# MetroidReward is repointed to $6878/$6879. Restore the values in the
-# trailing comments once that lands.
+# 17:1. They MUST stay 0.0 until BOTH of the following land: nes_core
+# exposes cartridge PRG-RAM, AND the item/missile bytes have been
+# re-derived by our own differential protocol. The external addresses
+# are quarantined above and may NOT be pasted in as the repoint target
+# — MetroidReward gets repointed at re-derived, receipted bytes or not
+# at all. Restore the values in the trailing comments only after that.
 # =====================================================================
 reward_weights:
   exploration_bonus: 8.0    # new (area, map-column) cell — the spine of the reward
@@ -89,7 +160,7 @@ action_space:
   - ["left", "A"]      # run-jump left
   - ["up"]             # aim up / take door up
   - ["up", "B"]        # shoot up
-  - ["down"]           # morph ball (once Maru Mari obtained)
+  - ["down"]           # down (crouch / morph, wherever the game allows it)
 
 curriculum:
   # Metroid has no SMB-style area-byte save-state curriculum; the
@@ -147,10 +218,17 @@ reinforce:
 # search out-travels random by pushing the position frontier past the
 # start room's exit — the maneuvers dumb holds never complete.
 #
-# All addresses were discovered by differential analysis of our OWN
-# scripted rollouts from the verified start state, cross-checked against
-# the profile's own verified ram_mapping (no external maps / disassembly).
-# Receipt: runs/metroid/metroid_receipt.json.
+# PURITY: every address in this solve: block was discovered by
+# differential analysis of our OWN scripted rollouts from the verified
+# start state, cross-checked only against the empirically-receipted
+# ([VERIFIED: ...]) subset of ram_mapping above — never against the
+# quarantined external material. Nothing under
+# `quarantined_external_knowledge` may be consumed here.
+# Receipt: runs/metroid/metroid_receipt.json. That receipt predates this
+# quarantine and still carries one external-provenance phrase of its
+# own; it is left byte-intact as a historical record and is logged, not
+# cited as authority, in
+# docs/receipts/games/metroid_purity_quarantine_2026-08-10.md.
 solve:
   rom: "roms/Metroid (USA).nes"
   # progress = fine on-screen X (0x0051, 0-255) | coarse scroll-column
@@ -158,20 +236,38 @@ solve:
   # under hold-right (768->1500). x_screen ALONE camera-clamps at 220
   # (rejected as sole progress by the saturation test); x_map is the
   # non-saturating scroll-column counter (steps 3->4->5 per screen of
-  # rightward travel) and leads the pair as hi — the lore-prescribed
-  # camera-byte + screen-counter pairing. The 1500 ceiling under all
-  # scripted holds is the start ROOM boundary (dumb holds cannot reach
-  # the exit), not a camera clamp on the combined signal — breaking past
-  # it is exactly what the search does.
+  # rightward travel) and leads the pair as hi. That pairing rests on
+  # our own two-gate measurement above — the fine byte clamps, the
+  # coarse byte keeps stepping — and on nothing external. (The wording
+  # that stood here appealed to an outside prescription for pairing a
+  # camera byte with a screen counter; the purity quarantine struck it.
+  # The measurement it decorated is unchanged and stands on its own.)
+  # The 1500 ceiling under all scripted holds is the start ROOM boundary
+  # (dumb holds cannot reach the exit), not a camera clamp on the
+  # combined signal — breaking past it is exactly what the search does.
+  # Rejected alternative (own saturation/persistence probe, receipt step2):
+  # the higher-range pair 0x0008|0x0065 reaches 6408, but 0x0065 is a
+  # NON-DURABLE scroll/elevator accumulator — it ramps 0->25 by +2/frame
+  # during a scroll animation then COLLAPSES back to 0 (7 downward resets in
+  # a 1500f drive), so its "keeps climbing" is transient, not world position.
+  # It fails the persistence half of the saturation test; the verified
+  # player-X pair above is the honest durable spine.
   progress: {lo: 0x0051, hi: 0x0050}
   # y = on-screen Y (0x0052): spans 5 distinct 32-px bands (0,3,4,5,6)
   # across varied movement — a usable fine vertical coverage axis.
   # y_map (0x004F) stays constant (14) in the reachable region — too
   # static/coarse for a cell axis, so the fine screen-Y is used.
   y: 0x0052
-  # area = region index (0x0074, verified ram_mapping RAM_AREA). Starts 0
-  # (Brinstar) and leads the cell key / frontier — when the search reaches
-  # a new region it steps and the deep-frontier bias follows.
+  # area = region index (0x0074, ram_mapping RAM_AREA). Starts 0 and
+  # leads the cell key / frontier — when the search reaches a new region
+  # it steps and the deep-frontier bias follows.
+  # Provenance caveat (not a quarantine, an open re-derivation): 0x0074
+  # held constant 0 through every scripted probe AND the whole 4-min
+  # solve, so what we have measured is its INERTNESS, not that it indexes
+  # a region. Harmless as the leading cell-key term — a constant term
+  # partitions nothing and costs nothing — but the label must be
+  # re-derived (reach a second region, watch it step) before any claim
+  # rests on it.
   area: 0x0074
   # No reachable per-level clear byte (item/boss state is unreachable
   # PRG-RAM): coverage baseline, level_key empty.

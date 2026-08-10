@@ -14,7 +14,10 @@ use pyo3::wrap_pyfunction;
 
 use crate::apu::SAMPLE_RATE as APU_NATIVE_RATE;
 use crate::cartridge::Cartridge;
-use crate::input::Button;
+use crate::input::{
+    BUTTON_A, BUTTON_B, BUTTON_DOWN, BUTTON_LEFT, BUTTON_RIGHT, BUTTON_SELECT, BUTTON_START,
+    BUTTON_UP,
+};
 use crate::nes::Nes;
 use crate::ppu::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use crate::sink::{AudioSink, VideoSink, Xrgb8888VideoSink};
@@ -59,19 +62,10 @@ fn apply_state_guarded(nes: &mut Nes, state: &crate::nes::State) -> PyResult<()>
 const STATE_MAGIC: &[u8; 5] = b"NCST\x01";
 
 // Match nes-py / nesrs button bitmask layout. Bits as defined in
-// src/emulation/nes_environment.py.
-// Button bitmask layout — nes-py convention. See `pool.rs` for the
-// history of why we standardized on this. All Python callers
-// (`src/emulation/frame_utils.py`, trainer action table, legacy
-// recordings) already use this layout.
-const BUTTON_RIGHT: u8 = 1 << 7;
-const BUTTON_LEFT: u8 = 1 << 6;
-const BUTTON_DOWN: u8 = 1 << 5;
-const BUTTON_UP: u8 = 1 << 4;
-const BUTTON_START: u8 = 1 << 3;
-const BUTTON_SELECT: u8 = 1 << 2;
-const BUTTON_B: u8 = 1 << 1;
-const BUTTON_A: u8 = 1 << 0;
+// src/emulation/nes_environment.py. The constants themselves now
+// live in `input.rs` (single definition shared by this module, the
+// pool, and the controller-2 lane) and are re-exported to Python
+// unchanged at the bottom of this file.
 
 /// Audio sink that accumulates f32 samples into an int16 stereo
 /// buffer, matching the existing nesrs `get_audio()` shape.
@@ -834,6 +828,34 @@ impl NESEnvironment {
         self.apply_buttons(mask);
     }
 
+    /// Set the controller-2 button mask (same nes-py bit layout as
+    /// `set_buttons`). `step()` drives controller 1 only, so pad 2 is
+    /// STICKY: whatever was last written here is held on every
+    /// subsequent frame until this is called again. That matches real
+    /// hardware — the second controller keeps its physical button
+    /// state between polls — and is what a 2P lead-in sequence wants
+    /// (hold Start on pad 2, then drive pad 1 normally).
+    ///
+    /// Default-inert: pad 2 boots fully released and stays released
+    /// unless this is called, so every existing single-player caller
+    /// sees byte-identical emulation.
+    fn set_buttons_p2(&mut self, mask: u8) {
+        self.apply_buttons_p2(mask);
+    }
+
+    /// APU channel-activity vector — the low 5 bits of $4015:
+    /// bit 0 pulse 1, bit 1 pulse 2, bit 2 triangle, bit 3 noise,
+    /// bit 4 DMC. A bit is set while that channel's length counter
+    /// (DMC: bytes-remaining) is non-zero.
+    ///
+    /// Read-only and side-effect-free: this does NOT go through the
+    /// bus, so unlike a real $4015 read it never clears the game's
+    /// pending frame IRQ. Safe to sample every step as an observation
+    /// modality alongside pixels / RAM.
+    fn apu_channel_activity(&self) -> u8 {
+        self.nes.apu.channel_activity()
+    }
+
     fn close(&mut self) {
         // No-op; Drop frees resources.
     }
@@ -841,15 +863,11 @@ impl NESEnvironment {
 
 impl NESEnvironment {
     fn apply_buttons(&mut self, mask: u8) {
-        let pad = self.nes.game_pad_1();
-        pad.set_button_pressed(Button::Right, mask & BUTTON_RIGHT != 0);
-        pad.set_button_pressed(Button::Left, mask & BUTTON_LEFT != 0);
-        pad.set_button_pressed(Button::Down, mask & BUTTON_DOWN != 0);
-        pad.set_button_pressed(Button::Up, mask & BUTTON_UP != 0);
-        pad.set_button_pressed(Button::Start, mask & BUTTON_START != 0);
-        pad.set_button_pressed(Button::Select, mask & BUTTON_SELECT != 0);
-        pad.set_button_pressed(Button::B, mask & BUTTON_B != 0);
-        pad.set_button_pressed(Button::A, mask & BUTTON_A != 0);
+        self.nes.game_pad_1().set_mask(mask);
+    }
+
+    fn apply_buttons_p2(&mut self, mask: u8) {
+        self.nes.game_pad_2().set_mask(mask);
     }
 
     fn advance_one_frame(&mut self) {

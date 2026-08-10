@@ -11,6 +11,18 @@ the whole progression is receipted and resumable.
 This demonstrates the search agent clearing level after level from power-on-style
 clean entrances (no mid-level seeds), machine-busy and hands-off.
 
+Chain-scope sequence invariant: the driver keeps its own history of every
+SETTLED level key it has banked (visited_keys.json, next to chain.jsonl) and
+refuses a stage that settles on a key this campaign already visited — a
+re-entered room is not a new level, and banking one fabricates progress the
+campaign never made. Stage k+1 is only ever attempted from a banked stage k.
+--allow-revisit turns the refusal off for campaigns that legitimately backtrack.
+
+The history is POSITIONED at --start-state's own settled key: a re-run keeps
+the campaign's walk up to the entrance it resumes from and nothing after it,
+so a crash-restart or a deliberate re-do of an earlier stage re-walks rather
+than refusing the rooms it was launched to re-solve.
+
 Usage:
   python scripts/go_explore_chain.py --start-state <entrance.state> \
       --start-label 2-2 --profile configs/mario_1_2_solo.yaml \
@@ -33,18 +45,172 @@ sys.path.insert(0, str(REPO))
 
 from nes_core import Pool  # noqa: E402
 from scripts.go_explore_solve import (  # noqa: E402
-    apply_hw_flags, hw_provenance, make_game, resolve_hw_flags,
+    apply_hw_flags, hw_provenance, make_game, resolve_hw_flags, sidecar_path,
     write_state_sidecar,
 )
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
 
 SOLVE = str(REPO / "scripts" / "go_explore_solve.py")
 
+# Campaign-scope visited-key history, banked next to chain.jsonl.
+VISITED_FILE = "visited_keys.json"
+
+
+def _norm_key(key) -> tuple:
+    """Level keys arrive as tuples from the game adapters and as lists
+    from a JSON round-trip; membership has to see one shape."""
+    return tuple(int(x) for x in key)
+
+
+def _history_from_chain_log(chain_log: Path) -> list:
+    """The campaign's walk, oldest first, rebuilt from an existing
+    chain.jsonl (each banked stage records its `next_wd`).
+
+    A campaign dir written before the history file existed has no
+    visited_keys.json, so the chain log is the fallback source of truth.
+    This returns the WHOLE recorded walk; `_position_history` decides how
+    much of it the current run is actually standing behind."""
+    recs: list = []
+    if not chain_log.is_file():
+        return recs
+    for line in chain_log.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue          # a torn last line from a killed run
+        if r.get("next_wd"):
+            recs.append({"key": list(_norm_key(r["next_wd"])),
+                         "label": r.get("next_label"),
+                         "after": r.get("level")})
+    return recs
+
+
+def _clean_history(recs) -> list:
+    """Normalise loaded records and drop any that carry no usable key.
+    The driver indexes every record's `key`, so one hand-edited or
+    half-written entry must not crash an unattended campaign."""
+    clean = []
+    for r in recs if isinstance(recs, list) else []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            key = list(_norm_key(r["key"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        clean.append({"key": key, "label": r.get("label"),
+                      "after": r.get("after")})
+    return clean
+
+
+def _position_history(recs: list, root_key) -> list:
+    """The prefix of a recorded walk that the run STARTING FROM
+    `root_key` is actually standing behind.
+
+    A recorded walk is an ordered sequence, and a re-run does not
+    necessarily resume at its end. Handing back the whole thing
+    regardless is what turns a crash-restart into a false campaign end:
+    re-run the identical command from the campaign's original root, the
+    stage-0 solve succeeds, the extraction settles on the key the log
+    already records, the invariant refuses it as a revisit, and the
+    driver writes `next: null` — a whole per-level solve budget burned,
+    unattended, for a run that should simply have re-walked.
+
+    So the history is truncated at the start state's own settled key:
+    everything up to and including it is genuinely behind this run, and
+    everything after it is a stage this run has NOT made yet and must be
+    free to re-bank. When the key is unknown (a hand-captured root with
+    no sidecar) or absent from the receipts (a restart from the
+    campaign's own root, a root captured elsewhere), nothing is behind
+    this run and the history is empty — the invariant then guards only
+    what this run banks itself, which is the pre-history behavior and
+    never fabricates a campaign end.
+
+    The FIRST occurrence wins: with the invariant on a key cannot be
+    banked twice, and if a `--allow-revisit` campaign did bank one twice
+    the shorter prefix is the conservative read."""
+    if root_key is None:
+        return []
+    rk = _norm_key(root_key)
+    for i, r in enumerate(recs):
+        if _norm_key(r["key"]) == rk:
+            return recs[:i + 1]
+    return []
+
+
+def _history_sources(out: Path):
+    """The campaign dir's recorded walks, best receipt first: the banked
+    history file, then chain.jsonl. The log is consulted when the file is
+    missing or unreadable, and also when the file simply does not reach
+    the entrance being resumed from (a dir re-walked from an earlier
+    stage has a file shorter than its own log)."""
+    p = out / VISITED_FILE
+    if p.is_file():
+        try:
+            yield _clean_history(json.loads(p.read_text()).get("visited"))
+        except (OSError, ValueError, AttributeError) as e:
+            print(f"[chain] WARNING: unreadable {p} ({e}); rebuilding the "
+                  f"visited-key history from chain.jsonl", flush=True)
+    yield _history_from_chain_log(out / "chain.jsonl")
+
+
+def load_key_history(out: Path, root_key=None) -> list:
+    """The SETTLED level keys this campaign banked BEFORE arriving at
+    `root_key`, oldest first, ending with `root_key` itself. Records are
+    {key, label, after}; `after` is the level whose clear produced the
+    key (None = the campaign's own root).
+
+    `root_key` is the settled key of the state this run starts from (see
+    `root_key_record`). It positions the history — see
+    `_position_history` for why an unpositioned rebuild dead-ends any
+    re-run that does not resume at the last banked entrance. Unknown
+    (the default) means no recorded stage can be proven to be behind
+    this run, so the history is empty."""
+    if root_key is None:
+        return []      # nothing to position against; don't even read
+    for recs in _history_sources(out):
+        positioned = _position_history(recs, root_key)
+        if positioned:
+            return positioned
+    return []
+
+
+def save_key_history(out: Path, recs: list) -> Path:
+    p = out / VISITED_FILE
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"visited": list(recs)}, indent=2) + "\n")
+    return p
+
+
+def root_key_record(start_state, label: str):
+    """The campaign's root room is visited by definition — the chain is
+    standing in it before the first solve. A chain-produced entrance
+    carries its settled key in the sidecar written next to the blob, so
+    a resumed or handed-off campaign can seed the history with it and
+    refuse a later transit BACK to the root. That key is also what
+    POSITIONS a resumed campaign's history (`_position_history`). A
+    hand-captured blob has no sidecar key; the root then simply is not
+    in the history and only judge_transition's start_key check guards
+    it. Returns None when there is nothing trustworthy to seed from."""
+    try:
+        rec = json.loads(sidecar_path(start_state).read_text())
+    except (OSError, ValueError):
+        return None
+    key = rec.get("settled_key")
+    if not key:
+        return None
+    try:
+        return {"key": list(_norm_key(key)), "label": label, "after": None}
+    except (TypeError, ValueError):
+        return None
+
 
 def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
                           settle: int = 8, stable_for: int = 45,
                           settle_cap: int = 600, hw_flags=(),
-                          transit_timeout_frames: int = 0):
+                          transit_timeout_frames: int = 0,
+                          visited=(), allow_revisit: bool = False):
     """Replay `actions` from the root; at the first level-key transition
     that lands on a genuinely NEW, ALIVE, stable state, snapshot it as the
     next level's entrance. Returns (path, next_key) or (None, None) if no
@@ -98,7 +264,36 @@ def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
     machine is what stamps the next level's entrance blob, so a
     mismatch bakes a foreign-machine state into the chain and every
     downstream level inherits it. Empty (the default) reproduces the
-    pre-existing behavior exactly."""
+    pre-existing behavior exactly.
+
+    `visited` is the CAMPAIGN-SCOPE sequence invariant: the settled keys
+    the chain has already banked. "Not the key we started this level on
+    and not dead" is too weak a definition of forward progress — a room
+    the campaign already passed through satisfies both, so a re-entered
+    or revisited room banks as a new stage and the chain reports
+    progress it never made (the Kirby fabrication class). A settled key
+    already in `visited` is REFUSED and logged; the scan rewinds and
+    keeps looking for a genuinely new room. Empty (the default) means
+    no key can be a revisit, so a first level — and every existing
+    caller that passes nothing — behaves exactly as before.
+    `allow_revisit=True` turns the check off for campaigns that really
+    do re-enter rooms (hub worlds, deliberate backtracking).
+
+    A refusal NEVER blacklists the key's VALUE for the rest of the scan.
+    Every action whose live reading leaves `start_key` is settled and
+    judged on its own, however many times the same reading recurs. The
+    reason is the round-67 receipt again from the other side: the live
+    reading at the instant a genuine transit fires is a TRANSIENT, and
+    it can equal a room the campaign really has visited (BB's counter
+    dips to the previous round's number). Screening that raw reading
+    against previously-refused settled keys skips the settle entirely,
+    so the one action carrying the real transition is never judged and
+    the stage reports "no forward transition" — the same lost-transition
+    class this function was fixed for, re-created by an optimization.
+    The cost of judging instead is bounded and small: one settle
+    (`settle` + at most `settle_cap` NOOP steps, ~53 at the defaults
+    once the key stabilises) per action that left the start key, against
+    a per-level solve budget measured in minutes."""
     game = make_game(profile)
     bm = action_space_to_bitmasks(profile["action_space"])
     fs = int(profile.get("frame_skip", 4))
@@ -116,6 +311,13 @@ def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
     r = step(0)
     start_key = game.level_key(r)
     start_lives = game.lives(r)
+
+    # Campaign history + the keys this replay has already refused as
+    # revisits. `refused` is a LOG/REPORTING set only — it must never
+    # gate whether an action gets judged (see the docstring). Both are
+    # empty unless a caller opts in, so the default scan is byte-identical.
+    seen = set() if allow_revisit else {_norm_key(k) for k in visited}
+    refused: set = set()
 
     def judge_transition():
         """NOOP-settle the candidate transition and rule on it. Returns
@@ -142,6 +344,23 @@ def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
         if settled_key == start_key or game.is_dead(rr, start_lives):
             pool.load_worker_state(0, mark)
             return None    # false/doomed transition — scan resumes in sync
+        # The sequence invariant is judged on the SETTLED key, never on
+        # the transient reading that triggered the settle: Bubble Bobble
+        # round 67's counter dips to 66 for a step, and a guard reading
+        # that raw blip would refuse the campaign's own history back at
+        # itself. Only settled keys are compared, and only settled keys
+        # are ever recorded by the driver.
+        nk = _norm_key(settled_key)
+        if nk in seen:
+            if nk not in refused:
+                print(f"[chain] *** REVISIT REFUSED *** settled level key "
+                      f"{nk} is ALREADY in this campaign's visited history "
+                      f"— a re-entered room is not forward progress. "
+                      f"Scanning on (pass --allow-revisit to bank it).",
+                      flush=True)
+            refused.add(nk)
+            pool.load_worker_state(0, mark)
+            return None
         return settled_key
 
     # NOOP tail past the end of the trace, for level bytes that only turn
@@ -151,18 +370,27 @@ def extract_next_entrance(profile, root_bytes: bytes, actions, out_path: Path,
     result = (None, None)
     for a in list(actions) + [0] * tail:
         r = step(int(a))
-        if game.level_key(r) != start_key:
-            settled_key = judge_transition()
-            if settled_key is None:
-                continue
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_bytes(pool.save_worker_state(0))
-            # Sidecar, not blob: record the machine this entrance was
-            # produced on so the next solve can be run on the same one.
-            write_state_sidecar(out_path, hw_provenance(hw_flags, fs),
-                                {"settled_key": list(settled_key)})
-            result = (str(out_path), settled_key)
-            break
+        k_now = game.level_key(r)
+        if k_now == start_key:
+            continue
+        # No screening of `k_now` against anything beyond start_key. A
+        # raw reading is a transient; a previously-refused SETTLED key
+        # can recur as the trigger reading of a genuine transit, and
+        # skipping it would silently lose that transit (docstring).
+        settled_key = judge_transition()
+        if settled_key is None:
+            continue
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(pool.save_worker_state(0))
+        # Sidecar, not blob: record the machine this entrance was
+        # produced on so the next solve can be run on the same one.
+        write_state_sidecar(out_path, hw_provenance(hw_flags, fs),
+                            {"settled_key": list(settled_key)})
+        result = (str(out_path), settled_key)
+        break
+    if result[0] is None and refused:
+        print(f"[chain] sequence invariant refused {len(refused)} revisited "
+              f"key(s) this replay: {sorted(refused)}", flush=True)
     pool.shutdown()
     return result
 
@@ -221,6 +449,18 @@ def main() -> int:
     # the trace stops. 0 = stop at the last action (pre-existing
     # behavior). Frames, not steps: divided by the profile's frame_skip.
     ap.add_argument("--transit-timeout-frames", type=int, default=0)
+    # Sequence invariant (chain scope). The driver keeps its own history
+    # of every SETTLED key it has banked (visited_keys.json, next to
+    # chain.jsonl) and refuses a stage whose settled key is already in
+    # it: a re-entered room is not a new level, and banking one fabricates
+    # progress the campaign never made. On by default — the history is
+    # positioned at --start-state's own settled key, so a NEW campaign
+    # (and any re-run that is not a true continuation) starts with only
+    # its own root and the first level is unaffected. Pass this to bank
+    # revisits anyway (hub worlds, deliberate backtracking).
+    ap.add_argument("--allow-revisit", action="store_true",
+                    help="bank a stage even when its settled level key is "
+                         "already in this campaign's visited history")
     args = ap.parse_args()
 
     profile = yaml.safe_load(Path(args.profile).read_text())
@@ -231,6 +471,32 @@ def main() -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     chain_log = out / "chain.jsonl"
+
+    # Campaign-scope visited-key history, POSITIONED at the entrance this
+    # run actually starts from: the campaign dir's receipts up to and
+    # including the start state's own settled key, and nothing after it.
+    # A true continuation therefore keeps everything it already banked,
+    # while a restart (same root, after a crash) or a deliberate re-do of
+    # an earlier stage re-walks with a clean history instead of refusing
+    # the very rooms it was launched to re-solve.
+    root_rec = root_key_record(args.start_state, args.start_label)
+    history = load_key_history(out, root_rec["key"] if root_rec else None)
+    if root_rec and not history:
+        # The start state's key is nowhere in this dir's receipts (a new
+        # campaign, or a root captured elsewhere). The chain is standing
+        # in that room before the first solve, so it is visited by
+        # definition and a transit BACK to it is refusable from stage 0.
+        history = [dict(root_rec)]
+    visited = [_norm_key(h["key"]) for h in history]
+    if args.allow_revisit:
+        print("[chain] --allow-revisit: the sequence invariant is OFF",
+              flush=True)
+    elif visited:
+        print(f"[chain] sequence invariant ON: {len(visited)} key(s) already "
+              f"visited this campaign; a stage settling on one is refused",
+              flush=True)
+    if history:
+        save_key_history(out, history)
 
     cur_state = str(args.start_state)
     cur_label = args.start_label
@@ -284,7 +550,8 @@ def main() -> int:
         npath, nwd = extract_next_entrance(
             profile, Path(cur_state).read_bytes(), actions, nxt_path,
             hw_flags=hw_flags,
-            transit_timeout_frames=args.transit_timeout_frames)
+            transit_timeout_frames=args.transit_timeout_frames,
+            visited=visited, allow_revisit=args.allow_revisit)
         rec = {"level": cur_label, "status": "solved",
                "actions": int(len(actions)), "solution": str(sols[0]),
                "hw_flags": list(hw_flags)}
@@ -296,12 +563,24 @@ def main() -> int:
                 f.write(json.dumps(rec) + "\n")
             print(f"[chain] no forward transition captured after {cur_label}; "
                   f"chain stops ({len(solved)} solved).", flush=True)
+            if visited and not args.allow_revisit:
+                print("[chain] (the sequence invariant refuses keys this "
+                      "campaign already visited — --allow-revisit banks "
+                      "them)", flush=True)
             break
         rec["next_wd"] = list(nwd)
         rec["next_label"] = game.label(nwd)
         rec["next_entrance"] = npath
         with open(chain_log, "a") as f:
             f.write(json.dumps(rec) + "\n")
+        # Only a SETTLED, accepted key enters the history — a transient
+        # level-byte blip never reaches here (judge_transition rejects it
+        # before the bank), so the campaign's invariant cannot be poisoned
+        # by a down-blip like Bubble Bobble's 67->66->67.
+        visited.append(_norm_key(nwd))
+        history.append({"key": list(_norm_key(nwd)),
+                        "label": game.label(nwd), "after": cur_label})
+        save_key_history(out, history)
         cur_state = npath
         cur_label = game.label(nwd)
 
