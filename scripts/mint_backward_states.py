@@ -7,11 +7,12 @@ START STATES ONLY — no action labels leave this script, so nothing here
 feeds imitation (naive BC on these same tapes was eliminated in Dossier
 v3: clone accuracy 1.0 -> 0.00 honest success).
 
-Replay convention is the repo's one convention (scripts/replay_to_demos.py,
-go_explore_chain.extract_next_entrance): load the root blob, take ONE noop
-step to materialize RAM, then step the tape's actions in order. The state
-minted for step i is the emulator BEFORE action i runs, so restoring it
-and running the tape's tail reproduces the clear exactly.
+Replay convention is the repo's one convention, and lives in exactly one
+place: `src.training.tape_replay` (load the root blob, take ONE noop step
+to materialize RAM, then step the tape's actions in order). The state
+minted for step i is the emulator BEFORE action i runs — the frame
+`TapePlayer.play()` pauses on when it yields step i — so restoring it and
+running the tape's tail reproduces the clear exactly.
 
 The output dir is self-describing: `index.json` carries every entry's
 (step, frame, gx, area) plus the tape's provenance, and
@@ -37,15 +38,15 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from nes_core import Pool  # noqa: E402
-from scripts.go_explore_solve import (  # noqa: E402
-    apply_hw_flags, check_state_sidecar, hw_provenance, resolve_hw_flags,
-)
+from scripts.go_explore_solve import hw_provenance  # noqa: E402
 from src.training.backward_curriculum import (  # noqa: E402
     DEFAULT_EVERY_FRAMES, DEFAULT_GX_TOLERANCE, StateEntry, gx_report,
     snapshot_steps, state_filename, stride_steps, write_index,
 )
-from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
+from src.training.tape_replay import (  # noqa: E402
+    TapePlayer, load_root, machine_from_profile, root_state_for,
+    solution_paths,
+)
 
 R_WORLD = 0x075F
 R_LEVEL = 0x075C
@@ -53,28 +54,11 @@ R_AREA = 0x0760
 R_X_PAGE = 0x006D
 R_X_LOW = 0x0086
 
-
-def solution_paths(run_dir: Path, level: str, index: int = 0) -> tuple:
-    """(actions.npy, sidecar.json) for `level` in a solver run dir."""
-    base = run_dir / f"lvl_{level}" / "solutions" / f"sol_{index:03d}"
-    return base.with_suffix(".actions.npy"), base.with_suffix(".json")
-
-
-def root_state_for(sidecar: Path, run_dir: Path) -> Path:
-    """The tape's OWN root blob — traces do not transplant across roots.
-
-    The solver banks it by absolute path in the solution sidecar; fall
-    back to the run dir's entrance naming when the run has been moved.
-    """
-    rec = json.loads(sidecar.read_text())
-    p = Path(rec["root_state"])
-    if p.exists():
-        return p
-    alt = run_dir / p.name
-    if alt.exists():
-        return alt
-    raise FileNotFoundError(
-        f"{sidecar}: root_state {p} not found (also tried {alt})")
+# `solution_paths` / `root_state_for` moved to src.training.tape_replay
+# (the tape-provenance half of the one replay convention) and are
+# re-exported here so existing callers keep importing them from the
+# script they were written against.
+__all__ = ["mint", "root_state_for", "solution_paths"]
 
 
 def mint(
@@ -99,40 +83,30 @@ def mint(
                                every_frames=every_frames))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    pool = Pool(rom_path=rom, num_workers=1, frame_skip=frame_skip)
-    apply_hw_flags(pool, hw_flags)   # before reset_all(); order is load-bearing
-    pool.set_headless(True)
-    pool.set_skip_preprocess(True)
-    pool.reset_all()
-    pool.load_worker_state(0, root_bytes)
-    buf = np.zeros(1, dtype=np.uint8)
-    ram = pool.step_all(buf)[0][2]   # one noop materializes RAM
-
     entries: list[StateEntry] = []
-    try:
-        for i, a in enumerate(actions):
-            if i in steps:
-                blob = pool.save_worker_state(0)
-                if blob is None:
-                    raise RuntimeError(f"save_worker_state failed at step {i}")
-                name = state_filename(i)
-                (out_dir / name).write_bytes(blob)
-                entries.append(StateEntry(
-                    step=i,
-                    frame=i * frame_skip,
-                    gx=(int(ram[R_X_PAGE]) << 8) | int(ram[R_X_LOW]),
-                    area=int(ram[R_AREA]),
-                    file=name,
-                ))
-            buf[0] = bitmasks[int(a)]
-            ram = pool.step_all(buf)[0][2]
-        tail = {
-            "end_wd": [int(ram[R_WORLD]), int(ram[R_LEVEL])],
-            "end_area": int(ram[R_AREA]),
-            "end_gx": (int(ram[R_X_PAGE]) << 8) | int(ram[R_X_LOW]),
-        }
-    finally:
-        pool.shutdown()
+    ram = None
+    with TapePlayer(rom=rom, bitmasks=bitmasks, frame_skip=frame_skip,
+                    hw_flags=hw_flags) as player:
+        # `play` yields the RAM BEFORE action `i` runs and holds the
+        # emulator there until the loop body returns, so the blob saved
+        # here is exactly the machine that action i is about to act on.
+        for i, ram in player.play(root_bytes, actions):
+            if i not in steps:
+                continue
+            name = state_filename(i)
+            (out_dir / name).write_bytes(player.save_state(i))
+            entries.append(StateEntry(
+                step=i,
+                frame=i * frame_skip,
+                gx=(int(ram[R_X_PAGE]) << 8) | int(ram[R_X_LOW]),
+                area=int(ram[R_AREA]),
+                file=name,
+            ))
+    tail = {
+        "end_wd": [int(ram[R_WORLD]), int(ram[R_LEVEL])],
+        "end_area": int(ram[R_AREA]),
+        "end_gx": (int(ram[R_X_PAGE]) << 8) | int(ram[R_X_LOW]),
+    }
     return entries, tail
 
 
@@ -177,18 +151,13 @@ def main() -> int:
     if args.actions:
         act_path = Path(args.actions)
     profile = yaml.safe_load(Path(args.profile).read_text())
-    rom_rel = args.rom or profile.get("rom_path") or profile.get("rom")
-    if not rom_rel:
-        raise SystemExit(f"[mint] {args.profile} has no rom_path/rom key — "
-                         f"pass --rom explicitly")
-    rom = str(REPO / rom_rel)
-    frame_skip = int(profile.get("frame_skip", 4))
-    bitmasks = action_space_to_bitmasks(profile["action_space"])
-    hw_flags = tuple(resolve_hw_flags(profile, args.hw_flags))
+    rom, frame_skip, bitmasks, hw_flags = machine_from_profile(
+        profile, rom=args.rom, hw_flags=args.hw_flags,
+        profile_name=args.profile, who="mint")
 
     root_path = (Path(args.start_state) if args.start_state
                  else root_state_for(sidecar, run_dir))
-    check_state_sidecar(root_path, hw_flags)
+    root_bytes = load_root(root_path, hw_flags)
     actions = np.load(act_path).astype(np.int64)
     if actions.ndim != 1 or (actions.size and int(actions.max()) >= len(bitmasks)):
         raise SystemExit(
@@ -200,7 +169,7 @@ def main() -> int:
         REPO / "checkpoints" / "backward_states" / args.level)
     t0 = time.time()
     entries, tail = mint(
-        rom=rom, root_bytes=root_path.read_bytes(), actions=actions,
+        rom=rom, root_bytes=root_bytes, actions=actions,
         bitmasks=bitmasks, out_dir=out_dir, frame_skip=frame_skip,
         every_frames=args.every_frames, hw_flags=hw_flags,
     )

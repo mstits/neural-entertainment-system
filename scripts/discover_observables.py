@@ -42,6 +42,16 @@ HEALTH / LIVES (find_hp_lives). A HUD-legible lives byte that decrements on
 death; or, when the opening is too forgiving to take damage, a stable health
 field (with HUD mirror tiles) used as a death proxy (is_dead on health drop).
 
+PROGRESS FROM BANKED TAPES (find_progress_from_tapes). Same output shape,
+different evidence: instead of driving the game live it replays a CHAIN of
+tapes we have already solved and learns lexicographic orderings over the RAM
+trace (Tom7's learnfun; src/training/lexicographic_objectives.py) to rank all
+2048 bytes. That ranking is a SHORTLIST ONLY — it routes through the same
+Gate 1 and Gate 2 above, because the ranking alone cannot see a free-running
+timer, and the learned objective must never become a reward or archive score
+(held-out Spearman rho -0.771 off the fit range). See the section header
+above the function for the full ledger.
+
 Usage
 -----
   python scripts/discover_observables.py --rom "roms/Contra (USA).nes" \
@@ -68,6 +78,14 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from nes_core import Pool  # noqa: E402
+from src.training.lexicographic_objectives import (  # noqa: E402
+    NEVER_WIRE_AS_REWARD, WHOLE_MOVIE_REPS, concentration,
+    concentration_verdict, learn_objectives, rank_locations,
+    skip_until_first_input,
+)
+from src.training.tape_replay import (  # noqa: E402
+    machine_from_profile, replay_segments, resolve_chain,
+)
 
 # --- controller bit layout (matches src.emulation.frame_utils / the pool) ---
 NOOP, A, B, SELECT, START = 0x00, 0x01, 0x02, 0x04, 0x08
@@ -263,6 +281,28 @@ def _wrap_deltas(log: np.ndarray, mask: Optional[np.ndarray] = None) -> np.ndarr
     return dw
 
 
+def _flat_under_noop(noop_stats: dict, addr: int) -> bool:
+    """GATE 1's rejecting half: is `addr` FLAT while the player idles?
+
+    A free-running counter — the frame counter, a music/animation timer,
+    the MM2 $001C byte an early bootstrap fell for — advances on a fixed
+    cadence whether or not the player moves, so it looks like beautiful
+    monotone progress to anything that only watches a forward rollout.
+    Idling is what separates it from real progress: hold NOOP and a
+    timer keeps ticking while a position/room/world byte sits still.
+
+    This is the ONLY thing that rejects the trap, and nothing inside the
+    lexicographic objective learner can substitute for it: on SMB 1-1
+    the cadence byte $07C7 takes lead-rank 6 with the heaviest mass in
+    the top ten (43.7), outranking every hand-authored observable but
+    $006D, and it scores the same on a SHUFFLED tape — its weight is
+    cadence-invariant, so no amount of trajectory-quality reasoning can
+    see through it. Only idling can.
+    """
+    return (abs(int(noop_stats["net"][addr])) <= 4
+            and float(noop_stats["churn"][addr]) < 2.0)
+
+
 def _col_stats(log: np.ndarray, mask: Optional[np.ndarray] = None) -> dict:
     """net (wrap-aware), monotone fraction, churn/1k, pos/neg step counts,
     raw 255->0 wrap count, per byte."""
@@ -307,7 +347,7 @@ def _spatial(disc: Discoverer) -> dict:
     raw_ad[~keep] = 0     # never read a reload's RAM rewrite as a step
 
     def flat_noop(i: int) -> bool:
-        return abs(int(sn["net"][i])) <= 4 and float(sn["churn"][i]) < 2.0
+        return _flat_under_noop(sn, i)
 
     def _coincide(a, b, tol: int = 2) -> int:
         sb = set(int(x) for x in b)
@@ -434,8 +474,9 @@ def _combined(log: np.ndarray, lo: int, hi: Optional[int]) -> np.ndarray:
     return v
 
 
-def _saturation_verdict(disc: Discoverer, lo: int, hi: Optional[int],
-                        room_addr: Optional[int]) -> dict:
+def _saturation_from_logs(cf: np.ndarray, adv: np.ndarray,
+                          rmask: np.ndarray, lo: int, hi: Optional[int],
+                          room_addr: Optional[int]) -> dict:
     """Gate 2. Under forward travel, does lo|hi<<8 keep climbing, or cap while
     play continues? Two camera-clamp signatures, either sufficient:
 
@@ -448,9 +489,14 @@ def _saturation_verdict(disc: Discoverer, lo: int, hi: Optional[int],
       * RE-BASING. The value drops sharply at a room-counter transition — a
         camera/room-local coordinate re-bases each room; a global position
         does not.
+
+    Pure over the logs so the same gate can be fed either drive: the
+    scripted probe (`_saturation_verdict`, `cf` = clean forward hold,
+    `adv` = maneuver drive) or a banked solver TAPE, which is the long
+    multi-room forward drive this gate has always wanted
+    (`find_progress_from_tapes` passes the tape as both, with an
+    all-false `rmask` — a tape has no death-reload rows to exclude).
     """
-    cf = disc.clean_forward()
-    adv, rmask = disc.advance()
     comb_cf = _combined(cf, lo, hi).astype(float)
     # Drop transition-frame garbage (a page byte read mid-load spikes the pair).
     if len(comb_cf):
@@ -500,6 +546,15 @@ def _saturation_verdict(disc: Discoverer, lo: int, hi: Optional[int],
 
     observed_max = int(max(comb_cf.max() if len(comb_cf) else 0,
                            float(np.clip(comb_ad, 0, acap).max()) if len(comb_ad) else 0))
+    # Did this drive move the value FORWARD at all? A byte that never rose
+    # has a flat tail for the boring reason, so "capped early then flat"
+    # is absence of evidence rather than evidence of a camera clamp. The
+    # scripted probe pre-filters candidates on forward motion so this is
+    # always False there; the tape path shortlists bytes that may not move
+    # within one entrance's probe at all, and reads it as INCONCLUSIVE.
+    never_rose = not (bool((np.diff(comb_cf) > 0).any()) if len(comb_cf) > 1
+                      else False) and not (
+        bool((np.diff(comb_ad) > 0).any()) if len(comb_ad) > 1 else False)
     return {
         "saturates": bool(within_cap or rebases >= 1),
         "within_room_cap": bool(within_cap),
@@ -508,7 +563,16 @@ def _saturation_verdict(disc: Discoverer, lo: int, hi: Optional[int],
         "n_transitions": int(transitions),
         "player_active_in_tail": bool(active_flag),
         "observed_max": observed_max,
+        "never_rose": bool(never_rose),
     }
+
+
+def _saturation_verdict(disc: Discoverer, lo: int, hi: Optional[int],
+                        room_addr: Optional[int]) -> dict:
+    """Gate 2 over the scripted probe's own drives."""
+    adv, rmask = disc.advance()
+    return _saturation_from_logs(disc.clean_forward(), adv, rmask, lo, hi,
+                                 room_addr)
 
 
 def find_progress(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
@@ -588,6 +652,386 @@ def find_progress(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
     finally:
         if own:
             disc.close()
+
+
+# --------------------------------------------------------------------------
+# PROGRESS FROM BANKED TAPES (learnfun shortlist -> the SAME two gates).
+# --------------------------------------------------------------------------
+#
+# `find_progress` drives the game itself and reasons about what it sees.
+# `find_progress_from_tapes` starts from trajectories we have ALREADY
+# solved: it replays a chain of banked solver tapes, learns maximal
+# lexicographic orderings over the RAM trace (Tom7's learnfun, ported in
+# src/training/lexicographic_objectives.py), and hands the top-ranked
+# locations to this file's existing gates.
+#
+# WHAT IT IS: a byte SHORTLISTING instrument. It turns 2048 addresses
+# into ~30 worth adjudicating. On the 32-tape SMB chain it surfaces 15 of
+# the 17 addresses in the hand-authored SMB table and puts $075F (world)
+# first by mass over all 2048 bytes (241.0, lead-rank 5); on the 30-round
+# Bubble Bobble chain it finds $0401 at lead-rank 28 while the known-bad
+# $0021 scratch byte never enters the ranking.
+#
+# WHAT IT IS NOT, EVER: a reward, an archive score, a cell key, or any
+# other training/search signal. The learned objective is fit to the
+# trajectories it was shown and is ANTI-correlated with progress off
+# that range — Spearman rho vs elapsed time is +0.999 in-sample on
+# Bubble Bobble rounds 69..79 and -0.771 on held-out rounds 80..84.
+# Optimizing it would train the agent backwards. The output of this
+# function is a list of ADDRESSES for the existing gates and a human to
+# rule on; the objective itself stays in the receipt.
+#
+# Two adjudications from the validation run are baked in below:
+#   1. Every candidate routes through Gate 1 (NOOP flatness) and Gate 2
+#      (saturation) before it can be recommended, because the raw
+#      lexicographic ranking cannot see a free-running timer: on the SMB
+#      1-1 tape $07C7 takes lead-rank 6 with the heaviest mass in the top
+#      ten and scores identically on shuffled tapes. Only idling rejects
+#      it. (It weakens on long chains — rank 1402 over all 32 tapes — but
+#      a new game's first chain is short, so the gate is not optional.)
+#   2. The quality statistic is lead-mass CONCENTRATION against a
+#      caller-supplied reference — never total objective weight / VF.
+#      The negative control inverts the latter: the same SMB 1-1 tape
+#      replayed from the WRONG root scores 205.2 against the correct
+#      run's 82.1, i.e. the broken trajectory earns 2.5x MORE weight.
+
+#: How many learnfun-ranked locations to put through the gates.
+LEARNFUN_SHORTLIST = 32
+
+
+def _saturates_conclusively(sat: dict) -> bool:
+    """Gate 2 with "the drive never moved this byte" held apart from "the
+    byte capped". Re-basing at a room transition is always evidence; a
+    flat tail is only evidence when the value actually rose first."""
+    return bool(sat["rebases_at_transitions"] >= 1
+                or (sat["within_room_cap"] and not sat["never_rose"]))
+
+
+def gate_tape_candidates(ranked: list, *, probe_stats: dict, gate2,
+                         mono_min: float = 0.9) -> tuple:
+    """Route learnfun-ranked locations through Gate 1 and Gate 2.
+
+    Pure, so the wiring is testable without a ROM:
+      * `ranked`   — `lexicographic_objectives.rank_locations(res,
+                     memories=trace)` records (addr, rank, lead, mass,
+                     n_up, n_down, ...).
+      * `probe_stats` — `{"noop": _col_stats(disc.noop()), "forward":
+                     ..., "reverse": ...}`; only "noop" is required, and
+                     it is the half of Gate 1 that kills the timer trap.
+      * `gate2(addr) -> dict` — a `_saturation_from_logs` verdict.
+
+    Gate 1 has two halves and the tape supplies one of them. "Rises
+    under forward input" is answered by the TAPE (a location only earns
+    lexicographic weight by increasing along a solved trajectory);
+    "flat under NOOP" can only be answered by idling the emulator, and
+    is mandatory. A candidate that fails either half, or that Gate 2
+    calls a camera-clamp saturator, can never become `recommended` —
+    which is the only thing `emit_solve_yaml` writes a progress line
+    from.
+
+    Returns `(candidates, recommended)` in `find_progress`'s shapes, the
+    candidates sorted best-adjudicated first and NOT truncated — the
+    caller decides how many to publish, but the gate summary is over all
+    of them.
+    """
+    sn = probe_stats["noop"]
+    sf = probe_stats.get("forward")
+    sr = probe_stats.get("reverse")
+    cands = []
+    for rec in ranked:
+        addr = int(rec["addr"])
+        up, down = int(rec.get("n_up", 0)), int(rec.get("n_down", 0))
+        tape_mono = up / max(up + down, 1)
+        rises_tape = bool(up > 0 and tape_mono >= mono_min)
+        netf = int(sf["net"][addr]) if sf is not None else 0
+        monof = float(sf["mono"][addr]) if sf is not None else 0.0
+        rises_probe = bool(netf >= 6 and monof >= mono_min)
+        flat = _flat_under_noop(sn, addr)
+        sat = gate2(addr)
+        saturates = _saturates_conclusively(sat)
+        conclusive = bool(sat["rebases_at_transitions"] >= 1
+                          or not sat["never_rose"])
+        gate1 = bool(flat and (rises_tape or rises_probe))
+        rejected = (None if gate1 and conclusive and not saturates else
+                    "gate1_noop_timer" if not flat else
+                    "gate1_no_forward_rise" if not (rises_tape or rises_probe)
+                    else "gate2_camera_clamp" if saturates else
+                    "gate2_inconclusive")
+        cands.append({
+            # --- find_progress candidate shape ---
+            "lo": addr, "hi": None, "kind": "single",
+            "label": f"${addr:04X}",
+            "wrap_coupled": 0,
+            "gate1_rises_forward": rises_probe,
+            "gate1_flat_under_noop": flat,
+            "reversible_bonus": bool(sr is not None
+                                     and int(sr["net"][addr]) < 0),
+            "net_forward": netf, "mono_forward": round(monof, 3),
+            "net_noop": int(sn["net"][addr]),
+            "net_reverse": int(sr["net"][addr]) if sr is not None else 0,
+            **{f"sat_{k}": v for k, v in sat.items()},
+            "saturates": saturates,
+            "camera_clamp": saturates,
+            # --- tape / learnfun provenance ---
+            "source": "learnfun_tape_chain",
+            "gate1_rises_on_tape": rises_tape,
+            "tape_up": up, "tape_down": down,
+            "tape_mono": round(tape_mono, 3),
+            "tape_span": int(rec.get("span", 0)),
+            "learnfun_rank": int(rec["rank"]),
+            "learnfun_lead": float(rec["lead"]),
+            "learnfun_mass": float(rec["mass"]),
+            "learnfun_disc": float(rec["disc"]),
+            "n_obj": int(rec["n_obj"]), "best_pos": int(rec["best_pos"]),
+            "singleton_vf": float(rec.get("singleton_vf", 0.0)),
+            "gate1": gate1, "gate2_conclusive": conclusive,
+            "gates_passed": bool(gate1 and conclusive and not saturates),
+            "rejected_by": rejected,
+        })
+
+    # Gate failures sort last so the report — and `emit_solve_yaml`'s
+    # "first saturator" pick — always leads with something adjudicated.
+    cands.sort(key=lambda c: (not c["gates_passed"], c["saturates"],
+                              -c["learnfun_lead"]))
+    passing = next((c for c in cands if c["gates_passed"]), None)
+    recommended = None
+    if passing is not None:
+        recommended = {
+            "lo": passing["lo"], "hi": None, "label": passing["label"],
+            "kind": "learnfun_shortlist",
+            "as_progress": (
+                f"{passing['label']} (learnfun lead-rank "
+                f"{passing['learnfun_rank']} over banked tapes; gates 1+2 "
+                f"pass) — SHORTLIST ONLY, confirm before wiring"),
+            "saturates": False,
+            "learnfun_rank": passing["learnfun_rank"],
+            "shortlist_only": True,
+            "never_wire_as_reward": NEVER_WIRE_AS_REWARD,
+        }
+    return cands, recommended
+
+
+def gate_summary(cands: list) -> dict:
+    """What the gates concluded over the WHOLE shortlist.
+
+    `gate1_clean_gate2_untested` is the interesting column on a chain:
+    bytes that are flat while idling and climb along solved play — so
+    not timers — but that the live probe never moves from one entrance,
+    so the saturation gate has no verdict on them. On the SMB world-1
+    chain that is where $075F (world) lands. They are candidates for a
+    human, not recommendations.
+    """
+    verdicts: dict = {}
+    for c in cands:
+        key = c["rejected_by"] or "passed"
+        verdicts[key] = verdicts.get(key, 0) + 1
+    return {
+        "n_gated": len(cands),
+        "verdicts": verdicts,
+        "passed": [c["label"] for c in cands if c["gates_passed"]],
+        "gate1_clean_gate2_untested": [
+            c["label"] for c in cands
+            if c["gate1"] and c["rejected_by"] == "gate2_inconclusive"],
+        "rejected_as_timer": [c["label"] for c in cands
+                              if c["rejected_by"] == "gate1_noop_timer"],
+        "rejected_as_camera_clamp": [
+            c["label"] for c in cands
+            if c["rejected_by"] == "gate2_camera_clamp"],
+    }
+
+
+def find_progress_from_tapes(
+    chain, *, profile, rom: Optional[str] = None,
+    hw_flags: Optional[str] = None, state=None,
+    disc: Optional[Discoverer] = None, forward: str = "right",
+    top: int = 8, shortlist: int = LEARNFUN_SHORTLIST,
+    whole: int = WHOLE_MOVIE_REPS, decrease_tol: float = 0.0,
+    reference=None, reference_seed: int = 1234, solution: int = 0,
+    verify: bool = False,
+) -> dict:
+    """Shortlist progress bytes from ALREADY-SOLVED tapes, then gate them.
+
+    Returns `find_progress`'s shape — `{"forward", "room_counter",
+    "candidates", "recommended"}` — so `discover_all` / `emit_solve_yaml`
+    consume it unchanged, plus `"learnfun"` (the ranking and its
+    provenance) and `"quality"` (the concentration verdict).
+
+    `chain` is a solver run dir, a chain JSON, or a list of
+    `{"root", "actions"}` segments — see `tape_replay.resolve_chain`.
+    CHAINS, NOT SINGLE TAPES: the Bubble Bobble round counter $0401 is
+    invisible on one round's 214-memory tape and lands at lead-rank 28
+    on the 30-round chain.
+
+    `profile` is the SOLVE profile the tapes were produced under (its
+    `action_space` indexes them). `state` is the start state the two
+    gates probe from; it defaults to the chain's first root blob, which
+    is the entrance the tapes themselves start at.
+
+    `reference` is what the trajectory-quality statistic is read
+    against, and it must be MATCHED IN LENGTH:
+      * `"shuffled"` — replay the same tapes with their actions permuted
+        (`reference_seed`). Matched by construction, and it is the exact
+        negative control the statistic was validated on.
+      * a chain spec, a `learn_objectives` result, or a `concentration`
+        dict — used directly.
+      * `None` (default) — concentration is still reported, with verdict
+        "no_reference".
+
+    NEVER read total objective weight as quality: the broken controls
+    score 2.5x MORE of it than the real solve. See `NEVER_WIRE_AS_REWARD`
+    for why nothing here may become a reward term.
+    """
+    if isinstance(profile, (str, Path)):
+        import yaml
+        profile = yaml.safe_load(Path(profile).read_text())
+    rom_abs, frame_skip, bitmasks, hw = machine_from_profile(
+        profile, rom=rom, hw_flags=hw_flags, who="discover")
+
+    segments = resolve_chain(chain, solution=solution, hw_flags=hw)
+    mem, masks, seams = replay_segments(
+        segments, rom=rom_abs, bitmasks=bitmasks, frame_skip=frame_skip,
+        hw_flags=hw)
+    mem, skipped = skip_until_first_input(mem, masks)
+
+    res = learn_objectives(mem, whole=whole, verify=verify,
+                           decrease_tol=decrease_tol)
+    ranked = rank_locations(res, by="lead", memories=mem)
+    # Top-N by lead UNION top-N by mass: $0401 sits at lead-rank 28 with
+    # unremarkable mass, while $075F is only 5th by lead but 1st of all
+    # 2048 bytes by mass. Neither view alone catches both.
+    by_mass = {r["addr"] for r in
+               sorted(ranked, key=lambda r: -r["mass"])[:shortlist]}
+    short = ranked[:shortlist] + [r for r in ranked[shortlist:]
+                                  if r["addr"] in by_mass]
+
+    quality = _tape_quality(
+        res, mem, reference, chain=chain, profile=profile, rom=rom_abs,
+        bitmasks=bitmasks, frame_skip=frame_skip, hw=hw,
+        reference_seed=reference_seed, solution=solution, whole=whole,
+        decrease_tol=decrease_tol, verify=verify)
+
+    own = disc is None
+    if own:
+        probe_state = state if state is not None else segments[0].root
+        disc = Discoverer(rom_abs, probe_state, frame_skip, forward)
+    try:
+        fwd_name = disc.fwd_name
+        sp = _spatial(disc)
+        rooms = find_room_counter(rom_abs, disc.state, disc=disc,
+                                  forward=forward)
+        room_addr = rooms[0]["addr"] if rooms else None
+
+        # GATE 2 IS THE EXISTING GATE, UNMODIFIED: the scripted probe's
+        # own drives, the same reference room counter, the same verdict
+        # `find_progress` gets. Two things were tried and rejected while
+        # wiring this up, both recorded so they are not re-attempted:
+        #
+        #   * Feeding the banked TAPE in as the forward drive. It looks
+        #     like an upgrade (a real multi-room drive instead of a
+        #     900-step hold) but the within-room cap test is calibrated
+        #     to ONE continuous drive, and a chain of concatenated tapes
+        #     is not one — a per-level byte that maxes out in 1-2 and
+        #     sits still through 1-3/1-4 reads as a camera clamp. On the
+        #     SMB world-1 chain it rejected every conclusive candidate.
+        #   * Swapping the reference room counter when
+        #     `find_room_counter` falls back to the progress PAGE byte.
+        #     That would make the gate REJECT LESS, which is the wrong
+        #     direction for a safety gate to be tuned in.
+        #
+        # What the tape does supply is Gate 1's other half — "rises under
+        # forward travel" — which is what a location earning
+        # lexicographic weight means in the first place.
+        def gate2(addr: int) -> dict:
+            return _saturation_verdict(disc, addr, None, room_addr)
+
+        cands, recommended = gate_tape_candidates(
+            short, probe_stats={"noop": sp["sn"], "forward": sp["sf"],
+                                "reverse": sp["sr"]},
+            gate2=gate2)
+        gates = gate_summary(cands)
+    finally:
+        if own:
+            disc.close()
+
+    return {
+        "forward": fwd_name,
+        "room_counter": room_addr,
+        "candidates": cands[:top],
+        "recommended": recommended,
+        "quality": quality,
+        "gates": gates,
+        "learnfun": {
+            "source": "banked solver tapes replayed on our own core",
+            "purpose": "byte SHORTLIST for the gates below — never a "
+                       "reward, archive score or cell key",
+            "never_wire_as_reward": NEVER_WIRE_AS_REWARD,
+            "segments": [{"label": s.label, "n_actions": len(s)}
+                         for s in segments],
+            "n_segments": len(segments), "seams": seams,
+            "n_memories": int(mem.shape[0]),
+            "skipped_pre_input": int(skipped),
+            "n_orderings": res["n_unique"],
+            "n_positive": res["n_positive"],
+            "decrease_tol": float(decrease_tol),
+            "invalid_orderings": res["invalid_orderings"],
+            "shortlist": [
+                {"addr": r["addr"], "rank": r["rank"], "lead": r["lead"],
+                 "mass": r["mass"], "disc": r["disc"],
+                 "best_pos": r["best_pos"], "n_up": r.get("n_up"),
+                 "n_down": r.get("n_down")} for r in short],
+        },
+    }
+
+
+def _tape_quality(res: dict, mem: np.ndarray, reference, *, chain, profile,
+                  rom, bitmasks, frame_skip, hw, reference_seed, solution,
+                  whole, decrease_tol, verify) -> dict:
+    """Lead-mass concentration for the fit chain, read against a reference.
+
+    Deliberately does NOT report total objective weight as quality: the
+    negative control inverts it (wrong-root replay of the SMB 1-1 tape
+    scores 205.2 vs the correct run's 82.1). Total weight is carried in
+    `diagnostics` with that warning attached, because it is still useful
+    for spotting an empty enumeration.
+    """
+    fit = concentration(res)
+    ref_conc, n_ref, ref_kind = None, 0, "none"
+    if isinstance(reference, str) and reference == "shuffled":
+        segs = resolve_chain(chain, solution=solution, hw_flags=hw,
+                             shuffle_seed=reference_seed)
+        rmem, rmasks, _ = replay_segments(segs, rom=rom, bitmasks=bitmasks,
+                                          frame_skip=frame_skip, hw_flags=hw)
+        rmem, _ = skip_until_first_input(rmem, rmasks)
+        ref_conc = concentration(learn_objectives(
+            rmem, whole=whole, verify=verify, decrease_tol=decrease_tol))
+        n_ref, ref_kind = int(rmem.shape[0]), f"shuffled(seed={reference_seed})"
+    elif isinstance(reference, dict) and "n_leaders" in reference:
+        ref_conc = reference
+        n_ref = int(reference.get("n_memories", mem.shape[0]))
+        ref_kind = "caller_supplied_concentration"
+    elif isinstance(reference, dict) and "objectives" in reference:
+        ref_conc = concentration(reference)
+        n_ref, ref_kind = int(reference["n_memories"]), "caller_supplied_result"
+    elif reference is not None:
+        segs = resolve_chain(reference, solution=solution, hw_flags=hw)
+        rmem, rmasks, _ = replay_segments(segs, rom=rom, bitmasks=bitmasks,
+                                          frame_skip=frame_skip, hw_flags=hw)
+        rmem, _ = skip_until_first_input(rmem, rmasks)
+        ref_conc = concentration(learn_objectives(
+            rmem, whole=whole, verify=verify, decrease_tol=decrease_tol))
+        n_ref, ref_kind = int(rmem.shape[0]), "caller_supplied_chain"
+
+    verdict = concentration_verdict(fit, ref_conc, n_fit=int(mem.shape[0]),
+                                    n_reference=n_ref)
+    verdict["reference_kind"] = ref_kind
+    verdict["diagnostics"] = {
+        "total_weight": float(sum(r["weight"] for r in res["objectives"])),
+        "warning": "total objective weight / VF is NOT a validity gate — "
+                   "the negative control INVERTS it (a broken trajectory "
+                   "scored 2.5x more: 205.2 wrong-root vs 82.1 correct on "
+                   "the same SMB 1-1 tape). Read `verdict` instead.",
+    }
+    return verdict
 
 
 # --------------------------------------------------------------------------
@@ -774,10 +1218,25 @@ def emit_solve_yaml(rom: str, findings: dict) -> str:
         if sp is not None:
             cap = sp.get("sat_observed_max") or 0
             capval = int(cap * 1.2) if cap else 4000
+            # A fine byte with no page partner has hi=None; print the
+            # single-byte spelling rather than crashing on the format.
+            pair = (f"lo: 0x{sp['lo']:04X}" if sp["hi"] is None else
+                    f"lo: 0x{sp['lo']:04X}, hi: 0x{sp['hi']:04X}")
             lines.append(f"  # capped spatial secondary (fine within-room X, "
                          f"DO NOT use as sole progress): {sp['label']}")
-            lines.append(f"  #   progress: {{lo: 0x{sp['lo']:04X}, "
-                         f"hi: 0x{sp['hi']:04X}}}  # progress_cap: {capval}")
+            lines.append(f"  #   progress: {{{pair}}}  # progress_cap: {capval}")
+    elif rec and rec.get("kind") == "learnfun_shortlist":
+        # Came from `find_progress_from_tapes`: a lexicographic ranking
+        # over banked tapes that then cleared Gate 1 and Gate 2. It is a
+        # shortlist, so it is emitted COMMENTED — a human confirms the
+        # byte before it becomes a solve adapter's progress signal.
+        lines.append(f"  # PROGRESS SHORTLIST (learnfun over banked tapes, "
+                     f"lead-rank {rec.get('learnfun_rank')}): passed Gate 1 "
+                     f"(flat under NOOP) + Gate 2 (no camera clamp).")
+        lines.append(f"  #   {NEVER_WIRE_AS_REWARD}")
+        lines.append(f"  progress: {{lo: 0x{rec['lo']:04X}}}   "
+                     f"# CONFIRM before trusting: shortlisted from tapes, "
+                     f"not driven live")
     elif rec:
         lo, hi = rec["lo"], rec["hi"]
         if hi is not None:
