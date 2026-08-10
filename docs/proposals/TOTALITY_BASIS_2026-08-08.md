@@ -47,6 +47,47 @@ content, not a new axiom.
    games reach T1 within 1 h unattended; ≥⅓ reach T3 within a
    show-night budget; zero fabricated clears (detector-verified).
 
+   *Amendment A1, 2026-08-10 — PROPOSED, not in force.* The three
+   lines above are the registered text and stay the text the ledger is
+   scored against until the owner signs this amendment into
+   `CLAIMS.md`. Three changes, each labelled by direction:
+
+   - **LOOSENS — denominator.** "sampled games" → "scorable sampled
+     games", on both the ≥80% T1 clause and the ≥⅓ T3 clause. No human
+     adjudicates "scorable" per game and no adjudication happens
+     mid-campaign: a game is scorable iff a pre-campaign run of
+     `scripts/discover_observables.py` yields a progress or
+     room-counter observable that clears that probe's own
+     NOOP-flatness and saturation gates, and UNSCORABLE otherwise.
+     The owner commits the probe's findings JSON under `docs/receipts/`
+     as the freeze receipt — one file, every sampled game and its
+     verdict — before the cycle's first League run; it is not editable
+     for that cycle. No receipt, or a sampled game absent from it, and
+     the original undifferentiated denominator applies for that cycle.
+   - **LOOSENS — fabrication clause.** "zero fabricated clears
+     (detector-verified)" → "zero unretracted fabricated clears".
+     Fabrications are COUNTED, one per claim as it is gated, and that
+     running count is what gets reported — never a frequency. A
+     retraction counts only if it lands BEFORE the claim is published
+     on any surface the CLAIMS.md vocabulary rule binds (README,
+     stream overlay, post, talk, commit subject). A fabrication after
+     publication is a gate violation, not a retraction, and voids the
+     tier rate that carried it for that cycle. "At ledger close" is
+     explicitly NOT the deadline: that reading lets any fabrication be
+     retracted before it counts, which makes the clause unfalsifiable.
+   - **TIGHTENS — publication form.** A tier rate is never printed
+     alone. It is worded as a floor rather than an estimate ("T1 was
+     reached in no fewer than X of the Y games we pointed at"), and it
+     travels with four numbers: how many games the cycle sampled, how
+     many of those the freeze receipt marked scorable, how many were
+     dropped, and — the number this amendment adds — how many clears
+     the per-claim detector gate actually checked, and under how many
+     independent detector modalities. Each dropped game is listed with
+     its reason. All of it sits next to the rate, not in a footnote,
+     because the excluded games are the part a reader most needs to
+     audit. The second detector modality this leans on shipped in
+     `e5e0957`.
+
 ## Dependency-ordered path (each unlocks the next)
 
 1. **CV hall** (class 4) — in flight; a receipted clear certifies 4
@@ -85,6 +126,31 @@ it diagnoses its own telemetry, never the game's internals):
   gx pinned, y-bands starved  -> orthogonal wall     -> --ortho arm
   deep tips die at fixed +N   -> doomed-tip drain    -> barren filter
   room byte + no gradient     -> discrete transition -> derived hold-macros
+  coverage saturated at a     -> gated wall          -> CALIBRATING
+    boundary, entropy high       (item/key gate)
+
+The gated-wall row ships marked CALIBRATING, and that marker is load
+bearing: no solver loop dispatches on it, and this document fixes no
+thresholds for it. The distinction it has to draw is against the barren
+counter already in the solver — barren increments when a burst off a
+cell returns nothing new and resets the instant novelty appears, so it
+names a region that never accumulated coverage in the first place. The
+gated case is the opposite failure: a region that accumulated all the
+coverage there is to accumulate, keeps spending selections on the same
+exit, and still never moves the room count. Whether those two separate
+cleanly in the telemetry the fleet actually records is an empirical
+question, and it is being settled offline against banked archives
+rather than asserted here. The numbers belong in that calibration's
+receipt; until one exists and is cited, the row stays inert.
+
+The wall library also now carries the Bubble Bobble receipts, which
+contributed two *observable*-side classes rather than search-side ones:
+the **observable-noise wall** (the y-scratch class — a byte that passes
+every naive movement test yet carries no progress; BB's `$0021` does not
+enter the learnfun ranking at all over a 30-round chain, `2adb17d`) and
+**saturated-counter detector-blindness** (a screen-bound coordinate that
+rises then sits dead flat, indistinguishable from real progress until
+the saturation gate runs). Both are T1-diagnosis targets, not new arms.
 
 What is missing for totality: (1) SELF-ARMING — several arms are still
 opt-in flags a human sets per run; the dispatcher should arm them from
@@ -120,3 +186,30 @@ Two invariants keep it honest at every tier: agents consume only
 SELF-MEASURED telemetry (never game internals/disassembly — purity),
 and no arm joins T0 without default-off byte-identity + its validation
 gate (the same discipline every arm shipped under so far).
+
+## Capability classes (added 2026-08-10)
+
+Two capabilities landed this week that widen the basis without adding
+mechanism classes to it. Both are default-inert.
+
+**Controller 2** (`env.set_buttons_p2`, `pool.step_all_2p`; `e5e0957`,
+with `step_all` left byte-identical) opens three distinct things:
+**cooperation** — the material difference that lets Contra re-enter as
+a class-5 lane under elimination-ledger rules (prior stated up front,
+what changed named in writing, stopping rule registered before launch,
+gate = telemetry not a clear); **competition / self-play**, which is
+*post-D1* and subject to the eighth-family rule (no new training family
+without a genuinely new, externally-sourced idea); and plainly
+**2P-scorable League games**, which cannot be played to completion
+one-handed and today would score UNSCORABLE for the wrong reason.
+
+**The learnfun shortlisting instrument** (`2adb17d`) is the League's
+auto-profiling path: it ranks all 2048 RAM locations by lexicographic
+progress weight over our own banked tapes, so a new game's
+scoring-vocabulary freeze starts from a short list instead of 2048
+bytes. Two adjudicated limits travel with it. It is **chains-only** — a
+single tape does not surface the round counter, only a chain does. And
+its **free-running-timer trap** (cadence bytes outrank true progress on
+short traces, and the instrument is structurally blind to it) is killed
+not by the instrument but by the existing NOOP-flatness gate its
+candidates are now routed through. It shortlists; it is never a scorer.

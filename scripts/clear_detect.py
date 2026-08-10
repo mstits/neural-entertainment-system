@@ -33,6 +33,16 @@ vote reaches >= 0.75, i.e. any 3 of the 4 agree):
                 RAM (entity slots) collapsing to zero -- the fingerprint of
                 a fresh level/room loading in.
 
+A fifth signal exists but is OPT-IN and contributes nothing unless a profile
+asks for it (so every existing receipt is unchanged):
+
+  5. apu      - a sustained, coordinated change in the game's own per-channel
+                APU activity vector (the 5-bit $4015 length-counter mask),
+                measured against a null this run self-measured from its own
+                history. NO game-content priors: nothing here knows what a
+                fanfare is, only that this game's channels stopped behaving
+                the way this game's channels have been behaving.
+
 The ground-truth self-test (--test) replays real SMB Go-Explore solution
 traces from their recorded root state, finds the frame the world/level
 bytes truly advance (the same forward-clear check the solver itself uses),
@@ -45,6 +55,7 @@ import glob
 import json
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -362,6 +373,249 @@ def trailing_median(x: np.ndarray, k: int) -> np.ndarray:
 
 
 # ===========================================================================
+# Signal 5 -- APU channel-activity change (opt-in)
+# ===========================================================================
+
+N_APU_BITS = 5                  # $4015 low 5 bits: pulse1 pulse2 tri noise DMC
+APU_SHORT_WINDOW = 30           # observations in the "now" rate estimate
+APU_BASELINE_WINDOW = 300       # observations in the self-measured null
+APU_MIN_BASELINE = 60           # null samples required before the vote exists
+APU_SUSTAIN = 4                 # consecutive positive CUSUM evaluations to fire
+APU_GATE_K = 3.0                # multiples of the null's own sampling noise
+APU_GATE_FLOOR = 0.10           # floor on the gate, in activity-mass units
+# Observations the vote stays raised once fired. Sized as 2*short_window,
+# which spans three checks at the streaming detector's default stride of 20 --
+# long enough that a fire and a RAM signature a check or two apart still
+# coincide, short enough that the vote is not simply up all the time. NOTE the
+# unit is OBSERVATIONS, not frames: an observation is a raw frame offline and
+# one action (frame_skip frames) in the solver's hot loop, so the same number
+# is ~1 s offline and ~4 s live at frame_skip 4.
+APU_HOLD = 60
+
+# mask -> bit vector, precomputed: the hot loop pushes one of 32 values.
+_APU_BIT_TABLE = np.array(
+    [[(m >> b) & 1 for b in range(N_APU_BITS)] for m in range(1 << N_APU_BITS)],
+    dtype=np.int32)
+
+
+class ApuActivitySignal:
+    """Sustained, coordinated change in the per-channel APU activity vector,
+    scored against a null this run measured from its own history.
+
+    INPUT is the 5-bit $4015 length-counter mask (nes_core:
+    `env.apu_channel_activity()` / `pool.apu_activity_all()`), one value per
+    observation. Bit b is set while channel b's length counter (DMC: bytes
+    remaining) is non-zero -- i.e. while that channel is *doing something*.
+    Nothing here decodes pitch, volume or timbre, and nothing here knows what
+    any particular game's music sounds like.
+
+    CONTENT-FREE BY CONSTRUCTION. The statistic is:
+
+        short_rate[b] = fraction of the last `short_window` observations in
+                        which channel b was active
+        base_rate[b]  = the same fraction over the `baseline_window`
+                        observations that PRECEDE the short window (the null:
+                        how this game's channels have been behaving lately)
+        dev           = sum_b |short_rate[b] - base_rate[b]| / N_APU_BITS
+
+    `dev` is the fraction of this game's own channel-activity mass that moved,
+    in [0, 1]. There is no reference fingerprint, no expected jingle, no
+    channel singled out as "the melody" -- swap the ROM and the null swaps
+    with it.
+
+    THE GATE IS ALSO SELF-MEASURED. Under the null, short_rate[b] is a mean of
+    `short_window` Bernoulli(base_rate[b]) draws, so pure sampling noise
+    already produces
+        null_sigma = sum_b sqrt(base_rate[b](1-base_rate[b]) / short_window)
+                     / N_APU_BITS
+    of deviation. The gate is `gate_k * null_sigma + gate_floor`: a game whose
+    channels flicker constantly gets a proportionally higher bar, and a game
+    with dead-steady channels is held to the floor instead of firing on
+    nothing. A CUSUM over (dev - gate) must then stay positive for `sustain`
+    consecutive evaluations -- the same "sustained, not a blip" shape the
+    audio signal uses, on the 5-bit vector instead of the FFT fingerprint.
+
+    WHY A SHORT BLIP CANNOT FIRE, AT ANY ALIGNMENT (the property the tests
+    pin). A transient spanning L observations can flip at most all
+    N_APU_BITS bits for those L observations, so it can move short_rate by at
+    most L/short_window per bit, hence
+
+        dev <= L / short_window                     (alignment-independent)
+
+    Firing needs dev > gate >= gate_floor, so it needs
+
+        L > gate_floor * short_window               (= 3 observations at the
+                                                     defaults)
+
+    A one-observation blip -- every channel slamming on or off for a single
+    frame, a drum hit, a jump SFX -- is structurally incapable of firing this
+    signal no matter where in the window it lands. That is the same kind of
+    guarantee `trailing_median` gives the coord signal, and it is why this is
+    an honest vote rather than another alignment lottery.
+
+    COORDINATION falls out of the sum: L observations of a c-channel change
+    give dev = L*c / (short_window * N_APU_BITS), so channels moving TOGETHER
+    reach the gate in proportionally fewer observations than any one channel
+    toggling alone (one channel alone must change its duty over more than half
+    the short window to clear the default floor).
+
+    Deliberately NOT modelled: which direction the change went (music starting
+    and music stopping are the same event to this signal), and which channel
+    moved. Both would be content priors.
+
+    The vote is a HELD PULSE, not a latch: 1 for `hold` observations after a
+    fire, then 0, and the signal re-arms once it has returned to its own null
+    (see _may_trigger for the measurement that forced this)."""
+
+    def __init__(self, short_window: int = APU_SHORT_WINDOW,
+                 baseline_window: int = APU_BASELINE_WINDOW,
+                 min_baseline: int = APU_MIN_BASELINE,
+                 sustain: int = APU_SUSTAIN,
+                 gate_k: float = APU_GATE_K,
+                 gate_floor: float = APU_GATE_FLOOR,
+                 hold: int = APU_HOLD):
+        self.short_window = max(1, int(short_window))
+        self.baseline_window = max(1, int(baseline_window))
+        self.min_baseline = max(1, int(min_baseline))
+        self.sustain = max(1, int(sustain))
+        self.gate_k = float(gate_k)
+        self.gate_floor = float(gate_floor)
+        self.hold = max(1, int(hold))
+        self.reset()
+
+    def reset(self) -> None:
+        """Drop the latch AND the calibration.
+
+        Same reasoning as StreamingConfluenceDetector.reset(): the samples
+        that produced a fire are still inside both windows, so keeping them
+        would let the identical fire land again the moment a veto expires.
+        Re-earning the null costs `min_baseline` fresh observations, which is
+        the precision-over-recall direction the rest of this detector takes."""
+        self._short: deque = deque()
+        self._long: deque = deque()
+        self._short_sum = np.zeros(N_APU_BITS, dtype=np.int64)
+        self._long_sum = np.zeros(N_APU_BITS, dtype=np.int64)
+        self._cusum = 0.0
+        self._consec = 0
+        self._rearm_ready = True
+        self.n = 0
+        self.trigger_n: int | None = None
+        self.n_triggers = 0
+        self.last_dev = 0.0
+        self.last_gate = 0.0
+        self.n_evals = 0
+
+    def push(self, mask) -> None:
+        """Feed one 5-bit activity mask (int, or anything int()-able).
+
+        O(1): the short window's evictions become the baseline's arrivals, so
+        neither window is ever rescanned."""
+        if mask is None:
+            return
+        v = _APU_BIT_TABLE[int(mask) & ((1 << N_APU_BITS) - 1)]
+        self.n += 1
+        self._short.append(v)
+        self._short_sum += v
+        if len(self._short) > self.short_window:
+            old = self._short.popleft()
+            self._short_sum -= old
+            self._long.append(old)
+            self._long_sum += old
+            if len(self._long) > self.baseline_window:
+                self._long_sum -= self._long.popleft()
+        self._evaluate()
+
+    def _evaluate(self) -> None:
+        if (len(self._short) < self.short_window
+                or len(self._long) < self.min_baseline):
+            return
+        self.n_evals += 1
+        short_rate = self._short_sum / float(self.short_window)
+        base_rate = self._long_sum / float(len(self._long))
+        dev = float(np.abs(short_rate - base_rate).sum()) / N_APU_BITS
+        null_sigma = float(np.sqrt(base_rate * (1.0 - base_rate)
+                                    / self.short_window).sum()) / N_APU_BITS
+        gate = self.gate_k * null_sigma + self.gate_floor
+        self.last_dev, self.last_gate = dev, gate
+        # CAPPED CUSUM. Uncapped, a change that persists for hundreds of
+        # observations accumulates hundreds of gate-widths of credit and then
+        # takes just as many observations of perfectly null behavior to bleed
+        # back down -- the statistic saturates and the signal is stuck
+        # "changed" long after the game has settled into its new normal
+        # (found by running this over real Contra play). Capping at `sustain`
+        # gate-widths keeps exactly as much history as the sustain rule needs
+        # and no more.
+        cap = self.sustain * max(gate, 1e-6)
+        self._cusum = min(max(0.0, self._cusum + (dev - gate)), cap)
+        self._consec = self._consec + 1 if self._cusum > 0.0 else 0
+        if self._cusum <= 0.0:
+            self._rearm_ready = True
+        if self._consec >= self.sustain and self._may_trigger():
+            self.trigger_n = self.n
+            self.n_triggers += 1
+            self._rearm_ready = False
+            # Restart the accumulator: the change has been declared, so the
+            # NEXT declaration must be earned from scratch.
+            self._cusum = 0.0
+            self._consec = 0
+
+    def _may_trigger(self) -> bool:
+        """A one-shot latch is useless to a live burst.
+
+        Measured on real play (Contra, 1,500 observations from power-on): the
+        FIRST sustained coordinated change after the null is measured is the
+        title music starting -- an entirely genuine change, fired at
+        observation 93. With a one-shot trigger the signal would then have
+        spent its only vote on the intro and been blind for the rest of the
+        burst, which is exactly the window a clear happens in.
+
+        So the signal re-arms, but only after it has (a) let its hold expire
+        and (b) come all the way back to its own null (CUSUM decayed to 0).
+        Requiring the return to null is what stops one long change from being
+        re-declared every `hold` observations: the deviation has to fall back
+        under this game's own gate before another change can be announced."""
+        return (self.trigger_n is None
+                or (self.n - self.trigger_n >= self.hold
+                    and self._rearm_ready))
+
+    def vote(self) -> int:
+        """1 while the fire is inside its hold window, else 0."""
+        if self.trigger_n is None:
+            return 0
+        return int(self.n - self.trigger_n < self.hold)
+
+    def warmup_observations(self) -> int:
+        """Observations a FRESH signal must be fed before vote() can be 1 --
+        the point below which this signal has no opinion at all, as opposed
+        to an opinion of 'no'.
+
+        Derived from the same three numbers _evaluate enforces, so the two
+        cannot drift: an evaluation happens only once the short window is
+        full AND the null holds `min_baseline` samples, and because the null
+        is fed exclusively by the short window's evictions that is
+        `short_window + min_baseline` pushes. `sustain` consecutive positive
+        evaluations must then follow, the earliest of which lands
+        `sustain - 1` observations after the first.
+
+        A LOWER BOUND, not a prediction: it says when the vote becomes
+        possible, never that it will happen. Callers use it to tell a replay
+        that was too short to look apart from one that looked and disagreed
+        -- a distinction that is invisible in the output otherwise, because
+        both read as vote() == 0 (the honest, strict direction for a live
+        detector, and a silent no-op for a fixed-length replay harness; see
+        Solver.counterfactual_probe in go_explore_solve.py, which measured
+        exactly that)."""
+        return self.short_window + self.min_baseline + self.sustain - 1
+
+    def stats(self) -> dict:
+        return {"n": self.n, "n_evals": self.n_evals,
+                "trigger_n": self.trigger_n, "n_triggers": self.n_triggers,
+                "dev": round(self.last_dev, 5),
+                "gate": round(self.last_gate, 5),
+                "baseline_n": len(self._long)}
+
+
+# ===========================================================================
 # Streaming confluence detector (live solver hot-loop form)
 # ===========================================================================
 
@@ -416,20 +670,53 @@ class StreamingConfluenceDetector:
 
     Neither knob addresses a ROOM transition, whose position reset is just as
     sustained and just as step-shaped as a stage clear's -- that one needs the
-    progress-aware room veto in the caller (GenericGame.is_clear)."""
+    progress-aware room veto in the caller (GenericGame.is_clear).
+
+    v3 (2026-08-09) -- THE APU CHANNEL-ACTIVITY VOTE, opt-in, default absent:
+
+      apu_weight: W > 0 arms a third signal (ApuActivitySignal) fed the 5-bit
+        $4015 activity mask the caller passes to push(). The vote becomes
+        `tally + coord + W*apu >= min_signals` instead of `tally + coord >=
+        min_signals`. W defaults to 0, and at 0 no ApuActivitySignal is even
+        constructed, so the arithmetic reduces to the shipped integer path
+        byte-for-byte and no existing receipt moves.
+
+      The vote is ADDITIVE, not a veto: at the default min_signals=2, arming
+      it with W>=1 makes firing EASIER (coord+apu can carry a clear without
+      tally). To make it a REQUIREMENT instead, raise the bar with it --
+      `min_signals: 3, apu_weight: 1.0` means all three must agree. That is
+      the configuration to reach for on a game whose false positives are
+      RAM-shaped (combat blips, room loads), because those move no channels.
+
+      Masks are optional per push: with none supplied the signal simply never
+      accumulates and votes 0, which is the safe direction (a caller that
+      forgot to plumb the audio modality gets a stricter detector, not a
+      looser one)."""
 
     def __init__(self, progress_fn, window: int = 240, stride: int = 20,
                  min_signals: int | None = None,
                  persist_checks: int | None = None,
-                 progress_median: int | None = None):
+                 progress_median: int | None = None,
+                 apu_weight: float | None = None,
+                 apu_params: dict | None = None):
         self._progress = progress_fn
         self.window = int(window)
         self.stride = int(stride)
-        self.min_signals = 2 if min_signals is None else int(min_signals)
+        # int for an integral bar (so the disarmed path's comparison is the
+        # shipped integer one to the byte), float only when a profile really
+        # asks for a fractional bar -- which only makes sense together with a
+        # fractional apu_weight.
+        self.min_signals = (
+            2 if min_signals is None else
+            int(min_signals) if float(min_signals).is_integer()
+            else float(min_signals))
         self.persist_checks = (1 if persist_checks is None
                                else max(1, int(persist_checks)))
         self.progress_median = (1 if progress_median is None
                                 else max(1, int(progress_median)))
+        self.apu_weight = 0.0 if apu_weight is None else float(apu_weight)
+        self._apu = (ApuActivitySignal(**(apu_params or {}))
+                     if self.apu_weight > 0 else None)
         self._ram: list[np.ndarray] = []
         self._gx: list[int] = []
         self._n = 0
@@ -438,6 +725,7 @@ class StreamingConfluenceDetector:
         # Telemetry (read by tests / receipts; never by the vote).
         self.n_checks = 0
         self.n_votes = 0
+        self.n_apu_votes = 0
 
     def reset(self) -> None:
         """Un-latch AND discard the rolling evidence window.
@@ -453,11 +741,19 @@ class StreamingConfluenceDetector:
         self._ram.clear()
         self._gx.clear()
         self._n = 0
+        if self._apu is not None:
+            self._apu.reset()
 
-    def push(self, ram) -> bool:
-        """Feed one RAM snapshot; returns True once the confluence has fired
-        (and stays True thereafter -- the clear is a latching event, until
-        reset() explicitly drops the latch)."""
+    def push(self, ram, apu_mask=None) -> bool:
+        """Feed one RAM snapshot (and optionally this observation's 5-bit APU
+        activity mask); returns True once the confluence has fired (and stays
+        True thereafter -- the clear is a latching event, until reset()
+        explicitly drops the latch).
+
+        `apu_mask` is ignored entirely unless apu_weight > 0, so every
+        existing single-argument call site is unchanged."""
+        if self._apu is not None:
+            self._apu.push(apu_mask)
         if self._fired:
             return True
         # The solver hands raw `bytes` in the live hot loop (pool step
@@ -483,7 +779,15 @@ class StreamingConfluenceDetector:
         tally = 1 if score_tally_windows(hist) else 0
         coord = 1 if coord_entity_windows(hist, gx) else 0
         self.n_checks += 1
-        if tally + coord >= self.min_signals:
+        if self._apu is None:
+            # Byte-identical to the shipped integer path.
+            passed = (tally + coord) >= self.min_signals
+        else:
+            apu = self._apu.vote()
+            self.n_apu_votes += apu
+            passed = ((tally + coord + self.apu_weight * apu)
+                      >= self.min_signals - 1e-9)
+        if passed:
             self.n_votes += 1
             self._streak += 1
         else:
@@ -491,6 +795,46 @@ class StreamingConfluenceDetector:
         if self._streak >= self.persist_checks:
             self._fired = True
         return self._fired
+
+    def warmup_observations(self) -> int:
+        """Observations a FRESH detector must be fed before push() can return
+        True -- the phase/warm-up counterpart to the caller's NOOP margin, and
+        the number any fixed-length replay harness has to budget for.
+
+        Read straight off this instance's own knobs, so no caller has to
+        re-derive (or drift from) the arithmetic push() actually enforces:
+
+          * a check happens only at `_n % stride == 0` with at least 16
+            samples buffered, so the FIRST one lands at the smallest multiple
+            of `stride` that is >= 16;
+          * `persist_checks` consecutive checks must pass, which adds
+            `stride * (persist_checks - 1)`;
+          * when the audio vote is REQUIRED -- apu_weight armed AND a bar
+            above 2, the most the two RAM signals can ever sum to -- the
+            first check that can pass is also the first one at or after
+            ApuActivitySignal.warmup_observations(). Below that bar the audio
+            vote is additive (tally+coord can carry a clear alone), so it
+            does not hold the detector's warm-up up.
+
+        WHY THIS IS PUBLIC. Feeding a windowed detector fewer observations
+        than this and reading its silence as a verdict is a structural no-op,
+        not a strict result: the measured case is the counterfactual gate's
+        52-observation branches against the 100 this returns for the
+        `min_signals: 3, apu_weight: 1.0` configuration these very docs
+        recommend for RAM-shaped false positives -- every branch returned
+        no_clear because none of them ever reached an evaluation.
+
+        A window under 16 can never satisfy push()'s own sample guard, so the
+        hook is unfirable by construction; that is reported as an
+        unsatisfiable budget rather than as a number a caller could meet."""
+        if self.window < 16:
+            return 1 << 30
+        stride = max(1, self.stride)
+        need = 16
+        if self._apu is not None and self.min_signals > 2 + 1e-9:
+            need = max(need, self._apu.warmup_observations())
+        first = ((need + stride - 1) // stride) * stride
+        return first + stride * (self.persist_checks - 1)
 
 
 # ===========================================================================

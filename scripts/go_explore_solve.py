@@ -324,6 +324,72 @@ def resolve_verify_bank(args) -> bool:
     return bool(getattr(args, "verify_bank", True))
 
 
+def resolve_counterfactual_gate(args) -> bool:
+    """Whether a clear candidate must additionally survive the K-branch
+    counterfactual perturbation probe before it is banked
+    (--counterfactual-gate / --no-counterfactual-gate).
+
+    DEFAULTS FALSE, including when the attribute is absent — the opposite of
+    resolve_verify_bank, and deliberately so. Replay verification is
+    milliseconds per action and asks "did this happen at all"; this gate is
+    SECONDS (K short branches re-simulated from a pre-clear state, measured
+    4-40 s per candidate) and asks the strictly harder question "would this
+    still have happened if the player had played slightly differently". A
+    check with that cost is an opt-in instrument, not something a call site
+    inherits by omission."""
+    return bool(getattr(args, "counterfactual_gate", False))
+
+
+def resolve_apu_sampling(game, pool) -> bool:
+    """Whether the per-step 5-bit APU channel-activity mask must be sampled
+    and threaded into the clear hook's ctx.
+
+    True only when BOTH hold: the adapter asked for it (`clear: {apu_weight:
+    > 0}`, default absent) and the linked nes_core exports
+    `Pool.apu_activity_all` (added 2026-08-09). A profile that opts in against
+    an older wheel degrades to the RAM-only detector with one loud line rather
+    than raising per step — and says so, because silently dropping a vote a
+    profile asked for is how a receipt ends up describing a detector that
+    never ran."""
+    if not bool(getattr(game, "needs_apu", lambda: False)()):
+        return False
+    if not hasattr(pool, "apu_activity_all"):
+        print("[go_explore_solve] profile asked for the APU channel-activity "
+              "vote but this nes_core has no Pool.apu_activity_all — running "
+              "the RAM-only detector instead", flush=True)
+        return False
+    return True
+
+
+def warn_if_burst_starves_clear_hook(game, burst: int) -> int:
+    """One loud line when a live BURST is shorter than the clear hook's own
+    warm-up. Returns the budget it asked the adapter for (0 = stateless hook,
+    nothing to warn about).
+
+    The live hook's state is per burst, not per run: _assign() hands every
+    worker a fresh ctx each time it re-roots, and GenericGame.is_clear builds
+    the streaming detector lazily inside that ctx. A hook that needs more
+    observations than `--burst` gives it can therefore NEVER fire during the
+    search, however long the run lasts — the same structural no-op the
+    counterfactual gate was measured committing, one level up and with no
+    receipt to notice it in. Worth exactly one line at construction: it is
+    the difference between "the audio vote disagreed" and "the audio vote was
+    never able to exist".
+
+    Diagnostic only — it changes no behavior and never raises, so unlike
+    Solver.counterfactual_probe (whose verdict depends on the number) it
+    tolerates an adapter that predates the hook."""
+    budget = int(getattr(game, "clear_observation_budget", lambda: 0)())
+    if budget > 0 and burst > 0 and burst < budget:
+        print(f"[go_explore_solve] WARNING: this profile's clear hook needs "
+              f"{budget} observations of warm-up but --burst is {burst}, and "
+              f"the hook's state is rebuilt every burst — it can never fire "
+              f"during the search. Raise --burst above {budget} or relax the "
+              f"clear knobs (stride/persist_checks/apu min_baseline).",
+              flush=True)
+    return budget
+
+
 def resolve_inversion_pin_secs(args) -> float:
     """Seconds the deep frontier must sit pinned before the heuristic-
     inversion arm engages (--inversion-pin-secs).
@@ -478,6 +544,20 @@ class SmbGame:
         clear the game ever finds."""
         return 0
 
+    def needs_apu(self) -> bool:
+        """SMB's clear hooks are RAM-only; the APU modality is never sampled
+        for this adapter. Defined here for the same reason
+        clear_verify_margin is: the callers ask every adapter."""
+        return False
+
+    def clear_observation_budget(self) -> int:
+        """Zero: SMB's clear hooks are stateless, so a replay of ANY length
+        can see the clear on the frame it happens. Defined here for the same
+        reason clear_verify_margin and needs_apu are — the callers ask every
+        adapter, unconditionally, and a missing method would turn into a
+        blanket 'error' verdict inside their broad excepts."""
+        return 0
+
     @staticmethod
     def label(key: tuple) -> str:
         return f"{key[0] + 1}-{key[1] + 1}"
@@ -585,7 +665,7 @@ class GenericGame:
         #     on a real clear, without making it the level_key (which also gates
         #     the warp/dead machinery). `target` requires a specific landing.
         #   confluence  {[window][stride][min_signals][persist_checks]
-        #                [progress_median]
+        #                [progress_median][apu_weight][apu: {...}]
         #                [room_veto: {steps[, addrs][, min_progress]}]} — the
         #     multi-signal clear_detect confluence, streamed over a bounded
         #     rolling window (clear_detect.StreamingConfluenceDetector; see its
@@ -604,6 +684,34 @@ class GenericGame:
         #         consecutive checks before the latch closes. Second, cheaper
         #         filter; NOT sufficient alone (see the detector docstring for
         #         the window arithmetic). Default 1 = shipped behavior.
+        #     DETECTOR v3 (2026-08-09) adds ONE more, also default-inert:
+        #       apu_weight: W — arm the APU channel-activity vote
+        #         (clear_detect.ApuActivitySignal) with weight W, fed the
+        #         5-bit $4015 length-counter mask the solver samples next to
+        #         each RAM snapshot. The check becomes `tally + coord +
+        #         W*apu >= min_signals`; at W = 0 (the default) no signal is
+        #         built, no mask is sampled and the arithmetic is the shipped
+        #         integer path. The vote is a self-calibrated, content-free
+        #         change detector — it knows this game's own rolling
+        #         per-channel activity rates and nothing whatsoever about
+        #         fanfares. Being ADDITIVE it can only make firing easier at
+        #         the default min_signals: 2; to make the audio modality
+        #         REQUIRED, raise the bar with it (`min_signals: 3,
+        #         apu_weight: 1.0` = all three signals must agree). `apu:
+        #         {...}` passes the signal's own knobs through
+        #         (short_window, baseline_window, min_baseline, sustain,
+        #         gate_k, gate_floor, hold).
+        #         MIND THE WARM-UP, it is not free: the vote needs
+        #         short_window + min_baseline + sustain - 1 = 93 observations
+        #         in a FRESH detector before it can be 1, so with the audio
+        #         vote REQUIRED the first check that can pass sits at
+        #         observation 100 (clear_observation_budget computes it from
+        #         the knobs). The live hook's state is per BURST, so --burst
+        #         must exceed that — the default 64 does NOT, and the solver
+        #         prints a loud line when it doesn't
+        #         (warn_if_burst_starves_clear_hook). Bounded replays budget
+        #         for it themselves: the counterfactual gate raises its
+        #         pre-steps to cover it.
         #       room_veto: {steps: M[, addrs: [..]][, min_progress: P]} — a
         #         change of the room observable within the last M observations
         #         VETOES a fire unless `progress` has advanced by >= P (default
@@ -644,6 +752,20 @@ class GenericGame:
         self._conf_min_signals = cl.get("min_signals")
         self._conf_persist = cl.get("persist_checks")
         self._conf_median = cl.get("progress_median")
+        # APU CHANNEL-ACTIVITY VOTE (v3, opt-in). `apu_weight: W` (0 = off,
+        # the default) arms clear_detect.ApuActivitySignal as a third vote
+        # inside the streaming detector, fed the 5-bit $4015 length-counter
+        # mask the solver samples alongside each RAM snapshot. `apu: {...}`
+        # passes that signal's own knobs through verbatim (short_window,
+        # baseline_window, min_baseline, sustain, gate_k, gate_floor, hold).
+        # At weight 0 no signal object is built and no mask is ever sampled,
+        # so an existing profile is byte-identical and pays nothing.
+        self._conf_apu_weight = float(cl.get("apu_weight", 0.0) or 0.0)
+        self._conf_apu = dict(cl.get("apu") or {})
+        # Cache for clear_observation_budget: the answer is a pure function
+        # of the knobs above, so it is computed once from a throwaway
+        # detector and reused (callers ask it once per banked candidate).
+        self._conf_budget: int | None = None
         rv = cl.get("room_veto") or {}
         self._rv_steps = int(rv.get("steps", 0))
         self._rv_addrs = tuple(int(a) for a in rv.get("addrs", ()))
@@ -680,6 +802,73 @@ class GenericGame:
             return 0
         persist = max(1, int(self._conf_persist or 1))
         return max(0, self._conf_stride) * persist
+
+    def needs_apu(self) -> bool:
+        """Whether this adapter's clear hook wants the per-step APU
+        channel-activity mask in its ctx (`ctx["_apu_mask"]`).
+
+        False for every profile that has not set `clear: {apu_weight: > 0}`,
+        which is all of them by default — the caller then never calls
+        pool.apu_activity_all() at all, so the audio modality costs exactly
+        nothing on the paths that do not ask for it."""
+        return self._clear_mode == "confluence" and self._conf_apu_weight > 0
+
+    def _new_clear_detector(self):
+        """Build the streaming confluence detector this profile's knobs
+        describe.
+
+        One constructor shared by the live hook and by
+        clear_observation_budget, so a warm-up budget can never be computed
+        from a differently-configured detector than the one that actually
+        runs."""
+        import sys as _sys
+        _sd = str(Path(__file__).resolve().parent)   # scripts/ on path
+        if _sd not in _sys.path:
+            _sys.path.insert(0, _sd)
+        from clear_detect import StreamingConfluenceDetector
+        return StreamingConfluenceDetector(
+            self.progress, window=self._conf_window,
+            stride=self._conf_stride,
+            min_signals=self._conf_min_signals,
+            persist_checks=self._conf_persist,
+            progress_median=self._conf_median,
+            apu_weight=self._conf_apu_weight,
+            apu_params=self._conf_apu)
+
+    def clear_observation_budget(self) -> int:
+        """Observations a FRESH clear-hook ctx must be fed before this hook is
+        CAPABLE of firing — the warm-up counterpart to clear_verify_margin's
+        phase allowance, and the second number any bounded replay owes a
+        windowed detector.
+
+        Zero for every STATELESS hook (level_key, finale, byte_change,
+        score_jump): they read the current frame, so one observation is
+        enough. For `confluence` the answer is the streaming detector's own
+        `warmup_observations()` — a detector built from these very knobs is
+        ASKED, rather than the arithmetic being copied here, so the two can
+        never drift apart the way a duplicated constant would.
+
+        WHY IT EXISTS. A replay that feeds the hook fewer observations than
+        this cannot tell "the clear did not reproduce" from "the detector
+        never got to look", and both come back as False. Measured on the
+        counterfactual gate before this hook existed: its branches see
+        cf_pre_steps (32) + clear_verify_margin (20) = 52 observations, while
+        the `min_signals: 3, apu_weight: 1.0` configuration recommended for
+        RAM-shaped false positives needs 100 before an APU-backed check can
+        pass (90 to have a null at all, +3 to sustain it, rounded up to the
+        next check point). Every branch INCLUDING the control therefore
+        returned no_clear, the probe reported 'inconclusive' with ok=True on
+        every candidate forever, and the gate refused nothing while still
+        paying 4-40 s a candidate — a silent no-op that looked like a working
+        gate in the receipts. Any caller with a fixed observation budget must
+        ask for this number and either meet it or say out loud that it could
+        not (Solver.counterfactual_probe now does both)."""
+        if self._clear_mode != "confluence":
+            return 0
+        if self._conf_budget is None:
+            self._conf_budget = int(
+                self._new_clear_detector().warmup_observations())
+        return self._conf_budget
 
     def note_start(self, ram) -> None:
         """Record the level-entrance baseline the byte_change WIN-CONDITION
@@ -860,18 +1049,18 @@ class GenericGame:
         if m == "confluence":
             det = ctx.get("_clear_det")
             if det is None:
-                import sys as _sys
-                _sd = str(Path(__file__).resolve().parent)   # scripts/ on path
-                if _sd not in _sys.path:
-                    _sys.path.insert(0, _sd)
-                from clear_detect import StreamingConfluenceDetector
-                det = ctx["_clear_det"] = StreamingConfluenceDetector(
-                    self.progress, window=self._conf_window,
-                    stride=self._conf_stride,
-                    min_signals=self._conf_min_signals,
-                    persist_checks=self._conf_persist,
-                    progress_median=self._conf_median)
-            fired = det.push(ram)
+                det = ctx["_clear_det"] = self._new_clear_detector()
+            # The APU mask rides in ctx rather than in is_clear's signature:
+            # every caller (observe, replay_verify, the counterfactual gate,
+            # the show) already threads ctx, and every duck-typed game
+            # adapter in the corpus implements the 3-argument form.
+            #
+            # The one-argument push() is kept literally, not defaulted to
+            # None, on the disarmed path: `det` is whatever the ctx holds,
+            # and the corpus is full of duck-typed one-argument detector
+            # stubs. A default-off knob must not widen the call it makes.
+            fired = (det.push(ram, ctx.get("_apu_mask"))
+                     if self._conf_apu_weight > 0 else det.push(ram))
             # ROOM-TRANSITION VETO (v2, 2026-08-08). Bookkeeping runs on
             # every observation, so it is evaluated before the early
             # returns below; disarmed profiles (room_veto.steps 0, the
@@ -1066,6 +1255,18 @@ class Solver:
         self.provenance = hw_provenance(self.hw_flags, self.frame_skip)
         if self.hw_flags:
             print(f"[go_explore_solve] hw flags: {self.hw_flags}", flush=True)
+        # AUDIO MODALITY (v3, opt-in). Resolved ONCE: the sample is a
+        # per-step pool call, and `hasattr` per step on the hot loop is not
+        # free. False unless the profile's clear hook asked for it AND the
+        # linked core actually exports the accessor (an older wheel must
+        # degrade to the RAM-only detector with a loud line, not AttributeError
+        # every step).
+        self._needs_apu = resolve_apu_sampling(self.game, self.pool)
+        # Diagnostic only: a windowed clear hook whose warm-up exceeds one
+        # burst can never fire live, because the ctx holding its state is
+        # rebuilt at every re-root.
+        warn_if_burst_starves_clear_hook(self.game,
+                                         int(getattr(args, "burst", 0) or 0))
         self.rng = np.random.default_rng(args.seed)
         # Sustained-hold macros (generic mechanism, profile-selected): at a
         # small per-step probability a worker settles briefly then HOLDS one
@@ -1136,6 +1337,20 @@ class Solver:
         self.verify_bank = resolve_verify_bank(args)
         self.verify_checks = 0
         self.verify_rejections = 0
+        # COUNTERFACTUAL GATE (v3, 2026-08-09) — default OFF, see
+        # resolve_counterfactual_gate for why this one does NOT inherit the
+        # verify_bank "absent means on" rule.
+        self.cf_gate = resolve_counterfactual_gate(args)
+        self.cf_branches = int(getattr(args, "cf_branches", 8))
+        self.cf_pre_steps = int(getattr(args, "cf_pre_steps", 32))
+        self.cf_perturb_p = float(getattr(args, "cf_perturb_p", 0.25))
+        self.cf_agree = float(getattr(args, "cf_agree", 0.5))
+        # Seeded off the run's own seed so two runs of the same invocation
+        # probe identically and a receipt's verdict is reproducible.
+        _cfs = getattr(args, "cf_seed", None)
+        self.cf_seed = int(getattr(args, "seed", 0) if _cfs is None else _cfs)
+        self.cf_checks = 0
+        self.cf_rejections = 0
         self.steps_done = 0
         self.t0 = time.time()
         self.stop = False
@@ -1496,9 +1711,14 @@ class Solver:
             # for the same reason. The trajectory is not extended; the hook is
             # only given the observations it needs to reach the verdict it
             # already reached live.
+            needs_apu = bool(getattr(self, "_needs_apu", False))
             for i, a in enumerate(list(trace) + [0] * margin):
                 acts[0] = self.bitmasks[int(a)]
                 ram = pool.step_all(acts)[0][2]
+                # Same modality the live hook saw, or the replay judges a
+                # different detector than the one that fired.
+                if needs_apu:
+                    ctx["_apu_mask"] = pool.apu_activity_all()[0]
                 if i < n and self.game.is_dead(ram, self.start_lives):
                     out.update(verdict="dead", at=i + 1)
                     break
@@ -1508,6 +1728,220 @@ class Solver:
                     break
             else:
                 out.update(verdict="no_clear", at=None)
+        except Exception as exc:                      # noqa: BLE001
+            out["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            if pool is not None:
+                try:
+                    pool.shutdown()
+                except Exception:                     # noqa: BLE001
+                    pass
+        out["elapsed_s"] = round(time.time() - t0, 3)
+        return out
+
+    def counterfactual_probe(self, root_id: str, trace) -> dict:
+        """K-branch counterfactual perturbation probe: does this candidate's
+        clear survive the player having played the last few seconds slightly
+        differently?
+
+        THE QUESTION, and why it is different from replay verification.
+        replay_verify asks "did this happen at all" — it re-simulates the
+        SAME inputs and the emulator is deterministic, so a clear hook that
+        fabricates a win on a transient RAM shape fabricates the identical
+        win in the replay (this is exactly how the Kirby garbage-read false
+        positive survived verification). This probe asks the strictly harder
+        question: "is the transition something the GAME committed to, or
+        something that hung off the exact frames we happened to press". A
+        real stage clear is committed — a flag slide, an exit pipe animation,
+        a tally cutscene all run themselves out whatever the pad does, which
+        is precisely the premise of the offline detector's `lock` signal. A
+        combat blip, a respawn or a one-off RAM coincidence is contingent:
+        perturb the inputs going into it and it does not recur.
+
+        This is that lock signal generalized from 2 branches (hold-a-direction
+        vs. NOOP, judged by a RAM diff) to K branches judged by the clear hook
+        itself, and run at its TRUE cost. It is NEVER in-loop: the measured
+        4-40 s per candidate is fine on the banking path (a handful of
+        candidates per 25-45 minute solve) and catastrophic anywhere near the
+        hot loop, which is why there is no per-step form of it anywhere in
+        this file.
+
+        MECHANISM. Replay the trace from its root in a FRESH single-worker
+        pool up to `cf_pre_steps` actions before the end, and snapshot that
+        pre-clear state. From that snapshot:
+
+          * one CONTROL branch replays the remaining actions verbatim;
+          * K branches replay them with each action independently replaced,
+            with probability `cf_perturb_p`, by a uniformly random action
+            from the profile's own space (seeded per branch, so the whole
+            probe is reproducible from the receipt).
+
+        Every branch gets a fresh ctx and the same NOOP margin replay
+        verification uses, and is judged by the same is_dead / is_finale /
+        is_clear hooks the live search used.
+
+        WHY RANDOM PERTURBATION AND NOT K CONSTANT HOLDS. Constant holds are
+        the literal shape of the lock probe and were tried first on paper:
+        they refuse REAL clears whose last second contains a required input.
+        An exit-pipe clear needs `down` held at the pipe mouth; a branch
+        holding NOOP or `right` simply never enters the pipe, so a genuine
+        clear would score 1-2 branches out of 8 and be thrown away. Sparse
+        random perturbation keeps the trajectory's own shape (a committed
+        transition is untouched by a few changed inputs) while still
+        destroying anything that balanced on exact frames.
+
+        THE CONTROL BRANCH IS A GUARD, NOT A VOTE. If the unperturbed branch
+        does not reproduce the clear from the snapshot, this probe has no
+        discriminating power on this candidate — the harness itself could not
+        see the clear even with the real inputs (a windowed hook whose
+        evidence predates the snapshot is the obvious way that happens). The
+        verdict is then `inconclusive` and ok=True: it does NOT refuse, it
+        reports that it could not judge. Measuring one's own instrument and
+        calling the result a fabricated clear is how a gate turns into a
+        blanket mute.
+
+        EVERY BRANCH GETS THE HOOK'S OWN WARM-UP (fix, 2026-08-10). A branch
+        is a bounded replay into a FRESH ctx, so a windowed hook starts from
+        zero evidence in it; `cf_pre_steps` alone therefore does not describe
+        what the hook can see. `pre` is raised to
+        `clear_observation_budget() - clear_verify_margin()` whenever that is
+        larger, exactly the way clear_verify_margin itself is derived from
+        stride*persist — the adapter is asked, nothing is hardcoded here.
+        Before that floor existed the probe was a STRUCTURAL NO-OP against the
+        one configuration it is most wanted for: 32 pre-steps + a 20-action
+        margin = 52 observations against the 100 that
+        `min_signals: 3, apu_weight: 1.0` needs before an APU-backed check can
+        pass, so the control could never reproduce ANY clear, every candidate
+        came back 'inconclusive' with ok=True, and the gate refused nothing
+        while still spending 4-40 s each time. When the trace itself is too
+        short to cover the budget the floor cannot help; the probe then says
+        so out loud on stderr and stamps `warmup_short` on the receipt rather
+        than reporting a silent 'inconclusive'. The floor is also this
+        probe's cost knob — k+1 branches of (pre + margin) steps — so a hook
+        needing 100 observations costs about twice one needing 52. Still
+        seconds, still banking-path only, and a cheap probe that cannot
+        conclude anything is not the cheaper option.
+
+        Returns {"ok", "verdict", "agree", "k", "agreement", "threshold",
+        "pre_steps", "pre_steps_requested", "warmup_budget", "margin",
+        "perturb_p", "n_actions", "control", "branches", "elapsed_s"[,
+        "reason"][, "warmup_short"][, "error"]}. Never raises; an
+        infrastructure failure is reported as ok=False (fail closed, same rule
+        as replay_verify)."""
+        t0 = time.time()
+        k = max(1, int(getattr(self, "cf_branches", 8)))
+        p = float(getattr(self, "cf_perturb_p", 0.25))
+        need = float(getattr(self, "cf_agree", 0.5))
+        seed = int(getattr(self, "cf_seed", 0))
+        trace = [int(a) for a in trace]
+        n = len(trace)
+        req = max(1, int(getattr(self, "cf_pre_steps", 32)))
+        pre = min(req, n)
+        out = {"ok": False, "verdict": "error", "agree": 0, "k": k,
+               "agreement": 0.0, "threshold": need, "pre_steps": pre,
+               "pre_steps_requested": req, "warmup_budget": None,
+               "margin": None,
+               "perturb_p": p, "n_actions": n, "seed": seed,
+               "control": None, "branches": [], "elapsed_s": 0.0}
+        pool = None
+        try:
+            root = self.roots.get(root_id)
+            if root is None:
+                raise KeyError(f"unknown root_id {root_id!r}")
+            # WARM-UP FLOOR, resolved before a single emulator step is spent:
+            # ask the adapter what its clear hook needs to SEE, and give the
+            # branches at least that much (see the docstring). Both hooks are
+            # called unconditionally, exactly the way replay_verify calls
+            # clear_verify_margin — an adapter missing either one is an
+            # infrastructure error that must fail closed, not a 0 quietly
+            # substituted for a number nobody measured.
+            margin = self.game.clear_verify_margin()
+            budget = int(self.game.clear_observation_budget())
+            pre = min(max(req, budget - margin), n)
+            out["pre_steps"], out["warmup_budget"] = pre, budget
+            out["margin"] = margin
+            if pre + margin < budget:
+                # The trace itself is shorter than the hook's own warm-up, so
+                # no branch — control included — can reach an evaluation. Say
+                # it, instead of returning a silent 'inconclusive' that reads
+                # in a receipt like a check that ran.
+                out["warmup_short"] = True
+                sys.stderr.write(
+                    f"[go_explore_solve] *** COUNTERFACTUAL GATE CANNOT JUDGE "
+                    f"*** root={root_id}: this clear hook needs {budget} "
+                    f"observations before it can fire at all, and a branch of "
+                    f"this candidate gets only {pre}+{margin}="
+                    f"{pre + margin} (the trace is {n} actions). The probe "
+                    f"will report 'inconclusive' and refuse nothing — that is "
+                    f"a MISSING check, not a passing one.\n")
+                sys.stderr.flush()
+            blob = Path(root["path"]).read_bytes()
+            pool = Pool(rom_path=self.game.rom, num_workers=1,
+                        frame_skip=self.frame_skip)
+            apply_hw_flags(pool, self.hw_flags)   # same machine as the search
+            pool.set_headless(True)
+            pool.set_skip_preprocess(True)
+            pool.reset_all()
+            pool.load_worker_state(0, blob)
+            acts = np.zeros(1, dtype=np.uint8)
+            pool.step_all(acts)                   # rooting NOOP, as seed() does
+            needs_apu = bool(getattr(self, "_needs_apu", False))
+            head, tail = trace[: n - pre], trace[n - pre:]
+            for a in head:
+                acts[0] = self.bitmasks[a]
+                pool.step_all(acts)
+            pivot = pool.save_worker_state(0)
+
+            def _branch(actions: list) -> dict:
+                pool.load_worker_state(0, pivot)
+                ctx: dict = {}
+                verdict, at = "no_clear", None
+                for i, a in enumerate(list(actions) + [0] * margin):
+                    acts[0] = self.bitmasks[int(a)]
+                    ram = pool.step_all(acts)[0][2]
+                    if needs_apu:
+                        ctx["_apu_mask"] = pool.apu_activity_all()[0]
+                    if i < len(actions) and self.game.is_dead(
+                            ram, self.start_lives):
+                        verdict, at = "dead", i + 1
+                        break
+                    if (self.game.is_finale(self.start_wd, ram)
+                            or self.game.is_clear(self.start_wd, ram, ctx)):
+                        verdict, at = "clear", i + 1
+                        break
+                return {"verdict": verdict, "at": at}
+
+            control = _branch(tail)
+            control["perturbed"] = 0
+            out["control"] = control
+            n_act = len(self.bitmasks)
+            for b in range(k):
+                rng = np.random.default_rng([seed, b, n])
+                branch = [int(rng.integers(n_act))
+                          if (n_act > 1 and rng.random() < p) else a
+                          for a in tail]
+                res = _branch(branch)
+                res["branch"] = b
+                res["perturbed"] = sum(1 for x, y in zip(branch, tail)
+                                       if x != y)
+                out["branches"].append(res)
+            agree = sum(1 for r in out["branches"] if r["verdict"] == "clear")
+            out["agree"] = agree
+            out["agreement"] = round(agree / float(k), 4)
+            if control["verdict"] != "clear":
+                # Cannot judge: see THE CONTROL BRANCH IS A GUARD above. The
+                # reason is recorded because the two causes are not equally
+                # acceptable — a hook the branch was too short to warm up is
+                # a hole in the harness (and already printed above), while a
+                # control that looked and did not see it is a property of the
+                # candidate.
+                out.update(ok=True, verdict="inconclusive",
+                           reason=("warmup_short" if out.get("warmup_short")
+                                   else "control_blind"))
+            elif out["agreement"] >= need - 1e-9:
+                out.update(ok=True, verdict="commits")
+            else:
+                out.update(ok=False, verdict="contingent")
         except Exception as exc:                      # noqa: BLE001
             out["error"] = f"{type(exc).__name__}: {exc}"
         finally:
@@ -1545,13 +1979,37 @@ class Solver:
                 return False
             print(f"[go_explore_solve] replay-verified clear "
                   f"{json.dumps(v)}", flush=True)
+        # COUNTERFACTUAL GATE (v3, opt-in, default OFF). Runs beside replay
+        # verification and answers the question determinism cannot: would the
+        # transition still have happened if the player had played the last
+        # couple of seconds differently. Refusal happens ONLY here — with the
+        # gate off, nothing on this path changes at all.
+        cf = None
+        if getattr(self, "cf_gate", False):
+            cf = self.counterfactual_probe(root_id, list(trace))
+            self.cf_checks = getattr(self, "cf_checks", 0) + 1
+            print(f"[go_explore_solve] counterfactual probe "
+                  f"{json.dumps(cf)}", flush=True)
+            if not cf["ok"]:
+                self.cf_rejections = getattr(self, "cf_rejections", 0) + 1
+                sys.stderr.write(
+                    f"[go_explore_solve] *** CLEAR REJECTED (counterfactual "
+                    f"gate) *** root={root_id} {len(trace)} actions: the "
+                    f"clear did NOT survive input perturbation "
+                    f"({cf['agree']}/{cf['k']} branches, threshold "
+                    f"{cf['threshold']}) — NOTHING banked. The transition was "
+                    f"contingent on the exact inputs, which is what a combat "
+                    f"blip or a one-off RAM coincidence looks like and what a "
+                    f"committed stage transition does not.\n")
+                sys.stderr.flush()
+                return False
         self.best_sol_len = len(trace)
         n = self.sol_counter
         self.sol_counter += 1
         self.n_solutions += 1
         base = self.out / "solutions" / f"sol_{n:03d}"
         np.save(str(base) + ".actions.npy", np.array(trace, dtype=np.int64))
-        (base.parent / (base.name + ".json")).write_text(json.dumps({
+        rec = {
             "provenance": "search",
             # Full effective invocation (audit finding: receipts recorded
             # neither workers nor profile nor buckets, making parity
@@ -1582,7 +2040,15 @@ class Solver:
             # verified receipt from a pre-v2 (or --no-verify-bank) one without
             # re-running anything.
             "replay_verified": bool(self.verify_bank),
-        }, indent=2) + "\n")
+        }
+        # Present ONLY when the gate ran, so a default-path receipt is
+        # byte-identical to every receipt already in the corpus and an audit
+        # can tell "passed the probe" from "was never probed" by the key's
+        # presence rather than by its value.
+        if cf is not None:
+            rec["counterfactual_gate"] = cf
+        (base.parent / (base.name + ".json")).write_text(
+            json.dumps(rec, indent=2) + "\n")
         print(f"[go_explore_solve] *** SOLUTION {n} *** root={root_id} "
               f"{len(trace)} actions, {self.start_wd}->"
               f"{self.game.level_key(ram)}", flush=True)
@@ -2010,6 +2476,11 @@ class Solver:
                 c["pending"] = a
                 acts[i] = self.bitmasks[a]
             results = self.pool.step_all(acts)
+            # One byte per worker, read straight after the step (state read,
+            # no stepping, no side effects). None unless a profile's clear
+            # hook asked for the audio modality, so the default hot loop is
+            # untouched.
+            apu_all = self.pool.apu_activity_all() if self._needs_apu else None
             self.steps_done += args.workers
             if self.step_hook is not None:
                 try:
@@ -2018,6 +2489,8 @@ class Solver:
                     pass
             for i, c in enumerate(ctx):
                 ram = results[i][2]
+                if apu_all is not None:
+                    c["_apu_mask"] = apu_all[i]
                 c["trace"].append(c["pending"])
                 c["steps"] += 1
                 c["left"] -= 1
@@ -2176,6 +2649,13 @@ class Solver:
         if getattr(self, "verify_rejections", 0):
             line["verify_checks"] = self.verify_checks
             line["verify_rejections"] = self.verify_rejections
+        # Counterfactual-gate telemetry: printed as soon as the gate has run
+        # at all (unlike the replay counters, which stay silent until
+        # something is rejected) — the gate is opt-in, so a reader who turned
+        # it on wants to see that it is actually being exercised.
+        if getattr(self, "cf_checks", 0):
+            line["cf_checks"] = self.cf_checks
+            line["cf_rejections"] = self.cf_rejections
         with open(self.out / "progress.jsonl", "a") as f:
             f.write(json.dumps(line) + "\n")
         print(f"[go_explore_solve] {json.dumps(line)}", flush=True)
@@ -2278,6 +2758,40 @@ def main() -> int:
                     help="Bank clear candidates unverified (pre-2026-08-08 "
                          "behavior). Receipts written this way record "
                          "replay_verified: false.")
+    ap.add_argument("--counterfactual-gate", dest="counterfactual_gate",
+                    action="store_true", default=False,
+                    help="Additionally require every clear candidate to "
+                         "survive a K-branch input-perturbation probe before "
+                         "banking (DEFAULT OFF). Re-simulates K short "
+                         "branches from a pre-clear state with perturbed "
+                         "inputs: a committed stage transition reproduces "
+                         "across most of them, a combat blip or one-off RAM "
+                         "coincidence does not. Costs seconds per candidate "
+                         "(measured 4-40 s), which is why it lives on the "
+                         "banking path and nowhere near the hot loop.")
+    ap.add_argument("--no-counterfactual-gate", dest="counterfactual_gate",
+                    action="store_false",
+                    help="Explicitly disable the counterfactual gate (the "
+                         "default).")
+    ap.add_argument("--cf-branches", type=int, default=8,
+                    help="K: perturbed branches per candidate (default 8).")
+    ap.add_argument("--cf-pre-steps", type=int, default=32,
+                    help="Actions before the end of the trace at which the "
+                         "pre-clear snapshot is taken; the branches perturb "
+                         "exactly this tail (default 32 ~= 2.1 s at "
+                         "frame_skip 4).")
+    ap.add_argument("--cf-perturb-p", type=float, default=0.25,
+                    help="Per-action probability that a branch replaces the "
+                         "trace's action with a random one (default 0.25). "
+                         "Higher = harsher; high enough and it deletes "
+                         "inputs a real clear needed.")
+    ap.add_argument("--cf-agree", type=float, default=0.5,
+                    help="Fraction of branches that must still reach the "
+                         "clear for the candidate to be banked (default 0.5 "
+                         "= most of them).")
+    ap.add_argument("--cf-seed", type=int, default=None,
+                    help="Seed for the perturbation streams (default: the "
+                         "run's --seed, so the probe is reproducible).")
     ap.add_argument("--swim-gx-ceiling", type=int, default=0,
                     help="If >0: in swim rooms ($001D=1), lineages crossing "
                          "this gx are terminated — forces attempt density "
