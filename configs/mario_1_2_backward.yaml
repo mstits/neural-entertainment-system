@@ -245,11 +245,35 @@ reinforce:
     advance_actions: 40
     min_attempts: 30
     entrance_weight: 1.0
-    # Truncated (boundary-cut) attempts are censored data — neither a
-    # clear nor a death. Dropped by default, which keeps the rung rate an
-    # honest "of the attempts that RESOLVED, how many cleared"; the
-    # `truncated N` column in the log says how much is being censored.
-    truncation_is_failure: false
+    # ---- run-2 mechanism repair 1 of 2 (2026-08-09) ----
+    # Truncated attempts (cut by the budget below, or by the iter
+    # boundary) are censored data — neither a clear nor a death — and
+    # were DROPPED before this. THE RECEIPT: run 2 stopped at iter 266 on
+    # the registered stall criterion with tau parked 156 iters at rung
+    # 893, trailing 0/0, and 15,914 truncated attempts thrown away.
+    # Episodes from that rung neither died nor cleared, so every attempt
+    # was censored, the advance gate's 30-attempt floor was never met and
+    # the window STARVED — exactly the length-biased-truncation defect
+    # the adversarial review flagged as a MAJOR at implementation time.
+    # On: a timeout scores as a failure (Salimans & Chen's convention),
+    # so an unlearnable rung stalls visibly at 0/N instead of invisibly
+    # at 0/0, and a rung the policy CAN do advances on its real rate.
+    count_truncations: true
+    # ---- run-2 mechanism repair 2 of 2 (2026-08-09) ----
+    # Per-rung episode step cap: min(rollout_steps, base + per_entry *
+    # (n_entries - r)) for an episode restarted at tape entry r. The
+    # vanilla_ppo loop had no per-episode cap at all, so run-2 attempts
+    # wandered to the global cap (rollout_steps 1536) and burned the
+    # rollout on one unresolvable life. The distance still to run IS what
+    # tau measures, so the cap is affine in it: at rung 893 the flag is
+    # ~201 tape entries away, and 600 + 2.0*201 = 1002 steps is a ~5x
+    # slack on the solver's own pace — generous for a learning policy,
+    # and still ~1.5 attempts per env per rollout instead of one. At the
+    # entrance the formula asks for 600 + 2.0*1094 = 2788 and the global
+    # cap swallows it, so honest entrance episodes are untouched.
+    rung_step_budget:
+      base: 600
+      per_entry: 2.0
     pin_entrance: false        # true = zero-diff guard only, never a real run
 
     # ---- entropy guard (added 2026-08-08 on the B4 v1 receipt) ----

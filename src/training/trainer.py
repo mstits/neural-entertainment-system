@@ -5739,18 +5739,28 @@ class Trainer:
         bwd_window_frames = int(_bwd_cfg.get("window_frames", 160))
         bwd_frames_per_entry = 4
         bwd_entrance_w = float(_bwd_cfg.get("entrance_weight", 1.0))
-        # Episodes still running when the iter boundary calls reset_all are
-        # TRUNCATED, and a truncated attempt is censored data: the policy
-        # neither cleared nor died. Dropping it (default) keeps the rung's
-        # rate an honest "of the attempts that resolved, how many cleared",
-        # but censors long episodes — and an episode from a deep rung
-        # cannot resolve at all when the remaining tape is longer than
-        # `rollout_steps` (see the reachability note logged below).
+        # Episodes still running when the iter boundary calls reset_all —
+        # or cut off by the per-rung budget below — are TRUNCATED, and a
+        # truncated attempt is censored data: the policy neither cleared
+        # nor died. Dropping it (default) keeps the rung's rate an honest
+        # "of the attempts that resolved, how many cleared", but censors
+        # long episodes — and an episode from a deep rung cannot resolve
+        # at all when the remaining tape is longer than `rollout_steps`
+        # (see the reachability note logged below).
+        #
         # Counting truncations as failures is the Salimans & Chen timeout
-        # convention; it makes the cursor stall visibly instead of stalling
-        # on an empty window.
-        bwd_trunc_fail = bool(_bwd_cfg.get("truncation_is_failure", False))
+        # convention, and B5 run 2 is the receipt for why it matters: the
+        # cursor sat 156 iters at rung 893 with a trailing window of 0/0
+        # while 15,914 attempts were truncated and dropped, so the advance
+        # gate's attempt floor could never be met. `count_truncations` is
+        # the registered name; `truncation_is_failure` is the original one
+        # and stays a live alias so B4's profiles keep their meaning.
+        bwd_trunc_fail = bool(_bwd_cfg.get(
+            "count_truncations",
+            _bwd_cfg.get("truncation_is_failure", False),
+        ))
         bwd_trunc_dropped = 0
+        bwd_trunc_scored = 0
         # Dev/guard knob: freeze every restart at the profile start state.
         # With sticky off this reproduces the pre-flag run bit-for-bit (no
         # extra RNG is drawn), which is how the zero-diff gate is checked.
@@ -5765,6 +5775,17 @@ class Trainer:
             BackwardEntropyGuard.from_config(_bwd_cfg.get("entropy_guard"))
             if bwd_on else None
         )
+        # OPT-IN per-rung episode budget (see backward_curriculum.RungBudget
+        # for the same run-2 receipt). The object needs the tape length and
+        # the rollout cap, so it is BUILT below once the index has loaded;
+        # the block's SHAPE is validated here, seconds into the run, so a
+        # malformed knob raises instead of silently leaving every episode
+        # uncapped. None => no episode is ever cut short (the historical
+        # path, and the one every pre-08-09 lineage was measured on).
+        bwd_budget = None
+        if bwd_on:
+            from src.training.backward_curriculum import RungBudget
+            RungBudget.parse_config(_bwd_cfg.get("rung_step_budget"))
         # The exact coefficient the guard last wrote, and the unboosted
         # value it was computed from. Both None while disarmed. Storing
         # the written value (not just the multiplier) lets the strip
@@ -5782,6 +5803,11 @@ class Trainer:
         _bwd_env_tau = np.zeros(num_envs, dtype=np.int64)
         _bwd_env_src = np.full(num_envs, -1, dtype=np.int8)
         _bwd_env_clear = np.zeros(num_envs, dtype=bool)
+        # Per-env episode step cap (0 = uncapped) and "this episode ended
+        # because the cap fired", which is what separates a truncation
+        # from a death at the scoring site.
+        _bwd_env_budget = np.zeros(num_envs, dtype=np.int64)
+        _bwd_env_trunc = np.zeros(num_envs, dtype=bool)
         if bwd_on:
             try:
                 from src.training import backward_curriculum as bwd
@@ -5805,6 +5831,15 @@ class Trainer:
                     min_attempts=int(_bwd_cfg.get(
                         "min_attempts", bwd.DEFAULT_MIN_ATTEMPTS
                     )),
+                    count_truncations=bwd_trunc_fail,
+                )
+                # The global cap is the rollout length: the iter boundary
+                # truncates every live episode there regardless, so a
+                # budget above it would never fire.
+                bwd_budget = bwd.RungBudget.from_config(
+                    _bwd_cfg.get("rung_step_budget"),
+                    n_entries=len(bwd_entries),
+                    max_steps=rollout_steps,
                 )
                 log.info(
                     "[backward] ENABLED: %d states (%d MB) from %s | tau0=%d "
@@ -5827,6 +5862,19 @@ class Trainer:
                 # as stale.
                 self._apply_pending_backward_state(bwd_sched)
                 _bwd_env_tau[:] = bwd_sched.tau
+                if bwd_budget is not None:
+                    log.info(
+                        "[backward] BUDGET: an episode restarted at rung r "
+                        "gets min(%d, %d + %.2f * (%d - r)) steps — %d at "
+                        "the current rung %d, %d at the ladder top, %d at "
+                        "the entrance. Over budget = truncated, %s.",
+                        bwd_budget.max_steps, bwd_budget.base,
+                        bwd_budget.per_entry, bwd_budget.n_entries,
+                        bwd_budget.steps_for(bwd_sched.tau), bwd_sched.tau,
+                        bwd_budget.steps_for(bwd_budget.n_entries - 1),
+                        bwd_budget.steps_for(0),
+                        "scored as a failure" if bwd_trunc_fail else "dropped",
+                    )
                 if bwd_guard is not None:
                     log.info(
                         "[backward-guard] configured: arm when the %d-iter "
@@ -5883,12 +5931,32 @@ class Trainer:
                 )
                 bwd_on = False
                 bwd_guard = None
+                bwd_budget = None
         elif _bwd_cfg.get("states_dir"):
             log.warning(
                 "[backward] configured but INERT: needs a tile-mode encoder "
                 "(is=%s) and a start_state_path (have=%s).",
                 self._is_tile_mode, _start_bytes is not None,
             )
+
+        def _bwd_score_truncation(idx: int, src: int) -> None:
+            """Book one TRUNCATED attempt from env `idx` (source `src`).
+
+            Both truncation sites — the per-rung budget mid-rollout and
+            the iter boundary — land here, so the two can never drift
+            apart on what a timeout means. The scheduler owns the
+            scored-or-dropped rule (`count_truncations`); these counters
+            are what the per-iter line reports as `truncated D (S
+            scored)`, i.e. how much of this rung's evidence is being
+            censored versus counted.
+            """
+            nonlocal bwd_trunc_scored, bwd_trunc_dropped
+            if (bwd_sched.record_truncation(tau=int(_bwd_env_tau[idx]))
+                    if src == 1 else
+                    bwd_sched.record_entrance_truncation()):
+                bwd_trunc_scored += 1
+            else:
+                bwd_trunc_dropped += 1
 
         # Initial reset.
         init_results = self.pool.reset_all()
@@ -6572,6 +6640,28 @@ class Trainer:
                             except ValueError:
                                 pass
                         done = bool(r.done) or bool(rew_done)
+                        # ===== BACKWARD CURRICULUM: the per-rung budget =====
+                        # The one cut the vanilla_ppo loop never had. An
+                        # attempt that neither dies nor clears otherwise runs
+                        # to the iter boundary, where it is censored — B5 run
+                        # 2 burned 156 iters at one rung that way. End it HERE
+                        # instead, at a cap sized by how much tape is left
+                        # ahead of its restart, so the attempt resolves inside
+                        # the rollout and the next one starts immediately.
+                        # Marked as a truncation (not a death) so the scoring
+                        # site can tell them apart; ending it BEFORE the
+                        # wavefront block below is deliberate — a non-clearing
+                        # terminal is charged -peak(Phi) there, so a budgeted
+                        # episode cannot bank approach shaping by idling.
+                        if (
+                            bwd_budget is not None
+                            and not done
+                            and _bwd_env_src[i] >= 0
+                            and _bwd_env_budget[i] > 0
+                            and ep_lengths[i] + 1 >= _bwd_env_budget[i]
+                        ):
+                            done = True
+                            _bwd_env_trunc[i] = True
                         # NON-FARMABLE wavefront PBRS (research fix 2026-07-22).
                         # Positive-shifted Phi in [0, phi_target]; Phi(terminal)=0.
                         #   LIVE : F = gamma*Phi(s') - Phi(s)
@@ -6859,16 +6949,20 @@ class Trainer:
                                     # tau 0 needs no hand-off. (The sticky
                                     # boundary is handled once for every
                                     # branch by _sticky_restart below.)
-                                    if _bwd_env_src[i] == 1:
+                                    _bwd_ok = bool(_bwd_env_clear[i])
+                                    if _bwd_env_trunc[i] and not _bwd_ok:
+                                        # Cut by the per-rung budget: a
+                                        # timeout, not a death.
+                                        _bwd_score_truncation(
+                                            i, int(_bwd_env_src[i]))
+                                    elif _bwd_env_src[i] == 1:
                                         bwd_sched.record(
-                                            bool(_bwd_env_clear[i]),
-                                            tau=int(_bwd_env_tau[i]),
+                                            _bwd_ok, tau=int(_bwd_env_tau[i]),
                                         )
                                     elif _bwd_env_src[i] == 0:
-                                        bwd_sched.record_entrance(
-                                            bool(_bwd_env_clear[i])
-                                        )
+                                        bwd_sched.record_entrance(_bwd_ok)
                                     _bwd_env_clear[i] = False
+                                    _bwd_env_trunc[i] = False
                                     bwd_sched.maybe_advance()
                                     _bwd_pick = bwd.ENTRANCE
                                     if not bwd_pin:
@@ -6890,6 +6984,16 @@ class Trainer:
                                     _bwd_env_tau[i] = bwd_sched.tau
                                     _bwd_env_src[i] = (
                                         0 if _bwd_pick == bwd.ENTRANCE else 1
+                                    )
+                                    # Budget the fresh attempt by the rung it
+                                    # actually restarts from (the entrance is
+                                    # rung 0), not by the cursor: the window
+                                    # spans entries behind tau.
+                                    _bwd_env_budget[i] = (
+                                        bwd_budget.steps_for(
+                                            0 if _bwd_pick == bwd.ENTRANCE
+                                            else int(_bwd_win[_bwd_pick])
+                                        ) if bwd_budget is not None else 0
                                     )
                                 elif (
                                     go_explore_archive is not None
@@ -7837,6 +7941,19 @@ class Trainer:
                 # `[vanilla_ppo] iter` line above was produced under
                 # exactly this coefficient. The arm/disarm `[backward-
                 # guard]` lines are emitted at the iter they happen.
+                # Truncation accounting rides the same suffix rule: silent
+                # unless one of the two run-2 repairs is armed, so an
+                # untouched lineage's log line is character-identical.
+                # `scored` is the half of `truncated` that reached the
+                # window as a failure — with both off it is always 0 and
+                # `truncated N` alone means "N attempts censored".
+                _btr_sfx = ""
+                if bwd_trunc_fail:
+                    _btr_sfx += " (%d scored)" % bwd_trunc_scored
+                if bwd_budget is not None:
+                    _btr_sfx += " | budget %d steps" % (
+                        bwd_budget.steps_for(_bs["tau"]),
+                    )
                 _bg_sfx = ""
                 if bwd_guard is not None:
                     _bg_sfx = (
@@ -7849,7 +7966,7 @@ class Trainer:
                 log.info(
                     "[backward] iter %d: tau=%d/%d (step %d frame %d gx %d) "
                     "trailing %d/%d=%.2f (advance at >=%.2f over %d) "
-                    "advances=%d%s | entrance %d/%d=%.3f | truncated %d%s",
+                    "advances=%d%s | entrance %d/%d=%.3f | truncated %d%s%s",
                     global_it, _bs["tau"], _bs["n_entries"] - 1,
                     _bt.step, _bt.frame, _bt.gx,
                     _bs["successes"], _bs["attempts"], _bs["rate"],
@@ -7857,7 +7974,8 @@ class Trainer:
                     _bs["advances"],
                     "  AT-ENTRANCE" if _bs["at_entrance"] else "",
                     _bs["entrance_successes"], _bs["entrance_attempts"],
-                    _bs["entrance_rate"], bwd_trunc_dropped, _bg_sfx,
+                    _bs["entrance_rate"], bwd_trunc_dropped, _btr_sfx,
+                    _bg_sfx,
                 )
 
             # ===== CGSA telemetry + research signposts =====
@@ -9022,17 +9140,18 @@ class Trainer:
                     if _bwd_src < 0:
                         continue
                     if not _bwd_env_clear[_bi]:
-                        if not bwd_trunc_fail:
-                            bwd_trunc_dropped += 1
-                            continue
-                    _bwd_ok = bool(_bwd_env_clear[_bi])
+                        # Cut by the iter boundary: same censored-data
+                        # rule as a budget cut, same accounting.
+                        _bwd_score_truncation(_bi, _bwd_src)
+                        continue
                     if _bwd_src == 1:
-                        bwd_sched.record(_bwd_ok, tau=int(_bwd_env_tau[_bi]))
+                        bwd_sched.record(True, tau=int(_bwd_env_tau[_bi]))
                     else:
-                        bwd_sched.record_entrance(_bwd_ok)
+                        bwd_sched.record_entrance(True)
                 bwd_sched.maybe_advance()
             _bwd_env_src[:] = -1
             _bwd_env_clear[:] = False
+            _bwd_env_trunc[:] = False
             if bwd_on:
                 _bwd_any = False
                 for _bi in range(num_envs):
@@ -9066,6 +9185,12 @@ class Trainer:
                     _bwd_env_tau[_bi] = bwd_sched.tau
                     _bwd_env_src[_bi] = (
                         0 if _bwd_pick == bwd.ENTRANCE else 1
+                    )
+                    _bwd_env_budget[_bi] = (
+                        bwd_budget.steps_for(
+                            0 if _bwd_pick == bwd.ENTRANCE
+                            else int(_bwd_win[_bwd_pick])
+                        ) if bwd_budget is not None else 0
                     )
                 if _bwd_any:
                     # Flush the post-restore frames into init_results, the

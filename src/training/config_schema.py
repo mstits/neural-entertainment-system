@@ -56,6 +56,22 @@ KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     "warm_start", "warmup_gens_ga_only", "wavefront_reward",
 })
 
+# Sub-keys of `reinforce.backward_curriculum`. This block is the one
+# sub-block that is validated one level deeper than its parent, because
+# it is the block pre-registered runs are configured through and a
+# silently-ignored knob there costs a 2.5-hour attended window (B5 run
+# 2's advance window starved on scoring semantics). Kept in sync with
+# the trainer by test_config_schema.py, which re-derives the consumed
+# set from the `_bwd_cfg.get(...)` sites. Sub-SUB-blocks
+# (`entropy_guard`, `rung_step_budget`) are validated by their own
+# readers, both of which RAISE on an unknown or missing field.
+KNOWN_BACKWARD_CURRICULUM_KEYS: frozenset[str] = frozenset({
+    "advance_actions", "advance_threshold", "count_truncations", "enabled",
+    "entrance_weight", "entropy_guard", "min_attempts", "pin_entrance",
+    "rung_step_budget", "states_dir", "tau_init", "truncation_is_failure",
+    "window_frames",
+})
+
 # Top-level profile keys read outside `reinforce` — by the launcher,
 # the GA path (`ga_params`), the Dreamer path (`dreamer`), and the
 # composite-eval manifest family (`levels`, `hysteresis_k`).
@@ -93,6 +109,26 @@ def validate_profile(profile: dict[str, Any]) -> list[str]:
                     f"unknown reinforce key {k!r} — NOT consumed by the "
                     f"trainer (typo? renamed? it will be silently ignored)"
                 )
+        bwd = rl.get("backward_curriculum")
+        if isinstance(bwd, dict):
+            for k in bwd:
+                if k not in KNOWN_BACKWARD_CURRICULUM_KEYS:
+                    warnings.append(
+                        f"unknown reinforce.backward_curriculum key {k!r} — "
+                        f"NOT consumed by the trainer (typo? renamed? it "
+                        f"will be silently ignored)"
+                    )
+            # `count_truncations` is the registered name and
+            # `truncation_is_failure` the original alias; the trainer
+            # reads the former first, so carrying both means one of them
+            # is inert — the exact bug class this validator exists for.
+            if "count_truncations" in bwd and "truncation_is_failure" in bwd:
+                warnings.append(
+                    "reinforce.backward_curriculum sets both "
+                    "'count_truncations' and its legacy alias "
+                    "'truncation_is_failure'; only 'count_truncations' is "
+                    "read — drop the alias"
+                )
     return warnings
 
 
@@ -125,4 +161,15 @@ def consumed_reinforce_keys_from_source(trainer_src: Path) -> set[str]:
         r'(?:rl_cfg|_rl_cfg|reinforce_cfg|reinforce)\.get\('
         r'\s*["\']([a-z0-9_]+)["\']'
     )
+    return set(pat.findall(txt))
+
+
+def consumed_backward_curriculum_keys_from_source(
+    trainer_src: Path,
+) -> set[str]:
+    """Same, one level deeper: the `reinforce.backward_curriculum` keys the
+    trainer reads (`_bwd_cfg.get("key"...)`). Used by the schema test so a
+    new curriculum knob cannot ship unregistered."""
+    txt = trainer_src.read_text()
+    pat = re.compile(r'_bwd_cfg\.get\(\s*["\']([a-z0-9_]+)["\']')
     return set(pat.findall(txt))

@@ -15,6 +15,7 @@ from src.training.backward_curriculum import (
     ENTRANCE,
     INDEX_NAME,
     STATE_VERSION,
+    RungBudget,
     StateEntry,
     TauScheduler,
     draw_restart,
@@ -293,6 +294,100 @@ def test_snapshot_reports_the_cursor_state() -> None:
     assert snap["at_entrance"] is False
 
 
+# ---- truncated attempts (the B5 run-2 starved window) ---------------
+#
+# Run 2 stalled 156 iters at rung 893 with a trailing window of 0/0 while
+# 15,914 attempts were truncated and DROPPED: the attempts never resolved,
+# so the advance gate's attempt floor could not be met and the ladder
+# stalled on an empty window. `count_truncations` scores a timeout as a
+# failure instead. Default off — every pre-08-09 lineage was measured
+# under the dropping behavior.
+
+
+def test_truncations_are_dropped_by_default() -> None:
+    s = _sched()
+    for _ in range(50):
+        assert s.record_truncation() is False
+    assert s.attempts == 0 and s.rate == 0.0     # the starved window
+    assert s.maybe_advance() is False
+
+
+def test_entrance_truncations_are_dropped_by_default() -> None:
+    s = _sched()
+    for _ in range(50):
+        assert s.record_entrance_truncation() is False
+    assert s.snapshot()["entrance_attempts"] == 0
+
+
+def test_counted_truncations_fill_the_window_as_failures() -> None:
+    s = _sched(count_truncations=True)
+    for _ in range(30):
+        assert s.record_truncation() is True
+    # The stall is now VISIBLE (0/30 at the rung) instead of invisible
+    # (0/0), and it still cannot advance — the rate is what blocks it.
+    assert s.attempts == 30 and s.successes == 0 and s.rate == 0.0
+    assert s.maybe_advance() is False
+
+
+def test_counted_truncations_do_not_block_a_rung_the_policy_can_do() -> None:
+    """A window mixing clears and timeouts advances on its real rate."""
+    s = _sched(count_truncations=True, min_attempts=10)
+    for _ in range(10):
+        s.record(True)              # 5 clears...
+        s.record_truncation()       # ...and 5 timeouts, interleaved
+    assert s.attempts == 10 and s.rate == pytest.approx(0.5)
+    assert s.maybe_advance() is True
+    assert s.tau == 89
+
+
+def test_a_counted_truncation_is_exactly_one_failure() -> None:
+    counted = _sched(count_truncations=True, min_attempts=4)
+    explicit = _sched(min_attempts=4)
+    for _ in range(4):
+        counted.record_truncation()
+        explicit.record(False)
+    assert counted.snapshot() == explicit.snapshot()
+
+
+def test_counted_truncations_respect_the_stale_tau_rule() -> None:
+    """An attempt that outlived an advance measured a retired rung, and a
+    truncation is no more admissible than a resolved outcome."""
+    s = _sched(count_truncations=True)
+    for _ in range(30):
+        s.record(True)
+    s.maybe_advance()
+    assert s.tau == 89
+    assert s.record_truncation(tau=99) is False
+    assert s.attempts == 0
+    assert s.record_truncation(tau=89) is True
+    assert s.attempts == 1
+
+
+def test_counted_entrance_truncations_score_as_entrance_failures() -> None:
+    s = _sched(count_truncations=True)
+    for _ in range(9):
+        assert s.record_entrance_truncation() is True
+    s.record_entrance(True)
+    snap = s.snapshot()
+    assert snap["entrance_attempts"] == 10
+    assert snap["entrance_successes"] == 1
+    assert snap["entrance_rate"] == pytest.approx(0.1)
+    assert s.attempts == 0            # still never pollutes the rung
+
+
+def test_count_truncations_is_config_not_persisted_state() -> None:
+    """Same rule as every other gate: a resume adopts the CONFIG's
+    semantics, so the knob can be flipped between runs of one lineage."""
+    on = _sched(count_truncations=True)
+    for _ in range(5):
+        on.record_truncation()
+    off = _sched()
+    off.load_state_dict(on.state_dict())
+    assert off.count_truncations is False
+    assert "count_truncations" not in on.state_dict()
+    assert off.attempts == 5          # the window itself still round-trips
+
+
 # ---- cursor persistence (resume) ------------------------------------
 #
 # A curriculum whose cursor is not checkpointed restarts at the ladder top
@@ -455,6 +550,125 @@ def test_a_rejected_load_leaves_the_cursor_untouched() -> None:
 
 def test_state_dict_carries_a_schema_tag() -> None:
     assert _sched().state_dict()["version"] == STATE_VERSION
+
+
+# ---- the per-rung episode budget ------------------------------------
+#
+# The other half of the run-2 repair. The vanilla_ppo loop has no
+# per-episode step cap, so an attempt that neither dies nor clears runs to
+# the iter boundary and is censored there; 15,914 of run 2's did. The cap
+# is affine in the tape distance still ahead of the restart, because that
+# distance is exactly what tau measures.
+
+
+def _budget(**kw) -> RungBudget:
+    kw.setdefault("base", 600)
+    kw.setdefault("per_entry", 2.0)
+    kw.setdefault("n_entries", 1094)      # the trimmed 1-2 bank
+    kw.setdefault("max_steps", 1536)      # the profile's rollout_steps
+    return RungBudget(**kw)
+
+
+def test_budget_is_affine_in_the_tape_left_ahead() -> None:
+    b = _budget()
+    # rung 893 (where run 2 stalled): 201 entries to the flag.
+    assert b.steps_for(893) == 600 + 2 * (1094 - 893) == 1002
+    assert b.steps_for(1093) == 602        # one entry short of the flag
+    assert b.steps_for(1094) == 600        # the flag itself: base only
+
+
+def test_deeper_rungs_get_more_room_than_near_flag_rungs() -> None:
+    b = _budget()
+    rungs = [1090, 900, 500, 100, 0]
+    got = [b.steps_for(r) for r in rungs]
+    assert got == sorted(got), got          # monotone in restart depth
+    assert b.steps_for(0) > b.steps_for(1090)
+
+
+def test_the_global_cap_wins() -> None:
+    b = _budget()
+    # 600 + 2 * 1094 = 2788, but no episode outlives the rollout anyway.
+    assert b.steps_for(0) == 1536
+    # ...so entrance episodes are exactly as long as before the budget.
+    assert b.steps_for(0) == b.max_steps
+
+
+def test_budget_clamps_a_rung_outside_the_tape() -> None:
+    b = _budget()
+    assert b.steps_for(-5) == b.steps_for(0)
+    assert b.steps_for(99999) == b.steps_for(1094)
+
+
+def test_budget_is_never_zero_steps() -> None:
+    # per_entry 0 is a legal flat cap; the floor keeps it a real episode.
+    assert RungBudget(base=1, per_entry=0.0, n_entries=10,
+                      max_steps=1000).steps_for(5) == 1
+
+
+def test_budget_truncates_the_fraction_rather_than_rounding_up() -> None:
+    b = RungBudget(base=10, per_entry=0.5, n_entries=5, max_steps=1000)
+    assert b.steps_for(2) == 11             # 10 + 1.5 -> 11, not 12
+
+
+@pytest.mark.parametrize("kw", [
+    {"base": 0}, {"per_entry": -0.1}, {"n_entries": 0}, {"max_steps": 0},
+])
+def test_budget_rejects_nonsense(kw) -> None:
+    with pytest.raises(ValueError):
+        _budget(**kw)
+
+
+@pytest.mark.parametrize("cfg", [None, {}, "", {"enabled": False},
+                                 {"enabled": False, "base": 1,
+                                  "per_entry": 1.0}])
+def test_absent_budget_block_builds_nothing(cfg) -> None:
+    """The default path: no instance, so no episode is ever cut short."""
+    assert RungBudget.parse_config(cfg) is None
+    assert RungBudget.from_config(cfg, n_entries=100, max_steps=500) is None
+
+
+@pytest.mark.parametrize("cfg", [
+    {"base": 600},                              # no per_entry
+    {"per_entry": 2.0},                         # no base
+    {"base": 600, "per_entry": 2.0, "cap": 9},  # dead knob
+    {"base": 0, "per_entry": 2.0},
+    {"base": 600, "per_entry": -1.0},
+])
+def test_a_malformed_budget_block_raises_rather_than_no_ops(cfg) -> None:
+    """This project's bug class is a knob that parses and does nothing; a
+    pre-registered run must not spend its window on one."""
+    with pytest.raises(ValueError):
+        RungBudget.parse_config(cfg)
+
+
+def test_from_config_builds_the_shipped_b5_budget() -> None:
+    b = RungBudget.from_config(
+        {"base": 600, "per_entry": 2.0}, n_entries=1094, max_steps=1536,
+    )
+    assert (b.base, b.per_entry, b.n_entries, b.max_steps) == \
+        (600, 2.0, 1094, 1536)
+    assert b.steps_for(893) == 1002
+
+
+def test_shipped_1_2_profile_carries_both_run2_repairs() -> None:
+    """The registered run-3 configuration, read off the profile itself."""
+    cfg = yaml.safe_load(
+        (REPO / "configs" / "mario_1_2_backward.yaml").read_text()
+    )
+    rl = cfg["reinforce"]
+    blk = rl["backward_curriculum"]
+    assert blk["count_truncations"] is True
+    # The alias would win nothing but confusion; only one name ships.
+    assert "truncation_is_failure" not in blk
+    assert blk["rung_step_budget"] == {"base": 600, "per_entry": 2.0}
+    b = RungBudget.from_config(
+        blk["rung_step_budget"],
+        n_entries=1094, max_steps=int(rl["rollout_steps"]),
+    )
+    # ~5x the solver's own pace over the 201 entries left at rung 893,
+    # and the entrance still runs the full rollout.
+    assert b.steps_for(893) == 1002
+    assert b.steps_for(0) == int(rl["rollout_steps"])
 
 
 # ---- the restart draw -----------------------------------------------

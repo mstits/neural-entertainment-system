@@ -24,6 +24,9 @@ Three pieces, all pure so they unit-test without an emulator:
   Small-sample gates are the known failure mode on this project (3-episode
   gates were measured to be mirages behind a true success rate under
   1/400), so the attempt floor is a hard precondition, not a suggestion.
+* `RungBudget` — the per-rung episode step cap. Deep rungs (near the
+  entrance) get more room than near-flag rungs, so an attempt that will
+  never resolve is cut short and SCORED instead of running out the clock.
 * `draw_restart` — the length-balanced draw over {window entries, true
   entrance}. The true entrance is ALWAYS in the pool, so the terminal
   curriculum (tau == 0) is exactly the honest start distribution and the
@@ -269,11 +272,26 @@ class TauScheduler:
     would drag the rung's rate down with a different distribution's
     outcomes and stall the curriculum. Their rate is tracked separately
     because it is the honest in-training signal worth logging.
+
+    TRUNCATIONS (`count_truncations`, opt-in, default off = the historical
+    behavior). An attempt that neither cleared nor died — cut off by an
+    episode step cap or by the rollout boundary — is censored data, and by
+    default it is dropped rather than scored. THE RECEIPT (B5 run 2,
+    2026-08-09): on 1-2 the cursor sat at rung 893 for 156 iters with a
+    trailing window of 0/0 while 15,914 attempts were truncated and
+    dropped. Every attempt was censored, so the advance gate's attempt
+    floor could never be met and the ladder stalled on an EMPTY window —
+    the length-biased-truncation defect the adversarial review flagged as
+    a MAJOR at implementation time. With `count_truncations` on, a
+    truncated attempt scores as a FAILURE (the Salimans & Chen timeout
+    convention): the window fills, the rate is honest about "did not
+    clear", and a rung that cannot be learned stalls VISIBLY at 0/N
+    instead of invisibly at 0/0.
     """
 
     __slots__ = ("n_entries", "advance_entries", "advance_threshold",
-                 "min_attempts", "trailing", "_tau", "_window", "_advances",
-                 "_ent_att", "_ent_succ")
+                 "min_attempts", "trailing", "count_truncations",
+                 "_tau", "_window", "_advances", "_ent_att", "_ent_succ")
 
     def __init__(
         self,
@@ -284,6 +302,7 @@ class TauScheduler:
         advance_threshold: float = DEFAULT_ADVANCE_THRESHOLD,
         min_attempts: int = DEFAULT_MIN_ATTEMPTS,
         trailing: Optional[int] = None,
+        count_truncations: bool = False,
     ) -> None:
         if n_entries < 1:
             raise ValueError(f"n_entries must be >= 1, got {n_entries}")
@@ -304,6 +323,7 @@ class TauScheduler:
         self.advance_threshold = float(advance_threshold)
         self.min_attempts = int(min_attempts)
         self.trailing = int(trailing) if trailing else int(min_attempts)
+        self.count_truncations = bool(count_truncations)
         self._tau = int(tau)
         self._window: deque = deque(maxlen=self.trailing)
         self._advances = 0
@@ -351,6 +371,33 @@ class TauScheduler:
         """Score one episode that started from the true level entrance."""
         self._ent_att += 1
         self._ent_succ += int(bool(success))
+
+    def record_truncation(self, tau: Optional[int] = None) -> bool:
+        """Score one TRUNCATED tau-window episode — it hit a step cap or
+        the rollout boundary without clearing and without dying.
+
+        Returns True if the attempt landed in the trailing window (as a
+        failure), False if it was dropped as censored data — which is the
+        default, and which is what starved B5 run 2's advance window (see
+        the class docstring). The caller counts the drops: "how much of
+        this rung's evidence is being censored" is telemetry a stalled
+        cursor is diagnosed from.
+        """
+        if not self.count_truncations:
+            return False
+        return self.record(False, tau=tau)
+
+    def record_entrance_truncation(self) -> bool:
+        """Same, for an episode drawn from the true entrance.
+
+        The entrance rate is the honest in-training signal, so a truncated
+        entrance attempt is a non-clear exactly like a truncated rung
+        attempt: counted as a failure, or dropped, by the same knob.
+        """
+        if not self.count_truncations:
+            return False
+        self.record_entrance(False)
+        return True
 
     def maybe_advance(self) -> bool:
         """Walk tau back if this rung is earned. Returns True if it moved."""
@@ -463,6 +510,126 @@ class TauScheduler:
             "entrance_rate": (self._ent_succ / self._ent_att
                               if self._ent_att else 0.0),
         }
+
+
+# ---- the per-rung episode budget ------------------------------------
+
+
+@dataclass(frozen=True)
+class RungBudget:
+    """How many steps an episode restarted from rung `r` may take.
+
+        max_steps(r) = min(global_max, base + per_entry * (n_entries - r))
+
+    THE RECEIPT (B5 run 2, 2026-08-09). The vanilla_ppo loop has no
+    per-episode step cap: an attempt runs until it dies, clears, or the
+    iter boundary truncates it. On 1-2 the cursor stalled 156 iters at
+    rung 893 because attempts from that rung did NEITHER — they wandered
+    to the rollout cap and were censored, 15,914 of them. A flat cap is
+    the wrong shape for a reverse curriculum, because the distance left
+    to the flag is exactly what tau measures: a near-flag rung needs ~200
+    steps and a rung at the entrance needs the whole level. So the budget
+    is affine in the tape distance still ahead, `n_entries - r`, which is
+    the number of tape entries between the restart and the clear.
+
+    `per_entry` is the slack multiple on that distance (the solver tape
+    walks it in one step per entry; a learning policy needs several), and
+    `base` is the fixed allowance every attempt gets on top — enough for
+    a near-flag rung's last jump. The global cap is the trainer's rollout
+    length: no episode can outlive the iter boundary anyway, so a budget
+    above it is not a budget.
+
+    Opt-in via ``reinforce.backward_curriculum.rung_step_budget:
+    {base, per_entry}``; absent, no instance is built and no episode is
+    ever cut short — the historical behavior.
+    """
+
+    base: int
+    per_entry: float
+    n_entries: int
+    max_steps: int
+
+    def __post_init__(self) -> None:
+        if self.base < 1:
+            raise ValueError(
+                f"rung_step_budget.base must be >= 1, got {self.base}")
+        if self.per_entry < 0.0:
+            raise ValueError(
+                f"rung_step_budget.per_entry must be >= 0, got "
+                f"{self.per_entry}")
+        if self.n_entries < 1:
+            raise ValueError(
+                f"rung_step_budget needs a tape: n_entries={self.n_entries}")
+        if self.max_steps < 1:
+            raise ValueError(
+                f"rung_step_budget.max_steps must be >= 1, got "
+                f"{self.max_steps}")
+
+    def steps_for(self, rung: int) -> int:
+        """Step cap for an episode restarted at tape entry `rung`.
+
+        The true entrance is rung 0 (the deepest restart there is), so it
+        draws the largest budget — which the global cap then usually
+        swallows, leaving entrance episodes exactly as long as they were
+        before this existed. Fractional steps are truncated, never
+        rounded up: a budget is a ceiling.
+        """
+        r = min(max(int(rung), 0), self.n_entries)
+        raw = self.base + self.per_entry * (self.n_entries - r)
+        return max(1, min(int(self.max_steps), int(raw)))
+
+    @staticmethod
+    def parse_config(cfg) -> Optional[dict]:
+        """Validate a `rung_step_budget` block. Returns its fields or None.
+
+        None means "not configured" and the caller must then leave every
+        episode uncapped — the byte-identical default path. `enabled:
+        false` is honored so a profile can keep the block documented while
+        turning it off. A block that IS present but malformed raises: this
+        project's dead-knob bug class is a knob that parses and does
+        nothing, and a pre-registered run must not discover it hours in.
+        """
+        if not isinstance(cfg, dict) or not cfg:
+            return None
+        if not bool(cfg.get("enabled", True)):
+            return None
+        missing = [k for k in ("base", "per_entry") if k not in cfg]
+        if missing:
+            raise ValueError(
+                f"rung_step_budget is configured but missing {missing}; it "
+                f"needs both `base` and `per_entry`")
+        unknown = sorted(set(cfg) - {"base", "per_entry", "enabled"})
+        if unknown:
+            raise ValueError(
+                f"rung_step_budget has unregistered keys {unknown}; it takes "
+                f"`base`, `per_entry` and `enabled` only")
+        base = int(cfg["base"])
+        per_entry = float(cfg["per_entry"])
+        if base < 1:
+            raise ValueError(f"rung_step_budget.base must be >= 1, got {base}")
+        if per_entry < 0.0:
+            raise ValueError(
+                f"rung_step_budget.per_entry must be >= 0, got {per_entry}")
+        return {"base": base, "per_entry": per_entry}
+
+    @classmethod
+    def from_config(
+        cls, cfg, *, n_entries: int, max_steps: int,
+    ) -> Optional["RungBudget"]:
+        """Build from a `rung_step_budget` sub-block, or None when absent.
+
+        `n_entries` is the minted tape's length and `max_steps` the global
+        cap (the trainer's rollout length) — neither is known until the
+        tape has loaded, which is why `parse_config` exists to validate
+        the block's shape earlier than that.
+        """
+        parsed = cls.parse_config(cfg)
+        if parsed is None:
+            return None
+        return cls(
+            base=parsed["base"], per_entry=parsed["per_entry"],
+            n_entries=int(n_entries), max_steps=int(max_steps),
+        )
 
 
 # ---- the restart draw -----------------------------------------------

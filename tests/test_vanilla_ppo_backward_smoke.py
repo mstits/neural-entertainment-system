@@ -89,17 +89,36 @@ def _tiny_profile(states_dir: Path, **block) -> dict:
     rl["rnd_intrinsic_coef"] = 0.0
     rl["rnd_loss_coef"] = 0.0
     rl["num_envs"] = 4
-    rl["backward_curriculum"] = dict(
-        rl["backward_curriculum"],
-        states_dir=str(states_dir),
-        # Tiny tape: keep the rungs reachable inside a few iters. Boundary
-        # truncations score so the rung statistics are deterministic
-        # instead of hostage to whether a random policy happens to die.
-        advance_actions=4, min_attempts=4, window_frames=16,
-        truncation_is_failure=True,
-        **block,
-    )
+    blk = dict(rl["backward_curriculum"])
+    # Tiny tape: keep the rungs reachable inside a few iters. Boundary
+    # truncations score so the rung statistics are deterministic instead
+    # of hostage to whether a random policy happens to die.
+    blk.update(states_dir=str(states_dir), advance_actions=4,
+               min_attempts=4, window_frames=16, count_truncations=True)
+    blk.update(block)
+    # `count_truncations` is the registered name and
+    # `truncation_is_failure` the legacy alias for the same knob. The
+    # profile on disk still carries the alias and shipping both is a
+    # schema warning, so exactly one survives — the one under test.
+    blk.pop("count_truncations" if "truncation_is_failure" in block
+            else "truncation_is_failure", None)
+    rl["backward_curriculum"] = blk
     return profile
+
+
+def _trailing(line: str) -> tuple[int, int]:
+    """(successes, attempts) off a `[backward] iter` line's `trailing S/N`."""
+    s, n = line.split("trailing ", 1)[1].split("=", 1)[0].split("/")
+    return int(s), int(n)
+
+
+def _truncated(line: str) -> tuple[int, int]:
+    """(dropped, scored) off the same line's `truncated D (S scored)`."""
+    tail = line.split("truncated ", 1)[1]
+    dropped = int(tail.split()[0])
+    scored = (int(tail.split("(", 1)[1].split(" scored)", 1)[0])
+              if " scored)" in tail else 0)
+    return dropped, scored
 
 
 def _run(profile: dict, tmp: str, caplog, *, prefix="[backward]",
@@ -230,6 +249,152 @@ def test_pinned_run_is_identical_to_one_without_the_flag(caplog) -> None:
 
     assert a and a == c, "baseline is not reproducible; guard is unusable"
     assert a == b, "\n".join(f"{x}\n{y}" for x, y in zip(a, b) if x != y)
+
+
+# ---- the two run-2 mechanism repairs ---------------------------------
+#
+# B5 run 2 stopped at iter 266 on the registered stall criterion: tau sat
+# 156 iters at rung 893 with a trailing window of 0/0 while 15,914
+# attempts were truncated and dropped. Nothing died, nothing cleared, so
+# nothing was ever SCORED and the advance gate's attempt floor could not
+# be met. Both repairs are opt-in; these smokes drive them through the
+# real loop, which is the only place the two of them meet.
+
+
+@needs_rom
+def test_counted_truncations_are_the_evidence_dropping_censors(caplog) -> None:
+    """Repair 1, as a paired run: same seed, same trajectories, one knob.
+
+    Dropped (the default) a truncated attempt leaves nothing behind but a
+    censoring count, and the advance gate's attempt floor has to be met
+    without it — on 1-2 that meant 15,914 attempts thrown away and a
+    window that never left 0/0. Counted, those same attempts land in the
+    window as failures: attempts_on == attempts_off + truncations, exactly.
+    """
+    def _measure(lines):
+        last = [m for m in lines if m.startswith("[backward] iter")][-1]
+        succ, att = _trailing(last)
+        ent = int(last.split("entrance ", 1)[1].split("/")[1].split("=")[0])
+        return (succ, att + ent) + _truncated(last), last
+
+    with tempfile.TemporaryDirectory(prefix="bwd_trunc_tape_") as tape_tmp:
+        states = Path(tape_tmp) / "tape"
+        profile = yaml.safe_load(_PROFILE.read_text())
+        _mint_synthetic_tape(states, ROOT / profile["start_state_path"])
+
+        def _go(count, tag):
+            with tempfile.TemporaryDirectory(prefix=tag) as tmp:
+                # A trailing window long enough that nothing falls out of
+                # it: the identity below counts attempts, and a saturated
+                # deque forgets the oldest ones.
+                return _measure(_run(
+                    _tiny_profile(states, count_truncations=count,
+                                  min_attempts=20),
+                    tmp, caplog, seed=1234,
+                ))
+
+        (s_off, att_off, drop_off, sc_off), line_off = _go(False, "bwd_drop_")
+        (s_on, att_on, drop_on, sc_on), line_on = _go(True, "bwd_count_")
+
+    # Censored: the drop count is the only trace a truncation leaves, and
+    # the column that would report it as evidence is absent entirely.
+    assert drop_off > 0 and sc_off == 0, line_off
+    assert "scored" not in line_off, line_off
+    # Counted: nothing censored, and every one of those attempts is now in
+    # the rung window or the entrance column.
+    assert drop_on == 0 and sc_on == drop_off, (line_off, line_on)
+    assert att_on == att_off + sc_on, (line_off, line_on)
+    # A timeout is a failure, never a win — on either setting.
+    assert s_off == 0 and s_on == 0, (line_off, line_on)
+
+
+@needs_rom
+def test_the_legacy_truncation_alias_still_arms_the_same_knob(caplog) -> None:
+    """B4's profiles say `truncation_is_failure`; their meaning must not
+    change under them just because the registered name did."""
+    with tempfile.TemporaryDirectory(prefix="bwd_alias_") as tmp:
+        states = Path(tmp) / "tape"
+        profile = yaml.safe_load(_PROFILE.read_text())
+        _mint_synthetic_tape(states, ROOT / profile["start_state_path"])
+        prof = _tiny_profile(states, truncation_is_failure=True)
+        assert "count_truncations" not in \
+            prof["reinforce"]["backward_curriculum"]
+        lines = _run(prof, tmp, caplog)
+
+    iters = [m for m in lines if m.startswith("[backward] iter")]
+    dropped, scored = _truncated(iters[-1])
+    assert scored > 0 and dropped == 0, iters[-1]
+
+
+@needs_rom
+def test_the_rung_budget_cuts_episodes_short_and_scores_them(caplog) -> None:
+    """Repair 2: a per-rung step cap, so attempts resolve INSIDE the
+    rollout instead of running out the clock.
+
+    Without it each env contributes exactly one (boundary-truncated)
+    attempt per iter; with a cap of ~5-9 steps on a 48-step rollout each
+    env contributes several, and every one of them is scored.
+    """
+    ENVS, ITERS = 4, 3
+    with tempfile.TemporaryDirectory(prefix="bwd_budget_") as tmp:
+        states = Path(tmp) / "tape"
+        profile = yaml.safe_load(_PROFILE.read_text())
+        _mint_synthetic_tape(states, ROOT / profile["start_state_path"])
+        lines = _run(
+            _tiny_profile(states, count_truncations=True,
+                          rung_step_budget={"base": 4, "per_entry": 1.0}),
+            tmp, caplog, iters=ITERS,
+        )
+
+    budget = [m for m in lines if m.startswith("[backward] BUDGET")]
+    assert budget, [m for m in lines if m.startswith("[backward]")]
+    # min(48, 4 + 1.0 * (12 - r)): 5 at the ladder top, 16 at the entrance.
+    assert "5 at the ladder top" in budget[0], budget[0]
+    assert "16 at the entrance" in budget[0], budget[0]
+
+    iters = [m for m in lines if m.startswith("[backward] iter")]
+    assert "budget " in iters[-1], iters[-1]
+    _, scored = _truncated(iters[-1])
+    assert scored > ENVS * ITERS, (
+        f"{scored} scored attempts is no more than the {ENVS * ITERS} the "
+        f"iter boundary alone produces — the budget never fired: "
+        f"{iters[-1]}"
+    )
+
+
+@needs_rom
+def test_no_budget_block_leaves_episodes_uncapped(caplog) -> None:
+    """Absent, the knob is not merely off — it is not there. No budget
+    line, no per-iter budget column, and no attempt is ever cut short: the
+    only truncations are the iter boundary's, at most one per env per
+    iter (and the boundary that ends the last rollout is not reported
+    until the next iter's line, so it is strictly fewer)."""
+    ENVS, ITERS = 4, 3
+    with tempfile.TemporaryDirectory(prefix="bwd_nobudget_") as tmp:
+        states = Path(tmp) / "tape"
+        profile = yaml.safe_load(_PROFILE.read_text())
+        _mint_synthetic_tape(states, ROOT / profile["start_state_path"])
+        lines = _run(_tiny_profile(states, count_truncations=True),
+                     tmp, caplog, iters=ITERS)
+
+    assert not [m for m in lines if m.startswith("[backward] BUDGET")]
+    iters = [m for m in lines if m.startswith("[backward] iter")]
+    assert "budget" not in iters[-1], iters[-1]
+    _, scored = _truncated(iters[-1])
+    assert 0 < scored <= ENVS * ITERS, iters[-1]
+
+
+@needs_rom
+def test_a_malformed_budget_block_raises_instead_of_no_opping(caplog) -> None:
+    """The dead-knob class: a pre-registered run must fail at second one,
+    not spend its window with the cap silently absent."""
+    with tempfile.TemporaryDirectory(prefix="bwd_badbudget_") as tmp:
+        states = Path(tmp) / "tape"
+        profile = yaml.safe_load(_PROFILE.read_text())
+        _mint_synthetic_tape(states, ROOT / profile["start_state_path"])
+        prof = _tiny_profile(states, rung_step_budget={"base": 600})
+        with pytest.raises(ValueError, match="per_entry"):
+            _run(prof, tmp, caplog, iters=1)
 
 
 @needs_rom
