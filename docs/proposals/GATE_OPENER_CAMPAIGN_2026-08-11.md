@@ -143,3 +143,29 @@ key-config axes against the live run; wall_taxonomy topo_delta drops
 doors; generic borrow-glitch hardening for multi-byte progress reads
 (median-of-3 or borrow-aware pairing) — the score=gx domination of
 glitch cells is a generic defect class.
+
+## §13 — K0 VERDICT (2026-08-11): FAIL — CAMPAIGN DISARMED
+
+Both blind grades MISSED (CV $0004: absent from all ranked rows,
+admissible list empty; BB $0030: absent, 9-row list). Tuning used 1 of
+2 revisions (roots 6->16, structural reason logged); rev2 was DECLINED
+with receipts — the ranked plateau ties at identical scores broken by
+ASCENDING ADDRESS, so no parameter setting could move the answers into
+rank<=5 (and, noted for honesty: both answers are low addresses, so a
+PASS would have been partly tie-break artifact). Per §4a/§7: no null,
+ARM-FAILED, or GATE-OPENED claim may cite this arm; no sidecar; FORGE
+#2 validation (i) unsatisfiable. Receipts: runs/gate_opener_k0_2026-08-11/.
+
+Diagnostic yield (seven receipted defects, for any future re-forge —
+which would require a NEW K0 registration): D-PRIOR (CV admissible
+list empty BY CONSTRUCTION — _gate_observe samples the top band the
+live search never re-enters while the sweep is rooted there; novelty
+defaulted 1.0, every significant row refused farm_unmeasured); D-TIE
+(address-ordered tie-break at the score plateau); D-TRUNC (ranked[:32]
+cannot distinguish missing from ranked-low); D-DUP (top-5 rows not
+addresses); D-DOC (§3/§4a --gate-target-typed contradiction); D-IDENT
+(lifetime-constancy bytes are poor targets for an onset ranker);
+D-ARM (60s-cadence arming floor). Positive salvage: the T2 pilot is
+GOOD — p0=0.946 (53/56) off a genuine stair-mode onset, K_min=42
+pairs for the registered MDE, quantitatively confirming §10-O10's
+kill of the K=16 design.
