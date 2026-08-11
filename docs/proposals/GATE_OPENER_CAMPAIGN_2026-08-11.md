@@ -92,3 +92,26 @@ O7 (RT2: the sweep corrupts search state and its byte-identity test is unsatisfi
 O8 (RT2: interaction_basis cannot be built to its asserted sizes — ladder gives 120/72/90, not 128/66/88; CONTACT is state-dependent and cannot be pure; program length is 153, not 140). VERIFIED by arithmetic on the declared ladder. DISPOSITION: ACCEPT in full. Generation table published as fixture data with per-target counts asserted by test; CONTACT moved to sweep-time admission with declared self-measured parameters (gx/y telemetry, eps=0, K=8); uniform length 153; §6 recomputed (+9%, T1 now 3×90) (§1, §6).
 O9 (RT2: gate_armed's inputs do not exist — no advance-timestamp history behind the derived pin_secs (median undefined at zero advances), no runtime surface for "TYPED in the corpus", no band-growth bookkeeping, R6's 10-min abort fires during a legitimate 600 s pin). VERIFIED: _pin_time overwritten in place at :1552/:1606, no interval record anywhere. DISPOSITION: ACCEPT in full. v1 requires explicit --gate-pin-secs (mined defaults 600/120, negative disables); derivation deferred to v2 behind an advance-timestamp ring at those two sites; --gate-target-typed flag replaces the corpus conjunct; band_cells progress-line field specified; R6 abort moved to pin_secs + 5 min (§1, §3, §9).
 O10 (RT2: T2 at K=16 exact-McNemar p<0.01 needs >44% recurrence and can never pass, routing real mechanisms to "coverage/unattributed"; T3 uses Fisher — unpaired — on a paired design and needs ≥7/30). VERIFIED by the binomial arithmetic. DISPOSITION: ACCEPT in full. K=16 killed; p0 measured in K0 (≥50 resamples off the CV stair-mode onset — a boundary that DOES open, so p0 is measurable); K set by power calc for MDE 0.3; p0<0.15 → deterministic NOOP-masked ablation reported as necessity-only; T3 switched to exact McNemar with the ≥~23%-discordance power limit pre-registered and UNDERPOWERED-NULL as an explicit outcome (§2, §4a).
+
+---
+
+## §11 — As-built amendments (2026-08-11, D1 implementation + repair receipts)
+
+The shipped code diverges from §1 as follows (each with its repair
+receipt in the D1 workflow journals):
+1. COMBO family is rung-outer/pair-inner; cap 24 = 24 PROGRAMS; totals
+   120/72/90 stand, but distinct combo MASKS are CV 24 / Contra 20 /
+   BB 6 (BB has only 6 novel pairs).
+2. CONTACT window: settle-only when settle supplies k+1 samples (never
+   slides); extends into the pattern's first frame only when settle
+   cannot; the pattern's first frame is a separate always-checked
+   refusing conjunct. Phase 8 is admittable; no phase can have an
+   admission manufactured from post-pattern motion.
+3. BH-FDR m = the full addr x family grid computed ONCE per sweep and
+   charged identically to the wall and its sham null (receipts carry
+   fdr_m). §9-R1's "~786k" is superseded (4-family CV grid = 8,192).
+4. gate_marks are (step, cand, kind, span) 4-tuples; 3-tuples load.
+5. Telemetry adds gate_restore_failed; null sweeps write their
+   candidates receipt (the pre-registered primary outcome) with empty
+   admitted/ranked + full sweep params.
+6. The run deadline is passed into the sweep (no overrun-by-a-sweep).

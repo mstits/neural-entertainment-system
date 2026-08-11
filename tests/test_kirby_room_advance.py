@@ -100,9 +100,19 @@ def test_near_is_expressed_in_gx_buckets(ra):
     assert ra["near"] * GX_BUCKET == 384
 
 
+# Profiles that deliberately opt into the discrete-transition gate. This is
+# an ALLOWLIST, not a count: the gate changes how the solver spends its
+# frontier budget, so arming it is a per-game decision that gets receipted,
+# and a profile arriving here by accident must break the build.
+#   kirby.yaml — the original room-graph opt-in (configs/kirby.yaml).
+#   zelda.yaml — the overworld screen graph, receipted in
+#     docs/receipts/games/zelda_onboarding_2026-08-10.md.
+GATE_OPTED_IN = ["kirby.yaml", "zelda.yaml"]
+
+
 def test_every_other_shipped_profile_stays_inert():
-    """Default-identical: this change configures exactly one profile, and
-    a profile without the block derives nothing at all."""
+    """Default-identical: only the allowlisted profiles configure the gate,
+    and a profile without the block derives nothing at all."""
     configured = []
     for path in sorted((REPO / "configs").glob("*.yaml")):
         try:
@@ -117,4 +127,35 @@ def test_every_other_shipped_profile_stays_inert():
                 prof.get("action_space", []), None) == []
         else:
             configured.append(path.name)
-    assert configured == ["kirby.yaml"]
+    assert configured == GATE_OPTED_IN, (
+        "the set of profiles arming `solve: room_advance` changed. Adding a "
+        "game here is a real decision — receipt the room observable, then "
+        "extend GATE_OPTED_IN. Removing one means a profile lost its gate."
+    )
+
+
+@pytest.mark.parametrize("name", GATE_OPTED_IN)
+def test_allowlisted_profiles_are_actually_armed(name):
+    """An allowlist entry has to mean something: each opted-in profile must
+    derive a non-empty macro list from its OWN action_space, otherwise the
+    solver prints 'discrete-transition gate inert' and the entry is a lie."""
+    prof = yaml.safe_load((REPO / "configs" / name).read_text())
+    ra = prof["solve"]["room_advance"]
+    macros = derive_transition_macros(prof["action_space"], ra)
+    assert macros, f"{name} is allowlisted but derives no transition macros"
+    space = prof["action_space"]
+    for idx, hold in macros:
+        assert hold == ra.get("steps", 20)
+        assert space[idx], f"{name} derived the no-op as a transition macro"
+
+
+@pytest.mark.parametrize("name", GATE_OPTED_IN)
+def test_allowlisted_gate_addr_is_the_profiles_own_observable(name):
+    """No new external knowledge, enforced for every opted-in profile: the
+    gate's addr must be a byte the profile ALREADY declares and receipts."""
+    solve = yaml.safe_load((REPO / "configs" / name).read_text())["solve"]
+    declared = {solve["area"], solve["lives"], solve["y"],
+                solve["progress"]["lo"]}
+    if "hi" in solve["progress"]:
+        declared.add(solve["progress"]["hi"])
+    assert solve["room_advance"]["addr"] in declared

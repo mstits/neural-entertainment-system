@@ -458,10 +458,31 @@ def main() -> int:
     # (and any re-run that is not a true continuation) starts with only
     # its own root and the first level is unaffected. Pass this to bank
     # revisits anyway (hub worlds, deliberate backtracking).
+    # GATE-OPENER passthrough. The receipted dead-flag lineage this
+    # closes: --kill-key and --ortho are BOTH unreachable through this
+    # driver today (it hardcodes twelve flags), exactly as eval's
+    # --start-state and --sect-cap were before they were found dead. A
+    # per-level arm nobody can reach from the campaign driver is an arm
+    # that never runs. Defaults leave the solver's own defaults alone:
+    # --gate-opener off, no sidecar, no attestation.
+    ap.add_argument("--gate-opener", choices=("off", "enumerate"),
+                    default="off")
+    ap.add_argument("--gate-sweep-frac", type=float, default=0.10)
+    ap.add_argument("--gate-sweep-roots", type=int, default=16)
+    ap.add_argument("--gate-sweep-repeats", type=int, default=2)
+    ap.add_argument("--gate-pin-secs", type=float, default=None)
+    ap.add_argument("--gate-target-typed", action="store_true")
+    ap.add_argument("--gate-band", type=int, default=24)
+    ap.add_argument("--gate-sham-roots", type=int, default=4)
+    ap.add_argument("--gate-axes", type=str, default=None)
+    ap.add_argument("--contact-bits", type=int, default=3)
     ap.add_argument("--allow-revisit", action="store_true",
                     help="bank a stage even when its settled level key is "
                          "already in this campaign's visited history")
     args = ap.parse_args()
+    if args.gate_opener != "off" and args.gate_pin_secs is None:
+        ap.error("--gate-pin-secs is REQUIRED when --gate-opener is not off "
+                 "(mined defaults: 600 CV / 120 BB; negative disables).")
 
     profile = yaml.safe_load(Path(args.profile).read_text())
     hw_flags = resolve_hw_flags(profile, args.hw_flags)
@@ -533,7 +554,26 @@ def main() -> int:
                 # for entrance extraction. Empty resolves to 'none',
                 # which sets nothing (the pre-existing behavior).
                 "--hw-flags", ",".join(hw_flags) or "none",
+                # Every --gate-* knob, echoed so the per-level receipt
+                # records the arm the campaign actually ran.
+                "--gate-opener", str(args.gate_opener),
+                "--gate-sweep-frac", str(args.gate_sweep_frac),
+                "--gate-sweep-roots", str(args.gate_sweep_roots),
+                "--gate-sweep-repeats", str(args.gate_sweep_repeats),
+                "--gate-band", str(args.gate_band),
+                "--gate-sham-roots", str(args.gate_sham_roots),
+                "--contact-bits", str(args.contact_bits),
             ]
+            # Value-less / optional flags stay OFF the command line at
+            # their defaults, so a chain that never asked for the arm
+            # invokes the solver with exactly the argv it always did
+            # (plus the inert --gate-* defaults above).
+            if args.gate_pin_secs is not None:
+                cmd += ["--gate-pin-secs", str(args.gate_pin_secs)]
+            if args.gate_target_typed:
+                cmd += ["--gate-target-typed"]
+            if args.gate_axes:
+                cmd += ["--gate-axes", str(args.gate_axes)]
             subprocess.run(cmd, check=False)
             sols = sorted(lvl_out.glob("solutions/sol_*.actions.npy"))
             if sols:

@@ -626,7 +626,8 @@ def _drive_main(monkeypatch, tmp_path, *, keys, stall_at=None,
     def fake_run(cmd, check=False):
         d = Path(cmd[cmd.index("--out") + 1])
         stage = int(d.name.split("_")[1])
-        calls.append(("solve", stage, cmd[cmd.index("--root-state") + 1]))
+        calls.append(("solve", stage, cmd[cmd.index("--root-state") + 1],
+                      list(cmd)))
         if stage == stall_at:
             return None                       # solver found nothing
         (d / "solutions").mkdir(parents=True, exist_ok=True)
@@ -773,3 +774,75 @@ def test_the_guard_is_on_by_default_and_off_under_allow_revisit(
     calls, _, _ = _drive_main(monkeypatch, tmp_path / "b", keys=[(1, 2)],
                               stall_at=1, argv_extra=("--allow-revisit",))
     assert [c[3] for c in calls if c[0] == "extract"] == [True]
+
+
+# ---------------------------------------------------------------------
+# gate-opener passthrough
+#
+# The receipted dead-flag lineage this closes: eval's --start-state and
+# --sect-cap were both unreachable through their drivers for weeks, and
+# --kill-key / --ortho still are. An arm the campaign driver cannot pass
+# is an arm the campaign never runs, and nobody finds out until the
+# receipts are read.
+# ---------------------------------------------------------------------
+
+GATE_FLAGS = ("--gate-opener", "--gate-sweep-frac", "--gate-sweep-roots",
+              "--gate-sweep-repeats", "--gate-pin-secs",
+              "--gate-target-typed", "--gate-band", "--gate-sham-roots",
+              "--gate-axes", "--contact-bits")
+
+
+def test_the_chain_forwards_every_gate_flag_to_the_per_level_solver(
+        monkeypatch, tmp_path):
+    axes = tmp_path / "gate_axes_cv.json"
+    axes.write_text("{}")
+    calls, _recs, _vis = _drive_main(
+        monkeypatch, tmp_path, keys=[(1, 2)], stall_at=1,
+        argv_extra=("--gate-opener", "enumerate", "--gate-pin-secs", "600",
+                    "--gate-target-typed", "--gate-sweep-frac", "0.2",
+                    "--gate-sweep-roots", "8", "--gate-sweep-repeats", "3",
+                    "--gate-band", "12", "--gate-sham-roots", "2",
+                    "--gate-axes", str(axes), "--contact-bits", "2"))
+    cmd = next(c[3] for c in calls if c[0] == "solve")
+    for flag in GATE_FLAGS:
+        assert flag in cmd, f"{flag} never reached the solver"
+    for flag, want in (("--gate-opener", "enumerate"),
+                       ("--gate-pin-secs", "600.0"),
+                       ("--gate-sweep-frac", "0.2"),
+                       ("--gate-sweep-roots", "8"),
+                       ("--gate-sweep-repeats", "3"),
+                       ("--gate-band", "12"),
+                       ("--gate-sham-roots", "2"),
+                       ("--gate-axes", str(axes)),
+                       ("--contact-bits", "2")):
+        assert cmd[cmd.index(flag) + 1] == want, flag
+    # Every forwarded flag is one the solver actually declares — a
+    # passthrough that invents a spelling fails the subprocess silently.
+    import scripts.go_explore_solve as ges
+
+    src = Path(ges.__file__).read_text()
+    for flag in GATE_FLAGS:
+        assert f'"{flag}"' in src, flag
+
+
+def test_a_default_chain_forwards_the_inert_arm_and_nothing_optional(
+        monkeypatch, tmp_path):
+    # Default-off identity at the driver: no sidecar, no attestation, no
+    # pin — so the per-level solver parses exactly the arm it always did.
+    calls, _recs, _vis = _drive_main(monkeypatch, tmp_path, keys=[(1, 2)],
+                                     stall_at=1)
+    cmd = next(c[3] for c in calls if c[0] == "solve")
+    assert cmd[cmd.index("--gate-opener") + 1] == "off"
+    assert "--gate-target-typed" not in cmd
+    assert "--gate-axes" not in cmd
+    assert "--gate-pin-secs" not in cmd
+
+
+def test_arming_the_chain_without_a_pin_is_a_hard_error(monkeypatch,
+                                                        tmp_path):
+    # The same "v1 derives nothing" contract the solver enforces, at the
+    # driver — otherwise a campaign arms with an unstated pin and the
+    # receipts cannot say what the arm was waiting for.
+    with pytest.raises(SystemExit):
+        _drive_main(monkeypatch, tmp_path, keys=[(1, 2)], stall_at=0,
+                    argv_extra=("--gate-opener", "enumerate"))

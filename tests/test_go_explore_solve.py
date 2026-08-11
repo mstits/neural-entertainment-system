@@ -10,6 +10,7 @@ only exercised via progress_line() through a duck-typed stand-in.
 from __future__ import annotations
 
 import ast
+import copy
 import json
 import sys
 from pathlib import Path
@@ -23,13 +24,22 @@ from scripts.go_explore_solve import (
     Solver,
     apply_hw_flags,
     available_hw_flags,
+    band_cell_count,
+    band_growth_stalled,
     check_state_sidecar,
     column_extremes,
     count_wmax,
+    gate_armed,
+    gate_axes_sidecar_sha,
+    gate_run_header,
+    gate_suppress_trace,
     hw_provenance,
     inversion_armed,
+    macro_slot_owner,
+    merge_gate_axes,
     ortho_armed,
     ortho_pool,
+    resolve_gate_pin_secs,
     resolve_hw_flags,
     resolve_inversion_pin_secs,
     resolve_verify_bank,
@@ -37,6 +47,8 @@ from scripts.go_explore_solve import (
     update_stall,
     write_state_sidecar,
 )
+from src.training import interaction_basis as ib
+from src.training.profile_utils import action_space_to_bitmasks
 
 
 def _fresh_stall() -> dict:
@@ -799,6 +811,9 @@ def _ortho_solver(cells, **over):
         door_weight=0.0, _doors=frozenset(), _key_ids={},
         ortho_mode="up", ortho_pin_secs=0.0, ortho_bias=1.0,
         ortho_band=1, ortho_weight=4.0, _pin_time=0.0,
+        # The gate-opener arm at its shipped defaults: off, and its count
+        # -arm multiplier at the identity so Wmax is the legacy ceiling.
+        gate_mode="off", gate_weight=1.0,
         _ortho_pool=[], _ortho_ids=set(), _ortho_ext={},
         _ortho_deep_yband=None, _ortho_selections=0,
         _ortho_cols_improved=0,
@@ -1130,7 +1145,7 @@ def test_the_count_arm_up_weights_the_pool_with_a_matching_wmax():
 
     arm = Path(ges.__file__).read_text().split(
         'if self.sel_mode == "count":', 1)[1].split("# Legacy:", 1)[0]
-    assert "wmax = count_wmax(dw, ow)" in arm
+    assert "wmax = count_wmax(dw, ow, gw)" in arm
     assert "1.1 * max(dw, 1.0)" not in arm     # the literal it replaced
     assert "ow = self.ortho_weight if armed else 1.0" in arm
     assert "w *= ow" in arm
@@ -1488,3 +1503,1897 @@ def test_the_credit_is_inert_at_the_shipped_throttle_default(
         return _run_bursts(f, 400, strip_credit=strip)
 
     assert _picks(True) == _picks(False)
+
+
+# ---------------------------------------------------------------------
+# GATE-OPENER ARM
+#
+# The arm enumerates CONTROLLER INTERACTIONS off archive savestates at a
+# pinned boundary and ledgers what they move in RAM. Everything it reads
+# is the run's own: archive blobs as roots, the profile's declared action
+# list as the alphabet, a paired NOOP control as the nuisance filter, the
+# run's own boundary histogram as the prior. No address allowlist, no
+# map, no answer key — the known bytes exist in this campaign only as
+# grading truth behind the tuner/grader wall, and none of them appears
+# anywhere below.
+#
+# Two contracts are pinned here and they are not the same: the SEMANTICS
+# when the arm is on, and BYTE IDENTITY when it is off. The second is the
+# one every banked receipt depends on.
+# ---------------------------------------------------------------------
+
+def _arm_gate(f, **over):
+    """Give a duck-typed solver the gate-opener attribute surface. The
+    defaults leave the arm inert (mode off, pin -1 = never arms); pass
+    `gate_mode="enumerate"` to turn the machinery on."""
+    d = dict(gate_mode="off", gate_pin_secs=-1.0, gate_target_typed=False,
+             gate_band=24, gate_sweep_frac=0.10, gate_sweep_roots=16,
+             gate_sweep_repeats=1, gate_sham_roots=1, contact_bits=3,
+             gate_weight=1.0, gate_axes=[], gate_axes_sha=None,
+             _gate_rng=np.random.default_rng(0), _gate_basis=[],
+             _gate_phases=(8,), _gate_swept={}, _gate_admitted=[],
+             _gate_shadow={}, _gate_positions=set(), _gate_band_hist=[],
+             _gate_marks_kind="pattern", _gate_obs_n=0, _gate_fdr_m=None,
+             _boundary_hist=None, _boundary_hist_total=0,
+             _boundary_rows=None, _gate_boundary_hit=False,
+             _gate_change=None, _gate_change_n=0, _gate_prev_vals=None,
+             _gate_inject=[], _gate_inject_i=0,
+             bitmasks=[0, 1],
+             _gate_next_sweep=0, _gate_last_pin=0.0, _gate_disarmed=False,
+             _gate_armed_secs=0.0, _gate_armed_since=None,
+             _gate_axes_live=None, steps_done=0, _pin_time=0.0,
+             _gate_counters={"sweeps": 0, "programs": 0, "candidates": 0,
+                             "admitted": 0, "cross": 0, "injections": 0,
+                             "inexpressible": 0, "steps": 0,
+                             "sham_yield": 0.0, "restore_failed": 0,
+                             "lift_active": 0, "lift_ctrl": 0})
+    d.update(over)
+    for k, v in d.items():
+        setattr(f, k, v)
+    for name in ("_gate_armed", "_gate_observe", "_gate_novelty",
+                 "_gate_farmability", "_gate_roots", "_gate_maybe_sweep",
+                 "_gate_sweep", "_gate_wave", "_gate_pass_b", "_gate_admit",
+                 "_gate_queue_injections", "shadow_yield"):
+        setattr(f, name, MethodType(getattr(Solver, name), f))
+    f._gate_rank = Solver._gate_rank          # a staticmethod: pure
+    return f
+
+
+# --- 1/8 solver: the arming predicate ---------------------------------
+
+def test_the_gate_arm_short_circuits_on_every_conjunct_it_declares():
+    # Five independent reasons not to arm, each sufficient on its own.
+    # The pin-secs one is the subtle member: `now - pin >= -1` is true
+    # forever, so the disable sentinel needs its own non-negativity test
+    # and not merely the elapsed comparison (the exact shape that made
+    # --inversion-pin-secs -1 a real disable).
+    ok = dict(mode="enumerate", pin_time=100.0, now=800.0, pin_secs=600.0,
+              typed=True, band_growth_ok=True)
+    assert gate_armed(**ok) is True
+    assert gate_armed(**dict(ok, mode="off")) is False
+    assert gate_armed(**dict(ok, mode=None)) is False
+    assert gate_armed(**dict(ok, pin_secs=-1.0)) is False
+    assert gate_armed(**dict(ok, now=699.9)) is False
+    assert gate_armed(**dict(ok, typed=False)) is False
+    assert gate_armed(**dict(ok, band_growth_ok=False)) is False
+    # Inclusive at the boundary, like ortho_armed: the caller polls on a
+    # burst boundary, not on a clock.
+    assert gate_armed(**dict(ok, now=700.0)) is True
+
+
+def test_band_growth_and_band_counting_are_measured_off_our_own_archive():
+    # The self-arming bookkeeping §3 specifies: band_cells is one pass
+    # over the keys, and the conjunct reads the last three checkpoints
+    # against the series' OWN peak (scale-free, so it cannot be tuned by
+    # picking a target).
+    keys = [(0, 0, 0, (), 0, ()) + (0, 0, 0, 1, gx) for gx in (10, 40, 50)]
+    assert band_cell_count(keys, band=24) == 2      # 50 and 40, not 10
+    assert band_cell_count(keys, top_gx=50, band=50) == 3
+    assert band_cell_count([], band=24) == 0
+    # Too short to judge -> False. An arm that fires on one checkpoint
+    # is arming on noise.
+    assert band_growth_stalled([100, 100, 100]) is False
+    assert band_growth_stalled([100, 100, 100, 100]) is True
+    # 5% of the peak (1000) is 50; a 60-cell step is still growth.
+    assert band_growth_stalled([1000, 1010, 1020, 1080]) is False
+    assert band_growth_stalled([1000, 1010, 1020, 1030]) is True
+
+
+# --- 2/8 solver: the sweep never touches the search stream ------------
+
+def _gate_methods() -> list:
+    import scripts.go_explore_solve as ges
+
+    tree = ast.parse(Path(ges.__file__).read_text())
+    cls = next(n for n in tree.body
+               if isinstance(n, ast.ClassDef) and n.name == "Solver")
+    return [n for n in cls.body
+            if isinstance(n, (ast.FunctionDef,))
+            and (n.name.startswith("_gate") or n.name == "shadow_yield")]
+
+
+def test_no_gate_method_can_reach_the_search_rng():
+    # THE isolation invariant, stated structurally so it holds for every
+    # archive shape rather than only the ones a fixture reaches: the
+    # sweep draws from its own Generator, so scheduling a sweep cannot
+    # shift one draw of the search. A single `self.rng` anywhere in the
+    # gate methods breaks A/B comparability silently.
+    offenders = []
+    for fn in _gate_methods():
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Attribute) and node.attr == "rng"
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "self"):
+                offenders.append(f"{fn.name}:{node.lineno}")
+    assert offenders == [], f"gate methods touching self.rng: {offenders}"
+    # ...and they DO have their own stream.
+    assert any(isinstance(n, ast.Attribute) and n.attr == "_gate_rng"
+               for fn in _gate_methods() for n in ast.walk(fn))
+
+
+# --- 3/8 solver: every knob comes off its own flag --------------------
+
+def test_solver_init_wires_every_gate_knob_to_its_own_flag():
+    # Same mutation class the ortho lane pinned: a copy-paste that points
+    # two knobs at one dest, or hardcodes a default, is caught here and
+    # not by a campaign that quietly swept the wrong band.
+    for attr, dest in (("gate_mode", "gate_opener"),
+                       ("gate_target_typed", "gate_target_typed"),
+                       ("gate_band", "gate_band"),
+                       ("gate_sweep_frac", "gate_sweep_frac"),
+                       ("gate_sweep_roots", "gate_sweep_roots"),
+                       ("gate_sweep_repeats", "gate_sweep_repeats"),
+                       ("gate_sham_roots", "gate_sham_roots"),
+                       ("contact_bits", "contact_bits")):
+        val = _init_assignment(attr)
+        assert val is not None, f"{attr} is never assigned"
+        names = [n.value for n in ast.walk(val)
+                 if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+        assert dest in names, f"{attr} does not read args.{dest}"
+    # The pin is resolved through the helper (so the disable sentinel and
+    # the "required when armed" contract live in one place), not inlined.
+    pin = _init_assignment("gate_pin_secs")
+    assert isinstance(pin, ast.Call) and pin.func.id == "resolve_gate_pin_secs"
+
+
+# --- 4/8 solver: count_wmax keeps its ceiling exact -------------------
+
+def test_count_wmax_composes_the_gate_multiplier_without_moving_the_default():
+    # The default-arg form is the whole point: the 2-argument contract
+    # above (line ~863) still holds unchanged, and a third armed
+    # multiplier scales the ceiling EXACTLY rather than truncating the
+    # prior in silence.
+    assert count_wmax(0.0, 1.0) == 1.1
+    assert count_wmax(0.0, 1.0, 1.0) == 1.1
+    assert count_wmax(0.0, 1.0, 0.0) == 1.1        # floors at 1.0
+    assert count_wmax(5.0, 4.0, 2.0) == 44.0
+    assert count_wmax(1.0, 1.0, 3.0) == pytest.approx(3.3)
+
+
+# --- 5/8 solver: the cell key arity is frozen -------------------------
+
+def test_the_armed_arm_never_changes_the_cell_key_arity():
+    # E's shadow ledger, and the reason it exists: candidates are
+    # recorded OUTSIDE the key, so `cells` and `new_cells` stay
+    # comparable between the armed run and its control. An axis that
+    # entered the key in-run would make every A/B number meaningless.
+    off = _arm_gate(_burst_solver([_ocell(4, 0)], learn_every=1))
+    on = _arm_gate(_burst_solver([_ocell(4, 0)], learn_every=1),
+                   gate_mode="enumerate", _gate_admitted=[0x0004],
+                   _sel_topgx=4)
+    ram = bytearray(2048)
+    ram[0x0004] = 8
+    keys_off, keys_on = [], []
+    for f, out in ((off, keys_off), (on, keys_on)):
+        ctx: dict = {}
+        for step in range(64):
+            f.observe(0, bytes(ram), [0], step, "entrance", ctx=ctx)
+        out += [len(k) for k in f.archive.cells]
+    assert keys_on == keys_off
+    assert set(keys_on) == {11}
+    # ...and the ledger still saw the candidate, off the key entirely.
+    assert on._gate_shadow.get(0x0004)
+    assert on.shadow_yield() > 0.0
+    assert off._gate_shadow == {}
+
+
+# --- 6/8 solver: DEFAULT-OFF BYTE IDENTITY (the headline) -------------
+
+def test_the_gate_costs_zero_rng_draws_whether_it_is_off_or_merely_disarmed():
+    # Draw-count ledger, exact by construction (same fixture the ortho
+    # lane uses). Two legs, because "off" and "armed-capable but not
+    # armed" are different code paths and BOTH have to be free:
+    #   * mode off      — every gate branch short-circuits on the compare
+    #   * mode enumerate, pin -1 — the machinery is live, the arm is not
+    # Mutation-proof: moving any draw into a gate branch (an injection
+    # probability, a sham-root pick off self.rng, a sampled sweep
+    # cadence) shows up here as an integer mismatch, not a flake.
+    class _BurstTally(_DrawTally):
+        """_DrawTally plus the third draw the record/reassign path makes,
+        so the ledger stays EXHAUSTIVE — a draw slipped into a gate
+        branch has nowhere to hide."""
+
+        def __init__(self, seed: int = 0) -> None:
+            super().__init__(seed)
+            self.calls["choice"] = 0
+
+        def choice(self, *a, **k):
+            self.calls["choice"] += 1
+            return self._rng.choice(*a, **k)
+
+    def _tally(mode: str) -> dict:
+        t = _BurstTally(0)
+        f = _arm_gate(_burst_solver(_burst_cells(), sel_mode="count"),
+                      gate_mode=mode, _sel_topgx=11)
+        f.rng = t
+        _run_bursts(f, 120)
+        return dict(t.calls)
+
+    off, disarmed = _tally("off"), _tally("enumerate")
+    assert off == disarmed, f"the gate shifted the stream: {off} vs {disarmed}"
+    assert off["random"] > 0 and off["integers"] > 0   # the fixture ran
+
+
+def test_every_gate_hot_path_short_circuits_on_the_mode_first():
+    # Source-level companion, aimed at the exact edit that breaks
+    # identity: each gate branch in the two hot loops must lead with the
+    # mode compare, so a disarmed run never evaluates anything more
+    # expensive (or more stateful) than one string comparison.
+    import scripts.go_explore_solve as ges
+
+    tree = ast.parse(Path(ges.__file__).read_text())
+    cls = next(n for n in tree.body
+               if isinstance(n, ast.ClassDef) and n.name == "Solver")
+    gates = []
+    for fname in ("observe", "explore", "_assign"):
+        fn = next(n for n in cls.body
+                  if isinstance(n, ast.FunctionDef) and n.name == fname)
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.If):
+                continue
+            src = ast.unparse(node.test)
+            if "gate_mode" in src or "gate_macro" in src:
+                gates.append((fname, node, src))
+    assert len(gates) >= 4, f"gate branches not found: {gates}"
+    for fname, node, src in gates:
+        test = node.test
+        first = test.values[0] if isinstance(test, ast.BoolOp) else test
+        assert "gate_mode" in ast.unparse(first), \
+            f"{fname}: gate branch does not lead with the mode: {src}"
+        assert "self.rng" not in src, f"{fname}: gate branch draws: {src}"
+        # ...and the BODY may not draw either. The condition being clean
+        # is not enough: the arm only has to be free on the paths a
+        # default run walks, but arm C's whole comparability argument is
+        # that taking the macro slot costs the SEARCH stream nothing, and
+        # that claim lives inside the branch, not in its test.
+        body = "\n".join(ast.unparse(s) for s in node.body)
+        assert "self.rng" not in body, \
+            f"{fname}: the gate branch body draws from the search stream"
+
+
+def test_the_sweep_can_only_be_triggered_at_a_burst_boundary():
+    # Rev 4 §10-O7. A sweep that fires mid-burst throws away in-flight
+    # steps, chops in-flight macros in half and mis-debits `barren` — so
+    # the trigger is conjoined with a flag explore() raises ONLY where a
+    # worker's burst has just ended, and consuming the flag clears it.
+    # Stated structurally because the failure is a deleted conjunct, and
+    # a deleted conjunct makes the sweep MORE eager, not less: it would
+    # show up as better coverage of the sweep in every other test.
+    import scripts.go_explore_solve as ges
+
+    tree = ast.parse(Path(ges.__file__).read_text())
+    cls = next(n for n in tree.body
+               if isinstance(n, ast.ClassDef) and n.name == "Solver")
+    fn = next(n for n in cls.body
+              if isinstance(n, ast.FunctionDef) and n.name == "explore")
+    guards = [n for n in ast.walk(fn) if isinstance(n, ast.If)
+              and "_gate_maybe_sweep" in "\n".join(ast.unparse(s)
+                                                   for s in n.body)]
+    assert len(guards) == 1, "the sweep trigger moved or multiplied"
+    guard = guards[0]
+    assert "_gate_boundary_hit" in ast.unparse(guard.test), \
+        "the sweep can fire mid-burst: the boundary conjunct is gone"
+    assert "_gate_boundary_hit = False" in "\n".join(
+        ast.unparse(s) for s in guard.body), \
+        "the boundary flag is not cleared as it is consumed"
+    # The flag is raised in exactly one place, and it is the burst-ended
+    # branch — not the top of the step loop.
+    raises = [n for n in ast.walk(fn) if isinstance(n, ast.Assign)
+              and "_gate_boundary_hit" in ast.unparse(n)
+              and ast.unparse(n).endswith("True")]
+    assert len(raises) == 1
+
+
+def test_the_runs_deadline_binds_the_sweep_and_the_clock_is_re_read(tmp_path):
+    # A pass-A sweep is tens of thousands of worker-steps and its pass-B
+    # tail runs 654-step programs; fired one burst boundary before
+    # --minutes expires it overruns by a whole sweep. T1 scores three
+    # arms at EQUAL WALL-CLOCK and the arm that can overrun is always
+    # the armed one, so the overrun lands on the deciding metric's own
+    # side. The deadline therefore reaches the sweep, and explore()
+    # re-reads the clock afterwards instead of deciding the run's last
+    # branch on a reading taken before thousands of steps ran.
+    late = _sweep_solver(tmp_path, n_roots=2)
+    late.pool.load_worker_state = lambda i, b: pytest.fail(
+        "a sweep started after the run's deadline")
+    ctx = [{"key": ("a",)}, {"key": ("b",)}]
+    late._gate_maybe_sweep(ctx, 1e9, deadline=1e9)      # inclusive
+    late._gate_maybe_sweep(ctx, 1e9 + 5, deadline=1e9)
+    assert late._gate_counters["sweeps"] == 0
+    assert ctx == [{"key": ("a",)}, {"key": ("b",)}]
+
+    # Inside the window it still fires, and with no deadline at all
+    # (--minutes 0) nothing changes.
+    inside = _sweep_solver(tmp_path, n_roots=2)
+    inside._gate_maybe_sweep([{"key": ("a",)}, {"key": ("b",)}], 1e9 - 1,
+                             deadline=1e9)
+    assert inside._gate_counters["sweeps"] == 1
+    forever = _sweep_solver(tmp_path, n_roots=2)
+    forever._gate_maybe_sweep([{"key": ("a",)}, {"key": ("b",)}], 1e9)
+    assert forever._gate_counters["sweeps"] == 1
+
+    # The wiring, at the one call site: explore() passes its own
+    # deadline and re-reads `now` before the branches that consume it.
+    import scripts.go_explore_solve as ges
+
+    body = Path(ges.__file__).read_text().split("def explore(self)", 1)[1]
+    call = body[body.index("self._gate_maybe_sweep("):]
+    assert call.startswith("self._gate_maybe_sweep(ctx, now, deadline)")
+    after = call[:call.index("if deadline and now >= deadline")]
+    assert "now = time.time()" in after, \
+        "the deadline is decided on a clock reading taken before the sweep"
+
+
+# --- 7/8 solver: an empty archive is a fall-through, not a crash ------
+
+def test_an_empty_or_stateless_archive_falls_through_instead_of_sweeping():
+    # The sweep borrows worker state; it must never be the thing that
+    # reassigns a worker. With no state-bearing cell there is nothing to
+    # root at, so it declines — no pool call, no ctx mutation, no
+    # counter movement.
+    f = _arm_gate(_ortho_solver([]), gate_mode="enumerate",
+                  gate_pin_secs=0.0, gate_target_typed=True,
+                  _gate_band_hist=[10, 10, 10, 10])
+    f.pool = SimpleNamespace(
+        save_worker_state=lambda i: pytest.fail("touched the pool"),
+        load_worker_state=lambda i, b: pytest.fail("touched the pool"))
+    f.args.workers = 2
+    ctx = [{"key": None}, {"key": None}]
+    assert f._gate_armed(1e9) is True
+    assert f._gate_roots() == []
+    f._gate_maybe_sweep(ctx, 1e9)
+    assert ctx == [{"key": None}, {"key": None}]
+    assert f._gate_counters["sweeps"] == 0
+    # Stateless cells (evicted blobs) are the same case.
+    g = _arm_gate(_ortho_solver([_ocell(4, 0)]), gate_mode="enumerate")
+    for c in g.archive.cells.values():
+        c.state = None
+    assert g._gate_roots() == []
+
+
+# --- 8/8 solver: telemetry appears only once the arm exists -----------
+
+def test_gate_telemetry_is_absent_from_a_default_progress_line(tmp_path):
+    # A progress line that grows fields on every run is a line no
+    # historical reader can parse. The gate block is silent while the arm
+    # is off and complete the moment it is on.
+    fake = _fake_solver(tmp_path, n_cells=5)
+    Solver.progress_line(fake, 10.0)
+    line = json.loads((tmp_path / "progress.jsonl").read_text().splitlines()[-1])
+    assert [k for k in line if k.startswith("gate_")] == []
+    assert "band_cells" not in line
+
+    class _Arch(dict):
+        """len() for the stall watchdog, .cells for the band count."""
+
+        @property
+        def cells(self):
+            return self
+
+    (tmp_path / "on").mkdir()
+    armed = _fake_solver(tmp_path / "on", n_cells=5)
+    armed.archive = _Arch({(0, 0, 0, (), 0, ()) + (0, 0, 0, 1, gx): None
+                           for gx in range(30)})
+    _arm_gate(armed, gate_mode="enumerate")
+    Solver.progress_line(armed, 10.0)
+    line = json.loads(
+        (tmp_path / "on" / "progress.jsonl").read_text().splitlines()[-1])
+    for key in ("gate_armed", "gate_armed_secs", "gate_sweeps",
+                "gate_programs", "gate_candidates", "gate_admitted",
+                "gate_sham_yield", "gate_cross", "gate_lift_active",
+                "gate_lift_ctrl", "gate_sweep_steps", "gate_shadow_yield",
+                # arm C's reach: how many admitted candidates the shared
+                # macro slot could not carry, and the denominator behind
+                # every farmability number in the receipts.
+                "gate_injections", "gate_inexpressible",
+                # ...and the one field that VOIDS the A/B pair when it is
+                # nonzero: a worker the sweep could not hand back intact.
+                # It is only useful if a reader sees it without opening a
+                # receipt, so it is pinned in the line like the rest.
+                "gate_restore_failed",
+                "gate_farm_samples", "band_cells"):
+        assert key in line, key
+    assert line["band_cells"] == 25          # buckets 5..29 within band 24
+    assert line["gate_armed"] is False       # pin -1: machinery on, arm off
+
+
+# ---------------------------------------------------------------------
+# interaction basis (6)
+# ---------------------------------------------------------------------
+
+_TARGET_BASIS = (("configs/castlevania.yaml", 16, 120, 64, 32, 24),
+                 ("configs/bubble_bobble.yaml", 8, 72, 32, 16, 24),
+                 ("configs/contra.yaml", 11, 90, 44, 22, 24))
+
+
+def _profile_actions(rel: str) -> list:
+    import yaml
+
+    return yaml.safe_load((Path(__file__).resolve().parents[1] / rel)
+                          .read_text())["action_space"]
+
+
+def test_the_basis_reproduces_its_published_generation_table():
+    # FIXTURE DATA, not a recomputation: the ladder is a fixed design
+    # constant declared in the module, and this is the table a reader of
+    # the campaign doc can check the code against by eye. A three-action
+    # space is small enough to write out in full.
+    space = [[], ["right"], ["A"]]
+    got = [(p.name, p.family, len(p.masks)) for p in ib.interaction_basis(space)]
+    want = ([(f"hold_a{a}_h{h}", "hold", h)
+             for a in range(3) for h in (4, 12, 36, 108)]
+            + [(f"tap_a{a}_{on}on{off}off_x{r}", "tap", (on + off) * r)
+               for a in range(3) for on, off, r in ((2, 2, 8), (2, 10, 4))]
+            + [(f"combo_a1+a2_h{h}", "combo", h) for h in (4, 12, 36, 108)])
+    assert got == want
+    # Deterministic: same input, same list, every call.
+    assert ib.interaction_basis(space) == ib.interaction_basis(space)
+
+
+@pytest.mark.parametrize("rel,n_actions,total,n_hold,n_tap,n_combo",
+                         _TARGET_BASIS, ids=[t[0] for t in _TARGET_BASIS])
+def test_the_per_target_basis_counts_are_exactly_the_declared_ladder(
+        rel, n_actions, total, n_hold, n_tap, n_combo):
+    # 4|A| holds + 2|A| taps + a 24-combo cap. These are the numbers §6
+    # budgets the sweep against, so a ladder change that quietly moves
+    # them turns every budget line into fiction.
+    space = _profile_actions(rel)
+    assert len(space) == n_actions
+    basis = ib.interaction_basis(space)
+    fams = [p.family for p in basis]
+    assert (len(basis), fams.count("hold"), fams.count("tap"),
+            fams.count("combo")) == (total, n_hold, n_tap, n_combo)
+
+
+@pytest.mark.parametrize("rel,n_masks", (("configs/castlevania.yaml", 24),
+                                         ("configs/bubble_bobble.yaml", 6),
+                                         ("configs/contra.yaml", 20)))
+def test_the_combo_cap_buys_distinct_masks_before_it_buys_durations(
+        rel, n_masks):
+    # FAMILY COLLAPSE. The COMBO family exists to ask which BUTTON
+    # COMBINATIONS were never tried at the boundary; the HOLD family
+    # already asked the duration question, at every rung, for every
+    # declared action. Enumerated pair-outer, COMBO_CAP=24 is exhausted
+    # by the first six novel pairs at four durations apiece on EVERY
+    # target — 24 programs carrying six masks, with 31 of Castlevania's
+    # 37 novel combinations never pressed and the campaign's "we
+    # enumerated the interactions" claim false in exactly the direction
+    # that matters. Rung-outer spends the same 24 on 24 masks where the
+    # space has them, and falls back to depth only where it does not.
+    space = _profile_actions(rel)
+    basis = ib.interaction_basis(space)
+    combos = [p for p in basis if p.family == "combo"]
+    assert len(combos) == ib.COMBO_CAP           # the count does not move
+    assert len({p.masks[0] for p in combos}) == n_masks
+    # Bubble Bobble is the honest exception: eight actions supply six
+    # novel pairwise masks in total, so depth is all its cap can buy.
+    novel = {a | b for a in action_space_to_bitmasks(space)
+             for b in action_space_to_bitmasks(space)} \
+        - set(action_space_to_bitmasks(space))
+    assert n_masks == min(ib.COMBO_CAP, len(novel))
+    # Rung-outer, stated as the order it actually emits in: durations
+    # are non-decreasing down the family, and a rung is only opened once
+    # the one before it has offered every pair it has.
+    lens = [len(p.masks) for p in combos]
+    assert lens == sorted(lens)
+    assert set(lens) <= set(ib.HOLD_STEPS)
+    for rung in sorted(set(lens))[:-1]:
+        assert lens.count(rung) == len(novel), (rel, rung)
+
+
+def test_the_basis_covers_every_declared_action_in_both_solo_families():
+    # COVER: no declared input may be unreachable. A basis that skips an
+    # action cannot rule that action out, and "we enumerated the
+    # interactions" would be false in the one direction that matters.
+    for rel, _n, *_ in _TARGET_BASIS:
+        space = _profile_actions(rel)
+        masks = set(action_space_to_bitmasks(space))
+        basis = ib.interaction_basis(space)
+        for fam in ("hold", "tap"):
+            covered = {p.masks[0] for p in basis if p.family == fam}
+            assert covered == masks, (rel, fam)
+
+
+def test_the_basis_never_invents_a_button():
+    # PURITY, mechanically: every mask is a declared mask or the OR of
+    # exactly two of them. A basis that reached outside the profile's own
+    # action list would be pressing buttons the agent was never given.
+    for rel, _n, *_ in _TARGET_BASIS:
+        space = _profile_actions(rel)
+        masks = list(action_space_to_bitmasks(space))
+        legal = set(masks) | {a | b for a in masks for b in masks}
+        for p in ib.interaction_basis(space):
+            assert set(p.masks) <= legal, (rel, p.name)
+
+
+def test_every_pass_a_program_is_the_one_uniform_length():
+    # 153 = max settle 21 + max pattern 108 + tail 24. Uniform because a
+    # whole wave is stepped in lockstep by one step_all loop; the PAD
+    # rides past the tail, so the tail keeps its declared length and the
+    # capture points stay per-program.
+    assert ib.PROGRAM_LEN_PASS_A == 153
+    space = _profile_actions("configs/castlevania.yaml")
+    for p in ib.interaction_basis(space):
+        for phase in ib.SETTLE_PHASES_PASS_A:
+            prog = p.program(phase)
+            assert len(prog) == 153
+            t0, t1, t2 = ib.capture_points(p, phase)
+            assert t0 == phase and t1 == phase + len(p.masks)
+            assert t2 == t1 + ib.TAIL_PASS_A <= 153
+            assert set(prog[:t0]) == {0}                 # settle is NOOP
+            assert tuple(prog[t0:t1]) == tuple(p.masks)  # then the pattern
+            assert set(prog[t1:]) == {0}                 # tail + pad
+    # Pass B's longer tail fits its own uniform length.
+    assert ib.PROGRAM_LEN_PASS_B == 34 + 108 + 512
+
+
+def test_slot_zero_is_the_all_noop_paired_control():
+    # NOOP subtraction is meaningless without it, so slot 0 is a
+    # GUARANTEE and not an accident of the YAML ordering: every fleet
+    # profile happens to declare [] first, and a space that does not
+    # still gets a control hoisted in front.
+    for rel, _n, *_ in _TARGET_BASIS:
+        basis = ib.interaction_basis(_profile_actions(rel))
+        assert set(basis[0].masks) == {0}
+        assert set(basis[0].program(21)) == {0}
+        assert sum(1 for p in basis if set(p.masks) == {0}) == 6   # 4+2 NOOP
+    noopless = ib.interaction_basis([["right"], ["A"]])
+    assert noopless[0].family == "control" and set(noopless[0].masks) == {0}
+
+
+# ---------------------------------------------------------------------
+# sweep + rank (5)
+# ---------------------------------------------------------------------
+
+class _GatePool:
+    """Deterministic pool stand-in. Each worker owns a 2 KB RAM holding
+    three bytes the instrument has to tell apart:
+
+      $0010  a FAST free-runner — ticks every step whatever the pad does.
+      $0011  a SLOW free-runner — input-independent too, but with a
+             period of 100 steps, so it is invisible inside a short
+             program's window and moves inside a long one. This is the
+             nuisance a 4-step paired control cannot subtract from a
+             108-step pattern, and it is exactly the shape (moves once,
+             stays moved) that classes LATCHED and scores like a gate.
+      $0040  the real thing — LATCHES once a nonzero mask has been held
+             eight steps running, so only the LONG holds reach it and
+             the short ones are the honest no-effect majority every
+             sweep is mostly made of. It also takes ONE input-independent
+             bump at step 600, which no pass-A program is long enough to
+             reach and every pass-B program is: the confirmation pass
+             re-classes survivors over a 20x longer tail, so a survivor
+             address that free-runs out there gets a nuisance-driven
+             class unless the pass re-runs its length twin too.
+    """
+
+    SLOW_PERIOD = 100
+    LATE_TICK = 600
+
+    def __init__(self, workers: int = 2) -> None:
+        self.rams = [bytearray(2048) for _ in range(workers)]
+        self.held = [0] * workers
+        self.t = [0] * workers
+        self.loads: list = []
+
+    def save_worker_state(self, wid: int) -> bytes:
+        return bytes(self.rams[wid])
+
+    def load_worker_state(self, wid: int, blob) -> None:
+        self.rams[wid] = bytearray(blob)
+        self.held[wid] = 0
+        self.t[wid] = 0
+        self.loads.append(wid)
+
+    def step_all(self, acts):
+        out = []
+        for i in range(len(self.rams)):
+            a = int(acts[i])
+            r = self.rams[i]
+            self.t[i] += 1
+            r[0x10] = (r[0x10] + 1) & 0xFF
+            r[0x11] = (self.t[i] // self.SLOW_PERIOD) & 0xFF
+            self.held[i] = self.held[i] + 1 if a else 0
+            if self.held[i] >= 8:
+                r[0x40] = 8
+            if self.t[i] == self.LATE_TICK:
+                r[0x40] = (r[0x40] + 1) & 0xFF
+            out.append((None, None, np.frombuffer(bytes(r), dtype=np.uint8)))
+        return out
+
+
+def _sweep_solver(tmp_path, n_roots: int = 6):
+    # Twelve columns and a band of 5: buckets 6-11 are the band the sweep
+    # roots at, 0-5 are the freely-advancing region the sham roots (K1's
+    # null) come from. SIX band roots because BH is charged against the
+    # full addr x family grid: with three, the strongest possible
+    # candidate in this fixture reaches p=1e-3 and the instrument would
+    # be pinned admitting rows a 6,144-comparison correction refuses.
+    cells = [_ocell(gx, 0) for gx in range(12)]
+    for i, c in enumerate(cells):
+        c.state = bytes([i]) + bytes(2047)
+    f = _arm_gate(_ortho_solver(cells), gate_mode="enumerate",
+                  gate_pin_secs=0.0, gate_target_typed=True, gate_band=5,
+                  gate_sweep_roots=n_roots, gate_sham_roots=0,
+                  _gate_band_hist=[5, 5, 5, 5])
+    space = [[], ["right"]]
+    full = ib.interaction_basis(space)
+    # THREE controls and three candidates, PAIRED BY LENGTH: the ladder
+    # emits an all-NOOP program at every length it uses, and NOOP
+    # subtraction is only valid between programs that measured the same
+    # window. A single 4-step control against a 108-step pattern is the
+    # defect this pairing exists to close. Two candidate FAMILIES,
+    # because the ranker's background rate is leave-family-out and a
+    # single-family sweep can never reach significance.
+    f._gate_basis = [full[0], full[3], full[8], full[4], full[7], full[10]]
+    assert [(p.name, p.family, len(p.masks)) for p in f._gate_basis] == [
+        ("hold_a0_h4", "hold", 4), ("hold_a0_h108", "hold", 108),
+        ("tap_a0_2on2off_x8", "tap", 32),
+        ("hold_a1_h4", "hold", 4), ("hold_a1_h108", "hold", 108),
+        ("tap_a1_2on2off_x8", "tap", 32)]
+    assert [not any(p.masks) for p in f._gate_basis] == [
+        True, True, True, False, False, False]
+    f.bitmasks = list(action_space_to_bitmasks(space))
+    f.pool = _GatePool(2)
+    f.args.workers = 2
+    f.out = tmp_path
+    # The sweep reads the profile's OWN position telemetry during settle
+    # (the CONTACT admission): gx frozen, y frozen => contact.
+    f.game = SimpleNamespace(progress=lambda ram: 100, y=lambda ram: 40,
+                             label=lambda k: "-".join(str(x) for x in k))
+    return f
+
+
+def test_the_sweep_restores_worker_state_ctx_and_the_search_rng_verbatim(
+        tmp_path):
+    # THE state-isolation contract, in its three parts. The sweep runs at
+    # a burst boundary and borrows the whole pool; if any of these three
+    # moves, the search after a sweep is not the search before it and the
+    # A/B pair is void. Stated as three assertions because they fail
+    # independently: `_assign` would break all three, a missing ctx
+    # deepcopy only the second, an rng draw only the third.
+    f = _sweep_solver(tmp_path)
+    f.pool.rams[0][0x100] = 0xAB
+    f.pool.rams[1][0x100] = 0xCD
+    ctx = [{"key": ("a",), "left": 0, "trace": [1, 2, 3], "nested": {"k": 1}},
+           {"key": ("b",), "left": 0, "trace": [], "nested": {"k": 2}}]
+    want_ctx = copy.deepcopy(ctx)
+    want_blobs = [f.pool.save_worker_state(i) for i in range(2)]
+    want_rng = copy.deepcopy(f.rng.bit_generator.state)
+    cells = list(f.archive.cells.values())
+    want_book = [(c.times_chosen, c.explored, c.barren) for c in cells]
+
+    # DIRTY the ctx from inside the sweep. Without this the restore is
+    # untestable by inspection — the current sweep happens not to touch
+    # ctx, so "ctx[i] = snap" could be deleted and every assertion below
+    # would still pass (verified by mutation). A sweep that ever grows a
+    # ctx write — a queued injection, a marks append, a bookkeeping
+    # counter — must still hand the search back exactly what it borrowed.
+    inner = f.pool.step_all
+
+    def _dirty(acts):
+        ctx[0]["trace"].append(99)
+        ctx[0]["nested"]["k"] = 999
+        ctx[1]["left"] = -7
+        return inner(acts)
+
+    f.pool.step_all = _dirty
+    ids_before = [id(c) for c in ctx]
+
+    ranked = f._gate_sweep(ctx)
+
+    assert [id(c) for c in ctx] != ids_before, "ctx was never restored"
+
+    # Positive control: the sweep really ran the instrument end to end —
+    # the stand-in's latched byte survives, neither free-runner does.
+    assert 0x40 in {r["addr"] for r in ranked}
+    assert 0x10 not in {r["addr"] for r in ranked}
+    assert 0x11 not in {r["addr"] for r in ranked}
+
+    assert ctx == want_ctx                                    # 1: ctx dicts
+    assert ctx[0]["nested"] is not want_ctx[0]["nested"]      #    (a copy)
+    assert [f.pool.save_worker_state(i) for i in range(2)] == want_blobs  # 2
+    assert f.rng.bit_generator.state == want_rng              # 3: search rng
+    # ...and no archive bookkeeping was debited on the way through.
+    assert [(c.times_chosen, c.explored, c.barren) for c in cells] == want_book
+    assert f._gate_counters["sweeps"] == 1
+    assert f._gate_counters["steps"] > 0
+
+
+def test_a_worker_the_sweep_cannot_bank_is_never_half_restored(
+        tmp_path, capsys):
+    # THE DESYNC. The restore guarded the machine half on the blob and
+    # handed back the ctx unconditionally, so a worker whose savestate
+    # could not be banked came out of the sweep with the search
+    # believing it was mid-burst at `snap` while the emulator sat at the
+    # end of the last sweep program. Every action after that is appended
+    # to a trace that does not describe the frames that ran — and
+    # observe() banks that trace as an archive cell, which is a
+    # FABRICATED trajectory, the one failure class the whole replay
+    # harness exists to catch after the fact. Both or neither.
+    f = _sweep_solver(tmp_path, n_roots=2)
+    real_save = f.pool.save_worker_state
+    f.pool.save_worker_state = lambda i: None if i == 1 else real_save(i)
+    reassigned: list = []
+
+    def _assign(i, prev=None):
+        reassigned.append((i, prev))
+        return {"key": ("fresh",), "left": 7}
+
+    f._assign = _assign
+    ctx = [{"key": ("a",), "left": 3}, {"key": ("b",), "left": 3}]
+    f._gate_sweep(ctx)
+
+    # Worker 0 banked, so it is handed back verbatim.
+    assert ctx[0] == {"key": ("a",), "left": 3}
+    # Worker 1 could not be: NEITHER half is restored, and the pair is
+    # resynced from a real archive root instead of left disagreeing.
+    # `prev` rides along because the abandoned burst is a FINISHED burst
+    # as far as R2's credit signal is concerned — the search debits or
+    # credits the source cell of every burst it ends, and dropping prev
+    # here would exempt exactly the roots the sweep interrupted.
+    assert reassigned == [(1, {"key": ("b",), "left": 3})]
+    assert ctx[1] == {"key": ("fresh",), "left": 7}
+    assert f._gate_counters["restore_failed"] == 1
+    # Loudly, because it costs an RNG draw and voids the A/B pair.
+    err = capsys.readouterr().err
+    assert "worker 1" in err and "ABANDONED" in err
+
+
+def test_a_failed_reassignment_is_reported_without_masking_the_real_error(
+        tmp_path, capsys):
+    # The repair runs in a FINALLY, so an exception out of it replaces
+    # whatever brought the sweep down: the operator gets a select()
+    # traceback from the cleanup and never sees the emulator error that
+    # actually ended the run. Both directions are pinned here.
+    def _rigged(n_roots=2):
+        f = _sweep_solver(tmp_path, n_roots=n_roots)
+        real_save = f.pool.save_worker_state
+        f.pool.save_worker_state = lambda i: None if i == 1 else real_save(i)
+
+        def _boom_assign(i, prev=None):
+            raise ValueError("select() blew up")
+
+        f._assign = _boom_assign
+        return f
+
+    # 1. Something else is already unwinding: it propagates untouched,
+    #    and the repair failure is shouted with its traceback instead.
+    f = _rigged()
+    f.pool.step_all = lambda acts: (_ for _ in ()).throw(
+        RuntimeError("the emulator died mid-sweep"))
+    ctx = [{"key": ("a",), "left": 3}, {"key": ("b",), "left": 3}]
+    with pytest.raises(RuntimeError, match="the emulator died mid-sweep"):
+        f._gate_sweep(ctx)
+    err = capsys.readouterr().err
+    assert "select() blew up" in err and "ValueError" in err
+    # ...and the workers that COULD be handed back still were: a repair
+    # that throws must not abort the rest of the restore either.
+    assert ctx[0] == {"key": ("a",), "left": 3}
+
+    # 2. Nothing else in flight: the failure is not swallowed. It is
+    #    re-raised wrapped, with the original chained so the traceback
+    #    survives.
+    g = _rigged()
+    ctx = [{"key": ("a",), "left": 3}, {"key": ("b",), "left": 3}]
+    with pytest.raises(RuntimeError, match="worker 1 could not be restored"
+                       ) as ei:
+        g._gate_sweep(ctx)
+    assert isinstance(ei.value.__cause__, ValueError)
+    assert ctx[0] == {"key": ("a",), "left": 3}
+
+
+def test_the_sweep_draws_only_from_its_own_reproducible_stream(tmp_path):
+    # Independence, behaviourally: two solvers seeded alike sweep alike,
+    # and a sweep leaves the search stream bit-identical however many
+    # sham roots it drew. (The structural half — no `self.rng` anywhere
+    # in a gate method — is pinned above.)
+    outs = []
+    for _ in range(2):
+        f = _sweep_solver(tmp_path, n_roots=2)
+        f.gate_sham_roots = 1
+        f._gate_rng = np.random.default_rng(1234)
+        f.rng = np.random.default_rng(99)
+        before = copy.deepcopy(f.rng.bit_generator.state)
+        roots = f._gate_roots()
+        outs.append([(c.key, sham) for c, sham in roots])
+        assert f.rng.bit_generator.state == before
+    assert outs[0] == outs[1]
+    assert any(sham for _k, sham in outs[0]), "no sham root was drawn"
+
+
+def test_the_wave_labels_every_capture_with_the_window_it_measured(tmp_path):
+    # The sweep is the only place that knows which program a capture came
+    # from, so it is the only place that can say "this one was a control"
+    # and "this one spanned N pattern steps". Those two labels are the
+    # ranker's ONLY means of pairing an observation with a control that
+    # covers the same t0..t2 — drop either and the pairing silently
+    # degrades to one bucket per root.
+    f = _sweep_solver(tmp_path)
+    cell = next(iter(f.archive.cells.values()))
+    jobs = [(cell, False, slot, pat, 8, 0)
+            for slot, pat in enumerate(f._gate_basis[:2])]
+    obs = f._gate_wave(jobs)
+    assert [(o["pattern"], o["control"], o["plen"]) for o in obs] == [
+        ("hold_a0_h4", True, 4), ("hold_a0_h108", True, 108)]
+    jobs = [(cell, False, 3, f._gate_basis[3], 8, 0),
+            (cell, False, 5, f._gate_basis[5], 8, 0)]
+    obs = f._gate_wave(jobs)
+    assert [(o["pattern"], o["control"], o["plen"]) for o in obs] == [
+        ("hold_a1_h4", False, 4), ("tap_a1_2on2off_x8", False, 32)]
+    # The window the labels describe is the one capture_points computes.
+    for o, (_c, _s, _sl, pat, phase, _r) in zip(obs, jobs):
+        t0, t1, t2 = ib.capture_points(pat, phase)
+        assert (t1 - t0, o["plen"]) == (len(pat.masks), len(pat.masks))
+
+
+def test_contact_can_be_admitted_at_every_registered_settle_phase(tmp_path):
+    # CONTACT_K=8 frozen steps needs NINE samples and the root frame is
+    # not readable (the pool hands back RAM only as the result of a
+    # step), so a settle-only window of 8 steps is one short: at the
+    # shorter of the two registered phases the CONTACT family could
+    # never be admitted at all, and half the lattice's phase replication
+    # was measuring a family that structurally could not exist. Closing
+    # the window one frame into the pattern makes both phases live and
+    # can only ever REFUSE an admission (open ground has already moved
+    # by then), never manufacture one.
+    f = _sweep_solver(tmp_path)
+    cell = next(iter(f.archive.cells.values()))
+    long_hold = f._gate_basis[4]
+    assert long_hold.name == "hold_a1_h108"
+    for phase in ib.SETTLE_PHASES_PASS_A:
+        assert phase <= ib.CONTACT_K + 1 or phase > ib.CONTACT_K
+        obs = f._gate_wave([(cell, False, 4, long_hold, phase, 0)])
+        assert (obs[0]["contact"], obs[0]["family"]) == (True, ib.CONTACT), \
+            f"contact is unadmittable at the registered phase {phase}"
+    # A MOVING observable still refuses it at both phases — the relabel
+    # reads the profile's own telemetry, it is not a rename of "held".
+    f.game = SimpleNamespace(progress=lambda ram: int(ram[0x10]),
+                             y=lambda ram: 40,
+                             label=lambda k: "k")
+    for phase in ib.SETTLE_PHASES_PASS_A:
+        obs = f._gate_wave([(cell, False, 4, long_hold, phase, 0)])
+        assert (obs[0]["contact"], obs[0]["family"]) == (False, ib.HOLD)
+
+
+def test_contact_is_refused_when_the_observable_moves_after_the_pattern_starts(
+        tmp_path):
+    # WHAT THE CLOSING FRAME IS FOR, at every phase and not just the one
+    # that needs it as padding. A root standing still on open ground is
+    # frozen for the whole settle exactly like a root pressed against a
+    # wall — the pad is doing nothing in both cases. The two only diverge
+    # one frame after the pattern starts pressing, so that frame is the
+    # entire discriminating content of the admission. Sample it only
+    # where a settle-only window comes up short (phase 8) and CONTACT at
+    # 13/21/34 degenerates into "the pad was idle", which every root in
+    # the archive satisfies.
+    f = _sweep_solver(tmp_path)
+    cell = next(iter(f.archive.cells.values()))
+    long_hold = f._gate_basis[4]
+    assert long_hold.name == "hold_a1_h108"
+    phases = sorted(set(ib.SETTLE_PHASES_PASS_A)
+                    | set(ib.SETTLE_PHASES_PASS_B))
+    assert phases == [8, 13, 21, 34], "the registered phases moved"
+    # $0010 is the stand-in's step counter, so this profile reads frozen
+    # for exactly `phase` steps and then advances one unit per frame:
+    # motion that begins with the pattern's first frame, i.e. open
+    # ground. Pass-B lengths throughout, because a 34-step settle plus a
+    # 108-step hold does not fit the pass-A program.
+    for phase in phases:
+        f.game = SimpleNamespace(
+            progress=lambda ram, p=phase: max(0, int(ram[0x10]) - p),
+            y=lambda ram: 40, label=lambda k: "k")
+        obs = f._gate_wave([(cell, False, 4, long_hold, phase, 0)],
+                           tail=ib.TAIL_PASS_B,
+                           length=ib.PROGRAM_LEN_PASS_B)
+        assert (obs[0]["contact"], obs[0]["family"]) == (False, ib.HOLD), \
+            f"motion that starts with the pattern was admitted as CONTACT " \
+            f"at phase {phase}"
+        # Positive control at the SAME phase and the same program: hold
+        # the observable still and the family comes back. Without this
+        # the assertion above is also satisfied by a window that can
+        # never close.
+        f.game = SimpleNamespace(progress=lambda ram: 100, y=lambda ram: 40,
+                                 label=lambda k: "k")
+        obs = f._gate_wave([(cell, False, 4, long_hold, phase, 0)],
+                           tail=ib.TAIL_PASS_B,
+                           length=ib.PROGRAM_LEN_PASS_B)
+        assert (obs[0]["contact"], obs[0]["family"]) == (True, ib.CONTACT), \
+            f"contact is unadmittable at the registered phase {phase}"
+
+
+def test_the_wave_anchors_the_contact_window_to_the_settle_it_measured(
+        tmp_path):
+    # The wave is the only caller that knows where settle ENDS, so it is
+    # the only one that can stop the freeze window sliding past it: it
+    # labels the samples with n_settle=t0. Unlabelled, the window is the
+    # last k+1 of everything, which at 13/21/34 buys a frame of the
+    # pattern by dropping the earliest settle transition the test covers
+    # — and that transition is the entire evidence that this root was
+    # still moving when the program began.
+    f = _sweep_solver(tmp_path)
+    cell = next(iter(f.archive.cells.values()))
+    long_hold = f._gate_basis[4]
+    for phase in (13, 21, 34):          # the phases with settle to spare
+        # ONE step of motion, at the earliest transition the K-step
+        # window covers, then frozen through the pattern's first frame.
+        f.game = SimpleNamespace(
+            progress=lambda ram, p=phase: int(
+                int(ram[0x10]) >= p - ib.CONTACT_K + 1),
+            y=lambda ram: 40, label=lambda k: "k")
+        obs = f._gate_wave([(cell, False, 4, long_hold, phase, 0)],
+                           tail=ib.TAIL_PASS_B,
+                           length=ib.PROGRAM_LEN_PASS_B)
+        assert (obs[0]["contact"], obs[0]["family"]) == (False, ib.HOLD), \
+            f"the window slid past a moving settle sample at phase {phase}"
+
+
+def test_the_contact_freeze_window_never_slides_off_the_end_of_settle():
+    # The same rule as a pure function. `n_settle` says how many of the
+    # samples are settle; anything past it is the pattern already running.
+    k = 4
+    frozen = [(10, 5)] * 12
+
+    # Settle can supply k+1 samples, so the freeze window is settle-only
+    # and the frame past it is a SEPARATE closing check.
+    assert ib.contact_admitted(frozen, eps=0, k=k, n_settle=11)
+    moved = list(frozen)
+    moved[-1] = (11, 5)                       # the pattern's first frame
+    assert not ib.contact_admitted(moved, eps=0, k=k, n_settle=11)
+
+    # THE SLIDE. A root still decelerating when settle begins: the
+    # earliest transition the window covers is the only evidence of it,
+    # and taking the last k+1 of ALL the samples drops exactly that
+    # transition to make room for a frame the window did not need. The
+    # dropped evidence is the difference between a refusal and an
+    # admission, and it would have made the verdict phase-dependent.
+    early = list(frozen)
+    early[6] = (9, 5)
+    assert not ib.contact_admitted(early, eps=0, k=k, n_settle=11)
+    assert ib.contact_admitted(early[-(k + 1):], eps=0, k=k), \
+        "the slid window is what this test exists to rule out"
+
+    # Settle alone one sample short: NOW the window extends into the
+    # pattern's first frame, because otherwise there is no window at all.
+    short = [(10, 5)] * 5
+    assert ib.contact_admitted(short, eps=0, k=k, n_settle=4)
+    # ...and the extension buys exactly one sample, never two.
+    assert not ib.contact_admitted(short[:4], eps=0, k=k, n_settle=3)
+    # Degenerate accept, and the settle-only caller is unchanged.
+    assert ib.contact_admitted([], k=0)
+    assert ib.contact_admitted(frozen[:9], eps=0, k=8)
+
+
+def _obs(root, slot, family, moves, *, base=None, n=ib.RAM_SIZE):
+    """One capture triple. `moves` maps addr -> (v1, v2) relative to a
+    zero baseline, so a test states exactly what moved and when."""
+    r0 = np.zeros(n, dtype=np.uint8) if base is None else np.array(base,
+                                                                   np.uint8)
+    r1, r2 = r0.copy(), r0.copy()
+    for addr, (v1, v2) in moves.items():
+        r1[addr], r2[addr] = v1, v2
+    return {"root": root, "slot": slot, "family": family,
+            "ram0": r0, "ram1": r1, "ram2": r2}
+
+
+def test_noop_subtraction_removes_whatever_moves_in_the_paired_control():
+    # The nuisance filter, and why it is MEASURED rather than assumed:
+    # frame counters, RNG, timers and music free-run whatever the pad
+    # does. Same address, same movement, in the control from the same
+    # root => not a candidate, at any effect size.
+    obs = []
+    for root in ("r0", "r1", "r2"):
+        obs.append(_obs(root, 0, "control", {0x10: (1, 2)}))
+        obs.append(_obs(root, 1, "hold", {0x10: (1, 2), 0x40: (8, 8)}))
+    ranked = Solver._gate_rank(obs)
+    addrs = {r["addr"] for r in ranked}
+    assert 0x40 in addrs
+    assert 0x10 not in addrs, "a free-runner survived NOOP subtraction"
+    # The survivor is classed by persistence: it moved and it stayed.
+    assert next(r for r in ranked if r["addr"] == 0x40)["class"] == "latched"
+
+
+def test_a_candidate_must_reproduce_from_three_distinct_roots():
+    # Cross-root invariance. One spectacular hit at one root is exactly
+    # what a coincidence looks like, and the archive has millions of
+    # roots to find coincidences at.
+    two = [_obs(r, 0, "control", {}) for r in ("r0", "r1")] + \
+          [_obs(r, 1, "hold", {0x40: (8, 8)}) for r in ("r0", "r1")]
+    assert [r["addr"] for r in Solver._gate_rank(two)] == []
+    three = two + [_obs("r2", 0, "control", {}),
+                   _obs("r2", 1, "hold", {0x40: (8, 8)})]
+    assert [r["addr"] for r in Solver._gate_rank(three)] == [0x40]
+    # ...and it is the DISTINCT root count, not the observation count:
+    # ten repeats at one root still fail.
+    many = [_obs("r0", 0, "control", {})] + \
+           [_obs("r0", i + 1, "hold", {0x40: (8, 8)}) for i in range(10)]
+    assert Solver._gate_rank(many) == []
+
+
+def _win_obs(root, slot, family, plen, control, moves, phase=8):
+    """A capture triple that also states the WINDOW it measured over —
+    (phase, pattern length), which is what fixes t0/t1/t2."""
+    ob = _obs(root, slot, family, moves)
+    ob.update(plen=plen, phase=phase, control=control)
+    return ob
+
+
+def test_a_paired_control_only_subtracts_over_the_window_it_measured():
+    # THE nuisance-filter defect, stated in full. Slot 0 is a 4-step
+    # hold, so at phase 8 it measures steps 8..36; hold_a0_h108 at the
+    # same phase measures 8..140. Any input-independent byte with a
+    # period longer than the control's window is therefore invisible to
+    # the control and fully visible to the pattern — and because a clock
+    # reproduces at EVERY root and moves once and stays moved, it sails
+    # through 3-root invariance and classes LATCHED. K0's blind grade and
+    # G1-DISCOVERY both rest on this subtraction, so a mismatched pair
+    # does not degrade the instrument, it inverts it.
+    def rows(with_twin: bool) -> list:
+        out = []
+        for root in ("r0", "r1", "r2"):
+            out.append(_win_obs(root, 0, "control", 4, True, {}))
+            if with_twin:
+                out.append(_win_obs(root, 1, "control", 108, True,
+                                    {0x11: (1, 1)}))
+            out.append(_win_obs(root, 2, "hold", 108, False,
+                                {0x11: (1, 1), 0x40: (8, 8)}))
+        return out
+
+    # Short control only: the 100-period byte is receipted as a
+    # discovery, scoring exactly as well as the real latch.
+    unpaired = {r["addr"]: r for r in Solver._gate_rank(rows(False))}
+    assert unpaired[0x11]["class"] == "latched"
+    assert unpaired[0x11]["score"] == unpaired[0x40]["score"] == 1.0
+
+    # Its own length twin — the all-NOOP program the ladder already
+    # emits at 108 — removes it, and leaves the real latch alone.
+    paired = {r["addr"]: r for r in Solver._gate_rank(rows(True))}
+    assert 0x11 not in paired, "a slow free-runner survived NOOP subtraction"
+    assert paired[0x40]["class"] == "latched"
+
+
+def test_a_long_control_cannot_veto_what_a_short_window_found():
+    # The rule runs BOTH ways, and this direction is the one a
+    # union-of-all-controls shortcut gets wrong. A 108-step control sees
+    # free-runners a 4-step pattern never had time to show; fold every
+    # control at a root into one mask and that pattern's real candidate
+    # is vetoed for a movement it could not have caused. Matching is on
+    # the window, not on "subtract everything we ever saw idle".
+    rows = []
+    for root in ("r0", "r1", "r2", "r3"):
+        rows.append(_win_obs(root, 0, "control", 4, True, {}))
+        rows.append(_win_obs(root, 1, "control", 108, True, {0x11: (1, 1)}))
+        # Inside ITS window the short pattern is the only thing that
+        # moved 0x11 — the long control's late tick is out of scope.
+        rows.append(_win_obs(root, 2, "hold", 4, False, {0x11: (1, 1)}))
+        rows.append(_win_obs(root, 3, "tap", 32, False, {0x42: (5, 5)}))
+    got = {r["addr"] for r in Solver._gate_rank(rows)}
+    assert 0x11 in got, "a long control vetoed a short window's candidate"
+    assert 0x42 in got
+
+
+def test_the_ladder_emits_an_all_noop_control_at_every_length_it_uses():
+    # Why the pairing above is affordable: the NOOP action rides the same
+    # hold and tap rungs as every other action, so the basis ALREADY
+    # contains a control for every window it generates. Nothing has to be
+    # added to the 120/72/90 counts §6 budgets against.
+    for rel, _n, total, *_ in _TARGET_BASIS:
+        basis = ib.interaction_basis(_profile_actions(rel))
+        ctl = ib.control_slots(basis)
+        assert set(ctl) == {len(p.masks) for p in basis}
+        # Six of them: the four hold rungs and the two tap duties.
+        assert sorted(ctl) == [4, 12, 32, 36, 48, 108]
+        assert len(basis) == total          # and the counts did not move
+        # First occurrence wins, and slot 0 is still the 4-step control.
+        assert ctl[4] == 0
+        # Exactly ONE control per length, because dedupe is on the mask
+        # tuple and (0,)*n is unique in n — so the lookup can never be
+        # ambiguous about which program certifies a window.
+        lens = [len(p.masks) for p in basis if not any(p.masks)]
+        assert len(lens) == len(set(lens)) == 6
+
+
+def test_an_all_noop_program_is_never_ranked_as_a_candidate():
+    # The other half: the five NOOP programs past slot 0 are CONTROLS,
+    # not hold-family patterns. Ranking them would enter a program that
+    # pressed nothing into the hold family's cross-root count and let a
+    # nuisance be "discovered" by the empty action.
+    rows = []
+    for root in ("r0", "r1", "r2"):
+        rows.append(_win_obs(root, 0, "control", 4, True, {}))
+        rows.append(_win_obs(root, 3, "hold", 108, True, {0x11: (1, 1)}))
+    assert Solver._gate_rank(rows) == []
+
+
+def test_the_ranking_is_invariant_under_a_permutation_of_its_input():
+    # The sweep collects observations in wave order, which depends on
+    # worker count and scheduling. A ranking that depended on that order
+    # would report a different candidate table on an 8-worker box than on
+    # a 4-worker one, from the same measurements.
+    obs = []
+    for root in ("r0", "r1", "r2", "r3"):
+        obs.append(_obs(root, 0, "control", {0x10: (1, 2)}))
+        obs.append(_obs(root, 1, "hold", {0x40: (8, 8)}))
+        obs.append(_obs(root, 2, "tap", {0x41: (3, 0)}))
+        obs.append(_obs(root, 3, "combo", {0x42: (1, 2)}))
+    base = Solver._gate_rank(obs)
+    assert len(base) >= 3
+    rng = np.random.default_rng(0)
+    for _ in range(8):
+        shuffled = [obs[i] for i in rng.permutation(len(obs))]
+        assert Solver._gate_rank(shuffled) == base
+    # The order is the declared one: score desc, then (addr, family).
+    assert base == sorted(base, key=lambda r: (-r["score"], r["addr"],
+                                               r["family"]))
+
+
+# ---------------------------------------------------------------------
+# K4 farmability: MEASURED, never a receipted constant
+# ---------------------------------------------------------------------
+
+def _sig_rows(n_roots: int = 6) -> list:
+    """Observations that clear BH-FDR on their own, so the ADMISSION path
+    is exercised and not merely the ranking. Three families are the
+    minimum that gives every address a defined leave-family-out
+    background rate; a single-family fixture falls back to the
+    conservative coin flip and nothing is ever significant.
+
+    SIX roots, not three or four, because BH's denominator is the whole
+    addr x family grid (2,048 x 3 here) and not the survivor list. The
+    smallest p an address can reach is rate**k with rate floored at
+    1/(grand+1), so four roots bottom out near 3e-5 — comfortably inside
+    a bare q=0.01 and nowhere near the 1.6e-6 the grid actually charges.
+    That gap IS the defect the grid denominator closes, and a fixture
+    sitting inside it would have gone on certifying it."""
+    rows = []
+    for root in [f"r{i}" for i in range(n_roots)]:
+        rows.append(_obs(root, 0, "control", {}))
+        rows.append(_obs(root, 1, "hold", {0x40: (8, 8)}))
+        rows.append(_obs(root, 2, "tap", {0x41: (3, 0)}))
+        rows.append(_obs(root, 3, "combo", {0x42: (1, 2)}))
+    return rows
+
+def test_farmability_is_measured_off_the_runs_own_band_sampling():
+    # K4's second refusal is "more than one event per 1k random steps",
+    # and the boundary histogram cannot answer it: it records the VALUES
+    # a byte took and is structurally silent about how often it moved
+    # between them. So the change count is its own counter, over the same
+    # stride-sampled band observations, and the rate is reported in the
+    # units the kill criterion is written in.
+    f = _arm_gate(_burst_solver([_ocell(4, 0)], learn_every=1),
+                  gate_mode="enumerate", _sel_topgx=4)
+    ram = bytearray(2048)
+    n_samples = ib.FARM_MIN_SAMPLES + 1
+    for i in range(n_samples * ib.BAND_SAMPLE_STRIDE):
+        ram[0x20] = i & 0xFF                 # differs at every sample
+        ram[0x21] = 7                        # never moves
+        f._gate_observe(bytes(ram), _ocell(4, 0).key)
+    assert f._gate_change_n == n_samples - 1
+    # A byte that differs at every sample saturates at 1000/stride: far
+    # above the 1-per-1k threshold, so K4 refuses it.
+    assert f._gate_farmability(0x20) == pytest.approx(
+        1000.0 / ib.BAND_SAMPLE_STRIDE)
+    assert f._gate_farmability(0x20) > ib.MAX_FARM_EVENTS_PER_1K
+    assert f._gate_farmability(0x21) == 0.0
+
+    # Below the minimum sample count the estimate cannot resolve the
+    # threshold it exists to decide, so it reports NOTHING rather than a
+    # comfortable zero.
+    assert ib.farm_rate(0, ib.FARM_MIN_SAMPLES - 1) is None
+    assert ib.farm_rate(0, ib.FARM_MIN_SAMPLES) == 0.0
+    # Unbiased where the decision is made: in the rare regime the chance
+    # of catching a change inside a gap is stride x the per-step rate, so
+    # 4 changes over 125 sampled gaps reads back as exactly the 1-event
+    # -per-1k-steps threshold K4 is written against.
+    assert ib.farm_rate(4, 125) == pytest.approx(ib.MAX_FARM_EVENTS_PER_1K)
+    # A run that never sampled the band has no reading at all.
+    cold = _arm_gate(SimpleNamespace(), gate_mode="enumerate")
+    assert Solver._gate_farmability(cold, 0x20) is None
+
+
+def test_an_unmeasured_farmability_refuses_the_axis_instead_of_scoring_it():
+    # THE fabricated-measurement guard (§8 PURITY). A ranker handed a
+    # farmability probe that has no reading yet must not write 0.0 into a
+    # receipt column called "farmability" — that is a measured-looking
+    # constant no probe produced, and it silently converts K4's refusal
+    # into a pass.
+    rows = _sig_rows()
+
+    unmeasured = ib.rank_candidates(rows, farmability=lambda a: None)
+    assert {r["farmability"] for r in unmeasured} == {None}
+    assert {r["refused"] for r in unmeasured} == {"farm_unmeasured"}
+    assert ib.admitted_candidates(unmeasured) == []
+
+    # A measured, farmable axis is refused by the OTHER half of K4 —
+    # the half that could never fire while farm was pinned at 0.0.
+    farmable = ib.rank_candidates(rows, farmability=lambda a: 4.0)
+    assert {r["refused"] for r in farmable} == {"farmable"}
+    assert {r["farmability"] for r in farmable} == {4.0}
+    assert ib.admitted_candidates(farmable) == []
+
+    # Measured and clean: admitted, and the rate is carried through the
+    # score as (1 - farmability) rather than dropped.
+    clean = ib.rank_candidates(rows, farmability=lambda a: 0.25)
+    latch = next(r for r in clean if r["addr"] == 0x40)
+    assert latch["refused"] is None and latch["significant"] is True
+    assert latch["score"] == pytest.approx(0.75)      # 1.0 latched x 0.75
+    assert ib.admitted_candidates(clean)[0]["addr"] == 0x40
+
+    # No probe supplied at all (the pure fixture path) reports None and
+    # screens nothing — it never claims a measurement either.
+    none = ib.rank_candidates(rows)
+    assert {r["farmability"] for r in none} == {None}
+    assert {r["refused"] for r in none} == {None}
+
+
+def test_bh_fdr_is_charged_against_the_full_addr_by_family_grid():
+    # THE multiple-comparisons defect. The differ runs one hypothesis
+    # per (addr, family) cell of the grid — thousands of them, R1's
+    # comparison flood — and then keeps the rows that reproduced from
+    # >= 3 roots. Handing BH only those survivors lets a filter chosen
+    # BECAUSE it keeps the interesting rows define the family of tests
+    # those rows were selected from: m collapses from thousands to a
+    # handful and every survivor is graded against a bar orders of
+    # magnitude too generous. q is the same 0.01 either way, which is
+    # why the receipt looks identical while meaning something else.
+    assert ib.comparison_grid(3) == ib.RAM_SIZE * 3
+    assert ib.comparison_grid(0) == ib.RAM_SIZE          # never divides by 0
+
+    # The correction, in one p-value: 5e-3 clears a bare q=0.01 and is
+    # refused the moment the real denominator is charged.
+    assert ib.bh_significant([0.005], q=0.01) == [True]
+    assert ib.bh_significant([0.005], q=0.01, m=ib.RAM_SIZE) == [False]
+    # An m smaller than the batch handed in cannot shrink the family.
+    assert ib.bh_significant([0.005], q=0.01, m=1) == [True]
+    # ...and a genuinely tiny p still passes the grid-wide bar.
+    assert ib.bh_significant([1e-9], q=0.01, m=ib.RAM_SIZE * 4) == [True]
+
+    # Wired: four roots is precisely the regime the survivor-only
+    # denominator called significant. p = 3.5e-5 — inside q=0.01, and
+    # twenty times outside the grid's first-rank bar of 1.6e-6.
+    four = ib.rank_candidates(_sig_rows(4))
+    assert [r["addr"] for r in four] == [0x40, 0x41, 0x42]
+    assert not any(r["significant"] for r in four)
+    assert ib.admitted_candidates(four) == []
+    # Six roots reaches 2.1e-8 and is admitted on the same q.
+    six = ib.rank_candidates(_sig_rows(6))
+    assert all(r["significant"] for r in six)
+    assert [r["addr"] for r in ib.admitted_candidates(six)] == [0x40, 0x41]
+
+    # A CALLER CAN STATE THE DENOMINATOR. A sweep that ranks its wall and
+    # its sham null in two calls performed ONE grid of comparisons, and
+    # neither call can see it: each counts only the families its own half
+    # carried. The override is charged to the verdict and reported on the
+    # row, so the two halves are comparable and a receipt can name the
+    # bar it was judged against.
+    wide = ib.rank_candidates(_sig_rows(6), m=ib.RAM_SIZE * 4096)
+    assert {r["fdr_m"] for r in wide} == {ib.RAM_SIZE * 4096}
+    assert not any(r["significant"] for r in wide)
+    assert {r["fdr_m"] for r in six} == {ib.comparison_grid(3)}
+
+
+def test_every_live_ranking_call_site_passes_the_farmability_probe():
+    # Wiring, structurally. The estimator existing is worth nothing if
+    # the sweep keeps calling the ranker without it: (1-farmability)
+    # would stay inert, K4's farmable half would stay dead, and every
+    # receipt row would carry the same constant. Pinned at the source so
+    # a future call site cannot be added without one.
+    import scripts.go_explore_solve as ges
+
+    tree = ast.parse(Path(ges.__file__).read_text())
+    cls = next(n for n in tree.body
+               if isinstance(n, ast.ClassDef) and n.name == "Solver")
+    calls = [n for n in ast.walk(cls)
+             if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "_gate_rank"]
+    assert len(calls) >= 3, "the live ranking call sites moved"
+    for call in calls:
+        kw = {k.arg for k in call.keywords}
+        assert "farmability" in kw, (
+            f"_gate_rank at line {call.lineno} ranks without measuring "
+            f"farmability")
+        assert "novelty" in kw
+    # ...and the two calls that split one sweep into a wall and its sham
+    # null charge the SAME BH denominator. One sweep performed one grid
+    # of comparisons; pinned as "the same name" so the pair cannot drift
+    # back into two locally-derived m's that make K1 compare two bars.
+    sweep = next(n for n in ast.walk(cls) if isinstance(n, ast.FunctionDef)
+                 and n.name == "_gate_sweep")
+    ms = [kw.value.id
+          for n in ast.walk(sweep)
+          if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+          and n.func.attr == "_gate_rank"
+          for kw in n.keywords
+          if kw.arg == "m" and isinstance(kw.value, ast.Name)]
+    assert len(ms) == 2 and len(set(ms)) == 1, (
+        "the wall and its sham null are not ranked against one m")
+
+
+def _swept_with_samples(tmp_path):
+    """A sweep-ready solver that has already sampled enough band steps
+    for a farmability reading, so the ADMISSION path is live."""
+    f = _sweep_solver(tmp_path)
+    ram = bytearray(2048)
+    for _ in range((ib.FARM_MIN_SAMPLES + 1) * ib.BAND_SAMPLE_STRIDE):
+        f._gate_observe(bytes(ram), _ocell(5, 0).key)
+    return f
+
+
+def test_the_confirmation_pass_re_runs_each_survivors_length_twin(tmp_path):
+    # Pass B stretches the tail 24 -> 512 to settle the persistence
+    # class, which is the term carrying the most weight in the rank. Over
+    # a window that long the machine's slow clocks are all awake, so a
+    # survivor that comes back WITHOUT the all-NOOP program of its own
+    # length gets its class from a capture nothing controlled: the
+    # stand-in's latched byte takes one input-independent bump at step
+    # 600, and an unmatched pass reads latch-then-bump as a monotone
+    # COUNTER — weight 0, score 0, candidate discarded.
+    f = _swept_with_samples(tmp_path)
+    ranked = f._gate_sweep([{"key": ("a",)}, {"key": ("b",)}])
+    row = next(r for r in ranked if r["addr"] == 0x40)
+    assert row["class"] == "latched" and row["score"] > 0.0
+    assert [r["addr"] for r in ib.admitted_candidates(ranked)] == [0x40]
+    # The twin was actually run: the confirmation pass saw the bump in
+    # its OWN control and subtracted it, so it declined to re-class.
+    assert row["pass_b"] is False
+    twins = ib.control_slots(f._gate_basis)
+    assert twins == {4: 0, 108: 1, 32: 2}
+
+
+def test_the_candidate_receipt_reports_how_farmability_was_measured(tmp_path):
+    # End to end: the sweep writes a receipt, and a reader can tell a
+    # measured zero from an unmeasured one without re-running anything.
+    f = _sweep_solver(tmp_path)
+    ranked = f._gate_sweep([{"key": ("a",)}, {"key": ("b",)}])
+    assert ranked and all(r["farmability"] is None for r in ranked), \
+        "a sweep with no band samples must not invent a rate"
+    # ...so nothing is admitted off an unmeasured axis, which is the
+    # refusal doing its job rather than a silent pass.
+    assert f._gate_counters["admitted"] == 0
+    null = json.loads((tmp_path / "gate" / "candidates_001.json").read_text())
+    assert null["admitted"] == []
+
+    # Now give it the samples, and the same sweep admits with a real
+    # number and states the denominator behind it.
+    ram = bytearray(2048)
+    for i in range((ib.FARM_MIN_SAMPLES + 1) * ib.BAND_SAMPLE_STRIDE):
+        f._gate_observe(bytes(ram), _ocell(5, 0).key)
+    f._gate_disarmed = False
+    f._gate_swept = {}
+    ranked = f._gate_sweep([{"key": ("a",)}, {"key": ("b",)}])
+    assert [r["addr"] for r in ranked if r["significant"]] == [0x40]
+    assert all(r["farmability"] == 0.0 for r in ranked)   # measured, quiet
+    rec = json.loads((tmp_path / "gate" / "candidates_002.json").read_text())
+    assert rec["farm_samples"] == ib.FARM_MIN_SAMPLES
+    assert rec["farm_stride"] == ib.BAND_SAMPLE_STRIDE
+    assert rec["admitted"] == [0x40]
+
+
+def test_a_null_sweep_writes_the_receipt_that_is_its_primary_outcome(tmp_path):
+    # A SWEEP THAT ADMITS NOTHING IS THE PRE-REGISTERED PRIMARY OUTCOME.
+    # The arm's whole claim is that it can come back empty from a wall it
+    # swept exhaustively, and K0 grades it blind on exactly that. Written
+    # only on the hit path, the null survived as a counter in a progress
+    # line and nothing else — after the fact, "the instrument found
+    # nothing" was indistinguishable from "it never ran", "it threw" and
+    # "somebody deleted the receipt", and no artifact stated what had
+    # been swept or against which bar.
+    f = _sweep_solver(tmp_path, n_roots=2)      # < MIN_INVARIANT_ROOTS
+    ranked = f._gate_sweep([{"key": ("a",)}, {"key": ("b",)}])
+    assert ranked == [] and f._gate_counters["admitted"] == 0
+    # Nothing found, so nothing is disarmed and nothing is queued: the
+    # null path leaves the arm exactly as armed as it was.
+    assert f._gate_disarmed is False and f._gate_inject == []
+
+    rec = json.loads((tmp_path / "gate" / "candidates_001.json").read_text())
+    assert (rec["admitted"], rec["ranked"], rec["queued_injections"]) == (
+        [], [], [])
+    # The same fields a hit carries, because a null is only readable
+    # against what produced it: how much was swept, from how many roots,
+    # over which phases, at which q.
+    assert rec["sweep"] == 1
+    assert (rec["roots"], rec["sham_roots"]) == (2, 0)
+    assert rec["basis"] == len(f._gate_basis)
+    assert rec["phases"] == list(f._gate_phases)
+    assert rec["program_len"] == ib.PROGRAM_LEN_PASS_A
+    assert (rec["fdr_q"], rec["rank_cutoff"]) == (ib.FDR_Q, ib.RANK_CUTOFF)
+    assert rec["farm_samples"] == 0
+    assert rec["farm_stride"] == ib.BAND_SAMPLE_STRIDE
+    # ...and the BH denominator, which is the one number a null CANNOT
+    # carry on a ranked row, because it has no rows.
+    assert rec["fdr_m"] == ib.comparison_grid(3) == f._gate_fdr_m
+
+
+def test_the_wall_and_its_sham_null_are_charged_one_bh_denominator(tmp_path):
+    # K1 compares two yields, so the two have to be graded on one bar.
+    # Left to derive its own, each rank call counts only the families ITS
+    # half of the observations carried — and the halves differ by
+    # construction, because CONTACT is a state-dependent relabel that
+    # fires where the roots are pressed against something and not where
+    # they are free. Here it is the SHAM roots that freeze (the wall
+    # roots are the ones still advancing), so the wall's own view of the
+    # grid is a family short and every wall p-value would be charged a
+    # denominator two thousand comparisons too small.
+    f = _sweep_solver(tmp_path)
+    f.gate_sham_roots = 2
+    # $0000 is the root's own index in this stand-in, so the band cells
+    # (6..11) read as still advancing and the free ones (0..5) as frozen.
+    f.game = SimpleNamespace(
+        progress=lambda ram: 100 if int(ram[0x00]) < 6 else int(ram[0x10]),
+        y=lambda ram: 40, label=lambda k: "k")
+    cells = {int(c.key[-1]): c for c in f.archive.cells.values()}
+    long_hold = f._gate_basis[4]
+    # The split, demonstrated: the same program is HOLD at a wall root
+    # and CONTACT at a sham one, so the two halves of one sweep really do
+    # see different family sets.
+    wall = f._gate_wave([(cells[7], False, 4, long_hold, 8, 0)])
+    free = f._gate_wave([(cells[1], True, 4, long_hold, 8, 0)])
+    assert (wall[0]["family"], free[0]["family"]) == (ib.HOLD, ib.CONTACT)
+
+    ranked = f._gate_sweep([{"key": ("a",)}, {"key": ("b",)}])
+    assert {r["family"] for r in ranked} == {"hold"}, \
+        "the fixture stopped producing wall rows"
+    # hold + tap at the wall, and contact only over at the null: three
+    # families in the sweep, two in the wall's own view of it.
+    grid = ib.comparison_grid(3)
+    assert f._gate_fdr_m == grid > ib.comparison_grid(2)
+    assert {r["fdr_m"] for r in ranked} == {grid}
+
+
+# ---------------------------------------------------------------------
+# gate_marks + suppression (3)
+# ---------------------------------------------------------------------
+
+def test_gate_marks_ride_as_the_eighth_trace_element(tmp_path):
+    # Hand-built ctx + trace: an armed run records where it injected, so
+    # T2 can later mask exactly those frames. Element 8 exists ONLY when
+    # the arm is on, so a default-path traces.pkl is unchanged.
+    ram = bytes(2048)
+    on = _arm_gate(_burst_solver([_ocell(4, 0)], learn_every=1),
+                   gate_mode="enumerate")
+    ctx = {"gate_marks": [(12, 0x40, "pattern")]}
+    assert on.observe(0, ram, [0, 1], 2, "entrance", ctx=ctx) == "live"
+    rec = next(iter(on.traces.values()))
+    assert len(rec) == 8 and rec[7] == ((12, 0x40, "pattern"),)
+
+    off = _burst_solver([_ocell(4, 0)], learn_every=1)
+    assert off.observe(0, ram, [0, 1], 2, "entrance", ctx={}) == "live"
+    assert len(next(iter(off.traces.values()))) == 7
+
+
+def test_suppressing_the_marked_window_changes_the_emitted_bytes():
+    # T2's deterministic ablation. It has to mask the marked frames and
+    # ONLY those (a blanket NOOP is not an ablation, it is a different
+    # trajectory), and it must not mutate the trace the archive holds.
+    trace = [3, 3, 3, 3, 3, 3]
+    marks = [(1, 0x40, "pattern"), (2, 0x40, "pattern"),
+             (4, 0x40, "other")]
+    masked = gate_suppress_trace(trace, marks)
+    assert masked == [3, 0, 0, 3, 3, 3]
+    assert masked != trace and trace == [3] * 6
+    assert bytes(masked) != bytes(trace)
+    # An out-of-range mark (a truncated lineage) is ignored, not fatal.
+    assert gate_suppress_trace([1, 1], [(99, 0, "pattern")]) == [1, 1]
+    # No marks at all is the identity, so an unarmed lineage ablates to
+    # itself and the T2 receipt says "nothing to suppress" honestly.
+    assert gate_suppress_trace(trace, []) == trace
+
+
+def test_the_ablation_masks_the_whole_injected_window_not_one_frame():
+    # T2's NECESSITY test, and why the mark needs a duration. An
+    # injection owns macro_hold + 6 frames (six settle NOOPs, then the
+    # hold); a mark that records only its start blanks ONE of them, so
+    # the "ablated" trace still contains 113 of a 108-step hold's 114
+    # frames and T2 compares the program against itself. A test that
+    # cannot fail is worse than no test: it reports NECESSITY-CONFIRMED
+    # for a mechanism it never removed.
+    trace = [3] * 20
+    masked = gate_suppress_trace(trace, [(4, 0x40, "pattern", 8)])
+    assert masked == [3] * 4 + [0] * 8 + [3] * 8
+    assert trace == [3] * 20                     # never mutated in place
+    # Two injections, and the frames between them are untouched — a
+    # blanket NOOP is a different trajectory, not an ablation.
+    two = gate_suppress_trace(trace, [(1, 0x40, "pattern", 2),
+                                      (10, 0x41, "pattern", 3)])
+    assert two == [3, 0, 0, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 3, 3, 3, 3, 3,
+                   3, 3]
+    # The other kind is still skipped whole, span and all.
+    assert gate_suppress_trace(trace, [(0, 0, "other", 9)]) == trace
+    # A span running off the end of a truncated lineage clips.
+    assert gate_suppress_trace([1, 1, 1], [(1, 0, "pattern", 99)]) == \
+        [1, 0, 0]
+    # A pre-span 3-tuple mark is honoured as written (one frame) rather
+    # than guessed at, so a resumed lineage ablates what it recorded.
+    assert gate_suppress_trace(trace, [(4, 0x40, "pattern")]) == \
+        [3] * 4 + [0] + [3] * 15
+
+
+def test_the_recorded_mark_carries_the_window_the_injection_owns():
+    # The writer's half of the same contract, pinned at the source: the
+    # branch that takes the shared macro slot writes macro_hold + 6 into
+    # macro_left, and the mark it appends records THAT span. A mark that
+    # only carried a step index would make the ablation above unable to
+    # know what to remove, however correct the ablation itself is.
+    import scripts.go_explore_solve as ges
+
+    body = Path(ges.__file__).read_text().split("def explore(self)", 1)[1]
+    branch = body[body.index('c.get("gate_macro")'):
+                  body.index("self.transition_macros and")]
+    assert 'c["macro_left"] = c["macro_hold"] + 6' in branch
+    mark = branch[branch.index("gate_marks"):]
+    assert 'int(c["macro_left"])' in mark, \
+        "the injection mark records no duration: T2 can ablate one frame"
+    # ...and it rides as a 4-tuple through the trace element.
+    ram = bytes(2048)
+    on = _arm_gate(_burst_solver([_ocell(4, 0)], learn_every=1),
+                   gate_mode="enumerate")
+    ctx = {"gate_marks": [(12, 0x40, "pattern", 18)]}
+    assert on.observe(0, ram, [0, 1], 2, "entrance", ctx=ctx) == "live"
+    assert next(iter(on.traces.values()))[7] == ((12, 0x40, "pattern", 18),)
+
+
+def test_a_resumed_seven_tuple_archive_loads_with_no_marks_and_no_error():
+    # Every banked archive on disk predates the 8th element. Resuming one
+    # must be a no-op, not a crash and not a silent re-key.
+    cell = _ocell(4, 0)
+    f = _burst_solver([cell])
+    f.traces = {cell.key: ("entrance", b"\x01\x02", 0, (), 0, (), 0)}
+    ctx = f._assign(0)
+    assert ctx["gate_marks"] == []
+    assert ctx["trace"] == [1, 2] and ctx["kills"] == 0
+    f.traces[cell.key] = ("entrance", b"\x01", 0, (), 0, (), 3,
+                          ((7, 0x40, "pattern"),))
+    ctx = f._assign(0)
+    assert ctx["gate_marks"] == [(7, 0x40, "pattern")] and ctx["kills"] == 3
+
+
+# ---------------------------------------------------------------------
+# macro-slot precedence (2)
+# ---------------------------------------------------------------------
+
+def test_the_shared_macro_slot_goes_gate_then_transition_then_hold():
+    # ONE slot, three claimants. Precedence is decided at ACQUISITION
+    # only — and an in-flight macro outranks all of them, which is what
+    # keeps Castlevania's declared up-hold (p=0.02, the rarest thing the
+    # sampler emits) from being chopped in half by an arm that arrived
+    # mid-hold.
+    assert macro_slot_owner(False, True, True, True) == "gate"
+    assert macro_slot_owner(False, False, True, True) == "transition"
+    assert macro_slot_owner(False, False, False, True) == "hold"
+    assert macro_slot_owner(False, False, False, False) is None
+    for g in (True, False):
+        for t in (True, False):
+            for h in (True, False):
+                assert macro_slot_owner(True, g, t, h) == "in_flight"
+
+
+def _assign_solver(cells, chosen, queue, **over):
+    """A solver whose selection is pinned, so the band rule and the
+    round-robin can be stated without depending on which cell the
+    weighted sampler happened to draw."""
+    kw = dict(gate_mode="enumerate", gate_band=2, _sel_topgx=40,
+              _gate_inject=list(queue))
+    kw.update(over)
+    f = _arm_gate(_burst_solver(cells), **kw)
+    f.select = lambda: chosen
+    return f
+
+
+def test_the_gate_program_channel_has_a_writer_and_not_only_a_reader():
+    # THE dead-code guard. `gate_macro`/`gate_cand` were once reachable
+    # only from tests — nothing in the solver ever WROTE them — so the
+    # injection branch, the gate_injections counter, gate_marks and
+    # gate_suppress_trace were live under pytest and nowhere else, and
+    # T1's arm C was arm B plus a step tax while T3 had nothing to be
+    # sufficient about. The writer also has to live in `_assign` and only
+    # there: that is what makes "at a burst boundary, never mid-burst"
+    # structural instead of a comment.
+    import scripts.go_explore_solve as ges
+
+    tree = ast.parse(Path(ges.__file__).read_text())
+
+    def _written(scope) -> set:
+        return {t.slice.value for n in ast.walk(scope)
+                if isinstance(n, ast.Assign) for t in n.targets
+                if isinstance(t, ast.Subscript)
+                and isinstance(t.slice, ast.Constant)
+                and isinstance(t.slice.value, str)}
+
+    cls = next(n for n in tree.body
+               if isinstance(n, ast.ClassDef) and n.name == "Solver")
+    assert {"gate_macro", "gate_cand"} <= _written(cls), \
+        "nothing writes a gate program: arm C and T3 are dead code"
+    fn = next(n for n in cls.body
+              if isinstance(n, ast.FunctionDef) and n.name == "_assign")
+    assert {"gate_macro", "gate_cand"} <= _written(fn)
+
+
+def test_only_a_declared_hold_can_be_handed_to_the_shared_macro_slot():
+    # The channel's REACH, stated so the campaign cannot quietly claim
+    # more than it injects. The slot is (action index, hold count) and
+    # the trace alphabet the archive and replay_verify speak is action
+    # indices, so a tap duty cycle and a combo mask — an OR that is by
+    # construction not any declared action — have no in-run path at all.
+    space = _profile_actions("configs/castlevania.yaml")
+    masks = list(action_space_to_bitmasks(space))
+    fams: dict = {}
+    for p in ib.interaction_basis(space):
+        fams.setdefault(p.family, []).append(p)
+    for p in fams["hold"]:
+        shot = ib.macro_injection(p, masks)
+        if not any(p.masks):
+            assert shot is None, "the paired control presses nothing"
+            continue
+        ai, hold = shot
+        assert masks[ai] == p.masks[0] and hold == len(p.masks)
+    assert all(ib.macro_injection(p, masks) is None
+               for p in fams["tap"] + fams["combo"])
+    # THE EXACT SPLIT, pinned so no receipt can round it in the arm's
+    # favour: 60 of Castlevania's 120 patterns can be MEASURED and never
+    # INJECTED — 32 taps + 24 combos + the 4 all-NOOP holds. The sweep
+    # measures twice what the channel can carry, and both docstrings that
+    # quote the figure are checked here rather than trusted.
+    basis = ib.interaction_basis(space)
+    injectable = [p for p in basis if ib.macro_injection(p, masks)]
+    assert (len(fams["tap"]) + len(fams["combo"])) == 56
+    assert len(basis) - len(injectable) == 60 == len(injectable)
+    for src, quote in ((ib.macro_injection.__doc__, "60 of the 120"),
+                       (Solver._gate_queue_injections.__doc__,
+                        "can be handed 60 of")):
+        assert quote in " ".join(src.split())
+
+
+def test_an_inexpressible_candidate_is_counted_and_not_silently_dropped():
+    # R2's rule: a gate the basis can measure but the channel cannot
+    # carry is a DECLARED limitation, not an absence. The refusal is
+    # counted into its own telemetry field and written onto the receipt
+    # row, so a null from arm C can be read against how much of the
+    # basis ever reached the search.
+    space = [[], ["right"], ["A"]]
+    basis = ib.interaction_basis(space)
+    masks = list(action_space_to_bitmasks(space))
+    f = _arm_gate(SimpleNamespace(), gate_mode="enumerate",
+                  _gate_basis=basis, bitmasks=masks)
+    hold = next(i for i, p in enumerate(basis)
+                if p.family == "hold" and any(p.masks))
+    combo = next(i for i, p in enumerate(basis) if p.family == "combo")
+    admitted = [{"addr": 0x40, "slots": [hold]},
+                {"addr": 0x41, "slots": [combo]}]
+    f._gate_queue_injections(admitted)
+    assert f._gate_inject == [(1, 4, 0x40)]
+    assert f._gate_counters["inexpressible"] == 1
+    assert admitted[0]["inject"] == [1, 4]
+    assert admitted[1]["inject"] is None
+
+
+def test_an_admitted_candidate_becomes_a_program_the_search_will_run(tmp_path):
+    # End to end, off the real sweep: measure -> rank -> admit -> QUEUE.
+    # The queue is the missing link that turns a receipt row into
+    # something the search does.
+    f = _swept_with_samples(tmp_path)
+    f._gate_sweep([{"key": ("a",)}, {"key": ("b",)}])
+    assert f._gate_counters["admitted"] == 1
+    # The winning interaction was a 108-step hold of declared action 1 —
+    # the pattern that actually MOVED the byte, read back off the row's
+    # own contributing slots rather than re-derived from the address.
+    assert f._gate_inject == [(1, 108, 0x40)]
+    rec = json.loads((tmp_path / "gate" / "candidates_001.json").read_text())
+    assert rec["queued_injections"] == [[1, 108, 0x40]]
+    assert next(r for r in rec["ranked"]
+                if r["addr"] == 0x40)["inject"] == [1, 108]
+
+
+def test_a_band_rooted_burst_is_handed_the_queued_program_at_assignment():
+    # The hand-off rule: only inside the same --gate-band the sweep
+    # rooted in, round-robin so two workers never carry the same
+    # candidate, and never at all with the arm off.
+    inband, outband = _ocell(40, 0), _ocell(0, 0)
+    queue = [(1, 4, 0x40), (2, 12, 0x41)]
+    f = _assign_solver([inband, outband], inband, queue)
+    c = f._assign(0)
+    assert c["gate_macro"] == (1, 4) and c["gate_cand"] == 0x40
+    assert [f._assign(0)["gate_macro"] for _ in range(3)] == [
+        (2, 12), (1, 4), (2, 12)]
+
+    g = _assign_solver([inband, outband], outband, queue)
+    assert "gate_macro" not in g._assign(0)
+
+    off = _assign_solver([inband], inband, queue, gate_mode="off")
+    assert "gate_macro" not in off._assign(0)
+    # An empty queue is the same inert path as an unarmed run.
+    empty = _assign_solver([inband], inband, [])
+    assert "gate_macro" not in empty._assign(0)
+
+
+def test_the_injection_hand_off_costs_the_search_not_one_draw():
+    # A queued program is a receipted candidate, not a sampled one. If
+    # acquiring the slot moved the stream, arm C's search would diverge
+    # from arm B's for a reason that has nothing to do with the
+    # treatment, and C-B would measure the divergence instead of the
+    # injection.
+    states = []
+    for queue in ([], [(1, 4, 0x40), (2, 12, 0x41)]):
+        f = _assign_solver([_ocell(40, 0)], _ocell(40, 0), queue)
+        f.rng = np.random.default_rng(7)
+        for _ in range(8):
+            f._assign(0)
+        states.append(f.rng.bit_generator.state)
+    assert states[0] == states[1]
+
+
+def test_the_gate_injection_takes_the_slot_without_preempting_a_burst():
+    # The live wiring of the same rule, run through explore()'s own
+    # branch order on a hand-built ctx. A queued gate program is a
+    # receipted candidate, not a sampled one, so acquiring the slot costs
+    # no RNG draw and leaves a mark for the ablation.
+    import scripts.go_explore_solve as ges
+
+    src = Path(ges.__file__).read_text()
+    body = src.split("def explore(self)", 1)[1]
+    gate_at = body.index('c.get("gate_macro")')
+    trans_at = body.index("self.transition_macros and")
+    hold_at = body.index("self.macros\n") if "self.macros\n" in body \
+        else body.index("and self.macros")
+    assert gate_at < trans_at < hold_at, \
+        "the macro arms are no longer ordered gate > transition > hold"
+    # Every arm is guarded by the same "slot is free" test, which is what
+    # makes an in-flight macro un-preemptable by construction.
+    window = body[gate_at - 400:hold_at + 200]
+    assert window.count('c.get("macro_left", 0) <= 0') == 3
+
+    f = _arm_gate(SimpleNamespace(), gate_mode="enumerate")
+    c = {"macro_left": 0, "steps": 41, "gate_macro": (2, 12),
+         "gate_cand": 0x40, "gate_marks": []}
+    owner = macro_slot_owner(c["macro_left"] > 0, bool(c.get("gate_macro")),
+                             True, True)
+    assert owner == "gate"
+    gi, gh = c.pop("gate_macro")
+    c["macro_a"], c["macro_hold"] = gi, gh
+    c["macro_left"] = gh + 6
+    c["gate_marks"].append((c["steps"], c.pop("gate_cand"), "pattern"))
+    assert c["gate_marks"] == [(41, 0x40, "pattern")]
+    # Mid-hold, no arm may claim it again.
+    assert macro_slot_owner(c["macro_left"] > 0, True, True, True) \
+        == "in_flight"
+
+
+# ---------------------------------------------------------------------
+# receipts + provenance (4; one lives in tests/test_wall_taxonomy.py and
+# one in tests/test_go_explore_chain.py)
+# ---------------------------------------------------------------------
+
+def _sidecar(tmp_path, axes) -> Path:
+    p = tmp_path / "gate_axes_target.json"
+    p.write_text(json.dumps({"target": "t", "tuned_on": "contra",
+                             "revisions": 1, "axes": axes}) + "\n")
+    return p
+
+
+def test_a_sidecar_axis_without_a_probe_receipt_sha_is_refused_at_merge(
+        tmp_path):
+    # THE injection guard: an axis nothing measured is an address an
+    # agent hand-wrote, and the whole campaign's purity claim is that
+    # every address came out of a receipted probe of our own rollouts.
+    prof = {"solve": {"state_sig": [{"addr": 1, "match": [1]}]}}
+    bad = _sidecar(tmp_path, [{"addr": 4, "match": [8]}])
+    with pytest.raises(SystemExit, match="no probe-receipt sha"):
+        merge_gate_axes(dict(prof), bad, 3)
+
+    good = _sidecar(tmp_path, [{"addr": 4, "match": [8],
+                                "receipt_sha": "deadbeefcafe"}])
+    p = copy.deepcopy(prof)
+    axes, sha = merge_gate_axes(p, good, 3)
+    # APPENDED LAST, so a resumed archive's existing bit indices survive.
+    assert p["solve"]["state_sig"] == [{"addr": 1, "match": [1]},
+                                       {"addr": 4, "match": [8], "mod": 0}]
+    assert axes[0]["receipt_sha"] == "deadbeefcafe"
+    assert sha == gate_axes_sidecar_sha(good) and len(sha) == 16
+    # No sidecar at all is the byte-identical default path.
+    assert merge_gate_axes(dict(prof), None, 3) == ([], None)
+    # The caps are refusals, not truncations.
+    with pytest.raises(SystemExit, match="--contact-bits"):
+        merge_gate_axes(copy.deepcopy(prof),
+                        _sidecar(tmp_path, [{"addr": a, "match": [1],
+                                             "receipt_sha": "x"}
+                                            for a in range(4)]), 3)
+    wide = {"solve": {"state_sig": [{"addr": i, "match": [1]}
+                                    for i in range(7)]}}
+    with pytest.raises(SystemExit, match="cap 8"):
+        merge_gate_axes(wide, _sidecar(tmp_path,
+                                       [{"addr": 9, "match": [1],
+                                         "receipt_sha": "x"},
+                                        {"addr": 10, "match": [1],
+                                         "receipt_sha": "x"}]), 3)
+    # An SMB-engine profile has no solve: section — merging would flip
+    # the adapter as a side effect, so it is refused instead.
+    with pytest.raises(SystemExit, match="solve"):
+        merge_gate_axes({}, good, 3)
+
+
+def test_a_negative_gate_pin_disables_the_arm_and_the_flag_is_required(
+        monkeypatch):
+    # Two halves of the same contract. v1 DERIVES NOTHING: there is no
+    # advance-interval history to derive a pin from, and a saturated wall
+    # can log zero advances all session, so the operator states it. A
+    # negative value is the disable sentinel --inversion-pin-secs already
+    # established.
+    args = _parse_solver_argv(monkeypatch)
+    assert args.gate_opener == "off" and args.gate_pin_secs is None
+    assert resolve_gate_pin_secs(args) == -1.0
+    assert resolve_gate_pin_secs(SimpleNamespace()) == -1.0
+    assert resolve_gate_pin_secs(SimpleNamespace(gate_pin_secs="600")) == 600.0
+
+    armed = _parse_solver_argv(monkeypatch, "--gate-opener", "enumerate",
+                               "--gate-pin-secs", "-1",
+                               "--gate-target-typed")
+    assert resolve_gate_pin_secs(armed) == -1.0
+    assert gate_armed("enumerate", 0.0, 1e9, resolve_gate_pin_secs(armed),
+                      True, True) is False
+    # ...and arming without stating a pin is a hard CLI error, never a
+    # silent default.
+    with pytest.raises(SystemExit):
+        _parse_solver_argv(monkeypatch, "--gate-opener", "enumerate")
+
+
+def test_the_gate_flags_are_json_types_so_receipts_keep_recording_them():
+    # Same reproducibility gate the ortho knobs carry: _dump_solution
+    # filters solver_args to (str, int, float, bool), so a knob typed
+    # outside that set vanishes from the receipt and the run cannot be
+    # replayed from its own JSON.
+    import scripts.go_explore_solve as ges
+
+    src = Path(ges.__file__).read_text()
+    for decl in ('"--gate-opener", choices=("off", "enumerate")',
+                 '"--gate-sweep-frac", type=float, default=0.10',
+                 '"--gate-sweep-roots", type=int, default=16',
+                 '"--gate-sweep-repeats", type=int, default=2',
+                 '"--gate-pin-secs", type=float, default=None',
+                 '"--gate-target-typed", action="store_true"',
+                 '"--gate-band", type=int, default=24',
+                 '"--gate-sham-roots", type=int, default=4',
+                 '"--gate-axes", type=str, default=None',
+                 '"--contact-bits", type=int, default=3'):
+        assert decl in src, decl
+    # And the header records what an A/B pair is judged on.
+    hdr = gate_run_header(
+        SimpleNamespace(seed=1, workers=8, burst=64, gate_opener="enumerate",
+                        gate_pin_secs=600.0, gate_target_typed=True,
+                        gate_band=24),
+        commit="abc123", hw_flags=["mmio_read_timing"], root_sha="0" * 16,
+        sidecar_sha="1" * 16, axes=[{"addr": 4}], active_predicate="p")
+    for key in ("argv", "commit", "seed", "workers", "burst", "hw_flags",
+                "root_sha", "sidecar_sha", "gate_axes", "active_predicate",
+                "loadavg", "contact"):
+        assert key in hdr, key
+    # eps and K alone do not identify the test that ran: the same two
+    # constants describe a settle-only window, a window slid a frame into
+    # the pattern, and settle plus a closing frame. The header states the
+    # window, so two arms that applied different ones cannot produce
+    # headers that agree.
+    assert hdr["contact"] == {
+        "observable": "profile gx/y telemetry", "eps": 0, "k": 8,
+        "window": ("last k+1 settle samples, closed by the pattern's "
+                   "first frame; extends into that frame only when "
+                   "settle alone cannot supply k+1")}
+    json.dumps(hdr)          # the whole header must be serializable

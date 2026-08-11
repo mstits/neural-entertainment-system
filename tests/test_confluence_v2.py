@@ -107,6 +107,9 @@ def _observe_driver(game, start_lives: int = 3) -> SimpleNamespace:
         archive=_NullArchive(), pool=_NullPool(), traces={},
         max_area=0, max_gx_in_area={}, max_sect=0, _pin_time=0.0,
         ortho_mode="off", door_weight=0.0, time_bins=False, kill_key=False,
+        # gate-opener arm at its shipped default: observe() pays one
+        # string compare and nothing else.
+        gate_mode="off",
         _recorded_new=False, banked=[],
     )
     fake._dump_solution = lambda *a, **k: (fake.banked.append(a) or True)
@@ -635,6 +638,9 @@ def _observe_solver(game) -> SimpleNamespace:
         game=game, start_wd=(0,), start_lives=3,
         _dumped=banked,
         ortho_mode="off", door_weight=0.0, time_bins=False, kill_key=False,
+        # gate-opener arm at its shipped default: observe() pays one
+        # string compare and nothing else.
+        gate_mode="off",
         max_area=0, max_gx_in_area={}, max_sect=0, archive=None,
     )
     fake._dump_solution = lambda *a, **k: (banked.append(a) or True)

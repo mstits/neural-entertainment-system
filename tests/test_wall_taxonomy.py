@@ -828,9 +828,21 @@ def test_missing_telemetry_names_the_runtime_gaps():
         assert len(wt.MISSING_TELEMETRY[key]) > 40
 
 
+#: The ONE runtime reference this module tolerates: the gate-opener arm
+#: reads the PURE `boundary_axis_profile` off a flush snapshot for its
+#: `boundary_state_axes` / `alias_ratio` telemetry. Everything that
+#: CLASSIFIES — `gated_wall_verdict`, `WallClass`, the thresholds — stays
+#: operator-read between sessions.
+_TAXONOMY_PURE_READER = "scripts/go_explore_solve.py"
+
+
 def test_module_is_not_wired_into_any_runtime_dispatch():
-    """Self-arming is a later decision (D2 verdict). Until then nothing
-    outside tests and docs may import this module."""
+    """Self-arming is a later decision (D2 verdict). Nothing outside
+    tests and docs may import this module, with exactly one exception:
+    the gate-opener arm's pure `boundary_axis_profile` read (taxonomy
+    KEYED, never taxonomy-WIRED — the companion test below pins how
+    narrow that exception is).
+    """
     importers = []
     for root in ("src", "scripts", "nes_core", "configs"):
         base = REPO / root
@@ -839,9 +851,39 @@ def test_module_is_not_wired_into_any_runtime_dispatch():
         for path in base.rglob("*.py"):
             if path.name == "wall_taxonomy.py":
                 continue
+            rel = str(path.relative_to(REPO))
+            if rel == _TAXONOMY_PURE_READER:
+                continue
             if "wall_taxonomy" in path.read_text(errors="ignore"):
-                importers.append(str(path.relative_to(REPO)))
+                importers.append(rel)
     assert importers == [], f"wall_taxonomy is wired into: {importers}"
+
+
+def test_the_one_tolerated_reader_imports_only_the_pure_profile():
+    """And the exception is exactly as narrow as it claims: the solver
+    imports `boundary_axis_profile` and nothing else, lazily, inside the
+    background flush — never at module scope and never in the hot loop.
+    """
+    import ast
+
+    src = (REPO / _TAXONOMY_PURE_READER).read_text()
+    tree = ast.parse(src)
+    imported, at_module_scope = [], []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.module != "src.training.wall_taxonomy":
+            continue
+        imported += [a.name for a in node.names]
+    for node in tree.body:                       # module-scope statements
+        if isinstance(node, ast.ImportFrom) and node.module and \
+                "wall_taxonomy" in node.module:
+            at_module_scope.append(node.module)
+    assert imported == ["boundary_axis_profile"], imported
+    assert at_module_scope == [], at_module_scope
+    # ...and no VERDICT function is reachable from the runtime at all.
+    assert "gated_wall_verdict(" not in src
+    assert "WallClass" not in src
 
 
 # --------------------------------------------------------------------------
