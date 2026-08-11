@@ -478,7 +478,7 @@ Command #1 (mint the root state) is unchanged. Command #2 loses
 the receipt records the choice rather than an omission. `--verify-bank`
 is also the default and is the check that carries the banking decision.
 
-## Attempt-1 receipt (2026-08-10, orchestrator)
+## Orchestrator verdict — Attempt-1 receipt (2026-08-10, orchestrator)
 
 25 min, seed 0, 8 workers, --gx-bucket 1 --burst 512: 814 cells,
 2 LINES CLEARED by search (gx 2 — the class-7 non-spatial progress

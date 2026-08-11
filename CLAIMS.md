@@ -181,11 +181,15 @@ selections) and redirected exploration upward exactly as designed —
 without the arm — vertical starvation is no longer the hall's binding
 constraint on a resumed stairkey archive; both runs pinned at gx 767,
 0 solutions, and the pre-registered partial gate (ortho_cols_improved
-≥ 8) failed in both (3). The freshly calibrated wall-taxonomy
-discriminator classifies both runs GATED. Citable as: *agent-forged;
-validated as a selection-pressure mechanism; not validated as a
-wall-cracking mechanism; the hall's wall class has migrated from
-orthogonal-starvation to gated.* No clear may be attributed to it.
+≥ 8) failed in both (3). The wall-taxonomy discriminator
+(`src/training/wall_taxonomy.py`, calibration receipted in
+`docs/receipts/dispatch/gated_wall_calibration_2026-08-10.md`, whose own
+§0 status was **CONDITIONAL — the positive class is unvalidated**: both
+GATED rows were the same unsolved hall read twice, not two data points)
+classifies both runs GATED. Citable as: *agent-forged; validated as a
+selection-pressure mechanism; not validated as a wall-cracking
+mechanism; the hall's wall class has migrated from orthogonal-starvation
+to gated.* No clear may be attributed to it.
 The prior text follows for the record.
 
 *Status at forging, stated plainly: no validation run had been
@@ -197,6 +201,23 @@ arms, and the validation is the pre-registered fidelity-corrected +
 its stopping rule declared in advance. Until that run reports, this
 entry may be cited only as *agent-forged, unvalidated*, and no clear of
 any kind may be attributed to it.
+
+*Addendum, 2026-08-10 (later the same day) — the K-FALSIFIER struck the
+GATED vocabulary.* `docs/receipts/dispatch/k_falsifier_2026-08-10.md`
+scored the four registered effort-matched SOLVED archives through the
+same discriminator with the RESOLVED/PROGRESSING escape branches
+bypassed: all four read GATED, at 3.9x-10.8x `CONCENTRATION_GATED_MIN`
+and above three of the hall's own four class-defining reads, and a false
+GATED reproduces on the unmodified shipped path (`smb_4_4_micro/lvl_1-3`
+seg 2, cleared 17 minutes later on a plain retry). Per that receipt's
+pre-registered FAIL branch, every `GATED` / "saturated" /
+visits-as-saturation citation above is **superseded**, including the
+"migrated from orthogonal-starvation to gated" sentence: the hall is
+relabeled **UNRESOLVED-CONCENTRATED**. The split verdict's mechanism
+finding is untouched — the arm still measurably redirected exploration
+upward (2,514 vs 1,471 new cells above y-band 9) — only the wall-class
+WORD borrowed from the discriminator is retracted. No clear was, or is,
+attributed to this arm either way.
 
 ## Quarantine (Tier-3-contaminated artifacts)
 

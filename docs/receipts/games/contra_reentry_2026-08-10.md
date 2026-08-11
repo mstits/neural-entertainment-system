@@ -660,7 +660,7 @@ Reported, not fixed — both fall outside the `solve:` block.
    so it was left alone; it should be reconciled with §4 by whoever owns the
    training profile.
 
-## Registered-attempt verdict (2026-08-10, r1_ortho, orchestrator)
+## Orchestrator verdict — Registered-attempt verdict, r1_ortho (2026-08-10, orchestrator)
 
 30 min, seed 0: G-0 PASS (ortho engaged: 12,455 selections, 197
 cols_improved), G-A FAIL (frontier ended AT gx 3072 — the 10-campaign

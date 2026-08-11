@@ -392,7 +392,7 @@ per-minute proxies.
    the honest alternative is a count-based / novelty selection over `area`
    rather than `max(area)`, which needs no new addresses.
 
-## Bounded-attempt receipts (2026-08-10 evening, orchestrator)
+## Orchestrator verdict — Bounded-attempt receipts (2026-08-10 evening, orchestrator)
 
 Seed 1 (30 min, 8 workers): 12,885 cells, max_room 127, max_sect 16
 (= the default --sect-cap — SATURATED, the Lost Levels lesson; raise
