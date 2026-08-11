@@ -187,6 +187,30 @@ BOUNDARY_ENTROPY_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-10
 #: see the horizon a verdict was taken over.
 MAP_STALL_WINDOWS_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-10
 
+#: Cell-key positions that `_spatial_key` projects onto: (area, y_band,
+#: gx_bucket). Negative, so they stay correct if a future arm grows the
+#: key's PREFIX — every adapter's `cell_fn` output is the last five
+#: elements and `scripts/go_explore_solve.py` indexes `key[-5]`/`key[-1]`
+#: on exactly that promise. Read by `boundary_axis_profile` to decide
+#: which axes are positional and which are not.
+SPATIAL_KEY_POSITIONS = (-5, -2, -1)
+
+#: Non-spatial axes that must carry at least TWO distinct values at the
+#: boundary before a GATED verdict can be read as "the game is
+#: withholding a transition" rather than "our cell key cannot represent
+#: an interaction, so we cannot know". OBSERVED, NEVER GATED ON: nothing
+#: in `gated_wall_verdict` reads this, and it is not calibrated against
+#: a labelled corpus. It exists because the measurement that motivated
+#: it is stark — `runs/cv_hall_ortho_a`, 131,561 cells, reads GATED at
+#: concentration 120.04, and in its pinned band SIX of eleven key
+#: positions are CONSTANT (sect, time-bin, kill-count, room-sig, area,
+#: boss-HP all identically 0/empty), leaving exactly ONE game-state axis
+#: (the on-stairs bit) against two trajectory-bookkeeping axes (loop
+#: count, route signature). A search whose memory has one state bit
+#: cannot have "tried every interaction"; it can only have tried every
+#: position. See docs/proposals/gate_opener_arm_2026-08-11.md.
+BOUNDARY_STATE_AXES_MIN = 2  # OBSERVED-2026-08-10 (reported, not a gate)
+
 
 #: Telemetry the adopted form wants and the fleet does not emit. This is
 #: the shopping list a runtime version needs the solver to add to
@@ -513,6 +537,182 @@ def read_archive_summary(path: str | Path) -> ArchiveSummary:
     with open(path, "rb") as fh:
         cells = _StateDroppingUnpickler(fh).load()
     return summarize_archive_cells(cells)
+
+
+# --------------------------------------------------------------------------
+# Boundary axis profile — reported diagnostic, gates nothing.
+#
+# ADDITIVE (2026-08-11). `gated_wall_verdict` does not read any of this;
+# every banked verdict is byte-identical with or without this section.
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class BoundaryAxisProfile:
+    """Per-axis cardinality of the cell key inside the pinned band.
+
+    A GATED verdict asserts that local coverage saturated and the
+    boundary froze, and its remedy says "switch to an orthogonal arm".
+    That reading only holds if the archive could have REMEMBERED an
+    interaction in the first place. This profile answers the prior
+    question — how many axes of the cell key are actually varying at the
+    boundary, and how many of them are anything other than position.
+
+    When every non-spatial axis is constant, GATED and KEY_BLIND stop
+    being distinguishable in the direction that matters: the search has
+    tried every POSITION, which is not the same claim as having tried
+    every interaction, and no statistic over a position-only key can
+    tell the two apart.
+    """
+
+    #: Deepest gx bucket in the deepest area — the pin.
+    frontier_bucket: int
+    #: Width of the profiled band, in gx buckets behind the pin.
+    band: int
+    #: Cells in the band, at any key arity.
+    band_cells: int
+    #: Cells in the band at the modal arity (the ones actually profiled).
+    #: Differs from `band_cells` only for an archive whose key layout
+    #: changed mid-campaign, which is itself worth seeing.
+    profiled_cells: int
+    key_arity: int
+    #: Distinct values per key position, position 0 first.
+    axis_cardinality: tuple[int, ...]
+    #: Positions holding one value for every profiled cell.
+    constant_axes: tuple[int, ...]
+    #: Non-spatial positions with >= 2 values, minus `bookkeeping`.
+    live_state_axes: tuple[int, ...]
+    #: Non-spatial positions with >= 2 values that the caller named as
+    #: trajectory bookkeeping (loop counters, route signatures): real
+    #: variation, but variation the AGENT manufactured, not state the
+    #: GAME changed.
+    live_bookkeeping_axes: tuple[int, ...]
+    #: |{(area, y_band, gx_bucket)}| inside the band.
+    distinct_positions: int
+
+    @property
+    def live_state_axis_count(self) -> int:
+        return len(self.live_state_axes)
+
+    @property
+    def alias_ratio(self) -> float:
+        """Cells per distinct position inside the band — `concentration`
+        computed locally, at the pin, rather than over the whole map."""
+        return self.profiled_cells / max(1, self.distinct_positions)
+
+    @property
+    def interaction_blind(self) -> bool:
+        """Fewer live game-state axes than `BOUNDARY_STATE_AXES_MIN`.
+
+        Reported, never gated on. True means a GATED verdict on this
+        archive should be read as "and we could not have seen an
+        interaction anyway", which is a different remedy: give the key an
+        axis a state change can land on BEFORE spending an orthogonal
+        campaign on it.
+        """
+        return self.live_state_axis_count < BOUNDARY_STATE_AXES_MIN
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "frontier_bucket": self.frontier_bucket,
+            "band": self.band,
+            "band_cells": self.band_cells,
+            "profiled_cells": self.profiled_cells,
+            "key_arity": self.key_arity,
+            "axis_cardinality": list(self.axis_cardinality),
+            "constant_axes": list(self.constant_axes),
+            "live_state_axes": list(self.live_state_axes),
+            "live_bookkeeping_axes": list(self.live_bookkeeping_axes),
+            "distinct_positions": self.distinct_positions,
+            "alias_ratio": round(self.alias_ratio, 3),
+            "interaction_blind": self.interaction_blind,
+            "calibration": CALIBRATION_TAG,
+        }
+
+
+def boundary_axis_profile(
+    cells: Mapping[Any, Any],
+    *,
+    band: int = 24,
+    bookkeeping: Sequence[int] = (),
+) -> BoundaryAxisProfile:
+    """Per-axis cardinality of the cell key inside the pinned band. Pure.
+
+    `band` is the same 24-gx-bucket window `scripts/go_explore_solve.py`
+    calls `_sel_band24` and samples from with `--deep-bias`, so the
+    profile describes the region the primary arm is actually spending its
+    budget on rather than an arbitrary slice.
+
+    `bookkeeping` names key positions that vary because of the AGENT's
+    own trajectory rather than the game's state; they are counted, but
+    reported separately and excluded from `live_state_axes`. For the
+    fleet's layout — `(sect, tb, kk, psig, loops, route_sig) +
+    cell_fn(ram)` — that is positions 4 and 5, the maze loop counter and
+    the route signature, both derived from the rollout's own gx history.
+    Default `()` counts nothing as bookkeeping, so a caller that has not
+    thought about its key layout gets the conservative (higher) reading.
+
+    Mixed-arity archives (a key layout that changed mid-campaign) are
+    profiled at the MODAL arity; `band_cells` vs `profiled_cells` shows
+    how much was set aside.
+    """
+    empty = BoundaryAxisProfile(0, band, 0, 0, 0, (), (), (), (), 0)
+    if not cells:
+        return empty
+
+    # Same projection and same "deepest area, deepest bucket" frontier
+    # definition `summarize_archive_cells` uses, so `frontier_bucket` here
+    # and `spatial_span`/`boundary_cells` there describe one region.
+    spatial_of = {k: _spatial_key(k) for k in cells}
+    max_area = max(s[0] for s in spatial_of.values())
+    deep = [k for k, s in spatial_of.items() if s[0] == max_area]
+    frontier = max(spatial_of[k][2] for k in deep)
+    in_band = [k for k in deep if spatial_of[k][2] >= frontier - band]
+    if not in_band:                     # only reachable for a negative band
+        return empty
+
+    arities: dict[int, int] = {}
+    for k in in_band:
+        arities[len(k)] = arities.get(len(k), 0) + 1
+    # Ties break toward the LONGER key: a key that grew gained an axis,
+    # and profiling the shorter half would report that axis as absent.
+    modal = max(arities, key=lambda a: (arities[a], a))
+    profiled = [k for k in in_band if len(k) == modal]
+
+    seen: list[set] = [set() for _ in range(modal)]
+    for k in profiled:
+        for i, v in enumerate(k):
+            seen[i].add(v)
+    card = tuple(len(s) for s in seen)
+
+    spatial = {p % modal for p in SPATIAL_KEY_POSITIONS if -modal <= p < modal}
+    book = {p % modal for p in bookkeeping if -modal <= p < modal}
+    constant = tuple(i for i, c in enumerate(card) if c <= 1)
+    live_state = tuple(i for i, c in enumerate(card)
+                       if c >= 2 and i not in spatial and i not in book)
+    live_book = tuple(i for i, c in enumerate(card)
+                      if c >= 2 and i not in spatial and i in book)
+
+    return BoundaryAxisProfile(
+        frontier_bucket=frontier,
+        band=band,
+        band_cells=len(in_band),
+        profiled_cells=len(profiled),
+        key_arity=modal,
+        axis_cardinality=card,
+        constant_axes=constant,
+        live_state_axes=live_state,
+        live_bookkeeping_axes=live_book,
+        distinct_positions=len({spatial_of[k] for k in profiled}),
+    )
+
+
+def read_boundary_axis_profile(path: str | Path, *, band: int = 24,
+                               bookkeeping: Sequence[int] = ()
+                               ) -> BoundaryAxisProfile:
+    """`boundary_axis_profile` over a real `archive.pkl` on disk."""
+    with open(path, "rb") as fh:
+        cells = _StateDroppingUnpickler(fh).load()
+    return boundary_axis_profile(cells, band=band, bookkeeping=bookkeeping)
 
 
 def telemetry_from_paths(

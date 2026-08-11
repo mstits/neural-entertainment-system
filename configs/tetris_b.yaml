@@ -1,0 +1,390 @@
+name: "Tetris B-TYPE"
+
+# =====================================================================
+# NES Tetris (Nintendo, 1989) — B-TYPE. Totality basis class 7:
+# NON-SPATIAL PLANNING. There is no world to travel through, no camera,
+# no x. The objective is a QUOTA: clear 25 lines. This profile is the
+# first attempt at that class, and every address below was derived by
+# our own differential probing of THIS dump on THIS core — no RAM map,
+# no disassembly, no walkthrough.
+#
+# Receipt: docs/receipts/games/tetris_b_onboarding_2026-08-10.md
+#
+# WHICH DUMP. roms/ holds three cartridges whose name contains "Tetris":
+#   * roms/Tetris (USA).nes        md5 5b0e571558c8c796937b96af469561c6,
+#                                  mapper 1 (MMC1)  <- THIS profile
+#   * roms/Tetris 2 (USA).nes      md5 3b697df25030ec1375d26c6d3985eee3,
+#                                  mapper 4 — a different game (no B-TYPE)
+#   * roms/Super Mario Bros. + Tetris + Nintendo World Cup (Europe)
+#     (Rev A).nes — a multicart carrying a European Tetris; not used.
+# There is NO Tengen Tetris dump in roms/ (the only Tengen cartridge
+# present is Pac-Man), so the Nintendo 1P game is the only one this
+# profile can, and does, describe.
+rom_hashes:
+  - "5b0e571558c8c796937b96af469561c6"
+
+# =====================================================================
+# ENTRY ROUTE (measured, scripted, reproducible).
+#
+# A cold boot lands on the legal screen, and the title screen's attract
+# demo ignores input — the start-state-demo trap. The route below was
+# read off the rendered frames of our own boot, one screen at a time,
+# and every step is confirmed in RAM before the next one is taken:
+#
+#   360 frames NOOP                    legal / copyright screen
+#   START (5 on / 20 off)              title, "PUSH START"
+#   START (5 on / 20 off)              GAME TYPE screen
+#   RIGHT (4 on / 20 off)              selects B-TYPE; ASSERT $00C1 == 1
+#   START (5 on / 30 off)              B-TYPE setup (LEVEL 0-9, HEIGHT 0-5)
+#   START (5 on / 30 off)              play, LEVEL 0 / HEIGHT 0
+#   120 frames NOOP                    settle
+#
+# Mint the root state with exactly that route (no repo file needed):
+#
+#   python - <<'PY'
+#   import nes_core
+#   NOOP, A, START, RIGHT = 0x00, 0x01, 0x08, 0x80
+#   ROM = "roms/Tetris (USA).nes"
+#   e = nes_core.NESEnvironment(ROM); e.reset()
+#   def hold(b, n):
+#       for _ in range(n): e.step(b)
+#   def tap(b, on, off): hold(b, on); hold(NOOP, off)
+#   hold(NOOP, 360); tap(START, 5, 20); tap(START, 5, 20)
+#   tap(RIGHT, 4, 20)
+#   assert bytes(e.get_ram_range(0, 2048))[0x00C1] == 1, "not on B-TYPE"
+#   tap(START, 5, 30); tap(START, 5, 30); hold(NOOP, 120)
+#   r = bytes(e.get_ram_range(0, 2048))
+#   assert r[0x0050] == 0x25 and all(v == 0xEF for v in r[0x0400:0x04C8])
+#   open("roms/Tetris (USA)_btype_start.state.bin", "wb").write(
+#       bytes(e.save_state()))
+#   PY
+#
+# The blob is produced on a STOCK machine (no set_hw_* flags), which is
+# the same machine the solver runs by default — `solve.hw_flags` is
+# absent here, and the solver's default flag set is empty. Keep it that
+# way: a state blob records the machine's state, never its timing
+# configuration, so minting under flags the solve does not set is the
+# CV block-3 mistake all over again.
+#
+# HEIGHT stays 0 (an empty board). The HEIGHT selector did NOT respond
+# to any input we tried — see the blocker note at the bottom.
+start_state_path: "roms/Tetris (USA)_btype_start.state.bin"
+
+# Placement needs tap granularity (a held direction auto-shifts), so the
+# coarse trainer default of 16 is useless here. 2 keeps single-cell taps
+# expressible while keeping trace lengths sane.
+frame_skip: 2
+max_episode_steps: 6000
+
+description: >
+  Go-Explore profile for NES Tetris B-TYPE (Nintendo dump, LEVEL 0,
+  HEIGHT 0). The win is a quota, not a destination: the BCD counter at
+  $0050 starts at 0x25 and is measured to count DOWN one per cleared
+  line; reaching 0 parks the machine in a terminal victory screen. The
+  archive axis that replaces gx is the clear-locked counter at $00D8 —
+  the only byte we measured that rises with line clears and is flat
+  across 6,000 samples of no-clear play.
+
+# =====================================================================
+# RAM — every entry carries the differential receipt that produced it.
+# Nothing here was copied from anywhere; the pre-existing
+# configs/tetris.yaml lists overlapping addresses, and this block was
+# derived independently before that file was compared against it (the
+# agreement is reported in the receipt as a cross-check, never as the
+# reason an address was chosen).
+#
+# NOTE ON MIRRORS. This game keeps a shadow copy of its $0040-$005F
+# state block at +$20 ($0060-$007F) and part of it again at +$40:
+# $0040/$0060, $0041/$0061, $0042/$0062, $0050/$0070 moved together in
+# every probe. Only the primary copy is wired.
+# =====================================================================
+ram_mapping:
+  game_type:      0x00C1   # 0 = A-TYPE, 1 = B-TYPE    [MEASURED: 0 -> 1 on one RIGHT tap on the GAME TYPE screen, clamps at 1 on a second, back to 0 on LEFT; the on-screen ">A-TYPE<" / ">B-TYPE< " cursor follows it]
+  menu_level:     0x0047   # LEVEL grid index 0-9      [MEASURED on the setup screen: RIGHT +1 (0->1, ->3 after three), DOWN +5 (0->5) — the 2x5 grid the screen draws]
+  piece_col:      0x0040   # falling piece column      [MEASURED: 5 at spawn, -> 2 under three LEFT taps, -> 8 under three RIGHT; hard-LEFT fills board cols 0-3, hard-RIGHT cols 6-9]
+  piece_row:      0x0041   # falling piece row 0-19    [MEASURED: climbs 1 -> 8 over 300 frames of gravity, resets at every lock]
+  piece_id:       0x0042   # piece + orientation id    [MEASURED: 18 at spawn, 17 after one A, back to 18 after two — an I-piece's two orientations; 19 distinct values seen across play]
+  lines_remaining: 0x0050  # B-TYPE quota, packed BCD  [MEASURED: 0x25 at the B-TYPE opening vs 0x00 at the A-TYPE opening (HUD reads LINES-025 / LINES-000); counts DOWN one BCD unit per cleared line over 24 real clears, 0x25 -> 0x00, including 0x20 -> 0x19 and a double 0x16 -> 0x14]
+  quota_constant: 0x0090   # 0x25 in every B-TYPE sample [MEASURED: 37 at the opening, through 24 clears, through a top-out, and at the win — never once observed to move]
+  score_lo:       0x0053   # score, packed BCD, low    [MEASURED: wraps; moves under soft drops alone]
+  score_mid:      0x0054   # score, packed BCD, mid    [MEASURED: monotone 0 -> 23 over the 24-clear run; also rises on soft drops, so it is FARMABLE — see why solve.progress is not this]
+  score_hi:       0x0055   # score, packed BCD, high   [MEASURED: 0 throughout — never exercised at this scale]
+  play_state:     0x0048   # 1-8 while playing, 10 after a top-out [MEASURED: values {1,2,3,5,6,7,8} across 6,000 samples of live play and never 10; 10 for 4,300 consecutive samples after a top-out]
+  game_over_ramp: 0x0058   # 0 in play; ramps then parks at 20 after a top-out [MEASURED across a stack-to-the-ceiling rollout]
+  clear_counter:  0x00D8   # BCD, rises only on line clears [MEASURED: flat at 0 across 6,000 samples of no-clear random play; monotone non-decreasing 0x01 -> 0x23 across the 24 measured clears — see the unit caveat in solve.progress]
+  board_start:    0x0400   # playfield, 20 rows x 10 cols, ROW-MAJOR, row 19 = bottom [MEASURED: a flat piece dropped hard-left fills $04BE-$04C1 (row 19, cols 0-3), hard-right fills $04C4-$04C7 (cols 6-9), a second piece stacks into row 18]
+  board_end:      0x04C7
+  board_empty:    0xEF     # empty cell               [MEASURED: all 200 cells read 0xEF at the opening; occupied cells read 0x7B/0x7C/0x7D in play and 0x4F in the top-out curtain]
+  # UNCONFIRMED, deliberately not wired anywhere: $0044 read 0 in every
+  # single sample we have (opening, 24 clears, top-out, victory). At
+  # LEVEL 0 that is exactly what a level counter would do, so the probe
+  # cannot distinguish "level counter" from "dead byte". It stays
+  # unlabelled until a LEVEL > 0 entry moves it.
+  level_unconfirmed: 0x0044
+
+# =====================================================================
+# TRAINING CHANNELS ARE DISARMED, and the reason is a measured defect,
+# not caution:
+#
+# nes_core's TetrisReward (rewards.rs) reads lines as the 2-byte value at
+# [$0050, $0051] and scores `lines - prev_lines` — a COUNT-UP assumption.
+# B-TYPE counts DOWN, and $0051 is 0 in every sample we took, so
+#   (a) the line-clear channel is structurally DEAD here: the saturating
+#       subtraction is 0 on every real clear; and
+#   (b) worse, `max_lines` is seeded from the first frame's value (0x25
+#       read as binary = 37) and success is `max_lines >= line_goal`, so
+#       at the shipped line_goal of 10 EVERY B-TYPE episode reports
+#       episode_success on its FIRST STEP without a single line cleared.
+# `line_goal: 99` below makes that impossible (the counter only ever
+# falls from 37), which costs nothing real: the same countdown means the
+# Rust reward cannot see a genuine B-TYPE win either. The win authority
+# for this game is solve.clear, below. Fixing TetrisReward for the
+# count-down mode is a code change outside this profile.
+# =====================================================================
+reward_weights:
+  line_clear_bonus:  0.0    # DISARMED: dl is structurally 0 under a countdown
+  score_delta:       0.1
+  top_out_penalty: -50.0
+  height_penalty:   -0.5
+  hole_penalty:     -2.0
+  survival_weight:   0.01
+  time_penalty:     -0.001
+  line_goal:         99     # unreachable by construction — see the note above
+  board_shaping:     1.0    # the 0xEF empty-cell sentinel IS measured here
+
+# The two soft-drop diagonals are not decoration. Gravity at LEVEL 0 was
+# MEASURED at one row per 48 frames (a piece fell 7 rows in 300 frames of
+# NOOP), so a piece takes ~960 frames — 480 solver steps at frame_skip 2
+# — to land on its own, and a search that rarely soft-drops spends its
+# whole budget watching pieces fall. Soft-drop-while-shifting is also a
+# real Tetris move, not a sampling hack: it reaches columns a piece
+# cannot get to once it has fallen past a ledge.
+action_space:
+  - []                   # noop (let the piece fall)
+  - ["left"]
+  - ["right"]
+  - ["down"]             # soft drop
+  - ["A"]                # rotate
+  - ["B"]                # rotate the other way
+  - ["down", "left"]     # soft drop while shifting left
+  - ["down", "right"]    # soft drop while shifting right
+
+curriculum:
+  stage_1: ["*"]
+
+reinforce:
+  # OFF by design: this is a solver onboarding profile, and the reward
+  # above cannot see either a B-TYPE line clear or a B-TYPE win (see the
+  # disarm note). Turning this on trains against score + survival only.
+  enabled: false
+  trainer_mode: vanilla_ppo
+  encoder: nature_dqn
+  preprocess_f16: true
+  device: mps
+
+# =====================================================================
+# Go-Explore solver adapter (scripts/go_explore_solve.py, GenericGame).
+#
+# THE ARCHIVE-AXIS QUESTION — what replaces gx on a game with no space?
+# Answered by measurement, not by analogy:
+#
+#   * The obvious candidate, the quota byte $0050, is DISQUALIFIED as
+#     progress: it counts DOWN, and the adapter's progress is a
+#     monotone-INCREASING frontier. Wiring it would make the archive
+#     treat "25 lines still to go" as the deepest cell in the search.
+#   * Score ($0053-$0055) rises monotonically, but soft-drop points
+#     alone move it: it is FARMABLE by surviving, so banking higher
+#     score would pay the search for stalling. Rejected on the same
+#     flatness gate that rejects a free-running frame counter.
+#   * $00D8 passes both halves: FLAT (0) across 6,000 samples of
+#     random play in which no line was ever cleared, and monotone
+#     non-decreasing across all 24 clears we forced. It is the only
+#     byte in the 2 KB that did both. It is therefore the axis.
+#
+#   UNIT CAVEAT, stated because it is not pinned: $00D8 is BCD and rose
+#   by 1 on each of the 23 single clears, but did NOT step on the one
+#   DOUBLE clear in the run, so it ended at BCD 23 after 25 lines. It is
+#   "a counter that advances with clear events" — whether the unit is
+#   lines or events is undetermined, and the run that would settle it is
+#   named in the receipt. Monotonicity and clear-locking are what the
+#   axis needs, and both are measured; the unit is not load-bearing.
+#
+# THE WIN — PRE-REGISTERED, THEN MEASURED. The definition was registered
+# before it was reached: "lines-remaining reaches 0". It was then
+# actually reached (a probe drove the quota 0x25 -> 0x00 in 70 pieces)
+# and the terminal state was read: the machine parks with $0050 = 0,
+# $0048 = 6, $0058 = 0, the board frozen and the victory screen (SCORE /
+# LEVEL / HEIGHT / TOTAL over the cathedral) drawn — unchanged for 1,800
+# frames. So this is the MEASURED win, not a registered guess.
+#
+#   Not chosen: the detector's confluence mode. It is unnecessary here
+#   (a single measured byte states the win exactly) and it is the
+#   riskier of the two — confluence is the windowed hook that needs the
+#   counterfactual gate to police it, and it has been CONFIRMED UNSAFE
+#   on three other secondary games. A stateless byte test that a replay
+#   reproduces on the exact frame is strictly better when the game hands
+#   you one.
+#
+# SAFETY OF THE `target: 0` TEST, measured rather than assumed. The
+# failure mode to fear is the quota byte reading 0 somewhere that is not
+# a win — the top-out-fabricates-a-win class. It does not:
+#   * $0050 held 0x25 for all 6,000 samples of random play, and for all
+#     4,300 samples AFTER a top-out (~72 s past it);
+#   * belt and braces, the adapter resolves is_dead BEFORE is_clear, and
+#     player_state below marks a top-out at the first observation after
+#     it, permanently ($0048 = 10 never recovers);
+#   * the mode is STATELESS, so clear_verify_margin and
+#     clear_observation_budget are both 0: --verify-bank re-simulates
+#     the candidate and the hook re-fires on the exact recorded frame.
+#     MEASURED on the real 4,329-action win below: replay_verify ->
+#     {"ok": true, "verdict": "clear", "at": 4329}. Use it. It is the
+#     right banking check for this profile.
+#
+# DO NOT RUN THIS PROFILE WITH --counterfactual-gate (measured
+# 2026-08-10; the previous revision of this block was WRONG). That
+# earlier text argued only that a replay SEES what the live hook saw —
+# a statement about warm-up and margin, which says nothing about the
+# quantity the gate actually decides on: BRANCH AGREEMENT.
+#
+# The gate's premise is stated in its own docstring — "a real stage
+# clear is committed; a flag slide, an exit pipe animation, a tally
+# cutscene all run themselves out whatever the pad does". That premise
+# is FALSE for a placement-contingent quota win, and the polarity is
+# what bites: HIGH agreement across perturbed branches = "commits" =
+# banked, so a win that DEPENDED on the player's last inputs is exactly
+# what the gate refuses. Tetris has no cutscene to ride out; the last
+# piece has to be steered into the last row.
+#
+# The numbers, from a 1-ply placement instrument on this very root
+# (per-step trace, frame_skip 2, 22 measured line clears plus the win):
+#   * piece lock -> $0050 decrement: 11-13 solver steps (22-26 frames),
+#     median 12. NONE of the 23 reached 32.
+#   * last steerable step -> $0050 decrement: 13-16 steps.
+#   * the clearing piece's whole life, spawn -> decrement: 24-43 steps.
+# The gate pivots --cf-pre-steps (default 32) actions = 64 frames back,
+# so its snapshot lands 19-21 steps BEFORE the deciding piece has even
+# locked — on the win itself, 8 steps before that piece SPAWNED (pivot
+# 4297, spawn 4305, lock 4318, quota hits 0 at 4329). The perturbed
+# tail is the entire decisive placement, in all 23 of 23 clears.
+#
+# Run for real against the measured win with the unmodified probe and
+# default knobs (k=8, p=0.25, agree=0.5): control = clear, agreement
+# 0.125, verdict "contingent", ok=False — reproduced at cf seeds 0-4
+# (agree 0-1 of 8). _dump_solution then returns False and observe()
+# converts that to "dead", so the single solution of a 25-minute run
+# would be discarded AND its lineage killed. Receipt: section 8 of
+# docs/receipts/games/tetris_b_onboarding_2026-08-10.md.
+#
+# --cf-pre-steps 8 or 12 does flip the verdict to "commits" at
+# agreement 1.0 — but only because the pivot then lands after the lock,
+# inside the collapse animation, where every branch trivially agrees.
+# That is the gate measuring its own pivot depth, not the candidate
+# (the verdict tracks the 11-13 step lock latency and nothing else:
+# 8 -> 1.0, 12 -> 1.0, 16 -> 0.625, 32 -> 0.125). Not recommended, and
+# not a substitute for --verify-bank, which is the check that works.
+#
+# PURITY: every address here came from differential probing of our own
+# scripted rollouts on this dump (receipt above). Nothing external.
+solve:
+  rom: "roms/Tetris (USA).nes"
+  # The clear-locked counter, as argued above. One byte: there is no
+  # high byte to pair it with (the neighbouring $00D9 moved once and is
+  # not understood, so it is left out rather than guessed at).
+  progress: {lo: 0x00D8}
+  # A B-TYPE game cannot legitimately exceed 25 lines, and the counter
+  # is BCD, so 0x25 = 37 is the top legitimate reading. 64 leaves head-
+  # room for the BCD encoding while still dropping any transitional
+  # garbage read instead of banking it as a deep frontier cell.
+  progress_cap: 64
+  # The falling piece's row. NOTE it is INERT at the default --y-band 32
+  # (the row only spans 0-19, so every state lands in band 0); that is
+  # deliberate for the first attempt — banking a cell per row of a piece
+  # that is still falling multiplies the archive 20x for a transient.
+  # Pass --y-band 4 to activate it if piece height turns out to matter.
+  y: 0x0041
+  # No stage counter: B-TYPE is one continuous game. Empty level_key
+  # means the ONLY clear is the configured hook below (coverage
+  # baseline + explicit win condition), which is exactly the intent.
+  level_key: []
+  # There is NO lives byte in Tetris — the game has one life. The
+  # adapter requires the key, so it is pointed at the byte we measured
+  # to be CONSTANT ($0090 = 0x25 in every B-TYPE sample we ever took):
+  # `lives(ram) < start_lives` is then inert BY CONSTRUCTION rather than
+  # by luck. Death is carried entirely by player_state, below.
+  # Explicitly NOT $0050: the quota byte decrements on every line clear,
+  # so wiring it here would report a death on each success.
+  lives: 0x0090
+  # The real death signal: the play-state byte parks at 10 on a top-out
+  # and never leaves. Measured never to read 10 in 6,000 samples of live
+  # play, and to read 10 for 4,300 consecutive samples after one. At the
+  # win it reads 6, so this cannot beat is_clear to a victory.
+  player_state: 0x0048
+  death_states: [10]
+  # THE WIN. Stateless, single byte, exact.
+  clear: {mode: byte_change, addr: 0x0050, direction: down, target: 0}
+  # BOARD SIGNATURE — the cell key's board dimension.
+  # Each entry is one bit: "this playfield cell is occupied", using the
+  # exact set of non-empty tile values we measured (0x7B/0x7C/0x7D in
+  # play, 0x4F in the top-out curtain; empty is 0xEF and is the only
+  # value excluded).
+  #
+  # WHICH ROWS, decided by measurement rather than by taste. Occupancy
+  # rate and 10-bit pattern diversity were computed per row over two
+  # independent corpora — 6,000 samples of random play and the 24
+  # post-clear snapshots of the win run. Rows 17/18/19 top both:
+  #   random play  row 17 0.22 / 18 0.30 / 19 0.43 occupancy,
+  #                25 / 23 / 23 distinct patterns
+  #   clear run    row 17 0.09 / 18 0.39 / 19 0.70 occupancy,
+  #                12 / 21 / 18 distinct patterns
+  # Row 15 (the first cut of this block) carried 19 patterns under
+  # random play but only 2 across the clear run — near-dead on the
+  # trajectories that actually matter — so it was dropped for row 17.
+  #
+  #   bits 0-9   = row 19 ($04BE-$04C7), all ten columns. The row a
+  #                clear consumes: its fill pattern IS the measured
+  #                distance to the next unit of progress.
+  #   bits 10-14 = row 18 ($04B4, +2 per column), every other column.
+  #   bits 15-19 = row 17 ($04AA, +2 per column), every other column.
+  # The two half-rate rows are the coarse "how tall is the stack here"
+  # profile, so a tall board and a flat board with the same bottom row
+  # are not the same cell.
+  #
+  # 20 bits x 26 progress tiers is the loose bound; the reachable set is
+  # FAR smaller — four 3-minute 4-worker probes banked 70-95 cells and
+  # cleared zero lines (the full matrix is in the receipt). If the search
+  # saturates again, widen rows 17 and 18 to all ten columns before
+  # adding a fourth row.
+  state_sig:
+    - {addr: 0x04BE, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04BF, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04C0, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04C1, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04C2, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04C3, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04C4, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04C5, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04C6, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04C7, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04B4, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04B6, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04B8, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04BA, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04BC, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04AA, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04AC, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04AE, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04B0, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+    - {addr: 0x04B2, match: [0x4F, 0x7B, 0x7C, 0x7D]}
+  # DELIBERATELY ABSENT:
+  #   area — the piece-identity byte $0042 is measured and would be the
+  #     natural occupant, but `area` also seeds Solver.max_area (read
+  #     ONCE from the root) and several heuristics filter cells on
+  #     `key[-5] == max_area`. Wiring a value that changes every piece
+  #     would silently narrow those to whichever piece happened to be
+  #     falling at the root. Left unset (0) until that is worth doing
+  #     properly.
+  #   room_advance — auto-derives door macros from UP moves; Tetris has
+  #     no UP action, so it would be inert anyway.
+  #   boss / entity_slots / room_sig / finale — no measured referent.
+  #   hw_flags — absent means the empty default, which is the machine the
+  #     root state above is minted on. Do not add one without re-minting.

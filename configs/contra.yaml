@@ -132,7 +132,30 @@ solve:
   # contra.json — the June map's 0x0031/0x0021 read 0 in live play and
   # collapsed the archive to screen granularity; 0x0065/0x031A discovered
   # by differential analysis 2026-07-31).
+  #
+  # RE-VERIFIED 2026-08-10 by a fresh run of the 3-probe protocol
+  # (scripts/discover_observables.py, forward-hold / NOOP-hold /
+  # reverse-hold from this profile's own start state; receipt:
+  # docs/receipts/games/contra_reentry_2026-08-10.md). $0065|$0064<<8 is
+  # still the recommended pair and clears BOTH gates on today's core:
+  # Gate 1 rises under forward (net +635, monotone fraction 1.00), flat
+  # under NOOP (net 0), wrap-coupled 3x; Gate 2 no camera clamp
+  # (rebases 0, within-room cap false). No amendment needed — the byte
+  # pair below is what the probe would emit from scratch.
   progress: {lo: 0x0065, hi: 0x0064}
+  # NOT ADOPTED, 2026-08-10 (both would change the cell key, so both are
+  # behaviour changes, and both would break comparability with the
+  # receipted base wall at max_gx_in_max_area == 3072 that the re-entry
+  # gate is measured against — see the receipt's "deliberately not
+  # adopted" section):
+  #   * area: 0x0064 — the probe names $0064 the room/screen counter, but
+  #     it is already this profile's progress PAGE byte, so wiring it as
+  #     `area` adds no information to the key while re-basing max_area /
+  #     max_gx_in_max_area telemetry mid-ledger.
+  #   * y: 0x0010 — the probe's top-scoring ballistic candidate (score
+  #     90.8) outranks the wired $031A (score 57.9, rank 3 of 6). Both
+  #     pass; the ranking is a heuristic, and swapping y re-bands every
+  #     cell. Owed a controlled A/B, not a silent swap.
   y: 0x031A
   level_key: []
   # WIN-CONDITION: level_key is empty (coverage baseline — Contra has no
@@ -146,7 +169,27 @@ solve:
   # the signals don't apply to this game's actual level-transition RAM
   # shape.
   clear: {mode: confluence}
+  # RE-VERIFIED 2026-08-10: the 3-probe protocol independently re-derives
+  # $0032 as the lives byte (start 2, decrements on death, churn 1.11) —
+  # top-ranked of 4 candidates. This is the ONLY death signal actually
+  # carrying the adapter, see below.
   lives: 0x0032
+  # UNRESOLVED, MEASURED INERT — deliberately left exactly as-is.
+  # $002C never once entered {1, 2} across all four probes on 2026-08-10
+  # (forward 325 steps, NOOP 240, reverse 900, advance-with-deaths 1800;
+  # observed values 3/4/10, frac_in{1,2} = 0.000 in every probe). So
+  # GenericGame.is_dead's second clause is measurably a no-op here: over
+  # the advance probe it added +0.000 to the lives-only death rate.
+  # Harmless (zero false positives) but it detects nothing.
+  # The June "correction" to $0090 is REFUTED by the same probe and must
+  # NOT be pasted in: $0090 sits in {1, 2} for 89.5% / 96.7% / 99.1% of
+  # ordinary forward / NOOP / reverse play, and wiring it here would make
+  # is_dead true on 99.6% of advance-probe steps versus 89.3% for
+  # lives alone — it would truncate essentially every trajectory.
+  # Neither byte is a player-state observable on the evidence we have.
+  # Rediscovery rule: a death byte enters here only after a probe shows
+  # it ~never in its death set while alive AND reliably in it at the
+  # lives-decrement events. Until then death detection is lives-only.
   player_state: 0x002C
   death_states: [1, 2]
   # Enemy object array (provisional, 2026-07-31): state bytes at

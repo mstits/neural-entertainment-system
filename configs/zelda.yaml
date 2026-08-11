@@ -219,3 +219,154 @@ dreamer:
   stoch_dim: 32
   stoch_classes: 32
   checkpoint_every_gens: 50
+
+# --------------------------------------------------------------------------
+# Go-Explore adapter (scripts/go_explore_solve.py, GenericGame). Opt-in: the
+# trainer never reads `solve:`, so adding this block leaves every training
+# path byte-identical; it only switches the SOLVER off the SMB adapter and
+# onto the profile-driven one.
+#
+# PURITY. Every address below was measured on THIS emulator, from our own
+# scripted rollouts, with our own rendered pixels as the only ground truth.
+# The pre-existing `ram_mapping:` above descends from a disassembly and is
+# NOT the source for anything here — where a probe happens to land on the
+# same address that is a coincidence recorded in the receipt, not evidence.
+# Receipt (protocol, sample counts, rejected candidates):
+#   docs/receipts/games/zelda_onboarding_2026-08-10.md
+#
+# WHY A BESPOKE PROBE. scripts/discover_observables.py assumes a forced
+# scroller that mass-rewrites RAM on death. Zelda satisfies neither: its
+# game-over is a slow animation with peak churn ~300 bytes/step (under the
+# instrument's 350 reset threshold, so its reset detector never fires), and
+# a hold-right probe walks into an octorok. Run head-on it returns
+# $00E8 as "room" and $000A as "hp" — both junk (receipt §5). The substitute
+# is the same discipline with a stricter event track: a screen transition is
+# only counted when OUR OWN rendered play area really changes.
+solve:
+  rom: "roms/Legend of Zelda, The (USA) (Rev A).nes"
+  # ROOT STATE. Use roms/zelda_start.state.bin with --root-state. The
+  # profile's training start_state_path (zelda_start_ctrl.state.bin) is a
+  # ONE-heart state on an octorok screen: measured 283 exploration attempts
+  # from it reached 2 screens and died 78 times, while the same driver from
+  # zelda_start.state.bin (three hearts) reached 11 screens with 2 deaths.
+  # start_state_path is deliberately left untouched (changing it would move
+  # the training path); the solver takes its root from the CLI.
+  #
+  # progress = Link's on-screen X ($0070). Measured (45-step directional
+  # holds, frame_skip 4, from zelda_start.state.bin): 89->240 under a RIGHT
+  # hold, 78->0 under LEFT, dead flat (88) under UP/DOWN and flat (84) under
+  # NOOP. It RE-BASES at every screen edge (240 -> 156 crossing east), which
+  # is the room-graph signature — so it is the WITHIN-ROOM axis only, and
+  # the room byte leads the cell key as `area` rather than riding as a <<8
+  # page. No `hi`: pairing X with the room index would make a one-column
+  # step east (+256) outrank the entire width of a screen and bias the
+  # frontier east/south for a reason nothing measured.
+  progress: {lo: 0x0070}
+  # y = Link's on-screen Y ($0084). Same probe: 133->85 under UP, 133->189
+  # under DOWN, flat under LEFT/RIGHT/NOOP. ($0248/$024C track it exactly —
+  # OAM-shadow mirrors of the same sprite; the zero-page byte is the source
+  # and the mirrors are not wired.)
+  y: 0x0084
+  # area = the overworld SCREEN INDEX ($00EB) — the room-graph class's real
+  # progress axis. Measured over 114 visually-verified screen transitions
+  # (a transition counts only when the settled play-area block fingerprint
+  # changes by >25%, which is what rejects the death-spin false positives an
+  # earlier pass banked):
+  #     right  +1  36/36 (1.00)      left  -1  49/49 (1.00)
+  #     up    -16   8/12 (0.67)      down +16  11/17 (0.65)
+  # The vertical impurity is the DRIVER, not the byte: the residual samples
+  # carry a +-1 delta, i.e. Link slid along a wall and crossed an east/west
+  # edge while the button said UP. So $00EB is a 16-wide grid index
+  # (row*16 + column). Cross-check: across 53 banked screens no background
+  # fingerprint ever mapped to two $00EB values, and the 11 values reached
+  # form a contiguous block (rows 5-7, columns 6-10).
+  # $00EC steps identically but read a stale 120 once mid-load (1/125), so
+  # the clean twin is used and $00EC is left out.
+  area: 0x00EB
+  # level_key EMPTY = coverage baseline, and here that is a correctness
+  # requirement, not a default. A level_key ADVANCE is `is_clear` and a
+  # level_key CHANGE that is not an advance kills the lineage as a warp — on
+  # a grid map that would fabricate a "clear" every time a worker walks east
+  # and execute every worker that walks west. Zelda has no measured
+  # per-screen clear signal, so nothing is wired: the run is honest
+  # coverage. The sect/psig transit machinery still engages, because
+  # room_id() = level_key + area + room_sig and `area` alone changes at
+  # every screen crossing (max_sect telemetry counts them).
+  level_key: []
+  # lives = fine HP ($0670), used as the Metroid-style damage proxy: any
+  # move OFF the full-health value means Link took a real hit and the
+  # lineage is terminated. Ground truth is the HUD heart box (rows 44-58,
+  # cols 170-208 of our own frame; one full heart = 41 red pixels).
+  #
+  # THE COMPLETE MEASURED LADDER, from roms/zelda_start.state.bin down to
+  # the death fade (repro: docs/receipts/games/zelda_hp_ladder_probe.py):
+  #     $0670   255  127  254  126  253  125    0
+  #     $066F    34   34   33   33   32   32   32
+  #     hp px   123  103   82   62   41   21    0
+  # i.e. $0670 is a HALF-HEART-resolution HP register: bit 7 = "the current
+  # heart is full (1) / half (0)", low 7 bits = a full-hearts-remaining
+  # counter (127 -> 126 -> 125), and 0 = dead. Every one of the six visible
+  # HP levels gets its own value, so this is the finest damage signal on the
+  # bus. $066F only tracks the low-7 half of that (34/33/32, saturating at
+  # 32 through 1.0, 0.5 AND 0.0 hearts) — strictly coarser, blind to the
+  # last two levels and to death itself, so it is NOT wired.
+  #
+  # READ THE BYTE, NOT THE PIXELS, AND MIND THE PHASE. $0670 LEADS the
+  # rendered HUD by exactly one frame_skip=4 step: at the step the byte
+  # moves, the heart box still shows the OLD value and repaints on the next
+  # step. Sampling both on the same frame therefore makes every real hit
+  # look like "damage byte moved at full health" — a one-step desync
+  # artifact, not a false positive. Settled with the controller FROZEN to
+  # no-op for 20 steps after each firing (a no-op cannot inflict new
+  # damage): 14/14 firings across 40 rollouts were real hits, 0 were at
+  # genuinely full health, and the HUD never returned to 123 px. The same
+  # test run on-frame scores 9 of those 14 "false". Score damage on the
+  # NEXT step or you will re-derive the artifact.
+  #
+  # WHY THE RAW BYTE IS WIRED, UNMASKED. As an integer the ladder is NOT
+  # monotone: 127 -> 254 is an INCREASE while HP falls from 2.5 to 2.0
+  # hearts. That does not matter to GenericGame.is_dead, which is a
+  # one-shot `lives(ram) < start_lives`: the root reads 255 and every
+  # damaged value (254, 127, 126, 125, 253, 0) is below it, so the test is
+  # exact — it fires on, and only on, the first half-heart lost. Verified
+  # 0 false / 5 true over the 16-rollout macro harness at seed 1234.
+  #   PRECONDITION, and it is load-bearing: the root state must read
+  #   $0670 == 255. Rooted at a PARTIAL-health state the non-monotonicity
+  #   does bite — from 127, the next hit reads 254, which is not < 127, so
+  #   that half-heart is missed and is_dead only fires on the one after.
+  #   roms/zelda_start.state.bin reads 255 (full) and is what the launch
+  #   command roots at; the training start_state_path reads 253, whose own
+  #   ladder (253 -> 125 -> 0) happens to stay monotone. Any NEW root — a
+  #   reverse-curriculum dungeon-entrance state, say — must be checked.
+  #   To make the wiring root-independent instead, GenericGame would need
+  #   an optional `lives_mask` (`int(ram[self._lives]) & self._lives_mask`,
+  #   default 0xFF = byte-identical for every existing profile) and this
+  #   profile would set 0x7F, whose ladder 127/127/126/126/125/125/0 IS
+  #   monotone. Note that is a SENSITIVITY change, not a bug fix: masked,
+  #   the first half-heart is invisible (127 == 127) and is_dead would fire
+  #   one full heart late. Not requested; recorded so the option is costed.
+  #
+  # NOT RESOLVED: Zelda's real death is the CONTINUE/SAVE/RETRY menu, which
+  # this proxy anticipates rather than detects. No menu-state byte survived
+  # probing (receipt §5); until one does, is_dead fires on the first hit.
+  # That is deliberate but aggressive — measured, ~1/3 of 700-step macro
+  # rollouts are terminated on first contact.
+  lives: 0x0670
+  # The discrete-transition gate. `addr` is the same measured screen index,
+  # so `max_room` telemetry is the deepest grid cell reached. `buttons` is
+  # given explicitly because the auto-derivation only builds UP macros: the
+  # measurement above says a Zelda screen is left across ANY of its four
+  # edges, so all four directional holds are transition maneuvers here.
+  # steps=45: at frame_skip 4 a crossing needed up to ~60 held steps in the
+  # probe, and 45 is inside the observed band without wasting the budget.
+  room_advance: {addr: 0x00EB, steps: 45, p: 0.05, near: 24,
+                 buttons: [["up"], ["down"], ["left"], ["right"]]}
+  # NOT WIRED, and why:
+  #   entity_slots — no clean kill-flag array was isolated. The strided scan
+  #     over a sword-spam drive returns only the OAM shadow ($0200-$02FF,
+  #     stride 8), which is sprite data, not per-enemy life state.
+  #   rupees / keys — no pickup occurred in any probe rollout (every HUD
+  #     counter read x0 throughout), so there was nothing to calibrate
+  #     against and nothing is claimed.
+  #   clear: — no measured win/clear signal of any kind. Deliberately absent
+  #     rather than borrowed from another profile.

@@ -1,0 +1,451 @@
+{
+ "question": "Does configs/tetris_b.yaml's MEASURED B-TYPE win survive scripts/go_explore_solve.py --counterfactual-gate at default knobs?",
+ "answer": "NO. verdict 'contingent', ok=False, at every seed tried. _dump_solution returns False and observe() converts that to 'dead', so the only solution of a run would be discarded AND its lineage killed.",
+ "date": "2026-08-10",
+ "profile": "configs/tetris_b.yaml (shipped, unmodified)",
+ "root_state": "roms/Tetris (USA)_btype_start.state.bin",
+ "machine": "Pool, frame_skip 2, no hw flags, root blob + one rooting NOOP (exactly what counterfactual_probe replays on)",
+ "trace": "win_trace_4329.npy - 4329 action-space indices, ends on the step where $0050 reads 0",
+ "win_evidence": {
+  "quota_0x0050": 0,
+  "play_state_0x0048": 6,
+  "clear_counter_0x00D8": "0x32",
+  "instrument": "place_instrument.py, 4 pool workers, 1-ply placement search, 93 pieces, 102.7 s, 23 clear events"
+ },
+ "replay_verify_is_what_verify_bank_runs": {
+  "ok": true,
+  "verdict": "clear",
+  "at": 4329,
+  "n_actions": 4329,
+  "margin": 0,
+  "elapsed_s": 8.165,
+  "reading": "PASSES. This is the banking check the profile should use."
+ },
+ "counterfactual_gate_default_seed0_pre32": {
+  "ok": false,
+  "verdict": "contingent",
+  "agree": 1,
+  "k": 8,
+  "agreement": 0.125,
+  "threshold": 0.5,
+  "pre_steps": 32,
+  "pre_steps_requested": 32,
+  "warmup_budget": 0,
+  "margin": 0,
+  "perturb_p": 0.25,
+  "n_actions": 4329,
+  "seed": 0,
+  "control": {
+   "verdict": "clear",
+   "at": 32,
+   "perturbed": 0
+  },
+  "branches": [
+   {
+    "verdict": "no_clear",
+    "at": null,
+    "branch": 0,
+    "perturbed": 3
+   },
+   {
+    "verdict": "no_clear",
+    "at": null,
+    "branch": 1,
+    "perturbed": 10
+   },
+   {
+    "verdict": "clear",
+    "at": 32,
+    "branch": 2,
+    "perturbed": 7
+   },
+   {
+    "verdict": "no_clear",
+    "at": null,
+    "branch": 3,
+    "perturbed": 8
+   },
+   {
+    "verdict": "no_clear",
+    "at": null,
+    "branch": 4,
+    "perturbed": 7
+   },
+   {
+    "verdict": "no_clear",
+    "at": null,
+    "branch": 5,
+    "perturbed": 12
+   },
+   {
+    "verdict": "no_clear",
+    "at": null,
+    "branch": 6,
+    "perturbed": 5
+   },
+   {
+    "verdict": "no_clear",
+    "at": null,
+    "branch": 7,
+    "perturbed": 9
+   }
+  ],
+  "elapsed_s": 8.619
+ },
+ "counterfactual_gate_seed_sweep_pre32": {
+  "0": {
+   "verdict": "contingent",
+   "agree": 1,
+   "ok": false
+  },
+  "1": {
+   "verdict": "contingent",
+   "agree": 0,
+   "ok": false
+  },
+  "2": {
+   "verdict": "contingent",
+   "agree": 0,
+   "ok": false
+  },
+  "3": {
+   "verdict": "contingent",
+   "agree": 0,
+   "ok": false
+  },
+  "4": {
+   "verdict": "contingent",
+   "agree": 0,
+   "ok": false
+  }
+ },
+ "counterfactual_gate_pre_steps_sweep_seed0": {
+  "win_trace_4329": {
+   "8": {
+    "verdict": "commits",
+    "agreement": 1.0
+   },
+   "12": {
+    "verdict": "commits",
+    "agreement": 1.0
+   },
+   "16": {
+    "verdict": "commits",
+    "agreement": 0.625
+   },
+   "32": {
+    "verdict": "contingent",
+    "agreement": 0.125
+   }
+  },
+  "first_clear_trace_230_target_0x24_variant": {
+   "4": {
+    "verdict": "commits",
+    "agreement": 1.0
+   },
+   "8": {
+    "verdict": "commits",
+    "agreement": 1.0
+   },
+   "12": {
+    "verdict": "commits",
+    "agreement": 1.0
+   },
+   "16": {
+    "verdict": "contingent",
+    "agreement": 0.25
+   },
+   "32": {
+    "verdict": "contingent",
+    "agreement": 0.0
+   }
+  },
+  "reading": "The verdict tracks the 11-13 step lock latency and nothing else. Below it every branch trivially agrees; above it the deciding placement is inside the perturbed tail. The gate is measuring its own pivot depth, not the candidate."
+ },
+ "lock_latency_stats_solver_steps_frame_skip_2": {
+  "n_clears": 23,
+  "min": 11,
+  "max": 13,
+  "median": 12,
+  "gate_pivot_depth": 32,
+  "n_reaching_the_gate_pivot": 0
+ },
+ "per_clear": [
+  {
+   "clear_step": 230,
+   "quota_after": 36,
+   "spawn_step": 196,
+   "lock_step": 219,
+   "last_playable_step": 217,
+   "lock_latency_steps": 11,
+   "steerable_latency_steps": 13,
+   "piece_lifetime_steps": 34,
+   "pivot_step_at_pre32": 198,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 288,
+   "quota_after": 35,
+   "spawn_step": 255,
+   "lock_step": 276,
+   "last_playable_step": 274,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 33,
+   "pivot_step_at_pre32": 256,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 480,
+   "quota_after": 34,
+   "spawn_step": 444,
+   "lock_step": 469,
+   "last_playable_step": 467,
+   "lock_latency_steps": 11,
+   "steerable_latency_steps": 13,
+   "piece_lifetime_steps": 36,
+   "pivot_step_at_pre32": 448,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 632,
+   "quota_after": 33,
+   "spawn_step": 589,
+   "lock_step": 620,
+   "last_playable_step": 618,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 43,
+   "pivot_step_at_pre32": 600,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 676,
+   "quota_after": 32,
+   "spawn_step": 645,
+   "lock_step": 665,
+   "last_playable_step": 663,
+   "lock_latency_steps": 11,
+   "steerable_latency_steps": 13,
+   "piece_lifetime_steps": 31,
+   "pivot_step_at_pre32": 644,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 822,
+   "quota_after": 25,
+   "spawn_step": 788,
+   "lock_step": 811,
+   "last_playable_step": 809,
+   "lock_latency_steps": 11,
+   "steerable_latency_steps": 13,
+   "piece_lifetime_steps": 34,
+   "pivot_step_at_pre32": 790,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 924,
+   "quota_after": 24,
+   "spawn_step": 887,
+   "lock_step": 912,
+   "last_playable_step": 910,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 37,
+   "pivot_step_at_pre32": 892,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 1304,
+   "quota_after": 23,
+   "spawn_step": 1274,
+   "lock_step": 1292,
+   "last_playable_step": 1290,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 30,
+   "pivot_step_at_pre32": 1272,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 1396,
+   "quota_after": 22,
+   "spawn_step": 1365,
+   "lock_step": 1383,
+   "last_playable_step": 1381,
+   "lock_latency_steps": 13,
+   "steerable_latency_steps": 15,
+   "piece_lifetime_steps": 31,
+   "pivot_step_at_pre32": 1364,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 1448,
+   "quota_after": 20,
+   "spawn_step": 1416,
+   "lock_step": 1436,
+   "last_playable_step": 1434,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 32,
+   "pivot_step_at_pre32": 1416,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 1600,
+   "quota_after": 19,
+   "spawn_step": 1562,
+   "lock_step": 1589,
+   "last_playable_step": 1587,
+   "lock_latency_steps": 11,
+   "steerable_latency_steps": 13,
+   "piece_lifetime_steps": 38,
+   "pivot_step_at_pre32": 1568,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 1652,
+   "quota_after": 18,
+   "spawn_step": 1620,
+   "lock_step": 1641,
+   "last_playable_step": 1639,
+   "lock_latency_steps": 11,
+   "steerable_latency_steps": 13,
+   "piece_lifetime_steps": 32,
+   "pivot_step_at_pre32": 1620,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 1850,
+   "quota_after": 17,
+   "spawn_step": 1818,
+   "lock_step": 1838,
+   "last_playable_step": 1836,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 32,
+   "pivot_step_at_pre32": 1818,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 2000,
+   "quota_after": 16,
+   "spawn_step": 1963,
+   "lock_step": 1988,
+   "last_playable_step": 1986,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 37,
+   "pivot_step_at_pre32": 1968,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 2414,
+   "quota_after": 9,
+   "spawn_step": 2379,
+   "lock_step": 2402,
+   "last_playable_step": 2400,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 35,
+   "pivot_step_at_pre32": 2382,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 2466,
+   "quota_after": 8,
+   "spawn_step": 2435,
+   "lock_step": 2453,
+   "last_playable_step": 2451,
+   "lock_latency_steps": 13,
+   "steerable_latency_steps": 15,
+   "piece_lifetime_steps": 31,
+   "pivot_step_at_pre32": 2434,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 2744,
+   "quota_after": 7,
+   "spawn_step": 2710,
+   "lock_step": 2732,
+   "last_playable_step": 2730,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 34,
+   "pivot_step_at_pre32": 2712,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 2968,
+   "quota_after": 6,
+   "spawn_step": 2936,
+   "lock_step": 2956,
+   "last_playable_step": 2953,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 15,
+   "piece_lifetime_steps": 32,
+   "pivot_step_at_pre32": 2936,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 3014,
+   "quota_after": 5,
+   "spawn_step": 2985,
+   "lock_step": 3001,
+   "last_playable_step": 2998,
+   "lock_latency_steps": 13,
+   "steerable_latency_steps": 16,
+   "piece_lifetime_steps": 29,
+   "pivot_step_at_pre32": 2982,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 3054,
+   "quota_after": 4,
+   "spawn_step": 3026,
+   "lock_step": 3042,
+   "last_playable_step": 3040,
+   "lock_latency_steps": 12,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 28,
+   "pivot_step_at_pre32": 3022,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 3100,
+   "quota_after": 3,
+   "spawn_step": 3071,
+   "lock_step": 3087,
+   "last_playable_step": 3085,
+   "lock_latency_steps": 13,
+   "steerable_latency_steps": 15,
+   "piece_lifetime_steps": 29,
+   "pivot_step_at_pre32": 3068,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 3234,
+   "quota_after": 1,
+   "spawn_step": 3201,
+   "lock_step": 3221,
+   "last_playable_step": 3219,
+   "lock_latency_steps": 13,
+   "steerable_latency_steps": 15,
+   "piece_lifetime_steps": 33,
+   "pivot_step_at_pre32": 3202,
+   "pivot_lands_before_lock": true
+  },
+  {
+   "clear_step": 4329,
+   "quota_after": 0,
+   "spawn_step": 4305,
+   "lock_step": 4318,
+   "last_playable_step": 4315,
+   "lock_latency_steps": 11,
+   "steerable_latency_steps": 14,
+   "piece_lifetime_steps": 24,
+   "pivot_step_at_pre32": 4297,
+   "pivot_lands_before_lock": true
+  }
+ ]
+}
