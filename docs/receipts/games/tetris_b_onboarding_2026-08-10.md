@@ -477,3 +477,13 @@ Command #1 (mint the root state) is unchanged. Command #2 loses
 `--no-counterfactual-gate` is the default; it is passed explicitly so
 the receipt records the choice rather than an omission. `--verify-bank`
 is also the default and is the check that carries the banking decision.
+
+## Attempt-1 receipt (2026-08-10, orchestrator)
+
+25 min, seed 0, 8 workers, --gx-bucket 1 --burst 512: 814 cells,
+2 LINES CLEARED by search (gx 2 — the class-7 non-spatial progress
+axis moves under search), 5.57M records, 3.7k sps, 0 solutions
+(quota 25 lines not reached), no stall, archive expanding at budget
+end. Taxonomy: PROGRESSING. Next-arm: longer budget seed-1 rerun
+unchanged; the pre-registered state_sig widening applies only on a
+SATURATED verdict, which did not occur.

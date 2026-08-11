@@ -391,3 +391,20 @@ per-minute proxies.
 4. **Frontier depth axis.** If east/south bias becomes the limiting factor,
    the honest alternative is a count-based / novelty selection over `area`
    rather than `max(area)`, which needs no new addresses.
+
+## Bounded-attempt receipts (2026-08-10 evening, orchestrator)
+
+Seed 1 (30 min, 8 workers): 12,885 cells, max_room 127, max_sect 16
+(= the default --sect-cap — SATURATED, the Lost Levels lesson; raise
+--sect-cap next session), 20,117 door macros injected, best_score
+160,254, 0 solutions (fabrication tripwire CLEAN — no clear: wired,
+so any bank would have been a detector defect). Taxonomy: PROGRESSING
+(map_delta 11 in the final window — still finding rooms at budget).
+
+Seed 2 (30 min): 10,025 cells, best_score 160,255, 0 solutions
+(tripwire clean). Taxonomy: COVERAGE_LIMITED. Cross-seed verdict per
+the plan's rule (divergent verdicts -> report the WEAKER claim):
+**COVERAGE_LIMITED, with the split noted** — both seeds healthy, no
+gate signature, next-arm = longer budget + raised --sect-cap; no
+profile change. D2's gated prediction NOT yet observed at this budget
+(gating likely appears only at item-locked boundaries deeper in).

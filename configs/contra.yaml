@@ -4,7 +4,7 @@ name: "Contra"
 # input — training there gives zero learning signal.
 start_state_path: "roms/Contra (USA)_start.state.bin"
 rom_hashes:
-  - "a70547ac1a4d0f86bdba6b31bf25c8aa"  # Contra (U) — NesDev canonical dump
+  - "7bdad8b4a7a56a634c9649d20bd3011b"  # Contra (U) — NesDev canonical dump
 
 # Action game — needs responsive control, so frame_skip 4 (NOT the
 # trainer's default 16, which is far too coarse to dodge bullets).

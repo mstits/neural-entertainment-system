@@ -659,3 +659,15 @@ Reported, not fixed — both fall outside the `solve:` block.
    death set. The `ram_mapping` block is the trainer's map, not the solver's,
    so it was left alone; it should be reconciled with §4 by whoever owns the
    training profile.
+
+## Registered-attempt verdict (2026-08-10, r1_ortho, orchestrator)
+
+30 min, seed 0: G-0 PASS (ortho engaged: 12,455 selections, 197
+cols_improved), G-A FAIL (frontier ended AT gx 3072 — the 10-campaign
+wall to the pixel — not past it), 52,539 cells, 0 solutions.
+Taxonomy: **GATED** — Contra's wall is NAMED for the first time, and
+it joins the CV hall and the BB 99-1 boss room in the same class.
+Contra remains demoted per the registration (gate not passed); the
+registered next material difference = the gate-opener arm
+(docs/proposals/gate_opener_arm_2026-08-11.md), which now has three
+targets in its class.
