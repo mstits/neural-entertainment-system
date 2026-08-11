@@ -594,3 +594,20 @@ ground truths in the corpus could only be scored on the degraded path.
   family before trusting the number on a new title.
 * **Nothing here is armed.** Self-arming dispatch is a separate decision
   per the D2 verdict. This module is a statistic and a receipt.
+
+## CORRECTION (2026-08-10 ~23:50) — K-FALSIFIER FAILED; GATED vocabulary STRUCK
+
+The pre-registered falsifier (docs/receipts/dispatch/
+k_falsifier_2026-08-10.md) invalidates this calibration's headline:
+the concentration statistic is archive size in disguise (Spearman
+rho +0.929 vs cells, -0.04 vs distinct_spatial), and the "zero false
+GATED" claim rested on an EOFError exclusion of the two largest
+solved archives that does not reproduce (both read complete; only
+lvl_4-3 is truncated). Solved archives score 98-270 vs the hall's
+31-136; no admissible threshold separates them; a false GATED exists
+on the UNMODIFIED shipped path (lvl_1-3 seg 2, cleared 17 min later).
+The wall class is relabeled UNRESOLVED-CONCENTRATED pending a
+size-decoupled statistic; every downstream "GATED" citation
+(Contra r1, BB 99-1, CV hall, CLAIMS ortho-verdict wording) inherits
+this correction. The discovery-instrument value of the gate-opener
+arm is unaffected (rev-4 re-founding).

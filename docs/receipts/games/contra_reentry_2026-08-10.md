@@ -671,3 +671,13 @@ Contra remains demoted per the registration (gate not passed); the
 registered next material difference = the gate-opener arm
 (docs/proposals/gate_opener_arm_2026-08-11.md), which now has three
 targets in its class.
+
+## Correction (2026-08-10): taxonomy label struck
+
+The r1_ortho "GATED" classification is retracted per the K-FALSIFIER
+(docs/receipts/dispatch/k_falsifier_2026-08-10.md — the statistic
+tracks archive size). What stands, receipted: frontier AT gx 3072
+(the 10-campaign wall), arm engaged (12,455 sel / 197 cols), 0
+solutions. Contra's wall class: UNTYPED (as rev-4 already
+re-registered it). The gate-opener discovery sweep remains the
+registered next material difference on its own merits.
