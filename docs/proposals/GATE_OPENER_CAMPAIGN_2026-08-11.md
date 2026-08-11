@@ -115,3 +115,31 @@ receipt in the D1 workflow journals):
    candidates receipt (the pre-registered primary outcome) with empty
    admitted/ranked + full sweep params.
 6. The run deadline is passed into the sweep (no overrun-by-a-sweep).
+
+## §12 — D3 lineage-check verdict (2026-08-11, binding amendments)
+
+**lvl_03_overnight: INCOMPATIBLE** (1-flag lineage vs the 4-flag arms,
+backfilled-not-observed provenance, and a disjoint tb/kk key subspace
+— its cited "3.8x largest archive" was key-inflation: 560,410 -> 88,212
+on collapse, 0.59x ortho_ctrl). RESUME ARCHIVE = runs/cv_hall_ortho_ctrl
+(149,153 cells, observed 4-flag lineage, arm-free) — supersedes both
+the §4b promotion and its fallback. Round-trip integrity PASSED; the
+doors-counter PROGRESSING read is a taxonomy defect (articulation
+points are connectivity properties, not monotone counters — drop
+`doors` from topo_delta), not a resume blocker.
+
+**THE gx-767 PIN IS A PHANTOM.** All 35 band-95 cells across all
+archives hold a one-frame non-atomic 16-bit borrow state (0x0041
+flips 2->1 after 0x0040 wraps: gx 767 = 0x02FF while moving LEFT;
+restores read gx 507-511). Receipts: bucket 94 empty in all five
+archives; live replay reproduces 516->767 on the final frame, 1/626
+steps >=760. TRUE FRONTIER = gx 751 (bucket 93, 16 distinct positions,
+stable across 16 post-restore frames). All §4b/§6 root counts
+RE-FROZEN on bucket 93 (ortho_ctrl: 2,805 band-93 cells); band-95 is
+struck from every root pool. The "5 runs / 10.7 h / 0 crossings" base
+rate is re-founded on the 751 frontier. Code fixes owed (filed, not
+yet implemented): --resume-archive must compare hw_provenance +
+key-config axes against the live run; wall_taxonomy topo_delta drops
+doors; generic borrow-glitch hardening for multi-byte progress reads
+(median-of-3 or borrow-aware pairing) — the score=gx domination of
+glitch cells is a generic defect class.
