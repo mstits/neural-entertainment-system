@@ -25,6 +25,13 @@ not merely if the code stops importing. The defects and their receipts:
            sham roots do.
   D-IDENT  a lifetime-CONSTANCY answer key cannot be found by an
            onset/persist differ; recorded in the module docstring.
+  D-ROOTSEL runs/gate_opener_k0v2_2026-08-11/k0v2_revision_log.json —
+           `(times_swept, key[-1])` is ASCENDING GX on a fresh sweep, so
+           the selector drew the most-rearward 32 cells of a 15,852-cell
+           band: 0.0% of them held an occupied answer slot against the
+           band's own 61.5%, and 19 of 32 died identically under the
+           all-NOOP control. Found by K0-v2, which halted NOT-READY with
+           its blind keys unspent.
 
 The campaign is DISARMED (campaign doc §13) and these repairs do not
 re-arm it: a re-forged instrument faces a NEW K0 registration.
@@ -763,6 +770,120 @@ def test_the_module_records_that_constancy_bytes_are_bad_answer_targets():
     assert "CONSTANCY" in doc
     assert "0x058F-92" in doc and "0x04BF-C2" in doc
     assert "onset" in doc
+
+
+# ---------------------------------------------------------------------
+# D-ROOTSEL — the selector's own corner
+# ---------------------------------------------------------------------
+
+def _band_solver(tmp_path, *, columns=100, rows=20, band=24, roots=32,
+                 **over):
+    """A wide FRESH band: `columns` gx buckets x `rows` y bands, every
+    cell unswept and carrying a blob. Shaped after the receipted Contra
+    band (15,852 cells across 25 gx buckets) so the tie-break is the only
+    thing deciding which cells get measured."""
+    f = _solver(tmp_path, gate_band=band, gate_sweep_roots=roots,
+                gate_sham_roots=0, **over)
+    cells = [_Cell((0, 0, 0, (), 0, (), 0, 0, 0, yb, gx),
+                   bytes([gx & 0xFF, yb & 0xFF]))
+             for gx in range(columns) for yb in range(rows)]
+    f.archive = SimpleNamespace(cells={c.key: c for c in cells})
+    return f
+
+
+def _root_gx(f):
+    return [int(c.key[-1]) for c, sham in f._gate_roots() if not sham]
+
+
+def test_a_fresh_band_is_sampled_across_its_whole_width_not_its_rear_corner():
+    # THE DEFECT: the key was `(times_swept, key[-1])` and on a fresh
+    # sweep every band cell has times_swept 0 — so the operative term was
+    # ASCENDING GX and the 32 roots were the 32 most-rearward cells of a
+    # 15,852-cell band, a correlated near-duplicate cluster. Receipt:
+    # runs/gate_opener_k0v2_2026-08-11/k0v2_revision_log.json D-ROOTSEL
+    # (200 random band cells held an occupied Contra hp slot 123 times;
+    # the 32 cells the selector drew held one zero times, at bands 24, 96
+    # and 192 alike).
+    #
+    # Held over EIGHT seeds, because a spread that only appears at one
+    # seed is the old corner with a different address on it.
+    for seed in range(8):
+        f = _band_solver(Path("."), _gate_rng=np.random.default_rng(seed))
+        gxs = _root_gx(f)
+        assert len(gxs) == 32
+        lo, hi = 75, 99                       # top 99, band 24 -> floor 75
+        assert min(gxs) >= lo and max(gxs) <= hi, "roots left the band"
+        # Spread: the 25 band columns are sampled broadly, and the draw
+        # reaches both ends. Under the defect all 32 sat in column 75.
+        assert len(set(gxs)) >= 12, \
+            f"seed {seed}: only {len(set(gxs))} of 25 band columns drawn"
+        assert max(gxs) - min(gxs) >= 15
+        # ...and the rearmost quarter of the band gets its share, not all
+        # of it. Expectation is ~8 of 32; the defect put all 32 there.
+        rear = sum(1 for g in gxs if g < lo + 6)
+        assert rear <= 16, f"seed {seed}: {rear}/32 roots in the rear corner"
+        assert sum(1 for g in gxs if g >= hi - 5) >= 1, \
+            f"seed {seed}: the forward end of the band was never drawn"
+
+
+def test_the_root_draw_is_seeded_reproducible_and_privileges_no_address():
+    # Arbitrary, but a DECLARED arbitrary, exactly as D-TIE's coin is:
+    # same seed same roots (so a receipt reproduces from its header),
+    # different seed different roots (so two seeds are a real replication
+    # of the measurement rather than the same corner twice).
+    def draw(seed):
+        f = _band_solver(Path("."), _gate_rng=np.random.default_rng(seed))
+        return [c.key for c, _s in f._gate_roots()]
+
+    a, b, c = draw(3), draw(3), draw(4)
+    assert a == b, "the root draw is not reproducible from its seed"
+    assert a != c, "the root draw ignores its seed"
+    # No key term is privileged: the draw is not the gx order, nor the
+    # gx order reversed, nor the archive's own insertion order.
+    f = _band_solver(Path("."), _gate_rng=np.random.default_rng(3))
+    keys = a
+    assert keys != sorted(keys) and keys != sorted(keys, reverse=True)
+    band = [k for k in f.archive.cells if int(k[-1]) >= 75]
+    assert keys != band[:32] and keys != band[-32:][::-1]
+    # The tie is broken by the SWEEP's stream, so the search stream is
+    # untouched however wide the band is.
+    g = _band_solver(Path("."), _gate_rng=np.random.default_rng(3),
+                     rng=np.random.default_rng(99))
+    before = g.rng.bit_generator.state
+    g._gate_roots()
+    assert g.rng.bit_generator.state == before
+
+
+def test_the_least_swept_first_contract_survives_the_random_tie_break():
+    # The coin breaks TIES; it does not replace the ordering. A cell the
+    # sweep has already visited must not be re-drawn while an unvisited
+    # one is available, or the sweep re-measures one root all run.
+    f = _band_solver(Path("."), roots=40, _gate_rng=np.random.default_rng(0))
+    band = [k for k in f.archive.cells if int(k[-1]) >= 75]
+    assert len(band) == 500
+    # All but 30 band cells already swept once: the draw must take those
+    # 30 first, then fill from the swept remainder.
+    fresh = set(band[::17][:30])
+    f._gate_swept = {k: 1 for k in band if k not in fresh}
+    keys = [c.key for c, _s in f._gate_roots()]
+    assert set(keys[:30]) == fresh, "a swept cell outranked an unswept one"
+    assert len(set(keys)) == 40
+    # Twice-swept cells come last for the same reason.
+    once = band[1]                            # band[0] is in `fresh`
+    f._gate_swept = {k: (0 if k in fresh else 2) for k in band}
+    f._gate_swept[once] = 1
+    f._gate_rng = np.random.default_rng(0)
+    keys = [c.key for c, _s in f._gate_roots()]
+    assert set(keys[:30]) == fresh and keys[30] == once
+
+
+def test_no_gx_ordered_root_key_survives_in_the_selector():
+    # Structural, because the defect is one line and reverting it is one
+    # line. The gx term must not reappear ahead of the coin.
+    src = SOLVER_SRC.split("def _gate_roots", 1)[1].split("\n    def ", 1)[0]
+    assert "self._gate_swept.get(c.key, 0), c.key[-1]" not in src
+    assert "self._gate_rng.random(len(band))" in src
+    assert "D-ROOTSEL" in src
 
 
 # ---------------------------------------------------------------------

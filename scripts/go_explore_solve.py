@@ -4342,7 +4342,34 @@ class Solver:
     def _gate_roots(self) -> list:
         """The sweep's roots: the least-swept band cells, plus sham roots
         drawn from the freely-advancing region (K1's null). Archive blobs
-        are a free reset, so a root is just a cell that still has one."""
+        are a free reset, so a root is just a cell that still has one.
+
+        THE LEAST-SWEPT TIE IS BROKEN AT RANDOM (repair D-ROOTSEL). The
+        key used to be `(times_swept, key[-1])`, and on a fresh sweep
+        every band cell has times_swept 0 — so the operative key was
+        ASCENDING GX and the selector returned the single most-rearward
+        slice of the band, the same correlated cluster every time. Its
+        receipt: 200 random cells of a 15,852-cell Contra band held an
+        OCCUPIED hp slot 123 times (61.5%); the 32 cells the selector
+        actually drew held one ZERO times (0.0%), at bands 24, 96 and
+        192 alike, and 19 of those 32 roots died identically under the
+        all-NOOP control. An answer byte that is unoccupied at every
+        root cannot be measured at any parameter setting, so no
+        gate_sweep_roots / gate_band value could reach the miss — this
+        is D-TIE's family (an arbitrary ordering key deciding an
+        outcome) one stage earlier, deciding what gets MEASURED rather
+        than what ranks.
+
+        The tie value comes from the SWEEP'S OWN Generator, which is
+        seeded off the run seed: a sweep is reproducible from its
+        header, the search stream is untouched (see _gate_sweep), and
+        no address, column or key term is privileged. Sorting by
+        (times_swept, coin) is a uniform sample without replacement
+        from the least-swept stratum, then the next, so the
+        least-swept-first contract is unchanged — only its ties move.
+        Cross-root invariance presumes >=3 INDEPENDENT roots, and it is
+        now fed a spread of the band rather than one corner of it.
+        """
         cells = [c for c in self.archive.cells.values() if c.state is not None]
         if not cells:
             return []
@@ -4350,8 +4377,11 @@ class Solver:
         floor = top - self.gate_band
         band = [c for c in cells if int(c.key[-1]) >= floor]
         free = [c for c in cells if int(c.key[-1]) < floor]
-        band.sort(key=lambda c: (self._gate_swept.get(c.key, 0), c.key[-1]))
-        roots = [(c, False) for c in band[:self.gate_sweep_roots]]
+        coin = self._gate_rng.random(len(band))
+        order = sorted(range(len(band)),
+                       key=lambda i: (self._gate_swept.get(band[i].key, 0),
+                                      float(coin[i]), i))
+        roots = [(band[i], False) for i in order[:self.gate_sweep_roots]]
         n_sham = min(self.gate_sham_roots, len(free))
         if n_sham:
             idx = self._gate_rng.choice(len(free), size=n_sham, replace=False)
