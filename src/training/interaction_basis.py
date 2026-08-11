@@ -74,9 +74,96 @@ is a sweep-time admission evaluated against the profile's own gx/y
 telemetry over settle, closed by the pattern's first frame, with its
 parameters (eps, K and the window rule) declared here and echoed in the
 run header.
+
+THE PRIOR AND THE SCREEN ARE MEASURED ON THE POPULATION THE INSTRUMENT
+IS ROOTED IN (repair D-PRIOR, receipted in runs/gate_opener_k0_2026-08-11
+/k0_verdict.json). The first build sampled the novelty histogram and the
+farmability counter ONLY from the live search's in-band observations —
+and the sweep roots in exactly the band tail a pinned search essentially
+never re-enters, so on the graded Castlevania run the histogram was never
+allocated at all: `farm_samples` ended at 0 after 24 minutes, novelty
+returned its 1.0 default for every row, and every BH-significant row was
+refused `farm_unmeasured`. The admissible list was empty BY CONSTRUCTION.
+The repair is that THE SWEEP FEEDS THE SAME STATISTICS: every frame of a
+sweep program in which nothing has been pressed yet (the settle prefix of
+every program, and the whole body of the ladder's all-NOOP controls) is
+an undirected observation at a sweep root, and it is counted into the
+same boundary histogram and the same change counter the live path feeds
+(`baseline_frames`, `farm_rate_pooled`). ONLY undirected frames: folding
+a pattern's own post-onset RAM into the prior would let the instrument
+cancel its own discoveries — the value a pattern just created would score
+as "already seen here". And a run that still has no reading reports None,
+never 0.0: a fabricated measurement in a column called `farmability` is
+the failure the refusal exists to prevent.
+
+DEATH-AWARE CONTROL PAIRING (repair for the slot-0 asymmetry receipted in
+runs/cv_t1_roots_2026-08-11.json finding 3: none of the 16 verified
+Castlevania band roots survives the 153-step all-NOOP program, deaths at
+step 31-115, while 3 of 4 sham roots do). Duration matching is already in
+place — a control is paired on (phase, pattern length), so it only ever
+speaks for the window it measured, and the pattern-truncation half of the
+repair is that machinery. What duration matching CANNOT fix is liveness:
+a control that dies inside its window measures a death-and-respawn RAM
+cascade rather than a quiescent baseline, so subtracting it deletes every
+address the death touched from the candidate pool; and the mirror case (a
+pattern that dies while its control does not) promotes the same cascade
+to a discovery — which is the "zero-page state going to 0 under 108-step
+holds" block that plateaued the Contra tuning grade. So the repair is
+SYMMETRIC and applied to the window, not to the program: an observation
+whose liveness changed inside its own differential window is excluded
+from the differential entirely, as a control and as a candidate alike,
+and the exclusions are counted into the caller's `stats` rather than
+absorbed. A root whose controls ALL died is dropped whole (its candidates
+have no baseline left), while a root that ran no control at all keeps the
+pre-existing behaviour — "no control was run" and "the control died" are
+different facts and are not merged.
+
+A BYTE IS A RING, NOT AN INTERVAL (repair for the Euclidean effect size).
+The first build measured the differential with int16 subtraction and
+called it "signed-safe". It is not: on a wrapping byte the Euclidean
+distance is the WRONG metric in both directions at once. A counter
+ticking 250 -> 254 -> 3 reads |3 - 250| = 247 (0.97 of full scale, so it
+wins the effect-size tie-break outright) and escapes the monotone COUNTER
+test (3 is not greater than 254), so it is classed LATCHED and takes rank
+1. Both halves are fixed by measuring on the ring the byte actually
+lives on: `ring_delta` is the shortest signed path (that tick is +4 then
++5, magnitude 9), `classify_persistence` reads monotonicity in signed
+ring steps bounded by COUNTER_WRAP_STEP, and the effect size is
+normalised by BYTE_HALF, the largest distance a byte can express.
+
+THE PRIOR IS A DISTRIBUTION, NOT A LOOKUP (repair D-TIE's other half).
+The novelty term was log2((total + 1) / (seen + 1)) over the count of
+undirected frames at this exact (addr, value). By construction the prior
+holds only PRE-PRESS frames, so a latched candidate's post-press value
+has `seen = 0` always, and every latched row on a run comes back with
+one identical novelty — 40 rows, one value, one score, and the plateau
+the tie-break was blamed for is manufactured upstream of the tie-break.
+The repair keeps the prior undirected and changes the ESTIMATOR: with an
+address's observed SUPPORT (how many distinct values it took in the
+undirected prior) the escape probability of an unseen value is
+Witten-Bell's D/(N+D), spread over the values never seen, so a byte
+pinned at one value for 5,000 frames scores an unseen value ~20 bits
+while a free-runner that has already visited 200 values scores the same
+event ~10. That is a measured property of the same undirected
+population, it discriminates exactly where the plateau was, and it never
+folds a post-press value into the prior.
+
+D-IDENT — LIFETIME-CONSTANCY BYTES ARE NOT VALID ANSWER TARGETS FOR THIS
+INSTRUMENT. `rank_candidates` is a differential onset/persist ranker: it
+can only see an address that MOVES inside a 153-step program rooted at a
+frozen archive blob. An answer key defined by CONSTANCY — Contra's slot
+identity array 0x058F-92, whose own receipt defines it as constant for
+the lifetime of a slot — is therefore close to unreachable by
+construction: it moves only on slot turnover, which a paired NOOP control
+at the same root usually reproduces and subtracts. Grading the instrument
+against such a key measures the key's unsuitability, not the ranker. A
+future K0 registration tuning on Contra should use the hp array
+(0x04BF-C2), which changes on contact and is exactly the onset shape the
+differ is built to read.
 """
 from __future__ import annotations
 
+import hashlib
 import itertools
 import math
 from typing import Any, Callable, Iterable, Mapping, NamedTuple, Sequence
@@ -140,11 +227,18 @@ VALUE_BUCKET = 256 // MAX_AXIS_VALUES
 #: histogram and the farmability counter. Declared here because both the
 #: sampler and the estimator that divides by it have to agree.
 BAND_SAMPLE_STRIDE = 32
-#: Sample pairs needed before a farm rate is reported at all. Below
-#: this the smallest resolvable nonzero rate, 1000/(n*STRIDE), sits above
-#: MAX_FARM_EVENTS_PER_1K, so the estimate could not decide the refusal
-#: it exists to decide.
-FARM_MIN_SAMPLES = 32
+#: OBSERVED STEPS needed before a farm rate is reported at all. This is
+#: the real floor and the only one that survives pooling two samplers at
+#: different strides: below 1,000 observed steps the smallest resolvable
+#: nonzero rate, 1000/steps, sits above MAX_FARM_EVENTS_PER_1K, so the
+#: estimate could not decide the refusal it exists to decide.
+FARM_MIN_STEPS = 1000
+#: The same floor in stride-32 sample pairs (32 x 32 = 1,024 steps), kept
+#: as a named constant because the live band sampler counts in pairs.
+FARM_MIN_SAMPLES = -(-FARM_MIN_STEPS // BAND_SAMPLE_STRIDE)
+#: The sweep's own undirected frames are consecutive, so they are counted
+#: at stride 1 — an exact per-step change count, not a gap estimate.
+SWEEP_SAMPLE_STRIDE = 1
 
 # --- contact admission (sweep-time, self-measured) --------------------
 #: |dgx| <= CONTACT_EPS and |dy| <= CONTACT_EPS for CONTACT_K steps.
@@ -152,6 +246,40 @@ CONTACT_EPS = 0
 CONTACT_K = 8
 
 RAM_SIZE = 2048
+
+# --- the byte ring ----------------------------------------------------
+#: A RAM byte wraps, so the distance between two readings is a distance
+#: on Z/256 and the largest one expressible is 128, not 255.
+BYTE_MOD = 256
+BYTE_HALF = BYTE_MOD // 2
+#: The largest per-capture step still readable as a WRAPPED counter tick.
+#: The plain in-range monotone test needs no bound (it cannot be faked by
+#: a wrap); the ring extension does, because "moved -56 twice" is also
+#: what a latch followed by a partial revert looks like, and only a small
+#: consistent tick is unambiguously a free-runner crossing 0xFF/0x00.
+COUNTER_WRAP_STEP = 32
+
+
+def ring_delta(a: int, b: int) -> int:
+    """b - a as the SHORTEST signed path on the byte ring, in
+    [-127, 128]. 0xFA -> 0x03 is +9, not -247.
+
+    The antipode is genuinely ambiguous — 0 and 128 are 128 apart in
+    both directions — and is reported as +128 from either side, so the
+    function stays total and the magnitude stays correct."""
+    d = (int(b) - int(a)) % BYTE_MOD
+    return d - BYTE_MOD if d > BYTE_HALF else d
+
+
+def ring_distance(a: int, b: int) -> int:
+    """|ring_delta| — 0 .. 128."""
+    return abs(ring_delta(a, b))
+
+
+def _ring_delta_np(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Vectorised `ring_delta` over two uint8 arrays, as int16."""
+    d = (b.astype(np.int16) - a.astype(np.int16)) % BYTE_MOD
+    return np.where(d > BYTE_HALF, d - BYTE_MOD, d).astype(np.int16)
 
 
 class Pattern(NamedTuple):
@@ -284,10 +412,120 @@ def farm_rate(changes: int, samples: int, stride: int = BAND_SAMPLE_STRIDE,
     differs at almost every sample is refused either way, so the bias
     there cannot change a verdict.
     """
-    samples = int(samples)
-    if samples < int(min_samples):
+    return farm_rate_pooled(((changes, samples, stride),),
+                            min_steps=int(min_samples) * int(stride))
+
+
+def farm_rate_pooled(sources: Iterable, min_steps: int = FARM_MIN_STEPS):
+    """K4's farmability pooled over several samplers: value-change events
+    per 1,000 observed steps. None — never 0.0 — below `min_steps`.
+
+    `sources` is an iterable of (changes, samples, stride). Pooling is in
+    STEP units, which is what makes two samplers at different strides
+    combinable at all: each contributes `samples * stride` steps observed
+    and `changes` changes seen inside them, and the ratio is the quantity
+    K4's threshold is written in. That matters because the two real
+    sources are asymmetric by construction — the live search samples the
+    band at stride 32 and, at a pinned wall whose band tail it never
+    re-enters, may sample it a handful of times or never (D-PRIOR), while
+    the sweep's own undirected frames are consecutive and counted exactly
+    at stride 1.
+
+    ZERO IS NOT A DEFAULT. A source with no samples contributes nothing
+    to either total instead of contributing a zero numerator, and a pool
+    that never reaches `min_steps` reports None — so an unmeasured axis is
+    REFUSED by the ranker rather than admitted on a number no sampler
+    produced.
+    """
+    changes = 0
+    steps = 0
+    for c, n, stride in sources:
+        n, stride = int(n), int(stride)
+        if n <= 0 or stride <= 0:
+            continue
+        changes += int(c)
+        steps += n * stride
+    if steps < int(min_steps):
         return None
-    return 1000.0 * float(changes) / (samples * float(stride))
+    return 1000.0 * float(changes) / float(steps)
+
+
+def noop_prefix_len(program: Sequence) -> int:
+    """How many leading frames of `program` press nothing.
+
+    THE UNDIRECTED PREFIX. After this many steps the program has begun
+    pressing, so every later frame is a consequence of the interaction
+    and cannot be counted into the prior that same interaction is scored
+    against (module docstring, D-PRIOR). For an all-NOOP control it is
+    the whole program; for a pattern at settle phase p it is exactly p.
+    """
+    n = 0
+    for a in program:
+        if a:
+            break
+        n += 1
+    return n
+
+
+def tie_break_key(seed: int, addr: int, family: str) -> int:
+    """A stable pseudo-random total order over rows, keyed by the RUN
+    SEED — the last resort once score, effect size and family diversity
+    have all tied.
+
+    THE DEFECT THIS REPLACES (D-TIE, receipted in
+    runs/gate_opener_k0_2026-08-11/k0_revision_log.json): the first build
+    broke the score plateau with the row's ADDRESS, ascending. The score
+    is a product of four coarse factors, so its plateaus are large — the
+    Contra tuning grade wrote 32 rows at one identical score, still
+    unbroken at the truncation boundary — and an ascending-address
+    tie-break makes `rank <= 5` a function of where a byte happens to sit
+    in the memory map. Both blind-graded answers were low addresses, so
+    even the PASS branch would have been partly a sort-key artifact.
+
+    Keyed by the seed rather than fixed, so the arbitrary part of the
+    order is a declared, logged property of the run and two seeds are a
+    real replication of the ranking instead of the same coin twice.
+    Content-addressed and therefore independent of the order the
+    observations arrived in.
+    """
+    h = hashlib.blake2b(f"{int(seed)}|{int(addr)}|{family}".encode(),
+                        digest_size=8)
+    return int.from_bytes(h.digest(), "big")
+
+
+def rank_sort_key(row: Mapping[str, Any]) -> tuple:
+    """The instrument's total order over ranked rows.
+
+    score desc -> SIGNIFICANT first -> UNREFUSED first -> effect size
+    desc -> the seeded pseudo-random key. Address and family appear only
+    as the determinism backstop behind an 8-byte hash, so a low address
+    buys no rank. Both `rank_candidates` and the pass-B re-sort read this
+    one definition, because two sort keys is how a repaired tie-break
+    comes back through the confirmation pass.
+
+    THE EVIDENCE OUTRANKS THE PLATEAU. The score is a product of four
+    coarse factors and its plateaus are enormous, while `significant` —
+    the BH-FDR verdict the whole pipeline exists to produce — was not in
+    the key at all. On a four-family, eight-root probe the ONLY
+    BH-significant row (a one-family mode bit moving by 8, the shape of
+    the blind key) sorted LAST, behind three non-significant nuisances
+    tied at its score, because they moved further. Significance is now
+    the first tie-break and the K4 refusal the second, so the rows an
+    admissible list is allowed to contain lead the rows it may not.
+
+    FAMILY DIVERSITY IS NOT IN THE KEY, DELIBERATELY. `addr_families`
+    used to sort DESC here while the leave-family-out background rate
+    that sets the row's p-value RISES with it: the same quantity was
+    evidence against significance in step 4 and evidence for rank in
+    step 6, in one pipeline. It stays on the row as a receipt field,
+    where a reader can see it without it being counted twice.
+    """
+    return (-float(row.get("score", 0.0)),
+            0 if row.get("significant") else 1,
+            1 if row.get("refused") else 0,
+            -float(row.get("effect_size", 0.0)),
+            int(row.get("tie_key", 0)),
+            int(row.get("addr", 0)), str(row.get("family", "")))
 
 
 def build_program(pattern: Pattern, settle: int, tail: int = TAIL_PASS_A,
@@ -379,13 +617,33 @@ def contact_admitted(positions: Sequence, eps: int = CONTACT_EPS,
     return True
 
 
-def classify_persistence(v0: int, v1: int, v2: int) -> str:
+def classify_persistence(v0: int, v1: int, v2: int,
+                         wrap_step: int = COUNTER_WRAP_STEP) -> str:
     """TIMED (moved and came back), LATCHED (moved and stayed), COUNTER
-    (moved monotonically at both samples — a free-running nuisance)."""
+    (moved monotonically at both samples — a free-running nuisance).
+
+    MONOTONE ON THE RING (repair). The plain test — v0 < v1 < v2 or
+    v0 > v1 > v2 — cannot see a counter that crossed the 0xFF/0x00
+    boundary between two captures, and a counter is exactly the thing
+    that crosses it: 250 -> 254 -> 3 is a byte ticking +4 then +5, and
+    the plain test calls that LATCHED (moved and stayed), which is the
+    class the whole rank is built to reward. So a wrapped tick is read as
+    monotone too — but only when BOTH signed ring steps are small
+    (<= `wrap_step`), because a large step in one ring direction is
+    equally consistent with a latch followed by a partial revert and the
+    ring gives no way to tell those apart. Below the bound the reading is
+    unambiguous; above it the pre-existing (conservative) class stands.
+    """
+    v0, v1, v2 = int(v0), int(v1), int(v2)
     onset = v1 != v0
     persist = v2 != v0
-    if onset and persist and ((v0 < v1 < v2) or (v0 > v1 > v2)):
-        return "counter"
+    if onset and persist:
+        if (v0 < v1 < v2) or (v0 > v1 > v2):
+            return "counter"
+        d1, d2 = ring_delta(v0, v1), ring_delta(v1, v2)
+        if d1 and d2 and (d1 > 0) == (d2 > 0) \
+                and max(abs(d1), abs(d2)) <= int(wrap_step):
+            return "counter"
     if persist:
         return "latched"
     return "timed"
@@ -453,11 +711,51 @@ def bh_significant(pvalues: Sequence, q: float = FDR_Q,
     return keep
 
 
-def novelty_score(seen: int, total: int) -> float:
-    """log2((total + 1) / (seen + 1)) — the run's own boundary histogram
-    as the prior. A value this boundary has never shown scores highest;
-    one it shows constantly scores ~0."""
-    return math.log2((float(total) + 1.0) / (float(seen) + 1.0))
+def novelty_score(seen: int, total: int, support: int | None = None,
+                  alphabet: int = BYTE_MOD) -> float:
+    """Surprise, in bits, of seeing `value` at this address under the
+    run's own undirected prior.
+
+    `seen` is how many undirected frames showed that value, `total` how
+    many undirected frames the prior holds, and `support` how many
+    DISTINCT values the address took across them.
+
+    WITHOUT `support` this is the original log2((total+1)/(seen+1)) —
+    kept because it is what a caller with only a (seen, total) pair can
+    honestly compute, and because the pass-through keeps every existing
+    reading reproducible.
+
+    WITH `support` it is the Witten-Bell estimate, and that is the repair
+    (module docstring). The prior holds only pre-press frames, so every
+    LATCHED candidate has seen == 0 by construction and the first form
+    returns one constant for all of them: 40 latched rows, one novelty,
+    one score, an unbreakable plateau. Witten-Bell splits that constant
+    by how volatile the ADDRESS is in the same undirected population —
+    an event's probability mass is (support)/(total+support) for values
+    never seen, shared over the values never seen, and seen/(total+
+    support) otherwise:
+
+        unseen: log2((total + support) * (alphabet - support) / support)
+        seen:   log2((total + support) / seen)
+
+    A byte pinned at one value for 5,000 undirected frames scores an
+    unseen value at ~20 bits; a free-runner that already visited 200
+    values scores the same event at ~10; the value a byte shows
+    constantly still scores ~0. Nothing post-press enters the prior.
+    """
+    total = float(total)
+    seen = float(seen)
+    if support is None:
+        return math.log2((total + 1.0) / (seen + 1.0))
+    d = float(max(0, int(support)))
+    if d <= 0.0:
+        # The address was never observed at all: there is no support to
+        # estimate an escape mass from, so fall back rather than invent.
+        return math.log2((total + 1.0) / (seen + 1.0))
+    if seen > 0.0:
+        return math.log2((total + d) / seen)
+    unseen = float(max(1, int(alphabet) - int(d)))
+    return math.log2((total + d) * unseen / d)
 
 
 def as_ram(x) -> np.ndarray:
@@ -482,6 +780,14 @@ def _is_control(ob: Mapping[str, Any]) -> bool:
     return bool(flag)
 
 
+def _is_alive(ob: Mapping[str, Any]) -> bool:
+    """Did this observation's own differential window run without the
+    liveness signal changing? Absent the key the answer is YES, so a
+    fixture (or a profile with no readable liveness telemetry) behaves
+    exactly as it did before the death-aware repair existed."""
+    return bool(ob.get("alive", True))
+
+
 def _window(ob: Mapping[str, Any]) -> tuple:
     """The differential WINDOW an observation measured over, as
     (settle phase, pattern length) — which fixes t0/t1/t2 exactly. Two
@@ -498,6 +804,8 @@ def rank_candidates(
     min_roots: int = MIN_INVARIANT_ROOTS,
     q: float = FDR_Q,
     m: int | None = None,
+    tie_seed: int = 0,
+    stats: dict | None = None,
 ) -> list:
     """Rank differential RAM candidates. PURE, and order-independent.
 
@@ -537,8 +845,25 @@ def rank_candidates(
          screened; with one, a None reading means UNMEASURED and refuses
          the axis. A row never carries a farmability number that no
          probe produced.
+      6. ORDER — `rank_sort_key`: score, then the BH verdict, then the
+         K4 refusal, then EFFECT SIZE (the mean ring distance of the
+         differential, in bytes), then a pseudo-random key drawn from
+         `tie_seed`. Neither the address (D-TIE) nor the family count
+         (which already sets the p-value) is a tie-break.
+
+    LIVENESS. Step 1 uses only controls that survived their own window,
+    and step 2 only counts patterns that survived theirs; a root whose
+    controls all died is dropped whole. `stats`, if supplied, receives
+    the counts (roots, roots_uncontrolled, controls, dropped_dead_control,
+    dropped_dead_pattern, observations) so a receipt can report what the
+    differential declined to read instead of silently shrinking.
     """
     obs = list(observations)
+    st = stats if stats is not None else {}
+    for k in ("roots", "roots_uncontrolled", "controls",
+              "dropped_dead_control", "dropped_dead_pattern",
+              "observations"):
+        st.setdefault(k, 0)
     by_root: dict = {}
     for ob in obs:
         by_root.setdefault(ob["root"], []).append(ob)
@@ -547,13 +872,27 @@ def rank_candidates(
     family_roots: dict = {}
     for root in sorted(by_root, key=str):
         rows = by_root[root]
+        ctls = [c for c in rows if _is_control(c)]
+        live_ctls = [c for c in ctls if _is_alive(c)]
+        st["controls"] += len(ctls)
+        st["dropped_dead_control"] += len(ctls) - len(live_ctls)
+        if ctls and not live_ctls:
+            # EVERY control this root ran died inside its own window, so
+            # there is no quiescent baseline left to subtract and the
+            # only honest reading of its patterns is none. Dropping the
+            # root is the conservative direction: the alternative is to
+            # rank uncontrolled differentials, which is how a death
+            # cascade becomes a receipted discovery. A root that ran NO
+            # control keeps the pre-existing behaviour — "no control was
+            # run" and "the control died" are different facts.
+            st["roots_uncontrolled"] += 1
+            continue
+        st["roots"] += 1
         # ONE FREE-RUNNER MASK PER WINDOW, not one per root: an
         # all-NOOP program only certifies the span it actually stepped.
         free_by_window: dict = {}
         free_any = np.zeros(RAM_SIZE, dtype=bool)
-        for ctl in rows:
-            if not _is_control(ctl):
-                continue
+        for ctl in live_ctls:
             r0, r1, r2 = (_as_ram(ctl["ram0"]), _as_ram(ctl["ram1"]),
                           _as_ram(ctl["ram2"]))
             moved = (r1 != r0) | (r2 != r0)
@@ -564,6 +903,15 @@ def rank_candidates(
         for ob in rows:
             if _is_control(ob):
                 continue
+            if not _is_alive(ob):
+                # The mirror of the dead control: a pattern that died
+                # inside its window measured the death cascade, and its
+                # live control cannot subtract what it never saw. That is
+                # how "zero-page state going to 0 under a 108-step hold"
+                # became the tied block at the top of the Contra grade.
+                st["dropped_dead_pattern"] += 1
+                continue
+            st["observations"] += 1
             fam = ob["family"]
             family_roots.setdefault(fam, set()).add(root)
             r0, r1, r2 = (_as_ram(ob["ram0"]), _as_ram(ob["ram1"]),
@@ -572,16 +920,29 @@ def rank_candidates(
             if free is None:
                 free = free_any
             moved = ((r1 != r0) | (r2 != r0)) & ~free
+            if not moved.any():
+                continue
+            # EFFECT SIZE, in the units the differential is measured in:
+            # how far the byte actually moved ON THE RING it lives on.
+            # int16 subtraction is Euclidean, and a byte is not an
+            # interval: it made a counter's 250 -> 3 tick read 247/255 =
+            # 0.97 and win the tie-break outright. Computed only for the
+            # addresses that survived subtraction, so the cost rides on
+            # the survivors.
+            dmax = np.maximum(np.abs(_ring_delta_np(r0, r1)),
+                              np.abs(_ring_delta_np(r0, r2)))
             for addr in np.flatnonzero(moved).tolist():
                 rec = events.setdefault((addr, fam), {
                     "roots": set(), "classes": {}, "values": set(),
-                    "slots": set()})
+                    "slots": set(), "mag": 0, "n": 0})
                 rec["roots"].add(root)
                 rec["slots"].add(int(ob.get("slot", -1)))
                 cls = classify_persistence(int(r0[addr]), int(r1[addr]),
                                            int(r2[addr]))
                 rec["classes"][cls] = rec["classes"].get(cls, 0) + 1
                 rec["values"].add(int(r2[addr]))
+                rec["mag"] += int(dmax[addr])
+                rec["n"] += 1
 
     # Leave-family-out background rate per address, in ROOT units so it
     # is comparable with the invariance count.
@@ -617,6 +978,16 @@ def rank_candidates(
             # needs them to re-run the right programs, and the in-run
             # injection needs them to know WHICH interaction to inject.
             "slots": sorted(rec["slots"]),
+            # The magnitude behind the p-value. A p-value collapses into
+            # plateaus under discreteness (k = n at every row is one
+            # value of p); the mean ring distance does not, and it is a
+            # property of the measurement rather than of the address's
+            # position in the map. Normalised by BYTE_HALF, the largest
+            # distance a byte can express.
+            "effect_size": (rec["mag"] / max(1, rec["n"])) / float(BYTE_HALF),
+            "addr_families": len(addr_roots.get(addr, {})),
+            "tie_key": tie_break_key(tie_seed, addr, fam),
+            "tie_seed": int(tie_seed),
             "p": binom_sf(k, n, rate),
         })
 
@@ -657,18 +1028,48 @@ def rank_candidates(
         elif farm > MAX_FARM_EVENTS_PER_1K:
             refused = "farmable"
         s["refused"] = refused
-    # Deterministic total order: score desc, then the tuple key, so a
-    # permutation of the input can never permute the output.
-    survivors.sort(key=lambda s: (-s["score"], s["addr"], s["family"]))
+    # Deterministic total order that gives no address a privileged
+    # position — see rank_sort_key and tie_break_key. Content-addressed
+    # throughout, so a permutation of the input cannot permute the output.
+    survivors.sort(key=rank_sort_key)
     return survivors
 
 
+def admissible_rows(ranked: Sequence) -> list:
+    """Every BH-significant, unrefused, non-nuisance row, in rank order.
+
+    The list a K0-style grade measures rank against, in FULL: the cut to
+    `RANK_CUTOFF` is a separate decision, and a receipt that only records
+    the cut cannot answer "did the answer rank at all" (D-TRUNC).
+    """
+    return [s for s in ranked
+            if s.get("significant") and not s.get("refused")
+            and s.get("score", 0.0) > 0.0]
+
+
 def admitted_candidates(ranked: Sequence, cutoff: int = RANK_CUTOFF) -> list:
-    """The top `cutoff` BH-significant, unrefused, non-nuisance rows."""
-    out = [s for s in ranked
-           if s.get("significant") and not s.get("refused")
-           and s.get("score", 0.0) > 0.0]
-    return out[:cutoff]
+    """The top `cutoff` admissible ADDRESSES, one row each.
+
+    BY ADDRESS, NOT BY ROW (D-TIE's sibling, D-DUP). A row is an
+    (addr, family) pair, so slicing rows spends admission slots on the
+    same byte seen through several families: the graded Bubble Bobble
+    sweep admitted ['0x0033', '0x0303', '0x0303', '0x0304', '0x0304'] —
+    five slots, three addresses. Since the sidecar promotes ADDRESSES to
+    state_sig bits, and `rank <= 5` is defined on addresses, the cut has
+    to be taken there too. The row kept for an address is its
+    best-ranked one, so the family that carried it is still receipted.
+    """
+    out: list = []
+    seen: set = set()
+    for s in admissible_rows(ranked):
+        addr = int(s["addr"])
+        if addr in seen:
+            continue
+        seen.add(addr)
+        out.append(s)
+        if len(out) >= int(cutoff):
+            break
+    return out
 
 
 def sweep_step_cost(n_patterns: int, n_roots: int, repeats: int,

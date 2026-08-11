@@ -171,3 +171,71 @@ D-ARM (60s-cadence arming floor). Positive salvage: the T2 pilot is
 GOOD — p0=0.946 (53/56) off a genuine stair-mode onset, K_min=42
 pairs for the registered MDE, quantitatively confirming §10-O10's
 kill of the K=16 design.
+
+## §14 — K0-v2 REGISTRATION (2026-08-11): RE-FORGE UNDER THE SAME BLIND LAW
+
+STANDING. §13's DISARM holds until this registration PASSES; nothing
+here arms anything. R = runs/gate_opener_k0_2026-08-11/.
+
+LAW (unchanged). Tune on Contra ONLY, <=2 revisions (code changes
+count; §1's ladders stay non-tunable), FREEZE, then grade BLIND once
+each: CV $0004 (lvl_02 stair root) and BB $0030 (99-0 pickup root).
+PASS = BOTH at rank<=5. A miss on either disarms the campaign, and
+these keys are dead for a K0-v3. Keys untouchable: unconsulted while
+tuning, absent from every allowlist/exclusion, receipts unopened until
+both runs exit.
+
+AMENDMENTS — one per receipted defect.
+1. D-IDENT (R/k0_verdict.json) — tuning target = Contra hp 0x04BF-C2
+   ONLY. The identity array 0x058F-92 is defined by lifetime CONSTANCY
+   in docs/receipts/breadth_contra/slot_identity_receipt.json, which an
+   onset/persist differ cannot see; struck as a grading target, cited
+   as neither hit nor miss.
+2. D-PRIOR (R/cv_blind/gate/candidates_001.json: farm_samples=0, all
+   32 rows novelty=1.0, 2,135 candidates, 0 admissible) — the sweep
+   must FEED novelty and farmability. PRECONDITION, answer-free,
+   before any grade counts: on the TUNING game farm_samples>0, novelty
+   not constant across ranked rows, admissible list NON-EMPTY. Failure
+   VOIDS the attempt as instrument error, not a revision; <=3 voids,
+   each receipted, then K0-v2 is abandoned. On the BLIND games that
+   emptiness is a MISS: the void branch is tuning-side only.
+3. D-TRUNC (R/k0_verdict.json; v1 wrote ranked[:32]) — grades read off
+   the FULL ranked table (written beside the receipt with its sha)
+   plus the full admissible list with ranks. "Absent" must be provable
+   from the full table; a top-32 view cannot settle a grade.
+4. D-TIE (R/k0_revision_log.json rev2: 32 rows at one score 11.651586,
+   ordered 0x0023..0x0156) — ADDRESS-INDEPENDENT TIE-BREAK, attested
+   at freeze: no address term ahead of a seeded pseudo-random key,
+   seed logged, an in-suite relabel-invariance test; the receipt
+   states the plateau size each answer sits in.
+5. D-DUP (R/bb_blind: admitted 0x0033/0x0303/0x0303/0x0304/0x0304 —
+   five slots, three addresses) — rank<=5 is BY ADDRESS.
+6. NOOP-ASYMMETRY (runs/cv_t1_roots_2026-08-11.json finding 3: 0/16
+   band roots survive the 153-step all-NOOP slot-0 control, deaths at
+   step 31-115, while 3/4 sham roots do; 104/200 band cells die inside
+   30 no-ops) — PER-PATTERN CONTROLS: each observation pairs with a
+   control at its own (phase, length); any observation whose liveness
+   changed inside its window is dropped as control AND candidate; a
+   root whose controls all died is dropped whole; exclusions are
+   receipted. Subsidiary D-SHAM0 (in k0_verdict.json, omitted from
+   §13's seven): a null that never ran reports null, not 0.0 (BB's
+   span=1 archive gave 0 sham roots silently).
+7. D-ARM (R/k0_verdict.json; arm at t=240-300 s) — a grade must
+   complete >=1 full sweep wave in its window or VOID; arm time in
+   the header.
+8. D-DOC — §3 conjunct (3) now reads "Contra never gets
+   --gate-target-typed OUTSIDE K0 instrument control". In K0 it is an
+   instrument attestation only: no typed-corpus row, no class standing
+   for Contra (§4d).
+
+DISCLOSURE AND ORDER OF SPEND. The re-forge was authored after §13
+published both answer keys, so K0-v2's blindness is procedural, not
+informational: every PASS citation must say so, and a lint keeps
+answer addresses out of the instrument path. The blind keys are
+ONE-SHOT and are spent only after the Contra hp grade PASSES; if
+tuning still misses at 2 revisions, K0-v2 halts NOT-READY with the
+keys unspent — v1 spent both on an instrument whose own tuning grade
+had already MISSED (R/k0_verdict.json tuning_grade_contra). Freeze:
+frozen_params_v2.json — commit, instrument shas, attestations.
+Unchanged: T2 salvage (p0=0.946, K_min=42), §12's bucket-93 re-freeze,
+the struck GATED vocabulary.

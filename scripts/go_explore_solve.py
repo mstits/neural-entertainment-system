@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import argparse
 import copy
+import gzip
 import hashlib
 import json
+import math
 import os
 import pickle
 import signal
@@ -233,7 +235,8 @@ def check_state_sidecar(state_path, flags) -> bool:
     return False
 
 
-def stamp_stats_provenance(archive_path, provenance: dict) -> None:
+def stamp_stats_provenance(archive_path, provenance: dict,
+                           key_config: dict | None = None) -> None:
     """Merge run provenance into the archive's stats sidecar.
 
     `GoExploreArchive.save()` owns archive.stats.json; this re-opens it
@@ -245,15 +248,26 @@ def stamp_stats_provenance(archive_path, provenance: dict) -> None:
     The key is `hw_provenance`, never `provenance`: `provenance` is the
     reserved honest-origin marker (`"search"`) on solution receipts, and
     one token must not mean a string in one artifact and a dict in its
-    sibling."""
+    sibling.
+
+    `key_config` (optional) records the CELL-KEY SCHEMA the archive was
+    built under — see `key_config_axes`. Without it, a later
+    `--resume-archive` can only check the machine and has to take the
+    key on faith, which is exactly the hole that let a 1-flag lineage
+    be resumed into a 4-flag run over a disjoint tb/kk key subspace
+    (GATE_OPENER_CAMPAIGN_2026-08-11 §12)."""
     p = Path(archive_path).with_suffix(".stats.json")
     try:
         stats = json.loads(p.read_text())
     except (OSError, ValueError):
         return
-    if stats.get("hw_provenance") == provenance:
+    want = dict(key_config) if key_config else None
+    if (stats.get("hw_provenance") == provenance
+            and (want is None or stats.get("key_config") == want)):
         return
     stats["hw_provenance"] = provenance
+    if want is not None:
+        stats["key_config"] = want
     tmp = p.with_name(p.name + ".prov.tmp")
     try:
         tmp.write_text(json.dumps(stats, indent=2))
@@ -261,6 +275,358 @@ def stamp_stats_provenance(archive_path, provenance: dict) -> None:
     except OSError as e:
         print(f"[go_explore_solve] could not stamp provenance into {p}: {e}",
               flush=True)
+
+
+# ---------------------------------------------------------------------
+# --resume-archive LINEAGE CHECK.
+#
+# `--resume-archive` loads someone else's archive.pkl straight into this
+# run's archive. Cells are only comparable if they were keyed the same
+# way AND produced on the same machine, and nothing checked either: the
+# D3 lineage check (GATE_OPENER_CAMPAIGN_2026-08-11 §12) found
+# runs/cv_chain_hw/lvl_03_overnight — 560,410 cells, cited as the
+# deepest banked attack on the wall — was built under ONE hw flag
+# against four, with a disjoint tb/kk key subspace, so 560,410 cells
+# collapsed to 88,212 on a like-for-like recount. That resume would
+# have run silently.
+#
+# The comparison is two-sided and deliberately narrow: the axes below
+# are the ones that change what a cell KEY MEANS (so the resumed cells
+# partition a different space) or what a state BLOB restores into (so
+# the resumed savestates run a different machine). Cosmetic differences
+# — out-dir, seed, workers, minutes — are not lineage.
+# ---------------------------------------------------------------------
+
+#: Sidecar axes compared on resume, with the human name used in the report.
+LINEAGE_KEY_AXES = (
+    ("tb", "time-bin key prefix (--time-bins)"),
+    ("kk", "kill-count key cardinality (--kill-key)"),
+    ("sig_arity", "state_sig bit count (profile + --gate-axes sidecar)"),
+    ("sig_sha", "state_sig contents (addresses/matches/mods)"),
+    ("gx_bucket", "gx bucket px (--gx-bucket)"),
+    ("y_band", "y band px (--y-band)"),
+    ("cell_fn", "cell-key adapter"),
+)
+
+
+def state_sig_sha(spec) -> str:
+    """A stable 8-hex digest of a `state_sig` spec (empty for no sig).
+
+    `sig_arity` alone cannot separate two sigs with the same BIT COUNT
+    over different bytes, which is exactly what the --gate-axes sidecar
+    produces: it merges axes into `state_sig` before the adapter reads
+    it, so one arm's 1-bit contact sig and another's 1-bit mode sig
+    would compare equal and their cells would be silently mixed. Axis
+    ORDER is part of the digest (axis i owns bit i, so a reordering is a
+    different key), each axis's `match` set is canonicalised (sorted) so
+    a cosmetic profile re-listing is not a new lineage."""
+    if not spec:
+        return ""
+    canon = [[int(addr), sorted(int(v) for v in match), int(mod or 0)]
+             for addr, match, mod in spec]
+    return hashlib.sha256(
+        json.dumps(canon, separators=(",", ":")).encode()).hexdigest()[:8]
+
+
+def key_config_axes(args, game) -> dict:
+    """The cell-key SCHEMA this run will build, as JSON scalars.
+
+    `tb`/`kk` are recorded as CARDINALITIES rather than as the flags
+    that set them, because that is what actually decides whether two
+    archives partition the same space: --time-bins off contributes one
+    constant slot, on contributes `bit_length` bins; --kill-key off is
+    one slot, on is the 0..15 cap in observe().
+
+    `smooth` is RECORDED BUT NOT COMPARED (it is deliberately absent
+    from LINEAGE_KEY_AXES): the torn-read filter changes which samples
+    become cells, not what a key means, and resuming an unfiltered
+    archive into a filtered run is the repair §12 asks for — refusing it
+    would refuse the fix. It still has to travel with the archive,
+    because those banked cells were screened by a different rule than
+    the ones this run will add; `resume_lineage_diff` reports the
+    difference as UNVERIFIABLE rather than as a mismatch."""
+    return {
+        "tb": 0 if not bool(getattr(args, "time_bins", False)) else 1,
+        "kk": 1 if not bool(getattr(args, "kill_key", False)) else 16,
+        "sig_arity": int(getattr(game, "state_sig_arity", 0) or 0),
+        "sig_sha": str(getattr(game, "state_sig_sha", "") or ""),
+        "gx_bucket": int(getattr(args, "gx_bucket", GX_BUCKET)),
+        "y_band": int(getattr(args, "y_band", Y_BAND)),
+        "cell_fn": type(game).__name__,
+        "smooth": str(getattr(game, "progress_smooth", "off") or "off"),
+    }
+
+
+def resume_lineage_diff(prev_stats: dict, provenance: dict,
+                        key_config: dict) -> dict:
+    """Compare a resumed archive's recorded lineage against this run's.
+
+    Pure. Returns `{"mismatch": [...], "unverifiable": [...],
+    "caveats": [...]}`, all lists of one-line human-readable strings.
+
+      MISMATCH      a recorded axis that DISAGREES.
+      UNVERIFIABLE  an axis the banked sidecar never recorded, so no
+                    comparison could be made. NOT agreement — this is
+                    the tier the §12 archive lands in
+                    (runs/cv_chain_hw/lvl_03_overnight records neither
+                    hw_provenance nor key_config, so the check that
+                    warned and resumed returned mismatch=[] on the exact
+                    archive it was written for). The caller refuses on
+                    it; `recover_lineage` is what turns as much of it as
+                    the disk can answer into a real comparison first.
+      CAVEATS       recorded, different, and NOT lineage: the torn-read
+                    filter changes which samples become cells, not what
+                    a key means, and resuming an unfiltered archive into
+                    a filtered run is the repair §12 asks for. Warned
+                    about, never refused — a refusal here would refuse
+                    the fix.
+    """
+    prev_stats = prev_stats or {}
+    mismatch, unverifiable, caveats = [], [], []
+
+    prov = prev_stats.get("hw_provenance")
+    if not isinstance(prov, dict):
+        unverifiable.append(
+            "hw_provenance: absent from the resumed archive.stats.json — "
+            "the machine that produced those state blobs is unrecorded")
+    else:
+        got, want = list(prov.get("hw_flags") or []), list(
+            provenance.get("hw_flags") or [])
+        if sorted(got) != sorted(want):
+            mismatch.append(
+                f"hw_flags: archive {got or '[]'} vs run {want or '[]'} — "
+                f"restored savestates run a different machine")
+        if int(prov.get("frame_skip", -1)) != int(
+                provenance.get("frame_skip", -1)):
+            mismatch.append(
+                f"frame_skip: archive {prov.get('frame_skip')} vs run "
+                f"{provenance.get('frame_skip')}")
+        a = (prov.get("nes_core") or {}).get("sha256_16")
+        b = (provenance.get("nes_core") or {}).get("sha256_16")
+        if a and b and a != b:
+            mismatch.append(f"nes_core: archive {a} vs run {b} — different "
+                            f"emulator binary")
+
+    prev_key = prev_stats.get("key_config")
+    if not isinstance(prev_key, dict):
+        unverifiable.append(
+            "key_config: absent from the resumed archive.stats.json — the "
+            "cell-key schema those cells were built under is unrecorded "
+            "(archives flushed before this field existed)")
+    else:
+        for axis, label in LINEAGE_KEY_AXES:
+            if axis not in prev_key:
+                unverifiable.append(f"key_config.{axis} ({label}): not "
+                                    f"recorded by the resumed archive")
+                continue
+            if prev_key[axis] != key_config.get(axis):
+                mismatch.append(
+                    f"{label}: archive {prev_key[axis]!r} vs run "
+                    f"{key_config.get(axis)!r} — the two runs' cells do not "
+                    f"partition the same space")
+
+    # Torn-read filter: a WARNING, never a refusal (see key_config_axes).
+    # Absent reads as "off" on both sides, so the default path and every
+    # legacy archive stay silent; the line only appears once someone
+    # actually arms the filter, which is when the caveat matters.
+    prev_smooth = str((prev_key if isinstance(prev_key, dict) else {})
+                      .get("smooth", "off") or "off")
+    run_smooth = str(key_config.get("smooth", "off") or "off")
+    if prev_smooth != run_smooth:
+        caveats.append(
+            f"progress smoothing: archive {prev_smooth!r} vs run "
+            f"{run_smooth!r} — the resumed cells were recorded under a "
+            f"different torn-read rule, so banked frontier cells are not "
+            f"screened the way this run screens new ones (§12: the gx-767 "
+            f"phantom is already banked in every hall archive)")
+    return {"mismatch": mismatch, "unverifiable": unverifiable,
+            "caveats": caveats}
+
+
+def recover_lineage(prev_dir, prev_stats: dict) -> tuple:
+    """Backfill a resumed archive's `hw_provenance` from the rest of its
+    own out-dir. Returns `(provenance or None, [source notes])`.
+
+    THE PROOF IS USUALLY ON DISK, UNREAD. archive.stats.json only grew
+    an `hw_provenance` field partway through the campaign, so the §12
+    archive — the one the whole check exists for — records none, and a
+    comparison against nothing returned "no mismatch". But that run's
+    roots.json names its root blob, and the blob's own sidecar
+    (`foo.state.json`, written by `write_state_sidecar`) records the
+    flags it was built under: for runs/cv_chain_hw/lvl_03_overnight that
+    is ["mmio_read_timing"] — one flag against the arms' four, which is
+    exactly the §12 verdict, sitting one file away from the check that
+    could not reach it.
+
+    Sources, most authoritative first: the stats sidecar itself, then
+    any root's recorded `hw_provenance` in roots.json, then the root
+    blob's own state sidecar. Every recovery is NAMED in the notes,
+    because a recovered lineage is weaker evidence than a recorded one
+    and a receipt has to say which it had.
+    """
+    prev_stats = prev_stats or {}
+    if isinstance(prev_stats.get("hw_provenance"), dict):
+        return prev_stats["hw_provenance"], []
+    d = Path(prev_dir)
+    try:
+        roots = json.loads((d / "roots.json").read_text())
+    except (OSError, ValueError):
+        return None, []
+    if not isinstance(roots, dict):
+        return None, []
+    for rid, info in roots.items():
+        if isinstance(info, dict) and isinstance(info.get("hw_provenance"),
+                                                 dict):
+            return info["hw_provenance"], [
+                f"hw_provenance RECOVERED from roots.json[{rid}] (the "
+                f"archive.stats.json predates the field)"]
+    for rid, info in roots.items():
+        path = (info or {}).get("path") if isinstance(info, dict) else None
+        if not path:
+            continue
+        side = sidecar_path(path)
+        try:
+            rec = json.loads(Path(side).read_text())
+        except (OSError, ValueError):
+            continue
+        if "hw_flags" not in rec:
+            continue
+        prov = {"hw_flags": list(rec.get("hw_flags") or []),
+                "frame_skip": int(rec.get("frame_skip", -1)),
+                "nes_core": dict(rec.get("nes_core") or {})}
+        note = (f"hw_provenance RECOVERED from the root blob's sidecar "
+                f"{Path(side).name} (roots.json[{rid}])")
+        if rec.get("provenance_source"):
+            note += f" — {rec['provenance_source']}"
+        return prov, [note]
+    return None, []
+
+
+#: Cell-key arity the frontier readers index against:
+#: (sect, tb, kk, psig, loops, route_sig) + cell_fn(ram)[5].
+KEY_ARITY = 11
+
+
+def key_schema_from_keys(keys) -> dict:
+    """What the archive's OWN keys say about the schema they were built
+    under. Pure.
+
+    The recorded half of the lineage check is unverifiable for every
+    archive on disk (no `key_config` was ever flushed), but the keys
+    themselves are not silent: `tb` is a bit-length slot that is >= 1
+    whenever --time-bins is on and exactly 0 when it is off, `kk` is a
+    capped kill count that can only be nonzero with --kill-key on, and
+    the state_sig slot is a bitmask whose width cannot exceed the
+    profile's declared arity. seed() already walks every loaded key
+    twice (frontier trackers, then local coverage); this rides along.
+
+    Returns {"n", "arity", "tb_max", "kk_max", "sig_bits"}, with arity
+    None on an empty archive.
+    """
+    n = tb = kk = sig = 0
+    arity = None
+    for k in keys:
+        n += 1
+        if arity is None:
+            arity = len(k)
+        elif len(k) != arity:
+            arity = -1
+        if len(k) >= KEY_ARITY:
+            tb = max(tb, int(k[1]))
+            kk = max(kk, int(k[2]))
+            sig = max(sig, int(k[-3]))
+    return {"n": n, "arity": arity, "tb_max": tb, "kk_max": kk,
+            "sig_bits": int(sig).bit_length()}
+
+
+def key_schema_conflicts(observed: dict, key_config: dict,
+                         arity: int | None = None) -> dict:
+    """Compare `key_schema_from_keys` against the schema this run builds.
+
+    Same two tiers as `resume_lineage_diff`: a CONTRADICTION is a key
+    the run could not have produced, an UNVERIFIABLE is an axis whose
+    "off" reading is also what an "on" run with no events looks like
+    (--kill-key with nothing killed yet). Pure.
+    """
+    mismatch, unverifiable = [], []
+    if not observed.get("n"):
+        return {"mismatch": mismatch, "unverifiable": unverifiable}
+    want = int(arity if arity is not None else KEY_ARITY)
+    got = observed.get("arity")
+    if got == -1:
+        mismatch.append("cell-key arity: the resumed archive mixes key "
+                        "lengths — its cells were not all built by one "
+                        "schema")
+    elif got is not None and int(got) != want:
+        mismatch.append(
+            f"cell-key arity: archive keys are {got}-tuples, this run "
+            f"builds {want}-tuples — every positional frontier read "
+            f"(area, y band, gx bucket) lands on a different slot")
+    if observed["tb_max"] and not int(key_config.get("tb", 0)):
+        mismatch.append(
+            f"time-bin key prefix: archive keys carry a nonzero time bin "
+            f"(max {observed['tb_max']}) and this run builds none — the "
+            f"two runs' cells do not partition the same space")
+    if not observed["tb_max"] and int(key_config.get("tb", 0)):
+        mismatch.append(
+            "time-bin key prefix: this run bins by time and every "
+            "resumed key has bin 0, which --time-bins never emits")
+    if observed["kk_max"] and int(key_config.get("kk", 1)) <= 1:
+        mismatch.append(
+            f"kill-count key: archive keys carry a nonzero kill slot "
+            f"(max {observed['kk_max']}) and this run builds none")
+    if not observed["kk_max"] and int(key_config.get("kk", 1)) > 1:
+        unverifiable.append(
+            "kill-count key: this run keys on kills and no resumed key "
+            "records one — consistent with an archive that killed "
+            "nothing, and with one built without the flag")
+    if observed["sig_bits"] > int(key_config.get("sig_arity", 0) or 0):
+        mismatch.append(
+            f"state_sig bit count: archive keys use {observed['sig_bits']} "
+            f"bit(s) and this run declares "
+            f"{int(key_config.get('sig_arity', 0) or 0)}")
+    elif observed["sig_bits"] < int(key_config.get("sig_arity", 0) or 0):
+        unverifiable.append(
+            f"state_sig bit count: this run declares "
+            f"{int(key_config.get('sig_arity', 0) or 0)} bit(s) and the "
+            f"resumed keys only ever set {observed['sig_bits']} — the "
+            f"unset bits cannot be told from absent ones, and the sig "
+            f"CONTENTS (which bytes, which matches) are unrecoverable "
+            f"from a key at all")
+    return {"mismatch": mismatch, "unverifiable": unverifiable}
+
+
+def format_lineage_report(path, diff: dict, allowed: bool,
+                          notes=(), unverified_allowed: bool = False) -> str:
+    """The operator-facing text for `resume_lineage_diff`."""
+    head = ("*** RESUME LINEAGE MISMATCH ***" if diff["mismatch"]
+            else "*** RESUME LINEAGE UNVERIFIABLE ***"
+            if diff.get("unverifiable") else "resume lineage: note")
+    lines = [f"[go_explore_solve] {head} {path}"]
+    lines += [f"    recovered {n}" for n in notes]
+    lines += [f"    MISMATCH  {m}" for m in diff["mismatch"]]
+    lines += [f"    UNCHECKED {u}" for u in diff.get("unverifiable", ())]
+    lines += [f"    note      {c}" for c in diff.get("caveats", ())]
+    if diff["mismatch"]:
+        lines.append(
+            "    Resuming across lineages silently mixes cells that were "
+            "never comparable (campaign §12: 560,410 cells -> 88,212 on "
+            "collapse). Re-run with matching flags, or pass "
+            "--allow-lineage-mismatch to proceed anyway."
+            if not allowed else
+            "    --allow-lineage-mismatch given: proceeding, and this "
+            "run's receipts inherit a mixed-lineage archive.")
+    elif diff.get("unverifiable"):
+        lines.append(
+            "    An axis nothing recorded is not an axis that matches. The "
+            "§12 archive records neither field and its ROOT SIDECAR says "
+            "one hw flag against four, so 'no mismatch' was a hole and not "
+            "a pass. Re-run with an archive that carries its lineage, or "
+            "pass --allow-unverified-lineage to resume on faith."
+            if not unverified_allowed else
+            "    --allow-unverified-lineage given: proceeding, and this "
+            "run's receipts inherit an UNVERIFIED lineage.")
+    return "\n".join(lines)
 
 
 def _gx(ram) -> int:
@@ -294,6 +660,277 @@ def cell_fn(ram) -> tuple:
     vsign = 0 if vx == 0 else (1 if vx > 0 else 2)
     return (int(ram[R_AREA]), (int(ram[R_PHASE]) >> 2) & 7, vsign,
             int(ram[R_YPOS]) // Y_BAND, _gx(ram) // GX_BUCKET)
+
+
+# ---------------------------------------------------------------------
+# TORN MULTI-BYTE PROGRESS READS (the gx-767 phantom).
+#
+# A 16-bit progress observable is two RAM bytes, and the game updates
+# them with two instructions. Sample the pair on the frame BETWEEN them
+# and you read a position the game was never in. On Castlevania block 3
+# ($0040 lo / $0041 hi) the lo byte wraps 0x00 -> 0xFF one frame before
+# the hi byte borrows 2 -> 1, so a player walking LEFT past x=512 reads
+# 0x02FF = 767 for exactly one frame.
+#
+# That single frame is not a curiosity: `score = sect*10000 + gx + ...`
+# means the phantom DOMINATES its cell outright, so every archive built
+# on that wall put a torn read at the top of its frontier. All 35
+# band-95 cells across five Castlevania archives — 10.7 h and ~77M
+# steps of "pinned at 767" — were the same one-frame artifact, and the
+# true frontier was gx 751 (campaign §12; the restores read 507-511).
+#
+# The filter below is GENERIC (it knows only that the observable is
+# built from two bytes), OPT-IN per profile (`progress: {smooth: ...}`)
+# and REJECT-ONLY: a sample it dislikes is dropped exactly the way
+# observe() already drops a `progress_cap` garbage read, so nothing
+# downstream — score, cell key, max_gx, the pin clock — is ever handed
+# a value the filter invented.
+#
+# It is deliberately ONLINE (one or two prior samples, no lookahead):
+# observe() has to classify the frame it is holding. The price is one
+# dropped observation at a genuine discontinuity (a warp, a room load,
+# a re-root); the same precision-over-recall trade the room_veto doc
+# above makes, and a dropped observation costs a re-record, never a
+# missed clear (is_dead/is_clear/is_finale all resolve BEFORE this).
+# ---------------------------------------------------------------------
+
+#: `progress: {smooth: ...}` modes. `off` = the shipped behaviour.
+PROGRESS_SMOOTH_MODES = ("off", "borrow", "median3")
+
+#: Default `progress: {jump: N}`: how far the observable may move in one
+#: observation before a filter is allowed to call the sample torn. 128 is
+#: half a page — comfortably above any per-frame velocity a position byte
+#: pair can express, comfortably below the ~255 a torn pair fabricates.
+PROGRESS_JUMP = 128
+
+
+def progress_glitch(mode: str, hist, sample, jump: int = PROGRESS_JUMP) -> bool:
+    """True when `sample` is a torn read rather than a state the game
+    was in. Pure.
+
+    `sample` and every entry of `hist` are `(value, hi, lo)` — the
+    composed observable plus the two raw bytes it came from, `hi`/`lo`
+    None when the profile's progress is not a two-byte read (a single
+    byte, or a decoded HUD field), in which case `borrow` is inert by
+    construction. `hist` holds the RAW previous samples, most recent
+    last, INCLUDING ones this function rejected: the rule is about the
+    byte stream, not about the accepted series.
+
+    borrow  — the low byte wrapped across the 0xFF/0x00 boundary while
+              the high byte did not move. On a real 16-bit counter a lo
+              wrap is always accompanied by a carry/borrow into hi, so
+              "wrapped, hi unchanged" is a torn pair and nothing else.
+    median3 — the sample is not the median of the last three raw
+              readings and misses it by more than `jump`: a one-sample
+              spike. Catches a tear whose bytes are not adjacent (and
+              any other single-frame impulse) at the cost of dropping
+              the first sample of a genuine jump too.
+    """
+    if mode in (None, "", "off") or not hist:
+        return False
+    val, hi, lo = sample
+    pval, phi, plo = hist[-1]
+    if mode == "borrow":
+        if hi is None or phi is None:
+            return False
+        # With `hi` unchanged the composed delta IS the low-byte delta,
+        # so one test covers both: the observable moved most of a page
+        # in one observation without the page byte moving with it.
+        # Clamped into a byte — this threshold is about the 0xFF/0x00
+        # boundary whatever scale `jump` was set for, and 255 would make
+        # the rule unfireable rather than merely permissive.
+        thresh = max(1, min(int(jump), 254))
+        return bool(int(hi) == int(phi) and abs(int(lo) - int(plo)) > thresh)
+    if mode == "median3":
+        if len(hist) < 2:
+            return False
+        median = sorted((int(hist[-2][0]), int(pval), int(val)))[1]
+        return abs(int(val) - median) > jump
+    return False
+
+
+#: How many refuted borrow rejections it takes to disarm the rule. Three,
+#: and only while they outnumber the confirmed tears: one coincidence
+#: (an unrelated hi move on the frame after a real wrap) must not disarm
+#: a filter that is working, and a pair that is not a pair produces a
+#: refutation at EVERY crossing, so three arrive quickly.
+BORROW_REFUTE_LIMIT = 3
+
+
+def borrow_followup(rejected, nxt) -> str:
+    """What the frame AFTER a borrow rejection says the rejected frame
+    was. Pure. Returns "tear", "not_a_pair" or "unknown".
+
+    THE RULE ASSUMES hi IS lo's PAGE BYTE AND NOTHING CHECKED IT. The
+    only guard was that `hi` exists, and 6 of the 11 two-byte progress
+    profiles in configs/ are (screen, x) composites — kid_icarus
+    (0x750/0x4D1), megaman (0x460/0x440), kirby, excitebike,
+    ghosts_n_goblins, double_dragon — whose bytes are not adjacent and
+    whose low byte wraps without any carry into the high one. On those,
+    "lo wrapped, hi flat" is ORDINARY MOTION and the rule deletes a real
+    observation at every crossing.
+
+    It cannot be settled on the frame the filter must decide (that is
+    why the filter is online), but it is settled one frame later: a torn
+    read is a sample taken BETWEEN two instructions, so the carry lands
+    on the next frame and hi moves. A pair that is not a 16-bit pair
+    leaves hi exactly where it was. The caller counts both and disarms
+    the rule when the refutations win — measured, not declared.
+    """
+    if not rejected or not nxt:
+        return "unknown"
+    _rv, rhi, _rlo = rejected
+    _nv, nhi, _nlo = nxt
+    if rhi is None or nhi is None:
+        return "unknown"
+    return "tear" if int(nhi) != int(rhi) else "not_a_pair"
+
+
+def push_progress_sample(hist, sample, keep: int = 2) -> None:
+    """Append a raw reading to a bounded rolling history, in place."""
+    hist.append(sample)
+    if len(hist) > keep:
+        del hist[:-keep]
+
+
+#: A resumed frontier group is a torn-read ISLAND when at least this many
+#: gx buckets below it are empty. The §12 signature exactly: bucket 95
+#: occupied, bucket 94 empty in all five archives, the body at 93.
+PHANTOM_GAP = 1
+#: ...and when it holds no more than this share of the body below it. 14
+#: cells over ortho_ctrl's 2,805 is 0.005; a real frontier advance
+#: arrives with a population, a one-frame artifact cannot.
+PHANTOM_MAX_FRAC = 0.02
+
+
+def phantom_top_buckets(keys, gap: int = PHANTOM_GAP,
+                        max_frac: float = PHANTOM_MAX_FRAC,
+                        rounds: int = 3) -> set:
+    """{(area, gx bucket)} at the top of each area that are a banked
+    torn read rather than a reached position. Pure.
+
+    THE FILTER ONLY SCREENS NEW SAMPLES; THE PHANTOM IS ALREADY BANKED.
+    Every Castlevania hall archive carries the gx-767 artifact as real
+    cells, and both frontier readers — seed()'s max_gx_in_area walk and
+    _refresh_sel_cache's `_sel_topgx = max(key[-1])` — take a maximum, so
+    14 cells out of 149,153 defined the frontier of every resumed run.
+    §12 re-froze the root pool on bucket 93 by hand and no code did it.
+
+    The signature is structural and needs no game knowledge: an occupied
+    bucket separated from the body of the frontier by an EMPTY gap and
+    holding a negligible share of it. A search advances by occupying the
+    buckets it passes through; a non-atomic 16-bit read jumps the gap and
+    lands nowhere near a population. Repeated up to `rounds` times per
+    area, because one tear can strand another just below it.
+    """
+    per_area: dict = {}
+    for k in keys:
+        per_area.setdefault(int(k[-5]), {})
+        b = int(k[-1])
+        per_area[int(k[-5])][b] = per_area[int(k[-5])].get(b, 0) + 1
+    out: set = set()
+    for area, hist in per_area.items():
+        live = dict(hist)
+        for _ in range(max(1, int(rounds))):
+            if len(live) < 2:
+                break
+            top = max(live)
+            group = []
+            b = top
+            while b in live:                     # the contiguous top group
+                group.append(b)
+                b -= 1
+            below = [x for x in live if x < min(group)]
+            if not below:
+                break
+            if min(group) - max(below) - 1 < int(gap):
+                break
+            body = sum(live[x] for x in below)
+            island = sum(live[x] for x in group)
+            if body <= 0 or island > float(max_frac) * body:
+                break
+            out.update((area, x) for x in group)
+            for x in group:
+                live.pop(x, None)
+    return out
+
+
+# ---------------------------------------------------------------------
+# LOCAL COVERAGE (c_local) — the derivative the receipts kept asking for.
+#
+# `c_local` = the number of distinct (area, y_band, gx_bucket) triples
+# the archive has reached. It is the archive's SPATIAL footprint, as
+# opposed to `cells`, which counts key-space entries and therefore grows
+# with every extra key axis.
+#
+# It is emitted per progress line because the signal is a DERIVATIVE and
+# a banked archive holds exactly one reading of it, at the flush: on the
+# Castlevania hall the footprint went 932 -> 1,102 (+18%) while cells
+# went 28,929 -> 560,410 (19x), and no cross-sectional statistic
+# recovers that (docs/receipts/dispatch/size_decoupled_statistic_2026-
+# 08-11.md §11: 22 candidates, 0 separate; "every candidate is a
+# surrogate for a derivative nobody recorded"). The elasticity
+# d log(c_local) / d log(cells) is scale-free and is the form that
+# receipt names as the one worth banking.
+#
+# NOTHING HERE CLASSIFIES A WALL — but do not read that as "inert".
+# `c_local` is the first entry on wall_taxonomy.MISSING_TELEMETRY (the
+# module's own shopping list: "count of DISTINCT spatial buckets in the
+# archive ... per progress line"), and emitting it MOVES VERDICTS. The
+# same 90-line hall log reads INDETERMINATE / missing=('c_local', ...)
+# without the field and COVERAGE_LIMITED ("C_local saturation 0.049 <
+# 0.85: the map footprint is still expanding") with it — measured on
+# runs/cv_hall_ortho_ctrl/progress.jsonl, both ways, 2026-08-11. That is
+# evidence arriving, not a regression: the discriminator applies the
+# same tests to the C_local series and to the archive snapshot
+# symmetrically, so a run does not flip verdicts merely because the
+# emitter learned a new field — it stops abstaining for want of one.
+# What stays struck is PROMOTION: the GATED class this series was
+# originally meant to feed is REFUTED, and c_local may only refute a
+# plateau (COVERAGE_LIMITED), name a stagnant map (BARREN) or name a
+# blind key (KEY_BLIND). Nothing here may certify a wall as opened.
+# ---------------------------------------------------------------------
+
+#: gx buckets counted as "the frontier band" for the band-local series.
+LOCAL_BAND_BUCKETS = 24
+
+
+def local_coverage(keys) -> set:
+    """Distinct (area, y_band, gx_bucket) triples over archive keys.
+
+    Positional, like every other frontier reader in this file: a cell
+    key is `(sect, tb, kk, psig, loops, route_sig) + cell_fn(ram)` and
+    cell_fn's tail is `(area, ..., y_band, gx_bucket)`."""
+    return {(k[-5], k[-2], k[-1]) for k in keys}
+
+
+def local_coverage_band(triples, band: int = LOCAL_BAND_BUCKETS) -> int:
+    """How many of those triples sit within `band` buckets of the
+    deepest one reached. The frontier-local half of the series: total
+    footprint keeps climbing while a search wanders, so a wall shows up
+    as the BAND term flattening while the total does not."""
+    triples = list(triples)
+    if not triples:
+        return 0
+    floor = max(int(t[-1]) for t in triples) - int(band)
+    return sum(1 for t in triples if int(t[-1]) >= floor)
+
+
+def coverage_elasticity(prev_local, prev_cells, local, cells):
+    """d log(c_local) / d log(cells) across one progress window.
+
+    None when it is undefined (first window, no new cells, or either
+    count still at zero) rather than 0.0 — "not measurable yet" and
+    "measured flat" are the two readings this series exists to tell
+    apart, and a silent zero is exactly the plateau it would fake."""
+    try:
+        a, b = int(prev_local), int(local)
+        m, n = int(prev_cells), int(cells)
+    except (TypeError, ValueError):
+        return None
+    if a <= 0 or b <= 0 or m <= 0 or n <= 0 or n == m:
+        return None
+    return (math.log(b) - math.log(a)) / (math.log(n) - math.log(m))
 
 
 def is_forward_clear(start_wd: tuple, ram) -> bool:
@@ -606,6 +1243,28 @@ class GenericGame:
         self._pscale = int(p.get("scale", 1))
         self._plo = int(p["lo"]) if "lo" in p else None
         self._phi = int(p["hi"]) if "hi" in p else None
+        # TORN-READ FILTER (optional, default off — see progress_glitch).
+        # `progress: {smooth: borrow|median3[, jump: N]}`. Opt-in per
+        # profile because it costs one dropped observation at every real
+        # discontinuity, which only pays for itself on a game whose
+        # progress pair is actually non-atomic.
+        self.progress_smooth = str(p.get("smooth", "off") or "off").lower()
+        if self.progress_smooth not in PROGRESS_SMOOTH_MODES:
+            raise SystemExit(
+                f"[go_explore_solve] unknown progress smooth mode "
+                f"{self.progress_smooth!r}; choose from "
+                f"{', '.join(PROGRESS_SMOOTH_MODES)}.")
+        if self.progress_smooth == "borrow" and self._phi is None:
+            raise SystemExit(
+                "[go_explore_solve] progress.smooth: borrow needs a two-byte "
+                "progress read (`progress: {lo: .., hi: ..}`) — there is no "
+                "carry to be torn on a single byte. Use median3 instead.")
+        self.progress_jump = int(p.get("jump", PROGRESS_JUMP))
+        if self.progress_jump < 1:
+            raise SystemExit(
+                f"[go_explore_solve] progress.jump must be >= 1, got "
+                f"{self.progress_jump}: a zero-width tolerance calls every "
+                f"observation torn and the search records nothing.")
         self._y = int(s["y"])
         self._lk = [int(a) for a in s["level_key"]]
         self._lives = int(s["lives"])
@@ -651,6 +1310,17 @@ class GenericGame:
                             frozenset(int(v) for v in e.get("match", ())),
                             int(e.get("mod", 0)))
                            for e in s.get("state_sig", ())]
+        #: Public, because it is a CELL-KEY axis: `key_config_axes` reads
+        #: it so --resume-archive can refuse an archive whose sig had a
+        #: different bit count (the merged --gate-axes sidecar is already
+        #: folded into `state_sig` by the time this runs, which is the
+        #: whole reason the arity has to travel with the archive).
+        self.state_sig_arity = len(self._state_sig)
+        #: The same axis, by CONTENT (see state_sig_sha): two 1-bit sigs
+        #: over different bytes have equal arity and unequal meaning,
+        #: and the sidecar makes that the ordinary case, not an exotic
+        #: one — arity alone would call those two archives one lineage.
+        self.state_sig_sha = state_sig_sha(self._state_sig)
         # Room signature (optional): `room_sig: [addr,...]` — bytes stable
         # within a room and different across rooms (found by before/after
         # transition diff of our own climbs). Feeds room_id, so the sect/
@@ -914,6 +1584,17 @@ class GenericGame:
         if self._phi is not None:
             v |= int(ram[self._phi]) << 8
         return v
+
+    def progress_pair(self, ram) -> tuple:
+        """`(value, hi, lo)` — the composed observable plus the raw bytes
+        it was composed from, for the torn-read filter. `hi`/`lo` are
+        None whenever there is no two-byte read to tear (single byte, or
+        a decoded HUD field), which makes `borrow` inert by construction
+        rather than by a caller remembering to check."""
+        v = self.progress(ram)
+        if self._ptiles is not None or self._phi is None:
+            return (v, None, None)
+        return (v, int(ram[self._phi]), int(ram[self._plo]))
 
     def level_key(self, ram) -> tuple:
         return tuple(int(ram[a]) for a in self._lk)
@@ -1295,6 +1976,20 @@ def gate_armed(mode: str, pin_time: float, now: float, pin_secs: float,
             and bool(band_growth_ok))
 
 
+def gate_arm_floor_secs(cadence: float, need: int = 3) -> float:
+    """The earliest a sweep can possibly arm, in seconds.
+
+    `band_growth_stalled` needs `need + 1` checkpoints before it stops
+    returning False, so the checkpoint cadence multiplied by that count
+    IS the arming floor — a structural property of the conjunct, not a
+    tuning choice. Stated as a function because it was invisible while
+    the cadence was a hardcoded 60 s inside the progress line: nothing
+    could arm inside four minutes, on runs whose whole grant was fifteen
+    (repair D-ARM, measured arming times 240-300 s in the K0 receipts).
+    """
+    return max(0.0, float(cadence)) * (int(need) + 1)
+
+
 def band_cell_count(keys, top_gx: int | None = None, band: int = 24) -> int:
     """Cells within `band` gx buckets of the frontier — the progress-line
     field the band-growth conjunct reads. One pass, no allocation beyond
@@ -1325,6 +2020,72 @@ def band_growth_stalled(history, need: int = 3, tol: float = 0.05) -> bool:
         return False
     window = hist[-(need + 1):]
     return all((b - a) < tol * peak for a, b in zip(window, window[1:]))
+
+
+def gate_counters() -> dict:
+    """The gate arm's telemetry counters, at their start values.
+
+    A FACTORY, not a literal in __init__: the progress line, the sweep
+    receipt and every duck-typed test solver read this same dict, so a
+    counter added in one place and missed in another is a KeyError in a
+    live run rather than a gap in a fixture.
+    """
+    return {
+        "sweeps": 0, "programs": 0, "candidates": 0, "admitted": 0,
+        "cross": 0, "injections": 0, "inexpressible": 0, "steps": 0,
+        # K1's null. None = NEVER MEASURED, and it starts there: a 0.0
+        # default reads as "the sham roots found nothing, the ranking is
+        # clean" to the kill that consumes it, and the sweep can be
+        # structurally unable to draw a sham root at all (the region
+        # below the band floor is empty on a one-column target — Bubble
+        # Bobble r99_1, spatial_span 1). The two counts behind the ratio
+        # ride beside it so a reader never has to trust the quotient.
+        "sham_yield": None, "sham_roots": 0, "sham_hits": 0,
+        "wall_hits": 0, "lift_active": 0, "lift_ctrl": 0,
+        # Workers the sweep could not hand back intact (see _gate_sweep's
+        # finally block). Nonzero voids the run's A/B comparability, so
+        # it rides in the progress line rather than only in stderr.
+        "restore_failed": 0,
+        # Undirected baseline windows closed early by a death. Large
+        # relative to `programs` means the prior and the K4 screen are
+        # being measured over a fraction of the horizon they were
+        # budgeted for, which is a fact about the roots.
+        "baseline_truncated": 0,
+        # Undirected frames REFUSED as replays of a trajectory this run
+        # already folded (see _gate_baseline_len). Receipted because it
+        # is the size of the pseudo-replication the K4 floor used to be
+        # paid in: on a 120-pattern basis it is ~97% of every frame the
+        # sweep steps through undirected.
+        "baseline_dupes": 0,
+    }
+
+
+#: "not sampled yet", distinct from a liveness reading of None (which is
+#: what a profile that declares no lives byte returns on every frame).
+_UNSET = object()
+
+#: How many roots' last undirected frame are kept for change PAIRING
+#: (2 KB each). Only the pairing needs the frame; the fold ledger that
+#: refuses replays is integers and is never evicted, so an eviction can
+#: cost one pair and can never re-admit a duplicate.
+GATE_BASELINE_CACHE = 64
+
+
+def _first_rank_by_addr(rows) -> dict:
+    """{"0xNNNN": 1-based rank of that address's BEST row}.
+
+    D-TRUNC's minimum: with this on the receipt, "the answer ranked 137th
+    of 2,135" and "the answer never ranked" are different readings of the
+    same artifact. Keyed by address because that is what a grade and the
+    sidecar both speak; the row that carried it is in the full ranked
+    table beside it.
+    """
+    out: dict = {}
+    for i, r in enumerate(rows, start=1):
+        key = "0x%04X" % int(r["addr"])
+        if key not in out:
+            out[key] = i
+    return out
 
 
 def gate_axes_sidecar_sha(path) -> str:
@@ -1462,6 +2223,46 @@ def gate_run_header(args, *, commit, hw_flags, root_sha, sidecar_sha,
         "gate_pin_secs": resolve_gate_pin_secs(args),
         "gate_target_typed": bool(getattr(args, "gate_target_typed", False)),
         "gate_band": int(getattr(args, "gate_band", 24)),
+        # The arming floor, DERIVED and stated rather than left implicit
+        # in a logging cadence (repair D-ARM).
+        "gate_arm_cadence_secs": float(
+            getattr(args, "gate_arm_cadence_secs", 60.0) or 60.0),
+        "gate_arm_floor_secs": gate_arm_floor_secs(
+            getattr(args, "gate_arm_cadence_secs", 60.0) or 60.0),
+        # The arbitrary half of the ranking's total order. Seeded, so it
+        # is reproducible and so two seeds are a real replication of the
+        # ranking; named here so no citation of a rank can omit it.
+        "rank_tie_seed": int(getattr(args, "seed", 0)),
+        "rank_sort_key": ("score desc, effect_size desc, addr_families "
+                          "desc, seeded tie_key, (addr, family) — the "
+                          "address is never a tie-break (D-TIE)"),
+        # Where the prior and the K4 screen are measured. Both samplers
+        # are named because the graded run's failure was that only the
+        # first existed and it sampled a population disjoint from the
+        # sweep's roots (D-PRIOR).
+        "prior_and_farm_sources": {
+            "live_band": {"stride": ib.BAND_SAMPLE_STRIDE,
+                          "population": "in-band cells the search re-enters"},
+            "sweep_undirected": {
+                "stride": ib.SWEEP_SAMPLE_STRIDE,
+                "population": ("frames of a sweep program before it "
+                               "presses anything: the settle prefix of "
+                               "every program and the whole body of the "
+                               "ladder's all-NOOP controls")},
+            "pooled_in": "steps",
+            "min_steps": ib.FARM_MIN_STEPS,
+        },
+        # The control-pairing rule, in full: duration matching (which
+        # window a control may speak for) AND liveness (whether it may
+        # speak at all).
+        "control_pairing": {
+            "duration": "matched on (settle phase, pattern length)",
+            "liveness": ("an observation whose profile-declared lives "
+                         "reading changes inside its own differential "
+                         "window is excluded as control and as candidate; "
+                         "a root whose controls all died is dropped whole; "
+                         "a root that ran no control is unchanged"),
+        },
         # The contact admission, in full: the observable, its two
         # constants, and the WINDOW those constants were applied over.
         # Without the window the same eps/K describe several different
@@ -1614,6 +2415,13 @@ class Solver:
         # the underground instead of pinning on the entrance area.
         self.max_area = 0
         self.max_gx_in_area: dict = {}    # area -> max gx seen
+        # {(area, gx bucket)} the resume refreeze refused as banked torn
+        # reads (§12's gx-767 phantom). Empty on every non-resumed run,
+        # so the default path is untouched; both frontier readers
+        # (max_gx_in_area, _sel_topgx) skip what is in it.
+        self._gx_phantoms: set = set()
+        self.resume_refreeze = bool(
+            getattr(args, "resume_refreeze", True))
         self._pin_time = time.time()      # last frontier advance (inversion gate)
         # Resolved once (the gate is read per worker per step).
         self._inv_pin_secs = resolve_inversion_pin_secs(args)
@@ -1718,6 +2526,17 @@ class Solver:
         self.gate_sweep_roots = int(getattr(args, "gate_sweep_roots", 16))
         self.gate_sweep_repeats = int(getattr(args, "gate_sweep_repeats", 2))
         self.gate_sham_roots = int(getattr(args, "gate_sham_roots", 4))
+        # THE ARMING FLOOR, AS A PARAMETER (repair D-ARM). The band-growth
+        # conjunct needs `need + 1` = 4 checkpoints before it can return
+        # anything but False, and those checkpoints used to be minted by
+        # the 60 s progress cadence alone — so no sweep could fire before
+        # t = 240 s no matter how short the run was, and the K0 grades
+        # measured arming at 240-300 s out of a ~15 min budget. The
+        # cadence is now stated; the DEFAULT IS UNCHANGED at 60 s, so a
+        # run that does not pass the flag checkpoints exactly as the
+        # receipted ones did.
+        self.gate_arm_cadence = float(
+            getattr(args, "gate_arm_cadence_secs", 60.0) or 60.0)
         self.contact_bits = int(getattr(args, "contact_bits", 3))
         # Reserved multiplier for the count arm's exact Wmax. v1 never
         # up-weights (no flag declares one), so the prior is unchanged;
@@ -1755,6 +2574,31 @@ class Solver:
         self._gate_change = None          # per-addr change count, uint32
         self._gate_change_n = 0           # sample PAIRS behind it
         self._gate_prev_vals = None
+        # ...AND THE SWEEP'S OWN COPY OF BOTH (repair D-PRIOR). The two
+        # counters above are fed by the LIVE search's in-band sampling,
+        # and the sweep roots in the band tail a pinned search essentially
+        # never re-enters: on the graded Castlevania run they stayed at
+        # zero for 24 minutes, novelty defaulted to 1.0 for every row and
+        # the admissible list was empty by construction. These are fed by
+        # the sweep's own UNDIRECTED frames — every frame of a program in
+        # which nothing has been pressed yet — at stride 1, and the two
+        # sources are pooled in step units by farm_rate_pooled.
+        self._gate_change_sweep = None    # per-addr change count, uint32
+        self._gate_change_sweep_n = 0     # consecutive frame PAIRS (stride 1)
+        self._gate_baseline_frames = 0    # DISTINCT undirected frames folded
+        # ...AND THE DE-REPLICATOR THAT MAKES THOSE COUNTS HONEST. Every
+        # program at one root replays the SAME all-NOOP trajectory until
+        # its first press: the settle prefixes of all 120 patterns x 2
+        # phases x N repeats are byte-identical, and the six all-NOOP
+        # controls are that trajectory in full. Counting each replay as
+        # fresh evidence turned ~2k distinct frames into ~78k "observed
+        # steps" and walked the K4 refusal floor (FARM_MIN_STEPS) with
+        # pseudo-replication, so a slow mover could read 0.0 events/1k as
+        # MEASURED off a 21-frame horizon. Frames are therefore folded at
+        # most once per (root trajectory, frame index).
+        self._gate_baseline_len: dict = {}   # root sig -> frames folded
+        self._gate_baseline_prev: dict = {}  # root sig -> last folded frame
+        self._gate_root_sig: dict = {}       # cell key -> root blob digest
         # Arm C's queue: (action index, hold, candidate addr), filled at
         # admission, drained round-robin at burst assignment.
         self._gate_inject: list = []
@@ -1765,16 +2609,17 @@ class Solver:
         self._gate_disarmed = False       # set on admission; fresh pin clears
         self._gate_armed_secs = 0.0
         self._gate_armed_since = None
-        self._gate_counters = {
-            "sweeps": 0, "programs": 0, "candidates": 0, "admitted": 0,
-            "cross": 0, "injections": 0, "inexpressible": 0, "steps": 0,
-            "sham_yield": 0.0, "lift_active": 0, "lift_ctrl": 0,
-            # Workers the sweep could not hand back intact (see
-            # _gate_sweep's finally block). Nonzero voids the run's A/B
-            # comparability, so it rides in the progress line rather
-            # than only in stderr.
-            "restore_failed": 0,
-        }
+        # Band-growth checkpoint clock, started HERE rather than at 0.0 so
+        # the first checkpoint lands one full cadence into the run, which
+        # is exactly where the old progress-line-driven one landed.
+        self._gate_last_ckpt = time.time()
+        self._gate_band_last = 0
+        # What the last differential DECLINED to read (dead controls,
+        # dead patterns, roots left with no live baseline). Receipted, so
+        # a shrinking candidate pool is a reported fact rather than an
+        # invisible one.
+        self._gate_rank_stats: dict = {}
+        self._gate_counters = gate_counters()
         self._gate_axes_live = None       # boundary_axis_profile snapshot
         # v6-report recipes (2026-07-30), flag-gated, default byte-identical:
         # time_bins: append floor(log2(steps+1)) to the key prefix (after
@@ -1804,6 +2649,30 @@ class Solver:
         self._last_door_t = time.time()
         self._flush_thread: threading.Thread | None = None
         self._recorded_new = False
+        # Torn multi-byte progress reads (see progress_glitch). Resolved
+        # ONCE off the adapter so observe()'s hot path is one string
+        # compare, and defaulted so an adapter without the knob (SmbGame,
+        # every duck-typed stand-in) is the shipped behaviour.
+        self.progress_smooth = str(
+            getattr(self.game, "progress_smooth", "off") or "off")
+        self.progress_jump = int(
+            getattr(self.game, "progress_jump", PROGRESS_JUMP))
+        self._prog_glitches = 0
+        # THE BORROW RULE AUDITS ITSELF (see borrow_followup). It assumes
+        # `hi` is `lo`'s page byte, which is true of Castlevania's
+        # $0040/$0041 and false of the six (screen, x) composites in
+        # configs/ — and the profile cannot be trusted to know which it
+        # declared. Every rejection is checked against the NEXT frame,
+        # and the rule disarms itself if the refutations win.
+        self._borrow_tears = 0
+        self._borrow_flat = 0
+        self._borrow_off = False
+        # c_local bookkeeping: the archive's distinct (area, y_band,
+        # gx_bucket) footprint, maintained incrementally on the record
+        # path (a full re-scan at the 60 s cadence would be a 560k-key
+        # pass on a hall archive; this is one tuple per NEW cell).
+        self._c_local: set = set()
+        self._c_local_prev: tuple | None = None
         # Optional spectator hook: called every pool step with
         # (results, solver) — the FULL per-worker results list, so the
         # live show can render one worker or the whole swarm. None in
@@ -1816,6 +2685,40 @@ class Solver:
         return self.pool.step_all(acts)[0][2]
 
     # ---- record path -------------------------------------------------
+
+    def _borrow_audit(self, verdict: str) -> None:
+        """Count one borrow rejection's follow-up verdict, and DISARM the
+        rule once the refutations outnumber the confirmations.
+
+        The rule is only valid when `hi` is `lo`'s page byte. Six of the
+        eleven two-byte profiles in configs/ pair a screen number with an
+        in-screen x, where a lo wrap with hi flat is ordinary motion and
+        every crossing loses a real observation. The verdict is measured
+        one frame later (`borrow_followup`), never declared by the
+        profile, and disarming is LOUD: a filter that turned itself off
+        is a fact about the profile's address pair, and the run that
+        finds it out should say so where the operator will see it.
+        """
+        if verdict == "tear":
+            self._borrow_tears = getattr(self, "_borrow_tears", 0) + 1
+            return
+        if verdict != "not_a_pair":
+            return
+        self._borrow_flat = getattr(self, "_borrow_flat", 0) + 1
+        if (self._borrow_flat >= BORROW_REFUTE_LIMIT
+                and self._borrow_flat > getattr(self, "_borrow_tears", 0)
+                and getattr(self, "progress_smooth", "off") == "borrow"):
+            self.progress_smooth = "off"
+            self._borrow_off = True
+            print(f"[go_explore_solve] *** progress.smooth: borrow DISARMED "
+                  f"*** {self._borrow_flat} rejections were followed by a "
+                  f"frame in which the high byte had NOT moved, against "
+                  f"{getattr(self, '_borrow_tears', 0)} that had. This "
+                  f"profile's `hi` is not `lo`'s page byte (a screen/x "
+                  f"composite reads exactly this way), so the rule was "
+                  f"deleting real observations at every wrap. Filtering is "
+                  f"off for the rest of the run; use smooth: median3 if the "
+                  f"observable still needs screening.", flush=True)
 
     def observe(self, wid: int, ram, trace: list, steps: int,
                 root_id: str, loops: int = 0,
@@ -1890,6 +2793,42 @@ class Solver:
             # real SMB levels reach ~6,300 px (8-1) — the old 3900 cap silently
             # froze the 8-1 frontier at 3900 (states past it never archived).
             return "live"
+        # TORN-READ GUARD, same disposition as the cap above: a sample
+        # the filter rejects is not recorded at all, so `score`, the cell
+        # key, max_gx and the pin clock never see it. Needs the burst's
+        # own ctx to hold the history — one stream per worker, reset for
+        # free at every re-root, which is exactly where a positional
+        # observable legitimately teleports. See progress_glitch.
+        # (getattr, not a bare attribute: every duck-typed Solver
+        # stand-in in the tests and in the live show predates the knob,
+        # and an observation path that only runs under the real
+        # constructor is a path the unit tests cannot reach.)
+        smooth = getattr(self, "progress_smooth", "off")
+        if smooth != "off" and ctx is not None:
+            sample = (game.progress_pair(ram)
+                      if hasattr(game, "progress_pair") else (gx, None, None))
+            hist = ctx.setdefault("_prog_hist", [])
+            # THE PAIR AUDIT (see borrow_followup). The frame after a
+            # borrow rejection says whether the pair really is a
+            # page/offset pair; the rejection itself is never undone, but
+            # a rule that keeps being refuted disarms itself instead of
+            # quietly deleting a real observation at every wrap.
+            # (getattr, like the mode read above: the duck-typed Solver
+            # stand-ins in the tests and in the live show carry observe()
+            # and nothing else.)
+            pend = ctx.pop("_borrow_pending", None)
+            audit = getattr(self, "_borrow_audit", None)
+            if pend is not None and audit is not None:
+                audit(borrow_followup(pend, sample))
+            torn = progress_glitch(smooth, hist, sample,
+                                   getattr(self, "progress_jump",
+                                           PROGRESS_JUMP))
+            push_progress_sample(hist, sample)
+            if torn:
+                self._prog_glitches = getattr(self, "_prog_glitches", 0) + 1
+                if smooth == "borrow":
+                    ctx["_borrow_pending"] = sample
+                return "live"
         area = game.area(ram)
         if gx > self.max_gx_in_area.get(area, 0):
             self.max_gx_in_area[area] = gx
@@ -2018,6 +2957,13 @@ class Solver:
                                  if ctx is not None else (),)
                 self.traces[key] = rec
                 self._recorded_new = True
+                # c_local: the archive's SPATIAL footprint, kept
+                # incrementally here (the only place a key can enter the
+                # archive) rather than rescanned at report time.
+                # Reporting only — nothing branches on it.
+                cl = getattr(self, "_c_local", None)
+                if cl is not None:
+                    cl.add((key[-5], key[-2], key[-1]))
                 # R2 credit signal (fix 2026-08-09): _assign() debits the
                 # source cell's `barren` counter for every burst and reads
                 # `prev["yielded"]` to credit the productive ones — but
@@ -2635,31 +3581,167 @@ class Solver:
         prev = getattr(self.args, "resume_archive", None)
         if prev:
             prev = Path(prev)
+            self.check_resume_lineage(prev)
+            # The entrance observation above is already a cell of THIS
+            # run's schema; the key audit below has to speak about the
+            # RESUMED cells only, or a legacy archive's arity would come
+            # back as "the archive mixes key lengths".
+            own = set(self.archive.cells)
             self.archive.load(prev / "archive.pkl")
             with open(prev / "traces.pkl", "rb") as f:
                 self.traces.update(pickle.load(f))
             saved_roots = json.loads((prev / "roots.json").read_text())
             for rid, info in saved_roots.items():
                 self.roots.setdefault(rid, info)
+            keys = [k for k in self.archive.cells if k not in own]
+            # The half of the lineage check that only the LOADED keys can
+            # answer (§12's disjoint tb/kk subspace).
+            self.audit_resumed_keys(prev, keys)
+            # THE BANKED PHANTOMS, REFROZEN. The torn-read filter screens
+            # new samples; these cells are already in the pickle, and
+            # both frontier readers take a maximum over them.
+            if self.resume_refreeze:
+                self._gx_phantoms = phantom_top_buckets(keys)
+                if self._gx_phantoms:
+                    n = sum(1 for k in keys
+                            if (int(k[-5]), int(k[-1])) in self._gx_phantoms)
+                    print(f"[seed] REFROZEN frontier: {n} resumed cells in "
+                          f"{sorted(self._gx_phantoms)} are a torn-read "
+                          f"island (empty gap below, negligible population) "
+                          f"and are excluded from max_gx/topgx. They stay in "
+                          f"the archive; only the frontier readers ignore "
+                          f"them (--no-resume-refreeze to keep them).",
+                          flush=True)
             # Rebuild the frontier trackers the loaded cells imply.
             for c in self.archive.cells.values():
                 area, gx = c.key[-5], c.key[-1] * GX_BUCKET
                 sect = c.key[0]
                 if area > self.max_area:
                     self.max_area = area
-                if gx > self.max_gx_in_area.get(area, 0):
+                # Only the gx read is refused: the tear is in the
+                # two-byte position pair, and the cell's transit count is
+                # a different byte that the same frame recorded honestly.
+                if (gx > self.max_gx_in_area.get(area, 0)
+                        and (int(area), int(c.key[-1]))
+                        not in self._gx_phantoms):
                     self.max_gx_in_area[area] = gx
                 if sect > self.max_sect:
                     self.max_sect = sect
+            # One pass, once, so the incremental c_local series continues
+            # the resumed archive's footprint instead of restarting at 0.
+            self._c_local |= local_coverage(self.archive.cells.keys())
             print(f"[seed] RESUMED archive from {prev}: "
                   f"{len(self.archive.cells)} cells, "
                   f"{len(self.traces)} traces, max_area={self.max_area}, "
-                  f"max_sect={self.max_sect}", flush=True)
+                  f"max_sect={self.max_sect}, "
+                  f"c_local={len(self._c_local)}", flush=True)
         print(f"[seed] rooted at {path} wd={self.start_wd} lives="
               f"{self.start_lives} area={self.max_area}; archive="
               f"{json.dumps(self.archive.stats())}", flush=True)
         if self.gate_mode != "off" or self.gate_axes:
             self._write_gate_header(path)
+
+    def key_config(self) -> dict:
+        """This run's cell-key schema, as banked into archive.stats.json
+        and compared on resume."""
+        return key_config_axes(self.args, self.game)
+
+    def check_resume_lineage(self, prev) -> dict:
+        """Refuse a --resume-archive whose lineage disagrees with this
+        run's, or cannot be checked at all.
+
+        Runs BEFORE archive.pkl is loaded: a multi-GB unpickle is not
+        the right place to discover the cells were never comparable.
+
+        UNVERIFIABLE IS A REFUSAL NOW, AND THE RECOVERY IS WHY IT CAN BE.
+        The first build warned and resumed on an unrecorded axis, on the
+        grounds that a legacy archive is the common case — which meant
+        the exact §12 archive (runs/cv_chain_hw/lvl_03_overnight: no
+        hw_provenance, no key_config in its stats sidecar) produced
+        mismatch=[] and resumed silently, one flag against four. But its
+        lineage was never actually unknown: `recover_lineage` reads it
+        out of roots.json and the root blob's own state sidecar, which
+        records hw_flags=["mmio_read_timing"]. So the check first
+        recovers everything the disk can answer and only then refuses
+        what is left, with --allow-unverified-lineage as the explicit
+        way past it (--allow-lineage-mismatch, the stronger override,
+        implies it).
+
+        The key-schema half cannot be answered here — a key is only
+        readable once the archive is loaded — and is audited in seed()
+        by `audit_resumed_keys`.
+        """
+        prev = Path(prev)
+        try:
+            stats = json.loads((prev / "archive.stats.json").read_text())
+        except (OSError, ValueError) as e:
+            stats = {}
+            print(f"[go_explore_solve] no readable archive.stats.json in "
+                  f"{prev} ({e}): falling back to the run's own root "
+                  f"sidecars for its lineage.", flush=True)
+        recovered, notes = recover_lineage(prev, stats)
+        if recovered is not None and not isinstance(
+                stats.get("hw_provenance"), dict):
+            stats = dict(stats, hw_provenance=recovered)
+        diff = resume_lineage_diff(stats, self.provenance, self.key_config())
+        allowed = bool(getattr(self.args, "allow_lineage_mismatch", False))
+        unver_ok = allowed or bool(
+            getattr(self.args, "allow_unverified_lineage", False))
+        if diff["mismatch"] or diff["unverifiable"] or diff["caveats"]:
+            report = format_lineage_report(prev, diff, allowed, notes,
+                                           unver_ok)
+            (sys.stderr if diff["mismatch"] or diff["unverifiable"]
+             else sys.stdout).write(report + "\n")
+            sys.stderr.flush()
+        if diff["mismatch"] and not allowed:
+            raise SystemExit(
+                f"[go_explore_solve] refusing to resume {prev}: "
+                f"{len(diff['mismatch'])} lineage mismatch(es) above. Pass "
+                f"--allow-lineage-mismatch to override.")
+        if diff["unverifiable"] and not unver_ok:
+            raise SystemExit(
+                f"[go_explore_solve] refusing to resume {prev}: "
+                f"{len(diff['unverifiable'])} lineage axis/axes could not be "
+                f"checked at all (above). Pass --allow-unverified-lineage to "
+                f"resume anyway.")
+        return diff
+
+    def audit_resumed_keys(self, prev, keys) -> dict:
+        """The key-schema half of the resume check, read off the LOADED
+        keys — the only place it can be read.
+
+        `key_config` was never flushed by any archive on disk, so the
+        recorded comparison is unverifiable for all of them, including
+        the §12 resume base. The keys are not silent though: tb, kk, the
+        state_sig width and the tuple arity are all recoverable from
+        them (see `key_schema_from_keys`), and a disjoint tb/kk subspace
+        is precisely what §12 found.
+
+        IT REFUSES ONLY CONTRADICTIONS. What the keys cannot settle is
+        already refused upstream — `check_resume_lineage` reads an
+        unrecorded `key_config` as UNVERIFIABLE and exits on it — so a
+        second refusal here would be double jeopardy, and it would also
+        fire on archives that DID record their schema and matched it (a
+        sig bit the archive never happened to set is not evidence of
+        anything). The ambiguous tier is printed and returned, never
+        enforced.
+        """
+        observed = key_schema_from_keys(keys)
+        conflicts = key_schema_conflicts(observed, self.key_config())
+        allowed = bool(getattr(self.args, "allow_lineage_mismatch", False))
+        if conflicts["mismatch"] or conflicts["unverifiable"]:
+            out = [f"[go_explore_solve] *** RESUMED KEY SCHEMA *** {prev} "
+                   f"({observed['n']} keys, arity {observed['arity']})"]
+            out += [f"    MISMATCH  {m}" for m in conflicts["mismatch"]]
+            out += [f"    unchecked {u}" for u in conflicts["unverifiable"]]
+            sys.stderr.write("\n".join(out) + "\n")
+            sys.stderr.flush()
+        if conflicts["mismatch"] and not allowed:
+            raise SystemExit(
+                f"[go_explore_solve] refusing to resume {prev}: the loaded "
+                f"cells were keyed under a different schema (above). Pass "
+                f"--allow-lineage-mismatch to override.")
+        return conflicts
 
     def _write_gate_header(self, root_path) -> None:
         """The A/B header. Written once, next to the archive, and echoed
@@ -2738,6 +3820,14 @@ class Solver:
             (c.best_score for c in self._sel_cells), default=1.0) or 1.0
         deep = [c for c in self._sel_cells
                 if c.key[0] == self.max_sect and c.key[-5] == self.max_area]
+        if self._gx_phantoms:
+            # THE REFROZEN FRONTIER (§12). `_sel_topgx` is a maximum, so
+            # a banked torn read defines the band every selection arm
+            # samples: ortho_ctrl's 14 bucket-95 cells restore at gx
+            # 507-511 and pinned topgx at 95 for every resumed run.
+            deep = [c for c in deep
+                    if (int(c.key[-5]), int(c.key[-1]))
+                    not in self._gx_phantoms]
         self._sel_deep = deep
         if deep:
             minl = min(c.key[0] for c in deep)
@@ -3016,6 +4106,130 @@ class Solver:
                           self.gate_pin_secs, self.gate_target_typed,
                           band_growth_stalled(self._gate_band_hist))
 
+    def _gate_checkpoint(self, now: float) -> int:
+        """One band-growth checkpoint: count the band, append it to the
+        history the arming conjunct reads, and roll the armed-secs clock.
+
+        THE CADENCE IS THE ARMING FLOOR (repair D-ARM). `band_growth
+        _stalled` needs four checkpoints before it can return True, so
+        the interval between checkpoints multiplied by four is the
+        earliest any sweep can fire — and while this lived inside the 60 s
+        progress line that floor was 240 s, hardcoded, on runs whose whole
+        budget was fifteen minutes. Now the interval is
+        --gate-arm-cadence-secs and the floor is stated rather than
+        inherited from a logging cadence. The default is unchanged.
+        """
+        band = band_cell_count(self.archive.cells.keys(),
+                               band=self.gate_band)
+        self._gate_band_hist.append(band)
+        self._gate_band_last = band
+        armed = self._gate_armed(now)
+        if armed and self._gate_armed_since is None:
+            self._gate_armed_since = now
+        elif not armed and self._gate_armed_since is not None:
+            self._gate_armed_secs += now - self._gate_armed_since
+            self._gate_armed_since = None
+        self._gate_last_ckpt = now
+        return band
+
+    def _gate_hist_alloc(self) -> None:
+        """Allocate the 2 MB boundary histogram on first use. Its own
+        method because BOTH samplers feed it now — the live in-band
+        observations and the sweep's undirected frames — and a lazily
+        allocated array with two writers needs one place that creates
+        it."""
+        if self._boundary_hist is None:
+            self._boundary_hist = np.zeros((ib.RAM_SIZE, 256), dtype=np.uint32)
+            self._boundary_rows = np.arange(ib.RAM_SIZE)
+
+    def _gate_baseline_sample(self, vals, prev):
+        """Fold ONE undirected frame into the prior and the farm counter.
+
+        `vals` is the RAM after a frame in which the program had not yet
+        pressed anything (module docstring of interaction_basis, D-PRIOR:
+        the settle prefix of every program, and the whole body of the
+        ladder's all-NOOP controls). `prev` is the previous such frame of
+        the SAME program, or None at its first — consecutive frames of one
+        program are a stride-1 change measurement; frames from different
+        programs are not consecutive and are never paired.
+
+        Post-onset frames are deliberately excluded. Counting them would
+        let the instrument cancel its own discoveries: the value a pattern
+        just created would score as "already seen at this boundary" and
+        the novelty term would shrink toward zero exactly where it is
+        supposed to be largest.
+
+        Returns the frame, to be carried as the next `prev`.
+        """
+        self._gate_hist_alloc()
+        if self._gate_change_sweep is None:
+            self._gate_change_sweep = np.zeros(ib.RAM_SIZE, dtype=np.uint32)
+        self._boundary_hist[self._boundary_rows[:len(vals)], vals] += 1
+        self._boundary_hist_total += 1
+        self._gate_baseline_frames += 1
+        if prev is not None and len(prev) == len(vals):
+            self._gate_change_sweep[:len(vals)] += (vals != prev)
+            self._gate_change_sweep_n += 1
+        return vals
+
+    def _gate_root_signature(self, cell) -> str:
+        """The identity of a root's UNDIRECTED TRAJECTORY: a digest of the
+        state blob every program at that root is restored from.
+
+        Not the cell key. Two archive keys holding the same blob restore
+        the same machine and, under the same all-NOOP input, produce the
+        same frames — so they are one trajectory and one piece of
+        evidence, whatever the archive calls them. Memoised per cell key,
+        since a root is swept many times over a run.
+        """
+        key = getattr(cell, "key", None)
+        sig = self._gate_root_sig.get(key)
+        if sig is None:
+            blob = getattr(cell, "state", None) or b""
+            sig = hashlib.blake2b(bytes(blob), digest_size=16).hexdigest()
+            if key is not None:
+                self._gate_root_sig[key] = sig
+        return sig
+
+    def _gate_baseline_fold(self, sig: str, t: int, vals) -> bool:
+        """Fold frame `t` of root `sig`'s undirected trajectory into the
+        prior and the K4 screen, ONCE.
+
+        Returns True when the frame was new. Every program at a root
+        replays the same frames from the same blob, so the second and
+        every later sighting of frame `t` is a replay and is counted as
+        `baseline_dupes` instead of as evidence. The pair (t-1, t) is
+        formed only when frame t-1 was itself folded and still cached, so
+        a pair is never invented across a gap — the direction that can
+        cost a change count, never fabricate one.
+        """
+        if t <= int(self._gate_baseline_len.get(sig, 0)):
+            self._gate_counters["baseline_dupes"] += 1
+            return False
+        prev = (self._gate_baseline_prev.get(sig)
+                if int(self._gate_baseline_len.get(sig, 0)) == t - 1 else None)
+        self._gate_baseline_sample(vals, prev)
+        self._gate_baseline_len[sig] = t
+        if len(self._gate_baseline_prev) > GATE_BASELINE_CACHE \
+                and sig not in self._gate_baseline_prev:
+            self._gate_baseline_prev.pop(next(iter(self._gate_baseline_prev)))
+        self._gate_baseline_prev[sig] = vals
+        return True
+
+    def _gate_liveness(self, ram):
+        """The profile's OWN liveness telemetry (its declared lives byte),
+        or None when the profile declares none.
+
+        Read through the same adapter the search reads it through, so the
+        death-aware control pairing uses no address this run did not
+        already depend on. A profile with no lives address yields None and
+        every observation is treated as live, i.e. exactly the behaviour
+        that predates the repair."""
+        try:
+            return int(self.game.lives(ram))
+        except Exception:                                  # noqa: BLE001
+            return None
+
     def _gate_observe(self, ram, key) -> None:
         """Boundary histogram + shadow ledger. Called from observe() only
         while the arm is on. NEVER touches the cell key."""
@@ -3026,9 +4240,7 @@ class Solver:
         gxb = int(key[-1])
         if gxb < top - self.gate_band:
             return
-        if self._boundary_hist is None:
-            self._boundary_hist = np.zeros((ib.RAM_SIZE, 256), dtype=np.uint32)
-            self._boundary_rows = np.arange(ib.RAM_SIZE)
+        self._gate_hist_alloc()
         if self._gate_change is None:
             # Its own guard rather than a rider on the histogram's: the
             # two are read by different consumers, and coupling the
@@ -3054,27 +4266,71 @@ class Solver:
                 (int(vals[addr]) // ib.VALUE_BUCKET, yb, gxb))
 
     def _gate_novelty(self, addr: int, value: int) -> float:
+        """Surprise, in bits, of `value` at `addr` under this run's own
+        UNDIRECTED prior — see interaction_basis.novelty_score.
+
+        THE SUPPORT IS THE REPAIR. The prior holds pre-press frames only
+        (post-press frames would let a pattern cancel its own discovery),
+        so the post-press value of every LATCHED candidate is unseen by
+        construction and the count-only estimator hands all of them the
+        same log2(total+1): on the probe, 40 latched rows, one novelty,
+        one score, and a plateau no tie-break can be blamed for. The
+        address's own SUPPORT — how many distinct values it took across
+        the same undirected frames — is measured from the same histogram
+        and separates a byte that has been pinned all run from one that
+        free-runs, which is exactly the distinction the plateau erased.
+        """
         if self._boundary_hist is None:
             return 1.0
-        seen = int(self._boundary_hist[int(addr), int(value) & 0xFF])
-        return ib.novelty_score(seen, self._boundary_hist_total)
+        row = self._boundary_hist[int(addr)]
+        seen = int(row[int(value) & 0xFF])
+        return ib.novelty_score(seen, self._boundary_hist_total,
+                                support=int(np.count_nonzero(row)))
+
+    def _gate_farm_sources(self) -> list:
+        """The (changes, samples, stride) triples behind every farmability
+        number this run reports. Pulled out of the estimator so the
+        receipt can state them SEPARATELY: "the live band sampler saw
+        nothing and the sweep carried the reading" and "both agreed" are
+        different facts, and the first is the one the graded run needed to
+        be able to say."""
+        src = []
+        if self._gate_change is not None and self._gate_change_n:
+            src.append(("live_band", self._gate_change,
+                        self._gate_change_n, ib.BAND_SAMPLE_STRIDE))
+        if self._gate_change_sweep is not None and self._gate_change_sweep_n:
+            src.append(("sweep_undirected", self._gate_change_sweep,
+                        self._gate_change_sweep_n, ib.SWEEP_SAMPLE_STRIDE))
+        return src
 
     def _gate_farmability(self, addr: int):
         """K4's farmability for one address, MEASURED off this run's own
-        band sampling: value-change events per 1,000 in-band search
-        steps.
+        sampling: value-change events per 1,000 observed steps, POOLED
+        over the live in-band sampler and the sweep's own undirected
+        frames.
 
-        Returns None — never 0.0 — when the run has not sampled enough
-        band steps to resolve the 1-event/1k threshold. An unmeasured
-        axis is then REFUSED by the ranker rather than admitted on a
-        number nothing produced; a constant 0.0 in a receipt column
+        The pooling is the D-PRIOR repair's other half. The live sampler
+        alone cannot answer K4 at a pinned wall — it only fires on band
+        cells the search re-enters, and the sweep is rooted precisely in
+        the tail it does not — so on the graded Castlevania run it never
+        produced a single sample and every significant row was refused
+        `farm_unmeasured`. The sweep's undirected frames are consecutive
+        and are counted exactly (stride 1); pooling in step units is what
+        makes the two combinable.
+
+        Returns None — never 0.0 — when the pooled sources have not
+        observed enough steps to resolve the 1-event/1k threshold. An
+        unmeasured axis is then REFUSED by the ranker rather than admitted
+        on a number nothing produced; a constant 0.0 in a receipt column
         called "farmability" is a fabricated measurement, and it would
         also make K4's farmable half unable to fire at all.
         """
-        if self._gate_change is None:
+        src = self._gate_farm_sources()
+        if not src:
             return None
-        return ib.farm_rate(int(self._gate_change[int(addr)]),
-                            self._gate_change_n)
+        a = int(addr)
+        return ib.farm_rate_pooled(
+            [(int(counts[a]), n, stride) for _name, counts, n, stride in src])
 
     def shadow_yield(self) -> float:
         """Cells the admitted axes WOULD create, per distinct in-band
@@ -3179,6 +4435,12 @@ class Solver:
             # to name it.
             fams = {o["family"] for o in obs if not o.get("control")}
             self._gate_fdr_m = fdr_m = ib.comparison_grid(len(fams))
+            # ONE TIE SEED FOR THE WHOLE SWEEP, and it is the RUN's seed.
+            # The tie-break has to be arbitrary (that is the point — see
+            # tie_break_key), but it must not be arbitrary DIFFERENTLY for
+            # the wall and its null, or K1 compares two shuffles.
+            tie = int(getattr(self.args, "seed", 0))
+            stats: dict = {}
             # K1: wall roots and sham roots are ranked SEPARATELY by the
             # same instrument. A sham yield that approaches the wall
             # yield means the ranking is reading noise, whatever it found
@@ -3186,11 +4448,12 @@ class Solver:
             ranked = self._gate_rank([o for o in obs if not o["sham"]],
                                      novelty=self._gate_novelty,
                                      farmability=self._gate_farmability,
-                                     m=fdr_m)
+                                     m=fdr_m, tie_seed=tie, stats=stats)
             sham = self._gate_rank([o for o in obs if o["sham"]],
                                    novelty=self._gate_novelty,
                                    farmability=self._gate_farmability,
-                                   m=fdr_m)
+                                   m=fdr_m, tie_seed=tie)
+            self._gate_rank_stats = stats
             ranked = self._gate_pass_b(obs, ranked, roots)
         finally:
             # Whatever brought us into this finally is the report that
@@ -3252,9 +4515,22 @@ class Solver:
             self._gate_swept[cell.key] = self._gate_swept.get(cell.key, 0) + 1
         self._gate_counters["sweeps"] += 1
         self._gate_counters["programs"] += len(jobs)
+        # K1'S NULL IS A MEASUREMENT OR IT IS NOTHING. The sham arm draws
+        # from the region BELOW the band floor, and that region can be
+        # empty by construction (a one-column target has no freely
+        # advancing region at all), in which case no sham program ever
+        # ran. Reporting 0.0 there hands the kill — "sham yield >= 50% of
+        # wall yield" — a clean bill of health off a null that does not
+        # exist. None says UNMEASURED, and the two counts behind the
+        # ratio are published beside it.
+        n_sham = sum(1 for _c, s in roots if s)
         wall_hits = sum(1 for r in ranked if r["significant"])
+        sham_hits = sum(1 for r in sham if r["significant"])
+        self._gate_counters["sham_roots"] = n_sham
+        self._gate_counters["sham_hits"] = sham_hits
+        self._gate_counters["wall_hits"] = wall_hits
         self._gate_counters["sham_yield"] = (
-            sum(1 for r in sham if r["significant"]) / max(1, wall_hits))
+            sham_hits / max(1, wall_hits) if n_sham else None)
         self._gate_admit(ranked, roots)
         return ranked
 
@@ -3302,12 +4578,14 @@ class Solver:
         for start in range(0, len(jobs), n):
             bobs += self._gate_wave(jobs[start:start + n],
                                     tail=ib.TAIL_PASS_B,
-                                    length=ib.PROGRAM_LEN_PASS_B)
+                                    length=ib.PROGRAM_LEN_PASS_B,
+                                    baseline=False)
         self._gate_counters["programs"] += len(jobs)
         confirmed = {(r["addr"], r["family"]): r
                      for r in self._gate_rank(
                          bobs, novelty=self._gate_novelty,
-                         farmability=self._gate_farmability)}
+                         farmability=self._gate_farmability,
+                         tie_seed=int(getattr(self.args, "seed", 0)))}
         for r in ranked:
             c = confirmed.get((r["addr"], r["family"]))
             r["pass_b"] = c is not None
@@ -3319,11 +4597,16 @@ class Solver:
                               * (r["roots"] / max(1, r["family_roots"]))
                               * (1.0 if farm is None
                                  else max(0.0, 1.0 - farm)))
-        ranked.sort(key=lambda r: (-r["score"], r["addr"], r["family"]))
+        # ONE sort key, defined once in interaction_basis. A pass-B
+        # re-sort with its own key is how an address-ordered tie-break
+        # walks back in through the confirmation pass after the ranking
+        # itself was repaired.
+        ranked.sort(key=ib.rank_sort_key)
         return ranked
 
     def _gate_wave(self, jobs, tail: int = ib.TAIL_PASS_A,
-                   length: int = ib.PROGRAM_LEN_PASS_A) -> list:
+                   length: int = ib.PROGRAM_LEN_PASS_A,
+                   baseline: bool = True) -> list:
         """Step one lockstep wave of <= workers programs and capture RAM
         at each program's own t0/t1/t2.
 
@@ -3339,6 +4622,42 @@ class Solver:
         phase 8, where a settle of eight samples cannot supply the nine a
         K=8 freeze needs (the root frame is not readable). See the
         sampling loop below and interaction_basis.contact_admitted.
+
+        THE SWEEP FEEDS ITS OWN PRIOR AND ITS OWN SCREEN (repair
+        D-PRIOR). Every frame of a program in which nothing has been
+        pressed yet is an undirected observation at a sweep root, and
+        those frames go into the same boundary histogram and the same
+        farmability counter the live search feeds. That is the population
+        the ranking is actually about; the live sampler alone measures a
+        different one (the band cells the search re-enters) and, at a
+        pinned wall, measured nothing at all.
+
+        `baseline=False` FOR PASS B, and the reason is the same one the
+        BH denominator is charged the full grid for. Pass B re-runs the
+        slots that SURVIVED pass A (and their length twins) from the
+        first three roots — a sub-population chosen by looking at the
+        data. Letting it feed the prior would make the horizon the prior
+        is measured over a function of what the sweep happened to find,
+        so two sweeps of the same wall would screen against different
+        priors. Pass A is the pre-declared population: every root, every
+        pattern in the basis, the same horizon every time.
+
+        THE BASELINE WINDOW IS DEATH-AWARE TOO. It closes at the frame
+        the program's liveness reading changes, because a death cascade
+        is neither a quiescent prior nor an undirected change rate — and
+        on the staged Castlevania band roots a 153-step NOOP program dies
+        at step 31-115, so without the close the screen would read every
+        address the death touches as wildly farmable and K4 would refuse
+        the entire map.
+
+        AND IT MEASURES LIVENESS. The profile's own lives byte is read at
+        t0/t1/t2, so an observation whose differential window contains a
+        death is marked and excluded by the ranker — as a control (whose
+        death cascade would otherwise be subtracted out of every real
+        candidate) and as a pattern (whose death cascade would otherwise
+        BE the candidate). On the staged Castlevania band roots, none of
+        the 16 survives the 153-step all-NOOP program, so this is not a
+        corner case at that wall: it is the common case.
         """
         progs, points = [], []
         for cell, _sham, _slot, pat, phase, _rep in jobs:
@@ -3348,6 +4667,16 @@ class Solver:
             self.pool.load_worker_state(wid, job[0].state)
         caps: list = [{} for _ in jobs]
         settle_pos: list = [[] for _ in jobs]
+        # How many leading frames of each program press nothing — the
+        # window in which a sample is still an UNDIRECTED observation.
+        undirected = ([ib.noop_prefix_len(p) for p in progs] if baseline
+                      else [0] * len(jobs))
+        # The trajectory each worker's undirected frames belong to. All
+        # programs at one root share it, which is exactly why the frames
+        # are folded once (see _gate_baseline_fold).
+        root_sig = [self._gate_root_signature(j[0]) for j in jobs]
+        base_live: list = [_UNSET for _ in jobs]
+        lives: list = [{} for _ in jobs]
         acts = np.zeros(int(self.args.workers), dtype=np.uint8)
         for t in range(1, length + 1):
             acts[:] = 0
@@ -3375,8 +4704,32 @@ class Solver:
                     ram = results[wid][2]
                     settle_pos[wid].append((self.game.progress(ram),
                                             self.game.y(ram)))
+                if t <= undirected[wid]:
+                    # Nothing has been pressed in this program yet, so
+                    # this frame belongs to the prior and to the K4
+                    # screen — ONCE per root trajectory. Every program at
+                    # a root replays the same undirected frames from the
+                    # same blob, so a second sighting of frame t is a
+                    # replay, not a second observation, and pairing is
+                    # done inside the trajectory rather than inside the
+                    # program (which would also invent changes across
+                    # two programs' unrelated frames).
+                    lv = self._gate_liveness(results[wid][2])
+                    if base_live[wid] is _UNSET:
+                        base_live[wid] = lv
+                    if lv != base_live[wid]:
+                        # The window CLOSES here and does not reopen: a
+                        # respawn is not a return to the state that was
+                        # being measured.
+                        undirected[wid] = 0
+                        self._gate_counters["baseline_truncated"] += 1
+                    else:
+                        self._gate_baseline_fold(
+                            root_sig[wid], t,
+                            ib.as_ram(results[wid][2])[:ib.RAM_SIZE].copy())
                 if t in (t0, t1, t2):
                     caps[wid][t] = ib.as_ram(results[wid][2]).copy()
+                    lives[wid][t] = self._gate_liveness(results[wid][2])
         out = []
         for wid, (cell, sham, slot, pat, phase, rep) in enumerate(jobs):
             t0, t1, t2 = points[wid]
@@ -3411,6 +4764,18 @@ class Solver:
                 "control": not any(pat.masks),
                 "plen": len(pat.masks),
                 "contact": contact,
+                # DEATH-AWARE PAIRING. `alive` is False when the
+                # profile's own liveness reading changed anywhere inside
+                # THIS observation's differential window — which is the
+                # only window it can speak for. Unreadable liveness (a
+                # profile that declares no lives byte) leaves every
+                # sample None, the comparison is vacuously equal, and the
+                # behaviour is the pre-repair one.
+                "alive": len({v for v in (lives[wid].get(t0),
+                                          lives[wid].get(t1),
+                                          lives[wid].get(t2))}) == 1,
+                "lives": [lives[wid].get(t0), lives[wid].get(t1),
+                          lives[wid].get(t2)],
                 "ram0": caps[wid][t0], "ram1": caps[wid][t1],
                 "ram2": caps[wid][t2],
             })
@@ -3418,7 +4783,7 @@ class Solver:
 
     @staticmethod
     def _gate_rank(observations, novelty=None, farmability=None,
-                   m=None) -> list:
+                   m=None, tie_seed=0, stats=None) -> list:
         """PURE differential ranking — see interaction_basis.rank_candidates
         for the pipeline (NOOP subtraction, cross-root invariance,
         persistence class, BH-FDR, novelty x controllability x
@@ -3427,7 +4792,8 @@ class Solver:
         staticmethod so it is testable with hand-built captures and
         cannot reach any live solver state."""
         return ib.rank_candidates(observations, novelty=novelty,
-                                  farmability=farmability, m=m)
+                                  farmability=farmability, m=m,
+                                  tie_seed=tie_seed, stats=stats)
 
     def _gate_admit(self, ranked, roots) -> None:
         """Record the sweep's verdict: counters, the K1 sham null, and a
@@ -3445,6 +4811,18 @@ class Solver:
         "the instrument never ran", "the sweep threw" and "somebody
         deleted the receipt". Same filename series, same fields, empty
         `admitted` — a null that can be read, checked and cited.
+
+        AND THE RANKED LIST IS RECEIPTED IN FULL (repair D-TRUNC). The
+        first build wrote ranked[:32]. A grade whose whole question is
+        "where did this address rank" cannot be settled from a truncated
+        list: the graded Castlevania sweep produced 2,135 candidate rows
+        and the receipt could only say that $0004 was not in the top 32 —
+        it could not distinguish "ranked 33rd" from "never ranked at all",
+        and the two are opposite verdicts about the instrument. So the
+        head stays inline for a human reader, and beside it go the total,
+        the rank of EVERY address that ranked, the full admissible list
+        with its own ranks, and the complete ranked table gzipped next to
+        the receipt with its sha.
         """
         self._gate_counters["candidates"] += len(ranked)
         self._gate_counters["cross"] += sum(1 for r in ranked
@@ -3460,9 +4838,24 @@ class Solver:
         d = self.out / "gate"
         d.mkdir(parents=True, exist_ok=True)
         n = self._gate_counters["sweeps"]
+        full_name = f"ranked_{n:03d}.json.gz"
+        # mtime=0 so the sha below is a function of the RANKING and not
+        # of the wall clock: two runs that ranked identically must
+        # produce identical receipt shas, or the sha cannot be used to
+        # check that they did.
+        blob = gzip.compress(
+            (json.dumps([dict(r) for r in ranked]) + "\n").encode(), mtime=0)
+        (d / full_name).write_bytes(blob)
+        admissible = ib.admissible_rows(ranked)
         (d / f"candidates_{n:03d}.json").write_text(json.dumps({
             "sweep": n, "roots": len(roots),
             "sham_roots": sum(1 for _c, s in roots if s),
+            # K1's null, as it will be read by the kill: null (never
+            # measured) is not 0.0 (measured clean), and the counts the
+            # ratio is built from are on the receipt beside it.
+            "sham_yield": self._gate_counters["sham_yield"],
+            "sham_hits": self._gate_counters["sham_hits"],
+            "wall_hits": self._gate_counters["wall_hits"],
             "basis": len(self._gate_basis),
             "phases": list(self._gate_phases),
             "program_len": ib.PROGRAM_LEN_PASS_A,
@@ -3472,12 +4865,57 @@ class Solver:
             # rows — and the one thing a reader of a null has to be able
             # to check is the bar it was judged against.
             "fdr_m": getattr(self, "_gate_fdr_m", None),
+            # The arbitrary half of the total order, named. Without it
+            # the ranking is not reproducible from the receipt, and the
+            # whole point of seeding the tie-break rather than fixing it
+            # is that it is a declared property of the run.
+            "tie_seed": int(getattr(self.args, "seed", 0)),
+            "sort_key": ("score desc, significant first, unrefused first, "
+                         "effect_size desc, seeded tie_key, (addr, family)"),
             # How the farmability column was measured, so a reader can
-            # reproduce it (and can tell a null from a zero).
+            # reproduce it (and can tell a null from a zero). BOTH
+            # sources, separately: "the live band sampler never fired and
+            # the sweep carried the reading" is the fact the graded run
+            # could not state.
             "farm_samples": int(self._gate_change_n),
             "farm_stride": ib.BAND_SAMPLE_STRIDE,
             "farm_min_samples": ib.FARM_MIN_SAMPLES,
+            "farm_min_steps": ib.FARM_MIN_STEPS,
+            "farm_sources": [
+                {"name": name, "samples": int(cnt), "stride": int(stride),
+                 "steps": int(cnt) * int(stride)}
+                for name, _counts, cnt, stride in self._gate_farm_sources()],
+            "farm_steps_total": sum(
+                int(cnt) * int(stride)
+                for _n, _c, cnt, stride in self._gate_farm_sources()),
+            # The prior, and where it came from. novelty == 1.0 across a
+            # whole receipt is the D-PRIOR signature and it has to be
+            # readable off the artifact.
+            "boundary_hist_total": int(self._boundary_hist_total),
+            "boundary_frames_sweep": int(self._gate_baseline_frames),
+            # DISTINCT vs STEPPED. Every program at a root replays the
+            # same undirected frames, so the second number is the size of
+            # the pseudo-replication the refusal floor is NOT charged in.
+            # A reader who sees frames_sweep below FARM_MIN_STEPS knows
+            # the farmability column had to be refused, and can see how
+            # much of the old denominator was replay.
+            "boundary_frames_replayed": int(
+                self._gate_counters["baseline_dupes"]),
+            "boundary_roots": len(self._gate_baseline_len),
+            # What the differential declined to read, and why.
+            "differential": dict(getattr(self, "_gate_rank_stats", {}) or {}),
+            # D-TRUNC: the head, the total, and the pointers that make
+            # "absent" distinguishable from "ranked low".
             "ranked": [dict(r) for r in ranked[:32]],
+            "ranked_total": len(ranked),
+            "ranked_head": 32,
+            "ranked_full": full_name,
+            "ranked_full_sha256": hashlib.sha256(blob).hexdigest(),
+            "ranked_addr_rank": _first_rank_by_addr(ranked),
+            "admissible_total": len(admissible),
+            "admissible_addr_rank": _first_rank_by_addr(admissible),
+            # ADDRESSES, not rows (D-DUP): `rank <= 5` is defined on
+            # addresses and the sidecar promotes addresses.
             "admitted": [r["addr"] for r in admitted],
             "queued_injections": [list(e) for e in self._gate_inject],
         }, indent=2) + "\n")
@@ -3725,6 +5163,14 @@ class Solver:
                     self._gate_boundary_hit = True
                     ctx[i] = self._assign(i, prev=c)
             now = time.time()
+            # The band-growth checkpoint runs on its OWN cadence and
+            # BEFORE the sweep poll, so the arming conjunct it feeds is
+            # current on the step the sweep is decided (repair D-ARM: the
+            # checkpoints used to be minted by the 60 s progress line, so
+            # nothing could arm before four minutes had passed).
+            if (self.gate_mode != "off"
+                    and now - self._gate_last_ckpt >= self.gate_arm_cadence):
+                self._gate_checkpoint(now)
             if self.gate_mode != "off" and self._gate_boundary_hit:
                 self._gate_boundary_hit = False
                 self._gate_maybe_sweep(ctx, now, deadline)
@@ -3776,6 +5222,32 @@ class Solver:
             "sps": round(self.steps_done / max(elapsed, 1e-9)),
             "stall_flat_windows": self._stall["flat_windows"],
         }
+        # LOCAL COVERAGE (c_local) — unconditional, unlike every arm's
+        # telemetry below, and deliberately so: it is a derivative, the
+        # archive on disk holds exactly ONE reading of it (at the flush),
+        # and the whole finding of size_decoupled_statistic_2026-08-11 §11
+        # is that no cross-sectional statistic substitutes for the series
+        # (22 candidates, 0 separate). It cannot be back-filled from a
+        # banked run, so it has to be in every run's line from now on.
+        # Peer of `cells`, not arm telemetry. It is READ by the wall
+        # discriminator (it is MISSING_TELEMETRY entry #1) and adding it
+        # to the line moves runs out of abstention — see the section
+        # header for the measured before/after and for what stays struck.
+        triples = getattr(self, "_c_local", None)
+        if triples is not None:
+            c_local = len(triples)
+            c_band = local_coverage_band(triples)
+            prev = getattr(self, "_c_local_prev", None)
+            line["c_local"] = c_local
+            line["c_local_band"] = c_band
+            line["c_local_delta"] = None if prev is None else c_local - prev[0]
+            line["c_local_band_delta"] = (None if prev is None
+                                          else c_band - prev[1])
+            elast = (None if prev is None else
+                     coverage_elasticity(prev[0], prev[2], c_local, n_cells))
+            line["c_local_elasticity"] = (None if elast is None
+                                          else round(elast, 4))
+            self._c_local_prev = (c_local, c_band, n_cells)
         if self.ortho_mode != "off":
             # ortho_deep_yband is the pre-registered gate figure: the
             # extreme y-band inside the band the PRIMARY arm samples, so
@@ -3790,17 +5262,16 @@ class Solver:
             line["pinned_secs"] = round(time.time() - self._pin_time)
         if getattr(self, "gate_mode", "off") != "off":
             # band_cells is the bookkeeping the self-arming band-growth
-            # conjunct reads (§3): one pass over the archive keys at this
-            # 60 s cadence, and the last few records are the whole input.
+            # conjunct reads (§3): one pass over the archive keys, and the
+            # last few records are the whole input. READ-ONLY here. The history the arming conjunct reads and
+            # the armed-secs clock are both rolled by _gate_checkpoint on
+            # its own cadence (--gate-arm-cadence-secs); a progress line
+            # that also appended would double-count the series the
+            # conjunct measures growth over and make the arming floor a
+            # function of how often the run happens to log.
             band = band_cell_count(self.archive.cells.keys(),
                                    band=self.gate_band)
-            self._gate_band_hist.append(band)
             armed = self._gate_armed()
-            if armed and self._gate_armed_since is None:
-                self._gate_armed_since = time.time()
-            elif not armed and self._gate_armed_since is not None:
-                self._gate_armed_secs += time.time() - self._gate_armed_since
-                self._gate_armed_since = None
             secs = self._gate_armed_secs + (
                 time.time() - self._gate_armed_since
                 if self._gate_armed_since is not None else 0.0)
@@ -3810,12 +5281,18 @@ class Solver:
             line["gate_sweep_steps"] = self._gate_counters["steps"]
             for k in ("sweeps", "programs", "candidates", "admitted",
                       "cross", "injections", "inexpressible", "sham_yield",
+                      "sham_roots", "sham_hits", "wall_hits",
                       "lift_active", "lift_ctrl", "restore_failed"):
                 line[f"gate_{k}"] = self._gate_counters[k]
             line["gate_shadow_yield"] = round(self.shadow_yield(), 4)
-            # The farmability denominator, so a reader can tell "measured
-            # and clean" from "never measured" without opening a receipt.
+            # The farmability denominators, so a reader can tell "measured
+            # and clean" from "never measured" without opening a receipt
+            # — and can tell WHICH sampler carried it. gate_farm_samples
+            # pinned at 0 for 24 minutes was D-PRIOR's visible symptom,
+            # and it was visible only in the receipt.
             line["gate_farm_samples"] = int(self._gate_change_n)
+            line["gate_farm_samples_sweep"] = int(self._gate_change_sweep_n)
+            line["gate_prior_frames"] = int(self._boundary_hist_total)
             prof = self._gate_axes_live
             if prof is not None:
                 line["boundary_state_axes"] = prof.get("live_state_axes_n")
@@ -3831,6 +5308,24 @@ class Solver:
         # (so ordinary runs' progress lines are unchanged), loud the moment a
         # candidate fails to reproduce — the four-game detector gate reads
         # exactly this number.
+        # Torn-read telemetry: silent unless the filter is on, so an
+        # unfiltered run's line is unchanged, and printed even at zero
+        # once it IS on — "armed and never fired" and "never armed" are
+        # different readings and the phantom cost 10.7 h of not knowing.
+        if (getattr(self, "progress_smooth", "off") != "off"
+                or getattr(self, "_borrow_off", False)):
+            line["progress_smooth"] = self.progress_smooth
+            line["progress_glitches"] = self._prog_glitches
+            # The pair audit, whenever the borrow rule has ruled on
+            # anything: "the filter is armed and firing" and "the filter
+            # is armed and wrong about this profile's address pair" are
+            # different runs, and only the second one disarms itself.
+            if (getattr(self, "_borrow_tears", 0)
+                    or getattr(self, "_borrow_flat", 0)
+                    or getattr(self, "_borrow_off", False)):
+                line["borrow_tears"] = self._borrow_tears
+                line["borrow_refuted"] = self._borrow_flat
+                line["borrow_disarmed"] = bool(self._borrow_off)
         if getattr(self, "verify_rejections", 0):
             line["verify_checks"] = self.verify_checks
             line["verify_rejections"] = self.verify_rejections
@@ -3862,7 +5357,8 @@ class Solver:
         if self._flush_thread is not None and self._flush_thread.is_alive():
             self._flush_thread.join()
         self.archive.save(self.out / "archive.pkl")
-        stamp_stats_provenance(self.out / "archive.pkl", self.provenance)
+        stamp_stats_provenance(self.out / "archive.pkl", self.provenance,
+                               self.key_config())
         with open(self.out / "traces.pkl", "wb") as f:
             pickle.dump(self.traces, f, protocol=pickle.HIGHEST_PROTOCOL)
         (self.out / "roots.json").write_text(json.dumps(self.roots, indent=2) + "\n")
@@ -3902,7 +5398,8 @@ class Solver:
             snap._cells = cells_snapshot
             snap.total_records, snap.total_new_cells, snap.total_improvements = counters
             snap.save(self.out / "archive.pkl")
-            stamp_stats_provenance(self.out / "archive.pkl", self.provenance)
+            stamp_stats_provenance(self.out / "archive.pkl", self.provenance,
+                                   self.key_config())
             if getattr(self, "gate_mode", "off") != "off":
                 # Taxonomy is KEYED, never WIRED: only the PURE per-axis
                 # profile runs, on the flush SNAPSHOT, on this background
@@ -4058,7 +5555,39 @@ def main() -> int:
                          "archive.pkl + traces.pkl + roots.json and continue "
                          "exploring instead of starting from one root cell. "
                          "Iterating on a single wall keeps every hard-won "
-                         "frontier cell (e.g. CV block-3's stair funnel).")
+                         "frontier cell (e.g. CV block-3's stair funnel). "
+                         "The resumed archive's recorded lineage (hw flags, "
+                         "frame_skip, core sha, cell-key schema) is compared "
+                         "against this run's before anything is loaded.")
+    ap.add_argument("--allow-unverified-lineage", action="store_true",
+                    help="Proceed with --resume-archive when an axis could "
+                         "not be CHECKED at all (the archive records no "
+                         "hw_provenance and none can be recovered from its "
+                         "roots.json or root sidecars, or its keys leave a "
+                         "schema axis ambiguous). OFF by default: 'nothing "
+                         "recorded' is not 'matches', and the §12 archive "
+                         "was resumed on exactly that reading. Implied by "
+                         "--allow-lineage-mismatch.")
+    ap.add_argument("--no-resume-refreeze", dest="resume_refreeze",
+                    action="store_false", default=True,
+                    help="Keep banked torn-read frontier cells in the "
+                         "frontier readers on --resume-archive. By default "
+                         "a resumed gx-bucket ISLAND — occupied, separated "
+                         "from the body of the frontier by an empty bucket, "
+                         "holding <2%% of it — is excluded from max_gx and "
+                         "_sel_topgx (it stays in the archive). That is the "
+                         "gx-767 phantom: 14 of ortho_ctrl's 149,153 cells "
+                         "pinned every resumed run's frontier at a position "
+                         "the game was never in (§12).")
+    ap.add_argument("--allow-lineage-mismatch", action="store_true",
+                    help="Proceed with --resume-archive even when the "
+                         "resumed archive's hw_provenance or cell-key "
+                         "schema disagrees with this run. OFF by default: "
+                         "the silent version of this cost the campaign a "
+                         "resume across a 1-flag lineage into a 4-flag run "
+                         "over a disjoint key subspace, where 560,410 cells "
+                         "collapsed to 88,212 on a like-for-like recount "
+                         "(GATE_OPENER_CAMPAIGN_2026-08-11 §12).")
     ap.add_argument("--inversion-pin-secs", type=float, default=180.0,
                     metavar="SECS",
                     help="Seconds the deep frontier must sit pinned before "
@@ -4153,6 +5682,15 @@ def main() -> int:
                          "advances in a session). Mined defaults: 600 for "
                          "the CV hall, 120 for Bubble Bobble. Any "
                          "negative value disables the arm outright.")
+    ap.add_argument("--gate-arm-cadence-secs", type=float, default=60.0,
+                    metavar="SECS",
+                    help="Seconds between band-growth checkpoints. Four "
+                         "are needed before the band-growth conjunct can "
+                         "return True, so this value x 4 is the earliest "
+                         "any sweep can fire — 240 s at the default, "
+                         "which is most of a short bounded run. Lower it "
+                         "to arm a K0-class run inside its budget. "
+                         "DEFAULT 60 = the receipted behaviour.")
     ap.add_argument("--gate-target-typed", action="store_true",
                     help="Operator attestation that this target has a "
                          "TYPED wall-corpus row (the corpus is markdown; "

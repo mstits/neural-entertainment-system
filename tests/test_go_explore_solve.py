@@ -31,6 +31,7 @@ from scripts.go_explore_solve import (
     count_wmax,
     gate_armed,
     gate_axes_sidecar_sha,
+    gate_counters,
     gate_run_header,
     gate_suppress_trace,
     hw_provenance,
@@ -817,6 +818,9 @@ def _ortho_solver(cells, **over):
         _ortho_pool=[], _ortho_ids=set(), _ortho_ext={},
         _ortho_deep_yband=None, _ortho_selections=0,
         _ortho_cols_improved=0,
+        # Banked torn-read buckets the resume refreeze refused: empty on
+        # every run that did not resume, which is every fixture here.
+        _gx_phantoms=set(),
         _sel_cells=None, _sel_n=0, _sel_area=None)
     for k, v in over.items():
         setattr(f, k, v)
@@ -1537,21 +1541,32 @@ def _arm_gate(f, **over):
              _boundary_hist=None, _boundary_hist_total=0,
              _boundary_rows=None, _gate_boundary_hit=False,
              _gate_change=None, _gate_change_n=0, _gate_prev_vals=None,
+             # The sweep's own copies of both counters (D-PRIOR repair):
+             # the live band sampler cannot reach the band tail the sweep
+             # roots in, so the sweep feeds the same statistics itself.
+             _gate_change_sweep=None, _gate_change_sweep_n=0,
+             _gate_baseline_frames=0, _gate_rank_stats={},
+             # ...and the de-replicator that keeps those counts honest:
+             # every program at a root replays the same undirected
+             # frames, so they are folded once per (trajectory, index).
+             _gate_baseline_len={}, _gate_baseline_prev={},
+             _gate_root_sig={},
+             gate_arm_cadence=60.0, _gate_last_ckpt=0.0, _gate_band_last=0,
              _gate_inject=[], _gate_inject_i=0,
              bitmasks=[0, 1],
              _gate_next_sweep=0, _gate_last_pin=0.0, _gate_disarmed=False,
              _gate_armed_secs=0.0, _gate_armed_since=None,
              _gate_axes_live=None, steps_done=0, _pin_time=0.0,
-             _gate_counters={"sweeps": 0, "programs": 0, "candidates": 0,
-                             "admitted": 0, "cross": 0, "injections": 0,
-                             "inexpressible": 0, "steps": 0,
-                             "sham_yield": 0.0, "restore_failed": 0,
-                             "lift_active": 0, "lift_ctrl": 0})
+             _gate_counters=gate_counters())
     d.update(over)
     for k, v in d.items():
         setattr(f, k, v)
     for name in ("_gate_armed", "_gate_observe", "_gate_novelty",
-                 "_gate_farmability", "_gate_roots", "_gate_maybe_sweep",
+                 "_gate_farmability", "_gate_farm_sources", "_gate_roots",
+                 "_gate_maybe_sweep", "_gate_hist_alloc",
+                 "_gate_baseline_sample", "_gate_baseline_fold",
+                 "_gate_root_signature", "_gate_liveness",
+                 "_gate_checkpoint",
                  "_gate_sweep", "_gate_wave", "_gate_pass_b", "_gate_admit",
                  "_gate_queue_injections", "shadow_yield"):
         setattr(f, name, MethodType(getattr(Solver, name), f))
@@ -2122,18 +2137,22 @@ class _GatePool:
         return out
 
 
-def _sweep_solver(tmp_path, n_roots: int = 6):
+def _sweep_solver(tmp_path, n_roots: int = 6, columns: int = 12,
+                  band: int = 5):
     # Twelve columns and a band of 5: buckets 6-11 are the band the sweep
     # roots at, 0-5 are the freely-advancing region the sham roots (K1's
     # null) come from. SIX band roots because BH is charged against the
     # full addr x family grid: with three, the strongest possible
     # candidate in this fixture reaches p=1e-3 and the instrument would
     # be pinned admitting rows a 6,144-comparison correction refuses.
-    cells = [_ocell(gx, 0) for gx in range(12)]
+    # `columns`/`band` widen that geometry for the tests that need the
+    # K4 screen to reach its DISTINCT-step floor: a root is worth one
+    # all-NOOP trajectory (152 pairs), not one per program.
+    cells = [_ocell(gx, 0) for gx in range(columns)]
     for i, c in enumerate(cells):
         c.state = bytes([i]) + bytes(2047)
     f = _arm_gate(_ortho_solver(cells), gate_mode="enumerate",
-                  gate_pin_secs=0.0, gate_target_typed=True, gate_band=5,
+                  gate_pin_secs=0.0, gate_target_typed=True, gate_band=band,
                   gate_sweep_roots=n_roots, gate_sham_roots=0,
                   _gate_band_hist=[5, 5, 5, 5])
     space = [[], ["right"]]
@@ -2864,18 +2883,40 @@ def test_the_confirmation_pass_re_runs_each_survivors_length_twin(tmp_path):
 def test_the_candidate_receipt_reports_how_farmability_was_measured(tmp_path):
     # End to end: the sweep writes a receipt, and a reader can tell a
     # measured zero from an unmeasured one without re-running anything.
-    f = _sweep_solver(tmp_path)
+    #
+    # D-PRIOR REPAIR, wired. The LIVE band sampler has fired zero times
+    # here, and at a pinned wall that is the ordinary case rather than a
+    # corner: the sweep roots in the band tail the search does not
+    # re-enter, so the graded Castlevania run ended 24 minutes with
+    # farm_samples=0 and refused every significant row `farm_unmeasured`.
+    # The sweep now measures the screen off its OWN undirected frames, so
+    # the reading below is a MEASUREMENT taken on the population the
+    # instrument is rooted in — not a default and not a zero nothing
+    # produced.
+    # Eight roots: the screen's floor is charged in DISTINCT steps, and
+    # every program at a root replays one all-NOOP trajectory (repair
+    # R5), so six roots cannot resolve one event per thousand.
+    f = _sweep_solver(tmp_path, n_roots=8, columns=14, band=7)
+    assert f._gate_change_n == 0             # the live sampler never fired
     ranked = f._gate_sweep([{"key": ("a",)}, {"key": ("b",)}])
-    assert ranked and all(r["farmability"] is None for r in ranked), \
-        "a sweep with no band samples must not invent a rate"
-    # ...so nothing is admitted off an unmeasured axis, which is the
-    # refusal doing its job rather than a silent pass.
-    assert f._gate_counters["admitted"] == 0
-    null = json.loads((tmp_path / "gate" / "candidates_001.json").read_text())
-    assert null["admitted"] == []
+    assert ranked and all(r["farmability"] == 0.0 for r in ranked)
+    assert f._gate_change_sweep_n > 0
+    rec = json.loads((tmp_path / "gate" / "candidates_001.json").read_text())
+    assert [s["name"] for s in rec["farm_sources"]] == ["sweep_undirected"]
+    assert rec["farm_steps_total"] >= ib.FARM_MIN_STEPS
+    assert rec["farm_samples"] == 0          # ...and the live half says so
+    # ...so the axis is screened and admitted on a real number, which is
+    # the outcome the empty-by-construction admissible list denied.
+    assert rec["admitted"] == [0x40]
+    assert f._gate_counters["admitted"] == 1
+    # A run whose sweep has ALSO never sampled has no reading at all, and
+    # the ranker refuses the axis rather than scoring it (K4's second
+    # half). "Unmeasured" and "measured quiet" stay distinguishable.
+    cold = _arm_gate(SimpleNamespace(), gate_mode="enumerate")
+    assert Solver._gate_farmability(cold, 0x40) is None
 
-    # Now give it the samples, and the same sweep admits with a real
-    # number and states the denominator behind it.
+    # Now give it live samples too, and the receipt states BOTH sources
+    # with the denominator behind each.
     ram = bytearray(2048)
     for i in range((ib.FARM_MIN_SAMPLES + 1) * ib.BAND_SAMPLE_STRIDE):
         f._gate_observe(bytes(ram), _ocell(5, 0).key)
@@ -2885,8 +2926,11 @@ def test_the_candidate_receipt_reports_how_farmability_was_measured(tmp_path):
     assert [r["addr"] for r in ranked if r["significant"]] == [0x40]
     assert all(r["farmability"] == 0.0 for r in ranked)   # measured, quiet
     rec = json.loads((tmp_path / "gate" / "candidates_002.json").read_text())
+    assert [s["name"] for s in rec["farm_sources"]] == ["live_band",
+                                                        "sweep_undirected"]
     assert rec["farm_samples"] == ib.FARM_MIN_SAMPLES
     assert rec["farm_stride"] == ib.BAND_SAMPLE_STRIDE
+    assert rec["farm_min_steps"] == ib.FARM_MIN_STEPS
     assert rec["admitted"] == [0x40]
 
 
