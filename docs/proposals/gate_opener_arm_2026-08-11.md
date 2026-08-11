@@ -1,4 +1,42 @@
-# The GATE-OPENER arm — design for the GATED wall class
+# The GATE-OPENER arm — design for the ~~GATED~~ UNRESOLVED-CONCENTRATED wall class
+
+> **VOCABULARY ADDENDUM (2026-08-11) — the class this document is named
+> for does not exist.** The K-FALSIFIER pre-registered in
+> `docs/proposals/GATE_OPENER_CAMPAIGN_2026-08-11.md` §7 RAN and **FAILED**
+> (`docs/receipts/dispatch/k_falsifier_2026-08-10.md` §0), and the
+> follow-up search for a size-decoupled replacement returned nothing
+> (`docs/receipts/dispatch/size_decoupled_statistic_2026-08-11.md` §0:
+> 22 candidates, both directions, 0 separate). `CONCENTRATION_GATED_MIN`
+> cannot tell a gated search from a solved one: four registered SOLVED
+> archives score 3.9×–10.8× the constant, and *solved Castlevania blocks
+> on this same profile and grid* read more stuck than the hall does.
+> **Every `GATED` / `saturated` / visits-as-saturation usage below is
+> STRUCK and the class label reads `UNRESOLVED-CONCENTRATED`** —
+> descriptive (five runs, ~10.7 h, ~77M steps, pinned best score, zero
+> crossings, zero solutions), not a verdict about cause. Load-bearing
+> usages carry an inline `[struck 2026-08-11: see §12 / falsifier
+> receipt]` strike-line — **"§12" is the campaign doc's §12** (D3
+> lineage-check verdict), this document having no §12 of its own.
+> Nothing is rewritten: the original wording stays legible so the
+> reasoning that produced it can be audited.
+>
+> **What survives, and it is most of the document.** §2.2's measurement —
+> the archive holds one live game-state axis at the boundary and could
+> not have RECORDED an interaction — is untouched, and `k_falsifier` §9
+> independently confirms it: `live_state_axis_count` is the one statistic
+> that separates the hall from the comparators, it separates in the
+> OPPOSITE direction from a wall statistic, and it therefore supports the
+> interaction-blind thesis and the `KEY_BLIND` family rather than
+> saturation. §2.5's sampler-reachability arithmetic, §3's arm, §7.6's
+> `entity_slots` refutation and every probe receipt stand unaffected. What
+> falls is only the *label* the remedy was dispatched under.
+>
+> **Two later verdicts also bind this document** (recorded here so it is
+> not read as live): the campaign doc's §12 struck the **gx-767 pin as a
+> borrow-glitch PHANTOM** — the true frontier is gx 751, bucket 93, and
+> band-95 is struck from every root pool, which supersedes §2.3 and
+> §5's `pin_gxb = 95` — and its §13 records **K0 FAIL, campaign
+> DISARMED**.
 
 **Status: DESIGN ONLY. Nothing here is implemented.**
 `scripts/go_explore_solve.py` is owned by another lane; this document is
@@ -10,8 +48,11 @@ measurement the arm needs to self-arm and which produced every number in
 
 **Companion documents.** The discriminator this arm is dispatched by:
 `src/training/wall_taxonomy.py` + `docs/receipts/dispatch/gated_wall_calibration_2026-08-10.md`.
-The A/B that produced the GATED reading: `CLAIMS.md` FORGE entry for
-`--ortho`, commit `42af396`.
+The A/B that produced the ~~GATED~~ reading: `CLAIMS.md` FORGE entry for
+`--ortho`, commit `42af396` [struck 2026-08-11: see §12 / falsifier
+receipt. The A/B itself stands; only the class it was read into is gone.
+The matching relabel in `CLAIMS.md` and the HUD is OWED and not done here
+— k_falsifier §12.4].
 
 ---
 
@@ -23,9 +64,19 @@ The calibrated discriminator separates three ways a search can stop:
 |---|---|---|
 | COVERAGE_LIMITED | still expanding; the wall is wall-clock | wait |
 | BARREN / KEY_BLIND | the archive is frozen or spatially degenerate | fix the key / the reset |
-| **GATED** | local coverage saturated, boundary frozen | **orthogonal mechanism** |
+| ~~**GATED**~~ | ~~local coverage saturated, boundary frozen~~ | **orthogonal mechanism** |
 
-The Castlevania hall now reads GATED, and so does its arm-free control.
+[struck 2026-08-11: see §12 / falsifier receipt — the third row's *class*
+is struck. There is no statistic that separates "local coverage
+saturated" from "solved"; `concentration` is `cells` wearing a hat
+(Spearman +0.929 against `cells`, −0.041 against `distinct_spatial`), and
+21 further candidates were built and all failed. The first two rows are
+untouched: `COVERAGE_LIMITED` and `KEY_BLIND` rest on other evidence and
+the falsifier explicitly leaves them standing.]
+
+The Castlevania hall now reads ~~GATED~~ UNRESOLVED-CONCENTRATED, and so
+does its arm-free control [struck 2026-08-11: see §12 / falsifier
+receipt].
 The `--ortho` arm was the first thing dispatched at it, and its premise —
 "the frontier is pinned because the search never climbs" — was measured
 STALE: the control reached the same vertical extent without the arm.
@@ -55,7 +106,7 @@ records + the flushed archive):
 
 | | `cv_hall_ortho_a` (arm) | `cv_hall_ortho_ctrl` (control) |
 |---|---|---|
-| verdict | **GATED** (degraded) | **GATED** (degraded) |
+| verdict | ~~**GATED**~~ (degraded) ᵈ | ~~**GATED**~~ (degraded) ᵈ |
 | cells | 131,561 | 149,153 |
 | `distinct_spatial` | 1,096 | 1,094 |
 | `spatial_span` | 95 | 95 |
@@ -66,8 +117,24 @@ records + the flushed archive):
 | records since the map moved | 79 | 83 |
 | solutions | 0 | 0 |
 
-Both far above `CONCENTRATION_GATED_MIN = 25.0`. The label is not
-marginal; the *positive class* is still unvalidated (§7.4).
+ᵈ [struck 2026-08-11: see §12 / falsifier receipt — the verdict row is
+struck as a CLASS reading. Every other number in this table is a
+measurement and stands.]
+
+~~Both far above `CONCENTRATION_GATED_MIN = 25.0`. The label is not
+marginal; the *positive class* is still unvalidated (§7.4).~~
+
+[struck 2026-08-11: see §12 / falsifier receipt. "Far above the
+threshold" turned out to carry no information: `smb_4_4_micro/lvl_3-3`
+scores **270.03** and `lvl_1-3` **240.19** — both SOLVED, both above the
+control's 136.34. Effort-normalized the ordering inverts outright (hall
+8.0–15.1 concentration per M archive records, solved archives 70.4–342.4:
+the hall is the *least* concentrated search in the set). And at full grid
+parity the hall's re-keyed `distinct_spatial` is 213, the **smallest** in
+the comparison set. The class was not merely "unvalidated" — the
+statement "the label is not marginal" was the reverse of true, because
+the constant's separating band (20.58, 31.04] was fitted inside a
+~20k-cell cap created by a pickle read error that does not reproduce.]
 
 ### 2.2 The cell key at the pin — the finding
 
@@ -110,7 +177,13 @@ bit (2 values). `3 × 31 × 2 = 186` possible aliases per position; 135 of
 them are realised, i.e. **73% of the nuisance-alias space is already
 full** (control: 161/310 = 52%). That is exactly the mechanism
 `CONCENTRATION_GATED_MIN`'s docstring names — "the key keeps
-manufacturing nuisance novelty" — measured on the actual key.
+manufacturing nuisance novelty" — measured on the actual key. [2026-08-11:
+the MECHANISM survives the falsifier and is independently reconfirmed —
+size_decoupled §8 finds the hall does NOT flatten (its tail growth
+exponent is the corpus's *highest*) precisely because the key
+manufactures novelty forever at a fixed location. What is struck is the
+CONSTANT the docstring belongs to, not this measurement. See §12 /
+falsifier receipt.]
 
 And of the four things a *game* could be withholding, the archive can
 represent **none**:
@@ -435,9 +508,25 @@ verdict == GATED  AND  boundary_state_axes >= BOUNDARY_STATE_AXES_MIN
     -> GATED-TRUE: run the SEARCH half (a1, a3) + the gate test.
 ```
 
-Run A reads **GATED-BLIND** (`boundary_state_axes = 1`). That is the
-single most actionable sentence this analysis produces, and no statistic
-in the shipped module could have said it.
+[struck 2026-08-11: see §12 / falsifier receipt — **the `verdict ==
+GATED` conjunct is struck from both branches.** No verdict is GATED; the
+size-decoupled receipt's §12 recommends deleting the branch outright and
+returning `INDETERMINATE`. The `boundary_state_axes` conjunct — the half
+this document contributed — is unaffected and is the half that carries
+the dispatch, so with the dead conjunct removed the rule reduces to
+`boundary_state_axes < BOUNDARY_STATE_AXES_MIN -> run the DISCOVERY half
+first`, which is what the campaign doc's §4b actually dispatches on.
+Also struck by the same receipt: the labels `GATED-BLIND` / `GATED-TRUE`
+themselves, which name a class that has no member.]
+
+Run A reads ~~**GATED-BLIND**~~ interaction-blind (`boundary_state_axes =
+1`) [struck 2026-08-11: see §12 / falsifier receipt]. That is the single
+most actionable sentence this analysis produces, and no statistic in the
+shipped module could have said it — a claim the falsifier independently
+*strengthened*: sweeping ~20 statistics against the corpus,
+`live_state_axis_count` was one of only three that ordered the hall apart
+from the comparators, and the only one whose separation was not a
+geometry artifact (k_falsifier §9).
 
 ---
 
@@ -659,10 +748,20 @@ cheap enough that there is no excuse for the exception.
 * **G2 — the wall is re-classified with evidence.** The discovery half
   returns ≥ 1 candidate surviving P1–P4; adding it raises
   `boundary_state_axes` from **1** to **≥ 2** at the pin; and with that
-  axis live the frontier still does not move. The hall then moves from
+  axis live the frontier still does not move. ~~The hall then moves from
   GATED-BLIND to GATED-TRUE — a strictly narrower, falsifiable claim
   ("we now have an interaction axis and the wall still holds") and the
-  **first non-circular evidence** that the GATED positive class is real.
+  **first non-circular evidence** that the GATED positive class is real.~~
+
+  [struck 2026-08-11: see §12 / falsifier receipt. G2 is doubly dead. It
+  was already DELETED by the campaign doc (rev-2 A1, restated §2: a
+  reclass "can never satisfy STRATEGY G4" and is a reported FINDING
+  only). It is now also incoherent on its own terms: a reclass between
+  two labels of a class with no separating statistic is not evidence
+  that the class is real, it is a rename. The falsifier reached G2's
+  target — "the first non-circular evidence about the positive class" —
+  by the opposite route and cheaper: the class has no member and no
+  statistic, so there was nothing to confirm.]
 
 FAIL: neither. `boundary_state_axes` stays 1, **no G1a/G1b/G1c
 crossing**, all per-candidate lifts flat. A FAIL may only be declared
@@ -706,7 +805,10 @@ Stop and report, rather than iterating:
 5. **Two seeds, no crossing.** Two bounded runs, different seeds, G1 and
    G2 both fail ⇒ the hall is not gated on any axis this arm can
    express. Escalate to (a4) or a different mechanism class, and record
-   that the GATED positive class is **still empty**.
+   that the ~~GATED~~ positive class is **still empty** [struck
+   2026-08-11: see §12 / falsifier receipt — the class is not merely
+   empty of members, it is empty of a *statistic*; there is no longer a
+   class for a wall to be recorded into].
 6. **Scope discipline.** A lockstep/fidelity receipt only covers the
    trajectory it covers — the bat-wake campaign's closing lesson. If the
    arm's evidence comes from bursts that never reach the pinned band, it
@@ -760,15 +862,42 @@ the field, (b) bank runs with labelled outcomes, (c) derive the band,
 
 **7.4 The positive class is still empty.** The receipt's falsifier was
 "if run A finishes the hall by ordinary coverage, the GATED class has
-nothing to separate." It did not fire — run A ended with 0 solutions and
-the pin unmoved — but *not firing is not confirmation*. The hall remains
-one unsolved candidate scored four times by the same statistic. **G2 is
+nothing to separate." ~~It did not fire~~ — run A ended with 0 solutions and
+the pin unmoved — but *not firing is not confirmation*. [struck
+2026-08-11: see §12 / falsifier receipt — it fired on 2026-08-10 by a
+route this paragraph did not anticipate. The falsifier was written to
+require run A to FINISH the hall; scoring already-banked SOLVED archives
+through the same statistic turned out to be sufficient and cost no
+compute at all.] The hall remains
+one unsolved candidate scored four times by the same statistic. ~~**G2 is
 the first design in this program that could confirm the class without
 solving the wall**, and G1 confirms it by solving it. Until one of them
 lands, `CONCENTRATION_GATED_MIN` still rests on a 1.51×-wide band whose
 upper bracket is an unvalidated wall, and the honest summary stays: *we
 can say reliably when a wall is NOT gated; whether we can say when one
-IS remains untested.*
+IS remains untested.*~~
+
+**[struck 2026-08-11: see §12 / falsifier receipt — §7.4's falsifier
+fired, by a cheaper route than either G1 or G2.** It did not need the arm
+to finish the hall. Scoring four banked SOLVED archives through the same
+statistic with the RESOLVED/PROGRESSING escape branches bypassed was
+enough: all four read GATED, three outrank every hall read, and no
+threshold can exclude them without emptying the class of its own
+definers. So the honest summary inverts — **we cannot reliably say a wall
+is NOT gated either**, because `smb_4_4_micro/lvl_1-3` seg 2 read GATED
+on the *unmodified shipped path* and then cleared 17 minutes later on a
+plain retry with no orthogonal mechanism of any kind. That is a false
+GATED with no bypass at all, and it falsifies the calibration's strongest
+surviving claim (`test_no_false_gated_anywhere_in_the_corpus`). The
+1.51×-wide band was fitted between a 19,958-cell resolved archive and a
+28,929-cell gated one because a pickle read error capped the corpus's
+resolved class at ~20k cells — a read error that does not reproduce. What
+this paragraph got right and should be kept: the positive class was one
+unsolved wall scored repeatedly by the same statistic, and that was
+always the defect. The remaining honest sentence is the one the
+size-decoupled receipt lands on — *the classes overlap, and the missing
+input is `c_local` emitted per progress line, not a 23rd surrogate
+statistic.*]
 
 **7.5 Not covered here.** The gate-opener is a solver arm. It produces
 teacher data; it is not the learned policy that is the product. Every
