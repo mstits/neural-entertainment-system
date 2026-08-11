@@ -1,25 +1,42 @@
-"""Tests for src/training/wall_taxonomy.py — the gated-wall discriminator.
+"""Tests for src/training/wall_taxonomy.py — the wall taxonomy.
 
-Four layers:
+Five layers:
 
 1. Unit tests over the pure helpers (segmentation, key projection, the
-   saturation statistic, the archive summary).
+   saturation statistic, the archive summary, the sidecar adapter).
 2. Verdict ordering, plus (2b) the C_local SERIES path — the world the
-   receipt's §8 asks the fleet to move to. No banked run emits
-   `c_local`, so that world is reachable only by construction, which is
-   exactly why it is pinned down here rather than after the field
-   lands.
-3. A frozen CALIBRATION FIXTURE (`CORPUS`) holding the statistics each
-   banked run in the 2026-08-10 calibration actually produced, replayed
-   through synthetic telemetry. These lock the shipped thresholds: move
-   a constant out of its measured separating band and a corpus row
-   flips. `runs/` is gitignored, so this layer carries the calibration
-   without needing the multi-GB archives on disk.
-4. A live regression that re-derives the same verdicts from the real
+   receipts ask the fleet to move to. No banked run emits `c_local`, so
+   that world is reachable only by construction, which is exactly why
+   it is pinned down here rather than after the field lands.
+3. A frozen CORPUS fixture holding the statistics each banked run in
+   the 2026-08-10 calibration actually produced, replayed through
+   synthetic telemetry. `runs/` is gitignored, so this layer carries
+   the corpus without needing the multi-GB archives on disk.
+4. The STRIKE, and its mutation guards. `WallClass.GATED` was removed
+   on 2026-08-11; re-adding it — the branch, the enum member, or a
+   verdict that turns on `concentration` by any other name — must fail
+   a test here. That is the point of `test_re_adding_a_gated_class_...`
+   and of `test_the_descriptive_threshold_moves_no_verdict`.
+5. A live regression that re-derives the same verdicts from the real
    run directories, skipped when they are absent.
 
-READ THE CORPUS HEALTH WARNING before treating a GATED expectation here
-as ground truth: the corpus has no validated positive.
+WHY THE POSITIVE CLASS IS GONE. This file used to assert that two rows
+read GATED and that nothing else did. Both receipts below killed that:
+
+  docs/receipts/dispatch/k_falsifier_2026-08-10.md
+      `ge_chain_w8/lvl_00_8-1` SOLVED at concentration 98.30 — 3.2x the
+      "gated" upper bracket — inside one chain whose siblings read
+      15.66 and 20.58.
+  docs/receipts/dispatch/size_decoupled_statistic_2026-08-11.md
+      22 candidate replacements over 103 archives. All straddle. The
+      best cut in the whole set still condemns 3 of 13 solved archives.
+
+So there is nothing here that asserts a wall can be detected, because
+nothing measured supports it. What is asserted is the half that
+survived: the subtractive classes (BARREN, KEY_BLIND, INSUFFICIENT),
+the two directly-observed ones (RESOLVED, PROGRESSING), the one
+direction a C_local series still licenses (COVERAGE_LIMITED), and the
+abstention everything else falls into.
 """
 
 from __future__ import annotations
@@ -32,18 +49,53 @@ import pytest
 
 from src.training import wall_taxonomy as wt
 from src.training.wall_taxonomy import (
+    ArchiveCounters,
     ArchiveSummary,
     ProgressRecord,
     WallClass,
     WallTelemetry,
     gated_wall_verdict,
     load_progress_segments,
+    read_archive_counters,
     record_from_json,
     saturation,
     summarize_archive_cells,
 )
 
 REPO = Path(__file__).resolve().parent.parent
+
+#: Every class `gated_wall_verdict` is allowed to return. Enumerated so
+#: that ADDING one is a deliberate, visible act rather than a diff nobody
+#: reads — the GATED branch got shipped exactly once, and quietly.
+LICENSED_CLASSES = {
+    WallClass.RESOLVED,
+    WallClass.PROGRESSING,
+    WallClass.COVERAGE_LIMITED,
+    WallClass.BARREN,
+    WallClass.KEY_BLIND,
+    WallClass.INDETERMINATE,
+    WallClass.INSUFFICIENT,
+}
+
+#: The `*_IS_SEPARATING`-family constants and the receipt section that
+#: kills each. A candidate statistic that has been scored and refuted
+#: lives here so nobody re-derives it and believes it.
+REFUTED_CONSTANTS = {
+    # struck 2026-08-10, by the original calibration
+    "RAW_COVERAGE_SATURATION_IS_SEPARATING": "2026-08-10",
+    "CHURN_IS_SEPARATING": "2026-08-10",
+    "BOUNDARY_ENTROPY_IS_SEPARATING": "2026-08-10",
+    "MAP_STALL_WINDOWS_IS_SEPARATING": "2026-08-10",
+    # struck 2026-08-11, by the falsifier and the replacement search
+    "CONCENTRATION_IS_SEPARATING": "2026-08-11",
+    "SIZE_PARTIALED_CONCENTRATION_IS_SEPARATING": "2026-08-11",
+    "NOVELTY_PER_RECORD_IS_SEPARATING": "2026-08-11",
+    "EXPLORED_FRACTION_IS_SEPARATING": "2026-08-11",
+    "SPATIAL_EVENNESS_IS_SEPARATING": "2026-08-11",
+    "GROWTH_EXPONENT_IS_SEPARATING": "2026-08-11",
+    "EFFORT_MATCHED_PERCENTILE_IS_SEPARATING": "2026-08-11",
+    "DOORS_IS_MONOTONE": "2026-08-11",
+}
 
 
 # --------------------------------------------------------------------------
@@ -68,6 +120,10 @@ def make_records(
     map_gx_end: int | None = None,
     max_area: int = 0,
     max_area_end: int | None = None,
+    max_room: int = 0,
+    max_room_end: int | None = None,
+    doors: int = 0,
+    doors_end: int | None = None,
     frozen: int = 0,
     c_local: tuple[int, int] | None = None,
     c_local_series: Sequence[int] | None = None,
@@ -78,12 +134,19 @@ def make_records(
     overrides it with an explicit curve, which is what the plateau tests
     need — a linear ramp can only ever express "climbing" or "pinned",
     and pinned is STAGNANT, not plateaued.
+
+    The `*_end` parameters (`map_gx_end`, `max_area_end`, `max_room_end`,
+    `doors_end`) move a counter on the LAST record only, which makes the
+    trailing-window delta exactly `end - start` rather than a fraction of
+    a ramp. `doors` uses that to reproduce a measured window delta to the
+    unit — see `test_doors_churn_no_longer_reads_as_topological_progress`.
     """
     if c_local_series is not None:
         assert len(c_local_series) == n, "c_local_series must be one per record"
     recs = []
     for i in range(n):
         f = i / max(1, n - 1)
+        last = i == n - 1
         if c_local_series is not None:
             cl: int | None = int(c_local_series[i])
         elif c_local is not None:
@@ -94,9 +157,11 @@ def make_records(
             elapsed_s=60 * (i + 1),
             cells=round(cells_start + f * (cells_end - cells_start)),
             steps=round(steps_start + f * (steps_end - steps_start)),
-            solutions=solutions if i == n - 1 else 0,
-            max_area=(max_area if max_area_end is None or i < n - 1 else max_area_end),
-            max_gx=(map_gx if map_gx_end is None or i < n - 1 else map_gx_end),
+            solutions=solutions if last else 0,
+            max_area=(max_area if max_area_end is None or not last else max_area_end),
+            max_room=(max_room if max_room_end is None or not last else max_room_end),
+            max_gx=(map_gx if map_gx_end is None or not last else map_gx_end),
+            doors=(doors if doors_end is None or not last else doors_end),
             stall_flat_windows=frozen,
             c_local=cl,
         ))
@@ -107,9 +172,9 @@ def c_local_shapes(n: int, peak: int) -> dict[str, list[int]]:
     """The three shapes a C_local series can have, by name.
 
     The distinction the module turns on: `stagnant` never grew (the
-    adopted form calls that BARREN), `plateaued` grew and then stopped
-    (that is the gated signature), and they are NOT the same curve even
-    though both are flat in the trailing window.
+    adopted form calls that BARREN), `plateaued` grew and then stopped,
+    and they are NOT the same curve even though both are flat in the
+    trailing window.
     """
     return {
         "stagnant": [peak] * n,
@@ -120,11 +185,12 @@ def c_local_shapes(n: int, peak: int) -> dict[str, list[int]]:
 
 
 def archive(*, cells: int, distinct_spatial: int, spatial_span: int,
-            boundary_cells: int = 8, entropy: float = 0.95) -> ArchiveSummary:
+            boundary_cells: int = 8, entropy: float = 0.95,
+            explored: float = 0.9) -> ArchiveSummary:
     return ArchiveSummary(
         cells=cells, distinct_spatial=distinct_spatial,
         spatial_span=spatial_span, boundary_cells=boundary_cells,
-        boundary_visit_entropy=entropy, explored_fraction=0.9,
+        boundary_visit_entropy=entropy, explored_fraction=explored,
     )
 
 
@@ -176,6 +242,19 @@ def test_record_from_json_tolerates_fields_added_over_time():
     assert old.max_room == 0 and old.doors == 0
     assert old.c_local is None
     assert old.solutions == 0
+
+
+def test_record_from_json_still_parses_doors_after_it_stopped_counting():
+    """`doors` left `topo_delta` on 2026-08-11 but not the record.
+
+    Dropping the FIELD would have been the wrong repair: the counter is
+    real telemetry and a cumulative variant of it is admissible (see
+    MISSING_TELEMETRY['doors_cumulative']). What was wrong was summing a
+    non-monotone quantity into a monotone one.
+    """
+    rec = record_from_json({"elapsed_s": 60, "cells": 10_492, "steps": 159_152,
+                            "doors": 1621, "edges": 16_286})
+    assert rec.doors == 1621
 
 
 def test_record_from_json_reads_the_forward_compatible_c_local_slot():
@@ -259,7 +338,7 @@ def test_saturation_returns_none_when_the_window_has_no_evidence():
 def test_saturation_separates_never_grew_from_grew_then_stopped():
     """Both series are flat in the trailing window and they mean OPPOSITE
     things: one never accumulated (STAGNANT -> BARREN), the other
-    accumulated and stopped (plateau -> the gated signature).
+    accumulated and stopped.
 
     Returning 1.0 for the never-grown case made them identical at the
     call site and read as 'maximally saturated' for a search that
@@ -289,6 +368,125 @@ def test_map_stall_windows_counts_the_trailing_frozen_run():
 
 
 # --------------------------------------------------------------------------
+# 1b. the archive.stats.json sidecar adapter (reporting only)
+# --------------------------------------------------------------------------
+
+#: The real sidecar of `runs/cv_chain_hw/lvl_03_overnight`, byte for
+#: byte. 279 sidecars were surveyed: all 279 carry these six fields, 72
+#: also carry `hw_provenance`.
+OVERNIGHT_SIDECAR = {
+    "cells": 560_410, "frontier": 181_425, "best_score": 767,
+    "records": 45_640_527, "new_cells": 560_410, "improvements": 827_786,
+}
+
+
+def _write_sidecar(dirpath: Path, payload) -> Path:
+    p = dirpath / wt.ARCHIVE_STATS_FILENAME
+    p.write_text(json.dumps(payload))
+    return p
+
+
+def test_read_archive_counters_parses_the_sidecar(tmp_path):
+    _write_sidecar(tmp_path, OVERNIGHT_SIDECAR)
+    c = read_archive_counters(tmp_path)
+    assert c == ArchiveCounters(cells=560_410, records=45_640_527,
+                                new_cells=560_410, improvements=827_786,
+                                frontier=181_425, best_score=767.0)
+
+
+def test_the_sidecar_reproduces_the_receipt_s_own_columns(tmp_path):
+    """The two derived columns, checked against the numbers the receipt
+    published for this exact run.
+
+    `explored_fraction` is `1 - frontier/cells` and the receipt's §7
+    coupon-collector table lists 0.6763 for `cv_chain_hw/lvl_03_overnight`;
+    `nu = cells/records` is the §9 candidate and the hall's band is
+    0.0087 - 0.0165. Both are computed here from the sidecar alone, which
+    is the whole point of §2.2: no multi-GB unpickle is needed to get the
+    effort denominator.
+    """
+    _write_sidecar(tmp_path, OVERNIGHT_SIDECAR)
+    c = read_archive_counters(tmp_path)
+    assert c.explored_fraction == pytest.approx(0.6763, abs=5e-5)
+    assert c.novelty_per_record == pytest.approx(0.012278, abs=5e-6)
+    assert 0.0087 <= c.novelty_per_record <= 0.0165     # inside the hall band
+
+
+def test_read_archive_counters_resolves_a_dir_a_pkl_or_the_sidecar(tmp_path):
+    """Callers hold whichever of the three they were given."""
+    sidecar = _write_sidecar(tmp_path, OVERNIGHT_SIDECAR)
+    expected = read_archive_counters(sidecar)
+    assert expected is not None
+    assert read_archive_counters(tmp_path) == expected
+    assert read_archive_counters(tmp_path / "archive.pkl") == expected
+
+
+def test_read_archive_counters_carries_hw_provenance_when_present(tmp_path):
+    """72 of 279 sidecars carry it, and a lineage mismatch is exactly
+    what the D3 adjudication had to catch by hand."""
+    prov = {"hw_flags": [], "frame_skip": 4,
+            "nes_core": {"sha256_16": "e09e8191b8d40490"}}
+    _write_sidecar(tmp_path, dict(OVERNIGHT_SIDECAR, hw_provenance=prov))
+    assert read_archive_counters(tmp_path).hw_provenance == prov
+    # ...and its absence is None, not a KeyError.
+    _write_sidecar(tmp_path, OVERNIGHT_SIDECAR)
+    assert read_archive_counters(tmp_path).hw_provenance is None
+
+
+@pytest.mark.parametrize("payload", [
+    pytest.param(None, id="absent"),
+    pytest.param("{not json", id="malformed"),
+    pytest.param("[1, 2, 3]", id="not-an-object"),
+    pytest.param('{"cells": 10}', id="missing-fields"),
+    pytest.param('{"cells": "many", "records": 1, "new_cells": 1, '
+                 '"improvements": 1, "frontier": 0, "best_score": 1}',
+                 id="unparseable-field"),
+])
+def test_read_archive_counters_returns_none_and_never_raises(tmp_path, payload):
+    """A free 130-byte diagnostic must not be able to take down a
+    classification that never depended on it."""
+    if payload is not None:
+        (tmp_path / wt.ARCHIVE_STATS_FILENAME).write_text(payload)
+    assert read_archive_counters(tmp_path) is None
+    assert read_archive_counters(tmp_path / "nope") is None
+
+
+def test_counters_are_reported_and_cannot_move_a_verdict():
+    """The adapter's contract in one property: it adds evidence columns
+    and changes nothing else. Asserted over the whole corpus, because
+    'reporting only' is the kind of claim that decays quietly."""
+    counters = ArchiveCounters(cells=560_410, records=45_640_527,
+                               new_cells=560_410, improvements=827_786,
+                               frontier=181_425, best_score=767.0)
+    for label, _truth, expected, _desc, kw, arc in CORPUS:
+        recs = make_records(**kw)
+        bare = gated_wall_verdict(WallTelemetry(records=recs, archive=arc))
+        with_counters = gated_wall_verdict(
+            WallTelemetry(records=recs, archive=arc, counters=counters))
+        assert with_counters.wall_class is bare.wall_class, label
+        assert with_counters.descriptor == bare.descriptor, label
+        assert with_counters.reasons == bare.reasons, label
+        added = set(with_counters.evidence) - set(bare.evidence)
+        assert added == {"archive_records", "archive_improvements",
+                         "archive_frontier", "archive_best_score",
+                         "archive_novelty_per_record",
+                         "archive_explored_fraction"}, label
+
+
+def test_explored_fraction_is_reported_from_the_archive_too():
+    """Reported from both sources and gated on from neither — it is a
+    saturating function of selections-per-cell (Pearson +0.9906 against
+    the coupon-collector null) and nothing else."""
+    assert wt.EXPLORED_FRACTION_IS_SEPARATING is False
+    tel = WallTelemetry(
+        records=make_records(n=30, cells_start=3354, cells_end=91_995),
+        archive=archive(cells=92_785, distinct_spatial=1089, spatial_span=95,
+                        explored=0.8335))
+    assert gated_wall_verdict(tel).evidence["explored_fraction"] == \
+        pytest.approx(0.8335)
+
+
+# --------------------------------------------------------------------------
 # 2. verdict ordering
 # --------------------------------------------------------------------------
 
@@ -315,6 +513,59 @@ def test_map_or_topology_movement_beats_every_wall_test():
     moved_topo = WallTelemetry(records=make_records(n=30, max_area=3,
                                                     max_area_end=4))
     assert gated_wall_verdict(moved_topo).wall_class is WallClass.PROGRESSING
+
+    # And a monotone room counter still counts, so dropping `doors` did
+    # not disarm the branch — it removed one non-monotone addend.
+    moved_room = WallTelemetry(records=make_records(n=30, max_room=11,
+                                                    max_room_end=12))
+    assert gated_wall_verdict(moved_room).wall_class is WallClass.PROGRESSING
+
+
+def test_doors_churn_no_longer_reads_as_topological_progress():
+    """The D3 defect, reproduced from the real telemetry that exposed it.
+
+    `runs/cv_chain_hw/lvl_03_overnight` is the frozen Castlevania hall:
+    355 consecutive records without the map moving, zero solutions in
+    ~6 h. Over its trailing 10 records `max_area`, `max_sect`, `max_room`
+    and `max_gx` were all flat and `doors` moved 12,694 -> 12,880, and
+    the module returned PROGRESSING — "the frontier is still moving" —
+    for a search that had not moved anything.
+
+    `doors` counts ARTICULATION POINTS in the discovered room graph. That
+    is a connectivity property of a graph that keeps being rewritten, not
+    a ratchet: a newly discovered edge can demote an articulation point,
+    and re-exploration churns the count in both directions. It is not
+    summable into a monotone delta.
+    GATE_OPENER_CAMPAIGN_2026-08-11.md §12.
+    """
+    kw = dict(n=30, cells_start=548_583, cells_end=559_310,
+              steps_start=44_777_250, steps_end=45_898_118,
+              map_gx=767, doors=12_694, doors_end=12_880)
+    v = gated_wall_verdict(WallTelemetry(records=make_records(**kw),
+                                         label="lvl_03_overnight"))
+
+    assert v.evidence["doors_delta"] == 186          # the churn is still real
+    assert v.evidence["topo_delta"] == 0             # ...and no longer counted
+    assert v.evidence["map_delta"] == 0
+    assert v.wall_class is not WallClass.PROGRESSING
+    assert v.wall_class is WallClass.INDETERMINATE
+
+    # The repair is exactly the removal of one addend, and the fixture
+    # must actually exercise it: the pre-repair sum was positive, which
+    # is the whole reason the run read PROGRESSING.
+    pre_repair_topo = v.evidence["topo_delta"] + v.evidence["doors_delta"]
+    assert pre_repair_topo > 0
+    # ...and the map had been frozen for the whole run while it said so.
+    assert v.evidence["map_stall_windows"] >= 29
+
+
+def test_doors_keeps_a_documented_monotone_successor():
+    """Dropping a term without saying what would replace it invites the
+    next person to re-add the same one."""
+    assert wt.DOORS_IS_MONOTONE is False
+    spec = wt.MISSING_TELEMETRY["doors_cumulative"]
+    assert "articulation points EVER seen" in spec
+    assert "SPEC ONLY" in spec
 
 
 def test_low_effort_window_is_insufficient_not_a_wall():
@@ -356,43 +607,15 @@ def test_trivially_small_archive_is_barren_independently_of_the_stall_flag():
     assert "COVERAGE_FLOOR_CELLS" in v.reasons[-1]
 
 
-def test_progress_only_telemetry_never_certifies_gated():
-    """The headline safety property, enforced as a property.
+def test_a_saturated_boundary_abstains_and_only_describes_itself():
+    """The row this module was built to certify, and no longer does.
 
-    Without an archive snapshot the cross-sectional term is unmeasured
-    and the series term rests on a threshold that has never been
-    measured against a labelled run, so the module must abstain rather
-    than guess — the Castlevania hall and a mid-run SMB 8-4 look
-    IDENTICAL on progress.jsonl alone.
-
-    This used to exercise exactly ONE hand-picked telemetry, one that
-    happened to carry no `c_local`; the property it claimed was false
-    for any telemetry that did carry one. It is now asserted over every
-    corpus run crossed with every C_local shape, which is the state §8
-    of the receipt is asking the fleet to move to.
+    The Castlevania hall's own statistics: 92,785 cells over 1,089
+    spatial buckets, concentration 85.2, boundary entropy 0.984, map
+    frozen. Under the 2026-08-10 build this returned GATED with the
+    remedy "switch to an orthogonal arm" — a several-hour commitment.
+    It now abstains and reports what it saw.
     """
-    hall = WallTelemetry(records=make_records(
-        n=89, cells_start=3354, cells_end=91_995, steps_end=10_643_480))
-    v = gated_wall_verdict(hall)
-    assert v.wall_class is WallClass.INDETERMINATE
-    assert v.degraded is True
-    assert "c_local" in v.missing
-
-    offenders = []
-    for label, _truth, _expected, kw, arc in CORPUS:
-        peak = arc.distinct_spatial if arc is not None else 1000
-        shapes = dict(c_local_shapes(kw["n"], peak), none=None)
-        for name, series in shapes.items():
-            tel = WallTelemetry(
-                records=make_records(**kw, c_local_series=series),
-                archive=None, label=label)
-            if gated_wall_verdict(tel).wall_class is WallClass.GATED:
-                offenders.append(f"{label} [c_local={name}]")
-    assert offenders == [], (
-        f"progress-only telemetry certified GATED for: {offenders}")
-
-
-def test_saturated_local_coverage_at_a_frozen_boundary_is_gated():
     tel = WallTelemetry(
         records=make_records(n=89, cells_start=3354, cells_end=91_995,
                              steps_end=10_643_480),
@@ -400,30 +623,47 @@ def test_saturated_local_coverage_at_a_frozen_boundary_is_gated():
                         boundary_cells=13, entropy=0.9837),
     )
     v = gated_wall_verdict(tel)
-    assert v.wall_class is WallClass.GATED
-    assert v.evidence["concentration"] >= wt.CONCENTRATION_GATED_MIN
+    assert v.wall_class is WallClass.INDETERMINATE
+    assert v.descriptor == wt.UNRESOLVED_CONCENTRATED
+    assert v.evidence["concentration"] >= wt.CONCENTRATION_DESCRIPTIVE_MIN
     assert v.evidence["topo_delta"] == 0 and v.evidence["map_delta"] == 0
-    # Still degraded: the entropy term of the adopted form is unmeasured.
     assert v.degraded is True
     assert "boundary_action_entropy" in v.missing
+    # The label never travels without the receipt that struck the branch.
+    assert any(wt.STRUCK_CLASSIFICATION_RECEIPT in r for r in v.reasons)
+    # ...and the remedy is an instruction to gather evidence, not to act.
+    assert v.remedy == wt.REMEDY[WallClass.INDETERMINATE]
+    assert "collect the missing telemetry" in v.remedy
 
 
-def test_a_still_expanding_map_footprint_is_coverage_limited():
+def test_a_low_concentration_archive_abstains_without_the_label():
+    """The other arm of the removed fork, and it went too.
+
+    `ge_chain/lvl_11_4-4`'s geometry — 5,885 cells over 750 buckets,
+    concentration 7.85 — used to return COVERAGE_LIMITED, i.e. "give it
+    more wall-clock". A single cross-sectional number cannot support
+    that claim either: the same statistic read 15.66 on a solved archive
+    and 98.30 on another one in the same chain. Same abstention, minus
+    the descriptive label, because 7.85 is not concentrated.
+    """
     tel = WallTelemetry(
         records=make_records(n=21, cells_start=5100, cells_end=5885,
                              steps_end=3_335_420),
         archive=archive(cells=5885, distinct_spatial=750, spatial_span=130),
     )
-    assert gated_wall_verdict(tel).wall_class is WallClass.COVERAGE_LIMITED
+    v = gated_wall_verdict(tel)
+    assert v.wall_class is WallClass.INDETERMINATE
+    assert v.descriptor == ""
+    assert "gates nothing" in v.reasons[-1]
 
 
 # --------------------------------------------------------------------------
-# 2b. the C_local series path — the state §8 asks the fleet to move to
+# 2b. the C_local series path — the state the receipts ask the fleet for
 #
 # `c_local` does not exist in any banked run, so this whole world is
-# reachable only by construction. It is also the world the receipt ranks
-# as its #1 runtime requirement, which makes it the one that must be
-# nailed down BEFORE the field lands rather than after.
+# reachable only by construction. It is also the field that makes
+# INDETERMINATE's remedy actionable, which makes it the one that must be
+# nailed down BEFORE it lands rather than after.
 # --------------------------------------------------------------------------
 
 def _series_tel(shape: str, *, peak: int, arc=None, n: int = 30,
@@ -435,14 +675,13 @@ def _series_tel(shape: str, *, peak: int, arc=None, n: int = 30,
         archive=arc)
 
 
-def test_a_pinned_c_local_series_is_barren_not_gated():
+def test_a_pinned_c_local_series_is_barren_not_a_plateau():
     """`BARREN <=> C_local STAGNANT` is the module's own adopted form.
 
-    This case used to read GATED — and it is the worst possible verdict
-    to get wrong here, because GATED spends an orthogonal campaign on a
-    search that never accumulated anything. The mechanism was
-    `saturation()` reporting 1.0 for a series with zero peak yield: a
-    curve that NEVER GREW scored as maximally plateaued.
+    The mechanism this guards is `saturation()` reporting 1.0 for a
+    series with zero peak yield: a curve that NEVER GREW scoring as
+    maximally plateaued, which put a search that is not searching into
+    the same class as one that has run out of ground.
     """
     v = gated_wall_verdict(_series_tel(
         "stagnant", peak=1089,
@@ -451,8 +690,11 @@ def test_a_pinned_c_local_series_is_barren_not_gated():
     assert "STAGNANT, not plateaued" in v.reasons[-1]
     assert v.evidence["c_local_peak_yield"] == 0
     assert v.evidence["c_local_saturation"] is None
+    # BARREN is a diagnosis of the SEARCH, so it carries no description
+    # of the archive even though this one is concentrated.
+    assert v.descriptor == ""
 
-    # Same series, no archive: still BARREN, never GATED.
+    # Same series, no archive: still BARREN.
     assert gated_wall_verdict(
         _series_tel("stagnant", peak=1089)).wall_class is WallClass.BARREN
 
@@ -464,8 +706,8 @@ def test_a_c_local_series_below_the_floor_is_key_blind_either_way():
     distinct spatial buckets, progress byte constant. WITH an archive
     the module has always said KEY_BLIND. WITHOUT one — the moment
     `c_local` starts being emitted and the archive has not flushed — the
-    identical run used to say GATED, because the archive's
-    `spatial_span` guard was the only place that check lived.
+    identical run escaped that verdict, because the archive's
+    `spatial_span` guard was the only place the check lived.
     """
     bb_arc = archive(cells=90_000, distinct_spatial=16, spatial_span=1,
                      boundary_cells=90_000, entropy=0.87)
@@ -489,65 +731,68 @@ def test_a_tiny_c_local_proves_the_span_guard_would_have_fired():
     assert "PROVES spatial_span is degenerate" in v.reasons[-1]
 
 
-def test_a_climbing_c_local_series_overrides_a_gated_concentration():
-    """The one direction the series is trusted alone: refutation.
+def test_a_climbing_c_local_series_is_the_one_affirmative_reading_left():
+    """COVERAGE_LIMITED survives, and only from a SERIES.
 
-    A still-expanding map footprint cannot be a saturated wall whatever
-    the cross-section says, and this direction can only ever move a
-    verdict AWAY from GATED, so it costs nothing if the PROVISIONAL
-    threshold is off."""
+    A map footprint measurably still expanding has not run out of
+    reachable ground — that is a direction, and a direction is the one
+    thing a cross-sectional number cannot supply. The hall's own cell
+    curve has the highest tail exponent in the corpus (0.899) while its
+    map is frozen, which is precisely why the point statistic went and
+    the series statistic stayed.
+    """
     hall_arc = archive(cells=92_785, distinct_spatial=1089, spatial_span=95,
                        boundary_cells=13, entropy=0.9837)
-    assert gated_wall_verdict(
+    # The same archive without a series only gets to describe itself.
+    baseline = gated_wall_verdict(
         WallTelemetry(records=make_records(n=30, cells_start=3354,
                                            cells_end=91_995),
-                      archive=hall_arc)).wall_class is WallClass.GATED
+                      archive=hall_arc))
+    assert baseline.wall_class is WallClass.INDETERMINATE
+    assert baseline.descriptor == wt.UNRESOLVED_CONCENTRATED
+
     v = gated_wall_verdict(_series_tel("climbing", peak=5000, arc=hall_arc))
     assert v.wall_class is WallClass.COVERAGE_LIMITED
     assert "still expanding" in v.reasons[-1]
+    # An affirmative reading of its own, so it does not also carry the
+    # description of a stalled archive.
+    assert v.descriptor == ""
 
 
-def test_a_c_local_plateau_certifies_gated_only_when_corroborated():
-    """The promotion direction, which the PROVISIONAL threshold does not
-    yet license on its own.
+def test_a_c_local_plateau_certifies_nothing_however_it_is_corroborated():
+    """The promotion direction, removed rather than re-thresholded.
 
-    Corroborated by concentration -> GATED (two statistics agreeing is
-    strictly stronger than today's archive-only verdict). Contradicted,
-    or with nothing to corroborate it -> INDETERMINATE, whose remedy is
-    'collect the missing telemetry', which is exactly right for a
-    threshold nobody has measured."""
+    Under the 2026-08-10 build a plateau plus a high concentration was
+    the strongest verdict the module could reach: two statistics
+    agreeing. They agree about the same confound. `concentration` is
+    archive SIZE wearing a hat and the plateau is measured on the very
+    curve size accumulates along, so corroboration between them is not
+    independent evidence — and the corroborating statistic has since
+    been shown not to separate at all.
+
+    All three corroboration states now land in the same abstention. Only
+    the DESCRIPTION differs, and it differs on the archive, which is what
+    a description is allowed to do.
+    """
     corroborating = archive(cells=92_785, distinct_spatial=1089,
                             spatial_span=95, boundary_cells=13, entropy=0.98)
     v = gated_wall_verdict(_series_tel("plateaued", peak=1089,
                                        arc=corroborating))
-    assert v.wall_class is WallClass.GATED
-    assert "corroborated by concentration" in v.reasons[-1]
+    assert v.wall_class is WallClass.INDETERMINATE
+    assert v.descriptor == wt.UNRESOLVED_CONCENTRATED
     assert v.degraded is True and "boundary_action_entropy" in v.missing
+    assert "not by itself evidence of a wall" in v.reasons[-2]
 
-    # ge_chain/lvl_11_4-4's geometry: a resolved coverage wall, 7.85.
+    # ge_chain/lvl_11_4-4's geometry: 7.85, once read as a contradiction.
     contradicting = archive(cells=5885, distinct_spatial=750, spatial_span=130)
     v = gated_wall_verdict(_series_tel("plateaued", peak=750, cells_end=5885,
                                        arc=contradicting))
     assert v.wall_class is WallClass.INDETERMINATE
-    assert "CONTRADICTS the series" in v.reasons[-1]
+    assert v.descriptor == ""
 
     v = gated_wall_verdict(_series_tel("plateaued", peak=1089))
     assert v.wall_class is WallClass.INDETERMINATE
-    assert "no archive snapshot to corroborate it" in v.reasons[-1]
-
-
-def test_the_series_path_is_promoted_by_calibrating_its_threshold(monkeypatch):
-    """What flipping the switch buys, so the promotion step is a tested
-    one-line change rather than a rewrite. Ship state stays False."""
-    assert wt.C_LOCAL_SERIES_MAY_CERTIFY_GATED is False
-    monkeypatch.setattr(wt, "C_LOCAL_SERIES_MAY_CERTIFY_GATED", True)
-    assert gated_wall_verdict(
-        _series_tel("plateaued", peak=1089)).wall_class is WallClass.GATED
-    # The guards in front of it still hold after promotion.
-    assert gated_wall_verdict(
-        _series_tel("stagnant", peak=1089)).wall_class is WallClass.BARREN
-    assert gated_wall_verdict(
-        _series_tel("plateaued", peak=16)).wall_class is WallClass.KEY_BLIND
+    assert v.descriptor == ""
 
 
 def test_missing_reports_what_this_call_lacked_not_what_the_fleet_lacks():
@@ -566,6 +811,18 @@ def test_missing_reports_what_this_call_lacked_not_what_the_fleet_lacks():
     assert "c_local" not in with_series.missing
     assert "boundary_action_entropy" in with_series.missing
 
+    # And an archive settles `frontier_bucket_cells`, which is derived
+    # from `boundary_cells`: it is on the shopping list only for a call
+    # that could not have had it.
+    assert "frontier_bucket_cells" in no_series.missing
+    with_archive = gated_wall_verdict(WallTelemetry(
+        records=make_records(n=89, cells_start=3354, cells_end=91_995,
+                             steps_end=10_643_480),
+        archive=archive(cells=92_785, distinct_spatial=1089, spatial_span=95,
+                        boundary_cells=13)))
+    assert "frontier_bucket_cells" not in with_archive.missing
+    assert with_archive.evidence["boundary_cells"] == 13
+
     # Present but too short to yield a series still counts as missing.
     short = make_records(n=30, steps_end=10_000_000)
     patched = short[:-1] + (
@@ -576,31 +833,41 @@ def test_missing_reports_what_this_call_lacked_not_what_the_fleet_lacks():
     assert "c_local" in v.missing
 
 
-def test_emitting_c_local_never_upgrades_a_banked_run_to_gated():
+def test_the_descriptor_is_a_function_of_the_archive_alone():
     """PARITY, as a property over the whole corpus.
 
-    A run's verdict must not become GATED merely because the solver
-    started emitting a field. Only the GATED direction is asserted:
-    other movements are legitimate (a hypothetically pinned C_local on a
-    coverage-limited run IS barren by the adopted form), but inventing a
-    positive is the failure this lane exists to prevent.
+    The label that replaced GATED must not be reachable by the solver
+    starting to emit a field. Under the old build this same sweep
+    guarded a VERDICT from being invented by `c_local`; the verdict is
+    gone, so it now guards the label, which is the only thing left that
+    a reader could mistake for one.
     """
     offenders = []
-    for label, _truth, _expected, kw, arc in CORPUS:
+    for label, _truth, _expected, _desc, kw, arc in CORPUS:
         peak = arc.distinct_spatial if arc is not None else 1000
-        baseline = gated_wall_verdict(
-            WallTelemetry(records=make_records(**kw), archive=arc)).wall_class
-        for name, series in c_local_shapes(kw["n"], peak).items():
-            for a in (arc, None):
+        shapes = dict(c_local_shapes(kw["n"], peak), none=None)
+        for a in (arc, None):
+            expected = (wt.UNRESOLVED_CONCENTRATED
+                        if a is not None
+                        and a.concentration >= wt.CONCENTRATION_DESCRIPTIVE_MIN
+                        else "")
+            for name, series in shapes.items():
                 tel = WallTelemetry(
                     records=make_records(**kw, c_local_series=series),
                     archive=a, label=label)
-                got = gated_wall_verdict(tel).wall_class
-                if got is WallClass.GATED and baseline is not WallClass.GATED:
-                    offenders.append(
-                        f"{label} [c_local={name}, archive={a is not None}] "
-                        f"{baseline.value} -> gated")
-    assert offenders == [], f"c_local invented a GATED verdict: {offenders}"
+                v = gated_wall_verdict(tel)
+                # A verdict that diagnoses the search (BARREN/KEY_BLIND)
+                # or observes movement describes nothing; everything else
+                # describes exactly what its archive shows.
+                if v.wall_class is not WallClass.INDETERMINATE:
+                    if v.descriptor != "":
+                        offenders.append(f"{label} [{name}] {v.wall_class.value}"
+                                         f" carried {v.descriptor!r}")
+                elif v.descriptor != expected:
+                    offenders.append(f"{label} [c_local={name}, "
+                                     f"archive={a is not None}] "
+                                     f"{v.descriptor!r} != {expected!r}")
+    assert offenders == [], f"the descriptor moved with the series: {offenders}"
 
 
 def test_every_verdict_carries_a_remedy_and_serializes():
@@ -608,91 +875,114 @@ def test_every_verdict_carries_a_remedy_and_serializes():
     v = gated_wall_verdict(tel)
     assert v.remedy == wt.REMEDY[v.wall_class]
     assert v.calibration == wt.CALIBRATION_TAG
-    json.dumps(v.as_dict())  # must not raise
+    blob = json.loads(json.dumps(v.as_dict()))   # must not raise
+    assert blob["descriptor"] == v.descriptor
+    assert blob["wall_class"] == v.wall_class.value
 
 
 # --------------------------------------------------------------------------
-# 3. frozen calibration corpus
+# 3. frozen corpus
 # --------------------------------------------------------------------------
 
 #: Statistics measured on the banked runs during the 2026-08-10 offline
 #: calibration, replayed as synthetic telemetry. Columns:
-#:   label, ground truth, expected verdict, telemetry kwargs, archive
-#: See docs/receipts/dispatch/gated_wall_calibration_2026-08-10.md.
+#:   label, ground truth, expected verdict, expected descriptor,
+#:   telemetry kwargs, archive
 #:
-#: GROUND-TRUTH HEALTH WARNING. The negatives here are solid — every
-#: `resolved` row was actually solved. The POSITIVES are not: both are
-#: `lvl_03_trace`, i.e. the same Castlevania hall from two hardware-flag
-#: lineages, and that hall has never been solved. Nothing receipts it as
-#: gated; the only thing pointing that way is that an orthogonal arm was
-#: launched at it, which is the conclusion, not the evidence. Every row
-#: marked PENDING-VALIDATION is conditional on `runs/cv_hall_ortho_a`
-#: reading out — see §9 of the receipt for what happens to these bands
-#: if it reads out COVERAGE instead.
+#: WHAT THIS FIXTURE IS FOR, AFTER THE STRIKE. It used to lock a set of
+#: separating bands: move a constant out of its measured band and a row
+#: flips. Two of those bands are gone — `concentration` does not separate
+#: this corpus or any other — so what the rows lock now is narrower and
+#: more honest:
+#:
+#:   * the SUBTRACTIVE classes still fire where they always did
+#:     (KEY_BLIND on every span-degenerate Bubble Bobble profile, BARREN
+#:     on the frozen ones, INSUFFICIENT on the starved show segment);
+#:   * the two directly-observed classes still fire (RESOLVED where a
+#:     solution was banked, PROGRESSING where a monotone counter moved);
+#:   * and everything the module can no longer tell apart lands in ONE
+#:     class, which is how you can see at a glance how much was struck.
+#:
+#: The five hall reads and the resolved coverage walls now share the
+#: INDETERMINATE row. That is not a loss of resolution the fixture is
+#: papering over — it IS the finding.
 CORPUS = [
-    ("cv_chain_hw2/lvl_03_trace", "gated (PENDING-VALIDATION)", WallClass.GATED,
+    ("cv_chain_hw2/lvl_03_trace", "unresolved hall",
+     WallClass.INDETERMINATE, wt.UNRESOLVED_CONCENTRATED,
      dict(n=89, cells_start=3354, cells_end=91_995, steps_end=10_643_480,
           map_gx=767),
      archive(cells=92_785, distinct_spatial=1089, spatial_span=95,
              boundary_cells=13, entropy=0.9837)),
-    ("cv_chain_hw/lvl_03_trace", "gated (PENDING-VALIDATION, same hall)",
-     WallClass.GATED,
+    ("cv_chain_hw/lvl_03_trace", "unresolved hall, second lineage",
+     WallClass.INDETERMINATE, wt.UNRESOLVED_CONCENTRATED,
      dict(n=14, cells_start=17_000, cells_end=27_619, steps_end=2_404_020,
           map_gx=767),
      archive(cells=28_929, distinct_spatial=932, spatial_span=94,
              boundary_cells=5, entropy=0.9697)),
-    # FROZEN at the 24-record, pre-flush snapshot the original probe saw.
-    # The live directory has since flushed an archive and its verdict has
-    # moved (see test_the_live_ortho_arm_now_reads_gated_and_is_excluded).
-    # This row is kept as a fixture of the DEGRADED path, not as evidence:
-    # it is the arm whose read-out the calibration is conditional on.
-    ("cv_hall_ortho_a @24 records (pre-flush snapshot)", "PENDING-VALIDATION",
-     WallClass.INDETERMINATE,
+    # The doors fixture. Progress-only ON PURPOSE: D3 ruled this run's
+    # archive INCOMPATIBLE as evidence (1-flag lineage against the 4-flag
+    # arms, backfilled provenance, a disjoint tb/kk key subspace, and a
+    # "3.8x largest archive" that was key-inflation — 560,410 collapsing
+    # to 88,212). The row is here for the progress series, which is where
+    # the taxonomy defect lived, not to contribute archive statistics.
+    ("cv_chain_hw/lvl_03_overnight (D3: INCOMPATIBLE lineage)",
+     "unresolved hall; read PROGRESSING off doors churn",
+     WallClass.INDETERMINATE, "",
+     dict(n=30, cells_start=548_583, cells_end=559_310,
+          steps_start=44_777_250, steps_end=45_898_118, map_gx=767,
+          doors=12_694, doors_end=12_880),
+     None),
+    ("cv_hall_ortho_a @24 records (pre-flush snapshot)", "unresolved hall",
+     WallClass.INDETERMINATE, "",
      dict(n=24, cells_start=93_720, cells_end=107_890, steps_end=2_440_150,
           map_gx=767),
      None),
-    ("bubble_bobble/r68_retry_ortho", "orthogonal/key", WallClass.KEY_BLIND,
+    ("bubble_bobble/r68_retry_ortho", "orthogonal/key",
+     WallClass.KEY_BLIND, "",
      dict(n=30, cells_start=96, cells_end=96, steps_end=3_675_730, frozen=29),
      archive(cells=96, distinct_spatial=16, spatial_span=1,
              boundary_cells=96, entropy=0.7775)),
-    ("bubble_bobble/r69_retry_ortho", "orthogonal/key", WallClass.KEY_BLIND,
+    ("bubble_bobble/r69_retry_ortho", "orthogonal/key",
+     WallClass.KEY_BLIND, "",
      dict(n=30, cells_start=40, cells_end=48, steps_end=3_153_184, frozen=19),
      archive(cells=48, distinct_spatial=8, spatial_span=1,
              boundary_cells=48, entropy=0.78)),
-    ("bubble_bobble/r68_retry_xsig", "resolved", WallClass.RESOLVED,
+    ("bubble_bobble/r68_retry_xsig", "resolved", WallClass.RESOLVED, "",
      dict(n=30, cells_start=224, cells_end=605, steps_end=3_570_080,
           solutions=6, frozen=4),
      archive(cells=605, distinct_spatial=16, spatial_span=1,
              boundary_cells=605, entropy=0.8253)),
-    ("bubble_bobble/r99_retry2", "orthogonal/key", WallClass.KEY_BLIND,
+    ("bubble_bobble/r99_retry2", "orthogonal/key", WallClass.KEY_BLIND, "",
      dict(n=30, cells_start=300, cells_end=691, steps_end=3_544_480, frozen=4),
      archive(cells=691, distinct_spatial=16, spatial_span=1,
              boundary_cells=691, entropy=0.8583)),
-    ("bubble_bobble/r99_1_boss_retry", "unknown/mechanic", WallClass.KEY_BLIND,
+    ("bubble_bobble/r99_1_boss_retry", "unknown/mechanic",
+     WallClass.KEY_BLIND, "",
      dict(n=30, cells_start=2931, cells_end=9475, steps_end=3_249_620),
      archive(cells=9475, distinct_spatial=32, spatial_span=1,
              boundary_cells=9475, entropy=0.8991)),
     ("bubble_bobble/chain_day2h_item/lvl_00_99-1", "unknown/mechanic",
-     WallClass.KEY_BLIND,
+     WallClass.KEY_BLIND, "",
      dict(n=45, cells_start=1462, cells_end=2989, steps_end=5_188_710),
      archive(cells=2989, distinct_spatial=16, spatial_span=1,
              boundary_cells=2989, entropy=0.8761)),
     ("live_show/smb_4_4_micro/lvl_4-4 seg1", "coverage (resolved)",
-     WallClass.INDETERMINATE,
+     WallClass.INDETERMINATE, "",
      dict(n=44, cells_start=50_366, cells_end=1_020_500, steps_end=6_800_000,
           map_gx=2059),
      None),
     ("live_show/smb_4_4_micro/lvl_4-4 seg4", "coverage (resolved)",
-     WallClass.PROGRESSING,
+     WallClass.PROGRESSING, "",
      dict(n=50, cells_start=51_853, cells_end=1_164_599, steps_end=7_286_076,
           map_gx=2055, map_gx_end=2575),
      None),
     ("live_show/smb_4_4_micro/lvl_8-4", "coverage (resolved)",
-     WallClass.PROGRESSING,
+     WallClass.PROGRESSING, "",
      dict(n=56, cells_start=45_035, cells_end=1_190_873, steps_end=7_203_648,
           map_gx=3844, map_gx_end=4290),
      None),
-    ("ge_chain/lvl_11_4-4", "coverage (resolved)", WallClass.COVERAGE_LIMITED,
+    ("ge_chain/lvl_11_4-4", "coverage (resolved)",
+     WallClass.INDETERMINATE, "",
      dict(n=21, cells_start=5100, cells_end=5885, steps_end=3_335_420,
           map_gx=2068),
      archive(cells=5885, distinct_spatial=750, spatial_span=130,
@@ -700,63 +990,76 @@ CORPUS = [
 ]
 
 
-@pytest.mark.parametrize("label,truth,expected,kw,arc", CORPUS,
+@pytest.mark.parametrize("label,truth,expected,descriptor,kw,arc", CORPUS,
                          ids=[c[0] for c in CORPUS])
-def test_corpus_verdicts(label, truth, expected, kw, arc):
+def test_corpus_verdicts(label, truth, expected, descriptor, kw, arc):
     tel = WallTelemetry(records=make_records(**kw), archive=arc, label=label)
     v = gated_wall_verdict(tel)
     assert v.wall_class is expected, (
         f"{label} (ground truth {truth}) -> {v.wall_class.value}; "
         f"reasons={v.reasons}")
+    assert v.descriptor == descriptor, (
+        f"{label} -> descriptor {v.descriptor!r}, expected {descriptor!r}")
 
 
-def test_no_false_gated_anywhere_in_the_corpus():
-    """No FALSE positives: every run whose ground truth is known — every
-    resolved coverage wall, every representation-limited Bubble Bobble
-    run — must land somewhere other than GATED, in both the full and the
-    degraded path.
+def test_the_solved_archives_that_broke_the_band_are_not_condemned():
+    """The three counter-examples that ended the classifier, scored.
 
-    The converse is NOT asserted, because it cannot be: the only two
-    rows that do read GATED are the same unsolved Castlevania hall seen
-    twice, so this test proves the module does not cry wolf, not that it
-    can find a wolf. See the CORPUS health warning.
+    All three were SOLVED. Under the shipped 25.0 threshold the first two
+    read GATED — "switch to an orthogonal arm" — and the third read
+    COVERAGE_LIMITED from one chain over, which is how a 6.3x intra-chain
+    spread hides inside a 1.51x "separating band". None of them may be
+    condemned now, and the mechanism by which none of them is is that
+    concentration reaches no branch at all.
     """
-    gated = set()
-    for label, _truth, _expected, kw, arc in CORPUS:
-        for a in (arc, None):
-            tel = WallTelemetry(records=make_records(**kw), archive=a)
-            if gated_wall_verdict(tel).wall_class is WallClass.GATED:
-                gated.add(label)
-    assert gated == {"cv_chain_hw2/lvl_03_trace",
-                     "cv_chain_hw/lvl_03_trace"}, (
-        "the GATED set must stay exactly the (unvalidated) hall pair")
+    solved = [
+        # ge_chain_w8, one chain, one profile, one --gx-bucket 16 grid.
+        ("lvl_00_8-1", 218_218, 2220, 98.30),
+        ("lvl_02_8-3", 19_958, 970, 20.58),
+        ("lvl_01_8-2", 19_330, 1234, 15.66),
+    ]
+    for name, cells, ds, conc in solved:
+        arc = archive(cells=cells, distinct_spatial=ds, spatial_span=120)
+        assert arc.concentration == pytest.approx(conc, abs=0.6), name
+        tel = WallTelemetry(
+            records=make_records(n=30, cells_start=cells // 2, cells_end=cells,
+                                 steps_end=8_000_000, map_gx=2000),
+            archive=arc, label=name)
+        v = gated_wall_verdict(tel)
+        assert v.wall_class in LICENSED_CLASSES
+        assert v.wall_class is WallClass.INDETERMINATE, name
+        assert v.remedy == wt.REMEDY[WallClass.INDETERMINATE]
+    # The spread that did the damage, asserted so the number is on record.
+    assert 98.30 / 15.66 > 6.0
 
 
-def test_the_live_ortho_arm_now_reads_gated_and_is_excluded():
-    """`runs/cv_hall_ortho_a` flushed an archive; its verdict moved.
+def test_the_live_ortho_arm_gets_a_description_and_stays_excluded():
+    """`runs/cv_hall_ortho_a` flushed an archive; its statistics are the
+    most extreme in the corpus and they still classify nothing.
 
     Measured 2026-08-10 11:26 from the real 2,436,606,838-byte
     `archive.pkl`: 114,699 cells over 1,095 distinct spatial buckets,
-    span 95 -> concentration 104.75, which is 4.2x
-    CONCENTRATION_GATED_MIN. The run reads GATED, not the INDETERMINATE
-    an earlier read of the same directory recorded when no archive had
-    been flushed yet.
+    span 95 -> concentration 104.75, 4.2x the descriptive floor. It is
+    deliberately NOT in CORPUS, and the exclusion is the point: it is a
+    THIRD read of the same Castlevania hall, so it adds no independent
+    evidence, and it was the pending-validation arm itself.
 
-    It is deliberately NOT in CORPUS, and the exclusion is the point.
-    It is a THIRD read of the same Castlevania hall, so it adds no
-    independent evidence; and it is the pending-validation arm itself,
-    so scoring it and counting the result as confirmation would be
-    grading the experiment with the instrument under test.
+    It also settles what the arm was launched to settle, in the only
+    direction the evidence allows: the arm ran, and no statistic computed
+    on any of its five hall reads separates them from an archive that
+    solved.
     """
     measured = archive(cells=114_699, distinct_spatial=1095, spatial_span=95,
                        boundary_cells=16, entropy=0.983)
     assert measured.concentration == pytest.approx(104.748, abs=0.01)
-    assert measured.concentration > 4 * wt.CONCENTRATION_GATED_MIN
+    assert measured.concentration > 4 * wt.CONCENTRATION_DESCRIPTIVE_MIN
     tel = WallTelemetry(
         records=make_records(n=56, cells_start=93_720, cells_end=119_535,
                              steps_end=5_621_170, map_gx=767),
         archive=measured, label="cv_hall_ortho_a @56 records")
-    assert gated_wall_verdict(tel).wall_class is WallClass.GATED
+    v = gated_wall_verdict(tel)
+    assert v.wall_class is WallClass.INDETERMINATE
+    assert v.descriptor == wt.UNRESOLVED_CONCENTRATED
 
     corpus_labels = {c[0] for c in CORPUS}
     assert not any(lab.startswith("cv_hall_ortho_a @56") for lab in corpus_labels)
@@ -765,18 +1068,18 @@ def test_the_live_ortho_arm_now_reads_gated_and_is_excluded():
         "fixture: its statistics move between reads")
 
 
-def test_shipped_constants_sit_inside_their_measured_separating_bands():
+def test_surviving_constants_sit_inside_their_measured_separating_bands():
     """Each band is (nearest counter-example, nearest positive]. Moving a
     constant outside its band silently reclassifies a banked run, so the
     bands are asserted here rather than living only in the receipt.
 
-    Every bracket below must come from a BANKED run. The earlier
-    EFFORT_MIN_STEPS bracket was taken from `cv_hall_ortho_a` while it
-    was still running, and it drifted (1,010,590 -> 968,490 over the
-    following hour) — a live run cannot bracket a frozen constant.
+    The two bands that used to head this list are gone. `concentration`
+    has no band — it was measured not to have one — and the flag that
+    could have promoted the C_local series into the same branch went with
+    the branch. What remains is the set §14 of the second receipt
+    enumerates as untouched, and all 13 resolved archives clear every one
+    of them.
     """
-    # (20.58 = SMB 8-3, resolved) .. (31.04 = CV hall hw, gated)
-    assert 20.58 < wt.CONCENTRATION_GATED_MIN <= 31.04
     # (1 = every Bubble Bobble run) .. (94 = CV hall hw)
     assert 1 < wt.SPATIAL_SPAN_MIN <= 94
     # (32 = BB 99-1 boss retry, the largest degenerate spatial projection)
@@ -792,38 +1095,182 @@ def test_shipped_constants_sit_inside_their_measured_separating_bands():
     assert 7 < wt.FROZEN_WINDOWS_MAX <= 19
     # 14 records is the shortest corpus run that must still be classified.
     assert wt.WINDOW_RECORDS < wt.MIN_RECORDS <= 14
-    # Uncalibrated thresholds may not certify the expensive verdict.
-    assert wt.C_LOCAL_SERIES_MAY_CERTIFY_GATED is False
+    # No band survives for the struck statistic, under any name.
+    assert not hasattr(wt, "CONCENTRATION_GATED_MIN")
+    assert not hasattr(wt, "C_LOCAL_SERIES_MAY_CERTIFY_GATED")
+
+
+# --------------------------------------------------------------------------
+# 4. the strike, and its mutation guards
+# --------------------------------------------------------------------------
+
+def test_re_adding_a_gated_class_fails_here():
+    """THE MUTATION GUARD for the removal.
+
+    Re-adding `GATED` — as an enum member, as a remedy, or as a verdict
+    string — fails this test. It is spelled out at three levels because
+    the shipped branch was one `if` and one enum line, and either alone
+    would have been enough to put "switch to an orthogonal arm" back in
+    front of an operator on evidence that does not support it.
+    """
+    names = {c.name for c in WallClass}
+    values = {c.value for c in WallClass}
+    assert "GATED" not in names, (
+        "WallClass.GATED was removed on 2026-08-11 after 22 candidate "
+        "statistics over 103 archives failed to separate a wall from a "
+        f"search that solved. See {wt.STRUCK_CLASSIFICATION_RECEIPT} §12.1.")
+    assert "gated" not in values
+    assert set(WallClass) == LICENSED_CLASSES
+    assert set(wt.REMEDY) == LICENSED_CLASSES
+    assert not any("gated" in r.lower() for r in wt.REMEDY.values())
+
+    # ...and no CODE path can name one. Checked on the parse tree rather
+    # than on the text so that the module is free to keep explaining, at
+    # whatever length, why the class is not there.
+    import ast
+
+    tree = ast.parse((REPO / "src/training/wall_taxonomy.py").read_text())
+    named = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Attribute) and n.attr == "GATED"
+             and isinstance(n.value, ast.Name) and n.value.id == "WallClass"]
+    assert named == [], f"WallClass.GATED referenced on {len(named)} line(s)"
+
+
+def test_no_telemetry_anywhere_in_the_corpus_certifies_a_wall():
+    """The headline safety property, now unconditional.
+
+    It used to be conditional — progress-only telemetry may not certify
+    GATED — and that condition was the concession that made the shipped
+    branch look safe: with an archive it certified freely, and four of
+    the thirteen archives it would have certified had already solved.
+
+    Swept over every corpus run, every C_local shape, and both archive
+    states. Nothing may leave the licensed set, and nothing may return a
+    class this module no longer has.
+    """
+    seen = set()
+    for label, _truth, _expected, _desc, kw, arc in CORPUS:
+        peak = arc.distinct_spatial if arc is not None else 1000
+        shapes = dict(c_local_shapes(kw["n"], peak), none=None)
+        for name, series in shapes.items():
+            for a in (arc, None):
+                tel = WallTelemetry(
+                    records=make_records(**kw, c_local_series=series),
+                    archive=a, label=label)
+                v = gated_wall_verdict(tel)
+                assert v.wall_class in LICENSED_CLASSES, (
+                    f"{label} [{name}] -> {v.wall_class}")
+                assert v.descriptor in ("", wt.UNRESOLVED_CONCENTRATED)
+                seen.add(v.wall_class)
+    # The sweep must actually exercise the interesting classes, or the
+    # assertion above is vacuous.
+    assert {WallClass.INDETERMINATE, WallClass.KEY_BLIND,
+            WallClass.BARREN, WallClass.RESOLVED} <= seen
+
+
+def test_the_descriptive_threshold_moves_no_verdict(monkeypatch):
+    """The other mutation guard, and the sharper of the two.
+
+    `CONCENTRATION_DESCRIPTIVE_MIN` is the last place the struck
+    statistic appears. If anyone re-wires it into a branch — under any
+    name, in either direction, whether it returns GATED or something
+    invented to avoid the word — driving it to both extremes will move a
+    `wall_class`, and this fails. Only the DESCRIPTOR is allowed to
+    respond to it, which is the operational difference between a
+    description and a gate.
+    """
+    def sweep():
+        return [(gated_wall_verdict(WallTelemetry(records=make_records(**kw),
+                                                  archive=arc, label=label))
+                 ) for label, _t, _e, _d, kw, arc in CORPUS]
+
+    baseline = [(v.wall_class, v.descriptor) for v in sweep()]
+
+    monkeypatch.setattr(wt, "CONCENTRATION_DESCRIPTIVE_MIN", 0.0)
+    everything_concentrated = sweep()
+    monkeypatch.setattr(wt, "CONCENTRATION_DESCRIPTIVE_MIN", 1e9)
+    nothing_concentrated = sweep()
+
+    for (cls, _desc), lo, hi in zip(baseline, everything_concentrated,
+                                    nothing_concentrated):
+        assert lo.wall_class is cls
+        assert hi.wall_class is cls
+    # And the descriptor DOES respond, or the sweep proved nothing.
+    assert any(v.descriptor for v in everything_concentrated)
+    assert not any(v.descriptor for v in nothing_concentrated)
 
 
 def test_refuted_statistics_are_reported_but_never_gated_on():
-    """Raw-cell saturation is the obvious candidate for 'C_local
-    plateau' and it is wrong: on the corpus the gated hall straddles two
+    """Raw-cell saturation was the obvious candidate for 'C_local
+    plateau' and it is wrong: on the corpus the hall straddles two
     resolved coverage walls in BOTH directions."""
-    assert wt.RAW_COVERAGE_SATURATION_IS_SEPARATING is False
-    assert wt.CHURN_IS_SEPARATING is False
-    assert wt.BOUNDARY_ENTROPY_IS_SEPARATING is False
-    assert wt.MAP_STALL_WINDOWS_IS_SEPARATING is False
-
     measured = {                     # raw-cell saturation, trailing 10 records
-        "cv_hall_hw (gated)": 0.179,
+        "cv_hall_hw (unresolved)": 0.179,
         "smb_8-4 (resolved)": 0.189,
-        "cv_hall_hw2 (gated)": 0.343,
+        "cv_hall_hw2 (unresolved)": 0.343,
         "smb_4-4 seg4 (resolved)": 0.352,
     }
-    gated_vals = [v for k, v in measured.items() if "gated" in k]
-    resolved = [v for k, v in measured.items() if "resolved" in k]
-    assert min(gated_vals) < min(resolved) < max(gated_vals) < max(resolved), (
+    hall = [v for k, v in measured.items() if "unresolved" in k]
+    resolved = [v for k, v in measured.items() if "(resolved)" in k]
+    assert min(hall) < min(resolved) < max(hall) < max(resolved), (
         "the corpus interleaves; no raw-saturation threshold separates it")
 
-    # And the statistic is still reported, so a human can see it.
+    # And the statistics are still reported, so a human can see them.
     tel = WallTelemetry(records=make_records(n=30))
-    assert "raw_coverage_saturation" in gated_wall_verdict(tel).evidence
-    assert "churn_per_window" in gated_wall_verdict(tel).evidence
+    ev = gated_wall_verdict(tel).evidence
+    for key in ("raw_coverage_saturation", "churn_per_window",
+                "map_stall_windows", "doors_delta"):
+        assert key in ev
+
+
+@pytest.mark.parametrize("name,when", sorted(REFUTED_CONSTANTS.items()))
+def test_every_refuted_constant_is_false_and_cites_its_kill(name, when):
+    """A refutation nobody can read is a refutation somebody re-derives.
+
+    Each constant must be `False`, must carry a `REFUTED-OFFLINE-<date>`
+    provenance tag on its own line, and must be documented in a comment
+    block that names the OFFENDER that killed it — a run and the value it
+    scored — in the idiom §3 of the calibration set. The 2026-08-11
+    cohort must additionally point at the receipt section it came from,
+    because that receipt scored 22 candidates and a bare assertion is not
+    findable inside it.
+    """
+    assert getattr(wt, name) is False
+
+    src = (REPO / "src/training/wall_taxonomy.py").read_text().splitlines()
+    idx = next(i for i, line in enumerate(src) if line.startswith(f"{name} ="))
+    assert f"REFUTED-OFFLINE-{when}" in src[idx], src[idx]
+
+    block = []
+    for line in reversed(src[:idx]):
+        if not line.startswith("#:"):
+            break
+        block.append(line)
+    doc = " ".join(reversed(block))
+    assert len(doc) > 120, f"{name} has no documented kill"
+    assert any(ch.isdigit() for ch in doc), (
+        f"{name} names no measured offender")
+    if when == "2026-08-11":
+        assert "§" in doc or ".md" in doc, f"{name} cites no receipt section"
+
+
+def test_the_module_names_the_receipts_that_struck_it():
+    src = (REPO / "src/training/wall_taxonomy.py").read_text()
+    for receipt in ("k_falsifier_2026-08-10.md",
+                    "size_decoupled_statistic_2026-08-11.md",
+                    "GATE_OPENER_CAMPAIGN_2026-08-11.md"):
+        assert receipt in src
+    assert wt.STRUCK_CLASSIFICATION_RECEIPT in src
+    assert (REPO / "docs/receipts/dispatch"
+            / "size_decoupled_statistic_2026-08-11.md").exists()
+    assert wt.CALIBRATION_TAG == "CLASSIFICATION-STRUCK-2026-08-11", (
+        "the tag stamped into every verdict must change when the verdicts "
+        "do, or a pre-strike receipt reads as a post-strike one")
 
 
 def test_missing_telemetry_names_the_runtime_gaps():
-    for key in ("c_local", "boundary_action_entropy", "frontier_bucket_cells"):
+    for key in ("c_local", "boundary_action_entropy", "frontier_bucket_cells",
+                "doors_cumulative"):
         assert key in wt.MISSING_TELEMETRY
         assert len(wt.MISSING_TELEMETRY[key]) > 40
 
@@ -837,11 +1284,11 @@ _TAXONOMY_PURE_READER = "scripts/go_explore_solve.py"
 
 
 def test_module_is_not_wired_into_any_runtime_dispatch():
-    """Self-arming is a later decision (D2 verdict). Nothing outside
-    tests and docs may import this module, with exactly one exception:
-    the gate-opener arm's pure `boundary_axis_profile` read (taxonomy
-    KEYED, never taxonomy-WIRED — the companion test below pins how
-    narrow that exception is).
+    """Self-arming is a later decision (D2 verdict), and after the strike
+    there is nothing to arm. Nothing outside tests and docs may import
+    this module, with exactly one exception: the gate-opener arm's pure
+    `boundary_axis_profile` read (taxonomy KEYED, never taxonomy-WIRED —
+    the companion test below pins how narrow that exception is).
     """
     importers = []
     for root in ("src", "scripts", "nes_core", "configs"):
@@ -887,31 +1334,39 @@ def test_the_one_tolerated_reader_imports_only_the_pure_profile():
 
 
 # --------------------------------------------------------------------------
-# 4. live regression against the banked runs (skipped without them)
+# 5. live regression against the banked runs (skipped without them)
 #
 # Only FINISHED run directories belong here. `runs/cv_hall_ortho_a` is
 # excluded on purpose: it is still being written, so its statistics move
-# between reads, and it is the arm the calibration is conditional on.
-# The two GATED expectations below are the unvalidated hall pair — they
-# assert reproducibility of the statistic, not correctness of the label.
+# between reads, and it was the arm the old calibration was conditional
+# on.
 # --------------------------------------------------------------------------
 
 LIVE = [
-    ("runs/cv_chain_hw2/lvl_03_trace", True, -1, WallClass.GATED),
-    ("runs/cv_chain_hw/lvl_03_trace", True, -1, WallClass.GATED),
-    ("runs/bubble_bobble/r68_retry_ortho", True, -1, WallClass.KEY_BLIND),
-    ("runs/bubble_bobble/r68_retry_xsig", True, -1, WallClass.RESOLVED),
-    ("runs/bubble_bobble/r99_1_boss_retry", True, -1, WallClass.KEY_BLIND),
-    ("runs/live_show/smb_4_4_micro/lvl_8-4", False, -1, WallClass.PROGRESSING),
-    ("runs/live_show/smb_4_4_micro/lvl_4-4", False, 1, WallClass.INDETERMINATE),
-    ("runs/ge_chain/lvl_11_4-4", True, -1, WallClass.COVERAGE_LIMITED),
+    ("runs/cv_chain_hw2/lvl_03_trace", True, -1, WallClass.INDETERMINATE,
+     wt.UNRESOLVED_CONCENTRATED),
+    ("runs/cv_chain_hw/lvl_03_trace", True, -1, WallClass.INDETERMINATE,
+     wt.UNRESOLVED_CONCENTRATED),
+    # Progress-only: the archive is 11.9 GB and D3 ruled it inadmissible
+    # as evidence anyway. This row exists to hold the doors repair against
+    # the real series that exposed it.
+    ("runs/cv_chain_hw/lvl_03_overnight", False, -1, WallClass.INDETERMINATE,
+     ""),
+    ("runs/bubble_bobble/r68_retry_ortho", True, -1, WallClass.KEY_BLIND, ""),
+    ("runs/bubble_bobble/r68_retry_xsig", True, -1, WallClass.RESOLVED, ""),
+    ("runs/bubble_bobble/r99_1_boss_retry", True, -1, WallClass.KEY_BLIND, ""),
+    ("runs/live_show/smb_4_4_micro/lvl_8-4", False, -1,
+     WallClass.PROGRESSING, ""),
+    ("runs/live_show/smb_4_4_micro/lvl_4-4", False, 1,
+     WallClass.INDETERMINATE, ""),
+    ("runs/ge_chain/lvl_11_4-4", True, -1, WallClass.INDETERMINATE, ""),
 ]
 
 
-@pytest.mark.parametrize("rundir,with_archive,segment,expected", LIVE,
-                         ids=[c[0] for c in LIVE])
+@pytest.mark.parametrize("rundir,with_archive,segment,expected,descriptor",
+                         LIVE, ids=[c[0] for c in LIVE])
 def test_live_corpus_reproduces_the_calibrated_verdicts(
-        rundir, with_archive, segment, expected):
+        rundir, with_archive, segment, expected, descriptor):
     base = REPO / rundir
     progress = base / "progress.jsonl"
     arch = base / "archive.pkl"
@@ -920,4 +1375,31 @@ def test_live_corpus_reproduces_the_calibrated_verdicts(
     tel = wt.telemetry_from_paths(
         progress, archive_path=(arch if with_archive else None),
         segment=segment, label=rundir)
-    assert gated_wall_verdict(tel).wall_class is expected
+    v = gated_wall_verdict(tel)
+    assert v.wall_class is expected
+    assert v.descriptor == descriptor
+
+
+def test_the_live_doors_defect_is_fixed_on_the_real_file():
+    """The exact read that produced the misclassification, off disk.
+
+    Synthetic fixtures reproduce the window deltas; this asserts the
+    verdict on the 359-record file itself, so the repair cannot be true
+    only of the reconstruction.
+    """
+    progress = REPO / "runs/cv_chain_hw/lvl_03_overnight/progress.jsonl"
+    if not progress.exists():
+        pytest.skip("runs/cv_chain_hw/lvl_03_overnight not present")
+    tel = wt.telemetry_from_paths(progress, label="lvl_03_overnight")
+    v = gated_wall_verdict(tel)
+    assert v.evidence["doors_delta"] == 186
+    assert v.evidence["topo_delta"] == 0
+    assert v.evidence["map_stall_windows"] == 355
+    assert v.wall_class is WallClass.INDETERMINATE
+
+    # The sidecar came along for free and reports the effort the verdict
+    # was taken over, on the archive's own clock.
+    assert tel.counters is not None
+    assert v.evidence["archive_records"] == 45_640_527
+    assert v.evidence["archive_explored_fraction"] == pytest.approx(0.6763,
+                                                                    abs=5e-5)

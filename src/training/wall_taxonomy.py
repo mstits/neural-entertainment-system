@@ -1,57 +1,85 @@
-"""Gated-wall discriminator — offline-calibrated, runtime-inert.
+"""Wall taxonomy over solver telemetry — offline, runtime-inert.
 
 WHAT THIS IS
 ------------
-A pure statistic over solver telemetry that answers one question about a
-search that has stopped making progress:
+Pure statistics over solver telemetry, plus a classifier that says what
+— if anything — they license about a search that has stopped making
+progress.
 
-    is this wall GATED (the search has saturated everything it can reach
-    and something in the game is withholding the next transition), or is
-    it BARREN (the search is not generating local novelty at all), or is
-    it merely COVERAGE-LIMITED (still productively expanding — it just
-    has not arrived yet)?
+WHAT IT NO LONGER IS
+--------------------
+It no longer answers "is this wall GATED?", i.e. "has the search
+saturated everything it can reach, so that something in the game must be
+withholding the next transition?". That question had a shipped answer —
+coverage concentration over a calibrated threshold — and two receipts
+killed it:
 
-The three demand opposite responses. A gated wall wants an ORTHOGONAL
-mechanism (a different action axis, a mechanic the current key cannot
-express); a barren wall wants the CELL KEY or the reset fixed; a
-coverage-limited wall wants nothing but more wall-clock. Getting it
-backwards costs hours in either direction: `runs/live_show/
-smb_4_4_micro/lvl_8-4` looked identically stuck for 44 straight minutes
-and then simply finished, while `runs/cv_hall_ortho_a` is an orthogonal
-arm launched at the Castlevania hall on the belief that it is gated.
+  * docs/receipts/dispatch/k_falsifier_2026-08-10.md — the shipped
+    `concentration` band does not separate the unsolved Castlevania hall
+    from archives that were SOLVED. `ge_chain_w8/lvl_00_8-1` solved at
+    concentration 98.30, 3.2x the "gated" upper bracket, inside one
+    chain whose two solved siblings read 15.66 and 20.58.
+  * docs/receipts/dispatch/size_decoupled_statistic_2026-08-11.md — a
+    search for a replacement: 22 candidates over 103 archives, including
+    two devised here that pass a same-chain sibling test cleanly. ALL
+    STRADDLE. The least-bad cut available anywhere in the set (new cells
+    per selection at 0.7778) still condemns 3 of 13 resolved archives as
+    walls; the shipped statistic's own best cut condemns 4.
 
-THE CALIBRATION IS CONDITIONAL ON A READ-OUT THAT HAS NOT HAPPENED.
-That belief is UNVALIDATED. The hall has never been solved; the corpus'
-only two positives are the SAME level (`lvl_03_trace`) from two
-hardware-flag lineages, which is one wall seen twice, not two
-independent ones; and the arm testing it (`runs/cv_hall_ortho_a`) is
-still running. If that arm reads out COVERAGE — the 8-4 outcome above —
-the positive class is empty and every band below collapses. Treat the
-hall as PENDING-VALIDATION, and read §9 of the receipt before citing
-any number here as evidence that gated walls are detectable.
+So `WallClass.GATED` is GONE — REMOVED, per §12.1 of the second receipt,
+rather than re-thresholded, because after that search there is no
+constant left to re-tag into correctness. Where it used to fire the
+module now ABSTAINS (`INDETERMINATE`, whose remedy "collect the missing
+telemetry" is now literally correct) and attaches the descriptive,
+non-verdict label `UNRESOLVED_CONCENTRATED`: a statement about what was
+OBSERVED — the archive piled cells into a map footprint that stopped
+growing, and the search has not resolved — never about why, and never a
+licence to spend an orthogonal campaign. `UNRESOLVED-CONCENTRATED` is
+also the vocabulary the K-falsifier's §12.4 requires downstream: no
+GATED wording for any target.
 
-The discriminator's adopted form is:
+Note what this does NOT say. It does not say the Castlevania hall is
+coverage-limited. The hall's facts are unchanged — five runs, ~10.7 h,
+~77 M steps, best score pinned, zero crossings, zero solutions. It says
+only that no statistic yet found tells a search that is stuck from one
+that is about to finish, which is exactly the 8-4 lesson:
+`runs/live_show/smb_4_4_micro/lvl_8-4` looked identically stuck for 44
+straight minutes and then simply finished.
 
-    GATED  <=>  local coverage SATURATED (C_local plateau)
-                AND high action-entropy at the boundary
-                AND zero topological transition
-                AND zero permanent-map delta
+WHAT STILL STANDS
+-----------------
+The subtractive and representational half of the form, which neither
+receipt disturbed (§14 enumerates what it leaves untouched):
 
-    BARREN <=>  local coverage STAGNANT (C_local never accumulated)
+    BARREN    <=>  local coverage STAGNANT (C_local never accumulated)
+    KEY_BLIND <=>  the cell key's spatial projection is degenerate, so
+                   no coverage statistic computed over it means anything
 
-This module implements that form against the telemetry the fleet
-ACTUALLY records, and is explicit — in `MISSING_TELEMETRY` and in every
-constant's calibration tag — about which terms are measured, which are
-substituted, and which were refuted outright by the banked corpus.
+together with `SPATIAL_SPAN_MIN`, `C_LOCAL_FLOOR_BUCKETS`,
+`COVERAGE_FLOOR_CELLS`, `FROZEN_WINDOWS_MAX`, `EFFORT_MIN_STEPS`, the
+segment-splitting progress adapter, and the STAGNANT-is-not-plateaued
+fix. All 13 resolved archives in the second receipt's §3 clear every one
+of them, so none is propping up a result.
 
-RUNTIME STATUS: INERT. Nothing imports this module. Thresholds are
-frozen constants tagged with how they were derived; self-arming dispatch
-is a later, separate decision. Import it from an analysis script or a
-test, not from a solver loop.
+This module is explicit — in `MISSING_TELEMETRY` and in every constant's
+provenance tag — about which terms are measured, which are substituted,
+and which were refuted outright.
 
-CALIBRATION: see docs/receipts/dispatch/gated_wall_calibration_2026-08-10.md
-for the corpus, the per-run statistic tables, and the separating bands
-each shipped constant sits in.
+RUNTIME STATUS: INERT for classification. Nothing imports the verdict
+path; the one tolerated runtime reader takes the pure
+`boundary_axis_profile` and nothing else. Self-arming dispatch is a
+later, separate decision, and there is now nothing to arm.
+
+RECEIPTS
+    docs/receipts/dispatch/gated_wall_calibration_2026-08-10.md
+        the original corpus and bands — SUPERSEDED in its §5/§6/§9
+    docs/receipts/dispatch/k_falsifier_2026-08-10.md
+        the falsifier that struck `concentration`
+    docs/receipts/dispatch/size_decoupled_statistic_2026-08-11.md
+        the replacement search that returned nothing; §12 is the spec
+        this module's current shape implements
+    docs/proposals/GATE_OPENER_CAMPAIGN_2026-08-11.md
+        §12, the D3 lineage verdict that struck `doors` from topo_delta
 """
 
 from __future__ import annotations
@@ -65,12 +93,30 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 # Stamped into every verdict so a receipt can never be read as if it came
-# from a differently-tuned build.
-CALIBRATION_TAG = "CALIBRATED-OFFLINE-2026-08-10"
+# from a differently-tuned build. BUMPED 2026-08-11: verdicts moved when
+# the GATED branch was removed, so a JSON produced before that date must
+# not be mistaken for one produced after it.
+CALIBRATION_TAG = "CLASSIFICATION-STRUCK-2026-08-11"
+
+#: Descriptive, NON-VERDICT label that replaces the removed `GATED`
+#: vocabulary. It names what was observed — an unresolved search whose
+#: archive is piling cells into a map footprint that stopped growing —
+#: and asserts nothing about why, because after 22 candidates over 103
+#: archives nothing separates that observation from a resolved coverage
+#: wall (size_decoupled_statistic_2026-08-11.md §0, §9.3, §14). It rides
+#: on `WallVerdict.descriptor`, never on `wall_class`, so no caller can
+#: switch on it as if it were a diagnosis.
+UNRESOLVED_CONCENTRATED = "UNRESOLVED-CONCENTRATED"
+
+#: Pointer stamped into the reasons of every verdict that carries the
+#: label above, so a pasted verdict always arrives with its refutation.
+STRUCK_CLASSIFICATION_RECEIPT = (
+    "docs/receipts/dispatch/size_decoupled_statistic_2026-08-11.md"
+)
 
 
 # --------------------------------------------------------------------------
-# Calibrated constants.
+# Constants.
 #
 # Every constant below carries its provenance:
 #   CALIBRATED-OFFLINE  -- a separating band was measured on the banked
@@ -82,6 +128,9 @@ CALIBRATION_TAG = "CALIBRATED-OFFLINE-2026-08-10"
 #   REFUTED-OFFLINE     -- a candidate statistic that does NOT separate
 #                          the corpus. Kept as a reported diagnostic so
 #                          nobody re-derives it and believes it.
+#   DESCRIPTIVE         -- decides only the wording of a reported label.
+#                          Gates nothing; moving it moves no `wall_class`
+#                          (asserted by test).
 # --------------------------------------------------------------------------
 
 #: Trailing window, in progress records. The fleet's progress cadence is
@@ -116,20 +165,44 @@ FROZEN_WINDOWS_MAX = 12  # CALIBRATED-OFFLINE-2026-08-10
 #: screen) .. 94 (Castlevania hall). SMB levels sit at 130-230.
 SPATIAL_SPAN_MIN = 8  # CALIBRATED-OFFLINE-2026-08-10
 
-#: Coverage concentration = cells / distinct spatial buckets. The
-#: cross-sectional stand-in for "C_local has plateaued": a search whose
-#: archive keeps multiplying inside a map footprint that stopped growing
-#: is, by definition, saturated locally. Separating band: 20.58 (SMB 8-3,
-#: resolved) .. 31.04 (Castlevania hall, gated). This is the THINNEST
-#: shipped margin in the module (1.51x total, ~1.2x either side) and the
-#: receipt says so.
-CONCENTRATION_GATED_MIN = 25.0  # CALIBRATED-OFFLINE-2026-08-10
+#: Coverage concentration = cells / distinct spatial buckets. Shipped
+#: 2026-08-10 as the cross-sectional stand-in for "C_local has
+#: plateaued", inside a 1.51x separating band (20.58 SMB 8-3 .. 31.04 CV
+#: hall) that was the thinnest margin in the module. STRUCK.
+#:
+#: The band was an artifact of a four-archive negative class. Widened,
+#: `ge_chain_w8/lvl_00_8-1` SOLVED at 98.30 — 3.2x the upper bracket —
+#: inside one chain, one profile, one `--gx-bucket 16` grid whose other
+#: two solved levels read 15.66 and 20.58, a 6.3x intra-chain spread that
+#: straddles the threshold on its own (k_falsifier §6, §9.1). The
+#: mechanism is that concentration is archive SIZE wearing a hat:
+#: Spearman(conc, cells) = +0.940, and `distinct_spatial` is bounded by
+#: map geometry, so the ratio mostly counts how long the run was left
+#: alive. The best cut that captures all five hall reads (31.04) condemns
+#: 4 of 13 resolved archives as walls (§9.3).
+CONCENTRATION_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-11
+
+#: Above this the word "concentrated" is honest in the DESCRIPTIVE label
+#: `UNRESOLVED_CONCENTRATED`. Inherited from the struck calibration, kept
+#: only so the label's English is not a lie; it partitions no verdict.
+#: `gated_wall_verdict` returns the same `wall_class` for any value of
+#: this constant — the abstention above it and the abstention below it
+#: are the SAME abstention — which is the whole difference between a
+#: description and the gate that used to live here.
+CONCENTRATION_DESCRIPTIVE_MIN = 25.0  # DESCRIPTIVE-2026-08-11 (gates nothing)
 
 #: Saturation of a true C_local time series, when one exists. Defined
 #: exactly like the coverage-saturation statistic but on the count of
 #: distinct spatial buckets rather than on raw cells. No banked run emits
 #: that series, so this value is NOT calibrated; it is the value the
 #: runtime version should re-derive first.
+#:
+#: It survives the 2026-08-11 strike because of the DIRECTION it is used
+#: in. It can only REFUTE a plateau (-> COVERAGE_LIMITED, "the footprint
+#: is still expanding"), name STAGNANT (-> BARREN) and name a blind key
+#: (-> KEY_BLIND). It can no longer promote anything, because there is
+#: nothing left to promote to: the branch a corroborated plateau used to
+#: certify is gone.
 C_LOCAL_SATURATION_MIN = 0.85  # PROVISIONAL-2026-08-10 (no offline series)
 
 #: Absolute floor on a reported `c_local` before ANY C_local statistic
@@ -140,25 +213,13 @@ C_LOCAL_SATURATION_MIN = 0.85  # PROVISIONAL-2026-08-10 (no offline series)
 #: projection) .. 638 (`ge_1_4_solve`, the smallest spatially resolved
 #: archive). This is the series-path twin of SPATIAL_SPAN_MIN. Without
 #: it, a single-screen profile that emits `c_local` and flushes no
-#: archive reads GATED where the identical run WITH an archive reads
-#: KEY_BLIND — a divergence measured before this floor existed.
+#: archive escaped the KEY_BLIND verdict the identical run WITH an
+#: archive got — a divergence measured before this floor existed, and
+#: still worth closing now that the escape lands in an abstention.
 C_LOCAL_FLOOR_BUCKETS = 64  # CALIBRATED-OFFLINE-2026-08-10
 
-#: May a C_local series certify GATED with nothing to corroborate it?
-#: NO, while C_LOCAL_SATURATION_MIN is PROVISIONAL. A threshold that has
-#: never been measured against a labelled run must not be able to
-#: manufacture the one verdict that costs an orthogonal campaign, so a
-#: plateau seen only in the series degrades to INDETERMINATE unless the
-#: cross-sectional concentration agrees. The series path is still fully
-#: load-bearing in the safe directions: it can REFUTE a plateau
-#: (-> COVERAGE_LIMITED, overriding concentration), name STAGNANT
-#: (-> BARREN) and name a blind key (-> KEY_BLIND). Flip this to True
-#: only together with a calibrated C_LOCAL_SATURATION_MIN, in the same
-#: commit as the receipt that measures it.
-C_LOCAL_SERIES_MAY_CERTIFY_GATED = False  # PROVISIONAL-2026-08-10
-
 #: Saturation computed on RAW archive cells. REFUTED: on the corpus the
-#: gated Castlevania hall (0.343) sits BETWEEN two resolved coverage
+#: Castlevania hall (0.343) sits BETWEEN two resolved coverage
 #: walls, SMB 8-4 (0.190) and SMB 4-4 (0.352). No threshold separates it
 #: in either direction. Raw cell count is not C_local, because nuisance
 #: dimensions in the cell key manufacture novelty forever at a fixed
@@ -174,18 +235,122 @@ CHURN_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-10
 #: Normalized Shannon entropy of visit mass across boundary cells — the
 #: only offline stand-in available for "high action-entropy at the
 #: boundary". REFUTED as a gate: every class in the corpus scores >= 0.77
-#: (gated CV hall 0.984, barren BB r68 ortho 0.778, resolved SMB 1-4
-#: 0.9999). It measures how evenly returns were spread, not how varied
-#: the actions were. Reported only.
+#: (CV hall 0.984, barren BB r68 ortho 0.778, resolved SMB 1-4 0.9999).
+#: It measures how evenly returns were spread, not how varied the actions
+#: were. Reported only.
 BOUNDARY_ENTROPY_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-10
 
-#: Consecutive windows at zero permanent-map delta. On the corpus the
-#: gated hall (81 windows) does separate from resolved SMB 8-4 (44) and
-#: SMB 4-4 (25) — but the statistic is a pure function of how long the
-#: run was left alive, so a longer 8-4 would have crossed any fixed
+#: Consecutive windows at zero permanent-map delta. On the 2026-08-10
+#: corpus the hall (81 windows) did separate from resolved SMB 8-4 (44)
+#: and SMB 4-4 (25) — but the statistic is a pure function of how long
+#: the run was left alive, so a longer 8-4 would have crossed any fixed
 #: threshold. Deliberately NOT shipped as a gate; reported so a human can
 #: see the horizon a verdict was taken over.
 MAP_STALL_WINDOWS_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-10
+
+# ---- The 2026-08-11 replacement search. Six candidates, all dead. -------
+#
+# size_decoupled_statistic_2026-08-11.md scored 22 candidate statistics
+# over 103 archives looking for anything that could take the struck
+# `concentration` branch's place. Nothing did. Each constant below names
+# the offender that killed it, the way the block above does, so that the
+# next attempt starts after this search rather than inside it.
+#
+# Definitions of the two classes used throughout: POSITIVE = the five
+# reads of the unsolved Castlevania hall; NEGATIVE = 13 archives with a
+# banked solution. A candidate STRADDLEs when at least one negative
+# falls inside the positives' range.
+
+#: `concentration` residualized on `log cells` — the principled fix for
+#: "the statistic is size wearing a hat". REFUTED, and by algebra before
+#: measurement: because conc == cells / distinct_spatial by definition,
+#: the residual reduces to -log(distinct_spatial) plus a vanishing
+#: 0.0773 * log cells term (measured Pearson vs -log ds = +0.9066). And
+#: distinct_spatial is bounded by map geometry, so the hall's 932..1102
+#: sits in the MIDDLE of the resolved 435..2220 — `ll_1_1_transfer`
+#: (1114) is one bucket from `cv_chain_hw/lvl_03_overnight` (1102). The
+#: candidate succeeds completely at decoupling size (rho +0.940 ->
+#: +0.074) and the classes still overlap; best cut condemns 6/13. §6.
+SIZE_PARTIALED_CONCENTRATION_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-11
+
+#: nu = cells / records — the fraction of recorded observations that
+#: created a new cell, read free from `archive.stats.json`. The best
+#: candidate found: archive-intrinsic, no pacing or segment-pairing
+#: confound, and it passes the same-chain sibling test cleanly (holds the
+#: hall inside 1.9x across a 19x range in cells while collapsing
+#: `ge_chain_w8`'s 6.3x intra-chain concentration spread to 1.5x).
+#: REFUTED anyway: `ge_1_2_solve` SOLVED at 0.01073, inside the hall's
+#: 0.0087..0.016476 band, with `cv_chain_hw/lvl_02` 0.00855,
+#: `ge_1_4_solve` 0.00624 and `ge_chain/lvl_11_4-4` 0.00177 below it.
+#: The mechanism is the trap for the next attempt: a run that solves does
+#: not stop recording — EXPLORE_AFTER_FIRST_CLEAR keeps re-treading, so a
+#: resolved archive buries its discovery phase and reads as stuck.
+#: Truncating at the solution does not rescue it (§8). §9.2, §10.
+NOVELTY_PER_RECORD_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-11
+
+#: Fraction of cells ever chosen as a return target. REFUTED, and this
+#: one pre-empts its whole family: `Cell.explored` flips on selection, so
+#: under a structureless null in which T selections fall over N cells,
+#: E[explored_fraction] = 1 - exp(-T/N). Measured across all 19 scored
+#: archives, Pearson(observed, that null) = +0.9906. It is
+#: selections-per-cell and essentially nothing else — the identical
+#: size/effort defect that killed `concentration`, wearing a different
+#: hat. It "ranked the hall above the registered four" only because the
+#: hall ran 1.3-2.6 selections per cell against their 0.02-0.20.
+#: `ge_chain/lvl_11_4-4` resolved at 0.9986, above every hall read; the
+#: principled residual (observed - null) straddles too, `ge_1_4_solve`
+#: (+0.0225) above the hall and `smb_4_4_micro/lvl_1-3` (-0.0957) below.
+#: Reported by `ArchiveSummary.explored_fraction`, never gated on. §7.
+EXPLORED_FRACTION_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-11
+
+#: exp(H) / D over the archive's D occupied spatial buckets — normalized
+#: effective support of the visit-mass distribution. Size-free by
+#: construction and measurably so (rho = -0.019, the best decoupling in
+#: the whole set), and it passes the same-chain sibling test. REFUTED
+#: anyway: `cv_chain_hw/lvl_02` SOLVED at 0.204, inside the hall's
+#: 0.115..0.211 band, with `ge_1_2_solve` 0.032, `ll_1_1_transfer` 0.043
+#: and `ge_1_4_solve` 0.054 below it. Same post-clear re-treading
+#: mechanism as nu. Best cut condemns 4/13. §9.2.
+SPATIAL_EVENNESS_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-11
+
+#: Log-log exponent of cells vs steps over the trailing half, and its
+#: three curvature variants. REFUTED, and the registered intuition —
+#: "resolved archives keep growing to solution, walls flatten" — is
+#: BACKWARDS. The hall does not flatten: `cv_chain_hw2/lvl_03_trace` has
+#: the HIGHEST tail exponent in the corpus (0.899), above
+#: `ge_chain_w8/lvl_00_8-1` (0.889), while the two flattest curves
+#: measured, `ge_chain/lvl_11_4-4` (0.023) and `ge_1_4_solve` (0.068),
+#: both RESOLVED. Nuisance dimensions in the cell key manufacture novelty
+#: forever at a fixed location: the hall grew 3,354 -> 91,995 cells with
+#: max_gx_in_max_area pinned for 84 consecutive records. No statistic
+#: computed on that curve can catch a map that is frozen underneath it.
+#: §8(d).
+GROWTH_EXPONENT_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-11
+
+#: Rank of `concentration` among archives within +-0.5 dex of log cells —
+#: "compare it only to runs of its own size". REFUTED, worst-performing
+#: candidate but one: 10 of 11 scorable resolved archives land inside the
+#: hall's band. Mechanical, not accidental: the falsifier's +0.929 IS the
+#: statement that concentration is a monotone function of cells, so
+#: conditioning on cells conditions away the statistic. Percentile-
+#: within-band converts a size clock into a coin flip, not into a wall
+#: detector. §8(c).
+EFFORT_MATCHED_PERCENTILE_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-11
+
+#: Is the solver's `doors` counter a monotone progress counter? NO.
+#: `doors` counts ARTICULATION POINTS in the discovered room graph, which
+#: is a connectivity property of a graph that keeps being rewritten, not
+#: a ratchet: a newly discovered edge can turn an articulation point into
+#: an ordinary node, and re-exploration churns the count in both
+#: directions. Adding it to `topo_delta` therefore reads "topology moved"
+#: off pure churn. Measured on `runs/cv_chain_hw/lvl_03_overnight`, the
+#: frozen Castlevania hall: over its trailing 10 records `doors` moved
+#: 12,694 -> 12,880 while max_area, max_sect, max_room and max_gx were
+#: all flat, and the module returned PROGRESSING for a search that had
+#: not moved the map in 355 consecutive records. DROPPED from topo_delta
+#: 2026-08-11; still reported as `doors_delta`.
+#: GATE_OPENER_CAMPAIGN_2026-08-11.md §12 (D3 adjudication).
+DOORS_IS_MONOTONE = False  # REFUTED-OFFLINE-2026-08-11
 
 #: Cell-key positions that `_spatial_key` projects onto: (area, y_band,
 #: gx_bucket). Negative, so they stay correct if a future arm grows the
@@ -196,32 +361,45 @@ MAP_STALL_WINDOWS_IS_SEPARATING = False  # REFUTED-OFFLINE-2026-08-10
 SPATIAL_KEY_POSITIONS = (-5, -2, -1)
 
 #: Non-spatial axes that must carry at least TWO distinct values at the
-#: boundary before a GATED verdict can be read as "the game is
-#: withholding a transition" rather than "our cell key cannot represent
-#: an interaction, so we cannot know". OBSERVED, NEVER GATED ON: nothing
-#: in `gated_wall_verdict` reads this, and it is not calibrated against
-#: a labelled corpus. It exists because the measurement that motivated
-#: it is stark — `runs/cv_hall_ortho_a`, 131,561 cells, reads GATED at
-#: concentration 120.04, and in its pinned band SIX of eleven key
-#: positions are CONSTANT (sect, time-bin, kill-count, room-sig, area,
-#: boss-HP all identically 0/empty), leaving exactly ONE game-state axis
-#: (the on-stairs bit) against two trajectory-bookkeeping axes (loop
+#: boundary before "the search has tried every interaction" is even a
+#: sayable claim, as opposed to "our cell key cannot represent an
+#: interaction, so we cannot know". OBSERVED, NEVER GATED ON: nothing in
+#: `gated_wall_verdict` reads this, and it is not calibrated against a
+#: labelled corpus. It exists because the measurement that motivated it
+#: is stark — `runs/cv_hall_ortho_a`, 131,561 cells at concentration
+#: 120.04, the highest in the corpus, has SIX of eleven key positions
+#: CONSTANT in its pinned band (sect, time-bin, kill-count, room-sig,
+#: area, boss-HP all identically 0/empty), leaving exactly ONE game-state
+#: axis (the on-stairs bit) against two trajectory-bookkeeping axes (loop
 #: count, route signature). A search whose memory has one state bit
 #: cannot have "tried every interaction"; it can only have tried every
 #: position. See docs/proposals/gate_opener_arm_2026-08-11.md.
+#:
+#: NOT a wall statistic, and now measured not to be one: scored across 13
+#: resolved archives, `live_state_axis_count` is the WORST candidate in
+#: the 2026-08-11 set — hall [3, 1, 1, 1, 1] against resolved [0, 1, 1,
+#: 1, 1, 1, 1, 2, 2, 2, 2, 3, 4], 11 of 13 inside the hall's range with
+#: both tails populated. `alias_ratio` behaves like `concentration`
+#: (rho +0.875) and dies to the same three SMB archives. It supports the
+#: interaction-blind thesis and the KEY_BLIND family; that is all.
+#: size_decoupled_statistic_2026-08-11.md §8(e).
 BOUNDARY_STATE_AXES_MIN = 2  # OBSERVED-2026-08-10 (reported, not a gate)
 
 
-#: Telemetry the adopted form wants and the fleet does not emit. This is
-#: the shopping list a runtime version needs the solver to add to
+#: Telemetry the form wants and the fleet does not emit. This is the
+#: shopping list a runtime version needs the solver to add to
 #: `progress_line()`; each entry names the field and why it matters.
+#: These are SPECS, not work items filed against this module — nothing
+#: here wires new solver telemetry, and the solver is not modified.
 MISSING_TELEMETRY: dict[str, str] = {
     "c_local": (
         "count of DISTINCT spatial buckets in the archive — |{(area, "
         "y_band, gx_bucket)}| — per progress line. Without it, C_local "
         "saturation can only be approximated cross-sectionally from a "
-        "final archive snapshot (see CONCENTRATION_GATED_MIN), which is "
-        "one number instead of a curve and cannot see a plateau form."
+        "final archive snapshot, which is one number instead of a curve "
+        "and cannot see a plateau form. It is also the field that makes "
+        "INDETERMINATE's remedy actionable: since 2026-08-11 the "
+        "abstention is where every uncorroborated plateau lands."
     ),
     "boundary_action_entropy": (
         "Shannon entropy of the ACTION distribution actually sampled "
@@ -243,6 +421,18 @@ MISSING_TELEMETRY: dict[str, str] = {
         "screen, so the 'zero permanent-map delta' term carries no "
         "information there."
     ),
+    "doors_cumulative": (
+        "the monotone replacement for the `doors` counter dropped from "
+        "topo_delta on 2026-08-11 — |{articulation points EVER seen}| "
+        "rather than |{articulation points in the CURRENT room graph}|. "
+        "A cumulative set is a ratchet and would be admissible where the "
+        "live count is not (DOORS_IS_MONOTONE), and it is trivial where "
+        "the graph already lives: union the articulation set into a "
+        "run-scoped set instead of recomputing a size. SPEC ONLY. It is "
+        "deliberately not wired here: this module reads telemetry and "
+        "does not commission it, and the counter as emitted today stays "
+        "reported-as-`doors_delta` until the solver emits the ratchet."
+    ),
     "archive_snapshot_on_show_runs": (
         "runs/live_show/* writes progress.jsonl but no archive.pkl "
         "(flush_secs is set to ~forever), so the two ground-truth "
@@ -252,25 +442,37 @@ MISSING_TELEMETRY: dict[str, str] = {
 
 
 class WallClass(str, Enum):
-    """Verdict labels, ordered from 'nothing to do' to 'act now'."""
+    """Verdict labels, ordered from 'nothing to do' to 'act now'.
+
+    There is NO `GATED` member and re-adding one is the mutation this
+    module's tests exist to catch. It was removed on 2026-08-11 because
+    no statistic — the shipped one or any of 22 candidates scored over
+    103 archives — separates a search that is stuck from one that is
+    about to finish. See the module docstring for the two receipts, and
+    `UNRESOLVED_CONCENTRATED` for the descriptive label that replaced the
+    vocabulary. What used to be certified here is now abstained on.
+    """
 
     #: The search already produced a solution inside the window.
     RESOLVED = "resolved"
     #: Topology or the permanent map moved inside the window.
     PROGRESSING = "progressing"
-    #: Still expanding productively; the wall is wall-clock, not structure.
+    #: The map footprint is measurably STILL EXPANDING, so whatever else
+    #: is true the search has not run out of reachable ground. Reachable
+    #: only from a C_local series that refutes a plateau — never from a
+    #: cross-sectional statistic, which cannot see a direction.
     COVERAGE_LIMITED = "coverage_limited"
-    #: Local coverage saturated, boundary frozen: needs an orthogonal
-    #: mechanism, not more of the same search.
-    GATED = "gated"
     #: Coverage never accumulated: the archive is frozen or trivially
     #: small. The cell key, the reset, or determinism is broken.
     BARREN = "barren"
     #: The cell key's spatial projection is degenerate, so no coverage
     #: statistic over it is meaningful. Enrich the key first.
     KEY_BLIND = "key_blind"
-    #: Preconditions met, but the evidence needed to separate GATED from
-    #: COVERAGE_LIMITED is not present in this telemetry.
+    #: The search is stalled and nothing in this telemetry licenses
+    #: saying why. The terminal class for every stalled run that is not
+    #: barren and not key-blind, including every archive that would once
+    #: have read GATED; `descriptor` then carries
+    #: `UNRESOLVED_CONCENTRATED`.
     INDETERMINATE = "indeterminate"
     #: Not enough records or not enough compute spent to say anything.
     INSUFFICIENT = "insufficient"
@@ -282,14 +484,15 @@ REMEDY: dict[WallClass, str] = {
     WallClass.RESOLVED: "nothing — harvest the solution and move on",
     WallClass.PROGRESSING: "nothing — the frontier is still moving",
     WallClass.COVERAGE_LIMITED: "give it more wall-clock before changing anything",
-    WallClass.GATED: "switch to an orthogonal arm: a different action axis, "
-                     "or a mechanic the current cell key cannot express",
     WallClass.BARREN: "fix the search, not the game: check the cell key, the "
                       "reset path, and determinism — the archive is frozen",
     WallClass.KEY_BLIND: "add the missing state axis to the cell key; the "
                          "current key cannot see where progress happens",
     WallClass.INDETERMINATE: "collect the missing telemetry (see "
-                             "MISSING_TELEMETRY) before deciding",
+                             "MISSING_TELEMETRY) before deciding — no "
+                             "statistic here distinguishes a stalled search "
+                             "from one about to finish, so the operator "
+                             "decides on grounds this module does not supply",
     WallClass.INSUFFICIENT: "keep running; too little evidence to classify",
 }
 
@@ -338,21 +541,82 @@ class ArchiveSummary:
     #: Reported only (BOUNDARY_ENTROPY_IS_SEPARATING is False).
     boundary_visit_entropy: float
     #: Fraction of cells that have ever been chosen as a return target.
+    #: Reported only, and pre-emptively so: it is a saturating function of
+    #: selections-per-cell and nothing else (Pearson +0.9906 against the
+    #: coupon-collector null), which is why the whole boundary family died
+    #: — EXPLORED_FRACTION_IS_SEPARATING.
     explored_fraction: float = 0.0
 
     @property
     def concentration(self) -> float:
-        """cells per distinct spatial bucket — the C_local stand-in."""
+        """cells per distinct spatial bucket.
+
+        Reported only since 2026-08-11: it is archive SIZE wearing a hat
+        (Spearman +0.940 against `cells`) and it does not separate a wall
+        from a search that solved — CONCENTRATION_IS_SEPARATING. It still
+        decides the WORDING of the `UNRESOLVED_CONCENTRATED` descriptor,
+        which is a description of the archive and not a claim about it.
+        """
         return self.cells / max(1, self.distinct_spatial)
 
 
 @dataclass(frozen=True)
+class ArchiveCounters:
+    """The `archive.stats.json` sidecar every banked archive carries.
+
+    ~130 bytes next to a multi-GB `archive.pkl`, and it is the free
+    effort denominator: `records` is exactly `Sigma visits` over every
+    cell (`GoExploreArchive.total_records`; `Cell.visits` starts at 1 and
+    increments on every re-record), verified to the unit against direct
+    archive reads on three runs. `frontier` is the UNEXPLORED count, so
+    `explored_fraction` falls out without unpickling anything.
+
+    Why it matters even though it gates nothing: an archive-intrinsic
+    denominator has no segment-pairing ambiguity. `ge_chain_w8/
+    lvl_00_8-1`'s 8,269,310 "total steps" is a cross-segment figure
+    spanning two attempts while the archive itself recorded 731,234 —
+    the hazard the K-falsifier's §7 had to audit by hand.
+
+    REPORTING ONLY. `cells / records` is the `nu` statistic and
+    `explored_fraction` is the boundary statistic; both were scored and
+    both STRADDLE (NOVELTY_PER_RECORD_IS_SEPARATING,
+    EXPLORED_FRACTION_IS_SEPARATING). Nothing here may reach a branch.
+    size_decoupled_statistic_2026-08-11.md §2.2, §12.3.
+    """
+
+    cells: int
+    records: int
+    new_cells: int
+    improvements: int
+    frontier: int
+    best_score: float
+    #: Present on newer sidecars only (72 of 279 banked): hw flags, frame
+    #: skip and the nes_core build hash. Carried through untouched
+    #: because a lineage mismatch is what D3 caught by hand.
+    hw_provenance: Optional[Mapping[str, Any]] = None
+
+    @property
+    def novelty_per_record(self) -> float:
+        """`nu` — the fraction of recorded observations that were new."""
+        return self.cells / max(1, self.records)
+
+    @property
+    def explored_fraction(self) -> float:
+        """1 - frontier/cells, the sidecar's view of the same column
+        `ArchiveSummary.explored_fraction` computes from the pickle."""
+        return 1.0 - (self.frontier / max(1, self.cells))
+
+
+@dataclass(frozen=True)
 class WallTelemetry:
-    """Everything the discriminator is allowed to look at."""
+    """Everything the classifier is allowed to look at."""
 
     records: tuple[ProgressRecord, ...]
     archive: Optional[ArchiveSummary] = None
     label: str = ""
+    #: The sidecar, when it was read. Surfaced in `evidence` so a verdict
+    #: shows the effort it was taken over; never read by a branch.
+    counters: Optional[ArchiveCounters] = None
 
 
 @dataclass(frozen=True)
@@ -369,6 +633,13 @@ class WallVerdict:
     #: Every statistic computed, whether or not it gated anything.
     evidence: Mapping[str, Any] = field(default_factory=dict)
     remedy: str = ""
+    #: A DESCRIPTIVE, non-verdict annotation — today only
+    #: `UNRESOLVED_CONCENTRATED`, and "" whenever there is nothing to
+    #: describe. It rides beside `wall_class` rather than inside it
+    #: precisely so that no caller can dispatch on it: it says what the
+    #: archive LOOKS like, and the receipt it cites says that what an
+    #: archive looks like does not predict whether the wall will fall.
+    descriptor: str = ""
     calibration: str = CALIBRATION_TAG
 
     def as_dict(self) -> dict[str, Any]:
@@ -380,6 +651,7 @@ class WallVerdict:
             "reasons": list(self.reasons),
             "evidence": dict(self.evidence),
             "remedy": self.remedy,
+            "descriptor": self.descriptor,
             "calibration": self.calibration,
         }
 
@@ -395,6 +667,9 @@ def record_from_json(obj: Mapping[str, Any]) -> ProgressRecord:
     time (`stall_flat_windows` arrived 2026-08-06; `max_room`/`doors`
     only appear when the relevant arms are on), and older banked runs
     predate all of them.
+
+    `doors` is still parsed. It no longer counts toward `topo_delta`
+    (DOORS_IS_MONOTONE) — it is reported as `doors_delta` instead.
     """
     return ProgressRecord(
         elapsed_s=int(obj.get("elapsed_s", 0)),
@@ -537,6 +812,61 @@ def read_archive_summary(path: str | Path) -> ArchiveSummary:
     with open(path, "rb") as fh:
         cells = _StateDroppingUnpickler(fh).load()
     return summarize_archive_cells(cells)
+
+
+#: Sidecar filename the solver writes beside every flushed `archive.pkl`.
+ARCHIVE_STATS_FILENAME = "archive.stats.json"
+
+
+def _stats_path(path: str | Path) -> Path:
+    """Resolve anything that identifies a run to its sidecar.
+
+    Accepts the sidecar itself, the run directory, or the `archive.pkl`
+    beside it, because callers hold whichever of the three they happened
+    to be given and the point of this adapter is that reading counters
+    must never cost more than reading a filename.
+    """
+    p = Path(path)
+    if p.is_dir():
+        return p / ARCHIVE_STATS_FILENAME
+    if p.name == ARCHIVE_STATS_FILENAME:
+        return p
+    if p.suffix == ".pkl":
+        return p.with_suffix(".stats.json")
+    return p
+
+
+def read_archive_counters(path: str | Path) -> Optional[ArchiveCounters]:
+    """Read an `archive.stats.json` sidecar. REPORTING ONLY.
+
+    Returns `None` — never raises — when the sidecar is absent,
+    unreadable, not an object, or missing a core field. That is
+    deliberate: this is a free diagnostic hung off the side of a verdict,
+    and a malformed 130-byte file must not be able to take down a
+    classification that never depended on it. 279 sidecars were surveyed;
+    all 279 carry the six core fields, 72 also carry `hw_provenance`.
+    """
+    p = _stats_path(path)
+    try:
+        raw = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return ArchiveCounters(
+            cells=int(raw["cells"]),
+            records=int(raw["records"]),
+            new_cells=int(raw["new_cells"]),
+            improvements=int(raw["improvements"]),
+            frontier=int(raw["frontier"]),
+            best_score=float(raw["best_score"]),
+            hw_provenance=(raw["hw_provenance"]
+                           if isinstance(raw.get("hw_provenance"), Mapping)
+                           else None),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -721,12 +1051,22 @@ def telemetry_from_paths(
     archive_path: Optional[str | Path] = None,
     segment: int = -1,
     label: str = "",
+    counters: bool = True,
 ) -> WallTelemetry:
-    """Convenience adapter: one run directory's telemetry, ready to score."""
+    """Convenience adapter: one run directory's telemetry, ready to score.
+
+    The `archive.stats.json` sidecar is picked up automatically from the
+    run directory — it costs one 130-byte read and it is the only effort
+    denominator that is intrinsic to the archive rather than to the
+    progress file. It changes no verdict; pass `counters=False` to prove
+    that, which is what the test does.
+    """
     segments = load_progress_segments(progress_path)
     records = segments[segment] if segments else ()
     archive = read_archive_summary(archive_path) if archive_path else None
-    return WallTelemetry(records=records, archive=archive,
+    stats = (read_archive_counters(archive_path or Path(progress_path).parent)
+             if counters else None)
+    return WallTelemetry(records=records, archive=archive, counters=stats,
                          label=label or str(progress_path))
 
 
@@ -817,8 +1157,13 @@ def _evidence(tel: WallTelemetry, window: int) -> dict[str, Any]:
     a, b = recs[n - window - 1], recs[n - 1]
     d_steps = b.steps - a.steps
     d_cells = b.cells - a.cells
+    # `doors` is NOT summed in. It counts articulation points in a room
+    # graph that keeps being rewritten, so it churns in both directions
+    # and is not a ratchet; summing it made the frozen Castlevania hall
+    # read PROGRESSING off +186 doors with every genuine counter flat.
+    # DOORS_IS_MONOTONE; reported below as `doors_delta`.
     topo = ((b.max_area - a.max_area) + (b.max_sect - a.max_sect)
-            + (b.max_room - a.max_room) + (b.doors - a.doors))
+            + (b.max_room - a.max_room))
     ev: dict[str, Any] = {
         "records": n,
         "window": window,
@@ -830,7 +1175,8 @@ def _evidence(tel: WallTelemetry, window: int) -> dict[str, Any]:
         "map_delta": b.max_gx - a.max_gx,
         "solutions": b.solutions,
         "frozen_windows": max(r.stall_flat_windows for r in recs[n - window - 1:]),
-        # Reported-only diagnostics (all three REFUTED as gates).
+        # Reported-only diagnostics (every one REFUTED as a gate).
+        "doors_delta": b.doors - a.doors,
         "raw_coverage_saturation": saturation(recs, "cells", window),
         "churn_per_window": (d_cells / max(1, b.cells)) / window,
         "map_stall_windows": map_stall_windows(recs),
@@ -850,7 +1196,35 @@ def _evidence(tel: WallTelemetry, window: int) -> dict[str, Any]:
         ev["concentration"] = round(tel.archive.concentration, 3)
         ev["boundary_cells"] = tel.archive.boundary_cells
         ev["boundary_visit_entropy"] = round(tel.archive.boundary_visit_entropy, 4)
+        ev["explored_fraction"] = round(tel.archive.explored_fraction, 4)
+    # The sidecar. Reported for the same reason `map_stall_windows` is:
+    # so a verdict always shows the effort it was taken over, and shows
+    # it on the archive's own clock rather than on a progress file whose
+    # step count may span two attempts.
+    if tel.counters is not None:
+        ev["archive_records"] = tel.counters.records
+        ev["archive_improvements"] = tel.counters.improvements
+        ev["archive_frontier"] = tel.counters.frontier
+        ev["archive_best_score"] = tel.counters.best_score
+        ev["archive_novelty_per_record"] = round(
+            tel.counters.novelty_per_record, 6)
+        ev["archive_explored_fraction"] = round(
+            tel.counters.explored_fraction, 4)
     return ev
+
+
+def _concentration_descriptor(arc: Optional[ArchiveSummary]) -> str:
+    """The descriptive label, or "" when there is nothing to describe.
+
+    A pure function of the ARCHIVE — never of the progress series — so
+    that a run cannot acquire the label by the solver starting to emit a
+    field. It annotates; it does not classify.
+    """
+    if arc is None:
+        return ""
+    if arc.concentration < CONCENTRATION_DESCRIPTIVE_MIN:
+        return ""
+    return UNRESOLVED_CONCENTRATED
 
 
 def gated_wall_verdict(telemetry: WallTelemetry,
@@ -866,9 +1240,7 @@ def gated_wall_verdict(telemetry: WallTelemetry,
       4. spatially degenerate cell key         -> KEY_BLIND
       5. archive frozen, or C_local stagnant   -> BARREN
       6. C_local still climbing                -> COVERAGE_LIMITED
-      7. C_local plateau, concentration agrees -> GATED
-      8. no C_local evidence available         -> INDETERMINATE
-      9. otherwise, on concentration alone     -> GATED / COVERAGE_LIMITED
+      7. anything else                         -> INDETERMINATE
 
     KEY_BLIND precedes BARREN on purpose. Both point at the cell key, but
     a degenerate spatial projection names WHICH axis is missing, and a
@@ -877,25 +1249,58 @@ def gated_wall_verdict(telemetry: WallTelemetry,
 
     Steps 4-6 apply to the C_local series and to the archive snapshot
     SYMMETRICALLY, which is the point: the same run must not change
-    verdict just because the solver started emitting `c_local`. The
-    series can only move a verdict toward GATED when the cross-sectional
-    concentration says the same thing (see
-    C_LOCAL_SERIES_MAY_CERTIFY_GATED); it can move one away from GATED
-    on its own, because that direction cannot cost a campaign.
+    verdict just because the solver started emitting `c_local`.
+
+    Step 7 is where the module used to fork, and the fork is gone. A
+    plateau — corroborated, contradicted, or seen from one side only —
+    now lands in the SAME abstention as no evidence at all, because
+    that is what the evidence supports: 22 candidate statistics scored
+    over 103 archives and none of them tells a stalled search from one
+    about to finish. Concentration survives as a DESCRIPTION, on
+    `WallVerdict.descriptor`, and every remaining test is subtractive
+    (BARREN, KEY_BLIND, INSUFFICIENT) or affirmative about something
+    directly observed (RESOLVED, PROGRESSING, COVERAGE_LIMITED).
+
+    Note the asymmetry that keeps COVERAGE_LIMITED honest: only the
+    C_local SERIES can reach it, because only a series can show a
+    direction. A cross-sectional number is one point on a curve and the
+    hall's curve is the steepest in the corpus while its map is frozen.
     """
     recs = telemetry.records
-    #: Fields the adopted form wanted and THIS call could not use. Set
-    #: properly once the evidence exists — a telemetry that carries a
-    #: usable `c_local` must not be told `c_local` is missing.
+    #: Fields the form wanted and THIS call could not use. Set properly
+    #: once the evidence exists — a telemetry that carries a usable
+    #: `c_local` must not be told `c_local` is missing.
     missing: tuple[str, ...] = ("c_local", "boundary_action_entropy")
 
     def out(cls: WallClass, reasons: Sequence[str], ev: Mapping[str, Any],
-            degraded: bool, miss: Sequence[str] = ()) -> WallVerdict:
+            degraded: bool, miss: Sequence[str] = (),
+            descriptor: str = "") -> WallVerdict:
         return WallVerdict(
             wall_class=cls, label=telemetry.label, degraded=degraded,
             missing=tuple(miss), reasons=tuple(reasons), evidence=dict(ev),
-            remedy=REMEDY[cls],
+            remedy=REMEDY[cls], descriptor=descriptor,
         )
+
+    def abstain(reasons: list[str], ev: Mapping[str, Any],
+                miss: Sequence[str]) -> WallVerdict:
+        """The terminal class, plus the description and its receipt."""
+        # `missing` is what THIS call lacked, so an archive snapshot —
+        # which is where `boundary_cells` comes from — settles the
+        # frontier field rather than leaving it on the shopping list.
+        if telemetry.archive is None:
+            miss = tuple(miss) + ("frontier_bucket_cells",)
+        desc = _concentration_descriptor(telemetry.archive)
+        if desc:
+            reasons = reasons + [
+                f"{desc}: concentration {telemetry.archive.concentration:.2f} "
+                f"(>= CONCENTRATION_DESCRIPTIVE_MIN="
+                f"{CONCENTRATION_DESCRIPTIVE_MIN}) DESCRIBES this archive and "
+                f"classifies nothing — the statistic that used to certify a "
+                f"wall here was struck after 22 candidates over 103 archives "
+                f"all straddled the resolved class; see "
+                f"{STRUCK_CLASSIFICATION_RECEIPT}"]
+        return out(WallClass.INDETERMINATE, reasons, ev, degraded=True,
+                   miss=miss, descriptor=desc)
 
     if len(recs) < max(MIN_RECORDS, window + 1):
         return out(WallClass.INSUFFICIENT,
@@ -965,71 +1370,59 @@ def gated_wall_verdict(telemetry: WallTelemetry,
         return out(WallClass.BARREN, reasons, ev, degraded=False)
     if ev["c_local_peak_yield"] == 0:
         # Measurable series, zero growth anywhere in the run: this is the
-        # adopted form's "BARREN <=> C_local STAGNANT" verbatim. It is
+        # form's "BARREN <=> C_local STAGNANT" verbatim. It is
         # emphatically NOT a plateau — nothing ever accumulated to
-        # plateau — and calling it GATED here would fire an orthogonal
-        # campaign at a search that is not searching.
+        # plateau — and the two must not share a class, whatever that
+        # class is called.
         reasons.append(f"c_local pinned at {c_local} for the whole run "
                        f"(peak yield 0.0 new buckets/step): C_local is "
                        f"STAGNANT, not plateaued")
         return out(WallClass.BARREN, reasons, ev, degraded=False)
 
     # ---- 6/7. the C_local series, when the solver emits one ----------
-    conc = arc.concentration if arc is not None else None
     c_local_sat = ev["c_local_saturation"]
     if c_local_sat is not None:
         if c_local_sat < C_LOCAL_SATURATION_MIN:
-            # Refutation is always allowed on the series alone: it can
-            # only move a verdict AWAY from GATED, and the adopted form
-            # makes C_local the primary term, so it also overrides a high
-            # cross-sectional concentration.
+            # The one affirmative reading a series still licenses, and
+            # the safe direction: a footprint measurably still expanding
+            # has not run out of reachable ground. It overrides a high
+            # cross-sectional concentration because a direction beats a
+            # point — and because concentration no longer decides
+            # anything to override.
             reasons.append(f"C_local saturation {c_local_sat:.3f} < "
                            f"C_LOCAL_SATURATION_MIN={C_LOCAL_SATURATION_MIN}: "
                            f"the map footprint is still expanding")
             return out(WallClass.COVERAGE_LIMITED, reasons, ev, degraded=True,
                        miss=("boundary_action_entropy",))
+        # A plateau. This is where the GATED branch was, on 2026-08-10
+        # requiring cross-sectional corroboration and on 2026-08-11
+        # requiring nothing at all, because there is nothing left that
+        # could corroborate it: the corroborating statistic was struck.
         reasons.append(f"C_local saturation {c_local_sat:.3f} >= "
                        f"C_LOCAL_SATURATION_MIN={C_LOCAL_SATURATION_MIN} "
-                       f"(PROVISIONAL, never measured against a labelled run)")
-        if conc is not None and conc >= CONCENTRATION_GATED_MIN:
-            reasons.append(f"corroborated by concentration {conc:.2f} >= "
-                           f"CONCENTRATION_GATED_MIN={CONCENTRATION_GATED_MIN}")
-            return out(WallClass.GATED, reasons, ev, degraded=True,
-                       miss=("boundary_action_entropy",))
-        if C_LOCAL_SERIES_MAY_CERTIFY_GATED:
-            return out(WallClass.GATED, reasons, ev, degraded=True,
-                       miss=("boundary_action_entropy",))
-        reasons.append(
-            "abstaining: " + (
-                f"concentration {conc:.2f} < "
-                f"CONCENTRATION_GATED_MIN={CONCENTRATION_GATED_MIN} "
-                f"CONTRADICTS the series"
-                if conc is not None else
-                "no archive snapshot to corroborate it")
-            + ", and C_LOCAL_SERIES_MAY_CERTIFY_GATED is False while the "
-              "threshold is PROVISIONAL")
-        return out(WallClass.INDETERMINATE, reasons, ev, degraded=True,
-                   miss=missing + ("frontier_bucket_cells",))
+                       f"(PROVISIONAL, never measured against a labelled run): "
+                       f"a plateau, which is not by itself evidence of a wall "
+                       f"— the hall's own cell curve is the steepest in the "
+                       f"corpus with its map frozen underneath it")
+        return abstain(reasons, ev, missing)
 
-    # ---- 8. nothing left to measure C_local with ---------------------
+    # ---- 7. the terminal abstention ----------------------------------
+    #
+    # Everything that survives to here is a stalled search that is not
+    # barren and not key-blind, and there is nothing admissible left to
+    # ask of it. Until 2026-08-11 this was a fork on `concentration`:
+    # over the threshold GATED, under it COVERAGE_LIMITED. Both arms are
+    # gone, not just the expensive one, because a single cross-sectional
+    # number cannot support EITHER claim — the same statistic that read
+    # 31.04 on the unsolved hall read 98.30 on `ge_chain_w8/lvl_00_8-1`,
+    # which was SOLVED, and 15.66 on one of its own chain siblings.
     if arc is None:
-        reasons.append("no C_local series and no archive snapshot: cannot "
-                       "separate a saturated wall from a slow one")
-        return out(WallClass.INDETERMINATE, reasons, ev, degraded=True,
-                   miss=missing + ("frontier_bucket_cells",))
-
-    # ---- 9. cross-sectional concentration alone ----------------------
-    if conc >= CONCENTRATION_GATED_MIN:
-        reasons.append(f"coverage concentration {conc:.2f} >= "
-                       f"CONCENTRATION_GATED_MIN={CONCENTRATION_GATED_MIN} "
-                       f"({arc.cells} cells over {arc.distinct_spatial} "
-                       f"spatial buckets): C_local has plateaued while the "
-                       f"key keeps manufacturing nuisance novelty")
-        return out(WallClass.GATED, reasons, ev, degraded=True,
-                   miss=missing)
-
-    reasons.append(f"coverage concentration {conc:.2f} < "
-                   f"CONCENTRATION_GATED_MIN={CONCENTRATION_GATED_MIN}: the "
-                   f"map footprint is still absorbing new cells")
-    return out(WallClass.COVERAGE_LIMITED, reasons, ev, degraded=True,
-               miss=missing)
+        reasons.append("no C_local series and no archive snapshot: nothing "
+                       "measurable is left to ask")
+    else:
+        reasons.append(
+            f"coverage concentration {arc.concentration:.2f} ({arc.cells} "
+            f"cells over {arc.distinct_spatial} spatial buckets) is REPORTED "
+            f"and gates nothing — CONCENTRATION_IS_SEPARATING is False, and "
+            f"no replacement was found for it")
+    return abstain(reasons, ev, missing)

@@ -75,6 +75,7 @@ from scripts.onboard_game import (
 # file the place the mirror is pinned to the real thing. Every
 # assertion below that reads `wt` exists so drift fails here instead of
 # in an orchestrated campaign.
+from scripts import onboard_game as og  # noqa: E402
 from src.training import wall_taxonomy as wt  # noqa: E402
 from src.training.wall_taxonomy import (  # noqa: E402
     COVERAGE_FLOOR_CELLS, EFFORT_MIN_STEPS, MIN_RECORDS, WINDOW_RECORDS,
@@ -442,9 +443,10 @@ def test_the_default_budget_is_derived_from_the_taxonomys_evidence_floor():
 
 
 def test_the_command_flushes_often_enough_that_an_archive_lands():
-    """Without an `archive.pkl` the taxonomy cannot separate GATED from
-    COVERAGE_LIMITED and abstains — which is exactly what happened to the
-    two banked show runs, whose flush interval was set to ~forever."""
+    """Without an `archive.pkl` the taxonomy cannot test the cell key's
+    spatial projection at all, and abstains with the frontier evidence
+    still missing — which is exactly what happened to the two banked show
+    runs, whose flush interval was set to ~forever."""
     cmd = build_solve_command("p.yaml", "s.bin", "out")
     flush = float(_argv_value(cmd, "--flush-secs"))
     minutes = float(_argv_value(cmd, "--minutes"))
@@ -507,11 +509,13 @@ def test_merge_argv_replaces_rather_than_duplicating():
 def _verdict(cls: WallClass, **kw):
     """A REAL verdict object from the calibrated discriminator, so the
     duck-typed arm table is exercised against the actual shape rather
-    than a hand-rolled look-alike."""
+    than a hand-rolled look-alike — including `descriptor`, the
+    non-verdict annotation that replaced the struck classification."""
     return wt.WallVerdict(
         wall_class=cls, label="t", degraded=kw.pop("degraded", True),
         missing=kw.pop("missing", ()), reasons=kw.pop("reasons", ("because",)),
-        evidence=kw.pop("evidence", {}), remedy=wt.REMEDY[cls])
+        evidence=kw.pop("evidence", {}), remedy=wt.REMEDY[cls],
+        descriptor=kw.pop("descriptor", ""))
 
 
 BASE = ("py", "scripts/go_explore_solve.py", "--out", "runs/onboard/x/calib",
@@ -579,10 +583,10 @@ def test_an_unknown_verdict_label_stops_instead_of_guessing():
 def test_next_arm_accepts_a_plain_duck_typed_verdict():
     """The whole point of not importing the discriminator: anything
     exposing the documented attributes classifies."""
-    duck = types.SimpleNamespace(wall_class="gated", reasons=("r",),
+    duck = types.SimpleNamespace(wall_class="indeterminate", reasons=("r",),
                                  remedy="switch", missing=(), calibration="tag")
     arm = next_arm(duck, base_command=BASE)
-    assert arm.arm == "interaction" and arm.calibration == "tag"
+    assert arm.arm == "instrument" and arm.calibration == "tag"
 
 
 def test_a_resolved_run_is_harvested_not_extended():
@@ -612,28 +616,64 @@ def test_a_progressing_run_is_extended_on_the_same_arm_and_resumes(tmp_path):
     assert "--ortho" not in arm.command
 
 
-def test_a_gated_run_leads_with_interaction_and_caveats_the_position_arm():
-    """A gated wall is opened by causing a STATE CHANGE, not by finding
-    another position. The position-orthogonal arm has been A/B'd against
-    its own control at a gated wall and did not move the frontier, so it
-    ships as a caveated fallback while the interaction edits lead."""
-    arm = next_arm(_verdict(WallClass.GATED), base_command=BASE,
-                   run_dir="runs/onboard/x/calib",
+def test_an_abstention_leads_with_the_telemetry_checklist_not_a_campaign():
+    """The struck classification, downstream. A stalled run that is not
+    barren and not key-blind now ABSTAINS, so the arm is the discovery /
+    telemetry checklist: collect what the discriminator said it lacked.
+    No orthogonal campaign is dispatched off a verdict nobody made."""
+    arm = next_arm(_verdict(WallClass.INDETERMINATE, missing=("c_local",)),
+                   base_command=BASE, run_dir="runs/onboard/x/calib",
                    profile={"solve": {"area": AREA}})
-    assert arm.arm == "interaction"
+    assert arm.arm == "instrument"
     assert arm.profile_edits[0].startswith("FIRST:")
-    assert "hold_macros" in arm.profile_edits[0]
-    assert any("room_advance" in e for e in arm.profile_edits)
+    assert "ABSTAINED" in arm.profile_edits[0]
+    assert "c_local" in arm.profile_edits[0]
+    assert any("discover_observables" in e for e in arm.profile_edits)
     assert any(f"0x{AREA:04X}" in e for e in arm.profile_edits)
-    # The fallback flag is still emitted, and still labelled a fallback.
-    assert _argv_value(arm.command, "--ortho") == "up"
-    assert _argv_value(arm.command, "--sel-mode") == "count"
-    assert "fallback" in arm.rationale
+    # The one arm the abstention may NOT buy: an orthogonal campaign.
+    assert "--ortho" not in arm.command
+    assert "--sel-mode" not in arm.command
 
 
-def test_a_gated_run_without_an_area_byte_says_so():
-    arm = next_arm(_verdict(WallClass.GATED), base_command=BASE, profile={"solve": {}})
+def test_the_descriptor_rides_through_as_a_description_and_selects_no_arm():
+    """`UNRESOLVED-CONCENTRATED` is a statement about what was OBSERVED.
+    It travels with its caveat and it must not move the arm: the same
+    verdict with and without it recommends exactly the same thing."""
+    plain = next_arm(_verdict(WallClass.INDETERMINATE), base_command=BASE,
+                     profile={"solve": {"area": AREA}})
+    described = next_arm(_verdict(WallClass.INDETERMINATE,
+                                  descriptor=wt.UNRESOLVED_CONCENTRATED),
+                         base_command=BASE, profile={"solve": {"area": AREA}})
+    assert described.arm == plain.arm == "instrument"
+    assert described.action == plain.action
+    assert described.command == plain.command
+    said = [e for e in described.profile_edits if wt.UNRESOLVED_CONCENTRATED in e]
+    assert len(said) == 1
+    assert "not a diagnosis" in said[0] and "licence" in said[0]
+    assert said[0] not in plain.profile_edits
+
+
+def test_an_abstention_without_an_area_byte_says_so():
+    arm = next_arm(_verdict(WallClass.INDETERMINATE), base_command=BASE,
+                   profile={"solve": {}})
     assert any("no solve.area" in e for e in arm.profile_edits)
+
+
+def test_no_struck_classification_vocabulary_survives_downstream():
+    """The K-falsifier's downstream requirement: the struck label may not
+    be carried by any target. It is gone from this module's wire strings
+    and from the arm table, and no arm the module can emit — rationale,
+    edits, notes or command — puts it back."""
+    assert not hasattr(og, "GATED")
+    assert all("gated" not in a.lower() for a in ARM_FOR_CLASS)
+    assert all("gated" not in a.lower() for a in ARM_FOR_CLASS.values())
+    for cls in WallClass:
+        arm = next_arm(_verdict(cls, descriptor=wt.UNRESOLVED_CONCENTRATED),
+                       base_command=BASE, run_dir="runs/onboard/x/calib",
+                       profile={"solve": {"area": AREA}})
+        text = " ".join((arm.arm, arm.action, arm.rationale, arm.remedy,
+                         *arm.profile_edits, *arm.notes, *(arm.command or ())))
+        assert "gated" not in text.lower(), cls
 
 
 def test_a_key_blind_run_shrinks_the_buckets_and_names_the_missing_axis():
@@ -659,8 +699,9 @@ def test_an_insufficient_run_is_lifted_to_at_least_the_floor():
 
 
 def test_next_arm_without_a_base_command_still_advises():
-    arm = next_arm(_verdict(WallClass.GATED))
-    assert arm.command is None and arm.arm == "interaction" and arm.rationale
+    arm = next_arm(_verdict(WallClass.INDETERMINATE))
+    assert arm.command is None and arm.arm == "instrument" and arm.rationale
+    assert arm.profile_edits
 
 
 # ---------------------------------------------------------------------
@@ -715,10 +756,11 @@ def test_a_run_that_never_flushed_is_never_resumed(tmp_path):
 
 
 def test_an_indeterminate_run_never_resumes_even_with_a_snapshot(tmp_path):
-    """INDETERMINATE can also be reached WITH an archive (a
-    concentration that contradicts the C_local series). Resuming would
-    still be wrong: the arm re-instruments from the root so the next
-    verdict is not confounded by the last run's archive."""
+    """Since the classification was struck, INDETERMINATE is the terminal
+    class for every stalled run that is not barren and not key-blind —
+    reached WITH an archive as readily as without one. Resuming is still
+    wrong: the arm re-instruments from the root so the next verdict is
+    not confounded by the last run's archive."""
     run = _snapshot(tmp_path / "calib")
     assert resume_ready(run)
     arm = next_arm(_verdict(WallClass.INDETERMINATE), base_command=BASE,
@@ -791,10 +833,14 @@ def test_classify_does_not_emit_a_resume_the_solver_cannot_open(tmp_path):
 
 
 def test_classify_resumes_when_the_snapshot_is_there(tmp_path):
+    """End to end through the hook, on an arm that MAY resume: the map is
+    still moving, so the verdict is PROGRESSING and the complete snapshot
+    is handed back as --resume-archive. (The abstention arm is not usable
+    here — it re-instruments from the root and never resumes.)"""
     run = _snapshot(tmp_path / "calib")
-    _write_progress(run / "progress.jsonl", _flat_records())
+    _write_progress(run / "progress.jsonl", _moving_records())
     res = classify_run(run, verdict_fn=_verdict_fn(), base_command=BASE)
-    assert res["wall_class"] == "gated"
+    assert res["wall_class"] == "progressing"
     assert _argv_value(res["next_arm"]["command"], "--resume-archive") == str(run)
 
 
@@ -813,6 +859,15 @@ def _flat_records(n=MIN_RECORDS + 1, *, cells=300, solutions=0,
              "cells": cells, "solutions": solutions, "max_area": 0,
              "max_sect": 0, "max_gx_in_max_area": 100}
             for i in range(n)]
+
+
+def _moving_records(n=MIN_RECORDS + 1, **kw):
+    """`_flat_records` with the permanent map still advancing, which is
+    the taxonomy's PROGRESSING test."""
+    recs = _flat_records(n, **kw)
+    for i, r in enumerate(recs):
+        r["max_gx_in_max_area"] = 100 + i
+    return recs
 
 
 def _write_archive(path, *, cells=300, buckets=12):
@@ -859,26 +914,36 @@ def test_classify_calls_a_frozen_archive_barren(tmp_path):
 
 
 def test_classify_uses_the_archive_snapshot_when_one_was_flushed(tmp_path):
-    """300 cells over 12 spatial buckets = concentration 25, the
-    calibrated GATED threshold: coverage plateaued while the key keeps
-    manufacturing novelty."""
+    """300 cells over 12 spatial buckets = concentration 25.0. That
+    number used to certify a wall; since the classification was struck it
+    is REPORTED evidence carrying a DESCRIPTOR, the verdict is an
+    abstention, and the arm that follows is instrumentation."""
     run = tmp_path / "calib"
     _write_progress(run / "progress.jsonl", _flat_records())
     _write_archive(run / "archive.pkl")
     res = classify_run(run, verdict_fn=_verdict_fn(), base_command=BASE)
     assert res["archive_path"] is not None
     assert res["verdict"]["evidence"]["concentration"] == 25.0
-    assert res["wall_class"] == "gated"
-    assert "--ortho" in res["next_arm"]["command"]
+    assert res["wall_class"] == "indeterminate"
+    assert res["verdict"]["descriptor"] == wt.UNRESOLVED_CONCENTRATED
+    assert res["verdict"]["calibration"] == wt.CALIBRATION_TAG
+    assert res["next_arm"]["arm"] == "instrument"
+    assert "--ortho" not in res["next_arm"]["command"]
+    assert any(wt.UNRESOLVED_CONCENTRATED in e
+               for e in res["next_arm"]["profile_edits"])
 
 
 def test_classify_reads_the_profile_to_sharpen_its_advice(tmp_path):
+    """The profile only ever makes the checklist more concrete — naming
+    the byte a transition counter could be instrumented off — never more
+    certain about a wall nothing classified."""
     run = tmp_path / "calib"
     _write_progress(run / "progress.jsonl", _flat_records())
     _write_archive(run / "archive.pkl")
     prof = tmp_path / "p.yaml"
     prof.write_text(yaml.safe_dump({"solve": {"area": AREA}}))
     res = classify_run(run, verdict_fn=_verdict_fn(), base_command=BASE, profile_path=prof)
+    assert res["next_arm"]["arm"] == "instrument"
     assert any(f"0x{AREA:04X}" in e for e in res["next_arm"]["profile_edits"])
 
 
@@ -895,7 +960,8 @@ def test_classify_rebuilds_a_base_command_from_the_profile_when_given_none(tmp_p
 
     res = classify_run(run, verdict_fn=_verdict_fn(), profile_path=prof)
     assert res["base_command_source"].startswith("reconstructed")
-    assert "--ortho" in res["next_arm"]["command"]
+    assert _argv_value(res["next_arm"]["command"], "--flush-secs") == \
+        str(CALIBRATION_FLUSH_SECS)
     assert _argv_value(res["next_arm"]["command"], "--profile") == str(prof)
 
     res2 = classify_run(run, verdict_fn=_verdict_fn(), profile_path=prof, base_command=BASE)
@@ -909,7 +975,7 @@ def test_classify_without_a_profile_advises_but_cannot_rebuild(tmp_path):
     _write_archive(run / "archive.pkl")
     res = classify_run(run, verdict_fn=_verdict_fn())
     assert res["base_command_source"] == "none"
-    assert res["wall_class"] == "gated"
+    assert res["wall_class"] == "indeterminate"
     assert res["next_arm"]["command"] is None
     assert res["next_arm"]["profile_edits"]
 
@@ -1193,8 +1259,9 @@ def test_onboard_refuses_a_missing_supplied_state(rom, tmp_path):
 
 
 def test_next_arm_dataclass_round_trips_to_json():
-    arm = NextArm("interaction", "run", "switch axis", "because",
-                  command=("py", "s.py"), profile_edits=("do a thing",))
+    arm = NextArm("instrument", "run", "collect the missing telemetry",
+                  "because", command=("py", "s.py"),
+                  profile_edits=("do a thing",))
     assert json.loads(json.dumps(arm.as_dict()))["command"] == ["py", "s.py"]
 
 

@@ -23,7 +23,7 @@ outside tests and docs may import it until the self-arming decision
 lands. So this module never reaches for it. `classify_run` takes a
 `verdict_fn`, `load_verdict_fn("<module path>")` builds one from a path
 the operator names, and the arm table is duck-typed on the verdict's
-`.wall_class` / `.reasons` / `.remedy`. `tests/test_onboard_game.py` —
+`.wall_class` / `.reasons` / `.remedy` / `.descriptor`. `tests/test_onboard_game.py` —
 which the hold carves out — pins the mirrored constants and the arm
 table against the real discriminator, so drift fails in the suite
 rather than in a campaign.
@@ -107,9 +107,12 @@ PROGRESS_LINE_SECS = 60
 #: partial minute, and a worker restart must not push a healthy run back
 #: under the floor and get it misread as INSUFFICIENT.
 CALIBRATION_MARGIN_MINUTES = 3
-#: An archive snapshot is what separates GATED from COVERAGE_LIMITED, and
-#: the two banked show runs in the taxonomy's corpus had `flush_secs` set
-#: to ~forever and so persisted no `archive.pkl` at all. Calibration runs
+#: An archive snapshot is the only thing that lets the taxonomy test the
+#: cell key's spatial projection at all (its KEY_BLIND test reads
+#: `spatial_span` off the snapshot), and without one a stalled run
+#: abstains with the frontier evidence still on its missing list. The two
+#: banked show runs in the taxonomy's corpus had `flush_secs` set to
+#: ~forever and so persisted no `archive.pkl` at all. Calibration runs
 #: flush often enough that the snapshot always exists.
 CALIBRATION_FLUSH_SECS = 60
 DEFAULT_WORKERS = 8
@@ -607,8 +610,10 @@ def build_solve_command(profile_path: str | Path, root_state: str | Path,
     `--minutes` is at least `min_calibration_minutes()` so the run
     produces enough progress records for a verdict, and `--flush-secs`
     is short enough that an `archive.pkl` actually lands — without one
-    the taxonomy cannot separate GATED from COVERAGE_LIMITED and returns
-    INDETERMINATE no matter how long the run was.
+    the taxonomy cannot test the cell key's spatial projection at all, so
+    a key-blind search is indistinguishable from one that merely stalled,
+    and the abstention that comes back is missing the frontier evidence a
+    human would need to act on it.
     """
     minutes = min_calibration_minutes() if minutes is None else float(minutes)
     argv = [python, SOLVER,
@@ -662,7 +667,6 @@ class NextArm:
 RESOLVED = "resolved"
 PROGRESSING = "progressing"
 COVERAGE_LIMITED = "coverage_limited"
-GATED = "gated"
 BARREN = "barren"
 KEY_BLIND = "key_blind"
 INDETERMINATE = "indeterminate"
@@ -672,11 +676,19 @@ INSUFFICIENT = "insufficient"
 #: test pins that) so a new label cannot silently fall through to "run it
 #: longer", which is the wrong answer for half of them. An unrecognized
 #: label stops rather than guesses — see `UNKNOWN_ARM`.
+#:
+#: There is deliberately NO arm for a certified wall, because the
+#: discriminator no longer certifies one: the classification was struck
+#: upstream (its tag reads CLASSIFICATION-STRUCK) after 22 candidate
+#: statistics scored over 103 archives all failed to separate a search
+#: that is stuck from one that is about to finish. A stalled run that is
+#: neither barren nor key-blind therefore ABSTAINS, and the only honest
+#: arm for an abstention is the instrumentation checklist — never a
+#: campaign bought on the strength of a verdict nobody made.
 ARM_FOR_CLASS: dict[str, str] = {
     RESOLVED: "harvest",
     PROGRESSING: "extend",
     COVERAGE_LIMITED: "extend",
-    GATED: "interaction",
     BARREN: "repair_search",
     KEY_BLIND: "enrich_key",
     INDETERMINATE: "instrument",
@@ -709,15 +721,21 @@ def next_arm(verdict: Any, *, base_command: Optional[Sequence[str]] = None,
     calibrated discriminator can be handed in without this module
     importing it. Everything else it needs is the command that produced
     the run and — optionally — the profile, which only ever makes a
-    suggestion more concrete (naming the `area` byte an interaction gate
-    would key on, say). No game knowledge enters here; the arms are
-    properties of the SEARCH.
+    suggestion more concrete (naming the `area` byte a transition counter
+    could be instrumented off, say) and never makes it more certain. No
+    game knowledge enters here; the arms are properties of the SEARCH.
 
     An emitted command names `--resume-archive` only when the dir it
     points at holds a complete flushed snapshot (`RESUME_ARTIFACTS`),
     and never on the INDETERMINATE arm — see `resume_ready` and the
     comment on the resume-eligibility block below. `.notes` records the
     decision either way.
+
+    A verdict may also carry a DESCRIPTOR — a non-verdict annotation
+    saying what the archive looks like. It is read here only to be
+    repeated back with its caveat attached: no arm is selected from it,
+    because the statistic that used to turn that observation into a
+    classification was struck.
     """
     raw = _verdict_field(verdict, "wall_class", "")
     cls = str(getattr(raw, "value", raw))
@@ -734,9 +752,11 @@ def next_arm(verdict: Any, *, base_command: Optional[Sequence[str]] = None,
     # DIR/traces.pkl and DIR/roots.json with no existence check, so a dir
     # that never flushed is a startup FileNotFoundError, not a degraded
     # resume. Every arm therefore names a resume dir only after checking
-    # it, and an INDETERMINATE run is never resumed at all: the verdict
-    # fires precisely BECAUSE no archive snapshot landed, and the remedy
-    # is to re-instrument from the root.
+    # it, and an INDETERMINATE run is never resumed at all: that arm
+    # re-instruments from the root, so carrying this run's archive into
+    # the next attempt would confound the very telemetry it was launched
+    # to collect — and when no snapshot landed there is nothing there to
+    # resume from in the first place.
     lacks = missing_resume_artifacts(run_dir)
     resume = str(run_dir) if run_dir is not None and not lacks else None
     notes: list[str] = []
@@ -822,60 +842,56 @@ def next_arm(verdict: Any, *, base_command: Optional[Sequence[str]] = None,
     if cls == INDETERMINATE:
         missing = ", ".join(_verdict_field(verdict, "missing", ())) \
             or "corroborating telemetry"
-        # NEVER resumes. This verdict fires exactly when no archive
-        # snapshot landed, so the previous run dir is not a resume point
-        # — it is the thing that failed to produce one. Re-instrument
-        # from the root with a flush short enough to bank a snapshot.
-        return made("run",
-                    f"{reasons}. Missing: {missing}. Re-run FROM THE ROOT with "
-                    f"a short flush so an archive.pkl actually lands — without "
-                    f"the snapshot a saturated wall and a slow one are "
-                    f"indistinguishable, and there is no snapshot here to "
-                    f"resume from either.",
-                    command=rebuild([("--flush-secs", str(CALIBRATION_FLUSH_SECS)),
-                                     ("--minutes", longer(1.5))],
-                                    may_resume=False))
-
-    if cls == GATED:
-        # The arm is INTERACTION, not position. Dispatching a
-        # position-orthogonal arm at a gated wall has been measured: it
-        # concentrated selection pressure upward and the ceiling at the
-        # pin did not move one band in 90 minutes and 37k selections.
-        # What a gated wall wants is a STATE CHANGE — a sustained hold, a
-        # wait, a transition — after which previously unreachable
-        # positions open up. So the profile edits lead and the flag
-        # follows, carrying its own caveat.
+        descriptor = str(_verdict_field(verdict, "descriptor", ""))
+        # NOTHING WAS CLASSIFIED, and that is the whole content of this
+        # arm. Since the wall classification was struck upstream this is
+        # the terminal class for every stalled search that is not barren
+        # and not key-blind, so the recommendation is the discovery /
+        # telemetry checklist — collect what the discriminator said it
+        # lacked, then decide on grounds it does not supply. NEVER
+        # resumes: the run is re-instrumented from the root, with a flush
+        # short enough to bank a snapshot, so the next verdict is read
+        # off fresh telemetry rather than this run's archive.
         edits = [
-            "FIRST: widen the interaction repertoire the sampler can emit. "
-            "hold_macros are the implemented mechanism, and a search whose "
-            "macros are short and directional cannot express 'stand still "
-            "for two seconds' or 'hold one button for 500 frames' — those "
-            "runs are never sampled naturally at any realistic step count",
-            "add a discrete-transition gate (solve.room_advance) so the "
-            "settle-then-HOLD maneuver fires at the deep frontier, where a "
-            "transition is the only progress left to buy",
+            f"FIRST: nothing classified this wall — the discriminator "
+            f"ABSTAINED. Collect what it named missing ({missing}) and read "
+            f"the verdict again before spending compute on any orthogonal "
+            f"arm: no statistic in this telemetry tells a search that is "
+            f"stuck from one that is about to finish, so an arm chosen here "
+            f"is a guess wearing a verdict's clothes",
+            "re-run discovery (scripts/discover_observables.py) against this "
+            "profile: an abstention taken over a cell key the probes never "
+            "enriched is a measurement gap before it is a hard game",
         ]
         if "area" in solve:
             edits.append(
                 f"solve.area is already 0x{int(solve['area']):04X} — that is "
-                f"the byte a room_advance gate keys on, no new observable "
-                f"needed")
+                f"the byte a monotone room/area transition counter can be "
+                f"instrumented off, and a real map-progress counter is one "
+                f"of the terms the discriminator is currently substituting "
+                f"a stand-in for")
         else:
             edits.append("no solve.area in this profile: re-run discovery, or "
-                         "the gate has nothing to count transitions with")
-        return made(
-            "run",
-            f"{reasons}. Local coverage has plateaued while the key keeps "
-            f"manufacturing novelty, so more of the same search buys nothing. "
-            f"The command below is the only ORTHOGONAL arm implemented today "
-            f"and it is a POSITION arm — it has been A/B'd against its own "
-            f"control at a gated wall and did not move the frontier, so treat "
-            f"it as the fallback and the profile edits above as the actual "
-            f"recommendation.",
-            command=rebuild([("--ortho", "up"), ("--ortho-pin-secs", "120"),
-                             ("--ortho-bias", "0.3"), ("--sel-mode", "count"),
-                             ("--minutes", longer())]),
-            edits=edits)
+                         "there is no observable to count discrete "
+                         "transitions with")
+        if descriptor:
+            edits.append(
+                f"the verdict carries the descriptor {descriptor}: a "
+                f"DESCRIPTION of what this archive looks like, not a "
+                f"diagnosis and not a licence to act. The statistic that "
+                f"used to turn that observation into a classification was "
+                f"struck upstream, so read it as an annotation on the "
+                f"abstention above and not as a wall")
+        return made("run",
+                    f"{reasons}. Missing: {missing}. NOT CLASSIFIED — the "
+                    f"discriminator abstained, so the next spend is "
+                    f"instrumentation, not a campaign: re-run FROM THE ROOT "
+                    f"with a short flush so an archive.pkl actually lands and "
+                    f"the checklist above has something to read.",
+                    command=rebuild([("--flush-secs", str(CALIBRATION_FLUSH_SECS)),
+                                     ("--minutes", longer(1.5))],
+                                    may_resume=False),
+                    edits=edits)
 
     if cls == KEY_BLIND:
         edits = []
@@ -931,7 +947,8 @@ def load_verdict_fn(module_path: str, *, window: Optional[int] = None
         gated_wall_verdict(telemetry, window=) -> verdict
 
     and the verdict must carry `.wall_class`, `.reasons`, `.remedy`,
-    `.missing` and (optionally) `.calibration` / `.as_dict()`.
+    `.missing` and (optionally) `.descriptor` / `.calibration` /
+    `.as_dict()`.
 
     Kept as a runtime lookup on a caller-supplied path rather than an
     import so this module has no compile-time dependency on the
@@ -971,13 +988,18 @@ class NoTelemetryVerdict:
     reasons: tuple[str, ...] = ()
     evidence: Mapping[str, Any] = field(default_factory=lambda: {"records": 0})
     remedy: str = "keep running; too little evidence to classify"
+    #: Same non-verdict annotation slot the real discriminator carries;
+    #: always empty here, because a run with no telemetry has nothing to
+    #: describe.
+    descriptor: str = ""
     calibration: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {"wall_class": self.wall_class, "label": self.label,
                 "degraded": self.degraded, "missing": list(self.missing),
                 "reasons": list(self.reasons), "evidence": dict(self.evidence),
-                "remedy": self.remedy, "calibration": self.calibration}
+                "remedy": self.remedy, "descriptor": self.descriptor,
+                "calibration": self.calibration}
 
 
 def _verdict_dict(verdict: Any) -> dict[str, Any]:
@@ -992,6 +1014,7 @@ def _verdict_dict(verdict: Any) -> dict[str, Any]:
             "reasons": list(_verdict_field(verdict, "reasons", ())),
             "evidence": dict(_verdict_field(verdict, "evidence", {})),
             "remedy": str(_verdict_field(verdict, "remedy", "")),
+            "descriptor": str(_verdict_field(verdict, "descriptor", "")),
             "calibration": str(_verdict_field(verdict, "calibration", ""))}
 
 
@@ -1604,6 +1627,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"[archive]   {res['archive_path'] or 'none flushed'}")
             for r in v["reasons"]:
                 print(f"[reason]    {r}")
+            if v.get("descriptor"):
+                print(f"[descriptor] {v['descriptor']} — DESCRIPTIVE only: it "
+                      f"says what the archive looks like, classifies nothing, "
+                      f"and selects no arm")
             print(f"[remedy]    {v['remedy']}")
             print(f"\n[next arm]  {arm['arm']} ({arm['action']})")
             print(f"[why]       {arm['rationale']}")
