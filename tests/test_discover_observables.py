@@ -22,6 +22,9 @@ import pytest
 
 from scripts.discover_observables import (
     LEARNFUN_SHORTLIST,
+    LIVES_MAX_DROP,
+    LIVES_MAX_TICKS,
+    SETTLE_CAP,
     _col_stats,
     _flat_under_noop,
     _saturates_conclusively,
@@ -30,6 +33,8 @@ from scripts.discover_observables import (
     emit_solve_yaml,
     gate_summary,
     gate_tape_candidates,
+    lives_from_death_drives,
+    settle_index,
 )
 from src.training.lexicographic_objectives import NEVER_WIRE_AS_REWARD
 
@@ -374,3 +379,232 @@ def test_gate_tape_candidates_requires_the_noop_probe(bad):
     with pytest.raises((TypeError, KeyError, IndexError)):
         gate_tape_candidates([_ranked(TIMER, 1, lead=1.0, mass=1.0)],
                              probe_stats=bad, gate2=_gate2_stub())
+
+
+# ---------------------------------------------------------------------
+# The settle window. A start state is not always captured mid-play, and
+# the level load that follows one that is not lands INSIDE every probe.
+# ---------------------------------------------------------------------
+
+def _idle_churn(*, steady: float, load_at: int | None, load: float = 320.0,
+                n: int = 150) -> np.ndarray:
+    """Per-step changed-byte counts for an idle scan: a quiet intro at a
+    fraction of the steady rate, one load burst, then ordinary play."""
+    ch = np.full(n, steady, dtype=float)
+    if load_at is not None:
+        ch[:load_at] = steady * 0.2
+        ch[load_at] = load
+    return ch
+
+
+def test_settle_skips_a_level_load_the_probe_would_otherwise_measure():
+    """The defect this exists for: a state captured on a level-intro
+    card makes the player-position byte read 0 across the intro and jump
+    to its spawn value when the level appears. Measured with the pad
+    untouched, that is movement, and Gate 1 rejects the position byte as
+    a free-running counter."""
+    assert settle_index(_idle_churn(steady=45, load_at=40)) == 42
+
+
+def test_a_state_already_in_play_settles_immediately():
+    rng = np.random.default_rng(0)
+    ch = 45 + rng.integers(-6, 7, size=150)
+    assert settle_index(ch) == 0
+
+
+def test_an_event_in_the_second_half_is_play_not_start_up():
+    """Only the HEAD of the scan is start-up. A burst later on is the
+    game doing something, and skipping past it would throw away the
+    probe rather than its transient."""
+    ch = _idle_churn(steady=45, load_at=None)
+    ch[110] = 400.0
+    assert settle_index(ch) == 0
+
+
+def test_settle_is_capped_so_a_noisy_scan_cannot_eat_the_probe():
+    ch = _idle_churn(steady=10, load_at=None, n=400)
+    ch[199] = 900.0
+    assert settle_index(ch) == SETTLE_CAP
+
+
+def test_settle_needs_no_scan_at_all_to_answer():
+    assert settle_index([]) == 0
+    assert settle_index([10.0, 12.0]) == 0
+
+
+# ---------------------------------------------------------------------
+# The life counter, over uninterrupted runs.
+#
+# The two recall failures this replaces: a zero-page-only scan cannot
+# even nominate a counter kept in high RAM, and a scan that reads the
+# maneuver drive sees nothing because that drive MASKS the diff rows
+# spanning a death — which is the only place a life counter moves.
+# ---------------------------------------------------------------------
+
+LIVES_HIGH = 0x075A          # a counter above the zero page
+TIMER_HIGH = 0x07A0          # a countdown that ticks with the pad idle
+SCRATCH = 0x006E
+
+
+def _falling(n: int, start: int, at, *, step: int = 1, refill_at=None,
+             refill_to: int = 0) -> np.ndarray:
+    """A byte holding `start`, dropping by `step` at each row in `at`,
+    optionally refilled to `refill_to` later. 8-bit wrapped."""
+    col = np.empty(n, dtype=np.uint8)
+    v = start
+    at, refill_at = set(at), set(refill_at or ())
+    for t in range(n):
+        if t in at:
+            v -= step
+        if t in refill_at:
+            v = refill_to
+        col[t] = v % 256
+    return col
+
+
+def _life_drive(n: int = 300, **cols) -> dict:
+    """One `death_drives` entry: a RAM log with the named columns set."""
+    log = np.zeros((n, RAM), dtype=np.uint8)
+    for addr, col in cols.items():
+        log[:, int(addr)] = col
+    return {"log": log, "steps": n}
+
+
+def _idle_stats(*ticking: int) -> dict:
+    churn = np.zeros(RAM)
+    for a in ticking:
+        churn[a] = 40.0
+    return {"churn": churn}
+
+
+def _runs(n_runs: int = 4, **kw) -> list:
+    """`n_runs` drives whose deaths land in different places, the way
+    different seeds make them."""
+    out = []
+    for k in range(n_runs):
+        cols = {a: fn(k) for a, fn in kw.items()}
+        out.append(_life_drive(**{str(a): c for a, c in cols.items()}))
+    return out
+
+
+def test_a_counter_above_the_zero_page_is_recalled():
+    """The scope half of the defect. $075A is nowhere near the zero page
+    the old scan read, and no amount of ranking can rescue a byte that
+    was never a candidate."""
+    cands, ev = lives_from_death_drives(_runs(
+        **{str(LIVES_HIGH): lambda k: _falling(300, 2, (60 + 9 * k, 150 + 9 * k))}))
+    assert ev["usable"] == 4
+    assert [c["addr"] for c in cands] == [LIVES_HIGH]
+    assert cands[0]["drop"] == 1
+    assert cands[0]["runs_agreeing"] == 4
+    assert cands[0]["reaches_empty"] and cands[0]["spends_its_stock"]
+
+
+def test_a_countdown_that_ticks_while_idle_loses_to_the_counter():
+    """A clock passes every other test here — it falls by one, reaches
+    zero, accounts for its stock, and does it far more often. Idling is
+    what separates them, exactly as it does for progress."""
+    cands, _ = lives_from_death_drives(
+        _runs(**{
+            str(LIVES_HIGH): lambda k: _falling(300, 2, (60 + 9 * k, 150 + 9 * k)),
+            str(TIMER_HIGH): lambda k: _falling(300, 6, range(20, 200, 30)),
+        }),
+        idle_stats=_idle_stats(TIMER_HIGH))
+    assert [c["addr"] for c in cands] == [LIVES_HIGH, TIMER_HIGH]
+    assert cands[1]["moves_while_idle"] is True
+    # Demoted, never dropped: a game that kills an idle player would
+    # otherwise disqualify its own counter.
+    assert cands[1]["addr"] == TIMER_HIGH
+
+
+def test_the_counter_that_moves_at_every_ending_beats_debris_that_does_not():
+    """Both spend a stock to empty. Only one is charged for every run
+    that ends."""
+    cands, _ = lives_from_death_drives(_runs(**{
+        str(LIVES_HIGH): lambda k: _falling(300, 2, (60 + 9 * k, 150 + 9 * k)),
+        str(SCRATCH): lambda k: _falling(300, 1, (60 + 9 * k,)),
+    }))
+    assert cands[0]["addr"] == LIVES_HIGH
+    assert cands[0]["spends"] > cands[1]["spends"]
+
+
+def test_a_refill_after_the_stock_is_spent_is_not_a_disqualification():
+    """A run that outlives the counter gets a fresh one — measured on
+    the SMB control as 1 -> 0 -> 255 and then back up to 2. Reading
+    that as 'this byte goes both ways' loses the counter outright."""
+    cands, _ = lives_from_death_drives(_runs(**{
+        str(LIVES_HIGH): lambda k: _falling(
+            300, 1, (60 + 9 * k, 130 + 9 * k),
+            refill_at=(200 + 9 * k,), refill_to=2),
+    }))
+    assert [c["addr"] for c in cands] == [LIVES_HIGH]
+    assert cands[0]["refilled_runs"] == 4
+
+
+def test_a_byte_refilled_without_ever_emptying_ranks_below_a_real_stock():
+    """The refill allowance is what lets a counter survive a game over,
+    so it cannot be a free pass. A byte that dips once, never reaches
+    empty, and is topped up to more than it started with has not spent
+    a stock, and must not outrank something that has."""
+    cands, _ = lives_from_death_drives(_runs(**{
+        str(LIVES_HIGH): lambda k: _falling(300, 2, (60 + 9 * k, 150 + 9 * k)),
+        str(SCRATCH): lambda k: _falling(300, 3, (40 + 9 * k,),
+                                         refill_at=(80 + 9 * k,), refill_to=9),
+    }))
+    assert [c["addr"] for c in cands] == [LIVES_HIGH, SCRATCH]
+    assert not cands[1]["reaches_empty"]
+    assert not cands[1]["spends_its_stock"]
+
+
+def test_a_run_that_never_ended_abstains_instead_of_disqualifying():
+    """Not every seeded run spends a life inside its budget. An
+    unfinished run is missing evidence, not counter-evidence."""
+    drives = _runs(3, **{
+        str(LIVES_HIGH): lambda k: _falling(300, 2, (60 + 9 * k, 150 + 9 * k))})
+    drives.append(_life_drive(**{str(LIVES_HIGH): np.full(300, 2, dtype=np.uint8)}))
+    cands, ev = lives_from_death_drives(drives)
+    assert [c["addr"] for c in cands] == [LIVES_HIGH]
+    assert cands[0]["runs_agreeing"] == 3
+    assert cands[0]["runs_watched"] == 4
+
+
+def test_a_byte_that_disagrees_across_runs_is_not_a_counter():
+    """A stock is spent at one price. One run charging a different
+    amount is not a counter with an exception — it is debris that
+    happened to fall the same way three times."""
+    drives = _runs(3, **{
+        str(SCRATCH): lambda k: _falling(300, 4, (60 + 9 * k, 150 + 9 * k))})
+    drives.append(_life_drive(**{str(SCRATCH): _falling(300, 4, (70,), step=3)}))
+    cands, _ = lives_from_death_drives(drives)
+    assert [c["addr"] for c in cands] == []
+
+
+def test_a_drop_wider_than_a_life_is_not_admitted():
+    cands, _ = lives_from_death_drives(_runs(**{
+        str(SCRATCH): lambda k: _falling(300, LIVES_MAX_DROP + 2, (60 + 9 * k,),
+                                         step=LIVES_MAX_DROP + 1)}))
+    assert cands == []
+
+
+def test_a_byte_that_ticks_more_than_a_stock_could_is_not_admitted():
+    cands, _ = lives_from_death_drives(_runs(**{
+        str(SCRATCH): lambda k: _falling(
+            300, 200, range(20, 20 + 12 * (LIVES_MAX_TICKS + 2), 12))}))
+    assert cands == []
+
+
+def test_a_mirror_is_folded_under_the_byte_it_copies():
+    """A HUD copy of the counter carries the identical signature, and
+    would otherwise fill the shortlist with the same finding."""
+    cands, _ = lives_from_death_drives(_runs(**{
+        str(LIVES_HIGH): lambda k: _falling(300, 2, (60 + 9 * k, 150 + 9 * k)),
+        str(LIVES_HIGH + 1): lambda k: _falling(300, 2, (60 + 9 * k, 150 + 9 * k)),
+    }))
+    assert [c["addr"] for c in cands] == [LIVES_HIGH]
+    assert cands[0]["mirrors"] == [LIVES_HIGH + 1]
+
+
+def test_nothing_watched_reports_that_rather_than_no_counter():
+    cands, ev = lives_from_death_drives([])
+    assert cands == []
+    assert ev["usable"] == 0

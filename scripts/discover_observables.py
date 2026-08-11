@@ -70,7 +70,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -99,6 +99,27 @@ RAM_SIZE = 0x800
 CLEAN_N = 900        # pure directional probes (truncated at first reset)
 NOOP_N = 240         # idle probe (frame-counter / flatness reference)
 ADVANCE_N = 1800     # maneuver + death-recovery drive (depth / transitions)
+SETTLE_SCAN = 150    # idle steps used to find where the machine starts running
+SETTLE_CAP = 120     # never skip more than this before a probe begins
+IDLE_REPS = 4        # idle probe repeats, when a death cuts one short
+DEATH_REPS = 5       # uninterrupted runs, one per seed
+DEATH_MAX_N = 700    # steps per run — long enough to spend a life or two
+#: How many runs must show the same drop. A run in which the player never
+#: died simply abstains; none may contradict.
+DEATH_MIN_AGREE = 3
+
+#: The lives/health scan reads all of system RAM. Persistent counters are
+#: routinely kept OUTSIDE the zero page (the zero page is scratch a game
+#: rewrites every frame), so a zero-page-only scan cannot even nominate
+#: them — it reports "no death signal" for a game that has one in plain
+#: sight. Bytes are ADJUDICATED by measurement below, not by address.
+LIVES_SCAN_TOP = RAM_SIZE
+
+#: Health candidates are matched against a HUD reference window, so they
+#: are drawn from the RAM BELOW that window — a byte inside the reference
+#: trivially "mirrors" itself and would pass for free.
+HUD_REF_LO = 0x500
+HUD_REF_HI = 0x800
 
 
 def _resolve_dirs(forward: str) -> tuple[int, int, str, str]:
@@ -107,6 +128,30 @@ def _resolve_dirs(forward: str) -> tuple[int, int, str, str]:
         raise SystemExit(f"--forward must be one of {sorted(_DIR)}; got {forward!r}")
     rev = _OPP[forward]
     return _DIR[forward], _DIR[rev], forward, rev
+
+
+def settle_index(churn: Sequence[float] | np.ndarray) -> int:
+    """How many leading steps of an idle scan are start-up, not play.
+
+    `churn[i]` is the number of RAM bytes that changed between idle rows
+    i and i+1. A machine that is still loading writes a burst far larger
+    than a frame of ordinary play; a machine already playing never does.
+    So: take the steady churn from the second half of the scan, and end
+    the transient just past the LAST burst in the first half. No burst
+    means no transient and the probe starts immediately.
+
+    Pure, so the rule can be tested without a ROM.
+    """
+    ch = np.asarray(churn, dtype=float)
+    if ch.size < 4:
+        return 0
+    half = ch.size // 2
+    steady = float(np.median(ch[half:]))
+    thr = max(3.0 * steady, steady + 60.0, 64.0)
+    spikes = np.where(ch[:half] > thr)[0]
+    if not len(spikes):
+        return 0
+    return int(min(int(spikes[-1]) + 2, SETTLE_CAP))
 
 
 # --------------------------------------------------------------------------
@@ -136,10 +181,45 @@ class Discoverer:
         # play) sets the reset threshold: a death/level reload rewrites far
         # more of RAM than one frame of motion does.
         self._reset_thr: Optional[float] = None
+        # How many idle steps a probe must burn after loading the state
+        # before the machine is actually playing (see settle_steps).
+        self._settle: Optional[int] = None
 
     # ---- low-level driving ------------------------------------------------
+    def settle_steps(self) -> int:
+        """Idle steps to burn after loading the state before a probe counts.
+
+        A start state is not always captured mid-play. It is routinely
+        captured on a level-intro card, a fade-in or a room load — the
+        machine is displaying, not yet simulating — and the level LOAD
+        then lands a few dozen steps INSIDE every probe. That one event
+        is enough to break the idle gate outright: the player-position
+        byte reads 0 across the intro and jumps to its spawn value when
+        the level appears, so the idle probe scores it as having MOVED
+        while the pad was untouched, and Gate 1 rejects the true
+        position byte as a free-running counter. (Measured on the SMB
+        control: $0086 idles 0 -> 40 at step 41, net 40, and the whole
+        paged position pair was rejected because of it.)
+
+        Found by measurement, not by assumption: hold NOOP, take the
+        per-step changed-byte count, and call the transient over after
+        the LAST load-sized spike in the first half of the scan, judged
+        against the steady churn of the second half. A state already
+        in play has no such spike and settles at 0.
+        """
+        if self._settle is None:
+            self.pool.load_worker_state(0, self.state)
+            log = np.empty((SETTLE_SCAN, RAM_SIZE), dtype=np.uint8)
+            for t in range(SETTLE_SCAN):
+                log[t] = self._step(NOOP)
+            ch = (np.diff(log.astype(np.int16), axis=0) != 0).sum(1)
+            self._settle = settle_index(ch)
+        return self._settle
+
     def _reload(self) -> None:
         self.pool.load_worker_state(0, self.state)
+        for _ in range(self.settle_steps()):
+            self._step(NOOP)
 
     def _step(self, mask: int) -> np.ndarray:
         r = self.pool.step_all(np.array([mask], dtype=np.uint8))
@@ -176,16 +256,127 @@ class Discoverer:
             self._cache["cr"] = log[: self._first_reset(log)]
         return self._cache["cr"]
 
+    def idle(self) -> tuple[np.ndarray, np.ndarray]:
+        """The idle probe, VALIDATED — `(log, keep)`.
+
+        Gate 1 asks "does this byte move while the pad is untouched?", so
+        the answer is only worth anything if the rows it is measured over
+        really are untouched play. Standing still is not always safe:
+        plenty of games kill an idle player, and the death — plus the
+        level reload behind it — teleports the position bytes, which is
+        exactly the movement the gate is looking for. Read naively that
+        reads as "the position byte is a free-running counter" and the
+        gate rejects the one byte it exists to protect.
+
+        So the probe is truncated at the first mass event and, if that
+        left too little to judge on, repeated from a fresh load. `keep`
+        masks every diff row that spans a rep boundary, so no delta is
+        ever taken across a reload.
+        """
+        if "idle" not in self._cache:
+            segs: list[np.ndarray] = []
+            rows = 0
+            for _ in range(IDLE_REPS):
+                log = self._run(lambda t: NOOP, NOOP_N)
+                seg = log[: self._first_reset(log, warmup=2)]
+                if len(seg) >= 2:
+                    segs.append(seg)
+                    rows += len(seg) - 1
+                if rows >= NOOP_N - 1:
+                    break
+            if not segs:                      # nothing survived: judge on one rep
+                segs = [self._run(lambda t: NOOP, NOOP_N)]
+            log = np.concatenate(segs) if len(segs) > 1 else segs[0]
+            keep = np.ones(max(len(log) - 1, 1), dtype=bool)
+            edge = -1
+            for s in segs[:-1]:
+                edge += len(s)
+                keep[edge] = False
+            self._cache["idle"] = (log, keep)
+        return self._cache["idle"]
+
     def noop(self) -> np.ndarray:
-        if "noop" not in self._cache:
-            self._cache["noop"] = self._run(lambda t: NOOP, NOOP_N)
-        return self._cache["noop"]
+        return self.idle()[0]
+
+    def noop_stats(self) -> dict:
+        """Gate 1's reference statistics, over validated idle rows only."""
+        if "idle_stats" not in self._cache:
+            log, keep = self.idle()
+            self._cache["idle_stats"] = _col_stats(log, keep)
+        return self._cache["idle_stats"]
 
     def _first_reset(self, log: np.ndarray, warmup: int = 25) -> int:
         thr = self.reset_threshold(log)
         d = (np.diff(log.astype(np.int16), axis=0) != 0).sum(1)
         idx = np.where(d[warmup:] > thr)[0]
         return int(idx[0]) + warmup if len(idx) else len(log)
+
+    def _macros(self) -> tuple[list, np.ndarray]:
+        """The maneuver vocabulary the driving probes share.
+
+        Generic pad moves only — hold forward, jump, attack, and COMPOUND
+        door moves that hold a vertical direction after a step of setup.
+        BOTH verticals are in the table: a "door" is as often below the
+        player (a pipe, a stairwell, a hatch) as above one, and a table
+        that only ever pressed UP could not take any of them.
+        """
+        fwd, rev = self.fwd, self.rev
+        macros = [[(fwd, 8)], [(fwd | A, 10)], [(fwd | B, 10)], [(A, 4)],
+                  [(rev, 5), (UP, 30)], [(fwd, 3), (UP, 30)], [(UP, 25)],
+                  [(fwd, 3), (DOWN, 30)], [(DOWN, 25)]]
+        mw = np.array([6, 3, 3, 2, 2.5, 2.5, 2, 2.5, 2], float)
+        return macros, mw / mw.sum()
+
+    def death_drives(self, reps: int = DEATH_REPS) -> list[dict]:
+        """Play until the run ends, `reps` times, ERASING NOTHING.
+
+        Every other driving probe here protects itself from a death.
+        `clean_forward` truncates at one; `advance` reloads and then masks
+        the two diff rows that span it, so a reload's RAM rewrite is never
+        read as motion. That is right for a position byte and fatal for a
+        life counter, because a counter's whole signature IS what happens
+        at a death. Two ways it gets lost:
+
+          * a game that decrements in the same step that reloads the
+            level puts its one informative delta inside the masked rows,
+            and the scan reads `decrements == 0` (measured on the SMB
+            control: $075A steps 1 -> 0 on the very row whose churn is
+            what flagged the reload);
+          * a game whose death is QUIET never trips a reload threshold at
+            all, so nothing marks it — Contra's death rewrites ~150 bytes
+            against an ordinary median of ~104, which no outlier test can
+            separate.
+
+        So this probe stops trying to find the death. It holds one seeded
+        drive, never reloads, and hands back the whole log; every change
+        the counter makes is in there, and the adjudication is left to
+        `lives_from_death_drives`, which needs no event boundary. Each
+        rep gets its own seed so the runs end differently — agreement
+        across them is what separates a counter from debris.
+        """
+        if "deaths" in self._cache:
+            return self._cache["deaths"]
+        macros, mw = self._macros()
+        fwd = self.fwd
+        out: list[dict] = []
+        for rep in range(reps):
+            rng = np.random.default_rng(self.seed * 977 + rep * 31 + 1)
+            self._reload()
+            log = np.empty((DEATH_MAX_N, RAM_SIZE), dtype=np.uint8)
+            seg, si, left = [(fwd, 1)], 0, 1
+            for t in range(DEATH_MAX_N):
+                if left <= 0:
+                    si += 1
+                    if si >= len(seg):
+                        seg = (macros[int(rng.choice(len(macros), p=mw))]
+                               if rng.random() < 0.20 else [(fwd, 1)])
+                        si = 0
+                    left = seg[si][1]
+                left -= 1
+                log[t] = self._step(seg[si][0])
+            out.append({"rep": rep, "log": log, "steps": DEATH_MAX_N})
+        self._cache["deaths"] = out
+        return out
 
     def advance(self) -> tuple[np.ndarray, np.ndarray]:
         """Aggressive 'make progress' drive with death recovery.
@@ -201,12 +392,8 @@ class Discoverer:
         if "adv" in self._cache:
             return self._cache["adv"]
         rng = np.random.default_rng(self.seed)
-        fwd, rev = self.fwd, self.rev
-        # Each macro is a list of (mask, hold) segments played back to back.
-        macros = [[(fwd, 8)], [(fwd | A, 10)], [(fwd | B, 10)], [(A, 4)],
-                  [(rev, 5), (UP, 30)], [(fwd, 3), (UP, 30)], [(UP, 25)]]
-        mw = np.array([6, 3, 3, 2, 2.5, 2.5, 2], float)
-        mw /= mw.sum()
+        fwd = self.fwd
+        macros, mw = self._macros()
         n = ADVANCE_N
         log = np.empty((n, RAM_SIZE), dtype=np.uint8)
         reset_rows = np.zeros(max(n - 1, 1), dtype=bool)
@@ -337,10 +524,10 @@ def _spatial(disc: Discoverer) -> dict:
         return disc._cache["spatial"]
     cf = disc.clean_forward()
     cr = disc.clean_reverse()
-    noop = disc.noop()
     adv, rmask = disc.advance()
     keep = ~rmask
-    sf, sr, sn = _col_stats(cf), _col_stats(cr), _col_stats(noop)
+    sf, sr = _col_stats(cf), _col_stats(cr)
+    sn = disc.noop_stats()
     sa = _col_stats(adv, keep)
     raw_cf = np.diff(cf.astype(np.int16), axis=0)
     raw_ad = np.diff(adv.astype(np.int16), axis=0)
@@ -1087,6 +1274,150 @@ def find_y(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
 # --------------------------------------------------------------------------
 # HEALTH / LIVES.
 # --------------------------------------------------------------------------
+#: A life counter steps DOWN by a small fixed amount. Wider drops are how
+#: a health bar or a score reads, and those are adjudicated separately.
+LIVES_MAX_DROP = 8
+#: ...and it steps a handful of times in a run, not continuously. This is
+#: what separates it from a countdown: a level timer only ever falls, by
+#: one, and would otherwise satisfy every other test here.
+LIVES_MAX_TICKS = 6
+
+
+def lives_from_death_drives(drives: Sequence[Mapping], *,
+                            idle_stats: Optional[Mapping] = None,
+                            top: int = 6) -> tuple[list, dict]:
+    """Rank life-counter candidates over uninterrupted runs.
+
+    Pure — `drives` is whatever `Discoverer.death_drives` produced, but
+    any sequence of mappings with a `log` array does, so the adjudication
+    is testable without a ROM.
+
+    Deliberately makes no attempt to locate the deaths. Detecting them
+    was the old failure: a game whose death is loud gets its evidence
+    masked as a reload, and a game whose death is quiet is never marked
+    at all. What a life counter looks like over a whole run needs no such
+    boundary:
+
+      * every change it makes is DOWN, and all of them by the same small
+        amount (wrap folded, so a counter that rolls 0 -> 255 to signal
+        the last life still reads as one step down);
+      * it changes only a few times in the whole run — the test that
+        rejects a countdown timer, which passes everything above;
+      * it starts from the same value in every rep, which it must, since
+        every rep starts from the same state;
+      * and the runs AGREE. Seeds end differently, so a byte the level
+        layout happened to knock down once does not repeat.
+
+    Whether it also moves while the pad is idle is reported but not
+    disqualifying: a game that kills an idle player would otherwise
+    disqualify its own counter.
+
+    Returns `(candidates, evidence)`.
+    """
+    logs = [np.asarray(d["log"]) for d in drives if len(np.asarray(d["log"])) > 1]
+    ev = {"drives": len(drives), "usable": len(logs),
+          "steps": [int(len(np.asarray(d["log"]))) for d in drives]}
+    if not logs:
+        return [], ev
+
+    width = min(log.shape[1] for log in logs)
+    scan = min(LIVES_SCAN_TOP, width)
+    deltas = [_wrap_deltas(log) for log in logs]
+    starts = np.stack([log[0, :scan].astype(np.int64) for log in logs])
+    idle_moved = (np.asarray(idle_stats["churn"])[:scan] > 0
+                  if idle_stats is not None else np.zeros(scan, dtype=bool))
+
+    need = min(DEATH_MIN_AGREE, len(logs))
+    out = []
+    for i in range(scan):
+        start = int(starts[0, i])
+        if not bool((starts[:, i] == start).all()):
+            continue
+        step: Optional[int] = None
+        agreeing = refills = spends = 0
+        floor = True
+        stock = True
+        ok = True
+        for log, dw in zip(logs, deltas):
+            mv = dw[:, i]
+            nz = np.nonzero(mv)[0]
+            if not nz.size:
+                continue                       # this run never ended: abstain
+            # A run that outlives the stock gets it REFILLED — a new game
+            # hands the player a fresh one, in however many stores the
+            # game feels like. Everything from the first rise on is a
+            # different regime, so the counter is judged up to there.
+            ups = nz[mv[nz] > 0]
+            end = int(ups[0]) if ups.size else len(mv)
+            down = mv[:end][mv[:end] < 0]
+            if not down.size or down.size > LIVES_MAX_TICKS:
+                ok = False
+                break
+            first = int(down[0])
+            if not (-LIVES_MAX_DROP <= first < 0) or not bool((down == first).all()):
+                ok = False
+                break
+            if step is None:
+                step = first
+            elif first != step:
+                ok = False
+                break
+            agreeing += 1
+            spends += int(down.size)
+            refills += int(bool(ups.size))
+            # A stock is spent to nothing, exactly once: it hits empty,
+            # and what came out of it accounts for what was in it. Debris
+            # knocked down by a level reload satisfies neither.
+            floor = floor and bool((log[:end + 1, i] == 0).any())
+            spent = int(down.size) * -first
+            stock = stock and (start <= spent <= start - first)
+        if not ok or step is None or agreeing < need:
+            continue
+        out.append({
+            "addr": i, "start": start, "drop": -step,
+            "runs_agreeing": agreeing, "runs_watched": len(logs),
+            "spends": spends, "refilled_runs": refills,
+            "reaches_empty": floor, "spends_its_stock": stock,
+            "moves_while_idle": bool(idle_moved[i]),
+        })
+
+    # Idling comes FIRST, for the same reason it leads Gate 1: a byte
+    # that ticks down with the pad untouched is a clock, and a clock
+    # beats a life counter on every other test here — it falls by one,
+    # reaches zero, accounts for its stock, and does it far more often.
+    # (Measured on the SMB control: $07A0 spends 30 against $075A's 9.)
+    # Demotion, not rejection: a game that kills an idle player would
+    # otherwise disqualify its own counter.
+    #
+    # Then: a stock spent to empty that accounts for itself, one death at
+    # a time, and spent the MOST times — every run ends by costing a
+    # life, while a byte the ending merely knocked down is not there for
+    # all of them. Then the canonical (lowest) address, so a duplicate
+    # never outranks the byte it mirrors.
+    out.sort(key=lambda c: (c["moves_while_idle"],
+                            not (c["reaches_empty"] and c["spends_its_stock"]),
+                            not c["reaches_empty"], abs(c["drop"] - 1),
+                            -c["spends"], -c["runs_agreeing"], c["addr"]))
+
+    # Mirror fold: a HUD copy of the counter carries the identical
+    # signature. Keep the first, record the rest against it.
+    kept: list[dict] = []
+    _sig = lambda c: (c["start"], c["drop"], c["runs_agreeing"], c["spends"],
+                      c["refilled_runs"], c["reaches_empty"],
+                      c["spends_its_stock"], c["moves_while_idle"])
+    for c in out:
+        sig = _sig(c)
+        prior = next((k for k in kept if _sig(k) == sig), None)
+        if prior is not None:
+            if len(prior["mirrors"]) < 8:
+                prior["mirrors"].append(c["addr"])
+            continue
+        c["mirrors"] = []
+        kept.append(c)
+    ev["nominated"] = len(out)
+    return kept[:top], ev
+
+
 def find_hp_lives(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
                   frame_skip: int = 4, forward: str = "right") -> dict:
     """A lives byte that decrements on death, or — when the opening is too
@@ -1098,36 +1429,19 @@ def find_hp_lives(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
     try:
         adv, rmask = disc.advance()
         keep = ~rmask
-        dw = _wrap_deltas(adv, keep)
         churn = _col_stats(adv, keep)["churn"]
 
-        lives = []
-        for i in range(0x100):
-            start = int(adv[0, i])
-            # Games start with >=2 lives; a start-1 byte that dips once is
-            # almost always a transient flag, not a lives counter.
-            if not (2 <= start <= 9):
-                continue
-            col = adv[:, i]
-            rng = int(col.max() - col.min())
-            dec = int((dw[:, i] < 0).sum())
-            # A real lives byte changes only a handful of times (very low
-            # churn); a churny position/velocity byte that happens to dip is
-            # not lives.
-            if dec >= 1 and rng <= 3 and float(churn[i]) < 2.0:
-                lives.append({"addr": i, "start": start, "decrements": dec,
-                              "range": rng, "churn": round(float(churn[i]), 2)})
-        # Prefer a canonical small lives count (2-5) with the most decrements.
-        lives.sort(key=lambda c: (2 <= c["start"] <= 5, c["decrements"],
-                                  -c["range"]), reverse=True)
+        lives, evidence = lives_from_death_drives(
+            disc.death_drives(), idle_stats=disc.noop_stats())
 
         # HP fallback: a stable low-value byte whose value is redrawn as a run
         # of consecutive HUD tiles (a health meter is N identical tiles in a
-        # row), preferred over a value that merely happens to recur.
+        # row), preferred over a value that merely happens to recur. Drawn
+        # from the RAM below the reference window — a byte inside it mirrors
+        # itself for free.
         hp = []
-        buf0 = adv[0]
-        hud = buf0[0x500:0x800]
-        for i in range(0x100):
+        hud = adv[0][HUD_REF_LO:HUD_REF_HI]
+        for i in range(HUD_REF_LO):
             v0 = int(adv[0, i])
             if not (2 <= v0 <= 16) or float(churn[i]) >= 2.0:
                 continue
@@ -1147,17 +1461,22 @@ def find_hp_lives(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
             best = lives[0]
             return {"kind": "lives", "addr": best["addr"], "start": best["start"],
                     "detail": best, "lives_candidates": lives[:5],
-                    "hp_candidates": hp[:5],
-                    "note": "is_dead on lives decrement"}
+                    "hp_candidates": hp[:5], "death_evidence": evidence,
+                    "note": f"is_dead on lives decrement (-{best['drop']}, "
+                            f"agreed by {best['runs_agreeing']} of "
+                            f"{best['runs_watched']} runs)"}
         if hp:
             best = hp[0]
             return {"kind": "hp_death_proxy", "addr": best["addr"],
                     "value": best["value"], "detail": best,
                     "lives_candidates": [], "hp_candidates": hp[:5],
+                    "death_evidence": evidence,
                     "note": ("no decrementing lives byte in this forgiving "
                              "opening; is_dead on health < start value")}
         return {"kind": "none", "addr": None, "lives_candidates": [],
-                "hp_candidates": [], "note": "no health/lives byte isolated"}
+                "hp_candidates": [], "death_evidence": evidence,
+                "note": ("no health/lives byte isolated "
+                         f"({evidence['usable']} uninterrupted runs watched)")}
     finally:
         if own:
             disc.close()
@@ -1295,12 +1614,19 @@ def _print_report(findings: dict, emit: bool) -> None:
 def _selftest() -> int:
     import yaml
     cases = [
+        # `expect_lives` is the POSITIVE control the death half of the
+        # protocol had none of: without one, a scan that silently
+        # recalls nothing still reports all_passed. Contra spends a
+        # visible stock in the opening, so it can carry the assertion;
+        # Kirby's opening is documented as too forgiving to take damage
+        # at all, so there is nothing there to recall and asserting one
+        # would only encode a wish.
         {"game": "Contra", "profile": "configs/contra.yaml",
          "expect_progress": (0x0065, 0x0064), "expect_saturates": False,
-         "expect_room": 0x0064},
+         "expect_room": 0x0064, "expect_lives": 0x0032},
         {"game": "Kirby", "profile": "configs/kirby.yaml",
          "expect_progress": (0x0083, 0x0095), "expect_saturates": True,
-         "expect_room": 0x004F},
+         "expect_room": 0x004F, "expect_lives": None},
     ]
     results = []
     ok_all = True
@@ -1331,7 +1657,16 @@ def _selftest() -> int:
             rec_ok = rec.get("kind") == "room_counter_fallback" and rec.get("lo") == c["expect_room"]
         else:
             rec_ok = rec.get("lo") == lo and rec.get("hi") == hi
-        passed = bool(found and sat_ok and room_hit and rec_ok)
+        # Lives recall: the known counter must be nominated. Rank is not
+        # asserted — the shortlist is what the protocol owes; picking the
+        # head of it is a heuristic and would make this a tuning test.
+        want_lives = c.get("expect_lives")
+        hl = findings["hp_lives"]
+        lives_cands = hl.get("lives_candidates") or []
+        lives_ok = want_lives is None or any(
+            cand["addr"] == want_lives or want_lives in cand.get("mirrors", [])
+            for cand in lives_cands)
+        passed = bool(found and sat_ok and room_hit and rec_ok and lives_ok)
         ok_all = ok_all and passed
         results.append({
             "game": c["game"], "rom": Path(rom).name,
@@ -1348,18 +1683,26 @@ def _selftest() -> int:
             "recommendation_correct": rec_ok,
             "recommended": rec.get("as_progress"),
             "y_top": f"${findings['y'][0]['addr']:04X}" if findings["y"] else None,
-            "hp_lives": {"kind": findings["hp_lives"]["kind"],
-                         "addr": (f"${findings['hp_lives']['addr']:04X}"
-                                  if findings["hp_lives"].get("addr") is not None else None)},
+            "hp_lives": {"kind": hl["kind"],
+                         "addr": (f"${hl['addr']:04X}"
+                                  if hl.get("addr") is not None else None)},
+            "expect_lives": (f"${want_lives:04X}" if want_lives is not None
+                             else None),
+            "lives_recalled": lives_ok,
+            "lives_candidates": [f"${cand['addr']:04X}" for cand in lives_cands],
+            "death_evidence": hl.get("death_evidence"),
             "passed": passed,
         })
     receipt = {
         "tool": "scripts/discover_observables.py",
         "purpose": "self-test observable discovery against two ground-truth games",
-        "provenance": "own scripted rollouts (clean directional + maneuver "
-                      "death-recovery + reload jump probes); no external RAM maps",
+        "provenance": "own scripted rollouts (settle scan + clean directional "
+                      "+ validated idle + maneuver death-recovery + reload jump "
+                      "+ uninterrupted death drives); no external RAM maps",
         "probe_budget": {"clean_forward": CLEAN_N, "clean_reverse": CLEAN_N,
-                         "noop": NOOP_N, "advance": ADVANCE_N},
+                         "noop": NOOP_N, "advance": ADVANCE_N,
+                         "settle_scan": SETTLE_SCAN,
+                         "death_drives": DEATH_REPS * DEATH_MAX_N},
         "all_passed": ok_all,
         "cases": results,
     }
