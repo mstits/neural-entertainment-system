@@ -72,6 +72,26 @@ KNOWN_BACKWARD_CURRICULUM_KEYS: frozenset[str] = frozenset({
     "window_frames",
 })
 
+# Sub-keys of `reinforce.consolidate_level` and of its `probe` block.
+# Validated a level (and two levels) deeper for the same reason the
+# backward-curriculum block is: it is how a pre-registered consolidation
+# run is configured, and a silently-ignored knob there costs the whole
+# attended window. The B6 receipt makes the cost concrete — v4's gate ran
+# a deterministic single-replay probe because the honest-protocol keys
+# had nowhere to be written, and a typo'd `sticky_probb` would reproduce
+# exactly that failure while looking configured.
+KNOWN_CONSOLIDATE_LEVEL_KEYS: frozenset[str] = frozenset({
+    "accept_bar", "accept_probes", "accept_rule", "best_decay", "cooldown",
+    "enabled", "probe", "protect", "schedule", "seed_globs", "target",
+    "target_entry_state", "tol", "use_wilson_bound", "wilson_confidence",
+    "winner",
+})
+
+KNOWN_CONSOLIDATE_PROBE_KEYS: frozenset[str] = frozenset({
+    "episodes", "eval_rng", "eval_seed", "eval_workers", "every",
+    "max_steps", "start_jitter", "sticky_prob",
+})
+
 # Top-level profile keys read outside `reinforce` — by the launcher,
 # the GA path (`ga_params`), the Dreamer path (`dreamer`), and the
 # composite-eval manifest family (`levels`, `hysteresis_k`).
@@ -82,6 +102,14 @@ KNOWN_TOP_KEYS: frozenset[str] = frozenset({
     "reward_weights", "action_space", "curriculum", "env_spec", "seed",
     "ga_params", "dreamer", "levels", "hysteresis_k", "stop_after_worlds",
     "plr_levels",
+})
+
+
+# Mirrors oneshot_curriculum.ACCEPT_RULES. Duplicated as a literal rather
+# than imported so this validator stays importable with no training deps
+# (the launcher validates before any of the heavy modules load).
+_ACCEPT_RULES: frozenset[str] = frozenset({
+    "point_gt_best", "wilson_lb_gt_best_point",
 })
 
 
@@ -129,6 +157,31 @@ def validate_profile(profile: dict[str, Any]) -> list[str]:
                     "'truncation_is_failure'; only 'count_truncations' is "
                     "read — drop the alias"
                 )
+        clev = rl.get("consolidate_level")
+        if isinstance(clev, dict):
+            for k in clev:
+                if k not in KNOWN_CONSOLIDATE_LEVEL_KEYS:
+                    warnings.append(
+                        f"unknown reinforce.consolidate_level key {k!r} — "
+                        f"NOT consumed by the trainer (typo? renamed? it "
+                        f"will be silently ignored)"
+                    )
+            probe = clev.get("probe")
+            if isinstance(probe, dict):
+                for k in probe:
+                    if k not in KNOWN_CONSOLIDATE_PROBE_KEYS:
+                        warnings.append(
+                            f"unknown reinforce.consolidate_level.probe key "
+                            f"{k!r} — NOT consumed by the trainer (typo? "
+                            f"renamed? it will be silently ignored)"
+                        )
+            rule = clev.get("accept_rule")
+            if rule is not None and str(rule) not in _ACCEPT_RULES:
+                warnings.append(
+                    f"reinforce.consolidate_level.accept_rule {rule!r} is not "
+                    f"one of {sorted(_ACCEPT_RULES)} — the trainer raises on "
+                    f"an unknown rule rather than silently point-accepting"
+                )
     return warnings
 
 
@@ -172,4 +225,26 @@ def consumed_backward_curriculum_keys_from_source(
     new curriculum knob cannot ship unregistered."""
     txt = trainer_src.read_text()
     pat = re.compile(r'_bwd_cfg\.get\(\s*["\']([a-z0-9_]+)["\']')
+    return set(pat.findall(txt))
+
+
+def consumed_consolidate_level_keys_from_source(trainer_src: Path) -> set[str]:
+    """The `reinforce.consolidate_level` keys the trainer reads
+    (`_clevel_cfg.get("key"...)`). Same drift guard, applied to the block a
+    pre-registered consolidation run is configured through."""
+    txt = trainer_src.read_text()
+    pat = re.compile(r'_clevel_cfg\.get\(\s*["\']([a-z0-9_]+)["\']')
+    return set(pat.findall(txt))
+
+
+def consumed_consolidate_probe_keys_from_source(probe_src: Path) -> set[str]:
+    """The `reinforce.consolidate_level.probe` keys the resolver reads.
+
+    Unlike the other two scanners this parses `oneshot_curriculum.py`, not
+    the trainer: the probe block is resolved in ONE place
+    (`resolve_probe_settings`) precisely so the gate's baseline probe and its
+    per-cycle probe cannot drift apart the way v4's did.
+    """
+    txt = probe_src.read_text()
+    pat = re.compile(r'cfg\.get\(\s*["\']([a-z0-9_]+)["\']')
     return set(pat.findall(txt))

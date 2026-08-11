@@ -207,6 +207,8 @@ def probe(
     action_select: str = "greedy",
     temperature: float = 1.0,
     eval_seed: Optional[int] = None,
+    eval_workers: int = 1,
+    eval_rng: Optional[str] = None,
     eval_script: Optional[str] = None,
     python_exe: Optional[str] = None,
 ) -> dict:
@@ -247,6 +249,13 @@ def probe(
         eval_seed: seed for the eval's sticky / no-op-start / sampling streams.
             ``None`` (default) leaves ``eval_game.py``'s own default in place
             so the emitted command line is unchanged.
+        eval_workers: parallel eval lanes for the subprocess. ``1`` (default)
+            appends nothing, so the command line is unchanged. Above 1 the
+            caller must also pass ``eval_rng="per-episode"`` for a stochastic
+            probe — ``eval_game.py`` refuses the shared stream there rather
+            than return a number it cannot reproduce serially.
+        eval_rng: ``"shared-stream"`` (eval_game's default) or
+            ``"per-episode"``. ``None`` (default) appends nothing.
         timeout: seconds before the subprocess is killed (failure, not crash).
         rom_path: ROM path; falls back to ``cfg['rom_path']`` / ``cfg['rom']``.
         game: cosmetic ``--game`` label for the subprocess (defaults to the
@@ -325,6 +334,13 @@ def probe(
                         "--temperature", str(float(temperature))]
             if eval_seed is not None:
                 cmd += ["--eval-seed", str(int(eval_seed))]
+            # Parallel eval lanes (commit 00e1eee) — what makes an N>=30 noisy
+            # gate probe affordable. Both flags stay OFF the command line at
+            # their defaults so a v4-era probe's argv is byte-identical.
+            if int(eval_workers) > 1:
+                cmd += ["--eval-workers", str(int(eval_workers))]
+            if eval_rng is not None:
+                cmd += ["--eval-rng", str(eval_rng)]
             try:
                 proc, seq_ran = _run_eval(
                     cmd, sequential, timeout, str(td_path), extra_args=extra_args,

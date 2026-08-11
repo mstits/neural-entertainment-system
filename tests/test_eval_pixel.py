@@ -91,6 +91,11 @@ _SEQ_KEYS = {
     # Schedule + randomness provenance — the effective worker count and which
     # RNG derivation produced the episodes (see tests/test_eval_parallel.py).
     "eval_workers", "eval_rng",
+    # Perturbation provenance — what was (or was not) applied to the episodes
+    # and the one-field answer to "was this a deterministic replay?". Always
+    # emitted, never null, so any two rows are comparable on protocol
+    # (see tests/test_b6_gate_repair.py).
+    "sticky_prob", "start_jitter", "eval_seed", "stochastic",
 }
 
 

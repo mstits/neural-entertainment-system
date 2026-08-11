@@ -79,7 +79,12 @@ def test_gate_step_rollback_takes_priority():
     # never accepts or terminates this probe.
     d = oc.gate_step(regressed="1-1", target_rate=1.0, best_rate=0.5,
                      sustain=2, bar=0.75, need=3)
-    assert d == {"action": "rollback", "sustain": 0, "done": False}
+    # The decision is unchanged by the B6 fields (which are additive and
+    # inert at their defaults); a rollback also never re-bases `best_rate`.
+    assert {k: d[k] for k in ("action", "sustain", "done")} == {
+        "action": "rollback", "sustain": 0, "done": False,
+    }
+    assert d["best_rate"] == 0.5 and d["target_lb"] is None
 
 
 def test_gate_step_accept_on_target_improvement():

@@ -1041,6 +1041,22 @@ def eval_one_game(
         # never be mistaken for the other mode's number.
         "action_select": str(action_select),
         "temperature": float(temperature),
+        # ...and next to WHAT WAS PERTURBED. These three were absent from the
+        # row entirely until now, which is how the v4 consolidation receipts
+        # (checkpoints/mario_1_1_backward_v4/eval.jsonl) came to carry a
+        # sticky-0.25 + jitter-16 number with no record that it was one: the
+        # protocol lived only in the config header and the invoking command
+        # line. A rate whose protocol is not in its own row cannot be cited,
+        # and cannot be compared against another row. Always emitted, never
+        # null — 0.0 / 0 / the seed actually used are the honest values for an
+        # unperturbed run, and `run_consumes_randomness` is the one-field
+        # answer to "was this a deterministic replay?".
+        "sticky_prob": float(sticky_prob),
+        "start_jitter": int(start_jitter),
+        "eval_seed": int(eval_seed),
+        "stochastic": bool(
+            run_consumes_randomness(sticky_prob, start_jitter, action_select)
+        ),
         # How the episodes were scheduled and where their randomness came
         # from. `eval_workers` is the EFFECTIVE lane count (after the
         # episodes/cpu clamp), not what was asked for. Both belong next to the

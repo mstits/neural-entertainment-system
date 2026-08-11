@@ -15,10 +15,14 @@ import pytest
 
 from src.training.config_schema import (
     KNOWN_BACKWARD_CURRICULUM_KEYS,
+    KNOWN_CONSOLIDATE_LEVEL_KEYS,
+    KNOWN_CONSOLIDATE_PROBE_KEYS,
     KNOWN_REINFORCE_KEYS,
     ConfigSchemaError,
     check_profile,
     consumed_backward_curriculum_keys_from_source,
+    consumed_consolidate_level_keys_from_source,
+    consumed_consolidate_probe_keys_from_source,
     consumed_reinforce_keys_from_source,
     validate_profile,
 )
@@ -101,6 +105,76 @@ def test_registry_covers_the_backward_curriculum_sub_block():
         f"trainer consumes backward_curriculum keys not in the schema "
         f"registry (register them in "
         f"config_schema.KNOWN_BACKWARD_CURRICULUM_KEYS): {sorted(missing)}"
+    )
+
+
+def test_typo_in_the_consolidate_level_block_is_flagged():
+    """The gate block is the other one a pre-registered run is configured
+    through, and B6 makes the cost of a silent typo concrete: a `sticky_probb`
+    would leave the probe deterministic — the exact v4 defect — while the
+    profile looked configured."""
+    prof = {"name": "x", "reinforce": {"consolidate_level": {
+        "target": "1-1", "accept_barr": 0.5,   # missing the second 'a'
+    }}}
+    warnings = validate_profile(prof)
+    assert any("accept_barr" in w for w in warnings), warnings
+
+
+def test_typo_in_the_consolidate_probe_sub_block_is_flagged():
+    prof = {"name": "x", "reinforce": {"consolidate_level": {
+        "target": "1-1", "probe": {"episodes": 30, "sticky_probb": 0.25},
+    }}}
+    warnings = validate_profile(prof)
+    assert any("sticky_probb" in w for w in warnings), warnings
+    assert any("consolidate_level.probe" in w for w in warnings), warnings
+
+
+def test_clean_consolidate_level_block_passes():
+    prof = {"name": "x", "reinforce": {"consolidate_level": {
+        "enabled": True, "target": "1-1", "protect": [], "accept_bar": 0.5,
+        "accept_probes": 3, "use_wilson_bound": True,
+        "wilson_confidence": 0.95, "accept_rule": "wilson_lb_gt_best_point",
+        "schedule": {"entropy": {"from": 0.01, "to": 0.002, "iters": 80}},
+        "probe": {"every": 12, "episodes": 30, "max_steps": 1500,
+                  "sticky_prob": 0.25, "start_jitter": 16, "eval_seed": 7,
+                  "eval_workers": 8},
+    }}}
+    assert validate_profile(prof) == []
+
+
+def test_unknown_accept_rule_is_flagged():
+    prof = {"name": "x", "reinforce": {"consolidate_level": {
+        "target": "1-1", "accept_rule": "wilson",
+    }}}
+    assert any("accept_rule" in w for w in validate_profile(prof))
+
+
+def test_registry_covers_the_consolidate_level_sub_block():
+    consumed = consumed_consolidate_level_keys_from_source(
+        REPO / "src/training/trainer.py"
+    )
+    assert consumed, "the consolidate_level scanner found nothing — regex rotted?"
+    missing = consumed - KNOWN_CONSOLIDATE_LEVEL_KEYS
+    assert not missing, (
+        f"trainer consumes consolidate_level keys not in the schema registry "
+        f"(register them in config_schema.KNOWN_CONSOLIDATE_LEVEL_KEYS): "
+        f"{sorted(missing)}"
+    )
+
+
+def test_registry_covers_the_consolidate_probe_sub_block():
+    """The probe block is resolved in ONE place (`resolve_probe_settings`)
+    precisely so the gate's baseline probe and its per-cycle probe cannot
+    drift apart the way v4's did — so that is where the registry is checked."""
+    consumed = consumed_consolidate_probe_keys_from_source(
+        REPO / "src/training/oneshot_curriculum.py"
+    )
+    assert consumed, "the probe scanner found nothing — regex rotted?"
+    missing = consumed - KNOWN_CONSOLIDATE_PROBE_KEYS
+    assert not missing, (
+        f"the probe resolver reads keys not in the schema registry "
+        f"(register them in config_schema.KNOWN_CONSOLIDATE_PROBE_KEYS): "
+        f"{sorted(missing)}"
     )
 
 

@@ -1,0 +1,426 @@
+# ===========================================================================
+# B6 — CONSOLIDATE SMB 1-1 UNDER A GATE THAT MEASURES WHAT WE PUBLISH
+# ===========================================================================
+# Started from configs/mario_1_1_backward_v4.yaml. Everything that decides
+# what gets trained is carried across untouched — donor, entropy schedule
+# {0.01 -> 0.002 over 80 iters}, RND schedule {0.1 -> 0.0}, `probe.every: 12`,
+# `probe.max_steps: 1500`, `target_entry_state`, `protect: []`, reward block,
+# action space, encoder. The edit is confined to the acceptance gate: what it
+# measures, and how it does the arithmetic on what it measured.
+#
+# THE QUESTION. v4's greedy cell moved because a gate picked a snapshot, not
+# because the entropy schedule sharpened the policy. If that reading is right,
+# giving the same selector a metric that matches the published protocol should
+# pick a better network. If it is wrong, it will not.
+#
+# ---------------------------------------------------------------------------
+# WHY — THE v4 RECEIPTS (all in-tree; read these, not a summary)
+# ---------------------------------------------------------------------------
+# checkpoints/mario_1_1_backward_v4/run.log
+#   The gate's `CONSOLIDATE PROBE` trace: target 1-1 = 0.000 at iters 80
+#   (baseline), 92, 104; 1.000 at 116 (ACCEPT -> best_1-1.pt); 0.000 at every
+#   one of the twelve probes from 128 to 260.
+#
+# checkpoints/mario_1_1_backward_v4/consolidate_1-1.json
+#   Closes at {"best_tgt_rate": 1.0, "target_rate": 0.0, "sustain": 0,
+#   "iter": 260}. The accept rule was STRICT improvement on `best`, and
+#   `best` was 1.0 — so from iter 116 onward no accept was arithmetically
+#   possible. 144 iterations, locked out. That is the ratchet.
+#
+# That 1.000 rested on a single trajectory. `probe.episodes: 1` was the right
+# call given the plumbing underneath it: `_clevel_probe_level` and
+# `_gate_probe` forwarded no `sticky_prob`, no `start_jitter` and no
+# `eval_seed`, which left `eval_game.run_consumes_randomness()` False, so any
+# N would have bought N copies of the same run. v4's own header says the probe
+# is deterministic and reasons correctly from there. The plumbing was the bug,
+# not the episode count.
+#
+# checkpoints/mario_1_1_backward_v4/eval.jsonl
+#   The accepted snapshot's cold pair: greedy 0.30 (N=50) + 0.42 (N=50) =
+#   36/100 pooled; sampled 0.60 (N=30) + 0.533 (N=30) = 34/60 pooled; the
+#   run's FINAL iterate (260) greedy 0.00 (N=25). v4's registered post-run
+#   bar was pooled cold greedy >= 0.63. Delivered 0.36: a REGISTERED FAIL.
+#   Those rows are also why `sticky_prob`/`start_jitter`/`eval_seed` are now
+#   written into every eval.jsonl row: v4's rows recorded a perturbed number
+#   with no field saying it was perturbed, which makes the number uncitable.
+#
+# Net of all that: 0.02 -> 0.36 is the biggest greedy movement banked on a
+# backward-curriculum policy here, it came out of snapshot selection, and the
+# selector that produced it fired on noise. B6 hands that selector a metric
+# worth selecting on and measures the difference.
+#
+# ---------------------------------------------------------------------------
+# THE GATE EDIT, ENUMERATED
+# ---------------------------------------------------------------------------
+#   probe.episodes        1    -> 30      (a distribution, not a replay)
+#   probe.sticky_prob     unset-> 0.25    (the protocol the deliverable is
+#   probe.start_jitter    unset-> 16       graded under)
+#   probe.eval_seed       unset-> 7       (SELECTION seed; see below)
+#   probe.eval_workers    unset-> 8       (new passthrough; makes N=30 cheap)
+#   use_wilson_bound      unset-> true
+#   wilson_confidence     unset-> 0.95
+#   accept_rule           unset-> wilson_lb_gt_best_point
+#   best_decay            unset-> 0.25    (the second half of the ratchet
+#                                          break; see below)
+#   accept_bar            1.0  -> 0.50
+#   accept_probes         4    -> 3
+#
+# EVERYTHING ELSE IS v4 VERBATIM. Drop these keys and the trainer reverts to
+# v4 byte for byte: one deterministic replay per probe, a point-estimate
+# comparison, and a 1.0 bar. tests/test_consolidate_level.py and
+# tests/test_b6_gate_repair.py hold that property.
+#
+# SELECTION SEED vs REPORTING SEED. The gate selects at `eval_seed 7`. The
+# published deliverable is measured at `eval_seed` 0 and 1
+# (oneshot_curriculum.REPORTING_EVAL_SEEDS) — the pair the banked v4 control
+# was measured on, which is what makes the comparison paired. No eval in the
+# tree uses 7, so the selector never draws from a stream the deliverable is
+# later scored on. This is ENFORCED, not advised: the trainer resolves the
+# EFFECTIVE seed (an omitted `eval_seed` is not "no seed" — eval_game defaults
+# --eval-seed to 0, which IS a reporting seed) and raises at mode start rather
+# than spending an attended block selecting on the reporting stream.
+#
+# WHY accept_bar MOVES OFF 1.0. v4's probe was deterministic, so its metric
+# was one bit wide and 1.0 was the only bar that meant anything. Once the
+# probe is sticky-0.25 + jitter-16 the metric is a rate, and asking for 30/30
+# is asking for more than the flagship pair delivers (0.65 / 0.667). DONE now
+# fires on a 95% Wilson LB of 0.50 held across 3 consecutive probes, so the
+# in-run bar and the published bar are the same number.
+#
+# WHY THE ACCEPT COMPARES A BOUND TO A POINT. `wilson_lb_gt_best_point`
+# accepts only when the 95% Wilson LOWER bound of the new probe exceeds the
+# POINT estimate of the incumbent. A lucky probe therefore cannot raise the
+# bar (its LB is low), and the incumbent is only ever re-set from a 30-episode
+# point estimate — never from an n=1 high-water. `consolidate_1-1.json` is the
+# receipt for why that needed fixing.
+#
+# WHY best_decay IS ALSO ARMED (and why the bound alone is not enough). The
+# bound makes the bar honest; it does not by itself make it reachable. Storing
+# an accepted probe's POINT estimate as the bar means the next accept needs
+# LB(new) > point(best), which at n=30 / 95% is about +0.18 of point estimate:
+# accept at 20/30 (0.667) and the next accept needs 26/30 (0.867), which is
+# above the flagship's honest ceiling; accept at 30/30 and the bar is 1.0
+# against a maximum attainable LB of 0.886 — v4's lockout, reproduced exactly.
+# `best_decay: 0.25` closes that: on a non-accepting probe the bar re-estimates
+# 25% of the way toward what the policy actually just did, so a high-water the
+# policy cannot reproduce erodes instead of standing forever. Two clamps keep
+# it safe (both in src/training/oneshot_curriculum.gate_step): the decay only
+# ever moves the bar DOWN, and it never falls below the Wilson LB of the probe
+# that produced the current snapshot — so a late collapse (v4's final iterate
+# read 0.00) cannot drag the bar to the floor and let a clearly worse network
+# overwrite the deliverable.
+#
+# ---------------------------------------------------------------------------
+# HOW THE RUN ADOPTS THE PRE-EXISTING POLICY  (v4's convention, unchanged)
+# ---------------------------------------------------------------------------
+#   mkdir -p checkpoints/mario_1_1_backward_v6
+#   cp checkpoints/mario_1_1_backward/vanilla_ppo_iter_00080.pt \
+#      checkpoints/mario_1_1_backward_v6/
+#
+# The checkpoint dir is derived from the profile NAME (`profile_slug`), and
+# `_maybe_resume_vanilla_ppo` loads the HIGHEST-numbered
+# `vanilla_ppo_iter_*.pt` in it and continues numbering from there, so the
+# donor is never overwritten. Launch with `--resume` (the launcher default).
+#
+# LOAD-BEARING, DO NOT EDIT: `action_space` (6 actions) and `encoder`
+# (smb_tiles_pos) must stay byte-identical to configs/mario_1_1_backward.yaml.
+# The resume calls `load_state_dict(..., strict=False)`; a changed head width
+# or feature dim does not raise, it SILENTLY drops the mismatched tensors and
+# you train a half-random net that looks like it resumed. The reward block,
+# frame_skip, ram_mapping and start_state_path are kept verbatim for the same
+# reason at the value-function level: the critic transferring is the point.
+#
+# `smb_curriculum: true` is REQUIRED for the mode to arm at all
+# (`consolidate_on = self._smb_curriculum_active and consolidate_level
+# .enabled`). It does NOT restore the staged area-byte curriculum: consolidate
+# mode overwrites the stage array with the unseeded structural ladder and hard-
+# blocks every advance/capture path, and with no `seed_globs` every rung blob
+# is None, so 100% of the pool trains from `start_state_path` with inline
+# restart there on death. Traced end-to-end in the v4 header.
+#
+# WHAT THIS RUN DOES NOT COVER. `protect: []` leaves `protect_regressed`
+# iterating an empty baseline dict, so the rollback arm can never fire. Only
+# the accept/select half of `consolidate_level` is exercised here; nothing
+# about protect-and-rollback should be read out of this run in either
+# direction.
+
+name: Mario 1-1 backward v6
+rom_path: "roms/Super Mario Bros. (World).nes"
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+
+# The tape's own root — IDENTICAL to configs/mario_1_1_backward.yaml and to
+# configs/mario_1_1_backward_v4.yaml, which is what makes the donor's critic
+# transfer and what makes the gate probe, the training restarts and the
+# post-run honest eval one lineage. (gx 40 / timer 400; NOT
+# roms/..._start.state.bin, which is a few frames earlier at gx 0 / timer 399.)
+start_state_path: "runs/live_show/smb_4_4_micro/entrance_start.state"
+
+description: >
+  B6: honest-probe consolidation of SMB 1-1 from the backward-curriculum
+  iter-80 policy. Identical to B4-v4 except in the acceptance gate: it
+  measures 30 episodes under sticky-0.25 + jitter-16 at selection seed 7,
+  accepts on a 95% Wilson lower bound against the incumbent's point estimate,
+  and re-estimates that incumbent downward on non-accepting probes so a lucky
+  reading cannot lock the gate out. Negative control is v4 itself
+  (deterministic probe, pooled cold greedy 0.36, final iterate 0.00) on the
+  same harness.
+
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+
+# Phase-A reward weights, VERBATIM from configs/mario_1_1_backward.yaml (and
+# from v4). Changing the reward scale mid-consolidation would invalidate the
+# donor's value function, which is the one thing this run needs to keep.
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+
+# LOAD-BEARING — 6 actions, byte-identical to the donor's profile. A width
+# change is silently dropped by the strict=False resume.
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+
+reinforce:
+  # ---- Phase-A / backward recipe, verbatim from v4 ----
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos     # LOAD-BEARING (see resume note in the header)
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  symlog_rewards: true
+  value_loss: huber
+  value_coef: 0.25
+  bc_epochs: 30
+  warmup_gens_ga_only: 10
+  steps: 10
+  # 1024, not Phase-A's 512: the iter boundary calls reset_all, so an episode
+  # only SCORES if it resolves inside one rollout, and an entrance-to-flagpole
+  # run of 1-1 is ~760 policy steps (the tape is 758 states / 3028 frames at
+  # frame_skip 4). At 512 the flagpole falls outside the rollout and the run
+  # trains on truncated episodes that never see the terminal reward — exactly
+  # the credit this run has to sharpen.
+  rollout_steps: 1024
+  lr: 0.0003
+  async_pipeline: false      # 1-step obs lag destroys frame-perfect SMB
+  device: cpu
+  panic_isolation: false
+  # Initial value only — `consolidate_level.schedule` ASSIGNS entropy_coef and
+  # rnd_intrinsic_coef at the end of every iter. Left at the donor's 0.005 so
+  # the first rollout (collected before the first schedule write) matches the
+  # lineage.
+  entropy_coef: 0.005
+  # MUST stay 0.0. A non-zero entropy_floor arms the adaptive floor
+  # controller, which runs AFTER the consolidate schedule in the iter body and
+  # would rescale the coefficient the schedule just wrote — the decay would
+  # never reach 0.002.
+  entropy_floor: 0.0
+  entropy_coef_max: 0.05     # inert while entropy_floor is 0.0
+  rnd_intrinsic_coef: 0.1    # initial only; schedule decays it to 0.0
+  rnd_loss_coef: 1.0
+  # Train under the protocol the gate now measures and the deliverable is
+  # graded under. `boundary_reset` matters more than usual: every death is an
+  # inline entrance restart, i.e. an episode boundary, and without it ~25% of
+  # restarts replay the action the previous life died holding.
+  sticky_action_prob: 0.25
+  sticky_episode_boundary_reset: true
+  bc_replay_enabled: true    # GA-path knobs; inert on the vanilla_ppo path.
+  bc_replay_every_gens: 20   # Kept verbatim rather than flipped to false so
+  bc_replay_epochs: 5        # this profile diffs cleanly against v4.
+  bc_replay_max_buffer: 16
+  bc_replay_train_window: 1
+  preprocess_f16: false
+  num_envs: 60
+
+  # REQUIRED for consolidate_level to arm at all — see the header. Does NOT
+  # restore the staged curriculum.
+  smb_curriculum: true
+
+  # NO `backward_curriculum` BLOCK (absent, not `enabled: false`), so no
+  # TauScheduler is built and the cursor payload inside the donor checkpoint
+  # is stashed and never read. Consolidation trains from the entrance, not the
+  # ladder. Same as v4.
+
+  # ======================================================================
+  # THE MACHINERY — the only block that differs from v4
+  # ======================================================================
+  consolidate_level:
+    enabled: true
+    target: "1-1"
+
+    # Probe the SAME blob the pool trains from and the same blob the honest
+    # eval uses. Explicit rather than relying on the `_resolve_entry` fallback
+    # chain so the resolution shows up in the `LEVEL CONSOLIDATION on: ...
+    # entry=...` log line as a receipt. Same as v4.
+    target_entry_state: "runs/live_show/smb_4_4_micro/entrance_start.state"
+
+    # Nothing else has been welded on this lineage, so there is nothing to
+    # protect. Empty => `protect_regressed` always returns None => the
+    # rollback arm and `cooldown` are structurally unreachable. Same as v4;
+    # see the scope note in the header.
+    protect: []
+
+    # NO seed_globs — keep the ladder structural so every rung is unseeded and
+    # the whole pool sits at the entrance. Same as v4.
+
+    # The June weld schedule, applied via the shared `lerp_coef` at the end of
+    # every iter. IDENTICAL to v4: B6 moves one variable, and it is not this
+    # one. entropy starts ABOVE the donor's 0.005 on purpose — the defect is an
+    # argmax TIE, and a tie is only broken by visiting the losing branch often
+    # enough to earn an advantage estimate that separates it; the decay then
+    # sharpens whichever branch won. RND decays on the same clock because
+    # consolidation is the phase where the objective becomes the extrinsic one.
+    schedule:
+      entropy: {from: 0.01, to: 0.002, iters: 80}
+      rnd:     {from: 0.1,  to: 0.0}
+
+    probe:
+      # Unchanged from v4: ~12 iters of training between probes, so
+      # consecutive probes are not measuring the same policy.
+      every: 12
+      # THE CHANGE. 30 episodes of an actual distribution. v4's 1 was correct
+      # arithmetic on a broken probe (N identical replays); with sticky and
+      # jitter armed below, N is the sample size again.
+      episodes: 30
+      # Generous cap: a legitimate greedy clear is ~760 steps and truncating a
+      # real clear is the expensive error. Unchanged from v4.
+      max_steps: 1500
+      # THE CHANGE, continued: the honest protocol, in the gate. These are the
+      # perturbations the published deliverable is measured under, so the gate
+      # now selects on the metric it will be judged by instead of on a
+      # noise-free replay.
+      sticky_prob: 0.25
+      start_jitter: 16
+      # SELECTION seed. Never a reporting seed (0, 1) — see the header.
+      eval_seed: 7
+      # New passthrough. 30 stochastic episodes serially would be ~135 s per
+      # probe worst case (a stuck argmax burning the 1500-step cap); 8 lanes
+      # bring the probe overhead back under the cost gate. Forces the eval's
+      # per-episode RNG automatically (eval_game refuses >1 worker on the
+      # shared stream for a stochastic run, because episode i's draws depend
+      # on how many draws episodes 0..i-1 consumed).
+      eval_workers: 8
+
+    # THE CHANGE: accept arithmetic, half one.
+    # A 95% Wilson LOWER bound on the new probe must exceed the incumbent's
+    # POINT estimate. Against the v4 ratchet (consolidate_1-1.json: best 1.0
+    # from one replay, then 144 iterations with no arithmetically possible
+    # accept) this does two things: a lucky probe's LB is low so it cannot pin
+    # the bar, and the incumbent is only ever re-set from a 30-episode point
+    # estimate.
+    use_wilson_bound: true
+    wilson_confidence: 0.95
+    accept_rule: wilson_lb_gt_best_point
+
+    # THE CHANGE: accept arithmetic, half two — WITHOUT THIS THE BOUND ALONE
+    # STILL LOCKS OUT. LB(new) > point(best) costs roughly +0.18 of point
+    # estimate at n=30/95%, so an accept at 20/30 sets the next bar at 26/30
+    # and an accept at 30/30 sets it at 1.0 against a maximum attainable LB of
+    # 0.886 — v4's lockout again. With `best_decay` the bar re-estimates 25%
+    # of the way toward each non-accepting measurement, so a high-water the
+    # policy cannot reproduce erodes. It can only move DOWN, and never below
+    # the Wilson LB of the probe that produced the current snapshot, so a
+    # collapse late in the run cannot let a worse network take the deliverable
+    # (see gate_step's "TWO CLAMPS" note). 0.0 = the pre-B6 permanent
+    # high-water; that is still the default everywhere else.
+    best_decay: 0.25
+
+    # THE CHANGE: the gate now terminates on the number the run is judged by.
+    # DONE fires on a 95% Wilson LB of 0.50 held across 3 consecutive probes.
+    # (v4: 1.0 x 4, the only bar a one-bit metric could carry.)
+    accept_bar: 0.50
+    accept_probes: 3
+
+    # Unreachable with `protect: []` (no rollback arm). Kept at v4's value so
+    # the knob is not silently redefined if a protect level is ever added.
+    cooldown: 40
+
+ga_params:
+  mutation_rate: 0.8
+  mutation_std: 0.001
+  adaptive_mutation_scale: false
+  elite_fraction: 0.4
+  stale_gens_before_restart: 50
+  restart_fraction: 0.5
+
+max_episode_steps: 2400
+
+# ===========================================================================
+# BUDGET / STOPPING RULES (fixed before the run; changing them mid-run
+# invalidates the result)
+#   Whichever comes first: 180 iterations, DONE (Wilson LB >= 0.50 held x3),
+#   or 3 h wall. Seed 0 only, one attended block.
+#   Cost floor: >= 3,000 env-steps/s of training at 60 CPU envs (v4 logged
+#   3,456-3,516), with the probes taking <= 15% of wall clock. That second
+#   number has to be read off the run, not assumed: every `CONSOLIDATE PROBE`
+#   line logs `probe_secs` and the sidecar records it.
+#   Interim read at iteration 128 (the 5th probe). If nothing has accepted
+#   under LB > point(best) by then, the conclusion fixed in advance is that
+#   the run contains no iterate that is greedy-competent under the honest
+#   protocol. That is an answer, not a cue to spend another block tuning the
+#   gate.
+#
+# POST-RUN GATE — the number that counts (the in-run probe is a proxy).
+# Both cells must pass. Reporting seeds (0, 1) are not the selection seed (7),
+# and the harness is the one the banked v4 control used, so the comparison is
+# paired:
+#
+#   for S in 0 1; do
+#     .venv/bin/python scripts/eval_game.py --game mario_1_1_backward_v6 \
+#       --profile configs/mario_1_1_backward_v6.yaml \
+#       --rom "roms/Super Mario Bros. (World).nes" \
+#       --checkpoint checkpoints/mario_1_1_backward_v6/best_1-1.pt \
+#       --start-state runs/live_show/smb_4_4_micro/entrance_start.state \
+#       --episodes 50 --max-steps 1500 --sequential --level-clear \
+#       --sticky-prob 0.25 --start-jitter 16 --eval-seed $S \
+#       --action-select greedy
+#   done
+#
+# then the sampled arm at 30 x 2 (--episodes 30 --action-select sampled).
+#   greedy pooled  >= 50/100 (95% Wilson LB 0.404) AND clear of the banked v4
+#                  control 36/100 on a two-proportion z-test at alpha = 0.05
+#                  (50/100 vs 36/100 -> z ~ 2.0, p ~ 0.045). 50 is the
+#                  smallest integer that clears both; 45/100 reads like
+#                  progress and fails the test at z = 1.30. AND
+#   sampled pooled >= 30/60 (Wilson LB 0.377). v4's sampled cell was 34/60,
+#                  and buying greedy by wrecking sampled is not a result.
+# Report both cells together, with warp_rate 0, the harness named, and the
+# protocol fields present in the rows (eval.jsonl now carries sticky_prob /
+# start_jitter / eval_seed on every row).
+#
+# Kill criterion — both cells, nothing partial counts. 180 iterations with no
+# accepted snapshot that meets both, and "selection, not capability" is dead
+# as an account of the argmax tie; `consolidate_level` closes as a line for
+# backward-curriculum policies and the pair gets published as it stands.
+# Promising telemetry is not a result.
+#
+# Score the late `vanilla_ppo_iter_*.pt` checkpoints too, not just the winner
+# file — scripts/score_banked_iterates.py does this offline.
+# ===========================================================================

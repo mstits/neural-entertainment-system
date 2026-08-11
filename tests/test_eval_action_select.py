@@ -270,9 +270,17 @@ def _run_eval(ckpt: Path, *, episodes: int, max_steps: int,
 
 
 def _stats(out: dict) -> dict:
-    """The result minus wall-clock / path fields, for run-to-run comparison."""
+    """The result minus wall-clock / path fields, for run-to-run comparison.
+
+    `stochastic` is dropped alongside `action_select`/`temperature` because it
+    is *derived* from them: `run_consumes_randomness` is True for any sampled
+    draw regardless of temperature, so a T -> 0 sampled run correctly reports
+    `stochastic: True` while reproducing the greedy trajectory exactly. The
+    field under test here is the trajectory, not the label on the draw.
+    """
     return {k: v for k, v in out.items()
-            if k not in ("timestamp", "checkpoint", "action_select", "temperature")}
+            if k not in ("timestamp", "checkpoint", "action_select",
+                         "temperature", "stochastic")}
 
 
 _EMU_SKIP = pytest.mark.skipif(

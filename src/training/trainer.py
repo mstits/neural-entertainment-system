@@ -5321,13 +5321,80 @@ class Trainer:
         clevel_target_entry: Optional[str] = None
         clevel_protect_entries: dict = {}
         _clevel_probe = dict(_clevel_cfg.get("probe", {}) or {})
-        clevel_every = max(1, int(_clevel_probe.get("every", 25)))
-        clevel_eps = max(1, int(_clevel_probe.get("episodes", 8)))
-        clevel_max_steps = int(_clevel_probe.get("max_steps", 1500))
+        # THE B6 REPAIR (v4 receipt: checkpoints/mario_1_1_backward_v4/run.log
+        # + consolidate_1-1.json). None of the perturbation settings reached
+        # v4's gate probe, so `eval_game.run_consumes_randomness` was False and
+        # its `probe.episodes: 1` was not a shortcut: any N would have produced
+        # N copies of one trajectory. The 1.000 that set the ratchet was that
+        # single trajectory, and strict improvement over best=1.0 then held the
+        # gate shut for 144 iterations.
+        #
+        # `resolve_probe_settings` resolves the probe distribution in ONE
+        # place, mirroring the PLR cold probe (which has always passed
+        # sticky_prob=0.25 / start_jitter=16). Absent keys resolve to the
+        # pre-B6 values, so a profile without them emits the identical
+        # eval_game command line and the gate is byte-identical to v4.
+        from src.training import oneshot_curriculum as _oc_gate
+        clevel_probe_cfg = _oc_gate.resolve_probe_settings(_clevel_probe)
+        clevel_every = clevel_probe_cfg.every
+        clevel_eps = clevel_probe_cfg.episodes
+        clevel_max_steps = clevel_probe_cfg.max_steps
+        clevel_probe_kwargs = clevel_probe_cfg.probe_kwargs()
         clevel_bar = float(_clevel_cfg.get("accept_bar", 0.75))
         clevel_need = max(1, int(_clevel_cfg.get("accept_probes", 3)))
         clevel_cooldown = max(0, int(_clevel_cfg.get("cooldown", 40)))
         clevel_tol = float(_clevel_cfg.get("tol", 1e-9))
+        # Accept arithmetic. Defaults reproduce the pre-B6 point-estimate
+        # ratchet exactly; `wilson_lb_gt_best_point` is the break.
+        clevel_use_wilson = bool(_clevel_cfg.get("use_wilson_bound", False))
+        clevel_wilson_conf = float(_clevel_cfg.get("wilson_confidence", 0.95))
+        clevel_accept_rule = str(
+            _clevel_cfg.get("accept_rule", _oc_gate.ACCEPT_RULE_POINT)
+        )
+        clevel_best_decay = float(_clevel_cfg.get("best_decay", 0.0))
+        if clevel_accept_rule not in _oc_gate.ACCEPT_RULES:
+            raise ValueError(
+                f"reinforce.consolidate_level.accept_rule must be one of "
+                f"{list(_oc_gate.ACCEPT_RULES)}, got {clevel_accept_rule!r}"
+            )
+        if not (0.0 <= clevel_best_decay <= 1.0):
+            raise ValueError(
+                f"reinforce.consolidate_level.best_decay must be in [0, 1] "
+                f"(0 = the pre-B6 permanent high-water mark, 1 = replace the "
+                f"incumbent with every measurement); got {clevel_best_decay}"
+            )
+        clevel_probe_n = 0   # episodes the last target probe actually scored
+        # Lower bound under `best_tgt_rate`, set from the Wilson LB of the
+        # probe that last accepted. None until a bounded accept establishes
+        # one, which is why the pre-B6 path never sees it.
+        clevel_best_floor: Optional[float] = None
+        # The gate's protocol, built ONCE and written verbatim into both the
+        # sidecar and the DONE marker, so the run's two receipts cannot
+        # disagree about how their numbers were produced. `eval_seed` is the
+        # EFFECTIVE seed, never the configured-or-null one: recording null for
+        # an unset key would reintroduce, inside the new receipt block, the
+        # very defect that writing sticky/jitter/seed into eval.jsonl exists
+        # to close: a number whose protocol is missing from its own receipt.
+        clevel_protocol = {
+            "episodes": clevel_probe_cfg.episodes,
+            "sticky_prob": clevel_probe_cfg.sticky_prob,
+            "start_jitter": clevel_probe_cfg.start_jitter,
+            "eval_seed": clevel_probe_cfg.effective_eval_seed,
+            "eval_seed_configured": clevel_probe_cfg.eval_seed,
+            "eval_workers": clevel_probe_cfg.eval_workers,
+            "eval_rng": clevel_probe_cfg.eval_rng,
+            "stochastic": clevel_probe_cfg.stochastic,
+            "accept_rule": clevel_accept_rule,
+            "use_wilson_bound": clevel_use_wilson,
+            "wilson_confidence": clevel_wilson_conf,
+            "wilson_confidence_effective": _oc_gate.nearest_tabulated_confidence(
+                clevel_wilson_conf
+            ),
+            "best_decay": clevel_best_decay,
+            "accept_bar": clevel_bar,
+            "accept_probes": clevel_need,
+            "reporting_eval_seeds": list(_oc_gate.REPORTING_EVAL_SEEDS),
+        }
         _clevel_sched = dict(_clevel_cfg.get("schedule", {}) or {})
         _clevel_ent = dict(_clevel_sched.get("entropy", {}) or {})
         _clevel_rnd = dict(_clevel_sched.get("rnd", {}) or {})
@@ -5460,6 +5527,60 @@ class Trainer:
                 clevel_max_steps, clevel_bar, clevel_need, clevel_cooldown,
                 clevel_ent_from, clevel_ent_to, clevel_ent_iters,
             )
+            # The probe DISTRIBUTION and the accept ARITHMETIC, logged as one
+            # receipt line: without it a run's log cannot say whether its gate
+            # measured a replay or a distribution (the v4 ambiguity).
+            # `eval_seed` is logged as the EFFECTIVE seed (what the subprocess
+            # will use) with the configured value beside it, because an unset
+            # seed is not "no seed" — eval_game defaults it to 0.
+            log.info(
+                "[vanilla_ppo] CONSOLIDATE GATE PROTOCOL: episodes=%d "
+                "sticky=%.2f jitter=%d eval_seed=%d (configured=%s) "
+                "eval_workers=%d eval_rng=%s stochastic=%s | accept_rule=%s "
+                "wilson=%s conf=%.2f best_decay=%.2f bar=%.2f x%d",
+                clevel_probe_cfg.episodes, clevel_probe_cfg.sticky_prob,
+                clevel_probe_cfg.start_jitter,
+                clevel_probe_cfg.effective_eval_seed,
+                clevel_probe_cfg.eval_seed,
+                clevel_probe_cfg.eval_workers, clevel_probe_cfg.eval_rng,
+                clevel_probe_cfg.stochastic, clevel_accept_rule,
+                clevel_use_wilson, clevel_wilson_conf, clevel_best_decay,
+                clevel_bar, clevel_need,
+            )
+            if clevel_wilson_conf not in _oc_gate.TABULATED_CONFIDENCES:
+                log.warning(
+                    "[vanilla_ppo] CONSOLIDATE GATE: wilson_confidence=%.4f "
+                    "is not tabulated; the bound is taken at the nearest "
+                    "available confidence %.2f. Tabulated: %s.",
+                    clevel_wilson_conf,
+                    _oc_gate.nearest_tabulated_confidence(clevel_wilson_conf),
+                    sorted(_oc_gate.TABULATED_CONFIDENCES),
+                )
+            if not clevel_probe_cfg.stochastic:
+                log.warning(
+                    "[vanilla_ppo] CONSOLIDATE GATE: probe is DETERMINISTIC "
+                    "(sticky=0, jitter=0) — every one of its %d episodes is a "
+                    "replay of the same trajectory, so however large the "
+                    "episode count, the accept rests on one sample (the v4 "
+                    "failure mode). Set reinforce.consolidate_level.probe."
+                    "{sticky_prob,start_jitter} to measure a distribution.",
+                    clevel_probe_cfg.episodes,
+                )
+            # SELECTION seed vs REPORTING seed. The gate selects the snapshot;
+            # the published deliverable is scored on oneshot_curriculum.
+            # REPORTING_EVAL_SEEDS. Sharing a seed between the two lets the
+            # gate pick the network that happens to win on the very stream it
+            # will later be graded on — the probe-overfitting hole.
+            #
+            # ENFORCED, not warned. A warning does not stop the probe, and
+            # `--strict-config` cannot catch this at all (every key involved is
+            # registered and individually valid — the defect is the value, and
+            # the commonest way to hit it is to arm sticky + jitter and simply
+            # OMIT `eval_seed`, which lands on eval_game's default of 0).
+            # `seed_collision` is therefore computed from the EFFECTIVE seed,
+            # and a collision stops the run at mode start, before a single
+            # iteration of an attended block is spent.
+            _oc_gate.require_selection_seed(clevel_probe_cfg)
 
             # Baseline capture at mode start: probe the pristine champion once
             # for the target AND every protect level from their entry states.
@@ -5468,26 +5589,32 @@ class Trainer:
             from src.training import cold_probe as _cold_probe
 
             def _clevel_probe_level(_entry):
+                """Baseline probe. `clevel_probe_kwargs` carries the resolved
+                honest-probe distribution (episodes / sticky / jitter / seed /
+                workers) — the same threading the PLR cold probe has always
+                done. Returns (rate, furthest, n_episodes_scored)."""
                 if _entry is None:
-                    return None, None
+                    return None, None, 0
                 _r = _cold_probe.probe(
-                    net, self.game_profile, episodes=clevel_eps,
+                    net, self.game_profile,
                     device=self.device, sequential=True, level_clear=True,
-                    start_state=_entry, max_steps=clevel_max_steps,
+                    start_state=_entry,
                     rom_path=self.rom_path,
                     game=str(self.game_profile.get("name", "mario")),
+                    **clevel_probe_kwargs,
                 )
                 _rate = _r.get("cold_seq_clear_rate")
                 return (
                     float(_rate) if _rate is not None else None,
                     _r.get("cold_furthest_seq"),
+                    int(_r.get("cold_n_episodes") or 0),
                 )
             clevel_baselines = {}
             for _plevel, _pentry in clevel_protect_entries.items():
-                _b, _ = _clevel_probe_level(_pentry)
+                _b, _, _ = _clevel_probe_level(_pentry)
                 if _b is not None:
                     clevel_baselines[_plevel] = _b
-            _tb, _ = _clevel_probe_level(clevel_target_entry)
+            _tb, _, clevel_probe_n = _clevel_probe_level(clevel_target_entry)
             best_tgt_rate = _tb if _tb is not None else -1.0
             accepted_snapshot = {
                 k: v.detach().cpu().clone() for k, v in net.state_dict().items()
@@ -5505,8 +5632,14 @@ class Trainer:
                 log.warning("[vanilla_ppo] best_%s init save failed: %s",
                             clevel_target, _e)
             log.info(
-                "[vanilla_ppo] CONSOLIDATE baselines: target %s=%.3f, "
-                "protect=%s", clevel_target, best_tgt_rate, clevel_baselines,
+                "[vanilla_ppo] CONSOLIDATE baselines: target %s=%.3f "
+                "(n=%d, wilson_lb=%.3f), protect=%s",
+                clevel_target, best_tgt_rate, clevel_probe_n,
+                _oc_gate.wilson_lower_bound(
+                    max(best_tgt_rate, 0.0) * clevel_probe_n, clevel_probe_n,
+                    confidence=clevel_wilson_conf,
+                ),
+                clevel_baselines,
             )
 
         if self._is_tile_mode:
@@ -8329,36 +8462,55 @@ class Trainer:
                 from src.training import cold_probe as _cold_probe
 
                 def _gate_probe(_entry):
+                    """One gate probe. Identical threading to the mode-start
+                    baseline probe and to the PLR cold probe: the resolved
+                    honest distribution rides in `clevel_probe_kwargs`, so the
+                    gate measures the protocol the deliverable is graded under
+                    (v4's did not). Returns (rate, furthest, n_scored)."""
                     if _entry is None:
-                        return None, None
+                        return None, None, 0
                     _r = _cold_probe.probe(
-                        net, self.game_profile, episodes=clevel_eps,
+                        net, self.game_profile,
                         device=self.device, sequential=True, level_clear=True,
-                        start_state=_entry, max_steps=clevel_max_steps,
+                        start_state=_entry,
                         rom_path=self.rom_path,
                         game=str(self.game_profile.get("name", "mario")),
+                        **clevel_probe_kwargs,
                     )
                     _rate = _r.get("cold_seq_clear_rate")
                     return (
                         float(_rate) if _rate is not None else None,
                         _r.get("cold_furthest_seq"),
+                        int(_r.get("cold_n_episodes") or 0),
                     )
-                _tr, _ = _gate_probe(clevel_target_entry)
+                _probe_t0 = time.time()
+                _tr, _, clevel_probe_n = _gate_probe(clevel_target_entry)
                 clevel_tgt_rate = _tr if _tr is not None else -1.0
                 clevel_protect_rates = {}
                 for _plevel, _pentry in clevel_protect_entries.items():
-                    _pr, _ = _gate_probe(_pentry)
+                    _pr, _, _ = _gate_probe(_pentry)
                     if _pr is not None:
                         clevel_protect_rates[_plevel] = _pr
+                _probe_secs = time.time() - _probe_t0
                 _pmin = (
                     min(clevel_protect_rates.values())
                     if clevel_protect_rates else 1.0
                 )
+                # The probe's own Wilson LB, reported whether or not the gate
+                # is armed with it, so the log is a receipt for the accept
+                # arithmetic rather than a bare rate.
+                clevel_tgt_lb = _oc_gate.wilson_lower_bound(
+                    max(clevel_tgt_rate, 0.0) * clevel_probe_n, clevel_probe_n,
+                    confidence=clevel_wilson_conf,
+                )
                 log.info(
                     "[vanilla_ppo] CONSOLIDATE PROBE iter %d: target %s=%.3f "
-                    "(best=%.3f) protect=%s sustain=%d/%d%s",
-                    global_it, clevel_target, clevel_tgt_rate, best_tgt_rate,
+                    "(n=%d, wilson_lb=%.3f @%.2f, best=%.3f) protect=%s "
+                    "sustain=%d/%d probe_secs=%.1f%s",
+                    global_it, clevel_target, clevel_tgt_rate, clevel_probe_n,
+                    clevel_tgt_lb, clevel_wilson_conf, best_tgt_rate,
                     clevel_protect_rates, clevel_sustain, clevel_need,
+                    _probe_secs,
                     " [cooldown]" if global_it < clevel_cooldown_until else "",
                 )
                 _regressed = oc.protect_regressed(
@@ -8376,6 +8528,12 @@ class Trainer:
                     ),
                     best_rate=best_tgt_rate, sustain=clevel_sustain,
                     bar=clevel_bar, need=clevel_need, tol=clevel_tol,
+                    target_n=clevel_probe_n,
+                    use_wilson_bound=clevel_use_wilson,
+                    wilson_confidence=clevel_wilson_conf,
+                    accept_rule=clevel_accept_rule,
+                    best_decay=clevel_best_decay,
+                    best_floor=clevel_best_floor,
                 )
                 clevel_sustain = int(_gate["sustain"])
                 clevel_done = bool(_gate["done"])
@@ -8398,9 +8556,19 @@ class Trainer:
                         (clevel_baselines or {}).get(_regressed, -1.0),
                         clevel_winner_name, clevel_cooldown,
                     )
-                elif _gate["action"] == "accept":
+                else:
+                    # Hold or accept: the gate owns the incumbent from here.
+                    # On a hold this is `best_decay`'s re-estimation (a no-op
+                    # at the default 0.0, and never upward); on an accept it is
+                    # THIS probe's point estimate, so the bar a future probe
+                    # must clear is a measured rate over `probe.episodes`,
+                    # never the n=1 high-water v4 pinned at 1.000. A FAILED
+                    # probe returns the incumbent untouched — the -1.0 sentinel
+                    # must never reach the re-estimation.
+                    best_tgt_rate = float(_gate["best_rate"])
+                    clevel_best_floor = _gate["best_floor"]
+                if _gate["action"] == "accept":
                     # Protect held + target strictly improved: pin the new best.
-                    best_tgt_rate = clevel_tgt_rate
                     accepted_snapshot = {
                         k: v.detach().cpu().clone()
                         for k, v in net.state_dict().items()
@@ -8421,27 +8589,41 @@ class Trainer:
                         )
                     log.info(
                         "[vanilla_ppo] *** CONSOLIDATE ACCEPT *** target %s "
-                        "improved to %.3f; snapshot -> %s.",
-                        clevel_target, best_tgt_rate, clevel_winner_name,
+                        "improved to %.3f (rule=%s, lhs=%.3f, n=%d); "
+                        "snapshot -> %s.",
+                        clevel_target, best_tgt_rate, clevel_accept_rule,
+                        float(_gate["accept_lhs"] or 0.0), clevel_probe_n,
+                        clevel_winner_name,
                     )
-                # Persist gate state for resume / inspection.
+                # Persist gate state for resume / inspection. The PROTOCOL
+                # travels with the numbers: a sidecar holding only a rate
+                # cannot say whether the gate measured a replay (v4) or a
+                # distribution, and the accept arithmetic is unreadable
+                # without the rule it used.
                 try:
                     clevel_sidecar.write_text(json.dumps({
                         "target": clevel_target,
                         "best_tgt_rate": best_tgt_rate,
                         "target_rate": clevel_tgt_rate,
+                        "target_lb": clevel_tgt_lb,
+                        "target_n": int(clevel_probe_n),
+                        "best_floor": clevel_best_floor,
                         "baselines": clevel_baselines or {},
                         "last_protect_rates": clevel_protect_rates,
                         "sustain": int(clevel_sustain),
                         "iter": int(global_it),
+                        "probe_secs": round(float(_probe_secs), 2),
+                        "protocol": dict(clevel_protocol),
                     }))
                 except Exception:
                     pass
                 clevel_metrics_emit = {
                     "consolidate_target_rate": float(clevel_tgt_rate),
+                    "consolidate_target_lb": float(clevel_tgt_lb),
                     "consolidate_best_rate": float(best_tgt_rate),
                     "consolidate_protect_min": float(_pmin),
                     "consolidate_sustain": int(clevel_sustain),
+                    "consolidate_probe_secs": float(_probe_secs),
                 }
                 if clevel_done:
                     # Final accepted snapshot + a DONE marker so a driver script
@@ -8460,12 +8642,20 @@ class Trainer:
                         clevel_done_marker.write_text(json.dumps({
                             "target": clevel_target,
                             "final_rate": best_tgt_rate,
+                            "final_lb": clevel_tgt_lb,
+                            "final_n": int(clevel_probe_n),
                             "bar": clevel_bar,
                             "probes_sustained": int(clevel_sustain),
                             "winner": clevel_winner_name,
                             "protect_baselines": clevel_baselines or {},
                             "last_protect_rates": clevel_protect_rates,
                             "iter": int(global_it),
+                            # The DONE marker is the run's terminal receipt;
+                            # it carries the SAME protocol object the sidecar
+                            # does, so a downstream driver never has to
+                            # reconstruct it from the config and the two
+                            # receipts can never disagree.
+                            "protocol": dict(clevel_protocol),
                         }, indent=2))
                         log.info(
                             "[vanilla_ppo] *** CONSOLIDATE DONE *** target %s "

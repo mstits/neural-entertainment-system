@@ -17,6 +17,12 @@ Six behaviours are factored out:
   * `update_forgetting` — the cold-probe regression alarm (N consecutive
     high-water regressions on an already-cleared early level).
   * `lerp_coef` — the linear entropy/RND consolidation schedule.
+  * `resolve_probe_settings` / `require_selection_seed` /
+    `wilson_lower_bound` / `probe_failed` / `decay_best` — the B6
+    consolidation-gate arithmetic: an honest (sticky + jitter + seeded)
+    probe distribution whose selection seed is kept off the reporting
+    seeds, a Wilson lower-bounded accept, and the ratchet break that
+    stops one lucky probe pinning an unreachable bar. All default-inert.
   * `furthest_rank` / `reached_1_4` — parse a cold-probe "furthest_seq"
     (a "1-4" label, a [world, level] pair, or None) into a comparable
     rank so forgetting and the consolidation trigger can reason about it.
@@ -294,6 +300,264 @@ def protect_regressed(
     return None
 
 
+# ---------------------------------------------------------------------------
+# B6 gate arithmetic: honest-probe distribution + Wilson-bounded acceptance.
+#
+# Receipts this exists to close (checkpoints/mario_1_1_backward_v4/):
+#   * `run.log` — of 16 gate probes on target 1-1, fifteen read 0.000 and one
+#     read 1.000. None of `sticky_prob`, `start_jitter` or `eval_seed` reached
+#     the eval, so all of a probe's episodes were one replay repeated and the
+#     accept rested on a single sample.
+#   * `consolidate_1-1.json` — closed at {"best_tgt_rate": 1.0,
+#     "target_rate": 0.0, "sustain": 0, "iter": 260}. Strict improvement over
+#     a best of 1.0 cannot be satisfied, so nothing could be accepted over the
+#     run's last 144 iterations.
+#
+# Everything below is default-inert: with the new profile keys absent the
+# resolver returns the pre-B6 settings and the gate arithmetic reduces to the
+# point-estimate comparison it always did.
+# ---------------------------------------------------------------------------
+
+# Accept-rule names. `point_gt_best` is the historical (pre-B6) rule.
+ACCEPT_RULE_POINT = "point_gt_best"
+ACCEPT_RULE_WILSON_LB = "wilson_lb_gt_best_point"
+ACCEPT_RULES = (ACCEPT_RULE_POINT, ACCEPT_RULE_WILSON_LB)
+
+# Seeds reserved for REPORTING (the published deliverable pair). The gate's
+# SELECTION seed must never be one of them: a probe that both selects the
+# snapshot and reports its score would draw from the very stream the number is
+# later published on. The 1-1 consolidation deliverable is reported at
+# eval_seed 0 and 1 (the two seeds the banked v4 control was measured on, so
+# the comparison is paired), and the gate selects outside that set.
+REPORTING_EVAL_SEEDS: tuple[int, ...] = (0, 1)
+
+# `scripts/eval_game.py`'s own `--eval-seed` default. An UNSET probe seed does
+# not mean "no seed" — `cold_probe.probe` simply omits the flag and the eval
+# subprocess falls back to this, which is REPORTING_EVAL_SEEDS[0]. Resolving
+# the effective seed is what makes the reporting-seed guard real: a profile
+# that arms sticky + jitter and leaves `eval_seed` unset silently selects on
+# reporting seed 0.
+EVAL_GAME_DEFAULT_SEED = 0
+
+# Two-sided z quantiles for the confidences a gate realistically uses. Kept as
+# a table so the module stays dependency-free (no scipy) and the arithmetic is
+# reproducible from the receipt; anything else falls back to the nearest
+# tabulated confidence, which is logged by the caller.
+_Z_FOR_CONFIDENCE: dict = {
+    0.80: 1.2815515655446004,
+    0.90: 1.6448536269514722,
+    0.95: 1.959963984540054,
+    0.98: 2.3263478740408408,
+    0.99: 2.5758293035489004,
+}
+
+
+#: The confidences the table can serve exactly. A caller asking for anything
+#: else silently gets the nearest one, so the trainer checks membership and
+#: says so in the log rather than letting a "0.975 gate" quietly be a 0.98 one.
+TABULATED_CONFIDENCES: frozenset = frozenset(_Z_FOR_CONFIDENCE)
+
+
+def nearest_tabulated_confidence(confidence: float) -> float:
+    """The tabulated confidence :func:`z_for_confidence` will actually use."""
+    c = float(confidence)
+    if c in _Z_FOR_CONFIDENCE:
+        return c
+    return min(_Z_FOR_CONFIDENCE, key=lambda k: abs(k - c))
+
+
+def z_for_confidence(confidence: float) -> float:
+    """Two-sided normal quantile for `confidence` (nearest tabulated value)."""
+    return _Z_FOR_CONFIDENCE[nearest_tabulated_confidence(confidence)]
+
+
+def wilson_lower_bound(
+    successes: float, n: int, *, confidence: float = 0.95
+) -> float:
+    """Wilson score-interval LOWER bound for `successes`/`n` (pure).
+
+    The score interval, not the normal approximation: at the counts a gate
+    probe actually produces (n = 30, p̂ near 0 or 1) the Wald interval is
+    degenerate — 30/30 gives a Wald half-width of exactly 0 — while Wilson
+    stays inside (0, 1) and shrinks correctly with n. `successes` is accepted
+    as a float because the caller reconstructs it from a rounded rate.
+
+    n <= 0 returns 0.0 (an unmeasured probe bounds nothing).
+    """
+    n_i = int(n)
+    if n_i <= 0:
+        return 0.0
+    k = min(max(float(successes), 0.0), float(n_i))
+    z = z_for_confidence(confidence)
+    p = k / n_i
+    denom = 1.0 + (z * z) / n_i
+    centre = p + (z * z) / (2.0 * n_i)
+    margin = z * ((p * (1.0 - p) / n_i + (z * z) / (4.0 * n_i * n_i)) ** 0.5)
+    return max(0.0, (centre - margin) / denom)
+
+
+def probe_failed(target_rate: Optional[float],
+                 target_n: Optional[int]) -> bool:
+    """True iff this probe produced no usable measurement (pure).
+
+    Three shapes of "no measurement", all of which must leave the incumbent
+    and the sustain counter exactly where they were:
+
+      * ``target_rate is None`` — the pure-API spelling of a failed probe;
+      * ``target_rate < 0`` — the TRAINER's spelling. `_gate_probe` returns
+        None on a failed eval subprocess and the caller converts it to the
+        ``-1.0`` sentinel before it reaches this module, so a guard that only
+        checks ``is None`` is unreachable from production;
+      * ``target_n == 0`` — the eval ran but scored zero episodes, so the rate
+        is not an estimate of anything and no bound can be taken over it.
+
+    ``target_n is None`` is NOT a failure: every pre-B6 caller omits it, and
+    those callers must keep their exact behaviour.
+    """
+    if target_rate is None:
+        return True
+    if float(target_rate) < 0.0:
+        return True
+    return target_n is not None and int(target_n) <= 0
+
+
+def decay_best(best_rate: float, observed: Optional[float],
+               decay: float) -> float:
+    """Re-estimate the incumbent best toward the live measurement (pure).
+
+    `decay` 0.0 (the default everywhere) returns `best_rate` unchanged — the
+    pre-B6 permanent high-water mark. `decay` 1.0 replaces the incumbent with
+    this probe's estimate outright; values between the two are an exponential
+    re-estimation.
+
+    `observed is None` never moves the bar, but note that this alone is NOT
+    the failed-probe guarantee: the trainer converts a failed probe to the
+    ``-1.0`` sentinel, which would drag the incumbent DOWNWARD (best 0.60 at
+    decay 0.25 -> 0.20) if it reached here. :func:`gate_step` screens for that
+    with :func:`probe_failed` before calling this, and that is where the
+    guarantee is tested.
+    """
+    d = float(decay)
+    if d <= 0.0 or observed is None:
+        return float(best_rate)
+    d = min(1.0, d)
+    return float(best_rate) + d * (float(observed) - float(best_rate))
+
+
+@dataclass(frozen=True)
+class ProbeSettings:
+    """Resolved `reinforce.consolidate_level.probe.*` settings (pure).
+
+    `sticky_prob` / `start_jitter` / `eval_seed` default to the pre-B6 values
+    (0.0 / 0 / None), which is what makes an absent probe block byte-identical
+    to v4: `cold_probe.probe` appends `--sticky-prob` / `--start-jitter` /
+    `--eval-seed` only when they are non-default, so the emitted eval command
+    line does not change.
+    """
+
+    every: int
+    episodes: int
+    max_steps: int
+    sticky_prob: float
+    start_jitter: int
+    eval_seed: Optional[int]
+    #: The seed the eval subprocess will ACTUALLY use — `eval_seed` when the
+    #: profile set one, else :data:`EVAL_GAME_DEFAULT_SEED`. Never None, so a
+    #: receipt written from it can never carry a null protocol field.
+    effective_eval_seed: int
+    eval_workers: int
+    eval_rng: str
+    stochastic: bool
+    seed_collision: bool
+
+    def probe_kwargs(self) -> dict:
+        """The `cold_probe.probe(...)` keyword arguments for these settings."""
+        return {
+            "episodes": self.episodes,
+            "max_steps": self.max_steps,
+            "sticky_prob": self.sticky_prob,
+            "start_jitter": self.start_jitter,
+            "eval_seed": self.eval_seed,
+            "eval_workers": self.eval_workers,
+            "eval_rng": self.eval_rng,
+        }
+
+
+def resolve_probe_settings(probe_cfg: Optional[dict]) -> ProbeSettings:
+    """Parse the consolidation probe block into a resolved settings object.
+
+    The gate probes to SELECT; the published deliverable is measured on
+    different seeds (:data:`REPORTING_EVAL_SEEDS`).
+
+    `seed_collision` is keyed on the EFFECTIVE seed, not the configured one.
+    An unset `eval_seed` is not "no seed": `cold_probe.probe` omits the flag
+    and `eval_game.py` falls back to :data:`EVAL_GAME_DEFAULT_SEED`, which is
+    a reporting seed — so a profile that arms sticky + jitter and forgets
+    `eval_seed` selects on the reporting stream while looking configured. It
+    is reported only for a stochastic probe, because that is the only case in
+    which a stream is drawn from at all: a deterministic probe consumes no
+    randomness (its own, louder defect is reported separately).
+
+    `eval_rng` is forced to ``per-episode`` whenever more than one eval worker
+    is asked for on a stochastic probe: `eval_game.py` refuses that
+    combination under the shared stream (episode i's draws depend on how many
+    draws episodes 0..i-1 consumed), and a refused probe is a dead gate.
+    """
+    cfg = dict(probe_cfg or {})
+    episodes = max(1, int(cfg.get("episodes", 8)))
+    sticky = float(cfg.get("sticky_prob", 0.0) or 0.0)
+    jitter = int(cfg.get("start_jitter", 0) or 0)
+    raw_seed = cfg.get("eval_seed", None)
+    seed = None if raw_seed is None else int(raw_seed)
+    effective_seed = EVAL_GAME_DEFAULT_SEED if seed is None else seed
+    workers = max(1, int(cfg.get("eval_workers", 1) or 1))
+    # A run "consumes randomness" (eval_game.run_consumes_randomness) iff any
+    # perturbation is armed; the gate always draws greedily.
+    stochastic = bool(sticky > 0.0 or jitter > 0)
+    rng = str(cfg.get("eval_rng", "shared-stream"))
+    if workers > 1 and stochastic:
+        rng = "per-episode"
+    return ProbeSettings(
+        every=max(1, int(cfg.get("every", 25))),
+        episodes=episodes,
+        max_steps=int(cfg.get("max_steps", 1500)),
+        sticky_prob=sticky,
+        start_jitter=jitter,
+        eval_seed=seed,
+        effective_eval_seed=effective_seed,
+        eval_workers=workers,
+        eval_rng=rng,
+        stochastic=stochastic,
+        seed_collision=bool(
+            stochastic and effective_seed in REPORTING_EVAL_SEEDS
+        ),
+    )
+
+
+def require_selection_seed(settings: ProbeSettings) -> None:
+    """Raise if the gate would select on a seed the deliverable is reported on.
+
+    Enforcement, not advice. A log line does not stop the probe, and
+    ``--strict-config`` cannot catch this case at all: every key involved is
+    registered and individually valid, and the commonest way to hit it is to
+    arm sticky + jitter and simply omit ``eval_seed`` — which lands on
+    :data:`EVAL_GAME_DEFAULT_SEED`. Called once at consolidation-mode start so
+    a misconfigured attended block fails before its first iteration.
+    """
+    if not settings.seed_collision:
+        return
+    raise ValueError(
+        f"reinforce.consolidate_level.probe.eval_seed resolves to "
+        f"{settings.effective_eval_seed} (configured: "
+        f"{settings.eval_seed!r}), which is one of the reporting seeds "
+        f"{list(REPORTING_EVAL_SEEDS)}. The gate would select the snapshot on "
+        f"the same random stream the deliverable is later reported on. Set an "
+        f"explicit selection seed outside {list(REPORTING_EVAL_SEEDS)} — note "
+        f"that OMITTING the key is not neutral: eval_game defaults "
+        f"--eval-seed to {EVAL_GAME_DEFAULT_SEED}."
+    )
+
+
 def target_improved(best_rate: float, rate: float, *, tol: float = 1e-9) -> bool:
     """True iff the target cold clear rate strictly improves on the accepted best.
 
@@ -326,6 +590,12 @@ def gate_step(
     bar: float,
     need: int,
     tol: float = 1e-9,
+    target_n: Optional[int] = None,
+    use_wilson_bound: bool = False,
+    wilson_confidence: float = 0.95,
+    accept_rule: str = ACCEPT_RULE_POINT,
+    best_decay: float = 0.0,
+    best_floor: Optional[float] = None,
 ) -> dict:
     """Sequence ONE probe of the level-scoped consolidation gate (pure).
 
@@ -342,16 +612,147 @@ def gate_step(
       * ``done``    — True once `sustain` reaches `need` with protect healthy:
         the target held its bar long enough to weld; the caller writes the
         final snapshot + DONE marker and exits.
+      * ``target_lb`` — the probe's Wilson lower bound, or None when no bound
+        was asked for (or the probe produced no measurement to bound).
+      * ``gate_metric`` — the scalar actually compared against `bar` (the
+        Wilson LB when armed, else the point rate).
+      * ``accept_lhs`` — the scalar actually compared against `best_rate`.
+      * ``best_rate`` — the value the caller must store as the new incumbent
+        (the probe's POINT estimate on an accept, the decayed/re-estimated
+        incumbent on a hold, unchanged on a rollback or a failed probe).
+      * ``best_floor`` — the value the caller must store as the new floor under
+        `best_rate` (see ``best_decay`` below), or None while no floor has been
+        established. None and inert unless a bound is armed.
 
-    This is the whole gate policy in one place so its three named behaviours —
+    This is the whole gate policy in one place so its named behaviours —
     rollback on protect regression, accept on target improvement, terminate on
     the sustained bar — are unit-testable with stubbed eval rates.
+
+    THE RATCHET BREAK (v4 receipt: ``consolidate_1-1.json`` closed at
+    ``best_tgt_rate 1.0``, set by ONE deterministic replay at iter 116; from
+    there the accept condition was unsatisfiable for 144 iterations). Two
+    changes, both default-inert, and INTENDED TO BE ARMED TOGETHER — the
+    bound stops a lucky probe raising the bar, the decay stops an honest but
+    unrepeatable high-water holding it (see the reachability note below):
+
+      * ``accept_rule="wilson_lb_gt_best_point"`` accepts only when the new
+        probe's Wilson LOWER bound beats the incumbent's POINT estimate — a
+        single lucky episode has a low LB, so it can no longer raise the bar;
+        and the incumbent is only ever re-set from that probe's point estimate
+        over the configured (>= 30) episode count, never from an n=1 replay.
+      * ``best_decay`` in (0, 1] re-estimates the incumbent toward the live
+        measurement on every non-accepting MEASURED probe, so a stale
+        high-water erodes instead of locking the gate out forever.
+
+    REACHABILITY, stated so nobody has to rediscover it mid-run. The bound
+    alone does not make the bar reachable: it only makes it honest. Setting
+    ``best`` to an accepted probe's point estimate means the next accept needs
+    ``LB(new) > point(best)``, i.e. roughly +0.18 of point estimate at n = 30
+    and 95%. Concretely, accepting at 20/30 (0.667) puts the next accept at
+    26/30 (0.867), and a 30/30 probe pins ``best`` at 1.0 against a maximum
+    attainable LB of 0.886 — which is the v4 lockout exactly. ``best_decay``
+    is what dissolves that: an incumbent the current policy cannot reproduce
+    erodes toward what the policy actually does, so the bar tracks the
+    measurement instead of the luckiest sample ever drawn.
+
+    TWO CLAMPS make the decay safe, and both are no-ops at ``best_decay=0``:
+
+      * the decay may only move the bar DOWN. The bar describes the ACCEPTED
+        SNAPSHOT, which a hold did not change, so a hold must never raise it.
+        (Reachable under the bound rule: a probe can have a higher point
+        estimate than ``best`` and still hold on its lower bound.)
+      * the decay may not fall below ``best_floor``, which the caller carries
+        forward from ``best_floor`` in this dict (None until the first bounded
+        accept establishes one). On an accept the floor becomes the accepting
+        probe's own Wilson LOWER bound: the run is 95% confident the snapshot
+        it just saved is at least that good, so a candidate that cannot beat
+        that number is not credibly better and must not be allowed to
+        overwrite it. Without the floor, a late collapse (v4's final iterate
+        read 0.00) would drag the bar to ~0 and let a clearly worse network
+        replace the deliverable.
+
+    FAILING CLOSED. Under ``accept_rule="wilson_lb_gt_best_point"`` the accept
+    is gated on the BOUND: if the bound cannot be computed the gate holds, and
+    it never silently falls back to comparing the point estimate (which would
+    restore the very ratchet the rule exists to break under a profile that
+    believes it is protected). A caller that asks for the rule without
+    threading ``target_n`` at all is a wiring bug, not a runtime condition, and
+    raises.
+
+    With the defaults (``use_wilson_bound=False``, ``accept_rule`` point,
+    ``best_decay=0.0``) every returned field reproduces the pre-B6 gate
+    exactly: action/sustain/done are unchanged and ``best_rate`` is the point
+    rate on an accept and the untouched incumbent otherwise.
     """
     if regressed is not None:
-        return {"action": "rollback", "sustain": 0, "done": False}
-    action = "accept" if target_improved(best_rate, target_rate, tol=tol) else "hold"
-    new_sustain = update_sustain(sustain, target_rate, bar)
-    return {"action": action, "sustain": new_sustain, "done": new_sustain >= int(need)}
+        return {
+            "action": "rollback", "sustain": 0, "done": False,
+            "target_lb": None, "gate_metric": target_rate,
+            "accept_lhs": target_rate, "best_rate": float(best_rate),
+            "best_floor": best_floor,
+        }
+    rule = str(accept_rule)
+    if rule not in ACCEPT_RULES:
+        raise ValueError(
+            f"accept_rule must be one of {list(ACCEPT_RULES)}, got {rule!r}"
+        )
+    wilson_rule = rule == ACCEPT_RULE_WILSON_LB
+    want_lb = bool(use_wilson_bound) or wilson_rule
+    if want_lb and target_n is None:
+        # Wiring bug: the bound has no sample size, so a "bounded" gate would
+        # be comparing point estimates while its log said otherwise.
+        raise ValueError(
+            "gate_step: a Wilson-bounded gate needs target_n (the episode "
+            f"count the probe actually scored); got accept_rule={rule!r}, "
+            f"use_wilson_bound={bool(use_wilson_bound)}, target_n=None"
+        )
+
+    if probe_failed(target_rate, target_n):
+        # No measurement: hold, reset the sustain counter, and leave the
+        # incumbent exactly where it was. In particular the -1.0 sentinel the
+        # trainer passes for a failed eval must never be fed to `decay_best`,
+        # which would drag `best` below every rate the policy can produce.
+        return {
+            "action": "hold", "sustain": 0, "done": False,
+            "target_lb": None, "gate_metric": target_rate,
+            "accept_lhs": target_rate, "best_rate": float(best_rate),
+            "best_floor": best_floor,
+        }
+
+    lb = None
+    if want_lb:
+        lb = wilson_lower_bound(
+            float(target_rate) * int(target_n), int(target_n),
+            confidence=wilson_confidence,
+        )
+    gate_metric = lb if lb is not None else target_rate
+    accept_lhs = lb if wilson_rule else target_rate
+    accept = target_improved(best_rate, accept_lhs, tol=tol)
+    action = "accept" if accept else "hold"
+    new_floor = None if best_floor is None else float(best_floor)
+    if accept:
+        # Re-estimate the incumbent from THIS probe's point estimate (an
+        # n>=30 measurement under B6), not from the bound that authorised it.
+        new_best = float(target_rate)
+        if lb is not None:
+            new_floor = float(lb) if new_floor is None \
+                else max(new_floor, float(lb))
+    else:
+        # Monotone-down, floored. See "TWO CLAMPS" above; both are no-ops at
+        # the default best_decay=0.0, where `decayed` IS `best_rate`, and the
+        # floor is skipped entirely until a bounded accept establishes one.
+        decayed = decay_best(best_rate, target_rate, best_decay)
+        new_best = min(float(best_rate), decayed)
+        if new_floor is not None:
+            new_best = max(new_best, new_floor)
+    new_sustain = update_sustain(sustain, gate_metric, bar)
+    return {
+        "action": action, "sustain": new_sustain,
+        "done": new_sustain >= int(need),
+        "target_lb": lb, "gate_metric": gate_metric,
+        "accept_lhs": accept_lhs, "best_rate": new_best,
+        "best_floor": new_floor,
+    }
 
 
 def lerp_coef(from_v: float, to_v: float, step: int, iters: int) -> float:
