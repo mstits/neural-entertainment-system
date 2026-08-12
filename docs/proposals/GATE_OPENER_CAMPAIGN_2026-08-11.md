@@ -239,3 +239,36 @@ had already MISSED (R/k0_verdict.json tuning_grade_contra). Freeze:
 frozen_params_v2.json — commit, instrument shas, attestations.
 Unchanged: T2 salvage (p0=0.946, K_min=42), §12's bucket-93 re-freeze,
 the struck GATED vocabulary.
+
+## §15 — K0-v3 (Kirby $004F): TUNING MISS — campaign stays DISARMED; K0 loop HALTED by decision
+
+The re-forged, six-defects-repaired instrument (commit 4efbe3e) armed
+and swept cleanly on a VALID target (Kirby $004F room-id, zero
+farmability, door-contact cause): 2,316 candidates, 5 admissible, sham
+0.0. $004F ranked ABSENT (0/2,316 rows — not truncation; the full
+per-address rank table has $0040/$0041/$004B/$004E/$004D but no $004F).
+
+MISS REASON — REACHABILITY, the third distinct failure mode: $004F is
+constant across every state the sweep visits and steps ONLY at a door.
+The sweep is rooted in the FRONTIER BAND, which is not door-adjacent,
+so no 153-step program ever crosses a door → the byte never varies →
+never a candidate. Structural tension in K0 itself: grading a
+state-CHANGE byte requires roots that can REACH the state-change, but
+the sweep roots at the frontier. The three K0 misses now span the
+space — v2 (ident: too CONSTANT), v2.1 (hp: too FARMABLE, 30x bar),
+v3 (room-id: interaction UNREACHABLE from frontier roots). Each is a
+real property, none is an arm-competence failure, and each fix exposes
+the next.
+
+DECISION (owner, sequencing-correction applied): the K0 auto-loop is
+HALTED. The instrument is mechanically SOUND (all six code defects
+fixed, mutation-pinned, suite 2534) but is NOT K0-certifiable on
+available targets without solving the root-reachability tension — a
+protocol-design problem, not a code fix. The blind keys (CV $0004,
+BB $0030) remain UNSPENT and preserved. Next move is the owner's:
+(A) redesign K0 to root the sweep at interaction-adjacent cells (a
+genuine protocol revision, not another rerun), or (B) route the
+Castlevania hall to Deep Research consultation with this receipt trail
+(three blind exams, nine instrument defects, a phantom frontier, a
+struck wall class) and bank the gate-opener as sound-but-uncertified.
+No further K0 attempts without an owner decision on A vs B.
