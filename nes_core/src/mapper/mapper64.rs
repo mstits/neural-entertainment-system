@@ -3,9 +3,11 @@
 // RAMBO-1 is Tengen's MMC3-like chip used by a small set of Tengen
 // carts (Klax, Rolling Thunder, Skull & Crossbones, Road Runner,
 // Xybots, Shinobi, ...). It is register-compatible with MMC3 at
-// $8000/$8001/$A000/$A001/$C000/$C001/$E000/$E001 but adds two extra
-// bank registers (R8/R9) that enable either extra PRG banking or
-// all-1KB CHR banking, selected by bit 5 of $8000.
+// $8000/$8001/$A000/$A001/$C000/$C001/$E000/$E001 but exposes a wider
+// register file (R0..=R15). R8/R9 are two extra 1 KB CHR selectors that
+// only take effect in the all-1KB CHR mode (bit 5 of $8000). R15 is a
+// third swappable 8 KB PRG bank that joins R6/R7 in the PRG window
+// decode; the top window ($E000-$FFFF) is hardwired to the last bank.
 //
 // This implementation targets "boot + run" compatibility — bank
 // layouts follow the nesdev wiki, but the IRQ counter is implemented
@@ -23,10 +25,11 @@ pub struct Mapper64 {
     cartridge: Cartridge,
 
     // Register file. Bits 0..=3 of $8000 select which register
-    // receives the next write to $8001. Only R0..=R9 are meaningful;
-    // higher indices are silently ignored.
+    // receives the next write to $8001. All 16 indices R0..=R15 are
+    // addressable: R6/R7/R15 are the swappable 8 KB PRG banks, R0..=R5
+    // are CHR, and R8/R9 are the extra 1 KB CHR selectors.
     next_bank_register: u8,
-    bank_registers: [u8; 10],
+    bank_registers: [u8; 16],
 
     // Bit 6 of $8000: toggles which PRG slot is fixed.
     prg_rom_mode: PrgRomMode,
@@ -76,7 +79,7 @@ pub enum ChrMode {
 pub struct State {
     pub cartridge: cartridge::State,
     pub next_bank_register: u8,
-    pub bank_registers: [u8; 10],
+    pub bank_registers: [u8; 16],
     pub prg_rom_mode: PrgRomMode,
     pub chr_a12_inversion: ChrA12Inversion,
     pub chr_mode: ChrMode,
@@ -94,7 +97,7 @@ impl Mapper64 {
         let mut m = Mapper64 {
             cartridge,
             next_bank_register: 0,
-            bank_registers: [0; 10],
+            bank_registers: [0; 16],
             prg_rom_mode: PrgRomMode::Zero,
             chr_a12_inversion: ChrA12Inversion::Zero,
             chr_mode: ChrMode::OneAndTwoKb,
@@ -144,8 +147,8 @@ impl Mapper64 {
     }
 
     fn write_bank_select(&mut self, value: u8) {
-        // Bits 0..=3 pick the target register. RAMBO-1 uses R0..=R9;
-        // higher values wrap (writes to them become no-ops).
+        // Bits 0..=3 pick the target register. RAMBO-1 decodes all 16
+        // indices R0..=R15; none are dropped.
         self.next_bank_register = value & 0x0F;
 
         self.prg_rom_mode = if value & 0x40 == 0 {
@@ -171,10 +174,10 @@ impl Mapper64 {
     }
 
     fn write_bank_data(&mut self, value: u8) {
+        // next_bank_register is masked to 0..=15 on select, so every
+        // index lands inside the 16-entry register file.
         let idx = self.next_bank_register as usize;
-        if idx < self.bank_registers.len() {
-            self.bank_registers[idx] = value;
-        }
+        self.bank_registers[idx] = value;
         self.update_banks();
         self.rebuild_asm_window();
     }
@@ -194,18 +197,17 @@ impl Mapper64 {
     }
 
     fn update_banks(&mut self) {
-        // PRG. RAMBO-1 has up to four 8 KB banks selectable — R6, R7,
-        // R8, R9 — but only three slots swap at a time plus one fixed
-        // "last" bank. We follow the common RAMBO-1 layout:
+        // PRG. Three swappable 8 KB banks — R6, R7, R15 — plus one
+        // hardwired "last" bank. Bit 6 of $8000 selects the layout:
         //   mode 0 ($8000 bit 6 = 0):
-        //     $8000 = R6, $A000 = R7, $C000 = R8 (or fixed -2), $E000 = fixed -1
+        //     $8000 = R6, $A000 = R7, $C000 = R15, $E000 = last
         //   mode 1 ($8000 bit 6 = 1):
-        //     $8000 = R8 (or fixed -2), $A000 = R7, $C000 = R6, $E000 = fixed -1
-        // Simplification: treat R8 slot as second-last bank when mode
-        // puts a fixed bank there — this is what actual RAMBO-1 carts
-        // see at boot before software programs R8.
+        //     $8000 = R15, $A000 = R7, $C000 = R6, $E000 = last
+        // The mode bit only swaps R6 and R15 between the $8000 and
+        // $C000 windows; R7 stays at $A000 and the last bank stays fixed
+        // at $E000. R15 powers on at 0, which is a valid bank — there is
+        // no fixed-bank fallback outside the hardwired $E000 window.
         let last = self.prg_count().saturating_sub(1) as u8;
-        let second_last = self.prg_count().saturating_sub(2) as u8;
 
         // $E000-$FFFF is always the last 8 KB.
         self.prg_rom_bank_offsets[3] = self.prg_bank_address(last);
@@ -214,20 +216,12 @@ impl Mapper64 {
             PrgRomMode::Zero => {
                 self.prg_rom_bank_offsets[0] = self.prg_bank_address(self.bank_registers[6]);
                 self.prg_rom_bank_offsets[1] = self.prg_bank_address(self.bank_registers[7]);
-                self.prg_rom_bank_offsets[2] = self.prg_bank_address(self.bank_registers[8]);
-                // If R8 hasn't been programmed yet, fall back to
-                // second-to-last so boot vectors map somewhere sane.
-                if self.bank_registers[8] == 0 {
-                    self.prg_rom_bank_offsets[2] = self.prg_bank_address(second_last);
-                }
+                self.prg_rom_bank_offsets[2] = self.prg_bank_address(self.bank_registers[15]);
             }
             PrgRomMode::One => {
-                self.prg_rom_bank_offsets[0] = self.prg_bank_address(self.bank_registers[8]);
+                self.prg_rom_bank_offsets[0] = self.prg_bank_address(self.bank_registers[15]);
                 self.prg_rom_bank_offsets[1] = self.prg_bank_address(self.bank_registers[7]);
                 self.prg_rom_bank_offsets[2] = self.prg_bank_address(self.bank_registers[6]);
-                if self.bank_registers[8] == 0 {
-                    self.prg_rom_bank_offsets[0] = self.prg_bank_address(second_last);
-                }
             }
         }
 
@@ -434,7 +428,7 @@ impl Mapper for Mapper64 {
     fn reset(&mut self) {
         self.cartridge.mirroring = self.cartridge.default_mirroring;
         self.next_bank_register = 0;
-        self.bank_registers = [0; 10];
+        self.bank_registers = [0; 16];
         self.prg_rom_mode = PrgRomMode::Zero;
         self.chr_a12_inversion = ChrA12Inversion::Zero;
         self.chr_mode = ChrMode::OneAndTwoKb;
@@ -597,35 +591,84 @@ mod tests {
         assert_eq!(m.prg_read_byte(0xE000), 15);
     }
 
-    // A programmed R8 selects the $C000 slot in PRG mode 0.
+    // R15 (index 0x0F) is the third swappable PRG bank; in mode 0 it
+    // drives the $C000 slot. Bites: old code read R8 here, so an R15
+    // write left $C000 untouched.
     #[test]
-    fn prg_r8_maps_to_c000_in_mode0() {
+    fn prg_r15_maps_to_c000_in_mode0() {
         let mut m = Mapper64::new(stamped_cart(8, 8));
-        set_reg(&mut m, 8, 5);
+        set_reg(&mut m, 15, 5);
         assert_eq!(m.prg_read_byte(0xC000), 5);
     }
 
-    // SUSPECTED BUG: an unprogrammed R8 (value 0) is treated as "not yet
-    // set" and silently replaced by the second-to-last bank, so PRG bank
-    // 0 can never be selected into the R8 slot. This is a documented
-    // boot-time simplification in update_banks(), not real RAMBO-1
-    // behavior. The test pins the CURRENT (fallback) behavior.
+    // No fixed-bank fallback: an unprogrammed R15 (value 0) selects PRG
+    // bank 0 at $C000, not the second-to-last bank. Bites: old code
+    // rewrote the R8==0 slot to prg_count()-2 (== 14 here).
     #[test]
-    fn unprogrammed_r8_falls_back_to_second_last() {
-        let mut m = Mapper64::new(stamped_cart(8, 8)); // second-last = 14
-        assert_eq!(m.prg_read_byte(0xC000), 14);
+    fn unprogrammed_r15_selects_bank_zero() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        assert_eq!(m.prg_read_byte(0xC000), 0);
     }
 
-    // PRG mode 1 swaps the $8000 and $C000 roles: R6 moves to $C000.
+    // R15 write reaches the register file: old code dropped indices >= 10
+    // (or forced the slot to a fixed bank), so bank 6 never appeared.
     #[test]
-    fn prg_mode_one_moves_r6_to_c000() {
+    fn prg_r15_write_is_not_dropped() {
         let mut m = Mapper64::new(stamped_cart(8, 8));
-        set_reg(&mut m, 6, 3);
+        set_reg(&mut m, 15, 6);
+        assert_eq!(m.prg_read_byte(0xC000), 6);
+    }
+
+    // PRG mode 1 swaps the $8000 and $C000 roles: R6 moves to $C000 and
+    // R15 moves to $8000. Bites: old code put R8 (not R15) at $8000 in
+    // mode 1, and applied an R8==0 fallback there.
+    #[test]
+    fn prg_mode_one_swaps_r6_and_r15() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 6, 3); // R6 -> 3
+        set_reg(&mut m, 15, 5); // R15 -> 5
         assert_eq!(m.prg_read_byte(0x8000), 3); // R6 at $8000 in mode 0
+        assert_eq!(m.prg_read_byte(0xC000), 5); // R15 at $C000 in mode 0
         // Flip to mode 1 without reprogramming any bank register.
         m.prg_write_byte(BANK_SELECT, PRG_MODE_ONE);
+        assert_eq!(m.prg_read_byte(0x8000), 5); // R15 now at $8000
         assert_eq!(m.prg_read_byte(0xC000), 3); // R6 now at $C000
+        assert_eq!(m.prg_read_byte(0xA000), 0); // R7 unmoved (== 0)
         assert_eq!(m.prg_read_byte(0xE000), 15); // last bank still fixed
+    }
+
+    // The fixed $E000 bank never moves with the PRG mode bit. Bites any
+    // regression that lets the mode toggle disturb the top window.
+    #[test]
+    fn e000_fixed_last_in_both_modes() {
+        let mut m = Mapper64::new(stamped_cart(8, 8)); // last = 15
+        assert_eq!(m.prg_read_byte(0xE000), 15); // mode 0
+        m.prg_write_byte(BANK_SELECT, PRG_MODE_ONE);
+        assert_eq!(m.prg_read_byte(0xE000), 15); // mode 1
+    }
+
+    // R8/R9 are CHR-only: writing them must not disturb any PRG window.
+    // Bites: old code read R8 into the $C000 (mode 0) / $8000 (mode 1)
+    // PRG slot, so an R8 write moved PRG banks.
+    #[test]
+    fn r8_r9_do_not_affect_prg_decode() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 6, 3); // R6 -> $8000
+        set_reg(&mut m, 7, 4); // R7 -> $A000
+        set_reg(&mut m, 15, 5); // R15 -> $C000
+        let (p8, pa, pc, pe) = (
+            m.prg_read_byte(0x8000),
+            m.prg_read_byte(0xA000),
+            m.prg_read_byte(0xC000),
+            m.prg_read_byte(0xE000),
+        );
+        // Hammer R8 and R9 with distinctive values.
+        set_reg(&mut m, 8, 12);
+        set_reg(&mut m, 9, 13);
+        assert_eq!(m.prg_read_byte(0x8000), p8);
+        assert_eq!(m.prg_read_byte(0xA000), pa);
+        assert_eq!(m.prg_read_byte(0xC000), pc);
+        assert_eq!(m.prg_read_byte(0xE000), pe);
     }
 
     // A PRG bank index larger than the ROM wraps (masked mod bank count)
@@ -688,6 +731,28 @@ mod tests {
         let mut m = Mapper64::new(stamped_cart(8, 8));
         set_reg(&mut m, CHR_ALL_1KB | 8, 9); // select R8 in all-1 KB mode
         assert_eq!(m.chr_read_byte(0x0400), 9);
+    }
+
+    // In all-1 KB mode R9 fills the $0C00 slot (its extra 1 KB bank).
+    #[test]
+    fn chr_all_1kb_r9_fills_fourth_slot() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, CHR_ALL_1KB | 9, 11); // select R9 in all-1 KB mode
+        assert_eq!(m.chr_read_byte(0x0C00), 11);
+    }
+
+    // R8/R9 are CHR selectors gated by the K-bit ($8000 bit 5): with the
+    // K-bit clear (1 KB+2 KB CHR mode) they feed no CHR window, so the
+    // $0400/$0C00 slots follow R0/R1's 2 KB pairs, not R8/R9.
+    #[test]
+    fn chr_r8_r9_inert_without_k_bit() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 0, 5); // R0 pair -> banks 4/5
+        set_reg(&mut m, 1, 3); // R1 pair -> banks 2/3
+        set_reg(&mut m, 8, 12); // K-bit clear: R8 write must not surface
+        set_reg(&mut m, 9, 13); // K-bit clear: R9 write must not surface
+        assert_eq!(m.chr_read_byte(0x0400), 5); // R0 | 1, not R8
+        assert_eq!(m.chr_read_byte(0x0C00), 3); // R1 | 1, not R9
     }
 
     // CHR bank index wraps mod the CHR bank count.
@@ -811,6 +876,29 @@ mod tests {
         assert_eq!(m.irq_latch, 9);
     }
 
+    // get_state/apply_state must preserve the full 16-entry register file
+    // (R0..=R15), including R15. Bites: with a [u8; 10] state, R10..=R15
+    // could not be serialized and R15 would be lost across a round-trip.
+    #[test]
+    fn state_round_trip_all_sixteen_registers() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        for r in 0u8..16 {
+            set_reg(&mut m, r, 0x10 + r); // distinct value per register
+        }
+        let snap = m.get_state();
+
+        // Clear every register away from the snapshot.
+        for r in 0u8..16 {
+            set_reg(&mut m, r, 0);
+        }
+        assert_eq!(m.bank_registers, [0u8; 16]);
+
+        m.apply_state(&snap);
+        for r in 0..16usize {
+            assert_eq!(m.bank_registers[r], 0x10 + r as u8);
+        }
+    }
+
     // reset() returns to the documented power-on bank layout and default
     // mirroring, and clears any pending IRQ.
     #[test]
@@ -824,7 +912,7 @@ mod tests {
 
         m.reset();
         assert_eq!(m.prg_read_byte(0x8000), 0); // R6 == 0 -> bank 0
-        assert_eq!(m.prg_read_byte(0xC000), 14); // R8 fallback second-last
+        assert_eq!(m.prg_read_byte(0xC000), 0); // R15 == 0 -> bank 0 (no fallback)
         assert_eq!(m.prg_read_byte(0xE000), 15); // last bank fixed
         assert_eq!(m.mirroring(), Mirroring::Horizontal); // default
         assert!(!m.irq_pending());
