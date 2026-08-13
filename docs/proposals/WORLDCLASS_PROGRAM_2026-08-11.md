@@ -54,7 +54,15 @@ this backlog directly.*
 - **Wave 2 (3be9f4d, 2026-08-12)** — mapper test coverage: 27 untested
   mappers now have 294 biting tests (lib suite 214 → 508 green). Surfaced
   **7 suspected implementation defects** (below) — filed, not fixed, so
-  the suite stayed green. This is the NEXT actionable list.
+  the suite stayed green.
+- **Wave 3 (1eba6e1 / 23cf9d5, 2026-08-12)** — fixed 3 of the 7 (VRC6
+  expansion audio forwarding [HIGH, demo-audible], AxROM OOB mask, mapper34
+  guard); diagnosed the other 4 as unsafe-to-fix-blind (2 DR dossiers
+  submitted). Gated cargo 511 / make test 2538 / pool-test 546.
+- **Wave 4 (4abd0df / 5ab0b1b, 2026-08-12)** — PPU/APU/CPU coverage: +65
+  tests (cpu.rs 1 → 30), lib 511 → 576. Surfaced + FIXED a latent APU DMC
+  bug (pointer wrap used `+= 1`, panics under overflow-checks; now
+  wrapping_add — release byte-identical).
 
 ## MAPPER DEFECTS SURFACED BY WAVE 2 — DISPOSITION (Wave 3, 2026-08-12)
 
