@@ -517,10 +517,44 @@ step is larger than one focused session; no step changes behavior.
   pattern: relocate bodies into the module, thin shim for direct-call
   tests, retarget the golden's source-string anchors to the new module
   (C0 doesn't source-anchor → stays the untouched behavioral proof).
-- **Task 2 PPOUpdater — IN PROGRESS.** SCOPE CORRECTION vs the plan: the
-  update region is no longer the "cleanest boundary" — PR-MDP (~6040),
-  CGSA (~6117), backward-curriculum (~6669), and the PR-MDP adversary
-  update (~7591) are now woven in, and are DISABLED in the tile-vanilla
-  golden profile → NOT net-covered. Task 2 is scoped to the net-covered
-  core (fold→GAE→adv-norm→K-epoch→NaN backstop); PR-MDP/CGSA/backward stay
-  in the conductor until the net is extended to cover them.
+- **Task 2 PPOUpdater — DONE (24fe36a).** Scope-corrected: net-covered core
+  (fold→GAE→adv-norm→K-epoch→NaN backstop) → ppo_updater.py (515 lines),
+  trainer.py −385. PR-MDP/CGSA/backward left in conductor. (Net later
+  EXTENDED — 84c7162 — with PR-MDP/CGSA/backward goldens so they're covered.)
+- **Task 3 ExplorationController — DONE (9176193, partial).** RND lifecycle
+  + count_bonus + generic Go-Explore archive → exploration_controller.py
+  (234 lines), trainer.py −106. The Go-Explore unstick burst hit the
+  entanglement wall (mutates Curriculum state) and stayed in the conductor.
+- **Task 4 Curriculum — DONE (9b052ea, partial) + INSEPARABILITY PROVEN.**
+  Only the disk-load leaf moved (→ Curriculum class in curriculum.py),
+  trainer.py −91. The core (capture/advance/warm-start) is INSEPARABLE from
+  the un-extracted RolloutCollector: env_stage & stage_seed_results are
+  co-written by curriculum decisions AND collector mechanics in the same
+  statements. Tasks 4&5 must be extracted TOGETHER, after a TrainingKnobs
+  value object + maybe_rollback seam (both absent).
+
+## 10. DECISION 2026-08-13 — bank at 4/6; defer Tasks 5 & 6 by design
+
+A 5-lens review cohort + synthesis decided (A=3 in-frame, C=2 wider-frame,
+B=0): **bank the refactor here and pivot to the product frontier.** Not
+abandonment — disciplined deferral.
+
+- trainer.py 9960 → 9168 (−792). Four collaborators extracted and wired
+  live (CheckpointManager, PPOUpdater, ExplorationController, Curriculum
+  disk-load). The C0–C5 + PR-MDP/CGSA/backward golden net is INTACT and
+  every task is independently revertable. This is an HONEST resting point:
+  4 golden-pinned modules + a documented, provably-inseparable rollout/
+  curriculum core.
+- **Task 6 (__init__ config-wiring + builders) — deferred.** Low-risk but
+  ORTHOGONAL to the product loop; deferrable at identical cost forever
+  (the Task-0.5 configs import nowhere, so they cannot drift into a bug —
+  the "rot" is cosmetic). Do it OPPORTUNISTICALLY the next time __init__ is
+  genuinely touched. When done: write tests/test_char_config_parse.py FIRST
+  (assert the wired __init__ reproduces byte-identical self.* for ≥2 real
+  profiles incl. a non-tile pixel config), then diff-review that trainer.py
+  SHRANK and the inline profile.get lines are DELETED (Task-1 anti-facade).
+- **Task 5 / the combined core (Curriculum + RolloutCollector) — deferred.**
+  RESUME DISCIPLINE = **EXTRACT-ON-TOUCH**: the next product edit of
+  _run_vanilla_ppo pays B's down-payment by landing TrainingKnobs + the
+  maybe_rollback seam first, so the inseparable-core extraction rides a
+  change we were already making rather than a cold invasive pass.
