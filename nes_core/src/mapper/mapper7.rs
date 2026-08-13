@@ -26,20 +26,22 @@ impl Mapper7 {
         m
     }
 
+    fn prg_32k_bank_count(&self) -> usize {
+        (self.cartridge.prg_rom.len() / 0x8000).max(1)
+    }
+
     fn rebuild_asm_window(&mut self) {
-        let bank_off = (self.prg_rom_bank as usize) * 0x8000;
+        let bank = (self.prg_rom_bank as usize) % self.prg_32k_bank_count();
+        let bank_off = bank * 0x8000;
         let prg = &self.cartridge.prg_rom;
         if bank_off + 0x8000 <= prg.len() {
             self.prg_asm_window.copy_from_slice(&prg[bank_off..bank_off + 0x8000]);
         }
     }
 
-    fn prg_rom_address(bank: u8, address: u16) -> usize {
-        (bank as usize * 0x8000) | (address as usize & 0x7FFF)
-    }
-
     fn read_prg_rom(&self, address: u16) -> u8 {
-        let rom_addr = Mapper7::prg_rom_address(self.prg_rom_bank, address);
+        let bank = (self.prg_rom_bank as usize) % self.prg_32k_bank_count();
+        let rom_addr = (bank * 0x8000) | (address as usize & 0x7FFF);
         self.cartridge.prg_rom[rom_addr]
     }
 }
@@ -173,11 +175,7 @@ mod tests {
     }
 
     // On a cart smaller than the 3-bit bank select can address, an in-range
-    // bank still maps correctly. read_prg_rom() does NOT mask the bank index
-    // against prg_rom length (rebuild_asm_window guards, the peek path does
-    // not), so a write of a bank >= the bank count would index out of bounds
-    // and panic. Documented here, not exercised, to keep the suite green.
-    // SUSPECTED BUG: Mapper7::read_prg_rom lacks a bank-count wrap/mask.
+    // bank still maps correctly.
     #[test]
     fn axrom_small_rom_in_range_bank() {
         let mut cart = test_cart(8, 1); // 128 KB = 4 x 32 KB banks
@@ -185,6 +183,21 @@ mod tests {
         let mut m = Mapper7::new(cart);
         m.prg_write_byte(0x8000, 3); // highest in-range bank
         assert_eq!(m.prg_read_byte(0x8000), 0xA3);
+    }
+
+    // On a cart smaller than 256 KB, a bank select whose value exceeds the
+    // real bank count wraps modulo that count instead of indexing past the
+    // ROM. Before the mask, read_prg_rom computed bank * 0x8000 straight
+    // into prg_rom and this panicked out of bounds.
+    #[test]
+    fn axrom_small_rom_bank_wraps() {
+        let mut cart = test_cart(8, 1); // 128 KB = 4 x 32 KB banks
+        stamp_prg32_banks(&mut cart);
+        let mut m = Mapper7::new(cart);
+        m.prg_write_byte(0x8000, 6); // 6 & 0x07 == 6, 6 % 4 == 2
+        assert_eq!(m.prg_read_byte(0x8000), 0xA2);
+        m.prg_write_byte(0x8000, 5); // 5 % 4 == 1
+        assert_eq!(m.prg_read_byte(0x8000), 0xA1);
     }
 
     // Bit 4 clear selects the single-screen lower nametable.

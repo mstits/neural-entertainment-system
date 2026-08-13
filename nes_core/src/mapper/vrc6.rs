@@ -326,6 +326,11 @@ impl Mapper for Vrc6 {
         self.irq_pending
     }
 
+    fn uses_scanline_irq(&self) -> bool {
+        // on_scanline_tick clocks a real per-scanline IRQ counter.
+        true
+    }
+
     fn tick_audio(&mut self) {
         self.audio.tick_cpu_cycle();
     }
@@ -420,8 +425,17 @@ macro_rules! forward_vrc6 {
             fn on_scanline_tick(&mut self) {
                 self.0.on_scanline_tick()
             }
+            fn uses_scanline_irq(&self) -> bool {
+                self.0.uses_scanline_irq()
+            }
             fn irq_pending(&self) -> bool {
                 self.0.irq_pending()
+            }
+            fn tick_audio(&mut self) {
+                self.0.tick_audio()
+            }
+            fn audio_mix(&self) -> f32 {
+                self.0.audio_mix()
             }
             fn prg_asm_ptr(&self) -> Option<*const u8> {
                 self.0.prg_asm_ptr()
@@ -714,36 +728,44 @@ mod tests {
         assert!(s.audio_mix() > 0.0);
     }
 
-    // SUSPECTED BUG: the forward_vrc6! macro does not forward tick_audio
-    // or audio_mix, so the VRC6 extra sound channels (2 pulse + saw) are
-    // silent when the mapper is driven through the Mapper24/Mapper26
-    // wrapper — which is the variant MapperEnum actually dispatches. The
-    // inner Vrc6 wires them correctly (see the test above); the wrapper
-    // falls back to the trait's no-op defaults. This documents the
-    // current (silent) behavior; a passing assertion here is NOT correct
-    // output.
+    // The forward_vrc6! macro forwards tick_audio and audio_mix to the
+    // inner Vrc6, so the VRC6 extra sound channels (2 pulse + saw) play
+    // when the mapper is driven through the Mapper24/Mapper26 wrapper —
+    // which is the variant MapperEnum actually dispatches. Without the
+    // forwarding these fall back to the trait's no-op defaults and stay
+    // silent; the pulse assertion below bites that regression.
     #[test]
-    fn mapper24_wrapper_does_not_forward_audio() {
+    fn mapper24_wrapper_forwards_audio() {
         let mut m = Mapper24::new(mk_cart(2, 1));
-        m.prg_write_byte(0x9000, 0x8F);
-        m.prg_write_byte(0x9002, 0x80);
-        assert_eq!(m.audio_mix(), 0.0); // would be 0.2 if forwarded
-        m.prg_write_byte(0xB000, 0x20);
-        m.prg_write_byte(0xB002, 0x80);
-        for _ in 0..8 {
-            m.tick_audio(); // no-op through the wrapper
-        }
-        assert_eq!(m.audio_mix(), 0.0);
+        m.prg_write_byte(0x9000, 0x8F); // pulse 1: volume 15, PCM mode
+        m.prg_write_byte(0x9002, 0x80); // enable
+        assert!((m.audio_mix() - 0.2).abs() < 1e-4); // 0.0 if not forwarded
     }
 
-    // SUSPECTED BUG (low severity, diagnostic-only): neither Vrc6 nor the
-    // forward_vrc6! wrapper overrides uses_scanline_irq, so it reports
-    // false even though on_scanline_tick clocks a real per-scanline IRQ
-    // counter. Only the gated ppu_batch_stats diagnostic consults this,
-    // never the hot path. Documenting current behavior.
+    // tick_audio must reach the inner sawtooth through the wrapper. Left
+    // at the trait no-op default the sawtooth never advances and audio_mix
+    // stays 0.0; forwarding lets it rise from silence.
     #[test]
-    fn uses_scanline_irq_reports_false_despite_scanline_counter() {
+    fn mapper24_wrapper_forwards_tick_audio_sawtooth() {
+        let mut m = Mapper24::new(mk_cart(2, 1));
+        m.prg_write_byte(0xB000, 0x20); // sawtooth rate
+        m.prg_write_byte(0xB001, 0x00); // period lo 0 (fast)
+        m.prg_write_byte(0xB002, 0x80); // enable, period hi 0
+        assert_eq!(m.audio_mix(), 0.0);
+        for _ in 0..8 {
+            m.tick_audio(); // advances the inner sawtooth when forwarded
+        }
+        assert!(m.audio_mix() > 0.0); // stays 0.0 if tick_audio is a no-op
+    }
+
+    // uses_scanline_irq reports true because on_scanline_tick clocks a
+    // real per-scanline IRQ counter, and the wrapper forwards it. Only
+    // the gated ppu_batch_stats diagnostic consults this, never the hot
+    // path. Without the override/forward it would report the trait's
+    // false default.
+    #[test]
+    fn uses_scanline_irq_true_when_scanline_counter_present() {
         let m = Mapper24::new(mk_cart(2, 1));
-        assert!(!m.uses_scanline_irq());
+        assert!(m.uses_scanline_irq());
     }
 }

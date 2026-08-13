@@ -68,9 +68,13 @@ impl Mapper for Mapper34 {
         if address < 0x8000 {
             return 0;
         }
+        let prg = &self.cartridge.prg_rom;
+        if prg.is_empty() {
+            return 0;
+        }
         let bank = (self.prg_bank as usize) % self.prg_banks_count();
         let off = bank * 0x8000 | (address as usize & 0x7FFF);
-        self.cartridge.prg_rom[off]
+        prg[off & (prg.len() - 1)]
     }
 
     fn prg_write_byte(&mut self, address: u16, value: u8) {
@@ -275,6 +279,22 @@ mod tests {
         m.prg_write_byte(0x7FFE, 5);
         m.prg_write_byte(0x7FFF, 6);
         assert_eq!(m.chr_read_byte(0x0100), 0xEE);
+    }
+
+    // BNROM with a sub-32 KB PRG: the $C000-$FFFF half of the window has
+    // no backing byte at bank*0x8000 | (addr & 0x7FFF), so an unguarded
+    // index panics out of bounds. The read must wrap into the ROM (NROM-128
+    // style mirror) and return a valid byte instead.
+    #[test]
+    fn bnrom_sub_32k_prg_read_wraps_no_panic() {
+        let mut c = cart(1, 1); // 16 KB PRG (sub-32 KB), single CHR bank
+        c.prg_rom[0] = 0x5A;
+        let m = Mapper34::new(c);
+        assert_eq!(m.prg_peek_byte(0x8000), 0x5A);
+        // 0xC000 & 0x7FFF == 0x4000, past the 16 KB ROM: wraps to offset 0.
+        assert_eq!(m.prg_peek_byte(0xC000), 0x5A);
+        // Highest address must also stay in bounds rather than panic.
+        let _ = m.prg_peek_byte(0xFFFF);
     }
 
     // ---- NINA-001 (>= 2 CHR banks) ----
