@@ -10,15 +10,20 @@
 //   $5000-$57FF: IRQ counter low 8 bits
 //   $5800-$5FFF: IRQ counter high 7 bits + enable
 //   $6000-$7FFF: optional PRG RAM (write protect via $F800)
-//   $8000-$B7FF: 8× 1 KB CHR bank registers (bank value 0x00-0xDF = CHR ROM,
-//                0xE0-0xFF = nametable RAM when enabled)
-//   $B800-$BFFF: nametable 0 bank (advanced mode)
-//   $C000-$C7FF: nametable 1 bank
-//   $C800-$CFFF: nametable 2 bank
-//   $D000-$D7FF: nametable 3 bank
-//   $E000-$E7FF: PRG bank for $8000 + sound enable bit
-//   $E800-$EFFF: PRG bank for $A000 + PRG RAM high-byte flag
-//   $F000-$F7FF: PRG bank for $C000
+//   $8000-$BFFF: 8× 1 KB CHR bank registers, decoded in uniform 2 KiB
+//                steps — slot n at $8000 + n*$0800, so reg 7 is $B800-$BFFF
+//                (bank value 0x00-0xDF = CHR ROM, 0xE0-0xFF = nametable RAM
+//                when enabled)
+//   $C000-$C7FF: nametable 0 bank
+//   $C800-$CFFF: nametable 1 bank
+//   $D000-$D7FF: nametable 2 bank
+//   $D800-$DFFF: nametable 3 bank
+//   $E000-$E7FF: PRG bank for $8000 — bits 0-5 select the page, bit 6 halts
+//                the sound engine (not part of the page index)
+//   $E800-$EFFF: PRG bank for $A000 — bits 0-5 select the page, bits 6-7 gate
+//                CHR-RAM (not part of the page index)
+//   $F000-$F7FF: PRG bank for $C000 — bits 0-5 select the page, bits 6-7 are
+//                pin logic (not part of the page index)
 //   $F800-$FFFF: sound register select + PRG RAM protection
 
 use crate::cartridge::{self, Cartridge, Mirroring};
@@ -145,26 +150,28 @@ impl Mapper for Mapper19 {
                     }
                 }
             }
-            0x8000..=0xB7FF => {
+            0x8000..=0xBFFF => {
+                // Eight CHR bank registers, one per 2 KiB CPU window; reg 7
+                // lives at $B800-$BFFF and drives PPU pattern slot 7.
                 let slot = ((address - 0x8000) / 0x0800) as usize;
                 if slot < 8 {
                     self.chr_banks[slot] = value;
                 }
             }
-            0xB800..=0xBFFF => self.nt_banks[0] = value,
-            0xC000..=0xC7FF => self.nt_banks[1] = value,
-            0xC800..=0xCFFF => self.nt_banks[2] = value,
-            0xD000..=0xD7FF => self.nt_banks[3] = value,
+            0xC000..=0xC7FF => self.nt_banks[0] = value,
+            0xC800..=0xCFFF => self.nt_banks[1] = value,
+            0xD000..=0xD7FF => self.nt_banks[2] = value,
+            0xD800..=0xDFFF => self.nt_banks[3] = value,
             0xE000..=0xE7FF => {
-                self.prg_banks[0] = value;
+                self.prg_banks[0] = value & 0x3F;
                 self.rebuild_asm_window();
             }
             0xE800..=0xEFFF => {
-                self.prg_banks[1] = value;
+                self.prg_banks[1] = value & 0x3F;
                 self.rebuild_asm_window();
             }
             0xF000..=0xF7FF => {
-                self.prg_banks[2] = value;
+                self.prg_banks[2] = value & 0x3F;
                 self.rebuild_asm_window();
             }
             0xF800..=0xFFFF => {
@@ -451,18 +458,47 @@ mod tests {
         assert_eq!(m.prg_read_byte(0x5800) & 0x80, 0); // enable bit cleared
     }
 
-    // Documents the current register map: $B800 writes nametable slot 0, not
-    // CHR bank register 7, so CHR pattern slot 7 ($1C00-$1FFF) stays on its
-    // power-on bank and cannot be re-banked.
-    // SUSPECTED BUG: on real N163 hardware $B800 is CHR bank register 7 and
-    // the four nametable registers begin at $C000 ($C000/$C800/$D000/$D800).
-    // Here they are shifted one slot low ($B800/$C000/$C800/$D000), leaving
-    // CHR register 7 unreachable.
+    // $B800-$BFFF is CHR bank register 7 (PPU pattern slot 7 at $1C00-$1FFF),
+    // not a nametable register; slot 7 must be re-bankable and nametable 0 must
+    // stay untouched. (Old shifted decode routed $B800 to nt_banks[0].)
     #[test]
-    fn b800_writes_nametable_not_chr_slot7() {
+    fn b800_writes_chr_reg7_not_nametable() {
         let mut m = build();
         m.prg_write_byte(0xB800, 0x0A);
-        assert_eq!(m.nt_banks[0], 0x0A);
-        assert_eq!(m.chr_read_byte(0x1C00), 0); // slot 7 unchanged
+        assert_eq!(m.chr_banks[7], 0x0A); // CHR bank register 7
+        assert_eq!(m.chr_read_byte(0x1C00), 0x0A); // visible at PPU $1C00
+        assert_eq!(m.nt_banks[0], 0); // nametable 0 left alone
+    }
+
+    // Nametable registers 0-3 are addressed at $C000/$C800/$D000/$D800.
+    // (Old decode shifted these one slot low, so every reg landed wrong.)
+    #[test]
+    fn nametable_regs_map_c000_through_d800() {
+        let mut m = build();
+        m.prg_write_byte(0xC000, 0x10);
+        m.prg_write_byte(0xC800, 0x11);
+        m.prg_write_byte(0xD000, 0x12);
+        m.prg_write_byte(0xD800, 0x13);
+        assert_eq!(m.nt_banks, [0x10, 0x11, 0x12, 0x13]);
+    }
+
+    // $D800-$DFFF drives nametable register 3; the old decode left this range
+    // unmatched, so the write was silently dropped.
+    #[test]
+    fn d800_sets_nametable_reg3_not_noop() {
+        let mut m = build();
+        m.prg_write_byte(0xD800, 0x2A);
+        assert_eq!(m.nt_banks[3], 0x2A);
+    }
+
+    // PRG bank registers keep only bits 0-5; the sound-halt / CHR-RAM / pin
+    // bits (6-7) must not leak into the selected 8 KB page.
+    #[test]
+    fn prg_reg_masks_to_six_bits() {
+        let mut m = build();
+        m.prg_write_byte(0xE000, 0xC7); // bits 6,7 set on top of page 7
+        assert_eq!(m.prg_banks[0], 0x07); // high bits stripped at the register
+        // ...and it selects the same page as writing bits 0-5 alone.
+        assert_eq!(m.prg_read_byte(0x8000), 7);
     }
 }
