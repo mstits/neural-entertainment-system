@@ -1,0 +1,33 @@
+{
+  "net_checksum": "0ce6772209880317ae0d39ed231fd37f",
+  "n_ppo_rows": 3,
+  "seq": [
+    {
+      "generation": 0.0,
+      "ppo_loss": 0.037273891270160675,
+      "ppo_policy_loss": 0.04781022667884827,
+      "ppo_value_loss": 0.003966577351093292,
+      "ppo_entropy": 1.7901479005813599,
+      "best_fitness": 0.0,
+      "avg_fitness": 0.0
+    },
+    {
+      "generation": 1.0,
+      "ppo_loss": 0.07054932415485382,
+      "ppo_policy_loss": 0.08746878057718277,
+      "ppo_value_loss": 0.002038294216617942,
+      "ppo_entropy": 1.7887388467788696,
+      "best_fitness": 0.0,
+      "avg_fitness": 0.0
+    },
+    {
+      "generation": 2.0,
+      "ppo_loss": -0.05315134674310684,
+      "ppo_policy_loss": -0.03582464158535004,
+      "ppo_value_loss": 0.0002618065045680851,
+      "ppo_entropy": 1.785706877708435,
+      "best_fitness": 0.0,
+      "avg_fitness": 0.0
+    }
+  ]
+}
