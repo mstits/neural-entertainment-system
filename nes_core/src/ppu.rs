@@ -3942,3 +3942,340 @@ mod advance_equivalence_tests {
         assert_eq!(pred_off, None);
     }
 }
+
+#[cfg(test)]
+mod ppu_coverage_tests {
+    use super::*;
+    use crate::cartridge::{Cartridge, Mirroring};
+
+    // Minimal NROM cart (32 KB PRG, 8 KB CHR of zeros; flags6=0 -> the
+    // default Horizontal mirroring) so the mapper can back CHR/mirror
+    // resolution for the memory-map path.
+    fn nrom_mapper() -> MapperEnum {
+        let mut rom = Vec::new();
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // 32 KB PRG
+        rom.push(1); // 8 KB CHR
+        rom.extend_from_slice(&[0u8; 10]);
+        rom.extend(vec![0u8; 32 * 1024]);
+        rom.extend(vec![0u8; 8 * 1024]);
+        let cart = Cartridge::load(&mut std::io::Cursor::new(rom)).unwrap();
+        MapperEnum::from_cartridge(cart)
+    }
+
+    // ---- Gap 1: VRAM read buffer semantics -------------------------------
+
+    // A $2007 read in the $0000-$3EFF range returns the PREVIOUS buffer
+    // contents (one-read delay) and then refills the buffer with the byte
+    // at the current VRAM address. Bites if the buffered/return order is
+    // swapped so the read returns the freshly-fetched byte immediately.
+    #[test]
+    fn ppudata_nametable_read_is_one_read_delayed() {
+        let mut ppu = Ppu::new();
+        let mut mapper = nrom_mapper();
+        // Page-0 nametable maps 1:1 to VRAM offsets 0 and 1 under both
+        // Horizontal and Vertical, so these bytes are deterministic.
+        ppu.mem.vram.write_byte(0, 0xAB);
+        ppu.mem.vram.write_byte(1, 0xCD);
+        ppu.regs.v = 0x2000;
+        ppu.ppu_data_read_buffer = 0x11; // stale seed
+
+        let first = ppu.read_ppu_data_byte(&mut mapper);
+        assert_eq!(first, 0x11, "first read must return the stale buffer, not $2000's byte");
+        // Buffer now holds $2000's byte; v advanced to $2001.
+        let second = ppu.read_ppu_data_byte(&mut mapper);
+        assert_eq!(second, 0xAB, "second read returns what the first read buffered");
+    }
+
+    // A $2007 read in the palette range $3F00-$3FFF returns the palette
+    // byte IMMEDIATELY (no one-read delay) but still refills the buffer
+    // with the nametable byte "underneath" (address - $1000). Bites if
+    // the palette branch is dropped (would return the stale buffer) or if
+    // the underneath refill reads the wrong address.
+    #[test]
+    fn ppudata_palette_read_is_immediate_and_buffers_underneath() {
+        let mut ppu = Ppu::new();
+        let mut mapper = nrom_mapper();
+        // $2F00 mirrors to physical VRAM 0x700 under Horizontal/Vertical.
+        ppu.mem.vram.write_byte(0x700, 0x5C);
+        ppu.mem.palette_ram.write_byte(0x3F00, 0x2A);
+        ppu.regs.v = 0x3F00;
+        ppu.ppu_data_read_buffer = 0x77; // stale seed that must be ignored
+
+        let val = ppu.read_ppu_data_byte(&mut mapper);
+        assert_eq!(val, 0x2A, "palette read returns immediately, no one-read delay");
+        assert_eq!(
+            ppu.ppu_data_read_buffer, 0x5C,
+            "palette read refills the buffer from the mirrored nametable underneath ($2F00)"
+        );
+    }
+
+    // ---- Gap 2: address auto-increment (1 vs 32) -------------------------
+
+    // PPUCTRL bit 2 clear -> $2007 access advances the VRAM address by 1.
+    #[test]
+    fn ppudata_increment_by_one_when_ctrl_bit2_clear() {
+        let mut ppu = Ppu::new();
+        let mut mapper = nrom_mapper();
+        *ppu.regs.ppu_ctrl = 0x00; // bit 2 clear -> +1
+        ppu.regs.v = 0x2000;
+        ppu.read_ppu_data_byte(&mut mapper);
+        assert_eq!(ppu.regs.v, 0x2001, "increment must be +1 with PPUCTRL bit 2 clear");
+    }
+
+    // PPUCTRL bit 2 set -> $2007 access advances the VRAM address by 32.
+    #[test]
+    fn ppudata_increment_by_thirtytwo_when_ctrl_bit2_set() {
+        let mut ppu = Ppu::new();
+        let mut mapper = nrom_mapper();
+        *ppu.regs.ppu_ctrl = 0x04; // bit 2 set -> +32
+        ppu.regs.v = 0x2000;
+        ppu.read_ppu_data_byte(&mut mapper);
+        assert_eq!(ppu.regs.v, 0x2020, "increment must be +32 with PPUCTRL bit 2 set");
+    }
+
+    // The increment also applies on a $2007 WRITE, not just reads.
+    #[test]
+    fn ppudata_write_also_increments_address() {
+        let mut ppu = Ppu::new();
+        let mut mapper = nrom_mapper();
+        *ppu.regs.ppu_ctrl = 0x04; // +32
+        ppu.regs.v = 0x2100;
+        ppu.write_ppu_data_byte(&mut mapper, 0x55);
+        assert_eq!(ppu.regs.v, 0x2120, "a $2007 write must advance v by the configured stride");
+    }
+
+    // ---- Gap 3: increment wrap / address-bus fold ------------------------
+
+    // With rendering disabled the $2007 stride is a plain arithmetic add:
+    // stepping +32 walks coarse-Y past 29 and 30 into the attribute region
+    // and only rolls the nametable-select bit on natural carry — it does
+    // NOT apply the rendering-time coarse-Y=29 skip. Bites if the plain
+    // increment is ever routed through the inc_y wrap helper.
+    #[test]
+    fn nonrendering_increment_walks_rows_without_coarse_y_skip() {
+        let mut ppu = Ppu::new();
+        *ppu.regs.ppu_ctrl = 0x04; // +32 (one row per step)
+        assert!(!ppu.rendering_enabled(), "test assumes rendering off");
+        ppu.regs.v = 0x2000 | (29u16 << 5); // coarse-Y = 29
+        ppu.inc_ppu_addr();
+        assert_eq!(ppu.regs.v, 0x2000 | (30u16 << 5), "+32 walks coarse-Y 29 -> 30, no skip");
+        ppu.inc_ppu_addr();
+        assert_eq!(ppu.regs.v, 0x2000 | (31u16 << 5), "+32 walks coarse-Y 30 -> 31");
+        ppu.inc_ppu_addr();
+        assert_eq!(ppu.regs.v, 0x2400, "coarse-Y 31 + 32 carries into the nametable-select bit");
+    }
+
+    // The PPU address bus is 14 bits: MemMap folds any access mod $4000.
+    // Bites if the top-level `& 0x3FFF` mask is widened/removed (a
+    // $6800 access would then miss the $2800 physical byte, or panic).
+    #[test]
+    fn ppu_address_bus_folds_mod_0x4000() {
+        let mut ppu = Ppu::new();
+        let mut mapper = nrom_mapper();
+        ppu.mem.write_byte(&mut mapper, 0x2800, 0x9E);
+        let wrapped = ppu.mem.read_byte(&mut mapper, 0x6800); // 0x6800 & 0x3FFF == 0x2800
+        assert_eq!(wrapped, 0x9E, "PPU address bus must fold accesses mod $4000");
+    }
+
+    // ---- Gap 4: palette mirroring ($3F10/$14/$18/$1C -> $3F00/$04/$08/$0C)
+
+    // The universal-backdrop entries at $3F10/$3F14/$3F18/$3F1C alias the
+    // backdrops at $3F00/$3F04/$3F08/$3F0C. Bites if the branchless mirror
+    // fold in PaletteRam::index drops or mis-targets bit 4.
+    #[test]
+    fn palette_backdrop_entries_mirror_to_lower_half() {
+        for (mirror, base) in [
+            (0x3F10u16, 0x3F00u16),
+            (0x3F14, 0x3F04),
+            (0x3F18, 0x3F08),
+            (0x3F1C, 0x3F0C),
+        ] {
+            let mut ppu = Ppu::new();
+            ppu.mem.palette_ram.write_byte(base, 0x0A);
+            ppu.mem.palette_ram.write_byte(mirror, 0x15); // must alias `base`
+            assert_eq!(
+                ppu.mem.palette_ram.read_byte(base), 0x15,
+                "${mirror:04X} must write through to ${base:04X}"
+            );
+            assert_eq!(
+                ppu.mem.palette_ram.read_byte(mirror), 0x15,
+                "${mirror:04X} reads its aliased backdrop"
+            );
+        }
+    }
+
+    // Non-backdrop palette entries are independent: $3F15 must NOT alias
+    // $3F05 (only the multiples-of-4 in the upper half mirror down).
+    #[test]
+    fn palette_non_backdrop_entries_are_independent() {
+        let mut ppu = Ppu::new();
+        ppu.mem.palette_ram.write_byte(0x3F05, 0x30);
+        ppu.mem.palette_ram.write_byte(0x3F15, 0x31); // distinct cell
+        assert_eq!(
+            ppu.mem.palette_ram.read_byte(0x3F05), 0x30,
+            "$3F15 is not a mirror of $3F05 — only $3F10/14/18/1C mirror"
+        );
+    }
+
+    // ---- Gap 5: scroll/address write toggle (w latch) --------------------
+
+    // $2005 first write loads coarse-X + fine-X and flips w; second write
+    // loads coarse-Y + fine-Y and flips w back. Bites if the two writes'
+    // t/x routing is swapped or the toggle fails to alternate.
+    #[test]
+    fn ppuscroll_write_toggle_routes_first_then_second() {
+        let mut ppu = Ppu::new();
+        ppu.regs.t = 0;
+        ppu.regs.w = WriteToggle::FirstWrite;
+
+        ppu.write_ppu_scroll(0x7D); // coarse-X = 0x0F, fine-X = 5
+        assert_eq!(ppu.regs.x, 0x05, "first $2005 write sets fine-X");
+        assert_eq!(ppu.regs.t & 0x001F, 0x0F, "first $2005 write sets coarse-X in t");
+        assert!(matches!(ppu.regs.w, WriteToggle::SecondWrite), "w flips to second after first write");
+
+        ppu.write_ppu_scroll(0x5E); // fine-Y = 6, coarse-Y = 0x0B
+        assert_eq!(ppu.regs.t, 0x616F, "second $2005 write folds coarse-Y + fine-Y into t");
+        assert!(matches!(ppu.regs.w, WriteToggle::FirstWrite), "w flips back to first after second write");
+    }
+
+    // $2006 first write is the high 6 bits of t; second write is the low 8
+    // and copies t into v. Bites if the hi/lo routing is swapped or the
+    // t->v transfer is dropped.
+    #[test]
+    fn ppuaddr_write_toggle_routes_hi_then_lo_and_copies_v() {
+        let mut ppu = Ppu::new();
+        ppu.regs.t = 0;
+        ppu.regs.v = 0;
+        ppu.regs.w = WriteToggle::FirstWrite;
+
+        ppu.write_ppu_addr(0x3C); // high byte (masked to 6 bits)
+        assert_eq!(ppu.regs.t, 0x3C00, "first $2006 write is the high 6 bits of t");
+        assert!(matches!(ppu.regs.w, WriteToggle::SecondWrite));
+
+        ppu.write_ppu_addr(0xA5); // low byte
+        assert_eq!(ppu.regs.t, 0x3CA5, "second $2006 write is the low 8 bits of t");
+        assert_eq!(ppu.regs.v, 0x3CA5, "second $2006 write copies t into v");
+        assert!(matches!(ppu.regs.w, WriteToggle::FirstWrite));
+    }
+
+    // Reading $2002 (PPUSTATUS) resets the shared write toggle to the
+    // first-write state. Bites if read_ppu_status stops clearing w — a
+    // classic scroll-glitch regression.
+    #[test]
+    fn status_read_resets_write_toggle() {
+        let mut ppu = Ppu::new();
+        ppu.regs.w = WriteToggle::FirstWrite;
+        ppu.write_ppu_addr(0x20); // leaves w in SecondWrite
+        assert!(matches!(ppu.regs.w, WriteToggle::SecondWrite), "precondition: one $2006 write pending");
+        let _ = ppu.read_ppu_status();
+        assert!(matches!(ppu.regs.w, WriteToggle::FirstWrite), "$2002 read must reset the w latch");
+    }
+
+    // ---- Gap 6: coarse-X / coarse-Y increment helpers --------------------
+
+    // Coarse-X below 31 just increments; the horizontal nametable bit is
+    // untouched.
+    #[test]
+    fn inc_coarse_x_plain_increment_below_31() {
+        let mut ppu = Ppu::new();
+        ppu.regs.v = 0x0005; // coarse-X = 5
+        ppu.inc_coarse_x_with_wrap();
+        assert_eq!(ppu.regs.v, 0x0006, "coarse-X < 31 increments in place");
+    }
+
+    // Coarse-X at 31 wraps to 0 and toggles the horizontal nametable bit
+    // ($0400). Bites if the wrap fails to clear coarse-X or forgets the NT
+    // flip.
+    #[test]
+    fn inc_coarse_x_wraps_at_31_and_toggles_horizontal_nametable() {
+        let mut ppu = Ppu::new();
+        ppu.regs.v = 0x001F; // coarse-X = 31, NT bit clear
+        ppu.inc_coarse_x_with_wrap();
+        assert_eq!(ppu.regs.v, 0x0400, "coarse-X 31 -> 0 and flips the horizontal nametable bit");
+    }
+
+    // Fine-Y below 7 increments the fine-Y field ($1000 step) and leaves
+    // coarse-Y alone.
+    #[test]
+    fn inc_y_increments_fine_y_below_7() {
+        let mut ppu = Ppu::new();
+        ppu.regs.v = 0x0000; // fine-Y = 0
+        ppu.inc_y_with_wrap();
+        assert_eq!(ppu.regs.v, 0x1000, "fine-Y < 7 increments the fine-Y field");
+    }
+
+    // Coarse-Y = 29 with fine-Y wrapping: coarse-Y resets to 0 AND the
+    // vertical nametable bit ($0800) toggles (the 30-row visible field).
+    // Bites if the 29-special-case is lost (would leak into the attribute
+    // rows) or the NT toggle is dropped.
+    #[test]
+    fn inc_y_wraps_at_coarse_y_29_and_toggles_vertical_nametable() {
+        let mut ppu = Ppu::new();
+        ppu.regs.v = 0x7000 | (29u16 << 5); // fine-Y = 7, coarse-Y = 29
+        ppu.inc_y_with_wrap();
+        assert_eq!(ppu.regs.v, 0x0800, "coarse-Y 29 -> 0, fine-Y -> 0, vertical NT toggled");
+    }
+
+    // Coarse-Y = 31 (in the attribute region) with fine-Y wrapping: coarse-Y
+    // resets to 0 with NO nametable toggle. Bites if 31 is treated like 29.
+    #[test]
+    fn inc_y_wraps_at_coarse_y_31_without_nametable_toggle() {
+        let mut ppu = Ppu::new();
+        ppu.regs.v = 0x7000 | (31u16 << 5); // fine-Y = 7, coarse-Y = 31
+        ppu.inc_y_with_wrap();
+        assert_eq!(ppu.regs.v, 0x0000, "coarse-Y 31 -> 0, fine-Y -> 0, no NT toggle");
+    }
+
+    // ---- Gap 7: nametable mirroring dispatch -----------------------------
+
+    // Horizontal mirroring: NT0 & NT1 share the lower 1 KB bank, NT2 & NT3
+    // share the upper bank; the intra-page offset is preserved.
+    #[test]
+    fn mirroring_horizontal_pairs_top_and_bottom() {
+        let m = Mirroring::Horizontal;
+        assert_eq!(m.mirror_address(0x2000), 0x000, "NT0 -> bank 0");
+        assert_eq!(m.mirror_address(0x2400), 0x000, "NT1 -> bank 0 (shares with NT0)");
+        assert_eq!(m.mirror_address(0x2800), 0x400, "NT2 -> bank 1");
+        assert_eq!(m.mirror_address(0x2C00), 0x400, "NT3 -> bank 1 (shares with NT2)");
+        assert_eq!(m.mirror_address(0x2456), 0x056, "offset within the page is preserved");
+    }
+
+    // Vertical mirroring: NT0 & NT2 share the lower bank, NT1 & NT3 share
+    // the upper bank.
+    #[test]
+    fn mirroring_vertical_pairs_left_and_right() {
+        let m = Mirroring::Vertical;
+        assert_eq!(m.mirror_address(0x2000), 0x000, "NT0 -> bank 0");
+        assert_eq!(m.mirror_address(0x2400), 0x400, "NT1 -> bank 1");
+        assert_eq!(m.mirror_address(0x2800), 0x000, "NT2 -> bank 0 (shares with NT0)");
+        assert_eq!(m.mirror_address(0x2C00), 0x400, "NT3 -> bank 1 (shares with NT1)");
+    }
+
+    // Single-screen lower/upper collapse all four nametables to one bank.
+    #[test]
+    fn mirroring_single_screen_collapses_to_one_bank() {
+        let lower = Mirroring::OneScreenLower;
+        let upper = Mirroring::OneScreenUpper;
+        for nt in [0x2000u16, 0x2400, 0x2800, 0x2C00] {
+            let offset = nt & 0x03FF;
+            assert_eq!(lower.mirror_address(nt), offset, "single-screen lower stays in bank 0");
+            assert_eq!(upper.mirror_address(nt), 0x400 + offset, "single-screen upper stays in bank 1");
+        }
+        assert_eq!(Mirroring::OneScreenLower.mirror_address(0x2456), 0x056);
+        assert_eq!(Mirroring::OneScreenUpper.mirror_address(0x2456), 0x456);
+    }
+
+    // Four-screen mirroring is identity over the four distinct 1 KB pages;
+    // the $3000-$3EFF range folds down onto $2000-$2EFF first.
+    #[test]
+    fn mirroring_four_screen_is_identity_after_fold() {
+        let m = Mirroring::FourScreen;
+        assert_eq!(m.mirror_address(0x2000), 0x000);
+        assert_eq!(m.mirror_address(0x2400), 0x400);
+        assert_eq!(m.mirror_address(0x2800), 0x800);
+        assert_eq!(m.mirror_address(0x2C00), 0xC00);
+        // $3456 folds to $2456 before dispatch.
+        assert_eq!(m.mirror_address(0x3456), m.mirror_address(0x2456), "$3xxx folds onto $2xxx");
+    }
+}

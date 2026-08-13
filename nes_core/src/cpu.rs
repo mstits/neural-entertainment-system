@@ -5765,3 +5765,647 @@ pub const IRQ_INTERRUPT: Instruction = Instruction {
         Cpu::irq_finish,
     ],
 };
+
+#[cfg(test)]
+mod cpu_coverage_tests {
+    use super::*;
+    use crate::apu::Apu;
+    use crate::cartridge::Cartridge;
+    use crate::game_genie::Cheat;
+    use crate::input::Input;
+    use crate::mapper::MapperEnum;
+    use crate::memory::Ram;
+    use crate::oam_dma::OamDma;
+    use crate::ppu::Ppu;
+    use std::collections::HashMap;
+    use std::io::Cursor;
+
+    /// Owns every peripheral so a `SystemBus` can borrow them for the
+    /// lifetime of a test. Programs run out of RAM ($0000-$07FF), so
+    /// the mapper/PRG contents never matter — a minimal NROM image is
+    /// only needed because `MapperEnum` demands a `Cartridge`.
+    struct Parts {
+        ram: Ram,
+        mapper: MapperEnum,
+        ppu: Ppu,
+        apu: Apu,
+        oam_dma: OamDma,
+        input: Input,
+        cheats: HashMap<u16, Cheat>,
+    }
+
+    fn min_nrom_rom() -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 32 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // 2 x 16KB PRG -> mapper 0 (NROM) 32KB
+        rom.push(0); // CHR-RAM
+        rom.push(0); // flags6: mapper low nibble 0
+        rom.push(0); // flags7: mapper high nibble 0
+        rom.extend_from_slice(&[0u8; 8]);
+        rom.extend(std::iter::repeat(0u8).take(32 * 1024));
+        rom
+    }
+
+    fn parts() -> Parts {
+        let cart = Cartridge::load(&mut Cursor::new(min_nrom_rom()))
+            .expect("synthetic NROM image parses");
+        Parts {
+            ram: Ram::new(),
+            mapper: MapperEnum::from_cartridge(cart),
+            ppu: Ppu::new(),
+            apu: Apu::new(),
+            oam_dma: OamDma::new(),
+            input: Input::new(),
+            cheats: HashMap::new(),
+        }
+    }
+
+    impl Parts {
+        fn bus(&mut self) -> SystemBus<'_> {
+            SystemBus::new(
+                &mut self.ram,
+                &mut self.mapper,
+                &mut self.ppu,
+                &mut self.apu,
+                &mut self.oam_dma,
+                &mut self.input,
+                &self.cheats,
+            )
+        }
+    }
+
+    /// Load consecutive bytes into RAM starting at `addr`.
+    fn load_prog(bus: &mut SystemBus, addr: u16, bytes: &[u8]) {
+        for (i, b) in bytes.iter().enumerate() {
+            bus.write_byte(addr + i as u16, *b);
+        }
+    }
+
+    /// Tick a CPU sitting at an instruction boundary until it reports
+    /// the instruction completed; return the number of CPU cycles
+    /// consumed (the opcode-fetch cycle included, matching hardware
+    /// cycle counts). Panics if the instruction never finishes so a
+    /// hung dispatch can't silently pass.
+    fn run_one(cpu: &mut Cpu, bus: &mut SystemBus) -> u32 {
+        let mut cycles = 0u32;
+        loop {
+            let done = cpu.tick(bus);
+            cycles += 1;
+            if done {
+                return cycles;
+            }
+            assert!(cycles <= 24, "instruction failed to complete");
+        }
+    }
+
+    // ---- Gap 1: ADC overflow (V) flag, all four sign combinations ----
+    // add_value is the shared ADC core. These bite any mangling of the
+    // "operands share a sign AND the result flips it" overflow rule or
+    // the carry-out detection.
+
+    #[test]
+    fn adc_overflow_pos_plus_pos_no_carry_no_overflow() {
+        // 0x50 + 0x10 = 0x60: two positives, positive result -> no V.
+        let mut cpu = Cpu::new();
+        cpu.regs.a = 0x50;
+        cpu.flags.c = false;
+        cpu.add_value(0x10);
+        assert_eq!(cpu.regs.a, 0x60);
+        assert!(!cpu.flags.v, "same-sign result kept sign -> no overflow");
+        assert!(!cpu.flags.c, "no carry out of bit 7");
+        assert!(!cpu.flags.z);
+        assert!(!cpu.flags.n);
+    }
+
+    #[test]
+    fn adc_overflow_pos_plus_pos_sets_v() {
+        // 0x50 + 0x50 = 0xA0: positive + positive -> negative -> V set.
+        let mut cpu = Cpu::new();
+        cpu.regs.a = 0x50;
+        cpu.flags.c = false;
+        cpu.add_value(0x50);
+        assert_eq!(cpu.regs.a, 0xA0);
+        assert!(cpu.flags.v, "two positives crossing into negative -> V");
+        assert!(!cpu.flags.c);
+        assert!(cpu.flags.n, "bit 7 set");
+    }
+
+    #[test]
+    fn adc_overflow_neg_plus_neg_sets_v_and_carry() {
+        // 0xD0 + 0x90 = 0x160 -> A=0x60, carry out, and two negatives
+        // producing a positive -> V. Carry-out and V both fire here.
+        let mut cpu = Cpu::new();
+        cpu.regs.a = 0xD0;
+        cpu.flags.c = false;
+        cpu.add_value(0x90);
+        assert_eq!(cpu.regs.a, 0x60);
+        assert!(cpu.flags.c, "sum exceeded 0xFF -> carry set");
+        assert!(cpu.flags.v, "two negatives crossing into positive -> V");
+        assert!(!cpu.flags.n);
+    }
+
+    #[test]
+    fn adc_overflow_mixed_signs_never_overflow() {
+        // 0x50 + 0x90 = 0xE0: opposite signs can never overflow -> V clear.
+        let mut cpu = Cpu::new();
+        cpu.regs.a = 0x50;
+        cpu.flags.c = false;
+        cpu.add_value(0x90);
+        assert_eq!(cpu.regs.a, 0xE0);
+        assert!(!cpu.flags.v, "opposite-sign operands never overflow");
+        assert!(!cpu.flags.c);
+        assert!(cpu.flags.n);
+    }
+
+    #[test]
+    fn adc_carry_in_is_added_and_binary_only() {
+        // Carry-in participates: 0x00 + 0xFF + C=1 wraps to 0x00 with
+        // carry out and Z set. The D flag must be ignored on the NES
+        // (binary add), so 0x50 + 0x50 with D=1 still yields 0xA0, not
+        // a BCD result.
+        let mut cpu = Cpu::new();
+        cpu.regs.a = 0x00;
+        cpu.flags.c = true;
+        cpu.add_value(0xFF);
+        assert_eq!(cpu.regs.a, 0x00, "0x00+0xFF+1 wraps to 0x00");
+        assert!(cpu.flags.c, "carry propagated out");
+        assert!(cpu.flags.z, "result is zero");
+
+        let mut cpu = Cpu::new();
+        cpu.regs.a = 0x50;
+        cpu.flags.c = false;
+        cpu.flags.d = true; // must be a no-op on the NES 6502
+        cpu.add_value(0x50);
+        assert_eq!(cpu.regs.a, 0xA0, "decimal mode ignored -> binary result");
+    }
+
+    // ---- Gap 2: SBC borrow/carry and V flag ----
+    // sub_value is the SBC core. C=1 means "no borrow"; C acts as an
+    // inverted borrow so C=0 subtracts an extra 1.
+
+    #[test]
+    fn sbc_overflow_case_sets_v() {
+        // 0x50 - 0xB0 (no borrow): +80 - (-80) = +160 -> signed overflow.
+        let mut cpu = Cpu::new();
+        cpu.regs.a = 0x50;
+        cpu.flags.c = true; // no incoming borrow
+        cpu.sub_value(0xB0);
+        assert_eq!(cpu.regs.a, 0xA0);
+        assert!(cpu.flags.v, "result sign wrong for the true difference -> V");
+        assert!(!cpu.flags.c, "0x50 < 0xB0 -> borrow -> carry cleared");
+        assert!(cpu.flags.n);
+        assert!(!cpu.flags.z);
+    }
+
+    #[test]
+    fn sbc_no_overflow_mixed_result() {
+        // 0x50 - 0xF0 (no borrow): +80 - (-16) = +96, fits -> no V,
+        // but a borrow occurred so carry clears.
+        let mut cpu = Cpu::new();
+        cpu.regs.a = 0x50;
+        cpu.flags.c = true;
+        cpu.sub_value(0xF0);
+        assert_eq!(cpu.regs.a, 0x60);
+        assert!(!cpu.flags.v, "difference in range -> no overflow");
+        assert!(!cpu.flags.c, "borrow occurred");
+        assert!(!cpu.flags.n);
+    }
+
+    #[test]
+    fn sbc_carry_clear_is_extra_borrow() {
+        // Same operands, only the incoming carry differs: C=0 subtracts
+        // one more than C=1. Bites any dropped `!carry` borrow term.
+        let mut with_borrow = Cpu::new();
+        with_borrow.regs.a = 0x50;
+        with_borrow.flags.c = false; // incoming borrow
+        with_borrow.sub_value(0x10);
+        assert_eq!(with_borrow.regs.a, 0x3F, "0x50 - 0x10 - 1 = 0x3F");
+        assert!(with_borrow.flags.c, "0x50 >= 0x11 -> no resulting borrow");
+
+        let mut no_borrow = Cpu::new();
+        no_borrow.regs.a = 0x50;
+        no_borrow.flags.c = true;
+        no_borrow.sub_value(0x10);
+        assert_eq!(no_borrow.regs.a, 0x40, "0x50 - 0x10 - 0 = 0x40");
+    }
+
+    #[test]
+    fn sbc_equal_operands_sets_zero_and_carry() {
+        // A - A with no borrow = 0, carry set (no borrow out), Z set.
+        let mut cpu = Cpu::new();
+        cpu.regs.a = 0x05;
+        cpu.flags.c = true;
+        cpu.sub_value(0x05);
+        assert_eq!(cpu.regs.a, 0x00);
+        assert!(cpu.flags.z);
+        assert!(cpu.flags.c, "no borrow -> carry stays set");
+        assert!(!cpu.flags.v);
+        assert!(!cpu.flags.n);
+    }
+
+    // ---- Gap 3: page-cross extra cycle on indexed reads ----
+    // The "optimistic" indexed read finishes early (no extra cycle)
+    // only when the speculative address stays on the base page.
+
+    #[test]
+    fn abs_x_read_no_page_cross_is_four_cycles() {
+        let mut p = parts();
+        let mut bus = p.bus();
+        // LDA $0010,X ; X=0x05 -> $0015, same page.
+        load_prog(&mut bus, 0x0200, &[0xBD, 0x10, 0x00]);
+        bus.write_byte(0x0015, 0x37);
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.x = 0x05;
+        let cycles = run_one(&mut cpu, &mut bus);
+        assert_eq!(cpu.regs.a, 0x37);
+        assert_eq!(cycles, 4, "no page cross -> base 4 cycles");
+    }
+
+    #[test]
+    fn abs_x_read_page_cross_adds_a_cycle() {
+        let mut p = parts();
+        let mut bus = p.bus();
+        // LDA $00F0,X ; X=0x20 -> $0110, crosses $00 -> $01.
+        load_prog(&mut bus, 0x0200, &[0xBD, 0xF0, 0x00]);
+        bus.write_byte(0x0110, 0x42);
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.x = 0x20;
+        let cycles = run_one(&mut cpu, &mut bus);
+        assert_eq!(cpu.regs.a, 0x42);
+        assert_eq!(cycles, 5, "page cross -> one extra read cycle");
+    }
+
+    #[test]
+    fn abs_y_read_page_cross_delta_is_exactly_one() {
+        // Both LDA $abs,Y forms, differing only in whether Y pushes the
+        // effective address onto the next page. The delta must be 1.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0xB9, 0x10, 0x00]); // $0010,Y
+        bus.write_byte(0x0018, 0x11);
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.y = 0x08; // -> $0018, same page
+        let same = run_one(&mut cpu, &mut bus);
+        assert_eq!(cpu.regs.a, 0x11);
+
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0xB9, 0xF0, 0x00]); // $00F0,Y
+        bus.write_byte(0x0108, 0x22);
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.y = 0x18; // -> $0108, crosses page
+        let crossed = run_one(&mut cpu, &mut bus);
+        assert_eq!(cpu.regs.a, 0x22);
+        assert_eq!(crossed - same, 1, "exactly one extra cycle on cross");
+    }
+
+    #[test]
+    fn indirect_y_read_page_cross_cycle_counts() {
+        // LDA ($20),Y with the pointer's base low byte + Y deciding the
+        // cross. No cross = 5 cycles, cross = 6.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0xB1, 0x20]);
+        bus.write_byte(0x0020, 0x00); // ptr low
+        bus.write_byte(0x0021, 0x04); // ptr high -> base $0400
+        bus.write_byte(0x0405, 0x5A); // $0400 + Y(5)
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.y = 0x05;
+        let no_cross = run_one(&mut cpu, &mut bus);
+        assert_eq!(cpu.regs.a, 0x5A);
+        assert_eq!(no_cross, 5, "(ind),Y no cross -> 5 cycles");
+
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0xB1, 0x20]);
+        bus.write_byte(0x0020, 0xF0); // ptr low
+        bus.write_byte(0x0021, 0x04); // base $04F0
+        bus.write_byte(0x0510, 0x6B); // $04F0 + Y(0x20) crosses to $05
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.y = 0x20;
+        let cross = run_one(&mut cpu, &mut bus);
+        assert_eq!(cpu.regs.a, 0x6B);
+        assert_eq!(cross, 6, "(ind),Y cross -> 6 cycles");
+    }
+
+    // ---- Gap 4: poll_interrupts flag combinations ----
+
+    fn pending_name(cpu: &Cpu) -> Option<&'static str> {
+        cpu.instruction.map(|i| i.name)
+    }
+
+    #[test]
+    fn nmi_edge_is_latched_and_serviced() {
+        // A high->low transition latches nmi_pended; the default poll
+        // path services it at the next boundary.
+        let mut cpu = Cpu::new();
+        cpu.set_nmi_line(true);
+        assert!(cpu.nmi_pended, "falling edge latches the NMI");
+        cpu.poll_interrupts();
+        assert_eq!(pending_name(&cpu), Some("NMI"));
+    }
+
+    #[test]
+    fn irq_is_level_gated_by_i_flag() {
+        // IRQ services only while the line is low AND I is clear.
+        let mut cpu = Cpu::new();
+        cpu.irq_line_low = true;
+        cpu.flags.i = false;
+        cpu.poll_interrupts();
+        assert_eq!(pending_name(&cpu), Some("IRQ"), "unmasked IRQ serviced");
+
+        let mut cpu = Cpu::new();
+        cpu.irq_line_low = true;
+        cpu.flags.i = true; // masked
+        cpu.poll_interrupts();
+        assert_eq!(pending_name(&cpu), None, "I flag masks the IRQ");
+    }
+
+    #[test]
+    fn nmi_has_priority_over_irq() {
+        let mut cpu = Cpu::new();
+        cpu.set_nmi_line(true);
+        cpu.irq_line_low = true;
+        cpu.flags.i = false;
+        cpu.poll_interrupts();
+        assert_eq!(pending_name(&cpu), Some("NMI"), "NMI outranks IRQ");
+    }
+
+    #[test]
+    fn nmi_poll_timing_defers_final_cycle_edge() {
+        // Under hw_nmi_poll_timing (and NOT subcycle phase) the service
+        // decision uses nmi_poll_latch, so an edge that only reached
+        // nmi_pended (latch still false) is deferred one boundary.
+        let mut cpu = Cpu::new();
+        cpu.hw_nmi_poll_timing = true;
+        cpu.hw_nmi_subcycle_phase = false;
+        cpu.nmi_pended = true;
+        cpu.nmi_poll_latch = false;
+        cpu.poll_interrupts();
+        assert_eq!(pending_name(&cpu), None, "final-cycle edge deferred");
+
+        // Once latched, it services.
+        let mut cpu = Cpu::new();
+        cpu.hw_nmi_poll_timing = true;
+        cpu.hw_nmi_subcycle_phase = false;
+        cpu.nmi_pended = true;
+        cpu.nmi_poll_latch = true;
+        cpu.poll_interrupts();
+        assert_eq!(pending_name(&cpu), Some("NMI"), "latched edge serviced");
+    }
+
+    #[test]
+    fn subcycle_phase_uses_live_pended_over_poll_latch() {
+        // hw_nmi_subcycle_phase forces the live nmi_pended path even
+        // when hw_nmi_poll_timing is set — the two must not stack
+        // (would double-quantize NMI entry).
+        let mut cpu = Cpu::new();
+        cpu.hw_nmi_poll_timing = true;
+        cpu.hw_nmi_subcycle_phase = true;
+        cpu.nmi_pended = true;
+        cpu.nmi_poll_latch = false; // ignored under subcycle phase
+        cpu.poll_interrupts();
+        assert_eq!(
+            pending_name(&cpu),
+            Some("NMI"),
+            "subcycle phase reads live pended, not the second-to-last latch"
+        );
+    }
+
+    // ---- Gap 5: get_state / apply_state round-trip ----
+
+    #[test]
+    fn state_round_trip_preserves_full_register_file_and_latches() {
+        let mut cpu = Cpu::new();
+        cpu.regs = Regs { pc: 0x1234, a: 0x11, x: 0x22, y: 0x33, sp: 0x44 };
+        cpu.flags = Flags::from(0xC1); // N,V,C set
+        cpu.stall_cycles = 3;
+        cpu.nmi_line_low = true;
+        cpu.nmi_pended = true;
+        cpu.irq_line_low = true;
+        cpu.cycles_total = 987_654;
+        cpu.opcode = 0xBD; // a real multi-cycle opcode
+        cpu.cycle = 2; // mid-instruction
+        cpu.addr_abs = 0xBEEF;
+        cpu.temp_addr_low = 0x77;
+        cpu.base_addr = 0x88;
+        cpu.rel_offset = -5;
+        cpu.fetched_data = 0x99;
+
+        let state = cpu.get_state();
+        let mut restored = Cpu::new();
+        restored.apply_state(&state);
+
+        assert_eq!(restored.regs.pc, 0x1234);
+        assert_eq!(restored.regs.a, 0x11);
+        assert_eq!(restored.regs.x, 0x22);
+        assert_eq!(restored.regs.y, 0x33);
+        assert_eq!(restored.regs.sp, 0x44);
+        assert_eq!(u8::from(restored.flags), 0xC1);
+        assert_eq!(restored.stall_cycles, 3);
+        assert!(restored.nmi_line_low);
+        assert!(restored.nmi_pended);
+        assert!(restored.irq_line_low);
+        assert_eq!(restored.cycles_total, 987_654);
+        assert_eq!(restored.opcode, 0xBD);
+        assert_eq!(restored.cycle, 2);
+        assert_eq!(restored.addr_abs, 0xBEEF);
+        assert_eq!(restored.temp_addr_low, 0x77);
+        assert_eq!(restored.base_addr, 0x88);
+        assert_eq!(restored.rel_offset, -5);
+        assert_eq!(restored.fetched_data, 0x99);
+        // Runtime latch is re-synced to the restored pending flag.
+        assert!(restored.nmi_poll_latch);
+        // Mid-instruction: dispatch re-hydrated from the opcode.
+        assert_eq!(pending_name(&restored), Some("LDA"));
+    }
+
+    #[test]
+    fn state_round_trip_boundary_has_no_instruction() {
+        // cycle==0 with no active interrupt means "between instructions":
+        // apply_state must leave instruction None so the next tick
+        // fetches fresh (the documented save/load fix).
+        let mut cpu = Cpu::new();
+        cpu.cycle = 0;
+        cpu.opcode = 0xA9; // stale opcode must NOT be re-armed
+        let state = cpu.get_state();
+        let mut restored = Cpu::new();
+        restored.apply_state(&state);
+        assert!(restored.at_instruction_boundary());
+        assert_eq!(pending_name(&restored), None);
+    }
+
+    #[test]
+    fn state_round_trip_preserves_active_interrupt() {
+        // An in-flight NMI (mid-service) must resume as an NMI, not the
+        // opcode whose byte happens to sit in `opcode`.
+        let mut cpu = Cpu::new();
+        cpu.cycle = 3;
+        cpu.opcode = 0xA9;
+        cpu.instruction = Some(NMI_INTERRUPT);
+        let state = cpu.get_state();
+        let mut restored = Cpu::new();
+        restored.apply_state(&state);
+        assert_eq!(pending_name(&restored), Some("NMI"));
+    }
+
+    #[test]
+    fn apply_state_resumes_execution_identically() {
+        // Full reference run vs. a run interrupted mid-instruction,
+        // snapshotted, and resumed on a fresh CPU. Same end state and
+        // total cycle count -> apply_state is a faithful resume point.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0xBD, 0xF0, 0x00]); // LDA $00F0,X (cross)
+        bus.write_byte(0x0110, 0x7E);
+
+        let mut reference = Cpu::new();
+        reference.regs.pc = 0x0200;
+        reference.regs.x = 0x20;
+        let full = run_one(&mut reference, &mut bus);
+
+        let mut partial = Cpu::new();
+        partial.regs.pc = 0x0200;
+        partial.regs.x = 0x20;
+        for _ in 0..3 {
+            partial.tick(&mut bus); // three cycles in, still mid-instruction
+        }
+        assert_ne!(partial.cycle, 0, "snapshot must be mid-instruction");
+        let snap = partial.get_state();
+
+        let mut resumed = Cpu::new();
+        resumed.apply_state(&snap);
+        let remaining = run_one(&mut resumed, &mut bus);
+
+        assert_eq!(resumed.regs.a, reference.regs.a);
+        assert_eq!(resumed.regs.pc, reference.regs.pc);
+        assert_eq!(resumed.regs.a, 0x7E);
+        assert_eq!(3 + remaining, full, "snapshot+resume matches uninterrupted cycles");
+    }
+
+    // ---- Gap 6: flag mechanics — shifts and the pushed B/unused bits ----
+
+    fn run_accumulator_op(opcode: u8, a: u8, carry_in: bool) -> Cpu {
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[opcode]);
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.a = a;
+        cpu.flags.c = carry_in;
+        run_one(&mut cpu, &mut bus);
+        cpu
+    }
+
+    #[test]
+    fn asl_accumulator_carry_from_bit7() {
+        // 0x81 << 1 = 0x02, bit7 -> carry. Then 0x80 << 1 = 0x00 -> Z.
+        let cpu = run_accumulator_op(0x0A, 0x81, false);
+        assert_eq!(cpu.regs.a, 0x02);
+        assert!(cpu.flags.c, "old bit 7 shifted into carry");
+        assert!(!cpu.flags.z);
+        assert!(!cpu.flags.n);
+
+        let cpu = run_accumulator_op(0x0A, 0x80, false);
+        assert_eq!(cpu.regs.a, 0x00);
+        assert!(cpu.flags.c);
+        assert!(cpu.flags.z);
+    }
+
+    #[test]
+    fn lsr_accumulator_carry_from_bit0_clears_n() {
+        // 0x03 >> 1 = 0x01, bit0 -> carry; N always cleared by LSR.
+        let cpu = run_accumulator_op(0x4A, 0x03, false);
+        assert_eq!(cpu.regs.a, 0x01);
+        assert!(cpu.flags.c, "old bit 0 shifted into carry");
+        assert!(!cpu.flags.n, "LSR feeds 0 into bit 7");
+        assert!(!cpu.flags.z);
+
+        let cpu = run_accumulator_op(0x4A, 0x01, false);
+        assert_eq!(cpu.regs.a, 0x00);
+        assert!(cpu.flags.c);
+        assert!(cpu.flags.z);
+    }
+
+    #[test]
+    fn rol_accumulator_rotates_carry_into_bit0() {
+        // 0x80 ROL with C=0 -> 0x00 (bit7 -> carry, 0 -> bit0), Z set.
+        let cpu = run_accumulator_op(0x2A, 0x80, false);
+        assert_eq!(cpu.regs.a, 0x00);
+        assert!(cpu.flags.c, "old bit 7 -> carry");
+        assert!(cpu.flags.z);
+
+        // 0x40 ROL with C=1 -> 0x81 (carry into bit0), carry out clear.
+        let cpu = run_accumulator_op(0x2A, 0x40, true);
+        assert_eq!(cpu.regs.a, 0x81, "incoming carry lands in bit 0");
+        assert!(!cpu.flags.c, "old bit 7 was 0 -> carry clears");
+        assert!(cpu.flags.n);
+    }
+
+    #[test]
+    fn ror_accumulator_rotates_carry_into_bit7() {
+        // 0x01 ROR with C=0 -> 0x00 (bit0 -> carry), Z set.
+        let cpu = run_accumulator_op(0x6A, 0x01, false);
+        assert_eq!(cpu.regs.a, 0x00);
+        assert!(cpu.flags.c, "old bit 0 -> carry");
+        assert!(cpu.flags.z);
+
+        // 0x02 ROR with C=1 -> 0x81 (carry into bit7), carry out clear.
+        let cpu = run_accumulator_op(0x6A, 0x02, true);
+        assert_eq!(cpu.regs.a, 0x81, "incoming carry lands in bit 7");
+        assert!(!cpu.flags.c, "old bit 0 was 0 -> carry clears");
+        assert!(cpu.flags.n);
+    }
+
+    #[test]
+    fn php_pushes_b_and_unused_bits_set() {
+        // PHP pushes P with both bit4 (B) and bit5 set, regardless of
+        // the live flags.
+        let mut p = parts();
+        let mut bus = p.bus();
+        let mut cpu = Cpu::new();
+        cpu.regs.sp = 0xFD;
+        cpu.flags = Flags::from(0x01); // only carry set
+        cpu.php_finish(&mut bus);
+        let pushed = bus.peek_byte(0x01FD);
+        assert_eq!(pushed, 0x31, "carry + B(0x10) + unused(0x20)");
+        assert_eq!(cpu.regs.sp, 0xFC, "stack pointer decremented");
+    }
+
+    #[test]
+    fn interrupt_push_clears_b_but_sets_unused_and_masks_irq() {
+        // IRQ/NMI entry pushes P with B (bit4) CLEAR and bit5 set, then
+        // sets the I flag. This is the only difference from PHP/BRK.
+        let mut p = parts();
+        let mut bus = p.bus();
+        let mut cpu = Cpu::new();
+        cpu.regs.sp = 0xFD;
+        cpu.flags = Flags::from(0x01); // carry set, I clear
+        cpu.interrupt_push_status(&mut bus);
+        let pushed = bus.peek_byte(0x01FD);
+        assert_eq!(pushed, 0x21, "carry + unused, but B cleared");
+        assert_eq!(pushed & 0x10, 0, "hardware clears B for IRQ/NMI");
+        assert!(cpu.flags.i, "I set after pushing status");
+    }
+
+    #[test]
+    fn brk_push_sets_b_bit() {
+        // BRK, unlike a hardware IRQ, pushes with B set.
+        let mut p = parts();
+        let mut bus = p.bus();
+        let mut cpu = Cpu::new();
+        cpu.regs.sp = 0xFD;
+        cpu.flags = Flags::from(0x01);
+        cpu.brk_push_status(&mut bus);
+        let pushed = bus.peek_byte(0x01FD);
+        assert_eq!(pushed & 0x10, 0x10, "BRK sets B in the pushed status");
+        assert_eq!(pushed, 0x31);
+        assert!(cpu.flags.i, "BRK sets I after pushing status");
+    }
+}
