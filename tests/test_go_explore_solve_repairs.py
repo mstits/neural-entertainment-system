@@ -61,10 +61,19 @@ ARM_FLAGS = ["reset_alignment", "mmio_read_timing", "dmc_stall_timing",
              "nmi_poll_timing"]
 
 
-def _prov(flags=ARM_FLAGS, frame_skip=4, sha="e09e8191b8d40490") -> dict:
+#: The digest of the nes_core binary this test run actually loaded. A
+#: "matching lineage" archive is one built on THIS machine, so its recorded
+#: sha has to be the live one; hard-coding a literal drifts the moment the
+#: binary is rebuilt (a PGO rerun is enough), which reads to the guard as a
+#: genuine emulator-binary mismatch. Tests that want a mismatch still pass an
+#: explicit sha.
+_LIVE_CORE_SHA = hw_provenance([], 0)["nes_core"]["sha256_16"]
+
+
+def _prov(flags=ARM_FLAGS, frame_skip=4, sha=None) -> dict:
     return {"hw_flags": list(flags), "frame_skip": frame_skip,
-            "nes_core": {"dist_version": "0.1.0",
-                         "module": "nes_core.abi3.so", "sha256_16": sha}}
+            "nes_core": {"dist_version": "0.1.0", "module": "nes_core.abi3.so",
+                         "sha256_16": _LIVE_CORE_SHA if sha is None else sha}}
 
 
 def _keycfg(**over) -> dict:

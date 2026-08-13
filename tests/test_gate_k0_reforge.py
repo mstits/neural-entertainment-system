@@ -451,8 +451,14 @@ def test_the_matching_lineage_archive_is_not_refused_for_its_machine():
     stats = json.loads((ORTHO_CTRL / "archive.stats.json").read_text())
     prov, notes = recover_lineage(ORTHO_CTRL, stats)
     assert prov["hw_flags"] == ARM_FLAGS and notes == []
-    diff = resume_lineage_diff(stats, hw_provenance(ARM_FLAGS, 4),
-                               _resume_solver().key_config())
+    # This is the machine-half control: the subject is the four flags and the
+    # key half being left unchecked, not the emulator binary. The archive was
+    # banked on whatever nes_core build was live then, so hold the run on the
+    # SAME binary (its own recorded one) — otherwise a since-rebuilt core reads
+    # as a real nes_core mismatch and masks what this test is about.
+    run_prov = hw_provenance(ARM_FLAGS, 4)
+    run_prov["nes_core"] = dict(prov["nes_core"])
+    diff = resume_lineage_diff(stats, run_prov, _resume_solver().key_config())
     assert diff["mismatch"] == []
     assert any("key_config" in u for u in diff["unverifiable"])
 
