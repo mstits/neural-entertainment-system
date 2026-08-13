@@ -56,32 +56,47 @@ this backlog directly.*
   **7 suspected implementation defects** (below) — filed, not fixed, so
   the suite stayed green. This is the NEXT actionable list.
 
-## MAPPER DEFECTS SURFACED BY WAVE 2 (verify → fix in a gated wave)
+## MAPPER DEFECTS SURFACED BY WAVE 2 — DISPOSITION (Wave 3, 2026-08-12)
 
-Ranked by impact. The behavioral-semantics ones (234/19) must be checked
-against the library-compat suite BEFORE fixing — a "fix" could regress a
-currently-booting game if the deviation is intentional.
+Wave 3 split them: fix the clearly-safe ones; DIAGNOSE (don't fix) the
+behavioral ones against the compat suite first. Result — half were fixed,
+half proved unsafe to fix blind. Falsifier source: `runs/rom_compat_audit.json`.
 
-1. **vrc6.rs (HIGH) — VRC6 expansion audio is silent.** `forward_vrc6!`
-   doesn't forward `tick_audio()`/`audio_mix()` for Mapper24/26, so the
-   inner Vrc6's 2-pulse+saw is wired but never heard (Akumajō Densetsu /
-   CV3-JP). Fix = forward both in the macro. Additive, verifiable, low
-   regression risk. **Do first.**
-2. **mapper7.rs (MED) — AxROM PRG bank index unmasked → OOB panic** on
-   sub-256KB carts or a corrupt/stray bank write. Fix = mask modulo
-   32K-bank-count, matching mapper2. Defensive, safe.
-3. **mapper234.rs (MED) — Maxi-15 latches banks on WRITE not READ.**
-   $FFxx is ROM; real hw latches on CPU read of those addresses. VERIFY
-   against compat suite first (does the game bank at all today?).
-4. **mapper19.rs (MED) — Namco163 register map shifted one 0x800 slot.**
-   CHR regs should span $8000-$B800, nametable regs $C000-$D800. VERIFY
-   against a N163 title before touching.
-5. **mapper34.rs (LOW) — unguarded PRG index on sub-32KB PRG.**
-   Unreachable with real dumps; cheap guard matching mapper41.
-6. **mapper64.rs (LOW) — RAMBO-1 R8==0 can't map real PRG bank 0.**
-   Self-described boot simplification; confirm before "fixing".
-7. **vrc6.rs (LOW) — uses_scanline_irq() not overridden** despite
-   clocking one; diagnostic-only impact (gated ppu_batch_stats).
+FIXED (1eba6e1), each with a test that fails on the old code:
+1. **vrc6.rs (HIGH) — VRC6 expansion audio was silent.** forward_vrc6!
+   now forwards tick_audio()/audio_mix() for Mapper24/26; also
+   uses_scanline_irq()->true. (bundled the LOW #7 here.)
+2. **mapper7.rs (MED) — AxROM PRG bank index** now masked modulo
+   32K-bank-count (identity for full 256KB carts). No more sub-256KB OOB.
+3. **mapper34.rs (LOW) — sub-32KB PRG read** now guarded `off & (len-1)`.
+
+NOT FIXED — diagnosis says unsafe blind (verify-with-ROM / DR):
+4. **mapper234.rs (Maxi-15) — CONFIRMED_BUG_RISKY.** Write-only latch;
+   real hw latches on READ of $FFxx (menu launches a game via a fetch,
+   never STA). 1 cart in library (boots, but the harness never drives a
+   menu selection, so the failure path is unproven). Fix is textbook
+   (override prg_read_byte to latch prg_peek_byte(addr) in the reg
+   windows) but must be validated against the ROM. → VERIFY-WITH-ROM.
+5. **mapper19.rs (Namco163) — CONFIRMED_BUG.** Register map shifted one
+   0x800 slot (CHR reg 7 unreachable, NT regs one slot low, $D800
+   dropped). BUT zero library ROMs use mapper 19 (boot-scaffold only),
+   AND nametable/CHR-RAM select logic is also absent — a register-map-only
+   fix won't render a real N163 title. → DR dossier written +
+   VERIFY-WITH-ROM. Dossier: research-consult/prompts/
+   n163_register_map_verification_2026-08-12.md (USER TO SUBMIT).
+6. **mapper64.rs (RAMBO-1) — flagged item NOT_A_BUG** (the R8==0 fallback
+   is a deliberate, commented boot guard). BUT diagnosis surfaced a
+   DEEPER latent bug: the impl uses bank_registers[8] for the third
+   swappable PRG bank, whereas real RAMBO-1 uses R15 — and bank_registers
+   is [u8;10] so a real R15 PRG write is silently dropped. 5 shipping
+   games (Klax, Road Runner, Rolling Thunder, Shinobi, Skull&Crossbones)
+   boot clean (vectors/main in fixed+R6/R7 banks), so this is a latent
+   in-gameplay bug with real regression risk. → DR dossier written.
+   Dossier: research-consult/prompts/
+   rambo1_mapper64_prg_register_verification_2026-08-12.md (USER TO SUBMIT).
+
+Real-impact priority for follow-up: #64 root cause (5 shipping games) >
+#19 (clean bug, nothing uses it) > #234 (single multicart, menu-switch).
 
 ## TEST-COVERAGE BACKLOG (largest cluster — the fidelity risk surface)
 
