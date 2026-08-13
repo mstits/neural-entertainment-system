@@ -137,3 +137,109 @@ impl Mapper for Mapper0 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 0,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    // 32 KB PRG maps linearly across $8000-$FFFF (address & 0x7FFF).
+    #[test]
+    fn nrom_32k_prg_linear_mapping() {
+        let mut cart = test_cart(2, 1);
+        cart.prg_rom[0x0000] = 0xA0; // maps to $8000
+        cart.prg_rom[0x4000] = 0xC0; // maps to $C000
+        cart.prg_rom[0x7FFF] = 0xFF; // maps to $FFFF
+        let mut m = Mapper0::new(cart);
+        assert_eq!(m.prg_read_byte(0x8000), 0xA0);
+        assert_eq!(m.prg_read_byte(0xC000), 0xC0);
+        assert_eq!(m.prg_read_byte(0xFFFF), 0xFF);
+    }
+
+    // 16 KB PRG mirrors the single bank into both halves of $8000-$FFFF.
+    #[test]
+    fn nrom_16k_prg_mirrors_high_half() {
+        let mut cart = test_cart(1, 1);
+        cart.prg_rom[0x0000] = 0x42;
+        cart.prg_rom[0x3FFF] = 0x99;
+        let mut m = Mapper0::new(cart);
+        // $8000 and $C000 fold to the same offset (address & 0x3FFF).
+        assert_eq!(m.prg_read_byte(0x8000), 0x42);
+        assert_eq!(m.prg_read_byte(0xC000), 0x42);
+        assert_eq!(m.prg_read_byte(0xBFFF), 0x99);
+        assert_eq!(m.prg_read_byte(0xFFFF), 0x99);
+    }
+
+    // Reads below $6000 are open bus (0), not ROM.
+    #[test]
+    fn nrom_below_6000_reads_zero() {
+        let mut cart = test_cart(2, 1);
+        cart.prg_rom[0] = 0xAB;
+        let mut m = Mapper0::new(cart);
+        assert_eq!(m.prg_read_byte(0x0000), 0);
+        assert_eq!(m.prg_read_byte(0x5FFF), 0);
+    }
+
+    // PRG-RAM window $6000-$7FFF round-trips writes (masked by 0x1FFF).
+    #[test]
+    fn nrom_prg_ram_read_write() {
+        let cart = test_cart(2, 1);
+        let mut m = Mapper0::new(cart);
+        m.prg_write_byte(0x6000, 0x55);
+        m.prg_write_byte(0x7FFF, 0xAA);
+        assert_eq!(m.prg_read_byte(0x6000), 0x55);
+        assert_eq!(m.prg_read_byte(0x7FFF), 0xAA);
+    }
+
+    // CHR-RAM round-trips writes across the full 8 KB window.
+    #[test]
+    fn nrom_chr_read_write() {
+        let cart = test_cart(2, 1);
+        let mut m = Mapper0::new(cart);
+        m.chr_write_byte(0x0000, 0x33);
+        m.chr_write_byte(0x1FFF, 0x44);
+        assert_eq!(m.chr_read_byte(0x0000), 0x33);
+        assert_eq!(m.chr_read_byte(0x1FFF), 0x44);
+    }
+
+    // mirroring() reflects the cartridge header value.
+    #[test]
+    fn nrom_mirroring_from_cartridge() {
+        let mut cart = test_cart(2, 1);
+        cart.mirroring = Mirroring::Vertical;
+        let m = Mapper0::new(cart);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+    }
+
+    // get_state/apply_state restores CHR-RAM and PRG-RAM contents.
+    #[test]
+    fn nrom_state_round_trip() {
+        let cart = test_cart(2, 1);
+        let mut m = Mapper0::new(cart);
+        m.chr_write_byte(0x0010, 0x7E);
+        m.prg_write_byte(0x6001, 0x3C);
+        let snap = m.get_state();
+        // Clobber both RAM regions.
+        m.chr_write_byte(0x0010, 0x00);
+        m.prg_write_byte(0x6001, 0x00);
+        m.apply_state(&snap);
+        assert_eq!(m.chr_read_byte(0x0010), 0x7E);
+        assert_eq!(m.prg_read_byte(0x6001), 0x3C);
+    }
+}

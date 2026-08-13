@@ -128,3 +128,137 @@ impl Mapper for Mapper13 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cartridge::{Cartridge, Mirroring};
+    use crate::mapper::Mapper;
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 13,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    // A full 32 KB PRG cart (two 16 KB banks) with distinct markers at the
+    // first and last byte of the window.
+    fn cprom_mapper() -> Mapper13 {
+        let mut cart = test_cart(2, 0);
+        cart.prg_rom[0x0000] = 0x11;
+        cart.prg_rom[0x7FFF] = 0x22;
+        Mapper13::new(cart)
+    }
+
+    // The 32 KB PRG bank is fixed: writes to the register do not move it.
+    #[test]
+    fn prg_is_fixed_32k() {
+        let mut m = cprom_mapper();
+        assert_eq!(m.prg_read_byte(0x8000), 0x11);
+        assert_eq!(m.prg_read_byte(0xFFFF), 0x22);
+        m.prg_write_byte(0x8000, 0x03); // CHR select only, PRG must not move
+        assert_eq!(m.prg_read_byte(0x8000), 0x11);
+        assert_eq!(m.prg_read_byte(0xFFFF), 0x22);
+    }
+
+    // Reads below $8000 are not decoded.
+    #[test]
+    fn reads_below_8000_return_zero() {
+        let mut m = cprom_mapper();
+        assert_eq!(m.prg_read_byte(0x6000), 0);
+        assert_eq!(m.prg_read_byte(0x7FFF), 0);
+    }
+
+    // The lower 4 KB pattern window ($0000-$0FFF) is hard-wired to CHR-RAM
+    // bank 0 and never follows the bank register.
+    #[test]
+    fn lower_4k_is_fixed_to_bank_zero() {
+        let mut m = cprom_mapper();
+        m.chr_write_byte(0x0500, 0x42);
+        for sel in 0..4u8 {
+            m.prg_write_byte(0x8000, sel);
+            assert_eq!(m.chr_read_byte(0x0500), 0x42);
+        }
+    }
+
+    // The upper 4 KB pattern window ($1000-$1FFF) switches among the four
+    // CHR-RAM banks selected by the register's low two bits.
+    #[test]
+    fn upper_4k_switches_banks() {
+        let mut m = cprom_mapper();
+        // Stamp each of the four upper banks at $1000 with a distinct byte.
+        for bank in 0..4u8 {
+            m.prg_write_byte(0x8000, bank);
+            m.chr_write_byte(0x1000, 0xD0 + bank);
+        }
+        // Reading back with each bank selected must return that byte.
+        for bank in 0..4u8 {
+            m.prg_write_byte(0x8000, bank);
+            assert_eq!(m.chr_read_byte(0x1000), 0xD0 + bank);
+        }
+    }
+
+    // Only the low two bits of the register matter: bank 5 aliases bank 1.
+    #[test]
+    fn upper_bank_masks_to_two_bits() {
+        let mut m = cprom_mapper();
+        m.prg_write_byte(0x8000, 0x01);
+        m.chr_write_byte(0x1000, 0x9E);
+        m.prg_write_byte(0x8000, 0x05); // 5 & 3 == 1 -> same physical bank
+        assert_eq!(m.chr_read_byte(0x1000), 0x9E);
+        m.prg_write_byte(0x8000, 0xFF); // ...as does 0xFF & 3 == 3, not 1
+        assert_ne!(m.chr_read_byte(0x1000), 0x9E);
+    }
+
+    // A 16 KB half-cart is mirrored across the fixed 32 KB window.
+    #[test]
+    fn half_size_prg_mirrors_across_window() {
+        let mut cart = test_cart(1, 0); // 16 KB PRG
+        cart.prg_rom[0x0000] = 0x7C;
+        let mut m = Mapper13::new(cart);
+        assert_eq!(m.prg_read_byte(0x8000), 0x7C);
+        assert_eq!(m.prg_read_byte(0xC000), 0x7C); // mirror of $8000
+    }
+
+    // get_state/apply_state restores both the bank register and CHR-RAM.
+    #[test]
+    fn state_roundtrip_restores_bank_and_ram() {
+        let mut m = cprom_mapper();
+        m.prg_write_byte(0x8000, 0x02);
+        m.chr_write_byte(0x1000, 0x55);
+        m.chr_write_byte(0x0800, 0x66);
+        let snap = m.get_state();
+        // Clobber selection and RAM.
+        m.prg_write_byte(0x8000, 0x00);
+        m.chr_write_byte(0x1000, 0x00);
+        m.chr_write_byte(0x0800, 0x00);
+        m.apply_state(&snap);
+        m.prg_write_byte(0x8000, 0x02);
+        assert_eq!(m.chr_read_byte(0x1000), 0x55);
+        assert_eq!(m.chr_read_byte(0x0800), 0x66);
+    }
+
+    // reset clears the upper-bank register back to bank 0.
+    #[test]
+    fn reset_clears_upper_bank() {
+        let mut m = cprom_mapper();
+        // Put a marker in bank 0 upper and a different one in bank 2 upper.
+        m.prg_write_byte(0x8000, 0x00);
+        m.chr_write_byte(0x1000, 0xAA);
+        m.prg_write_byte(0x8000, 0x02);
+        m.chr_write_byte(0x1000, 0xBB);
+        m.reset();
+        assert_eq!(m.chr_read_byte(0x1000), 0xAA);
+    }
+}

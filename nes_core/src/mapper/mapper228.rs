@@ -189,3 +189,168 @@ impl Mapper for Mapper228 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 228,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    // Compose the write address that carries the bank-select bits: A12..A11
+    // = chip, A10..A6 = inner bank, A5 = PRG-mode (set for 16 KB), A13 =
+    // mirroring. Bit 15 keeps the address inside PRG write space.
+    fn wr_addr(chip: u16, inner: u16, mode_16k: bool, a13_high: bool) -> u16 {
+        let mut a = 0x8000u16;
+        if a13_high {
+            a |= 1 << 13;
+        }
+        a |= (chip & 0x03) << 11;
+        a |= (inner & 0x1F) << 6;
+        if mode_16k {
+            a |= 1 << 5; // A5 set => 16 KB mode
+        }
+        a
+    }
+
+    fn marker(bank: usize) -> u8 {
+        0x40 + bank as u8
+    }
+
+    fn stamp_prg_16k(cart: &mut Cartridge) {
+        let banks = cart.prg_rom.len() / 0x4000;
+        for b in 0..banks {
+            cart.prg_rom[b * 0x4000] = marker(b);
+        }
+    }
+
+    fn stamp_chr_8k(cart: &mut Cartridge) {
+        let banks = cart.chr.len() / 0x2000;
+        for b in 0..banks {
+            cart.chr[b * 0x2000] = b as u8;
+        }
+    }
+
+    // In 16 KB mode both CPU windows mirror the same selected bank.
+    #[test]
+    fn prg_16k_mode_mirrors_bank_into_both_windows() {
+        let mut cart = test_cart(8, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper228::new(cart);
+        m.prg_write_byte(wr_addr(0, 3, true, false), 0x00); // inner 3, 16 KB
+        assert_eq!(m.prg_read_byte(0x8000), marker(3));
+        assert_eq!(m.prg_read_byte(0xC000), marker(3)); // mirrored high window
+    }
+
+    // In 32 KB mode $8000 sees the even base bank and $C000 the next one.
+    #[test]
+    fn prg_32k_mode_maps_consecutive_banks() {
+        let mut cart = test_cart(8, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper228::new(cart);
+        m.prg_write_byte(wr_addr(0, 4, false, false), 0x00); // inner 4, 32 KB
+        assert_eq!(m.prg_read_byte(0x8000), marker(4));
+        assert_eq!(m.prg_read_byte(0xC000), marker(5));
+    }
+
+    // The 2-bit chip select stacks above the 5-bit inner bank, and chip 1
+    // is remapped onto chip 0 (open-bus mirror on real hardware).
+    #[test]
+    fn prg_chip_select_stacks_above_inner_bank() {
+        let mut cart = test_cart(128, 1); // 2 MB so chips 2/3 are in range
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper228::new(cart);
+        m.prg_write_byte(wr_addr(0, 1, true, false), 0x00);
+        assert_eq!(m.prg_read_byte(0x8000), marker(1)); // chip 0, bank 1
+        m.prg_write_byte(wr_addr(1, 1, true, false), 0x00);
+        assert_eq!(m.prg_read_byte(0x8000), marker(1)); // chip 1 -> chip 0, not 33
+        m.prg_write_byte(wr_addr(2, 1, true, false), 0x00);
+        assert_eq!(m.prg_read_byte(0x8000), marker(65)); // (2<<5)|1
+        m.prg_write_byte(wr_addr(3, 1, true, false), 0x00);
+        assert_eq!(m.prg_read_byte(0x8000), marker(97)); // (3<<5)|1
+    }
+
+    // The CHR bank is the low six bits of the written value (bits 6-7
+    // dropped); the split hi/lo nibble recombine covers the full range.
+    #[test]
+    fn chr_bank_from_value_low_six_bits() {
+        let mut cart = test_cart(2, 64);
+        stamp_chr_8k(&mut cart);
+        let mut m = Mapper228::new(cart);
+        m.prg_write_byte(0x8000, 0x05);
+        assert_eq!(m.chr_read_byte(0x0000), 5);
+        m.prg_write_byte(0x8000, 0x3F);
+        assert_eq!(m.chr_read_byte(0x0000), 63);
+        m.prg_write_byte(0x8000, 0xC5); // bits 6-7 ignored -> still bank 5
+        assert_eq!(m.chr_read_byte(0x0000), 5);
+    }
+
+    // A13 of the write address selects the nametable mirroring.
+    #[test]
+    fn mirroring_follows_a13() {
+        let cart = test_cart(2, 1);
+        let mut m = Mapper228::new(cart);
+        m.prg_write_byte(0x8000, 0x00); // A13 clear
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        m.prg_write_byte(0xA000, 0x00); // A13 set
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+    }
+
+    // A PRG bank index beyond the ROM wraps modulo the bank count.
+    #[test]
+    fn prg_bank_wraps_beyond_rom() {
+        let mut cart = test_cart(4, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper228::new(cart);
+        m.prg_write_byte(wr_addr(0, 6, true, false), 0x00); // 6 % 4 == 2
+        assert_eq!(m.prg_read_byte(0x8000), marker(2));
+    }
+
+    // reset returns to bank 0 / 32 KB mode and the default mirroring.
+    #[test]
+    fn reset_restores_defaults() {
+        let mut cart = test_cart(8, 4);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper228::new(cart);
+        m.prg_write_byte(wr_addr(0, 5, true, false), 0x07); // bank 5, CHR 7, vertical
+        assert_eq!(m.prg_read_byte(0x8000), marker(5));
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        m.reset();
+        assert_eq!(m.prg_read_byte(0x8000), marker(0));
+        assert_eq!(m.mirroring(), Mirroring::Horizontal); // default
+    }
+
+    // get_state/apply_state round-trips PRG mode, banks, CHR and mirroring.
+    #[test]
+    fn state_round_trip() {
+        let mut cart = test_cart(8, 8);
+        stamp_prg_16k(&mut cart);
+        stamp_chr_8k(&mut cart);
+        let mut m = Mapper228::new(cart);
+        m.prg_write_byte(wr_addr(0, 4, false, true), 0x03); // 32 KB, banks 4/5, CHR 3, horizontal
+        assert_eq!(m.prg_read_byte(0x8000), marker(4));
+        assert_eq!(m.prg_read_byte(0xC000), marker(5));
+        let snap = m.get_state();
+        m.prg_write_byte(wr_addr(0, 0, true, false), 0x00); // mutate away
+        assert_eq!(m.prg_read_byte(0x8000), marker(0));
+        m.apply_state(&snap);
+        assert_eq!(m.prg_read_byte(0x8000), marker(4));
+        assert_eq!(m.prg_read_byte(0xC000), marker(5));
+        assert_eq!(m.chr_read_byte(0x0000), 3);
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+    }
+}

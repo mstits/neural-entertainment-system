@@ -307,3 +307,188 @@ impl Mapper for Mapper85 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 85,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    fn stamp_prg(cart: &mut Cartridge) {
+        let banks = cart.prg_rom.len() / PRG_BANK;
+        for i in 0..banks {
+            cart.prg_rom[i * PRG_BANK] = i as u8;
+        }
+    }
+
+    fn stamp_chr(cart: &mut Cartridge) {
+        let banks = cart.chr.len() / CHR_BANK;
+        for i in 0..banks {
+            cart.chr[i * CHR_BANK] = i as u8;
+        }
+    }
+
+    fn build() -> Mapper85 {
+        let mut cart = test_cart(4, 2); // 8 PRG 8K-banks, 16 CHR 1K-banks
+        stamp_prg(&mut cart);
+        stamp_chr(&mut cart);
+        Mapper85::new(cart)
+    }
+
+    // The three switchable PRG windows are selected by the A4 register bit:
+    // $8000 -> slot 0, $8010 -> slot 1, $9000 -> slot 2.
+    #[test]
+    fn prg_banks_switch_via_a4_selector() {
+        let mut m = build();
+        m.prg_write_byte(0x8000, 1);
+        m.prg_write_byte(0x8010, 2);
+        m.prg_write_byte(0x9000, 6);
+        assert_eq!(m.prg_read_byte(0x8000), 1);
+        assert_eq!(m.prg_read_byte(0xA000), 2);
+        assert_eq!(m.prg_read_byte(0xC000), 6);
+    }
+
+    // The $E000 window is fixed to the last PRG bank.
+    #[test]
+    fn prg_last_bank_fixed() {
+        let mut m = build();
+        assert_eq!(m.prg_read_byte(0xE000), 7);
+        m.prg_write_byte(0x9000, 1);
+        assert_eq!(m.prg_read_byte(0xE000), 7);
+    }
+
+    // A PRG bank index beyond the ROM wraps (mod bank count).
+    #[test]
+    fn prg_bank_wraps() {
+        let mut m = build();
+        m.prg_write_byte(0x8000, 10); // 10 & 0x3F = 10, 10 % 8 == 2
+        assert_eq!(m.prg_read_byte(0x8000), 2);
+    }
+
+    // The eight 1 KB CHR windows follow $A000..$D010.
+    #[test]
+    fn chr_banks_switch() {
+        let mut m = build();
+        m.prg_write_byte(0xA000, 3); // slot 0
+        m.prg_write_byte(0xD010, 9); // slot 7
+        assert_eq!(m.chr_read_byte(0x0000), 3);
+        assert_eq!(m.chr_read_byte(0x1C00), 9);
+    }
+
+    // A CHR bank index beyond the ROM wraps (mod bank count).
+    #[test]
+    fn chr_bank_wraps() {
+        let mut m = build();
+        m.prg_write_byte(0xA000, 20); // 20 % 16 == 4
+        assert_eq!(m.chr_read_byte(0x0000), 4);
+    }
+
+    // $E000 sets mirroring from the low two bits.
+    #[test]
+    fn mirroring_control() {
+        let mut m = build();
+        m.prg_write_byte(0xE000, 0);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        m.prg_write_byte(0xE000, 1);
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+        m.prg_write_byte(0xE000, 2);
+        assert_eq!(m.mirroring(), Mirroring::OneScreenLower);
+        m.prg_write_byte(0xE000, 3);
+        assert_eq!(m.mirroring(), Mirroring::OneScreenUpper);
+    }
+
+    // Cycle-mode IRQ: a latch of 0xFF reloads to 0xFF and asserts on the
+    // first clocked cycle; acknowledge clears the line and (with re-enable
+    // off) leaves it disabled.
+    #[test]
+    fn irq_cycle_mode_fires_and_acks() {
+        let mut m = build();
+        m.prg_write_byte(0xE010, 0xFF); // latch
+        m.prg_write_byte(0xF000, 0x06); // enable + cycle mode
+        assert!(!m.irq_pending());
+        m.on_scanline_tick();
+        assert!(m.irq_pending());
+        m.prg_write_byte(0xF010, 0x00); // ack
+        assert!(!m.irq_pending());
+        m.on_scanline_tick(); // disabled after ack
+        assert!(!m.irq_pending());
+    }
+
+    // With enable-on-ack set, acknowledging re-arms the line so it fires again.
+    #[test]
+    fn irq_re_enables_after_ack() {
+        let mut m = build();
+        m.prg_write_byte(0xE010, 0xFF);
+        m.prg_write_byte(0xF000, 0x07); // enable + cycle + enable_after_ack
+        m.on_scanline_tick();
+        assert!(m.irq_pending());
+        m.prg_write_byte(0xF010, 0x00); // ack re-enables
+        assert!(!m.irq_pending());
+        m.on_scanline_tick();
+        assert!(m.irq_pending());
+    }
+
+    // Scanline-mode IRQ runs the 341-tick prescaler: it does not clock on
+    // the first scanline (341 -> 2) and first clocks on the second, so a
+    // latch of 0xFF fires only after two scanline ticks.
+    #[test]
+    fn irq_scanline_mode_prescaler() {
+        let mut m = build();
+        m.prg_write_byte(0xE010, 0xFF);
+        m.prg_write_byte(0xF000, 0x02); // enable, scanline mode
+        m.on_scanline_tick();
+        assert!(!m.irq_pending());
+        m.on_scanline_tick();
+        assert!(m.irq_pending());
+    }
+
+    // Snapshot/restore returns bank, mirroring, and IRQ latch state.
+    #[test]
+    fn state_round_trip() {
+        let mut m = build();
+        m.prg_write_byte(0x8000, 3);
+        m.prg_write_byte(0xA000, 7); // chr slot 0
+        m.prg_write_byte(0xE000, 0); // vertical
+        m.prg_write_byte(0xE010, 0x5A); // latch
+        let snap = m.get_state();
+
+        m.prg_write_byte(0x8000, 0);
+        m.prg_write_byte(0xA000, 0);
+        m.prg_write_byte(0xE000, 1);
+        m.prg_write_byte(0xE010, 0x00);
+
+        m.apply_state(&snap);
+        assert_eq!(m.prg_read_byte(0x8000), 3);
+        assert_eq!(m.chr_read_byte(0x0000), 7);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        assert_eq!(m.irq_latch, 0x5A);
+    }
+
+    // reset returns to power-on banking, default mirroring, and IRQ cleared.
+    #[test]
+    fn reset_restores_power_on() {
+        let mut m = build();
+        m.prg_write_byte(0x8000, 4);
+        m.prg_write_byte(0xE000, 0); // vertical
+        m.prg_write_byte(0xF000, 0x06);
+        m.reset();
+        assert_eq!(m.prg_read_byte(0x8000), 0);
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+        assert!(!m.irq_pending());
+    }
+}

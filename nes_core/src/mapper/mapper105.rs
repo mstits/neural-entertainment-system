@@ -276,3 +276,216 @@ impl Mapper for Mapper105 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 105,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    // Stamp every 16 KB PRG bank's first byte with its physical bank index.
+    fn stamp_prg(cart: &mut Cartridge) {
+        let banks = cart.prg_rom.len() / PRG_ROM_BANK_SIZE as usize;
+        for i in 0..banks {
+            cart.prg_rom[i * PRG_ROM_BANK_SIZE as usize] = i as u8;
+        }
+    }
+
+    // Stamp every 4 KB CHR block's first byte with its block index.
+    fn stamp_chr(cart: &mut Cartridge) {
+        let blocks = cart.chr.len() / 0x1000;
+        for i in 0..blocks {
+            cart.chr[i * 0x1000] = i as u8;
+        }
+    }
+
+    // Clock one 5-bit value through the MMC1 serial shift register (LSB first).
+    fn ser(m: &mut Mapper105, addr: u16, value: u8) {
+        for i in 0..5 {
+            m.prg_write_byte(addr, (value >> i) & 0x01);
+        }
+    }
+
+    fn build() -> Mapper105 {
+        let mut cart = test_cart(16, 4); // 256 KB PRG (16 banks), 32 KB CHR (8 4K blocks)
+        stamp_prg(&mut cart);
+        stamp_chr(&mut cart);
+        Mapper105::new(cart)
+    }
+
+    // Power-on control (0x0C) fixes $C000 to the last 16 KB bank of the
+    // active 128 KB outer half; outer 0 -> physical bank 7.
+    #[test]
+    fn default_fixes_last_bank_of_outer_half() {
+        let mut m = build();
+        assert_eq!(m.prg_read_byte(0xC000), 7);
+    }
+
+    // In fix-last mode the $8000 window follows prg_bank; the last window
+    // stays pinned.
+    #[test]
+    fn fixlast_switches_8000_window() {
+        let mut m = build();
+        ser(&mut m, 0xE000, 3); // prg_bank = 3
+        assert_eq!(m.prg_read_byte(0x8000), 3);
+        assert_eq!(m.prg_read_byte(0xC000), 7);
+    }
+
+    // chr_bank_0 bit 0 selects the 128 KB outer PRG half; setting it moves
+    // every PRG window into physical banks 8-15.
+    #[test]
+    fn outer_bank_selects_upper_half() {
+        let mut m = build();
+        ser(&mut m, 0xE000, 3); // prg_bank = 3
+        ser(&mut m, 0xA000, 0x01); // chr0 bit0 -> outer_bank = 1
+        assert_eq!(m.prg_read_byte(0x8000), 11); // outer1 bank3 -> physical 11
+        assert_eq!(m.prg_read_byte(0xC000), 15); // outer1 last -> physical 15
+    }
+
+    // Fix-first mode pins $8000 to bank 0 and switches $C000 via prg_bank.
+    #[test]
+    fn fixfirst_mode() {
+        let mut m = build();
+        ser(&mut m, 0x8000, 0x08); // control bits 3..2 = 10 -> fix first
+        ser(&mut m, 0xE000, 5); // prg_bank = 5
+        assert_eq!(m.prg_read_byte(0x8000), 0);
+        assert_eq!(m.prg_read_byte(0xC000), 5);
+    }
+
+    // 32 KB switch mode maps an aligned pair: prg_bank is forced even for the
+    // low window and odd for the high window.
+    #[test]
+    fn switch32k_mode() {
+        let mut m = build();
+        ser(&mut m, 0x8000, 0x00); // control bits 3..2 = 00 -> switch 32K
+        ser(&mut m, 0xE000, 6); // pair (6, 7)
+        assert_eq!(m.prg_read_byte(0x8000), 6);
+        assert_eq!(m.prg_read_byte(0xC000), 7);
+        ser(&mut m, 0xE000, 5); // odd rounds down to pair (4, 5)
+        assert_eq!(m.prg_read_byte(0x8000), 4);
+        assert_eq!(m.prg_read_byte(0xC000), 5);
+    }
+
+    // Control low two bits drive mirroring.
+    #[test]
+    fn mirroring_control() {
+        let mut m = build();
+        ser(&mut m, 0x8000, 0x00);
+        assert_eq!(m.mirroring(), Mirroring::OneScreenLower);
+        ser(&mut m, 0x8000, 0x01);
+        assert_eq!(m.mirroring(), Mirroring::OneScreenUpper);
+        ser(&mut m, 0x8000, 0x02);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        ser(&mut m, 0x8000, 0x03);
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+    }
+
+    // A write with bit 7 set resets the shift register and forces the PRG
+    // mode bits (control |= 0x0C), i.e. back to fix-last.
+    #[test]
+    fn reset_write_forces_fixlast() {
+        let mut m = build();
+        ser(&mut m, 0x8000, 0x00); // switch 32K
+        ser(&mut m, 0xE000, 2); // pair (2, 3)
+        assert_eq!(m.prg_read_byte(0xC000), 3);
+        m.prg_write_byte(0x8000, 0x80); // reset bit
+        assert_eq!(m.prg_read_byte(0xC000), 7); // fix-last of outer half
+    }
+
+    // A mid-sequence reset write discards partially shifted bits so the next
+    // full 5-write sequence commits the intended value.
+    #[test]
+    fn reset_clears_partial_shift() {
+        let mut m = build();
+        m.prg_write_byte(0xE000, 0x01); // bogus partial bits
+        m.prg_write_byte(0xE000, 0x01);
+        m.prg_write_byte(0x8000, 0x80); // reset discards them
+        ser(&mut m, 0xE000, 4); // clean program of prg_bank = 4
+        assert_eq!(m.prg_read_byte(0x8000), 4);
+    }
+
+    // 4 KB CHR mode routes $0000 via chr_bank_0 and $1000 via chr_bank_1.
+    #[test]
+    fn chr_switch_4k_mode() {
+        let mut m = build();
+        ser(&mut m, 0x8000, 0x10); // control bit4 set -> 4K CHR
+        ser(&mut m, 0xA000, 3); // chr_bank_0 = 3
+        ser(&mut m, 0xC000, 5); // chr_bank_1 = 5
+        assert_eq!(m.chr_read_byte(0x0000), 3);
+        assert_eq!(m.chr_read_byte(0x1000), 5);
+    }
+
+    // 8 KB CHR mode ignores bit 0 of chr_bank_0 and maps a contiguous 8 KB
+    // window (two consecutive 4 KB blocks).
+    #[test]
+    fn chr_switch_8k_mode() {
+        let mut m = build();
+        ser(&mut m, 0x8000, 0x00); // control bit4 clear -> 8K CHR
+        ser(&mut m, 0xA000, 5); // chr_bank_0 = 5 -> & !1 = 4
+        assert_eq!(m.chr_read_byte(0x0000), 4);
+        assert_eq!(m.chr_read_byte(0x1000), 5);
+    }
+
+    // CHR RAM writes land and read back at the mapped address.
+    #[test]
+    fn chr_write_read_round_trip() {
+        let mut m = build();
+        m.chr_write_byte(0x0040, 0xBE);
+        assert_eq!(m.chr_read_byte(0x0040), 0xBE);
+    }
+
+    // PRG RAM at $6000-$7FFF round-trips through the 8 KB work-RAM window.
+    #[test]
+    fn prg_ram_round_trip() {
+        let mut m = build();
+        m.prg_write_byte(0x6000, 0x42);
+        m.prg_write_byte(0x7FFF, 0x99);
+        assert_eq!(m.prg_read_byte(0x6000), 0x42);
+        assert_eq!(m.prg_read_byte(0x7FFF), 0x99);
+    }
+
+    // Snapshot/restore returns control mode, prg_bank, and outer bank.
+    #[test]
+    fn state_round_trip() {
+        let mut m = build();
+        ser(&mut m, 0x8000, 0x02); // switch32 PRG, vertical mirror
+        ser(&mut m, 0xE000, 4); // prg_bank = 4 -> pair (4, 5)
+        ser(&mut m, 0xA000, 0x01); // outer_bank = 1
+        let snap = m.get_state();
+
+        ser(&mut m, 0x8000, 0x03);
+        ser(&mut m, 0xE000, 0);
+        ser(&mut m, 0xA000, 0x00);
+
+        m.apply_state(&snap);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        assert_eq!(m.prg_read_byte(0x8000), 12); // outer1 bank4 -> physical 12
+        assert_eq!(m.prg_read_byte(0xC000), 13); // outer1 bank5 -> physical 13
+    }
+
+    // reset returns to power-on config: fix-last, outer 0, prg_bank 0.
+    #[test]
+    fn reset_restores_power_on() {
+        let mut m = build();
+        ser(&mut m, 0xE000, 5);
+        ser(&mut m, 0xA000, 0x01); // outer 1
+        m.reset();
+        assert_eq!(m.prg_read_byte(0xC000), 7); // fix-last, outer 0
+        assert_eq!(m.prg_read_byte(0x8000), 0); // prg_bank 0
+    }
+}

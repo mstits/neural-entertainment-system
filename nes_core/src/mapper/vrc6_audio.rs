@@ -265,3 +265,171 @@ impl Vrc6Audio {
         ((p1 + p2) * 0.2 + saw * 0.2).min(1.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    // write_register must claim exactly the pulse/sawtooth register
+    // blocks and reject the banking/mirroring/IRQ addresses that share
+    // the mapper's write window — the mapper relies on this bool to
+    // decide whether to fall through to its own handling.
+    #[test]
+    fn write_register_claims_only_audio_addresses() {
+        let mut a = Vrc6Audio::new();
+        for addr in [
+            0x9000u16, 0x9001, 0x9002, 0x9003, 0xA000, 0xA001, 0xA002, 0xB000, 0xB001, 0xB002,
+        ] {
+            assert!(a.write_register(addr, 0), "expected {:#06X} claimed", addr);
+        }
+        // $B003 is mirroring, $F000 is IRQ latch — must fall through.
+        for addr in [0xB003u16, 0x8000, 0xC000, 0xD000, 0xE000, 0xF000] {
+            assert!(
+                !a.write_register(addr, 0),
+                "expected {:#06X} not claimed",
+                addr
+            );
+        }
+    }
+
+    // In PCM mode the pulse emits its raw volume regardless of duty
+    // position, and that shows up scaled in the mix.
+    #[test]
+    fn pulse_pcm_mode_outputs_constant_volume() {
+        let mut a = Vrc6Audio::new();
+        a.write_register(0x9000, 0x8F); // volume 15, PCM mode (bit7)
+        a.write_register(0x9002, 0x80); // enable
+        assert_eq!(a.pulse_1.output(), 15);
+        assert!(approx(a.mix(), 0.2));
+    }
+
+    // Ticking walks the duty position through the selected duty table
+    // row; duty 1 = [1,1,0,...] so output is high at positions 0-1 and
+    // silent at position 2.
+    #[test]
+    fn pulse_duty_table_walks_with_ticks() {
+        let mut a = Vrc6Audio::new();
+        a.write_register(0x9000, 0x1F); // volume 15, duty_mode 1, not PCM
+        a.write_register(0x9001, 0x00); // period lo 0 (advances every tick)
+        a.write_register(0x9002, 0x80); // enable, period hi 0
+        assert_eq!(a.pulse_1.output(), 15); // position 0
+        a.tick_cpu_cycle();
+        assert_eq!(a.pulse_1.output(), 15); // position 1
+        a.tick_cpu_cycle();
+        assert_eq!(a.pulse_1.output(), 0); // position 2
+    }
+
+    // Clearing the enable bit silences the channel and rewinds the duty
+    // position to 0.
+    #[test]
+    fn pulse_disable_resets_position_and_mutes() {
+        let mut a = Vrc6Audio::new();
+        a.write_register(0x9000, 0x8F);
+        a.write_register(0x9002, 0x80);
+        assert_eq!(a.pulse_1.output(), 15);
+        a.write_register(0x9002, 0x00); // clear enable bit
+        assert_eq!(a.pulse_1.output(), 0);
+        assert_eq!(a.pulse_1.duty_position, 0);
+    }
+
+    // The 12-bit period is split: low 8 bits from $9001, high 4 bits
+    // from $9002.
+    #[test]
+    fn pulse_period_is_12_bit_split_across_two_writes() {
+        let mut a = Vrc6Audio::new();
+        a.write_register(0x9001, 0x34); // low byte
+        a.write_register(0x9002, 0x8F); // high nibble 0xF + enable
+        assert_eq!(a.pulse_1.timer_period, 0x0F34);
+    }
+
+    // $9003 decodes bit0 as global halt and bits1-2 as the frequency
+    // divider select (0 -> <<0, 1 -> <<4, 2/3 -> <<8).
+    #[test]
+    fn control_9003_decodes_halt_and_freq_shift() {
+        let mut a = Vrc6Audio::new();
+        a.write_register(0x9003, 0x00);
+        assert!(!a.halt);
+        assert_eq!(a.freq_shift, 0);
+        a.write_register(0x9003, 0x02); // (2>>1)&3 == 1 -> shift 4
+        assert_eq!(a.freq_shift, 4);
+        a.write_register(0x9003, 0x04); // (4>>1)&3 == 2 -> shift 8
+        assert_eq!(a.freq_shift, 8);
+        a.write_register(0x9003, 0x01); // halt bit
+        assert!(a.halt);
+    }
+
+    // With the halt bit set, tick_cpu_cycle is a no-op — the sawtooth
+    // accumulator stays frozen.
+    #[test]
+    fn halt_freezes_channel_ticking() {
+        let mut a = Vrc6Audio::new();
+        a.write_register(0xB000, 0x10); // sawtooth rate
+        a.write_register(0xB002, 0x80); // enable sawtooth
+        a.tick_cpu_cycle();
+        a.tick_cpu_cycle();
+        let frozen = a.sawtooth.accumulator;
+        a.write_register(0x9003, 0x01); // halt
+        a.tick_cpu_cycle();
+        assert_eq!(a.sawtooth.accumulator, frozen);
+    }
+
+    // The sawtooth adds its rate to the accumulator on even sub-steps;
+    // output is the top 5 bits (accumulator >> 3).
+    #[test]
+    fn sawtooth_accumulates_rate_and_outputs() {
+        let mut a = Vrc6Audio::new();
+        a.write_register(0xB000, 0x08); // rate 8
+        a.write_register(0xB001, 0x00); // period lo 0
+        a.write_register(0xB002, 0x80); // enable, period hi 0
+        assert_eq!(a.sawtooth.output(), 0);
+        a.tick_cpu_cycle(); // step 1 (odd, no add)
+        a.tick_cpu_cycle(); // step 2 (even, += 8)
+        assert_eq!(a.sawtooth.accumulator, 8);
+        assert_eq!(a.sawtooth.output(), 1); // 8 >> 3
+    }
+
+    // Clearing the sawtooth enable bit zeroes the accumulator.
+    #[test]
+    fn sawtooth_disable_resets_accumulator() {
+        let mut a = Vrc6Audio::new();
+        a.write_register(0xB000, 0x20);
+        a.write_register(0xB002, 0x80);
+        for _ in 0..6 {
+            a.tick_cpu_cycle();
+        }
+        assert!(a.sawtooth.accumulator > 0);
+        a.write_register(0xB002, 0x00); // disable
+        assert_eq!(a.sawtooth.accumulator, 0);
+        assert_eq!(a.sawtooth.output(), 0);
+    }
+
+    // The mix sums both pulses (each up to 0.2) and clips at 1.0.
+    #[test]
+    fn mix_sums_channels_and_clips_to_one() {
+        let mut a = Vrc6Audio::new();
+        a.write_register(0x9000, 0x8F);
+        a.write_register(0x9002, 0x80);
+        a.write_register(0xA000, 0x8F);
+        a.write_register(0xA002, 0x80);
+        assert!(approx(a.mix(), 0.4)); // (1.0 + 1.0) * 0.2
+        assert!(a.mix() <= 1.0);
+    }
+
+    // reset() silences every channel and clears the halt/freq state.
+    #[test]
+    fn reset_clears_all_channels() {
+        let mut a = Vrc6Audio::new();
+        a.write_register(0x9000, 0x8F);
+        a.write_register(0x9002, 0x80);
+        a.write_register(0x9003, 0x01);
+        assert!(a.mix() > 0.0);
+        a.reset();
+        assert_eq!(a.mix(), 0.0);
+        assert!(!a.halt);
+        assert!(!a.pulse_1.enabled);
+    }
+}

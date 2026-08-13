@@ -266,3 +266,203 @@ impl Mapper for Mapper19 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 19,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    // Stamp the first byte of every 8 KB PRG bank with its index so a read
+    // through a mapped window reveals which bank is currently selected.
+    fn stamp_prg(cart: &mut Cartridge) {
+        let banks = cart.prg_rom.len() / PRG_BANK;
+        for i in 0..banks {
+            cart.prg_rom[i * PRG_BANK] = i as u8;
+        }
+    }
+
+    // Stamp the first byte of every 1 KB CHR bank with its index.
+    fn stamp_chr(cart: &mut Cartridge) {
+        let banks = cart.chr.len() / CHR_BANK;
+        for i in 0..banks {
+            cart.chr[i * CHR_BANK] = i as u8;
+        }
+    }
+
+    fn build() -> Mapper19 {
+        let mut cart = test_cart(4, 2); // 8 PRG 8K-banks, 16 CHR 1K-banks
+        stamp_prg(&mut cart);
+        stamp_chr(&mut cart);
+        Mapper19::new(cart)
+    }
+
+    // The $8000 window follows the register at $E000-$E7FF.
+    #[test]
+    fn prg_bank0_switches_at_8000() {
+        let mut m = build();
+        m.prg_write_byte(0xE000, 3);
+        assert_eq!(m.prg_read_byte(0x8000), 3);
+    }
+
+    // The $A000 window follows the register at $E800-$EFFF.
+    #[test]
+    fn prg_bank1_switches_at_a000() {
+        let mut m = build();
+        m.prg_write_byte(0xE800, 5);
+        assert_eq!(m.prg_read_byte(0xA000), 5);
+    }
+
+    // The $C000 window follows the register at $F000-$F7FF.
+    #[test]
+    fn prg_bank2_switches_at_c000() {
+        let mut m = build();
+        m.prg_write_byte(0xF000, 6);
+        assert_eq!(m.prg_read_byte(0xC000), 6);
+    }
+
+    // The $E000 window is hard-wired to the last PRG bank.
+    #[test]
+    fn prg_last_bank_fixed_at_e000() {
+        let mut m = build();
+        assert_eq!(m.prg_read_byte(0xE000), 7); // last of 8 banks
+        m.prg_write_byte(0xF000, 1); // touching another window must not move it
+        assert_eq!(m.prg_read_byte(0xE000), 7);
+    }
+
+    // A bank index beyond the ROM wraps (mod bank count) instead of OOB.
+    #[test]
+    fn prg_bank_index_wraps() {
+        let mut m = build();
+        m.prg_write_byte(0xE000, 10); // 10 & 0x3F = 10, 10 % 8 == 2
+        assert_eq!(m.prg_read_byte(0x8000), 2);
+    }
+
+    // Each 1 KB CHR window follows its per-slot register at $8000 + slot*0x800.
+    #[test]
+    fn chr_bank_switches_per_slot() {
+        let mut m = build();
+        m.prg_write_byte(0x8000, 5); // slot 0 -> bank 5
+        assert_eq!(m.chr_read_byte(0x0000), 5);
+        m.prg_write_byte(0x8800, 9); // slot 1 -> bank 9
+        assert_eq!(m.chr_read_byte(0x0400), 9);
+        m.prg_write_byte(0xB000, 2); // slot 6 -> bank 2
+        assert_eq!(m.chr_read_byte(0x1800), 2);
+    }
+
+    // A CHR bank index beyond the ROM wraps (mod bank count).
+    #[test]
+    fn chr_bank_index_wraps() {
+        let mut m = build();
+        m.prg_write_byte(0x8000, 20); // 20 % 16 == 4
+        assert_eq!(m.chr_read_byte(0x0000), 4);
+    }
+
+    // The IRQ line stays low while the enable bit is clear.
+    #[test]
+    fn irq_disabled_never_fires() {
+        let mut m = build();
+        for _ in 0..1000 {
+            m.on_scanline_tick();
+        }
+        assert!(!m.irq_pending());
+    }
+
+    // The counter climbs to 0x7FFF, asserts the IRQ, and a port write acks it.
+    #[test]
+    fn irq_fires_then_acks() {
+        let mut m = build();
+        m.prg_write_byte(0x5000, 0xCD); // counter low
+        m.prg_write_byte(0x5800, 0xFF); // counter high 0x7F + enable
+        assert!(!m.irq_pending());
+        m.on_scanline_tick(); // 0x7FCD + 113 crosses 0x7FFF
+        assert!(m.irq_pending());
+        m.prg_write_byte(0x5000, 0x00); // ack via a counter write
+        assert!(!m.irq_pending());
+    }
+
+    // The IRQ counter/enable ports read back what was written.
+    #[test]
+    fn irq_ports_read_back() {
+        let mut m = build();
+        m.prg_write_byte(0x5000, 0xCD);
+        m.prg_write_byte(0x5800, 0xFF);
+        assert_eq!(m.prg_read_byte(0x5000), 0xCD);
+        assert_eq!(m.prg_read_byte(0x5800), 0xFF); // 0x7F | enable(0x80)
+    }
+
+    // PRG RAM at $6000 is writable until $F800 sets the protect bit.
+    #[test]
+    fn prg_ram_write_protect() {
+        let mut m = build();
+        m.prg_write_byte(0x6000, 0x42);
+        assert_eq!(m.prg_read_byte(0x6000), 0x42);
+        m.prg_write_byte(0xF800, 0x40); // prg_ram_protect = 0x40 >> 6 == 1
+        m.prg_write_byte(0x6000, 0x99); // blocked
+        assert_eq!(m.prg_read_byte(0x6000), 0x42);
+    }
+
+    // Snapshot/restore returns bank and IRQ state to the captured values.
+    #[test]
+    fn state_round_trip() {
+        let mut m = build();
+        m.prg_write_byte(0xE000, 3); // prg slot 0 -> bank 3
+        m.prg_write_byte(0x8000, 7); // chr slot 0 -> bank 7
+        m.prg_write_byte(0x5000, 0x11);
+        m.prg_write_byte(0x5800, 0x82); // enable + high bits
+        let snap = m.get_state();
+
+        m.prg_write_byte(0xE000, 1);
+        m.prg_write_byte(0x8000, 0);
+        m.prg_write_byte(0x5000, 0x00);
+        m.prg_write_byte(0x5800, 0x00);
+
+        m.apply_state(&snap);
+        assert_eq!(m.prg_read_byte(0x8000), 3);
+        assert_eq!(m.chr_read_byte(0x0000), 7);
+        assert_eq!(m.prg_read_byte(0x5000), 0x11);
+        assert_eq!(m.prg_read_byte(0x5800), 0x82);
+    }
+
+    // reset returns to power-on banking (bank 0 at $8000) with IRQ disabled.
+    #[test]
+    fn reset_clears_banks_and_irq() {
+        let mut m = build();
+        m.prg_write_byte(0xE000, 4);
+        m.prg_write_byte(0x5800, 0x82);
+        m.reset();
+        assert_eq!(m.prg_read_byte(0x8000), 0);
+        assert!(!m.irq_pending());
+        assert_eq!(m.prg_read_byte(0x5800) & 0x80, 0); // enable bit cleared
+    }
+
+    // Documents the current register map: $B800 writes nametable slot 0, not
+    // CHR bank register 7, so CHR pattern slot 7 ($1C00-$1FFF) stays on its
+    // power-on bank and cannot be re-banked.
+    // SUSPECTED BUG: on real N163 hardware $B800 is CHR bank register 7 and
+    // the four nametable registers begin at $C000 ($C000/$C800/$D000/$D800).
+    // Here they are shifted one slot low ($B800/$C000/$C800/$D000), leaving
+    // CHR register 7 unreachable.
+    #[test]
+    fn b800_writes_nametable_not_chr_slot7() {
+        let mut m = build();
+        m.prg_write_byte(0xB800, 0x0A);
+        assert_eq!(m.nt_banks[0], 0x0A);
+        assert_eq!(m.chr_read_byte(0x1C00), 0); // slot 7 unchanged
+    }
+}

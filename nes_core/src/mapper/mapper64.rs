@@ -501,3 +501,333 @@ impl Mapper for Mapper64 {
         self.irq_active
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cartridge::{Cartridge, Mirroring};
+    use crate::mapper::Mapper;
+
+    // RAMBO-1 register addresses. The mapper decodes only the $8000
+    // block boundaries and address bit 0 (even/odd) within each block.
+    const BANK_SELECT: u16 = 0x8000; // even in $8000-$9FFF
+    const BANK_DATA: u16 = 0x8001; // odd in $8000-$9FFF
+    const MIRROR: u16 = 0xA000; // even in $A000-$BFFF
+    const IRQ_LATCH: u16 = 0xC000; // even in $C000-$DFFF
+    const IRQ_RELOAD: u16 = 0xC001; // odd in $C000-$DFFF
+    const IRQ_DISABLE: u16 = 0xE000; // even in $E000-$FFFF (disable + ack)
+    const IRQ_ENABLE: u16 = 0xE001; // odd in $E000-$FFFF
+
+    // Control bits packed into a $8000 (bank-select) write.
+    const PRG_MODE_ONE: u8 = 0x40; // bit 6
+    const CHR_ALL_1KB: u8 = 0x20; // bit 5
+    const CHR_A12_INVERT: u8 = 0x80; // bit 7
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 64,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    // Stamp the first byte of every 8 KB PRG bank and every 1 KB CHR
+    // bank with that bank's index, so a mapped read reveals which bank
+    // is currently selected. Must run before the cartridge is moved
+    // into the mapper.
+    fn stamped_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        let mut c = test_cart(prg_16k_banks, chr_8k_banks);
+        let prg_banks = c.prg_rom.len() / 0x2000;
+        for b in 0..prg_banks {
+            c.prg_rom[b * 0x2000] = b as u8;
+        }
+        let chr_banks = c.chr.len() / 0x0400;
+        for b in 0..chr_banks {
+            c.chr[b * 0x0400] = b as u8;
+        }
+        c
+    }
+
+    // Select `reg` (control bits merged in) then write `bank` to it.
+    fn set_reg(m: &mut Mapper64, control: u8, bank: u8) {
+        m.prg_write_byte(BANK_SELECT, control);
+        m.prg_write_byte(BANK_DATA, bank);
+    }
+
+    fn arm_irq(m: &mut Mapper64, latch: u8) {
+        m.prg_write_byte(IRQ_LATCH, latch);
+        m.prg_write_byte(IRQ_RELOAD, 0);
+        m.prg_write_byte(IRQ_ENABLE, 0);
+    }
+
+    // ---- PRG banking ----
+
+    // R6 drives the $8000 slot in PRG mode 0.
+    #[test]
+    fn prg_r6_maps_to_8000_in_mode0() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 6, 3);
+        assert_eq!(m.prg_read_byte(0x8000), 3);
+    }
+
+    // R7 drives the $A000 slot in PRG mode 0.
+    #[test]
+    fn prg_r7_maps_to_a000_in_mode0() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 7, 4);
+        assert_eq!(m.prg_read_byte(0xA000), 4);
+    }
+
+    // The last 8 KB PRG bank is permanently fixed at $E000.
+    #[test]
+    fn last_prg_bank_fixed_at_e000() {
+        let mut m = Mapper64::new(stamped_cart(8, 8)); // 16 x 8 KB, last = 15
+        assert_eq!(m.prg_read_byte(0xE000), 15);
+        // Reprogramming a swappable slot must not disturb the fixed one.
+        set_reg(&mut m, 6, 3);
+        assert_eq!(m.prg_read_byte(0xE000), 15);
+    }
+
+    // A programmed R8 selects the $C000 slot in PRG mode 0.
+    #[test]
+    fn prg_r8_maps_to_c000_in_mode0() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 8, 5);
+        assert_eq!(m.prg_read_byte(0xC000), 5);
+    }
+
+    // SUSPECTED BUG: an unprogrammed R8 (value 0) is treated as "not yet
+    // set" and silently replaced by the second-to-last bank, so PRG bank
+    // 0 can never be selected into the R8 slot. This is a documented
+    // boot-time simplification in update_banks(), not real RAMBO-1
+    // behavior. The test pins the CURRENT (fallback) behavior.
+    #[test]
+    fn unprogrammed_r8_falls_back_to_second_last() {
+        let mut m = Mapper64::new(stamped_cart(8, 8)); // second-last = 14
+        assert_eq!(m.prg_read_byte(0xC000), 14);
+    }
+
+    // PRG mode 1 swaps the $8000 and $C000 roles: R6 moves to $C000.
+    #[test]
+    fn prg_mode_one_moves_r6_to_c000() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 6, 3);
+        assert_eq!(m.prg_read_byte(0x8000), 3); // R6 at $8000 in mode 0
+        // Flip to mode 1 without reprogramming any bank register.
+        m.prg_write_byte(BANK_SELECT, PRG_MODE_ONE);
+        assert_eq!(m.prg_read_byte(0xC000), 3); // R6 now at $C000
+        assert_eq!(m.prg_read_byte(0xE000), 15); // last bank still fixed
+    }
+
+    // A PRG bank index larger than the ROM wraps (masked mod bank count)
+    // instead of reading out of bounds.
+    #[test]
+    fn prg_bank_index_wraps() {
+        let mut m = Mapper64::new(stamped_cart(8, 8)); // 16 banks
+        set_reg(&mut m, 6, 200); // 200 % 16 == 8
+        assert_eq!(m.prg_read_byte(0x8000), (200 % 16) as u8);
+    }
+
+    // ---- CHR banking ----
+
+    // In the 1 KB+2 KB mode, R2 supplies a single 1 KB bank at $1000.
+    #[test]
+    fn chr_r2_1kb_bank_at_1000() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 2, 7);
+        assert_eq!(m.chr_read_byte(0x1000), 7);
+    }
+
+    // R0 is a 2 KB pair: its low bit is forced even for $0000 and odd
+    // for $0400.
+    #[test]
+    fn chr_r0_2kb_pair_even_odd() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 0, 5); // pair covers banks 4 and 5
+        assert_eq!(m.chr_read_byte(0x0000), 4); // R0 & 0xFE
+        assert_eq!(m.chr_read_byte(0x0400), 5); // R0 | 0x01
+    }
+
+    // Bit 7 (A12 inversion) swaps the $0000 and $1000 CHR halves.
+    #[test]
+    fn chr_a12_inversion_swaps_halves() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 0, 5); // R0 pair -> banks 4/5
+        set_reg(&mut m, 2, 7); // R2 -> bank 7
+        assert_eq!(m.chr_read_byte(0x0000), 4); // low half = R0 pair
+        assert_eq!(m.chr_read_byte(0x1000), 7); // high half = R2
+        // Invert without reprogramming a register.
+        m.prg_write_byte(BANK_SELECT, CHR_A12_INVERT);
+        assert_eq!(m.chr_read_byte(0x0000), 7); // halves swapped
+        assert_eq!(m.chr_read_byte(0x1000), 4);
+    }
+
+    // Bit 5 (all-1 KB mode) makes R0 a single unmasked 1 KB bank rather
+    // than an even/odd 2 KB pair.
+    #[test]
+    fn chr_all_1kb_mode_unmasks_r0() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 0, 5);
+        assert_eq!(m.chr_read_byte(0x0000), 4); // masked to even in pair mode
+        m.prg_write_byte(BANK_SELECT, CHR_ALL_1KB); // switch to all-1 KB
+        assert_eq!(m.chr_read_byte(0x0000), 5); // now unmasked
+    }
+
+    // In all-1 KB mode R8 fills the $0400 slot (the extra 1 KB bank).
+    #[test]
+    fn chr_all_1kb_r8_fills_second_slot() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, CHR_ALL_1KB | 8, 9); // select R8 in all-1 KB mode
+        assert_eq!(m.chr_read_byte(0x0400), 9);
+    }
+
+    // CHR bank index wraps mod the CHR bank count.
+    #[test]
+    fn chr_bank_index_wraps() {
+        let mut m = Mapper64::new(stamped_cart(8, 8)); // 64 x 1 KB banks
+        set_reg(&mut m, 2, 100); // 100 % 64 == 36
+        assert_eq!(m.chr_read_byte(0x1000), (100 % 64) as u8);
+    }
+
+    // CHR RAM writes land in the currently-selected 1 KB bank.
+    #[test]
+    fn chr_write_read_roundtrip() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 2, 7); // $1000 -> bank 7
+        m.chr_write_byte(0x1000, 0xAB);
+        assert_eq!(m.chr_read_byte(0x1000), 0xAB);
+    }
+
+    // ---- Mirroring ----
+
+    // $A000 bit 0: 0 = vertical, 1 = horizontal.
+    #[test]
+    fn mirroring_register() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+        m.prg_write_byte(MIRROR, 0);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        m.prg_write_byte(MIRROR, 1);
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+    }
+
+    // A four-screen cart ignores the mirroring register entirely.
+    #[test]
+    fn fourscreen_mirroring_locked() {
+        let mut c = stamped_cart(8, 8);
+        c.mirroring = Mirroring::FourScreen;
+        c.default_mirroring = Mirroring::FourScreen;
+        let mut m = Mapper64::new(c);
+        m.prg_write_byte(MIRROR, 0);
+        assert_eq!(m.mirroring(), Mirroring::FourScreen);
+        m.prg_write_byte(MIRROR, 1);
+        assert_eq!(m.mirroring(), Mirroring::FourScreen);
+    }
+
+    // ---- IRQ ----
+
+    // With latch N the counter fires on the (N+1)-th scanline clock: the
+    // reload is clock #1, then it counts down to zero.
+    #[test]
+    fn irq_fires_after_latch_plus_one() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        arm_irq(&mut m, 3);
+        for _ in 0..3 {
+            m.on_scanline_tick();
+            assert!(!m.irq_pending());
+        }
+        m.on_scanline_tick(); // counter reaches 0
+        assert!(m.irq_pending());
+    }
+
+    // Writing the disable/ack register clears a pending IRQ.
+    #[test]
+    fn irq_disable_acknowledges_pending() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        arm_irq(&mut m, 0); // latch 0 -> fires on the reload clock
+        m.on_scanline_tick();
+        assert!(m.irq_pending());
+        m.prg_write_byte(IRQ_DISABLE, 0);
+        assert!(!m.irq_pending());
+    }
+
+    // Clocking a disabled counter never asserts an IRQ.
+    #[test]
+    fn irq_disabled_never_fires() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        m.prg_write_byte(IRQ_LATCH, 0);
+        m.prg_write_byte(IRQ_RELOAD, 0);
+        // Deliberately do not enable.
+        for _ in 0..5 {
+            m.on_scanline_tick();
+        }
+        assert!(!m.irq_pending());
+    }
+
+    // A write to $C001 forces a reload on the next clock even mid-count.
+    #[test]
+    fn irq_reload_flag_reloads_counter() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        arm_irq(&mut m, 5);
+        m.on_scanline_tick(); // reload -> 5
+        m.on_scanline_tick(); // 4
+        assert_eq!(m.irq_counter, 4);
+        m.prg_write_byte(IRQ_RELOAD, 0); // request reload
+        m.on_scanline_tick(); // reload -> 5
+        assert_eq!(m.irq_counter, 5);
+    }
+
+    // ---- State + reset ----
+
+    // get_state/apply_state round-trips banks, mirroring and IRQ latch.
+    #[test]
+    fn state_round_trip() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 6, 3); // R6 -> $8000
+        set_reg(&mut m, 2, 7); // R2 -> $1000
+        m.prg_write_byte(MIRROR, 0); // vertical
+        m.prg_write_byte(IRQ_LATCH, 9);
+        let snap = m.get_state();
+
+        // Mutate everything away from the snapshot.
+        set_reg(&mut m, 6, 1);
+        m.prg_write_byte(MIRROR, 1); // horizontal
+        assert_eq!(m.prg_read_byte(0x8000), 1);
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+
+        m.apply_state(&snap);
+        assert_eq!(m.prg_read_byte(0x8000), 3);
+        assert_eq!(m.chr_read_byte(0x1000), 7);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        assert_eq!(m.irq_latch, 9);
+    }
+
+    // reset() returns to the documented power-on bank layout and default
+    // mirroring, and clears any pending IRQ.
+    #[test]
+    fn reset_restores_power_on() {
+        let mut m = Mapper64::new(stamped_cart(8, 8));
+        set_reg(&mut m, 6, 3);
+        m.prg_write_byte(MIRROR, 0); // vertical
+        arm_irq(&mut m, 0);
+        m.on_scanline_tick();
+        assert!(m.irq_pending());
+
+        m.reset();
+        assert_eq!(m.prg_read_byte(0x8000), 0); // R6 == 0 -> bank 0
+        assert_eq!(m.prg_read_byte(0xC000), 14); // R8 fallback second-last
+        assert_eq!(m.prg_read_byte(0xE000), 15); // last bank fixed
+        assert_eq!(m.mirroring(), Mirroring::Horizontal); // default
+        assert!(!m.irq_pending());
+        assert_eq!(m.irq_latch, 0);
+    }
+}

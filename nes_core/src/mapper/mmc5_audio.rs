@@ -274,3 +274,173 @@ impl Mmc5Audio {
         v
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    // Arm pulse 1: enable it, then program duty/volume, timer and the
+    // length/timer-hi register (which loads the length counter).
+    fn arm_pulse1(a: &mut Mmc5Audio, ctrl: u8, timer_lo: u8, len_hi: u8) {
+        a.write_register(0x5015, 0x01); // enable pulse 1
+        a.write_register(0x5000, ctrl);
+        a.write_register(0x5002, timer_lo);
+        a.write_register(0x5003, len_hi);
+    }
+
+    // write_register claims the MMC5 sound registers ($5000-$5007,
+    // $5010, $5011, $5015) and rejects everything else so the mapper
+    // can fall through to its own decode.
+    #[test]
+    fn write_register_claims_only_mmc5_audio_addresses() {
+        let mut a = Mmc5Audio::new();
+        for addr in [
+            0x5000u16, 0x5001, 0x5002, 0x5003, 0x5004, 0x5005, 0x5006, 0x5007, 0x5010, 0x5011,
+            0x5015,
+        ] {
+            assert!(a.write_register(addr, 0), "expected {:#06X} claimed", addr);
+        }
+        for addr in [0x5008u16, 0x5009, 0x500F, 0x5012, 0x4015, 0x6000] {
+            assert!(
+                !a.write_register(addr, 0),
+                "expected {:#06X} not claimed",
+                addr
+            );
+        }
+    }
+
+    // With the channel gated fully open (enabled, length loaded, period
+    // >= 8, duty position high, constant-volume flag set) the pulse
+    // emits its constant volume and it shows in the mix.
+    #[test]
+    fn pulse_outputs_constant_volume_when_gated_open() {
+        let mut a = Mmc5Audio::new();
+        // ctrl 0xDF: duty 3, constant flag, volume 15. Period 16.
+        arm_pulse1(&mut a, 0xDF, 0x10, 0x08);
+        assert_eq!(a.pulse_1.output(), 15);
+        assert!(approx(a.mix(), 0.25));
+    }
+
+    // A timer period below 8 mutes the pulse (the classic ultrasonic
+    // cutoff); raising it back above the threshold unmutes.
+    #[test]
+    fn pulse_period_below_eight_is_muted() {
+        let mut a = Mmc5Audio::new();
+        arm_pulse1(&mut a, 0xDF, 0x04, 0x08); // period 4 < 8
+        assert_eq!(a.pulse_1.output(), 0);
+        a.write_register(0x5002, 0x10); // raise period to 16
+        assert_eq!(a.pulse_1.output(), 15);
+    }
+
+    // Clearing the enable bit in $5015 forces the length counter to 0,
+    // which mutes the channel.
+    #[test]
+    fn disabling_via_5015_zeroes_length_and_mutes() {
+        let mut a = Mmc5Audio::new();
+        arm_pulse1(&mut a, 0xDF, 0x10, 0x08);
+        assert_eq!(a.pulse_1.output(), 15);
+        a.write_register(0x5015, 0x00);
+        assert_eq!(a.pulse_1.length_counter, 0);
+        assert_eq!(a.pulse_1.output(), 0);
+    }
+
+    // With the constant-volume flag clear, output tracks the decaying
+    // envelope counter: the start flag loads it to 15, then it steps
+    // down one per envelope clock (period 0).
+    #[test]
+    fn envelope_decays_when_constant_flag_clear() {
+        let mut a = Mmc5Audio::new();
+        arm_pulse1(&mut a, 0xC0, 0x10, 0x08); // duty 3, envelope mode, period 0
+        a.pulse_1.tick_envelope(); // start -> counter 15
+        assert_eq!(a.pulse_1.output(), 15);
+        a.pulse_1.tick_envelope(); // divider hits 0 -> counter 14
+        assert_eq!(a.pulse_1.output(), 14);
+    }
+
+    // The timer advances the duty position each time it underflows; from
+    // a fresh counter of 0 the first tick advances it to 1.
+    #[test]
+    fn timer_advances_duty_position() {
+        let mut a = Mmc5Audio::new();
+        arm_pulse1(&mut a, 0xDF, 0x05, 0x08);
+        assert_eq!(a.pulse_1.duty_position, 0);
+        a.pulse_1.tick_timer();
+        assert_eq!(a.pulse_1.duty_position, 1);
+    }
+
+    // $5011 writes the raw 7-bit PCM DAC level, which feeds the mix.
+    #[test]
+    fn pcm_write_sets_output_and_mix() {
+        let mut a = Mmc5Audio::new();
+        a.write_register(0x5011, 0x40);
+        assert_eq!(a.pcm_output, 0x40);
+        assert!(a.mix() > 0.0);
+    }
+
+    // With read mode selected via $5010 bit0, $5011 writes are ignored
+    // and the PCM level holds its previous value.
+    #[test]
+    fn pcm_read_mode_blocks_5011_writes() {
+        let mut a = Mmc5Audio::new();
+        a.write_register(0x5011, 0x40);
+        a.write_register(0x5010, 0x01); // enter read mode
+        a.write_register(0x5011, 0x7F); // ignored
+        assert_eq!(a.pcm_output, 0x40);
+    }
+
+    // read_status reflects which pulse length counters are non-zero.
+    #[test]
+    fn read_status_reports_length_counters() {
+        let mut a = Mmc5Audio::new();
+        assert_eq!(a.read_status(), 0);
+        a.write_register(0x5015, 0x03); // enable both pulses
+        a.write_register(0x5003, 0x08); // load pulse 1 length
+        a.write_register(0x5007, 0x08); // load pulse 2 length
+        assert_eq!(a.read_status() & 0x03, 0x03);
+    }
+
+    // The internal frame sequencer clocks the length counter at its
+    // half-frame cadence; the first boundary (~7457 CPU cycles) lands on
+    // a half-frame step and decrements it once.
+    #[test]
+    fn frame_sequencer_clocks_length_counter() {
+        let mut a = Mmc5Audio::new();
+        arm_pulse1(&mut a, 0xC0, 0x10, 0x08); // length 254, halt clear
+        assert_eq!(a.pulse_1.length_counter, 254);
+        for _ in 0..7457 {
+            a.tick_cpu_cycle();
+        }
+        assert_eq!(a.pulse_1.length_counter, 253);
+    }
+
+    // The mix combines both pulses and PCM and is clamped to 1.0.
+    #[test]
+    fn mix_combines_pulses_and_pcm_capped() {
+        let mut a = Mmc5Audio::new();
+        arm_pulse1(&mut a, 0xDF, 0x10, 0x08); // pulse 1 -> 15
+        a.write_register(0x5015, 0x03); // keep both enabled
+        a.write_register(0x5004, 0xDF); // pulse 2 ctrl
+        a.write_register(0x5006, 0x10); // pulse 2 timer lo
+        a.write_register(0x5007, 0x08); // pulse 2 length
+        a.write_register(0x5011, 0x7F); // PCM max
+        assert!(a.mix() <= 1.0);
+        assert!(a.mix() > 0.5);
+    }
+
+    // reset() silences the pulses and PCM output.
+    #[test]
+    fn reset_clears_state() {
+        let mut a = Mmc5Audio::new();
+        arm_pulse1(&mut a, 0xDF, 0x10, 0x08);
+        a.write_register(0x5011, 0x40);
+        assert!(a.mix() > 0.0);
+        a.reset();
+        assert_eq!(a.mix(), 0.0);
+        assert_eq!(a.pcm_output, 0);
+        assert_eq!(a.pulse_1.length_counter, 0);
+    }
+}

@@ -146,3 +146,160 @@ impl Mapper for Mapper232 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 232,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    fn marker(bank: usize) -> u8 {
+        0x40 + bank as u8
+    }
+
+    fn stamp_prg_16k(cart: &mut Cartridge) {
+        let banks = cart.prg_rom.len() / 0x4000;
+        for b in 0..banks {
+            cart.prg_rom[b * 0x4000] = marker(b);
+        }
+    }
+
+    // The $C000 register picks the inner bank of the low ($8000) window,
+    // within the current 64 KB block.
+    #[test]
+    fn inner_bank_selects_low_window() {
+        let mut cart = test_cart(16, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper232::new(cart);
+        for inner in 0u8..4 {
+            m.prg_write_byte(0xC000, inner); // inner = value & 3
+            assert_eq!(m.prg_read_byte(0x8000), marker(inner as usize));
+        }
+    }
+
+    // The high ($C000) window is fixed to the last bank of the block
+    // regardless of the inner-bank selection.
+    #[test]
+    fn high_window_fixed_to_last_bank_of_block() {
+        let mut cart = test_cart(16, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper232::new(cart);
+        for inner in 0u8..4 {
+            m.prg_write_byte(0xC000, inner);
+            assert_eq!(m.prg_read_byte(0xC000), marker(3)); // block 0 last bank
+        }
+        m.prg_write_byte(0x8000, 1 << 3); // block 1
+        assert_eq!(m.prg_read_byte(0xC000), marker(7)); // (1<<2)|3
+    }
+
+    // The $8000 register picks the 64 KB block (its base 16 KB bank).
+    #[test]
+    fn block_select_shifts_window_base() {
+        let mut cart = test_cart(16, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper232::new(cart);
+        m.prg_write_byte(0xC000, 0); // inner 0
+        for block in 0u8..4 {
+            m.prg_write_byte(0x8000, block << 3); // block bits 4-3
+            let base = (block as usize) << 2;
+            assert_eq!(m.prg_read_byte(0x8000), marker(base));
+            assert_eq!(m.prg_read_byte(0xC000), marker(base | 3));
+        }
+    }
+
+    // Only bits 4-3 of the $8000 value select the block.
+    #[test]
+    fn block_select_uses_bits_4_and_3_only() {
+        let mut cart = test_cart(16, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper232::new(cart);
+        m.prg_write_byte(0xC000, 0);
+        m.prg_write_byte(0x8000, 0xFF); // (0xFF>>3)&3 == 3
+        assert_eq!(m.prg_read_byte(0x8000), marker(12));
+        m.prg_write_byte(0x8000, 0x08); // (0x08>>3)&3 == 1
+        assert_eq!(m.prg_read_byte(0x8000), marker(4));
+    }
+
+    // Only bits 1-0 of the $C000 value select the inner bank.
+    #[test]
+    fn inner_select_uses_low_two_bits_only() {
+        let mut cart = test_cart(16, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper232::new(cart);
+        m.prg_write_byte(0x8000, 0); // block 0
+        m.prg_write_byte(0xC000, 0xFF); // 0xFF & 3 == 3
+        assert_eq!(m.prg_read_byte(0x8000), marker(3));
+        m.prg_write_byte(0xC000, 0x06); // 0x06 & 3 == 2
+        assert_eq!(m.prg_read_byte(0x8000), marker(2));
+    }
+
+    // Bank indices wrap modulo the bank count on an undersized ROM.
+    #[test]
+    fn bank_index_wraps_on_small_rom() {
+        let mut cart = test_cart(4, 1); // only block 0 present
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper232::new(cart);
+        m.prg_write_byte(0x8000, 2 << 3); // block 2 -> base 8
+        m.prg_write_byte(0xC000, 0);
+        assert_eq!(m.prg_read_byte(0x8000), marker(0)); // 8 % 4
+        assert_eq!(m.prg_read_byte(0xC000), marker(3)); // 11 % 4
+    }
+
+    // CHR is 8 KB of CHR-RAM: writes are read back verbatim.
+    #[test]
+    fn chr_ram_read_write_round_trips() {
+        let cart = test_cart(4, 1);
+        let mut m = Mapper232::new(cart);
+        m.chr_write_byte(0x0000, 0xAB);
+        m.chr_write_byte(0x1FFF, 0xCD);
+        assert_eq!(m.chr_read_byte(0x0000), 0xAB);
+        assert_eq!(m.chr_read_byte(0x1FFF), 0xCD);
+    }
+
+    // reset returns block and inner bank to zero.
+    #[test]
+    fn reset_restores_block_and_inner_zero() {
+        let mut cart = test_cart(16, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper232::new(cart);
+        m.prg_write_byte(0x8000, 3 << 3); // block 3
+        m.prg_write_byte(0xC000, 2); // inner 2
+        assert_eq!(m.prg_read_byte(0x8000), marker(14)); // 12 | 2
+        m.reset();
+        assert_eq!(m.prg_read_byte(0x8000), marker(0));
+        assert_eq!(m.prg_read_byte(0xC000), marker(3)); // block 0 last bank
+    }
+
+    // get_state/apply_state round-trips both the block and inner registers.
+    #[test]
+    fn state_round_trip() {
+        let mut cart = test_cart(16, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper232::new(cart);
+        m.prg_write_byte(0x8000, 2 << 3); // block 2
+        m.prg_write_byte(0xC000, 1); // inner 1
+        assert_eq!(m.prg_read_byte(0x8000), marker(9)); // 8 | 1
+        let snap = m.get_state();
+        m.prg_write_byte(0x8000, 0);
+        m.prg_write_byte(0xC000, 0);
+        assert_eq!(m.prg_read_byte(0x8000), marker(0));
+        m.apply_state(&snap);
+        assert_eq!(m.prg_read_byte(0x8000), marker(9));
+        assert_eq!(m.prg_read_byte(0xC000), marker(11)); // block 2 last bank
+    }
+}

@@ -194,3 +194,179 @@ impl Mapper for Mapper68 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 68,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    // Stamp offset 0 of every 16 KB PRG bank and every 2 KB CHR bank with
+    // its own index, so a read through a window reveals which bank is live.
+    fn stamped_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        let mut c = test_cart(prg_16k_banks, chr_8k_banks);
+        for i in 0..prg_16k_banks as usize {
+            c.prg_rom[i * PRG_BANK] = i as u8;
+        }
+        let chr_2k = c.chr.len() / CHR_BANK_2K;
+        for i in 0..chr_2k {
+            c.chr[i * CHR_BANK_2K] = i as u8;
+        }
+        c
+    }
+
+    // The $8000-$BFFF window maps whichever bank was written to $F000.
+    #[test]
+    fn prg_bank_select_low_window() {
+        let mut m = Mapper68::new(stamped_cart(4, 2));
+        m.prg_write_byte(0xF000, 2);
+        assert_eq!(m.prg_read_byte(0x8000), 2);
+        m.prg_write_byte(0xF000, 3);
+        assert_eq!(m.prg_read_byte(0x8000), 3);
+    }
+
+    // The last 16 KB PRG bank is fixed at $C000 regardless of $8000 select.
+    #[test]
+    fn prg_last_bank_fixed_high_window() {
+        let mut m = Mapper68::new(stamped_cart(4, 2));
+        m.prg_write_byte(0xF000, 0);
+        assert_eq!(m.prg_read_byte(0xC000), 3);
+        m.prg_write_byte(0xF000, 2);
+        assert_eq!(m.prg_read_byte(0xC000), 3);
+    }
+
+    // PRG bank index (masked to 4 bits) wraps modulo the bank count.
+    #[test]
+    fn prg_bank_index_wraps() {
+        let mut m = Mapper68::new(stamped_cart(4, 2));
+        // 5 & 0x0F = 5, then 5 % 4 = 1.
+        m.prg_write_byte(0xF000, 5);
+        assert_eq!(m.prg_read_byte(0x8000), 1);
+    }
+
+    // Each 2 KB CHR window ($8000/$9000/$A000/$B000) selects independently.
+    #[test]
+    fn chr_bank_select_per_slot() {
+        let mut m = Mapper68::new(stamped_cart(4, 2));
+        m.prg_write_byte(0x8000, 1);
+        m.prg_write_byte(0x9000, 2);
+        m.prg_write_byte(0xA000, 3);
+        m.prg_write_byte(0xB000, 4);
+        assert_eq!(m.chr_read_byte(0x0000), 1);
+        assert_eq!(m.chr_read_byte(0x0800), 2);
+        assert_eq!(m.chr_read_byte(0x1000), 3);
+        assert_eq!(m.chr_read_byte(0x1800), 4);
+    }
+
+    // CHR bank index wraps modulo the 2 KB bank count (here 4 banks).
+    #[test]
+    fn chr_bank_index_wraps() {
+        let mut m = Mapper68::new(stamped_cart(1, 1));
+        m.prg_write_byte(0x8000, 5); // 5 % 4 = 1
+        assert_eq!(m.chr_read_byte(0x0000), 1);
+    }
+
+    // $6000-$7FFF PRG RAM writes read back through the same window.
+    #[test]
+    fn prg_ram_read_write() {
+        let mut m = Mapper68::new(stamped_cart(2, 1));
+        m.prg_write_byte(0x6000, 0xAB);
+        m.prg_write_byte(0x7FFF, 0xCD);
+        assert_eq!(m.prg_read_byte(0x6000), 0xAB);
+        assert_eq!(m.prg_read_byte(0x7FFF), 0xCD);
+    }
+
+    // $E000 low two bits drive the mirroring mode.
+    #[test]
+    fn mirroring_control() {
+        let mut m = Mapper68::new(stamped_cart(2, 1));
+        m.prg_write_byte(0xE000, 0);
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+        m.prg_write_byte(0xE000, 1);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        m.prg_write_byte(0xE000, 2);
+        assert_eq!(m.mirroring(), Mirroring::OneScreenLower);
+        m.prg_write_byte(0xE000, 3);
+        assert_eq!(m.mirroring(), Mirroring::OneScreenUpper);
+    }
+
+    // $E000 bit 4 latches the CHR-as-nametable enable flag.
+    #[test]
+    fn chr_nametable_enable_bit() {
+        let mut m = Mapper68::new(stamped_cart(2, 1));
+        m.prg_write_byte(0xE000, 0x10);
+        match m.get_state() {
+            mapper::State::State68(s) => assert!(s.use_chr_nametables),
+            _ => panic!("wrong state variant"),
+        }
+        m.prg_write_byte(0xE000, 0x00);
+        match m.get_state() {
+            mapper::State::State68(s) => assert!(!s.use_chr_nametables),
+            _ => panic!("wrong state variant"),
+        }
+    }
+
+    // $C000/$D000 store the two nametable bank selects masked to 7 bits.
+    #[test]
+    fn nametable_bank_registers_masked() {
+        let mut m = Mapper68::new(stamped_cart(2, 1));
+        m.prg_write_byte(0xC000, 0xFF);
+        m.prg_write_byte(0xD000, 0x81);
+        match m.get_state() {
+            mapper::State::State68(s) => {
+                assert_eq!(s.nt_bank_0, 0x7F);
+                assert_eq!(s.nt_bank_1, 0x01);
+            }
+            _ => panic!("wrong state variant"),
+        }
+    }
+
+    // Bank selections and mirroring survive a get_state/apply_state cycle.
+    #[test]
+    fn state_round_trip() {
+        let mut m = Mapper68::new(stamped_cart(4, 2));
+        m.prg_write_byte(0xF000, 2); // low PRG window -> bank 2
+        m.prg_write_byte(0x8000, 3); // CHR slot 0 -> bank 3
+        m.prg_write_byte(0xE000, 1); // vertical
+        let snap = m.get_state();
+        m.prg_write_byte(0xF000, 0);
+        m.prg_write_byte(0x8000, 0);
+        m.prg_write_byte(0xE000, 0);
+        assert_eq!(m.prg_read_byte(0x8000), 0);
+        m.apply_state(&snap);
+        assert_eq!(m.prg_read_byte(0x8000), 2);
+        assert_eq!(m.chr_read_byte(0x0000), 3);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+    }
+
+    // reset() returns to bank 0 everywhere and the cart's default mirroring.
+    #[test]
+    fn reset_restores_power_on() {
+        let mut c = stamped_cart(4, 2);
+        c.default_mirroring = Mirroring::Vertical;
+        c.mirroring = Mirroring::Vertical;
+        let mut m = Mapper68::new(c);
+        m.prg_write_byte(0xF000, 3);
+        m.prg_write_byte(0x8000, 2);
+        m.prg_write_byte(0xE000, 2);
+        m.reset();
+        assert_eq!(m.prg_read_byte(0x8000), 0);
+        assert_eq!(m.chr_read_byte(0x0000), 0);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+    }
+}

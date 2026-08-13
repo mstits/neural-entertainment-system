@@ -126,3 +126,155 @@ impl Mapper for Mapper79 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 79,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    // Stamp the first byte of every 32 KB PRG bank so a read at $8000
+    // reveals which bank is currently mapped in.
+    fn stamp_prg_32k(cart: &mut Cartridge) {
+        let banks = cart.prg_rom.len() / 0x8000;
+        for b in 0..banks {
+            cart.prg_rom[b * 0x8000] = 0xC0 + b as u8;
+        }
+    }
+
+    // Stamp the first byte of every 8 KB CHR bank.
+    fn stamp_chr_8k(cart: &mut Cartridge) {
+        let banks = cart.chr.len() / 0x2000;
+        for b in 0..banks {
+            cart.chr[b * 0x2000] = 0xD0 + b as u8;
+        }
+    }
+
+    // Bit 3 of the $4100 register picks one of two 32 KB PRG banks.
+    #[test]
+    fn prg_bank_bit3_selects_32k_bank() {
+        let mut cart = test_cart(4, 2); // two 32 KB PRG banks
+        stamp_prg_32k(&mut cart);
+        let mut m = Mapper79::new(cart);
+        assert_eq!(m.prg_read_byte(0x8000), 0xC0); // power-on bank 0
+        m.prg_write_byte(0x4100, 0x08); // value bit 3 -> PRG bank 1
+        assert_eq!(m.prg_read_byte(0x8000), 0xC1);
+        m.prg_write_byte(0x4100, 0x00); // back to bank 0
+        assert_eq!(m.prg_read_byte(0x8000), 0xC0);
+    }
+
+    // Bits 0-2 of the $4100 register pick the active 8 KB CHR bank.
+    #[test]
+    fn chr_bank_low_three_bits_select_8k_bank() {
+        let mut cart = test_cart(2, 8); // eight 8 KB CHR banks
+        stamp_chr_8k(&mut cart);
+        let mut m = Mapper79::new(cart);
+        for bank in 0u8..8 {
+            m.prg_write_byte(0x4100, bank); // bits 0-2 = CHR bank, bit 3 = 0
+            assert_eq!(m.chr_read_byte(0x0000), 0xD0 + bank);
+        }
+    }
+
+    // The register only decodes at `addr & 0xE100 == 0x4100`; writes into
+    // ROM space or to a non-matching low address must not rebank.
+    #[test]
+    fn register_ignores_non_matching_writes() {
+        let mut cart = test_cart(4, 2);
+        stamp_prg_32k(&mut cart);
+        let mut m = Mapper79::new(cart);
+        m.prg_write_byte(0x4100, 0x08); // select PRG bank 1
+        assert_eq!(m.prg_read_byte(0x8000), 0xC1);
+        m.prg_write_byte(0x8000, 0x00); // store into ROM space -> ignored
+        assert_eq!(m.prg_read_byte(0x8000), 0xC1);
+        m.prg_write_byte(0x4000, 0x00); // does not match the decode mask
+        assert_eq!(m.prg_read_byte(0x8000), 0xC1);
+    }
+
+    // The register is mirrored across the whole $4100-$41FF window.
+    #[test]
+    fn register_mirrored_across_4100_41ff() {
+        let mut cart = test_cart(4, 2);
+        stamp_prg_32k(&mut cart);
+        let mut m = Mapper79::new(cart);
+        m.prg_write_byte(0x41FF, 0x08); // top of the mirror range
+        assert_eq!(m.prg_read_byte(0x8000), 0xC1);
+    }
+
+    // A CHR bank index past the end of ROM wraps rather than reading OOB.
+    #[test]
+    fn chr_bank_wraps_when_rom_smaller() {
+        let mut cart = test_cart(2, 2); // only two 8 KB CHR banks
+        stamp_chr_8k(&mut cart);
+        let mut m = Mapper79::new(cart);
+        m.prg_write_byte(0x4100, 0x05); // asks CHR bank 5 -> 5 % 2 == 1
+        assert_eq!(m.chr_read_byte(0x0000), 0xD1);
+    }
+
+    // A PRG bank index past the end of ROM wraps to bank 0.
+    #[test]
+    fn prg_bank_wraps_single_bank_rom() {
+        let mut cart = test_cart(2, 2); // single 32 KB PRG bank
+        stamp_prg_32k(&mut cart);
+        let mut m = Mapper79::new(cart);
+        m.prg_write_byte(0x4100, 0x08); // asks bank 1 -> 1 % 1 == 0
+        assert_eq!(m.prg_read_byte(0x8000), 0xC0);
+    }
+
+    // reset returns to the power-on PRG 0 / CHR 0 configuration.
+    #[test]
+    fn reset_restores_power_on_banks() {
+        let mut cart = test_cart(4, 8);
+        stamp_prg_32k(&mut cart);
+        stamp_chr_8k(&mut cart);
+        let mut m = Mapper79::new(cart);
+        m.prg_write_byte(0x4100, 0x0F); // PRG bank 1, CHR bank 7
+        assert_eq!(m.prg_read_byte(0x8000), 0xC1);
+        assert_eq!(m.chr_read_byte(0x0000), 0xD7);
+        m.reset();
+        assert_eq!(m.prg_read_byte(0x8000), 0xC0);
+        assert_eq!(m.chr_read_byte(0x0000), 0xD0);
+    }
+
+    // Mirroring is fixed by the header and unaffected by register writes.
+    #[test]
+    fn mirroring_is_fixed_from_header() {
+        let mut cart = test_cart(2, 2);
+        cart.mirroring = Mirroring::Vertical;
+        let mut m = Mapper79::new(cart);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        m.prg_write_byte(0x4100, 0x0F);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+    }
+
+    // get_state/apply_state round-trips the selected PRG and CHR banks.
+    #[test]
+    fn state_round_trip_restores_banks() {
+        let mut cart = test_cart(4, 8);
+        stamp_prg_32k(&mut cart);
+        stamp_chr_8k(&mut cart);
+        let mut m = Mapper79::new(cart);
+        m.prg_write_byte(0x4100, 0x0D); // PRG bank 1 (bit 3), CHR bank 5
+        let snap = m.get_state();
+        m.prg_write_byte(0x4100, 0x00); // mutate away
+        assert_eq!(m.prg_read_byte(0x8000), 0xC0);
+        assert_eq!(m.chr_read_byte(0x0000), 0xD0);
+        m.apply_state(&snap); // restore
+        assert_eq!(m.prg_read_byte(0x8000), 0xC1);
+        assert_eq!(m.chr_read_byte(0x0000), 0xD5);
+    }
+}

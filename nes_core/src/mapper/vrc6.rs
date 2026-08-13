@@ -441,3 +441,309 @@ macro_rules! forward_vrc6 {
 
 forward_vrc6!(Mapper24, Vrc6Board::M24);
 forward_vrc6!(Mapper26, Vrc6Board::M26);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 24,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    // Writing $8000 selects the 16 KB bank visible at $8000-$BFFF.
+    #[test]
+    fn prg16_bank_select_reads_selected_bank() {
+        let mut cart = mk_cart(8, 1);
+        for b in 0..8usize {
+            cart.prg_rom[b * PRG_BANK_16K] = b as u8;
+        }
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0x8000, 3);
+        assert_eq!(m.prg_peek_byte(0x8000), 3);
+        m.prg_write_byte(0x8000, 6);
+        assert_eq!(m.prg_peek_byte(0x8000), 6);
+    }
+
+    // Writing $C000 selects the 8 KB bank visible at $C000-$DFFF.
+    #[test]
+    fn prg8_bank_select_reads_selected_bank() {
+        let mut cart = mk_cart(8, 1); // 128 KB => 16 8 KB banks
+        for b in 0..16usize {
+            cart.prg_rom[b * PRG_BANK_8K] = 0x40 + b as u8;
+        }
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0xC000, 5);
+        assert_eq!(m.prg_peek_byte(0xC000), 0x45);
+        m.prg_write_byte(0xC000, 11);
+        assert_eq!(m.prg_peek_byte(0xC000), 0x4B);
+    }
+
+    // $E000-$FFFF is hard-wired to the last 8 KB bank and never moves
+    // when the switchable $C000 window is re-banked.
+    #[test]
+    fn last_prg_bank_fixed_at_e000() {
+        let mut cart = mk_cart(8, 1); // last 8 KB bank index = 15
+        cart.prg_rom[15 * PRG_BANK_8K] = 0x99;
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0xC000, 3);
+        assert_eq!(m.prg_peek_byte(0xE000), 0x99);
+        m.prg_write_byte(0xC000, 7);
+        assert_eq!(m.prg_peek_byte(0xE000), 0x99);
+    }
+
+    // A 16 KB bank index larger than the ROM wraps modulo the bank
+    // count rather than reading out of bounds.
+    #[test]
+    fn prg16_bank_index_wraps_modulo_bank_count() {
+        let mut cart = mk_cart(2, 1); // only 2 16 KB banks
+        cart.prg_rom[PRG_BANK_16K] = 0x77; // bank 1
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0x8000, 0x0F); // masks to 15, 15 % 2 == 1
+        assert_eq!(m.prg_peek_byte(0x8000), 0x77);
+    }
+
+    // The four 1 KB CHR slots addressed by $D000-$D003 / $E000-$E003
+    // each select an independent bank.
+    #[test]
+    fn chr_bank_select_per_slot() {
+        let mut cart = mk_cart(2, 8); // 64 KB CHR => 64 1 KB banks
+        for b in 0..64usize {
+            cart.chr[b * CHR_BANK] = b as u8;
+        }
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0xD000, 5); // slot 0
+        m.prg_write_byte(0xD001, 9); // slot 1
+        m.prg_write_byte(0xE000, 20); // slot 4
+        m.prg_write_byte(0xE003, 30); // slot 7
+        assert_eq!(m.chr_read_byte(0x0000), 5);
+        assert_eq!(m.chr_read_byte(0x0400), 9);
+        assert_eq!(m.chr_read_byte(0x1000), 20);
+        assert_eq!(m.chr_read_byte(0x1C00), 30);
+    }
+
+    // A CHR bank index past the end of CHR wraps modulo the bank count.
+    #[test]
+    fn chr_bank_index_wraps_modulo() {
+        let mut cart = mk_cart(2, 1); // 8 KB CHR => 8 1 KB banks
+        cart.chr[4 * CHR_BANK] = 0x88;
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0xD000, 20); // 20 % 8 == 4
+        assert_eq!(m.chr_read_byte(0x0000), 0x88);
+    }
+
+    // A CHR write goes to the currently selected bank for that slot and
+    // is not visible after switching the slot to another bank.
+    #[test]
+    fn chr_write_lands_in_selected_bank() {
+        let cart = mk_cart(2, 8);
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0xD000, 3); // slot 0 -> bank 3
+        m.chr_write_byte(0x0000, 0x55);
+        m.prg_write_byte(0xD000, 4); // switch slot 0 -> bank 4
+        assert_ne!(m.chr_read_byte(0x0000), 0x55);
+        m.prg_write_byte(0xD000, 3); // back to bank 3
+        assert_eq!(m.chr_read_byte(0x0000), 0x55);
+    }
+
+    // $B003 bits 2-3 pick the nametable mirroring mode.
+    #[test]
+    fn mirroring_register_b003() {
+        let cart = mk_cart(2, 1);
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0xB003, 0x00);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+        m.prg_write_byte(0xB003, 0x04);
+        assert_eq!(m.mirroring(), Mirroring::Horizontal);
+        m.prg_write_byte(0xB003, 0x08);
+        assert_eq!(m.mirroring(), Mirroring::OneScreenLower);
+        m.prg_write_byte(0xB003, 0x0C);
+        assert_eq!(m.mirroring(), Mirroring::OneScreenUpper);
+    }
+
+    // Cycle mode ($F001 bit2): the scanline hook clocks the counter 113
+    // times per call; with latch 0xFF it reloads and asserts on the
+    // first clock. Acking via $F002 clears the line.
+    #[test]
+    fn irq_cycle_mode_fires_and_acks() {
+        let cart = mk_cart(2, 1);
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0xF000, 0xFF); // latch
+        m.prg_write_byte(0xF001, 0x06); // enable + cycle mode
+        assert!(!m.irq_pending());
+        m.on_scanline_tick();
+        assert!(m.irq_pending());
+        m.prg_write_byte(0xF002, 0x00); // ack
+        assert!(!m.irq_pending());
+    }
+
+    // Scanline mode ($F001 bit2 clear): the 341-cycle prescaler is
+    // decremented 339 (113*3) per scanline, so the first counter clock
+    // lands on the second scanline, not the first.
+    #[test]
+    fn irq_scanline_mode_prescaler_timing() {
+        let cart = mk_cart(2, 1);
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0xF000, 0xFF);
+        m.prg_write_byte(0xF001, 0x02); // enable, scanline mode
+        m.on_scanline_tick(); // prescaler 341 -> 2, no clock yet
+        assert!(!m.irq_pending());
+        m.on_scanline_tick(); // prescaler underflows -> one clock fires
+        assert!(m.irq_pending());
+    }
+
+    // Ack copies the enable-after-ack latch back into the enable bit, so
+    // an armed IRQ keeps firing on subsequent scanlines after an ack.
+    #[test]
+    fn irq_ack_restores_enable_from_after_ack_bit() {
+        let cart = mk_cart(2, 1);
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0xF000, 0xFF);
+        m.prg_write_byte(0xF001, 0x07); // enable + cycle + enable_after_ack
+        m.on_scanline_tick();
+        assert!(m.irq_pending());
+        m.prg_write_byte(0xF002, 0x00); // ack -> re-enables
+        assert!(!m.irq_pending());
+        assert!(m.0.irq_enabled);
+        m.on_scanline_tick(); // still enabled -> fires again
+        assert!(m.irq_pending());
+    }
+
+    // get_state / apply_state round-trips PRG/CHR banking and mirroring.
+    #[test]
+    fn state_round_trip_restores_banks_and_mirroring() {
+        let mut cart = mk_cart(8, 8);
+        cart.prg_rom[3 * PRG_BANK_16K] = 0xA3;
+        cart.prg_rom[5 * PRG_BANK_8K] = 0xB5;
+        cart.chr[7 * CHR_BANK] = 0xC7;
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0x8000, 3);
+        m.prg_write_byte(0xC000, 5);
+        m.prg_write_byte(0xD000, 7);
+        m.prg_write_byte(0xB003, 0x00); // Vertical
+        let snap = m.get_state();
+        // Mutate everything away from the snapshot.
+        m.prg_write_byte(0x8000, 1);
+        m.prg_write_byte(0xC000, 1);
+        m.prg_write_byte(0xD000, 1);
+        m.prg_write_byte(0xB003, 0x04); // Horizontal
+        m.apply_state(&snap);
+        assert_eq!(m.prg_peek_byte(0x8000), 0xA3);
+        assert_eq!(m.prg_peek_byte(0xC000), 0xB5);
+        assert_eq!(m.chr_read_byte(0x0000), 0xC7);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+    }
+
+    // reset() returns banking and mirroring to the power-on defaults and
+    // clears any pending IRQ.
+    #[test]
+    fn reset_returns_to_power_on_banks() {
+        let mut cart = mk_cart(8, 8);
+        cart.prg_rom[0] = 0xE0; // 16 KB bank 0 marker
+        cart.chr[0] = 0xD0; // CHR bank 0 marker
+        let mut m = Mapper24::new(cart);
+        m.prg_write_byte(0x8000, 4);
+        m.prg_write_byte(0xD000, 6);
+        m.prg_write_byte(0xB003, 0x00); // Vertical
+        m.prg_write_byte(0xF000, 0xFF);
+        m.prg_write_byte(0xF001, 0x06);
+        m.on_scanline_tick();
+        assert!(m.irq_pending());
+        m.reset();
+        assert_eq!(m.prg_peek_byte(0x8000), 0xE0);
+        assert_eq!(m.chr_read_byte(0x0000), 0xD0);
+        assert_eq!(m.mirroring(), Mirroring::Horizontal); // default_mirroring
+        assert!(!m.irq_pending());
+    }
+
+    // Mapper 26 swaps the A0/A1 address lines before register decode, so
+    // CPU $D002 lands on canonical $D001 (CHR slot 1) where the direct
+    // mapper 24 board would hit slot 2.
+    #[test]
+    fn m26_swaps_a0_a1_on_register_low_bits() {
+        let mut cart24 = mk_cart(2, 8);
+        for b in 0..64usize {
+            cart24.chr[b * CHR_BANK] = b as u8;
+        }
+        let mut m24 = Mapper24::new(cart24);
+        m24.prg_write_byte(0xD002, 42);
+        assert_eq!(m24.chr_read_byte(0x0800), 42); // slot 2 on M24
+        assert_eq!(m24.chr_read_byte(0x0400), 0); // slot 1 untouched
+
+        let mut cart26 = mk_cart(2, 8);
+        for b in 0..64usize {
+            cart26.chr[b * CHR_BANK] = b as u8;
+        }
+        let mut m26 = Mapper26::new(cart26);
+        m26.prg_write_byte(0xD002, 42);
+        assert_eq!(m26.chr_read_byte(0x0400), 42); // slot 1 on M26 (swapped)
+        assert_eq!(m26.chr_read_byte(0x0800), 0); // slot 2 untouched
+    }
+
+    // At the Vrc6 level the audio unit is fully wired: register writes
+    // routed through the PRG write path reach it, audio_mix() reflects a
+    // PCM pulse, and tick_audio() advances the sawtooth from silence.
+    #[test]
+    fn vrc6_audio_wired_through_inner_mapper() {
+        let mut m = Vrc6::new(mk_cart(2, 1), Vrc6Board::M24);
+        assert_eq!(m.audio_mix(), 0.0);
+        m.prg_write_byte(0x9000, 0x8F); // pulse 1: volume 15, PCM mode
+        m.prg_write_byte(0x9002, 0x80); // enable
+        assert!((m.audio_mix() - 0.2).abs() < 1e-4);
+
+        let mut s = Vrc6::new(mk_cart(2, 1), Vrc6Board::M24);
+        s.prg_write_byte(0xB000, 0x20); // sawtooth rate
+        s.prg_write_byte(0xB001, 0x00); // period lo 0 (fast)
+        s.prg_write_byte(0xB002, 0x80); // enable, period hi 0
+        assert_eq!(s.audio_mix(), 0.0);
+        for _ in 0..4 {
+            s.tick_audio();
+        }
+        assert!(s.audio_mix() > 0.0);
+    }
+
+    // SUSPECTED BUG: the forward_vrc6! macro does not forward tick_audio
+    // or audio_mix, so the VRC6 extra sound channels (2 pulse + saw) are
+    // silent when the mapper is driven through the Mapper24/Mapper26
+    // wrapper — which is the variant MapperEnum actually dispatches. The
+    // inner Vrc6 wires them correctly (see the test above); the wrapper
+    // falls back to the trait's no-op defaults. This documents the
+    // current (silent) behavior; a passing assertion here is NOT correct
+    // output.
+    #[test]
+    fn mapper24_wrapper_does_not_forward_audio() {
+        let mut m = Mapper24::new(mk_cart(2, 1));
+        m.prg_write_byte(0x9000, 0x8F);
+        m.prg_write_byte(0x9002, 0x80);
+        assert_eq!(m.audio_mix(), 0.0); // would be 0.2 if forwarded
+        m.prg_write_byte(0xB000, 0x20);
+        m.prg_write_byte(0xB002, 0x80);
+        for _ in 0..8 {
+            m.tick_audio(); // no-op through the wrapper
+        }
+        assert_eq!(m.audio_mix(), 0.0);
+    }
+
+    // SUSPECTED BUG (low severity, diagnostic-only): neither Vrc6 nor the
+    // forward_vrc6! wrapper overrides uses_scanline_irq, so it reports
+    // false even though on_scanline_tick clocks a real per-scanline IRQ
+    // counter. Only the gated ppu_batch_stats diagnostic consults this,
+    // never the hot path. Documenting current behavior.
+    #[test]
+    fn uses_scanline_irq_reports_false_despite_scanline_counter() {
+        let m = Mapper24::new(mk_cart(2, 1));
+        assert!(!m.uses_scanline_irq());
+    }
+}

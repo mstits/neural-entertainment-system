@@ -149,3 +149,126 @@ impl Mapper for Mapper3 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_cart(prg_16k_banks: u8, chr_8k_banks: u8) -> Cartridge {
+        Cartridge {
+            mapper: 3,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: prg_16k_banks,
+            prg_rom: vec![0u8; prg_16k_banks as usize * 16 * 1024],
+            chr_num_banks: chr_8k_banks,
+            chr: vec![0u8; chr_8k_banks as usize * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    // Stamp byte 0 of every 8 KB CHR bank with a distinct marker.
+    fn stamp_chr_banks(cart: &mut Cartridge) {
+        let bank_size = 8 * 1024;
+        for b in 0..cart.chr_num_banks as usize {
+            cart.chr[b * bank_size] = 0xC0 + b as u8;
+        }
+    }
+
+    // Writing $8000+ selects the 8 KB CHR bank seen by CHR reads.
+    #[test]
+    fn cnrom_chr_bank_switch() {
+        let mut cart = test_cart(2, 4);
+        stamp_chr_banks(&mut cart);
+        let mut m = Mapper3::new(cart);
+        m.prg_write_byte(0x8000, 0);
+        assert_eq!(m.chr_read_byte(0x0000), 0xC0);
+        m.prg_write_byte(0x8000, 2);
+        assert_eq!(m.chr_read_byte(0x0000), 0xC2);
+        // Any address in the $8000-$FFFF window is a bank-select port.
+        m.prg_write_byte(0xFFFF, 3);
+        assert_eq!(m.chr_read_byte(0x0000), 0xC3);
+    }
+
+    // CHR bank index wraps within CHR ROM size (bank 6 of 4 => bank 2).
+    #[test]
+    fn cnrom_chr_bank_wraps() {
+        let mut cart = test_cart(2, 4);
+        stamp_chr_banks(&mut cart);
+        let mut m = Mapper3::new(cart);
+        // 4 banks => 32 KB, mask 0x7FFF; 6*0x2000 & 0x7FFF = 0x4000 => bank 2.
+        m.prg_write_byte(0x8000, 6);
+        assert_eq!(m.chr_read_byte(0x0000), 0xC2);
+    }
+
+    // 32 KB PRG maps linearly; reads below $8000 are open bus.
+    #[test]
+    fn cnrom_prg_32k_mapping() {
+        let mut cart = test_cart(2, 4);
+        cart.prg_rom[0x0000] = 0x10;
+        cart.prg_rom[0x7FFF] = 0x20;
+        let mut m = Mapper3::new(cart);
+        assert_eq!(m.prg_read_byte(0x7FFF), 0); // below $8000
+        assert_eq!(m.prg_read_byte(0x8000), 0x10);
+        assert_eq!(m.prg_read_byte(0xFFFF), 0x20);
+    }
+
+    // 16 KB PRG mirrors into the high half of $8000-$FFFF.
+    #[test]
+    fn cnrom_prg_16k_mirror() {
+        let mut cart = test_cart(1, 4);
+        cart.prg_rom[0x0000] = 0x55;
+        let mut m = Mapper3::new(cart);
+        assert_eq!(m.prg_read_byte(0x8000), 0x55);
+        assert_eq!(m.prg_read_byte(0xC000), 0x55);
+    }
+
+    // CHR is ROM: chr_write_byte is a no-op and does not corrupt banks.
+    #[test]
+    fn cnrom_chr_write_ignored() {
+        let mut cart = test_cart(2, 4);
+        stamp_chr_banks(&mut cart);
+        let mut m = Mapper3::new(cart);
+        m.chr_write_byte(0x0000, 0xFF);
+        assert_eq!(m.chr_read_byte(0x0000), 0xC0); // unchanged
+    }
+
+    // reset() returns to CHR bank 0.
+    #[test]
+    fn cnrom_reset_selects_bank_zero() {
+        let mut cart = test_cart(2, 4);
+        stamp_chr_banks(&mut cart);
+        let mut m = Mapper3::new(cart);
+        m.prg_write_byte(0x8000, 3);
+        assert_eq!(m.chr_read_byte(0x0000), 0xC3);
+        m.reset();
+        assert_eq!(m.chr_read_byte(0x0000), 0xC0);
+    }
+
+    // mirroring() reflects the cartridge header.
+    #[test]
+    fn cnrom_mirroring_from_cartridge() {
+        let mut cart = test_cart(2, 4);
+        cart.mirroring = Mirroring::Vertical;
+        let m = Mapper3::new(cart);
+        assert_eq!(m.mirroring(), Mirroring::Vertical);
+    }
+
+    // State snapshot preserves the CHR bank across a later switch.
+    #[test]
+    fn cnrom_state_round_trip() {
+        let mut cart = test_cart(2, 4);
+        stamp_chr_banks(&mut cart);
+        let mut m = Mapper3::new(cart);
+        m.prg_write_byte(0x8000, 2);
+        let snap = m.get_state();
+        m.prg_write_byte(0x8000, 0);
+        assert_eq!(m.chr_read_byte(0x0000), 0xC0);
+        m.apply_state(&snap);
+        assert_eq!(m.chr_read_byte(0x0000), 0xC2);
+    }
+}
