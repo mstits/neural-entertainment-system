@@ -558,3 +558,35 @@ abandonment — disciplined deferral.
   _run_vanilla_ppo pays B's down-payment by landing TrainingKnobs + the
   maybe_rollback seam first, so the inseparable-core extraction rides a
   change we were already making rather than a cold invasive pass.
+
+## 11. Post-refactor validation on real compute (2026-08-13)
+
+Beyond the 3-iteration C0 golden, the refactor was validated end-to-end
+with real training runs (user lifted no-compute for validation). Every
+major code path exercised; no bugs found.
+
+- **Real-loop learning guard** (`make selftest-learning`): PASS — the
+  refactored vanilla_ppo loop learns on real SMB (envs diverge + entropy
+  drops).
+- **Vanilla 120-iter** (mario_tiles_vanilla, 24 envs, seed 0): **learns +
+  CLEARS 1-1** — 34 iters banked clears (up to 4/iter), return 3044→5000,
+  entropy 1.73→1.35, 11 checkpoints saved via CheckpointManager, ZERO
+  NaNs/crashes. Exercises PPOUpdater + ExplorationController +
+  CheckpointManager.save_iter + Curriculum.load_from_disk.
+- **Backward-curriculum 80-iter** (mario_1_1_backward): PASS — the code the
+  refactor LEFT in the conductor works: tau scheduler stepped 757→397
+  (start marched back from the flag), capture/advance fired (advances
+  0→9), policy re-learned (clears 49→17, entropy 1.77→1.05), 7 checkpoints,
+  ZERO crashes.
+- **Eval path** (eval_game.py greedy/sampled): PASS — backward iter-70
+  policy clears 1-1 from the entrance at greedy 0.0 / sampled 0.16 (the
+  expected under-consolidation gap for a short run).
+- **Resume path** (CheckpointManager.resume in production): PASS — resumed
+  net + optimizer AND the backward-tau cursor (`_pending_backward_curriculum`)
+  from iter-70 correctly (tau=0 AT-ENTRANCE, advances=19 restored).
+
+Conclusion: the four extractions (CheckpointManager, PPOUpdater,
+ExplorationController, Curriculum-load) and the conductor code they touched
+or left behind (backward-tau, capture/advance, fresh-start relocation)
+preserve learning behavior across the vanilla, backward-curriculum, eval,
+and resume paths. The refactor introduced no bugs.
