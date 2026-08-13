@@ -1,0 +1,134 @@
+{
+  "net_checksum": "7f4561e9337822fdeb15a7ddc25637a6",
+  "n_ppo_rows": 6,
+  "seq": [
+    {
+      "generation": 0.0,
+      "ppo_loss": 51.28656005859375,
+      "ppo_policy_loss": 0.2300698459148407,
+      "ppo_value_loss": 204.1605682373047,
+      "ppo_entropy": 1.789270281791687,
+      "best_fitness": 660.5,
+      "avg_fitness": 649.75
+    },
+    {
+      "generation": 1.0,
+      "ppo_loss": 284.138671875,
+      "ppo_policy_loss": -0.6487551927566528,
+      "ppo_value_loss": 1139.101318359375,
+      "ppo_entropy": 1.7832157611846924,
+      "best_fitness": 2463.0,
+      "avg_fitness": 2258.0
+    },
+    {
+      "generation": 2.0,
+      "ppo_loss": 195.18145751953125,
+      "ppo_policy_loss": 0.22008372843265533,
+      "ppo_value_loss": 779.854736328125,
+      "ppo_entropy": 1.7784347534179688,
+      "best_fitness": 4069.0,
+      "avg_fitness": 3243.25
+    },
+    {
+      "generation": 3.0,
+      "ppo_loss": 79.55750274658203,
+      "ppo_policy_loss": -0.39580655097961426,
+      "ppo_value_loss": 319.81268310546875,
+      "ppo_entropy": 1.7729971408843994,
+      "best_fitness": 2302.0,
+      "avg_fitness": 1275.0
+    },
+    {
+      "generation": 4.0,
+      "ppo_loss": 147.23492431640625,
+      "ppo_policy_loss": -0.18255077302455902,
+      "ppo_value_loss": 589.6689453125,
+      "ppo_entropy": 1.7692861557006836,
+      "best_fitness": 2418.0,
+      "avg_fitness": 1391.75
+    },
+    {
+      "generation": 5.0,
+      "ppo_loss": 131.07858276367188,
+      "ppo_policy_loss": 0.2860492467880249,
+      "ppo_value_loss": 523.17578125,
+      "ppo_entropy": 1.769188642501831,
+      "best_fitness": 2511.5,
+      "avg_fitness": 2507.75
+    }
+  ],
+  "bwd_snapshots": [
+    {
+      "tau": 757,
+      "n_entries": 758,
+      "attempts": 0,
+      "successes": 0,
+      "rate": 0.0,
+      "advances": 0,
+      "at_entrance": false,
+      "entrance_attempts": 0,
+      "entrance_successes": 0,
+      "entrance_rate": 0.0
+    },
+    {
+      "tau": 757,
+      "n_entries": 758,
+      "attempts": 0,
+      "successes": 0,
+      "rate": 0.0,
+      "advances": 0,
+      "at_entrance": false,
+      "entrance_attempts": 0,
+      "entrance_successes": 0,
+      "entrance_rate": 0.0
+    },
+    {
+      "tau": 757,
+      "n_entries": 758,
+      "attempts": 1,
+      "successes": 1,
+      "rate": 1.0,
+      "advances": 0,
+      "at_entrance": false,
+      "entrance_attempts": 0,
+      "entrance_successes": 0,
+      "entrance_rate": 0.0
+    },
+    {
+      "tau": 717,
+      "n_entries": 758,
+      "attempts": 0,
+      "successes": 0,
+      "rate": 0.0,
+      "advances": 1,
+      "at_entrance": false,
+      "entrance_attempts": 0,
+      "entrance_successes": 0,
+      "entrance_rate": 0.0
+    },
+    {
+      "tau": 717,
+      "n_entries": 758,
+      "attempts": 0,
+      "successes": 0,
+      "rate": 0.0,
+      "advances": 1,
+      "at_entrance": false,
+      "entrance_attempts": 0,
+      "entrance_successes": 0,
+      "entrance_rate": 0.0
+    },
+    {
+      "tau": 717,
+      "n_entries": 758,
+      "attempts": 0,
+      "successes": 0,
+      "rate": 0.0,
+      "advances": 1,
+      "at_entrance": false,
+      "entrance_attempts": 0,
+      "entrance_successes": 0,
+      "entrance_rate": 0.0
+    }
+  ]
+}
