@@ -63,6 +63,14 @@ this backlog directly.*
   tests (cpu.rs 1 → 30), lib 511 → 576. Surfaced + FIXED a latent APU DMC
   bug (pointer wrap used `+= 1`, panics under overflow-checks; now
   wrapping_add — release byte-identical).
+- **Wave 4b (f6f23af, 2026-08-12)** — cartridge coverage: +14 tests
+  (mirror_address all modes, trainer skip, NES2.0 CHR, size cap). Lib 576
+  → 590. Closed the plain-cargo test backlog.
+- **Wave 5 (5202aa9 / 6fd83fb / 4dda276, 2026-08-12)** — pool/pyo3
+  coverage (+18, incl. the NEON unpack blind spot; pool-test 546 → 652)
+  and the two DR-confirmed mapper fixes (mapper64 RAMBO-1 R15, mapper19
+  N163 decode). DR reports round-tripped through the user. Full suite
+  2538 / pool-test 652 green.
 
 ## MAPPER DEFECTS SURFACED BY WAVE 2 — DISPOSITION (Wave 3, 2026-08-12)
 
@@ -78,33 +86,33 @@ FIXED (1eba6e1), each with a test that fails on the old code:
    32K-bank-count (identity for full 256KB carts). No more sub-256KB OOB.
 3. **mapper34.rs (LOW) — sub-32KB PRG read** now guarded `off & (len-1)`.
 
-NOT FIXED — diagnosis says unsafe blind (verify-with-ROM / DR):
-4. **mapper234.rs (Maxi-15) — CONFIRMED_BUG_RISKY.** Write-only latch;
-   real hw latches on READ of $FFxx (menu launches a game via a fetch,
-   never STA). 1 cart in library (boots, but the harness never drives a
-   menu selection, so the failure path is unproven). Fix is textbook
-   (override prg_read_byte to latch prg_peek_byte(addr) in the reg
-   windows) but must be validated against the ROM. → VERIFY-WITH-ROM.
-5. **mapper19.rs (Namco163) — CONFIRMED_BUG.** Register map shifted one
-   0x800 slot (CHR reg 7 unreachable, NT regs one slot low, $D800
-   dropped). BUT zero library ROMs use mapper 19 (boot-scaffold only),
-   AND nametable/CHR-RAM select logic is also absent — a register-map-only
-   fix won't render a real N163 title. → DR dossier written +
-   VERIFY-WITH-ROM. Dossier: research-consult/prompts/
-   n163_register_map_verification_2026-08-12.md (USER TO SUBMIT).
-6. **mapper64.rs (RAMBO-1) — flagged item NOT_A_BUG** (the R8==0 fallback
-   is a deliberate, commented boot guard). BUT diagnosis surfaced a
-   DEEPER latent bug: the impl uses bank_registers[8] for the third
-   swappable PRG bank, whereas real RAMBO-1 uses R15 — and bank_registers
-   is [u8;10] so a real R15 PRG write is silently dropped. 5 shipping
-   games (Klax, Road Runner, Rolling Thunder, Shinobi, Skull&Crossbones)
-   boot clean (vectors/main in fixed+R6/R7 banks), so this is a latent
-   in-gameplay bug with real regression risk. → DR dossier written.
-   Dossier: research-consult/prompts/
-   rambo1_mapper64_prg_register_verification_2026-08-12.md (USER TO SUBMIT).
+FIXED via Deep Research (Wave 5, 6fd83fb / 4dda276 — DR reports
+submitted by user, returned, both confirmed our diagnosis + gave the
+authoritative spec):
+5. **mapper19.rs (Namco163) — FIXED (register decode).** DR (NESdev +
+   Mesen) confirmed the one-slot shift. Corrected: chr regs $8000-$BFFF
+   (chr[7] reachable at $B800), nt regs $C000/$C800/$D000/$D800 -> nt[0..3]
+   ($D800 was a no-op), PRG masked 0x3F. Unit-tested + mutation-checked.
+   SCOPE: register-decode only — ROM-nametables, CHR-RAM mux, cycle-exact
+   IRQ, and expansion audio still unimplemented (need a test ROM; zero
+   N163 ROMs in library).
+6. **mapper64.rs (RAMBO-1) — FIXED.** DR (NESdev + Mesen source + FCEUX)
+   confirmed the third PRG bank is R15 not R8, and R8/R9 are CHR-only.
+   Fixed: [u8;10]->[u8;16], R15 PRG decode + bit-6 mode swap, dual-mapping
+   removed, fallback deleted. VALIDATED via before/after boot-hash on all
+   5 shipping ROMs: 4 byte-identical, Shinobi changed — investigation
+   proved the change CORRECT (old dual-mapping froze Shinobi on a wrong
+   screen; post-fix boots to its real title, visually verified). This was
+   a real latent in-gameplay bug on 5 shipping games.
 
-Real-impact priority for follow-up: #64 root cause (5 shipping games) >
-#19 (clean bug, nothing uses it) > #234 (single multicart, menu-switch).
+STILL OPEN — verify-with-ROM (no DR needed; textbook fix, but a working
+game today):
+4. **mapper234.rs (Maxi-15) — CONFIRMED_BUG_RISKY.** Write-only latch;
+   real hw latches on READ of $FFxx. 1 cart, boots, but menu-selection
+   path unproven. Fix (override prg_read_byte to latch in the reg windows)
+   needs validation against the ROM. → VERIFY-WITH-ROM.
+
+Also FIXED separately: the DMC overflow-wrap (5ab0b1b) surfaced by Wave 4.
 
 ## TEST-COVERAGE BACKLOG (largest cluster — the fidelity risk surface)
 
