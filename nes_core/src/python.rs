@@ -1664,3 +1664,164 @@ mod tests {
         assert!(st.cycles < 100, "power-cycle resets the machine");
     }
 }
+
+/// Coverage for the single-env surfaces the pool suite does not touch:
+/// legacy action-replay start states, the `hw_vblank_read_race`
+/// prerequisite gate, and the realtime-pacing snap-forward decision.
+#[cfg(test)]
+mod env_coverage_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    // 32 KB NROM (mapper 0), NOP-filled PRG, reset vector at $8000 —
+    // safe to step (mirrors the pool bugfix fixtures).
+    fn build_nrom_nop() -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 32 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // PRG = 2 × 16 KB
+        rom.push(0); // CHR-RAM
+        rom.push(0); // flags6
+        rom.push(0); // flags7 (iNES 1.0, mapper 0)
+        rom.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0xEAu8; 32 * 1024]; // NOP fill
+        let n = prg.len();
+        prg[n - 4] = 0x00; // reset vector low  → $8000
+        prg[n - 3] = 0x80; // reset vector high → $8000
+        rom.extend(prg);
+        rom
+    }
+
+    fn make_env(tag: &str) -> NESEnvironment {
+        let path = std::env::temp_dir().join(format!(
+            "env_cov_{}_{tag}.nes",
+            std::process::id(),
+        ));
+        std::fs::write(&path, build_nrom_nop()).expect("write synthetic NROM");
+        let env = NESEnvironment::new(path.clone(), 1, None, 44_100)
+            .expect("construct env from synthetic NROM");
+        let _ = std::fs::remove_file(&path);
+        env
+    }
+
+    // Legacy replay advances exactly one rendered NES frame per action
+    // byte (~29,781 CPU cycles each).
+    #[test]
+    fn replay_actions_advances_one_frame_per_byte() {
+        let mut env = make_env("replay");
+        let start = env.nes.cycles;
+        env.replay_actions(&[0u8, 0u8, 0u8])
+            .expect("legacy action replay must succeed");
+        let advanced = env.nes.cycles - start;
+        assert!(
+            (82_000..=95_000).contains(&advanced),
+            "3 legacy action frames should advance ~3 NES frames, got {advanced} cycles",
+        );
+    }
+
+    // A non-NCST start-state file drives the constructor's legacy
+    // action-replay branch and must cache a post-replay snapshot for
+    // fast resets.
+    #[test]
+    fn constructor_replays_legacy_action_start_state() {
+        let rom = std::env::temp_dir().join(format!("env_cov_ctor_{}.nes", std::process::id()));
+        std::fs::write(&rom, build_nrom_nop()).expect("write rom");
+        let legacy =
+            std::env::temp_dir().join(format!("env_cov_legacy_{}.state.bin", std::process::id()));
+        std::fs::write(&legacy, [0u8, 0u8]).expect("write legacy state"); // non-NCST
+        let env = NESEnvironment::new(rom.clone(), 1, Some(legacy.clone()), 44_100)
+            .expect("construct env from legacy action-replay start state");
+        assert!(
+            env.start_state_snapshot.is_some(),
+            "legacy replay must cache a post-replay NES snapshot",
+        );
+        let _ = std::fs::remove_file(&rom);
+        let _ = std::fs::remove_file(&legacy);
+    }
+
+    // The vblank-read-race enable is refused as a unit when its bus-phase
+    // prerequisites are unmet — and the refusal must not partially arm
+    // the flag.
+    #[test]
+    fn vblank_read_race_refused_without_prereqs() {
+        let mut env = make_env("vbl_refuse");
+        assert!(!env.vblank_read_race_prereqs_met(), "fresh env: prereqs unmet");
+        assert!(
+            env.set_hw_vblank_read_race(true).is_err(),
+            "enable must be refused when the bus-phase prereqs are unmet",
+        );
+        assert!(
+            !env.nes.hw_vblank_read_race(),
+            "a refused enable must not partially arm the flag",
+        );
+    }
+
+    // Two of the three prereqs (event PPU + final-cycle read) but the
+    // default dot offset (2, not 0) leaves the race inert — the enable
+    // must still be refused.
+    #[test]
+    fn vblank_read_race_refused_with_partial_prereqs() {
+        let mut env = make_env("vbl_partial");
+        env.set_hw_event_ppu(true);
+        env.set_hw_mmio_read_timing(true);
+        // ppu_read_dot_offset left at its default (2).
+        assert!(!env.vblank_read_race_prereqs_met());
+        assert!(
+            env.set_hw_vblank_read_race(true).is_err(),
+            "partial prereqs (wrong dot offset) must not arm the race",
+        );
+        assert!(!env.nes.hw_vblank_read_race());
+    }
+
+    // With all three prereqs held the enable is accepted and the flag
+    // arms.
+    #[test]
+    fn vblank_read_race_armed_once_all_prereqs_met() {
+        let mut env = make_env("vbl_ok");
+        env.set_hw_event_ppu(true);
+        env.set_hw_mmio_read_timing(true);
+        env.set_ppu_read_dot_offset(0);
+        assert!(env.vblank_read_race_prereqs_met(), "all three prereqs now hold");
+        env.set_hw_vblank_read_race(true)
+            .expect("enable accepted when prereqs met");
+        assert!(env.nes.hw_vblank_read_race(), "flag armed after accepted enable");
+    }
+
+    // Disabling is unconditional — never gated on the prereqs.
+    #[test]
+    fn vblank_read_race_disable_always_accepted() {
+        let mut env = make_env("vbl_disable");
+        assert!(!env.vblank_read_race_prereqs_met());
+        env.set_hw_vblank_read_race(false)
+            .expect("disable must never be gated on prereqs");
+        assert!(!env.nes.hw_vblank_read_race());
+    }
+
+    // Fall-behind pacing decision: when the machine is far behind
+    // realtime, pace_to_realtime must NOT sleep and must snap the target
+    // forward to ~now + one step instead of carrying the accumulated
+    // debt. Exercises the decision math only — no real multi-step sleep.
+    #[test]
+    fn pace_to_realtime_snaps_forward_when_far_behind() {
+        let mut env = make_env("pace");
+        env.frame_skip = 1;
+        let step_dur = Duration::from_nanos(1_000_000_000 / 60);
+        // Simulate emulation that fell 5 s behind realtime.
+        env.pace_next_target = Some(Instant::now() - Duration::from_secs(5));
+        let t0 = Instant::now();
+        env.pace_to_realtime();
+        let elapsed = t0.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "fall-behind path must not sleep, took {elapsed:?}",
+        );
+        let target = env.pace_next_target.expect("pace target set");
+        assert!(
+            target > t0,
+            "snap-forward: target must be in the future, not stale-past + step",
+        );
+        assert!(
+            target <= t0 + step_dur + Duration::from_millis(500),
+            "snap-forward target must stay within ~one step ahead (no debt carry)",
+        );
+    }
+}

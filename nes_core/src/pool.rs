@@ -3102,3 +3102,275 @@ mod two_player_and_apu_tests {
         assert_ne!(activity[1], 0, "live worker must still report activity");
     }
 }
+
+/// Coverage for the video-unpack SIMD path and the state-restore error
+/// funnels that the byte-identical-run comparisons cannot see:
+///
+///   * `xrgb_to_rgb` / `xrgb_to_gray` are the NEON unpack on aarch64 —
+///     the whole training collect path funnels through them, so a
+///     consistent unpack bug is invisible to run-vs-run diffs (both runs
+///     use the same NEON code). These differential tests pin the NEON
+///     output against an independent scalar reference computed here.
+///   * `load_start_state` must turn a corrupt / mismatched / missing
+///     blob into a catchable `Err`, never a panic that crosses the PyO3
+///     boundary.
+///   * `load_worker_state` must clear `frame_cycle_target` after applying
+///     a mid-game state, or the next `advance_one_frame` never ticks.
+#[cfg(test)]
+mod pool_coverage_tests {
+    use super::bugfix_tests::{build_nrom, worker_from_rom};
+    use super::*;
+
+    // Independent scalar reference for the XRGB8888 -> RGB unpack. On
+    // aarch64 the production `xrgb_to_rgb` compiles to the NEON path only
+    // (the scalar arm is cfg'd out), so this is a genuine differential.
+    fn ref_xrgb_to_rgb(src: &[u32]) -> Vec<u8> {
+        let mut out = vec![0u8; src.len() * 3];
+        for (i, &px) in src.iter().enumerate() {
+            out[i * 3] = ((px >> 16) & 0xFF) as u8;
+            out[i * 3 + 1] = ((px >> 8) & 0xFF) as u8;
+            out[i * 3 + 2] = (px & 0xFF) as u8;
+        }
+        out
+    }
+
+    // Independent scalar reference for the fused XRGB8888 -> grayscale
+    // unpack, using the same 77/150/29 luma weights as the NEON path.
+    fn ref_xrgb_to_gray(src: &[u32]) -> Vec<u8> {
+        let mut out = vec![0u8; src.len()];
+        for (i, &px) in src.iter().enumerate() {
+            let r = ((px >> 16) & 0xFF) as u32;
+            let g = ((px >> 8) & 0xFF) as u32;
+            let b = (px & 0xFF) as u32;
+            out[i] = ((77 * r + 150 * g + 29 * b) >> 8).min(255) as u8;
+        }
+        out
+    }
+
+    // Deterministic xorshift32 fill so the "random-ish" cases are
+    // reproducible; the high (padding) byte varies too, so a path that
+    // leaked X into the output would diverge from the reference.
+    fn patterned(n: usize, mut s: u32) -> Vec<u32> {
+        if s == 0 {
+            s = 0x9E37_79B9;
+        }
+        (0..n)
+            .map(|_| {
+                s ^= s << 13;
+                s ^= s >> 17;
+                s ^= s << 5;
+                s
+            })
+            .collect()
+    }
+
+    // Every representative framebuffer content class, all with the pad
+    // byte populated so a leak would show.
+    fn unpack_fixtures(n: usize) -> Vec<(&'static str, Vec<u32>)> {
+        vec![
+            ("all-zero", vec![0x0000_0000u32; n]),
+            ("all-ones", vec![0xFFFF_FFFFu32; n]),
+            ("alt-00-ff", (0..n).map(|i| if i % 2 == 0 { 0 } else { 0xFFFF_FFFF }).collect()),
+            ("byte-gradient", (0..n).map(|i| (i as u32).wrapping_mul(0x0101_0101)).collect()),
+            ("xorshift-a", patterned(n, 0x1234_5678)),
+            ("xorshift-b", patterned(n, 0xDEAD_C0DE)),
+        ]
+    }
+
+    // NEON RGB unpack is byte-identical to the scalar reference for every
+    // content class at 16-aligned lengths (full vector blocks).
+    #[test]
+    fn xrgb_to_rgb_matches_scalar_reference_aligned() {
+        for &n in &[16usize, 64, FRAME_PIXELS] {
+            for (name, src) in unpack_fixtures(n) {
+                let mut got = vec![0u8; n * 3];
+                xrgb_to_rgb(&src, &mut got);
+                assert_eq!(got, ref_xrgb_to_rgb(&src), "rgb mismatch: {name} @ n={n}");
+            }
+        }
+    }
+
+    // The <16-pixel remainder handled by the scalar tail inside the NEON
+    // function must also match the reference (non-16-aligned lengths).
+    #[test]
+    fn xrgb_to_rgb_scalar_tail_matches_reference() {
+        for &n in &[1usize, 7, 15, 17, 31, 70] {
+            for (name, src) in unpack_fixtures(n) {
+                let mut got = vec![0u8; n * 3];
+                xrgb_to_rgb(&src, &mut got);
+                assert_eq!(got, ref_xrgb_to_rgb(&src), "rgb tail mismatch: {name} @ n={n}");
+            }
+        }
+    }
+
+    // NEON grayscale unpack is byte-identical to the scalar luma reference
+    // (weights + >>8 + saturation) at 16-aligned lengths.
+    #[test]
+    fn xrgb_to_gray_matches_scalar_reference_aligned() {
+        for &n in &[16usize, 64, FRAME_PIXELS] {
+            for (name, src) in unpack_fixtures(n) {
+                let mut got = vec![0u8; n];
+                xrgb_to_gray(&src, &mut got);
+                assert_eq!(got, ref_xrgb_to_gray(&src), "gray mismatch: {name} @ n={n}");
+            }
+        }
+    }
+
+    // Grayscale scalar-tail remainder matches the reference too.
+    #[test]
+    fn xrgb_to_gray_scalar_tail_matches_reference() {
+        for &n in &[1usize, 7, 15, 17, 31, 70] {
+            for (name, src) in unpack_fixtures(n) {
+                let mut got = vec![0u8; n];
+                xrgb_to_gray(&src, &mut got);
+                assert_eq!(got, ref_xrgb_to_gray(&src), "gray tail mismatch: {name} @ n={n}");
+            }
+        }
+    }
+
+    // The XRGB pad (high) byte is never written into the RGB output —
+    // hand-computed expectation independent of the scalar reference.
+    #[test]
+    fn xrgb_to_rgb_drops_the_pad_byte() {
+        // px byte order in memory is [B, G, R, X]; X must not leak.
+        let src = [0xFF00_0000u32, 0x0011_2233u32];
+        let mut got = vec![0u8; src.len() * 3];
+        xrgb_to_rgb(&src, &mut got);
+        assert_eq!(
+            got,
+            vec![0x00, 0x00, 0x00, /* px0: X=FF, R=G=B=0 */ 0x11, 0x22, 0x33 /* px1 */],
+            "pad byte leaked into RGB output",
+        );
+    }
+
+    // A pure-white pixel (X and RGB all 0xFF) maps to full luma 255, and
+    // a pad-only pixel (X=FF, RGB=0) maps to 0 — proves X is excluded
+    // from the luma sum.
+    #[test]
+    fn xrgb_to_gray_excludes_pad_byte() {
+        let src = [0xFFFF_FFFFu32, 0xFF00_0000u32];
+        let mut got = vec![0u8; src.len()];
+        xrgb_to_gray(&src, &mut got);
+        assert_eq!(got, vec![255u8, 0u8], "pad byte contaminated luma");
+    }
+
+    fn write_nrom(tag: &str, fill: &[u8]) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "pool_cov_{}_{tag}.nes",
+            std::process::id(),
+        ));
+        std::fs::write(&path, build_nrom(fill)).expect("write synthetic NROM");
+        path
+    }
+
+    fn pool_of(n: usize, tag: &str) -> Pool {
+        let path = write_nrom(tag, &[0xEA]); // NOP-filled, safe to step
+        let pool = Pool::new(path.clone(), n, 1, None).expect("Pool::new");
+        let _ = std::fs::remove_file(&path);
+        pool
+    }
+
+    // A valid header but truncated body must surface a clean Err from the
+    // deserialize, never a panic or a silently-corrupt restore.
+    #[test]
+    fn load_start_state_rejects_truncated_ncst_blob() {
+        let pool = pool_of(1, "lss_trunc");
+        let w = worker_from_rom(build_nrom(&[0xEA]));
+        let good = bincode::serialize(&w.nes.get_state()).expect("serialize state");
+        let mut file = POOL_STATE_MAGIC.to_vec();
+        // Keep the header + a fragment of the body so deserialize hits EOF.
+        file.extend_from_slice(&good[..good.len().min(24)]);
+        let path = std::env::temp_dir().join(format!("lss_trunc_{}.bin", std::process::id()));
+        std::fs::write(&path, &file).expect("write truncated blob");
+        let r = pool.load_start_state(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(r.is_err(), "truncated NCST blob must error, not corrupt/panic");
+    }
+
+    // A blob that deserializes cleanly but whose RAM length mismatches the
+    // machine makes `apply_state` panic; `load_start_state` must catch it
+    // and return Err rather than unwinding across the PyO3 boundary.
+    #[test]
+    fn load_start_state_guards_mapper_mismatched_state() {
+        let pool = pool_of(1, "lss_mismatch");
+        let w = worker_from_rom(build_nrom(&[0xEA]));
+        let mut st = w.nes.get_state();
+        st.ram.truncate(100); // deserializes fine; apply_state panics
+        let body = bincode::serialize(&st).expect("serialize mismatched state");
+        let mut file = POOL_STATE_MAGIC.to_vec();
+        file.extend_from_slice(&body);
+        let path = std::env::temp_dir().join(format!("lss_mismatch_{}.bin", std::process::id()));
+        std::fs::write(&path, &file).expect("write mismatched blob");
+        let r = pool.load_start_state(&path);
+        let _ = std::fs::remove_file(&path);
+        // Reaching this line (no SIGABRT) already proves the catch_unwind
+        // guard held; the Err proves the caller can recover cleanly.
+        assert!(r.is_err(), "mapper/RAM-mismatched state must be caught, not unwound");
+    }
+
+    // A missing start-state file is a clean I/O Err, not a panic.
+    #[test]
+    fn load_start_state_errors_on_missing_file() {
+        let pool = pool_of(1, "lss_missing");
+        let path = std::env::temp_dir()
+            .join(format!("lss_missing_{}_does_not_exist.bin", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            pool.load_start_state(&path).is_err(),
+            "missing start-state file must error, not panic",
+        );
+    }
+
+    // The load_worker_state_bug_fix invariant: applying a mid-game state
+    // must clear `frame_cycle_target`, or the next `advance_one_frame`
+    // computes a stale target and the worker never ticks post-restore.
+    // Requires the interpreter (PyBytes) — reachable under the pool-test
+    // harness (libpython preloaded).
+    #[test]
+    fn load_worker_state_clears_frame_cycle_target() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let pool = pool_of(1, "lws_reset");
+            // Advance once so a cycle target exists to be cleared.
+            {
+                let w = unsafe { worker_mut(&pool.workers[0]) };
+                w.advance_one_frame();
+                assert!(w.frame_cycle_target.is_some(), "advance sets a cycle target");
+            }
+            // Capture a valid, ROM-matching blob to load back.
+            let blob = pool
+                .save_worker_state(py, 0)
+                .expect("save_worker_state ok")
+                .expect("worker 0 in range");
+            // Poison the target so a missing reset is observable.
+            {
+                let w = unsafe { worker_mut(&pool.workers[0]) };
+                w.frame_cycle_target = Some(0xDEAD_BEEF);
+            }
+            pool.load_worker_state(0, &blob).expect("load_worker_state ok");
+            let w = unsafe { worker_mut(&pool.workers[0]) };
+            assert!(
+                w.frame_cycle_target.is_none(),
+                "load_worker_state must clear frame_cycle_target so the next \
+                 advance re-anchors to the restored cycle count",
+            );
+        });
+    }
+
+    // Out-of-range worker id is an IndexError, not a panic/OOB.
+    #[test]
+    fn load_worker_state_rejects_out_of_range_worker() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let pool = pool_of(1, "lws_oob");
+            let blob = pool
+                .save_worker_state(py, 0)
+                .expect("save ok")
+                .expect("worker 0 in range");
+            assert!(
+                pool.load_worker_state(5, &blob).is_err(),
+                "worker_id past the pool must error",
+            );
+        });
+    }
+}
