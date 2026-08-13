@@ -122,8 +122,11 @@ def _capture_rollout_buffers() -> dict:
     * `fold_intrinsic_into_rewards` spy: its FIRST call receives the RAW
       reward_buf (the fold returns a new array and never mutates its input,
       so the reference stays raw) — that is the collector's own reward stream.
-    * `batched_gae` spy: reaches one frame up into `_run_vanilla_ppo`'s locals
-      to copy action/done/valid/value/log_prob as filled for this iter.
+    * `batched_gae` spy: reaches one frame up into `PPOUpdater.update`'s locals
+      to copy action/done/valid/value/log_prob as filled for this iter. (The
+      fold + GAE calls were lifted from `_run_vanilla_ppo` into
+      `PPOUpdater.update` by the Task-2 extraction, so both the patch target
+      and the frame-up now resolve in `src/training/ppo_updater.py`.)
     Both are called exactly once per iteration.
     """
     _seed_all(_SEED)
@@ -133,17 +136,17 @@ def _capture_rollout_buffers() -> dict:
     profile["reinforce"]["ppo_minibatch_size"] = _MINIBATCH
     profile["reinforce"]["device"] = "cpu"
 
-    import src.training.trainer as trainer_mod
+    import src.training.ppo_updater as ppo_updater_mod
     from src.training.trainer import Trainer
 
     cap: dict = {}
-    orig_fold = trainer_mod.fold_intrinsic_into_rewards
+    orig_fold = ppo_updater_mod.fold_intrinsic_into_rewards
 
     def _fold_spy(reward_buf, intrinsic, done_buf):
         cap.setdefault("reward_buf", np.array(reward_buf, copy=True))
         return orig_fold(reward_buf, intrinsic, done_buf)
 
-    orig_gae = trainer_mod.batched_gae
+    orig_gae = ppo_updater_mod.batched_gae
 
     def _gae_spy(reward_buf, value_buf, done_buf, *args, **kwargs):
         if "seam" not in cap:
@@ -155,8 +158,8 @@ def _capture_rollout_buffers() -> dict:
             }
         return orig_gae(reward_buf, value_buf, done_buf, *args, **kwargs)
 
-    trainer_mod.fold_intrinsic_into_rewards = _fold_spy
-    trainer_mod.batched_gae = _gae_spy
+    ppo_updater_mod.fold_intrinsic_into_rewards = _fold_spy
+    ppo_updater_mod.batched_gae = _gae_spy
     try:
         metrics_q: _queue.Queue = _queue.Queue()
         with tempfile.TemporaryDirectory(prefix="c5_rollout_") as tmp:
@@ -176,8 +179,8 @@ def _capture_rollout_buffers() -> dict:
             trainer.run(num_generations=1, resume_from=None, fresh_start=True)
             rnd_built = trainer._rnd is not None
     finally:
-        trainer_mod.fold_intrinsic_into_rewards = orig_fold
-        trainer_mod.batched_gae = orig_gae
+        ppo_updater_mod.fold_intrinsic_into_rewards = orig_fold
+        ppo_updater_mod.batched_gae = orig_gae
 
     assert rnd_built, "rnd_intrinsic_coef > 0 but RND never built — fold spy path"
     assert "reward_buf" in cap, (
