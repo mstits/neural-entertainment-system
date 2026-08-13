@@ -44,13 +44,52 @@ this backlog directly.*
    instead of `copy_from_slice` into existing buffers. Allocation churn
    on every state load.
 
+## WAVE LEDGER
+
+- **Wave 1 (a94a51d, 2026-08-12)** — 6 actionable audit bugs fixed
+  (write_word byte order, empty-cheats hot-path guard, peek_byte input
+  routing, cartridge in-place restore, ram_ptr provenance, guarded
+  reset). OAM-DMA (#2) reverted → DEFERRED. Test-drift it exposed fixed
+  in 61a2846.
+- **Wave 2 (3be9f4d, 2026-08-12)** — mapper test coverage: 27 untested
+  mappers now have 294 biting tests (lib suite 214 → 508 green). Surfaced
+  **7 suspected implementation defects** (below) — filed, not fixed, so
+  the suite stayed green. This is the NEXT actionable list.
+
+## MAPPER DEFECTS SURFACED BY WAVE 2 (verify → fix in a gated wave)
+
+Ranked by impact. The behavioral-semantics ones (234/19) must be checked
+against the library-compat suite BEFORE fixing — a "fix" could regress a
+currently-booting game if the deviation is intentional.
+
+1. **vrc6.rs (HIGH) — VRC6 expansion audio is silent.** `forward_vrc6!`
+   doesn't forward `tick_audio()`/`audio_mix()` for Mapper24/26, so the
+   inner Vrc6's 2-pulse+saw is wired but never heard (Akumajō Densetsu /
+   CV3-JP). Fix = forward both in the macro. Additive, verifiable, low
+   regression risk. **Do first.**
+2. **mapper7.rs (MED) — AxROM PRG bank index unmasked → OOB panic** on
+   sub-256KB carts or a corrupt/stray bank write. Fix = mask modulo
+   32K-bank-count, matching mapper2. Defensive, safe.
+3. **mapper234.rs (MED) — Maxi-15 latches banks on WRITE not READ.**
+   $FFxx is ROM; real hw latches on CPU read of those addresses. VERIFY
+   against compat suite first (does the game bank at all today?).
+4. **mapper19.rs (MED) — Namco163 register map shifted one 0x800 slot.**
+   CHR regs should span $8000-$B800, nametable regs $C000-$D800. VERIFY
+   against a N163 title before touching.
+5. **mapper34.rs (LOW) — unguarded PRG index on sub-32KB PRG.**
+   Unreachable with real dumps; cheap guard matching mapper41.
+6. **mapper64.rs (LOW) — RAMBO-1 R8==0 can't map real PRG bank 0.**
+   Self-described boot simplification; confirm before "fixing".
+7. **vrc6.rs (LOW) — uses_scanline_irq() not overridden** despite
+   clocking one; diagnostic-only impact (gated ppu_batch_stats).
+
 ## TEST-COVERAGE BACKLOG (largest cluster — the fidelity risk surface)
 
 Grouped by area; each is "add unit tests for X" unless noted. Ranked by
 blast radius.
 
-- **Mappers: 28 of 33 (85%) have zero unit tests** — the single largest
-  gap. VRC6/MMC5 audio subsystems entirely untested.
+- **Mappers: DONE (Wave 2, 3be9f4d)** — was 27 of 33 untested; all now
+  covered with 294 tests. VRC6/MMC5 audio subsystems included.
 - **PPU**: sprite-evaluation state machine (`:958`), VRAM read buffer
   (`:869`), address-increment row 30/31 wrap (`:1702`), palette mirror
   (`:2952`), scroll write-toggle (`:816`), coarse-X wrap (`:1693`),
