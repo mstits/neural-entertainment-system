@@ -1126,7 +1126,7 @@ impl Dmc {
             cpu_stall_cycles = if hw_stall { 3 } else { 4 };
             self.shift_register = mapper.prg_read_byte(self.current_address);
             self.bit_count = 8;
-            self.current_address += 1;
+            self.current_address = self.current_address.wrapping_add(1);
             if self.current_address == 0 {
                 self.current_address = 0x8000;
             }
@@ -1602,14 +1602,10 @@ mod apu_coverage_tests {
 
     // GAP 1: the sample pointer must wrap $FFFF -> $8000 so the next
     // fetch stays inside cartridge ROM and never drops to $0000 (which
-    // would read zero-page RAM). The shipped wheel is built release
-    // (overflow-checks off): the u16 `current_address += 1` wraps to 0
-    // and the guard rewrites it to $8000. Under `cargo test` (dev
-    // profile, overflow-checks ON) the same increment traps before the
-    // guard can run, so we document current behavior per profile.
-    // SUSPECTED BUG: `current_address += 1` should be `wrapping_add(1)`
-    // so the wrap is correct in every build profile, not only when
-    // overflow-checks happen to be disabled.
+    // would read zero-page RAM). The pointer increment uses wrapping_add
+    // so the $FFFF -> $0000 wrap is well-defined in every build profile
+    // (not only release, where overflow-checks are off); the guard then
+    // rewrites the wrapped 0 to $8000, keeping the fetch inside ROM.
     #[test]
     fn dmc_sample_address_wraps_into_rom_not_zero() {
         let mut mapper = nrom_mapper();
@@ -1621,21 +1617,12 @@ mod apu_coverage_tests {
         dmc.current_length = 4;
         dmc.bit_count = 0;
 
-        if cfg!(debug_assertions) {
-            let trapped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                dmc.step_reader(&mut mapper, false);
-            }));
-            assert!(
-                trapped.is_err(),
-                "debug/test profile has overflow-checks on: the 0xFFFF increment must trap",
-            );
-        } else {
-            dmc.step_reader(&mut mapper, false);
-            assert_eq!(
-                dmc.current_address, 0x8000,
-                "release wrap must land in ROM space ($8000), never $0000",
-            );
-        }
+        // Must not panic under overflow-checks, and must land in ROM.
+        dmc.step_reader(&mut mapper, false);
+        assert_eq!(
+            dmc.current_address, 0x8000,
+            "the $FFFF wrap must land in ROM space ($8000), never $0000",
+        );
     }
 
     // --- GAP 2: DMC loop flag + sample-end IRQ ------------------------
