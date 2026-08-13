@@ -305,16 +305,13 @@ impl NESEnvironment {
             // pointing into PRG ROM with the wrong bank mapped, which
             // crashes on the first opcode fetch (observed: opcode 0x02
             // panic at PC 0xE534 on Zelda after 100 frames of play).
-            if let Some(snap) = &self.start_state_snapshot {
-                let state: crate::nes::State = bincode::deserialize(snap).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "failed to restore start-state snapshot: {e}"
-                    ))
-                })?;
-                self.nes.apply_state(&state);
-            } else {
-                self.nes.reset();
-            }
+            // Route the restore through the panic guard (matches the doc
+            // at the top of this file and the other restore sites —
+            // constructor, reset_no_advance). A wrong-length RAM /
+            // mismatched-mapper State would otherwise unwind across the
+            // PyO3 boundary and kill the interpreter; on failure the env
+            // is left cold-reset rather than half-mutated.
+            self.restore_or_reset()?;
             self.audio.drain();
             self.done = false;
             // Reset pacing so the first paced step doesn't sleep for the
@@ -862,6 +859,29 @@ impl NESEnvironment {
 }
 
 impl NESEnvironment {
+    /// Restore the cached start-state snapshot behind the panic guard,
+    /// falling back to a cold `Nes::reset()` when the snapshot cannot be
+    /// applied (guarded apply returns Err on wrong-length RAM / mismatched
+    /// mapper, etc.). With no cached snapshot this is a plain power-cycle,
+    /// byte-identical to the pre-existing path. Pure Rust — no `py` token —
+    /// so it is safe to call inside `py.allow_threads`. On any failure the
+    /// env is left cold-reset, never half-mutated (see the module doc).
+    fn restore_or_reset(&mut self) -> PyResult<()> {
+        if let Some(snap) = &self.start_state_snapshot {
+            let state: crate::nes::State = bincode::deserialize(snap).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "failed to restore start-state snapshot: {e}"
+                ))
+            })?;
+            if apply_state_guarded(&mut self.nes, &state).is_err() {
+                self.nes.reset();
+            }
+        } else {
+            self.nes.reset();
+        }
+        Ok(())
+    }
+
     fn apply_buttons(&mut self, mask: u8) {
         self.nes.game_pad_1().set_mask(mask);
     }
@@ -1526,4 +1546,121 @@ fn nes_core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("BUTTON_B", BUTTON_B)?;
     m.add("BUTTON_A", BUTTON_A)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Synthetic 32 KB NROM (mapper 0) iNES 1.0 ROM with the reset
+    /// vector pointing at $C000. Enough for `NESEnvironment::new` to
+    /// build a real `Nes` without touching disk fixtures.
+    fn build_nrom() -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 32 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // PRG = 2 × 16 KB
+        rom.push(0); // CHR = 0 (CHR-RAM)
+        rom.push(0); // flags6
+        rom.push(0); // flags7 (iNES 1.0, mapper 0)
+        rom.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 32 * 1024];
+        let n = prg.len();
+        prg[n - 4] = 0x00; // reset vector low  → $C000
+        prg[n - 3] = 0xC0; // reset vector high → $C000
+        rom.extend(prg);
+        rom
+    }
+
+    fn build_env() -> NESEnvironment {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "nes_reset_guard_{}_{:?}.nes",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
+        std::fs::write(&path, build_nrom()).expect("write synthetic rom");
+        let env = NESEnvironment::new(path.clone(), 1, None, 44_100)
+            .expect("construct env from synthetic NROM");
+        let _ = std::fs::remove_file(&path);
+        env
+    }
+
+    // A snapshot whose bincode decodes fine but whose RAM length is
+    // wrong makes `Nes::apply_state` panic at `copy_from_slice`. Pre-fix,
+    // `reset()` called `apply_state` unguarded, so this unwound across
+    // the PyO3 boundary and killed the interpreter. `restore_or_reset`
+    // must catch it and fall back to a cold reset instead.
+    fn incompatible_snapshot(env: &NESEnvironment) -> Vec<u8> {
+        let mut state = env.nes.get_state();
+        state.ram = vec![0u8; 1024]; // wrong length (RAM is 2 KB)
+        bincode::serialize(&state).expect("serialize corrupt state")
+    }
+
+    /// Push the machine well off its post-reset state (without stepping
+    /// the emulator, which can hit debug-only arithmetic panics on a
+    /// blank synthetic ROM) so a genuine fallback reset is observable.
+    fn dirty_machine(env: &mut NESEnvironment) {
+        let mut st = env.nes.get_state();
+        st.cycles = 50_000;
+        st.cpu.regs.pc = 0x8000;
+        env.nes.apply_state(&st);
+    }
+
+    #[test]
+    fn restore_or_reset_guards_incompatible_snapshot_and_falls_back() {
+        let mut env = build_env();
+        env.start_state_snapshot = Some(incompatible_snapshot(&env));
+        dirty_machine(&mut env);
+        assert_eq!(env.nes.get_state().cpu.regs.pc, 0x8000);
+
+        // Pre-fix (unguarded apply) this line PANICS; the guard must
+        // turn the incompatible restore into Ok(()).
+        env.restore_or_reset()
+            .expect("guarded restore must not surface the apply panic");
+
+        // Fallback path ran: RAM is full length again and the CPU is
+        // back at the reset vector. A guard-without-fallback mutation
+        // would leave PC at 0x8000 and fail this assertion.
+        let st = env.nes.get_state();
+        assert_eq!(st.ram.len(), 2048, "cold reset restores full-length RAM");
+        assert_eq!(st.cpu.regs.pc, 0xC000, "cold reset re-seeds PC from reset vector");
+    }
+
+    #[test]
+    fn restore_or_reset_applies_valid_snapshot() {
+        let mut env = build_env();
+        // Capture a valid state, mark RAM with a sentinel, cache it.
+        let mut state = env.nes.get_state();
+        state.ram[0x123] = 0xAB;
+        env.start_state_snapshot =
+            Some(bincode::serialize(&state).expect("serialize valid state"));
+        env.restore_or_reset().expect("valid restore returns Ok");
+        assert_eq!(
+            env.nes.get_state().ram[0x123],
+            0xAB,
+            "valid snapshot must be applied to RAM"
+        );
+    }
+
+    #[test]
+    fn restore_or_reset_no_snapshot_is_plain_reset() {
+        let mut env = build_env();
+        assert!(env.start_state_snapshot.is_none());
+        dirty_machine(&mut env);
+        assert_eq!(env.nes.get_state().cpu.regs.pc, 0x8000);
+        // `Nes::reset()` in the default `hw_reset_alignment = false` path
+        // INCREMENTS the cycle counter by the 8-cycle reset-sequence
+        // discard rather than zeroing it, so the dirtied 50_000 would
+        // survive as 50_008 — the counter alone cannot prove a
+        // power-cycle in that path. Use the hardware-accurate alignment,
+        // where reset SETS the counter to its fixed 7-cycle boot
+        // baseline, so the power-cycle is observable as a deterministic
+        // small cycle count (the reset-vector PC re-seed below is the
+        // flag-independent proof).
+        env.nes.hw_reset_alignment = true;
+        env.restore_or_reset().expect("no-snapshot path returns Ok");
+        let st = env.nes.get_state();
+        assert_eq!(st.cpu.regs.pc, 0xC000);
+        assert!(st.cycles < 100, "power-cycle resets the machine");
+    }
 }

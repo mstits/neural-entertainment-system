@@ -16,7 +16,15 @@ this backlog directly.*
 2. **`oam_dma.rs` + `nes::State` — OAM DMA state never serialized.**
    The in-file doc claims byte-exact round-trips, but `get_state`/
    `apply_state` are never called from `nes::State`. A savestate taken
-   mid-DMA is not byte-exact. Add `oam_dma` to `nes::State`.
+   mid-DMA is not byte-exact.
+   **DEFERRED — requires a savestate format-version bump; bincode
+   serde(default) does not give backward compat, so adding the field
+   breaks all banked blobs. Needs a versioned State envelope, done as its
+   own wave with a migration/round-trip test over old blobs.**
+   *(A first attempt appended `oam_dma` to `nes::State`; because bincode
+   is non-self-describing, every banked blob then failed to load with
+   `unexpected end of file`. Reverted 2026-08-12 to restore backward
+   compat.)*
 3. **`python.rs:314` — `reset()` bypasses `apply_state_guarded`.**
    Restores the cached start-state via raw `apply_state`, so a corrupted
    snapshot crashes the interpreter instead of falling back to `reset()`.

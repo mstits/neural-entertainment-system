@@ -315,8 +315,23 @@ impl Cartridge {
 
     pub fn apply_state(&mut self, state: &State) {
         self.mirroring = state.mirroring;
-        self.chr = state.chr.clone();
-        self.prg_ram = state.prg_ram.clone();
+        // Copy into the existing buffers in place when the lengths agree,
+        // preserving the current allocation instead of dropping it and
+        // reallocating a fresh Vec on every restore (the common case:
+        // curriculum warm-start, Go-Explore, GUI load-state all restore a
+        // state captured from this same cartridge). Fall back to a
+        // resizing copy only on a genuine length mismatch.
+        Self::restore_buf(&mut self.chr, &state.chr);
+        Self::restore_buf(&mut self.prg_ram, &state.prg_ram);
+    }
+
+    fn restore_buf(dst: &mut Vec<u8>, src: &[u8]) {
+        if dst.len() == src.len() {
+            dst.copy_from_slice(src);
+        } else {
+            dst.clear();
+            dst.extend_from_slice(src);
+        }
     }
 }
 
@@ -411,5 +426,63 @@ mod tests {
         assert!(!cart.is_nes20);
         assert_eq!(cart.mapper, 0);
         assert_eq!(cart.prg_ram.len(), PRG_RAM_BANK_SIZE as usize);
+    }
+
+    // Build a CHR-RAM cartridge (chr_lo = 0 => 1 CHR-RAM bank) with the
+    // default 8 KB PRG-RAM, so both apply_state buffers are writable.
+    fn build_ram_cart() -> Cartridge {
+        let fields = [
+            0x01, // byte 4: prg_lo (1 PRG bank)
+            0x00, // byte 5: chr_lo (0 => CHR-RAM)
+            0x00, // byte 6: flags6
+            0x00, // byte 7: flags7
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let rom = build_rom(fields, PRG_ROM_BANK_SIZE as usize, 0);
+        Cartridge::load(&mut Cursor::new(rom)).unwrap()
+    }
+
+    // apply_state must write into the existing buffers rather than dropping
+    // and reallocating them. When the lengths match the backing allocation
+    // (as_ptr) must be preserved. Pre-fix (`self.chr = state.chr.clone()`)
+    // allocates a fresh Vec while the old one is still live, so the pointer
+    // is guaranteed to change and this assertion fails.
+    #[test]
+    fn apply_state_preserves_buffer_identity() {
+        let mut cart = build_ram_cart();
+        let chr_ptr = cart.chr.as_ptr();
+        let prg_ram_ptr = cart.prg_ram.as_ptr();
+        let chr_len = cart.chr.len();
+        let prg_ram_len = cart.prg_ram.len();
+
+        let state = State {
+            mirroring: cart.mirroring,
+            chr: vec![0xAB; chr_len],
+            prg_ram: vec![0xCD; prg_ram_len],
+        };
+        cart.apply_state(&state);
+
+        // Contents applied...
+        assert!(cart.chr.iter().all(|&b| b == 0xAB));
+        assert!(cart.prg_ram.iter().all(|&b| b == 0xCD));
+        // ...into the same allocation (no realloc).
+        assert_eq!(cart.chr.as_ptr(), chr_ptr);
+        assert_eq!(cart.prg_ram.as_ptr(), prg_ram_ptr);
+    }
+
+    // The length-mismatch guard must still apply the incoming contents
+    // (e.g. a state captured from a differently-sized RAM layout) instead
+    // of panicking in copy_from_slice.
+    #[test]
+    fn apply_state_handles_length_mismatch() {
+        let mut cart = build_ram_cart();
+        let state = State {
+            mirroring: cart.mirroring,
+            chr: vec![0x11; cart.chr.len() + 4],
+            prg_ram: vec![0x22; cart.prg_ram.len() - 4],
+        };
+        cart.apply_state(&state);
+        assert_eq!(cart.chr, state.chr);
+        assert_eq!(cart.prg_ram, state.prg_ram);
     }
 }

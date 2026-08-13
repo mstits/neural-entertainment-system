@@ -142,10 +142,19 @@ impl<'a> SystemBus<'a> {
             0x4016..=0x4017 => self.input.read_byte(addr),
         };
 
-        let byte = if let Some(cheat) = self.cheats.get(&addr) {
-            let compare = cheat.compare();
-            if compare.is_none() || compare.unwrap() == byte {
-                cheat.data()
+        // Skip the SipHash HashMap probe entirely on the common path:
+        // `cheats` is empty for the whole training/solver pipeline, so a
+        // `get` per bus read is pure overhead. When empty, `get` would
+        // return `None` and leave `byte` unchanged, so the guarded and
+        // unguarded paths are behaviourally identical.
+        let byte = if !self.cheats.is_empty() {
+            if let Some(cheat) = self.cheats.get(&addr) {
+                let compare = cheat.compare();
+                if compare.is_none() || compare.unwrap() == byte {
+                    cheat.data()
+                } else {
+                    byte
+                }
             } else {
                 byte
             }
@@ -175,6 +184,11 @@ impl<'a> SystemBus<'a> {
             0x4020..=0xFFFF => self.mapper.prg_peek_byte(addr),
             0x0000..=0x1FFF => self.ram.peek_byte(addr),
             0x2000..=0x3FFF => self.ppu.peek_byte(addr),
+            // Controller ports must route to the input unit, not the APU
+            // (which returns 0 for anything but $4015). Mirror the
+            // `read_byte` routing, but via the side-effect-free peek so
+            // the controller shift register is not advanced.
+            0x4016..=0x4017 => self.input.peek_byte(addr),
             0x4000..=0x401F => self.apu.peek_byte(addr),
         }
     }
@@ -217,8 +231,11 @@ impl<'a> SystemBus<'a> {
     }
 
     pub fn write_word(&mut self, address: u16, value: u16) {
-        self.write_byte(address, (value >> 8) as u8);
-        self.write_byte(address + 1, (value & 0xff) as u8);
+        // 6502 is little-endian: low byte at the lower address. This is
+        // the inverse of `read_word` above, so a write/read round-trip
+        // preserves the value.
+        self.write_byte(address, (value & 0xff) as u8);
+        self.write_byte(address + 1, (value >> 8) as u8);
     }
 
     pub fn ppu_scanline(&self) -> u16 {
@@ -245,5 +262,130 @@ impl<'a> SystemBus<'a> {
     /// Rust slow path which knows how to handle the stall correctly.
     pub fn cpu_stall_pending(&self) -> bool {
         self.oam_dma.active
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cartridge::Cartridge;
+    use crate::input::BUTTON_A;
+    use std::io::Cursor;
+
+    /// Minimal NROM (mapper 0, 1×16 KB PRG, CHR-RAM). Enough to stand up
+    /// a `MapperEnum` so the bus can be constructed; PRG reads back 0.
+    fn nrom() -> MapperEnum {
+        let mut rom = vec![0x4E, 0x45, 0x53, 0x1A]; // "NES\x1A"
+        rom.extend_from_slice(&[
+            0x01, // prg_lo: 1 PRG bank
+            0x00, // chr_lo: 0 => CHR-RAM
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        rom.resize(16 + 16 * 1024, 0);
+        let cart = Cartridge::load(&mut Cursor::new(rom)).unwrap();
+        MapperEnum::from_cartridge(cart)
+    }
+
+    struct Parts {
+        ram: Ram,
+        mapper: MapperEnum,
+        ppu: Ppu,
+        apu: Apu,
+        oam_dma: OamDma,
+        input: Input,
+        cheats: HashMap<u16, Cheat>,
+    }
+
+    impl Parts {
+        fn new() -> Self {
+            Self {
+                ram: Ram::default(),
+                mapper: nrom(),
+                ppu: Ppu::new(),
+                apu: Apu::new(),
+                oam_dma: OamDma::new(),
+                input: Input::new(),
+                cheats: HashMap::new(),
+            }
+        }
+
+        fn bus(&mut self) -> SystemBus<'_> {
+            SystemBus::new(
+                &mut self.ram,
+                &mut self.mapper,
+                &mut self.ppu,
+                &mut self.apu,
+                &mut self.oam_dma,
+                &mut self.input,
+                &self.cheats,
+            )
+        }
+    }
+
+    /// Finding 1: `write_word` must be little-endian so a write/read
+    /// round-trip preserves the value. FAILS on the pre-fix big-endian
+    /// implementation (0x1234 comes back as 0x3412).
+    #[test]
+    fn write_word_round_trips_little_endian() {
+        let mut parts = Parts::new();
+        let mut bus = parts.bus();
+        bus.write_word(0x0010, 0x1234);
+        // Low byte at the lower address.
+        assert_eq!(bus.read_byte(0x0010), 0x34);
+        assert_eq!(bus.read_byte(0x0011), 0x12);
+        assert_eq!(bus.read_word(0x0010), 0x1234);
+    }
+
+    /// Finding 2: the empty-`cheats` guard must not change read results.
+    /// Reads with an empty map return the underlying byte; an installed
+    /// compare-less cheat overrides it. Identical pre- and post-fix — this
+    /// pins that the perf guard is behaviour-preserving.
+    #[test]
+    fn cheats_guard_preserves_read_semantics() {
+        // Empty map: RAM read returns what was written.
+        {
+            let mut parts = Parts::new();
+            let mut bus = parts.bus();
+            bus.write_byte(0x0020, 0x5A);
+            assert_eq!(bus.read_byte(0x0020), 0x5A);
+        }
+        // Installed cheat (GOSSIP => addr 0xD1DD, data 0x14, no compare)
+        // overrides the underlying PRG byte on read.
+        {
+            let mut parts = Parts::new();
+            let cheat = Cheat::from_code(b"GOSSIP").unwrap();
+            parts.cheats.insert(cheat.address(), cheat);
+            let mut bus = parts.bus();
+            assert_eq!(bus.read_byte(0xD1DD), 0x14);
+        }
+    }
+
+    /// Finding 3: `peek_byte` must route $4016/$4017 to the controller,
+    /// not the APU. Pre-fix, peek returns the APU's 0 while `read_byte`
+    /// returns the pressed bit, so the equality FAILS.
+    #[test]
+    fn peek_byte_matches_read_for_controller_ports() {
+        // $4016 -> pad 1.
+        {
+            let mut parts = Parts::new();
+            parts.input.game_pad_1.set_mask(BUTTON_A);
+            let mut bus = parts.bus();
+            // peek must not advance the shift register, so it observes the
+            // same bit the very next read returns.
+            let peeked = bus.peek_byte(0x4016);
+            let read = bus.read_byte(0x4016);
+            assert_eq!(peeked, 1, "$4016 peek should see A pressed");
+            assert_eq!(peeked, read, "peek must match read for $4016");
+        }
+        // $4017 -> pad 2.
+        {
+            let mut parts = Parts::new();
+            parts.input.game_pad_2.set_mask(BUTTON_A);
+            let mut bus = parts.bus();
+            let peeked = bus.peek_byte(0x4017);
+            let read = bus.read_byte(0x4017);
+            assert_eq!(peeked, 1, "$4017 peek should see A pressed");
+            assert_eq!(peeked, read, "peek must match read for $4017");
+        }
     }
 }

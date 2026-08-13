@@ -372,7 +372,6 @@ impl Nes {
             // ASM exits cleanly and we fall through to try_bulk_step.
             #[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
             {
-                let ram_ptr = self.ram.as_mut_ptr();
                 // Cached at construction / reset / apply_state. The
                 // underlying prg_asm_window Vec is fixed-size 32 KB
                 // mutated only via slice indexing; pointer is stable.
@@ -420,13 +419,24 @@ impl Nes {
                 let _ = (bulk_cycles, asm_handler_cycles);
                 // Construct a bus so the ASM MMIO callback can route
                 // reads/writes through the live PPU/APU/mapper. The
-                // bus borrows ram/mapper/ppu/apu/oam_dma/input, so the
-                // ram_ptr raw pointer aliases with the bus's ram borrow
-                // — only one accesses any given byte per ASM invocation
-                // (ASM uses ram_ptr for $0000-$1FFF, bus for $2000+).
+                // bus borrows ram/mapper/ppu/apu/oam_dma/input.
                 if asm_handler_cycles > 0 && !self.disable_asm_cpu {
+                // Single provenance: `ram_ptr` is derived from the very
+                // same `&mut self.ram` that is then moved into the bus, so
+                // constructing the bus cannot invalidate `ram_ptr`. The
+                // pre-fix code took `ram_ptr` from a separate, earlier
+                // `&mut self.ram`, which the bus's fresh borrow popped off
+                // the borrow stack before `ram_ptr` was used — latent
+                // Stacked-Borrows UB. This ordering is sound because the
+                // bus never accesses its `ram` field during the ASM step:
+                // RAM $0000-$1FFF is serviced through `ram_ptr`, while the
+                // bus routes $2000+ only (its `tick` callback ticks
+                // PPU/APU, which never touch CPU RAM), so the raw pointer
+                // and the bus's borrow never alias a live access.
+                let ram_ref: &mut Ram = &mut self.ram;
+                let ram_ptr = ram_ref.as_mut_ptr();
                 let mut bus = SystemBus::new(
-                    &mut self.ram,
+                    ram_ref,
                     &mut self.mapper,
                     &mut self.ppu,
                     &mut self.apu,
