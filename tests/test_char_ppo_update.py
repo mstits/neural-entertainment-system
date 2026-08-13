@@ -378,7 +378,7 @@ def _run_update_harness(params: dict, inputs: dict) -> dict:
 def _capture_real_iteration() -> dict:
     """Run one real vanilla_ppo iteration and capture the update inputs + the
     real fold/GAE reference outputs. Requires the SMB ROM/profile."""
-    import src.training.trainer as trainer_mod
+    import src.training.ppo_updater as updater_mod
     from src.training.trainer import Trainer
 
     _seed_all(_SEED)
@@ -389,8 +389,11 @@ def _capture_real_iteration() -> dict:
     profile["reinforce"]["device"] = "cpu"
 
     cap: dict = {}
-    orig_fold = trainer_mod.fold_intrinsic_into_rewards
-    orig_gae = trainer_mod.batched_gae
+    # The fold + protagonist GAE moved from `_run_vanilla_ppo` into
+    # `PPOUpdater.update` (trainer-decomposition plan, Task 2), so the spies
+    # patch the names in the ppo_updater module (where they are now called).
+    orig_fold = updater_mod.fold_intrinsic_into_rewards
+    orig_gae = updater_mod.batched_gae
 
     def _fold_spy(reward_buf, intrinsic, done_buf, *a, **k):
         out = orig_fold(reward_buf, intrinsic, done_buf, *a, **k)
@@ -408,10 +411,12 @@ def _capture_real_iteration() -> dict:
             cap["gae_adv"] = np.array(adv, copy=True)
             cap["gae_vt"] = np.array(vt, copy=True)
             # Snapshot the live rollout buffers + hyperparameters from the
-            # caller frame (_run_vanilla_ppo) — everything the update reads.
+            # caller frame (PPOUpdater.update) — everything the update reads.
+            # The buffers are `update`'s keyword params; the hyperparameters
+            # live on the owning Trainer, reached via the updater's `.trainer`.
             fr = sys._getframe(1)
             lv = fr.f_locals
-            t = lv["self"]
+            t = lv["self"].trainer
             cap["inputs"] = {
                 "obs_buf": np.array(lv["obs_buf"], copy=True),
                 "action_buf": np.array(lv["action_buf"], copy=True),
@@ -426,8 +431,8 @@ def _capture_real_iteration() -> dict:
             cap["params"] = {key: getattr(t, key) for key in _PARAM_KEYS}
         return adv, vt
 
-    trainer_mod.fold_intrinsic_into_rewards = _fold_spy
-    trainer_mod.batched_gae = _gae_spy
+    updater_mod.fold_intrinsic_into_rewards = _fold_spy
+    updater_mod.batched_gae = _gae_spy
     try:
         metrics_q: _queue.Queue = _queue.Queue()
         with tempfile.TemporaryDirectory(prefix="c2_capture_") as tmp:
@@ -446,8 +451,8 @@ def _capture_real_iteration() -> dict:
             )
             trainer.run(num_generations=1, resume_from=None, fresh_start=True)
     finally:
-        trainer_mod.fold_intrinsic_into_rewards = orig_fold
-        trainer_mod.batched_gae = orig_gae
+        updater_mod.fold_intrinsic_into_rewards = orig_fold
+        updater_mod.batched_gae = orig_gae
 
     assert "inputs" in cap, "the update never ran — no GAE call captured"
     return cap
@@ -600,17 +605,22 @@ def test_obs_rms_updated_exactly_once(golden) -> None:
 
 def test_obs_rms_once_and_pipeline_order_anchored_in_source() -> None:
     """Anchor the §2.5 contract + the fold->GAE->K-epoch order in the real
-    `_run_vanilla_ppo` body, so the harness above cannot silently drift from
-    the code it characterizes (no ROM needed)."""
-    src = (ROOT / "src" / "training" / "trainer.py").read_text()
-    start = src.find("def _run_vanilla_ppo")
-    end = src.find("def _emit_metrics", start)
-    assert start >= 0 and end > start
-    body = src[start:end]
+    update code, so the harness above cannot silently drift from the code it
+    characterizes (no ROM needed).
 
-    # obs-rms is updated exactly once in the whole vanilla_ppo body.
+    The update stretch was lifted verbatim from `Trainer._run_vanilla_ppo` into
+    `PPOUpdater.update` (trainer-decomposition plan, Task 2), so this anchor now
+    reads `src/training/ppo_updater.py`. Every assertion is unchanged in strength
+    -- only the anchored file (and the `self.`->`t.` trainer-ref form the move
+    introduced) moved with the code."""
+    src = (ROOT / "src" / "training" / "ppo_updater.py").read_text()
+    start = src.find("def update(")
+    assert start >= 0, "PPOUpdater.update not found"
+    body = src[start:]
+
+    # obs-rms is updated exactly once in the whole update body.
     assert body.count("update_normalization") == 1, (
-        "vanilla_ppo now updates the RND obs-rms a different number of times — "
+        "the updater now touches the RND obs-rms a different number of times — "
         "the fold-once contract (plan §2.5) changed; update this test deliberately."
     )
     # The update stretch exists and is ordered fold -> GAE -> K-epoch, with the
@@ -619,11 +629,11 @@ def test_obs_rms_once_and_pipeline_order_anchored_in_source() -> None:
     i_fold = body.find("fold_intrinsic_into_rewards")
     i_gae = body.find("batched_gae")
     i_kepoch = body.find(
-        "for epoch in range(0 if self._recurrent else self.reinforce_steps)"
+        "for epoch in range(0 if t._recurrent else t.reinforce_steps)"
     )
     assert -1 < i_norm < i_fold < i_gae < i_kepoch, (
         "the fold -> GAE -> K-epoch update order (or the obs-rms-before-cache "
-        "ordering) changed in vanilla_ppo."
+        "ordering) changed in the updater."
     )
     # The NaN backstop that skips the optimizer step still guards the loop.
     assert "if not torch.isfinite(loss):" in body

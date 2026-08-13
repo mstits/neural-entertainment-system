@@ -203,13 +203,17 @@ def test_nan_backstop_skips_optimizer_step_on_nonfinite_loss() -> None:
 
 
 def test_nan_backstop_guard_present_in_trainer_source() -> None:
-    """Anchor the guard's existence in `_run_vanilla_ppo` so the isolated
-    replication above cannot silently drift from the real code."""
-    src = (ROOT / "src" / "training" / "trainer.py").read_text()
-    start = src.find("def _run_vanilla_ppo")
-    end = src.find("def _emit_metrics", start)
-    assert start >= 0 and end > start
-    body = src[start:end]
+    """Anchor the guard's existence in the update code so the isolated
+    replication above cannot silently drift from the real code.
+
+    The minibatch update (with this NaN backstop) was lifted verbatim from
+    `Trainer._run_vanilla_ppo` into `PPOUpdater.update` (trainer-decomposition
+    plan, Task 2), so this anchor now reads `src/training/ppo_updater.py`. The
+    assertions are unchanged."""
+    src = (ROOT / "src" / "training" / "ppo_updater.py").read_text()
+    start = src.find("def update(")
+    assert start >= 0, "PPOUpdater.update not found"
+    body = src[start:]
     assert "if not torch.isfinite(loss):" in body, (
         "the vanilla_ppo minibatch NaN backstop is gone or was reworded — "
         "update this characterization test deliberately."
@@ -411,7 +415,7 @@ def test_one_iteration_metrics_dict_and_reward_buffer(monkeypatch) -> None:
     Deliberately not asserting the loss/return VALUES — those legitimately
     vary; only the shape/type/finiteness contract is pinned here.
     """
-    import src.training.trainer as trainer_mod
+    import src.training.ppo_updater as ppo_updater_mod
     from src.training.trainer import Trainer
 
     _seed_everything()
@@ -427,9 +431,12 @@ def test_one_iteration_metrics_dict_and_reward_buffer(monkeypatch) -> None:
     profile["reinforce"]["device"] = "cpu"
 
     # Spy on the GAE entry point (the collector->updater seam) to capture
-    # the buffers the loop actually fills, without reaching into locals.
+    # the buffers the loop actually fills, without reaching into locals. The
+    # protagonist GAE call moved into PPOUpdater (trainer-decomposition plan,
+    # Task 2), so patch the name in the ppo_updater module (where it is now
+    # called) rather than in the trainer module.
     captured: dict[str, np.ndarray] = {}
-    orig_batched_gae = trainer_mod.batched_gae
+    orig_batched_gae = ppo_updater_mod.batched_gae
 
     def _spy_batched_gae(reward_buf, value_buf, done_buf, *args, **kwargs):
         captured.setdefault("reward_buf", reward_buf)
@@ -437,7 +444,7 @@ def test_one_iteration_metrics_dict_and_reward_buffer(monkeypatch) -> None:
         captured.setdefault("done_buf", done_buf)
         return orig_batched_gae(reward_buf, value_buf, done_buf, *args, **kwargs)
 
-    monkeypatch.setattr(trainer_mod, "batched_gae", _spy_batched_gae)
+    monkeypatch.setattr(ppo_updater_mod, "batched_gae", _spy_batched_gae)
 
     metrics_q: _queue.Queue = _queue.Queue()
     with tempfile.TemporaryDirectory(prefix="vppo_char_run_") as tmp:

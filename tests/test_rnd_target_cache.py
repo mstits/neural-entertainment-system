@@ -388,21 +388,28 @@ def test_trainer_gates_rnd_on_predictor_update_fraction() -> None:
     stride, and gate the RND predictor loss on it — so the reconstruction
     tests above stay tied to the real trainer. Fails loudly if the knob is
     dropped or the gate is removed from _run_vanilla_ppo."""
+    # The knob is still parsed in the trainer's __init__ (config parse stays
+    # in the conductor). The update stretch that derives the stride + gates the
+    # RND predictor loss on it moved verbatim into PPOUpdater.update
+    # (trainer-decomposition plan, Task 2), so those two anchors now read
+    # src/training/ppo_updater.py. Assertions unchanged (the gate's `self.`->`t.`
+    # trainer-ref form moved with the code).
     src = Path("src/training/trainer.py").read_text()
     assert 'rl_cfg.get("rnd_predictor_update_fraction"' in src, (
         "trainer must read reinforce.rnd_predictor_update_fraction from cfg"
     )
-    i_vanilla = src.find("def _run_vanilla_ppo(")
-    assert i_vanilla != -1, "_run_vanilla_ppo not found"
-    i_stride = src.find("_rnd_pred_stride", i_vanilla)
+    upd = Path("src/training/ppo_updater.py").read_text()
+    i_update = upd.find("def update(")
+    assert i_update != -1, "PPOUpdater.update not found"
+    i_stride = upd.find("_rnd_pred_stride", i_update)
     assert i_stride != -1, (
-        "predictor-update stride not derived inside _run_vanilla_ppo"
+        "predictor-update stride not derived inside PPOUpdater.update"
     )
     # The RND predictor block must be guarded by the per-minibatch flag.
-    i_gate = src.find("self._rnd is not None and _rnd_update_this_mb", i_vanilla)
+    i_gate = upd.find("t._rnd is not None and _rnd_update_this_mb", i_update)
     assert i_gate != -1, (
         "RND predictor loss must be gated by the per-minibatch schedule "
-        "flag (_rnd_update_this_mb) in _run_vanilla_ppo"
+        "flag (_rnd_update_this_mb) in PPOUpdater.update"
     )
 
 
@@ -447,29 +454,33 @@ def test_trainer_builds_cache_after_update_normalization() -> None:
     """Ordering guard (source): in the vanilla_ppo update, the RND target
     cache (`target_features`) must be built AFTER `update_normalization`.
     Fails loudly if someone moves the cache build ahead of the intrinsic
-    block's obs_rms update, which would bake in stale stats."""
-    src = Path("src/training/trainer.py").read_text()
+    block's obs_rms update, which would bake in stale stats.
 
-    # Anchor inside _run_vanilla_ppo: the GA path has its own
-    # update_normalization call earlier in the file, so a bare
-    # src.find() would latch onto that one and approve a cache build
-    # mis-ordered anywhere after line ~3787 (proven by test-theater).
-    i_vanilla = src.find("def _run_vanilla_ppo(")
-    assert i_vanilla != -1, "_run_vanilla_ppo not found"
-    i_cache_build = src.find("self._rnd.target_features(", i_vanilla)
+    The update stretch moved verbatim from `Trainer._run_vanilla_ppo` into
+    `PPOUpdater.update` (trainer-decomposition plan, Task 2), so this anchor now
+    reads src/training/ppo_updater.py. Assertions unchanged (the `self.`->`t.`
+    trainer-ref form moved with the code)."""
+    src = Path("src/training/ppo_updater.py").read_text()
+
+    # Anchor inside PPOUpdater.update: the trainer's GA path has its own
+    # update_normalization call, but that stayed in trainer.py; here the
+    # updater body contains exactly one intrinsic-block update_normalization.
+    i_update = src.find("def update(")
+    assert i_update != -1, "PPOUpdater.update not found"
+    i_cache_build = src.find("t._rnd.target_features(", i_update)
     assert i_cache_build != -1, (
-        "target_features cache build not found inside _run_vanilla_ppo"
+        "target_features cache build not found inside PPOUpdater.update"
     )
     i_update_norm = src.rfind(
-        "self._rnd.update_normalization(", i_vanilla, i_cache_build
+        "t._rnd.update_normalization(", i_update, i_cache_build
     )
     assert i_update_norm != -1, (
         "RND target cache (target_features) must be built AFTER the "
         "vanilla intrinsic block's update_normalization — the minibatch "
         "loop needs post-update obs_rms. No update_normalization call "
-        "precedes the cache build inside _run_vanilla_ppo."
+        "precedes the cache build inside PPOUpdater.update."
     )
 
     # The cached-loss consumer must also be present (predictor_loss),
     # guarding against a half-applied revert that leaves a dead cache.
-    assert "self._rnd.predictor_loss(" in src
+    assert "t._rnd.predictor_loss(" in src
