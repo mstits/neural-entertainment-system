@@ -486,3 +486,208 @@ mod tests {
         assert_eq!(cart.prg_ram, state.prg_ram);
     }
 }
+
+#[cfg(test)]
+mod cartridge_coverage_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    // A bare 16-byte header (magic + `fields` for bytes 4..16), no payload.
+    fn header(fields: [u8; 12]) -> Vec<u8> {
+        let mut rom = vec![0x4E, 0x45, 0x53, 0x1A];
+        rom.extend_from_slice(&fields);
+        rom
+    }
+
+    // Header + zero-filled PRG/CHR payload of the requested lengths.
+    fn zero_rom(fields: [u8; 12], prg_len: usize, chr_len: usize) -> Vec<u8> {
+        let mut rom = header(fields);
+        rom.resize(16 + prg_len + chr_len, 0);
+        rom
+    }
+
+    // Horizontal mirroring: the two upper nametables share page 0, the two
+    // lower ones share page 1, and the intra-page offset is preserved.
+    #[test]
+    fn mirror_horizontal_folds_nametables() {
+        let off = 0x123u16;
+        let m = Mirroring::Horizontal;
+        assert_eq!(m.mirror_address(0x2000 + off), 0x000 + off);
+        assert_eq!(m.mirror_address(0x2400 + off), 0x000 + off);
+        assert_eq!(m.mirror_address(0x2800 + off), 0x400 + off);
+        assert_eq!(m.mirror_address(0x2C00 + off), 0x400 + off);
+    }
+
+    // Vertical mirroring: NT0==NT2 fold to page 0, NT1==NT3 fold to page 1.
+    #[test]
+    fn mirror_vertical_folds_nametables() {
+        let off = 0x123u16;
+        let m = Mirroring::Vertical;
+        assert_eq!(m.mirror_address(0x2000 + off), 0x000 + off);
+        assert_eq!(m.mirror_address(0x2400 + off), 0x400 + off);
+        assert_eq!(m.mirror_address(0x2800 + off), 0x000 + off);
+        assert_eq!(m.mirror_address(0x2C00 + off), 0x400 + off);
+    }
+
+    // OneScreenLower: every nametable region collapses onto physical page 0.
+    #[test]
+    fn mirror_one_screen_lower_maps_all_to_page0() {
+        let off = 0x123u16;
+        let m = Mirroring::OneScreenLower;
+        for base in [0x2000u16, 0x2400, 0x2800, 0x2C00] {
+            assert_eq!(m.mirror_address(base + off), off);
+        }
+    }
+
+    // OneScreenUpper: every nametable region collapses onto physical page 1 ($400).
+    #[test]
+    fn mirror_one_screen_upper_maps_all_to_page1() {
+        let off = 0x123u16;
+        let m = Mirroring::OneScreenUpper;
+        for base in [0x2000u16, 0x2400, 0x2800, 0x2C00] {
+            assert_eq!(m.mirror_address(base + off), 0x400 + off);
+        }
+    }
+
+    // FourScreen: no folding — each of the four regions keeps its own page.
+    #[test]
+    fn mirror_four_screen_is_identity() {
+        let off = 0x123u16;
+        let m = Mirroring::FourScreen;
+        assert_eq!(m.mirror_address(0x2000 + off), 0x000 + off);
+        assert_eq!(m.mirror_address(0x2400 + off), 0x400 + off);
+        assert_eq!(m.mirror_address(0x2800 + off), 0x800 + off);
+        assert_eq!(m.mirror_address(0x2C00 + off), 0xC00 + off);
+    }
+
+    // The $3000-$3EFF window mirrors $2000-$2EFF before any per-mode folding.
+    #[test]
+    fn mirror_address_folds_3000_range_into_2000() {
+        let m = Mirroring::Vertical;
+        assert_eq!(m.mirror_address(0x3123), m.mirror_address(0x2123));
+        assert_eq!(m.mirror_address(0x3EFF), m.mirror_address(0x2EFF));
+    }
+
+    // flags6 bit 2 marks a 512-byte trainer that must be consumed so PRG data
+    // begins after it, not read as the first 512 bytes of PRG.
+    #[test]
+    fn trainer_flag_consumes_512_bytes_before_prg() {
+        let prg: Vec<u8> = (0..PRG_ROM_BANK_SIZE as usize)
+            .map(|i| (i % 251) as u8)
+            .collect();
+
+        // trainer bit set: header, 512 sentinel bytes, then the real PRG.
+        let fields = [0x01, 0x00, 0x04, 0x00, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut rom = header(fields);
+        rom.extend_from_slice(&[0xAA; 512]);
+        rom.extend_from_slice(&prg);
+        let cart = Cartridge::load(&mut Cursor::new(rom)).unwrap();
+        assert_eq!(cart.prg_rom, prg);
+
+        // Same PRG without the trainer bit (and without the 512 bytes) matches.
+        let fields_no = [0x01, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut rom_no = header(fields_no);
+        rom_no.extend_from_slice(&prg);
+        let cart_no = Cartridge::load(&mut Cursor::new(rom_no)).unwrap();
+        assert_eq!(cart_no.prg_rom, cart.prg_rom);
+    }
+
+    // NES 2.0 CHR high nibble comes from flags9[7..4]; 256 banks => full 2 MB CHR.
+    #[test]
+    fn nes20_chr_over_255_banks_parses_full_size() {
+        let fields = [0x00, 0x00, 0x00, 0x08, 0x00, 0x10, 0x00, 0, 0, 0, 0, 0];
+        let expected = 256 * CHR_ROM_BANK_SIZE as usize;
+        let rom = zero_rom(fields, 0, expected);
+        let cart = Cartridge::load(&mut Cursor::new(rom)).unwrap();
+        assert!(cart.is_nes20);
+        assert_eq!(cart.chr.len(), expected);
+    }
+
+    // NES 2.0 CHR exponent-multiplier form (flags9[7..4]==0xF): chr_lo=0x39 =>
+    // size = 2^14 * (1*2 + 1) = 49152 bytes, not a bank multiple.
+    #[test]
+    fn nes20_chr_exponent_multiplier_size() {
+        let fields = [0x00, 0x39, 0x00, 0x08, 0x00, 0xF0, 0x00, 0, 0, 0, 0, 0];
+        let expected = (1usize << 14) * 3;
+        assert_eq!(expected, 49152);
+        let rom = zero_rom(fields, 0, expected);
+        let cart = Cartridge::load(&mut Cursor::new(rom)).unwrap();
+        assert_eq!(cart.chr.len(), expected);
+    }
+
+    // A NES 2.0 exponent-form PRG over the 64 MB cap is rejected before the
+    // payload vec is allocated (prg_lo=0x6C => E=27 => 2^27 = 128 MB).
+    #[test]
+    fn nes20_rom_size_over_cap_rejected() {
+        let fields = [0x6C, 0x00, 0x00, 0x08, 0x00, 0x0F, 0x00, 0, 0, 0, 0, 0];
+        let rom = header(fields); // 16 bytes only: must error before reading payload
+        match Cartridge::load(&mut Cursor::new(rom)) {
+            Err(LoadError::FormatError(msg)) => {
+                assert!(
+                    msg.contains("cap") || msg.contains("64 MB"),
+                    "unexpected error message: {}",
+                    msg
+                );
+            }
+            other => panic!("expected FormatError for oversized ROM, got {:?}", other),
+        }
+    }
+
+    // An exponent-form size that overflows usize is rejected, never wrapped
+    // (prg_lo=0xFF => E=63, M=3 => 2^63 * 7 overflows).
+    #[test]
+    fn nes20_exponent_multiplier_overflow_rejected() {
+        let fields = [0xFF, 0x00, 0x00, 0x08, 0x00, 0x0F, 0x00, 0, 0, 0, 0, 0];
+        let rom = header(fields);
+        match Cartridge::load(&mut Cursor::new(rom)) {
+            Err(LoadError::FormatError(msg)) => {
+                assert!(msg.contains("overflow"), "unexpected error message: {}", msg);
+            }
+            other => panic!("expected FormatError for overflowing ROM, got {:?}", other),
+        }
+    }
+
+    // iNES 1.0 mapper = (flags7 & 0xF0) | (flags6 >> 4): 0x10 | 0x02 = 18.
+    #[test]
+    fn ines1_mapper_from_flags6_and_flags7_nibbles() {
+        let fields = [0x01, 0x01, 0x20, 0x10, 0x00, 0, 0, 0, 0, 0, 0, 0];
+        let rom = zero_rom(
+            fields,
+            PRG_ROM_BANK_SIZE as usize,
+            CHR_ROM_BANK_SIZE as usize,
+        );
+        let cart = Cartridge::load(&mut Cursor::new(rom)).unwrap();
+        assert!(!cart.is_nes20);
+        assert_eq!(cart.mapper, 18);
+        assert_eq!(cart.mirroring, Mirroring::Horizontal);
+    }
+
+    // flags6 bit0 selects Vertical mirroring, bit1 flags battery-backed RAM,
+    // and default_mirroring is captured from the same source.
+    #[test]
+    fn ines1_vertical_mirroring_and_battery_flags() {
+        let fields = [0x01, 0x01, 0x03, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0];
+        let rom = zero_rom(
+            fields,
+            PRG_ROM_BANK_SIZE as usize,
+            CHR_ROM_BANK_SIZE as usize,
+        );
+        let cart = Cartridge::load(&mut Cursor::new(rom)).unwrap();
+        assert_eq!(cart.mirroring, Mirroring::Vertical);
+        assert!(cart.is_battery_backed);
+        assert_eq!(cart.default_mirroring, cart.mirroring);
+    }
+
+    // flags6 bit3 (four-screen) takes precedence over the V/H mirroring bit0.
+    #[test]
+    fn ines1_four_screen_overrides_vh_bit() {
+        let fields = [0x01, 0x01, 0x09, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0];
+        let rom = zero_rom(
+            fields,
+            PRG_ROM_BANK_SIZE as usize,
+            CHR_ROM_BANK_SIZE as usize,
+        );
+        let cart = Cartridge::load(&mut Cursor::new(rom)).unwrap();
+        assert_eq!(cart.mirroring, Mirroring::FourScreen);
+    }
+}
