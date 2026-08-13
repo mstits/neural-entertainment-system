@@ -56,6 +56,7 @@ from src.training.bc_seed_cache import (
 )
 from src.training.behavior_cloning import build_dataset, pretrain, seed_population_from_weights
 from src.training.checkpoint_manager import CheckpointManager
+from src.training.exploration_controller import ExplorationController
 from src.training.ppo_updater import PPOUpdater
 from src.training.checkpointing import (
     archive_previous_run,
@@ -4238,23 +4239,14 @@ class Trainer:
         # optimizer as the policy so a single backward+step covers both.
         # Encoder dispatches on observation kind: pixel mode uses the
         # CNN-backed `RND`; tile mode uses the MLP-backed `TileRND`.
-        if self.rnd_intrinsic_coef > 0.0 and self._rnd is None:
-            if self._is_tile_mode:
-                from src.models.tile_rnd import TileRND
-                self._rnd = TileRND(
-                    feature_dim=self._tile_feature_dim
-                ).to(self.device)
-            else:
-                self._rnd = RND(in_channels=4).to(self.device)
-            log.info(
+        # Lifecycle owned by ExplorationController (Task 3); the GA path's
+        # log prefix differs from the vanilla path's, preserved verbatim.
+        ExplorationController(self).build_rnd(
+            log_msg=(
                 "RND intrinsic motivation enabled (%s): predictor=%d params, "
-                "intrinsic_coef=%.3f, loss_coef=%.3f",
-                "tile_mlp" if self._is_tile_mode else "pixel_cnn",
-                self._rnd.num_params,
-                self.rnd_intrinsic_coef,
-                self.rnd_loss_coef,
+                "intrinsic_coef=%.3f, loss_coef=%.3f"
             )
-            self._apply_pending_rnd_state()
+        )
 
         if self._ppo_optimizer is None:
             self._ppo_optimizer = self._build_ppo_optimizer(net)
@@ -4730,6 +4722,11 @@ class Trainer:
         num_envs = self.num_instances
         rollout_steps = self.rollout_steps
 
+        # Exploration lifecycle owner (RND build, count bonus, generic
+        # Go-Explore archive). Built once; used for the RND build below and
+        # the per-step count-bonus / go_explore record hooks in the loop.
+        _exploration = ExplorationController(self)
+
         # Persistent net + optimizer (same machinery the GA-mode PPO
         # update uses; reused so the existing fix infrastructure
         # — Adam state, lr, etc. — applies uniformly).
@@ -4779,22 +4776,12 @@ class Trainer:
         # limited (entropy pins near ln(A), policy settles on a single
         # safe-failing behavior); RND's novelty bonus keeps advantages
         # alive past that wall.
-        if self.rnd_intrinsic_coef > 0.0 and self._rnd is None:
-            if self._is_tile_mode:
-                from src.models.tile_rnd import TileRND
-                self._rnd = TileRND(
-                    feature_dim=self._tile_feature_dim
-                ).to(self.device)
-            else:
-                self._rnd = RND(in_channels=4).to(self.device)
-            log.info(
+        _exploration.build_rnd(
+            log_msg=(
                 "[vanilla_ppo] RND enabled (%s): predictor=%d params, "
-                "intrinsic_coef=%.3f, loss_coef=%.3f",
-                "tile_mlp" if self._is_tile_mode else "pixel_cnn",
-                self._rnd.num_params, self.rnd_intrinsic_coef,
-                self.rnd_loss_coef,
+                "intrinsic_coef=%.3f, loss_coef=%.3f"
             )
-            self._apply_pending_rnd_state()
+        )
         if self._ppo_optimizer is None:
             self._ppo_optimizer = self._build_ppo_optimizer(net)
         optimizer = self._ppo_optimizer
@@ -5679,49 +5666,12 @@ class Trainer:
         # archive returns then happen only at iter boundaries.
         _ge_inline_p = float(_ge_cfg.get("inline_return_prob", 0.0))
         if go_explore_on:
-            from src.training.go_explore import (
-                GoExploreArchive, ram_bytes_cell, ram_downsample_cell,
-                smb_gx_phase_cell,
-            )
-            _cell_cfg = dict(_ge_cfg.get("cell", {}) or {})
-            _cell_type = str(_cell_cfg.get("type", "ram_downsample"))
-            if _cell_type == "smb_gx_phase":
-                cell_fn = smb_gx_phase_cell(
-                    gx_bucket=int(_cell_cfg.get("gx_bucket", 16)),
-                    y_bucket=int(_cell_cfg.get("y_bucket", 32)),
-                )
-            elif _cell_type == "ram_bytes":
-                _addrs = [
-                    int(a) for a in _cell_cfg.get(
-                        "addresses", [0x075F, 0x0760, 0x006D]
-                    )
-                ]
-                cell_fn = ram_bytes_cell(
-                    _addrs, bucket=int(_cell_cfg.get("bucket", 1))
-                )
-            else:
-                cell_fn = ram_downsample_cell(
-                    stride=int(_cell_cfg.get("stride", 64)),
-                    bucket=int(_cell_cfg.get("bucket", 16)),
-                )
-            go_explore_archive = GoExploreArchive(
-                cell_fn, seed=int(_ge_cfg.get("seed", self.seed) or 0)
-            )
-            self._go_explore = go_explore_archive
-            _ge_path = self.checkpoint_dir / "go_explore" / "archive.pkl"
-            if _ge_path.exists():
-                try:
-                    go_explore_archive.load(_ge_path)
-                    log.info(
-                        "[vanilla_ppo] go_explore: resumed archive (%d cells)",
-                        len(go_explore_archive),
-                    )
-                except Exception as e:
-                    log.warning("[vanilla_ppo] go_explore reload failed: %s", e)
-            _score_kind = str(_ge_cfg.get("score", "auto"))
-            _is_mario = "mario" in str(self.game_profile.get("name", "")).lower()
-            _use_max_x = _score_kind == "max_x" or (
-                _score_kind == "auto" and _is_mario
+            # Archive build/load + score-kind selection live in
+            # ExplorationController (Task 3); it sets `self._go_explore` and
+            # returns `_use_max_x` so the score closure (which captures the
+            # rollout trackers) stays here in the conductor.
+            go_explore_archive, _use_max_x = _exploration.build_go_explore(
+                _ge_cfg
             )
 
             def _ge_score(_i: int) -> float:  # noqa: F811
@@ -5729,12 +5679,6 @@ class Trainer:
                     float(max_x_reached[_i]) if _use_max_x
                     else float(ep_returns[_i])
                 )
-
-            log.info(
-                "[vanilla_ppo] go_explore ENABLED: cell=%s, score=%s "
-                "(SMB curriculum OFF)",
-                _cell_type, "max_x" if _use_max_x else "ep_return",
-            )
 
         # ========= BACKWARD START-STATE CURRICULUM (opt-in) =========
         # Salimans & Chen (arXiv:1812.03381): a solved tape supplies START
@@ -6545,15 +6489,9 @@ class Trainer:
                             if cg_env_start_gx[i] < 0 and x_pos > 0:
                                 cg_env_start_gx[i] = x_pos
                                 _cg_entry(cg_env_cell[i]).setdefault("gx", x_pos)
-                        if self._gx_count_beta > 0.0:
-                            _gxk = (wl_packed << 9) | (x_pos >> 6)
-                            _gxn = self._gx_counts.get(_gxk, 0) + 1
-                            self._gx_counts[_gxk] = _gxn
-                            bonus_buf[t, i] = (
-                                self._gx_count_beta / math.sqrt(_gxn)
-                            )
-                        else:
-                            bonus_buf[t, i] = 0.0
+                        bonus_buf[t, i] = _exploration.count_bonus(
+                            wl_packed, x_pos
+                        )
                         # Ladder mode: track the furthest sub-stage rung this
                         # env reached. `region_of` credits only sequential-path
                         # states (a warp yields OFF_LADDER), so it never rises
@@ -6810,27 +6748,9 @@ class Trainer:
                         # strict improvement (peek the archive first). Skip
                         # death states — they make useless return targets.
                         if go_explore_archive is not None and not done:
-                            _gk = go_explore_archive.cell_fn(ram)
-                            _gc = go_explore_archive.cells.get(_gk)
-                            _gs = _ge_score(i)
-                            _gsteps = int(ep_lengths[i])
-                            _dom = (
-                                _gc is None
-                                or _gs > _gc.best_score + 1e-9
-                                or (abs(_gs - _gc.best_score) <= 1e-9
-                                    and _gsteps < _gc.best_steps)
+                            _exploration.record_cell(
+                                i, ram, _ge_score(i), int(ep_lengths[i]),
                             )
-                            if _dom:
-                                try:
-                                    _blob = self.pool.save_worker_state(i)
-                                except Exception:
-                                    _blob = None
-                                if _blob is not None:
-                                    go_explore_archive.record(
-                                        ram, _blob, _gs, _gsteps
-                                    )
-                            else:
-                                go_explore_archive.record(ram, None, _gs, _gsteps)
 
                         # Set True when an auto-reset re-seeds the
                         # stacker this step, so the post-step push below
@@ -9029,14 +8949,7 @@ class Trainer:
             # of the 10-iter checkpoint block above) so save_every actually
             # takes effect instead of being masked by lcm(10, save_every).
             if go_explore_archive is not None and it % go_explore_save_every == 0:
-                try:
-                    go_explore_archive.save(
-                        self.checkpoint_dir / "go_explore" / "archive.pkl"
-                    )
-                except Exception as exc:
-                    log.warning(
-                        "[vanilla_ppo] go_explore archive save failed: %s", exc
-                    )
+                _exploration.save_go_explore()
 
     def _save_checkpoint(self, gen: int, keep_last: int = 5) -> None:
         path = self.checkpoint_dir / f"gen_{gen:05d}.pt"
@@ -9078,25 +8991,6 @@ class Trainer:
 
     def _emit_metrics(self, **metrics) -> None:
         self._metrics_sink.emit(**metrics)
-
-    def _apply_pending_rnd_state(self) -> None:
-        """Load RND state stashed from a resumed checkpoint into the
-        freshly-built module. RND builds lazily on the first update —
-        after resume runs — so the state can't be applied at load time.
-        No-op when nothing is pending. Called right after each lazy build."""
-        if self._pending_rnd_state is None or self._rnd is None:
-            return
-        try:
-            self._rnd.load_state_dict(self._pending_rnd_state, strict=False)
-            log.info(
-                "[vanilla_ppo] restored RND state (predictor + normalization) "
-                "from checkpoint — novelty memory preserved across resume"
-            )
-        except Exception as exc:
-            log.warning(
-                "[vanilla_ppo] RND state restore failed (fresh init): %s", exc
-            )
-        self._pending_rnd_state = None
 
     def _apply_pending_backward_state(self, sched) -> None:
         """Load a resumed checkpoint's backward cursor into `sched`.

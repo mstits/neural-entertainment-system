@@ -375,21 +375,34 @@ def test_count_bonus_keying_and_decay() -> None:
     assert got["bonus_seq"][-1] == _approx(_GX_BETA / math.sqrt(3))
 
 
-def test_count_key_expressions_present_in_trainer_source() -> None:
-    """Anchor the inline keying + decay in `_run_vanilla_ppo` so the replica
-    above cannot silently drift from the real (not-yet-extracted) code."""
-    src = (ROOT / "src" / "training" / "trainer.py").read_text()
-    start = src.find("def _run_vanilla_ppo")
-    end = src.find("def _save_checkpoint", start)
+def test_count_key_expressions_present_in_source() -> None:
+    """Anchor the count keying + decay so the replica above cannot silently
+    drift from the real code. The Task-3 extraction split these: the loop still
+    computes `wl_packed`/`x_pos` in `_run_vanilla_ppo` (they feed many trackers)
+    and passes them to `ExplorationController.count_bonus`, which now owns the
+    `(wl_packed << 9) | (x_pos >> 6)` key and the `beta / sqrt(n)` decay."""
+    tsrc = (ROOT / "src" / "training" / "trainer.py").read_text()
+    start = tsrc.find("def _run_vanilla_ppo")
+    end = tsrc.find("def _save_checkpoint", start)
     assert start >= 0 and end > start
-    body = src[start:end]
+    body = tsrc[start:end]
+    # The world/level + x-position packing still happens in the loop.
     assert "wl_packed = (int(ram[0x075F]) << 4) | (int(ram[0x0760]) & 0x0F)" in body
     assert "x_pos = (int(ram[0x006D]) << 8) | int(ram[0x0086])" in body
-    assert "(wl_packed << 9) | (x_pos >> 6)" in body, (
+
+    # The cell key + decay moved into ExplorationController.count_bonus
+    # (self.-> t. form; the trainer-owned `_gx_counts` / `_gx_count_beta`
+    # are read through the `t = self.trainer` alias).
+    esrc = (ROOT / "src" / "training" / "exploration_controller.py").read_text()
+    cstart = esrc.find("def count_bonus")
+    cend = esrc.find("\n    def ", cstart + 1)
+    assert cstart >= 0 and cend > cstart
+    cbody = esrc[cstart:cend]
+    assert "(wl_packed << 9) | (x_pos >> 6)" in cbody, (
         "the count-bonus cell key expression changed — update this "
         "characterization deliberately."
     )
-    assert "self._gx_count_beta / math.sqrt(_gxn)" in body, (
+    assert "t._gx_count_beta / math.sqrt(_gxn)" in cbody, (
         "the count-bonus decay (beta/sqrt(n)) changed."
     )
 
@@ -443,19 +456,17 @@ def test_rnd_obs_rms_updated_exactly_once_per_iteration() -> None:
     assert r["reward_rms_count"] == _approx(1e-4 + _RND_N)
 
 
-def test_rnd_update_normalization_called_once_in_trainer_source() -> None:
-    """Source-scan companion to the count check: `_run_vanilla_ppo` must call
-    `update_normalization` exactly once (the GA path's call at ~4374 is in a
-    different method and must not be counted)."""
-    src = (ROOT / "src" / "training" / "trainer.py").read_text()
-    start = src.find("def _run_vanilla_ppo")
-    end = src.find("def _save_checkpoint", start)
-    assert start >= 0 and end > start
-    body = src[start:end]
-    n = body.count(".update_normalization(")
+def test_rnd_update_normalization_called_once_in_updater_source() -> None:
+    """Source-scan companion to the count check: the RND intrinsic fold must
+    call `update_normalization` exactly once. Task 2 relocated the fold from
+    `_run_vanilla_ppo` into `PPOUpdater.update`, so the fold-once contract is
+    now anchored there (the GA path's call lives in a different file/method and
+    must not be counted)."""
+    src = (ROOT / "src" / "training" / "ppo_updater.py").read_text()
+    n = src.count(".update_normalization(")
     assert n == 1, (
         f"expected exactly one RND update_normalization call in "
-        f"_run_vanilla_ppo, found {n} — the fold-once contract changed."
+        f"PPOUpdater.update, found {n} — the fold-once contract changed."
     )
 
 
