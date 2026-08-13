@@ -495,3 +495,32 @@ builders. Acceptance: `test_smoke_imports`, `test_gui_imports`,
 
 Total: eight commits, each independently green and independently revertable. No
 step is larger than one focused session; no step changes behavior.
+
+---
+
+## 9. Execution log
+
+- **§3 goldens (C0–C5) — DONE (b16ce2f, 5f1258c).** Determinism validated
+  3/3 back-to-back on the M4 (tile+CPU bit-reproducible). C0 master golden
+  pins the exact 3-iter metric sequence + final-net sha256; C1–C5 pin
+  checkpoint / ppo-update / exploration / curriculum / rollout. 54 tests,
+  2.2s. Each documents its honest "not covered" gaps.
+- **Task 0.5 config dataclasses — DONE (260df99).** PPO/Exploration/
+  Curriculum/Rollout/Entropy configs + from_profile, 45 fidelity tests.
+  UNWIRED (nothing imports them yet); wiring happens in Task 6.
+- **Task 1 CheckpointManager — DONE (1a99467).** Real relocation: resume +
+  save_iter + write_manifest live in `checkpoint_manager.py` (332 lines);
+  trainer.py 9960→9751. C0 bit-for-bit green = the pure-move proof.
+  **LESSON:** the first pass was a FACADE (delegating wrappers; trainer.py
+  GREW) — C0 can't catch that ("grew the file" isn't a behavior change);
+  the §7 diff-review gate caught it. Always verify trainer.py SHRANK. Fix
+  pattern: relocate bodies into the module, thin shim for direct-call
+  tests, retarget the golden's source-string anchors to the new module
+  (C0 doesn't source-anchor → stays the untouched behavioral proof).
+- **Task 2 PPOUpdater — IN PROGRESS.** SCOPE CORRECTION vs the plan: the
+  update region is no longer the "cleanest boundary" — PR-MDP (~6040),
+  CGSA (~6117), backward-curriculum (~6669), and the PR-MDP adversary
+  update (~7591) are now woven in, and are DISABLED in the tile-vanilla
+  golden profile → NOT net-covered. Task 2 is scoped to the net-covered
+  core (fold→GAE→adv-norm→K-epoch→NaN backstop); PR-MDP/CGSA/backward stay
+  in the conductor until the net is extended to cover them.
