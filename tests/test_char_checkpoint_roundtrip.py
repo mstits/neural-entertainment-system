@@ -68,6 +68,11 @@ from tests.test_vanilla_ppo_characterization import _bare_tile_trainer
 
 ROOT = Path(__file__).resolve().parent.parent
 _TRAINER_SRC = (ROOT / "src" / "training" / "trainer.py").read_text()
+# Task 1 of the trainer-decomposition plan relocated the resume scan and the
+# iter-save block into `CheckpointManager`; the source-anchored assertions
+# below now read that module (the behavioral round-trip tests are unchanged and
+# still exercise the real code through `_maybe_resume_vanilla_ppo`).
+_CKPT_SRC = (ROOT / "src" / "training" / "checkpoint_manager.py").read_text()
 
 
 def _seed_all(seed: int = 1234) -> None:
@@ -187,11 +192,12 @@ def test_gx_counts_save_gate_and_resume_coercion_present_in_source() -> None:
     """Anchor the two halves of the gx contract in the trainer source so the
     mirrored save + the exercised resume can't silently drift: the save side is
     gated on a truthy (non-empty) table, and the resume side re-keys to int."""
-    assert 'if self._gx_counts:' in _TRAINER_SRC, (
-        "the gx_counts save gate (`if self._gx_counts:`) changed or vanished."
+    assert 'if self.trainer._gx_counts:' in _CKPT_SRC, (
+        "the gx_counts save gate (`if self.trainer._gx_counts:`) changed or "
+        "vanished."
     )
-    assert '_ckpt_payload["gx_counts"] = self._gx_counts' in _TRAINER_SRC
-    assert 'int(k): int(v) for k, v in state["gx_counts"].items()' in _TRAINER_SRC, (
+    assert '_ckpt_payload["gx_counts"] = self.trainer._gx_counts' in _CKPT_SRC
+    assert 'int(k): int(v) for k, v in state["gx_counts"].items()' in _CKPT_SRC, (
         "the resume-side gx_counts int-coercion changed — update this test "
         "deliberately."
     )
@@ -270,15 +276,15 @@ def test_anticollapse_blob_roundtrips_into_pending_and_is_reextractable() -> Non
 def test_anticollapse_save_and_consume_sites_present_in_source() -> None:
     """Anchor both ends of the anti-collapse contract so the mirrors above can't
     drift from the real save/resume/consume code."""
-    # Save side (9536-9541).
-    assert 'if best_net_snapshot is not None:' in _TRAINER_SRC
-    assert '_ckpt_payload["anticollapse"] = {' in _TRAINER_SRC
-    assert '"best_net_snapshot": best_net_snapshot,' in _TRAINER_SRC
-    assert '"best_snapshot_fitness": float(best_snapshot_fitness),' in _TRAINER_SRC
-    assert '"collapse_strikes": int(collapse_strikes),' in _TRAINER_SRC
-    # Resume side (4683-4684).
-    assert 'self._pending_anticollapse = state["anticollapse"]' in _TRAINER_SRC
-    # Consume side (5056-5062).
+    # Save side (CheckpointManager.save_iter).
+    assert 'if best_net_snapshot is not None:' in _CKPT_SRC
+    assert '_ckpt_payload["anticollapse"] = {' in _CKPT_SRC
+    assert '"best_net_snapshot": best_net_snapshot,' in _CKPT_SRC
+    assert '"best_snapshot_fitness": float(best_snapshot_fitness),' in _CKPT_SRC
+    assert '"collapse_strikes": int(collapse_strikes),' in _CKPT_SRC
+    # Resume side (CheckpointManager.resume).
+    assert 'self.trainer._pending_anticollapse = state["anticollapse"]' in _CKPT_SRC
+    # Consume side (still in `_run_vanilla_ppo`).
     assert '_ac = getattr(self, "_pending_anticollapse", None)' in _TRAINER_SRC
     assert 'best_net_snapshot = _ac.get("best_net_snapshot") or None' in _TRAINER_SRC
 
@@ -330,17 +336,17 @@ def test_all_finite_truth_table() -> None:
 def test_poison_guard_source_matches_mirror() -> None:
     """Anchor the real `_all_finite` definition + the refusal gate so the mirror
     above and the refusal contract below cannot silently drift from the code."""
-    assert 'def _all_finite(sd) -> bool:' in _TRAINER_SRC
-    assert 'torch.isfinite(v).all()' in _TRAINER_SRC
-    assert 'if torch.is_tensor(v) and v.is_floating_point()' in _TRAINER_SRC
+    assert 'def _all_finite(sd) -> bool:' in _CKPT_SRC
+    assert 'torch.isfinite(v).all()' in _CKPT_SRC
+    assert 'if torch.is_tensor(v) and v.is_floating_point()' in _CKPT_SRC
     # Net + RND both routed through _all_finite.
-    assert '_params_finite = _all_finite(net.state_dict())' in _TRAINER_SRC
-    assert '_params_finite = _all_finite(self._rnd.state_dict())' in _TRAINER_SRC
+    assert '_params_finite = _all_finite(net.state_dict())' in _CKPT_SRC
+    assert '_params_finite = _all_finite(self.trainer._rnd.state_dict())' in _CKPT_SRC
     # The optimizer-moment half (a separate inline loop, not _all_finite).
-    assert 'for _grp in optimizer.state.values():' in _TRAINER_SRC
+    assert 'for _grp in optimizer.state.values():' in _CKPT_SRC
     # The save is gated on the finiteness verdict, and refusal is logged.
-    assert 'if it > 0 and it % 10 == 0 and _params_finite:' in _TRAINER_SRC
-    assert 'REFUSING checkpoint save at iter ' in _TRAINER_SRC
+    assert 'if it > 0 and it % 10 == 0 and _params_finite:' in _CKPT_SRC
+    assert 'REFUSING checkpoint save at iter ' in _CKPT_SRC
 
 
 def test_poison_guard_refusal_makes_resume_fall_back_to_last_good() -> None:
