@@ -90,6 +90,9 @@ mkdir -p "${PGO_DIR}"
 cd "${REPO}/nes_core"
 source "$HOME/.cargo/env" 2>/dev/null || true
 
+echo "==> [0] cargo clean (avoid mixed-build cache corruption)..."
+run_step "cargo clean" cargo clean
+
 if [[ "${MODE}" == "full" ]]; then
     echo "==> [1/3] Building instrumented wheel..."
     if [[ "${DRY_RUN}" != "1" ]]; then

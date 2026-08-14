@@ -1,7 +1,7 @@
 .PHONY: help test parity show launcher control-panel bench bench-hot bench-scaling bench-phases bench-all \
-        build build-pgo build-pgo-apply selftest clean train eval scoreboard \
+        build build-pgo build-pgo-apply selftest clean clean-rust train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
-        ppu_layout_check ppu-batch-profile
+        ppu_layout_check ppu-batch-profile rust-check
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -47,6 +47,7 @@ help:
 	@echo ""
 	@echo "  Maint:"
 	@echo "    make clean             - remove cached artifacts"
+	@echo "    make clean-rust        - cargo clean nes_core/target (mixed-build hazard)"
 
 # Default game arg for `make train` / `make eval`. Override:
 #   make train GAME=zelda
@@ -92,7 +93,10 @@ launcher control-panel:
 scoreboard:
 	. .venv/bin/activate && python scripts/scoreboard.py
 
-test:
+rust-check:
+	cd nes_core && cargo check --lib
+
+test: rust-check
 	. .venv/bin/activate && pytest tests/ -q --timeout=120
 
 test-fast:
@@ -161,6 +165,9 @@ selftest:
 clean:
 	rm -rf .pytest_cache __pycache__ **/__pycache__ **/**/__pycache__
 	find . -name "*.pyc" -delete
+
+clean-rust:
+	cd nes_core && cargo clean
 
 # Provenance gate for Learned-ledger training inputs (see CLAIMS.md):
 # allowlist integrity, quarantine intact, no profile references
