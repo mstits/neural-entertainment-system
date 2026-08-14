@@ -100,6 +100,13 @@ impl GamePad {
         self.strobe_state.next();
         state
     }
+
+    /// Side-effect-free view of the bit `next_button_state` would return
+    /// next: reads the button the shift register currently points at
+    /// without advancing it. Used by the bus `peek_byte` path.
+    fn peek_button_state(&self) -> bool {
+        self.button_pressed(self.strobe_state.button)
+    }
 }
 
 #[derive(Copy, Clone, Default, Deserialize, Serialize)]
@@ -172,6 +179,20 @@ impl Input {
     fn reset_strobe_states(&mut self) {
         self.game_pad_1.strobe_state.reset();
         self.game_pad_2.strobe_state.reset();
+    }
+
+    /// Side-effect-free counterpart to the `Memory::read_byte` controller
+    /// path: returns the bit the next $4016/$4017 read would yield without
+    /// advancing the shift register. Any other address returns 0, matching
+    /// `read_byte`. Used by the bus `peek_byte` path.
+    pub fn peek_byte(&self, address: u16) -> u8 {
+        if address == 0x4016 {
+            self.game_pad_1.peek_button_state() as u8
+        } else if address == 0x4017 {
+            self.game_pad_2.peek_button_state() as u8
+        } else {
+            0
+        }
     }
 }
 
