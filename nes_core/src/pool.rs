@@ -29,7 +29,7 @@ use std::sync::Once;
 use crate::cartridge::Cartridge;
 use crate::nes::Nes;
 use crate::ppu::{SCREEN_HEIGHT, SCREEN_WIDTH};
-use crate::sink::{AudioSink, Xrgb8888VideoSink};
+use crate::sink::{AudioSink, VideoSink, Xrgb8888VideoSink};
 
 const FRAME_PIXELS: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 const RAM_SIZE: usize = 2048;
@@ -130,6 +130,12 @@ struct Worker {
     /// hard-coded; harmless for other games (always reports the
     /// final-frame x there).
     last_max_x: u32,
+    // Persistent scratch Nes for `peek_u16_consistent` (torn-read
+    // guard). Allocated once on first use — same ROM as the live
+    // machine — and reused for every peek; the live `Nes` is never
+    // stepped or restored, so a peek cannot perturb the trajectory.
+    // Boxed: a full Nes is large and most workers never peek.
+    scratch: Option<Box<Nes>>,
 }
 
 impl Worker {
@@ -152,13 +158,16 @@ impl Worker {
             frame_cycle_target: None,
             hw_frame_anchor: false,
             last_max_x: 0,
+            scratch: None,
         }
     }
 
     fn reset(&mut self) {
         if let Some(snap) = &self.start_state_snapshot {
-            match bincode::deserialize::<crate::nes::State>(snap) {
-                Ok(state) => self.nes.apply_state(&state),
+            match crate::serialize::decode_state(snap) {
+                Ok((state, oam_dma)) => {
+                    crate::serialize::apply_decoded(&mut self.nes, &state, &oam_dma)
+                }
                 Err(e) => {
                     // Cached snapshot bytes are corrupted somehow.
                     // Falling back to a cold reset is correct behavior
@@ -307,6 +316,111 @@ impl Worker {
     /// its boot state (all released) and $4017 reads are unchanged.
     fn apply_buttons_p2(&mut self, mask: u8) {
         self.nes.game_pad_2().set_mask(mask);
+    }
+
+    /// Build the persistent scratch Nes for `peek_u16_consistent` if
+    /// it doesn't exist yet. One-time cost per worker; every later
+    /// peek reuses the instance.
+    fn ensure_scratch(&mut self, rom_bytes: &[u8]) -> Result<(), String> {
+        if self.scratch.is_some() {
+            return Ok(());
+        }
+        let cart = Cartridge::load(&mut std::io::Cursor::new(rom_bytes))
+            .map_err(|e| format!("scratch instance failed to parse iNES: {e:?}"))?;
+        let mut nes = Box::new(Nes::new(cart));
+        nes.set_audio_output_enabled(false);
+        self.scratch = Some(nes);
+        Ok(())
+    }
+
+    /// Torn-read guard for a 16-bit little-endian RAM pair (e.g. the
+    /// Castlevania $0040/$0041 progress counter). A frame boundary can
+    /// land between the ROM's two byte updates — low byte wrapped, high
+    /// byte not yet borrowed — so the naive `hi:lo` composition
+    /// fabricates a value the counter never held (the 2026-08-11 gx-767
+    /// incident). The writer can't be instrumented; the sampler owns
+    /// time, so it adjudicates:
+    ///
+    ///   1. Read (L1, H1) from the LIVE machine.
+    ///   2. Serialize the worker's `State` into the persistent scratch
+    ///      Nes and advance the SCRATCH exactly one CPU instruction
+    ///      (normal PPU/APU catch-up). The live machine is never
+    ///      stepped, never restored — zero perturbation by construction.
+    ///   3. (L2, H2) == (L1, H1): the boundary was quiescent — publish
+    ///      the raw pair. Otherwise the boundary split a multi-
+    ///      instruction update — publish the post-step composition,
+    ///      the logically consistent atomic value.
+    ///
+    /// Returns `(value, consistent)`. `consistent == false` means the
+    /// verdict could not be adjudicated and `value` is the raw pair:
+    /// mid-OAM-DMA boundaries (`State` does not capture the DMA unit,
+    /// so a scratch replay would resume without the stall — never
+    /// adjudicate off an incomplete scratch), a missing scratch, or a
+    /// scratch panic.
+    ///
+    /// The scratch ticks directly (no `advance_one_frame`), so the
+    /// `frame_cycle_target` reset that `load_worker_state` needs after
+    /// `apply_state` has no analogue here — the scratch has no frame
+    /// lock to go stale.
+    fn peek_u16_consistent(&mut self, lo_addr: u16, hi_addr: u16) -> (u16, bool) {
+        let l1 = self.nes.system_ram_byte(lo_addr);
+        let h1 = self.nes.system_ram_byte(hi_addr);
+        let raw = u16::from_le_bytes([l1, h1]);
+        if self.nes.oam_dma.active {
+            return (raw, false);
+        }
+        let Some(scratch) = self.scratch.as_mut() else {
+            return (raw, false);
+        };
+        let state = self.nes.get_state();
+        // Config flags are not part of `State` (deliberately — see the
+        // hw-flag field docs); mirror the ones that steer `Nes::tick`
+        // so the scratch instruction runs on the live machine's model.
+        let hw_event_ppu = self.nes.hw_event_ppu;
+        let ppu_read_dot_offset = self.nes.ppu_read_dot_offset;
+        let ppu_write_dot_offset = self.nes.ppu_write_dot_offset;
+        let hw_nmi_subcycle_phase = self.nes.hw_nmi_subcycle_phase;
+        let hw_vblank_read_race = self.nes.hw_vblank_read_race();
+        let hw_mmio_read_timing = self.nes.cpu.hw_mmio_read_timing;
+        let hw_mmio_write_timing = self.nes.cpu.hw_mmio_write_timing;
+        let hw_nmi_poll_timing = self.nes.cpu.hw_nmi_poll_timing;
+        let hw_dmc_stall_timing = self.nes.apu.hw_dmc_stall_timing;
+        // Guarded like `load_worker_state`'s apply: a panic here must
+        // degrade to the raw pair, not unwind into rayon/PyO3.
+        let stepped = catch_unwind(AssertUnwindSafe(|| {
+            scratch.apply_state(&state);
+            scratch.hw_event_ppu = hw_event_ppu;
+            scratch.ppu_read_dot_offset = ppu_read_dot_offset;
+            scratch.ppu_write_dot_offset = ppu_write_dot_offset;
+            scratch.hw_nmi_subcycle_phase = hw_nmi_subcycle_phase;
+            scratch.set_hw_vblank_read_race(hw_vblank_read_race);
+            scratch.cpu.hw_mmio_read_timing = hw_mmio_read_timing;
+            scratch.cpu.hw_mmio_write_timing = hw_mmio_write_timing;
+            scratch.cpu.hw_nmi_poll_timing = hw_nmi_poll_timing;
+            scratch.apu.hw_dmc_stall_timing = hw_dmc_stall_timing;
+            let mut video = NullVideoSink;
+            let mut audio = NullAudioSink;
+            // Tick to the next instruction boundary — same contract as
+            // `python.rs::step_one_instruction`, same 600-tick runaway
+            // cap (worst legitimate case is a DMC stall + long opcode).
+            let mut ticks = 0u32;
+            loop {
+                scratch.tick(&mut video, &mut audio);
+                ticks += 1;
+                if ticks > 600 || scratch.cpu.at_instruction_boundary() {
+                    break;
+                }
+            }
+            (
+                scratch.system_ram_byte(lo_addr),
+                scratch.system_ram_byte(hi_addr),
+            )
+        }));
+        match stepped {
+            Ok((l2, h2)) if (l2, h2) == (l1, h1) => (raw, true),
+            Ok((l2, h2)) => (u16::from_le_bytes([l2, h2]), true),
+            Err(_) => (raw, false),
+        }
     }
 }
 
@@ -568,6 +682,28 @@ impl AudioSink for AudioVecSink<'_> {
     }
 }
 
+/// Discard-everything sinks for scratch-instance ticking
+/// (`Worker::peek_u16_consistent`) — the scratch's video/audio output
+/// is never observed, only its RAM. Mirrors the local sinks in
+/// `python.rs::step_one_instruction`.
+struct NullVideoSink;
+impl VideoSink for NullVideoSink {
+    fn write_frame(&mut self, _: &[u8]) {}
+    fn frame_written(&self) -> bool {
+        false
+    }
+    fn pixel_size(&self) -> usize {
+        4
+    }
+}
+struct NullAudioSink;
+impl AudioSink for NullAudioSink {
+    fn write_sample(&mut self, _: f32) {}
+    fn samples_written(&self) -> usize {
+        0
+    }
+}
+
 /// Python-facing worker pool. Replaces `ParallelPool` from
 /// `src/emulation/parallel_pool.py` with an in-process, rayon-parallel,
 /// zero-IPC implementation.
@@ -703,6 +839,10 @@ pub struct Pool {
     /// Mutex is uncontended — locked once per `step_all` on the
     /// (sequential) trainer thread.
     pool_pace_next_target: std::sync::Mutex<Option<std::time::Instant>>,
+    /// Raw iNES bytes the pool was built from. Kept so
+    /// `peek_u16_consistent` can lazily build a worker's scratch Nes
+    /// (same ROM, independent instance) on first use.
+    rom_bytes: Vec<u8>,
 }
 
 #[pymethods]
@@ -775,6 +915,7 @@ impl Pool {
             pace_multiplier_bits: std::sync::atomic::AtomicU64::new(1.0f64.to_bits()),
             spectator_subframe_skip: std::sync::atomic::AtomicBool::new(true),
             pool_pace_next_target: std::sync::Mutex::new(None),
+            rom_bytes,
         };
 
         if let Some(p) = start_state_path {
@@ -1382,8 +1523,7 @@ impl Pool {
         // SAFETY: called sequentially from Python — never overlaps with
         // an in-flight step_all/reset_all rayon dispatch.
         let w = unsafe { worker_mut(&self.workers[worker_id]) };
-        let state = w.nes.get_state();
-        match bincode::serialize(&state) {
+        match crate::serialize::encode_state(&w.nes) {
             Ok(body) => {
                 let mut out = Vec::with_capacity(POOL_STATE_MAGIC.len() + body.len());
                 out.extend_from_slice(POOL_STATE_MAGIC);
@@ -1397,7 +1537,8 @@ impl Pool {
     /// Load an opaque bytes blob into a specific worker. Counterpart
     /// to `save_worker_state`; use for start-state broadcast or
     /// curriculum-driven restore. Accepts both the versioned
-    /// `NCST\x01` prefix and legacy naked-bincode blobs.
+    /// `NCST\x01` prefix and legacy naked-bincode blobs; the body may
+    /// be either legacy bincode or the `crate::serialize` envelope.
     fn load_worker_state(
         &self,
         worker_id: usize,
@@ -1428,7 +1569,7 @@ impl Pool {
         } else {
             raw
         };
-        let state: crate::nes::State = bincode::deserialize(body).map_err(|e| {
+        let (state, oam_dma) = crate::serialize::decode_state(body).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "load_worker_state deserialize failed: {e}"
             ))
@@ -1445,7 +1586,7 @@ impl Pool {
         // PyValueError so the trainer can degrade this worker to a cold
         // boot instead of the whole overnight run dying.
         let res = catch_unwind(AssertUnwindSafe(|| {
-            w.nes.apply_state(&state);
+            crate::serialize::apply_decoded(&mut w.nes, &state, &oam_dma);
         }));
         if let Err(panic_payload) = res {
             let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
@@ -1478,6 +1619,39 @@ impl Pool {
         // shows cold-boot pixels and the game can't advance.
         w.frame_cycle_target = None;
         Ok(())
+    }
+
+    /// Torn-read-guarded 16-bit little-endian RAM pair peek for one
+    /// worker. Returns `(value, consistent)` — see
+    /// `Worker::peek_u16_consistent` for the adjudication mechanism.
+    /// `consistent == False` means the value is the raw unadjudicated
+    /// pair (mid-OAM-DMA boundary or scratch failure); callers that
+    /// gate decisions on the value should treat those samples the way
+    /// the gx-767 repair treats transition-frame reads. Read-only with
+    /// respect to the live worker: not calling it is byte-identical to
+    /// today, and calling it never perturbs the trajectory.
+    fn peek_u16_consistent(
+        &self,
+        worker_id: usize,
+        lo_addr: u16,
+        hi_addr: u16,
+    ) -> PyResult<(u16, bool)> {
+        if worker_id >= self.num_workers {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "worker_id out of range",
+            ));
+        }
+        if lo_addr >= 0x0800 || hi_addr >= 0x0800 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "RAM address out of bounds (0..=0x7FF)",
+            ));
+        }
+        // SAFETY: called sequentially from Python — never overlaps with
+        // an in-flight step_all/reset_all rayon dispatch.
+        let w = unsafe { worker_mut(&self.workers[worker_id]) };
+        w.ensure_scratch(&self.rom_bytes)
+            .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
+        Ok(w.peek_u16_consistent(lo_addr, hi_addr))
     }
 
     #[getter]
@@ -1921,7 +2095,7 @@ impl Pool {
                 "[nes_core::Pool] replay took {:.2}s",
                 t0.elapsed().as_secs_f64()
             );
-            bincode::serialize(&w.nes.get_state()).map_err(|e| {
+            crate::serialize::encode_state(&w.nes).map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "snapshot post-replay failed: {e}"
                 ))
@@ -1929,7 +2103,7 @@ impl Pool {
         };
 
         // Apply the snapshot to every worker + cache for fast resets.
-        let state: crate::nes::State = bincode::deserialize(&snapshot).map_err(|e| {
+        let (state, oam_dma) = crate::serialize::decode_state(&snapshot).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "start-state snapshot unreadable: {e}"
             ))
@@ -1948,7 +2122,7 @@ impl Pool {
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
             let res = catch_unwind(AssertUnwindSafe(|| {
-                w.nes.apply_state(&state);
+                crate::serialize::apply_decoded(&mut w.nes, &state, &oam_dma);
             }));
             if let Err(panic_payload) = res {
                 let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
@@ -2273,6 +2447,280 @@ mod bugfix_tests {
         // whole point of the guard.
         w.dead = true;
         assert!(w.dead);
+    }
+}
+
+/// Torn-read guard (`peek_u16_consistent`): sampling a 16-bit
+/// little-endian progress pair at a frame boundary can catch the ROM
+/// between the two byte updates — low byte wrapped, high byte not yet
+/// borrowed — composing a value the counter never held (the gx-767
+/// incident; the Python-side reconstruction lives in
+/// tests/test_go_explore_solve_repairs.py). The emulated writer cannot
+/// be instrumented, so the sampler adjudicates: replay the worker's
+/// State into a persistent scratch Nes, advance it exactly one CPU
+/// instruction, and compare the pair. The LIVE machine is never
+/// stepped and never restored — zero perturbation by construction.
+#[cfg(test)]
+mod atomic_peek_tests {
+    use super::bugfix_tests::{build_nrom, worker_from_rom};
+    use super::*;
+
+    /// 16-bit down-counter at $40/$41 whose borrow is the very next
+    /// instruction after the low-byte wrap, so an instruction boundary
+    /// can sit exactly between the two RAM writes:
+    ///
+    ///   $8000  LDA #$00        counter := 0x0200
+    ///   $8002  STA $40
+    ///   $8004  LDA #$02
+    ///   $8006  STA $41
+    ///   $8008  LDA $40         loop
+    ///   $800A  BNE nolo
+    ///   $800C  DEC $40         lo: 0x00 -> 0xFF   <- torn window opens
+    ///   $800E  DEC $41         hi borrow          <- torn window closes
+    ///   $8010  JMP $8008
+    ///   $8013  DEC $40         nolo
+    ///   $8016  JMP $8008
+    const COUNTER_PRG: &[u8] = &[
+        0xA9, 0x00, 0x85, 0x40, 0xA9, 0x02, 0x85, 0x41, // init
+        0xA5, 0x40, 0xD0, 0x07, // loop: LDA $40 / BNE nolo
+        0xC6, 0x40, 0xC6, 0x41, // DEC $40 / DEC $41
+        0x4C, 0x08, 0x80, // JMP loop
+        0xC6, 0x40, // nolo: DEC $40
+        0x4C, 0x08, 0x80, // JMP loop
+    ];
+
+    fn counter_worker() -> Worker {
+        let rom = build_nrom(COUNTER_PRG);
+        let mut w = worker_from_rom(rom.clone());
+        w.ensure_scratch(&rom).expect("scratch Nes should build");
+        w
+    }
+
+    /// Tick the LIVE machine, one CPU cycle at a time, to the first
+    /// instruction boundary where `pred` holds.
+    fn tick_to_boundary(w: &mut Worker, pred: impl Fn(&Nes) -> bool) {
+        let mut video = NullVideoSink;
+        let mut audio = NullAudioSink;
+        for _ in 0..200_000 {
+            w.nes.tick(&mut video, &mut audio);
+            if w.nes.cpu.at_instruction_boundary() && pred(&w.nes) {
+                return;
+            }
+        }
+        panic!("never reached the requested boundary");
+    }
+
+    #[test]
+    fn torn_boundary_publishes_atomic_value_never_the_tear() {
+        let mut w = counter_worker();
+        // Halt exactly between the two stores: lo wrapped to 0xFF,
+        // borrow (DEC $41) not yet executed. A naive pair read here
+        // composes 0x02FF — a value the counter never held (it steps
+        // 0x0200 -> 0x01FF).
+        tick_to_boundary(&mut w, |nes| {
+            nes.system_ram_byte(0x40) == 0xFF && nes.system_ram_byte(0x41) == 0x02
+        });
+        assert_eq!(
+            w.nes.cpu.regs().pc,
+            0x800E,
+            "boundary must sit on the DEC $41 fetch"
+        );
+        let (val, consistent) = w.peek_u16_consistent(0x40, 0x41);
+        assert!(consistent, "no DMA in flight — verdict must be adjudicated");
+        assert!(
+            val == 0x01FF || val == 0x0200,
+            "peek published {val:#06X}; only the pre (0x0200) or post \
+             (0x01FF) composition is logically consistent"
+        );
+        assert_ne!(val, 0x02FF, "published the torn composition");
+    }
+
+    #[test]
+    fn quiescent_boundary_returns_the_raw_pair() {
+        let mut w = counter_worker();
+        // First boundary with the settled pair (0xFF, 0x01) is right
+        // after the borrow completes (PC on the JMP): the next
+        // instruction touches neither byte, so the boundary is
+        // quiescent and the raw composition is the answer.
+        tick_to_boundary(&mut w, |nes| {
+            nes.system_ram_byte(0x40) == 0xFF && nes.system_ram_byte(0x41) == 0x01
+        });
+        let (val, consistent) = w.peek_u16_consistent(0x40, 0x41);
+        assert!(consistent);
+        assert_eq!(val, 0x01FF, "quiescent boundary must publish the raw pair");
+    }
+
+    #[test]
+    fn live_machine_is_untouched_by_1000_peeks() {
+        let mut w = counter_worker();
+        for _ in 0..3 {
+            w.advance_one_frame();
+        }
+        let cycles_before = w.nes.cycles;
+        let target_before = w.frame_cycle_target;
+        let state_before =
+            bincode::serialize(&w.nes.get_state()).expect("serialize live state");
+        for _ in 0..1000 {
+            let _ = w.peek_u16_consistent(0x40, 0x41);
+        }
+        assert_eq!(w.nes.cycles, cycles_before, "cycle counter moved");
+        assert_eq!(w.frame_cycle_target, target_before, "frame lock moved");
+        let state_after =
+            bincode::serialize(&w.nes.get_state()).expect("serialize live state");
+        assert_eq!(
+            state_before, state_after,
+            "peek perturbed the live machine's State"
+        );
+    }
+
+    #[test]
+    fn mid_oam_dma_falls_back_to_raw_with_flag() {
+        // Same STA $4014 loop as
+        // `advance_one_frame_stays_cycle_locked_across_oam_dma` — a DMA
+        // is in flight almost always. `Nes::State` does not capture the
+        // DMA unit, so the scratch replay would resume WITHOUT the
+        // stall; the peek must refuse to adjudicate and hand back the
+        // raw pair flagged inconsistent.
+        let rom = build_nrom(&[0x8D, 0x14, 0x40]);
+        let mut w = worker_from_rom(rom.clone());
+        w.ensure_scratch(&rom).expect("scratch Nes should build");
+        let mut video = NullVideoSink;
+        let mut audio = NullAudioSink;
+        for _ in 0..200_000 {
+            w.nes.tick(&mut video, &mut audio);
+            if w.nes.oam_dma.active {
+                break;
+            }
+        }
+        assert!(w.nes.oam_dma.active, "STA $4014 loop never started a DMA");
+        let lo = w.nes.system_ram_byte(0x40);
+        let hi = w.nes.system_ram_byte(0x41);
+        let raw = u16::from_le_bytes([lo, hi]);
+        let (val, consistent) = w.peek_u16_consistent(0x40, 0x41);
+        assert!(!consistent, "mid-DMA verdicts must not be trusted");
+        assert_eq!(val, raw, "fallback must publish the unadjudicated raw pair");
+    }
+}
+
+/// Versioned savestate envelope (`crate::serialize`): a legacy blob
+/// drops the OAM-DMA engine, so a restore captured at a mid-DMA
+/// cycle-locked frame boundary resumes without the remaining stall and
+/// the trajectory forks. Version-2 blobs carry the DMA snapshot and
+/// must resume byte-identically.
+#[cfg(test)]
+mod savestate_envelope_tests {
+    use super::bugfix_tests::{build_nrom, worker_from_rom};
+    use super::*;
+
+    /// INC $0F / STA $4014 loop: RAM $0F counts loop passes (so a
+    /// dropped DMA stall shows up as a RAM divergence, not just a CPU
+    /// phase shift) and each STA arms a fresh 513/514-cycle transfer,
+    /// so frame boundaries land mid-DMA almost always.
+    const DMA_COUNTER_FILL: &[u8] = &[0xE6, 0x0F, 0x8D, 0x14, 0x40];
+
+    fn frame_digest(w: &Worker) -> (Vec<u8>, Vec<u32>, crate::oam_dma::State) {
+        (
+            bincode::serialize(&w.nes.get_state()).expect("serialize nes state"),
+            w.video_buf.clone(),
+            w.nes.oam_dma.get_state(),
+        )
+    }
+
+    /// Advance until a cycle-locked frame boundary lands with a DMA in
+    /// flight — the capture point the legacy format cannot represent.
+    fn advance_to_mid_dma_boundary(w: &mut Worker) {
+        for _ in 0..240 {
+            w.advance_one_frame();
+            if w.nes.oam_dma.active {
+                return;
+            }
+        }
+        panic!("cycle-locked frame boundary never landed mid-DMA");
+    }
+
+    /// Restore a blob into a fresh worker the way `load_worker_state`
+    /// does: decode, apply state + DMA snapshot, clear the frame
+    /// anchor.
+    fn restore_worker(rom: Vec<u8>, blob: &[u8]) -> Worker {
+        let mut w = worker_from_rom(rom);
+        let (state, oam_dma) =
+            crate::serialize::decode_state(blob).expect("blob should decode");
+        crate::serialize::apply_decoded(&mut w.nes, &state, &oam_dma);
+        w.frame_cycle_target = None;
+        w
+    }
+
+    /// The divergence harness. Capture mid-DMA, restore, run 60
+    /// cycle-locked frames, compare state + framebuffer per frame:
+    /// the V2 restore must track the unbroken run byte-for-byte, and
+    /// the legacy restore of the same capture must fork — if the
+    /// legacy arm ever stops diverging, dropping the DMA no longer
+    /// matters and this harness has lost its subject.
+    #[test]
+    fn mid_dma_v2_round_trip_resumes_byte_identically_and_legacy_diverges() {
+        let rom = build_nrom(DMA_COUNTER_FILL);
+        let mut a = worker_from_rom(rom.clone());
+        advance_to_mid_dma_boundary(&mut a);
+        assert!(a.nes.oam_dma.count < 256, "capture must be mid-transfer");
+
+        let v2 = crate::serialize::encode_state_with(&a.nes, true).expect("v2 encode");
+        let legacy =
+            crate::serialize::encode_state_with(&a.nes, false).expect("legacy encode");
+
+        let mut b = restore_worker(rom.clone(), &v2);
+        let mut c = restore_worker(rom.clone(), &legacy);
+        assert!(
+            b.nes.oam_dma.active,
+            "V2 restore must resume the in-flight DMA",
+        );
+        assert!(
+            !c.nes.oam_dma.active,
+            "legacy restore drops the in-flight DMA",
+        );
+
+        let mut legacy_diverged = false;
+        for frame in 0..60 {
+            a.advance_one_frame();
+            b.advance_one_frame();
+            c.advance_one_frame();
+            let unbroken = frame_digest(&a);
+            assert_eq!(
+                unbroken,
+                frame_digest(&b),
+                "V2 restore diverged from the unbroken run at frame {frame}",
+            );
+            if unbroken != frame_digest(&c) {
+                legacy_diverged = true;
+            }
+        }
+        assert!(
+            legacy_diverged,
+            "legacy restore of a mid-DMA capture never diverged — the \
+             harness can no longer detect a dropped OAM-DMA snapshot",
+        );
+    }
+
+    /// `Worker::reset` must read the envelope: a V2 snapshot in
+    /// `start_state_snapshot` restores (DMA included) instead of being
+    /// treated as a corrupt blob and falling back to a cold reset.
+    #[test]
+    fn worker_reset_restores_v2_snapshot_with_dma() {
+        let rom = build_nrom(DMA_COUNTER_FILL);
+        let mut a = worker_from_rom(rom.clone());
+        advance_to_mid_dma_boundary(&mut a);
+        let v2 = crate::serialize::encode_state_with(&a.nes, true).expect("v2 encode");
+
+        let mut w = worker_from_rom(rom.clone());
+        w.start_state_snapshot = Some(v2.clone());
+        w.reset();
+        assert!(
+            w.start_state_snapshot.is_some(),
+            "envelope snapshot was treated as corrupt and dropped",
+        );
+
+        let mut reference = restore_worker(rom, &v2);
+        reference.advance_one_frame();
+        assert_eq!(frame_digest(&w), frame_digest(&reference));
     }
 }
 

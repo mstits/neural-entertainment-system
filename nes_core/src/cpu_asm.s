@@ -685,6 +685,25 @@ Lsta_abs_mmio:
     mov     w9, w0
     mov     w10, w20
     mov     w3, #4
+    // APU registers ($4000-$4017 minus $4014): pre-charge ONE cycle so
+    // Lmmio_write's cumulative tick lands the write after the fetch
+    // cycle's APU tick — where the Rust core's early-commit stores
+    // land it (Nes::tick runs APU before CPU each cycle). This seeds
+    // the DMC timer phase at a $4015 enable; one tick early and every
+    // later DMC sample-fetch stall fires ahead of the slow core
+    // (Kirby lockstep, tests/asm_vs_slow_mmc3.rs). Non-APU addresses
+    // keep the batch-cumulative baseline; $4014 keeps the OAM-DMA
+    // convention (the slow core defers that write to the last cycle,
+    // see sta_abs_4014_late_write).
+    sub     w1, w9, #0x4000
+    cmp     w1, #0x18
+    b.hs    Lsta_abs_mmio_nonapu
+    cmp     w1, #0x14
+    b.eq    Lsta_abs_mmio_nonapu
+    sub     x25, x25, #1
+    bl      Lmmio_write
+    NEXT    3
+Lsta_abs_mmio_nonapu:
     bl      Lmmio_write
     // Force end-of-block exit: any MMIO write could have changed
     // PPU state, triggered OAM DMA, or switched banks (MMC1+). Rust
@@ -714,6 +733,16 @@ Lstx_abs_mmio:
     mov     w9, w0
     mov     w10, w21
     mov     w3, #4
+    // APU-register pre-charge — see Lsta_abs_mmio.
+    sub     w1, w9, #0x4000
+    cmp     w1, #0x18
+    b.hs    Lstx_abs_mmio_nonapu
+    cmp     w1, #0x14
+    b.eq    Lstx_abs_mmio_nonapu
+    sub     x25, x25, #1
+    bl      Lmmio_write
+    NEXT    3
+Lstx_abs_mmio_nonapu:
     bl      Lmmio_write
     NEXT    4
 
@@ -739,6 +768,16 @@ Lsty_abs_mmio:
     mov     w9, w0
     mov     w10, w22
     mov     w3, #4
+    // APU-register pre-charge — see Lsta_abs_mmio.
+    sub     w1, w9, #0x4000
+    cmp     w1, #0x18
+    b.hs    Lsty_abs_mmio_nonapu
+    cmp     w1, #0x14
+    b.eq    Lsty_abs_mmio_nonapu
+    sub     x25, x25, #1
+    bl      Lmmio_write
+    NEXT    3
+Lsty_abs_mmio_nonapu:
     bl      Lmmio_write
     NEXT    4
 

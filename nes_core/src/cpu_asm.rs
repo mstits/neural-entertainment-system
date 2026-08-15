@@ -577,6 +577,26 @@ unsafe fn invoke_asm_tick(bus_ptr: *mut core::ffi::c_void, cycles: u32) {
     });
 }
 
+thread_local! {
+    /// DMC-DMA stall cycles burned inside MMIO-callback catch-up ticks
+    /// during the current `try_step_asm` call. The tick wrapper in
+    /// `Nes::step` adds what `SystemBus::tick_cpu_cycles_with` reports;
+    /// `Nes::step` takes the total after the ASM step so `self.cycles`
+    /// books the same stall the interpreter books via `Cpu::stall`.
+    static ASM_STALL_EXTRA: Cell<u32> = const { Cell::new(0) };
+}
+
+#[inline]
+pub fn add_asm_stall_extra(cycles: u32) {
+    ASM_STALL_EXTRA.with(|c| c.set(c.get() + cycles));
+}
+
+/// Returns the accumulated callback-stall cycles and resets to zero.
+#[inline]
+pub fn take_asm_stall_extra() -> u32 {
+    ASM_STALL_EXTRA.with(|c| c.replace(0))
+}
+
 /// Counter of instructions that went through the ASM fast path.
 /// Useful to verify integration is engaged on real ROMs.
 pub static ASM_HITS: AtomicU64 = AtomicU64::new(0);

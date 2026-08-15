@@ -458,7 +458,11 @@ impl Nes {
                 ) {
                     let bus = unsafe { &mut *(bus_ptr as *mut SystemBus) };
                     let ctx = unsafe { &mut *(ctx_ptr as *mut SinkCtx<V, A>) };
-                    bus.tick_cpu_cycles_with(cycles, ctx.video, ctx.audio);
+                    let stall_extra =
+                        bus.tick_cpu_cycles_with(cycles, ctx.video, ctx.audio);
+                    if stall_extra > 0 {
+                        crate::cpu_asm::add_asm_stall_extra(stall_extra);
+                    }
                 }
                 let mut sink_ctx: SinkCtx<V, A> = SinkCtx {
                     video: video_frame_sink,
@@ -473,6 +477,10 @@ impl Nes {
                     bulk_cycles,
                 );
                 crate::cpu_asm::clear_asm_tick();
+                // DMC DMA stall cycles the MMIO callback burned beyond
+                // its nominal pre-access ticks. Taken unconditionally so
+                // no residue leaks into a later step.
+                let cb_stall_extra = crate::cpu_asm::take_asm_stall_extra();
                 drop(bus);
                 if let Some(r) = result {
                     // MMIO callbacks already ticked PPU/APU for
@@ -498,6 +506,16 @@ impl Nes {
                     // boundary — exactly as before.
                     let remaining = r.cycles_consumed
                         .saturating_sub(r.cycles_ticked_in_callback);
+                    // DMC DMA stall accounting: the interpreter books
+                    // `Apu::tick`'s stall return as idle CPU cycles
+                    // (`Cpu::stall`) during which APU/PPU keep running.
+                    // The catch-up loops below mirror that — a stall of
+                    // s extends the catch-up by s cycles — and the total
+                    // joins `self.cycles` so both engines book identical
+                    // cycle counts at every instruction boundary
+                    // (repro: tests/asm_vs_slow_mmc3.rs, Kirby title
+                    // music enabling DMC via STA $4015).
+                    let mut stall_extra: u32 = 0;
                     // Event-driven PPU catch-up (Stage 1/2). APU stays
                     // per-cycle (audio / DMC / frame-IRQ), then the PPU
                     // fast-forwards to the absolute batch-end dot in one
@@ -508,10 +526,17 @@ impl Nes {
                     // mapper: `advance_to` self-selects closed-form vs the
                     // verbatim per-dot reference. Legacy branches unchanged.
                     if self.hw_event_ppu {
-                        for _ in 0..remaining {
-                            self.apu.tick(&mut self.mapper, audio_frame_sink);
+                        let mut left = remaining;
+                        while left > 0 {
+                            let s = self.apu.tick(&mut self.mapper, audio_frame_sink);
+                            left -= 1;
+                            if s > 0 {
+                                left += s as u32;
+                                stall_extra += s as u32;
+                            }
                         }
-                        let target = self.ppu.cycles + remaining as u64 * 3;
+                        let target = self.ppu.cycles
+                            + (remaining + stall_extra) as u64 * 3;
                         self.ppu.advance_to(
                             target,
                             &mut self.mapper,
@@ -524,21 +549,34 @@ impl Nes {
                         // Rung-1 scanline-granular PPU catch-up. Only under
                         // skip_render (advance omits pixel work), a
                         // batchable mapper, and the runtime gate.
-                        for _ in 0..remaining {
-                            self.apu.tick(&mut self.mapper, audio_frame_sink);
+                        let mut left = remaining;
+                        while left > 0 {
+                            let s = self.apu.tick(&mut self.mapper, audio_frame_sink);
+                            left -= 1;
+                            if s > 0 {
+                                left += s as u32;
+                                stall_extra += s as u32;
+                            }
                         }
                         self.ppu.advance(
-                            remaining as u64 * 3,
+                            (remaining + stall_extra) as u64 * 3,
                             &mut self.mapper,
                             video_frame_sink,
                         );
                     } else {
-                        for _ in 0..remaining {
-                            self.apu.tick(&mut self.mapper, audio_frame_sink);
+                        let mut left = remaining;
+                        while left > 0 {
+                            let s = self.apu.tick(&mut self.mapper, audio_frame_sink);
                             self.ppu.tick_three(&mut self.mapper, video_frame_sink);
+                            left -= 1;
+                            if s > 0 {
+                                left += s as u32;
+                                stall_extra += s as u32;
+                            }
                         }
                     }
-                    self.cycles += r.cycles_consumed as usize;
+                    self.cycles += (r.cycles_consumed + cb_stall_extra + stall_extra)
+                        as usize;
                     self.cpu.set_nmi_line(
                         self.ppu.nmi_output && self.ppu.nmi_occurred,
                     );
@@ -597,11 +635,23 @@ impl Nes {
                 // remainder loop above for the invariant). Legacy
                 // scanline-granular + verbatim interleaved branches
                 // unchanged below.
+                // DMC DMA stall accounting — same contract as the ASM
+                // remainder loops above: a stall of s from `Apu::tick`
+                // extends the catch-up by s cycles and joins the cycle
+                // total, matching the interpreter's `Cpu::stall` booking.
+                let mut stall_extra: u32 = 0;
                 if self.hw_event_ppu {
-                    for _ in 0..cycles {
-                        self.apu.tick(&mut self.mapper, audio_frame_sink);
+                    let mut left = cycles as u32;
+                    while left > 0 {
+                        let s = self.apu.tick(&mut self.mapper, audio_frame_sink);
+                        left -= 1;
+                        if s > 0 {
+                            left += s as u32;
+                            stall_extra += s as u32;
+                        }
                     }
-                    let target = self.ppu.cycles + cycles as u64 * 3;
+                    let target = self.ppu.cycles
+                        + (cycles as u64 + stall_extra as u64) * 3;
                     self.ppu.advance_to(
                         target,
                         &mut self.mapper,
@@ -611,21 +661,33 @@ impl Nes {
                     && self.ppu.scanline_advance_enabled()
                     && self.cached_ppu_batchable
                 {
-                    for _ in 0..cycles {
-                        self.apu.tick(&mut self.mapper, audio_frame_sink);
+                    let mut left = cycles as u32;
+                    while left > 0 {
+                        let s = self.apu.tick(&mut self.mapper, audio_frame_sink);
+                        left -= 1;
+                        if s > 0 {
+                            left += s as u32;
+                            stall_extra += s as u32;
+                        }
                     }
                     self.ppu.advance(
-                        cycles as u64 * 3,
+                        (cycles as u64 + stall_extra as u64) * 3,
                         &mut self.mapper,
                         video_frame_sink,
                     );
                 } else {
-                    for _ in 0..cycles {
-                        self.apu.tick(&mut self.mapper, audio_frame_sink);
+                    let mut left = cycles as u32;
+                    while left > 0 {
+                        let s = self.apu.tick(&mut self.mapper, audio_frame_sink);
                         self.ppu.tick_three(&mut self.mapper, video_frame_sink);
+                        left -= 1;
+                        if s > 0 {
+                            left += s as u32;
+                            stall_extra += s as u32;
+                        }
                     }
                 }
-                self.cycles += cycles as usize;
+                self.cycles += cycles as usize + stall_extra as usize;
                 // Detect NMI edge once, at the end. `set_nmi_line`
                 // handles the low-to-high / high-to-low transition
                 // internally; calling it here gives the same
@@ -679,13 +741,21 @@ impl Nes {
         // APU + PPU catch-up. Per-cycle loop keeps behaviour
         // bit-identical to the slow path; `bulk_tick(n)` helpers in
         // PPU/APU are a future optimization (Phase 3 of the plan).
-        for _ in 0..cpu_cycles {
-            self.apu.tick(&mut self.mapper, audio_frame_sink);
+        // DMC DMA stalls extend the catch-up like the other fast paths.
+        let mut left = cpu_cycles;
+        let mut stall_extra = 0usize;
+        while left > 0 {
+            let s = self.apu.tick(&mut self.mapper, audio_frame_sink);
             for _ in 0..3 {
                 self.ppu.tick(&mut self.mapper, video_frame_sink);
             }
+            left -= 1;
+            if s > 0 {
+                left += s as usize;
+                stall_extra += s as usize;
+            }
         }
-        self.cycles += cpu_cycles;
+        self.cycles += cpu_cycles + stall_extra;
         // CPU may have new interrupt state after the instruction
         // completes — poll for NMI/IRQ now, matching what the
         // per-cycle path does via `Cpu::poll_interrupts` on instr end.

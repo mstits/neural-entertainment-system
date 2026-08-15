@@ -1,20 +1,399 @@
+//! Versioned savestate envelope.
+//!
+//! State blobs have historically been raw untagged bincode of
+//! `nes::State` — their first 8 bytes are the u64 length prefix of the
+//! RAM vector (always 2048 = `00 08 00 00 00 00 00 00`), which is what
+//! makes a magic-tagged envelope safe to introduce: no legacy blob can
+//! ever begin with the envelope magic (see
+//! `tests::legacy_bytes_never_alias_envelope_magic`).
+//!
+//! Envelope wire format (all little-endian):
+//!
+//! ```text
+//! [u32 magic 0x5341_5645 "SAVE"] [u32 version] [payload]
+//! ```
+//!
+//! * version 1 — payload is `bincode(nes::State)`; the OAM-DMA engine
+//!   is not captured and defaults to inactive on load (identical to a
+//!   legacy untagged blob).
+//! * version 2 — payload is `bincode((nes::State, oam_dma::State))`;
+//!   an in-flight sprite-upload DMA survives the round trip, so a
+//!   restore at a mid-DMA cycle-locked frame boundary resumes
+//!   byte-identically instead of dropping the remaining stall.
+//!
+//! Writes stay legacy by default: version-2 blobs are produced only
+//! when `NES_STATE_V2` is set in the environment (or a caller opts in
+//! via `encode_state_with`), so the default write path is byte-
+//! identical to the pre-envelope core. The reader accepts every
+//! format unconditionally.
+
+use std::sync::OnceLock;
+
 use super::nes;
 use super::nes::Nes;
+use crate::oam_dma;
 
-use serde_derive::{Deserialize, Serialize};
+/// "SAVE" read as big-endian text; serialized little-endian, so the
+/// on-disk bytes are `45 56 41 53`.
+pub const ENVELOPE_MAGIC: u32 = 0x5341_5645;
+pub const ENVELOPE_VERSION_1: u32 = 1;
+pub const ENVELOPE_VERSION_2: u32 = 2;
+pub const ENVELOPE_HEADER_LEN: usize = 8;
 
-#[derive(Deserialize, Serialize)]
-pub enum VersionedState {
-    Version1(nes::State),
+/// Opt-in knob for version-2 writes. Read once per process: flipping
+/// the variable mid-run cannot produce a mixed-format save stream.
+pub fn v2_writes_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("NES_STATE_V2")
+            .map(|v| !v.is_empty() && v != *"0")
+            .unwrap_or(false)
+    })
 }
 
-pub fn get_state(nes: &Nes) -> VersionedState {
-    VersionedState::Version1(nes.get_state())
+/// Encode with the process-default format (legacy unless
+/// `NES_STATE_V2` is set).
+pub fn encode_state(nes: &Nes) -> bincode::Result<Vec<u8>> {
+    encode_state_with(nes, v2_writes_enabled())
 }
 
-pub fn apply_state(nes: &mut Nes, state: VersionedState) {
-    use self::VersionedState::*;
-    match state {
-        Version1(ref state) => nes.apply_state(state),
+/// Encode with an explicit format choice. `v2 == false` is the legacy
+/// untagged writer, byte-identical to `bincode::serialize(&get_state())`.
+pub fn encode_state_with(nes: &Nes, v2: bool) -> bincode::Result<Vec<u8>> {
+    if !v2 {
+        return bincode::serialize(&nes.get_state());
+    }
+    let payload = bincode::serialize(&(nes.get_state(), nes.oam_dma.get_state()))?;
+    let mut blob = Vec::with_capacity(ENVELOPE_HEADER_LEN + payload.len());
+    blob.extend_from_slice(&ENVELOPE_MAGIC.to_le_bytes());
+    blob.extend_from_slice(&ENVELOPE_VERSION_2.to_le_bytes());
+    blob.extend_from_slice(&payload);
+    Ok(blob)
+}
+
+/// True when `body` carries the versioned envelope header.
+pub fn has_envelope(body: &[u8]) -> bool {
+    body.len() >= ENVELOPE_HEADER_LEN && body[..4] == ENVELOPE_MAGIC.to_le_bytes()
+}
+
+/// Decode a state blob of any supported format. Legacy and version-1
+/// blobs yield a default (inactive) OAM-DMA snapshot.
+pub fn decode_state(body: &[u8]) -> bincode::Result<(nes::State, oam_dma::State)> {
+    if !has_envelope(body) {
+        let state: nes::State = bincode::deserialize(body)?;
+        return Ok((state, oam_dma::State::default()));
+    }
+    let version = u32::from_le_bytes(body[4..8].try_into().expect("length checked"));
+    let payload = &body[ENVELOPE_HEADER_LEN..];
+    match version {
+        ENVELOPE_VERSION_1 => {
+            let state: nes::State = bincode::deserialize(payload)?;
+            Ok((state, oam_dma::State::default()))
+        }
+        ENVELOPE_VERSION_2 => bincode::deserialize::<(nes::State, oam_dma::State)>(payload),
+        v => Err(Box::new(bincode::ErrorKind::Custom(format!(
+            "unsupported savestate envelope version {v} \
+             (this build reads versions 1..={ENVELOPE_VERSION_2})"
+        )))),
+    }
+}
+
+/// Apply a decoded pair. The OAM-DMA snapshot is applied
+/// unconditionally: a legacy/version-1 decode carries the inactive
+/// default, so a restore never inherits a stale in-flight transfer
+/// from the destination machine.
+pub fn apply_decoded(nes: &mut Nes, state: &nes::State, oam_dma: &oam_dma::State) {
+    nes.apply_state(state);
+    nes.oam_dma.apply_state(oam_dma);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cartridge::Cartridge;
+    use crate::sink::{AudioSink, VideoSink};
+    use std::path::PathBuf;
+
+    const CPU_CYCLES_PER_FRAME: usize = 29781;
+
+    struct NullVideo;
+    impl VideoSink for NullVideo {
+        fn write_frame(&mut self, _: &[u8]) {}
+        fn frame_written(&self) -> bool {
+            false
+        }
+        fn pixel_size(&self) -> usize {
+            4
+        }
+    }
+    struct NullAudio;
+    impl AudioSink for NullAudio {
+        fn write_sample(&mut self, _: f32) {}
+        fn samples_written(&self) -> usize {
+            0
+        }
+    }
+
+    /// Synthetic 32 KB NROM whose PRG repeats INC $0F / STA $4014:
+    /// RAM $0F ticks every loop pass and each STA arms an OAM DMA, so
+    /// cycle-locked frame boundaries land mid-transfer almost always
+    /// (same trick as `pool.rs`'s
+    /// `advance_one_frame_stays_cycle_locked_across_oam_dma`).
+    /// Reset vector -> $8000.
+    fn fixture_rom() -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 32 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(2); // PRG = 2 × 16 KB = 32 KB
+        rom.push(0); // CHR = 0 → CHR-RAM
+        rom.push(0); // flags6: mapper 0 low nibble, H-mirror
+        rom.push(0); // flags7: mapper 0 high nibble
+        rom.extend_from_slice(&[0u8; 8]);
+        let mut prg = vec![0u8; 32 * 1024];
+        const FILL: &[u8] = &[0xE6, 0x0F, 0x8D, 0x14, 0x40];
+        let mut i = 0;
+        while i + FILL.len() <= prg.len() {
+            prg[i..i + FILL.len()].copy_from_slice(FILL);
+            i += FILL.len();
+        }
+        let n = prg.len();
+        prg[n - 4] = 0x00; // low byte of $8000
+        prg[n - 3] = 0x80; // high byte of $8000
+        rom.extend(prg);
+        rom
+    }
+
+    fn fixture_nes() -> Nes {
+        let cart = Cartridge::load(&mut std::io::Cursor::new(fixture_rom()))
+            .expect("synthetic NROM should parse");
+        Nes::new(cart)
+    }
+
+    fn tick_to_cycle(nes: &mut Nes, target: usize) {
+        let mut v = NullVideo;
+        let mut a = NullAudio;
+        while nes.cycles < target {
+            nes.tick(&mut v, &mut a);
+        }
+    }
+
+    fn advance_frames(nes: &mut Nes, frames: usize) {
+        tick_to_cycle(nes, nes.cycles + frames * CPU_CYCLES_PER_FRAME);
+    }
+
+    /// The exact machine the golden legacy fixture was captured from:
+    /// the fixture ROM ticked to the 3-frame cycle mark. Both the
+    /// (ignored) regenerator and the characterization tests go through
+    /// here so the recipe can never drift from the golden bytes.
+    fn fixture_machine() -> Nes {
+        let mut nes = fixture_nes();
+        tick_to_cycle(&mut nes, 3 * CPU_CYCLES_PER_FRAME);
+        nes
+    }
+
+    /// A machine frozen strictly mid-OAM-DMA: transfer armed and part
+    /// way through the 256-byte copy.
+    fn mid_dma_machine() -> Nes {
+        let mut nes = fixture_machine();
+        let mut v = NullVideo;
+        let mut a = NullAudio;
+        let cap = nes.cycles + 4 * CPU_CYCLES_PER_FRAME;
+        while nes.cycles < cap {
+            nes.tick(&mut v, &mut a);
+            if nes.oam_dma.active && nes.oam_dma.count >= 8 && nes.oam_dma.count < 200 {
+                break;
+            }
+        }
+        assert!(
+            nes.oam_dma.active && nes.oam_dma.count >= 8 && nes.oam_dma.count < 200,
+            "fixture ROM should reach a mid-transfer OAM DMA window",
+        );
+        nes
+    }
+
+    fn fixture_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("legacy_state_v1.bin")
+    }
+
+    fn state_digest(nes: &Nes) -> Vec<u8> {
+        bincode::serialize(&nes.get_state()).expect("serialize nes state")
+    }
+
+    /// One-shot generator for the golden legacy fixture. Ignored so a
+    /// routine test run can never silently rewrite the golden bytes;
+    /// run explicitly (`cargo test --lib regenerate_legacy_fixture --
+    /// --ignored`) only when the fixture is intentionally re-captured.
+    #[test]
+    #[ignore]
+    fn regenerate_legacy_fixture() {
+        let path = fixture_path();
+        std::fs::create_dir_all(path.parent().unwrap()).expect("create fixtures dir");
+        std::fs::write(&path, state_digest(&fixture_machine())).expect("write fixture");
+    }
+
+    /// The legacy writer must stay byte-identical to the golden blob
+    /// captured before the envelope landed — the default (knob-off)
+    /// write path is characterized, not merely trusted.
+    #[test]
+    fn golden_legacy_fixture_matches_current_legacy_writer() {
+        let golden = std::fs::read(fixture_path()).expect("golden fixture present");
+        let now = encode_state_with(&fixture_machine(), false).expect("legacy encode");
+        assert_eq!(
+            golden, now,
+            "legacy write path drifted from the pre-envelope golden bytes",
+        );
+        assert_eq!(golden[..8], 2048u64.to_le_bytes());
+    }
+
+    /// Golden legacy blob through the envelope-aware reader resumes a
+    /// 60-frame trajectory byte-identically to the pre-envelope reader.
+    #[test]
+    fn golden_legacy_fixture_resumes_identically_through_new_reader() {
+        let golden = std::fs::read(fixture_path()).expect("golden fixture present");
+
+        let mut old_nes = fixture_nes();
+        let state: nes::State =
+            bincode::deserialize(&golden).expect("old reader parses golden blob");
+        old_nes.apply_state(&state);
+
+        let mut new_nes = fixture_nes();
+        let (state, oam_dma) = decode_state(&golden).expect("new reader parses golden blob");
+        apply_decoded(&mut new_nes, &state, &oam_dma);
+
+        assert_eq!(state_digest(&old_nes), state_digest(&new_nes));
+        for frame in 0..60 {
+            advance_frames(&mut old_nes, 1);
+            advance_frames(&mut new_nes, 1);
+            assert_eq!(
+                state_digest(&old_nes),
+                state_digest(&new_nes),
+                "trajectory diverged at frame {frame}",
+            );
+            assert_eq!(old_nes.oam_dma.get_state(), new_nes.oam_dma.get_state());
+        }
+    }
+
+    /// Non-aliasing proof: every legacy blob starts with the RAM
+    /// vector's u64 length prefix (2048), so its first four bytes are
+    /// `00 08 00 00` — never the envelope magic in either byte order.
+    #[test]
+    fn legacy_bytes_never_alias_envelope_magic() {
+        let golden = std::fs::read(fixture_path()).expect("golden fixture present");
+        let fresh = encode_state_with(&mid_dma_machine(), false).expect("legacy encode");
+        for blob in [&golden[..], &fresh[..]] {
+            assert_eq!(blob[..8], 2048u64.to_le_bytes());
+            assert_ne!(blob[..4], ENVELOPE_MAGIC.to_le_bytes()); // 45 56 41 53
+            assert_ne!(blob[..4], ENVELOPE_MAGIC.to_be_bytes()); // 53 41 56 45
+            assert!(!has_envelope(blob));
+        }
+        // The 2048 prefix is structural, not incidental: it IS the
+        // serialized RAM length, pinned by the RAM array size.
+        let (state, _) = decode_state(&golden).expect("decode golden");
+        assert_eq!(state.ram.len(), 0x0800);
+
+        let v2 = encode_state_with(&mid_dma_machine(), true).expect("v2 encode");
+        assert!(has_envelope(&v2));
+        assert_eq!(v2[..4], ENVELOPE_MAGIC.to_le_bytes());
+        assert_eq!(
+            u32::from_le_bytes(v2[4..8].try_into().unwrap()),
+            ENVELOPE_VERSION_2,
+        );
+    }
+
+    /// V2 round trip from a strictly mid-transfer machine: the DMA
+    /// snapshot survives, and the restored machine tracks the source
+    /// byte-for-byte for 60 frames.
+    #[test]
+    fn v2_round_trip_preserves_in_flight_dma() {
+        let mut src = mid_dma_machine();
+        let blob = encode_state_with(&src, true).expect("v2 encode");
+
+        let (state, oam_dma) = decode_state(&blob).expect("v2 decode");
+        assert_eq!(oam_dma, src.oam_dma.get_state());
+        assert!(oam_dma.active, "mid-transfer DMA must survive the round trip");
+
+        let mut restored = fixture_nes();
+        apply_decoded(&mut restored, &state, &oam_dma);
+        assert_eq!(state_digest(&src), state_digest(&restored));
+        assert_eq!(restored.oam_dma.get_state(), src.oam_dma.get_state());
+
+        for frame in 0..60 {
+            advance_frames(&mut src, 1);
+            advance_frames(&mut restored, 1);
+            assert_eq!(
+                state_digest(&src),
+                state_digest(&restored),
+                "trajectory diverged at frame {frame}",
+            );
+            assert_eq!(src.oam_dma.get_state(), restored.oam_dma.get_state());
+        }
+    }
+
+    /// Legacy and version-1 blobs decode to an inactive DMA default,
+    /// and applying them forces the destination's DMA inactive even
+    /// when the destination machine is itself mid-transfer.
+    #[test]
+    fn legacy_and_v1_envelope_default_dma_inactive() {
+        let src = mid_dma_machine();
+
+        let legacy = encode_state_with(&src, false).expect("legacy encode");
+        let (state, oam_dma) = decode_state(&legacy).expect("legacy decode");
+        assert!(!oam_dma.active);
+        assert_eq!(oam_dma, crate::oam_dma::State::default());
+
+        let mut v1 = Vec::new();
+        v1.extend_from_slice(&ENVELOPE_MAGIC.to_le_bytes());
+        v1.extend_from_slice(&ENVELOPE_VERSION_1.to_le_bytes());
+        v1.extend_from_slice(&bincode::serialize(&src.get_state()).expect("serialize"));
+        let (v1_state, v1_dma) = decode_state(&v1).expect("v1 envelope decode");
+        assert!(!v1_dma.active);
+        assert_eq!(
+            bincode::serialize(&v1_state).expect("serialize"),
+            bincode::serialize(&state).expect("serialize"),
+        );
+
+        let mut target = mid_dma_machine();
+        assert!(target.oam_dma.active);
+        apply_decoded(&mut target, &state, &oam_dma);
+        assert!(
+            !target.oam_dma.active,
+            "legacy restore must not inherit the destination's stale DMA",
+        );
+    }
+
+    /// An enveloped blob with a version this build does not know must
+    /// fail loudly instead of feeding the payload to the wrong layout.
+    #[test]
+    fn unsupported_envelope_version_is_a_clear_error() {
+        let src = fixture_machine();
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&ENVELOPE_MAGIC.to_le_bytes());
+        blob.extend_from_slice(&99u32.to_le_bytes());
+        blob.extend_from_slice(&bincode::serialize(&src.get_state()).expect("serialize"));
+        let err = match decode_state(&blob) {
+            Ok(_) => panic!("version 99 must not decode"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("version"),
+            "error should name the version problem, got: {err}",
+        );
+    }
+
+    /// Knob-off default: with `NES_STATE_V2` unset, `encode_state`
+    /// produces exactly the golden legacy bytes.
+    #[test]
+    fn v2_writes_default_off() {
+        if std::env::var_os("NES_STATE_V2").is_some() {
+            return;
+        }
+        assert!(!v2_writes_enabled());
+        let blob = encode_state(&fixture_machine()).expect("encode");
+        assert_eq!(
+            blob,
+            std::fs::read(fixture_path()).expect("golden fixture present"),
+        );
     }
 }

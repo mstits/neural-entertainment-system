@@ -13,7 +13,7 @@ pub struct OamDma {
 /// byte-exact even when the emulator was paused mid-transfer (514
 /// CPU-cycle window). Previously unserialized → save mid-DMA + load
 /// would land the OAM array in an inconsistent state.
-#[derive(Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct State {
     pub active: bool,
     pub page: u8,

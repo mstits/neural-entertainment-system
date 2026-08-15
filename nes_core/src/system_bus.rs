@@ -78,16 +78,32 @@ impl<'a> SystemBus<'a> {
     /// callback via a function-pointer vtable so PPU/APU sync BEFORE a
     /// bus read/write happens with the same sinks the frame-render path
     /// uses — no lost pixels, no lost audio samples.
+    ///
+    /// Returns the extra cycles burned beyond `cpu_cycles` for DMC DMA
+    /// stalls: when `Apu::tick` schedules a sample-fetch stall, the
+    /// interpreter path idles the CPU (`Cpu::stall`) while APU/PPU keep
+    /// running, so the instruction's bus access lands that many cycles
+    /// later. Extending the pre-access catch-up here reproduces that
+    /// exactly; the caller must add the returned amount to the CPU
+    /// cycle total (see the ASM tick wrapper in `Nes::step`).
     pub fn tick_cpu_cycles_with<V: crate::sink::VideoSink, A: crate::sink::AudioSink>(
         &mut self,
         cpu_cycles: u32,
         video: &mut V,
         audio: &mut A,
-    ) {
-        for _ in 0..cpu_cycles {
-            let _stall = self.apu.tick(self.mapper, audio);
+    ) -> u32 {
+        let mut left = cpu_cycles;
+        let mut stall_extra = 0u32;
+        while left > 0 {
+            let stall = self.apu.tick(self.mapper, audio);
             self.ppu.tick_three(self.mapper, video);
+            left -= 1;
+            if stall > 0 {
+                left += stall as u32;
+                stall_extra += stall as u32;
+            }
         }
+        stall_extra
     }
 
     /// Tick APU and PPU for `cpu_cycles` CPU cycles. Used by the
@@ -255,11 +271,13 @@ impl<'a> SystemBus<'a> {
         self.ppu.nmi_output && self.ppu.nmi_occurred
     }
 
-    /// True iff a CPU stall is pending or in progress: either OAM DMA
-    /// triggered by a write to $4014 (513-514 cycle stall) or a DMC
-    /// DMA scheduled by APU (1-4 cycle stall). The ASM CPU's MMIO
-    /// write callback signals this so the dispatch loop bails to the
-    /// Rust slow path which knows how to handle the stall correctly.
+    /// True iff an OAM DMA is pending or in progress (write to $4014,
+    /// 513-514 cycle stall). The ASM CPU's MMIO write callback signals
+    /// this so the dispatch loop bails to the Rust slow path, which
+    /// runs the DMA cycle-by-cycle. DMC DMA stalls (1-4 cycles) are
+    /// NOT signalled here: they surface as `Apu::tick` return values
+    /// and are booked inline by the fast-path catch-up loops
+    /// (`tick_cpu_cycles_with` and the remainder loops in `Nes::step`).
     pub fn cpu_stall_pending(&self) -> bool {
         self.oam_dma.active
     }

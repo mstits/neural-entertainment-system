@@ -34,9 +34,13 @@ const FRAME_PIXELS: usize = SCREEN_WIDTH * SCREEN_HEIGHT;
 /// "Load State" on a stale/wrong-game/truncated .state.bin hard-crashed
 /// the play window. On failure the caller is expected to leave the env
 /// cold-reset, never half-mutated.
-fn apply_state_guarded(nes: &mut Nes, state: &crate::nes::State) -> PyResult<()> {
+fn apply_state_guarded(
+    nes: &mut Nes,
+    state: &crate::nes::State,
+    oam_dma: &crate::oam_dma::State,
+) -> PyResult<()> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        nes.apply_state(state);
+        crate::serialize::apply_decoded(nes, state, oam_dma);
     }))
     .map_err(|e| {
         let msg = if let Some(s) = e.downcast_ref::<&str>() {
@@ -245,14 +249,14 @@ impl NESEnvironment {
                     p.display(), raw.len() - NCST_MAGIC.len(),
                 );
                 let blob = &raw[NCST_MAGIC.len()..];
-                let state: crate::nes::State = bincode::deserialize(blob)
+                let (state, oam_dma) = crate::serialize::decode_state(blob)
                     .map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                             "binary start state {} unreadable: {e}",
                             p.display()
                         ))
                     })?;
-                apply_state_guarded(&mut env.nes, &state)?;
+                apply_state_guarded(&mut env.nes, &state, &oam_dma)?;
                 // Cache for fast resets.
                 env.start_state_snapshot = Some(blob.to_vec());
             } else {
@@ -277,7 +281,7 @@ impl NESEnvironment {
                     p.display(), t0.elapsed().as_secs_f64(),
                 );
                 env.start_state_snapshot = Some(
-                    bincode::serialize(&env.nes.get_state()).map_err(|e| {
+                    crate::serialize::encode_state(&env.nes).map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                             "failed to snapshot post-replay state: {e}"
                         ))
@@ -355,11 +359,11 @@ impl NESEnvironment {
             let restored = self
                 .start_state_snapshot
                 .as_ref()
-                .and_then(|snap| {
-                    bincode::deserialize::<crate::nes::State>(snap).ok()
-                });
+                .and_then(|snap| crate::serialize::decode_state(snap).ok());
             let applied = match restored {
-                Some(state) => apply_state_guarded(&mut self.nes, &state).is_ok(),
+                Some((state, oam_dma)) => {
+                    apply_state_guarded(&mut self.nes, &state, &oam_dma).is_ok()
+                }
                 None => false,
             };
             if !applied {
@@ -595,20 +599,19 @@ impl NESEnvironment {
     }
 
     /// Save the current emulator state as an opaque `bytes` blob.
-    /// Format is bincode-encoded `nes::State` — RAM, CPU, PPU, APU,
-    /// mapper, input registers. Versioning is implicit: only blobs
-    /// produced by the same `nes_core` build are guaranteed to load.
-    /// A future split-05 migration will add an explicit version
-    /// header. For now, callers who care about durability should
-    /// re-snapshot rather than relying on cross-version loads.
+    /// Body is bincode-encoded `nes::State` — RAM, CPU, PPU, APU,
+    /// mapper, input registers — or, when `NES_STATE_V2` is set, the
+    /// `crate::serialize` versioned envelope whose version-2 payload
+    /// also carries the OAM-DMA engine snapshot (so a save at a
+    /// mid-DMA frame boundary restores byte-exact). The loader
+    /// accepts both formats unconditionally.
     fn save_state<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         // Snapshot + bincode serialize is pure-Rust; run it with the GIL
         // released so a concurrent Python thread isn't blocked while a
         // large state blob is encoded. The `PyBytes` allocation (which
         // needs the GIL) happens after the closure returns the owned Vec.
         let out = py.allow_threads(|| -> PyResult<Vec<u8>> {
-            let state = self.nes.get_state();
-            let body = bincode::serialize(&state).map_err(|e| {
+            let body = crate::serialize::encode_state(&self.nes).map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "save_state serialize failed: {e}"
                 ))
@@ -673,12 +676,12 @@ impl NESEnvironment {
         // per-frame hot path.
         let body_owned: Vec<u8> = body.to_vec();
         py.allow_threads(|| -> PyResult<()> {
-            let state: crate::nes::State = bincode::deserialize(&body_owned).map_err(|e| {
+            let (state, oam_dma) = crate::serialize::decode_state(&body_owned).map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "load_state deserialize failed: {e}"
                 ))
             })?;
-            apply_state_guarded(&mut self.nes, &state)?;
+            apply_state_guarded(&mut self.nes, &state, &oam_dma)?;
             // The cycle anchor was tied to the PREVIOUS Nes instance's
             // CPU clock. After a state load the CPU clock effectively
             // jumps; clear the anchor so the next advance_one_frame
@@ -868,12 +871,12 @@ impl NESEnvironment {
     /// env is left cold-reset, never half-mutated (see the module doc).
     fn restore_or_reset(&mut self) -> PyResult<()> {
         if let Some(snap) = &self.start_state_snapshot {
-            let state: crate::nes::State = bincode::deserialize(snap).map_err(|e| {
+            let (state, oam_dma) = crate::serialize::decode_state(snap).map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "failed to restore start-state snapshot: {e}"
                 ))
             })?;
-            if apply_state_guarded(&mut self.nes, &state).is_err() {
+            if apply_state_guarded(&mut self.nes, &state, &oam_dma).is_err() {
                 self.nes.reset();
             }
         } else {
