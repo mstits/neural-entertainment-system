@@ -265,11 +265,21 @@ def critic_cv(vlosses) -> float:
 
 
 def probe_summary(eval_json: dict, survival_x: int) -> dict:
-    """Median max-x / bottleneck survival / clear rate off eval_game JSON."""
+    """Median max-x / bottleneck survival / clear rates off eval_game JSON.
+
+    PREDICATE DISCIPLINE (2026-08-15 forensics,
+    docs/receipts/eval_rng_regimes_2026-08-15.md): sequential probes
+    carry TWO clear predicates that disagreed 13:1 on real data —
+    seq_clear_rate (level-chain advance, fires on reaching the flag
+    area) and clear_rate (strict episode_success: flagpole/castle).
+    The headline `clear_rate` keeps its historical chain-preferring
+    semantics so pinned gates/kills are unchanged, but both predicates
+    are now carried explicitly so no row can be quoted without one.
+    """
     gxs = [int(g) for g in (eval_json.get("max_gx_per_episode") or [])]
-    clear = eval_json.get("seq_clear_rate")
-    if clear is None:
-        clear = eval_json.get("clear_rate", 0.0)
+    chain = eval_json.get("seq_clear_rate")
+    strict = eval_json.get("clear_rate")
+    clear = chain if chain is not None else strict
     return {
         "n_episodes": int(eval_json.get("n_episodes", len(gxs)) or 0),
         "median_max_x": float(statistics.median(gxs)) if gxs else 0.0,
@@ -277,6 +287,8 @@ def probe_summary(eval_json: dict, survival_x: int) -> dict:
             sum(1 for g in gxs if g >= int(survival_x)) / len(gxs)
             if gxs else 0.0),
         "clear_rate": float(clear or 0.0),
+        "clear_rate_chain": (float(chain) if chain is not None else None),
+        "clear_rate_strict": (float(strict) if strict is not None else None),
     }
 
 

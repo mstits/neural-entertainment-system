@@ -288,14 +288,26 @@ and the controller's pre-registration comments). Banked result, policy
 `checkpoints/_preserved/online_v2_FINAL_consolidated.pt`
 (sha256 daa34bbe…): under the canonical honest protocol (cold entrance,
 greedy, sticky-0.25, jitter-16, 100 episodes over two seeds) —
-**2/100 clears (2.0%)**, median max-gx 2059 of 3266, 39/100 episodes
-past the x≈2674 barrier, flag height reached on both seeds; under the
-campaign-probe protocol (identical stochasticity, per-episode RNG) the
-final three 30-episode probes pooled 13/90 (14.4%). Prior state of the
+**2/100 strict clears (2.0%)** (episode_success: flagpole/castle
+predicate), median max-gx 2059 of 3266, 39/100 episodes past the
+x≈2674 barrier, flag height reached on both seeds. Prior state of the
 world: zero honest 1-2 clears across every method ever recorded here,
-and a published-literature audit that found none elsewhere. The
-protocol-variant rate gap (2% vs 14%) is an open measurement question,
-documented in the ledger, not folded into either claim. First honest
+and a published-literature audit that found none elsewhere.
+
+CORRECTION (2026-08-15, same day, receipts
+`docs/receipts/eval_rng_regimes_2026-08-15.md`): the campaign-probe
+figure of 13/90 (14.4%) initially reported as a "protocol-variant gap"
+was a PREDICATE mismatch, not an RNG effect — probe rows ran
+`--sequential --level-clear`, whose clear_rate fires on level-chain
+advance (max-gx ≥ 3267, reaching the flag area), while the definitive
+evals bank strict episode_success. On the probes' own episodes the
+predicates disagree 13:1; held to a common event, every RNG regime
+agrees (Fisher p 0.6–1.0, KS p 0.83–0.96; stream-correlation,
+seed-lottery, and noise-distribution explanations each rejected
+mechanically). Quotable numbers, each with its predicate named:
+strict honest clears 3/190 pooled (~1.6%); flag-area-reach rate under
+honest noise ~10–20% by probe. The `clear_rate` key must never again
+be quoted without its predicate; probe tooling now reports both. First honest
 clears observed at iter 380/440 mid-campaign (preserved with hashes);
 adversarial-hardening phase (kernel adversary) degraded the policy and
 was rolled back — its receipts and the sharp-adversary telemetry

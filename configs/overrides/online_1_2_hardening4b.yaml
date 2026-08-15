@@ -1,0 +1,390 @@
+# Mario 1-2 online campaign — ANCHORED hardening (phase 4b) catalog.
+#
+# INERT DOCUMENT. Same contract as configs/overrides/online_1_2_escalations.yaml:
+# nothing loads this file automatically, nobody points --profile at it, and
+# no block is applied without (a) confirming its trigger predicate against
+# the live run's own probe receipts and (b) hand-merging the `override`
+# onto configs/mario_1_2_online_v2.yaml for a RESUME of the existing
+# lineage (checkpoints/mario_1_2_online_v2, currently restored to the
+# attempt-8 consolidated head). Guarded by tests/test_hardening4b_catalog.py.
+#
+# WHY THIS PACKAGE EXISTS (attempt 7 post-mortem,
+# runs/online_1_2_attempt_ledger.md): the registered phase 4 armed the
+# kernel adversary at FULL budget (0.1) with the KL anchor entirely OFF.
+# The adversary itself worked exactly as designed — policy-entropy
+# 0.18-0.21 vs the ln 2 = 0.693 binary ceiling (sharp, strategically
+# timed), repeat_frac 0.16-0.24 self-held under the budget price — but
+# the un-anchored protagonist lost the fight: honest probe median
+# 899 -> 671 -> 196 in two probe cycles, heading through the 150
+# competence floor before the operator stopped it and restored
+# iter_00810. Attempt 8 then consolidated WITHOUT the adversary and
+# banked the capability (checkpoints/_preserved/online_v2_FINAL_consolidated.pt,
+# canonical eval 2/100 with median max-gx 2059; campaign-probe protocol
+# ~14% — both receipts in runs/online_1_2/final_eval*.json).
+# This catalog is the redesign the ledger's attempt-7 entry demands:
+# "hardening returns only with an anchored, gate-phased adversary design."
+#
+# THE REDESIGN, in one paragraph: tether the policy to a snapshot of
+# ITSELF (the consolidated head — not the stale A7 prior) via the
+# loss-level KL tether at coef 0.3, and arm the adversary WEAK first —
+# budget_penalty 0.3, i.e. interventions cost the adversary 3x what the
+# collapsed run charged — then ramp its strength 0.3 -> 0.2 -> 0.1 only
+# as the policy PROVES it holds: each ramp step requires the honest
+# probe median (the campaign controller's standing entrance probe:
+# greedy, sticky 0.25, jitter 16, 30 eps, median max-x from
+# probe_summary) to hold >= 800 on 2 CONSECUTIVE probes. Any probe
+# median < 500 is the kill line — and the registered response is the
+# K1 ROLLBACK (restore the pre-hardening checkpoint, quarantine the
+# degraded iters), not a bare abort, because attempt 7 already proved
+# the failure mode leaves poisoned checkpoints at the head of the dir.
+#
+# --------------------------------------------------------------------
+# RE-ANCHOR-ON-RESUME SEMANTICS (code-read 2026-08-15; this is the
+# mechanism block H1 rides on, and it already exists — no new trainer
+# code was needed):
+#
+#   * src/training/trainer.py (_run_vanilla_ppo): CheckpointManager.resume
+#     (src/training/checkpoint_manager.py) loads the newest
+#     vanilla_ppo_iter_*.pt into the live net/optimizer and returns
+#     iter_offset > 0. ONLY AFTER that resume does the trainer read
+#     `_rl_cfg.get("kl_anchor_checkpoint")` and construct KLAnchor
+#     (src/training/kl_anchor.py) — whose __init__ torch.loads the
+#     prior from THAT CONFIG PATH, unconditionally, on every launch.
+#     The checkpoint blob carries no anchor path; the config is the
+#     sole source of the prior.
+#   * The actor-seeding step is separately guarded:
+#         if iter_offset == 0:
+#             _kl_loaded = self._kl_anchor.load_actor_into(net)
+#     — i.e. on a RESUMED run (iter_offset != 0, the attempt-5+
+#     semantics) the live net keeps its trained weights and the anchor
+#     rebuilds the PRIOR ONLY. Pointing the resumed profile's
+#     kl_anchor_checkpoint at a NEW file therefore re-anchors the
+#     lineage mid-stream: new prior, untouched policy. No
+#     `kl_anchor_reload` key is needed; the capability is native.
+#     tests/test_hardening4b_catalog.py pins both halves of this
+#     contract at source level so a refactor that moves the guard
+#     fails the suite instead of silently flipping H1 from "tether to
+#     a snapshot of itself" into "overwrite the policy with the
+#     snapshot".
+#   * Interaction notes, all verified in source: the loss tether
+#     (kl_anchor_loss_coef, ppo_updater.py) is active only when
+#     sam_rho <= 0 — the base profile sets no sam_rho (default 0.0),
+#     so the tether engages. kl_anchor_div is emitted to metrics every
+#     iter regardless of beta, so the controller's KL kill line keeps
+#     its telemetry even with the reward-level betas zeroed. The
+#     adversary net is NOT persisted across resumes (base-profile
+#     documented behavior): each ramp rung's resume retrains the
+#     adversary from fresh — acceptable by design, since attempt 7
+#     showed it re-sharpens to 0.18-0.21 entropy within a probe cycle.
+#
+# --------------------------------------------------------------------
+# RUNNER DECISION (registered here so the choice is auditable): NO new
+# runner and NO controller patch ship with this package. The ramp/gate
+# decision rule is pre-registered as PURE FUNCTIONS in
+# scripts/hardening4b_ramp.py (BUDGET_RAMP/HOLD_MEDIAN/KILL_MEDIAN/
+# step_ramp/run_stream, plus the check_armed_profile launch guard),
+# unit-tested on stub probe streams, and the suite cross-checks those
+# constants against this catalog's blocks so prose and code cannot
+# drift. Application is operator-driven hand-merge + resume, because:
+#   (1) scripts/run_online_campaign.py already owns the probe cadence,
+#       kill table, and phase layering; a second runner would duplicate
+#       that authority and can diverge from it (the attempt-4 harness
+#       defect was exactly a controller/probe semantic mismatch);
+#   (2) ramp steps are infrequent (one per >= 2 probes ~= one per 10M
+#       env-steps) — automation buys nothing but risk at that cadence;
+#   (3) the mission soak owns the emulator; an inert catalog + pure
+#       decision module is the strongest package that stays inert.
+#
+# LAUNCH PATH (registered — and it is NOT the controller's
+# --start-phase workflow): hand-merge the chosen block's `override`
+# onto configs/mario_1_2_online_v2.yaml into a NEW profile file (e.g.
+# runs/online_1_2_hardening4b/hardening4b_r1.yaml; never edit the base
+# in place), keep the profile `name` unchanged so the trainer's
+# tear-tolerant resume picks up checkpoints/mario_1_2_online_v2, and
+# launch DIRECTLY through the trainer entrypoint the controller itself
+# subprocesses:
+#     python scripts/train_game.py --profile <merged>.yaml \
+#         --iters <N> --no-supervise --strict-config
+# The resume mechanics are byte-identical to a controller phase launch
+# (same entrypoint, same checkpoint dir); only the controller's
+# profile-ASSEMBLY layer is skipped — deliberately, see next block.
+#
+# DO NOT launch hardening 4b via run_online_campaign.py
+# --start-phase 4 (or 5). The controller's phase-4 AND phase-5
+# override rows both pin `kl_anchor_loss_coef: 0.0` (the pre-4b
+# accepted spec: anchor fully removed from hardening on), phase 4
+# additionally pins sticky_action_prob 0.0 with a bare adversary
+# block, and build_phase_profile deep-merges those rows ONTO whatever
+# base it is given while unconditionally overwriting entropy_coef
+# from the cumulative schedule. A controller launch over a
+# hand-merged hardening-4b base therefore silently ZEROES the 0.3
+# tether and re-runs an UN-ANCHORED adversary — the exact attempt-7
+# collapse this package exists to prevent. If hardening 4b is ever
+# folded into the controller, the fold-in must REPLACE the phase-4/5
+# override rows with these blocks (and feed each probe_summary median
+# through step_ramp) — never layer the old rows on top of them. The
+# guard below makes this failure un-launchable either way.
+#
+# MANDATORY PREFLIGHT (required line item in every override block's
+# receipt): BEFORE launching, run
+#     scripts/hardening4b_ramp.check_armed_profile(<profile>,
+#         expected_budget=<rung budget, or None for H1-only>)
+# on the EXACT profile the trainer will parse — after ALL merging,
+# i.e. the file passed to --profile (for a hypothetical controller
+# fold-in: the phase_configs/phase_N.yaml it dumps) — and record the
+# empty-violations verdict in the decision log. ANY non-empty result
+# is a registered NO-LAUNCH. This catches the tether-zeroing class
+# before compute is spent; the H1 "loss-level tether on: coef 0.300"
+# log line remains as post-launch confirmation, but the preflight is
+# the gate. tests/test_hardening4b_catalog.py pins the guard against
+# the controller's real phase-4/5 rows so the clobber scenario stays
+# reproducible in the suite.
+#
+# Base-profile facts assumed (read from configs/mario_1_2_online_v2.yaml,
+# not modified here): reinforce.steps 10; adversary block present but
+# INERT (no mode key) with lr 2.5e-4 / clip 0.1 defaults; kl_beta_start
+# 0.5 / actor_freeze_steps 1e12 (phase-0 values — every block below
+# overrides both, betas to 0 and freeze to 0); rollout_steps 1536 x
+# num_envs 60. The controller normally assigns entropy_coef per phase
+# from its cumulative-step schedule — these blocks PIN entropy_coef
+# 0.01 (the registered hardening value) — and, far more dangerously,
+# its phase-4/5 rows pin kl_anchor_loss_coef 0.0: BOTH are clobbers a
+# controller launch layers over a hand-merged base (see the DO NOT /
+# MANDATORY PREFLIGHT blocks above). check_armed_profile rejects both.
+
+hardening4b:
+
+  # ---------------------------------------------------------------------
+  # H1 — the anchor prior: tether the policy to a snapshot of ITSELF.
+  # ---------------------------------------------------------------------
+  H1_anchor_prior:
+    description: >
+      Re-anchor the resumed lineage to the CURRENT consolidated policy:
+      kl_anchor_checkpoint moves from the stale A7 prior to the
+      preserved attempt-8 head (online_v2_FINAL_consolidated.pt,
+      sha256 daa34bbe..., canonical eval receipts in
+      runs/online_1_2/final_eval_seed{7,101}.json). On the resume the
+      trainer rebuilds the PRIOR ONLY from this path (see the
+      re-anchor semantics note in the header) — the live net keeps its
+      trained weights, and every PPO minibatch adds
+      0.3 * KL(prior || pi) on its own states (loss-level tether,
+      ppo_updater). The reward-level beta penalty is zeroed (betas 0.0)
+      so the tether is a single, legible term; kl_anchor_div telemetry
+      still flows to metrics.jsonl every iter. actor_freeze_steps 0
+      overrides the base profile's 1e12 phase-0 freeze — the hardening
+      resume must train the actor, not a statue.
+
+    trigger: >
+      MEASURABLE PREDICATE (hardening re-entry): applied only when
+      (a) checkpoints/mario_1_2_online_v2 is at the restored
+      consolidated head (latest vanilla_ppo_iter_* == the attempt-8
+      lineage, no quarantined-degraded iters at the head), and
+      (b) a fresh pre-hardening honest probe (controller protocol:
+      greedy, sticky 0.25, jitter 16, 30 eps, seed 20260814) has been
+      recorded with median max-x >= 800 — the same "holds" bar the
+      ramp gates use, established BEFORE the adversary is armed so the
+      ramp's baseline is a receipt, not a memory. Attempt-7 grounding
+      for the bar: the healthy pre-hardening probe read median 899;
+      the collapse read 671 then 196.
+
+    override:
+      reinforce:
+        kl_anchor_checkpoint: "checkpoints/_preserved/online_v2_FINAL_consolidated.pt"
+        kl_anchor_loss_coef: 0.3
+        kl_beta_start: 0.0
+        kl_beta_end: 0.0
+        actor_freeze_steps: 0
+
+    receipt: >
+      Record in the decision log: the pre-launch check_armed_profile
+      verdict (empty violations list) on the exact --profile file
+      handed to the trainer (MANDATORY PREFLIGHT, header), the resumed
+      iter (from the trainer's
+      "Resumed from iter N" line), the pre-hardening probe JSON
+      (median max-x >= 800) and its campaign.jsonl line, the
+      "[vanilla_ppo] KL ANCHOR on" + "loss-level tether on: coef
+      0.300" log lines proving the new prior path loaded WITHOUT a
+      "KL ANCHOR: loaded N actor weight(s)" line (absence of that
+      line is the receipt that the resume did NOT reseed the actor),
+      and the first iter's kl_anchor_div reading (expected ~0 at
+      re-anchor: the prior IS the policy's own snapshot).
+
+  # ---------------------------------------------------------------------
+  # H2 rung 1 — adversary armed WEAK: budget_penalty 0.3.
+  # Self-contained: restates the full H1 anchor stack, so hand-merging
+  # exactly this one block onto the base profile is the complete
+  # registered configuration for the rung.
+  # ---------------------------------------------------------------------
+  H2_ramp_r1_budget_030:
+    description: >
+      Arm the kernel-matched sticky adversary at budget_penalty 0.3 —
+      interventions cost the adversary 3x the price of the run that
+      collapsed attempt 7 — with the H1 anchor tether holding the
+      protagonist near its consolidated snapshot. Epochs matched 10:10
+      (reinforce.steps : adversary.epochs — the v7 10:2 imbalance drove
+      the GDA limit cycle), entropy_coef 0.01 on both sides against
+      the ln 2 binary ceiling. lr/clip stay at the adversary defaults
+      (2.5e-4 / 0.1). The adversary net trains from fresh on this
+      resume (not persisted across resumes, documented base-profile
+      behavior).
+
+    trigger: >
+      MEASURABLE PREDICATE: H1's re-entry predicate satisfied (restored
+      head + pre-hardening probe median >= 800 on record). R1 arms
+      TOGETHER WITH the anchor on the same resume — the adversary is
+      never run un-anchored again (attempt-7 lesson, ledger entry
+      "hardening returns only with an anchored, gate-phased adversary
+      design").
+
+    override:
+      reinforce:
+        kl_anchor_checkpoint: "checkpoints/_preserved/online_v2_FINAL_consolidated.pt"
+        kl_anchor_loss_coef: 0.3
+        kl_beta_start: 0.0
+        kl_beta_end: 0.0
+        actor_freeze_steps: 0
+        steps: 10
+        entropy_coef: 0.01
+        adversary:
+          mode: kernel_sticky
+          budget_penalty: 0.3
+          entropy_coef: 0.01
+          epochs: 10
+
+    receipt: >
+      Record: the pre-launch check_armed_profile(profile,
+      expected_budget=0.3) empty-violations verdict on the exact
+      --profile file (MANDATORY PREFLIGHT, header),
+      the "[kernel_adv] ON: budget=0.300 ent=0.010 epochs=10"
+      log line from the resumed run, the resumed iter, and every
+      subsequent honest-probe median with its scripts/hardening4b_ramp
+      trace row (median -> action -> rung/budget) pasted next to the
+      probe JSON — the ramp trace IS the gate bookkeeping.
+
+  # ---------------------------------------------------------------------
+  # H2 rung 2 — budget_penalty 0.2, reachable only through the hold gate.
+  # ---------------------------------------------------------------------
+  H2_ramp_r2_budget_020:
+    description: >
+      Strengthen the adversary one step: budget_penalty 0.3 -> 0.2.
+      Everything else identical to rung 1 (anchor tether 0.3, 10:10
+      epochs, entropy 0.01 both sides). Applied as a hand-merge +
+      resume of the same lineage; the adversary net retrains from
+      fresh at the new price.
+
+    trigger: >
+      MEASURABLE PREDICATE (the hold gate, scripts/hardening4b_ramp
+      step_ramp semantics): at rung 1, the honest probe median max-x
+      held >= 800 on 2 consecutive probes (probes with median in
+      [500, 800) reset the consecutive counter; no skipping). Verify
+      by replaying the rung's full probe-median stream through
+      run_stream and confirming the last row's action == "advance"
+      with rung 1 / budget 0.2.
+
+    override:
+      reinforce:
+        kl_anchor_checkpoint: "checkpoints/_preserved/online_v2_FINAL_consolidated.pt"
+        kl_anchor_loss_coef: 0.3
+        kl_beta_start: 0.0
+        kl_beta_end: 0.0
+        actor_freeze_steps: 0
+        steps: 10
+        entropy_coef: 0.01
+        adversary:
+          mode: kernel_sticky
+          budget_penalty: 0.2
+          entropy_coef: 0.01
+          epochs: 10
+
+    receipt: >
+      Record: the pre-launch check_armed_profile(profile,
+      expected_budget=0.2) empty-violations verdict on the exact
+      --profile file (MANDATORY PREFLIGHT, header),
+      the two consecutive >= 800 probe JSONs (medians + seeds +
+      campaign.jsonl lines), the run_stream trace showing "advance",
+      the checkpoint iter the rung-2 resume launched FROM, and the
+      "[kernel_adv] ON: budget=0.200" line from the new resume.
+
+  # ---------------------------------------------------------------------
+  # H2 rung 3 — budget_penalty 0.1: the attempt-7 full-strength price,
+  # now reached only behind two earned gates and under the anchor.
+  # ---------------------------------------------------------------------
+  H2_ramp_r3_budget_010:
+    description: >
+      Final rung: budget_penalty 0.2 -> 0.1, the same adversary price
+      that collapsed the un-anchored attempt 7 — but arrived at with
+      the policy having HELD >= 800 through two weaker rungs and with
+      the 0.3 anchor tether still on. Two further consecutive >= 800
+      holds at this rung complete the hardening ramp (run_stream
+      action "complete"); the kill line stays armed throughout.
+
+    trigger: >
+      MEASURABLE PREDICATE (hold gate, second application): at rung 2,
+      honest probe median max-x >= 800 on 2 consecutive probes (same
+      counter-reset rule). Verify via run_stream over the full
+      hardening probe stream: last row action == "advance" with
+      rung 2 / budget 0.1.
+
+    override:
+      reinforce:
+        kl_anchor_checkpoint: "checkpoints/_preserved/online_v2_FINAL_consolidated.pt"
+        kl_anchor_loss_coef: 0.3
+        kl_beta_start: 0.0
+        kl_beta_end: 0.0
+        actor_freeze_steps: 0
+        steps: 10
+        entropy_coef: 0.01
+        adversary:
+          mode: kernel_sticky
+          budget_penalty: 0.1
+          entropy_coef: 0.01
+          epochs: 10
+
+    receipt: >
+      Record: the pre-launch check_armed_profile(profile,
+      expected_budget=0.1) empty-violations verdict on the exact
+      --profile file (MANDATORY PREFLIGHT, header),
+      the rung-2 gate probes (two consecutive >= 800 medians),
+      the run_stream trace row for the advance, the resume iter, the
+      "[kernel_adv] ON: budget=0.100" line — and, at ramp completion,
+      the two >= 800 probes at THIS rung plus a canonical B-series
+      eval (sequential shared-stream, 50 eps x seeds 7+101) of the
+      hardened head against the pre-hardening
+      online_v2_FINAL_consolidated.pt baseline (2/100, median 2059),
+      so "hardening kept the capability" is a receipt, not a claim.
+
+  # ---------------------------------------------------------------------
+  # K1 — kill line + ROLLBACK procedure (not an override: rollback is
+  # checkpoint surgery, and pretending it is a profile knob is how a
+  # collapsed head gets resumed by accident).
+  # ---------------------------------------------------------------------
+  K1_kill_rollback:
+    trigger: >
+      MEASURABLE PREDICATE: ANY honest probe during hardening 4b reads
+      median max-x < 500 (scripts/hardening4b_ramp KILL_MEDIAN;
+      strict less-than — 500.0 exactly is a counter reset, not a
+      kill). This fires ~2 probe cycles earlier than the controller's
+      150 competence floor: attempt 7 read 899 -> 671 -> 196, so the
+      671 probe would have reset this ramp's counter and the 196 probe
+      arrived only after the capability was already consumed. 500 cuts
+      the same trajectory off at the first sub-500 reading.
+
+    procedure: >
+      ROLLBACK, not just abort — the attempt-7 playbook, pre-registered
+      this time: (1) stop the run; (2) quarantine every
+      vanilla_ppo_iter_*.pt saved at-or-after the hardening 4b entry
+      iter into runs/online_1_2_hardening4b/degraded_ckpts/ (out of
+      the checkpoint dir entirely, so the tear-tolerant resume scan in
+      src/training/checkpoint_manager.py cannot walk back onto a
+      poisoned head); (3) restore the pre-hardening consolidated head
+      as the newest checkpoint — the same policy preserved as
+      checkpoints/_preserved/online_v2_FINAL_consolidated.pt — so the
+      next resume continues from the banked capability; (4) verify the
+      restore with one honest probe (expect median ~>= 800, the H1
+      entry bar) BEFORE any further training decision; (5) write the
+      kill probe JSON, the run_stream trace row showing
+      "kill_rollback", the quarantine listing, and the verification
+      probe into the decision log and the attempt ledger. Hardening
+      does not re-enter afterwards without a NEW pre-registered
+      catalog — a second collapse under the anchored design is
+      evidence against the design, not noise to retry.

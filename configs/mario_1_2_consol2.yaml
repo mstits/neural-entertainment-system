@@ -1,0 +1,246 @@
+# Mario 1-2 CONSOLIDATION ROUND 2 — single-phase rate-building profile.
+#
+# Driven by scripts/run_consol2.py (30M env-step budget, dual-protocol
+# honest probes every 5M, pre-registered kills, NO advance gates). This
+# file is a fork of configs/mario_1_2_online_v2.yaml frozen at the
+# consolidation-1 regime, with the deltas below.
+#
+# CONTINUATION: the run continues from
+#   checkpoints/_preserved/online_v2_FINAL_consolidated.pt
+# (sha256 daa34bbedd252e317d2a313224033574210231b22f15c15ce22a68fad383b091,
+# byte-identical to checkpoints/mario_1_2_online_v2/vanilla_ppo_iter_00910.pt).
+# The runner seeds checkpoints/mario_1_2_consol2/ with a verified copy at
+# its true iter (910) before launch; the trainer's tear-tolerant resume
+# picks it up — actor, critic, and optimizer state all continue.
+#
+# CONSOLIDATION-1 EVIDENCE (why this regime, why round 2):
+#   Phase 5 of the online_v2 campaign (entrance-pinned restarts, sticky
+#   0.25, entropy_coef 0.004028, SIL on, ~10M steps) took honest
+#   entrance clears from ~3% (5/150 pooled across attempt-5 probes; see
+#   the phase-2 re-registration note in scripts/run_online_campaign.py)
+#   to 14.4% pooled probe-protocol: 6/30 + 5/30 + 2/30 = 13/90 across
+#   the iter-860 probe (0.20), iter-910 probe (0.1667) and the final
+#   probe (0.0667) — runs/online_1_2/campaign.jsonl. Round 2 buys 3x
+#   the consolidation budget under the same regime, plus drift insurance.
+#
+# PROTOCOL GAP (why the runner probes BOTH protocols every 5M):
+#   The SAME checkpoints scored 0.00-0.04 on 50-episode SEQUENTIAL
+#   shared-stream evals (runs/online_1_2/final_eval*.json: iter 910 =
+#   0.00/0.04 on seeds 7/101; iter 860 = 0.04/0.00). Identical noise
+#   profile (greedy, sticky 0.25, jitter 16, cold entrance) — only the
+#   RNG plumbing differs. Round 2 measures that gap continuously on the
+#   same checkpoints instead of discovering it post-hoc.
+#
+# DELTAS vs mario_1_2_online_v2.yaml (each marked "CONSOL2" inline):
+#   * name              -> its own checkpoint dir (mario_1_2_consol2);
+#                          the source run's dir is never written again.
+#   * kl_anchor_checkpoint -> the FINAL consolidated checkpoint ITSELF.
+#     On this (seeded-resume) run the anchor loads NO weights — resumes
+#     keep trained weights; only the frozen prior is rebuilt. The prior
+#     therefore IS the 14.4% policy, and kl_anchor_div reads drift from
+#     it directly. D_KL starts at exactly 0.
+#   * kl_anchor_loss_coef 0.1 — loss-level tether only. Attempt-3
+#     receipt: the loss-level term at 1.0 converted attempt-2's monotone
+#     KL unspool (~1.4-1.6) into a stable 0.30-0.32 plateau; 0.1 is
+#     deliberately weaker — drift INSURANCE, not a freeze. Learning must
+#     stay live: this is a rate-building run, not a distill.
+#   * kl_beta_start/end 0.0 — the reward-level KL channel (attempt-2's
+#     failed containment mechanism) is fully off; one tether, one knob.
+#   * actor_freeze_steps 0 — trained actor+critic pair resumes; a
+#     critic-warmup freeze would be pure overhead here.
+#   * sticky_action_prob 0.25 — the consolidation-1 house noise, from
+#     step zero (single phase; no phase controller rewrites it).
+#   * entropy_coef 0.003 — the pre-registered entropy floor. The trainer
+#     has no coef-decay schedule of its own and run_consol2.py never
+#     rewrites entropy_coef, so 0.003 is BOTH the value and the floor
+#     for the whole 30M steps. (Consolidation-1 sat at 0.004028; 0.003
+#     continues the campaign's 0.01->0.002/100M line at ~90M cumulative
+#     steps, clamped up to a floor that keeps exploration alive.) The
+#     `entropy_floor` KNOB below stays 0.0: that knob is an adaptive
+#     POLICY-entropy (nats) controller, not a coef floor — arming it at
+#     0.003 nats would be a silent near-no-op masquerading as the floor.
+#   * backward_curriculum.pin_entrance true — every restart is the true
+#     1-2 entrance (consolidation-1's phase-5 setting); the rung ladder
+#     below is inert while pinned but kept so the block stays byte-
+#     comparable with the campaign's.
+#
+# SIL bc_coef SCHEDULE NOTE (pre-registered): bc_coef holds at 0.5 for
+# the whole 30M steps. The trainer exposes no bc_coef schedule knob
+# (KNOWN_SIL_KEYS = {enabled, buffer_size, bc_coef}), and consolidation-1
+# banked its 3% -> 14.4% gain at a constant 0.5 — so round 2 changes
+# nothing it cannot cite. If round 2 plateaus with a SIL-loss share that
+# dwarfs the PPO term, the registered follow-up is a manual halving to
+# 0.25 in a NEW pre-registered config, never a mid-run edit.
+#
+# BUDGET: 30M env-steps, enforced by run_consol2.py via --iters
+# (30M / 92,160 steps-per-iter); the profile itself has no budget knob.
+
+name: Mario 1-2 consol2
+rom_path: "roms/Super Mario Bros. (World).nes"
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+# 1-2 entrance (x=0), verified — same state the honest probes start from.
+start_state_path: "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/stage_03.state"
+description: >
+  SMB 1-2 consolidation round 2: continue the online-v2 FINAL consolidated
+  policy (14.4% pooled probe-protocol honest clears) for 30M more steps in
+  the consolidation-1 regime — entrance-pinned restarts, sticky 0.25,
+  entropy 0.003, SIL on — with the policy self-anchored (loss-level KL
+  tether 0.1 against its own frozen start) as drift insurance. Honest
+  metric: cold greedy sticky-0.25 + jitter-16 1-2 clears from the
+  entrance, measured on BOTH eval-RNG protocols every 5M steps.
+
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+
+reinforce:
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos
+  recurrent: false
+  # Net matches the continued checkpoint exactly (712-dim stacked tiles,
+  # fc1 256, fc2 64, layernorm) — the self-anchor's shape check raises on
+  # any mismatch, so these three lines are load-bearing.
+  tile_hidden_dim: 256
+  tile_trunk_dim: 64
+  layernorm: true
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  # PBRS invariance is the whole point of the monotone rule — no reward
+  # warping on top of it.
+  symlog_rewards: false
+  value_loss: huber          # smooth_l1, delta 1.0 (torch default; no knob)
+  value_coef: 0.5
+  # CONSOL2: gamma/gae exactly as the campaign banked them. MUST stay
+  # equal to wavefront_reward.gamma below (PBRS invariance).
+  gamma: 0.99
+  gae_lambda: 0.95
+  bc_epochs: 0
+  warmup_gens_ga_only: 0
+  steps: 10                  # PPO epochs per iter
+  lr: 0.0001                 # single knob; unchanged from consolidation-1
+  ppo_clip_eps: 0.2
+  grad_clip: 1.0
+  async_pipeline: false      # 1-step obs lag destroys frame-perfect platforming
+  device: cpu
+  panic_isolation: false
+  # Batch shape unchanged: 1536 x 60 = 92,160 samples/iter; the iter
+  # boundary is the episode cap and an entrance clear needs ~871+ steps.
+  rollout_steps: 1536
+  num_envs: 60
+  ppo_minibatch_size: 256
+  # CONSOL2: entropy floor 0.003 — fixed coef for the whole run (see
+  # header; the runner never rewrites it, so value == floor).
+  entropy_coef: 0.003
+  entropy_floor: 0.0
+  entropy_coef_max: 0.05
+  # Wavefront supplies the dense signal; RND stays off (semi-farmable,
+  # competes with the PBRS gradient).
+  rnd_intrinsic_coef: 0.0
+  rnd_loss_coef: 0.0
+  # CONSOL2: house sticky 0.25 from step zero (consolidation-1 regime).
+  sticky_action_prob: 0.25
+  sticky_episode_boundary_reset: true
+
+  # ---- M1: monotone wavefront PBRS ------------------------------------
+  wavefront_reward:
+    enabled: true
+    dmap: "checkpoints/wavefront/mario_1_2_dmap.pkl"
+    phi_target: 100.0
+    gamma: 0.99              # must equal reinforce.gamma for PBRS invariance
+  wave_terminal_rule: monotone
+
+  # ---- M2: SELF-anchor (drift insurance, not a freeze) -----------------
+  # CONSOL2: the frozen prior IS the checkpoint this run continues from.
+  # On this seeded-resume run the anchor loads no weights (resumes keep
+  # the trained pair); it only rebuilds the frozen prior, so
+  # kl_anchor_div in metrics.jsonl reads drift from the 14.4% policy
+  # directly and starts at exactly 0. Loss coef 0.1 = insurance without
+  # freezing learning (attempt-3 receipt: 1.0 held KL at a 0.30-0.32
+  # plateau; 0.1 is deliberately looser). Reward-level beta channel off.
+  kl_anchor_checkpoint: "checkpoints/_preserved/online_v2_FINAL_consolidated.pt"
+  kl_anchor_loss_coef: 0.1
+  kl_beta_start: 0.0
+  kl_beta_end: 0.0
+  kl_beta_decay_steps: 30000000
+  actor_freeze_steps: 0
+
+  # ---- M3: self-imitation on clears ------------------------------------
+  # bc_coef holds at 0.5 for the whole run — no schedule knob exists and
+  # consolidation-1's gain was banked at constant 0.5 (schedule note in
+  # the header; any change is a new pre-registered config).
+  sil:
+    enabled: true
+    buffer_size: 64
+    bc_coef: 0.5
+
+  # ---- M4: adversary (INERT — no `mode` key) ----------------------------
+  # Kept byte-comparable with the campaign block; nothing arms it in
+  # round 2 (single phase, no phase controller).
+  adversary:
+    budget_penalty: 0.1
+    entropy_coef: 0.01
+    epochs: 10
+    clip: 0.1
+    lr: 0.00025
+
+  # ---- Restarts: ENTRANCE-PINNED (consolidation-1 phase-5 setting) -----
+  # CONSOL2: pin_entrance true — every restart is the true 1-2 entrance.
+  # The rung ladder below is inert while pinned; kept so the block stays
+  # byte-comparable with the campaign's and a later unpin is a one-line
+  # (re-registered) change.
+  backward_curriculum:
+    states_dir: "checkpoints/online_1_2/restart_states"
+    pin_entrance: true
+    tau_init: -1
+    advance_actions: 1
+    advance_threshold: 0.3
+    min_attempts: 30
+    window_frames: 0
+    entrance_weight: 0.25
+    count_truncations: true
+    rung_step_budget:
+      base: 300
+      per_entry: 350
+
+  # Off: round 2's teachers are entrance practice + SIL, not demos.
+  demo_anchor_enabled: false
+  bc_replay_enabled: false
+  preprocess_f16: false
+  smb_curriculum: false
+
+max_episode_steps: 2400
