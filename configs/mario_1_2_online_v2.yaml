@@ -1,0 +1,214 @@
+# Mario 1-2 ONLINE v2 — the four-mechanism online campaign base profile.
+#
+# Driven by scripts/run_online_campaign.py, which launches the trainer once
+# per phase with overrides layered onto THIS file (same `name` every phase,
+# so every phase auto-resumes checkpoints/mario_1_2_online_v2). The stack:
+#
+#   M1 wave_terminal_rule: monotone — peak-augmented wavefront PBRS: shaping
+#      pays only on new episode peaks, true deaths charge -peak (non-clearing
+#      episodes telescope to exactly zero net shaping), and the lost-cut is a
+#      TRUNCATION whose GAE bootstraps the critic's own V, not 0.
+#   M2 KL-anchored warm start — the A7 checkpoint's actor (trunk+actor) is
+#      loaded on the fresh run, the critic keeps its fresh init and learns
+#      alone for actor_freeze_steps; after unfreeze a decaying beta*KL(prior||pi)
+#      reward penalty keeps the policy near the anchor while it robustifies.
+#   M3 sil — trajectories of episodes that CLEAR enter a FIFO buffer; each
+#      PPO minibatch adds a BC cross-entropy term on them, so a rare
+#      stochastic clear is consolidated instead of washed out.
+#   M4 adversary (kernel_sticky) — configured below but INERT (no `mode`
+#      key): the phase controller arms it in phase 4 (hardening) by adding
+#      `mode: kernel_sticky`. Mutually exclusive with prmdp.
+#
+# Restarts: backward-curriculum rungs minted from a VERIFIED banked 1-2
+# solution (runs/ge_1_2_div_s1 sol_000; replay re-verified at mint time) at
+# x ~= 2500/2000/1500/1000/500/0 — tau starts on the x2500 rung, the
+# approach to the x~2674 off-manifold-drift barrier, and walks back to the
+# true entrance as rungs are earned. START STATES ONLY, no action labels
+# (Dossier v3: naive BC on these tapes was eliminated).
+#
+# DELIBERATE DEVIATIONS from the requested hyperparameters (both loud):
+#   * batch: requested 4096. This trainer's iter boundary truncates every
+#     episode (batch == rollout_steps x num_envs == the episode-length cap),
+#     and a 1-2 entrance clear needs ~871 tape steps — a 4096 total batch
+#     (e.g. 8 envs x 512) caps episodes at 512 steps and makes the entrance
+#     rung unclearable BY CONSTRUCTION (the exact B5 censoring defect). Kept
+#     the proven backward-run shape instead: rollout_steps 1536 x 60 envs,
+#     minibatch 256, 10 epochs.
+#   * lr: requested actor 1e-4 / critic 3e-4 — the trainer has one `lr`
+#     knob (no split optimizer groups). Single lr 1e-4. During phase 0 the
+#     KL anchor drops actor grads anyway (critic-only warmup).
+#   * huber delta: requested 1.0 — value_loss `huber` maps to
+#     F.smooth_l1_loss, whose beta is fixed at torch's default 1.0; there is
+#     no config knob, so the requested value is what runs.
+#   * entropy 0.01 -> 0.002 over 100M: the trainer has no global env-step
+#     entropy schedule; the phase controller sets `entropy_coef` per phase
+#     launch from the cumulative-step schedule (piecewise-linear).
+
+name: Mario 1-2 online v2
+rom_path: "roms/Super Mario Bros. (World).nes"
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+# 1-2 entrance (x=0), verified — same state the honest probe starts from.
+start_state_path: "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/stage_03.state"
+description: >
+  SMB 1-2 online campaign: KL-anchored warm start from the A7 tile policy,
+  monotone wavefront shaping, self-imitation on clears, backward-curriculum
+  restarts at the x~2674 bottleneck approach, kernel-matched adversary held
+  in reserve for the hardening phase. Honest gate: cold greedy
+  sticky-0.25 + jitter-16 1-2 clear from the entrance.
+
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+
+reinforce:
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos
+  recurrent: false
+  # Net matches the A7 anchor checkpoint exactly (712-dim stacked tiles,
+  # fc1 256, fc2 64, layernorm) — kl_anchor.load_actor_into raises on any
+  # shape mismatch, so these three lines are load-bearing.
+  tile_hidden_dim: 256
+  tile_trunk_dim: 64
+  layernorm: true
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  # PBRS invariance is the whole point of the monotone rule — no reward
+  # warping on top of it.
+  symlog_rewards: false
+  value_loss: huber          # smooth_l1, delta 1.0 (torch default; no knob)
+  value_coef: 0.5
+  gamma: 0.999
+  gae_lambda: 0.95
+  bc_epochs: 0
+  warmup_gens_ga_only: 0
+  steps: 10                  # PPO epochs per iter (matched 10:10 by M4)
+  lr: 0.0001                 # single knob; no actor/critic split (see header)
+  ppo_clip_eps: 0.2
+  grad_clip: 1.0
+  async_pipeline: false      # 1-step obs lag destroys frame-perfect platforming
+  device: cpu
+  panic_isolation: false
+  # Batch shape: 1536 x 60 = 92,160 samples/iter; minibatch 256. The iter
+  # boundary is also the episode cap, and the entrance rung needs ~871+
+  # steps (see header for why the requested 4096 batch is unusable here).
+  rollout_steps: 1536
+  num_envs: 60
+  ppo_minibatch_size: 256
+  # Phase controller ASSIGNS entropy_coef per phase from the campaign's
+  # 0.01 -> 0.002-over-100M schedule; this is only the phase-0 value.
+  entropy_coef: 0.01
+  entropy_floor: 0.0
+  entropy_coef_max: 0.05
+  # Wavefront supplies the dense signal; RND stays off (semi-farmable,
+  # competes with the PBRS gradient).
+  rnd_intrinsic_coef: 0.0
+  rnd_loss_coef: 0.0
+  # Sticky is PHASE-CONTROLLED: 0.0 in phases 0-1 (zero-noise), 0.25 from
+  # phase 2. Boundary reset stays on so rung restarts never replay the
+  # dead life's held action into the advance gate's success rate.
+  sticky_action_prob: 0.0
+  sticky_episode_boundary_reset: true
+
+  # ---- M1: monotone wavefront PBRS ------------------------------------
+  wavefront_reward:
+    enabled: true
+    dmap: "checkpoints/wavefront/mario_1_2_dmap.pkl"
+    phi_target: 100.0
+    gamma: 0.999             # must equal reinforce.gamma for PBRS invariance
+  wave_terminal_rule: monotone
+
+  # ---- M2: KL-anchored warm start from A7 ------------------------------
+  # A7 = the SMoDICE-ablation 1-2 tile policy (h256/trunk64). Actor loads
+  # on the FRESH run only; resumes keep the trained weights and only the
+  # frozen prior is rebuilt. D_KL(prior||pi) is logged every iter — the
+  # campaign kill criterion (KL > 0.15 sustained 2M steps in phase 1)
+  # reads kl_anchor_div from metrics.jsonl.
+  kl_anchor_checkpoint: "checkpoints/smodice_1_2/abl_A7/vanilla_ppo_iter_00000.pt"
+  kl_beta_start: 0.05
+  kl_beta_end: 0.01
+  kl_beta_decay_steps: 50000000
+  actor_freeze_steps: 5000000
+
+  # ---- M3: self-imitation on clears ------------------------------------
+  sil:
+    enabled: true
+    buffer_size: 64
+    bc_coef: 0.5
+
+  # ---- M4: kernel-matched binary adversary (HELD IN RESERVE) -----------
+  # No `mode` key => the adversary is OFF and this block is inert. Phase 4
+  # (hardening) launches with `mode: kernel_sticky` layered on top. The
+  # adversary net is not persisted across resumes (documented behavior).
+  adversary:
+    budget_penalty: 0.1
+    entropy_coef: 0.01
+    epochs: 10               # matched 10:10 with the protagonist
+    clip: 0.1
+    lr: 0.00025
+
+  # ---- Backward-curriculum restarts (minted, verified rungs) -----------
+  # Six rungs at x ~= 0/500/1000/1500/2000/2500; tau_init -1 starts on the
+  # x2500 stage (the bottleneck approach). window_frames 0 => the restart
+  # window is exactly the tau rung (the ladder is sparse by design);
+  # entrance_weight keeps a measurable trickle of honest entrance starts.
+  # advance_actions 1 walks back one rung (~500 px) per earned advance —
+  # earned = >= advance_threshold over >= min_attempts at the rung
+  # (3-episode gates are mirages; the attempt floor is a hard precondition).
+  # count_truncations: true scores budget/boundary cuts as failures (the
+  # B5 run-2 censoring repair). rung_step_budget: an x2500 attempt gets
+  # 300 + 350*(6-5) = 650 steps; the entrance draws the full rollout cap.
+  backward_curriculum:
+    states_dir: "checkpoints/online_1_2/restart_states"
+    tau_init: -1
+    advance_actions: 1
+    advance_threshold: 0.3
+    min_attempts: 30
+    window_frames: 0
+    entrance_weight: 0.25
+    count_truncations: true
+    rung_step_budget:
+      base: 300
+      per_entry: 350
+
+  # Off: this campaign's teachers are the restart rungs + SIL, not demos.
+  demo_anchor_enabled: false
+  bc_replay_enabled: false
+  preprocess_f16: false
+  smb_curriculum: false
+
+max_episode_steps: 2400

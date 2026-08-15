@@ -1,0 +1,844 @@
+"""SMB 1-2 online-campaign phase controller.
+
+Drives the six-phase schedule over the four-mechanism trainer stack
+(configs/mario_1_2_online_v2.yaml): one trainer SUBPROCESS per phase, each
+launched via scripts/train_game.py with phase-specific overrides layered
+onto the base profile. Every phase keeps the same profile `name`, so every
+phase auto-resumes the previous phase's checkpoint in
+checkpoints/mario_1_2_online_v2/ — the trainer's own tear-tolerant resume
+path is the hand-off mechanism.
+
+Phases:
+  0 critic_warmup   zero-noise; A7 actor frozen (critic-only warmup)
+  1 local_clear     zero-noise; earn deterministic clears from the x2500 rung
+  2 sticky_local    house sticky 0.25; robustify the local clear
+  3 reverse_walk    SPDL-style backward expansion: tau walks x2500 -> x0
+  4 hardening       kernel_sticky adversary + cold entrance starts
+  5 consolidation   adversary off, sticky 0.25, low entropy
+
+Every 5M env-steps the controller probes the latest checkpoint with the
+HONEST protocol (30 episodes, cold from the 1-2 entrance, greedy, sticky
+0.25, jitter 16) via a scripts/eval_game.py subprocess, and logs median
+max-x + bottleneck survival (fraction of episodes reaching the x~2674
+approach) + clear rate to runs/online_1_2/campaign.jsonl.
+
+Pre-registered kill criteria (CONFIG below; mirrored into the manifest):
+  * kl_anchor_div > 0.15 sustained for 2M env-steps during phase 1;
+  * value-loss spike > 500% of the trailing baseline, unrecovered for 1M
+    env-steps (any phase);
+  * 20M phase-1 env-steps without a single SIL clear.
+On a kill: SIGINT the trainer, write the reason to campaign.jsonl, exit
+nonzero. A phase that exhausts its step budget without meeting its
+advance gate aborts the same way (phases 4 and 5 are budget-gated and
+complete on exhaustion).
+
+`--dry-run` validates the whole assembly without training: base + phase
+profiles pass the strict schema, the A7 anchor shape-infers into the
+configured net dims, the minted restart states load and match their
+manifest sha256s, and the probe command assembles against real paths.
+
+Long runs are launched by the operator, not by edits to this file: every
+threshold lives in CONFIG at the top and is mirrored into
+runs/online_1_2/manifest.json at campaign start.
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import hashlib
+import json
+import os
+import signal
+import statistics
+import subprocess
+import sys
+import time
+from collections import deque
+from pathlib import Path
+from typing import Any, Optional
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+
+# ---------------------------------------------------------------------------
+# CONFIG — every threshold the campaign runs on. Mirrored verbatim into
+# runs/online_1_2/manifest.json (build_manifest) so the pre-registration
+# and the run can never drift apart.
+# ---------------------------------------------------------------------------
+CONFIG: dict[str, Any] = {
+    "base_profile": "configs/mario_1_2_online_v2.yaml",
+    "run_dir": "runs/online_1_2",
+    "campaign_log": "runs/online_1_2/campaign.jsonl",
+    "restart_states_dir": "checkpoints/online_1_2/restart_states",
+
+    # Honest probe protocol (Machado sticky + start jitter, greedy).
+    "probe_every_env_steps": 5_000_000,
+    "probe_episodes": 30,
+    "probe_sticky": 0.25,
+    "probe_jitter": 16,
+    "probe_max_steps": 3000,
+    "probe_eval_workers": 5,
+    "probe_seed": 20260814,
+    "probe_timeout_s": 3600.0,
+
+    # The 1-2 wall: x~2674 off-manifold-drift barrier. An episode whose
+    # max gx reaches bottleneck_survival_x has survived the approach.
+    "bottleneck_x": 2674,
+    "bottleneck_survival_x": 2600,
+
+    # Kill criteria (pre-registered).
+    "kill_kl_threshold": 0.15,
+    "kill_kl_sustain_steps": 2_000_000,       # phase 1 only
+    "kill_vloss_spike_ratio": 5.0,            # >500% of trailing baseline
+    "kill_vloss_recovery_steps": 1_000_000,
+    "kill_vloss_baseline_rows": 20,           # rows before the spike arms
+    "kill_phase1_no_sil_clear_steps": 20_000_000,
+
+    # Advance gates.
+    "gate_critic_cv": 0.10,                   # phase 0: trailing CV < 10%
+    "gate_critic_window_iters": 50,
+    "gate_det_clears": 10,                    # phase 1: 10/10 deterministic
+    "gate_sticky_clear": 0.80,                # phase 2: sticky-local > 80%
+    # phase 3 gate: backward tau == 0 (read from the latest checkpoint's
+    # persisted backward_curriculum state).
+
+    # Entropy schedule (applied per phase launch from cumulative steps —
+    # the trainer has no global env-step entropy schedule).
+    "entropy_start": 0.01,
+    "entropy_end": 0.002,
+    "entropy_decay_steps": 100_000_000,
+
+    # Controller cadence.
+    "poll_secs": 15.0,
+    "trainer_stop_grace_s": 180.0,
+}
+
+# Phase schedule. `budget_env_steps` bounds the phase; gate types:
+#   critic_warmup      — trailing critic-loss CV < gate_critic_cv AND the
+#                        actor-freeze window has elapsed;
+#   det_local_clears   — probe (sticky 0, jitter 0, greedy) clears
+#                        gate_det_clears / gate_det_clears episodes;
+#   sticky_clear       — honest probe clear rate > gate_sticky_clear;
+#   restart_at_entrance— backward tau == 0 in the latest checkpoint;
+#   budget             — phase completes when the budget is spent.
+PHASES: tuple[dict, ...] = (
+    {"idx": 0, "name": "critic_warmup", "gate": "critic_warmup",
+     "budget_env_steps": 8_000_000,
+     "overrides": {"reinforce": {"sticky_action_prob": 0.0}}},
+    {"idx": 1, "name": "local_clear", "gate": "det_local_clears",
+     "budget_env_steps": 40_000_000,
+     "overrides": {"reinforce": {"sticky_action_prob": 0.0}}},
+    {"idx": 2, "name": "sticky_local", "gate": "sticky_clear",
+     "budget_env_steps": 40_000_000,
+     "overrides": {"reinforce": {"sticky_action_prob": 0.25}}},
+    {"idx": 3, "name": "reverse_walk", "gate": "restart_at_entrance",
+     "budget_env_steps": 60_000_000,
+     "overrides": {"reinforce": {"sticky_action_prob": 0.25}}},
+    # Phase 4's perturbation is the kernel-matched adversary (house sticky
+    # off — the two would double-perturb the same channel); restarts pin
+    # to the true entrance for cold hardening.
+    {"idx": 4, "name": "hardening", "gate": "budget",
+     "budget_env_steps": 20_000_000,
+     "overrides": {"reinforce": {
+         "sticky_action_prob": 0.0,
+         "adversary": {"mode": "kernel_sticky"},
+         "backward_curriculum": {"pin_entrance": True}}}},
+    {"idx": 5, "name": "consolidation", "gate": "budget",
+     "budget_env_steps": 10_000_000,
+     "overrides": {"reinforce": {
+         "sticky_action_prob": 0.25,
+         "backward_curriculum": {"pin_entrance": True}}}},
+)
+
+
+# ---------------------------------------------------------------------------
+# Pure pieces (unit-tested with stubbed streams — tests/test_online_campaign.py)
+# ---------------------------------------------------------------------------
+
+
+def deep_merge(base: dict, overrides: dict) -> dict:
+    """Recursive dict merge; returns a new dict, mutates neither input."""
+    out = copy.deepcopy(base)
+    for k, v in overrides.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def entropy_coef_at(env_steps: float) -> float:
+    """Linear entropy_start -> entropy_end over entropy_decay_steps."""
+    frac = min(1.0, max(0.0, float(env_steps)) / CONFIG["entropy_decay_steps"])
+    return CONFIG["entropy_start"] + frac * (
+        CONFIG["entropy_end"] - CONFIG["entropy_start"])
+
+
+def build_phase_profile(base: dict, phase: dict, cum_env_steps: float) -> dict:
+    """The profile a phase launches with: base + overrides + entropy.
+
+    Always layered onto the BASE profile (not the previous phase's), so a
+    phase can only be what it declares — e.g. the adversary `mode` exists
+    in phase 4's profile and nowhere else. The `name` is never touched:
+    every phase must resume the same checkpoint dir.
+    """
+    prof = deep_merge(base, phase.get("overrides", {}))
+    prof.setdefault("reinforce", {})["entropy_coef"] = round(
+        entropy_coef_at(cum_env_steps), 6)
+    return prof
+
+
+def steps_per_iter(profile: dict) -> int:
+    rl = profile.get("reinforce", {}) or {}
+    return int(rl.get("rollout_steps", 512)) * int(rl.get("num_envs", 60))
+
+
+def critic_cv(vlosses) -> float:
+    """Coefficient of variation of a critic-loss window (inf when empty
+    or degenerate — an empty window must never pass a variance gate)."""
+    vals = [float(v) for v in vlosses if v is not None]
+    if len(vals) < 2:
+        return float("inf")
+    mean = statistics.fmean(vals)
+    if mean <= 0.0:
+        return float("inf")
+    return statistics.pstdev(vals) / mean
+
+
+def probe_summary(eval_json: dict, survival_x: int) -> dict:
+    """Median max-x / bottleneck survival / clear rate off eval_game JSON."""
+    gxs = [int(g) for g in (eval_json.get("max_gx_per_episode") or [])]
+    clear = eval_json.get("seq_clear_rate")
+    if clear is None:
+        clear = eval_json.get("clear_rate", 0.0)
+    return {
+        "n_episodes": int(eval_json.get("n_episodes", len(gxs)) or 0),
+        "median_max_x": float(statistics.median(gxs)) if gxs else 0.0,
+        "bottleneck_survival": (
+            sum(1 for g in gxs if g >= int(survival_x)) / len(gxs)
+            if gxs else 0.0),
+        "clear_rate": float(clear or 0.0),
+    }
+
+
+class KillMonitor:
+    """The three pre-registered kill criteria over a metrics.jsonl stream.
+
+    Fed one metrics row per iter via `observe(row)`; returns None while
+    healthy, or a human-readable kill reason the moment a criterion
+    fires. Pure over the row stream — no filesystem, no subprocess — so
+    the whole surface is testable with synthetic rows.
+    """
+
+    def __init__(self, cfg: dict, steps_per_iter: int) -> None:
+        self.cfg = dict(cfg)
+        self.spi = int(steps_per_iter)
+        self._phase = -1
+        self._phase_start_steps = 0.0
+        self._sil_baseline: Optional[float] = None
+        self._sil_cleared = False
+        self._kl_high_since: Optional[float] = None
+        self._vloss_hist: deque = deque(
+            maxlen=int(cfg["kill_vloss_baseline_rows"]))
+        self._spike_since: Optional[float] = None
+        self._spike_baseline: Optional[float] = None
+
+    def start_phase(self, phase_idx: int, env_steps: float,
+                    sil_clears_total: Optional[float]) -> None:
+        self._phase = int(phase_idx)
+        self._phase_start_steps = float(env_steps)
+        self._sil_baseline = (
+            float(sil_clears_total) if sil_clears_total is not None else None)
+        self._sil_cleared = False
+        self._kl_high_since = None
+        # Value-loss baseline deliberately survives phase changes: the
+        # criterion is a run-level health check, and a phase boundary is
+        # not a spike amnesty.
+
+    def _env_steps(self, row: dict) -> float:
+        return (float(row.get("generation", 0)) + 1.0) * self.spi
+
+    def observe(self, row: dict) -> Optional[str]:
+        steps = self._env_steps(row)
+
+        # --- KL anchor divergence (phase 1 only) ---
+        kl = row.get("kl_anchor_div")
+        if self._phase == 1 and kl is not None:
+            if float(kl) > self.cfg["kill_kl_threshold"]:
+                if self._kl_high_since is None:
+                    self._kl_high_since = steps
+                elif steps - self._kl_high_since >= (
+                        self.cfg["kill_kl_sustain_steps"]):
+                    return (
+                        f"KILL kl_anchor_div>{self.cfg['kill_kl_threshold']} "
+                        f"sustained {steps - self._kl_high_since:.0f} steps "
+                        f"(>= {self.cfg['kill_kl_sustain_steps']}) in phase 1")
+            else:
+                self._kl_high_since = None
+
+        # --- value-loss spike, unrecovered ---
+        v = row.get("ppo_value_loss")
+        if v is not None:
+            v = float(v)
+            if self._spike_since is None:
+                if (len(self._vloss_hist) >=
+                        self.cfg["kill_vloss_baseline_rows"]):
+                    baseline = statistics.median(self._vloss_hist)
+                    if baseline > 0 and v > (
+                            self.cfg["kill_vloss_spike_ratio"] * baseline):
+                        # Freeze the pre-spike baseline: the spike must
+                        # not launder itself into its own reference.
+                        self._spike_since = steps
+                        self._spike_baseline = baseline
+                if self._spike_since is None:
+                    self._vloss_hist.append(v)
+            else:
+                if v <= (self.cfg["kill_vloss_spike_ratio"] *
+                         self._spike_baseline):
+                    self._spike_since = None
+                    self._spike_baseline = None
+                    self._vloss_hist.append(v)
+                elif steps - self._spike_since >= (
+                        self.cfg["kill_vloss_recovery_steps"]):
+                    return (
+                        f"KILL value-loss spike >{self.cfg['kill_vloss_spike_ratio']:.0f}x "
+                        f"baseline {self._spike_baseline:.4f} unrecovered for "
+                        f"{steps - self._spike_since:.0f} steps "
+                        f"(>= {self.cfg['kill_vloss_recovery_steps']})")
+
+        # --- phase-1 SIL-clear drought ---
+        sil = row.get("sil_clears_total")
+        if self._phase == 1 and sil is not None:
+            if self._sil_baseline is None:
+                self._sil_baseline = float(sil)
+            if float(sil) > self._sil_baseline:
+                self._sil_cleared = True
+            phase_steps = steps - self._phase_start_steps
+            if (not self._sil_cleared and phase_steps >=
+                    self.cfg["kill_phase1_no_sil_clear_steps"]):
+                return (
+                    f"KILL {phase_steps:.0f} phase-1 steps "
+                    f"(>= {self.cfg['kill_phase1_no_sil_clear_steps']}) "
+                    f"without a single SIL clear")
+        return None
+
+
+def build_manifest(base_profile: dict) -> dict:
+    """The campaign manifest: CONFIG + phase schedule, mirrored verbatim."""
+    return {
+        "campaign": "smb_1_2_online_v2",
+        "profile_name": base_profile.get("name"),
+        "config": copy.deepcopy(CONFIG),
+        "phases": copy.deepcopy(list(PHASES)),
+        "created_at": time.time(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Runtime pieces (subprocess / filesystem; exercised by --dry-run and the
+# real campaign, not by the unit tests)
+# ---------------------------------------------------------------------------
+
+
+def _load_yaml(path) -> dict:
+    import yaml
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+
+def _dump_yaml(obj: dict, path: Path) -> None:
+    import yaml
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(obj, sort_keys=False))
+
+
+def _append_jsonl(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = dict(row)
+    row.setdefault("timestamp", time.time())
+    with open(path, "a") as f:
+        f.write(json.dumps(row) + "\n")
+
+
+def _tail_jsonl(path: Path, offset: int) -> tuple[list[dict], int]:
+    """New complete JSON rows past byte `offset` (tolerates a torn tail)."""
+    if not path.exists():
+        return [], offset
+    if path.stat().st_size < offset:
+        # The trainer truncates metrics.jsonl at the top of a fresh run;
+        # a stale offset past EOF would blind the monitor for the whole
+        # phase. Restart from the top of the truncated file.
+        offset = 0
+    rows: list[dict] = []
+    with open(path, "rb") as f:
+        f.seek(offset)
+        chunk = f.read()
+    if not chunk:
+        return [], offset
+    end = chunk.rfind(b"\n")
+    if end < 0:
+        return [], offset
+    for line in chunk[:end].splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows, offset + end + 1
+
+
+def checkpoint_dir_for(profile: dict) -> Path:
+    from src.training.profile_utils import derive_checkpoint_dir
+    return REPO / derive_checkpoint_dir("./checkpoints", profile.get("name"))
+
+
+def latest_checkpoint(ckpt_dir: Path) -> Optional[Path]:
+    cands = sorted(ckpt_dir.glob("vanilla_ppo_iter_*.pt"), reverse=True)
+    return cands[0] if cands else None
+
+
+def load_checkpoint_payload(ckpt_dir: Path) -> Optional[dict]:
+    """Newest loadable checkpoint payload (walks back over torn files)."""
+    import torch
+    for p in sorted(ckpt_dir.glob("vanilla_ppo_iter_*.pt"), reverse=True):
+        try:
+            return torch.load(str(p), map_location="cpu", weights_only=False)
+        except Exception:
+            continue
+    return None
+
+
+def read_backward_tau(payload: Optional[dict]) -> Optional[int]:
+    if not isinstance(payload, dict):
+        return None
+    state = payload.get("backward_curriculum")
+    if isinstance(state, dict) and "tau" in state:
+        return int(state["tau"])
+    return None
+
+
+def build_probe_command(
+    *, checkpoint: Path, episodes: int, sticky: float, jitter: int,
+    max_steps: int, eval_seed: int,
+) -> list[str]:
+    """The honest-probe eval_game argv (greedy; sticky/jitter as given).
+
+    Stochastic probes get parallel lanes + per-episode RNG (eval_game
+    refuses shared-stream parallel stochastic runs); the deterministic
+    phase-1 gate probe runs a single serial lane.
+    """
+    base = _load_yaml(REPO / CONFIG["base_profile"])
+    cmd = [
+        sys.executable, str(REPO / "scripts" / "eval_game.py"),
+        "--game", "mario_1_2_online_v2",
+        "--profile", str(REPO / CONFIG["base_profile"]),
+        "--rom", str(REPO / base["rom_path"]),
+        "--checkpoint", str(checkpoint),
+        "--episodes", str(int(episodes)),
+        "--max-steps", str(int(max_steps)),
+        "--sequential", "--level-clear",
+        "--start-state", str(REPO / base["start_state_path"]),
+        "--eval-seed", str(int(eval_seed)),
+    ]
+    if sticky > 0.0:
+        cmd += ["--sticky-prob", str(float(sticky))]
+    if jitter > 0:
+        cmd += ["--start-jitter", str(int(jitter))]
+    if sticky > 0.0 or jitter > 0:
+        cmd += ["--eval-workers", str(int(CONFIG["probe_eval_workers"])),
+                "--eval-rng", "per-episode"]
+    return cmd
+
+
+def run_probe(*, checkpoint: Path, episodes: int, sticky: float, jitter: int,
+              eval_seed: int) -> dict:
+    """Run one probe subprocess; returns eval_game's JSON (or an error dict)."""
+    cmd = build_probe_command(
+        checkpoint=checkpoint, episodes=episodes, sticky=sticky,
+        jitter=jitter, max_steps=CONFIG["probe_max_steps"],
+        eval_seed=eval_seed)
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(REPO), capture_output=True, text=True,
+            timeout=CONFIG["probe_timeout_s"])
+    except subprocess.TimeoutExpired:
+        return {"status": "probe_timeout"}
+    if proc.returncode != 0:
+        return {"status": "probe_failed",
+                "detail": proc.stderr.strip()[-500:]}
+    text = proc.stdout.strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        return {"status": "probe_failed", "detail": "no JSON on stdout"}
+    try:
+        return json.loads(text[start:end + 1])
+    except json.JSONDecodeError as e:
+        return {"status": "probe_failed", "detail": f"bad JSON: {e}"}
+
+
+def _stop_trainer(proc: subprocess.Popen) -> None:
+    """SIGINT -> clean trainer stop; escalate only if it hangs."""
+    if proc.poll() is not None:
+        return
+    proc.send_signal(signal.SIGINT)
+    try:
+        proc.wait(timeout=CONFIG["trainer_stop_grace_s"])
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+# ---------------------------------------------------------------------------
+# Dry run
+# ---------------------------------------------------------------------------
+
+
+def dry_run() -> int:
+    """Validate the whole assembly without training. Returns exit code."""
+    from src.training.config_schema import check_profile
+    from src.training.profile_utils import resolve_encoder
+
+    ok = True
+
+    def report(label: str, good: bool, detail: str = "") -> None:
+        nonlocal ok
+        ok = ok and good
+        print(f"[dry-run] {'PASS' if good else 'FAIL'} {label}"
+              + (f" — {detail}" if detail else ""), flush=True)
+
+    # 1. Base profile parses + strict schema.
+    base_path = REPO / CONFIG["base_profile"]
+    try:
+        base = _load_yaml(base_path)
+        warns = check_profile(base, strict=False)
+        report("base profile schema", not warns,
+               "; ".join(warns) if warns else str(base_path))
+    except Exception as e:
+        report("base profile schema", False, repr(e))
+        return 1
+
+    # 2. Every phase profile passes the strict schema too.
+    for phase in PHASES:
+        prof = build_phase_profile(base, phase, cum_env_steps=0)
+        warns = check_profile(prof, strict=False)
+        report(f"phase {phase['idx']} ({phase['name']}) profile schema",
+               not warns, "; ".join(warns))
+
+    # 3. A7 anchor loads with shape inference into the configured dims.
+    try:
+        import torch
+        from src.models.tile_policy import build_tile_policy_from_checkpoint
+        rl = base["reinforce"]
+        _, _, obs_width = resolve_encoder(base)
+        payload = torch.load(str(REPO / rl["kl_anchor_checkpoint"]),
+                             map_location="cpu", weights_only=False)
+        sd = payload.get("net_state_dict", payload)
+        prior, is_recurrent = build_tile_policy_from_checkpoint(
+            payload, num_actions=len(base["action_space"]),
+            feature_dim=obs_width)
+        missing, _ = prior.load_state_dict(sd, strict=False)
+        fc1 = tuple(sd["fc1.weight"].shape)
+        fc2 = tuple(sd["fc2.weight"].shape)
+        dims_ok = (
+            not is_recurrent and not missing
+            and fc1 == (int(rl["tile_hidden_dim"]), obs_width)
+            and fc2 == (int(rl["tile_trunk_dim"]), int(rl["tile_hidden_dim"]))
+        )
+        report("A7 anchor shape-infers into the configured net", dims_ok,
+               f"fc1={fc1} fc2={fc2} obs={obs_width} recurrent={is_recurrent}"
+               f" missing={missing}")
+    except Exception as e:
+        report("A7 anchor shape-infers into the configured net", False,
+               repr(e))
+
+    # 4. Restart states load and match their manifest sha256s.
+    try:
+        from src.training.backward_curriculum import load_blobs, load_index
+        states_dir = REPO / CONFIG["restart_states_dir"]
+        entries, meta = load_index(states_dir)
+        blobs = load_blobs(states_dir, entries)
+        manifest = json.loads((states_dir / "manifest.json").read_text())
+        by_file = {s["file"]: s for s in manifest["states"]}
+        sha_ok = all(
+            hashlib.sha256(blob).hexdigest() == by_file[e.file]["sha256"]
+            for e, blob in zip(entries, blobs))
+        gxs = [e.gx for e in entries]
+        report(
+            "restart states load + sha256 match manifest",
+            sha_ok and len(entries) == len(manifest["states"])
+            and bool(meta.get("reached_clear")),
+            f"{len(entries)} rungs, gx {gxs}, verified clear="
+            f"{meta.get('reached_clear')}")
+    except Exception as e:
+        report("restart states load + sha256 match manifest", False, repr(e))
+
+    # 5. Probe command assembles against real paths.
+    try:
+        fake_ckpt = REPO / base["reinforce"]["kl_anchor_checkpoint"]
+        cmd = build_probe_command(
+            checkpoint=fake_ckpt, episodes=CONFIG["probe_episodes"],
+            sticky=CONFIG["probe_sticky"], jitter=CONFIG["probe_jitter"],
+            max_steps=CONFIG["probe_max_steps"],
+            eval_seed=CONFIG["probe_seed"])
+        missing_paths = [
+            a for a in cmd
+            if ("/" in a and not a.startswith("-") and not Path(a).exists())]
+        report("probe command assembles", not missing_paths,
+               " ".join(cmd) if not missing_paths
+               else f"missing paths: {missing_paths}")
+    except Exception as e:
+        report("probe command assembles", False, repr(e))
+
+    # 6. Manifest mirrors CONFIG + phases.
+    man = build_manifest(base)
+    report("manifest mirrors CONFIG + phases",
+           man["config"] == CONFIG and len(man["phases"]) == len(PHASES))
+
+    print(f"[dry-run] {'ALL CHECKS PASSED' if ok else 'CHECKS FAILED'}",
+          flush=True)
+    return 0 if ok else 1
+
+
+# ---------------------------------------------------------------------------
+# The campaign loop
+# ---------------------------------------------------------------------------
+
+
+def _gate_met(phase: dict, *, base: dict, vloss_window: deque,
+              phase_env_steps: float, last_probe: Optional[dict],
+              ckpt_dir: Path, log_path: Path, probe_seed: int) -> bool:
+    gate = phase["gate"]
+    if gate == "budget":
+        return phase_env_steps >= phase["budget_env_steps"]
+    if gate == "critic_warmup":
+        freeze = float(base["reinforce"].get("actor_freeze_steps", 0))
+        if phase_env_steps < freeze:
+            return False
+        cv = critic_cv(list(vloss_window))
+        return cv < CONFIG["gate_critic_cv"]
+    if gate == "det_local_clears":
+        # Deterministic gate probe: greedy, sticky 0, jitter 0 — N
+        # consecutive clears == clear_rate 1.0 over N episodes.
+        ckpt = latest_checkpoint(ckpt_dir)
+        if ckpt is None:
+            return False
+        res = run_probe(checkpoint=ckpt,
+                        episodes=CONFIG["gate_det_clears"], sticky=0.0,
+                        jitter=0, eval_seed=probe_seed)
+        summ = probe_summary(res, CONFIG["bottleneck_survival_x"])
+        _append_jsonl(log_path, {
+            "type": "gate_probe", "phase": phase["idx"], "protocol": {
+                "sticky": 0.0, "jitter": 0,
+                "episodes": CONFIG["gate_det_clears"]},
+            **summ, "status": res.get("status")})
+        return (res.get("status") == "ok"
+                and summ["n_episodes"] >= CONFIG["gate_det_clears"]
+                and summ["clear_rate"] >= 1.0)
+    if gate == "sticky_clear":
+        if not last_probe or last_probe.get("status") != "ok":
+            return False
+        return last_probe["clear_rate"] > CONFIG["gate_sticky_clear"]
+    if gate == "restart_at_entrance":
+        tau = read_backward_tau(load_checkpoint_payload(ckpt_dir))
+        return tau == 0
+    raise ValueError(f"unknown gate {gate!r}")
+
+
+def run_campaign(start_phase: int = 0) -> int:
+    base = _load_yaml(REPO / CONFIG["base_profile"])
+    run_dir = REPO / CONFIG["run_dir"]
+    log_path = REPO / CONFIG["campaign_log"]
+    ckpt_dir = checkpoint_dir_for(base)
+    metrics_path = ckpt_dir / "metrics.jsonl"
+    spi = steps_per_iter(base)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = build_manifest(base)
+    (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    _append_jsonl(log_path, {"type": "campaign_start", "config": CONFIG,
+                             "phases": list(PHASES),
+                             "steps_per_iter": spi,
+                             "start_phase": start_phase})
+
+    monitor = KillMonitor(CONFIG, steps_per_iter=spi)
+    cum_env_steps = 0.0
+    payload = load_checkpoint_payload(ckpt_dir) if ckpt_dir.exists() else None
+    if payload is not None:
+        cum_env_steps = float(payload.get("iter", 0)) * spi
+
+    probe_idx = 0
+    for phase in PHASES[start_phase:]:
+        phase_profile = build_phase_profile(base, phase, cum_env_steps)
+        prof_path = run_dir / "phase_configs" / f"phase_{phase['idx']}.yaml"
+        _dump_yaml(phase_profile, prof_path)
+        iters = max(1, int(phase["budget_env_steps"] // spi) + 1)
+        phase_log = run_dir / f"phase_{phase['idx']}.log"
+        _append_jsonl(log_path, {
+            "type": "phase_start", "phase": phase["idx"],
+            "name": phase["name"], "profile": str(prof_path),
+            "iters": iters, "cum_env_steps": cum_env_steps,
+            "entropy_coef": phase_profile["reinforce"]["entropy_coef"]})
+
+        cmd = [sys.executable, str(REPO / "scripts" / "train_game.py"),
+               "--profile", str(prof_path), "--iters", str(iters),
+               "--no-supervise", "--strict-config"]
+        with open(phase_log, "ab") as lf:
+            proc = subprocess.Popen(cmd, cwd=str(REPO), stdout=lf,
+                                    stderr=subprocess.STDOUT)
+        offset = metrics_path.stat().st_size if metrics_path.exists() else 0
+        phase_start_steps: Optional[float] = None
+        vloss_window: deque = deque(
+            maxlen=CONFIG["gate_critic_window_iters"])
+        last_probe: Optional[dict] = None
+        next_probe_at = cum_env_steps + CONFIG["probe_every_env_steps"]
+        started_monitor = False
+        gate_passed = False
+
+        def _abort(reason: str) -> int:
+            _stop_trainer(proc)
+            _append_jsonl(log_path, {"type": "abort", "phase": phase["idx"],
+                                     "reason": reason,
+                                     "env_steps": cum_env_steps})
+            print(f"[campaign] ABORT: {reason}", flush=True)
+            return 2
+
+        while True:
+            rows, offset = _tail_jsonl(metrics_path, offset)
+            for row in rows:
+                env_steps = (float(row.get("generation", 0)) + 1.0) * spi
+                cum_env_steps = max(cum_env_steps, env_steps)
+                if not started_monitor:
+                    phase_start_steps = env_steps - spi
+                    monitor.start_phase(
+                        phase["idx"], phase_start_steps,
+                        row.get("sil_clears_total"))
+                    started_monitor = True
+                if row.get("ppo_value_loss") is not None:
+                    vloss_window.append(float(row["ppo_value_loss"]))
+                reason = monitor.observe(row)
+                if reason:
+                    return _abort(reason)
+
+            phase_env_steps = (
+                cum_env_steps - phase_start_steps
+                if phase_start_steps is not None else 0.0)
+
+            # Scheduled honest probe every probe_every_env_steps.
+            if cum_env_steps >= next_probe_at:
+                next_probe_at += CONFIG["probe_every_env_steps"]
+                ckpt = latest_checkpoint(ckpt_dir)
+                if ckpt is not None:
+                    probe_idx += 1
+                    res = run_probe(
+                        checkpoint=ckpt,
+                        episodes=CONFIG["probe_episodes"],
+                        sticky=CONFIG["probe_sticky"],
+                        jitter=CONFIG["probe_jitter"],
+                        eval_seed=CONFIG["probe_seed"] + probe_idx)
+                    summ = probe_summary(
+                        res, CONFIG["bottleneck_survival_x"])
+                    last_probe = {**summ, "status": res.get("status")}
+                    _append_jsonl(log_path, {
+                        "type": "probe", "phase": phase["idx"],
+                        "checkpoint": str(ckpt),
+                        "env_steps": cum_env_steps, "protocol": {
+                            "sticky": CONFIG["probe_sticky"],
+                            "jitter": CONFIG["probe_jitter"],
+                            "episodes": CONFIG["probe_episodes"],
+                            "greedy": True},
+                        **summ, "status": res.get("status")})
+
+                # Gate check rides the probe cadence (cheap gates too —
+                # they only read state the probe cycle already loads).
+                if started_monitor and _gate_met(
+                        phase, base=base, vloss_window=vloss_window,
+                        phase_env_steps=phase_env_steps,
+                        last_probe=last_probe, ckpt_dir=ckpt_dir,
+                        log_path=log_path,
+                        probe_seed=CONFIG["probe_seed"] + probe_idx):
+                    gate_passed = True
+                    _append_jsonl(log_path, {
+                        "type": "gate_pass", "phase": phase["idx"],
+                        "gate": phase["gate"],
+                        "env_steps": cum_env_steps})
+                    _stop_trainer(proc)
+                    break
+
+            if proc.poll() is not None:
+                # Trainer exited on its own: budget exhausted or crash.
+                rows, offset = _tail_jsonl(metrics_path, offset)
+                for row in rows:
+                    reason = monitor.observe(row)
+                    if reason:
+                        return _abort(reason)
+                    cum_env_steps = max(
+                        cum_env_steps,
+                        (float(row.get("generation", 0)) + 1.0) * spi)
+                if proc.returncode != 0:
+                    return _abort(
+                        f"trainer subprocess exited {proc.returncode} "
+                        f"in phase {phase['idx']}")
+                if phase["gate"] == "budget":
+                    gate_passed = True
+                break
+
+            time.sleep(CONFIG["poll_secs"])
+
+        if not gate_passed:
+            # Budget-gated phases were handled above; a gated phase whose
+            # trainer ran out of iters never earned its advance.
+            if phase["gate"] == "budget":
+                gate_passed = True
+            else:
+                return _abort(
+                    f"phase {phase['idx']} ({phase['name']}) exhausted its "
+                    f"{phase['budget_env_steps']:.0f}-step budget without "
+                    f"meeting gate {phase['gate']!r}")
+
+        _append_jsonl(log_path, {"type": "phase_complete",
+                                 "phase": phase["idx"],
+                                 "name": phase["name"],
+                                 "env_steps": cum_env_steps})
+
+    # Final honest probe for the record.
+    ckpt = latest_checkpoint(ckpt_dir)
+    if ckpt is not None:
+        res = run_probe(checkpoint=ckpt, episodes=CONFIG["probe_episodes"],
+                        sticky=CONFIG["probe_sticky"],
+                        jitter=CONFIG["probe_jitter"],
+                        eval_seed=CONFIG["probe_seed"] + probe_idx + 1)
+        summ = probe_summary(res, CONFIG["bottleneck_survival_x"])
+        _append_jsonl(log_path, {"type": "final_probe",
+                                 "checkpoint": str(ckpt), **summ,
+                                 "status": res.get("status")})
+    _append_jsonl(log_path, {"type": "campaign_complete",
+                             "env_steps": cum_env_steps})
+    print("[campaign] complete.", flush=True)
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Validate config, anchor, restart states and the "
+                         "probe command without training.")
+    ap.add_argument("--start-phase", type=int, default=0,
+                    help="Resume the schedule at this phase (checkpoints "
+                         "carry the trainer state; default 0).")
+    args = ap.parse_args()
+    if args.dry_run:
+        return dry_run()
+    if not 0 <= args.start_phase < len(PHASES):
+        raise SystemExit(f"--start-phase must be 0..{len(PHASES) - 1}")
+    return run_campaign(start_phase=args.start_phase)
+
+
+if __name__ == "__main__":
+    os.chdir(REPO)
+    sys.exit(main())
