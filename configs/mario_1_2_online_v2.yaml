@@ -112,7 +112,10 @@ reinforce:
   symlog_rewards: false
   value_loss: huber          # smooth_l1, delta 1.0 (torch default; no knob)
   value_coef: 0.5
-  gamma: 0.999
+  # Attempt-3 return rescale: 0.999 put the value target on a 30-95 huber
+  # scale that never converged; 0.99 shrinks the effective horizon to the
+  # shaping wavelength. MUST stay equal to wavefront_reward.gamma below.
+  gamma: 0.99
   gae_lambda: 0.95
   bc_epochs: 0
   warmup_gens_ga_only: 0
@@ -149,7 +152,7 @@ reinforce:
     enabled: true
     dmap: "checkpoints/wavefront/mario_1_2_dmap.pkl"
     phi_target: 100.0
-    gamma: 0.999             # must equal reinforce.gamma for PBRS invariance
+    gamma: 0.99              # must equal reinforce.gamma for PBRS invariance
   wave_terminal_rule: monotone
 
   # ---- M2: KL-anchored warm start from A7 ------------------------------
@@ -157,12 +160,19 @@ reinforce:
   # on the FRESH run only; resumes keep the trained weights and only the
   # frozen prior is rebuilt. D_KL(prior||pi) is logged every iter — the
   # campaign kill criterion (KL > 0.15 sustained 2M steps in phase 1)
-  # reads kl_anchor_div from metrics.jsonl.
+  # reads kl_anchor_div from metrics.jsonl. The loss-level tether
+  # (kl_anchor_loss_coef, attempt 3) is PHASE-CONTROLLED and deliberately
+  # absent here (default 0.0 = off): 1.0 at unfreeze, 0.3 in phases 2-3,
+  # 0.0 from hardening on.
   kl_anchor_checkpoint: "checkpoints/smodice_1_2/abl_A7/vanilla_ppo_iter_00000.pt"
-  kl_beta_start: 0.05
+  kl_beta_start: 0.5
   kl_beta_end: 0.01
   kl_beta_decay_steps: 50000000
-  actor_freeze_steps: 5000000
+  # Sentinel: the actor stays frozen for the whole critic-warmup phase; the
+  # campaign controller's phase-1+ override sets this to 0 at the moment the
+  # critic-stability gate actually passes (attempt-1 post-mortem: a 5M-step
+  # timer unfroze into an unconverged critic and KL blew 0->1.2 in 300k steps).
+  actor_freeze_steps: 1000000000000
 
   # ---- M3: self-imitation on clears ------------------------------------
   sil:

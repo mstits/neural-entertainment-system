@@ -302,6 +302,19 @@ class PPOUpdater:
         # every optimizer step, so only the fresh critic moves.
         _kl_anchor = getattr(t, "_kl_anchor", None)
         _actor_frozen = _kl_anchor is not None and _kl_anchor.frozen
+        # Loss-level anchor tether (reinforce.kl_anchor_loss_coef): each
+        # minibatch adds coef * mean KL(prior(.|s) || pi_theta(.|s)) on its
+        # own states directly to the loss — the prior logits come no-grad
+        # from the same frozen prior the reward-level penalty holds, so the
+        # two paths compose. 0.0 (the default) never enters the branch:
+        # no extra tensor work, bit-identical update. Not applied under
+        # SHAPO (`loss` never backprops there), matching the SIL plug.
+        _kl_loss_coef = float(getattr(t, "_kl_anchor_loss_coef", 0.0) or 0.0)
+        _kl_loss_active = (
+            _kl_anchor is not None and _kl_loss_coef > 0.0 and sam_rho <= 0.0
+        )
+        _kl_loss_accum = 0.0
+        _kl_loss_n = 0
         for epoch in range(0 if t._recurrent else t.reinforce_steps):
             perm = np.random.permutation(valid_indices)
             n_valid = perm.shape[0]
@@ -376,6 +389,25 @@ class PPOUpdater:
                     loss = loss + _sil_coef * _sil_loss
                     _sil_loss_accum = _sil_loss_accum + _sil_loss.detach()
                     _sil_loss_n += 1
+                # Loss-level anchor tether: coef * mean KL(prior || pi) on
+                # THIS minibatch's states, straight into the policy loss —
+                # the per-update pull the reward-level beta penalty cannot
+                # provide once the surrogate ratio clips.
+                if _kl_loss_active:
+                    with torch.no_grad():
+                        _kl_prior_logits, _ = _kl_anchor.prior.forward_ac(
+                            states_t
+                        )
+                        _kl_prior_logp = F.log_softmax(
+                            _kl_prior_logits.float(), dim=-1
+                        )
+                    _kl_pi_logp = F.log_softmax(logits.float(), dim=-1)
+                    _kl_loss = (
+                        _kl_prior_logp.exp() * (_kl_prior_logp - _kl_pi_logp)
+                    ).sum(dim=-1).mean()
+                    loss = loss + _kl_loss_coef * _kl_loss
+                    _kl_loss_accum = _kl_loss_accum + _kl_loss.detach()
+                    _kl_loss_n += 1
                 # RND predictor loss: train the predictor to mimic
                 # the frozen target on visited states (its params are
                 # in this optimizer). Forward with grad here, unlike
@@ -549,6 +581,11 @@ class PPOUpdater:
                 float(_sil_loss_accum) if _sil_loss_n else 0.0
             ),
             "sil_loss_n": _sil_loss_n,
+            "kl_loss_coef": _kl_loss_coef,
+            "kl_loss_accum": (
+                float(_kl_loss_accum) if _kl_loss_n else 0.0
+            ),
+            "kl_loss_n": _kl_loss_n,
             "obs_all": obs_all,
             "obs_flat": obs_flat,
             "mb_size": mb_size,

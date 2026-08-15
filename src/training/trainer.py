@@ -5078,6 +5078,27 @@ class Trainer:
                 self._kl_anchor.beta_decay_steps,
                 self._kl_anchor.actor_freeze_steps,
             )
+        # Loss-level anchor tether (reinforce.kl_anchor_loss_coef): each PPO
+        # minibatch adds coef * mean KL(prior(.|s) || pi_theta(.|s)) on its
+        # own states directly to the update loss (ppo_updater), reusing the
+        # frozen prior above. 0.0 (the default) = off, byte-identical
+        # update; composable with the reward-level beta penalty.
+        self._kl_anchor_loss_coef = float(
+            _rl_cfg.get("kl_anchor_loss_coef", 0.0) or 0.0
+        )
+        if self._kl_anchor_loss_coef > 0.0:
+            if self._kl_anchor is None:
+                log.warning(
+                    "[vanilla_ppo] reinforce.kl_anchor_loss_coef %.3f set "
+                    "but no kl_anchor_checkpoint — the loss-level tether "
+                    "has no prior and stays OFF.",
+                    self._kl_anchor_loss_coef,
+                )
+            else:
+                log.info(
+                    "[vanilla_ppo] KL ANCHOR loss-level tether on: "
+                    "coef %.3f per minibatch", self._kl_anchor_loss_coef,
+                )
         # Self-imitation buffer (reinforce.sil): full trajectories of
         # level-clearing episodes feed a BC term in the PPO update. The
         # updater reads self._sil_buffer / self._sil_bc_coef; None = inert.
@@ -7505,6 +7526,17 @@ class Trainer:
                 _mech_metrics["kl_anchor_actor_frozen"] = int(
                     self._kl_anchor.frozen
                 )
+                if _upd["kl_loss_n"]:
+                    # Loss-level tether magnitude: coef * mean minibatch
+                    # KL(prior || pi) — the exact term the update loss
+                    # carried this iter, alongside the rollout-time div.
+                    _mech_metrics["kl_anchor_loss"] = float(
+                        _upd["kl_loss_coef"]
+                        * _upd["kl_loss_accum"] / _upd["kl_loss_n"]
+                    )
+                    _mech_metrics["kl_anchor_loss_coef"] = float(
+                        _upd["kl_loss_coef"]
+                    )
                 # Logged every iteration — the campaign kill criterion
                 # (KL > 0.15 sustained 2M steps) reads this series.
                 log.info(
