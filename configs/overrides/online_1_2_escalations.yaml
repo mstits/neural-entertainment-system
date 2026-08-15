@@ -1,0 +1,239 @@
+# Mario 1-2 online campaign — next-rung escalation catalog.
+#
+# INERT DOCUMENT. This file is a reference catalog, not a live profile —
+# nothing in the campaign loads it automatically. Nobody applies a block
+# here without first (a) confirming the trigger predicate against the
+# live run's own logs/metrics, and (b) hand-merging the `override` onto
+# whatever phase profile is actually in flight at the time. Do not point
+# `--profile` at this file.
+#
+# Each block below documents ONE candidate escalation for the online
+# campaign (attempt 4+): the exact reinforce-key override, the trigger
+# condition it answers (a measurable predicate, not a vibe), and the
+# receipt to record if/when someone applies it. Overrides are always
+# expressed as a partial `reinforce` (or top-level) tree meant to be
+# deep-merged onto the base profile (configs/mario_1_2_online_v2.yaml)
+# the same way scripts/run_online_campaign.py layers phase overrides —
+# this file is deliberately NOT wired into that layering.
+#
+# Grounding: attempt 3's phase_1.log (21:09-21:22, iters 50-73 resumed
+# from checkpoints/mario_1_2_online_v2/vanilla_ppo_iter_00050.pt) and the
+# archived checkpoints/mario_1_2_online_v2_attempt{1,2,3}/metrics.jsonl.
+# Exact numbers cited per-block below; see each block's `trigger` comment
+# for the specific log lines that motivate it and the honest caveat when
+# attempt 3 did NOT actually exhibit the trigger condition (these are
+# forward-looking contingencies, not confirmed diagnoses).
+#
+# Base-profile facts this catalog assumes (read from
+# configs/mario_1_2_online_v2.yaml, NOT modified by this file):
+#   - reinforce.steps: 10                 (PPO epochs per iter)
+#   - reinforce.entropy_coef: 0.01        (phase-0 value; phase controller
+#     resolves this per-phase from a schedule — attempt 3's ACTUAL
+#     resolved phase-1 value was 0.009594, i.e. ~0.0096, confirmed in
+#     runs/online_1_2_attempt3/phase_configs/phase_1.yaml)
+#   - reinforce.sil.bc_coef: 0.5
+#   - reinforce.backward_curriculum.tau_init: -1  (== top rung, tau 5 of
+#     a 6-entry tape minted at x = 2500/2000/1500/1000/500/0 by
+#     scripts/select_restart_states.py; tau 5 -> x~2502, tau 0 -> entrance)
+
+escalations:
+
+  # ---------------------------------------------------------------------
+  # E1 — epoch-cut: fewer PPO epochs per iter, reduces within-iteration
+  # policy drift relative to the rollout that generated the batch.
+  # ---------------------------------------------------------------------
+  E1_epoch_cut:
+    description: >
+      Cut phase-1 PPO epochs from 10 to 4. Each PPO iter currently takes
+      10 gradient passes over the same 92,160-sample rollout
+      (rollout_steps 1536 x num_envs 60); with a KL-anchored warm start
+      already fighting the policy to stay near the A7 prior, 10 epochs
+      is more off-policy drift per iter than a plateauing KL divergence
+      can absorb. Dropping to 4 shortens that drift window without
+      touching the sample budget, the anchor, or the reward shaping.
+
+    trigger: >
+      MEASURABLE PREDICATE: the trainer's own
+      "[kl_anchor] iter N: D_KL(prior||pi)=X" line (logged every iter,
+      see src/training/trainer.py) shows X on a SUSTAINED plateau (not a
+      single-iter spike) above ~0.45 for >= 10 consecutive iters, AND the
+      concurrent "[vanilla_ppo] iter N: ... clears=" count over that same
+      window is not trending down relative to the preceding 10-iter
+      window (i.e. the drift is not accompanied by competence loss — if
+      clears ARE dropping with KL, that is the documented hard-kill
+      criterion in configs/mario_1_2_online_v2.yaml's header
+      [KL > 0.15 sustained 2M steps], not this escalation).
+
+      GROUNDING (attempt 3, runs/online_1_2_attempt3/phase_1.log): D_KL
+      spiked to 0.5018 at iter 53 (a single-iter transient coincident
+      with the tau=4->3 rung advance and a temporary clears crash 46->3),
+      then settled into a SUSTAINED 0.30-0.32 plateau for the remaining
+      20 logged iters (53 through 73) while clears recovered and
+      cum sil_clears_total climbed monotonically the whole time (23 at
+      iter 50 -> 431 at iter 73, checkpoints/mario_1_2_online_v2_attempt3/
+      metrics.jsonl) — i.e. attempt 3's plateau (~0.31) sat WELL BELOW
+      this escalation's ~0.45 trigger and never fired it; this is
+      therefore an unconfirmed contingency for a worse rung/phase, not a
+      diagnosis of attempt 3. Check with:
+        grep '\[kl_anchor\] iter' runs/online_1_2/phase_1.log | tail -50
+
+    override:
+      reinforce:
+        steps: 4
+
+    receipt: >
+      Record in the campaign's run manifest / decision log: the
+      iter-range and D_KL values that satisfied the plateau predicate
+      (paste the matching `[kl_anchor] iter N: D_KL=...` lines), the
+      clears trend over the same window (from the matching
+      `[vanilla_ppo] iter N: ... clears=` lines) proving no competence
+      loss, the checkpoint iter the override was applied FROM, and the
+      D_KL trend for >= 10 iters AFTER applying it (to confirm the cut
+      actually lowered the plateau rather than just being coincidental
+      with training noise).
+
+  # ---------------------------------------------------------------------
+  # E2 — entropy-bump: widen phase-1 local exploration at the rung while
+  # making self-imitation consolidate any resulting clear harder.
+  # ---------------------------------------------------------------------
+  E2_entropy_bump:
+    description: >
+      Raise phase-1 entropy_coef from its resolved ~0.0096 to 0.02 (paired
+      with sil.bc_coef 0.5 -> 0.8) to counter SIL starvation: if the
+      policy stops finding NEW clears at the current backward-curriculum
+      rung, the self-imitation buffer stops refreshing and the campaign
+      is consolidating an increasingly stale sample of trajectories. The
+      entropy bump widens the local action distribution so the rollout
+      is more likely to re-discover a clear; the paired bc_coef bump
+      leans harder on the SIL buffer's BC term once a clear IS found, so
+      the wider exploration noise doesn't wash out what little
+      consolidation signal exists.
+
+    trigger: >
+      MEASURABLE PREDICATE: over a 10M-env-step window within phase 1
+      (~108 iters at the base profile's 92,160 samples/iter — 1536
+      rollout_steps x 60 num_envs), the per-iter "sil_clears_total" field
+      in the run's metrics.jsonl (checkpoints/mario_1_2_online_v2/
+      metrics.jsonl) is FLAT — zero NEW clears added across the whole
+      window (sil_clears_total[iter_end] == sil_clears_total[iter_start]),
+      not merely slow growth. Cross-check against
+      "vanilla_ppo_clears" (per-iter, not cumulative) also reading 0 for
+      the same span, to rule out a SIL-buffer bookkeeping stall rather
+      than an actual clear drought.
+
+      GROUNDING (attempt 3, checkpoints/mario_1_2_online_v2_attempt3/
+      metrics.jsonl): sil_clears_total rose EVERY single logged iter,
+      23 -> 431 over iters 50-73 (24 iters, ~2.2M env-steps at this
+      profile's batch size — well short of a 10M-step window), and
+      sil_buffer_trajs saturated its 64-slot cap by iter 52 and stayed
+      full through iter 73 — the buffer was healthy and rotating, not
+      starved. Attempt 3 never observed anything close to this trigger;
+      it is a forward-looking contingency for a harder rung (e.g. after
+      a rung-shift or once the ladder reaches x<=1000) where clears may
+      genuinely dry up. Check with:
+        python3 -c "
+        import json
+        for l in open('runs/online_1_2/../../checkpoints/mario_1_2_online_v2/metrics.jsonl'):
+            d = json.loads(l)
+            print(d['generation'], d['vanilla_ppo_clears'], d['sil_clears_total'])
+        "
+
+    override:
+      reinforce:
+        entropy_coef: 0.02
+        sil:
+          bc_coef: 0.8
+
+    receipt: >
+      Record: the iter range and cumulative-step count over which
+      sil_clears_total (and per-iter vanilla_ppo_clears) read flat-zero,
+      the rung (tau / gx) active during that window from the matching
+      "[backward] iter N: tau=" lines, the checkpoint iter the override
+      was applied FROM, and the clears trend for the window AFTER
+      applying it (did sil_clears_total resume climbing, and did
+      sil_buffer_trajs refresh past its pre-bump contents).
+
+  # ---------------------------------------------------------------------
+  # E3 — rung-shift: move the backward-curriculum ladder's starting rung
+  # from x~2502 down to x~2000, in case the top rung sits inside a hazard's
+  # kill radius rather than being a clean "one jump from the flag" spot.
+  # ---------------------------------------------------------------------
+  E3_rung_shift:
+    description: >
+      Start the restart ladder at tau=4 (x~2000, the second rung) instead
+      of tau_init=-1 (== tau=5, x~2502, the top/last-minted rung). A rung
+      that sits just inside a hazard's kill radius (e.g. an enemy spawn
+      or a mistimed jump window at that exact x) would show episodes
+      restarted there dying almost immediately, before the policy gets
+      enough steps to act on the rung's own local structure — the
+      curriculum would be trying to learn a rung it cannot survive long
+      enough to observe. Moving the ladder's head one rung back gives the
+      policy a rung it can actually accumulate signal at, and the
+      abandoned x2502 rung is picked back up naturally once the ladder's
+      normal backward walk reaches it again as clears accrue.
+
+    trigger: >
+      MEASURABLE PREDICATE (proxy, see caveat below): while tau sits at
+      the top rung (tau == n_entries-1, x~2502) and BEFORE any advance
+      away from it, the per-iter mean episode length collapses to
+      < 100 steps for the fraction of the pool actually restarting at
+      that rung. Concretely, at low iter counts before the first advance
+      the whole active env pool restarts at that single rung
+      (window_frames: 0 pins the restart window to exactly tau, per the
+      base profile's header comment), so the SAME iter's
+      "[vanilla_ppo] iter N: ... mean_len=" / "ip_len=" line is a valid
+      per-rung proxy for episode length. Confirm the death (not budget
+      cutoff) reading by pairing it with the matching
+      "[backward] iter N: tau=5/5 ... truncated K (M scored)" line: a
+      near-zero truncated fraction rules out the rung's generous budget
+      (min(1536, 300 + 350*(6-5)) = 650 steps at tau=5) as the cause, and
+      confirms episodes are dying, not timing out.
+
+      HOW TO CHECK (campaign_report equivalent — no dedicated per-rung
+      episode-length tool exists in this repo today; this repo's closest
+      thing to a "campaign report" is the trainer's own per-iter
+      "[backward]" log line plus TauScheduler.snapshot(), both of which
+      only carry attempt/success/truncated COUNTS at a rung, not a
+      per-episode step-of-death. Build the check as:
+        grep -E '\[backward\] iter [0-9]+: tau=5/5' runs/online_1_2/phase_*.log
+      paired, iter-for-iter, with:
+        grep -E '\[vanilla_ppo\] iter [0-9]+: ' runs/online_1_2/phase_*.log
+      (same timestamp/iter number) to read off mean_len/ip_len while
+      tau==5. If this trigger needs to fire for real, the honest
+      escalation is instrumenting TauScheduler.record()'s caller with a
+      per-episode step-count-at-outcome histogram keyed by tau, not
+      inferring it from the pool-wide mean_len proxy above.
+
+      GROUNDING (all three archived attempts, phase_0.log iter 0 — the
+      only tau=5/5 samples any attempt logged before advancing away):
+      attempt 1, 2, and 3 each show IDENTICAL stats at iter 0 — "tau=5/5
+      (step 559 frame 2236 gx 2502) trailing 7/30=0.23 ... truncated 0
+      (70 scored)" — identical because each attempt re-resumed the same
+      seed=0, same warm-started net, so the first batch at the top rung
+      is bit-for-bit reproducible before any weights diverge. Attempt
+      1's SAME-iter "[vanilla_ppo] iter 0: ... mean_len=424.5" is far
+      ABOVE the 100-step trigger, and truncated=0 means none of those 70
+      attempts hit even the (small, 650-step) budget either — so on this
+      evidence episodes at x2502 were NOT dying fast; they were running
+      long. Caveat: no attempt held tau at 5 long enough to build a
+      trustworthy trailing sample past this one iter — attempt 3 had
+      already advanced twice (tau 5->4->3) by iter 52, two iters after
+      its phase-1 log opens at tau=4 — so this predicate remains
+      UNCONFIRMED either way by current telemetry; it is a real,
+      well-specified contingency to check on FUTURE time spent at that
+      rung, not a fix motivated by an observed failure.
+
+    override:
+      reinforce:
+        backward_curriculum:
+          tau_init: 4
+
+    receipt: >
+      Record: the tau=5/5 "[backward]" and same-iter "[vanilla_ppo]"
+      log lines across the FULL trailing window (>= min_attempts=30
+      scored, not just the first iter) that established mean_len < 100
+      with truncated ~= 0, the checkpoint iter the override was applied
+      FROM, and — after applying — the tau=4/5 rung's own trailing
+      rate/mean_len for a comparable window, to confirm x2000 is
+      survivable where x2502 was not (rather than the same hazard
+      simply also existing one rung back).

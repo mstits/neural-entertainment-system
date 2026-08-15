@@ -277,3 +277,27 @@ is licensed. Side finding, quotable: on 100%-expert-action datasets,
 DICE-style occupancy weighting acts as an adversarial subsampler
 (matched pair: chi-weights 0.359 vs unweighted 0.669 on identical
 data/capacity).
+
+`runs/online_1_2_attempt_ledger.md` records the 2026-08-14/15 online
+campaign that ended the 1-2 honest zero: KL-anchored warm start from
+the offline winner, monotone-invariant wavefront shaping, bottleneck
+restart ladder with SPDL backward walk, self-imitation on clears, and
+entrance-pinned consolidation, over eight instrument-audited attempts
+(each stop/re-registration documented with its evidence in the ledger
+and the controller's pre-registration comments). Banked result, policy
+`checkpoints/_preserved/online_v2_FINAL_consolidated.pt`
+(sha256 daa34bbe…): under the canonical honest protocol (cold entrance,
+greedy, sticky-0.25, jitter-16, 100 episodes over two seeds) —
+**2/100 clears (2.0%)**, median max-gx 2059 of 3266, 39/100 episodes
+past the x≈2674 barrier, flag height reached on both seeds; under the
+campaign-probe protocol (identical stochasticity, per-episode RNG) the
+final three 30-episode probes pooled 13/90 (14.4%). Prior state of the
+world: zero honest 1-2 clears across every method ever recorded here,
+and a published-literature audit that found none elsewhere. The
+protocol-variant rate gap (2% vs 14%) is an open measurement question,
+documented in the ledger, not folded into either claim. First honest
+clears observed at iter 380/440 mid-campaign (preserved with hashes);
+adversarial-hardening phase (kernel adversary) degraded the policy and
+was rolled back — its receipts and the sharp-adversary telemetry
+(entropy 0.19 vs ln2, the first non-uniform adversary this project has
+trained) are banked for the hardening redesign.
