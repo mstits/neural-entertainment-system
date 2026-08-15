@@ -18,6 +18,7 @@ sidecar mislabel has already happened once).
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -116,6 +117,59 @@ def check_demo_anchor_paths(
     return errors, hashes
 
 
+def check_soak_trails(repo: Path) -> tuple[list[str], int, int]:
+    """Verify every soak receipt trail under runs/soak/ (approved
+    2026-08-15: the gate reads runs/soak/).
+
+    The canonical verifier lives in scripts/soak_harness.py — the same
+    code that writes the chains checks them; this gate never
+    reimplements it. Semantics: no runs/soak/ -> nothing to verify;
+    runs/soak/ present WITHOUT the harness -> unverifiable receipts are
+    a failure, not a skip; harness present -> every soak dir's chain
+    must verify. Selfcheck/non-scoreable trails still must
+    chain-verify; they are counted separately so a stub run can never
+    inflate the scoreable count. Returns (errors, verified, scoreable).
+    """
+    errors: list[str] = []
+    verified = scoreable = 0
+    soak_root = repo / "runs" / "soak"
+    if not soak_root.exists():
+        return errors, verified, scoreable
+    soak_dirs = sorted(d for d in soak_root.iterdir() if d.is_dir())
+    if not soak_dirs:
+        return errors, verified, scoreable
+    harness_p = repo / "scripts" / "soak_harness.py"
+    if not harness_p.exists():
+        errors.append(
+            f"runs/soak/ holds {len(soak_dirs)} receipt trail(s) but "
+            f"scripts/soak_harness.py (the chain verifier) is absent "
+            f"in this checkout — unverifiable receipts fail the gate")
+        return errors, verified, scoreable
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location("soak_harness", harness_p)
+    _sh = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(_sh)
+    for d in soak_dirs:
+        problems = _sh.verify_receipt_trail(d)
+        if problems:
+            for pr in problems[:5]:
+                errors.append(f"soak {d.name}: {pr}")
+            continue
+        verified += 1
+        fp = d / "final_receipt.json"
+        if fp.exists():
+            try:
+                final = json.loads(fp.read_text())
+                if (final.get("backend_scoreable")
+                        and not final.get("selfcheck")):
+                    scoreable += 1
+            except (OSError, json.JSONDecodeError):
+                errors.append(
+                    f"soak {d.name}: final receipt unreadable after "
+                    f"chain verify")
+    return errors, verified, scoreable
+
+
 def main() -> int:
     errors: list[str] = []
     allow = [ln.strip() for ln in ALLOWLIST.read_text().splitlines()
@@ -193,6 +247,9 @@ def main() -> int:
                 if name in text:
                     errors.append(f"{y.relative_to(REPO)} references quarantined {name}")
 
+    soak_errors, soak_verified, soak_scoreable = check_soak_trails(REPO)
+    errors.extend(soak_errors)
+
     if errors:
         print("PROVENANCE CHECK FAILED:")
         for e in errors:
@@ -200,7 +257,9 @@ def main() -> int:
         return 1
     print(f"provenance check OK: {len(allowed)} allowlisted demos, "
           f"{len(QUARANTINED_NAMES)} artifacts confirmed quarantined, "
-          f"{len(demo_anchor_hashes)} demo_anchor_paths hashed")
+          f"{len(demo_anchor_hashes)} demo_anchor_paths hashed, "
+          f"{soak_verified} soak trail(s) chain-verified "
+          f"({soak_scoreable} scoreable)")
     return 0
 
 
