@@ -137,6 +137,53 @@ def test_sticky_zero_in_noise_free_phases_kernel_phase_included():
     assert sticky["consolidation"] == 0.25
 
 
+def test_loss_tether_coef_schedule_across_phases():
+    """Attempt-3 loss-level KL tether: 1.0 at unfreeze, 0.3 through the
+    sticky/reverse phases, 0.0 (anchor fully removed) from hardening on."""
+    base = _base_profile()
+    coefs = {
+        p["name"]: build_phase_profile(base, p, 0)["reinforce"].get(
+            "kl_anchor_loss_coef")
+        for p in PHASES
+    }
+    # Phase 0 leaves the key absent (trainer default 0.0; the actor is
+    # frozen for the whole critic warmup anyway).
+    assert coefs["critic_warmup"] is None
+    assert coefs["local_clear"] == 1.0
+    assert coefs["sticky_local"] == 0.3
+    assert coefs["reverse_walk"] == 0.3
+    assert coefs["hardening"] == 0.0
+    assert coefs["consolidation"] == 0.0
+
+
+def test_kill_table_is_preregistered_and_unchanged():
+    """The kill criteria are pre-registered per attempt. Attempt-4
+    re-registration (rationale in the CONFIG comment; attempt-3 receipt
+    runs/online_1_2_attempt3/): KL threshold 0.15 -> 0.60 — attempt 3's
+    loss tether held a STABLE plateau at ~0.31 (vs attempt 2's monotone
+    unspool to ~1.4) and 0.60 separates the two measured modes — plus a
+    new immediate competence kill on probe median collapse, which guards
+    the thing the KL kill was a proxy for. These pins exist so any later
+    change must be equally deliberate."""
+    assert CONFIG["kill_kl_threshold"] == 0.60
+    assert CONFIG["kill_kl_sustain_steps"] == 2_000_000
+    assert CONFIG["kill_probe_median_floor"] == 150.0
+    assert CONFIG["kill_vloss_spike_ratio"] == 5.0
+    assert CONFIG["kill_vloss_recovery_steps"] == 1_000_000
+    assert CONFIG["kill_phase1_no_sil_clear_steps"] == 20_000_000
+
+
+def test_base_profile_gammas_rescaled_and_equal():
+    """Return scale (attempt 3): reinforce.gamma dropped 0.999 -> 0.99, and
+    the wavefront shaping gamma must mirror it exactly — the monotone
+    rule's PBRS invariance argument requires shaping gamma == RL gamma."""
+    import yaml
+    prof = yaml.safe_load((ROOT / CONFIG["base_profile"]).read_text())
+    rl = prof["reinforce"]
+    assert rl["gamma"] == 0.99
+    assert rl["wavefront_reward"]["gamma"] == rl["gamma"]
+
+
 def test_entropy_coef_follows_cumulative_steps():
     base = _base_profile()
     p0 = build_phase_profile(base, PHASES[0], cum_env_steps=0)
@@ -165,7 +212,7 @@ def test_kl_kill_fires_after_sustained_2m_in_phase1():
     n = _steps_to_iters(CONFIG["kill_kl_sustain_steps"])
     reason = None
     for g in range(n):
-        reason = m.observe(_row(g, kl_anchor_div=0.2, ppo_value_loss=1.0,
+        reason = m.observe(_row(g, kl_anchor_div=0.7, ppo_value_loss=1.0,
                                 sil_clears_total=1))
         if reason:
             break

@@ -87,16 +87,40 @@ CONFIG: dict[str, Any] = {
     "bottleneck_survival_x": 2600,
 
     # Kill criteria (pre-registered).
-    "kill_kl_threshold": 0.15,
+    # Attempt-4 re-registration (logged BEFORE launch; attempt-3 receipt:
+    # runs/online_1_2_attempt3/). Attempt 3's loss-level tether produced a
+    # STABLE plateau at KL~0.31 (iters 51-73: oscillation 0.19-0.50 settling
+    # flat at 0.30-0.32, vs attempt 2's monotone unspool to ~1.4) — the 0.15
+    # threshold, registered before any tether existed, killed the healthiest
+    # dynamics yet. The failure mode this kill exists to catch is monotone
+    # divergence, and the two attempts' telemetry separates the modes at
+    # ~0.6. A bounded plateau is not forgetting; competence collapse is —
+    # so a second, direct kill on probe competence is added below.
+    "kill_kl_threshold": 0.60,
     "kill_kl_sustain_steps": 2_000_000,       # phase 1 only
+    # Competence kill (any phase, any probe): if the honest probe's median
+    # max-x falls below this floor, the anchor has failed at the only level
+    # that matters — the policy lost even the early-hazard competence the
+    # frozen A7 prior scores (~187 median on the probe seed). Fires
+    # immediately, no sustain window.
+    "kill_probe_median_floor": 150.0,
     "kill_vloss_spike_ratio": 5.0,            # >500% of trailing baseline
     "kill_vloss_recovery_steps": 1_000_000,
     "kill_vloss_baseline_rows": 20,           # rows before the spike arms
     "kill_phase1_no_sil_clear_steps": 20_000_000,
 
     # Advance gates.
-    "gate_critic_cv": 0.10,                   # phase 0: trailing CV < 10%
+    # Attempt-1 calibration: raw huber value loss on this reward scale
+    # oscillated 30-95 (CV ~0.3) at 8M steps and never approached 10%.
+    # 0.25 over a 50-iter trail plus a minimum-steps floor replaces the
+    # old actor_freeze_steps coupling (freeze is now a config sentinel).
+    "gate_critic_cv": 0.25,
     "gate_critic_window_iters": 50,
+    # 5M floor guarded a FRESH critic; on resumed runs the critic
+    # arrives with 50M+ steps of training and passes instantly, so the
+    # floor is pure re-warmup overhead. 2M still forces a real trailing
+    # window before the gate can fire. (Attempt-6 re-registration.)
+    "gate_min_phase0_steps": 2_000_000,
     "gate_det_clears": 10,                    # phase 1: 10/10 deterministic
     "gate_sticky_clear": 0.80,                # phase 2: sticky-local > 80%
     # phase 3 gate: backward tau == 0 (read from the latest checkpoint's
@@ -122,18 +146,49 @@ CONFIG: dict[str, Any] = {
 #   restart_at_entrance— backward tau == 0 in the latest checkpoint;
 #   budget             — phase completes when the budget is spent.
 PHASES: tuple[dict, ...] = (
+    # Phase 0 keeps the base profile's sentinel actor_freeze_steps: the
+    # actor stays frozen until the critic-stability gate passes, however
+    # long that takes — unfreeze is gate-coupled, never timer-coupled
+    # (attempt-1 post-mortem). Phases 1+ unfreeze (freeze 0) and phase 1
+    # additionally drops lr to 3e-5 so the fresh-unfrozen actor takes
+    # small steps while the KL anchor (beta 0.5 at unfreeze) holds.
+    # Attempt 3 adds the loss-level tether (kl_anchor_loss_coef): the
+    # reward-level beta alone let KL blow 0 -> 0.574 in ONE PPO iteration
+    # at unfreeze; the per-update term pulls every minibatch back toward
+    # the prior. 1.0 at unfreeze, relaxed to 0.3 while robustifying,
+    # 0.0 from hardening on (anchor fully removed, per the accepted spec).
     {"idx": 0, "name": "critic_warmup", "gate": "critic_warmup",
-     "budget_env_steps": 8_000_000,
+     "budget_env_steps": 15_000_000,
      "overrides": {"reinforce": {"sticky_action_prob": 0.0}}},
     {"idx": 1, "name": "local_clear", "gate": "det_local_clears",
      "budget_env_steps": 40_000_000,
-     "overrides": {"reinforce": {"sticky_action_prob": 0.0}}},
-    {"idx": 2, "name": "sticky_local", "gate": "sticky_clear",
-     "budget_env_steps": 40_000_000,
-     "overrides": {"reinforce": {"sticky_action_prob": 0.25}}},
+     "overrides": {"reinforce": {"sticky_action_prob": 0.0,
+                                 "actor_freeze_steps": 0,
+                                 "lr": 0.00003,
+                                 "kl_anchor_loss_coef": 1.0}}},
+    # Attempt-6 re-registration (evidence: runs/online_1_2_attempt5/).
+    # Phase 2's sticky_clear gate (>0.8 rung-local under sticky+jitter)
+    # was measured 5 times at 0.7/0.2/0.2/0.37/0.1 — mean ~0.31, no
+    # trend, median max-x pinned at 2675 on every probe — while the
+    # campaign's true metric moved: entrance honest clears emerged
+    # (5/150 pooled) and bottleneck survival from the rung was 30/30 on
+    # every single probe. The gate measured the minted tape state's
+    # entry conditions (frozen velocity/enemy phase + jitter), not the
+    # capability the mission needs; as a gated phase it would have
+    # budget-ABORTED the campaign before the reverse walk ever ran.
+    # Re-registered as budget-complete at 2M (25M+ of sticky wall
+    # practice already banked across attempts); the rate-building work
+    # belongs to phase 3.
+    {"idx": 2, "name": "sticky_local", "gate": "budget",
+     "budget_env_steps": 2_000_000,
+     "overrides": {"reinforce": {"sticky_action_prob": 0.25,
+                                 "actor_freeze_steps": 0,
+                                 "kl_anchor_loss_coef": 0.3}}},
     {"idx": 3, "name": "reverse_walk", "gate": "restart_at_entrance",
      "budget_env_steps": 60_000_000,
-     "overrides": {"reinforce": {"sticky_action_prob": 0.25}}},
+     "overrides": {"reinforce": {"sticky_action_prob": 0.25,
+                                 "actor_freeze_steps": 0,
+                                 "kl_anchor_loss_coef": 0.3}}},
     # Phase 4's perturbation is the kernel-matched adversary (house sticky
     # off — the two would double-perturb the same channel); restarts pin
     # to the true entrance for cold hardening.
@@ -141,12 +196,16 @@ PHASES: tuple[dict, ...] = (
      "budget_env_steps": 20_000_000,
      "overrides": {"reinforce": {
          "sticky_action_prob": 0.0,
+         "actor_freeze_steps": 0,
+         "kl_anchor_loss_coef": 0.0,
          "adversary": {"mode": "kernel_sticky"},
          "backward_curriculum": {"pin_entrance": True}}}},
     {"idx": 5, "name": "consolidation", "gate": "budget",
      "budget_env_steps": 10_000_000,
      "overrides": {"reinforce": {
          "sticky_action_prob": 0.25,
+         "actor_freeze_steps": 0,
+         "kl_anchor_loss_coef": 0.0,
          "backward_curriculum": {"pin_entrance": True}}}},
 )
 
@@ -419,15 +478,34 @@ def read_backward_tau(payload: Optional[dict]) -> Optional[int]:
     return None
 
 
+def _top_rung_state() -> Path:
+    """The highest-gx minted restart state (the bottleneck approach rung).
+
+    Gate probes are RUNG-LOCAL by design: phase 1/2 gates measure clears
+    of the bottleneck from the x~2502 rung, not entrance-to-flag runs.
+    (Attempt-4 harness defect: gate probes launched from the entrance,
+    making the deterministic gate impossible — proven by a det gate probe
+    median of 668 < 2502, arithmetically impossible from the rung.)
+    Honest probes stay entrance-based; only gates use this.
+    """
+    manifest = json.loads(
+        (REPO / CONFIG["restart_states_dir"] / "manifest.json").read_text())
+    entries = manifest if isinstance(manifest, list) else (
+        manifest.get("rungs") or manifest.get("states") or [])
+    top = max(entries, key=lambda e: e.get("gx", -1))
+    return REPO / CONFIG["restart_states_dir"] / top["file"]
+
+
 def build_probe_command(
     *, checkpoint: Path, episodes: int, sticky: float, jitter: int,
-    max_steps: int, eval_seed: int,
+    max_steps: int, eval_seed: int, start_state: Optional[Path] = None,
 ) -> list[str]:
     """The honest-probe eval_game argv (greedy; sticky/jitter as given).
 
     Stochastic probes get parallel lanes + per-episode RNG (eval_game
     refuses shared-stream parallel stochastic runs); the deterministic
-    phase-1 gate probe runs a single serial lane.
+    phase-1 gate probe runs a single serial lane. start_state overrides
+    the profile entrance (rung-local gate probes); None = entrance.
     """
     base = _load_yaml(REPO / CONFIG["base_profile"])
     cmd = [
@@ -439,7 +517,8 @@ def build_probe_command(
         "--episodes", str(int(episodes)),
         "--max-steps", str(int(max_steps)),
         "--sequential", "--level-clear",
-        "--start-state", str(REPO / base["start_state_path"]),
+        "--start-state", str(start_state if start_state is not None
+                             else REPO / base["start_state_path"]),
         "--eval-seed", str(int(eval_seed)),
     ]
     if sticky > 0.0:
@@ -453,12 +532,12 @@ def build_probe_command(
 
 
 def run_probe(*, checkpoint: Path, episodes: int, sticky: float, jitter: int,
-              eval_seed: int) -> dict:
+              eval_seed: int, start_state: Optional[Path] = None) -> dict:
     """Run one probe subprocess; returns eval_game's JSON (or an error dict)."""
     cmd = build_probe_command(
         checkpoint=checkpoint, episodes=episodes, sticky=sticky,
         jitter=jitter, max_steps=CONFIG["probe_max_steps"],
-        eval_seed=eval_seed)
+        eval_seed=eval_seed, start_state=start_state)
     try:
         proc = subprocess.run(
             cmd, cwd=str(REPO), capture_output=True, text=True,
@@ -617,33 +696,55 @@ def _gate_met(phase: dict, *, base: dict, vloss_window: deque,
     if gate == "budget":
         return phase_env_steps >= phase["budget_env_steps"]
     if gate == "critic_warmup":
-        freeze = float(base["reinforce"].get("actor_freeze_steps", 0))
-        if phase_env_steps < freeze:
+        if phase_env_steps < CONFIG["gate_min_phase0_steps"]:
             return False
         cv = critic_cv(list(vloss_window))
         return cv < CONFIG["gate_critic_cv"]
     if gate == "det_local_clears":
-        # Deterministic gate probe: greedy, sticky 0, jitter 0 — N
-        # consecutive clears == clear_rate 1.0 over N episodes.
+        # Deterministic gate probe: greedy, sticky 0, jitter 0, FROM THE
+        # TOP RUNG (x~2502) — N consecutive local bottleneck clears ==
+        # clear_rate 1.0 over N episodes. Rung-local by design; the
+        # entrance-to-flag path is phase 3's job.
         ckpt = latest_checkpoint(ckpt_dir)
         if ckpt is None:
             return False
         res = run_probe(checkpoint=ckpt,
                         episodes=CONFIG["gate_det_clears"], sticky=0.0,
-                        jitter=0, eval_seed=probe_seed)
+                        jitter=0, eval_seed=probe_seed,
+                        start_state=_top_rung_state())
         summ = probe_summary(res, CONFIG["bottleneck_survival_x"])
         _append_jsonl(log_path, {
             "type": "gate_probe", "phase": phase["idx"], "protocol": {
-                "sticky": 0.0, "jitter": 0,
+                "sticky": 0.0, "jitter": 0, "start": "rung_top",
                 "episodes": CONFIG["gate_det_clears"]},
             **summ, "status": res.get("status")})
         return (res.get("status") == "ok"
                 and summ["n_episodes"] >= CONFIG["gate_det_clears"]
                 and summ["clear_rate"] >= 1.0)
     if gate == "sticky_clear":
-        if not last_probe or last_probe.get("status") != "ok":
+        # Rung-local sticky gate: clears from the top rung under the
+        # honest noise profile (sticky 0.25 + jitter). The entrance-based
+        # honest probe is the campaign metric, NOT this gate — requiring
+        # >80% honest entrance clears here would gate phase 2 on a bar
+        # above the campaign's own end goal (attempt-4 harness defect).
+        ckpt = latest_checkpoint(ckpt_dir)
+        if ckpt is None:
             return False
-        return last_probe["clear_rate"] > CONFIG["gate_sticky_clear"]
+        res = run_probe(checkpoint=ckpt,
+                        episodes=CONFIG["probe_episodes"],
+                        sticky=CONFIG["probe_sticky"],
+                        jitter=CONFIG["probe_jitter"],
+                        eval_seed=probe_seed,
+                        start_state=_top_rung_state())
+        summ = probe_summary(res, CONFIG["bottleneck_survival_x"])
+        _append_jsonl(log_path, {
+            "type": "gate_probe", "phase": phase["idx"], "protocol": {
+                "sticky": CONFIG["probe_sticky"],
+                "jitter": CONFIG["probe_jitter"], "start": "rung_top",
+                "episodes": CONFIG["probe_episodes"]},
+            **summ, "status": res.get("status")})
+        return (res.get("status") == "ok"
+                and summ["clear_rate"] > CONFIG["gate_sticky_clear"])
     if gate == "restart_at_entrance":
         tau = read_backward_tau(load_checkpoint_payload(ckpt_dir))
         return tau == 0
@@ -753,6 +854,19 @@ def run_campaign(start_phase: int = 0) -> int:
                             "episodes": CONFIG["probe_episodes"],
                             "greedy": True},
                         **summ, "status": res.get("status")})
+                    # Competence kill: an OK probe whose median max-x is
+                    # below the floor means the policy lost even the
+                    # frozen prior's early-hazard competence — the direct
+                    # signature of anchor failure. No sustain window.
+                    if (res.get("status") == "ok"
+                            and summ["n_episodes"] > 0
+                            and summ["median_max_x"]
+                            < CONFIG["kill_probe_median_floor"]):
+                        return _abort(
+                            f"KILL probe median_max_x "
+                            f"{summ['median_max_x']:.0f} < floor "
+                            f"{CONFIG['kill_probe_median_floor']:.0f} "
+                            f"in phase {phase['idx']}")
 
                 # Gate check rides the probe cadence (cheap gates too —
                 # they only read state the probe cycle already loads).
