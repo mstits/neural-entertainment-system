@@ -695,13 +695,38 @@ def cell_fn(ram) -> tuple:
 # ---------------------------------------------------------------------
 
 #: `progress: {smooth: ...}` modes. `off` = the shipped behaviour.
-PROGRESS_SMOOTH_MODES = ("off", "borrow", "median3")
+PROGRESS_SMOOTH_MODES = ("off", "borrow", "median3", "hampel")
 
 #: Default `progress: {jump: N}`: how far the observable may move in one
 #: observation before a filter is allowed to call the sample torn. 128 is
 #: half a page — comfortably above any per-frame velocity a position byte
 #: pair can express, comfortably below the ~255 a torn pair fabricates.
 PROGRESS_JUMP = 128
+
+#: `hampel`'s rolling window: the median/MAD are taken over this many raw
+#: samples (the current one plus the trailing HAMPEL_WINDOW - 1), and the
+#: persistence check that lets a sustained jump through reads one sample
+#: further back still — see `progress_glitch` and `HAMPEL_KEEP` below.
+HAMPEL_WINDOW = 5
+
+#: How many raw samples `observe()` must keep in `hist` for `hampel` to see
+#: both its window and the one-sample-further-back persistence check. One
+#: more than the window: the window's oldest slot is exactly the sample the
+#: persistence check needs as ITS window's newest slot.
+HAMPEL_KEEP = HAMPEL_WINDOW + 1
+
+
+def _median_mad(values) -> tuple:
+    """(median, MAD) of `values`. Pure; ties broken the same way for both
+    odd and even counts (average of the two middle order statistics)."""
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    median = s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
+    devs = sorted(abs(v - median) for v in s)
+    m = len(devs) // 2
+    mad = devs[m] if len(devs) % 2 else (devs[m - 1] + devs[m]) / 2
+    return median, mad
 
 
 def progress_glitch(mode: str, hist, sample, jump: int = PROGRESS_JUMP) -> bool:
@@ -725,6 +750,20 @@ def progress_glitch(mode: str, hist, sample, jump: int = PROGRESS_JUMP) -> bool:
               spike. Catches a tear whose bytes are not adjacent (and
               any other single-frame impulse) at the cost of dropping
               the first sample of a genuine jump too.
+    hampel  — a robust generalisation of median3: the sample is compared
+              against the median of the trailing HAMPEL_WINDOW raw values
+              (current one included), and flagged only when it clears BOTH
+              3 * MAD (the Hampel identifier's usual threshold) and `jump`.
+              median3 always drops the first sample of a genuine warp; this
+              mode does too, UNLESS the immediately preceding raw sample
+              (which the window rule would still be outvoting 3-2 by the
+              old baseline) was itself a comparable outlier against the
+              window one step further back AND `sample` sits close to it
+              rather than reverting — two consecutive readings that agree
+              on a new level are a level, not a spike, and the second one
+              is admitted retroactively (<=1 sample of delay: the first
+              reading of a warp still costs an observation, exactly like
+              median3, but the second one is never dropped).
     """
     if mode in (None, "", "off") or not hist:
         return False
@@ -746,6 +785,27 @@ def progress_glitch(mode: str, hist, sample, jump: int = PROGRESS_JUMP) -> bool:
             return False
         median = sorted((int(hist[-2][0]), int(pval), int(val)))[1]
         return abs(int(val) - median) > jump
+    if mode == "hampel":
+        if len(hist) < 2:
+            return False
+        window = [int(h[0]) for h in hist[-(HAMPEL_WINDOW - 1):]] + [int(val)]
+        median, mad = _median_mad(window)
+        dev = abs(int(val) - median)
+        if not (dev > 3 * mad and dev > jump):
+            return False
+        prev_val = int(pval)
+        if abs(int(val) - prev_val) > jump:
+            return True   # not sitting near the previous sample: no
+                           # persistence signal, this is a lone spike
+        prior = [int(h[0]) for h in hist[-HAMPEL_WINDOW:-1]]
+        if len(prior) < 2:
+            return True
+        pmedian, pmad = _median_mad(prior)
+        pdev = abs(prev_val - pmedian)
+        if pdev > 3 * pmad and pdev > jump:
+            return False  # two consecutive outliers agreeing on a new
+                           # level: a sustained jump, admitted
+        return True
     return False
 
 
@@ -1265,6 +1325,22 @@ class GenericGame:
                 f"[go_explore_solve] progress.jump must be >= 1, got "
                 f"{self.progress_jump}: a zero-width tolerance calls every "
                 f"observation torn and the search records nothing.")
+        # ATOMIC PEEK (optional, default off). `progress: {atomic: true}`
+        # routes the two-byte sample through Pool.peek_u16_consistent
+        # instead of composing it from a step snapshot: the scratch-
+        # instance adjudicator resolves the same 0xFF/0x00 boundary
+        # `smooth` merely screens for, so it supersedes `smooth` rather
+        # than stacking with it (Solver.observe skips the smoothing
+        # block whenever atomic is on). Needs a two-byte read for the
+        # same reason `borrow` does — there is no pair to adjudicate on
+        # a single byte or a decoded HUD field.
+        self.progress_atomic = bool(p.get("atomic", False))
+        if self.progress_atomic and self._phi is None:
+            raise SystemExit(
+                "[go_explore_solve] progress.atomic: true needs a two-byte "
+                "progress read (`progress: {lo: .., hi: ..}`) — there is no "
+                "pair for peek_u16_consistent to adjudicate on a single "
+                "byte.")
         self._y = int(s["y"])
         self._lk = [int(a) for a in s["level_key"]]
         self._lives = int(s["lives"])
@@ -1595,6 +1671,27 @@ class GenericGame:
         if self._ptiles is not None or self._phi is None:
             return (v, None, None)
         return (v, int(ram[self._phi]), int(ram[self._plo]))
+
+    def progress_atomic_read(self, pool, wid: int) -> tuple:
+        """`(value, consistent)` for `progress: {atomic: true}` — the
+        composed 16-bit progress pair read through the Rust torn-read-
+        guarded peek (`Pool.peek_u16_consistent`) rather than composed
+        from a step snapshot. `consistent` is False on an unadjudicated
+        boundary (mid-OAM-DMA, a missing/panicked scratch instance); the
+        caller must treat that exactly like a transition-frame read, not
+        trust `value`. Raises SystemExit rather than silently falling
+        back to the torn read this flag exists to avoid — the profile
+        parser already refused `atomic: true` on a single-byte progress
+        read, so the only way here is a pool built before the binding
+        shipped."""
+        if not hasattr(pool, "peek_u16_consistent"):
+            raise SystemExit(
+                "[go_explore_solve] progress.atomic: true but this "
+                "nes_core build has no peek_u16_consistent binding — "
+                "rebuild it (`make build`) and refresh the venv .so "
+                "(maturin does not update it in place) before using "
+                "this flag.")
+        return pool.peek_u16_consistent(wid, self._plo, self._phi)
 
     def level_key(self, ram) -> tuple:
         return tuple(int(ram[a]) for a in self._lk)
@@ -2658,6 +2755,18 @@ class Solver:
         self.progress_jump = int(
             getattr(self.game, "progress_jump", PROGRESS_JUMP))
         self._prog_glitches = 0
+        # ATOMIC PEEK preflight (see GenericGame.progress_atomic_read):
+        # fail at construction, not on the first observation, when the
+        # profile asks for `progress.atomic` but the loaded nes_core
+        # build predates peek_u16_consistent.
+        if (getattr(self.game, "progress_atomic", False)
+                and not hasattr(self.pool, "peek_u16_consistent")):
+            raise SystemExit(
+                "[go_explore_solve] progress.atomic: true but this "
+                "nes_core build has no peek_u16_consistent binding — "
+                "rebuild it (`make build`) and refresh the venv .so "
+                "(maturin does not update it in place) before using "
+                "this flag.")
         # THE BORROW RULE AUDITS ITSELF (see borrow_followup). It assumes
         # `hi` is `lo`'s page byte, which is true of Castlevania's
         # $0040/$0041 and false of the six (screen, x) composites in
@@ -2787,7 +2896,20 @@ class Solver:
             return "dead"
         elif ctx is not None:
             ctx["_key_mm"] = 0
-        gx = game.progress(ram)
+        # ATOMIC PEEK (opt-in, `progress: {atomic: true}`, see
+        # GenericGame.progress_atomic_read): reads the two-byte pair
+        # through the Rust torn-read-guarded scratch adjudicator instead
+        # of composing it from this step's snapshot. `consistent=False`
+        # is an unadjudicated boundary — same disposition as every other
+        # garbage read on this path, drop the sample, record nothing.
+        # (getattr: duck-typed Solver stand-ins in the tests and the
+        # live show predate the knob.)
+        if getattr(game, "progress_atomic", False):
+            gx, gx_consistent = game.progress_atomic_read(self.pool, wid)
+            if not gx_consistent:
+                return "live"
+        else:
+            gx = game.progress(ram)
         if gx > game.progress_cap:
             # Transition-frame garbage read (page byte mid-load reads huge);
             # real SMB levels reach ~6,300 px (8-1) — the old 3900 cap silently
@@ -2799,12 +2921,18 @@ class Solver:
         # own ctx to hold the history — one stream per worker, reset for
         # free at every re-root, which is exactly where a positional
         # observable legitimately teleports. See progress_glitch.
+        # Inert when `atomic` is on: peek_u16_consistent already resolves
+        # the boundary the filter can only screen for, so stacking a
+        # heuristic on top of an adjudicated read could only add false
+        # rejections of a genuine warp, never fix anything the peek
+        # missed.
         # (getattr, not a bare attribute: every duck-typed Solver
         # stand-in in the tests and in the live show predates the knob,
         # and an observation path that only runs under the real
         # constructor is a path the unit tests cannot reach.)
         smooth = getattr(self, "progress_smooth", "off")
-        if smooth != "off" and ctx is not None:
+        if (smooth != "off" and ctx is not None
+                and not getattr(game, "progress_atomic", False)):
             sample = (game.progress_pair(ram)
                       if hasattr(game, "progress_pair") else (gx, None, None))
             hist = ctx.setdefault("_prog_hist", [])
@@ -2823,7 +2951,9 @@ class Solver:
             torn = progress_glitch(smooth, hist, sample,
                                    getattr(self, "progress_jump",
                                            PROGRESS_JUMP))
-            push_progress_sample(hist, sample)
+            push_progress_sample(hist, sample,
+                                 keep=(HAMPEL_KEEP if smooth == "hampel"
+                                       else 2))
             if torn:
                 self._prog_glitches = getattr(self, "_prog_glitches", 0) + 1
                 if smooth == "borrow":

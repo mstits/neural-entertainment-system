@@ -142,7 +142,7 @@ solve:
   # under NOOP (net 0), wrap-coupled 3x; Gate 2 no camera clamp
   # (rebases 0, within-room cap false). No amendment needed — the byte
   # pair below is what the probe would emit from scratch.
-  progress: {lo: 0x0065, hi: 0x0064}
+  progress: {lo: 0x0065, hi: 0x0064, smooth: hampel}
   # NOT ADOPTED, 2026-08-10 (both would change the cell key, so both are
   # behaviour changes, and both would break comparability with the
   # receipted base wall at max_gx_in_max_area == 3072 that the re-entry

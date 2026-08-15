@@ -170,7 +170,7 @@ solve:
   # rejection list (0x005D scroll bytes, 0x0083/0x0608 frame clocks,
   # 0x06C2/0x05C0 camera-saturation) and the wrap/direction-sensitivity
   # evidence for this pair.
-  progress: {lo: 0x006C, hi: 0x0065}
+  progress: {lo: 0x006C, hi: 0x0065, smooth: hampel}
   progress_cap: 8000
   # No clean ballistic Y was isolable from the pinned spawn (the same
   # zombie-lock that killed the X probes also meant every "hold A" burst

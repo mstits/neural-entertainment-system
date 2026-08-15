@@ -659,7 +659,8 @@ def test_the_solver_resolves_the_mode_off_its_adapter_and_short_circuits():
     assert 'getattr(self.game, "progress_jump"' in init
     body = inspect.getsource(Solver.observe)
     head = body.split('smooth = getattr(self, "progress_smooth", "off")', 1)[1]
-    assert head.lstrip().startswith('if smooth != "off" and ctx is not None:')
+    assert head.lstrip().startswith(
+        'if (smooth != "off" and ctx is not None')
 
 
 def test_each_burst_filters_its_own_stream():
