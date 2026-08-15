@@ -1,0 +1,114 @@
+name: Mario 1-2 AUTORESOLVE seedvar (base recipe, distinct dir for seed-variance)
+rom_path: roms/Super Mario Bros. (World).nes
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+start_state_path: checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/stage_03.state
+description: 'Mario 1-2 learned clear via the research-corrected recipe: non-farmable
+  positive-shifted wavefront PBRS, DQfD large-margin demo anchor on the expert forward
+  solutions + DARS recoveries (binds the GREEDY mode), Go-Explore backward-curriculum
+  restarts, feedforward tile MLP, sticky-0.25. Honest gate: cold greedy sticky+jitter
+  1-2 clear from the entrance.
+
+  '
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+reinforce:
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos
+  recurrent: false
+  tile_hidden_dim: 128
+  tile_trunk_dim: 32
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  symlog_rewards: true
+  value_loss: huber
+  value_coef: 0.25
+  gae_lambda: 0.95
+  gamma: 0.99
+  bc_epochs: 0
+  warmup_gens_ga_only: 10
+  steps: 10
+  lr: 0.0003
+  ppo_clip_eps: 0.2
+  async_pipeline: false
+  device: cpu
+  panic_isolation: false
+  entropy_coef: 0.005
+  entropy_floor: 0.1
+  entropy_coef_max: 0.05
+  rnd_intrinsic_coef: 0.0
+  rnd_loss_coef: 0.0
+  sticky_action_prob: 0.25
+  wavefront_reward:
+    enabled: true
+    dmap: checkpoints/wavefront/mario_1_2_dmap.pkl
+    phi_target: 100.0
+    gamma: 0.99
+  demo_anchor_enabled: false
+  demo_anchor_paths:
+  - runs/ge_1_2_solve/demos/demo_000.npz
+  - runs/ge_1_2_solve/demos/demo_001.npz
+  - runs/ge_1_2_solve/demos/demo_002.npz
+  - runs/ge_1_2_solve/demos/demo_003.npz
+  - runs/dars_1_2/recovery_demos.npz
+  - runs/dars_1_2/wall_recovery_demos.npz
+  demo_anchor_coef: 1.0
+  demo_anchor_coef_final: 0.02
+  demo_anchor_margin: 0.5
+  demo_anchor_decay_start: 100
+  demo_anchor_decay_iters: 600
+  demo_anchor_minibatch: 256
+  bc_replay_enabled: false
+  preprocess_f16: false
+  smb_curriculum: false
+  go_explore:
+    enabled: true
+    inline_return_prob: 0.6
+    cell:
+      type: smb_gx_phase
+      gx_bucket: 16
+      y_bucket: 32
+    score: max_x
+    save_every: 20
+  num_envs: 60
+ga_params:
+  mutation_rate: 0.8
+  mutation_std: 0.001
+  adaptive_mutation_scale: false
+  elite_fraction: 0.4
+  stale_gens_before_restart: 50
+  restart_fraction: 0.5
+max_episode_steps: 2400

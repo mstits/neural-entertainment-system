@@ -62,9 +62,44 @@ solve:
   # zero climbs survived). One bit, cardinality 2.
   state_sig:
     - {addr: 0x0004, match: [8]}
-  # Active-entity slot flags (0x450..0x457, observed 0/1 spawn/despawn in
-  # block-3 differential probes 2026-07-29/30): --kill-key counts 1->0
-  # transitions as kills for the prerequisite-gate search dimension.
+  # Active-entity OCCUPANCY flags, 0x450..0x457.
+  #
+  # RECEIPTED 2026-08-10 (scripts/probe_entity_slots.py; receipts:
+  # docs/receipts/probes/cv_entity_slots_2026-08-10.json, _site2_,
+  # _attribution_). Until then the only provenance for this range was
+  # this comment, which cited "block-3 differential probes 2026-07-29/30"
+  # — no such artifact existed. It is the one solve byte-range that ever
+  # entered the profile unreceipted; the probe closes that and corrects
+  # what the comment claimed.
+  #
+  # CONFIRMED by the probe: the bounds are a measured structure, not an
+  # assumption. Sweeping the whole page 0x0400-0x04FF, the longest
+  # contiguous run of binary-{0,1} bytes is exactly 0x0450-0x0458
+  # (length 8; runner-up length 3). Slots spawn and despawn under our
+  # own inputs — 0.00 despawns/1k under NOOP vs 24.00/1k under the best
+  # arm at the block-3 hall root.
+  #
+  # REFUTED by the same probe: the old comment said "--kill-key counts
+  # 1->0 transitions as kills". It does not. Every action arm above the
+  # NOOP baseline at both probe sites contains `right`; both attack
+  # actions (B, down+B) sit exactly at baseline; holding locomotion
+  # constant, right+B vs right moves the pooled rate +2.0/1k and
+  # +0.0/1k, matching the non-attack control right+A vs right. The 1->0
+  # edge tracks the CAMERA SCROLLING PAST an entity, so a cumulative
+  # count over it is a monotone function of distance — a positional
+  # alias. It is also farmable: 317 edges over 8 slots at each site
+  # (~40x respawn).
+  #
+  # CONSEQUENCE: do NOT enable --kill-key on this profile expecting a
+  # combat axis; it would key cells on distance travelled. A real
+  # interaction axis needs a contact-conditioned differential first
+  # (docs/proposals/gate_opener_arm_2026-08-11.md §3.1(a2) P1-P4).
+  # The range stays declared because the occupancy reading is sound and
+  # it is the substrate that probe will work from.
+  #
+  # Residual defects, recorded not smoothed: at the hall root 0x0451 and
+  # 0x0452 are byte-identical columns over 32k steps and 0x0453 showed
+  # zero spawns, so the reachable mask alphabet is well under 2^8.
   entity_slots: {lo: 0x0450, hi: 0x0458}
 
 reward_weights:

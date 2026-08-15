@@ -200,11 +200,25 @@ class _TilePolicy:
     and decodes it into a feature vector.
     """
 
-    def __init__(self, net, stacker, extractor, is_recurrent: bool) -> None:
+    def __init__(
+        self,
+        net,
+        stacker,
+        extractor,
+        is_recurrent: bool,
+        prev_action_feature: bool = False,
+        num_actions: int = 0,
+    ) -> None:
         self.net = net
         self.stacker = stacker
         self.extractor = extractor
         self.is_recurrent = is_recurrent
+        # a_{t-1} de-aliasing: when enabled, `logits` appends the one-hot of the
+        # last EXECUTED action (length num_actions) to the tile obs so the net
+        # sees the same 718-dim input the prev-action BC checkpoint trained on.
+        # Off by default => obs is untouched and the path is byte-identical.
+        self.prev_action_feature = bool(prev_action_feature)
+        self.num_actions = int(num_actions)
 
     def reset(self, step) -> np.ndarray:
         return self.stacker.reset(self.extractor.extract(step[2]))
@@ -215,7 +229,11 @@ class _TilePolicy:
     def initial_hidden(self, device):
         return self.net.initial_hidden(1, device) if self.is_recurrent else None
 
-    def logits(self, obs: np.ndarray, hidden):
+    def logits(self, obs: np.ndarray, hidden, prev_action: int = 0):
+        if self.prev_action_feature:
+            onehot = np.zeros(self.num_actions, dtype=obs.dtype)
+            onehot[int(prev_action)] = 1
+            obs = np.concatenate((obs, onehot))
         x = torch.from_numpy(obs[None, :]).float()
         if self.is_recurrent:
             logits, _, hidden = self.net.forward_ac_recurrent(x, hidden)
@@ -265,7 +283,9 @@ class _PixelPolicy:
     def initial_hidden(self, device):
         return None
 
-    def logits(self, obs: np.ndarray, hidden):
+    def logits(self, obs: np.ndarray, hidden, prev_action: int = 0):
+        # `prev_action` is accepted for a uniform call signature with the tile
+        # policy and ignored: the a_{t-1} feature is tile-path only.
         x = torch.from_numpy(obs[None, :]).float()
         if not self.preprocess_f16:
             x = x.div_(255.0)
@@ -422,7 +442,9 @@ def _run_episodes_parallel(
                 if lane.done or lane.noops_left > 0:
                     continue  # no-op: action 0, exactly as the serial pre-loop
                 with torch.no_grad():
-                    logits, lane.hidden = lane.pol.logits(lane.obs, lane.hidden)
+                    logits, lane.hidden = lane.pol.logits(
+                        lane.obs, lane.hidden, lane.prev_action,
+                    )
                     action_idx = select_action(
                         logits, action_select, temperature, lane.gen,
                     )
@@ -591,7 +613,7 @@ def _run_episodes_serial(
             # and pixel. `action_select` picks argmax (default) or a seeded
             # draw from the policy's own softmax.
             with torch.no_grad():
-                logits, hidden = pol.logits(obs, hidden)
+                logits, hidden = pol.logits(obs, hidden, _prev_action_idx)
                 action_idx = select_action(
                     logits, action_select, temperature, _action_gen,
                 )
@@ -696,6 +718,7 @@ def eval_one_game(
     temperature: float = 1.0,
     eval_workers: int = 1,
     eval_rng: str = "shared-stream",
+    prev_action_feature: bool = False,
 ) -> dict:
     """Run N episodes; return a dict of eval stats."""
     if action_select not in _ACTION_SELECT_MODES:
@@ -792,13 +815,20 @@ def eval_one_game(
     if pixel_encoder is None:
         # === TILE PATH (RAM-feature MLP / GRU) — unchanged behavior ===
         stack_size = stacked_dim // feature_dim
+        # With --prev-action-feature the policy input is the stacked tile obs
+        # PLUS a one-hot of a_{t-1} (length num_actions), so the net must be
+        # built one action-space wider or the 718-dim checkpoint fails to load.
+        # Flag off => net_feature_dim == stacked_dim, byte-identical.
+        net_feature_dim = stacked_dim + (
+            len(bitmasks) if prev_action_feature else 0
+        )
         # Dispatch on the checkpoint's architecture family. A recurrent
         # (tile_gru) checkpoint MUST load into the recurrent policy and have
         # its GRU hidden state threaded through the step loop below; loading
         # it into the stateless net would leave a non-empty `missing` set
         # (the GRU weights) and eval a half-random policy.
         net, is_recurrent = build_tile_policy_from_checkpoint(
-            state, num_actions=len(bitmasks), feature_dim=stacked_dim,
+            state, num_actions=len(bitmasks), feature_dim=net_feature_dim,
         )
         net_kind = type(net).__name__
         # Load non-strict so older checkpoints with extra aux heads still
@@ -817,7 +847,7 @@ def eval_one_game(
                 "detail": (
                     "checkpoint does not provide all network weights for "
                     f"{net_kind}(num_actions={len(bitmasks)}, "
-                    f"feature_dim={stacked_dim}); refusing to eval a "
+                    f"feature_dim={net_feature_dim}); refusing to eval a "
                     "partially-initialized policy."
                 ),
             }
@@ -826,12 +856,16 @@ def eval_one_game(
         def make_policy() -> _TilePolicy:
             # One stacker PER policy wrapper: the stacker is the only stateful
             # piece, so a parallel lane must not share one. Constructed with
-            # the same arguments the serial path always used.
+            # the same arguments the serial path always used. The stacker still
+            # produces the stacked_dim (712) tile obs; the a_{t-1} one-hot is
+            # appended inside `logits` only when prev_action_feature is set.
             return _TilePolicy(
                 net,
                 TileFeatureStacker(stack_size=stack_size, feature_dim=feature_dim),
                 extractor,
                 is_recurrent,
+                prev_action_feature=prev_action_feature,
+                num_actions=len(bitmasks),
             )
     else:
         # === PIXEL PATH (CNN) ===
@@ -1171,6 +1205,14 @@ def main() -> int:
                              "STARTED in' (a forward area/level transition out "
                              "of the warm-start level, warp-guarded) instead of "
                              "the full World-1 chain. The per-level gate metric.")
+    parser.add_argument("--prev-action-feature", action="store_true",
+                        dest="prev_action_feature",
+                        help="Tile path only: append the one-hot of the last "
+                             "EXECUTED action (a_{t-1}, length num_actions) to "
+                             "the obs before the forward pass, matching a policy "
+                             "trained on the 718-dim prev-action augmented obs. "
+                             "The net is built one action-space wider. Off by "
+                             "default (obs untouched, byte-identical path).")
     args = parser.parse_args()
 
     if not (args.temperature > 0.0):
@@ -1233,7 +1275,7 @@ def main() -> int:
         sticky_prob=args.sticky_prob, start_jitter=args.start_jitter,
         eval_seed=args.eval_seed, action_select=args.action_select,
         temperature=args.temperature, eval_workers=args.eval_workers,
-        eval_rng=args.eval_rng,
+        eval_rng=args.eval_rng, prev_action_feature=args.prev_action_feature,
     )
     print(json.dumps(result, indent=2))
     return 0

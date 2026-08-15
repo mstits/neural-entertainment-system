@@ -118,3 +118,6 @@ runs/ge_1_2_solve/demos/demo_002.npz
 runs/ge_1_2_solve/demos/demo_003.npz
 runs/dars_1_2/recovery_demos.npz
 runs/dars_1_2/wall_recovery_demos.npz
+
+# DR-v10 cross-seed trajectory funnel (8 diverse GE 1-2 clears -> DART recovery demos, 458580 pairs)
+runs/funnel_1_2_dr10/funnel_1_2_merged.npz

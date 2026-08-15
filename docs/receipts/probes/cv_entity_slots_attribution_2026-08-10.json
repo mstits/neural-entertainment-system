@@ -1,0 +1,125 @@
+{
+  "what": "attribution of the 1->0 edge in castlevania.yaml solve.entity_slots (0x0450-0x0457): locomotion vs attack",
+  "why": "configs/castlevania.yaml asserts '--kill-key counts 1->0 transitions as kills'. The gate-opener arm's (a1) keys a search dimension on that edge. If the edge is locomotion-coupled it is a positional alias, not an interaction axis, and (a1)'s own mandatory farmability test refuses it.",
+  "sources": {
+    "pin": "docs/receipts/probes/cv_entity_slots_2026-08-10.json",
+    "site2": "docs/receipts/probes/cv_entity_slots_site2_2026-08-10.json"
+  },
+  "unit": "pooled 1->0 edges per 1000 steps over the 8 slots",
+  "sites": {
+    "pin": {
+      "root_state": "/Users/stits/Documents/macos-emulation-and-training/runs/cv_chain_hw2/entrances/entrance_after_2.state",
+      "steps_per_hold_arm": 1500,
+      "arms_above_noop": [
+        "hold:up+right",
+        "hold:right+B",
+        "hold:right",
+        "hold:right+A"
+      ],
+      "arms_above_noop_all_contain_right": true,
+      "C1_locomotion_right_vs_noop": {
+        "right": 15.333,
+        "noop": 0.0,
+        "delta": 15.333
+      },
+      "C2_attack_alone_B_vs_noop": {
+        "B": 0.0,
+        "noop": 0.0,
+        "delta": 0.0
+      },
+      "C3_attack_given_locomotion_rightB_vs_right": {
+        "right+B": 17.333,
+        "right": 15.333,
+        "delta": 2.0
+      },
+      "C4_negcontrol_jump_given_locomotion_rightA_vs_right": {
+        "right+A": 15.333,
+        "right": 15.333,
+        "delta": 0.0
+      },
+      "farmability": {
+        "per_slot_1to0_edges": [
+          140,
+          37,
+          37,
+          5,
+          20,
+          24,
+          18,
+          36
+        ],
+        "total_1to0_edges_all_arms": 317,
+        "slot_count": 8,
+        "edges_exceed_slot_count": true,
+        "note": "the arm doc's (a1) farmability rule: more 1->0 edges than slots means slots respawn and a cumulative COUNT is farmable",
+        "coincidence_notice": "both sites total exactly 317 from different per-slot vectors ([140,37,37,5,20,24,18,36] vs [178,48,65,0,11,7,3,5]). Numerically a coincidence, not a copied value -- the per-slot vectors above are the proof."
+      }
+    },
+    "site2": {
+      "root_state": "/Users/stits/Documents/macos-emulation-and-training/roms/Castlevania (USA)_start.state.bin",
+      "steps_per_hold_arm": 800,
+      "arms_above_noop": [
+        "hold:right",
+        "hold:right+B",
+        "hold:right+A",
+        "hold:up+right"
+      ],
+      "arms_above_noop_all_contain_right": true,
+      "C1_locomotion_right_vs_noop": {
+        "right": 15.0,
+        "noop": 2.5,
+        "delta": 12.5
+      },
+      "C2_attack_alone_B_vs_noop": {
+        "B": 2.5,
+        "noop": 2.5,
+        "delta": 0.0
+      },
+      "C3_attack_given_locomotion_rightB_vs_right": {
+        "right+B": 15.0,
+        "right": 15.0,
+        "delta": 0.0
+      },
+      "C4_negcontrol_jump_given_locomotion_rightA_vs_right": {
+        "right+A": 15.0,
+        "right": 15.0,
+        "delta": 0.0
+      },
+      "farmability": {
+        "per_slot_1to0_edges": [
+          178,
+          48,
+          65,
+          0,
+          11,
+          7,
+          3,
+          5
+        ],
+        "total_1to0_edges_all_arms": 317,
+        "slot_count": 8,
+        "edges_exceed_slot_count": true,
+        "note": "the arm doc's (a1) farmability rule: more 1->0 edges than slots means slots respawn and a cumulative COUNT is farmable",
+        "coincidence_notice": "both sites total exactly 317 from different per-slot vectors ([140,37,37,5,20,24,18,36] vs [178,48,65,0,11,7,3,5]). Numerically a coincidence, not a copied value -- the per-slot vectors above are the proof."
+      }
+    }
+  },
+  "verdict": {
+    "edge_is_locomotion_coupled": true,
+    "edge_is_attack_coupled": false,
+    "C1_deltas": [
+      15.333,
+      12.5
+    ],
+    "C2_deltas": [
+      0.0,
+      0.0
+    ],
+    "C3_deltas": [
+      2.0,
+      0.0
+    ],
+    "conclusion": "REFUTED as a kill axis / CONFIRMED as an occupancy axis: the 1->0 edge is entirely locomotion-coupled. Every arm above the NOOP baseline at both sites contains `right`; every arm without it sits exactly at baseline, including `B` and `down+B`. Holding locomotion constant, adding continuous attack moves the pooled rate by +2.000 and +0.000 per 1k -- the same order as the non-attack negative control. The slots are real and agent-coupled, but what the agent does to them is SCROLL them, and a count over scroll-driven despawns is a positional alias that (a1)'s farmability rule refuses.",
+    "scope_caveat": "single held actions from one root per site, 1500/800 steps per arm. A whip only connects when an entity is in range, so a null attack contrast from a fixed root is evidence that HELD attack does not drive the edge -- not proof that no contact ever clears a slot. The correct instrument for that is a contact-conditioned differential (the arm doc's P1-P4), not --kill-key."
+  }
+}

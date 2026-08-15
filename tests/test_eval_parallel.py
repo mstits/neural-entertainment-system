@@ -317,7 +317,7 @@ class _StubPolicy:
     def initial_hidden(self, device):
         return None
 
-    def logits(self, obs, hidden):
+    def logits(self, obs, hidden, prev_action=None):
         # Near-uniform on purpose: sampled draws must actually spread, so a
         # crossed generator would show up as a different trajectory.
         base = float(obs[0]) * 0.001
