@@ -145,6 +145,8 @@ class CheckpointManager:
                 self.trainer._pending_anticollapse = state["anticollapse"]
             if "backward_curriculum" in state:
                 self.trainer._pending_backward_curriculum = state["backward_curriculum"]
+            if "curriculum_resume" in state:
+                self.trainer._pending_curriculum_resume = state["curriculum_resume"]
             if "gx_counts" in state:
                 self.trainer._gx_counts = {
                     int(k): int(v) for k, v in state["gx_counts"].items()
@@ -189,7 +191,7 @@ class CheckpointManager:
 
     def save_iter(
         self, *, net, optimizer, adv_net, adv_opt, bwd_on, bwd_sched,
-        anticollapse, it, global_it,
+        anticollapse, it, global_it, curriculum_resume=None,
     ) -> bool:
         """Save the periodic vanilla_ppo iter checkpoint, poison-guarded.
 
@@ -199,6 +201,8 @@ class CheckpointManager:
         and `checkpoint_dir` are read from the trainer exactly as the inline
         block did. `anticollapse` is the `(best_net_snapshot,
         best_snapshot_fitness, collapse_strikes)` rollback baseline.
+        `curriculum_resume` is the SMB curriculum's rolling advance history +
+        Go-Explore burst bookkeeping (builtin-typed dict, or None to omit).
 
         Returns `_params_finite` so the conductor's winner-retention gate is
         identical to the inline `if it > 0 and it % 10 == 0 and _params_finite:`
@@ -306,6 +310,12 @@ class CheckpointManager:
                         "best_snapshot_fitness": float(best_snapshot_fitness),
                         "collapse_strikes": int(collapse_strikes),
                     }
+                # Persist the curriculum's rolling advance history + the
+                # Go-Explore burst state so a resume continues the advance
+                # gate and stall clock where they stopped, instead of
+                # re-earning the rolling window from an empty history.
+                if curriculum_resume is not None:
+                    _ckpt_payload["curriculum_resume"] = curriculum_resume
                 # Atomic write: tmp + fsync + os.replace, so a death
                 # mid-save (OOM/SIGKILL — and the full CPU state copy
                 # above widens that window) can never leave a

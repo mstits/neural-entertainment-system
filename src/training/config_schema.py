@@ -30,7 +30,8 @@ from typing import Any
 # dict keys (consolidate_level.*, cold_eval.*, etc.) are validated only
 # at the top level here; their internals are owned by their own readers.
 KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
-    "advance", "asm_bulk_cycles", "async_pipeline", "autocast_fp16",
+    "actor_freeze_steps", "advance", "adversary", "asm_bulk_cycles",
+    "async_pipeline", "autocast_fp16",
     "backward_curriculum",
     "batched_render", "bc_demo_path", "bc_epochs", "bc_replay_enabled",
     "bc_replay_epochs", "bc_replay_every_gens", "bc_replay_max_buffer",
@@ -42,18 +43,21 @@ KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     "encoder", "entropy_coef", "entropy_coef_max", "entropy_floor",
     "cgsa", "episodes_per_genome", "freeze_pre_ppo_elite", "gae_lambda", "gamma",
     "go_explore", "go_explore_fallback", "grad_clip",
-    "gx_count_bonus_coef", "inherit_curriculum_on_fresh", "layernorm",
+    "gx_count_bonus_coef", "inherit_curriculum_on_fresh",
+    "kl_anchor_checkpoint", "kl_beta_decay_steps", "kl_beta_end",
+    "kl_beta_start", "layernorm",
     "lr", "max_steps_per_traj", "num_envs", "num_instances",
     "pace_multiplier", "panic_isolation", "plr_enabled", "ppo_clip_eps",
     "ppo_minibatch_size", "preprocess_f16", "preserve_elite_diversity",
     "prmdp", "recurrent", "recurrent_env_minibatch", "rnd_intrinsic_coef",
     "rnd_loss_coef", "rnd_predictor_update_fraction", "rollout_steps",
-    "sam_rho", "smb_curriculum", "steps", "sticky_action_prob",
+    "sam_rho", "sil", "smb_curriculum", "steps", "sticky_action_prob",
     "sticky_episode_boundary_reset", "substage_ladder",
     "symlog_rewards", "tile_frame_stack", "tile_hidden_dim", "tile_trunk_dim",
     "top_k", "torch_compile",
     "trainer_mode", "value_coef", "value_loss", "vmap_forward",
-    "warm_start", "warmup_gens_ga_only", "wavefront_reward",
+    "warm_start", "warmup_gens_ga_only", "wave_terminal_rule",
+    "wavefront_reward",
 })
 
 # Sub-keys of `reinforce.backward_curriculum`. This block is the one
@@ -91,6 +95,24 @@ KNOWN_CONSOLIDATE_PROBE_KEYS: frozenset[str] = frozenset({
     "episodes", "eval_rng", "eval_seed", "eval_workers", "every",
     "max_steps", "start_jitter", "sticky_prob",
 })
+
+# Sub-keys of `reinforce.sil` (self-imitation buffer) and
+# `reinforce.adversary` (kernel-matched binary adversary). Both are
+# campaign blocks a pre-registered online run is configured through —
+# same one-level-deeper rationale as backward_curriculum: a typo'd
+# `bc_coef` or `budget_penalty` silently reverting to the default costs
+# the attended window.
+KNOWN_SIL_KEYS: frozenset[str] = frozenset({
+    "bc_coef", "buffer_size", "enabled",
+})
+
+KNOWN_ADVERSARY_KEYS: frozenset[str] = frozenset({
+    "budget_penalty", "clip", "entropy_coef", "epochs", "lr", "mode",
+})
+
+# Mirrors kernel_adversary's accepted modes. Literal (not imported) so the
+# validator stays importable with no training deps, same as _ACCEPT_RULES.
+_ADVERSARY_MODES: frozenset[str] = frozenset({"kernel_sticky"})
 
 # Top-level profile keys read outside `reinforce` — by the launcher,
 # the GA path (`ga_params`), the Dreamer path (`dreamer`), and the
@@ -181,6 +203,32 @@ def validate_profile(profile: dict[str, Any]) -> list[str]:
                     f"reinforce.consolidate_level.accept_rule {rule!r} is not "
                     f"one of {sorted(_ACCEPT_RULES)} — the trainer raises on "
                     f"an unknown rule rather than silently point-accepting"
+                )
+        sil = rl.get("sil")
+        if isinstance(sil, dict):
+            for k in sil:
+                if k not in KNOWN_SIL_KEYS:
+                    warnings.append(
+                        f"unknown reinforce.sil key {k!r} — NOT consumed by "
+                        f"the trainer (typo? renamed? it will be silently "
+                        f"ignored)"
+                    )
+        adv = rl.get("adversary")
+        if isinstance(adv, dict):
+            for k in adv:
+                if k not in KNOWN_ADVERSARY_KEYS:
+                    warnings.append(
+                        f"unknown reinforce.adversary key {k!r} — NOT "
+                        f"consumed by the trainer (typo? renamed? it will "
+                        f"be silently ignored)"
+                    )
+            mode = adv.get("mode")
+            if mode is not None and str(mode) not in _ADVERSARY_MODES:
+                warnings.append(
+                    f"reinforce.adversary.mode {mode!r} is not one of "
+                    f"{sorted(_ADVERSARY_MODES)} — the trainer raises on an "
+                    f"unknown mode rather than silently training without an "
+                    f"adversary"
                 )
     return warnings
 

@@ -212,6 +212,43 @@ def cgsa_zone_summary(
     }
 
 
+def _select_winner_metric(
+    in_training_rate: float,
+    *,
+    cold_rate: Optional[float] = None,
+    bwd_snapshot: Optional[dict] = None,
+) -> tuple[Optional[float], str]:
+    """Pick the winner-retention metric for the non-ladder / non-consolidate
+    branch of the retention block.
+
+    Precedence: the backward-curriculum entrance rate (or pre-entrance
+    suppression) keeps its deliberate re-keying; otherwise an honest
+    cold-probe rate in scope (PLR mode's `last_cold_metrics`) keys the
+    winner; only when neither exists does the RAW in-training clear_rate
+    remain — loudly flagged, because it is inflated relative to the honest
+    protocol (PR-MDP incident: winners/ retained a "best" at in-training
+    0.25 while the honest cold probe read 0.0 at all nine sampled
+    checkpoints). Negative cold rates are the probe's "no episodes scored"
+    sentinel, not an honest measurement.
+
+    Returns `(metric_value_or_None, metric_name)`; None means "do not
+    save a winner this round".
+    """
+    if bwd_snapshot is not None:
+        if bwd_snapshot["at_entrance"]:
+            return float(bwd_snapshot["rate"]), "entrance_trailing_rate"
+        return None, "entrance_trailing_rate"
+    if cold_rate is not None and float(cold_rate) >= 0.0:
+        return float(cold_rate), "cold_seq_clear_rate"
+    log.warning(
+        "[vanilla_ppo] WINNER METRIC = in-training clear_rate (INFLATED; "
+        "not honest-probe verified): %.3f — no honest cold-probe result in "
+        "scope for this mode",
+        float(in_training_rate),
+    )
+    return float(in_training_rate), "clear_rate"
+
+
 class StickyBoundary:
     """One-step sticky-action suppression across an episode boundary.
 
@@ -1546,29 +1583,32 @@ class Trainer:
 
         return _probe
 
-    def _make_network(self):
+    def _make_network(self, num_actions: int | None = None):
         """Construct the policy network appropriate for the configured
         encoder. Pixel encoders (`nature_dqn`, `impala`) use the CNN-
         backed `PolicyNetwork`; tile encoders (`smb_tiles`) use the
-        small MLP-backed `TilePolicyNetwork`."""
+        small MLP-backed `TilePolicyNetwork`. `num_actions` overrides the
+        head width (default: the game's action space) — the kernel
+        adversary's 2-action head shares everything else."""
+        head_actions = self.num_actions if num_actions is None else int(num_actions)
         if self._is_tile_mode:
             if self._recurrent:
                 from src.models.tile_policy import TileRecurrentPolicyNetwork
                 return TileRecurrentPolicyNetwork(
-                    num_actions=self.num_actions,
+                    num_actions=head_actions,
                     feature_dim=self._tile_feature_dim,
                     hidden_dim=self._tile_hidden_dim,
                     gru_dim=self._tile_trunk_dim,
                 )
             from src.models.tile_policy import TilePolicyNetwork
             return TilePolicyNetwork(
-                num_actions=self.num_actions,
+                num_actions=head_actions,
                 feature_dim=self._tile_feature_dim,
                 hidden_dim=self._tile_hidden_dim,
                 trunk_dim=self._tile_trunk_dim,
             )
         return PolicyNetwork(
-            num_actions=self.num_actions,
+            num_actions=head_actions,
             encoder=self.encoder_kind,
             use_layernorm=self.use_layernorm,
         )
@@ -4970,6 +5010,109 @@ class Trainer:
                      "phi_target=%.1f, D_start=%.0f (positive-shifted PBRS, "
                      "search-derived, no game internals)",
                      len(wave_pot.dmap), wave_pot.phi_target, wave_pot.d_start)
+        # Invariance-preserving terminal rule (reinforce.wave_terminal_rule
+        # "monotone"): shaping pays only on new episode peaks, true deaths
+        # charge -peak (Grzes zero-terminal on the peak-augmented potential,
+        # so non-clearing episodes telescope to exactly zero net shaping),
+        # and the lost-cut becomes a TRUNCATION whose GAE bootstraps V
+        # instead of 0 (Pardo). Absent = the legacy -peak-on-any-non-clear
+        # behavior, byte-identical.
+        from src.training.wave_shaping import (
+            monotone_wave_step, resolve_wave_terminal_rule,
+            wave_terminal_charge,
+        )
+        wave_monotone = resolve_wave_terminal_rule(
+            _rl_cfg.get("wave_terminal_rule")
+        )
+        if wave_monotone and wave_pot is None:
+            log.warning(
+                "[vanilla_ppo] wave_terminal_rule 'monotone' set but the "
+                "wavefront reward is OFF — the rule has nothing to act on."
+            )
+        if wave_monotone and wave_pot is not None:
+            log.info(
+                "[vanilla_ppo] wave terminal rule: MONOTONE (peak-only "
+                "shaping, death charges -peak, lost-cut truncates + "
+                "bootstraps V)"
+            )
+        # KL-anchored warm start + critic warmup
+        # (reinforce.kl_anchor_checkpoint + kl_beta_* + actor_freeze_steps).
+        # The anchor's actor weights seed the live net only on a FRESH run —
+        # a resume keeps its trained weights and just continues the beta
+        # schedule (env-steps derive from the absolute iter).
+        self._kl_anchor = None
+        _kl_ckpt = _rl_cfg.get("kl_anchor_checkpoint")
+        if _kl_ckpt:
+            if not self._is_tile_mode:
+                raise ValueError(
+                    "reinforce.kl_anchor_checkpoint requires tile mode "
+                    "(the anchor prior is a tile MLP)"
+                )
+            if self._recurrent:
+                raise ValueError(
+                    "reinforce.kl_anchor_checkpoint does not support the "
+                    "recurrent path (the freeze/penalty hooks live in the "
+                    "feedforward update)"
+                )
+            from src.training.kl_anchor import KLAnchor
+            self._kl_anchor = KLAnchor(
+                checkpoint_path=str(_kl_ckpt),
+                beta_start=float(_rl_cfg.get("kl_beta_start", 0.05)),
+                beta_end=float(_rl_cfg.get("kl_beta_end", 0.01)),
+                beta_decay_steps=float(_rl_cfg.get("kl_beta_decay_steps", 50e6)),
+                actor_freeze_steps=float(_rl_cfg.get("actor_freeze_steps", 5e6)),
+                num_actions=self.num_actions,
+                feature_dim=self._tile_feature_dim,
+                device=self.device,
+            )
+            if iter_offset == 0:
+                _kl_loaded = self._kl_anchor.load_actor_into(net)
+                log.info(
+                    "[vanilla_ppo] KL ANCHOR: loaded %d actor weight(s) "
+                    "from %s (critic stays fresh)", len(_kl_loaded), _kl_ckpt,
+                )
+            log.info(
+                "[vanilla_ppo] KL ANCHOR on: beta %.3f -> %.3f over %.0f "
+                "steps, actor frozen for %.0f steps",
+                self._kl_anchor.beta_start, self._kl_anchor.beta_end,
+                self._kl_anchor.beta_decay_steps,
+                self._kl_anchor.actor_freeze_steps,
+            )
+        # Self-imitation buffer (reinforce.sil): full trajectories of
+        # level-clearing episodes feed a BC term in the PPO update. The
+        # updater reads self._sil_buffer / self._sil_bc_coef; None = inert.
+        _sil_cfg = dict(_rl_cfg.get("sil", {}) or {})
+        sil_on = bool(_sil_cfg.get("enabled", False))
+        self._sil_buffer = None
+        self._sil_bc_coef = 0.0
+        if sil_on and not self._is_tile_mode:
+            log.warning(
+                "[vanilla_ppo] reinforce.sil requires tile mode (pixel "
+                "trajectories would be ~GBs at buffer_size clears) — OFF."
+            )
+            sil_on = False
+        if sil_on and self._recurrent:
+            log.warning(
+                "[vanilla_ppo] reinforce.sil is feedforward-only (the BC "
+                "term lives in the K-epoch minibatch loop) — OFF."
+            )
+            sil_on = False
+        if sil_on:
+            from src.training.sil import SelfImitationBuffer
+            self._sil_buffer = SelfImitationBuffer(
+                capacity=int(_sil_cfg.get("buffer_size", 64))
+            )
+            self._sil_bc_coef = float(_sil_cfg.get("bc_coef", 0.5))
+            if float(_rl_cfg.get("sam_rho", 0.0) or 0.0) > 0.0:
+                log.warning(
+                    "[vanilla_ppo] sil + sam_rho: the BC term is not "
+                    "applied on the SHAPO three-pass path."
+                )
+            log.info(
+                "[vanilla_ppo] SELF-IMITATION on: buffer %d clears, "
+                "bc_coef %.2f", int(_sil_cfg.get("buffer_size", 64)),
+                self._sil_bc_coef,
+            )
         frontier_frac = float(_ws_cfg.get("frontier", 0.50))
         base_retention_frac = float(_ws_cfg.get("retention", 0.25))
         retention_frac = base_retention_frac
@@ -5041,6 +5184,41 @@ class Trainer:
         ge_burst_quota = 0
         ge_iters_since_advance = 0   # stall clock; reset on advance / arm / retract
         ge_bursts_done = 0
+        # Restore the rolling advance history + burst bookkeeping from a
+        # resumed checkpoint (staged by CheckpointManager.resume). Without
+        # it every resume re-earned the advance window from an empty
+        # history and zeroed the stall clock. The mid-burst `ge_archive`
+        # is intentionally NOT persisted — every consumer already guards
+        # on `ge_archive is not None`, so a restored active burst simply
+        # ticks down without archive returns and retracts normally.
+        _cr = getattr(self, "_pending_curriculum_resume", None)
+        if _cr:
+            smb_stage_clear_history = [
+                int(x) for x in _cr.get("smb_stage_clear_history", [])
+            ]
+            smb_pastfrac_history = [
+                float(x) for x in _cr.get("smb_pastfrac_history", [])
+            ]
+            ge_burst_active = bool(_cr.get("ge_burst_active", False))
+            ge_burst_remaining = int(_cr.get("ge_burst_remaining", 0))
+            ge_burst_quota = int(_cr.get("ge_burst_quota", 0))
+            ge_iters_since_advance = int(_cr.get("ge_iters_since_advance", 0))
+            ge_bursts_done = int(_cr.get("ge_bursts_done", 0))
+            self._pending_curriculum_resume = None
+            log.info(
+                "[vanilla_ppo] curriculum resume state RESTORED: "
+                "pastfrac_window=%d clear_history=%d ge_burst_active=%s "
+                "ge_burst_remaining=%d ge_stall_iters=%d ge_bursts_done=%d",
+                len(smb_pastfrac_history), len(smb_stage_clear_history),
+                ge_burst_active, ge_burst_remaining, ge_iters_since_advance,
+                ge_bursts_done,
+            )
+        elif self._vppo_resumed_from_iter is not None:
+            log.info(
+                "[vanilla_ppo] curriculum resume state: fresh reset "
+                "(checkpoint predates the curriculum_resume blob) — rolling "
+                "history + burst state start empty"
+            )
         if ladder_on:
             from src.training import oneshot_curriculum as oc
             from src.training.smb_substage_ladder import (
@@ -5460,6 +5638,11 @@ class Trainer:
         value_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
         log_prob_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
         done_buf = np.zeros((rollout_steps, num_envs), dtype=np.bool_)
+        # Truncation mask (wave_terminal_rule "monotone" only): marks dones
+        # that are CUTS (the lost-cut), not real terminals, so GAE
+        # bootstraps V(s) there instead of 0. Stays all-False — and is
+        # passed to the updater as None — under the legacy rule.
+        trunc_buf = np.zeros((rollout_steps, num_envs), dtype=np.bool_)
         # Per-step validity mask: True only where an env actually executed
         # that step (including its death step). Post-done frozen-padding
         # slots stay False and are excluded from advantage normalization
@@ -5525,6 +5708,30 @@ class Trainer:
         wave_peak_phi = np.zeros(num_envs, dtype=np.float32)
         wave_lost_count = np.zeros(num_envs, dtype=np.int32)
         WAVE_LOST_K = 150  # ~10 s game time; area-load blips are ~6 steps
+        # Self-imitation episode accumulators: per-env (obs, action) lists
+        # for the CURRENT episode, appended on every executed step. Flushed
+        # into the buffer at the completion-diff clear; dropped on any
+        # non-clearing end (death / iter boundary).
+        sil_ep_obs: list = [[] for _ in range(num_envs)] if sil_on else []
+        sil_ep_act: list = [[] for _ in range(num_envs)] if sil_on else []
+
+        def _sil_flush_clear(i: int) -> None:
+            """Store the accumulated episode — it just cleared the level."""
+            if not sil_on or not sil_ep_act[i]:
+                return
+            self._sil_buffer.add(
+                np.stack(sil_ep_obs[i]),
+                np.asarray(sil_ep_act[i], dtype=np.int64),
+            )
+            sil_ep_obs[i].clear()
+            sil_ep_act[i].clear()
+
+        def _sil_drop_episode(i: int) -> None:
+            """Discard a non-clearing episode's accumulator."""
+            if sil_on:
+                sil_ep_obs[i].clear()
+                sil_ep_act[i].clear()
+
         n_clears_this_iter = 0
         # Per-env max world+level reached this iter, packed as
         # world*16+level so a single uint8 max comparator works
@@ -5967,6 +6174,63 @@ class Trainer:
         adv_value_buf = np.zeros((rollout_steps, num_envs), dtype=np.float32)
         exec_mask_buf = np.zeros((rollout_steps, num_envs), dtype=np.bool_)
 
+        # ===== Kernel-matched binary adversary (reinforce.adversary) =====
+        # The PR-MDP machinery refit to the honest-eval noise kernel: a
+        # 2-action head {pass, repeat-previous-EXECUTED}, deciding every
+        # step, paid -protagonist_reward - budget_penalty*I(repeat), and
+        # trained epochs-matched to the protagonist (10:10 — the v7 10:2
+        # imbalance drove the GDA limit cycle) at entropy_coef 0.01
+        # against the ln 2 binary ceiling. Absent block = legacy PR-MDP
+        # behavior untouched (both enabled = config error, fail loud).
+        _kadv_cfg = dict(_rl_cfg.get("adversary", {}) or {})
+        _kadv = None
+        _kadv_mode = str(_kadv_cfg.get("mode", "") or "")
+        if _kadv_mode and _kadv_mode != "kernel_sticky":
+            raise ValueError(
+                f"reinforce.adversary.mode {_kadv_mode!r} is not "
+                f"'kernel_sticky' (the only implemented mode)"
+            )
+        if _kadv_mode == "kernel_sticky":
+            if prmdp_on:
+                raise ValueError(
+                    "reinforce.adversary (kernel_sticky) and reinforce."
+                    "prmdp.enabled are mutually exclusive — both would "
+                    "override the same executed-action channel"
+                )
+            if self._recurrent:
+                raise ValueError(
+                    "reinforce.adversary (kernel_sticky) does not support "
+                    "the recurrent protagonist path"
+                )
+            from src.training.kernel_adversary import KernelStickyAdversary
+            _kadv_net = self._make_network(num_actions=2)
+            _kadv_net.to(self.device)
+            _kadv = KernelStickyAdversary(
+                net=_kadv_net,
+                num_envs=num_envs,
+                rollout_steps=rollout_steps,
+                budget_penalty=float(_kadv_cfg.get("budget_penalty", 0.1)),
+                entropy_coef=float(_kadv_cfg.get("entropy_coef", 0.01)),
+                epochs=int(_kadv_cfg.get("epochs", 10)),
+                clip=float(_kadv_cfg.get("clip", 0.1)),
+                lr=float(_kadv_cfg.get("lr", 2.5e-4)),
+                gamma=self.reinforce_gamma,
+                gae_lambda=self.gae_lambda,
+                value_coef=self.value_coef,
+                value_loss_kind=self.value_loss_kind,
+                grad_clip=self.reinforce_grad_clip,
+                device=self.device,
+                preprocess_f16=self.preprocess_f16,
+                is_tile_mode=self._is_tile_mode,
+            )
+            log.info(
+                "[kernel_adv] ON: budget=%.3f ent=%.3f epochs=%d clip=%.2f "
+                "(%d params; protagonist epochs=%d — matched)",
+                _kadv.budget_penalty, _kadv.entropy_coef, _kadv.epochs,
+                _kadv.clip, sum(p.numel() for p in _kadv_net.parameters()),
+                self.reinforce_steps,
+            )
+
         # ===== CGSA-PPO: Cell-Granular Stochasticity Annealing =====
         # (research recipe 2026-07-23, "SMB 1-2 RL Consulting"). Each archived
         # Go-Explore cell carries its OWN sticky probability p_sticky(c),
@@ -6175,6 +6439,17 @@ class Trainer:
             # Per-iter pool-max screen for screen_XX reward games (Contra).
             # Surfaces progress in metrics even before a stage-end is known.
             iter_max_screen = 0
+            # KL anchor: refresh beta + the freeze flag from the global
+            # env-step count (absolute iter, so a resume continues the
+            # schedule), and reset the per-iter D_KL accumulator.
+            if self._kl_anchor is not None:
+                self._kl_anchor.set_env_steps(
+                    global_it * rollout_steps * num_envs
+                )
+            _kl_div_sum = 0.0
+            _kl_div_n = 0
+            _kl_step = None
+            _kl_pen_step = None
             # Apply any GUI audio-mode pace change here (trainer thread,
             # between rollouts) rather than from the drainer thread.
             self._drain_pending_pace()
@@ -6200,6 +6475,9 @@ class Trainer:
             log_prob_steps: list[torch.Tensor] = []
             adv_value_steps: list[torch.Tensor] = []
             exec_mask_buf[:] = False
+            trunc_buf[:] = False
+            if _kadv is not None:
+                _kadv.begin_iter()
             with torch.no_grad():
                 for t in range(rollout_steps):
                     if not self._running:
@@ -6252,6 +6530,22 @@ class Trainer:
                     log_probs_taken = log_probs_all.gather(
                         1, actions.unsqueeze(1)
                     ).squeeze(1)
+
+                    if self._kl_anchor is not None:
+                        # State-based D_KL(prior || pi) on the SAME
+                        # distribution the sample came from (pre-override —
+                        # sticky/adversary rewrites change the executed
+                        # action, not pi). The reward-level penalty is
+                        # applied per env in the result loop below, only
+                        # after the actor unfreezes (while frozen pi IS the
+                        # prior, so the KL is identically ~0 anyway).
+                        _kl_step = self._kl_anchor.kl_divergence(
+                            batch_t, log_probs_all
+                        )
+                        _kl_pen_step = (
+                            None if self._kl_anchor.frozen
+                            else self._kl_anchor.beta * _kl_step
+                        )
 
                     if (_sticky_p > 0.0 or cgsa_on) and t > 0:
                         # Per-env sticky: with CGSA each env rolls at its
@@ -6325,6 +6619,16 @@ class Trainer:
                                 ).squeeze(1), min=-13.0,
                             ).numpy()
                             adv_value_steps.append(adv_values)
+
+                    if _kadv is not None:
+                        # Kernel-matched adversary: pass/repeat decision on
+                        # every env; REPEAT swaps in the previous EXECUTED
+                        # action and the tracker advances post-override
+                        # (decide() owns both — see kernel_adversary.py).
+                        _kadv.decide(
+                            t, batch_t, actions, log_probs_all,
+                            log_probs_taken, _prev_exec_action,
+                        )
 
                     actions_np = actions.numpy().astype(np.int32)
                     action_buf[t] = actions_np
@@ -6557,20 +6861,39 @@ class Trainer:
                         if wave_pot is not None:
                             if not done:
                                 _phi = wave_pot.potential(ram)
-                                if wave_prev_phi[i] is not None:
-                                    reward += wave_pot.gamma * _phi - wave_prev_phi[i]
-                                wave_prev_phi[i] = _phi
-                                if _phi > wave_peak_phi[i]:
-                                    wave_peak_phi[i] = _phi
+                                if wave_monotone:
+                                    # Monotone rule: F pays only on a NEW
+                                    # episode peak of Phi (the peak-augmented
+                                    # potential); retreat/idle steps pay 0 at
+                                    # gamma=1. Peak starts at 0 per episode,
+                                    # so the death charge below refunds the
+                                    # whole stream exactly (Grzes).
+                                    _wf, _wpk = monotone_wave_step(
+                                        float(wave_peak_phi[i]), _phi,
+                                        wave_pot.gamma,
+                                    )
+                                    reward += _wf
+                                    wave_peak_phi[i] = _wpk
+                                    wave_prev_phi[i] = _phi
+                                else:
+                                    if wave_prev_phi[i] is not None:
+                                        reward += wave_pot.gamma * _phi - wave_prev_phi[i]
+                                    wave_prev_phi[i] = _phi
+                                    if _phi > wave_peak_phi[i]:
+                                        wave_peak_phi[i] = _phi
                                 # Lost-cut: linger off the solution envelope
                                 # (Phi~0) for WAVE_LOST_K consecutive steps ->
                                 # terminate as a non-clear (charge -peak below
-                                # via the done branch on THIS step).
+                                # via the done branch on THIS step). Under the
+                                # monotone rule the cut is a TRUNCATION: no
+                                # terminal charge, GAE bootstraps V(s).
                                 if _phi <= 0.5:
                                     wave_lost_count[i] += 1
                                     if wave_lost_count[i] >= WAVE_LOST_K:
                                         done = True
                                         rew_done = True
+                                        if wave_monotone:
+                                            trunc_buf[t, i] = True
                                 else:
                                     wave_lost_count[i] = 0
                             if done:
@@ -6586,7 +6909,15 @@ class Trainer:
                                     reward_fns[i].breakdown.get("completion", 0.0)
                                 )
                                 _is_clear = _cur_comp > prev_completion_total[i] + 1e-6
-                                if not _is_clear and wave_peak_phi[i] > 0.0:
+                                if wave_monotone:
+                                    # TRUE deaths charge -peak; clears and
+                                    # truncations (the lost-cut) charge 0.
+                                    reward += wave_terminal_charge(
+                                        float(wave_peak_phi[i]),
+                                        is_clear=_is_clear,
+                                        truncated=bool(trunc_buf[t, i]),
+                                    )
+                                elif not _is_clear and wave_peak_phi[i] > 0.0:
                                     reward += -float(wave_peak_phi[i])
                                 wave_prev_phi[i] = None
                                 wave_peak_phi[i] = 0.0
@@ -6612,11 +6943,23 @@ class Trainer:
                                     if _ep_done else False
                                 ),
                             )
+                        if _kl_pen_step is not None:
+                            # Reward-level KL penalty (post-unfreeze): keep
+                            # pi near the anchor prior where it has no
+                            # better evidence, at the decayed beta.
+                            reward -= float(_kl_pen_step[i])
+                        if _kl_step is not None:
+                            _kl_div_sum += float(_kl_step[i])
+                            _kl_div_n += 1
                         reward_buf[t, i] = reward
                         done_buf[t, i] = done
                         valid_buf[t, i] = True  # real executed step (incl. death)
                         ep_returns[i] += reward
                         ep_lengths[i] += 1
+                        if sil_on:
+                            # Copy: obs_buf slots are reused across iters.
+                            sil_ep_obs[i].append(obs_buf[t, i].copy())
+                            sil_ep_act[i].append(int(action_buf[t, i]))
                         # Detect a completion bonus firing on this step
                         # by diffing the reward fn's cumulative
                         # `completion` breakdown against the last seen
@@ -6646,6 +6989,12 @@ class Trainer:
                                     except Exception:
                                         pass
                                     episode_recorded[i] = True
+                                # Same trusted signal feeds the SIL buffer:
+                                # this episode CLEARED — bank its trajectory.
+                                # Last in the block so a flush failure can
+                                # never eat the clear/PLR bookkeeping above
+                                # (this try swallows exceptions).
+                                _sil_flush_clear(i)
                             prev_completion_total[i] = cur_comp
                         except Exception:
                             pass
@@ -6670,6 +7019,10 @@ class Trainer:
                             completed_lengths.append(int(ep_lengths[i]))
                             ep_returns[i] = 0.0
                             ep_lengths[i] = 0
+                            # SIL: a done that reaches here without having
+                            # flushed at the clear diff above did NOT clear
+                            # — drop the episode's accumulator.
+                            _sil_drop_episode(i)
                             if plr_on and not episode_recorded[i]:
                                 # Episode ended WITHOUT clearing (a death) and
                                 # wasn't already recorded at a flag-touch above
@@ -6956,6 +7309,8 @@ class Trainer:
                         adv_value_buf[:len(adv_value_steps)] = (
                             torch.stack(adv_value_steps, dim=0).cpu().numpy()
                         )
+                    if _kadv is not None:
+                        _kadv.drain_values()
                 self._gen_timer.add(
                     "rollout_forward", time.perf_counter_ns() - _drain_t0
                 )
@@ -6978,6 +7333,8 @@ class Trainer:
                 if _adv_net is not None:
                     _, adv_final_values = _adv_net.forward_ac(final_batch_t)
                     adv_final_values_np = adv_final_values.cpu().numpy()
+                if _kadv is not None:
+                    _kadv.compute_final_values(final_batch_t)
 
             # Stop pressed mid-rollout: the rollout loop broke early, so the
             # buffer is only partially filled (valid_buf is sparse). Running
@@ -7007,6 +7364,7 @@ class Trainer:
                 final_values_np=final_values_np,
                 rollout_steps=rollout_steps, num_envs=num_envs,
                 obs_shape=obs_shape, global_it=global_it, sam_rho=_sam_rho,
+                trunc_buf=(trunc_buf if wave_monotone else None),
             )
             reward_buf = _upd["reward_buf"]
             valid_flat = _upd["valid_flat"]
@@ -7036,6 +7394,7 @@ class Trainer:
                     -reward_buf, adv_value_buf, done_buf,
                     adv_final_values_np,
                     self.reinforce_gamma, self.gae_lambda,
+                    trunc_buf=(trunc_buf if wave_monotone else None),
                 )
                 exec_flat = (exec_mask_buf & valid_buf).reshape(-1)
                 adv_valid = np.where(exec_flat)[0]
@@ -7109,6 +7468,64 @@ class Trainer:
                     "override_frac=%.3f", global_it,
                     float(exec_mask_buf.mean()),
                 )
+
+            # ===== KERNEL ADVERSARY UPDATE (reinforce.adversary) =====
+            # PPO on the SAME rollout with the adversary's own reward
+            # stream (negated protagonist reward minus the repeat budget)
+            # and its own critic, over EVERY valid step — pass is a
+            # decision too, so its behavior distribution is the whole
+            # rollout, not an alpha draw. Epoch count matches the
+            # protagonist's (10:10). `_mech_metrics` also carries the KL
+            # anchor + SIL surfaces; empty when all mechanisms are off so
+            # the metrics rows are unchanged byte-for-byte.
+            _mech_metrics: dict = {}
+            if _kadv is not None and valid_indices.size:
+                _kadv_t0 = time.perf_counter_ns()
+                _kadv_stats = _kadv.update(
+                    reward_buf=reward_buf, done_buf=done_buf,
+                    valid_buf=valid_buf, obs_all=obs_all, obs_flat=obs_flat,
+                    mb_size=mb_size,
+                    trunc_buf=(trunc_buf if wave_monotone else None),
+                )
+                _mech_metrics.update(_kadv_stats)
+                log.info(
+                    "[kernel_adv] iter %d: repeat_frac=%.3f entropy=%.4f "
+                    "(ln2=%.4f) policy=%.4f", global_it,
+                    _kadv_stats["adversary_repeat_frac"],
+                    _kadv_stats["adversary_entropy"], math.log(2.0),
+                    _kadv_stats["adversary_policy_loss"],
+                )
+                self._gen_timer.add(
+                    "kernel_adversary", time.perf_counter_ns() - _kadv_t0
+                )
+            if self._kl_anchor is not None:
+                _kl_mean = _kl_div_sum / max(1, _kl_div_n)
+                _mech_metrics["kl_anchor_div"] = float(_kl_mean)
+                _mech_metrics["kl_anchor_beta"] = float(self._kl_anchor.beta)
+                _mech_metrics["kl_anchor_actor_frozen"] = int(
+                    self._kl_anchor.frozen
+                )
+                # Logged every iteration — the campaign kill criterion
+                # (KL > 0.15 sustained 2M steps) reads this series.
+                log.info(
+                    "[kl_anchor] iter %d: D_KL(prior||pi)=%.4f beta=%.4f "
+                    "frozen=%d", global_it, _kl_mean,
+                    float(self._kl_anchor.beta), int(self._kl_anchor.frozen),
+                )
+            if self._sil_buffer is not None:
+                _mech_metrics["sil_buffer_trajs"] = len(self._sil_buffer)
+                _mech_metrics["sil_buffer_steps"] = self._sil_buffer.n_steps
+                _mech_metrics["sil_clears_total"] = (
+                    self._sil_buffer.total_clears
+                )
+                if _upd["sil_loss_n"]:
+                    _mech_metrics["sil_loss"] = (
+                        _upd["sil_loss_accum"] / _upd["sil_loss_n"]
+                    )
+            if wave_monotone:
+                # Lost-cut truncation rate — how much rollout the
+                # off-envelope cut is reclaiming under the monotone rule.
+                _mech_metrics["wave_truncations"] = int(trunc_buf.sum())
 
             # ============== LOGGING + METRICS ==============
             # Attribute the per-iter bookkeeping (episode stats, reward
@@ -8201,6 +8618,7 @@ class Trainer:
                 **reward_breakdown_emit,
                 **cold_metrics_emit,
                 **clevel_metrics_emit,
+                **_mech_metrics,
             )
 
             # Level-scoped consolidation reached its termination bar: the DONE
@@ -8645,6 +9063,11 @@ class Trainer:
             # n_clears and the PLR clear flag. Sync them here.
             prev_completion_total[:] = 0.0
             episode_recorded[:] = False
+            if sil_on:
+                # The reset_all above truncated every live episode; a
+                # censored attempt is not a clear — drop its accumulator.
+                for _si in range(num_envs):
+                    _sil_drop_episode(_si)
             # ===== BACKWARD CURRICULUM: the iter-boundary restart =====
             # `reset_all` above truncated every live episode and put each
             # env back at the profile start state. Two consequences the
@@ -8795,6 +9218,19 @@ class Trainer:
                 ),
                 it=it,
                 global_it=global_it,
+                curriculum_resume={
+                    "smb_stage_clear_history": [
+                        int(x) for x in smb_stage_clear_history
+                    ],
+                    "smb_pastfrac_history": [
+                        float(x) for x in smb_pastfrac_history
+                    ],
+                    "ge_burst_active": bool(ge_burst_active),
+                    "ge_burst_remaining": int(ge_burst_remaining),
+                    "ge_burst_quota": int(ge_burst_quota),
+                    "ge_iters_since_advance": int(ge_iters_since_advance),
+                    "ge_bursts_done": int(ge_bursts_done),
+                },
             )
             if it > 0 and it % 10 == 0 and _params_finite:
                 # Retain the best-ever policy under winners/ (excluded from
@@ -8833,15 +9269,21 @@ class Trainer:
                         # while the never-snapshotted entrance-era policy
                         # trained at 0.25). Pre-entrance nets are never
                         # the deliverable.
-                        _wm_val = float(vppo_success_rate)
-                        _wm_name = "clear_rate"
-                        if bwd_on and bwd_sched is not None:
-                            _wbs = bwd_sched.snapshot()
-                            if _wbs["at_entrance"]:
-                                _wm_val = float(_wbs["rate"])
-                                _wm_name = "entrance_trailing_rate"
-                            else:
-                                _wm_val = None
+                        # Elsewhere the honest cold probe (PLR mode's
+                        # `last_cold_metrics`) re-keys the winner the same
+                        # way — the raw rate is a loudly-flagged last
+                        # resort (see _select_winner_metric).
+                        _wm_val, _wm_name = _select_winner_metric(
+                            vppo_success_rate,
+                            cold_rate=last_cold_metrics.get(
+                                "cold_seq_clear_rate"
+                            ),
+                            bwd_snapshot=(
+                                bwd_sched.snapshot()
+                                if bwd_on and bwd_sched is not None
+                                else None
+                            ),
+                        )
                         if _wm_val is not None:
                             save_winner(
                                 {k: v.detach().cpu() for k, v in net.state_dict().items()},

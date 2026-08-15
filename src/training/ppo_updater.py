@@ -54,6 +54,7 @@ class PPOUpdater:
         self, *, net, optimizer, obs_buf, action_buf, reward_buf, value_buf,
         log_prob_buf, done_buf, valid_buf, bonus_buf, final_values_np,
         rollout_steps, num_envs, obs_shape, global_it, sam_rho,
+        trunc_buf=None,
     ) -> dict:
         """Run the core PPO update on one filled rollout, mutating `net`,
         `optimizer`, and the RND predictor in place.
@@ -139,7 +140,7 @@ class PPOUpdater:
         _gae_t0 = time.perf_counter_ns()
         advantages, value_targets = batched_gae(
             reward_buf, value_buf, done_buf, final_values_np,
-            t.reinforce_gamma, t.gae_lambda,
+            t.reinforce_gamma, t.gae_lambda, trunc_buf=trunc_buf,
         )
         t._gen_timer.add("gae", time.perf_counter_ns() - _gae_t0)
 
@@ -283,6 +284,24 @@ class PPOUpdater:
             _demo_coef = 0.0
         _demo_loss_accum = 0.0
         _demo_loss_n = 0
+        # Self-imitation BC (reinforce.sil): each minibatch also draws from
+        # the stored level clears and adds cross-entropy at bc_coef —
+        # exactly the demo-anchor plug shape, but the bank is the policy's
+        # OWN clears. Inert when unset/empty. Not applied under SHAPO
+        # (`loss` never backprops there); the trainer warns on that combo.
+        _sil_buf = getattr(t, "_sil_buffer", None)
+        _sil_coef = float(getattr(t, "_sil_bc_coef", 0.0) or 0.0)
+        _sil_active = (
+            _sil_buf is not None and len(_sil_buf) > 0 and _sil_coef > 0.0
+            and sam_rho <= 0.0
+        )
+        _sil_loss_accum = 0.0
+        _sil_loss_n = 0
+        # KL-anchored warm start (reinforce.kl_anchor_checkpoint): during
+        # the critic-warmup phase the actor set's grads are dropped before
+        # every optimizer step, so only the fresh critic moves.
+        _kl_anchor = getattr(t, "_kl_anchor", None)
+        _actor_frozen = _kl_anchor is not None and _kl_anchor.frozen
         for epoch in range(0 if t._recurrent else t.reinforce_steps):
             perm = np.random.permutation(valid_indices)
             n_valid = perm.shape[0]
@@ -344,6 +363,19 @@ class PPOUpdater:
                     # emission instead of one .item() per minibatch.
                     _demo_loss_accum = _demo_loss_accum + _da_loss.detach()
                     _demo_loss_n += 1
+                if _sil_active:
+                    s_obs, s_act = _sil_buf.sample(mb_size)
+                    s_obs_t = torch.from_numpy(s_obs).to(t.device).float()
+                    if not t._is_tile_mode and not t.preprocess_f16:
+                        s_obs_t = s_obs_t.div_(255.0)
+                    s_logits, _ = net.forward_ac(s_obs_t)
+                    _sil_loss = F.cross_entropy(
+                        s_logits.float(),
+                        torch.from_numpy(s_act).to(t.device),
+                    )
+                    loss = loss + _sil_coef * _sil_loss
+                    _sil_loss_accum = _sil_loss_accum + _sil_loss.detach()
+                    _sil_loss_n += 1
                 # RND predictor loss: train the predictor to mimic
                 # the frozen target on visited states (its params are
                 # in this optimizer). Forward with grad here, unlike
@@ -474,12 +506,16 @@ class PPOUpdater:
                     torch.nn.utils.clip_grad_norm_(
                         net.parameters(), t.reinforce_grad_clip
                     )
+                    if _actor_frozen:
+                        _kl_anchor.zero_actor_grads(net)
                     optimizer.step()
                 else:
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(
                         net.parameters(), t.reinforce_grad_clip
                     )
+                    if _actor_frozen:
+                        _kl_anchor.zero_actor_grads(net)
                     optimizer.step()
 
                 _last_policy_t = policy_loss.detach()
@@ -509,6 +545,10 @@ class PPOUpdater:
             "demo_coef": _demo_coef,
             "demo_loss_accum": _demo_loss_accum,
             "demo_loss_n": _demo_loss_n,
+            "sil_loss_accum": (
+                float(_sil_loss_accum) if _sil_loss_n else 0.0
+            ),
+            "sil_loss_n": _sil_loss_n,
             "obs_all": obs_all,
             "obs_flat": obs_flat,
             "mb_size": mb_size,

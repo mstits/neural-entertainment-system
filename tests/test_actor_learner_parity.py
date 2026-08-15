@@ -346,11 +346,15 @@ def test_entropy_floor_is_learner_side() -> None:
 
 def test_demo_anchor_is_learner_side() -> None:
     """The DQfD demo-anchor term is added inside the K-epoch minibatch loop
-    (trainer.py:6193) via src.training.ppo.demo_anchor_loss. Learner-side;
-    the actor never touches it."""
+    via src.training.ppo.demo_anchor_loss. Learner-side; the actor never
+    touches it. The loop was lifted verbatim from trainer.py into
+    `PPOUpdater.update` (trainer-decomposition Task 2), so the pin reads
+    ppo_updater.py now — same retarget the C5 rollout-buffer spy got."""
     from src.training.ppo import demo_anchor_loss  # noqa: F401
 
-    src = _trainer_source()
+    src = (
+        _REPO_ROOT / "src" / "training" / "ppo_updater.py"
+    ).read_text()
     assert "loss = loss + _demo_coef * _da_loss" in src, (
         "demo-anchor is expected to fold into the PPO minibatch loss "
         "(learner-side) — location/expression changed"

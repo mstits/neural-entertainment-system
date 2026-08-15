@@ -36,21 +36,39 @@ class DemoBank:
         which is unfittable by construction (one input, many labels).
         """
         O, A = [], []
+        widths: dict[int, list[str]] = {}
         for p in paths:
             d = np.load(str(p))
-            for k in sorted(k for k in d.files if k.startswith("obs_")):
+            obs_keys = sorted(k for k in d.files if k.startswith("obs_"))
+            if not obs_keys:
+                raise ValueError(
+                    f"{p}: no obs_-prefixed keys — got {sorted(d.files)}; "
+                    "this looks like a different npz schema (e.g. "
+                    "state/action/next_state from gen_iq_transitions.py), "
+                    "not a demo bank")
+            rows = 0
+            for k in obs_keys:
                 j = k.split("_", 1)[1]
                 o, a = d[k], d[f"act_{j}"]
-                assert o.ndim == 2 and o.shape[1] == feature_dim, \
-                    f"{p}:{k} shape {o.shape} != (*, {feature_dim})"
+                assert o.ndim == 2, f"{p}:{k} not 2D: {o.shape}"
+                widths.setdefault(o.shape[1], []).append(f"{p}:{k}")
                 assert int(a.max()) < num_actions, \
                     f"{p}:act_{j} max {a.max()} >= {num_actions}"
                 uniq = len(np.unique(o, axis=0))
                 assert uniq > 0.5 * len(o), \
                     f"{p}:{k} only {uniq}/{len(o)} unique obs rows — " \
                     "buffer-aliased collection (store copies, not views)"
+                rows += len(o)
                 O.append(o)
                 A.append(a)
+            if rows == 0:
+                raise ValueError(f"{p}: obs_-prefixed keys present but 0 rows")
+        bad = {w: fs for w, fs in widths.items() if w != feature_dim}
+        if bad:
+            detail = ", ".join(f"{w}: {fs}" for w, fs in widths.items())
+            raise ValueError(
+                f"mismatched obs width across demo files (expected "
+                f"feature_dim={feature_dim}): {detail}")
         assert O, f"no demos found in {list(paths)}"
         obs = torch.from_numpy(np.concatenate(O)).float()
         acts = torch.from_numpy(np.concatenate(A).astype(np.int64))

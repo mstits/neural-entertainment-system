@@ -46,7 +46,7 @@ from typing import Any, Optional
 import torch
 import yaml
 
-from src.training.profile_utils import profile_slug
+from src.training.profile_utils import profile_slug, resolve_encoder
 
 _ROOT = Path(__file__).resolve().parents[2]
 
@@ -179,6 +179,50 @@ def _run_eval(cmd: list[str], want_sequential: Optional[bool], timeout: float,
     return proc, use_seq
 
 
+def _checkpoint_input_width(state_dict: dict) -> Optional[int]:
+    """The observation width a checkpoint's first layer expects.
+
+    Reads the input (column) dimension off whichever first-layer key is
+    present: ``fc1.weight`` (`TilePolicyNetwork`) or ``input_proj.0.weight``
+    (`TileRecurrentPolicyNetwork`). ``None`` when neither key is present
+    (a partial/synthetic state_dict, or a pixel-CNN checkpoint this guard
+    does not apply to).
+    """
+    for key in ("fc1.weight", "input_proj.0.weight"):
+        w = state_dict.get(key)
+        if w is not None and hasattr(w, "shape") and len(w.shape) == 2:
+            return int(w.shape[1])
+    return None
+
+
+def _check_observation_width(state_dict: dict, cfg: dict) -> None:
+    """Guard against scoring a checkpoint the probe cannot build obs for.
+
+    ``eval_game.py --prev-action-feature`` trains tile nets on a 718-dim
+    observation (712-dim stacked tiles + a 6-wide one-hot of a_{t-1});
+    `probe()` never passes that flag, so it always builds the plain
+    stacked-tile observation `cfg` describes. Feeding a 718-wide checkpoint
+    into that 712-wide net is a shape mismatch that
+    ``load_state_dict(..., strict=False)`` silently drops instead of
+    raising, leaving the first layer half-random and the eval looking
+    clean. Raise loudly here instead of letting that happen deep in the
+    eval subprocess.
+    """
+    try:
+        _, _, obs_width = resolve_encoder(cfg)
+    except ValueError:
+        return  # not a tile profile (e.g. pixel-CNN) — guard doesn't apply
+    ckpt_width = _checkpoint_input_width(state_dict)
+    if ckpt_width is not None and ckpt_width != obs_width:
+        raise ValueError(
+            f"checkpoint expects a {ckpt_width}-wide observation but this "
+            f"probe builds a {obs_width}-wide observation from cfg; likely "
+            "cause: the checkpoint was trained with "
+            "eval_game.py --prev-action-feature (stacked tiles + a 6-wide "
+            "one-hot of a_{t-1}), which cold_probe does not support."
+        )
+
+
 def _resolve_path(value: Any) -> Optional[str]:
     """Absolutize a path against the caller's CWD (relative → cwd-anchored)."""
     if not value:
@@ -272,6 +316,7 @@ def probe(
         if not isinstance(state_dict, dict):
             return _base_result("bad_net", f"net is neither a module nor a state_dict: {type(net)!r}", None)
         cpu_sd = {k: (v.detach().to("cpu") if hasattr(v, "detach") else v) for k, v in state_dict.items()}
+        _check_observation_width(cpu_sd, cfg)
 
         rom = _resolve_path(rom_path or cfg.get("rom_path") or cfg.get("rom"))
         if rom is None or not Path(rom).exists():

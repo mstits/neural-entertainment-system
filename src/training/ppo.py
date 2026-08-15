@@ -32,6 +32,7 @@ def batched_gae(
     final_values: np.ndarray,
     gamma: float,
     gae_lambda: float,
+    trunc_buf: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """GAE-λ backward sweep over a (T, N) rollout buffer.
 
@@ -42,6 +43,14 @@ def batched_gae(
         final_values: (N,) float32 bootstrap V(s_T) for the step after
                       the last rollout step.
         gamma, gae_lambda: PPO discount and GAE trace-decay.
+        trunc_buf:    optional (T, N) bool — True where the done at step
+                      t was a TRUNCATION (stall/timeout cut), not a real
+                      terminal. Truncated steps bootstrap the critic's
+                      own V(s_t) instead of 0 (Pardo partial-episode
+                      bootstrapping; same approximation as `gae.gae`'s
+                      truncation branch), while the accumulator still
+                      breaks at the boundary. None (the default) is the
+                      legacy all-terminal behavior, byte-identical.
 
     Returns `(advantages, value_targets)`, both (T, N) float32 and
     UN-normalized. `value_targets = advantages + value_buf` (the
@@ -63,6 +72,16 @@ def batched_gae(
             next_value = value_buf[t + 1]
         not_done = (~done_buf[t]).astype(np.float32)
         delta = reward_buf[t] + gamma * next_value * not_done - value_buf[t]
+        if trunc_buf is not None and trunc_buf[t].any():
+            # Truncated done: the episode was CUT, not finished — the
+            # target keeps a bootstrapped future (V(s_t) stands in for
+            # V(s_{t+1}), which the cut never produced) instead of the
+            # death-style hard zero.
+            delta = np.where(
+                trunc_buf[t],
+                reward_buf[t] + gamma * value_buf[t] - value_buf[t],
+                delta,
+            )
         gae_running = delta + gamma * gae_lambda * gae_running * not_done
         advantages[t] = gae_running
     value_targets = advantages + value_buf
