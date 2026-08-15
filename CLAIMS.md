@@ -260,3 +260,20 @@ the gauntlet core has a measured local sticky ceiling of ~0.03–0.05.
 The companion literature audit found no published agent by any method
 that clears 1-2 under this protocol. Negative results carry the same
 evidentiary standard as positives and are quotable with their data.
+
+`runs/smodice_1_2/` records the 2026-08-14 closure of offline imitation
+for 1-2 under a pre-registered rehabilitate-or-close protocol. The prior
+offline negative was contaminated (expert-only IQ-Learn degenerates to
+BC; survivorship-filtered windows; no terminal grounding), so the
+corrected experiment was run same-day: terminal-grounded 50/50
+success/failure dataset (40,785 transitions, `transitions.npz`), a
+seven-arm ablation (`abl_A*.log`) that cured the fit ceiling — argmax
+0.308 → 0.669, past the 0.60 gate, best-ever for any offline method
+here — and a 50-episode honest eval of the winner
+(`checkpoints/smodice_1_2/abl_A7`, `honest_eval_A7.log`): 0.0 clears,
+median death at x=646 of 3,266. With fit cured and clears still zero,
+offline-without-rollouts is closed on sound evidence; the online pivot
+is licensed. Side finding, quotable: on 100%-expert-action datasets,
+DICE-style occupancy weighting acts as an adversarial subsampler
+(matched pair: chi-weights 0.359 vs unweighted 0.669 on identical
+data/capacity).
