@@ -1,4 +1,5 @@
-"""SMB 1-2 online-campaign phase controller.
+"""SMB online-campaign phase controller (1-2 by default; any level via
+`--campaign-config`).
 
 Drives the six-phase schedule over the four-mechanism trainer stack
 (configs/mario_1_2_online_v2.yaml): one trainer SUBPROCESS per phase, each
@@ -40,6 +41,16 @@ manifest sha256s, and the probe command assembles against real paths.
 Long runs are launched by the operator, not by edits to this file: every
 threshold lives in CONFIG at the top and is mirrored into
 runs/online_1_2/manifest.json at campaign start.
+
+RETARGETING TO ANOTHER LEVEL (`--campaign-config <yaml>`): the same
+controller drives a different level package by loading a small override
+document over CONFIG and PHASES — no fork, no second copy of the phase
+logic. The doc carries `config:` (keys that must ALREADY exist in
+CONFIG — an unregistered key is a typo and raises) and optionally
+`phases:` (a full replacement schedule; every phase is validated for a
+known gate and a sequential index). Without the flag, CONFIG and PHASES
+are exactly the pinned 1-2 values. See configs/campaign_1_3.yaml and
+docs/receipts/one_three_coordination_2026-08-16.md.
 """
 from __future__ import annotations
 
@@ -70,6 +81,20 @@ CONFIG: dict[str, Any] = {
     "run_dir": "runs/online_1_2",
     "campaign_log": "runs/online_1_2/campaign.jsonl",
     "restart_states_dir": "checkpoints/online_1_2/restart_states",
+    # Identity: `campaign_name` labels the manifest, `probe_game` is the
+    # logical game name eval_game.py echoes into its JSON (the profile
+    # and ROM are passed explicitly, so this is a label, not a lookup).
+    "campaign_name": "smb_1_2_online_v2",
+    "probe_game": "mario_1_2_online_v2",
+    # The level this campaign trains. The dry run refuses a restart set
+    # whose ladder was minted for a different level, or from a root that
+    # is not the base profile's own `start_state_path`. Schema-compatible
+    # is NOT the same as provenance-compatible: the on-disk
+    # checkpoints/backward_states/1-2 ladder is a valid index.json whose
+    # meta names root entrance_after_1-1.state and profile
+    # smb_4_4_micro.yaml, so consuming a ladder from another lane without
+    # this check seeds the campaign from a foreign room, silently.
+    "campaign_level": "1-2",
 
     # Honest probe protocol (Machado sticky + start jitter, greedy).
     "probe_every_env_steps": 5_000_000,
@@ -108,6 +133,21 @@ CONFIG: dict[str, Any] = {
     "kill_vloss_recovery_steps": 1_000_000,
     "kill_vloss_baseline_rows": 20,           # rows before the spike arms
     "kill_phase1_no_sil_clear_steps": 20_000_000,
+    # Rung-progress kill (audit-7). The backward curriculum's cursor is
+    # the thing being falsified: if tau has not walked back past the
+    # ladder midpoint after this many CUMULATIVE campaign env-steps, the
+    # walk is not walking and the campaign aborts instead of spending
+    # the rest of its budget to report the same thing. Cumulative, and
+    # checked in every phase that does not pin the entrance, because the
+    # curriculum sits in the BASE profile and advances from phase 0 —
+    # scoping it to the reverse-walk phase would arm it where 1-2's
+    # precedent proves it cannot fire (see `rung_progress_kill`).
+    # PROVISIONAL wherever it is armed: no banked run measures a
+    # reverse-walk rate, so a value here is a bound, not a calibration.
+    # 0 == DISARMED, which is the 1-2 default (its ledger predates the
+    # criterion; retargeted campaigns register a value in their
+    # --campaign-config).
+    "kill_rung_halfway_steps": 0,
 
     # Advance gates.
     # Attempt-1 calibration: raw huber value loss on this reward scale
@@ -215,6 +255,22 @@ PHASES: tuple[dict, ...] = (
 # ---------------------------------------------------------------------------
 
 
+# Every gate `_gate_met` implements. Literal (not derived) so a
+# retargeted campaign's schedule is validated against a registry that a
+# refactor of `_gate_met` cannot silently widen.
+KNOWN_GATES: frozenset[str] = frozenset({
+    "budget", "critic_warmup", "det_local_clears", "sticky_clear",
+    "restart_at_entrance",
+})
+
+# Top-level keys a --campaign-config document may carry.
+CAMPAIGN_DOC_KEYS: frozenset[str] = frozenset({"config", "phases", "notes"})
+
+# Keys every phase entry must carry.
+PHASE_REQUIRED_KEYS: tuple[str, ...] = (
+    "idx", "name", "gate", "budget_env_steps")
+
+
 def deep_merge(base: dict, overrides: dict) -> dict:
     """Recursive dict merge; returns a new dict, mutates neither input."""
     out = copy.deepcopy(base)
@@ -224,6 +280,102 @@ def deep_merge(base: dict, overrides: dict) -> dict:
         else:
             out[k] = copy.deepcopy(v)
     return out
+
+
+def _same_kind(old: Any, new: Any) -> bool:
+    """Type compatibility for a CONFIG override (int<->float is fine)."""
+    if isinstance(old, bool) or isinstance(new, bool):
+        return isinstance(old, bool) and isinstance(new, bool)
+    if isinstance(old, (int, float)) and isinstance(new, (int, float)):
+        return True
+    return type(old) is type(new)
+
+
+def merge_campaign_config(
+    base_cfg: dict, base_phases: tuple[dict, ...], doc: dict,
+) -> tuple[dict, tuple[dict, ...]]:
+    """PURE: the (CONFIG, PHASES) a --campaign-config document produces.
+
+    Neither input is mutated. Validation is deliberately strict — this
+    document is a pre-registration, and a silently-ignored key here is a
+    threshold that does not exist at 3 a.m.:
+
+    * only `config` / `phases` / `notes` at the top level;
+    * every `config` key must ALREADY exist in the controller's CONFIG,
+      with a compatible type (a typo'd threshold raises, it does not
+      quietly join the dict);
+    * `phases`, if present, REPLACES the schedule wholesale (a partial
+      phase merge would make "which budget is live?" unanswerable). Each
+      entry needs idx/name/gate/budget_env_steps, a gate in KNOWN_GATES,
+      a sequential idx from 0, and a dict `overrides` if it has one.
+    """
+    if not isinstance(doc, dict):
+        raise ValueError(
+            f"campaign config must be a YAML mapping, got {type(doc).__name__}")
+    unknown_top = sorted(set(doc) - CAMPAIGN_DOC_KEYS)
+    if unknown_top:
+        raise ValueError(
+            f"unknown campaign-config key(s) {unknown_top}; allowed: "
+            f"{sorted(CAMPAIGN_DOC_KEYS)}")
+
+    cfg = copy.deepcopy(base_cfg)
+    over = doc.get("config") or {}
+    if not isinstance(over, dict):
+        raise ValueError("campaign-config `config` must be a mapping")
+    for k, v in over.items():
+        if k not in cfg:
+            raise ValueError(
+                f"campaign-config sets unknown CONFIG key {k!r} — it would "
+                f"be ignored by the controller (typo? renamed?)")
+        if not _same_kind(cfg[k], v):
+            raise ValueError(
+                f"campaign-config key {k!r}: expected "
+                f"{type(cfg[k]).__name__}, got {type(v).__name__}")
+        cfg[k] = copy.deepcopy(v)
+
+    raw_phases = doc.get("phases")
+    if raw_phases is None:
+        return cfg, copy.deepcopy(base_phases)
+    if not isinstance(raw_phases, list) or not raw_phases:
+        raise ValueError("campaign-config `phases` must be a non-empty list")
+    phases: list[dict] = []
+    for i, p in enumerate(raw_phases):
+        if not isinstance(p, dict):
+            raise ValueError(f"phase {i} must be a mapping")
+        missing = [k for k in PHASE_REQUIRED_KEYS if k not in p]
+        if missing:
+            raise ValueError(f"phase {i} is missing {missing}")
+        if int(p["idx"]) != i:
+            raise ValueError(
+                f"phase indices must be sequential from 0; entry {i} "
+                f"declares idx {p['idx']}")
+        if str(p["gate"]) not in KNOWN_GATES:
+            raise ValueError(
+                f"phase {i} ({p['name']}) declares unknown gate "
+                f"{p['gate']!r}; known gates: {sorted(KNOWN_GATES)}")
+        if int(p["budget_env_steps"]) <= 0:
+            raise ValueError(
+                f"phase {i} ({p['name']}) needs a positive budget_env_steps")
+        ov = p.get("overrides", {})
+        if not isinstance(ov, dict):
+            raise ValueError(f"phase {i} `overrides` must be a mapping")
+        phases.append(copy.deepcopy(p))
+    return cfg, tuple(phases)
+
+
+def apply_campaign_config(path) -> dict:
+    """Load a campaign-override doc and install it into CONFIG/PHASES.
+
+    CONFIG is updated IN PLACE (callers hold references to it) and
+    PHASES is rebound at module scope. Returns the raw document so the
+    caller can log what was applied.
+    """
+    doc = _load_yaml(path) or {}
+    cfg, phases = merge_campaign_config(CONFIG, PHASES, doc)
+    CONFIG.clear()
+    CONFIG.update(cfg)
+    globals()["PHASES"] = phases
+    return doc
 
 
 def entropy_coef_at(env_steps: float) -> float:
@@ -394,10 +546,152 @@ class KillMonitor:
         return None
 
 
+def restart_provenance_ok(
+    meta: Optional[dict], base_profile: dict, cfg: dict,
+) -> tuple[bool, str]:
+    """PURE: does this restart set belong to THIS campaign?
+
+    `mint_backward_states.py` stamps every ladder's `index.json` meta
+    with the level it minted, the root blob it replayed from and the
+    profile it replayed under, and `select_restart_states.py` copies
+    that meta forward into the selection. Schema checks read none of it,
+    so a ladder minted by another lane for another level from another
+    root passes every other check in this dry run.
+
+    That is a live on-disk situation, not a hypothetical: the banked
+    `checkpoints/backward_states/1-2` ladder's meta names root
+    `runs/live_show/smb_4_4_micro/entrance_after_1-1.state` and profile
+    `configs/smb_4_4_micro.yaml` over a 1215-action tape, while the 1-2
+    campaign profile starts at `stage_03.state` and the restart set it
+    actually shipped came from an 871-action stage_03-rooted tape.
+    Consuming the former as a `--ladder` input would have seeded the
+    campaign from a foreign room with every check printing PASS.
+
+    Two things must agree, and both are compared by resolved path /
+    exact string so a near-miss is a failure:
+
+      * `meta["level"]` == `cfg["campaign_level"]`;
+      * `meta["root_state"]` == the base profile's `start_state_path`.
+
+    A ladder with no `level`/`root_state` in its meta FAILS. Unstamped
+    provenance is not a pass — it is a ladder whose origin cannot be
+    established, which is the case this gate exists to refuse.
+    """
+    if not isinstance(meta, dict):
+        return False, f"no ladder meta to check (got {type(meta).__name__})"
+    want_level = str(cfg.get("campaign_level") or "")
+    got_level = meta.get("level")
+    want_root = base_profile.get("start_state_path")
+    got_root = meta.get("root_state")
+    if got_level is None or got_root is None:
+        return False, (
+            f"ladder meta is missing provenance (level={got_level!r}, "
+            f"root_state={got_root!r}); re-mint with "
+            f"scripts/mint_backward_states.py")
+    if not want_level:
+        return False, "campaign_level is unset — nothing to check against"
+    if not want_root:
+        return False, "base profile has no start_state_path to check against"
+    bad = []
+    if str(got_level) != want_level:
+        bad.append(f"level {got_level!r} != campaign_level {want_level!r}")
+    if Path(str(got_root)).resolve() != Path(str(want_root)).resolve():
+        bad.append(f"root_state {got_root!r} != profile start_state_path "
+                   f"{want_root!r}")
+    if bad:
+        return False, "; ".join(bad) + " — this ladder is another lane's"
+    return True, (f"level {got_level}, root {got_root}, profile "
+                  f"{meta.get('profile')}, {meta.get('n_actions')} actions")
+
+
+def phase_pins_entrance(phase: dict) -> bool:
+    """True when this phase's overrides pin restarts to the entrance.
+
+    A pinned phase has no cursor to falsify — tau is held at 0 by the
+    schedule, not by learning — so the rung-progress kill must not read
+    it. Everything else in the schedule leaves the base profile's
+    backward curriculum live, and therefore advancing.
+    """
+    bwd = (((phase.get("overrides") or {}).get("reinforce") or {})
+           .get("backward_curriculum") or {})
+    return bool(bwd.get("pin_entrance"))
+
+
+def rung_progress_kill(
+    *, state: Optional[dict], curriculum_env_steps: float, cfg: dict,
+) -> Optional[str]:
+    """Audit-7 rung-progress kill over the persisted backward cursor.
+
+    PURE over the curriculum's `state_dict()` (the trainer persists it
+    under `backward_curriculum` in every checkpoint). Fires only when
+    ALL of these hold:
+
+      * the criterion is armed (`kill_rung_halfway_steps` > 0);
+      * the CURRICULUM has burned at least that many env-steps;
+      * the ladder is real (>= 2 entries) and the cursor is readable;
+      * tau has NOT yet walked past the ladder midpoint — tau counts
+        DOWN from the deepest rung to 0 (the entrance), so "past
+        halfway" is `tau <= (n_entries - 1) // 2`.
+
+    SCOPE — `curriculum_env_steps` is CUMULATIVE campaign steps, not
+    phase-local, and the caller evaluates this in every phase that does
+    not pin the entrance. That is not a refinement, it is the whole
+    criterion: tau is a campaign-global cursor. The backward curriculum
+    sits in the BASE profile, so it is live and advancing from phase 0,
+    and the only banked precedent shows it finishing there — 1-2 attempt
+    7 entered its reverse-walk phase and passed `restart_at_entrance` at
+    the FIRST check because tau had already walked to 0 across the
+    earlier phases (runs/online_1_2_attempt_ledger.md, attempt 7). A
+    kill scoped to the reverse-walk phase alone, measured on that
+    phase's own steps, would have had ~5M steps of a 25M threshold to
+    fire in and could never have fired; meanwhile a cursor that genuinely
+    stalls, stalls in phase 1 or 2, where nothing would have read it.
+
+    CALIBRATION — the threshold is PROVISIONAL and must be treated like
+    `kill_probe_median_floor`. No banked artifact measures a reverse-walk
+    RATE: attempt 7 resumed from a checkpoint whose cursor was already at
+    0, so the ledger bounds the walk only from above (tau reached 0 by
+    the ~70.0M cumulative steps at which phase 3 opened) and never
+    timestamps the midpoint. The threshold therefore has to sit far
+    enough out that the one precedent survives it.
+
+    NOT a post-hoc rationalisation of the 1-2 ledger. The ledger records
+    no attempt lost to a stalled cursor — attempts 1-3 were unfreeze and
+    tether calibration, 4 a miswired gate probe, 5 a miscalibrated gate,
+    6 a resume re-litigating earned gates, 7 an un-anchored adversary.
+    This criterion is a NEW pre-registration against a failure mode that
+    has not been observed, which is why it is armed generously rather
+    than tightly.
+
+    Returns the kill reason, or None while healthy. A missing cursor is
+    never a kill: an unreadable checkpoint is a probe problem, and a
+    kill criterion that fires on missing data is a coin flip.
+    """
+    limit = float(cfg.get("kill_rung_halfway_steps") or 0)
+    if limit <= 0 or float(curriculum_env_steps) < limit:
+        return None
+    if not isinstance(state, dict):
+        return None
+    tau, n = state.get("tau"), state.get("n_entries")
+    if tau is None or n is None:
+        return None
+    tau, n = int(tau), int(n)
+    if n < 2:
+        return None
+    halfway = (n - 1) // 2
+    if tau <= halfway:
+        return None
+    return (
+        f"KILL rung-progress: tau={tau}/{n - 1} after "
+        f"{curriculum_env_steps:.0f} cumulative env-steps (>= {limit:.0f}) "
+        f"— the backward curriculum has not reached the ladder midpoint "
+        f"(tau <= {halfway})")
+
+
 def build_manifest(base_profile: dict) -> dict:
     """The campaign manifest: CONFIG + phase schedule, mirrored verbatim."""
     return {
-        "campaign": "smb_1_2_online_v2",
+        "campaign": CONFIG["campaign_name"],
         "profile_name": base_profile.get("name"),
         "config": copy.deepcopy(CONFIG),
         "phases": copy.deepcopy(list(PHASES)),
@@ -481,11 +775,17 @@ def load_checkpoint_payload(ckpt_dir: Path) -> Optional[dict]:
     return None
 
 
-def read_backward_tau(payload: Optional[dict]) -> Optional[int]:
+def read_backward_state(payload: Optional[dict]) -> Optional[dict]:
+    """The persisted TauScheduler state_dict from a checkpoint payload."""
     if not isinstance(payload, dict):
         return None
     state = payload.get("backward_curriculum")
-    if isinstance(state, dict) and "tau" in state:
+    return state if isinstance(state, dict) else None
+
+
+def read_backward_tau(payload: Optional[dict]) -> Optional[int]:
+    state = read_backward_state(payload)
+    if state is not None and "tau" in state:
         return int(state["tau"])
     return None
 
@@ -522,7 +822,7 @@ def build_probe_command(
     base = _load_yaml(REPO / CONFIG["base_profile"])
     cmd = [
         sys.executable, str(REPO / "scripts" / "eval_game.py"),
-        "--game", "mario_1_2_online_v2",
+        "--game", str(CONFIG["probe_game"]),
         "--profile", str(REPO / CONFIG["base_profile"]),
         "--rom", str(REPO / base["rom_path"]),
         "--checkpoint", str(checkpoint),
@@ -641,12 +941,28 @@ def dry_run() -> int:
             and fc1 == (int(rl["tile_hidden_dim"]), obs_width)
             and fc2 == (int(rl["tile_trunk_dim"]), int(rl["tile_hidden_dim"]))
         )
-        report("A7 anchor shape-infers into the configured net", dims_ok,
+        report("KL anchor shape-infers into the configured net", dims_ok,
                f"fc1={fc1} fc2={fc2} obs={obs_width} recurrent={is_recurrent}"
                f" missing={missing}")
     except Exception as e:
-        report("A7 anchor shape-infers into the configured net", False,
+        report("KL anchor shape-infers into the configured net", False,
                repr(e))
+
+    # 3b. The wavefront distance map exists and unpickles (a missing dmap
+    # is a launch-time crash inside the trainer subprocess, i.e. a phase
+    # log nobody reads until the window is gone).
+    wave = (base.get("reinforce", {}) or {}).get("wavefront_reward") or {}
+    if wave.get("enabled") and wave.get("dmap"):
+        try:
+            import pickle
+            with open(REPO / wave["dmap"], "rb") as f:
+                dmap = pickle.load(f)
+            ds = [int(v) for v in dmap.values()]
+            report("wavefront dmap loads", bool(ds),
+                   f"{len(dmap)} cells, dist range [{min(ds)}, {max(ds)}]"
+                   if ds else "empty dmap")
+        except Exception as e:
+            report("wavefront dmap loads", False, repr(e))
 
     # 4. Restart states load and match their manifest sha256s.
     try:
@@ -668,6 +984,19 @@ def dry_run() -> int:
             f"{meta.get('reached_clear')}")
     except Exception as e:
         report("restart states load + sha256 match manifest", False, repr(e))
+
+    # 4b. PROVENANCE, not schema. The check above passes on any
+    # well-formed ladder, including one another lane minted for another
+    # level from another root — see CONFIG["campaign_level"]. This one
+    # asks whose ladder it actually is.
+    try:
+        from src.training.backward_curriculum import load_index
+        _, meta = load_index(REPO / CONFIG["restart_states_dir"])
+        ok_p, why = restart_provenance_ok(meta, base, CONFIG)
+        report("restart states are THIS level's, from THIS root", ok_p, why)
+    except Exception as e:
+        report("restart states are THIS level's, from THIS root", False,
+               repr(e))
 
     # 5. Probe command assembles against real paths.
     try:
@@ -880,6 +1209,22 @@ def run_campaign(start_phase: int = 0) -> int:
                             f"{CONFIG['kill_probe_median_floor']:.0f} "
                             f"in phase {phase['idx']}")
 
+                # Audit-7 rung-progress kill. Armed in every phase whose
+                # restarts are NOT entrance-pinned, because the backward
+                # curriculum lives in the base profile and its cursor
+                # advances from phase 0 — 1-2's reverse-walk gate passed
+                # at its first check on a cursor the earlier phases had
+                # already walked to 0. Measured on CUMULATIVE env-steps
+                # for the same reason. Probe cadence only: this is the
+                # one cycle slow enough to pay for a checkpoint load.
+                if not phase_pins_entrance(phase):
+                    reason = rung_progress_kill(
+                        state=read_backward_state(
+                            load_checkpoint_payload(ckpt_dir)),
+                        curriculum_env_steps=cum_env_steps, cfg=CONFIG)
+                    if reason:
+                        return _abort(reason)
+
                 # Gate check rides the probe cadence (cheap gates too —
                 # they only read state the probe cycle already loads).
                 if started_monitor and _gate_met(
@@ -957,7 +1302,19 @@ def main() -> int:
     ap.add_argument("--start-phase", type=int, default=0,
                     help="Resume the schedule at this phase (checkpoints "
                          "carry the trainer state; default 0).")
+    ap.add_argument("--campaign-config", default=None,
+                    help="YAML overriding CONFIG (and optionally the whole "
+                         "phase schedule) to retarget this controller at "
+                         "another level package, e.g. "
+                         "configs/campaign_1_3.yaml. Omit for the pinned "
+                         "1-2 campaign.")
     args = ap.parse_args()
+    if args.campaign_config:
+        apply_campaign_config(REPO / args.campaign_config
+                              if not Path(args.campaign_config).is_absolute()
+                              else Path(args.campaign_config))
+        print(f"[campaign] config: {args.campaign_config} -> "
+              f"{CONFIG['campaign_name']} ({len(PHASES)} phases)", flush=True)
     if args.dry_run:
         return dry_run()
     if not 0 <= args.start_phase < len(PHASES):

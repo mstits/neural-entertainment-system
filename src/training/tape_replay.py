@@ -76,10 +76,60 @@ class TapeSegment:
 # ---- provenance helpers (where a tape and its root live on disk) ------
 
 
+def level_from_wd(wd) -> Optional[str]:
+    """`[world, level]` solver coordinates -> the "W-L" name, or None.
+
+    The solver banks zero-based coordinates (`start_wd [0, 2]` is 1-3),
+    so this is the one place that translation lives.
+    """
+    try:
+        w, d = int(wd[0]), int(wd[1])
+    except (TypeError, ValueError, IndexError, KeyError):
+        return None
+    return f"{w + 1}-{d + 1}"
+
+
 def solution_paths(run_dir, level: str, index: int = 0) -> tuple[Path, Path]:
-    """(actions.npy, sidecar.json) for `level` in a solver run dir."""
-    base = Path(run_dir) / f"lvl_{level}" / "solutions" / f"sol_{index:03d}"
-    return base.with_suffix(".actions.npy"), base.with_suffix(".json")
+    """(actions.npy, sidecar.json) for `level` in a solver run dir.
+
+    Two banked layouts exist and both must resolve:
+
+    * MULTI-LEVEL — `<run>/lvl_<level>/solutions/sol_NNN.*`, what a chain
+      solve writes when one run dir holds many levels;
+    * SINGLE-LEVEL — `<run>/solutions/sol_NNN.*`, what a per-level solve
+      writes when the run dir IS the level (`runs/ge_1_3_solve/`).
+
+    The multi-level path always wins when its level dir exists, so every
+    caller that already resolved keeps resolving to the same files. The
+    flat fallback is taken ONLY when `lvl_<level>/` is absent and the
+    flat pair is present, and it is provenance-gated: the flat sidecar's
+    `start_wd` must name the level that was asked for. A run dir solved
+    for a different level therefore raises here instead of handing back
+    a tape that mints the wrong ladder under the right filename.
+    """
+    run_dir = Path(run_dir)
+    lvl_dir = run_dir / f"lvl_{level}"
+    base = lvl_dir / "solutions" / f"sol_{index:03d}"
+    act, side = base.with_suffix(".actions.npy"), base.with_suffix(".json")
+    if lvl_dir.is_dir() or act.exists() or side.exists():
+        return act, side
+
+    flat = run_dir / "solutions" / f"sol_{index:03d}"
+    f_act, f_side = flat.with_suffix(".actions.npy"), flat.with_suffix(".json")
+    if not (f_act.exists() and f_side.exists()):
+        return act, side          # neither layout: report the canonical one
+    try:
+        rec = json.loads(f_side.read_text())
+    except (OSError, ValueError):
+        return act, side
+    got = level_from_wd(rec.get("start_wd") or ())
+    if got is not None and got != str(level):
+        raise ValueError(
+            f"{run_dir}: single-level layout holds {got} "
+            f"(start_wd {rec.get('start_wd')}), not the requested "
+            f"{level} — point --run at the {level} solve, or pass "
+            f"--actions/--start-state explicitly")
+    return f_act, f_side
 
 
 def root_state_for(sidecar, run_dir) -> Path:

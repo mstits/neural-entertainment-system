@@ -218,6 +218,62 @@ def test_solution_paths_pairs_the_tape_with_its_sidecar(tmp_path):
     assert act.parent == tmp_path / "lvl_4-2" / "solutions"
 
 
+def _flat_run(tmp_path, wd=(0, 2), index=0):
+    """A per-level solver run dir: solutions/ sits at the run root."""
+    sol = tmp_path / "solutions"
+    sol.mkdir(parents=True, exist_ok=True)
+    np.save(sol / f"sol_{index:03d}.actions.npy",
+            np.array([0, 1, 2], dtype=np.int64))
+    (sol / f"sol_{index:03d}.json").write_text(json.dumps(
+        {"root_state": "/gone/root.state", "start_wd": list(wd),
+         "clear_wd": [wd[0], wd[1] + 1]}))
+    return tmp_path
+
+
+def test_solution_paths_reads_the_single_level_run_layout(tmp_path):
+    """PROVE-IT: `runs/ge_1_3_solve/` banks solutions/ at the run ROOT,
+    with no lvl_<level>/ dir. Resolving only the multi-level layout made
+    `mint_backward_states.py --run runs/ge_1_3_solve --level 1-3` raise
+    FileNotFoundError before any emulator work."""
+    run = _flat_run(tmp_path)
+    act, side = tape_replay.solution_paths(run, "1-3", 0)
+    assert act == run / "solutions" / "sol_000.actions.npy"
+    assert side == run / "solutions" / "sol_000.json"
+    assert act.exists() and side.exists()
+
+
+def test_solution_paths_flat_fallback_is_gated_on_the_level(tmp_path):
+    """A flat run dir solved for another level must raise, not hand back
+    a tape that mints the wrong ladder under the right filename."""
+    run = _flat_run(tmp_path, wd=(0, 2))            # this dir holds 1-3
+    with pytest.raises(ValueError, match="1-3"):
+        tape_replay.solution_paths(run, "1-1", 0)
+
+
+def test_solution_paths_prefers_the_multi_level_layout(tmp_path):
+    """When both layouts exist the level dir wins, so nothing that
+    already resolved moves."""
+    run = _flat_run(tmp_path, wd=(0, 2))
+    (run / "lvl_1-3" / "solutions").mkdir(parents=True)
+    act, _ = tape_replay.solution_paths(run, "1-3", 0)
+    assert act.parent == run / "lvl_1-3" / "solutions"
+
+
+def test_solution_paths_reports_the_canonical_path_when_neither_exists(
+        tmp_path):
+    act, side = tape_replay.solution_paths(tmp_path, "1-3", 0)
+    assert act.parent == tmp_path / "lvl_1-3" / "solutions"
+    assert not act.exists() and not side.exists()
+
+
+def test_level_from_wd_translates_solver_coordinates():
+    assert tape_replay.level_from_wd([0, 2]) == "1-3"
+    assert tape_replay.level_from_wd([0, 0]) == "1-1"
+    assert tape_replay.level_from_wd([7, 3]) == "8-4"
+    for bad in ((), (1,), None, ("a", "b")):
+        assert tape_replay.level_from_wd(bad) is None
+
+
 def test_resolve_chain_shuffle_seed_builds_a_matched_length_control(tmp_path):
     """The negative control keeps every root and every action count — it
     is the same trajectory length, differently ordered."""

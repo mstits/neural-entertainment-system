@@ -135,6 +135,112 @@ def select_entries(
     return picked
 
 
+def auto_targets(
+    entries: Sequence[StateEntry],
+    n_rungs: int = 6,
+    *,
+    round_to: int = 50,
+) -> tuple[int, ...]:
+    """Evenly spaced gx targets for a level whose range is not known.
+
+    The 1-2 targets (2500/2000/1500/1000/500/0) were hand-chosen around a
+    MEASURED barrier. A level with no measured barrier must not get
+    invented coordinates, so this derives the ladder entirely from our
+    own solver tape: take one segment's max gx (the tape's reach inside
+    that segment), lay `n_rungs - 1` rungs at k/n_rungs of it for
+    k = n_rungs-1 .. 1, floor each to a `round_to` multiple, and append 0
+    (the true entrance, which is always the ladder head).
+
+    WHICH segment is not free. `select_entries` resolves every non-zero
+    target inside `pick_bottleneck_segment` — the EARLIEST segment whose
+    range covers the deepest target — so if the scale came from a later,
+    deeper segment the rungs would be measured against one room and
+    minted in another. That is not hypothetical: on the banked 1-2
+    ladder the segments reach gx 160 / 2674 / 3175, and scaling off the
+    deepest (3175, the re-based exit run) puts the top target at 2600,
+    which the earliest-covering rule then resolves back inside the 2674
+    underground segment. Scale and rungs would disagree silently.
+
+    So the segment is chosen to a FIXED POINT: start from the deepest,
+    and while the earliest segment covering the resulting top target is
+    an earlier one, re-scale off that earlier segment. The iteration only
+    ever moves earlier, so it terminates in at most `len(segments)`
+    rounds, and it ends on exactly the segment `select_entries` will use.
+    On a single-segment tape (SMB 1-3 never leaves its area byte) the
+    first round is already the fixed point and this is a no-op.
+
+    Returned descending, matching DEFAULT_TARGETS' order.
+    """
+    if n_rungs < 2:
+        raise ValueError(f"n_rungs must be >= 2, got {n_rungs}")
+    if round_to < 1:
+        raise ValueError(f"round_to must be >= 1, got {round_to}")
+    if not entries:
+        raise ValueError("empty ladder: nothing to select from")
+    segs = [s for s in split_segments(sorted(entries, key=lambda e: e.step))
+            if s]
+
+    def _scale(seg):
+        max_gx = max(e.gx for e in seg)
+        out = [int(max_gx * k / n_rungs) // round_to * round_to
+               for k in range(n_rungs - 1, 0, -1)]
+        out.append(0)
+        return max_gx, out
+
+    seg = max(segs, key=lambda s: max(e.gx for e in s))
+    for _ in range(len(segs)):
+        max_gx, targets = _scale(seg)
+        top = max(t for t in targets if t) if any(targets) else 0
+        if top <= 0:
+            break
+        owner = pick_bottleneck_segment(segs, top)
+        if owner[0].step >= seg[0].step:
+            break
+        seg = owner
+    else:                                   # pragma: no cover - unreachable
+        raise ValueError("auto targets did not settle on a segment")
+    if len(set(targets)) != len(targets):
+        raise ValueError(
+            f"auto targets collapsed to {targets} (max gx {max_gx} is too "
+            f"small for {n_rungs} rungs at {round_to}px granularity); pass "
+            f"explicit --targets or lower --round-to")
+    return tuple(targets)
+
+
+def check_ladder_provenance(
+    meta, *, level=None, root_state=None, ladder="<ladder>",
+) -> None:
+    """Raise unless a ladder's stamped origin is the one we asked for.
+
+    The mint stamps `level` / `root_state` / `profile` into index.json
+    meta and this script copies them forward, but NOTHING downstream
+    reads them, so a ladder minted by another lane for another level
+    from another root selects cleanly and ships. That has a live on-disk
+    example: `checkpoints/backward_states/1-2`'s meta names root
+    `.../smb_4_4_micro/entrance_after_1-1.state` and profile
+    `configs/smb_4_4_micro.yaml` over a 1215-action tape, while the 1-2
+    campaign starts at `stage_03.state` and shipped an 871-action
+    stage_03-rooted selection.
+
+    Both checks are opt-in (the default path is unchanged) but a ladder
+    that CANNOT prove its origin fails whichever check was requested —
+    a missing stamp is not a pass.
+    """
+    meta = meta if isinstance(meta, dict) else {}
+    if level is not None:
+        got = meta.get("level")
+        if got is None or str(got) != str(level):
+            raise SystemExit(
+                f"[select] {ladder}: ladder level {got!r} != expected "
+                f"{level!r} — this is another level's ladder")
+    if root_state is not None:
+        got = meta.get("root_state")
+        if got is None or Path(str(got)).resolve() != Path(root_state).resolve():
+            raise SystemExit(
+                f"[select] {ladder}: ladder root_state {got!r} != expected "
+                f"{root_state!r} — this ladder starts in a different room")
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -154,10 +260,31 @@ def main() -> int:
                     help="Comma-separated gx targets (default "
                          "2500,2000,1500,1000,500,0).")
     ap.add_argument("--tolerance-px", type=int, default=DEFAULT_TOLERANCE_PX)
+    ap.add_argument("--auto-targets", type=int, default=None, metavar="N",
+                    help="Derive N evenly spaced targets from the ladder's "
+                         "own deepest segment instead of --targets (for a "
+                         "level with no measured barrier).")
+    ap.add_argument("--round-to", type=int, default=50,
+                    help="Granularity auto targets are floored to (px).")
+    ap.add_argument("--expect-level", default=None, metavar="W-L",
+                    help="Refuse a ladder whose index.json meta names a "
+                         "different level. Pass this whenever --ladder "
+                         "points outside your own lane.")
+    ap.add_argument("--expect-root", default=None, metavar="PATH",
+                    help="Refuse a ladder minted from a different root "
+                         "blob than the campaign profile starts at.")
     args = ap.parse_args()
 
-    targets = tuple(int(t) for t in args.targets.split(","))
     entries, meta = load_index(args.ladder)
+    check_ladder_provenance(meta, level=args.expect_level,
+                            root_state=args.expect_root, ladder=args.ladder)
+    if args.auto_targets is not None:
+        targets = auto_targets(entries, args.auto_targets,
+                               round_to=args.round_to)
+        print(f"[select] auto targets ({args.auto_targets} rungs): "
+              f"{list(targets)}", flush=True)
+    else:
+        targets = tuple(int(t) for t in args.targets.split(","))
     picked = select_entries(entries, targets, tolerance_px=args.tolerance_px)
 
     out_dir = Path(args.out)
@@ -192,10 +319,11 @@ def main() -> int:
     actions_path = meta.get("actions")
     if actions_path and Path(actions_path).exists():
         actions_path = str(Path(actions_path).resolve())
+    level = str(meta.get("level") or "1-2")
     manifest = {
-        "purpose": "SMB 1-2 online-campaign restart states "
-                   "(backward-curriculum rungs at the x~2674 bottleneck "
-                   "approach)",
+        "purpose": (
+            f"SMB {level} online-campaign restart states "
+            f"(backward-curriculum rungs at gx {list(targets)})"),
         "source_solution": {
             "actions": actions_path,
             "root_state": meta.get("root_state"),
