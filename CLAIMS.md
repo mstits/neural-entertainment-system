@@ -307,7 +307,24 @@ seed-lottery, and noise-distribution explanations each rejected
 mechanically). Quotable numbers, each with its predicate named:
 strict honest clears 3/190 pooled (~1.6%); flag-area-reach rate under
 honest noise ~10–20% by probe. The `clear_rate` key must never again
-be quoted without its predicate; probe tooling now reports both. First honest
+be quoted without its predicate; probe tooling now reports both.
+
+CONSOLIDATION ROUND 2 (2026-08-15/16 overnight, ledger §consol2):
+30M further entrance-pinned steps produced a transient peak the probe
+pair caught at both protocols simultaneously and the runner preserved
+before the post-peak descent (the pre-registered collapse kill then
+ended the run). Banked policy
+`checkpoints/_preserved/consol2_40pct_strict_iter01120.pt`
+(sha256 413548b9…), definitive eval on fresh seeds under the canonical
+protocol, strict flagpole predicate throughout: **38/100 clears
+(38.0%)** — seed 7: 24/50 (the same seed that measured 0/50 on this
+harness two days earlier), seed 101: 14/50 — median max-gx 2095,
+40/100 past the bottleneck, chain and strict predicates converged
+(reach-without-grab eliminated). Honest 1-2, full arc with receipts:
+0.0 in all prior history → 2.0% (first campaign) → 38.0% (round 2).
+Greedy now exceeds the policy's own measured sampled ceiling (31.7%).
+Receipts: runs/consol2/campaign.jsonl, peak_eval_seed{7,101}.json,
+runs/online_1_2_attempt_ledger.md. First honest
 clears observed at iter 380/440 mid-campaign (preserved with hashes);
 adversarial-hardening phase (kernel adversary) degraded the policy and
 was rolled back — its receipts and the sharp-adversary telemetry
