@@ -530,3 +530,18 @@ Consequences banked:
    shared-stream, no --sequential/--level-clear). Under one protocol
    1-1 and 1-2 are comparable (~0.43 vs ~0.42), not 2:1 apart. The
    frontier map should be restated in measured, protocol-named terms.
+
+## W4 anomaly: sol_001 quarantined (2026-08-16)
+
+`replay_to_demos.py` reported `final gx 0, ps 0` for
+`runs/ge_1_3_solve/solutions/sol_001.actions.npy` while sol_000/002/003
+all reproduced their banked clear (`final gx 2514, ps 5`). The tape's
+own json claims a clear (`start_wd [0,2] -> clear_wd [0,3]`, 530 steps),
+so the tape and the replay disagree — a provenance conflict, not a
+judgement call. Per the project's replay-verification discipline the
+demo was quarantined to `checkpoints/bc_1_3/demos_quarantine/` and the
+BC anchor trains on the three verified tapes (1,557 pairs) rather than
+on a tape whose clear does not reproduce on this machine lineage.
+Root-causing sol_001 (stale lineage? hw-flag drift? a genuinely
+non-reproducing archive cell?) is queued as a separate investigation;
+it does not block the campaign, which needs only a warm-start anchor.

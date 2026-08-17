@@ -324,7 +324,29 @@ harness two days earlier), seed 101: 14/50 — median max-gx 2095,
 0.0 in all prior history → 2.0% (first campaign) → 38.0% (round 2).
 Greedy now exceeds the policy's own measured sampled ceiling (31.7%).
 Receipts: runs/consol2/campaign.jsonl, peak_eval_seed{7,101}.json,
-runs/online_1_2_attempt_ledger.md. First honest
+runs/online_1_2_attempt_ledger.md.
+
+WORLD 1-3, AND THE TRANSFER CLAIM (2026-08-16/17, ledger §1-3): the
+same campaign machinery, retargeted by config alone
+(`--campaign-config`; the 1-2 defaults stay golden-pinned), was applied
+to a level it had never trained on. Setup took one ~20-minute window
+(ladder mint from the banked solver tapes, auto-derived rungs, wavefront
+dmap, BC anchor, and a competence floor calibrated from the anchor's own
+measured median rather than guessed). The deterministic bottleneck gate
+passed **10/10 on its first probe, 35 minutes from cold start**, on
+inherited thresholds with zero retuning — the milestone that cost World
+1-2 eight campaign attempts and five harness fixes across two nights.
+Banked policy `checkpoints/_preserved/one_three_FINAL_consol2_iter00690.pt`
+(sha256 352273f9…), definitive eval on two fresh seeds under the
+canonical protocol, strict flagpole predicate: **21/100 (21.0%)**
+(10/50 and 11/50), chain-advance 26/100, median max-gx 1800.5 of ~2515,
+flag height reached on both seeds. The learned ledger now holds three
+levels — 1-1 43%, 1-2 38%, 1-3 21%, each measured under the same cold
+greedy sticky-0.25 jitter-16 protocol. Also banked from the same run,
+as negatives: un-anchored adversarial hardening degrades slowly on a
+level without a concentrated hazard (1138→448 over three probes) rather
+than collapsing as it did on 1-2, and consolidating *from* a hardened
+net trips the pre-registered value-loss kill within 1M steps. First honest
 clears observed at iter 380/440 mid-campaign (preserved with hashes);
 adversarial-hardening phase (kernel adversary) degraded the policy and
 was rolled back — its receipts and the sharp-adversary telemetry
