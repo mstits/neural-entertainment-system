@@ -498,3 +498,35 @@ discipline they stay, with corrections here:
 - Scheduling: the "no-overnight" concern cited in review is obsolete —
   the compute policy was lifted 2026-08-14; the 1-3 campaign is cleared
   to run overnight after the falsifier.
+
+## Interference falsifier result (2026-08-16, runs/interference/)
+
+Pre-registered 2-level joint-BC experiment, all four legs 100 episodes,
+canonical honest protocol (cold, greedy, sticky-0.25, jitter-16,
+per-episode RNG), strict episode_success predicate:
+
+| level | specialist control | joint net | leg decision |
+|---|---|---|---|
+| 1-1 | 43/100 | **52/100** | holds (p_above 2.1e-11) |
+| 1-2 | 42/100 | 4/100 | fails (p_below 1.3e-06) |
+
+VERDICT: partial_interference. A single 200k-param net (200,071;
+h256/trunk64) trained 50 epochs CE on 122,490 pair-balanced success
+transitions (61,245/level, collected sampled T=1.0 under the honest
+noise profile: 1-1 189/300 strict, 1-2 97/300 strict) does not merely
+degrade — it CAPTURES one level and loses the other, and the captured
+leg exceeded its own specialist (median max-gx 3266 = flag).
+
+Consequences banked:
+1. Naive pooled distillation into this architecture is FALSIFIED as a
+   generalist path. Next falsifiable step per the research round: add a
+   Level-ID token to the observation (cheapest), or scale capacity, or
+   interference-aware training (per-level heads / EWC-class). Same bar.
+2. 1-2's banked 38/100 (2026-08-15, sequential shared-stream) is
+   REPLICATED cross-protocol at 42/100 here (per-episode, 5 workers).
+3. 1-1's honest strict rate MEASURES 43/100 here. The 0.76 figure that
+   circulated in prose traces to a differently-configured evaluation
+   (checkpoints/mario_1_1_consolidate_exp/eval.jsonl, 0.467 over 120 eps,
+   shared-stream, no --sequential/--level-clear). Under one protocol
+   1-1 and 1-2 are comparable (~0.43 vs ~0.42), not 2:1 apart. The
+   frontier map should be restated in measured, protocol-named terms.
