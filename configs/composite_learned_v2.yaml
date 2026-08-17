@@ -1,0 +1,48 @@
+# ============================================================
+# LEARNED LEDGER (see CLAIMS.md). Every net here is a trained policy
+# with a DEFINITIVE honest number behind it — cold power-on start,
+# greedy argmax, sticky-0.25, jitter-16, 100 episodes over two fresh
+# seeds, strict clear predicate. This is the chain the words "the AI
+# plays" refer to. It is NOT one agent: it is a relay of per-level
+# specialists switched by the RAM level label with hysteresis, and
+# any presentation of it must say so (the 2026-08-16 interference
+# falsifier measured what happens when two of these nets are pooled
+# into one: 1-1 captured at 52/100, 1-2 destroyed to 4/100 — a single
+# generalist net does not exist yet, and claiming one would be false).
+#
+# Measured rates of the members (definitive evals, receipts in
+# CLAIMS.md and runs/):
+#   1-1  43/100   _preserved/backward_1_1_best_honest_greedy_047.pt
+#   1-2  38/100   _preserved/consol2_40pct_strict_iter01120.pt
+#   1-3  21/100   _preserved/one_three_FINAL_consol2_iter00690.pt
+#   1-4  pending  (campaign in flight 2026-08-17; the entry below is
+#                  its best PRESERVED checkpoint, 6/30 on one probe —
+#                  a probe, not a definitive eval. Update on bank.)
+#
+# Expected relay behaviour: a no-death run of all four is the product
+# of the rates (~0.7%), so the interesting number is not "does one
+# attempt succeed" but how many level attempts a full World-1 clear
+# costs — roughly the sum of the reciprocals, ~15 attempts.
+# ============================================================
+name: learned_chain_v2
+game: mario
+hysteresis_k: 2
+levels:
+  1-1:
+    ckpt: checkpoints/_preserved/backward_1_1_best_honest_greedy_047.pt
+    profile: configs/mario_1_1_backward.yaml
+  1-2:
+    ckpt: checkpoints/_preserved/consol2_40pct_strict_iter01120.pt
+    profile: configs/mario_1_2_consol2.yaml
+  1-2@1:
+    ckpt: checkpoints/_preserved/consol2_40pct_strict_iter01120.pt
+    profile: configs/mario_1_2_consol2.yaml
+  1-3:
+    ckpt: checkpoints/_preserved/one_three_FINAL_consol2_iter00690.pt
+    profile: configs/mario_1_3_online_v1.yaml
+  1-4:
+    ckpt: checkpoints/_preserved/one_four_phase2_6of30_iter00210.pt
+    profile: configs/mario_1_4_online_v1.yaml
+  default:
+    ckpt: checkpoints/_preserved/backward_1_1_best_honest_greedy_047.pt
+    profile: configs/mario_1_1_backward.yaml

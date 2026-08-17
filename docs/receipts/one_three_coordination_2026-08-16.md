@@ -545,3 +545,39 @@ on a tape whose clear does not reproduce on this machine lineage.
 Root-causing sol_001 (stale lineage? hw-flag drift? a genuinely
 non-reproducing archive cell?) is queued as a separate investigation;
 it does not block the campaign, which needs only a warm-start anchor.
+
+## Replay-verification failures across banked tapes (2026-08-16/17)
+
+Two of eight banked solver tapes failed replay during BC-demo minting:
+- 1-3 `sol_001` (json claims clear; replay ended gx 0)
+- 1-4 `sol_003` (json claims clear; replay ended gx 0)
+Both quarantined; their levels' anchors trained on the verified tapes
+only. HYPOTHESIS worth testing before trusting any banked archive:
+the core changed under them. Commit 8c10ade landed the DMC-DMA stall
+propagation fix plus an APU abs-store tick-index correction — both
+alter intra-frame cycle interleaving, which is exactly what a
+frame-perfect tape depends on. Tapes recorded on the pre-fix core would
+diverge only where they cross a DMC-active moment, which fits the
+partial (2/8) failure rate. The migration gate recorded in the campaign
+memory called for a replay-integrity sweep of banked solutions before
+adopting the fixed core; these two failures may be that sweep arriving
+unannounced. QUEUED: run every banked SMB solution tape through
+replay_to_demos (or the mint gate) on the current core, count
+divergences, and compare against a pre-fix build before any conclusion.
+
+### Correction, same session: the DMC hypothesis is REFUTED
+
+The loaded extension was built 2026-08-14 17:02; the DMC/APU fix landed
+at 19:06 — the running core PREDATES the fix, so it cannot explain the
+divergences. Metadata is identical between failing and passing tapes
+(same root_state, same start_wd/clear_wd, same `provenance: search`),
+and tape length shows no clean pattern (1-4's shortest fails, 1-3's
+shortest passes). The residual explanation is the simplest one: these
+tapes were banked without an end-to-end replay-from-root verification.
+`mint_backward_states.py` verifies only the single tape it consumes, so
+a partially-unverifiable solution set can sit in a run directory
+indefinitely. Standing finding: ~2 of 8 banked SMB solution tapes do
+not reproduce from their own recorded root on the current core. QUEUED
+(unchanged in priority, corrected in rationale): sweep every banked
+solution tape through the replay gate and quarantine what fails, so
+downstream consumers inherit only verified provenance.
