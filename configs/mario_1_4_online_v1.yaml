@@ -225,7 +225,7 @@ reinforce:
   # failures (the B5 censoring repair). window_frames 0 => the restart
   # window is exactly the tau rung.
   backward_curriculum:
-    states_dir: "checkpoints/online_1_3/restart_states"
+    states_dir: "checkpoints/online_1_4/restart_states"
     tau_init: -1
     advance_actions: 1
     advance_threshold: 0.3
@@ -241,9 +241,19 @@ reinforce:
     # remaining = n_actions - S, and only if 650/remaining falls outside
     # 1.5x-3.0x (the band 1-2's 2.08x sits in) re-tune base/per_entry to
     # land inside it, recording S, remaining and the new ratio here.
+    # W2a EXECUTED against the correct 1-4 ladder (rungs at gx
+    # [0,400,800,1200,1600,2000], tape steps [0,57,114,158,222,291]
+    # of n_actions=490, tape ending gx 2431). Deepest rung S=291,
+    # remaining=199. The proven 1-2 values would draw 300+350=650,
+    # i.e. 3.27x — OUTSIDE the 1.5x-3.0x band 1-2's 2.08x sits in,
+    # because 1-4 is the shortest level and its tape is 490 actions
+    # against 1-2's ~871. So the config's own re-registration rule
+    # fires: base 250 + per_entry 250 draws 500 = 2.51x, inside.
+    # FOR A FUTURE RE-RUN ONLY. The banked 51/100 stands on its
+    # honest eval and is not retroactively affected by this edit.
     rung_step_budget:
-      base: 300
-      per_entry: 350
+      base: 250
+      per_entry: 250
 
   # Off: this campaign's teachers are the restart rungs + SIL, not demos.
   demo_anchor_enabled: false

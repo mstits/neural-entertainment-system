@@ -1,4 +1,4 @@
-.PHONY: help test parity show launcher control-panel bench bench-hot bench-scaling bench-phases bench-all \
+.PHONY: help test parity engine show launcher control-panel bench bench-hot bench-scaling bench-phases bench-all \
         build build-pgo build-pgo-apply selftest clean clean-rust train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
         ppu_layout_check ppu-batch-profile rust-check
@@ -173,5 +173,11 @@ clean-rust:
 # allowlist integrity, quarantine intact, no profile references
 # quarantined artifacts. Run before any Learned-ledger training run
 # and before publishing any number.
+engine:
+	@. .venv/bin/activate && python scripts/engine_status.py
+
+engine-check:
+	@. .venv/bin/activate && python scripts/engine_status.py --check
+
 provenance-check:
 	.venv/bin/python scripts/provenance_check.py
