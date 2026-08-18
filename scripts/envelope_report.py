@@ -93,7 +93,8 @@ def main() -> int:
           "\nassumes levels share a hazard density, and they do not — 1-3 is"
           "\nplatform-hopping over pits while 1-2 and 1-4 are mostly ground"
           "\ntraversal. A gap here is NOT evidence of under-training; acting on"
-          "\none cost a 30M-step round that produced no improvement. Use the"
+          "\none cost a round whose MID-POINT showed no improvement (its full"
+          "\nbudget was never run — see the ledger correction). Use the"
           "\nper-level lambda and the death-spread diagnostic; treat the cross"
           "\nprediction as a question, never a verdict.")
     header = "from\\to"
