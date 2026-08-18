@@ -142,3 +142,33 @@ def test_json_output_is_valid(monkeypatch, capsys):
         lambda: es.Check("c", True, "d", "f"),))
     es.main(["--json"])
     json.loads(capsys.readouterr().out)
+
+
+def test_a_terminal_row_before_a_resume_is_superseded(tmp_path):
+    """The tool's own version of the failure it guards.
+
+    A resume appends a fresh campaign_start. The previous attempt's abort
+    is still the last terminal-typed row in the file, so a naive
+    backwards scan reports a live, progressing run as aborted.
+    """
+    p = _log(tmp_path, "r", [
+        {"type": "phase_start", "name": "sticky_local"},
+        {"type": "abort", "reason": "trainer subprocess exited -9"},
+        {"type": "campaign_start", "start_phase": 2},
+        {"type": "phase_start", "name": "reverse_walk"},
+        {"type": "probe", "env_steps": 6.7e7, "median_max_x": 1016,
+         "clear_rate_strict": 0.0},
+    ])
+    out = es.summarize_campaign(p)
+    assert "abort" not in out, out
+    assert "resumed" in out
+    assert "reverse_walk" in out
+
+
+def test_an_abort_after_the_last_resume_is_still_reported(tmp_path):
+    p = _log(tmp_path, "r", [
+        {"type": "campaign_start"},
+        {"type": "phase_start", "name": "local_clear"},
+        {"type": "abort", "reason": "real failure"},
+    ])
+    assert "abort" in es.summarize_campaign(p)

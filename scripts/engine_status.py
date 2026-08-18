@@ -141,15 +141,26 @@ def summarize_campaign(path: Path) -> str:
     if not rows:
         return f"{path.parent.name}: empty log"
 
+    # A resume appends a fresh `campaign_start`, so any terminal row BEFORE
+    # it belongs to a previous attempt and is superseded. Without this the
+    # board reports a live, progressing run as aborted — which is exactly
+    # the "state inferred from a stale artifact" failure it exists to
+    # prevent, committed by the tool itself.
+    last_start = max((i for i, r in enumerate(rows)
+                      if r.get("type") == "campaign_start"), default=-1)
+    live = rows[last_start + 1:] if last_start >= 0 else rows
+
     terminal = "in progress (no terminal row)"
-    for r in reversed(rows):
+    for r in reversed(live):
         if r.get("type") in ("campaign_complete", "abort", "kill"):
             terminal = f"{r['type']}"
             if r.get("reason"):
                 terminal += f" — {str(r['reason'])[:60]}"
             break
+    if last_start > 0 and terminal.startswith("in progress"):
+        terminal += " (resumed)"
 
-    phase = next((r.get("name") for r in reversed(rows)
+    phase = next((r.get("name") for r in reversed(live)
                   if r.get("type") == "phase_start"), "?")
     gate = next((r for r in reversed(rows)
                  if r.get("type") == "gate_probe"), None)
