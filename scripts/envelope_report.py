@@ -93,8 +93,11 @@ def main() -> int:
           "\nassumes levels share a hazard density, and they do not — 1-3 is"
           "\nplatform-hopping over pits while 1-2 and 1-4 are mostly ground"
           "\ntraversal. A gap here is NOT evidence of under-training; acting on"
-          "\none cost a round whose MID-POINT showed no improvement (its full"
-          "\nbudget was never run — see the ledger correction). Use the"
+          "\none cost a FULL 30M-step consolidation round that produced no"
+          "\nimprovement: six probes, no trend, endpoint at zero, and its best"
+          "\ncheckpoint definitively evaluated at 20/100 against a banked"
+          "\n21/100. That is the strongest evidence available here that a"
+          "\nlambda gap does not imply headroom. Use the"
           "\nper-level lambda and the death-spread diagnostic; treat the cross"
           "\nprediction as a question, never a verdict.")
     header = "from\\to"
