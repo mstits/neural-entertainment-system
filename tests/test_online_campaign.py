@@ -22,6 +22,7 @@ Covered:
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -37,6 +38,12 @@ from scripts.run_online_campaign import (  # noqa: E402
 )
 
 SPI = 92_160  # steps-per-iter used by the stub streams (1536 x 60)
+
+
+def _load_controller():
+    """The controller module itself, for tests that patch REPO."""
+    import scripts.run_online_campaign as mod
+    return mod
 
 
 def _row(gen: int, **kw) -> dict:
@@ -360,3 +367,103 @@ def test_manifest_mirrors_every_config_threshold_and_phase():
                 "kill_phase1_no_sil_clear_steps", "gate_critic_cv",
                 "gate_det_clears", "gate_sticky_clear"):
         assert key in man["config"]
+
+
+# --------------------------------------------------------------------------
+# preflight_restart_ladders — the trainer's ladder, not just the gates'.
+#
+# Regression corpus for the 2-1 attempt-1 defect: configs/campaign_2_1.yaml
+# named checkpoints/online_2_1/restart_states while the profile's
+# backward_curriculum.states_dir still named the 1-3 lane's ladder it was
+# cloned from. restart_provenance_ok validated the campaign config's path
+# and passed; training restarted from the other one for 20M steps.
+# --------------------------------------------------------------------------
+
+def _ladder(tmp_path, name, level, root, n_actions=763):
+    """A minimal on-disk ladder that load_index can read."""
+    d = tmp_path / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "index.json").write_text(json.dumps({
+        "level": level, "root_state": root,
+        "profile": f"configs/mario_{level.replace('-', '_')}_online_v1.yaml",
+        "n_actions": n_actions, "reached_clear": True,
+        "entries": [{"file": "s_000000.state", "gx": 0, "step": 0,
+                     "frame": 0, "area": 0}],
+    }))
+    return d
+
+
+def _profile_cfg(states_dir, cfg_dir, level="2-1", root="root.state"):
+    base = {"start_state_path": root,
+            "reinforce": {"backward_curriculum": {"states_dir": states_dir}}}
+    cfg = {"restart_states_dir": cfg_dir, "campaign_level": level}
+    return base, cfg
+
+
+def test_preflight_rejects_trainer_and_gates_on_different_ladders(
+        tmp_path, monkeypatch):
+    """The exact 2-1 defect: two keys, two directories, one silent run."""
+    mod = _load_controller()
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    _ladder(tmp_path, "online_2_1/restart_states", "2-1", "root.state")
+    _ladder(tmp_path, "online_1_3/restart_states", "1-3", "other.state")
+    base, cfg = _profile_cfg("online_1_3/restart_states",
+                             "online_2_1/restart_states")
+    ok, notes = mod.preflight_restart_ladders(base, cfg)
+    assert not ok
+    joined = " ".join(notes)
+    assert "online_1_3/restart_states" in joined
+    assert "online_2_1/restart_states" in joined
+    assert "same ladder" in joined
+
+
+def test_preflight_accepts_matching_ladder_of_this_level(tmp_path, monkeypatch):
+    mod = _load_controller()
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    _ladder(tmp_path, "online_2_1/restart_states", "2-1",
+            str(tmp_path / "root.state"))
+    base, cfg = _profile_cfg("online_2_1/restart_states",
+                             "online_2_1/restart_states",
+                             root=str(tmp_path / "root.state"))
+    ok, notes = mod.preflight_restart_ladders(base, cfg)
+    assert ok, notes
+
+
+def test_preflight_rejects_same_path_but_foreign_level(tmp_path, monkeypatch):
+    """Agreement is necessary, not sufficient — both sides can be wrong."""
+    mod = _load_controller()
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    _ladder(tmp_path, "online_1_3/restart_states", "1-3",
+            str(tmp_path / "root.state"))
+    base, cfg = _profile_cfg("online_1_3/restart_states",
+                             "online_1_3/restart_states",
+                             level="2-1", root=str(tmp_path / "root.state"))
+    ok, notes = mod.preflight_restart_ladders(base, cfg)
+    assert not ok
+    assert "another lane's" in " ".join(notes)
+
+
+def test_preflight_rejects_one_sided_ladder(tmp_path, monkeypatch):
+    mod = _load_controller()
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    base, cfg = _profile_cfg(None, "online_2_1/restart_states")
+    ok, notes = mod.preflight_restart_ladders(base, cfg)
+    assert not ok and "only one side" in " ".join(notes)
+
+
+def test_preflight_rejects_unreadable_ladder(tmp_path, monkeypatch):
+    mod = _load_controller()
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    base, cfg = _profile_cfg("nope/restart_states", "nope/restart_states")
+    ok, notes = mod.preflight_restart_ladders(base, cfg)
+    assert not ok and "cannot read ladder" in " ".join(notes)
+
+
+def test_shipped_2_1_config_passes_its_own_preflight():
+    """The on-disk 2-1 pair, as it will actually launch."""
+    mod = _load_controller()
+    mod.apply_campaign_config(ROOT / "configs/campaign_2_1.yaml")
+    base = mod._load_yaml(ROOT / mod.CONFIG["base_profile"])
+    ok, notes = mod.preflight_restart_ladders(base, mod.CONFIG)
+    assert ok, notes
+    assert "online_2_1/restart_states" in " ".join(notes)

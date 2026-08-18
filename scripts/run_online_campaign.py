@@ -604,6 +604,71 @@ def restart_provenance_ok(
                   f"{meta.get('profile')}, {meta.get('n_actions')} actions")
 
 
+def preflight_restart_ladders(
+    base_profile: dict, cfg: dict,
+) -> tuple[bool, list[str]]:
+    """PURE: do the ladder the TRAINER reads and the ladder the GATES
+    read exist, agree with each other, and belong to this campaign?
+
+    `restart_provenance_ok` asks the right question of the wrong path.
+    It reads `cfg["restart_states_dir"]` — the key `_top_rung_state`
+    uses to launch gate probes — while training restarts come from the
+    base profile's `backward_curriculum.states_dir`. Those are two
+    independent strings, and nothing compared them.
+
+    Attempt 1 on 2-1 is what that costs: the campaign config named
+    `checkpoints/online_2_1/restart_states` and the profile named
+    `checkpoints/online_1_3/restart_states`, cloned from the 1-3 lane
+    and never repointed. The dry run validated the campaign config's
+    ladder and printed PASS, gate probes launched from 2-1's gx-2700
+    rung, and 20M steps of backward-curriculum training ran against
+    1-3's rungs. Every instrument read plausibly; the deterministic gate
+    simply never passed, stalling at gx 2910 against a stretch of 2-1
+    the policy had never been restarted into.
+
+    So this checks three things, and any failure aborts the launch:
+
+      * the profile's `states_dir` resolves to the same directory as
+        `cfg["restart_states_dir"]` — disagreement means gates and
+        training are measuring different ladders, which is silent;
+      * that directory's meta passes `restart_provenance_ok`, i.e. it
+        is this level's ladder from this profile's root;
+      * a profile with no `backward_curriculum.states_dir` at all is a
+        PASS only when the campaign config also names none, since a
+        campaign can legitimately run without a ladder.
+    """
+    from src.training.backward_curriculum import load_index
+
+    notes: list[str] = []
+    prof_dir = (base_profile.get("reinforce", {})
+                .get("backward_curriculum", {}) or {}).get("states_dir")
+    cfg_dir = cfg.get("restart_states_dir")
+
+    if not prof_dir and not cfg_dir:
+        return True, ["no restart ladder configured on either side"]
+    if bool(prof_dir) != bool(cfg_dir):
+        return False, [
+            f"only one side names a ladder (profile={prof_dir!r}, "
+            f"campaign={cfg_dir!r}) — gates and training would disagree"]
+
+    prof_path = (REPO / str(prof_dir)).resolve()
+    cfg_path = (REPO / str(cfg_dir)).resolve()
+    if prof_path != cfg_path:
+        return False, [
+            f"profile trains on {prof_dir!r} but gate probes read "
+            f"{cfg_dir!r} — these must be the same ladder"]
+    notes.append(f"trainer and gates agree on {prof_dir}")
+
+    try:
+        _, meta = load_index(prof_path)
+    except Exception as e:  # unreadable ladder is a failure, not a skip
+        return False, [f"cannot read ladder index at {prof_dir}: {e!r}"]
+
+    ok, why = restart_provenance_ok(meta, base_profile, cfg)
+    notes.append(why)
+    return ok, notes
+
+
 def phase_pins_entrance(phase: dict) -> bool:
     """True when this phase's overrides pin restarts to the entrance.
 
@@ -990,10 +1055,10 @@ def dry_run() -> int:
     # level from another root — see CONFIG["campaign_level"]. This one
     # asks whose ladder it actually is.
     try:
-        from src.training.backward_curriculum import load_index
-        _, meta = load_index(REPO / CONFIG["restart_states_dir"])
-        ok_p, why = restart_provenance_ok(meta, base, CONFIG)
-        report("restart states are THIS level's, from THIS root", ok_p, why)
+        ok_p, notes = preflight_restart_ladders(base, CONFIG)
+        report("restart states are THIS level's, from THIS root, and the "
+               "trainer and gates read the SAME ladder",
+               ok_p, "; ".join(notes))
     except Exception as e:
         report("restart states are THIS level's, from THIS root", False,
                repr(e))
@@ -1100,6 +1165,16 @@ def run_campaign(start_phase: int = 0) -> int:
     metrics_path = ckpt_dir / "metrics.jsonl"
     spi = steps_per_iter(base)
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    ok_ladder, ladder_notes = preflight_restart_ladders(base, CONFIG)
+    if not ok_ladder:
+        sys.stderr.write(
+            "ABORT: restart-ladder preflight failed —\n  "
+            + "\n  ".join(ladder_notes) + "\n")
+        _append_jsonl(log_path, {"type": "abort",
+                                 "reason": "restart_ladder_preflight",
+                                 "notes": ladder_notes})
+        return 2
 
     manifest = build_manifest(base)
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
