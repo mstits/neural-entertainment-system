@@ -89,7 +89,13 @@ def main() -> int:
               f"{cv:8.3f} {band:9.2f}  {verdict}")
 
     print("\ncross-prediction (each level's rate predicted from every other"
-          "\nlevel's hazard density; large gaps mark the outlier):")
+          "\nlevel's hazard density). CAUTION, measured 2026-08-17: this table"
+          "\nassumes levels share a hazard density, and they do not — 1-3 is"
+          "\nplatform-hopping over pits while 1-2 and 1-4 are mostly ground"
+          "\ntraversal. A gap here is NOT evidence of under-training; acting on"
+          "\none cost a 30M-step round that produced no improvement. Use the"
+          "\nper-level lambda and the death-spread diagnostic; treat the cross"
+          "\nprediction as a question, never a verdict.")
     header = "from\\to"
     print(f"{header:>8} " + " ".join(f"{r[0]:>8}" for r in rows))
     for src in rows:
