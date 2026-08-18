@@ -326,6 +326,25 @@ Greedy now exceeds the policy's own measured sampled ceiling (31.7%).
 Receipts: runs/consol2/campaign.jsonl, peak_eval_seed{7,101}.json,
 runs/online_1_2_attempt_ledger.md.
 
+WORLD 1-4 (2026-08-17, ledger §1-4): the castle level, whose clear is a
+world increment rather than a flagpole latch — a different branch of the
+strict predicate, and therefore a test that the pipeline crosses level
+TYPES rather than level instances. Same machinery retargeted by config
+alone; ~15 minutes of setup. Its deterministic rung gate went 0/10 then
+10/10 one probe later (the pipeline meeting real resistance and solving
+it by training, not intervention), it was already clearing 6/30 from the
+entrance in phase 2, and its reverse walk exhausted its budget without
+reaching the entrance — so the rate below was earned WITHOUT the
+backward curriculum completing. Banked policy
+`checkpoints/_preserved/one_four_MEASURED60_iter00960.pt`
+(sha256 c170a54d...), definitive eval on two fresh seeds under the
+canonical protocol, strict predicate: **51/100 (51.0%)** — 24/50 and
+27/50 — with the chain predicate identical at 51/100 and median max-gx
+2428 of 2431 (the median episode reaches the axe). The learned ledger
+now holds four levels: 1-1 43%, 1-2 38%, 1-3 21%, 1-4 51%.
+Receipts: runs/online_1_4/final_eval_seed{7,101}.json,
+runs/online_1_4_attempt1/campaign.jsonl, runs/online_1_4/campaign.jsonl.
+
 WORLD 1-3, AND THE TRANSFER CLAIM (2026-08-16/17, ledger §1-3): the
 same campaign machinery, retargeted by config alone
 (`--campaign-config`; the 1-2 defaults stay golden-pinned), was applied
