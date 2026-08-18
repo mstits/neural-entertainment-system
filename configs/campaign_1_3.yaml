@@ -52,7 +52,10 @@ config:
   # and sets floor = round(0.8 * median), with the measurement line
   # recorded in the coordination receipt. Launching without W6 means
   # running with a floor that is not calibrated to this anchor.
-  kill_probe_median_floor: 100.0
+  kill_probe_median_floor: 346.0   # W6-calibrated 2026-08-16: 0.8x the
+  # anchor's measured honest median (433, 30 eps, per-episode RNG,
+  # sticky-0.25/jitter-16, strict 0/30 — a warm-start prior, not a
+  # policy). Mirrors the 1-2 rule (150 = 0.8x A7's 187).
 
   # Audit-7 rung-progress kill, ARMED for 1-3 (the 1-2 default is 0 =
   # disarmed). CUMULATIVE campaign env-steps, checked in every phase
