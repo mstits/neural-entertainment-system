@@ -76,10 +76,36 @@ def test_script_flags_reads_declarations_without_executing(tmp_path):
 
 # ---- the physics budget ----
 
-def test_tick_waits_while_an_emulator_job_is_live(monkeypatch):
+def test_never_launches_an_emulator_action_while_one_is_live(monkeypatch):
+    """The physics budget: one emulator job, always.
+
+    The engine may still do token-bound work beside a campaign — that is
+    the brief's own scheduling rule and most of why the loop felt stalled
+    — but whatever it picks must not need the emulator.
+    """
     monkeypatch.setattr(ed, "emulator_busy", lambda: 4242)
+    launched = []
+    monkeypatch.setattr(ed, "launch", lambda a, repo=ed.REPO:
+                        (launched.append(a), 1)[1])
     rec = ed.tick({"completed": {}, "attempts": {}})
-    assert rec["decision"] == "wait" and "4242" in rec["reason"]
+    assert all(not a.needs_emulator for a in launched), launched
+    if rec["decision"] == "wait":
+        assert "4242" in rec["reason"]
+
+
+def test_waits_when_busy_and_no_token_bound_work_remains(monkeypatch):
+    monkeypatch.setattr(ed, "emulator_busy", lambda: 4242)
+    monkeypatch.setattr(ed, "plan",
+                        lambda s, repo=ed.REPO, emulator_only=None:
+                        _act(["scripts/x.py"]) if emulator_only is None
+                        else None)
+    rec = ed.tick({"completed": {}, "attempts": {}})
+    assert rec["decision"] == "wait" and "token-bound" in rec["reason"]
+
+
+def test_token_bound_work_is_offered_while_the_emulator_is_busy():
+    a = ed.plan({"completed": {}, "attempts": {}}, emulator_only=False)
+    assert a is not None and not a.needs_emulator
 
 
 def test_unknown_process_table_is_treated_as_busy(monkeypatch):

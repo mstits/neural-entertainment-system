@@ -452,7 +452,8 @@ def tag_of(level: str) -> str:
 
 # ---------------------------------------------------------------- plan
 
-def plan(state: dict, repo: Path = REPO) -> Optional[Action]:
+def plan(state: dict, repo: Path = REPO,
+         emulator_only: Optional[bool] = None) -> Optional[Action]:
     """The highest-priority undone thing. Pure w.r.t. the filesystem.
 
     Order is deliberate: finish and judge what is already started before
@@ -467,6 +468,8 @@ def plan(state: dict, repo: Path = REPO) -> Optional[Action]:
         """Emit an action only if it is genuinely runnable."""
         if a is None or a.id in done:
             return None
+        if emulator_only is False and a.needs_emulator:
+            return None
         ok, why = validate_action(a, repo)
         if ok:
             return a
@@ -474,6 +477,18 @@ def plan(state: dict, repo: Path = REPO) -> Optional[Action]:
         return None
 
     candidates: list[Optional[Action]] = []
+
+    # Token-bound and always available: keep the suite honest. A red test
+    # sat unnoticed in `make test` for three days because nothing ran it
+    # to completion — the same shape as HEAD not compiling for 40 hours.
+    # Cheap, needs no emulator, and runs beside a campaign.
+    candidates.append(Action(
+        id="suite_check", kind="suite", needs_emulator=False, timeout_h=1.0,
+        cmd=["scripts/run_suite_check.py", "--out",
+             "runs/engine/suite_check.json"],
+        gate="Records pass/fail counts and the failing node ids. It never "
+             "edits a test: a red suite is a finding for the human, and "
+             "weakening a test to green it is mission failure."))
 
     # 1. Score finished campaigns before starting anything new.
     for level in SMB_LEVELS:
@@ -564,11 +579,6 @@ def guard_reasons(state: dict, repo: Path = REPO) -> list[str]:
 def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
     """One decision. Returns a record of what was decided and why."""
     busy = emulator_busy()
-    if busy is not None:
-        rec = {"type": "tick", "decision": "wait",
-               "reason": f"emulator job live (pid {busy})"}
-        journal(rec)
-        return rec
 
     blocked = guard_reasons(state, repo)
     if blocked:
@@ -577,6 +587,20 @@ def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
         return rec
 
     action = plan(state, repo)
+    if busy is not None and action is not None and action.needs_emulator:
+        # The machine is held by an emulator job, so fall back to work
+        # that needs no emulator. The brief's own scheduling rule is that
+        # token-bound work proceeds WHILE compute-bound work runs; a
+        # driver that merely waits leaves hours of reviewable work undone
+        # every campaign, which is most of why the loop felt stalled.
+        action = plan(state, repo, emulator_only=False)
+        if action is None:
+            rec = {"type": "tick", "decision": "wait",
+                   "reason": f"emulator job live (pid {busy}), no "
+                             f"token-bound action available"}
+            journal(rec)
+            return rec
+
     if action is None:
         rec = {"type": "tick", "decision": "idle",
                "reason": "nothing left in the computed plan"}
