@@ -1,0 +1,196 @@
+# 2-2 campaign pre-registration — the CONFIG/PHASES document
+# scripts/run_online_campaign.py loads with `--campaign-config`.
+#
+#   python scripts/run_online_campaign.py \
+#       --campaign-config configs/campaign_1_3.yaml [--dry-run]
+#
+# Only keys that ALREADY exist in the controller's CONFIG are accepted
+# (an unregistered key raises rather than being ignored), and `phases`
+# replaces the schedule wholesale. Everything not listed here keeps the
+# controller's default — deliberately, so the 2-2 run differs from the
+# proven 1-2 run only where a reason is written down.
+#
+# Runbook + coordination audit with the parallel backward-only 2-2 lane:
+#   docs/receipts/one_three_coordination_2026-08-16.md
+
+notes: >
+  SMB 2-2 online campaign v1. Same four-mechanism stack and same six
+  phases as the 1-2 campaign that ended the 1-2 honest zero; retargeted
+  inputs (stage_05 entrance, 2-2 dmap, 2-2 BC anchor, 2-2 restart rungs)
+  and two 2-2-specific criteria: a provisional competence floor that is
+  re-registered from the measured anchor median before launch, and the
+  audit-7 rung-progress kill on the reverse walk.
+
+config:
+  base_profile: "configs/mario_2_2_online_v1.yaml"
+  run_dir: "runs/online_2_2"
+  campaign_log: "runs/online_2_2/campaign.jsonl"
+  restart_states_dir: "checkpoints/online_2_2/restart_states"
+  campaign_name: "smb_2_2_online_v1"
+  probe_game: "mario_2_2_online_v1"
+
+  # Honest probe protocol is UNCHANGED from 1-2 (30 episodes, cold from
+  # the level entrance, greedy, sticky 0.25, jitter 16) — the protocol is
+  # the purity line and does not get re-tuned per level. Only the seed
+  # moves, so 2-2 probe episodes are not the 1-2 episodes' twins.
+  probe_seed: 20260816
+
+  # 2-2 has NO measured barrier. 1-2's 2674 was an off-manifold-drift
+  # wall found by measurement; inventing a 2-2 equivalent would be
+  # level knowledge we have not earned. bottleneck_x 0 == "none known";
+  # bottleneck_survival_x is pure telemetry (probe_summary only — no
+  # gate and no kill reads it) and is set to a deep-progress mark of
+  # 2000 px, roughly 4/5 of the solver tape's deepest recorded gx (2515
+  # in runs/ge_1_3_solve/archive.stats.json). Do not quote it as a wall.
+  bottleneck_x: 0
+  bottleneck_survival_x: 2000
+
+  # PROVISIONAL — re-register before launch. 1-2's 150.0 floor was
+  # 0.8x the frozen A7 anchor's measured ~187 honest median. The 2-2
+  # anchor does not exist until in-window step W5, so this ships at a
+  # conservative 100.0 and step W6 measures the anchor's honest median
+  # and sets floor = round(0.8 * median), with the measurement line
+  # recorded in the coordination receipt. Launching without W6 means
+  # running with a floor that is not calibrated to this anchor.
+  kill_probe_median_floor: 0.0   # DISARMED until runbook W6 calibrates it from THIS level's BC anchor (0.8x its honest median). An inherited floor is a threshold tuned against another level's difficulty.
+  # 2-2 anchor's own measured honest median (451.0); same 0.8x rule as
+  # 1-2 (150=0.8x187), 1-3 (346=0.8x433), 1-4 (477=0.8x596).
+  # from the 2-2 anchor's own measured honest median (0.8x rule) in the
+  # W6 step before launch. 0.0 == disarmed; launching with an
+  # uncalibrated floor is the mistake the 1-3 review flagged.
+  # 2-2 anchor's measured honest median (596, 30 eps, per-episode RNG,
+  # sticky-0.25/jitter-16, strict 0/30). Same rule as 1-2 (150=0.8x187)
+  # and 1-3 (346=0.8x433).
+  # anchor's measured honest median (433, 30 eps, per-episode RNG,
+  # sticky-0.25/jitter-16, strict 0/30 — a warm-start prior, not a
+  # policy). Mirrors the 1-2 rule (150 = 0.8x A7's 187).
+
+  # Audit-7 rung-progress kill, ARMED for 2-2 (the 1-2 default is 0 =
+  # disarmed). CUMULATIVE campaign env-steps, checked in every phase
+  # that does not pin the entrance — the backward curriculum is in the
+  # base profile, so tau advances from phase 0, and the sole precedent
+  # (1-2 attempt 7) entered its reverse-walk phase with tau ALREADY at
+  # 0. A phase-scoped kill on that phase's own steps could not have
+  # fired there, and would not have been watching phases 0-2 where a
+  # real stall would happen.
+  #
+  # PROVISIONAL, like kill_probe_median_floor. Nothing banked measures a
+  # reverse-walk rate: attempt 7 resumed from a checkpoint whose cursor
+  # was already 0, so the ledger bounds the walk only from ABOVE — tau
+  # reached 0 by the ~70.0M cumulative steps at which phase 3 opened —
+  # and never timestamps the midpoint. 65M is that bound minus the
+  # margin of one probe interval, and is also exactly where phase 3
+  # opens under full budgets (15 + 40 + 10). So the one campaign we can
+  # check survives this threshold, and firing still saves the whole 60M
+  # reverse-walk budget. With 6 rungs the midpoint is tau <= 2, i.e. at
+  # least 3 of the 5 advances earned by 65M cumulative.
+  #
+  # NOT justified by the 1-2 attempt ledger. That ledger records no
+  # attempt lost to a stalled cursor (2-2 were unfreeze/tether
+  # calibration, 4 a miswired gate probe, 5 a miscalibrated gate, 6 a
+  # resume re-litigating earned gates, 7 an un-anchored adversary). This
+  # is a new pre-registration against an UNOBSERVED failure mode, which
+  # is why it is armed generously rather than tightly.
+  kill_rung_halfway_steps: 65000000
+
+  # Provenance gate on the restart set (see the dry-run check). The
+  # ladder may be consumed from the parallel lane's directory, so the
+  # campaign declares which level and which root it will accept and the
+  # dry run refuses a set minted from anything else. The live precedent
+  # this exists for: checkpoints/backward_states/1-2's index.json meta
+  # names root_state entrance_after_1-1.state and profile
+  # smb_4_4_micro.yaml — a foreign root and a foreign profile — and
+  # every schema check in this package passes on it.
+  campaign_level: "2-2"
+
+# Six phases, same shape and same override semantics as the 1-2
+# schedule (each phase is layered onto the BASE profile, never onto the
+# previous phase, so a phase can only be what it declares).
+phases:
+  # Actor frozen; the critic learns alone against the KL-anchored prior
+  # until the trailing critic-loss CV gate passes. Keeps the base
+  # profile's sentinel actor_freeze_steps — unfreeze is gate-coupled,
+  # never timer-coupled (1-2 attempt-1 post-mortem).
+  - idx: 0
+    name: critic_warmup
+    gate: critic_warmup
+    budget_env_steps: 15000000
+    overrides:
+      reinforce:
+        sticky_action_prob: 0.0
+
+  # Earn deterministic clears from the deepest rung. lr drops so the
+  # freshly-unfrozen actor takes small steps while the anchor holds, and
+  # the loss-level tether is at full strength (the reward-level beta
+  # alone let 1-2's KL blow 0 -> 0.574 in ONE PPO iteration at unfreeze).
+  - idx: 1
+    name: local_clear
+    gate: det_local_clears
+    budget_env_steps: 40000000
+    overrides:
+      reinforce:
+        sticky_action_prob: 0.0
+        actor_freeze_steps: 0
+        lr: 0.00003
+        kl_anchor_loss_coef: 1.0
+
+  # Sticky robustification of the local clear. BUDGET-gated, not
+  # sticky_clear-gated: 1-2 measured that rung-local sticky clear rate
+  # tracks the minted state's entry conditions (frozen velocity/enemy
+  # phase under jitter) rather than capability — 5 probes at
+  # 0.7/0.2/0.2/0.37/0.1 with no trend while the campaign's real metric
+  # moved — and as a hard gate it would have aborted the campaign before
+  # the reverse walk ran. 2-2 has no banked sticky practice (1-2 had
+  # 25M+ across attempts), so this budget is 10M rather than 1-2's
+  # re-registered 2M; the rate-building work belongs to phase 3.
+  - idx: 2
+    name: sticky_local
+    gate: budget
+    budget_env_steps: 10000000
+    overrides:
+      reinforce:
+        sticky_action_prob: 0.25
+        actor_freeze_steps: 0
+        kl_anchor_loss_coef: 0.3
+
+  # SPDL reverse walk: tau walks from the deepest rung back to the true
+  # entrance. This is the phase the audit-7 rung-progress kill guards.
+  - idx: 3
+    name: reverse_walk
+    gate: restart_at_entrance
+    budget_env_steps: 60000000
+    overrides:
+      reinforce:
+        sticky_action_prob: 0.25
+        actor_freeze_steps: 0
+        kl_anchor_loss_coef: 0.3
+
+  # Hardening: the kernel-matched adversary IS the perturbation (house
+  # sticky off — the two would double-perturb the same channel), and
+  # restarts pin to the true entrance. The anchor is fully released.
+  - idx: 4
+    name: hardening
+    gate: budget
+    budget_env_steps: 20000000
+    overrides:
+      reinforce:
+        sticky_action_prob: 0.0
+        actor_freeze_steps: 0
+        kl_anchor_loss_coef: 0.0
+        adversary:
+          mode: kernel_sticky
+        backward_curriculum:
+          pin_entrance: true
+
+  # Consolidation under the honest noise profile, entrance-pinned.
+  - idx: 5
+    name: consolidation
+    gate: budget
+    budget_env_steps: 10000000
+    overrides:
+      reinforce:
+        sticky_action_prob: 0.25
+        actor_freeze_steps: 0
+        kl_anchor_loss_coef: 0.0
+        backward_curriculum:
+          pin_entrance: true

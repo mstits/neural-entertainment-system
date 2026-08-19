@@ -614,7 +614,19 @@ def plan(state: dict, repo: Path = REPO,
         if honest_eval_done(level, repo) or level_has_campaign(level, repo):
             continue
         candidates.extend(onboarding_actions(level, repo))
-        if level_has_config(level, repo):
+        # A config alone is not readiness. Generating one is cheap and
+        # happens early in the W-chain, so a level can have configs while
+        # still lacking its ladder, dmap and BC anchor. Launching a
+        # campaign there aborts in preflight and burns an attempt for
+        # nothing, so the campaign is offered only once the artifacts it
+        # actually consumes exist.
+        t = tag_of(level)
+        ready = all((repo / x).exists() for x in (
+            f"checkpoints/online_{t}/restart_states/index.json",
+            f"checkpoints/wavefront/mario_{t}_dmap.pkl",
+            f"checkpoints/bc_{t}/anchor_h256/vanilla_ppo_iter_00000.pt",
+        ))
+        if level_has_config(level, repo) and ready:
             candidates.append(Action(
                 id=f"campaign_{tag}", kind="campaign", needs_emulator=True,
                 timeout_h=14.0,

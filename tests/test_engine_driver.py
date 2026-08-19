@@ -513,3 +513,29 @@ def test_mission_work_outranks_maintenance():
                         "last_run": {}})
         assert rest is None, (
             f"maintenance {a.id} was offered ahead of {rest.id}")
+
+
+def test_a_campaign_is_not_offered_for_a_level_that_only_has_configs(tmp_path,
+                                                                     monkeypatch):
+    """A config is cheap and early; readiness is the ladder, dmap and anchor.
+
+    config_2_2 ran and produced both configs for a level with none of its
+    artifacts. Offering a campaign there aborts in preflight and burns an
+    attempt for nothing.
+    """
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    (tmp_path / "configs").mkdir(parents=True)
+    (tmp_path / "configs" / "campaign_2_2.yaml").write_text("x")
+    (tmp_path / "configs" / "mario_2_2_online_v1.yaml").write_text("x")
+    (tmp_path / "scripts").mkdir(parents=True)
+    (tmp_path / "scripts" / "run_online_campaign.py").write_text(
+        'import argparse\nap = argparse.ArgumentParser()\n'
+        'ap.add_argument("--campaign-config")\nap.add_argument("--start-phase")\n')
+    seen, state = set(), {"completed": {}, "attempts": {}, "last_run": {}}
+    for _ in range(8):
+        a = ed.plan(state, tmp_path)
+        if a is None:
+            break
+        seen.add(a.id)
+        state["completed"][a.id] = {"status": "ok"}
+    assert "campaign_2_2" not in seen, seen
