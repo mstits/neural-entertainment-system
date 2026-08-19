@@ -49,6 +49,7 @@ import argparse
 import glob as globmod
 import hashlib
 import json
+import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
@@ -202,6 +203,43 @@ def resolve_profile(spec: TapeSpec,
     return spec
 
 
+def sibling_profiles(specs: Sequence[TapeSpec]) -> dict[str, str]:
+    """solutions-dir -> profile, from whichever tapes in it DID resolve.
+
+    Tapes sharing a `solutions/` directory came out of one solver
+    invocation, so they share its profile. When some siblings resolved
+    and others did not, the directory's profile is known and the gap is
+    bookkeeping.
+
+    This is the WEAKEST of the three provenance tiers and is labelled as
+    such, never merged with the other two:
+
+      recorded            the tape names its own profile
+      consumer manifest   something that replayed the tape names it
+      sibling             a tape from the same solve names it
+
+    A directory whose resolved siblings disagree yields nothing — an
+    ambiguous directory is not evidence, and guessing here would be
+    exactly the "confident and wrong" failure the basename index made.
+    """
+    by_dir: dict[str, set[str]] = {}
+    for sp in specs:
+        if sp.profile and sp.profile_source:
+            by_dir.setdefault(str(Path(sp.tape).parent), set()).add(sp.profile)
+    return {d: next(iter(v)) for d, v in by_dir.items() if len(v) == 1}
+
+
+def resolve_from_siblings(spec: TapeSpec, sibs: dict[str, str],
+                          root: Path = REPO) -> TapeSpec:
+    if spec.profile and (root / spec.profile).exists():
+        return spec
+    hit = sibs.get(str(Path(spec.tape).parent))
+    if hit and (root / hit).exists():
+        spec.profile = hit
+        spec.profile_source = "recovered from sibling tapes in the same solve"
+    return spec
+
+
 def spec_problems(spec: TapeSpec, root: Path = REPO) -> list[str]:
     """Everything missing BEFORE the emulator is started.
 
@@ -221,64 +259,32 @@ def spec_problems(spec: TapeSpec, root: Path = REPO) -> list[str]:
     return bad
 
 
-def batch(items: Sequence[Any], size: int) -> list[list[Any]]:
-    if size < 1:
-        raise ValueError("size must be >= 1")
-    return [list(items[i:i + size]) for i in range(0, len(items), size)]
+def verify_ram_trace(
+    rams: Sequence[Any],
+    spec: TapeSpec,
+    is_clear: Callable[[Any], bool],
+) -> Verdict:
+    """PURE: does this RAM trace reach a clear? Emulator-free, so testable.
 
+    Kept separate from the replay itself because the interesting logic is
+    here and the stepping is not. `rams` is the trace
+    `src/training/tape_replay.replay_tape` returns — that module is
+    documented as "the repo's ONE banked-tape replay convention", so this
+    sweep consumes it rather than driving a Pool by hand. An earlier draft
+    of this file did drive a Pool by hand; re-deriving a convention that
+    already exists is waste, and it would also have diverged from the
+    frame_skip / hw_flags lineage `TapePlayer` enforces.
 
-def replay_batch(
-    pool: Any,
-    specs: Sequence[TapeSpec],
-    action_lists: Sequence[Sequence[int]],
-    roots: Sequence[bytes],
-    clear_fn: Callable[[Any, TapeSpec], bool],
-    key_fn: Callable[[Any], list],
-) -> list[Verdict]:
-    """Replay up to one tape per pool worker, tick-aligned.
-
-    `step_all` advances every worker, so tapes of different lengths are
-    padded with NOOP once exhausted and their verdict frozen at the tick
-    they ended. Without the freeze a short tape would keep stepping past
-    its own clear and could walk back out of it — which is precisely how
-    a replay check can report a false negative.
+    The verdict is taken at the FIRST clearing frame. A tape that clears
+    and then keeps stepping can leave the cleared state — scoring the
+    final frame instead would report a false negative on a good tape.
     """
-    n = len(specs)
-    if not (n == len(action_lists) == len(roots)):
-        raise ValueError("specs/actions/roots length mismatch")
-    for i in range(n):
-        pool.load_worker_state(i, roots[i])
-
-    done = [False] * n
-    verdicts: list[Optional[Verdict]] = [None] * n
-    longest = max((len(a) for a in action_lists), default=0)
-
-    for t in range(longest):
-        acts = [NOOP] * max(n, 1)
-        for i in range(n):
-            if not done[i] and t < len(action_lists[i]):
-                acts[i] = int(action_lists[i][t])
-        stepped = pool.step_all(acts)
-        for i in range(n):
-            if done[i]:
-                continue
-            ram = stepped[i][2]
-            if clear_fn(ram, specs[i]):
-                done[i] = True
-                verdicts[i] = Verdict(
-                    specs[i].tape, "PASS",
-                    f"cleared at step {t + 1}", t + 1, key_fn(ram))
-            elif t + 1 >= len(action_lists[i]):
-                done[i] = True
-                verdicts[i] = Verdict(
-                    specs[i].tape, "FAIL",
-                    f"tape exhausted at step {t + 1} without a clear",
-                    t + 1, key_fn(ram))
-    for i in range(n):
-        if verdicts[i] is None:
-            verdicts[i] = Verdict(specs[i].tape, "FAIL",
-                                  "empty action tape", 0, None)
-    return [v for v in verdicts if v is not None]
+    for i, ram in enumerate(rams):
+        if is_clear(ram):
+            return Verdict(spec.tape, "PASS", f"cleared at frame {i}", i)
+    n = len(rams)
+    return Verdict(spec.tape, "FAIL",
+                   f"trace of {n} frames never satisfied is_clear", n)
 
 
 def evaluate_gate(verdicts: Sequence[Verdict],
@@ -349,17 +355,62 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {t}: {'; '.join(ps)}")
         return 0
 
-    # Lazy, per scripts/hazard_collect.py: importing nes_core at module
-    # scope would make every function above untestable without a ROM.
-    import numpy as np
-    import nes_core  # noqa: F401
-    from src.training.profile_utils import action_space_to_bitmasks
+    # Lazy, per scripts/hazard_collect.py: importing the emulator at
+    # module scope would make every function above untestable without a ROM.
+    # scripts/ is not the import root; the repo is (matches every other
+    # script here that imports src.training.*).
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
     import yaml
-    print("replay_sweep: emulator path is deliberately unexercised in this "
-          "build step; run it exclusively per the machine calendar.")
-    raise SystemExit(
-        "refusing to sweep implicitly — pass --list for the token-bound "
-        "inventory, or run with the campaign stopped and --confirm-exclusive")
+    from src.training.tape_replay import (
+        TapePlayer, load_root, machine_from_profile)
+    from scripts.go_explore_solve import make_game
+    import numpy as np
+
+    index = build_consumer_index()
+    specs = [resolve_profile(s_, index) for s_ in specs]
+    specs = [resolve_from_siblings(s_, sibling_profiles(specs))
+             for s_ in specs]
+
+    verdicts: list[Verdict] = []
+    for spec in specs:
+        problems = spec_problems(spec)
+        if problems:
+            verdicts.append(Verdict(spec.tape, "ERROR", "; ".join(problems)))
+            continue
+        try:
+            profile = yaml.safe_load((REPO / spec.profile).read_text())
+            rom, frame_skip, bitmasks, hw_flags = machine_from_profile(
+                profile, rom=(profile or {}).get("rom_path"))
+            game = make_game(profile)
+            root = load_root(REPO / spec.root_state, hw_flags)
+            actions = np.load(REPO / spec.actions, allow_pickle=False)
+            start_key = tuple(spec.start_wd) if spec.start_wd else None
+            with TapePlayer(rom=rom, bitmasks=bitmasks,
+                            frame_skip=frame_skip, hw_flags=hw_flags) as pl:
+                rams = [ram for _step, ram in pl.play(root, actions)]
+            if start_key is None:
+                verdicts.append(Verdict(spec.tape, "ERROR",
+                                        "start_wd not recorded"))
+                continue
+            verdicts.append(verify_ram_trace(
+                rams, spec, lambda ram: bool(game.is_clear(start_key, ram))))
+        except Exception as e:  # an untestable tape is a FAILING tape
+            verdicts.append(Verdict(spec.tape, "ERROR",
+                                    f"{type(e).__name__}: {e}"[:160]))
+        print(f"  {verdicts[-1].status:5s} {verdicts[-1].tape}"
+              f"  {verdicts[-1].reason[:70]}", flush=True)
+
+    report = build_report(verdicts, stamp=args.stamp,
+                          core_sha16=sha256_16(
+                              REPO / ".venv/lib/python3.11/site-packages/"
+                              "nes_core.abi3.so"))
+    out = REPO / args.out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2) + "\n")
+    print(f"\n{report['gate_message']}")
+    print(f"gate_passed={report['gate_passed']}  report={out}")
+    return 0 if report["gate_passed"] else 1
 
 
 if __name__ == "__main__":

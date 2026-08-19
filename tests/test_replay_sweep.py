@@ -18,53 +18,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from scripts.replay_sweep import (  # noqa: E402
-    KNOWN_BAD, TapeSpec, Verdict, batch, build_consumer_index, build_report,
-    discover_tapes, evaluate_gate, read_tape, replay_batch, resolve_profile,
-    spec_problems,
+    KNOWN_BAD, TapeSpec, Verdict, build_consumer_index, build_report,
+    discover_tapes, evaluate_gate, read_tape, resolve_profile,
+    resolve_from_siblings, sibling_profiles, spec_problems,
+    verify_ram_trace,
 )
-
-
-class StubPool:
-    """Reproduces nes_core.Pool's step_all 4-tuple shape.
-
-    `clear_at` maps worker -> the tick at which its RAM starts reporting a
-    clear, so a tape can be made to clear early, exactly at its end, or
-    never.
-    """
-
-    def __init__(self, n: int, clear_at: dict[int, int] | None = None):
-        self.n = n
-        self.clear_at = clear_at or {}
-        self.t = 0
-        self.loaded: dict[int, bytes] = {}
-        self.actions_seen: dict[int, list[int]] = {i: [] for i in range(n)}
-
-    def load_worker_state(self, i: int, blob: bytes) -> None:
-        self.loaded[i] = blob
-
-    def step_all(self, acts):
-        self.t += 1
-        for i in range(min(len(acts), self.n)):
-            self.actions_seen[i].append(int(acts[i]))
-        out = []
-        for i in range(self.n):
-            cleared = i in self.clear_at and self.t >= self.clear_at[i]
-            out.append((None, None, {"cleared": cleared, "t": self.t}, None))
-        return out
-
-
-def _clear_fn(ram, spec):
-    return bool(ram["cleared"])
-
-
-def _key_fn(ram):
-    return [ram["t"]]
-
-
-def test_batch_chunks_including_remainder():
-    assert batch([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]
-    with pytest.raises(ValueError):
-        batch([1], 0)
 
 
 def _spec(name="t.json"):
@@ -73,52 +31,28 @@ def _spec(name="t.json"):
                     clear_wd=[0, 1], steps=3, core_sha16="abc")
 
 
-def test_a_tape_that_clears_within_its_actions_passes():
-    pool = StubPool(1, clear_at={0: 2})
-    v = replay_batch(pool, [_spec()], [[1, 1, 1]], [b"r"], _clear_fn, _key_fn)
-    assert v[0].status == "PASS" and v[0].replayed_steps == 2
+def test_trace_that_reaches_a_clear_passes():
+    v = verify_ram_trace([{"c": 0}, {"c": 0}, {"c": 1}], _spec(),
+                         lambda r: bool(r["c"]))
+    assert v.status == "PASS" and v.replayed_steps == 2
 
 
-def test_a_tape_that_never_clears_fails_not_errors():
-    pool = StubPool(1)
-    v = replay_batch(pool, [_spec()], [[1, 1, 1]], [b"r"], _clear_fn, _key_fn)
-    assert v[0].status == "FAIL"
-    assert "exhausted" in v[0].reason
+def test_trace_that_never_clears_fails():
+    v = verify_ram_trace([{"c": 0}] * 4, _spec(), lambda r: bool(r["c"]))
+    assert v.status == "FAIL" and "never satisfied" in v.reason
 
 
-def test_verdict_is_frozen_at_the_clear_not_at_tape_end():
-    """A short tape must not keep stepping past its own clear.
-
-    Without the freeze a policy that clears then walks back out would be
-    scored FAIL — a false negative on a genuinely good tape.
-    """
-    pool = StubPool(1, clear_at={0: 1})
-    v = replay_batch(pool, [_spec()], [[1, 1, 1, 1, 1]], [b"r"],
-                     lambda ram, s: ram["t"] == 1, _key_fn)
-    assert v[0].status == "PASS" and v[0].replayed_steps == 1
+def test_verdict_is_taken_at_the_first_clearing_frame():
+    """A tape can clear and then step back out; scoring the last frame
+    would report a false negative on a good tape."""
+    trace = [{"c": 0}, {"c": 1}, {"c": 0}, {"c": 0}]
+    v = verify_ram_trace(trace, _spec(), lambda r: bool(r["c"]))
+    assert v.status == "PASS" and v.replayed_steps == 1
 
 
-def test_shorter_tape_is_padded_with_noop_so_workers_stay_aligned():
-    pool = StubPool(2, clear_at={1: 4})
-    specs = [_spec("short.json"), _spec("long.json")]
-    v = replay_batch(pool, specs, [[3], [7, 7, 7, 7]], [b"a", b"b"],
-                     _clear_fn, _key_fn)
-    by = {x.tape: x for x in v}
-    assert by["short.json"].status == "FAIL"
-    assert by["long.json"].status == "PASS"
-    # worker 0 was padded with NOOP for ticks 2..4, never re-fed its action
-    assert pool.actions_seen[0] == [3, 0, 0, 0]
-
-
-def test_empty_tape_is_a_failure():
-    pool = StubPool(1)
-    v = replay_batch(pool, [_spec()], [[]], [b"r"], _clear_fn, _key_fn)
-    assert v[0].status == "FAIL" and "empty" in v[0].reason
-
-
-def test_length_mismatch_is_rejected():
-    with pytest.raises(ValueError):
-        replay_batch(StubPool(1), [_spec()], [], [b"r"], _clear_fn, _key_fn)
+def test_empty_trace_fails_rather_than_raising():
+    v = verify_ram_trace([], _spec(), lambda r: True)
+    assert v.status == "FAIL"
 
 
 def test_gate_passes_when_only_known_bad_tapes_fail():
@@ -221,3 +155,42 @@ def test_recovery_does_not_invent_a_profile_that_is_absent(tmp_path):
     idx = {act.resolve(): ("configs/gone.yaml", "m.json")}
     out = resolve_profile(spec, idx, tmp_path)
     assert out.profile == "" and out.profile_source == ""
+
+
+def test_sibling_recovery_fills_a_gap_in_a_resolved_directory(tmp_path):
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs/x.yaml").write_text("x")
+    resolved = TapeSpec("runs/s/solutions/sol_000.json", "a.npy", "r",
+                        "configs/x.yaml", None, None, None, None,
+                        profile_source="recorded")
+    gap = TapeSpec("runs/s/solutions/sol_001.json", "b.npy", "r",
+                   "", None, None, None, None)
+    sibs = sibling_profiles([resolved, gap])
+    out = resolve_from_siblings(gap, sibs, tmp_path)
+    assert out.profile == "configs/x.yaml"
+    assert "sibling" in out.profile_source
+
+
+def test_sibling_recovery_refuses_an_ambiguous_directory(tmp_path):
+    """Two different profiles in one solve dir is not evidence."""
+    a = TapeSpec("runs/s/solutions/sol_000.json", "a", "r", "configs/a.yaml",
+                 None, None, None, None, profile_source="recorded")
+    b = TapeSpec("runs/s/solutions/sol_001.json", "b", "r", "configs/b.yaml",
+                 None, None, None, None, profile_source="recorded")
+    gap = TapeSpec("runs/s/solutions/sol_002.json", "c", "r", "",
+                   None, None, None, None)
+    assert sibling_profiles([a, b, gap]) == {}
+    out = resolve_from_siblings(gap, {}, tmp_path)
+    assert out.profile == "" and out.profile_source == ""
+
+
+def test_sibling_recovery_does_not_cross_directories(tmp_path):
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs/x.yaml").write_text("x")
+    other = TapeSpec("runs/OTHER/solutions/sol_000.json", "a", "r",
+                     "configs/x.yaml", None, None, None, None,
+                     profile_source="recorded")
+    gap = TapeSpec("runs/MINE/solutions/sol_000.json", "b", "r", "",
+                   None, None, None, None)
+    out = resolve_from_siblings(gap, sibling_profiles([other, gap]), tmp_path)
+    assert out.profile == ""
