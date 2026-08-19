@@ -80,6 +80,15 @@ class Action:
     gate: str
     timeout_h: float = DEFAULT_ACTION_TIMEOUT_H
     meta: dict = field(default_factory=dict)
+    # A path that exists if and only if this action succeeded. Without one
+    # the reaper can only say "the process ended", which is not the same
+    # as "the work is done".
+    done_marker: Optional[str] = None
+    # Recurring actions are meant to run again — they are never recorded
+    # as completed and are exempt from the attempt cap. The suite check is
+    # the archetype: capping it at two runs would silence exactly the
+    # watchdog that caught a test red for three days.
+    recurring: bool = False
 
 
 # ---------------------------------------------------------------- state
@@ -176,6 +185,49 @@ def campaign_terminal(run_dir: Path) -> Optional[str]:
     return "running"
 
 
+def campaign_interrupted(run_dir: Path, repo: Path = REPO) -> Optional[int]:
+    """Phase index of a campaign that stopped without recording an end.
+
+    Returns None if the campaign is live, finished, or absent.
+
+    This is the one place liveness may be inferred from the process
+    table, and the distinction matters because inferring the OPPOSITE is
+    what once cost a wrong ledger entry and a 30M-step re-run. That error
+    read a missing process as "the run died" — an OUTCOME, which only the
+    log can supply. Here nothing is concluded about the outcome: the log
+    is still authoritative that no terminal row exists, and `ps` is
+    authoritative that nothing is executing. Together those mean
+    interrupted, which is a resumable state, not a verdict.
+
+    Without this, any reboot, crash or stray kill strands a campaign
+    forever: the log says running, no process is running, and the
+    pipeline skips the level because a run directory exists.
+    """
+    log = run_dir / "campaign.jsonl"
+    if not log.exists():
+        return None
+    rows = []
+    for line in log.read_text().splitlines():
+        line = line.strip()
+        if line:
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    if not rows:
+        return None
+    last_start = max((i for i, r in enumerate(rows)
+                      if r.get("type") == "campaign_start"), default=-1)
+    live = rows[last_start + 1:]
+    if any(r.get("type") in ("campaign_complete", "abort", "kill")
+           for r in live):
+        return None                      # it recorded how it ended
+    if emulator_busy() is not None:
+        return None                      # something is executing; leave it
+    phases = [r.get("phase") for r in live if r.get("type") == "phase_start"]
+    return int(phases[-1]) if phases and phases[-1] is not None else 0
+
+
 def honest_eval_done(level: str, repo: Path = REPO) -> bool:
     """Has this level been scored under the honest protocol, on 2 seeds?
 
@@ -192,17 +244,32 @@ def honest_eval_done(level: str, repo: Path = REPO) -> bool:
     tag = level.replace("-", "_")
     want = f"mario_{tag}_"
     seeds: set[Any] = set()
-    for p in (repo / "runs").glob("**/*eval*seed*.json"):
-        try:
-            rec = json.loads(p.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
+
+    def consider(rec: Any) -> None:
         if not isinstance(rec, dict):
-            continue
+            return
         if str(rec.get("game", "")).startswith(want) and \
                 int(rec.get("n_episodes") or 0) >= 50 and \
                 float(rec.get("sticky_prob") or 0) > 0:
             seeds.add(rec.get("eval_seed"))
+
+    for p in (repo / "runs").glob("**/*eval*seed*.json"):
+        try:
+            consider(json.loads(p.read_text()))
+        except (OSError, json.JSONDecodeError):
+            continue
+    # eval_game appends EVERY result to <ckpt_dir>/eval.jsonl, which is the
+    # receipt an engine-launched eval actually leaves — the runbook's
+    # `> final_eval_seedN.json` is a shell redirect no detached launch
+    # performs. Reading only the redirected files made a completed eval
+    # invisible, so the engine would have re-run it until the attempt cap.
+    for p in (repo / "checkpoints").glob("**/eval.jsonl"):
+        try:
+            for line in p.read_text().splitlines():
+                if line.strip():
+                    consider(json.loads(line))
+        except (OSError, json.JSONDecodeError):
+            continue
     return len(seeds) >= 2
 
 
@@ -466,7 +533,7 @@ def plan(state: dict, repo: Path = REPO,
 
     def offer(a: Optional[Action]) -> Optional[Action]:
         """Emit an action only if it is genuinely runnable."""
-        if a is None or a.id in done:
+        if a is None or (a.id in done and not a.recurring):
             return None
         if emulator_only is False and a.needs_emulator:
             return None
@@ -486,6 +553,8 @@ def plan(state: dict, repo: Path = REPO,
         id="suite_check", kind="suite", needs_emulator=False, timeout_h=1.0,
         cmd=["scripts/run_suite_check.py", "--out",
              "runs/engine/suite_check.json"],
+        recurring=True,
+        done_marker="runs/engine/suite_check.json",
         gate="Records pass/fail counts and the failing node ids. It never "
              "edits a test: a red suite is a finding for the human, and "
              "weakening a test to green it is mission failure."))
@@ -519,8 +588,28 @@ def plan(state: dict, repo: Path = REPO,
         cmd=["scripts/replay_sweep.py", "--glob",
              "runs/**/solutions/*.json", "--out",
              "runs/engine/replay_sweep_full.json"],
+        done_marker="runs/engine/replay_sweep_full.json",
         gate="Zero genuine replay FAILUREs. ERRORs are unverifiable, "
              "reported separately, never counted as passes."))
+
+    # 3b. Resume any campaign interrupted without recording an end. A
+    #     reboot or a stray kill must self-heal, or three weeks of
+    #     absence ends with a half-finished run and an idle machine.
+    for level in SMB_LEVELS:
+        t = tag_of(level)
+        rd = repo / "runs" / f"online_{t}"
+        phase = campaign_interrupted(rd, repo)
+        if phase is not None and (repo / f"configs/campaign_{t}.yaml").exists():
+            candidates.append(Action(
+                id=f"resume_{t}_phase{phase}", kind="campaign",
+                needs_emulator=True, timeout_h=14.0,
+                cmd=["scripts/run_online_campaign.py", "--campaign-config",
+                     f"configs/campaign_{t}.yaml", "--start-phase",
+                     str(phase)],
+                gate="Resumes at the phase it was interrupted in; earned "
+                     "gates are not re-litigated, which is why the phase "
+                     "index is carried rather than restarting at 0.",
+                meta={"level": level, "resumed_from_phase": phase}))
 
     # 4. Extend the pipeline: run the campaign for any level that already
     #    has a validated config but no run. Onboarding a level that lacks
@@ -562,6 +651,76 @@ def launch(action: Action, repo: Path = REPO) -> int:
     return detach_launch(cmd, log, cwd=repo)
 
 
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def reap(state: dict, repo: Path = REPO) -> Optional[dict]:
+    """Settle the previously launched action. Returns a record, or None.
+
+    Nothing did this before, which had two consequences worth naming.
+    Actions were never marked completed, so any action without a
+    filesystem-derived done-check re-ran until the attempt cap and was
+    then abandoned. And `consecutive_failures` was initialised and read
+    but never incremented, so the circuit breaker could not fire — the
+    engine had a brake with no linkage to the pedal.
+
+    Success is judged by the action's `done_marker`, not by the process
+    having ended: an exit is not an outcome. Where an action declares no
+    marker, an ended process is recorded as `finished` and treated as
+    neither success nor failure, because claiming either would be an
+    inference the engine cannot support.
+    """
+    running = state.get("running")
+    if not running:
+        return None
+    pid = int(running.get("pid", -1))
+    started = float(running.get("started", 0))
+    marker = running.get("done_marker")
+    age_h = (time.time() - started) / 3600.0
+
+    if pid_alive(pid):
+        if age_h <= float(running.get("timeout_h", DEFAULT_ACTION_TIMEOUT_H)):
+            return None
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass
+        state["running"] = None
+        state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
+        state.setdefault("completed", {})[running["id"]] = {
+            "status": "timeout", "hours": round(age_h, 2)}
+        rec = {"type": "reap", "action": running["id"], "outcome": "timeout",
+               "hours": round(age_h, 2)}
+        journal(rec)
+        return rec
+
+    if marker:
+        ok = (repo / marker).exists()
+        outcome = "succeeded" if ok else "failed"
+    else:
+        ok, outcome = None, "finished"
+
+    state["running"] = None
+    if ok is True:
+        state["consecutive_failures"] = 0
+    elif ok is False:
+        state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
+    if not running.get("recurring"):
+        state.setdefault("completed", {})[running["id"]] = {
+            "status": outcome, "marker": marker}
+    rec = {"type": "reap", "action": running["id"], "outcome": outcome,
+           "marker": marker}
+    journal(rec)
+    return rec
+
+
 def guard_reasons(state: dict, repo: Path = REPO) -> list[str]:
     """Everything that forbids launching anything right now."""
     out: list[str] = []
@@ -578,6 +737,7 @@ def guard_reasons(state: dict, repo: Path = REPO) -> list[str]:
 
 def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
     """One decision. Returns a record of what was decided and why."""
+    reap(state, repo)
     busy = emulator_busy()
 
     blocked = guard_reasons(state, repo)
@@ -609,7 +769,7 @@ def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
 
     attempts = state.setdefault("attempts", {})
     n = attempts.get(action.id, 0)
-    if n >= MAX_ATTEMPTS_PER_ACTION:
+    if n >= MAX_ATTEMPTS_PER_ACTION and not action.recurring:
         state.setdefault("completed", {})[action.id] = {
             "status": "abandoned", "attempts": n}
         rec = {"type": "tick", "decision": "abandon", "action": action.id,
@@ -627,7 +787,9 @@ def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
     attempts[action.id] = n + 1
     state["running"] = {"id": action.id, "pid": pid,
                         "started": time.time(),
-                        "timeout_h": action.timeout_h}
+                        "timeout_h": action.timeout_h,
+                        "done_marker": action.done_marker,
+                        "recurring": action.recurring}
     rec = {"type": "tick", "decision": "launched", "action": action.id,
            "pid": pid}
     journal(rec)

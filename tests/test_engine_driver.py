@@ -8,7 +8,9 @@ retrying a poisoned action forever, or halting on a corrupt state file.
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -21,9 +23,27 @@ import scripts.engine_driver as ed  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
+    """Redirect all engine state to tmp AND neuter the launcher.
+
+    Stubbing `launch` here rather than per-test is not tidiness. Several
+    tests call `tick()` for its decision, and `tick` launches through
+    `detach`, which starts a process in its OWN session that outlives the
+    test run. One pass of this file left fourteen detached full-suite
+    pytest processes alive, one of them at 713% CPU, which took the
+    machine to a load of 20 and stalled the git commit that followed.
+
+    A test suite must not be able to start background work by accident,
+    so the capability is removed for every test in the file and the fake
+    records what would have been launched.
+    """
     monkeypatch.setattr(ed, "ENGINE_DIR", tmp_path / "engine")
     monkeypatch.setattr(ed, "JOURNAL", tmp_path / "engine" / "journal.jsonl")
     monkeypatch.setattr(ed, "STATE_PATH", tmp_path / "engine" / "state.json")
+    launched: list = []
+    monkeypatch.setattr(
+        ed, "launch",
+        lambda action, repo=ed.REPO: (launched.append(action), 4242)[1])
+    monkeypatch.setattr(ed, "_test_launched", launched, raising=False)
 
 
 def _script(tmp_path: Path, name: str, flags: list[str]) -> Path:
@@ -84,10 +104,8 @@ def test_never_launches_an_emulator_action_while_one_is_live(monkeypatch):
     — but whatever it picks must not need the emulator.
     """
     monkeypatch.setattr(ed, "emulator_busy", lambda: 4242)
-    launched = []
-    monkeypatch.setattr(ed, "launch", lambda a, repo=ed.REPO:
-                        (launched.append(a), 1)[1])
     rec = ed.tick({"completed": {}, "attempts": {}})
+    launched = ed._test_launched
     assert all(not a.needs_emulator for a in launched), launched
     if rec["decision"] == "wait":
         assert "4242" in rec["reason"]
@@ -158,11 +176,40 @@ def test_plan_skips_an_unrunnable_action_instead_of_emitting_it(monkeypatch):
     assert ed.plan({"completed": {}, "attempts": {}}) is None
 
 
-def test_plan_does_not_repeat_a_completed_action():
+def test_plan_does_not_repeat_a_completed_nonrecurring_action():
+    done: dict = {}
+    seen = set()
+    for _ in range(6):
+        a = ed.plan({"completed": done, "attempts": {}})
+        if a is None:
+            break
+        if a.recurring:            # recurring actions are meant to repeat
+            done[a.id] = {"status": "ok"}
+            continue
+        assert a.id not in seen, f"{a.id} re-offered after completion"
+        seen.add(a.id)
+        done[a.id] = {"status": "ok"}
+
+
+def test_a_recurring_action_is_re_offered_after_completion():
+    """Capping the suite check would silence the watchdog that caught a
+    test red for three days."""
     a = ed.plan({"completed": {}, "attempts": {}})
-    assert a is not None
-    b = ed.plan({"completed": {a.id: {"status": "ok"}}, "attempts": {}})
-    assert b is None or b.id != a.id
+    assert a is not None and a.recurring, a
+    b = ed.plan({"completed": {a.id: {"status": "succeeded"}},
+                 "attempts": {}})
+    assert b is not None and b.id == a.id
+
+
+def test_a_recurring_action_is_exempt_from_the_attempt_cap(monkeypatch):
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    monkeypatch.setattr(ed, "plan", lambda s, repo=ed.REPO,
+                        emulator_only=None: ed.Action(
+                            id="rec", kind="k", cmd=["scripts/x.py"],
+                            needs_emulator=False, gate="g", recurring=True))
+    state = {"completed": {}, "attempts": {"rec": 99}}
+    rec = ed.tick(state)
+    assert rec["decision"] == "launched"
 
 
 # ---- honest-eval detection ----
@@ -220,3 +267,170 @@ def test_intent_is_journalled_before_the_action_runs(monkeypatch):
     ed.tick({"completed": {}, "attempts": {}}, dry=True)
     kinds = [json.loads(l)["type"] for l in ed.JOURNAL.read_text().splitlines()]
     assert "launch_intent" in kinds
+
+
+# ---- the reaper: an exit is not an outcome ----
+
+def test_reap_marks_success_only_when_the_marker_exists(tmp_path):
+    marker = tmp_path / "done.json"
+    marker.write_text("{}")
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 2,
+             "running": {"id": "a", "pid": 999999, "started": 0.0,
+                         "timeout_h": 1.0, "done_marker": "done.json",
+                         "recurring": False}}
+    rec = ed.reap(state, tmp_path)
+    assert rec["outcome"] == "succeeded"
+    assert state["consecutive_failures"] == 0, "success must reset the breaker"
+    assert state["completed"]["a"]["status"] == "succeeded"
+    assert state["running"] is None
+
+
+def test_reap_counts_a_missing_marker_as_failure_and_arms_the_breaker(tmp_path):
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"id": "a", "pid": 999999, "started": 0.0,
+                         "timeout_h": 1.0, "done_marker": "never.json",
+                         "recurring": False}}
+    rec = ed.reap(state, tmp_path)
+    assert rec["outcome"] == "failed"
+    assert state["consecutive_failures"] == 1
+
+
+def test_reap_will_not_infer_an_outcome_without_a_marker(tmp_path):
+    """A process ending is not evidence the work succeeded."""
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"id": "a", "pid": 999999, "started": 0.0,
+                         "timeout_h": 1.0, "done_marker": None,
+                         "recurring": False}}
+    rec = ed.reap(state, tmp_path)
+    assert rec["outcome"] == "finished"
+    assert state["consecutive_failures"] == 0, "no marker, no verdict"
+
+
+def test_reap_leaves_a_live_action_alone(tmp_path):
+    state = {"completed": {}, "attempts": {},
+             "running": {"id": "a", "pid": os.getpid(), "started": time.time(),
+                         "timeout_h": 10.0, "done_marker": None,
+                         "recurring": False}}
+    assert ed.reap(state, tmp_path) is None
+    assert state["running"] is not None
+
+
+def test_reap_kills_and_fails_an_action_past_its_timeout(tmp_path, monkeypatch):
+    killed = []
+    monkeypatch.setattr(ed.os, "kill",
+                        lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(ed, "pid_alive", lambda pid: True)
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"id": "a", "pid": 4242, "started": 0.0,
+                         "timeout_h": 0.001, "done_marker": None,
+                         "recurring": False}}
+    rec = ed.reap(state, tmp_path)
+    assert rec["outcome"] == "timeout"
+    assert (4242, 9) in killed
+    assert state["consecutive_failures"] == 1
+
+
+def test_a_recurring_action_is_never_recorded_as_completed(tmp_path):
+    marker = tmp_path / "d.json"
+    marker.write_text("{}")
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"id": "suite", "pid": 999999, "started": 0.0,
+                         "timeout_h": 1.0, "done_marker": "d.json",
+                         "recurring": True}}
+    ed.reap(state, tmp_path)
+    assert "suite" not in state["completed"]
+
+
+def test_reap_runs_before_anything_is_planned(monkeypatch):
+    """Otherwise a finished action still looks live and blocks the tick."""
+    calls = []
+    monkeypatch.setattr(ed, "reap",
+                        lambda s, repo=ed.REPO: calls.append("reap"))
+    monkeypatch.setattr(ed, "emulator_busy",
+                        lambda: (calls.append("busy"), None)[1])
+    ed.tick({"completed": {}, "attempts": {}})
+    assert calls[0] == "reap"
+
+
+# ---- interrupted campaigns must self-heal ----
+
+def _campaign_log(tmp_path, rows):
+    d = tmp_path / "runs" / "online_2_1"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "campaign.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
+    return d
+
+
+def test_interrupted_campaign_reports_its_phase(tmp_path, monkeypatch):
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    d = _campaign_log(tmp_path, [
+        {"type": "campaign_start", "start_phase": 5},
+        {"type": "phase_start", "phase": 5, "name": "consolidation"},
+        {"type": "probe", "env_steps": 8.6e7, "median_max_x": 2559},
+    ])
+    assert ed.campaign_interrupted(d, tmp_path) == 5
+
+
+def test_a_campaign_that_recorded_its_end_is_not_interrupted(tmp_path,
+                                                             monkeypatch):
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    d = _campaign_log(tmp_path, [
+        {"type": "campaign_start"},
+        {"type": "phase_start", "phase": 5},
+        {"type": "campaign_complete"},
+    ])
+    assert ed.campaign_interrupted(d, tmp_path) is None
+
+
+def test_a_live_campaign_is_never_called_interrupted(tmp_path, monkeypatch):
+    """Liveness comes from ps; the OUTCOME still comes only from the log."""
+    monkeypatch.setattr(ed, "emulator_busy", lambda: 4242)
+    d = _campaign_log(tmp_path, [
+        {"type": "campaign_start"},
+        {"type": "phase_start", "phase": 3},
+    ])
+    assert ed.campaign_interrupted(d, tmp_path) is None
+
+
+def test_an_aborted_campaign_is_not_resumed_blindly(tmp_path, monkeypatch):
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    d = _campaign_log(tmp_path, [
+        {"type": "campaign_start"},
+        {"type": "phase_start", "phase": 3},
+        {"type": "abort", "reason": "budget exhausted"},
+    ])
+    assert ed.campaign_interrupted(d, tmp_path) is None
+
+
+def test_resume_carries_the_phase_rather_than_restarting_at_zero(
+        tmp_path, monkeypatch):
+    """Restarting at 0 re-litigates gates already earned.
+
+    2-1 earned its deterministic rung gate 10/10 in phase 1; a resume
+    that began again at phase 0 would put that back at risk for nothing.
+    """
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    _campaign_log(tmp_path, [
+        {"type": "campaign_start", "start_phase": 5},
+        {"type": "phase_start", "phase": 5, "name": "consolidation"},
+    ])
+    (tmp_path / "configs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "configs" / "campaign_2_1.yaml").write_text("x")
+    (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "scripts" / "run_online_campaign.py").write_text(
+        'import argparse\nap = argparse.ArgumentParser()\n'
+        'ap.add_argument("--campaign-config")\n'
+        'ap.add_argument("--start-phase")\n')
+
+    acts = [a for a in [ed.plan({"completed": {}, "attempts": {}}, tmp_path)]
+            if a is not None]
+    resume = [a for a in acts if a.id.startswith("resume_")]
+    if not resume:                       # suite_check may outrank it
+        done = {a.id: {} for a in acts}
+        nxt = ed.plan({"completed": done, "attempts": {}}, tmp_path)
+        resume = [nxt] if nxt and nxt.id.startswith("resume_") else []
+    assert resume, "an interrupted campaign was not offered a resume"
+    a = resume[0]
+    assert "--start-phase" in a.cmd
+    assert a.cmd[a.cmd.index("--start-phase") + 1] == "5"
