@@ -260,6 +260,11 @@ def validate_action(action: Action, repo: Path = REPO) -> tuple[bool, str]:
     """
     if not action.cmd:
         return False, "empty command"
+    if action.cmd[0] == "-m":
+        mod = action.cmd[1].replace(".", "/") + ".py"
+        if not (repo / mod).exists():
+            return False, f"no such module: {action.cmd[1]}"
+        return True, "ok (module)"
     script = repo / action.cmd[0]
     if not script.exists():
         return False, f"no such script: {action.cmd[0]}"
@@ -332,6 +337,119 @@ def honest_eval_action(level: str, seed: int,
         meta={"level": level, "seed": seed})
 
 
+def onboarding_actions(level: str, repo: Path = REPO) -> list[Action]:
+    """The runbook's W-chain for one level, as validated actions.
+
+    Encodes docs/receipts/two_one_runbook_2026-08-17.md, which is the
+    sequence 1-3, 1-4 and 2-1 were all onboarded by. Each step is offered
+    only when its own output is missing, so the chain resumes wherever it
+    stopped rather than redoing work.
+
+    Two provenance assertions are passed explicitly rather than left to
+    convention: `--expect-level` and `--expect-root` on the rung
+    selection. Those flags already existed and were not used when 2-1 and
+    1-4 were onboarded by hand, which is how both ended up consuming
+    another level's ladder.
+
+    Not included: capturing an entrance state. A brand-new level's
+    entrance comes either from `capture_start_state.py` against a real
+    boot or from the previous level's chain handoff, and choosing between
+    those is a judgement about what the level's start legitimately IS —
+    not something to guess unattended.
+    """
+    t = tag_of(level)
+    prof = f"configs/mario_{t}_online_v1.yaml"
+    entrance = f"checkpoints/ge_entrances/smb_{t}_entrance.state"
+    rom = "roms/Super Mario Bros. (World).nes"
+    ladder_raw = f"checkpoints/backward_states/{level}_online"
+    rungs = f"checkpoints/online_{t}/restart_states"
+    out: list[Action] = []
+
+    if not (repo / prof).exists():
+        out.append(Action(
+            id=f"config_{t}", kind="config", needs_emulator=False,
+            timeout_h=0.2,
+            cmd=["scripts/make_campaign_config.py", "--level", level],
+            gate="Both configs written by derivation with zero residual "
+                 "references to the template level.",
+            meta={"level": level}))
+        return out          # everything downstream needs the profile
+
+    if not (repo / ladder_raw).exists():
+        out.append(Action(
+            id=f"mint_{t}", kind="mint", needs_emulator=True, timeout_h=1.0,
+            cmd=["scripts/mint_backward_states.py", "--level", level,
+                 "--run", f"runs/ge_{t}_solve", "--profile", prof,
+                 "--out", ladder_raw],
+            gate="Aborts unless the tape replays to its banked clear — "
+                 "the replay IS the verification.",
+            meta={"level": level}))
+    elif not (repo / rungs / "index.json").exists():
+        out.append(Action(
+            id=f"select_{t}", kind="select", needs_emulator=False,
+            timeout_h=0.2,
+            cmd=["scripts/select_restart_states.py", "--ladder", ladder_raw,
+                 "--out", rungs, "--auto-targets", "6",
+                 "--expect-level", level, "--expect-root", entrance],
+            gate="6 rungs whose index names THIS level and THIS root; the "
+                 "expect-* flags make a foreign ladder a hard failure.",
+            meta={"level": level}))
+
+    if not (repo / f"checkpoints/wavefront/mario_{t}_dmap.pkl").exists():
+        tapes = sorted((repo / "runs" / f"ge_{t}_solve" / "solutions")
+                       .glob("sol_*.actions.npy"))
+        if tapes:
+            out.append(Action(
+                id=f"dmap_{t}", kind="dmap", needs_emulator=True,
+                timeout_h=1.0,
+                cmd=["-m", "src.utils.wavefront_reward", "--solutions"]
+                    + [str(x.relative_to(repo)) for x in tapes]
+                    + ["--root-state", entrance, "--profile", prof,
+                       "--rom", rom, "--out",
+                       f"checkpoints/wavefront/mario_{t}_dmap.pkl"],
+                gate="D_start below the tape length (1-3 read 455 against "
+                     "540; 1-4 read 456 against 490).",
+                meta={"level": level}))
+
+    anchor_ck = f"checkpoints/bc_{t}/anchor_h256/vanilla_ppo_iter_00000.pt"
+    if not (repo / anchor_ck).exists():
+        demo_dir = repo / f"checkpoints/bc_{t}/demos"
+        if not any(demo_dir.glob("*.npz")):
+            for tp in sorted((repo / "runs" / f"ge_{t}_solve" / "solutions")
+                             .glob("sol_*.actions.npy")):
+                idx = tp.name.split("_")[1].split(".")[0]
+                out.append(Action(
+                    id=f"demo_{t}_{idx}", kind="demo", needs_emulator=True,
+                    timeout_h=0.5,
+                    cmd=["scripts/replay_to_demos.py",
+                         "--start-state", entrance,
+                         "--actions", str(tp.relative_to(repo)),
+                         "--profile", prof, "--root-id", "entrance",
+                         "--out",
+                         f"checkpoints/bc_{t}/demos/demos_{t}_sol_{idx}.npz"],
+                    gate="Expect some tapes to fail; quarantine those and "
+                         "train on the rest.",
+                    meta={"level": level}))
+        else:
+            out.append(Action(
+                id=f"anchor_{t}", kind="anchor", needs_emulator=False,
+                timeout_h=1.0,
+                cmd=["scripts/bc_distill.py", "--demos",
+                     f"checkpoints/bc_{t}/demos/demos_{t}_sol_*.npz",
+                     "--profile", prof, "--out",
+                     f"checkpoints/bc_{t}/anchor_h256",
+                     "--hidden-dim", "256", "--trunk-dim", "64",
+                     "--epochs", "120", "--lr", "1e-3", "--seed", "0"],
+                gate="An anchor the profile's net shape-infers, per the "
+                     "campaign dry-run's KL-anchor check.",
+                meta={"level": level}))
+    return out
+
+
+def tag_of(level: str) -> str:
+    return level.replace("-", "_")
+
+
 # ---------------------------------------------------------------- plan
 
 def plan(state: dict, repo: Path = REPO) -> Optional[Action]:
@@ -397,6 +515,7 @@ def plan(state: dict, repo: Path = REPO) -> Optional[Action]:
         tag = level.replace("-", "_")
         if honest_eval_done(level, repo) or level_has_campaign(level, repo):
             continue
+        candidates.extend(onboarding_actions(level, repo))
         if level_has_config(level, repo):
             candidates.append(Action(
                 id=f"campaign_{tag}", kind="campaign", needs_emulator=True,
