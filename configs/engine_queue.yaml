@@ -1,0 +1,92 @@
+# PRE-REGISTERED ACTION QUEUE — the engine's work list.
+#
+# This file is pre-registration in the CLAIMS.md sense: every action's
+# gate is written down BEFORE the action runs, and the driver may never
+# edit a gate. Run state lives in runs/engine/state.json so this document
+# stays an immutable record of what was promised.
+#
+# Ordering follows docs/proposals/RESEARCH_SYNTHESIS_2026-08-17.md, where
+# three independent Deep Research rounds converged on the hazard
+# substrate, with its three gated phases. Nothing later starts until the
+# gate before it passes.
+#
+# `needs_emulator: true` actions run EXCLUSIVELY — one at a time, per the
+# one-machine physics budget. Token-bound actions may run beside them.
+
+actions:
+  - id: two_one_consolidation
+    why: >
+      2-1 exhausted phase 3's pre-registered 60M budget at tau=1 of 6,
+      one rung short of `restart_at_entrance`. 1-4 hit the identical wall
+      and reached its banked 51% by launching --start-phase 5, skipping
+      reverse_walk and hardening entirely. This applies that precedent.
+    needs_emulator: true
+    cmd:
+      - scripts/run_online_campaign.py
+      - --campaign-config
+      - configs/campaign_2_1.yaml
+      - --start-phase
+      - "5"
+    gate: >
+      Honest protocol, >=100 episodes over two fresh seeds, strict
+      predicate: pooled clear rate > 0.00. Any non-zero honest rate banks
+      2-1 as the fifth level; zero means consolidation-after-sticky does
+      not transfer to a level this long and the phase-3 skip is refuted
+      for 2-1.
+
+  - id: reverse_walk_earns_its_budget
+    why: >
+      Both levels that have ever run phase 3 died in it (1-4 attempt 1,
+      2-1 attempt 2), each burning its full 60M budget. 1-4's banked 51%
+      came from a run that skipped phases 3 AND 4. So the phase has never
+      once paid out, and if it can be dropped every future level costs
+      ~60M fewer steps. This is the cheapest available shortening of the
+      validation cycle, and it is a falsifier, not an optimisation.
+    needs_emulator: false
+    cmd:
+      - scripts/phase_value_report.py
+      - --out
+      - runs/engine/phase_value.json
+    gate: >
+      Descriptive only. Reports, per level and per phase, env steps spent
+      against honest-probe median and strict delta across that phase. It
+      cannot on its own justify dropping a phase — n is 2 — but a phase
+      with zero positive strict delta across every level that ran it is
+      pre-registered here as sufficient to demote it to opt-in.
+
+  - id: hazard_phase1_benchmark
+    why: >
+      RESEARCH_SYNTHESIS Phase 1, the causal data engine. Three
+      independent DR rounds converged on the hazard substrate; this is
+      its first gate and it is cheap.
+    needs_emulator: true
+    cmd:
+      - scripts/hazard_collect.py
+      - --benchmark
+      - --profile
+      - configs/mario_1_1_tiles.yaml
+      - --rom
+      - roms/Super Mario Bros. (World).nes
+    gate: >
+      >= 1,000 worker-ticks/second under micro-forking, and a projected
+      100,000 labels in under one hour. Below the throughput floor,
+      Phase 1 is KILLED and the fallback is observational deaths from
+      ordinary rollout logs, per the synthesis. The script prints its own
+      PASS/FAIL and exits non-zero on FAIL.
+
+  - id: replay_sweep_full
+    why: >
+      12 of 16 SMB solver tapes verified; 282 banked tapes across the
+      other games have never been checked. An EXHIBITION claim that
+      cannot be replayed is an assertion, not a receipt.
+    needs_emulator: true
+    cmd:
+      - scripts/replay_sweep.py
+      - --glob
+      - runs/**/solutions/*.json
+      - --out
+      - runs/engine/replay_sweep_full.json
+    gate: >
+      Zero replay FAILUREs. ERRORs are reported separately and counted as
+      unverifiable-not-broken; a tape that genuinely replays to a
+      non-clear is a new finding, quarantined rather than repaired.

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.stits.nes-engine</string>
+
+  <!-- launchd runs the TICK, never the training. A tick is cheap,
+       idempotent and guarded: it makes one decision and exits. Any
+       training it starts is detached separately and outlives it. That is
+       why wrapping launchd is safe here and would not be safe around a
+       campaign — a relaunched tick re-reads state, whereas a relaunched
+       campaign could resume from a torn checkpoint. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/stits/Documents/macos-emulation-and-training/.venv/bin/python</string>
+    <string>/Users/stits/Documents/macos-emulation-and-training/scripts/engine_driver.py</string>
+    <string>--once</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/stits/Documents/macos-emulation-and-training</string>
+  <key>StartInterval</key><integer>600</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key>
+  <string>/Users/stits/Documents/macos-emulation-and-training/runs/engine/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/stits/Documents/macos-emulation-and-training/runs/engine/launchd.err</string>
+  <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>
