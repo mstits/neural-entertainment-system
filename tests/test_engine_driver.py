@@ -191,14 +191,31 @@ def test_plan_does_not_repeat_a_completed_nonrecurring_action():
         done[a.id] = {"status": "ok"}
 
 
-def test_a_recurring_action_is_re_offered_after_completion():
+def test_a_recurring_action_is_re_offered_after_completion(tmp_path,
+                                                            monkeypatch):
     """Capping the suite check would silence the watchdog that caught a
-    test red for three days."""
-    a = ed.plan({"completed": {}, "attempts": {}})
-    assert a is not None and a.recurring, a
-    b = ed.plan({"completed": {a.id: {"status": "succeeded"}},
-                 "attempts": {}})
-    assert b is not None and b.id == a.id
+    test red for three days.
+
+    Run against a synthetic repo holding only run_suite_check.py, so the
+    recurring action is the sole valid candidate — the real repo offers a
+    dozen mission actions ahead of it now that maintenance ranks last,
+    and draining them would make this test a minute long for no gain.
+    """
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    sc = tmp_path / "scripts" / "run_suite_check.py"
+    sc.parent.mkdir(parents=True)
+    sc.write_text('import argparse\nap = argparse.ArgumentParser()\n'
+                  'ap.add_argument("--out")\n')
+
+    first = ed.plan({"completed": {}, "attempts": {}, "last_run": {}},
+                    tmp_path)
+    assert first is not None and first.id == "suite_check", first
+    assert first.recurring
+
+    again = ed.plan({"completed": {"suite_check": {"status": "succeeded"}},
+                     "attempts": {}, "last_run": {}}, tmp_path)
+    assert again is not None and again.id == "suite_check", (
+        "a completed recurring action was not re-offered")
 
 
 def test_a_recurring_action_is_exempt_from_the_attempt_cap(monkeypatch):
@@ -434,3 +451,65 @@ def test_resume_carries_the_phase_rather_than_restarting_at_zero(
     a = resume[0]
     assert "--start-phase" in a.cmd
     assert a.cmd[a.cmd.index("--start-phase") + 1] == "5"
+
+
+# ---- one action at a time, and maintenance never outranks the mission ----
+
+def test_tick_will_not_launch_while_the_previous_action_is_alive():
+    """Fifteen suite checks were started in one session, four at once.
+
+    reap() correctly returns None for a live pid, leaving state['running']
+    in place; tick() then planned and launched regardless.
+    """
+    state = {"completed": {}, "attempts": {}, "last_run": {},
+             "running": {"id": "prev", "pid": os.getpid(),
+                         "started": time.time(), "timeout_h": 10.0,
+                         "done_marker": None, "recurring": True}}
+    rec = ed.tick(state)
+    assert rec["decision"] == "wait"
+    assert "prev" in rec["reason"]
+    assert not ed._test_launched, "launched despite a live action"
+
+
+def test_recurring_action_is_suppressed_inside_its_cooldown():
+    state = {"completed": {}, "attempts": {},
+             "last_run": {"suite_check": time.time()}}
+    a = ed.plan(state)
+    assert a is None or a.id != "suite_check"
+
+
+def test_recurring_action_returns_after_its_cooldown():
+    old = time.time() - (ed.RECURRING_COOLDOWN_H + 1) * 3600
+    state = {"completed": {}, "attempts": {}, "last_run": {"suite_check": old}}
+    seen = set()
+    a = ed.plan(state)
+    while a is not None and a.id not in seen:
+        seen.add(a.id)
+        if a.id == "suite_check":
+            break
+        state.setdefault("completed", {})[a.id] = {"status": "ok"}
+        a = ed.plan(state)
+    assert "suite_check" in seen
+
+
+def test_launching_records_a_last_run_stamp(monkeypatch):
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    monkeypatch.setattr(ed, "plan", lambda s, repo=ed.REPO,
+                        emulator_only=None: ed.Action(
+                            id="r", kind="k", cmd=["scripts/x.py"],
+                            needs_emulator=False, gate="g", recurring=True))
+    state = {"completed": {}, "attempts": {}, "last_run": {}}
+    ed.tick(state)
+    assert state["last_run"]["r"] > 0
+
+
+def test_mission_work_outranks_maintenance():
+    """Housekeeping must never be chosen over the result the engine exists
+    to produce."""
+    a = ed.plan({"completed": {}, "attempts": {}, "last_run": {}})
+    if a is not None and a.recurring:
+        # only acceptable when there is genuinely no mission work left
+        rest = ed.plan({"completed": {a.id: {}}, "attempts": {},
+                        "last_run": {}})
+        assert rest is None, (
+            f"maintenance {a.id} was offered ahead of {rest.id}")

@@ -60,6 +60,10 @@ PROPOSED = ENGINE_DIR / "proposed_claims.jsonl"
 
 CONSECUTIVE_FAILURE_LIMIT = 3
 MAX_ATTEMPTS_PER_ACTION = 2
+# A full suite is ~6 minutes; running one every tick is pure
+# thrash. Recurring maintenance earns a slot a few times a day,
+# not a hundred times.
+RECURRING_COOLDOWN_H = 6.0
 DISK_FLOOR_GB = 40.0
 DEFAULT_ACTION_TIMEOUT_H = 14.0
 
@@ -535,6 +539,10 @@ def plan(state: dict, repo: Path = REPO,
         """Emit an action only if it is genuinely runnable."""
         if a is None or (a.id in done and not a.recurring):
             return None
+        if a.recurring:
+            last = float(state.get("last_run", {}).get(a.id, 0.0))
+            if last and (time.time() - last) / 3600.0 < RECURRING_COOLDOWN_H:
+                return None
         if emulator_only is False and a.needs_emulator:
             return None
         ok, why = validate_action(a, repo)
@@ -544,20 +552,6 @@ def plan(state: dict, repo: Path = REPO,
         return None
 
     candidates: list[Optional[Action]] = []
-
-    # Token-bound and always available: keep the suite honest. A red test
-    # sat unnoticed in `make test` for three days because nothing ran it
-    # to completion — the same shape as HEAD not compiling for 40 hours.
-    # Cheap, needs no emulator, and runs beside a campaign.
-    candidates.append(Action(
-        id="suite_check", kind="suite", needs_emulator=False, timeout_h=1.0,
-        cmd=["scripts/run_suite_check.py", "--out",
-             "runs/engine/suite_check.json"],
-        recurring=True,
-        done_marker="runs/engine/suite_check.json",
-        gate="Records pass/fail counts and the failing node ids. It never "
-             "edits a test: a red suite is a finding for the human, and "
-             "weakening a test to green it is mission failure."))
 
     # 1. Score finished campaigns before starting anything new.
     for level in SMB_LEVELS:
@@ -629,6 +623,25 @@ def plan(state: dict, repo: Path = REPO,
                 gate="Phase gates as pre-registered in the campaign config; "
                      "the honest eval that follows is the real claim.",
                 meta={"level": level}))
+
+    # Maintenance goes LAST. It was first, which meant a recurring suite
+    # check outranked 2-1's honest eval the moment its campaign completed
+    # — the engine choosing housekeeping over the result it exists to
+    # produce.
+    # Token-bound and always available: keep the suite honest. A red test
+    # sat unnoticed in `make test` for three days because nothing ran it
+    # to completion — the same shape as HEAD not compiling for 40 hours.
+    # Cheap, needs no emulator, and runs beside a campaign.
+    candidates.append(Action(
+        id="suite_check", kind="suite", needs_emulator=False, timeout_h=1.0,
+        cmd=["scripts/run_suite_check.py", "--out",
+             "runs/engine/suite_check.json"],
+        recurring=True,
+        done_marker="runs/engine/suite_check.json",
+        gate="Records pass/fail counts and the failing node ids. It never "
+             "edits a test: a red suite is a finding for the human, and "
+             "weakening a test to green it is mission failure."))
+
 
     for cand in candidates:
         got = offer(cand)
@@ -738,6 +751,18 @@ def guard_reasons(state: dict, repo: Path = REPO) -> list[str]:
 def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
     """One decision. Returns a record of what was decided and why."""
     reap(state, repo)
+
+    # An action reap() left in place is still executing. Launching anyway
+    # is how fifteen suite checks were started in one session, four of
+    # them running at once: reap() correctly returns None for a live pid,
+    # tick() then planned and launched regardless. One action at a time.
+    still = state.get("running")
+    if still:
+        rec = {"type": "tick", "decision": "wait",
+               "reason": f"{still['id']} still running (pid {still['pid']})"}
+        journal(rec)
+        return rec
+
     busy = emulator_busy()
 
     blocked = guard_reasons(state, repo)
@@ -785,6 +810,7 @@ def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
 
     pid = launch(action, repo)
     attempts[action.id] = n + 1
+    state.setdefault("last_run", {})[action.id] = time.time()
     state["running"] = {"id": action.id, "pid": pid,
                         "started": time.time(),
                         "timeout_h": action.timeout_h,
