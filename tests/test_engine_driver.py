@@ -49,7 +49,7 @@ def _isolate(tmp_path, monkeypatch):
 def _script(tmp_path: Path, name: str, flags: list[str]) -> Path:
     p = tmp_path / "scripts" / name
     p.parent.mkdir(parents=True, exist_ok=True)
-    body = "\n".join(f'    ap.add_argument("{f}")' for f in flags)
+    body = "\n".join(f'ap.add_argument("{f}")' for f in flags)
     p.write_text(f"import argparse\nap = argparse.ArgumentParser()\n{body}\n")
     return p
 
@@ -91,7 +91,8 @@ def test_script_flags_reads_declarations_without_executing(tmp_path):
     """Discovering an interface must never run the script."""
     p = _script(tmp_path, "s.py", ["--alpha", "--beta"])
     p.write_text(p.read_text() + "\nraise SystemExit('must not run')\n")
-    assert ed.script_flags(p) == {"--alpha", "--beta"}
+    declared, _required = ed.script_flags(p)
+    assert declared == {"--alpha", "--beta"}
 
 
 # ---- the physics budget ----
@@ -539,3 +540,47 @@ def test_a_campaign_is_not_offered_for_a_level_that_only_has_configs(tmp_path,
         seen.add(a.id)
         state["completed"][a.id] = {"status": "ok"}
     assert "campaign_2_2" not in seen, seen
+
+
+def test_validation_rejects_an_action_missing_a_required_flag(tmp_path):
+    """The hole that silently skipped the hazard Phase-1 gate."""
+    p = tmp_path / "scripts" / "s.py"
+    p.parent.mkdir(parents=True)
+    p.write_text('import argparse\n'
+                 'ap = argparse.ArgumentParser()\n'
+                 'ap.add_argument("--states", required=True)\n'
+                 'ap.add_argument("--benchmark", action="store_true")\n')
+    bad = _act(["scripts/s.py", "--benchmark"])
+    ok, why = ed.validate_action(bad, tmp_path)
+    assert not ok and "--states" in why and "requires" in why
+
+    good = _act(["scripts/s.py", "--benchmark", "--states", "x"])
+    assert ed.validate_action(good, tmp_path)[0]
+
+
+def test_script_flags_reports_declared_and_required_separately(tmp_path):
+    p = tmp_path / "s.py"
+    p.write_text('import argparse\n'
+                 'ap = argparse.ArgumentParser()\n'
+                 'ap.add_argument("--a", required=True)\n'
+                 'ap.add_argument("--b")\n')
+    declared, required = ed.script_flags(p)
+    assert declared == {"--a", "--b"} and required == {"--a"}
+
+
+def test_script_flags_survives_an_unparseable_script(tmp_path):
+    p = tmp_path / "broken.py"
+    p.write_text("def (((")
+    assert ed.script_flags(p) == (set(), set())
+
+
+def test_the_real_hazard_action_now_validates():
+    """Regression on the live planner, not a synthetic script."""
+    ok, why = ed.validate_action(ed.Action(
+        id="hazard_phase1", kind="benchmark", needs_emulator=True,
+        cmd=["scripts/hazard_collect.py", "--benchmark",
+             "--profile", "configs/mario_1_2_online_v2.yaml",
+             "--rom", "roms/Super Mario Bros. (World).nes",
+             "--states", "checkpoints/online_1_2/restart_states"],
+        gate="g"))
+    assert ok, why

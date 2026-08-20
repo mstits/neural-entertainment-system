@@ -298,19 +298,46 @@ def level_has_ladder(level: str, repo: Path = REPO) -> bool:
 
 # --------------------------------------------------- action validation
 
-def script_flags(script: Path) -> set[str]:
-    """Every --flag the script's argparse declares, read from its source.
+def script_flags(script: Path) -> tuple[set[str], set[str]]:
+    """(declared, required) --flags, parsed from the script's own source.
 
-    Source-scraping rather than `--help` because importing or running an
-    unknown script to discover its interface is exactly the kind of side
-    effect an unattended engine must not have.
+    Parsed with `ast` rather than executed, because importing or running
+    an unknown script to discover its interface is exactly the side
+    effect an unattended engine must not have. Regex was the first
+    version and could only see declarations.
+
+    REQUIRED matters as much as declared, and missing it cost a real
+    result: the hazard Phase-1 action passed only flags the script
+    accepts, so validation said 'ok', and hazard_collect.py then exited
+    immediately with "the following arguments are required: --states".
+    Because that action declared no done_marker, the reaper recorded it
+    as 'finished' — the exact "an exit is not an outcome" case the reaper
+    documents — and the gate the whole research synthesis sits on was
+    silently skipped.
     """
+    import ast
     try:
-        text = script.read_text()
-    except OSError:
-        return set()
-    import re
-    return set(re.findall(r'add_argument\(\s*"(--[a-z0-9-]+)"', text))
+        tree = ast.parse(script.read_text())
+    except (OSError, SyntaxError):
+        return set(), set()
+    declared: set[str] = set()
+    required: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"):
+            continue
+        names = [a.value for a in node.args
+                 if isinstance(a, ast.Constant) and isinstance(a.value, str)
+                 and a.value.startswith("--")]
+        if not names:
+            continue
+        declared.update(names)
+        for kw in node.keywords:
+            if kw.arg == "required" and isinstance(kw.value, ast.Constant) \
+                    and kw.value.value is True:
+                required.update(names)
+    return declared, required
 
 
 def validate_action(action: Action, repo: Path = REPO) -> tuple[bool, str]:
@@ -339,10 +366,14 @@ def validate_action(action: Action, repo: Path = REPO) -> tuple[bool, str]:
     script = repo / action.cmd[0]
     if not script.exists():
         return False, f"no such script: {action.cmd[0]}"
-    declared = script_flags(script)
+    declared, required = script_flags(script)
     for tok in action.cmd[1:]:
         if tok.startswith("--") and tok not in declared:
             return False, f"{script.name} does not accept {tok}"
+    missing = sorted(required - set(action.cmd))
+    if missing:
+        return False, (f"{script.name} requires {', '.join(missing)}, "
+                       f"not supplied")
     for tok in action.cmd[1:]:
         if tok.startswith("--") or tok.startswith("-"):
             continue
@@ -569,8 +600,13 @@ def plan(state: dict, repo: Path = REPO,
         id="hazard_phase1", kind="benchmark", needs_emulator=True,
         timeout_h=2.0,
         cmd=["scripts/hazard_collect.py", "--benchmark",
-             "--profile", "configs/mario_tiles.yaml",
-             "--rom", "roms/Super Mario Bros. (World).nes"],
+             "--profile", "configs/mario_1_2_online_v2.yaml",
+             "--rom", "roms/Super Mario Bros. (World).nes",
+             # Restore points: the minted 1-2 rungs are real saved states
+             # spread along a solved level, which is what micro-forking
+             # wants — varied, reachable, and already provenance-checked.
+             "--states", "checkpoints/online_1_2/restart_states"],
+        done_marker=None,
         gate=">=1000 worker-ticks/s and <1h projected for 100k labels; "
              "below that Phase 1 is KILLED per the synthesis and the "
              "fallback is observational deaths from rollout logs."))
