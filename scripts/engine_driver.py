@@ -741,6 +741,32 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def lane_of(action_or_record: Any) -> str:
+    """Which slot an action occupies: 'emulator' or 'token'."""
+    needs = (action_or_record.needs_emulator
+             if isinstance(action_or_record, Action)
+             else bool(action_or_record.get("needs_emulator")))
+    return "emulator" if needs else "token"
+
+
+def running_slots(state: dict) -> dict:
+    """state['running'] as {lane: record}, migrating the old single form.
+
+    Originally one global slot, which fixed a real bug — fifteen suite
+    checks launched with four running at once — and introduced another:
+    the engine then did nothing at all for five and a half hours while a
+    campaign held the machine, because a single slot cannot express "one
+    emulator job AND one token-bound job". Two lanes keep the physics
+    budget (one emulator job, always) without idling the rest.
+    """
+    running = state.get("running")
+    if not running:
+        return {}
+    if "id" in running:                      # legacy single-record form
+        return {lane_of(running): running}
+    return {k: v for k, v in running.items() if v}
+
+
 def reap(state: dict, repo: Path = REPO) -> Optional[dict]:
     """Settle the previously launched action. Returns a record, or None.
 
@@ -757,7 +783,21 @@ def reap(state: dict, repo: Path = REPO) -> Optional[dict]:
     neither success nor failure, because claiming either would be an
     inference the engine cannot support.
     """
-    running = state.get("running")
+    slots = running_slots(state)
+    if not slots:
+        return None
+    records = []
+    for lane in list(slots):
+        rec = _reap_one(state, slots, lane, repo)
+        if rec:
+            records.append(rec)
+    state["running"] = {k: v for k, v in slots.items() if v}
+    return records[0] if records else None
+
+
+def _reap_one(state: dict, slots: dict, lane: str,
+              repo: Path) -> Optional[dict]:
+    running = slots.get(lane)
     if not running:
         return None
     pid = int(running.get("pid", -1))
@@ -772,7 +812,7 @@ def reap(state: dict, repo: Path = REPO) -> Optional[dict]:
             os.kill(pid, 9)
         except OSError:
             pass
-        state["running"] = None
+        slots[lane] = None
         state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
         state.setdefault("completed", {})[running["id"]] = {
             "status": "timeout", "hours": round(age_h, 2)}
@@ -787,7 +827,7 @@ def reap(state: dict, repo: Path = REPO) -> Optional[dict]:
     else:
         ok, outcome = None, "finished"
 
-    state["running"] = None
+    slots[lane] = None
     if ok is True:
         state["consecutive_failures"] = 0
     elif ok is False:
@@ -823,13 +863,7 @@ def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
     # is how fifteen suite checks were started in one session, four of
     # them running at once: reap() correctly returns None for a live pid,
     # tick() then planned and launched regardless. One action at a time.
-    still = state.get("running")
-    if still:
-        rec = {"type": "tick", "decision": "wait",
-               "reason": f"{still['id']} still running (pid {still['pid']})"}
-        journal(rec)
-        return rec
-
+    slots = running_slots(state)
     busy = emulator_busy()
 
     blocked = guard_reasons(state, repo)
@@ -838,20 +872,36 @@ def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
         journal(rec)
         return rec
 
+    # An action is launchable only if its lane is free AND, when it needs
+    # the emulator, nothing else already holds the machine. Both
+    # conditions are checked on every path: an earlier version applied the
+    # busy-fallback without re-checking the lane, which re-planned
+    # token-bound work straight into an occupied token slot.
+    def launchable(a: Optional[Action]) -> bool:
+        if a is None:
+            return False
+        if lane_of(a) in slots:
+            return False
+        return not (a.needs_emulator and busy is not None)
+
     action = plan(state, repo)
-    if busy is not None and action is not None and action.needs_emulator:
-        # The machine is held by an emulator job, so fall back to work
-        # that needs no emulator. The brief's own scheduling rule is that
-        # token-bound work proceeds WHILE compute-bound work runs; a
-        # driver that merely waits leaves hours of reviewable work undone
-        # every campaign, which is most of why the loop felt stalled.
+    if not launchable(action):
         action = plan(state, repo, emulator_only=False)
-        if action is None:
-            rec = {"type": "tick", "decision": "wait",
-                   "reason": f"emulator job live (pid {busy}), no "
-                             f"token-bound action available"}
-            journal(rec)
-            return rec
+        if not launchable(action):
+            action = None
+
+    # "nothing to do" and "something else holds the machine" are
+    # different states and are not merged: only the first means the plan
+    # is genuinely exhausted.
+    if action is None and (slots or busy is not None):
+        reasons = [f"{r['id']} running (pid {r['pid']})"
+                   for r in slots.values() if r]
+        if busy is not None:
+            reasons.append(f"emulator held externally (pid {busy}), "
+                           f"no token-bound action available")
+        rec = {"type": "tick", "decision": "wait", "reason": "; ".join(reasons)}
+        journal(rec)
+        return rec
 
     if action is None:
         rec = {"type": "tick", "decision": "idle",
@@ -878,11 +928,13 @@ def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
     pid = launch(action, repo)
     attempts[action.id] = n + 1
     state.setdefault("last_run", {})[action.id] = time.time()
-    state["running"] = {"id": action.id, "pid": pid,
-                        "started": time.time(),
-                        "timeout_h": action.timeout_h,
-                        "done_marker": action.done_marker,
-                        "recurring": action.recurring}
+    slots[lane_of(action)] = {"id": action.id, "pid": pid,
+                              "started": time.time(),
+                              "timeout_h": action.timeout_h,
+                              "done_marker": action.done_marker,
+                              "recurring": action.recurring,
+                              "needs_emulator": action.needs_emulator}
+    state["running"] = slots
     rec = {"type": "tick", "decision": "launched", "action": action.id,
            "pid": pid}
     journal(rec)

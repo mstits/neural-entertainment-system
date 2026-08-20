@@ -118,8 +118,9 @@ def test_waits_when_busy_and_no_token_bound_work_remains(monkeypatch):
                         lambda s, repo=ed.REPO, emulator_only=None:
                         _act(["scripts/x.py"]) if emulator_only is None
                         else None)
-    rec = ed.tick({"completed": {}, "attempts": {}})
-    assert rec["decision"] == "wait" and "token-bound" in rec["reason"]
+    rec = ed.tick({"completed": {}, "attempts": {}, "last_run": {}})
+    assert rec["decision"] == "wait", rec
+    assert "4242" in rec["reason"] and "token-bound" in rec["reason"]
 
 
 def test_token_bound_work_is_offered_while_the_emulator_is_busy():
@@ -300,7 +301,7 @@ def test_reap_marks_success_only_when_the_marker_exists(tmp_path):
     assert rec["outcome"] == "succeeded"
     assert state["consecutive_failures"] == 0, "success must reset the breaker"
     assert state["completed"]["a"]["status"] == "succeeded"
-    assert state["running"] is None
+    assert not ed.running_slots(state), "slot not released"
 
 
 def test_reap_counts_a_missing_marker_as_failure_and_arms_the_breaker(tmp_path):
@@ -456,20 +457,60 @@ def test_resume_carries_the_phase_rather_than_restarting_at_zero(
 
 # ---- one action at a time, and maintenance never outranks the mission ----
 
-def test_tick_will_not_launch_while_the_previous_action_is_alive():
+def test_tick_will_not_launch_into_an_occupied_lane():
     """Fifteen suite checks were started in one session, four at once.
 
-    reap() correctly returns None for a live pid, leaving state['running']
-    in place; tick() then planned and launched regardless.
+    The rule is one action per LANE, not one globally: a global slot
+    fixed that pile-up and then left the engine idle for five and a half
+    hours while a campaign held the machine.
     """
     state = {"completed": {}, "attempts": {}, "last_run": {},
-             "running": {"id": "prev", "pid": os.getpid(),
-                         "started": time.time(), "timeout_h": 10.0,
-                         "done_marker": None, "recurring": True}}
+             "running": {"token": {"id": "prev", "pid": os.getpid(),
+                                   "started": time.time(), "timeout_h": 10.0,
+                                   "done_marker": None, "recurring": True,
+                                   "needs_emulator": False}}}
+    ed.tick(state)
+    assert all(a.needs_emulator for a in ed._test_launched), (
+        "launched into the occupied token lane")
+
+
+def test_both_lanes_occupied_means_wait():
+    state = {"completed": {}, "attempts": {}, "last_run": {},
+             "running": {
+                 "token": {"id": "t", "pid": os.getpid(),
+                           "started": time.time(), "timeout_h": 10.0,
+                           "done_marker": None, "recurring": False,
+                           "needs_emulator": False},
+                 "emulator": {"id": "e", "pid": os.getpid(),
+                              "started": time.time(), "timeout_h": 10.0,
+                              "done_marker": None, "recurring": False,
+                              "needs_emulator": True}}}
     rec = ed.tick(state)
     assert rec["decision"] == "wait"
-    assert "prev" in rec["reason"]
-    assert not ed._test_launched, "launched despite a live action"
+    assert not ed._test_launched
+
+
+def test_token_work_launches_while_the_emulator_lane_is_held(monkeypatch):
+    """The capability the global slot destroyed."""
+    monkeypatch.setattr(ed, "emulator_busy", lambda: 4242)
+    state = {"completed": {}, "attempts": {}, "last_run": {},
+             "running": {"emulator": {"id": "campaign", "pid": os.getpid(),
+                                      "started": time.time(),
+                                      "timeout_h": 10.0, "done_marker": None,
+                                      "recurring": False,
+                                      "needs_emulator": True}}}
+    ed.tick(state)
+    assert ed._test_launched, "engine idled with a free token lane"
+    assert all(not a.needs_emulator for a in ed._test_launched)
+
+
+def test_legacy_single_slot_state_is_migrated():
+    """A state file written before lanes existed must still be readable."""
+    legacy = {"running": {"id": "old", "pid": 1, "started": 0.0,
+                          "timeout_h": 1.0, "done_marker": None,
+                          "recurring": False}}
+    slots = ed.running_slots(legacy)
+    assert list(slots) == ["token"] and slots["token"]["id"] == "old"
 
 
 def test_recurring_action_is_suppressed_inside_its_cooldown():
