@@ -742,11 +742,20 @@ def pid_alive(pid: int) -> bool:
 
 
 def lane_of(action_or_record: Any) -> str:
-    """Which slot an action occupies: 'emulator' or 'token'."""
-    needs = (action_or_record.needs_emulator
-             if isinstance(action_or_record, Action)
-             else bool(action_or_record.get("needs_emulator")))
-    return "emulator" if needs else "token"
+    """Which slot this occupies: 'emulator' or 'token'.
+
+    A record written before lanes existed carries no `needs_emulator`
+    key, and the safe reading of a missing value is EMULATOR. The live
+    example proved why: the record for a running 1-4 campaign lacked the
+    key, so a permissive default filed a campaign in the token lane and
+    left the engine believing the machine was free. `emulator_busy` would
+    still have refused the second launch, but bookkeeping that disagrees
+    with reality is how the next bug hides.
+    """
+    if isinstance(action_or_record, Action):
+        return "emulator" if action_or_record.needs_emulator else "token"
+    needs = action_or_record.get("needs_emulator")
+    return "token" if needs is False else "emulator"
 
 
 def running_slots(state: dict) -> dict:
@@ -762,9 +771,14 @@ def running_slots(state: dict) -> dict:
     running = state.get("running")
     if not running:
         return {}
-    if "id" in running:                      # legacy single-record form
-        return {lane_of(running): running}
-    return {k: v for k, v in running.items() if v}
+    records = ([running] if "id" in running          # legacy single form
+               else [v for v in running.values() if v])
+    # The lane is RE-DERIVED from each record, never trusted from the
+    # stored key. A record misfiled once would otherwise stay misfiled
+    # forever: the first tick after lanes shipped wrote a running campaign
+    # under "token", and reading the key back kept it there across every
+    # subsequent tick.
+    return {lane_of(r): r for r in records}
 
 
 def reap(state: dict, repo: Path = REPO) -> Optional[dict]:

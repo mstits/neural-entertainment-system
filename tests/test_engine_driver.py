@@ -504,13 +504,25 @@ def test_token_work_launches_while_the_emulator_lane_is_held(monkeypatch):
     assert all(not a.needs_emulator for a in ed._test_launched)
 
 
-def test_legacy_single_slot_state_is_migrated():
-    """A state file written before lanes existed must still be readable."""
+def test_legacy_single_slot_state_migrates_to_the_SAFE_lane():
+    """A pre-lane record has no needs_emulator key.
+
+    The live case was a running campaign: read permissively it lands in
+    the token lane and the engine believes the machine is free.
+    """
     legacy = {"running": {"id": "old", "pid": 1, "started": 0.0,
                           "timeout_h": 1.0, "done_marker": None,
                           "recurring": False}}
     slots = ed.running_slots(legacy)
-    assert list(slots) == ["token"] and slots["token"]["id"] == "old"
+    assert list(slots) == ["emulator"], slots
+    assert slots["emulator"]["id"] == "old"
+
+
+def test_an_explicit_token_record_stays_in_the_token_lane():
+    rec = {"running": {"token": {"id": "t", "pid": 1, "started": 0.0,
+                                 "timeout_h": 1.0, "done_marker": None,
+                                 "recurring": True, "needs_emulator": False}}}
+    assert list(ed.running_slots(rec)) == ["token"]
 
 
 def test_recurring_action_is_suppressed_inside_its_cooldown():
@@ -684,3 +696,13 @@ def test_a_scored_levels_resume_is_still_eventually_offered(tmp_path,
         seen.add(a.id)
         state["completed"][a.id] = {"status": "ok"}
     assert any(i.startswith("resume_1_4") for i in seen), seen
+
+
+def test_a_misfiled_lane_is_corrected_on_read():
+    """Trusting the stored key made one bad classification permanent."""
+    bad = {"running": {"token": {"id": "campaign", "pid": 1, "started": 0.0,
+                                 "timeout_h": 1.0, "done_marker": None,
+                                 "recurring": False,
+                                 "needs_emulator": True}}}
+    slots = ed.running_slots(bad)
+    assert list(slots) == ["emulator"], slots
