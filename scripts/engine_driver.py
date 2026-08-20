@@ -622,24 +622,39 @@ def plan(state: dict, repo: Path = REPO,
         gate="Zero genuine replay FAILUREs. ERRORs are unverifiable, "
              "reported separately, never counted as passes."))
 
-    # 3b. Resume any campaign interrupted without recording an end. A
-    #     reboot or a stray kill must self-heal, or three weeks of
-    #     absence ends with a half-finished run and an idle machine.
+    # 3b. Resume campaigns interrupted without recording an end, so a
+    #     reboot or stray kill self-heals rather than stranding a run.
+    #
+    #     Split by whether the level has already been scored. "Resume
+    #     interrupted work before starting new work" is right in general
+    #     and wrong here: an ALREADY-SCORED level's interrupted campaign
+    #     is worth less than an unscored level's first one. 1-4, banked at
+    #     51%, held the machine for four hours on exactly this rule while
+    #     the hazard Phase-1 gate and 2-2's pipeline waited. Consolidation
+    #     on a banked level is a real experiment — it is what produced
+    #     1-4's rate — but it can also collapse one, as 2-1 just did
+    #     (median 2596 -> 1171, ending 0/100), so it is speculative work
+    #     and ranks accordingly.
+    deferred_resumes: list[Action] = []
     for level in SMB_LEVELS:
         t = tag_of(level)
         rd = repo / "runs" / f"online_{t}"
         phase = campaign_interrupted(rd, repo)
-        if phase is not None and (repo / f"configs/campaign_{t}.yaml").exists():
-            candidates.append(Action(
-                id=f"resume_{t}_phase{phase}", kind="campaign",
-                needs_emulator=True, timeout_h=14.0,
-                cmd=["scripts/run_online_campaign.py", "--campaign-config",
-                     f"configs/campaign_{t}.yaml", "--start-phase",
-                     str(phase)],
-                gate="Resumes at the phase it was interrupted in; earned "
-                     "gates are not re-litigated, which is why the phase "
-                     "index is carried rather than restarting at 0.",
-                meta={"level": level, "resumed_from_phase": phase}))
+        if phase is None or not (repo / f"configs/campaign_{t}.yaml").exists():
+            continue
+        act = Action(
+            id=f"resume_{t}_phase{phase}", kind="campaign",
+            needs_emulator=True, timeout_h=14.0,
+            cmd=["scripts/run_online_campaign.py", "--campaign-config",
+                 f"configs/campaign_{t}.yaml", "--start-phase", str(phase)],
+            gate="Resumes at the phase it was interrupted in; earned gates "
+                 "are not re-litigated, which is why the phase index is "
+                 "carried rather than restarting at 0.",
+            meta={"level": level, "resumed_from_phase": phase})
+        if honest_eval_done(level, repo):
+            deferred_resumes.append(act)     # already scored: speculative
+        else:
+            candidates.append(act)           # unscored: this is the result
 
     # 4. Extend the pipeline: run the campaign for any level that already
     #    has a validated config but no run. Onboarding a level that lacks
@@ -671,6 +686,10 @@ def plan(state: dict, repo: Path = REPO,
                 gate="Phase gates as pre-registered in the campaign config; "
                      "the honest eval that follows is the real claim.",
                 meta={"level": level}))
+
+    # Speculative re-consolidation of already-scored levels: after every
+    # unscored result and every pipeline step, before maintenance.
+    candidates.extend(deferred_resumes)
 
     # Maintenance goes LAST. It was first, which meant a recurring suite
     # check outranked 2-1's honest eval the moment its campaign completed

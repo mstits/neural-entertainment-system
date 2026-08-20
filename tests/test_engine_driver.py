@@ -584,3 +584,62 @@ def test_the_real_hazard_action_now_validates():
              "--states", "checkpoints/online_1_2/restart_states"],
         gate="g"))
     assert ok, why
+
+
+def _interrupted(tmp_path, tag):
+    d = tmp_path / "runs" / f"online_{tag}"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "campaign.jsonl").write_text(
+        json.dumps({"type": "campaign_start"}) + "\n"
+        + json.dumps({"type": "phase_start", "phase": 5}) + "\n")
+    (tmp_path / "configs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "configs" / f"campaign_{tag}.yaml").write_text("x")
+    sc = tmp_path / "scripts" / "run_online_campaign.py"
+    sc.parent.mkdir(parents=True, exist_ok=True)
+    sc.write_text('import argparse\nap = argparse.ArgumentParser()\n'
+                  'ap.add_argument("--campaign-config")\n'
+                  'ap.add_argument("--start-phase")\n')
+
+
+def _scored(tmp_path, tag):
+    d = tmp_path / "checkpoints" / f"mario_{tag}_online_v1"
+    d.mkdir(parents=True, exist_ok=True)
+    rows = [json.dumps({"game": f"mario_{tag}_online_v1", "eval_seed": s,
+                        "n_episodes": 50, "sticky_prob": 0.25})
+            for s in (7, 101)]
+    (d / "eval.jsonl").write_text("\n".join(rows) + "\n")
+
+
+def test_an_unscored_levels_interrupted_campaign_is_high_priority(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    _interrupted(tmp_path, "2_1")
+    a = ed.plan({"completed": {}, "attempts": {}, "last_run": {}}, tmp_path)
+    assert a is not None and a.id.startswith("resume_2_1"), a
+
+
+def test_a_scored_levels_resume_ranks_below_other_work(tmp_path, monkeypatch):
+    """1-4, banked at 51%, held the machine four hours on this rule."""
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    _interrupted(tmp_path, "1_4")
+    _scored(tmp_path, "1_4")
+    _interrupted(tmp_path, "2_1")          # unscored: must win
+    a = ed.plan({"completed": {}, "attempts": {}, "last_run": {}}, tmp_path)
+    assert a is not None and a.id.startswith("resume_2_1"), a
+
+
+def test_a_scored_levels_resume_is_still_eventually_offered(tmp_path,
+                                                            monkeypatch):
+    """Deferred, not discarded — re-consolidation is a real experiment."""
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    _interrupted(tmp_path, "1_4")
+    _scored(tmp_path, "1_4")
+    state = {"completed": {}, "attempts": {}, "last_run": {}}
+    seen = set()
+    for _ in range(6):
+        a = ed.plan(state, tmp_path)
+        if a is None:
+            break
+        seen.add(a.id)
+        state["completed"][a.id] = {"status": "ok"}
+    assert any(i.startswith("resume_1_4") for i in seen), seen
