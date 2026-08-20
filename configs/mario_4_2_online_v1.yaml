@@ -1,0 +1,260 @@
+# Mario 4-2 ONLINE v1 — the proven 1-2 four-mechanism online stack,
+# retargeted to 4-2. Structural clone of configs/mario_1_2_online_v2.yaml;
+# every deviation from it is called out below.
+#
+# Driven by:
+#   python scripts/run_online_campaign.py --campaign-config configs/campaign_1_3.yaml
+# which layers per-phase overrides onto THIS file and keeps the `name`
+# constant so every phase auto-resumes checkpoints/mario_1_3_online_v1.
+#
+# The stack (identical mechanisms, 4-2 inputs):
+#   M1 wave_terminal_rule: monotone — peak-augmented wavefront PBRS over a
+#      4-2 distance map built from the four banked solver clears.
+#   M2 KL-anchored warm start — a BC net trained on the same four clears
+#      (h256/trunk64) is the frozen prior; the critic warms up alone, then
+#      a decaying beta*KL(prior||pi) penalty bounds early drift.
+#   M3 sil — clearing trajectories enter a FIFO buffer and add a BC
+#      cross-entropy term to every PPO minibatch.
+#   M4 adversary (kernel_sticky) — inert here (no `mode` key); the phase
+#      controller arms it in the hardening phase.
+#
+# PROVENANCE OF THE 4-2 INPUTS (all four derive from ONE root, the true
+# 4-2 entrance state, which is also the solver's root):
+#   entrance  checkpoints/ge_entrances/smb_4_2_entrance.state
+#   clears    runs/ge_1_3_solve/solutions/sol_000..003 (540/530/519/498
+#             actions, start_wd [0,2] -> clear_wd [0,3], banked 2026-07-21)
+#   dmap      built from all four tapes (see the runbook)
+#   anchor    BC h256 on the same four tapes
+#   rungs     6 evenly spaced restart states selected off the dense
+#             backward ladder minted from the tape
+# Full runbook + coordination audit with the parallel backward-only lane:
+#   docs/receipts/one_three_coordination_2026-08-16.md
+#
+# DELIBERATE DEVIATIONS FROM mario_1_2_online_v2.yaml:
+#   * start_state_path stage_03 -> stage_05 (the 4-2 entrance).
+#   * wavefront dmap, kl_anchor_checkpoint and backward states_dir all
+#     point at 4-2 artifacts (built in-window; see the runbook).
+#   * NO hyperparameter deviation at all — including rung_step_budget,
+#     which an earlier draft of this profile retuned to base 250 /
+#     per_entry 220. That retune is WITHDRAWN. Its stated justification
+#     ("the same ratio 1-2 ran at") did not survive arithmetic: 1-2's
+#     deepest rung draws 300 + 350*(6-5) = 650 steps against ~312 tape
+#     steps remaining, i.e. 2.08x, not the 1.5x the draft claimed, and
+#     where the 4-2 deepest rung lands on its 540-step tape is unknown
+#     until the ladder is minted (the tape's own pace is 2.2 px/step
+#     early and ~6 px/step at speed, so the deepest rung plausibly sits
+#     anywhere from step 340 to step 455). A budget tuned against an
+#     unmeasured quantity is exactly the class of un-calibrated
+#     threshold that cost the 1-2 campaign attempt 3. The proven 1-2
+#     values ship as-is; W2a below re-registers them from the MINTED
+#     ladder, in-window, with the arithmetic written down.
+#   * NO deviation in batch shape (1536 x 60), gammas (0.99 == 0.99),
+#     value loss, lr, clip, action space, ram_mapping or reward weights —
+#     those are the proven 1-2 settings and are carried verbatim so the
+#     1-2 -> 4-2 comparison is not confounded by hyperparameters.
+#
+# 1-2 knowledge that does NOT carry over: the x~2674 off-manifold-drift
+# barrier is a 1-2 fact. Nothing in this file encodes a 4-2 wall
+# location; the rungs come from our own solver tape (evenly spaced), not
+# from level knowledge.
+
+name: Mario 4-2 online v1
+rom_path: "roms/Super Mario Bros. (World).nes"
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+# 4-2 entrance — the solver's root (runs/ge_1_3_solve/roots.json) and the
+# parallel lane's backward root. One entrance, one convention.
+start_state_path: "checkpoints/ge_entrances/smb_4_2_entrance.state"
+description: >
+  SMB 4-2 online campaign: KL-anchored warm start from a BC net trained
+  on the four banked 4-2 solver clears, monotone wavefront shaping over
+  a 4-2 distance map, evenly spaced backward-curriculum restart rungs
+  walked back to the entrance, self-imitation on clears, kernel-matched
+  adversary held in reserve for the hardening phase. Honest gate: cold
+  greedy sticky-0.25 + jitter-16 4-2 clear from the entrance.
+
+# Identical to configs/mario_1_3_backward.yaml (the parallel lane's) and
+# to the 1-2 profile — SMB's player/level RAM is level-independent.
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+
+reinforce:
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos
+  recurrent: false
+  # Net shape is a CONTRACT with the anchor checkpoint: the BC anchor is
+  # trained with --hidden-dim 256 --trunk-dim 64 on the 712-wide
+  # smb_tiles_pos encoder, and kl_anchor.load_actor_into raises on any
+  # shape mismatch. These three lines are load-bearing.
+  tile_hidden_dim: 256
+  tile_trunk_dim: 64
+  layernorm: true
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  # PBRS invariance is the point of the monotone rule — no reward warping
+  # on top of it.
+  symlog_rewards: false
+  value_loss: huber          # smooth_l1, delta 1.0 (torch default; no knob)
+  value_coef: 0.5
+  # MUST stay equal to wavefront_reward.gamma below (PBRS invariance).
+  gamma: 0.99
+  gae_lambda: 0.95
+  bc_epochs: 0
+  warmup_gens_ga_only: 0
+  steps: 10                  # PPO epochs per iter (matched 10:10 by M4)
+  lr: 0.0001                 # single knob; no actor/critic split
+  ppo_clip_eps: 0.2
+  grad_clip: 1.0
+  async_pipeline: false      # 1-step obs lag destroys frame-perfect platforming
+  device: cpu
+  panic_isolation: false
+  # 1536 x 60 = 92,160 samples/iter. The iter boundary is also the
+  # episode cap; the 4-2 entrance tape is 540 steps, so this cap is ~2.8x
+  # the tape and the entrance rung is clearable by construction (the B5
+  # censoring defect cannot recur here).
+  rollout_steps: 1536
+  num_envs: 60
+  ppo_minibatch_size: 256
+  # The phase controller ASSIGNS entropy_coef per phase from the
+  # campaign's 0.01 -> 0.002-over-100M schedule; this is the phase-0 value.
+  entropy_coef: 0.01
+  entropy_floor: 0.0
+  entropy_coef_max: 0.05
+  # Wavefront supplies the dense signal; RND stays off (semi-farmable,
+  # competes with the PBRS gradient).
+  rnd_intrinsic_coef: 0.0
+  rnd_loss_coef: 0.0
+  # Sticky is PHASE-CONTROLLED: 0.0 in the zero-noise phases, 0.25 from
+  # the sticky phase on. Boundary reset stays on so rung restarts never
+  # replay a dead life's held action into the advance gate.
+  sticky_action_prob: 0.0
+  sticky_episode_boundary_reset: true
+
+  # ---- M1: monotone wavefront PBRS ------------------------------------
+  # BUILT IN-WINDOW (runbook step W3) from all four banked solver tapes:
+  #   python -m src.utils.wavefront_reward --solutions <4 tapes> \
+  #     --root-state <stage_05> --profile configs/mario_1_3_online_v1.yaml \
+  #     --out checkpoints/wavefront/mario_4_2_dmap.pkl
+  wavefront_reward:
+    enabled: true
+    dmap: "checkpoints/wavefront/mario_4_2_dmap.pkl"
+    phi_target: 100.0
+    gamma: 0.99              # must equal reinforce.gamma
+  wave_terminal_rule: monotone
+
+  # ---- M2: KL-anchored warm start -------------------------------------
+  # TRAINED IN-WINDOW (runbook step W5): BC h256/trunk64 on the 4-2
+  # solver-demo npz minted by replay_to_demos.py (step W4). The actor
+  # loads on the FRESH run only; resumes keep trained weights and rebuild
+  # only the frozen prior. kl_anchor_div is logged every iter and the
+  # KL kill reads it from metrics.jsonl.
+  #
+  # NOT the 1-2 A7 anchor and NOT the preserved 1-2/1-1 winners: an
+  # anchor trained on another level's manifold makes the KL telemetry
+  # uninterpretable (see the coordination receipt, deferred arm B).
+  kl_anchor_checkpoint: "checkpoints/bc_4_2/anchor_h256/vanilla_ppo_iter_00000.pt"
+  kl_beta_start: 0.5
+  kl_beta_end: 0.01
+  kl_beta_decay_steps: 50000000
+  # Sentinel: the actor stays frozen for the whole critic-warmup phase;
+  # the controller's phase-1+ override sets this to 0 at the moment the
+  # critic-stability gate passes (never on a timer — attempt-1 post-mortem).
+  actor_freeze_steps: 1000000000000
+
+  # ---- M3: self-imitation on clears ------------------------------------
+  sil:
+    enabled: true
+    buffer_size: 64
+    bc_coef: 0.5
+
+  # ---- M4: kernel-matched binary adversary (HELD IN RESERVE) -----------
+  # No `mode` key => OFF and inert. The hardening phase layers
+  # `mode: kernel_sticky` on top.
+  adversary:
+    budget_penalty: 0.1
+    entropy_coef: 0.01
+    epochs: 10               # matched 10:10 with the protagonist
+    clip: 0.1
+    lr: 0.00025
+
+  # ---- Backward-curriculum restarts (minted, verified rungs) -----------
+  # SELECTED IN-WINDOW (runbook step W2) into this dir — 6 rungs at
+  # evenly spaced fractions of the tape's own max gx, deepest first;
+  # tau_init -1 starts on the deepest rung and walks back to the true
+  # entrance (target 0 == tape step 0) as rungs are earned.
+  # START STATES ONLY, no action labels (Dossier v3: naive BC on these
+  # tapes was eliminated — the tape is a curriculum, not a teacher).
+  # advance_actions 1 walks back one rung per earned advance; earned =
+  # >= advance_threshold over >= min_attempts (3-episode gates are
+  # mirages). count_truncations: true scores budget/boundary cuts as
+  # failures (the B5 censoring repair). window_frames 0 => the restart
+  # window is exactly the tau rung.
+  backward_curriculum:
+    states_dir: "checkpoints/online_4_2/restart_states"
+    tau_init: -1
+    advance_actions: 1
+    advance_threshold: 0.3
+    min_attempts: 30
+    window_frames: 0
+    entrance_weight: 0.25
+    count_truncations: true
+    # The proven 1-2 values, carried VERBATIM. Deepest rung draws
+    # 300 + 350*(6-5) = 650 steps; the entrance draws the full cap.
+    # W2a re-registration, EXECUTED against the minted 4-2 ladder
+    # (checkpoints/online_4_2/restart_states, rungs at gx
+    # [2700, 2150, 1600, 1050, 500, 0]): the deepest rung is tape step
+    # S=500 of n_actions=763, so remaining=263 and 650/263 = 2.47x.
+    # That is inside the 1.5x-3.0x band 1-2's 2.08x sits in, so the
+    # proven values ship unchanged and no re-tune is warranted.
+    #
+    # The earlier draft of this step read S from the 1-3 manifest, which
+    # is how attempt 1 came to run 20M steps against 1-3's ladder: the
+    # path was cloned with the rest of the profile and never repointed.
+    # scripts/run_online_campaign.py now refuses to launch when a rung
+    # ladder's index.json names a different profile than the one running.
+    rung_step_budget:
+      base: 300
+      per_entry: 350
+
+  # Off: this campaign's teachers are the restart rungs + SIL, not demos.
+  demo_anchor_enabled: false
+  bc_replay_enabled: false
+  preprocess_f16: false
+  smb_curriculum: false
+
+max_episode_steps: 2400

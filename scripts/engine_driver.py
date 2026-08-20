@@ -682,11 +682,19 @@ def plan(state: dict, repo: Path = REPO,
         candidates.append(Action(
             id="hazard_collect_full", kind="collect", needs_emulator=True,
             timeout_h=4.0,
+            # A TAPE, not the rung directory. The 1-2 ladder holds six
+            # restore points, so 64 forks each caps at 384 labels — three
+            # orders of magnitude short of the gate, and far too few to
+            # fit a survival model without memorising it. Replaying the
+            # 871-step tape yields a restore point per step, which is
+            # what "100,000 cleanly labelled transitions" assumes.
             cmd=["scripts/hazard_collect.py",
                  "--profile", "configs/mario_1_2_online_v2.yaml",
                  "--rom", "roms/Super Mario Bros. (World).nes",
-                 "--states", "checkpoints/online_1_2/restart_states",
-                 "--forks-per-state", "64", "--out", haz_npz],
+                 "--states", "runs/ge_1_2_div_s1/solutions/sol_000.actions.npy",
+                 "--root-state",
+                 "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/stage_03.state",
+                 "--forks-per-state", "120", "--out", haz_npz],
             done_marker=haz_npz,
             gate="100,000 cleanly labelled transitions; a worker alive at "
                  "horizon end is CENSORED, never a survivor-labelled zero."))
