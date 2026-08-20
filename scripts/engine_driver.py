@@ -286,6 +286,46 @@ def honest_eval_done(level: str, repo: Path = REPO) -> bool:
     return len(seeds) >= 2
 
 
+def honest_eval_current(level: str, repo: Path = REPO) -> bool:
+    """Scored, AND scored against the policy as it stands now.
+
+    `honest_eval_done` asks whether a level was ever scored. That is the
+    wrong question after a re-consolidation: 1-4 was banked at 51%, its
+    campaign was resumed and finished with a final probe at 0.633, and
+    because an eval existed the engine refused to measure the improved
+    policy at all. An eval is stale the moment a checkpoint newer than it
+    appears.
+    """
+    if not honest_eval_done(level, repo):
+        return False
+    tag = level.replace("-", "_")
+    ckpt_dir = repo / "checkpoints" / f"mario_{tag}_online_v1"
+    ckpts = list(ckpt_dir.glob("*.pt"))
+    if not ckpts:
+        return True
+    newest_ckpt = max(c.stat().st_mtime for c in ckpts)
+
+    # The file's mtime is useless here: eval_game appends EVERY probe to
+    # the same eval.jsonl, so a campaign's own 30-episode probes keep
+    # refreshing it and a stale honest eval looks current. Compare against
+    # the timestamp carried by the honest records themselves.
+    newest_honest = 0.0
+    log = ckpt_dir / "eval.jsonl"
+    if log.exists():
+        for line in log.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if int(rec.get("n_episodes") or 0) >= 50 and \
+                    float(rec.get("sticky_prob") or 0) > 0:
+                newest_honest = max(newest_honest,
+                                    float(rec.get("timestamp") or 0.0))
+    return newest_honest >= newest_ckpt
+
+
 def level_has_campaign(level: str, repo: Path = REPO) -> bool:
     return (repo / "runs" / f"online_{level.replace('-', '_')}").exists()
 
@@ -385,6 +425,12 @@ def validate_action(action: Action, repo: Path = REPO) -> tuple[bool, str]:
                        f"not supplied")
     for tok in action.cmd[1:]:
         if tok.startswith("--") or tok.startswith("-"):
+            continue
+        # A glob is a pattern, not a path: it never exists as a file, so
+        # checking it as one made replay_sweep_full permanently
+        # un-runnable — validation rejected it every tick, silently, and
+        # the corpus went unverified.
+        if any(ch in tok for ch in "*?["):
             continue
         looks_like_path = ("/" in tok and not tok.startswith("runs/engine"))
         if looks_like_path and not (repo / tok).exists():
@@ -604,7 +650,7 @@ def plan(state: dict, repo: Path = REPO,
         rd = repo / "runs" / f"online_{tag}"
         if rd.exists() and campaign_terminal(rd) in ("campaign_complete",
                                                      "abort", "kill"):
-            if not honest_eval_done(level, repo):
+            if not honest_eval_current(level, repo):
                 for seed in (7, 101):
                     candidates.append(honest_eval_action(level, seed, repo))
 
@@ -625,6 +671,37 @@ def plan(state: dict, repo: Path = REPO,
         gate=">=1000 worker-ticks/s and <1h projected for 100k labels; "
              "below that Phase 1 is KILLED per the synthesis and the "
              "fallback is observational deaths from rollout logs."))
+
+    # 2b. Phase 1 proper, then Phase 2. Each is offered only once the
+    #     step before it has left its artifact on disk, so the synthesis's
+    #     gate order is enforced by construction rather than by intent.
+    haz_npz = "runs/engine/hazard_labels.npz"
+    bench = repo / "runs/engine/logs/hazard_phase1.log"
+    if bench.exists() and "GATE: PASS" in bench.read_text()[-4000:] \
+            and not (repo / haz_npz).exists():
+        candidates.append(Action(
+            id="hazard_collect_full", kind="collect", needs_emulator=True,
+            timeout_h=4.0,
+            cmd=["scripts/hazard_collect.py",
+                 "--profile", "configs/mario_1_2_online_v2.yaml",
+                 "--rom", "roms/Super Mario Bros. (World).nes",
+                 "--states", "checkpoints/online_1_2/restart_states",
+                 "--forks-per-state", "64", "--out", haz_npz],
+            done_marker=haz_npz,
+            gate="100,000 cleanly labelled transitions; a worker alive at "
+                 "horizon end is CENSORED, never a survivor-labelled zero."))
+    if (repo / haz_npz).exists() and not (repo / "runs/engine/hazard_report.json").exists():
+        candidates.append(Action(
+            id="hazard_phase2_train", kind="train", needs_emulator=False,
+            timeout_h=3.0,
+            cmd=["scripts/train_hazard.py", "--data", haz_npz,
+                 "--out", "runs/engine/hazard_model.pt",
+                 "--gate", "0.85"],
+            done_marker="runs/engine/hazard_report.json",
+            gate="Uno IPCW C-index >= 0.85 on a held-out trajectory set, "
+                 "split by source state. Below that the synthesis says the "
+                 "13x13 tile observation lacks the resolution to see "
+                 "threats: do not integrate."))
 
     # 3. Verify the banked EXHIBITION corpus once.
     candidates.append(Action(

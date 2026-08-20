@@ -757,3 +757,53 @@ def test_a_quiet_requiring_action_is_skipped_not_failed(monkeypatch):
     state = {"completed": {}, "attempts": {}, "last_run": {}}
     ed.plan(state)
     assert state.get("attempts", {}).get("hazard_phase1", 0) == 0
+
+
+# ---- an eval is stale once the policy changes under it ----
+
+def _scored_at(tmp_path, tag, ts):
+    d = tmp_path / "checkpoints" / f"mario_{tag}_online_v1"
+    d.mkdir(parents=True, exist_ok=True)
+    rows = [json.dumps({"game": f"mario_{tag}_online_v1", "eval_seed": s,
+                        "n_episodes": 50, "sticky_prob": 0.25,
+                        "timestamp": ts}) for s in (7, 101)]
+    (d / "eval.jsonl").write_text("\n".join(rows) + "\n")
+    return d
+
+
+def test_an_eval_older_than_the_checkpoint_is_stale(tmp_path):
+    d = _scored_at(tmp_path, "9_9", time.time() - 10_000)
+    ck = d / "vanilla_ppo_iter_00100.pt"
+    ck.write_text("x")
+    assert ed.honest_eval_done("9-9", tmp_path)
+    assert not ed.honest_eval_current("9-9", tmp_path)
+
+
+def test_an_eval_newer_than_the_checkpoint_is_current(tmp_path):
+    d = _scored_at(tmp_path, "9_9", time.time() + 10_000)
+    (d / "vanilla_ppo_iter_00100.pt").write_text("x")
+    assert ed.honest_eval_current("9-9", tmp_path)
+
+
+def test_probe_rows_do_not_make_a_stale_eval_look_current(tmp_path):
+    """eval_game appends every probe to the same file, so the file's
+    mtime refreshes constantly and cannot be the staleness signal."""
+    d = _scored_at(tmp_path, "9_9", time.time() - 10_000)
+    (d / "vanilla_ppo_iter_00100.pt").write_text("x")
+    with open(d / "eval.jsonl", "a") as f:      # a fresh 30-episode probe
+        f.write(json.dumps({"game": "mario_9_9_online_v1", "eval_seed": 1,
+                            "n_episodes": 30, "sticky_prob": 0.25,
+                            "timestamp": time.time() + 50_000}) + "\n")
+    assert not ed.honest_eval_current("9-9", tmp_path)
+
+
+def test_a_glob_argument_is_not_checked_as_a_path(tmp_path):
+    """replay_sweep_full was permanently un-runnable: a glob never exists
+    as a file, so the input-path check rejected it every tick."""
+    p = tmp_path / "scripts" / "s.py"
+    p.parent.mkdir(parents=True)
+    p.write_text('import argparse\nap = argparse.ArgumentParser()\n'
+                 'ap.add_argument("--glob")\n')
+    a = _act(["scripts/s.py", "--glob", "runs/**/solutions/*.json"])
+    ok, why = ed.validate_action(a, tmp_path)
+    assert ok, why
