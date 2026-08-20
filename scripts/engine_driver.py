@@ -65,6 +65,12 @@ MAX_ATTEMPTS_PER_ACTION = 2
 # not a hundred times.
 RECURRING_COOLDOWN_H = 6.0
 DISK_FLOOR_GB = 40.0
+# A benchmark measures the machine as much as the method, so it may only
+# run on a quiet one. The 1-minute load average must sit below this, and
+# the machine must have been quiet for QUIET_SETTLE_S, before any action
+# whose verdict is a throughput number.
+QUIET_LOAD_MAX = 3.0
+QUIET_SETTLE_S = 900.0
 DEFAULT_ACTION_TIMEOUT_H = 14.0
 
 # The SMB ladder, in the order the pipeline has been onboarding them.
@@ -83,6 +89,9 @@ class Action:
     needs_emulator: bool
     gate: str
     timeout_h: float = DEFAULT_ACTION_TIMEOUT_H
+    # True for actions whose result is a throughput measurement. Such an
+    # action is deferred until the machine is demonstrably quiet.
+    needs_quiet: bool = False
     meta: dict = field(default_factory=dict)
     # A path that exists if and only if this action succeeded. Without one
     # the reaper can only say "the process ended", which is not the same
@@ -570,6 +579,11 @@ def plan(state: dict, repo: Path = REPO,
         """Emit an action only if it is genuinely runnable."""
         if a is None or (a.id in done and not a.recurring):
             return None
+        if a.needs_quiet:
+            ok_q, why_q = machine_quiet(state)
+            if not ok_q:
+                skipped.append(f"{a.id}: deferred, machine not quiet ({why_q})")
+                return None
         if a.recurring:
             last = float(state.get("last_run", {}).get(a.id, 0.0))
             if last and (time.time() - last) / 3600.0 < RECURRING_COOLDOWN_H:
@@ -607,6 +621,7 @@ def plan(state: dict, repo: Path = REPO,
              # wants — varied, reachable, and already provenance-checked.
              "--states", "checkpoints/online_1_2/restart_states"],
         done_marker=None,
+        needs_quiet=True,
         gate=">=1000 worker-ticks/s and <1h projected for 100k labels; "
              "below that Phase 1 is KILLED per the synthesis and the "
              "fallback is observational deaths from rollout logs."))
@@ -842,6 +857,8 @@ def _reap_one(state: dict, slots: dict, lane: str,
         ok, outcome = None, "finished"
 
     slots[lane] = None
+    if running.get("needs_emulator"):
+        state["last_heavy_finish"] = time.time()
     if ok is True:
         state["consecutive_failures"] = 0
     elif ok is False:
@@ -853,6 +870,40 @@ def _reap_one(state: dict, slots: dict, lane: str,
            "marker": marker}
     journal(rec)
     return rec
+
+
+def load_average() -> float:
+    try:
+        return os.getloadavg()[0]
+    except OSError:
+        return float("inf")          # unknown is not quiet
+
+
+def machine_quiet(state: dict) -> tuple[bool, str]:
+    """Is the machine quiet enough to trust a throughput measurement?
+
+    The hazard Phase-1 gate is why this exists. It ran twelve minutes
+    after a thirteen-hour campaign ended and measured 100.1 steps/s
+    against a 1,000 steps/s kill threshold — a KILL, on the research
+    direction three independent Deep Research rounds had converged on.
+    Re-run on a settled machine the same command measured 2,318.6
+    steps/s and PASSED with 43.8 minutes projected against a 60-minute
+    budget: a 23x difference attributable entirely to when it ran.
+
+    The brief already required that benches run only on a quiet machine.
+    Nothing enforced it, so the engine cheerfully benchmarked a hot one
+    and recorded a false negative as a pre-registered result.
+    """
+    la = load_average()
+    if la > QUIET_LOAD_MAX:
+        return False, f"load {la:.2f} > {QUIET_LOAD_MAX}"
+    last_heavy = float(state.get("last_heavy_finish", 0.0))
+    if last_heavy:
+        waited = time.time() - last_heavy
+        if waited < QUIET_SETTLE_S:
+            return False, (f"only {waited/60:.1f} min since the last heavy "
+                           f"job; need {QUIET_SETTLE_S/60:.0f}")
+    return True, f"load {la:.2f}, settled"
 
 
 def guard_reasons(state: dict, repo: Path = REPO) -> list[str]:

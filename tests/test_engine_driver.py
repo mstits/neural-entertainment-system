@@ -706,3 +706,54 @@ def test_a_misfiled_lane_is_corrected_on_read():
                                  "needs_emulator": True}}}
     slots = ed.running_slots(bad)
     assert list(slots) == ["emulator"], slots
+
+
+# ---- benchmarks may only run on a quiet machine ----
+
+def test_a_benchmark_is_deferred_on_a_loaded_machine(monkeypatch):
+    """The false KILL: 100.1 steps/s twelve minutes after a 13h campaign,
+    versus 2318.6 on a settled machine. A 23x difference from timing
+    alone, on a verdict that would have abandoned the research."""
+    monkeypatch.setattr(ed, "load_average", lambda: ed.QUIET_LOAD_MAX + 5)
+    ok, why = ed.machine_quiet({})
+    assert not ok and "load" in why
+
+
+def test_a_benchmark_is_deferred_until_the_machine_has_settled(monkeypatch):
+    monkeypatch.setattr(ed, "load_average", lambda: 0.1)
+    ok, why = ed.machine_quiet({"last_heavy_finish": time.time()})
+    assert not ok and "since the last heavy job" in why
+
+
+def test_a_quiet_settled_machine_admits_a_benchmark(monkeypatch):
+    monkeypatch.setattr(ed, "load_average", lambda: 0.5)
+    old = time.time() - (ed.QUIET_SETTLE_S + 60)
+    ok, why = ed.machine_quiet({"last_heavy_finish": old})
+    assert ok, why
+
+
+def test_an_unreadable_load_average_is_not_quiet(monkeypatch):
+    def boom():
+        raise OSError("no loadavg")
+    monkeypatch.setattr(ed.os, "getloadavg", boom)
+    assert ed.load_average() == float("inf")
+    assert not ed.machine_quiet({})[0]
+
+
+def test_finishing_an_emulator_job_stamps_the_settle_clock(tmp_path):
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"emulator": {
+                 "id": "campaign", "pid": 999999, "started": 0.0,
+                 "timeout_h": 1.0, "done_marker": None, "recurring": False,
+                 "needs_emulator": True}}}
+    ed.reap(state, tmp_path)
+    assert state.get("last_heavy_finish", 0) > 0
+
+
+def test_a_quiet_requiring_action_is_skipped_not_failed(monkeypatch):
+    """Deferred means it comes back, not that it burns an attempt."""
+    monkeypatch.setattr(ed, "load_average", lambda: ed.QUIET_LOAD_MAX + 5)
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    state = {"completed": {}, "attempts": {}, "last_run": {}}
+    ed.plan(state)
+    assert state.get("attempts", {}).get("hazard_phase1", 0) == 0
