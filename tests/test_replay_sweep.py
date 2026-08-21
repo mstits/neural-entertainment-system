@@ -194,3 +194,23 @@ def test_sibling_recovery_does_not_cross_directories(tmp_path):
                    None, None, None, None)
     out = resolve_from_siblings(gap, sibling_profiles([other, gap]), tmp_path)
     assert out.profile == ""
+
+
+def test_a_root_that_already_clears_is_unscorable_not_a_pass():
+    """111 of 171 passes were 'cleared at frame 0' — nothing verified."""
+    v = verify_ram_trace([{"c": 1}, {"c": 1}], _spec(), lambda r: bool(r["c"]))
+    assert v.status == "UNSCORABLE"
+    assert "before the tape acts" in v.reason
+
+
+def test_a_clear_after_the_root_still_passes():
+    v = verify_ram_trace([{"c": 0}, {"c": 1}], _spec(), lambda r: bool(r["c"]))
+    assert v.status == "PASS" and v.replayed_steps == 1
+
+
+def test_unscorable_is_neither_a_pass_nor_a_gate_failure():
+    ok, msg = evaluate_gate([Verdict("a", "UNSCORABLE", "root"),
+                             Verdict("b", "PASS", "ok")])
+    assert ok, msg
+    assert "1 UNSCORABLE" in msg
+    assert msg.startswith("1/2"), msg

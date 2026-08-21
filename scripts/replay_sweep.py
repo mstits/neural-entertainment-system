@@ -279,7 +279,26 @@ def verify_ram_trace(
     and then keeps stepping can leave the cleared state — scoring the
     final frame instead would report a false negative on a good tape.
     """
-    for i, ram in enumerate(rams):
+    if not rams:
+        return Verdict(spec.tape, "FAIL", "empty trace", 0)
+
+    # A predicate already true at the ROOT verifies nothing. 111 of this
+    # sweep's first 171 passes were "cleared at frame 0" — the tape had
+    # not acted yet, so the only thing demonstrated was that its recorded
+    # start_wd does not describe the state it is rooted at. Counting those
+    # as PASS would have reported a corpus as verified on a 65% false
+    # rate, which is worse than not sweeping at all.
+    #
+    # This is UNSCORABLE rather than FAIL, per the brief: the tape may be
+    # perfectly good and its provenance merely mislabelled. Refusing to
+    # score it is honest; calling it broken is not.
+    if is_clear(rams[0]):
+        return Verdict(
+            spec.tape, "UNSCORABLE",
+            "clear predicate already satisfied at the root, before the "
+            "tape acts — start_wd does not describe this root state", 0)
+
+    for i, ram in enumerate(rams[1:], start=1):
         if is_clear(ram):
             return Verdict(spec.tape, "PASS", f"cleared at frame {i}", i)
     n = len(rams)
@@ -291,11 +310,14 @@ def evaluate_gate(verdicts: Sequence[Verdict],
                   known_bad: Sequence[str] = KNOWN_BAD) -> tuple[bool, str]:
     """The pre-registered gate. ERROR counts as failure, never as a skip."""
     kb = set(known_bad)
+    unscorable = [v for v in verdicts if v.status == "UNSCORABLE"]
     failed = [v for v in verdicts if v.status in ("FAIL", "ERROR")]
     new = [v for v in failed if v.tape not in kb]
     known_hit = [v for v in failed if v.tape in kb]
-    passed = len(verdicts) - len(failed)
+    passed = len(verdicts) - len(failed) - len(unscorable)
     msg = (f"{passed}/{len(verdicts)} replay; "
+           f"{len(unscorable)} UNSCORABLE (root already satisfies the "
+           f"predicate); "
            f"{len(known_hit)} known-bad reproduced as bad; "
            f"{len(new)} NEW failure(s)")
     if new:
@@ -380,8 +402,14 @@ def main(argv: list[str] | None = None) -> int:
             continue
         try:
             profile = yaml.safe_load((REPO / spec.profile).read_text())
+            # Some solve profiles carry no rom key at all, which aborted
+            # the whole sweep partway with "pass --rom explicitly".
+            # The tape records the ROM it was made against; fall back to it.
+            rom_hint = ((profile or {}).get("rom_path")
+                        or (json.loads((REPO / spec.tape).read_text())
+                            .get("solver_args") or {}).get("rom"))
             rom, frame_skip, bitmasks, hw_flags = machine_from_profile(
-                profile, rom=(profile or {}).get("rom_path"))
+                profile, rom=rom_hint)
             game = make_game(profile)
             root = load_root(REPO / spec.root_state, hw_flags)
             actions = np.load(REPO / spec.actions, allow_pickle=False)
