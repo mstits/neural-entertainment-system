@@ -207,7 +207,7 @@ def test_a_recurring_action_is_re_offered_after_completion(tmp_path,
     sc = tmp_path / "scripts" / "run_suite_check.py"
     sc.parent.mkdir(parents=True)
     sc.write_text('import argparse\nap = argparse.ArgumentParser()\n'
-                  'ap.add_argument("--out")\n')
+                  'ap.add_argument("--out")\nap.add_argument("--timeout")\n')
 
     first = ed.plan({"completed": {}, "attempts": {}, "last_run": {}},
                     tmp_path)

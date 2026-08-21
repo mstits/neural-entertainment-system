@@ -698,14 +698,18 @@ def plan(state: dict, repo: Path = REPO,
             done_marker=haz_npz,
             gate="100,000 cleanly labelled transitions; a worker alive at "
                  "horizon end is CENSORED, never a survivor-labelled zero."))
-    if (repo / haz_npz).exists() and not (repo / "runs/engine/hazard_report.json").exists():
+    if (repo / haz_npz).exists() and not (
+            repo / "runs/engine/hazard/hazard_report.json").exists():
         candidates.append(Action(
             id="hazard_phase2_train", kind="train", needs_emulator=False,
             timeout_h=3.0,
+            # --out is a DIRECTORY: train_hazard writes hazard_model.pt
+            # and hazard_report.json inside it. Naming it "...pt" made the
+            # marker path wrong, so a run that PASSED at C-index 0.917 was
+            # recorded as failed and counted toward the circuit breaker.
             cmd=["scripts/train_hazard.py", "--data", haz_npz,
-                 "--out", "runs/engine/hazard_model.pt",
-                 "--gate", "0.85"],
-            done_marker="runs/engine/hazard_report.json",
+                 "--out", "runs/engine/hazard", "--gate", "0.85"],
+            done_marker="runs/engine/hazard/hazard_report.json",
             gate="Uno IPCW C-index >= 0.85 on a held-out trajectory set, "
                  "split by source state. Below that the synthesis says the "
                  "13x13 tile observation lacks the resolution to see "
@@ -802,7 +806,7 @@ def plan(state: dict, repo: Path = REPO,
     candidates.append(Action(
         id="suite_check", kind="suite", needs_emulator=False, timeout_h=1.0,
         cmd=["scripts/run_suite_check.py", "--out",
-             "runs/engine/suite_check.json"],
+             "runs/engine/suite_check.json", "--timeout", "5400"],
         recurring=True,
         done_marker="runs/engine/suite_check.json",
         gate="Records pass/fail counts and the failing node ids. It never "

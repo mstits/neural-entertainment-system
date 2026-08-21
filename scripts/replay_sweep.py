@@ -423,7 +423,17 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             verdicts.append(verify_ram_trace(
                 rams, spec, lambda ram: bool(game.is_clear(start_key, ram))))
-        except Exception as e:  # an untestable tape is a FAILING tape
+        except BaseException as e:   # noqa: BLE001 — see below
+            # BaseException, not Exception: machine_from_profile aborts
+            # with SystemExit when a profile carries no rom key, and
+            # SystemExit is not an Exception. Catching only Exception let
+            # a single unusable tape terminate a 298-tape sweep partway,
+            # which is why two consecutive full sweeps produced no report
+            # at all. One bad input is one ERROR row, never the end of the
+            # run. KeyboardInterrupt is re-raised so the sweep stays
+            # interruptible.
+            if isinstance(e, KeyboardInterrupt):
+                raise
             verdicts.append(Verdict(spec.tape, "ERROR",
                                     f"{type(e).__name__}: {e}"[:160]))
         print(f"  {verdicts[-1].status:5s} {verdicts[-1].tape}"
