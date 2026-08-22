@@ -1,0 +1,7 @@
+6000 real 1-2 states, frozen mask, threshold 0.90
+fully-vetoed (hatch fires)      : 13.5%
+partial veto active             : 20.4%
+control's greedy action vetoed  : 15.8% overall
+within veto-active states       : 77.4% of chosen actions blocked
+per-action veto rates: mov 14.3-17.3%, passive 2.7-4.1%
+masked mean_len 301/333 vs control 653/805 (dies earlier)

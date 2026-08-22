@@ -1,0 +1,25 @@
+{
+  "gate": ">= 20% relative improvement, >= 100 episodes over 2 seeds",
+  "control": {
+    "clears": 31,
+    "episodes": 100,
+    "rate": 0.31,
+    "seeds": [
+      101,
+      7
+    ]
+  },
+  "masked": {
+    "clears": 0,
+    "episodes": 100,
+    "rate": 0.0,
+    "seeds": [
+      101,
+      7
+    ]
+  },
+  "relative_improvement": -1.0,
+  "verdict": "FAIL",
+  "problems": [],
+  "instruction": "Per the synthesis: terminate the substrate experiment. Do NOT tune the threshold, change level, or extend the budget to rescue this result \u2014 any of those is a new experiment needing its own registration."
+}
