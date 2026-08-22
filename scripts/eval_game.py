@@ -836,6 +836,23 @@ def eval_one_game(
         # partial load would eval a half-random policy and still print
         # status "ok", which is worse than an error.
         load_res = net.load_state_dict(state["net_state_dict"], strict=False)
+        # PHASE 3: if the profile arms the hazard veto, EVALUATE with it.
+        # The first Phase-3 run did not, so the treatment arm was scored as
+        # though unmasked — the arm's entire intervention was absent from
+        # its own measurement, and both arms returned identical numbers
+        # because they were, in effect, the same policy. Wrapped after the
+        # state dict loads so the weights land on the real net.
+        _hz = (profile.get("reinforce", {}) or {}).get("hazard_mask") or {}
+        if _hz.get("enabled") and not load_res.missing_keys:
+            from src.training.hazard_mask import (
+                HazardMask, HazardMaskedPolicy)
+            _m = HazardMask.from_checkpoint(
+                _hz["checkpoint"],
+                threshold=float(_hz.get("threshold", 0.90)), enabled=True)
+            net = HazardMaskedPolicy(net, _m)
+            net_kind = f"{net_kind}+hazard_veto"
+            print(f"[eval] hazard veto ARMED threshold={_m.threshold}",
+                  flush=True)
         if load_res.missing_keys:
             return {
                 "game": game,

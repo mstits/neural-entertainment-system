@@ -42,7 +42,23 @@ import torch
 from src.training.hazard_model import HazardMLP, NUM_ACTIONS, OBS_DIM
 
 DEFAULT_THRESHOLD = 0.90
-NEG_INF = float("-inf")
+
+# A large finite negative, NOT -inf, and the difference decided a whole
+# experiment. With -inf, log_softmax yields -inf for a vetoed action and
+# its probability is 0, so the entropy term computes 0 * -inf = NaN. The
+# loss goes NaN, the gradients go NaN, and the trainer's NaN guard skips
+# the actor update -- silently. The first Phase-3 masked arm ran 200
+# iterations that way: only critic.weight and critic.bias differed from
+# the control at the end, the actor was byte-identical, and both arms
+# then evaluated to exactly 0.28 / 0.34 because they WERE the same actor.
+# Read at face value that is "hazard masking gives 0% improvement", which
+# would have terminated the substrate experiment on a bug.
+#
+# -1e9 gives a vetoed action probability 0.0 to float precision -- the
+# same behaviour -- while keeping the entropy finite and the gradients
+# clean.
+NEG_MASK = -1.0e9
+NEG_INF = NEG_MASK          # retained name; no longer literally infinite
 
 
 @dataclass
@@ -143,3 +159,73 @@ class HazardMask:
         self.stats.per_action = [a + int(b) for a, b
                                  in zip(self.stats.per_action, counts)]
         return logits.masked_fill(risky.to(logits.device), NEG_INF)
+
+
+class HazardMaskedPolicy(torch.nn.Module):
+    """A policy whose lethal actions are vetoed, wrapping the real net.
+
+    The veto belongs to the POLICY, not to the sampling site. Masking only
+    where actions are drawn would leave PPO's update recomputing logits
+    from the unmasked network, so the behaviour distribution and the
+    target distribution would differ and the importance ratio would be
+    wrong — the update would be correcting for a policy that never acted.
+
+    Both the rollout and the updater call `net.forward_ac(states)`, so
+    applying the mask inside that one method makes the two consistent by
+    construction. The hazard model is frozen and deterministic, so the
+    same observation yields the same veto in both passes.
+
+    Everything else delegates to the wrapped net, deliberately including
+    `state_dict`. A checkpoint written through this wrapper must be
+    loadable by the plain policy: the mask is an experiment arm, not a
+    change to the artifact, and a run that could only be resumed through
+    the wrapper would quietly make the arm permanent.
+    """
+
+    def __init__(self, net: torch.nn.Module, mask: HazardMask):
+        super().__init__()
+        self.net = net
+        self.mask = mask
+
+    def forward_ac(self, states: torch.Tensor):
+        logits, values = self.net.forward_ac(states)
+        if not self.mask.enabled:
+            return logits, values
+        obs = states.reshape(states.shape[0], -1).float()
+        return self.mask.apply(logits, obs), values
+
+    def forward(self, *a, **k):
+        return self.net.forward(*a, **k)
+
+    # --- delegation: the wrapper must be invisible to everything else ---
+    def state_dict(self, *a, **k):
+        return self.net.state_dict(*a, **k)
+
+    def load_state_dict(self, *a, **k):
+        return self.net.load_state_dict(*a, **k)
+
+    def parameters(self, *a, **k):
+        return self.net.parameters(*a, **k)
+
+    def named_parameters(self, *a, **k):
+        return self.net.named_parameters(*a, **k)
+
+    def train(self, mode: bool = True):
+        self.net.train(mode)
+        return self
+
+    def eval(self):
+        self.net.eval()
+        return self
+
+    def to(self, *a, **k):
+        self.net.to(*a, **k)
+        return self
+
+    def __getattr__(self, name):
+        # nn.Module.__getattr__ handles registered submodules first; this
+        # only fires for genuinely unknown names, which belong to the net.
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.__dict__["_modules"]["net"], name)

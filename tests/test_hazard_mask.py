@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.training.hazard_mask import (  # noqa: E402
-    HazardMask, MaskStats, NEG_INF, survival_to_death_prob)
+    HazardMask, MaskStats, NEG_INF, NEG_MASK, survival_to_death_prob)
 from src.training.hazard_model import HazardMLP, NUM_ACTIONS, OBS_DIM
 
 
@@ -126,3 +126,92 @@ def test_stats_round_trip_as_dict():
     d = s.as_dict()
     assert d["veto_fraction"] == round(6 / 60, 4)
     assert d["fully_vetoed_fraction"] == 0.2
+
+
+# ---- the wrapper: the veto belongs to the policy, not the sampler ----
+
+class _Net(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lin = torch.nn.Linear(OBS_DIM, NUM_ACTIONS)
+        self.v = torch.nn.Linear(OBS_DIM, 1)
+        self.tag = "base"
+
+    def forward_ac(self, s):
+        return self.lin(s), self.v(s)
+
+    def forward(self, s):
+        return self.lin(s)
+
+
+def test_wrapper_masks_inside_forward_ac_so_both_passes_agree():
+    """Rollout and update both call forward_ac; if only the sampler
+    masked, PPO's ratio would correct for a policy that never acted."""
+    from src.training.hazard_mask import HazardMaskedPolicy
+    net = _Net()
+    m = HazardMask(_Fixed([0.99, 0.0, 0.0, 0.0, 0.0, 0.0]), threshold=0.9,
+                   enabled=True)
+    p = HazardMaskedPolicy(net, m)
+    obs = torch.zeros(3, OBS_DIM)
+    a, _ = p.forward_ac(obs)
+    b, _ = p.forward_ac(obs)
+    assert (a[:, 0] == NEG_INF).all()
+    assert torch.equal(a, b), "same obs must yield the same veto"
+
+
+def test_wrapper_is_transparent_when_disabled():
+    from src.training.hazard_mask import HazardMaskedPolicy
+    net = _Net()
+    p = HazardMaskedPolicy(net, HazardMask(HazardMLP(n_bins=2),
+                                           enabled=False))
+    obs = torch.zeros(2, OBS_DIM)
+    assert torch.equal(p.forward_ac(obs)[0], net.forward_ac(obs)[0])
+
+
+def test_checkpoint_written_through_the_wrapper_loads_into_a_plain_net():
+    """The mask is an experiment arm, not a change to the artifact."""
+    from src.training.hazard_mask import HazardMaskedPolicy
+    net = _Net()
+    p = HazardMaskedPolicy(net, HazardMask(HazardMLP(n_bins=2), enabled=True))
+    fresh = _Net()
+    fresh.load_state_dict(p.state_dict())
+    assert torch.equal(fresh.lin.weight, net.lin.weight)
+    assert all(not k.startswith("net.") for k in p.state_dict())
+
+
+def test_wrapper_delegates_unknown_attributes():
+    from src.training.hazard_mask import HazardMaskedPolicy
+    p = HazardMaskedPolicy(_Net(), HazardMask(HazardMLP(n_bins=2)))
+    assert p.tag == "base"
+
+
+# ---- the -inf trap that voided the first Phase-3 masked arm ----
+
+def test_the_veto_value_is_finite():
+    """-inf makes entropy 0 * -inf = NaN, the loss NaN, and the trainer's
+    NaN guard skips every actor update. 200 iterations produced an actor
+    byte-identical to the control."""
+    import math
+    assert math.isfinite(NEG_MASK)
+    assert NEG_MASK < -1e6, "must still drive the probability to zero"
+
+
+def test_masked_logits_keep_entropy_and_gradients_finite():
+    import torch.nn.functional as F
+    m = HazardMask(_Fixed([0.99, 0.0, 0.0, 0.0, 0.0, 0.0]), threshold=0.9,
+                   enabled=True)
+    logits = torch.zeros(1, NUM_ACTIONS, requires_grad=True)
+    out = m.apply(logits, torch.zeros(1, OBS_DIM))
+    lp = F.log_softmax(out, dim=-1)
+    ent = -(lp.exp() * lp).sum(-1)
+    assert torch.isfinite(ent).all(), "entropy went non-finite"
+    ent.sum().backward()
+    assert torch.isfinite(logits.grad).all(), "gradients went non-finite"
+
+
+def test_a_vetoed_action_still_has_zero_probability():
+    import torch.nn.functional as F
+    m = HazardMask(_Fixed([0.99, 0.0, 0.0, 0.0, 0.0, 0.0]), threshold=0.9,
+                   enabled=True)
+    out = m.apply(torch.zeros(1, NUM_ACTIONS), torch.zeros(1, OBS_DIM))
+    assert float(F.softmax(out, dim=-1)[0, 0]) == 0.0
