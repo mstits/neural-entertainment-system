@@ -292,6 +292,19 @@ def verify_ram_trace(
     # This is UNSCORABLE rather than FAIL, per the brief: the tape may be
     # perfectly good and its provenance merely mislabelled. Refusing to
     # score it is honest; calling it broken is not.
+    # A tape whose own sidecar records clear_wd == start_wd was banked
+    # under a predicate THIS verifier does not implement. SMB finales are
+    # the live case: 8-4's ending never advances world/level — the game
+    # sets opermode ($0770==2), which the level-advance predicate cannot
+    # see. Scoring that FAIL would quarantine a sound tape for the
+    # verifier's own blindness.
+    if spec.clear_wd is not None and spec.start_wd is not None \
+            and list(spec.clear_wd) == list(spec.start_wd):
+        return Verdict(spec.tape, "UNSCORABLE",
+                       "banked under a predicate this verifier does not "
+                       "implement (clear_wd == start_wd; e.g. a finale "
+                       "detected via opermode, not level advance)", 0)
+
     if is_clear(rams[0]):
         return Verdict(
             spec.tape, "UNSCORABLE",
@@ -410,6 +423,32 @@ def main(argv: list[str] | None = None) -> int:
                             .get("solver_args") or {}).get("rom"))
             rom, frame_skip, bitmasks, hw_flags = machine_from_profile(
                 profile, rom=rom_hint)
+            # The tape records the hw flags it was made under. Replaying
+            # under different flags diverges the trace and produces a
+            # false FAIL — three Castlevania tapes failed exactly this way
+            # while same-family tapes with matching lineage passed. The
+            # tape's own lineage wins; a tape with no recorded lineage
+            # replays under the profile's.
+            rec_hw = (json.loads((REPO / spec.tape).read_text())
+                      .get("hw") or {}).get("hw_flags")
+            if rec_hw is None:
+                # Older tapes carry no lineage of their own, but their
+                # ROOT often does: entrance blobs ship a .state.json
+                # sidecar recording the hw flags the machine ran with.
+                # Three Castlevania tapes failed as "never satisfied
+                # is_clear" purely because their root was built under
+                # ['reset_alignment','mmio_read_timing','dmc_stall_timing',
+                # 'nmi_poll_timing'] and the replay ran under the
+                # profile's defaults — the trace diverges from frame one.
+                side = REPO / (spec.root_state + ".json")
+                if side.exists():
+                    try:
+                        rec_hw = (json.loads(side.read_text())
+                                  .get("hw_flags"))
+                    except (OSError, json.JSONDecodeError):
+                        rec_hw = None
+            if rec_hw is not None:
+                hw_flags = tuple(rec_hw)
             game = make_game(profile)
             root = load_root(REPO / spec.root_state, hw_flags)
             actions = np.load(REPO / spec.actions, allow_pickle=False)
