@@ -1,0 +1,55 @@
+name: "Rygar"
+
+rom_path: "roms/Rygar (USA).nes"
+rom_hashes:
+  - "527cc09ab3a503372abbbf567b76db46"
+start_state_path: "roms/Rygar (USA)_start.state.bin"
+
+description: |
+  Rygar (NES, 1987), solver profile. Written from MEASUREMENT ONLY —
+  nothing here is inherited from another game's profile.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Rygar (USA).nes"
+  # Discovered by scripts/discover_observables.py's 3-probe protocol
+  # (forward-hold / NOOP-hold / reverse-hold) from this profile's own
+  # start state, 2026-08-21. No RAM map, no disassembly, no walkthrough.
+  # Receipt: runs/rygar_observables.json
+  #
+  #   $0015  net +2896 under forward at monotone fraction 1.00 — a
+  #          perfectly monotone progress signal, and far cleaner than
+  #          Ninja Gaiden's +92 / 0.96 on the same protocol.
+  #   $002B  jump/ballistic signature.
+  #   $0303  decrements on death, agreed by 5 of 5 independent runs.
+  #
+  # DEATH-SIGNAL SANITY CHECK (added because Ninja Gaiden failed it):
+  # $0303 reads 1 at this start state, so a decrement lands on 0 and is
+  # detectable. Ninja Gaiden's lives byte reads 0 at ITS start state, so a
+  # decrement underflows to 255 and no "lives went down" test can see the
+  # death — which is why that run sat at 36 cells for 40 minutes and why
+  # it must NOT be filed as a game difficulty wall.
+  progress: {lo: 0x0015}
+  y: 0x002B
+  lives: 0x0303
+  # Empty until a real clear is captured; guessing it is authored
+  # semantics. The solver can search but cannot yet recognise winning.
+  level_key: []

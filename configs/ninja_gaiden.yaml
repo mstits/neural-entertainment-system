@@ -1,0 +1,61 @@
+name: "Ninja Gaiden"
+
+rom_path: "roms/Ninja Gaiden (USA).nes"
+rom_hashes:
+  - "0c2cccda6ba6cab7bede0ff05e7f6852"          # md5 of the dump actually used
+start_state_path: "roms/Ninja Gaiden (USA)_start.state.bin"
+
+description: |
+  Ninja Gaiden (NES, 1989), solver profile.
+
+  Written from MEASUREMENT ONLY. An earlier draft of this file was cloned
+  from configs/contra.yaml and carried Contra's ROM hash, its player_state
+  byte, its boss-defeated flag and its reward weights — the same
+  clone-contamination that cost 20.1M training steps on World 2-1 and ran
+  through World 1-4's entire campaign undetected. Nothing here is
+  inherited: every byte below was discovered by experiment on this ROM,
+  and anything not discovered is absent rather than guessed.
+
+frame_skip: 4
+# A GENERIC controller, not a tuned set. Contra's action space encodes
+# Contra-specific tactics (prone fire for its base wall); inheriting that
+# would be handing this game someone else's strategy. Here the agent gets
+# the buttons and works out which ones matter.
+action_space:
+  - []                     # NOOP
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Ninja Gaiden (USA).nes"
+  # Discovered by scripts/discover_observables.py's 3-probe protocol
+  # (forward-hold / NOOP-hold / reverse-hold) from this profile's own
+  # start state, 2026-08-21. No RAM map, no disassembly, no walkthrough.
+  # Receipt: runs/ninja_gaiden_observables.json
+  #
+  #   $0086  rises under forward (net +92, monotone fraction 0.96), flat
+  #          under NOOP, reverses under reverse-hold; clears both the wrap
+  #          and the saturation gate.
+  #   $00F3  carries the jump/ballistic signature.
+  #   $001F  decrements on death, agreed by 5 of 5 independent runs.
+  progress: {lo: 0x0086}
+  y: 0x00F3
+  lives: 0x001F
+  # DELIBERATELY EMPTY. Observing a stage-advance byte requires a real
+  # clear, and nothing has cleared yet. With an empty level_key the solver
+  # explores for coverage but CANNOT declare a solution — it can search,
+  # and it cannot yet recognise winning. Guessing a byte here is the
+  # authored-semantics class the purity line forbids, so it stays empty
+  # until a clear is actually captured.
+  level_key: []

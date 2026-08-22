@@ -1,0 +1,41 @@
+# Blank-slate Lost Levels show profile.
+#
+# Byte-identical to lost_levels.yaml. The only thing that differs is
+# the FILENAME, and that is the whole point: live_solve_show derives
+# its output directory from the profile stem and laps any solution
+# already sitting there instead of searching. Because
+# runs/live_show/lost_levels/lvl_1-1/solutions/ holds a banked tape,
+# the original profile can only ever open on a victory lap. A fresh
+# stem gives an empty show dir, so the swarm has to find it live.
+
+name: "Super Mario Bros. 2 (Japan) — The Lost Levels"
+# THE TRANSFER DEMO: Lost Levels runs on the SMB1 ENGINE (same physics,
+# same RAM map), so it carries NO solve: section and auto-routes to the
+# byte-exact SmbGame adapter — the exact solver that cleared SMB1
+# 1-1 -> 8-4. Only the ROM differs. Harder layouts, same difficulty
+# CLASS as SMB's castle mazes / 8-4, which we already cracked.
+#
+# ARMED. The ROM is a mapper-40 (NTDEC 2722) FDS-to-cartridge bootleg;
+# nes_core gained mapper-40 support (CD4020 self-acknowledging IRQ + the
+# fixed-6/4/5 + switchable-$C000 PRG layout) so it boots + renders 1-1
+# correctly. The start state below was captured with
+#   scripts/capture_start_state.py --game lost_levels --rom "<rom>"
+# and the SmbGame adapter reads world/level/area/x/lives byte-exact off
+# it (Mario runs right, x climbs). A Go-Explore transfer solve clears
+# 1-1 (area 0 -> 1) in seconds. Run:  make show GAME=lost_levels
+# (or scripts/go_explore_solve.py with this profile).
+rom: "roms/Super Mario Bros. 2; The Lost Levels (Japan).nes"
+start_state_path: "roms/Super Mario Bros. 2; The Lost Levels (Japan)_start.state.bin"
+frame_skip: 4
+max_episode_steps: 3000
+
+# SMB1-engine action space (identical to the SMB solver's — the adapter is
+# byte-exact on this engine). No solve: section = SmbGame adapter.
+action_space:
+  - []
+  - ["right"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["right", "A", "B"]
+  - ["A"]
+  - ["left"]
