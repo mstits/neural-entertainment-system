@@ -1584,6 +1584,34 @@ class Trainer:
         return _probe
 
     def _make_network(self, num_actions: int | None = None):
+        """Build the policy, wrapping it in the Phase-3 hazard veto if armed.
+
+        Wrapped HERE rather than at each of the five construction sites,
+        and outside the encoder branches so every network kind gets the
+        same treatment. The wrapper delegates state_dict, so a checkpoint
+        written under the veto still loads into a plain policy — the mask
+        is an experiment arm, not a change to the artifact.
+
+        Default off: with no `reinforce.hazard_mask` block this returns
+        exactly what it always returned, which is what makes the Phase-3
+        control arm a true control.
+        """
+        net = self._make_network_raw(num_actions)
+        cfg = ((self.game_profile.get("reinforce", {}) or {})
+               .get("hazard_mask") or {})
+        if not cfg.get("enabled"):
+            return net
+        from src.training.hazard_mask import HazardMask, HazardMaskedPolicy
+        mask = HazardMask.from_checkpoint(
+            cfg["checkpoint"],
+            threshold=float(cfg.get("threshold", 0.90)),
+            enabled=True)
+        self._hazard_mask = mask
+        print(f"[hazard-mask] ARMED threshold={mask.threshold} "
+              f"from {cfg['checkpoint']}", flush=True)
+        return HazardMaskedPolicy(net, mask)
+
+    def _make_network_raw(self, num_actions: int | None = None):
         """Construct the policy network appropriate for the configured
         encoder. Pixel encoders (`nature_dqn`, `impala`) use the CNN-
         backed `PolicyNetwork`; tile encoders (`smb_tiles`) use the

@@ -30,6 +30,10 @@ from typing import Any
 # dict keys (consolidate_level.*, cold_eval.*, etc.) are validated only
 # at the top level here; their internals are owned by their own readers.
 KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
+    # Phase 3 of the hazard substrate: freeze the model and veto actions
+    # above a predicted death probability. Genuinely consumed by
+    # Trainer._make_network, which is the bar this set enforces.
+    "hazard_mask",
     "actor_freeze_steps", "advance", "adversary", "asm_bulk_cycles",
     "async_pipeline", "autocast_fp16",
     "backward_curriculum",
