@@ -78,7 +78,13 @@ def adjudicate(control: list[dict], masked: list[dict],
         problems.append("control scored zero — relative improvement is "
                         "undefined and must not be reported as infinite")
     else:
-        rel = (m_rate - c_rate) / c_rate
+        # Rounded BEFORE comparison, and to the same places the verdict
+        # reports, so the decision always agrees with the number printed
+        # beside it. Unrounded, (0.48 - 0.40) / 0.40 is 0.19999999999999998
+        # and an exact-threshold run would print "relative_improvement:
+        # 0.2" next to "verdict: FAIL". Clear rates are k/n at n>=100, so
+        # nothing real lives below this resolution anyway.
+        rel = round((m_rate - c_rate) / c_rate, 4)
         verdict = "PASS" if rel >= GATE_RELATIVE_IMPROVEMENT else "FAIL"
 
     out = {
@@ -88,7 +94,7 @@ def adjudicate(control: list[dict], masked: list[dict],
                     "seeds": c_seeds},
         "masked": {"clears": m_cl, "episodes": m_n, "rate": round(m_rate, 4),
                    "seeds": m_seeds},
-        "relative_improvement": None if rel is None else round(rel, 4),
+        "relative_improvement": rel,
         "verdict": verdict,
         "problems": problems,
     }
