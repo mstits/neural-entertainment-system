@@ -1,0 +1,2498 @@
+{
+  "stamp": "2026-08-22-final",
+  "replaying_core_sha16": null,
+  "n_tapes": 310,
+  "counts": {
+    "UNSCORABLE": 112,
+    "PASS": 107,
+    "ERROR": 91
+  },
+  "gate_passed": false,
+  "gate_message": "107/310 replay; 112 UNSCORABLE (root already satisfies the predicate); 0 known-bad reproduced as bad; 91 NEW failure(s): runs/cv_chain_a/lvl_00_0/solutions/sol_000.json, runs/cv_chain_a/lvl_00_2/solutions/sol_000.json, runs/cv_chain_a/lvl_01_1/solutions/sol_000.json, runs/cv_smoke/solutions/sol_000.json, runs/detector_gate_20260810/double_dragon/solutions/sol_000.json, runs/detector_gate_20260810/double_dragon_cf/solutions/sol_000.json",
+  "known_bad": [
+    "runs/ge_1_3_solve/solutions/sol_001.json",
+    "runs/ge_1_4_solve/solutions/sol_003.json"
+  ],
+  "verdicts": [
+    {
+      "tape": "runs/bubble_bobble/bubble_bobble_bootstrap/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/bubble_bobble_bootstrap/solutions/sol_001.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/bubble_bobble_bootstrap/solutions/sol_002.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_00_22/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_01_23/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_02_24/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_03_25/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_04_26/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_05_27/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_06_28/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_07_29/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_08_30/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_09_31/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_10_32/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_11_33/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_12_34/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_13_35/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_14_36/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_15_37/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_16_38/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_17_39/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_18_40/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_19_41/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_20_42/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_21_43/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_22_44/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_23_45/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_24_46/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_25_47/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_26_48/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_27_49/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_28_50/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2/lvl_29_51/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_00_52/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_00_61/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_01_53/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_01_62/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_02_54/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_02_63/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_03_55/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_03_64/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_04_56/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_04_65/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_05_57/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_05_66/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_06_58/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_06_67/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_07_59/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2c/lvl_08_60/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2d/lvl_00_67/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2e/lvl_00_67/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_00_69/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_01_70/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_02_71/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_03_72/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_04_73/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_05_74/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_06_75/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_07_76/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_08_77/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_09_78/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_10_79/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_11_80/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_12_81/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_13_82/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_14_83/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_15_84/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_16_85/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_17_86/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_18_87/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_19_88/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_20_89/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_21_90/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_22_91/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_23_92/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_24_93/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_25_94/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_26_95/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_27_96/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_28_97/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2f/lvl_29_98/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_day2g/lvl_00_99-0/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 621",
+      "replayed_steps": 621,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_00_1/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_01_2/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_02_3/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_03_4/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_04_5/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_05_6/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_06_7/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_07_8/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_08_9/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_09_10/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_10_11/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_11_12/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_12_13/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_13_14/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_14_15/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_15_16/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_16_17/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_17_18/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_18_19/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_19_20/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/chain_overnight/lvl_20_21/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/r68_retry_xsig/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/r68_retry_xsig/solutions/sol_001.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/r68_retry_xsig/solutions/sol_002.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/r68_retry_xsig/solutions/sol_003.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/r68_retry_xsig/solutions/sol_004.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/r68_retry_xsig/solutions/sol_005.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/bubble_bobble/r99_fixed/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 515",
+      "replayed_steps": 515,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_a/lvl_00_0/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_a/lvl_00_2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_a/lvl_01_1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_a/reenter_b2_s1001/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 843",
+      "replayed_steps": 843,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_hw/lvl_00/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 582",
+      "replayed_steps": 582,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_hw/lvl_01/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1339",
+      "replayed_steps": 1339,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_hw/lvl_02/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1237",
+      "replayed_steps": 1237,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_hw2/lvl_00/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 492",
+      "replayed_steps": 492,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_hw2/lvl_01/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1604",
+      "replayed_steps": 1604,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_hw2/lvl_02/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1252",
+      "replayed_steps": 1252,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_poweron/lvl_00_0/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 784",
+      "replayed_steps": 784,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_poweron/lvl_01_1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1544",
+      "replayed_steps": 1544,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_chain_poweron/lvl_02_2_kit/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1212",
+      "replayed_steps": 1212,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/cv_smoke/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/detector_gate_20260810/double_dragon/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile missing: /tmp/gate_double_dragon.yaml",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/detector_gate_20260810/double_dragon_cf/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile missing: /tmp/gate_double_dragon.yaml",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/detector_gate_20260810/double_dragon_cf2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile missing: /tmp/gate_double_dragon.yaml",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/detector_gate_20260810/double_dragon_final/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile missing: /tmp/gate_double_dragon2.yaml",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/detector_gate_20260810/kirby/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile missing: /tmp/gate_kirby.yaml",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/detector_gate_20260810/kirby_cf/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile missing: /tmp/gate_kirby.yaml",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/excitebike/excitebike_bootstrap/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "start_wd not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/gate_opener_k0_2026-08-11/cv_blind/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1252",
+      "replayed_steps": 1252,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/gate_opener_k0_2026-08-11/cv_blind/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1224",
+      "replayed_steps": 1224,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 871",
+      "replayed_steps": 871,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s1/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 850",
+      "replayed_steps": 850,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s1/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 829",
+      "replayed_steps": 829,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s1/solutions/sol_003.json",
+      "status": "PASS",
+      "reason": "cleared at frame 819",
+      "replayed_steps": 819,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s1/solutions/sol_004.json",
+      "status": "PASS",
+      "reason": "cleared at frame 808",
+      "replayed_steps": 808,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s1/solutions/sol_005.json",
+      "status": "PASS",
+      "reason": "cleared at frame 787",
+      "replayed_steps": 787,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s2/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 934",
+      "replayed_steps": 934,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s2/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 903",
+      "replayed_steps": 903,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s2/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 892",
+      "replayed_steps": 892,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s3/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 934",
+      "replayed_steps": 934,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s3/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 871",
+      "replayed_steps": 871,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s3/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 856",
+      "replayed_steps": 856,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s4/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 871",
+      "replayed_steps": 871,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s4/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 861",
+      "replayed_steps": 861,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s4/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 845",
+      "replayed_steps": 845,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s4/solutions/sol_003.json",
+      "status": "PASS",
+      "reason": "cleared at frame 835",
+      "replayed_steps": 835,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s5/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 892",
+      "replayed_steps": 892,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s5/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 877",
+      "replayed_steps": 877,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s5/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 861",
+      "replayed_steps": 861,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s5/solutions/sol_003.json",
+      "status": "PASS",
+      "reason": "cleared at frame 850",
+      "replayed_steps": 850,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s5/solutions/sol_004.json",
+      "status": "PASS",
+      "reason": "cleared at frame 835",
+      "replayed_steps": 835,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s6/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 829",
+      "replayed_steps": 829,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s6/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 819",
+      "replayed_steps": 819,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s6/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 808",
+      "replayed_steps": 808,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s6/solutions/sol_003.json",
+      "status": "PASS",
+      "reason": "cleared at frame 777",
+      "replayed_steps": 777,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s7/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 982",
+      "replayed_steps": 982,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s7/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 971",
+      "replayed_steps": 971,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s7/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 961",
+      "replayed_steps": 961,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s7/solutions/sol_003.json",
+      "status": "PASS",
+      "reason": "cleared at frame 945",
+      "replayed_steps": 945,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s8/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1018",
+      "replayed_steps": 1018,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s8/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 992",
+      "replayed_steps": 992,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s8/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 961",
+      "replayed_steps": 961,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s8/solutions/sol_003.json",
+      "status": "PASS",
+      "reason": "cleared at frame 945",
+      "replayed_steps": 945,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s9/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 861",
+      "replayed_steps": 861,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s9/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 824",
+      "replayed_steps": 824,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_div_s9/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 814",
+      "replayed_steps": 814,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_solve/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_solve/solutions/sol_001.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_solve/solutions/sol_002.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_2_solve/solutions/sol_003.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_3_solve/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 540",
+      "replayed_steps": 540,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_3_solve/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 530",
+      "replayed_steps": 530,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_3_solve/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 519",
+      "replayed_steps": 519,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_3_solve/solutions/sol_003.json",
+      "status": "PASS",
+      "reason": "cleared at frame 498",
+      "replayed_steps": 498,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_4_solve/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 490",
+      "replayed_steps": 490,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_4_solve/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 469",
+      "replayed_steps": 469,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_4_solve/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 453",
+      "replayed_steps": 453,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_1_4_solve/solutions/sol_003.json",
+      "status": "PASS",
+      "reason": "cleared at frame 443",
+      "replayed_steps": 443,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_2_1_solve/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 763",
+      "replayed_steps": 763,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_2_1_solve/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 748",
+      "replayed_steps": 748,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_2_1_solve/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 737",
+      "replayed_steps": 737,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_2_1_solve/solutions/sol_003.json",
+      "status": "PASS",
+      "reason": "cleared at frame 721",
+      "replayed_steps": 721,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_00_2-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_01_2-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_02_2-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_03_2-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_04_3-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_05_3-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_06_3-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_07_3-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_08_4-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_09_4-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain/lvl_10_4-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_00_1-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_01_1-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_02_1-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_03_1-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_04_2-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_05_2-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_06_2-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_07_2-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_08_3-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_09_3-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_10_3-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_11_3-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_12_4-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_13_4-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_a/lvl_14_4-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_00_4-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_01_5-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_02_5-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_03_5-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_04_5-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_05_6-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_06_6-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_07_6-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_08_6-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_09_7-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_10_7-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_11_7-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_12_7-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_13_8-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_14_8-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_15_8-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_final_b/lvl_16_8-4_retry/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus/lvl_00_5-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus/lvl_01_5-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus_b/lvl_00_5-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus_b/lvl_01_5-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus_b/lvl_02_6-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus_b/lvl_03_6-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus_b/lvl_04_6-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus_b/lvl_05_6-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus_b/lvl_06_7-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus_b/lvl_07_7-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w5plus_b/lvl_08_7-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w8/lvl_00_8-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w8/lvl_01_8-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/ge_chain_w8/lvl_02_8-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/bubble_bobble/lvl_1/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/bubble_bobble/lvl_7/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/bubble_bobble/lvl_8/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "clear predicate already satisfied at the root, before the tape acts \u2014 start_wd does not describe this root state",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/lost_levels/lvl_1-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 730",
+      "replayed_steps": 730,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/lost_levels_blank/lvl_1-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 751",
+      "replayed_steps": 751,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/lost_levels_blank/lvl_1-2/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 907",
+      "replayed_steps": 907,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/lost_levels_blank/lvl_1-3/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 524",
+      "replayed_steps": 524,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/lost_levels_blank/lvl_1-4/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 623",
+      "replayed_steps": 623,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/lost_levels_blank/lvl_2-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 792",
+      "replayed_steps": 792,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/lost_levels_blank/lvl_2-2/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 891",
+      "replayed_steps": 891,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/lost_levels_blank/lvl_2-3/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 582",
+      "replayed_steps": 582,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/lost_levels_blank/lvl_2-4/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 618",
+      "replayed_steps": 618,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/lost_levels_blank/lvl_3-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 697",
+      "replayed_steps": 697,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/mario/lvl_1-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "SystemExit: [tape_replay] <profile> has no rom_path/rom/solve.rom key \u2014 pass --rom explicitly",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_1-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 903",
+      "replayed_steps": 903,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_1-2/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1215",
+      "replayed_steps": 1215,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_1-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_1-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_2-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_2-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_2-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_2-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_3-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_3-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_3-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_3-4/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_4-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_4-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_4-3/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_4-4/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1104",
+      "replayed_steps": 1104,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_5-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 837",
+      "replayed_steps": 837,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_5-2/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 905",
+      "replayed_steps": 905,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_5-3/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 852",
+      "replayed_steps": 852,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_5-4/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 699",
+      "replayed_steps": 699,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_6-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 832",
+      "replayed_steps": 832,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_6-2/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1637",
+      "replayed_steps": 1637,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_6-3/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 794",
+      "replayed_steps": 794,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_6-4/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 637",
+      "replayed_steps": 637,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_7-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 916",
+      "replayed_steps": 916,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_7-2/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1204",
+      "replayed_steps": 1204,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_7-3/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 716",
+      "replayed_steps": 716,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_7-4/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1472",
+      "replayed_steps": 1472,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_8-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1400",
+      "replayed_steps": 1400,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_8-2/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1029",
+      "replayed_steps": 1029,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_8-3/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 852",
+      "replayed_steps": 852,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_4_4_micro/lvl_8-4/solutions/sol_000.json",
+      "status": "UNSCORABLE",
+      "reason": "banked under a predicate this verifier does not implement (clear_wd == start_wd; e.g. a finale detected via opermode, not level advance)",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_blank_slate/lvl_1-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 814",
+      "replayed_steps": 814,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_blank_slate/lvl_1-2/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1096",
+      "replayed_steps": 1096,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/live_show/smb_blank_slate/lvl_1-3/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 603",
+      "replayed_steps": 603,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_1_1_transfer/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 834",
+      "replayed_steps": 834,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_1_1_transfer/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 813",
+      "replayed_steps": 813,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_1_1_transfer/solutions/sol_002.json",
+      "status": "PASS",
+      "reason": "cleared at frame 787",
+      "replayed_steps": 787,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_1_1_transfer/solutions/sol_003.json",
+      "status": "PASS",
+      "reason": "cleared at frame 740",
+      "replayed_steps": 740,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_1_1_transfer/solutions/sol_004.json",
+      "status": "PASS",
+      "reason": "cleared at frame 703",
+      "replayed_steps": 703,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_1_2_escalate/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 1058",
+      "replayed_steps": 1058,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_1_2_escalate/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 932",
+      "replayed_steps": 932,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_2_1_seed1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 785",
+      "replayed_steps": 785,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_2_1_seed1/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 753",
+      "replayed_steps": 753,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_chain/lvl_00_1-1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 834",
+      "replayed_steps": 834,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_chain_cov/lvl_00_1-3/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 595",
+      "replayed_steps": 595,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/ll_chain_cov/lvl_01_1-4/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 636",
+      "replayed_steps": 636,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/smoke_1_1/solutions/sol_000.json",
+      "status": "PASS",
+      "reason": "cleared at frame 766",
+      "replayed_steps": 766,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/lost_levels/smoke_1_1/solutions/sol_001.json",
+      "status": "PASS",
+      "reason": "cleared at frame 755",
+      "replayed_steps": 755,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/regress_post/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/regress_post2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/regress_pre/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/smb_chain_regress/lvl_00_1-1/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    },
+    {
+      "tape": "runs/smb_chain_regress/lvl_01_1-2/solutions/sol_000.json",
+      "status": "ERROR",
+      "reason": "profile not recorded",
+      "replayed_steps": 0,
+      "end_key": null,
+      "core_match": null
+    }
+  ]
+}
