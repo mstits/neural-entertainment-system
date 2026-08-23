@@ -1,0 +1,1 @@
+{"verdict": "VOID", "reason": "actor_freeze_steps 1e12 inherited from campaign base profile froze the actor for the whole run in BOTH arms; only critics trained; treatment eval reproduced the seed fingerprint to the digit (0.28/653, 0.34/805). Not a FAIL: nothing was tested. Both arms re-run with actor_freeze_steps 0.", "control": "re-running", "treatment": "re-running"}

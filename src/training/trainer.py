@@ -5136,6 +5136,19 @@ class Trainer:
                     "[vanilla_ppo] KL ANCHOR: loaded %d actor weight(s) "
                     "from %s (critic stays fresh)", len(_kl_loaded), _kl_ckpt,
                 )
+            _run_end_steps = (iter_offset + num_iters) * (
+                self.num_envs * self.rollout_steps)
+            if self._kl_anchor.actor_freeze_steps > _run_end_steps:
+                log.warning(
+                    "[vanilla_ppo] KL ANCHOR: actor_freeze_steps %.3g "
+                    "EXCEEDS this run's final step count %.3g — the actor "
+                    "will NEVER unfreeze and only the critic will train. "
+                    "This is how two experiments (phase-3 hazard, "
+                    "commitment options) silently trained nothing: the "
+                    "value was inherited from a campaign base profile "
+                    "whose controller overrides it per phase, but a "
+                    "standalone train_game run has no controller.",
+                    self._kl_anchor.actor_freeze_steps, _run_end_steps)
             log.info(
                 "[vanilla_ppo] KL ANCHOR on: beta %.3f -> %.3f over %.0f "
                 "steps, actor frozen for %.0f steps",

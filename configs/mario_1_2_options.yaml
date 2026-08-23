@@ -91,7 +91,7 @@ reinforce:
   kl_beta_start: 0.5
   kl_beta_end: 0.01
   kl_beta_decay_steps: 50000000
-  actor_freeze_steps: 1000000000000
+  actor_freeze_steps: 0
   sil:
     enabled: true
     buffer_size: 64

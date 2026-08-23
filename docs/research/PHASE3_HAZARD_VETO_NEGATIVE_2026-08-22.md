@@ -49,3 +49,23 @@ transferred; the decision rule did not.
    episodes, two seeds, strict predicate.
 3. This is the falsification that justifies a Deep Research round; the
    question travels with measured artifacts, not hunches.
+
+## CORRECTION (2026-08-23): scope narrowed — the TRAINING claim is void
+
+Post-experiment forensics on the options run exposed that
+`actor_freeze_steps: 1000000000000` (inherited from the campaign base
+profile, whose controller overrides it per phase) froze the ACTOR for
+the entire run in BOTH Phase-3 arms. Every "trained" policy in this
+experiment was the seed actor plus a trained critic — which is also why
+the void run's arms differed only in critic tensors.
+
+What SURVIVES: the eval-time result. 31/100 (seed policy) vs 0/100
+(seed policy under the veto at execution), and the 77.4% chosen-action
+veto overlap — the veto destroys a working policy's behavior, measured
+cleanly. What is VOID: any claim about PPO training UNDER the veto
+(gradient corruption in practice, training collapse). Those were never
+tested, because nothing trained. The v21 literature mechanisms remain
+literature, not our measurement.
+
+The standing instruction (no hazard-veto revival) is unchanged — the
+surviving eval-time result alone justifies it.
