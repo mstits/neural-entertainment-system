@@ -1,0 +1,127 @@
+# OPTIONS TREATMENT ARM (OPTIONS_PREREG_2026-08-22). Identical to the
+# Phase-3 control config except reinforce.commitment_options — asserted
+# key-by-key at generation. Control: 31/100 honest. Gate: >=0.372.
+name: Mario 1-2 options treatment
+rom_path: roms/Super Mario Bros. (World).nes
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+start_state_path: checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/stage_03.state
+description: 'SMB 1-2 online campaign: KL-anchored warm start from the A7 tile policy,
+  monotone wavefront shaping, self-imitation on clears, backward-curriculum restarts
+  at the x~2674 bottleneck approach, kernel-matched adversary held in reserve for
+  the hardening phase. Honest gate: cold greedy sticky-0.25 + jitter-16 1-2 clear
+  from the entrance.
+
+  '
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+reinforce:
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos
+  recurrent: false
+  tile_hidden_dim: 256
+  tile_trunk_dim: 64
+  layernorm: true
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  symlog_rewards: false
+  value_loss: huber
+  value_coef: 0.5
+  gamma: 0.99
+  gae_lambda: 0.95
+  bc_epochs: 0
+  warmup_gens_ga_only: 0
+  steps: 10
+  lr: 0.0001
+  ppo_clip_eps: 0.2
+  grad_clip: 1.0
+  async_pipeline: false
+  device: cpu
+  panic_isolation: false
+  rollout_steps: 1536
+  num_envs: 60
+  ppo_minibatch_size: 256
+  entropy_coef: 0.01
+  entropy_floor: 0.0
+  entropy_coef_max: 0.05
+  rnd_intrinsic_coef: 0.0
+  rnd_loss_coef: 0.0
+  sticky_action_prob: 0.0
+  sticky_episode_boundary_reset: true
+  wavefront_reward:
+    enabled: true
+    dmap: checkpoints/wavefront/mario_1_2_dmap.pkl
+    phi_target: 100.0
+    gamma: 0.99
+  wave_terminal_rule: monotone
+  kl_anchor_checkpoint: checkpoints/smodice_1_2/abl_A7/vanilla_ppo_iter_00000.pt
+  kl_beta_start: 0.5
+  kl_beta_end: 0.01
+  kl_beta_decay_steps: 50000000
+  actor_freeze_steps: 1000000000000
+  sil:
+    enabled: true
+    buffer_size: 64
+    bc_coef: 0.5
+  adversary:
+    budget_penalty: 0.1
+    entropy_coef: 0.01
+    epochs: 10
+    clip: 0.1
+    lr: 0.00025
+  backward_curriculum:
+    states_dir: checkpoints/online_1_2/restart_states
+    tau_init: -1
+    advance_actions: 1
+    advance_threshold: 0.3
+    min_attempts: 30
+    window_frames: 0
+    entrance_weight: 0.25
+    count_truncations: true
+    rung_step_budget:
+      base: 300
+      per_entry: 350
+  demo_anchor_enabled: false
+  bc_replay_enabled: false
+  preprocess_f16: false
+  smb_curriculum: false
+  commitment_options:
+    enabled: true
+    durations:
+    - 1
+    - 2
+    - 4
+max_episode_steps: 2400

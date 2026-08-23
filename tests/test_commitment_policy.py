@@ -140,3 +140,42 @@ def test_invalid_durations_are_rejected():
     for bad in ((), (0,), (-1, 2)):
         with pytest.raises(ValueError):
             _policy(durations=bad)
+
+
+def test_forward_ac_is_stateless_and_matches_step_distribution():
+    """The update pass must see the same pair distribution step() samples
+    from — behaviour and target must be the same object."""
+    torch.manual_seed(4)
+    p = _policy()
+    obs = torch.randn(3, 32)
+    lg1, v1 = p.forward_ac(obs)
+    lg2, v2 = p.forward_ac(obs)
+    assert torch.equal(lg1, lg2) and torch.equal(v1, v2)
+    assert lg1.shape == (3, p.num_pairs)
+    # step() at a decision uses exactly these logits
+    _, _, _, rec = p.step(obs, CommitState.initial(3))
+    assert torch.equal(rec["pair_logits"], lg1)
+
+
+def test_recurrent_surface_holds_commitments_across_calls():
+    """Eval rides the recurrent plumbing: zero h = fresh decision, and the
+    returned h carries the timer so the commitment survives between
+    forward calls with episode resets free."""
+    torch.manual_seed(5)
+    p = _policy(durations=(4,))
+    obs = torch.randn(2, 32)
+    h = torch.zeros(2, 2)
+    lg1, _v, h = p.forward_ac_recurrent(obs, h)
+    prim = lg1.argmax(-1)
+    for _ in range(3):
+        lg, _v, h = p.forward_ac_recurrent(torch.randn(2, 32), h)
+        assert torch.equal(lg.argmax(-1), prim), "commitment broke"
+    lg5, _v, h = p.forward_ac_recurrent(torch.randn(2, 32), h)
+    assert float(h[:, 1].min()) >= 0
+
+
+def test_zero_hidden_state_means_decide_now():
+    p = _policy()
+    _, _, h = p.forward_ac_recurrent(torch.randn(3, 32), torch.zeros(3, 2))
+    assert (h[:, 1] >= 0).all()
+    assert (h[:, 0] >= 1).all(), "no pair committed on a fresh state"

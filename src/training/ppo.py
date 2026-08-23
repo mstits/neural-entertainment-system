@@ -125,6 +125,7 @@ def ppo_losses(
     value_coef: float,
     entropy_coef: float,
     value_loss_kind: str,
+    entropy_weights: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """PPO clipped-surrogate + value + entropy loss for one minibatch.
 
@@ -157,7 +158,16 @@ def ppo_losses(
 
     # Entropy bonus.
     probs = log_probs_all.exp()
-    entropy = -(probs * log_probs_all).sum(dim=-1).mean()
+    per_row_entropy = -(probs * log_probs_all).sum(dim=-1)
+    if entropy_weights is not None:
+        # Duration-scaled entropy for commitment options (v22): a k-step
+        # decision's bonus is multiplied by k so 1000 env steps earn the
+        # same total entropy whether spent as 1000 k=1 decisions or 250
+        # k=4 decisions. Without this the optimizer itself drives the
+        # policy back to k=1 by letting it decide (and collect the bonus)
+        # four times as often. None = exact legacy behavior.
+        per_row_entropy = per_row_entropy * entropy_weights.float()
+    entropy = per_row_entropy.mean()
 
     # Value loss.
     if value_loss_kind == "mse":

@@ -827,10 +827,36 @@ def eval_one_game(
         # its GRU hidden state threaded through the step loop below; loading
         # it into the stateless net would leave a non-empty `missing` set
         # (the GRU weights) and eval a half-random policy.
-        net, is_recurrent = build_tile_policy_from_checkpoint(
-            state, num_actions=len(bitmasks), feature_dim=net_feature_dim,
-        )
-        net_kind = type(net).__name__
+        _commit_cfg = ((profile.get("reinforce", {}) or {})
+                       .get("commitment_options") or {})
+        if _commit_cfg.get("enabled"):
+            # Commitment-options checkpoint: an 18-way (primitive,
+            # duration) head whose timer rides the RECURRENT plumbing —
+            # hidden state (pair, remaining) is zeroed at episode starts
+            # by the same machinery that resets a GRU, giving fresh-
+            # decision semantics with no harness changes. Pair choice at
+            # decisions is greedy inside the driver; the emitted primitive
+            # logits are near-one-hot so both harness selection modes
+            # follow the commitment.
+            from src.training.commitment_policy import CommitmentPolicy
+            _sd = state["net_state_dict"]
+            _flat_sd = {k[len("trunk.flat."):]: v for k, v in _sd.items()
+                        if k.startswith("trunk.flat.")}
+            _flat, _ = build_tile_policy_from_checkpoint(
+                {"net_state_dict": _flat_sd},
+                num_actions=len(bitmasks), feature_dim=net_feature_dim,
+            )
+            net = CommitmentPolicy.from_flat_policy(
+                _flat, trunk_dim=_flat.fc2.out_features,
+                num_primitives=len(bitmasks),
+                durations=tuple(_commit_cfg.get("durations", (1, 2, 4))))
+            is_recurrent = True          # rides the hidden-state plumbing
+            net_kind = "CommitmentPolicy"
+        else:
+            net, is_recurrent = build_tile_policy_from_checkpoint(
+                state, num_actions=len(bitmasks), feature_dim=net_feature_dim,
+            )
+            net_kind = type(net).__name__
         # Load non-strict so older checkpoints with extra aux heads still
         # load, but FAIL LOUD if core weights are missing — a silent
         # partial load would eval a half-random policy and still print

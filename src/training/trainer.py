@@ -1597,8 +1597,35 @@ class Trainer:
         control arm a true control.
         """
         net = self._make_network_raw(num_actions)
-        cfg = ((self.game_profile.get("reinforce", {}) or {})
-               .get("hazard_mask") or {})
+        rl_cfg = self.game_profile.get("reinforce", {}) or {}
+
+        commit_cfg = rl_cfg.get("commitment_options") or {}
+        if commit_cfg.get("enabled"):
+            # Action-commitment options (OPTIONS_PREREG_2026-08-22): the
+            # policy's head is over (primitive, duration) pairs; the
+            # commitment TIMER lives in the rollout loop, which holds the
+            # chosen pair for k steps and marks held rows invalid so the
+            # update only ever sees decisions. Tile, non-recurrent only —
+            # the pseudo-recurrent eval surface reuses the recurrent
+            # plumbing, so a genuinely recurrent base would collide.
+            if (rl_cfg.get("hazard_mask") or {}).get("enabled"):
+                raise ValueError("commitment_options and hazard_mask are "
+                                 "mutually exclusive")
+            if self._recurrent or not self._is_tile_mode:
+                raise ValueError("commitment_options requires the "
+                                 "non-recurrent tile policy")
+            from src.training.commitment_policy import CommitmentPolicy
+            durations = tuple(commit_cfg.get("durations", (1, 2, 4)))
+            wrapped = CommitmentPolicy.from_flat_policy(
+                net, trunk_dim=net.fc2.out_features,
+                num_primitives=len(self.action_space),
+                durations=durations)
+            self._commit_durations = durations
+            print(f"[commitment] ARMED durations={durations} "
+                  f"pairs={wrapped.num_pairs}", flush=True)
+            return wrapped
+
+        cfg = rl_cfg.get("hazard_mask") or {}
         if not cfg.get("enabled"):
             return net
         from src.training.hazard_mask import HazardMask, HazardMaskedPolicy
@@ -1774,7 +1801,17 @@ class Trainer:
         # The string-entry / unknown-button guards (this exact bug bit
         # the canonical profile in commit d76c4ab) moved there too.
         from src.training.profile_utils import action_space_to_bitmasks
-        return action_space_to_bitmasks(self.action_space)
+        table = action_space_to_bitmasks(self.action_space)
+        commit_cfg = ((self.game_profile.get("reinforce", {}) or {})
+                      .get("commitment_options") or {})
+        if commit_cfg.get("enabled"):
+            # Pair index -> its primitive's bitmask, pair-major order
+            # matching CommitmentPolicy.pair_of. The pool sees only
+            # primitives; durations exist purely in the policy/rollout.
+            durations = tuple(commit_cfg.get("durations", (1, 2, 4)))
+            table = tuple(table[p_ // len(durations)]
+                          for p_ in range(len(table) * len(durations)))
+        return table
 
 
     def run(
@@ -6525,6 +6562,19 @@ class Trainer:
             adv_value_steps: list[torch.Tensor] = []
             exec_mask_buf[:] = False
             trunc_buf[:] = False
+            # Commitment options: the timer lives HERE, not in the module,
+            # so the update-pass network stays stateless. Reset at iter
+            # start — a commitment crossing the iter boundary is truncated
+            # once per 1,536 steps, a negligible and unbiased edge.
+            _commit_on = getattr(self, "_commit_durations", None) is not None
+            if _commit_on:
+                _cd = np.asarray(self._commit_durations, dtype=np.int64)
+                _commit_pair = np.zeros(num_envs, dtype=np.int64)
+                _commit_left = np.zeros(num_envs, dtype=np.int64)
+                _commit_held_buf = np.zeros((rollout_steps, num_envs),
+                                            dtype=np.bool_)
+                _entw_buf = np.ones((rollout_steps, num_envs),
+                                    dtype=np.float32)
             if _kadv is not None:
                 _kadv.begin_iter()
             with torch.no_grad():
@@ -6576,6 +6626,23 @@ class Trainer:
                     log_probs_all = F.log_softmax(logits_cpu, dim=-1)
                     probs = log_probs_all.exp()
                     actions = torch.multinomial(probs, num_samples=1).squeeze(-1)
+                    if _commit_on:
+                        # Hold the committed pair for its duration. Held
+                        # rows keep executing the SAME primitive (their
+                        # pair maps to it via the expanded bitmask table)
+                        # and are marked held so the result loop leaves
+                        # them invalid — the update sees only decisions.
+                        _acts_np = actions.numpy()
+                        _held = _commit_left > 0
+                        _acts_np[_held] = _commit_pair[_held]
+                        _new = ~_held
+                        _commit_pair[_new] = _acts_np[_new]
+                        _commit_left[_new] = _cd[_acts_np[_new] % len(_cd)]
+                        _commit_left -= 1
+                        _commit_held_buf[t] = _held
+                        _entw_buf[t] = np.where(
+                            _held, 1.0,
+                            _cd[_acts_np % len(_cd)].astype(np.float32))
                     log_probs_taken = log_probs_all.gather(
                         1, actions.unsqueeze(1)
                     ).squeeze(1)
@@ -6588,8 +6655,23 @@ class Trainer:
                         # applied per env in the result loop below, only
                         # after the actor unfreezes (while frozen pi IS the
                         # prior, so the KL is identically ~0 anyway).
+                        _kl_lp = log_probs_all
+                        if _commit_on:
+                            # The anchor prior is over PRIMITIVES; compare
+                            # it to the policy's primitive MARGINAL:
+                            # logsumexp over each primitive's duration
+                            # group. Pair-major layout makes that a
+                            # reshape. Same anchor semantics ("stay near
+                            # the banked primitive distribution"), so the
+                            # arms stay comparable — durations are exactly
+                            # the treatment's added freedom and are
+                            # correctly NOT penalized by the anchor.
+                            _kl_lp = torch.logsumexp(
+                                log_probs_all.reshape(
+                                    log_probs_all.shape[0], -1, len(_cd)),
+                                dim=-1)
                         _kl_step = self._kl_anchor.kl_divergence(
-                            batch_t, log_probs_all
+                            batch_t, _kl_lp
                         )
                         _kl_pen_step = (
                             None if self._kl_anchor.frozen
@@ -7002,7 +7084,18 @@ class Trainer:
                             _kl_div_n += 1
                         reward_buf[t, i] = reward
                         done_buf[t, i] = done
-                        valid_buf[t, i] = True  # real executed step (incl. death)
+                        # Commitment options: held (non-decision) rows stay
+                        # INVALID — their reward/value/done still feed the
+                        # per-step GAE recursion (dense critic view), but
+                        # the update never treats them as sampled actions.
+                        # A done also cuts the commitment so the next step
+                        # of that env decides fresh.
+                        if _commit_on:
+                            valid_buf[t, i] = not _commit_held_buf[t, i]
+                            if done:
+                                _commit_left[i] = 0
+                        else:
+                            valid_buf[t, i] = True  # real executed step (incl. death)
                         ep_returns[i] += reward
                         ep_lengths[i] += 1
                         if sil_on:
@@ -7414,6 +7507,7 @@ class Trainer:
                 rollout_steps=rollout_steps, num_envs=num_envs,
                 obs_shape=obs_shape, global_it=global_it, sam_rho=_sam_rho,
                 trunc_buf=(trunc_buf if wave_monotone else None),
+                entropy_weight_buf=(_entw_buf if _commit_on else None),
             )
             reward_buf = _upd["reward_buf"]
             valid_flat = _upd["valid_flat"]

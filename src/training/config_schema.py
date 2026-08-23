@@ -34,6 +34,9 @@ KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     # above a predicted death probability. Genuinely consumed by
     # Trainer._make_network, which is the bar this set enforces.
     "hazard_mask",
+    # Action-commitment options (OPTIONS_PREREG_2026-08-22): consumed by
+    # Trainer._make_network, the rollout overlay, and eval_game.
+    "commitment_options",
     "actor_freeze_steps", "advance", "adversary", "asm_bulk_cycles",
     "async_pipeline", "autocast_fp16",
     "backward_curriculum",

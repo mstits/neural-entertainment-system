@@ -54,7 +54,7 @@ class PPOUpdater:
         self, *, net, optimizer, obs_buf, action_buf, reward_buf, value_buf,
         log_prob_buf, done_buf, valid_buf, bonus_buf, final_values_np,
         rollout_steps, num_envs, obs_shape, global_it, sam_rho,
-        trunc_buf=None,
+        trunc_buf=None, entropy_weight_buf=None,
     ) -> dict:
         """Run the core PPO update on one filled rollout, mutating `net`,
         `optimizer`, and the RND predictor in place.
@@ -200,6 +200,17 @@ class PPOUpdater:
         ).to(t.device)
         log_probs_old_all = torch.from_numpy(log_prob_old_flat).to(t.device).float()
         adv_all = torch.from_numpy(adv_flat).to(t.device).float()
+        # Commitment options: per-row entropy weights (the intended
+        # duration k at decision rows). None on every other path — and
+        # None reproduces legacy entropy exactly (tested in ppo.py).
+        # FULL flat like actions_all/adv_all: mb_idx carries full-flat
+        # indices (a permutation of valid_indices), so pre-filtering here
+        # would misalign every minibatch row.
+        entw_all = None
+        if entropy_weight_buf is not None:
+            entw_all = torch.from_numpy(
+                entropy_weight_buf.reshape(-1)
+            ).to(t.device).float()
         target_all = torch.from_numpy(target_flat).to(t.device).float()
         obs_all = (
             torch.from_numpy(obs_flat).to(t.device).float()
@@ -357,6 +368,8 @@ class PPOUpdater:
                     value_coef=t.value_coef,
                     entropy_coef=t.entropy_coef,
                     value_loss_kind=t.value_loss_kind,
+                    entropy_weights=(entw_all[mb_idx]
+                                     if entw_all is not None else None),
                 )
                 # Demo anchor (DQfD-style): every PPO minibatch also
                 # draws a demo minibatch from the fixed bank and adds

@@ -130,6 +130,49 @@ class CommitmentPolicy(nn.Module):
                   "pair_logits": pair_logits}
         return prim_logits, values, new_state, record
 
+    def forward_ac(self, obs: torch.Tensor):
+        """Stateless (pair_logits, values) — the TRAINER-facing surface.
+
+        During training the commitment timer lives in the ROLLOUT LOOP,
+        not in the module: the trainer samples a pair at decision steps,
+        then holds the committed pair and marks the held rows invalid so
+        the update never sees them. That keeps this module stateless for
+        the update pass (same logits for the same obs, which the PPO
+        ratio requires) while `step()` remains the stateful driver for
+        evaluation.
+        """
+        h = self.trunk(obs)
+        return self.pair_actor(h), self.critic(h).squeeze(-1)
+
+    def initial_hidden(self, batch: int, device=None) -> torch.Tensor:
+        """Zero state = no commitment = decide now. Shape (batch, 2)."""
+        return torch.zeros(batch, 2, device=device)
+
+    def forward_ac_recurrent(self, obs: torch.Tensor, h: torch.Tensor):
+        """The commitment timer as pseudo-recurrent state, for EVAL.
+
+        The eval harness already threads hidden state for recurrent nets
+        and ZEROES it at episode boundaries — exactly the reset semantics
+        a commitment timer needs, obtained without touching the harness.
+        h is (B, 2) float: [committed pair, remaining]; zeros = fresh
+        episode = decide now.
+
+        Pair choice at decisions is GREEDY argmax: the honest protocol's
+        greedy mode is exactly this, and the emitted primitive logits are
+        near-one-hot so the harness's own argmax follows the commitment.
+        Returns (primitive_logits, values, new_h).
+        """
+        b = obs.shape[0]
+        state = CommitState(
+            pair=h[:, 0].long() - 1,           # stored +1 so zeros = none
+            remaining=h[:, 1].long())
+        prim_logits, values, new_state, _rec = self.step(obs, state,
+                                                         sample=False)
+        new_h = torch.stack([(new_state.pair + 1).float(),
+                             new_state.remaining.clamp(min=0).float()],
+                            dim=1)
+        return prim_logits, values, new_h
+
     @classmethod
     def from_flat_policy(cls, flat: nn.Module, trunk_dim: int,
                          num_primitives: int,
