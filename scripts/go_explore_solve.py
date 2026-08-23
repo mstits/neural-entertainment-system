@@ -638,6 +638,13 @@ def _wd(ram) -> tuple:
     return (int(ram[R_WORLD]), int(ram[R_LEVEL]))
 
 
+#: Pseudo-addresses where Solver._xram appends the scroll-odometer
+#: integral (little-endian, 3 bytes, clamped to [0, 0xFFFFFF]) past the
+#: 2KB RAM snapshot. Indexing them on an unextended snapshot is a LOUD
+#: IndexError by design — a path that forgot the extension must not
+#: silently read zeros as progress.
+ODO_LO = 0x800
+
 GX_BUCKET = 16   # overridable via --gx-bucket (micro-search: 8)
 Y_BAND = 32      # overridable via --y-band (micro-search: 16)
 
@@ -1290,6 +1297,29 @@ class GenericGame:
         s = profile["solve"]
         self.rom = str(REPO / s["rom"])
         p = s["progress"]
+        # PPU SCROLL ODOMETER progress (optional): `progress: {source:
+        # odometer, axis: x|y}`. The progress observable is the in-core
+        # camera integral (nes_core odometer, certified by
+        # scripts/odometer_cert.py) instead of a discovered RAM byte —
+        # the hardware-surface signal for games whose RAM bytes failed
+        # the progress-signal gate (Rygar's saturating $0015, Ninja
+        # Gaiden's dud). The Solver appends the clamped 24-bit integral
+        # to every worker's RAM snapshot at pseudo-addresses
+        # 0x800..0x802 (see Solver._xram), so every existing consumer —
+        # cells, glitch filter, macros — reads it through the ordinary
+        # lo/hi path. verify_ram_map receipts do not apply: the
+        # instrument is certified by odometer_cert + the gate, not by
+        # RAM verification.
+        self.odometer_axis = None
+        if str(p.get("source", "")).lower() == "odometer":
+            axis = str(p.get("axis", "x")).lower()
+            if axis not in ("x", "y"):
+                raise SystemExit(
+                    f"[go_explore_solve] progress.axis must be x or y, "
+                    f"got {axis!r}")
+            self.odometer_axis = axis
+            p = dict(p)
+            p["lo"], p["hi"] = ODO_LO, ODO_LO + 1
         # Decoded HUD-field progress (optional): score/money games (DuckTales)
         # have no monotone spatial frontier — the objective is a multi-tile
         # decimal HUD field. `progress: {tiles: [addrs MSB-first], blank: B,
@@ -2443,6 +2473,17 @@ class Solver:
         apply_hw_flags(self.pool, self.hw_flags)
         self.pool.set_headless(True)
         self.pool.set_skip_preprocess(True)
+        self._odo = getattr(self.game, "odometer_axis", None) is not None
+        if self._odo:
+            if not hasattr(self.pool, "set_odometer_enabled"):
+                raise SystemExit(
+                    "[go_explore_solve] progress.source: odometer but this "
+                    "nes_core build has no odometer binding — rebuild "
+                    "(make build) before solving with this profile.")
+            self.pool.set_odometer_enabled(True)
+            print(f"[go_explore_solve] progress source: PPU scroll odometer "
+                  f"(axis {self.game.odometer_axis})", flush=True)
+        self._odo_now: list = []
         self.pool.reset_all()
         self.provenance = hw_provenance(self.hw_flags, self.frame_skip)
         if self.hw_flags:
@@ -2788,10 +2829,56 @@ class Solver:
         # headless runs (zero overhead).
         self.step_hook = None
 
+    def _odo_refresh(self, pool=None) -> None:
+        """Snapshot every worker's odometer straight after a step_all
+        (state read, no side effects) so _xram can extend RAM without a
+        per-worker Rust round-trip."""
+        if self._odo:
+            self._odo_now = (pool or self.pool).get_odometer_per_worker()
+
+    def _xram(self, ram, wid: int):
+        """Extend one worker's 2KB RAM snapshot with the scroll-odometer
+        integral at ODO_LO..ODO_LO+2 (little-endian, clamped to 24 bits;
+        backward-of-origin clamps to 0 — regress is not negative
+        progress, it is no progress). No-op when the profile doesn't use
+        the odometer, so non-odometer solves keep zero overhead and
+        their exact snapshot identity."""
+        if not self._odo:
+            return ram
+        x, y = self._odo_now[wid]
+        v = x if self.game.odometer_axis == "x" else y
+        v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
+        base = (np.frombuffer(ram, dtype=np.uint8)
+                if isinstance(ram, (bytes, bytearray)) else ram)
+        ext = np.empty(len(base) + 3, dtype=np.uint8)
+        ext[:len(base)] = base
+        ext[ODO_LO] = v & 0xFF
+        ext[ODO_LO + 1] = (v >> 8) & 0xFF
+        ext[ODO_LO + 2] = (v >> 16) & 0xFF
+        return ext
+
+    def _xram_local(self, ram, pool):
+        """_xram against a FRESH single-worker pool (replay paths). The
+        replay pool's odometer was enabled by the v3 blob it loaded, so
+        the read is coherent with what the live search saw."""
+        x, y = pool.get_odometer_per_worker()[0]
+        v = x if self.game.odometer_axis == "x" else y
+        v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
+        base = (np.frombuffer(ram, dtype=np.uint8)
+                if isinstance(ram, (bytes, bytearray)) else ram)
+        ext = np.empty(len(base) + 3, dtype=np.uint8)
+        ext[:len(base)] = base
+        ext[ODO_LO] = v & 0xFF
+        ext[ODO_LO + 1] = (v >> 8) & 0xFF
+        ext[ODO_LO + 2] = (v >> 16) & 0xFF
+        return ext
+
     def _step0(self, a: int):
         acts = np.zeros(self.args.workers, dtype=np.uint8)
         acts[0] = self.bitmasks[a]
-        return self.pool.step_all(acts)[0][2]
+        out = self.pool.step_all(acts)
+        self._odo_refresh()
+        return self._xram(out[0][2], 0)
 
     # ---- record path -------------------------------------------------
 
@@ -3185,6 +3272,8 @@ class Solver:
             for i, a in enumerate(list(trace) + [0] * margin):
                 acts[0] = self.bitmasks[int(a)]
                 ram = pool.step_all(acts)[0][2]
+                if self._odo:
+                    ram = self._xram_local(ram, pool)
                 # Same modality the live hook saw, or the replay judges a
                 # different detector than the one that fired.
                 if needs_apu:
@@ -3425,6 +3514,8 @@ class Solver:
                 for i, a in enumerate(list(actions) + [0] * margin):
                     acts[0] = self.bitmasks[int(a)]
                     ram = pool.step_all(acts)[0][2]
+                    if self._odo:
+                        ram = self._xram_local(ram, pool)
                     if needs_apu:
                         ctx["_apu_mask"] = pool.apu_activity_all()[0]
                     if i < len(actions) and self.game.is_dead(
@@ -4843,6 +4934,7 @@ class Solver:
             for wid, prog in enumerate(progs):
                 acts[wid] = prog[t - 1]
             results = self.pool.step_all(acts)
+            self._odo_refresh()
             self.steps_done += int(self.args.workers)
             self._gate_counters["steps"] += int(self.args.workers)
             for wid, (t0, t1, t2) in enumerate(points):
@@ -4861,7 +4953,7 @@ class Solver:
                 # check that can only refuse. The sampler's job is just
                 # to record it, labelled by n_settle=t0 below.
                 if t <= t0 + 1:
-                    ram = results[wid][2]
+                    ram = self._xram(results[wid][2], wid)
                     settle_pos[wid].append((self.game.progress(ram),
                                             self.game.y(ram)))
                 if t <= undirected[wid]:
@@ -5216,6 +5308,7 @@ class Solver:
                 c["pending"] = a
                 acts[i] = self.bitmasks[a]
             results = self.pool.step_all(acts)
+            self._odo_refresh()
             # One byte per worker, read straight after the step (state read,
             # no stepping, no side effects). None unless a profile's clear
             # hook asked for the audio modality, so the default hot loop is
@@ -5228,7 +5321,7 @@ class Solver:
                 except Exception:
                     pass
             for i, c in enumerate(ctx):
-                ram = results[i][2]
+                ram = self._xram(results[i][2], i)
                 if apu_all is not None:
                     c["_apu_mask"] = apu_all[i]
                 c["trace"].append(c["pending"])

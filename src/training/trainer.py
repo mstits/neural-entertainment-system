@@ -1649,19 +1649,34 @@ class Trainer:
         if self._is_tile_mode:
             if self._recurrent:
                 from src.models.tile_policy import TileRecurrentPolicyNetwork
-                return TileRecurrentPolicyNetwork(
+                net = TileRecurrentPolicyNetwork(
                     num_actions=head_actions,
                     feature_dim=self._tile_feature_dim,
                     hidden_dim=self._tile_hidden_dim,
                     gru_dim=self._tile_trunk_dim,
                 )
-            from src.models.tile_policy import TilePolicyNetwork
-            return TilePolicyNetwork(
-                num_actions=head_actions,
-                feature_dim=self._tile_feature_dim,
-                hidden_dim=self._tile_hidden_dim,
-                trunk_dim=self._tile_trunk_dim,
+            else:
+                from src.models.tile_policy import TilePolicyNetwork
+                net = TilePolicyNetwork(
+                    num_actions=head_actions,
+                    feature_dim=self._tile_feature_dim,
+                    hidden_dim=self._tile_hidden_dim,
+                    trunk_dim=self._tile_trunk_dim,
+                )
+            # Armed-evidence line: the policy CLASS is the experimental
+            # variable in policy-class A/Bs, and the preflight
+            # (scripts/experiment_preflight.py) needs positive log proof
+            # of which class actually trained — a silently-ignored
+            # `recurrent:` knob must not be discoverable only by autopsy.
+            log.info(
+                "[policy] class=%s params=%d (hidden=%d, trunk/gru=%d, "
+                "features=%d, actions=%d)",
+                type(net).__name__,
+                sum(p.numel() for p in net.parameters()),
+                self._tile_hidden_dim, self._tile_trunk_dim,
+                self._tile_feature_dim, head_actions,
             )
+            return net
         return PolicyNetwork(
             num_actions=head_actions,
             encoder=self.encoder_kind,

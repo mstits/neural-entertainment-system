@@ -47,7 +47,14 @@ solve:
   # decrement underflows to 255 and no "lives went down" test can see the
   # death — which is why that run sat at 36 cells for 40 minutes and why
   # it must NOT be filed as a game difficulty wall.
-  progress: {lo: 0x0015}
+  # 2026-08-23: $0015 FAILED the progress-signal gate (21 distinct
+  # values, saturates at 209, no paired high byte — the archive could
+  # not represent being further along; 73 min of search, 116 cells,
+  # zero progress). Replaced by the PPU scroll odometer: certified
+  # 5/5 (scripts/odometer_cert.py), gate re-run SOUND at 117 distinct
+  # over 470 px (runs/odometer/gate_rygar_2026-08-23.json). Hardware
+  # surface — same purity class as pixels/OAM.
+  progress: {source: odometer, axis: x}
   y: 0x002B
   lives: 0x0303
   # Empty until a real clear is captured; guessing it is authored
