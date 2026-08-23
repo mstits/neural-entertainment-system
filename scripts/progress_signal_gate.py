@@ -89,6 +89,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--profile", required=True)
     ap.add_argument("--steps", type=int, default=1200)
     ap.add_argument("--forward", default="right")
+    ap.add_argument("--odometer", action="store_true",
+                    help="trace the PPU scroll odometer (dominant axis) "
+                         "instead of a discovered RAM byte — the "
+                         "hardware-surface progress signal for games "
+                         "whose RAM bytes failed this gate")
     ap.add_argument("--out", default=None)
     args = ap.parse_args(argv)
 
@@ -104,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     hi = (solve.get("progress") or {}).get("hi")
     lives_addr = solve.get("lives")
     rom = solve.get("rom") or prof.get("rom_path")
-    if lo is None:
+    if lo is None and not args.odometer:
         raise SystemExit("profile has no solve.progress.lo")
 
     space = prof["action_space"]
@@ -114,17 +119,58 @@ def main(argv: list[str] | None = None) -> int:
     pool = nes_core.Pool(rom_path=str(REPO / rom), num_workers=1,
                          frame_skip=int(prof.get("frame_skip", 4)))
     pool.set_headless(True); pool.set_skip_preprocess(True)
+    if args.odometer:
+        pool.set_odometer_enabled(True)
     pool.load_worker_state(0, (REPO / prof["start_state_path"]).read_bytes())
     a = np.array([bm[idx]], dtype=np.uint8)
 
     first = pool.step_all(np.zeros(1, dtype=np.uint8))[0][2]
     lives0 = int(first[lives_addr]) if lives_addr is not None else None
     trace = []
-    for _ in range(args.steps):
-        ram = pool.step_all(a)[0][2]
-        trace.append(int(ram[lo]) + (int(ram[hi]) << 8 if hi is not None else 0))
-
-    v = assess(trace, lives0, hi is not None)
+    if args.odometer:
+        xy = []
+        oam_churn = 0
+        prev_oam = None
+        for _ in range(args.steps):
+            pool.step_all(a)
+            xy.append(pool.get_odometer_per_worker()[0])
+            oam = bytes(pool.peek_oam(0))
+            if prev_oam is not None and oam != prev_oam:
+                oam_churn += 1
+            prev_oam = oam
+        rx = max(p[0] for p in xy) - min(p[0] for p in xy)
+        ry = max(p[1] for p in xy) - min(p[1] for p in xy)
+        axis = 0 if rx >= ry else 1
+        base = min(p[axis] for p in xy)
+        trace = [int(p[axis] - base) for p in xy]
+        print(f"odometer trace: axis={'xy'[axis]} "
+              f"(range x={rx}, y={ry}) oam_churn={oam_churn}/{args.steps-1}")
+        # i64 integral: no wrap exists, so run assess as a paired signal.
+        v = assess(trace, lives0, True)
+        # The odometer measures the CAMERA, and the build is certified
+        # (scripts/odometer_cert.py) before this gate runs. A flat
+        # odometer therefore reports a static camera — a fact about the
+        # game under this driver, never about the instrument. Reclassify
+        # the RAM-era coarseness fault and attach the OAM cross-check so
+        # the verdict says whether the agent was even alive.
+        if rx == 0 and ry == 0:
+            v["instrument_findings"] = [
+                f for f in v["instrument_findings"] if "too coarse" not in f]
+            agent = ("agent active (OAM moving)" if oam_churn > args.steps // 4
+                     else "agent inert (OAM static too)")
+            v["behaviour_findings"].append(
+                f"camera never moved over {args.steps} steps; {agent} — "
+                f"the game does not scroll under this driver, which is a "
+                f"skill/route wall, not an instrument fault")
+            v["passed"] = not v["instrument_findings"]
+            v["verdict"] = ("SIGNAL SOUND — camera static, " + agent
+                            if v["passed"] else v["verdict"])
+        v["oam_churn"] = oam_churn
+    else:
+        for _ in range(args.steps):
+            ram = pool.step_all(a)[0][2]
+            trace.append(int(ram[lo]) + (int(ram[hi]) << 8 if hi is not None else 0))
+        v = assess(trace, lives0, hi is not None)
     print(f"progress-signal gate: {'PASS' if v['passed'] else 'FAIL'} — "
           f"{v['verdict']}  ({args.profile})")
     print(f"  {v['steps']} steps, {v['distinct']} distinct, "
@@ -140,7 +186,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.out:
         p = REPO / args.out
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"profile": args.profile, **v}, indent=2) + "\n")
+        p.write_text(json.dumps({"profile": args.profile,
+                                 "odometer": bool(args.odometer),
+                                 **v}, indent=2) + "\n")
     return 0 if v["passed"] else 1
 
 

@@ -38,6 +38,14 @@ use crate::oam_dma;
 pub const ENVELOPE_MAGIC: u32 = 0x5341_5645;
 pub const ENVELOPE_VERSION_1: u32 = 1;
 pub const ENVELOPE_VERSION_2: u32 = 2;
+/// version 3 — payload is `bincode((nes::State, oam_dma::State,
+/// ppu::OdoState))`. Written only when the PPU odometer is enabled, so
+/// default saves stay byte-identical to the previous writer and every
+/// consumer that has not opted in sees no format change at all. The
+/// odometer accumulator MUST travel inside the savestate: Go-Explore
+/// restores states thousands of times per run, and an external
+/// accumulator desyncs on the first restore.
+pub const ENVELOPE_VERSION_3: u32 = 3;
 pub const ENVELOPE_HEADER_LEN: usize = 8;
 
 /// Opt-in knob for version-2 writes. Read once per process: flipping
@@ -60,6 +68,20 @@ pub fn encode_state(nes: &Nes) -> bincode::Result<Vec<u8>> {
 /// Encode with an explicit format choice. `v2 == false` is the legacy
 /// untagged writer, byte-identical to `bincode::serialize(&get_state())`.
 pub fn encode_state_with(nes: &Nes, v2: bool) -> bincode::Result<Vec<u8>> {
+    // Odometer on -> version 3 unconditionally: coherence across
+    // restores is the entire point of carrying it in the blob.
+    if nes.ppu.odometer_enabled {
+        let payload = bincode::serialize(&(
+            nes.get_state(),
+            nes.oam_dma.get_state(),
+            nes.ppu.get_odo_state(),
+        ))?;
+        let mut blob = Vec::with_capacity(ENVELOPE_HEADER_LEN + payload.len());
+        blob.extend_from_slice(&ENVELOPE_MAGIC.to_le_bytes());
+        blob.extend_from_slice(&ENVELOPE_VERSION_3.to_le_bytes());
+        blob.extend_from_slice(&payload);
+        return Ok(blob);
+    }
     if !v2 {
         return bincode::serialize(&nes.get_state());
     }
@@ -78,22 +100,32 @@ pub fn has_envelope(body: &[u8]) -> bool {
 
 /// Decode a state blob of any supported format. Legacy and version-1
 /// blobs yield a default (inactive) OAM-DMA snapshot.
-pub fn decode_state(body: &[u8]) -> bincode::Result<(nes::State, oam_dma::State)> {
+pub fn decode_state(
+    body: &[u8],
+) -> bincode::Result<(nes::State, oam_dma::State, crate::ppu::OdoState)> {
     if !has_envelope(body) {
         let state: nes::State = bincode::deserialize(body)?;
-        return Ok((state, oam_dma::State::default()));
+        return Ok((state, oam_dma::State::default(), Default::default()));
     }
     let version = u32::from_le_bytes(body[4..8].try_into().expect("length checked"));
     let payload = &body[ENVELOPE_HEADER_LEN..];
     match version {
         ENVELOPE_VERSION_1 => {
             let state: nes::State = bincode::deserialize(payload)?;
-            Ok((state, oam_dma::State::default()))
+            Ok((state, oam_dma::State::default(), Default::default()))
         }
-        ENVELOPE_VERSION_2 => bincode::deserialize::<(nes::State, oam_dma::State)>(payload),
+        ENVELOPE_VERSION_2 => {
+            let (s, o) = bincode::deserialize::<(nes::State, oam_dma::State)>(payload)?;
+            Ok((s, o, Default::default()))
+        }
+        ENVELOPE_VERSION_3 => bincode::deserialize::<(
+            nes::State,
+            oam_dma::State,
+            crate::ppu::OdoState,
+        )>(payload),
         v => Err(Box::new(bincode::ErrorKind::Custom(format!(
             "unsupported savestate envelope version {v} \
-             (this build reads versions 1..={ENVELOPE_VERSION_2})"
+             (this build reads versions 1..={ENVELOPE_VERSION_3})"
         )))),
     }
 }
@@ -102,9 +134,21 @@ pub fn decode_state(body: &[u8]) -> bincode::Result<(nes::State, oam_dma::State)
 /// unconditionally: a legacy/version-1 decode carries the inactive
 /// default, so a restore never inherits a stale in-flight transfer
 /// from the destination machine.
-pub fn apply_decoded(nes: &mut Nes, state: &nes::State, oam_dma: &oam_dma::State) {
+pub fn apply_decoded(
+    nes: &mut Nes,
+    state: &nes::State,
+    oam_dma: &oam_dma::State,
+    odo: &crate::ppu::OdoState,
+) {
     nes.apply_state(state);
     nes.oam_dma.apply_state(oam_dma);
+    // A v1/v2 blob carries the zeroed default. Restoring it would erase
+    // a live odometer on every legacy-rooted restore, so a default-and-
+    // disabled snapshot leaves the current odometer configuration
+    // alone; a v3 snapshot is applied verbatim (that IS coherence).
+    if odo.enabled {
+        nes.ppu.apply_odo_state(odo);
+    }
 }
 
 #[cfg(test)]
@@ -259,8 +303,8 @@ mod tests {
         old_nes.apply_state(&state);
 
         let mut new_nes = fixture_nes();
-        let (state, oam_dma) = decode_state(&golden).expect("new reader parses golden blob");
-        apply_decoded(&mut new_nes, &state, &oam_dma);
+        let (state, oam_dma, odo) = decode_state(&golden).expect("new reader parses golden blob");
+        apply_decoded(&mut new_nes, &state, &oam_dma, &odo);
 
         assert_eq!(state_digest(&old_nes), state_digest(&new_nes));
         for frame in 0..60 {
@@ -290,7 +334,7 @@ mod tests {
         }
         // The 2048 prefix is structural, not incidental: it IS the
         // serialized RAM length, pinned by the RAM array size.
-        let (state, _) = decode_state(&golden).expect("decode golden");
+        let (state, _, _) = decode_state(&golden).expect("decode golden");
         assert_eq!(state.ram.len(), 0x0800);
 
         let v2 = encode_state_with(&mid_dma_machine(), true).expect("v2 encode");
@@ -310,12 +354,12 @@ mod tests {
         let mut src = mid_dma_machine();
         let blob = encode_state_with(&src, true).expect("v2 encode");
 
-        let (state, oam_dma) = decode_state(&blob).expect("v2 decode");
+        let (state, oam_dma, odo) = decode_state(&blob).expect("v2 decode");
         assert_eq!(oam_dma, src.oam_dma.get_state());
         assert!(oam_dma.active, "mid-transfer DMA must survive the round trip");
 
         let mut restored = fixture_nes();
-        apply_decoded(&mut restored, &state, &oam_dma);
+        apply_decoded(&mut restored, &state, &oam_dma, &odo);
         assert_eq!(state_digest(&src), state_digest(&restored));
         assert_eq!(restored.oam_dma.get_state(), src.oam_dma.get_state());
 
@@ -339,7 +383,7 @@ mod tests {
         let src = mid_dma_machine();
 
         let legacy = encode_state_with(&src, false).expect("legacy encode");
-        let (state, oam_dma) = decode_state(&legacy).expect("legacy decode");
+        let (state, oam_dma, odo) = decode_state(&legacy).expect("legacy decode");
         assert!(!oam_dma.active);
         assert_eq!(oam_dma, crate::oam_dma::State::default());
 
@@ -347,7 +391,7 @@ mod tests {
         v1.extend_from_slice(&ENVELOPE_MAGIC.to_le_bytes());
         v1.extend_from_slice(&ENVELOPE_VERSION_1.to_le_bytes());
         v1.extend_from_slice(&bincode::serialize(&src.get_state()).expect("serialize"));
-        let (v1_state, v1_dma) = decode_state(&v1).expect("v1 envelope decode");
+        let (v1_state, v1_dma, _v1_odo) = decode_state(&v1).expect("v1 envelope decode");
         assert!(!v1_dma.active);
         assert_eq!(
             bincode::serialize(&v1_state).expect("serialize"),
@@ -356,7 +400,7 @@ mod tests {
 
         let mut target = mid_dma_machine();
         assert!(target.oam_dma.active);
-        apply_decoded(&mut target, &state, &oam_dma);
+        apply_decoded(&mut target, &state, &oam_dma, &odo);
         assert!(
             !target.oam_dma.active,
             "legacy restore must not inherit the destination's stale DMA",
@@ -395,5 +439,92 @@ mod tests {
             blob,
             std::fs::read(fixture_path()).expect("golden fixture present"),
         );
+    }
+
+    #[test]
+    fn odometer_off_keeps_writer_byte_identical() {
+        // The entire compatibility story: with the odometer disabled,
+        // both writer modes produce exactly the bytes they did before
+        // the odometer existed.
+        let nes = fixture_machine();
+        assert!(!nes.ppu.odometer_enabled);
+        let legacy = encode_state(&nes).expect("legacy encode");
+        assert!(!has_envelope(&legacy));
+        let v2 = encode_state_with(&nes, true).expect("v2 encode");
+        let version = u32::from_le_bytes(v2[4..8].try_into().unwrap());
+        assert_eq!(version, ENVELOPE_VERSION_2);
+    }
+
+    #[test]
+    fn odometer_on_writes_v3_and_round_trips() {
+        let mut nes = fixture_machine();
+        nes.ppu.apply_odo_state(&crate::ppu::OdoState {
+            enabled: true,
+            odometer_x: 12345,
+            odometer_y: -67,
+            prev_modal_x: 300,
+            prev_modal_y: 100,
+            have_prev: true,
+        });
+        let blob = encode_state(&nes).expect("v3 encode");
+        assert!(has_envelope(&blob));
+        let version = u32::from_le_bytes(blob[4..8].try_into().unwrap());
+        assert_eq!(version, ENVELOPE_VERSION_3);
+
+        let (state, oam_dma, odo) = decode_state(&blob).expect("v3 decode");
+        assert!(odo.enabled);
+        assert_eq!(odo.odometer_x, 12345);
+        assert_eq!(odo.odometer_y, -67);
+        assert_eq!(odo.prev_modal_x, 300);
+
+        let mut target = fixture_nes();
+        apply_decoded(&mut target, &state, &oam_dma, &odo);
+        assert!(target.ppu.odometer_enabled);
+        assert_eq!(target.ppu.odometer_x, 12345);
+        assert_eq!(target.ppu.odometer_y, -67);
+    }
+
+    #[test]
+    fn restore_reverts_odometer_to_saved_value() {
+        // Savestate coherence — the reason the odometer lives in the
+        // blob at all. Save at x=1000, drift to x=2000, restore: the
+        // odometer must read 1000 again, not 2000 and not 3000.
+        let mut nes = fixture_machine();
+        nes.ppu.apply_odo_state(&crate::ppu::OdoState {
+            enabled: true,
+            odometer_x: 1000,
+            odometer_y: 0,
+            prev_modal_x: 0,
+            prev_modal_y: 0,
+            have_prev: true,
+        });
+        let blob = encode_state(&nes).expect("encode at 1000");
+        nes.ppu.odometer_x = 2000;
+        let (state, oam_dma, odo) = decode_state(&blob).expect("decode");
+        apply_decoded(&mut nes, &state, &oam_dma, &odo);
+        assert_eq!(nes.ppu.odometer_x, 1000);
+    }
+
+    #[test]
+    fn legacy_blob_restore_leaves_live_odometer_alone() {
+        // Go-Explore restores legacy-rooted states constantly. A v1/v2
+        // blob carries no odometer; restoring one must not zero a live
+        // accumulator (the disabled-default guard in apply_decoded).
+        let mut nes = fixture_machine();
+        let legacy = encode_state(&nes).expect("legacy encode");
+        nes.ppu.apply_odo_state(&crate::ppu::OdoState {
+            enabled: true,
+            odometer_x: 777,
+            odometer_y: 42,
+            prev_modal_x: 5,
+            prev_modal_y: 6,
+            have_prev: true,
+        });
+        let (state, oam_dma, odo) = decode_state(&legacy).expect("legacy decode");
+        assert!(!odo.enabled);
+        apply_decoded(&mut nes, &state, &oam_dma, &odo);
+        assert!(nes.ppu.odometer_enabled, "restore must not disable");
+        assert_eq!(nes.ppu.odometer_x, 777);
+        assert_eq!(nes.ppu.odometer_y, 42);
     }
 }

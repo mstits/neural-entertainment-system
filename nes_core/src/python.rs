@@ -38,9 +38,10 @@ fn apply_state_guarded(
     nes: &mut Nes,
     state: &crate::nes::State,
     oam_dma: &crate::oam_dma::State,
+    odo: &crate::ppu::OdoState,
 ) -> PyResult<()> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::serialize::apply_decoded(nes, state, oam_dma);
+        crate::serialize::apply_decoded(nes, state, oam_dma, odo);
     }))
     .map_err(|e| {
         let msg = if let Some(s) = e.downcast_ref::<&str>() {
@@ -249,14 +250,14 @@ impl NESEnvironment {
                     p.display(), raw.len() - NCST_MAGIC.len(),
                 );
                 let blob = &raw[NCST_MAGIC.len()..];
-                let (state, oam_dma) = crate::serialize::decode_state(blob)
+                let (state, oam_dma, odo) = crate::serialize::decode_state(blob)
                     .map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                             "binary start state {} unreadable: {e}",
                             p.display()
                         ))
                     })?;
-                apply_state_guarded(&mut env.nes, &state, &oam_dma)?;
+                apply_state_guarded(&mut env.nes, &state, &oam_dma, &odo)?;
                 // Cache for fast resets.
                 env.start_state_snapshot = Some(blob.to_vec());
             } else {
@@ -361,8 +362,8 @@ impl NESEnvironment {
                 .as_ref()
                 .and_then(|snap| crate::serialize::decode_state(snap).ok());
             let applied = match restored {
-                Some((state, oam_dma)) => {
-                    apply_state_guarded(&mut self.nes, &state, &oam_dma).is_ok()
+                Some((state, oam_dma, odo)) => {
+                    apply_state_guarded(&mut self.nes, &state, &oam_dma, &odo).is_ok()
                 }
                 None => false,
             };
@@ -676,12 +677,12 @@ impl NESEnvironment {
         // per-frame hot path.
         let body_owned: Vec<u8> = body.to_vec();
         py.allow_threads(|| -> PyResult<()> {
-            let (state, oam_dma) = crate::serialize::decode_state(&body_owned).map_err(|e| {
+            let (state, oam_dma, odo) = crate::serialize::decode_state(&body_owned).map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "load_state deserialize failed: {e}"
                 ))
             })?;
-            apply_state_guarded(&mut self.nes, &state, &oam_dma)?;
+            apply_state_guarded(&mut self.nes, &state, &oam_dma, &odo)?;
             // The cycle anchor was tied to the PREVIOUS Nes instance's
             // CPU clock. After a state load the CPU clock effectively
             // jumps; clear the anchor so the next advance_one_frame
@@ -722,6 +723,48 @@ impl NESEnvironment {
             out.push(ram.peek_byte(a));
         }
         Ok(out.into_pyarray_bound(py))
+    }
+
+    /// Enable/disable the PPU scroll odometer. Enabling resets the
+    /// accumulator to (0, 0) with no previous-frame anchor, so the
+    /// first folded frame contributes delta 0. Enabled state and the
+    /// accumulator ride the savestate (v3 envelope), so Go-Explore
+    /// restores stay coherent without any Python-side bookkeeping.
+    fn set_odometer_enabled(&mut self, enabled: bool) {
+        let ppu = &mut self.nes.ppu;
+        if enabled && !ppu.odometer_enabled {
+            ppu.apply_odo_state(&crate::ppu::OdoState {
+                enabled: true,
+                ..Default::default()
+            });
+        } else if !enabled {
+            ppu.odometer_enabled = false;
+        }
+    }
+
+    /// Accumulated global scroll position (x, y) in pixels since the
+    /// odometer was enabled (or since the restored savestate's origin).
+    /// Sign convention: rightward/downward camera motion increases the
+    /// value. Returns (0, 0) when the odometer is disabled.
+    fn get_odometer(&self) -> (i64, i64) {
+        let ppu = &self.nes.ppu;
+        (ppu.odometer_x, ppu.odometer_y)
+    }
+
+    /// Raw 2KB physical nametable VRAM (mirror-agnostic). Intended for
+    /// room-identity fingerprinting: hash (a static-masked slice of)
+    /// these bytes to detect discrete scene changes that bypass $2005
+    /// scrolling (e.g. PPUADDR-driven room flips). Hardware surface —
+    /// same purity class as pixels and OAM.
+    fn peek_nametables<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new_bound(py, self.nes.ppu.nametable_snapshot())
+    }
+
+    /// Raw 256-byte primary OAM (64 sprites x 4 bytes: y, tile, attr, x).
+    /// Pairs with the odometer for player-anchor fusion: the lowest-
+    /// variance sprite in odometer-relative coordinates is the player.
+    fn peek_oam<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new_bound(py, self.nes.ppu.oam_snapshot())
     }
 
     fn get_frame<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<u8>>> {
@@ -871,12 +914,12 @@ impl NESEnvironment {
     /// env is left cold-reset, never half-mutated (see the module doc).
     fn restore_or_reset(&mut self) -> PyResult<()> {
         if let Some(snap) = &self.start_state_snapshot {
-            let (state, oam_dma) = crate::serialize::decode_state(snap).map_err(|e| {
+            let (state, oam_dma, odo) = crate::serialize::decode_state(snap).map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "failed to restore start-state snapshot: {e}"
                 ))
             })?;
-            if apply_state_guarded(&mut self.nes, &state, &oam_dma).is_err() {
+            if apply_state_guarded(&mut self.nes, &state, &oam_dma, &odo).is_err() {
                 self.nes.reset();
             }
         } else {

@@ -165,8 +165,8 @@ impl Worker {
     fn reset(&mut self) {
         if let Some(snap) = &self.start_state_snapshot {
             match crate::serialize::decode_state(snap) {
-                Ok((state, oam_dma)) => {
-                    crate::serialize::apply_decoded(&mut self.nes, &state, &oam_dma)
+                Ok((state, oam_dma, odo)) => {
+                    crate::serialize::apply_decoded(&mut self.nes, &state, &oam_dma, &odo)
                 }
                 Err(e) => {
                     // Cached snapshot bytes are corrupted somehow.
@@ -1569,7 +1569,7 @@ impl Pool {
         } else {
             raw
         };
-        let (state, oam_dma) = crate::serialize::decode_state(body).map_err(|e| {
+        let (state, oam_dma, odo) = crate::serialize::decode_state(body).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "load_worker_state deserialize failed: {e}"
             ))
@@ -1586,7 +1586,7 @@ impl Pool {
         // PyValueError so the trainer can degrade this worker to a cold
         // boot instead of the whole overnight run dying.
         let res = catch_unwind(AssertUnwindSafe(|| {
-            crate::serialize::apply_decoded(&mut w.nes, &state, &oam_dma);
+            crate::serialize::apply_decoded(&mut w.nes, &state, &oam_dma, &odo);
         }));
         if let Err(panic_payload) = res {
             let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
@@ -1652,6 +1652,91 @@ impl Pool {
         w.ensure_scratch(&self.rom_bytes)
             .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
         Ok(w.peek_u16_consistent(lo_addr, hi_addr))
+    }
+
+    /// Enable/disable the PPU scroll odometer on every worker.
+    /// Enabling resets each accumulator to (0, 0). The odometer rides
+    /// the v3 savestate envelope, so `load_worker_state` restores stay
+    /// coherent automatically.
+    fn set_odometer_enabled(&self, enabled: bool) {
+        for cell in &self.workers {
+            // SAFETY: called sequentially from Python — never overlaps
+            // an in-flight step_all/reset_all rayon dispatch.
+            let w = unsafe { worker_mut(cell) };
+            let ppu = &mut w.nes.ppu;
+            if enabled && !ppu.odometer_enabled {
+                ppu.apply_odo_state(&crate::ppu::OdoState {
+                    enabled: true,
+                    ..Default::default()
+                });
+            } else if !enabled {
+                ppu.odometer_enabled = false;
+            }
+        }
+    }
+
+    /// Per-worker accumulated global scroll position [(x, y); workers],
+    /// in pixels. (0, 0) for workers with the odometer disabled.
+    fn get_odometer_per_worker(&self) -> Vec<(i64, i64)> {
+        self.workers
+            .iter()
+            .map(|cell| {
+                // SAFETY: sequential with step_all/reset_all (see
+                // peek_max_x_per_worker).
+                let w = unsafe { &*cell.0.get() };
+                (w.nes.ppu.odometer_x, w.nes.ppu.odometer_y)
+            })
+            .collect()
+    }
+
+    /// One worker's odometer fold diagnostics: (modal_x, modal_y,
+    /// rendered_lines_voting) from the most recent frame fold. Triage
+    /// surface for flat odometers.
+    fn odo_debug(&self, worker_id: usize) -> PyResult<(i32, i32, usize)> {
+        if worker_id >= self.num_workers {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "worker_id out of range",
+            ));
+        }
+        // SAFETY: sequential with step_all/reset_all.
+        let w = unsafe { &*self.workers[worker_id].0.get() };
+        let p = &w.nes.ppu;
+        Ok((p.odo_last_mx, p.odo_last_my, p.odo_last_n))
+    }
+
+    /// One worker's raw 2KB physical nametable VRAM, for room-identity
+    /// fingerprinting (hash a static-masked slice to detect discrete
+    /// scene changes that bypass $2005 scrolling).
+    fn peek_nametables<'py>(
+        &self,
+        py: Python<'py>,
+        worker_id: usize,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        if worker_id >= self.num_workers {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "worker_id out of range",
+            ));
+        }
+        // SAFETY: sequential with step_all/reset_all.
+        let w = unsafe { &*self.workers[worker_id].0.get() };
+        Ok(PyBytes::new_bound(py, w.nes.ppu.nametable_snapshot()))
+    }
+
+    /// One worker's raw 256-byte primary OAM (64 sprites x 4 bytes:
+    /// y, tile, attr, x) — the sprite surface for player-anchor fusion.
+    fn peek_oam<'py>(
+        &self,
+        py: Python<'py>,
+        worker_id: usize,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        if worker_id >= self.num_workers {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
+                "worker_id out of range",
+            ));
+        }
+        // SAFETY: sequential with step_all/reset_all.
+        let w = unsafe { &*self.workers[worker_id].0.get() };
+        Ok(PyBytes::new_bound(py, w.nes.ppu.oam_snapshot()))
     }
 
     #[getter]
@@ -2103,7 +2188,7 @@ impl Pool {
         };
 
         // Apply the snapshot to every worker + cache for fast resets.
-        let (state, oam_dma) = crate::serialize::decode_state(&snapshot).map_err(|e| {
+        let (state, oam_dma, odo) = crate::serialize::decode_state(&snapshot).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "start-state snapshot unreadable: {e}"
             ))
@@ -2122,7 +2207,7 @@ impl Pool {
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
             let res = catch_unwind(AssertUnwindSafe(|| {
-                crate::serialize::apply_decoded(&mut w.nes, &state, &oam_dma);
+                crate::serialize::apply_decoded(&mut w.nes, &state, &oam_dma, &odo);
             }));
             if let Err(panic_payload) = res {
                 let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
@@ -2645,7 +2730,7 @@ mod savestate_envelope_tests {
         let mut w = worker_from_rom(rom);
         let (state, oam_dma) =
             crate::serialize::decode_state(blob).expect("blob should decode");
-        crate::serialize::apply_decoded(&mut w.nes, &state, &oam_dma);
+        crate::serialize::apply_decoded(&mut w.nes, &state, &oam_dma, &odo);
         w.frame_cycle_target = None;
         w
     }

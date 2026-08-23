@@ -121,6 +121,34 @@ pub struct Ppu {
 
     pub frame: u64,
 
+    // --- PPU scroll odometer (wideNES-class; docs/proposals/
+    // ODOMETER_CORE_SPEC_2026-08-23.md). Per-line scroll origins are
+    // captured at LINE START (after the previous line's dot-257 h-copy,
+    // before this line's fetches increment coarse X — sampling at dot
+    // 256 as the literature suggests would read a coarse X the fetch
+    // pipeline has already advanced ~32 times). The frame's playfield
+    // scroll is the MODE over visible lines, which is HUD-immune by
+    // construction. Deltas are wrap-aware and accumulate into i64
+    // odometers that serialize in the version-3 envelope so Go-Explore
+    // restores stay coherent. Scratch arrays are per-frame and never
+    // serialized (saves occur on frame boundaries).
+    pub odometer_enabled: bool,
+    pub odometer_x: i64,
+    pub odometer_y: i64,
+    odo_prev_modal_x: i32,
+    odo_prev_modal_y: i32,
+    odo_have_prev: bool,
+    odo_line_x: Vec<i32>,
+    odo_line_y: Vec<i32>,
+    odo_line_n: usize,
+    // Last fold's diagnostics (not serialized): modal origin + how many
+    // rendered lines voted. Surfaced to Python for onboarding triage —
+    // "flat odometer" splits into no-votes / votes-but-static / mode-
+    // capture-bug in one read.
+    pub odo_last_mx: i32,
+    pub odo_last_my: i32,
+    pub odo_last_n: usize,
+
     frame_buffer: Box<[u8]>,
 
     // The PPU has an internal data bus that it uses for communication with the CPU.
@@ -427,6 +455,18 @@ impl Ppu {
             scanline: 0,
             scanline_start_cycle: 0,
             frame: 0,
+            odometer_enabled: false,
+            odometer_x: 0,
+            odometer_y: 0,
+            odo_prev_modal_x: 0,
+            odo_prev_modal_y: 0,
+            odo_have_prev: false,
+            odo_line_x: vec![0; 240],
+            odo_line_y: vec![0; 240],
+            odo_line_n: 0,
+            odo_last_mx: 0,
+            odo_last_my: 0,
+            odo_last_n: 0,
             frame_buffer: Box::new([0; SCREEN_WIDTH * SCREEN_HEIGHT]),
             ppu_gen_latch: 0,
             name_table_byte: 0,
@@ -1924,6 +1964,12 @@ impl Ppu {
             self.run_batched_scanline();
         }
 
+        // Odometer: sample the line's scroll origin at its first dot,
+        // before background fetches advance coarse X.
+        if on_visible_scanline && scanline_cycle == 1 {
+            self.odo_capture_line();
+        }
+
         if rendering_enabled {
             // Handle backgrounds
             {
@@ -2082,6 +2128,7 @@ impl Ppu {
                 video_frame_sink.write_frame(&self.frame_buffer);
                 self.scanline = VISIBLE_START_SCANLINE;
                 self.frame += 1;
+                self.odo_fold_frame();
                 #[cfg(feature = "ppu_batch_stats")]
                 {
                     self.batch_stats.frames += 1;
@@ -2325,6 +2372,11 @@ impl Ppu {
     /// then advances the line. Skips the unobserved render pipeline.
     #[inline(never)]
     fn step_whole_visible_scanline(&mut self, mapper: &mut MapperEnum) {
+        // Odometer: batched lines carry no MMIO by construction, so v at
+        // entry IS the line-start scroll origin — same sample the
+        // per-dot path takes at dot 1.
+        self.odo_capture_line();
+
         // --- Sprite evaluation, verbatim per-dot schedule ---
         // dot 1: init — publishes `sprite_0_on_scanline` from the prior
         // line's scan and resets n/m/secondary_write_index/sprite_0_found.
@@ -2897,8 +2949,158 @@ pub struct Vram {
     bytes: Vec<u8>,
 }
 
+/// Serialized odometer accumulator — the version-3 envelope tail.
+/// Lives OUTSIDE `ppu::State` so version 1/2 blobs stay byte-identical
+/// and every banked savestate keeps decoding unchanged.
+#[derive(Clone, Default, Deserialize, Serialize)]
+pub struct OdoState {
+    pub enabled: bool,
+    pub odometer_x: i64,
+    pub odometer_y: i64,
+    pub prev_modal_x: i32,
+    pub prev_modal_y: i32,
+    pub have_prev: bool,
+}
+
+impl Ppu {
+    /// Raw 2KB physical nametable VRAM (mirror-agnostic), for
+    /// room-identity fingerprinting. Read-only hardware surface.
+    pub fn nametable_snapshot(&self) -> &[u8] {
+        self.mem.vram.snapshot()
+    }
+
+    /// Raw 256-byte primary OAM (64 sprites x 4 bytes). Read-only.
+    pub fn oam_snapshot(&self) -> &[u8] {
+        &self.oam
+    }
+
+    pub fn get_odo_state(&self) -> OdoState {
+        OdoState {
+            enabled: self.odometer_enabled,
+            odometer_x: self.odometer_x,
+            odometer_y: self.odometer_y,
+            prev_modal_x: self.odo_prev_modal_x,
+            prev_modal_y: self.odo_prev_modal_y,
+            have_prev: self.odo_have_prev,
+        }
+    }
+
+    pub fn apply_odo_state(&mut self, o: &OdoState) {
+        self.odometer_enabled = o.enabled;
+        self.odometer_x = o.odometer_x;
+        self.odometer_y = o.odometer_y;
+        self.odo_prev_modal_x = o.prev_modal_x;
+        self.odo_prev_modal_y = o.prev_modal_y;
+        self.odo_have_prev = o.have_prev;
+    }
+
+    /// Capture this visible line's scroll ORIGIN from loopy_v + fine_x.
+    /// Y is normalized to a per-frame origin (absolute Y minus the
+    /// scanline index) so a mid-frame $2006 write — Zelda's vertical
+    /// room transitions — shows up as a block of lines agreeing on a
+    /// DIFFERENT origin, and the mode tracks whichever block dominates.
+    #[inline]
+    fn odo_capture_line(&mut self) {
+        if !self.odometer_enabled {
+            return;
+        }
+        let sl = self.scanline as usize;
+        if sl >= 240 || self.odo_line_n >= 240 {
+            return;
+        }
+        // Rendering disabled => v is frozen at whatever the CPU last
+        // wrote via $2006 — pure garbage as a scroll sample (observed:
+        // SMB death blanking parked v in the attribute rows, +480 of
+        // phantom vertical travel). Only rendered lines vote.
+        if !self.rendering_enabled() {
+            return;
+        }
+        let v = self.regs.v as i32;
+        let fx = self.regs.x as i32;
+        let x = ((v >> 10) & 1) * 256 + (v & 0x1F) * 8 + fx;
+        let y_abs = ((v >> 11) & 1) * 240 + ((v >> 5) & 0x1F) * 8 + ((v >> 12) & 7);
+        let n = self.odo_line_n;
+        self.odo_line_x[n] = x;
+        self.odo_line_y[n] = y_abs - sl as i32;
+        self.odo_line_n = n + 1;
+    }
+
+    /// Mode with largest-contiguous-run tie-breaking, allocation-free.
+    fn odo_mode(vals: &[i32]) -> i32 {
+        let mut sorted: [i32; 240] = [0; 240];
+        let n = vals.len().min(240);
+        sorted[..n].copy_from_slice(&vals[..n]);
+        sorted[..n].sort_unstable();
+        let (mut best_val, mut best_len) = (sorted[0], 0usize);
+        let (mut cur_val, mut cur_len) = (sorted[0], 0usize);
+        for &v in &sorted[..n] {
+            if v == cur_val {
+                cur_len += 1;
+            } else {
+                cur_val = v;
+                cur_len = 1;
+            }
+            if cur_len > best_len {
+                best_len = cur_len;
+                best_val = cur_val;
+            }
+        }
+        best_val
+    }
+
+    /// Fold the frame's line samples into the global odometer.
+    fn odo_fold_frame(&mut self) {
+        if !self.odometer_enabled {
+            return;
+        }
+        let n = self.odo_line_n;
+        self.odo_line_n = 0;
+        self.odo_last_n = n;
+        if n < 120 {
+            // Mostly-blank frame (death fade, level-load blackout,
+            // console still warming up): nothing trustworthy to
+            // integrate. Drop the anchor so the next rendered frame
+            // re-anchors instead of integrating a phantom delta across
+            // the discontinuity. A respawn therefore FREEZES the
+            // odometer rather than rewinding it; death is flagged by
+            // the (separate) discontinuity/lives channel, not by the
+            // position integral.
+            self.odo_have_prev = false;
+            return;
+        }
+        let mx = Self::odo_mode(&self.odo_line_x[..n]);
+        let my = Self::odo_mode(&self.odo_line_y[..n]);
+        self.odo_last_mx = mx;
+        self.odo_last_my = my;
+        if self.odo_have_prev {
+            // Wrap-aware deltas over the 2x2 nametable plane. The
+            // vertical modulus grows to 512 when either endpoint sits in
+            // the attribute-table rows (coarse Y 30..31 -> origin >=
+            // 480): the hardware wraps at 31 there, not 29.
+            let dx = ((mx - self.odo_prev_modal_x + 256).rem_euclid(512)) - 256;
+            let ymod = if my >= 480 || self.odo_prev_modal_y >= 480 {
+                512
+            } else {
+                480
+            };
+            let dy = ((my - self.odo_prev_modal_y + ymod / 2).rem_euclid(ymod)) - ymod / 2;
+            self.odometer_x += dx as i64;
+            self.odometer_y += dy as i64;
+        }
+        self.odo_prev_modal_x = mx;
+        self.odo_prev_modal_y = my;
+        self.odo_have_prev = true;
+    }
+}
+
 impl Vram {
     const SIZE: usize = 0x0800;
+
+    /// The 2 KB physical nametable RAM, mirror-agnostic — the raw
+    /// surface the room-fingerprint hashing consumes.
+    pub fn snapshot(&self) -> &[u8] {
+        &self.bytes
+    }
 
     fn new() -> Vram {
         Vram {
@@ -4277,5 +4479,181 @@ mod ppu_coverage_tests {
         assert_eq!(m.mirror_address(0x2C00), 0xC00);
         // $3456 folds to $2456 before dispatch.
         assert_eq!(m.mirror_address(0x3456), m.mirror_address(0x2456), "$3xxx folds onto $2xxx");
+    }
+}
+
+#[cfg(test)]
+mod odometer_tests {
+    use super::*;
+
+    fn odo_ppu() -> Ppu {
+        let mut p = Ppu::new();
+        p.odometer_enabled = true;
+        // Rendering must be on for lines to vote (blank-frame guard).
+        p.regs.ppu_mask.insert(PpuMask::SHOW_BACKGROUND);
+        p.refresh_ppu_mask_cache();
+        p
+    }
+
+    /// Feed one whole frame of identical line samples and fold.
+    fn fold_uniform_frame(p: &mut Ppu, x: i32, y: i32) {
+        p.odo_line_x.iter_mut().for_each(|v| *v = x);
+        p.odo_line_y.iter_mut().for_each(|v| *v = y);
+        p.odo_line_n = 240;
+        p.odo_fold_frame();
+    }
+
+    #[test]
+    fn mode_picks_majority_value() {
+        let mut vals = [7i32; 240];
+        // HUD: 40 lines locked at 0 must not outvote 200 playfield lines.
+        vals[..40].iter_mut().for_each(|v| *v = 0);
+        assert_eq!(Ppu::odo_mode(&vals), 7);
+    }
+
+    #[test]
+    fn mode_tie_breaks_on_longest_run_deterministically() {
+        // Exact tie 120/120: sort-based scan keeps the first (smallest)
+        // run — what matters is that it is deterministic, not which.
+        let mut vals = [0i32; 240];
+        vals[120..].iter_mut().for_each(|v| *v = 9);
+        let m = Ppu::odo_mode(&vals);
+        assert_eq!(m, Ppu::odo_mode(&vals));
+        assert!(m == 0 || m == 9);
+    }
+
+    #[test]
+    fn capture_line_decodes_loopy_v() {
+        let mut p = odo_ppu();
+        p.scanline = 0;
+        // coarse X = 3, fine x = 5, NT bit 10 set -> x = 256 + 24 + 5
+        p.regs.v = (1 << 10) | 3;
+        p.regs.x = 5;
+        p.odo_capture_line();
+        assert_eq!(p.odo_line_x[0], 256 + 3 * 8 + 5);
+        // coarse Y = 2, fine Y = 4, NT bit 11 set -> y = 240 + 16 + 4,
+        // normalized by scanline index (0 here). Samples compact, so
+        // this second capture lands at index 1.
+        p.regs.v = (1 << 11) | (4 << 12) | (2 << 5);
+        p.odo_capture_line();
+        assert_eq!(p.odo_line_n, 2);
+        assert_eq!(p.odo_line_y[1], 240 + 2 * 8 + 4);
+    }
+
+    #[test]
+    fn capture_line_normalizes_y_by_scanline() {
+        let mut p = odo_ppu();
+        p.scanline = 37;
+        // Origin y=100: at line 37 the hardware v carries y=137.
+        let y = 137;
+        p.regs.v = (((y % 240) / 8) << 5 | (y % 240) % 8 << 12) as u16;
+        p.odo_capture_line();
+        // Compacted: first valid sample of the frame -> index 0.
+        assert_eq!(p.odo_line_y[0], 100);
+    }
+
+    #[test]
+    fn first_fold_establishes_anchor_without_delta() {
+        let mut p = odo_ppu();
+        fold_uniform_frame(&mut p, 300, 100);
+        assert_eq!((p.odometer_x, p.odometer_y), (0, 0));
+    }
+
+    #[test]
+    fn rightward_seam_wrap_accumulates_forward() {
+        let mut p = odo_ppu();
+        fold_uniform_frame(&mut p, 504, 0);
+        fold_uniform_frame(&mut p, 8, 0); // 504 -> 8 across the 512 seam
+        assert_eq!(p.odometer_x, 16);
+        assert_eq!(p.odometer_y, 0);
+    }
+
+    #[test]
+    fn leftward_seam_wrap_accumulates_backward() {
+        let mut p = odo_ppu();
+        fold_uniform_frame(&mut p, 8, 0);
+        fold_uniform_frame(&mut p, 504, 0);
+        assert_eq!(p.odometer_x, -16);
+    }
+
+    #[test]
+    fn vertical_wrap_uses_480_modulus() {
+        let mut p = odo_ppu();
+        fold_uniform_frame(&mut p, 0, 470);
+        fold_uniform_frame(&mut p, 0, 10); // 470 -> 10 across the 480 seam
+        assert_eq!(p.odometer_y, 20);
+    }
+
+    #[test]
+    fn attribute_row_endpoint_switches_to_512_modulus() {
+        let mut p = odo_ppu();
+        // An endpoint in coarse-Y 30..31 territory (origin >= 480) must
+        // widen the modulus to 512, matching the hardware wrap at 31.
+        fold_uniform_frame(&mut p, 0, 500);
+        fold_uniform_frame(&mut p, 0, 505);
+        assert_eq!(p.odometer_y, 5);
+        // and the delta out of the attribute rows stays small-signed:
+        fold_uniform_frame(&mut p, 0, 2); // 505 -> 2 over mod 512 = +9
+        assert_eq!(p.odometer_y, 14);
+    }
+
+    #[test]
+    fn disabled_odometer_folds_nothing() {
+        let mut p = Ppu::new();
+        assert!(!p.odometer_enabled);
+        fold_uniform_frame(&mut p, 300, 100);
+        fold_uniform_frame(&mut p, 316, 100);
+        assert_eq!((p.odometer_x, p.odometer_y), (0, 0));
+        assert!(!p.odo_have_prev);
+    }
+
+    #[test]
+    fn blank_frame_reanchors_instead_of_integrating() {
+        let mut p = odo_ppu();
+        fold_uniform_frame(&mut p, 300, 0);
+        fold_uniform_frame(&mut p, 316, 0);
+        assert_eq!(p.odometer_x, 16);
+        // Death fade: only 40 rendered lines carrying garbage scroll.
+        p.odo_line_x.iter_mut().for_each(|v| *v = 999);
+        p.odo_line_n = 40;
+        p.odo_fold_frame();
+        assert_eq!(p.odometer_x, 16, "blank frame must not integrate");
+        assert!(!p.odo_have_prev, "blank frame must drop the anchor");
+        // Respawn renders at scroll 0: re-anchor, still no delta.
+        fold_uniform_frame(&mut p, 0, 0);
+        assert_eq!(p.odometer_x, 16);
+        // ...and motion resumes normally from the new anchor.
+        fold_uniform_frame(&mut p, 8, 0);
+        assert_eq!(p.odometer_x, 24);
+    }
+
+    #[test]
+    fn unrendered_lines_do_not_vote() {
+        let mut p = odo_ppu();
+        p.scanline = 0;
+        p.regs.v = 3;
+        p.odo_capture_line();
+        assert_eq!(p.odo_line_n, 1);
+        p.regs.ppu_mask.remove(PpuMask::SHOW_BACKGROUND);
+        p.refresh_ppu_mask_cache();
+        p.odo_capture_line();
+        assert_eq!(p.odo_line_n, 1, "disabled rendering must not sample");
+    }
+
+    #[test]
+    fn odo_state_round_trips() {
+        let mut p = odo_ppu();
+        fold_uniform_frame(&mut p, 100, 0);
+        fold_uniform_frame(&mut p, 132, 0);
+        let snap = p.get_odo_state();
+        assert_eq!(snap.odometer_x, 32);
+
+        let mut q = Ppu::new();
+        q.apply_odo_state(&snap);
+        assert!(q.odometer_enabled);
+        assert_eq!(q.odometer_x, 32);
+        // Restored anchor continues seamlessly: next frame at 140 adds 8.
+        fold_uniform_frame(&mut q, 140, 0);
+        assert_eq!(q.odometer_x, 40);
     }
 }
