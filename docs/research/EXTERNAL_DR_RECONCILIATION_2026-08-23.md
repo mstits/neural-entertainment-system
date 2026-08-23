@@ -63,3 +63,42 @@ Confirmed from the field: wavefront distance-gradient navigation is
 their standard too — theirs from parsed layouts (authored), ours from
 own solved tapes (legal). Rejected again: the info-dict RAM map and all
 reward formulas over named fields.
+
+## Addendum 2: the primary source itself — DarkAutumn/Triforce (Reddit
+r/MachineLearning 1i3t4c3) and victorsevero/megai_man
+
+Both surveys' Zelda content traces to this hobby project (PPO beats
+Zelda dungeon 1; disassembly-assisted — Zelda1 speedrun community pulled
+the RAM addresses, so its OBSERVABLES are Tier-3 for us; mechanisms
+only). First-hand details worth keeping:
+
+1. **Delayed-effect reward resolution by emulator time travel.** For
+   bombs (seconds between action and payoff), they run the emulator
+   forward to the outcome, assign the reward at the decision frame, and
+   REWIND to continue. Purity-clean training mechanism in the same
+   family as our micro-forking; directly relevant to Zelda bombs and
+   Castlevania sub-weapons if we ever need credit assignment for slow
+   projectiles.
+2. **The reward debugger was their highest-leverage tool** — "75% of
+   the time the model behaved incorrectly, the rewards were wrong";
+   click any reward event to replay it with breakpoints and stepping.
+   We have campaign logs and eval receipts but no step-level
+   reward-replay tool. Candidate FORGE item.
+3. **Author independently abandoned the objective vector as "too much
+   like cheating"** — outside confirmation of our purity intuition,
+   from someone with no ledger to defend.
+4. **Compute calibration.** RTX 4090 + 10-core: ~100-185 steps/s; our
+   M4 runs ~3,000 env-steps/s — 15-30x their throughput. Their scale:
+   okay results ~2M, good ~10M, plateau 40-50M steps per model — the
+   same regime as our per-level campaigns, so our budgets are not
+   under-provisioned by hobby-project standards.
+5. **megai_man** (Mega Man Cut Man stage CLEARED): pre-train the stage
+   with shooting MASKED and enemies absent, then fine-tune with
+   enemies; wavefront gradient for stage phase, simple damage rewards
+   for boss phase; ~57M steps total. An action-curriculum data point
+   for the combat classes (mask-then-unmask), and yet another
+   independent wavefront user.
+6. Confirmed from the primary source: egocentric viewport ("REALLY
+   helped"), animation-lock gating via RAM state, tile-aligned movement
+   commitment — all already in our adopted list; frame-stacking gave
+   them little once entity vectors existed.
