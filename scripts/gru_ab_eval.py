@@ -57,7 +57,8 @@ def honest_eval(ckpt: Path, episodes: int) -> dict:
     out = {}
     for es in (0, 1):
         cmd = [str(REPO / ".venv/bin/python"), str(REPO / "scripts/eval_game.py"),
-               "--game", "mario_1_1_backward_gru",
+               "--game", "mario",
+               "--profile", "configs/mario_1_1_backward_gru.yaml",
                "--checkpoint", str(ckpt),
                "--start-state", "runs/live_show/smb_4_4_micro/entrance_start.state",
                "--episodes", str(episodes), "--sticky-prob", "0.25",
