@@ -64,3 +64,34 @@ that structure explicit and optimizable.)
 KL to the warm-start prior > 0.60 sustained 2M steps, or value-loss
 spike >5x baseline unrecovered — the campaign controller's standing
 table, unchanged.
+
+## Design addendum (2026-08-23, PRE-RUN — no arm has trained)
+
+v22 (responses/20260823T031554Z) returned before implementation. Four
+mechanics are adopted; the GATE above is unchanged.
+
+1. **Entropy scaled by duration.** Per-decision entropy lets a k=1
+   policy make 4x more decisions than k=4 and farm 4x the bonus — the
+   optimization itself would drive collapse back to per-step decisions
+   and forfeit the mechanism. The bonus is multiplied by k at each
+   decision, equalizing the per-env-step footprint (CTCO/persistent-
+   action literature). Without this the experiment measures an entropy
+   artifact, not options.
+2. **Semi-MDP GAE with lambda exponentiated by duration**:
+   delta_t = sum gamma^i r + gamma^k V(s_{t+k}) - V(s_t);
+   A_t = delta_t + (gamma*lambda)^k A_{t+k}. Lambda per-decision would
+   stretch the effective horizon for long options and inject bias.
+3. **Interruption + truncation**: a macro breaks on done (record actual
+   k'); the importance ratio always uses the INTENDED pair — relabeling
+   to the realized duration would penalize a choice the network never
+   made. Timeout cuts bootstrap V at the cut state.
+4. **Critic trains dense, actor sparse**: two aligned buffer views —
+   the critic regresses on every env step, the actor updates on
+   decisions, anchoring GAE with a low-variance baseline.
+
+Duration set stays {1,2,4} as registered: v22's k=1 collapse risk is
+driven chiefly by the entropy artifact (fix #1) plus early defensive
+selection; we keep k=1 because 1-2's pole defect showed agility at
+specific pixels matters, and we log the duration distribution per iter
+as the collapse tripwire. Eval-argmax overcommitment is mitigated by
+the KL-anchor already standing in the campaign machinery.
