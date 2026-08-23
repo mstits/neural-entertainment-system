@@ -1938,7 +1938,18 @@ class GenericGame:
         return False
 
     def is_dead(self, ram, start_lives: int) -> bool:
-        if self.lives(ram) < start_lives:
+        # MODULAR decrement (2026-08-23, the Ninja Gaiden underflow):
+        # a lives counter that displays REMAINING lives can read 0 in
+        # normal play, so death decrements 0 -> 255 and a plain `<`
+        # never fires — NG banked a 5888-px corpse frontier because
+        # every death was invisible. `(start - cur) % 256 in 1..8` reads
+        # any small wrap-aware decrement as death, keeps Rygar's 1 -> 0
+        # and SMB-class 3 -> 2, and stays safe on extra-life pickups
+        # (cur = start+1 gives delta 255, not 1..8). Transition blips
+        # through adjacent values are absorbed by observe()'s 3-step
+        # death debounce, same as before.
+        d = (int(start_lives) - int(self.lives(ram))) % 256
+        if 1 <= d <= 8:
             return True
         return (self._pstate is not None
                 and int(ram[self._pstate]) in self._death_states)
