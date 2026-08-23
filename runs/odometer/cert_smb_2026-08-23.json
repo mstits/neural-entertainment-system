@@ -1,0 +1,40 @@
+{
+  "profile": "configs/mario_1_1_backward.yaml",
+  "steps": 600,
+  "passed": true,
+  "checks": {
+    "hold_forward_monotonic": {
+      "passed": true,
+      "total_dx": 551,
+      "max_regress": 0
+    },
+    "hud_split_immunity": {
+      "passed": true,
+      "max_abs_step_dx": 6
+    },
+    "hold_still_flat": {
+      "passed": true,
+      "x": 0,
+      "y": 0
+    },
+    "restore_exact": {
+      "passed": true,
+      "saved": [
+        185,
+        0
+      ],
+      "drifted": [
+        368,
+        0
+      ],
+      "restored": [
+        185,
+        0
+      ]
+    },
+    "no_restore_discontinuity": {
+      "passed": true,
+      "first_step_delta_after_restore": 0
+    }
+  }
+}
