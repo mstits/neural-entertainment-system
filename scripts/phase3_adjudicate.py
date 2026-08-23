@@ -56,6 +56,25 @@ def pooled_rate(records: list[dict]) -> tuple[int, int, list]:
     return clears, eps, sorted(set(seeds), key=str)
 
 
+def fingerprints_identical(a: list[dict], b: list[dict]) -> bool:
+    """Per-seed (rate, mean_length) equality between two arms. PURE.
+
+    Two independently trained policies do not tie to the digit on both
+    rate AND mean episode length at both seeds. When they do, the arms
+    are behaviorally the same policy — the frozen-actor signature that
+    produced two void experiments — and the honest verdict is VOID, not
+    a measured null.
+    """
+    def fp(recs):
+        return sorted((r.get("eval_seed"), round(float(r.get("clear_rate") or 0), 6),
+                       round(float(r.get("mean_length") or 0), 1))
+                      for r in recs
+                      if int(r.get("n_episodes") or 0) >= 50
+                      and float(r.get("sticky_prob") or 0) > 0)
+    fa, fb = fp(a), fp(b)
+    return bool(fa) and fa == fb
+
+
 def adjudicate(control: list[dict], masked: list[dict],
                veto_stats: dict | None = None) -> dict:
     c_cl, c_n, c_seeds = pooled_rate(control)
@@ -71,6 +90,11 @@ def adjudicate(control: list[dict], masked: list[dict],
     c_rate = c_cl / c_n if c_n else 0.0
     m_rate = m_cl / m_n if m_n else 0.0
 
+    if fingerprints_identical(control, masked):
+        problems.append(
+            "arms are behaviorally IDENTICAL (same rate and mean length "
+            "per seed) — the frozen-actor signature; this is a VOID "
+            "experiment, not a measured null")
     if problems:
         verdict, rel = "UNSCORABLE", None
     elif c_rate == 0.0:

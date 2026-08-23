@@ -85,3 +85,19 @@ def test_a_live_veto_carries_no_caveat():
     v = adjudicate(two(0.40), two(0.50),
                    veto_stats={"fully_vetoed_fraction": 0.13})
     assert v["veto_caveat"] is None
+
+
+def test_identical_arm_fingerprints_are_void_not_null():
+    """Two independently trained policies do not tie to the digit on rate
+    AND mean length at both seeds; when they do, nothing trained."""
+    def rec2(seed, rate, ml):
+        return {"n_episodes": 50, "sticky_prob": 0.25, "eval_seed": seed,
+                "clear_rate": rate, "mean_length": ml}
+    same = [rec2(7, 0.28, 653.3), rec2(101, 0.34, 805.0)]
+    v = adjudicate(list(same), list(same))
+    assert v["verdict"] == "UNSCORABLE"
+    assert any("frozen-actor" in p for p in v["problems"])
+    # genuinely different arms still adjudicate normally
+    other = [rec2(7, 0.30, 640.0), rec2(101, 0.36, 790.2)]
+    v2 = adjudicate(same, other)
+    assert v2["verdict"] in ("PASS", "FAIL")
