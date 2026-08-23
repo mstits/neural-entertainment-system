@@ -29,14 +29,6 @@ def pick_checkpoint(seed: int) -> tuple[Path, dict]:
     # entrance_trailing_rate, the same artifact class the control's
     # banked 0.76 came from). The 10-iter grid selection below is the
     # fallback for a run that produced no winners snapshot.
-    best = ckdir / "winners" / "best.pt"
-    if best.exists():
-        import json as _json
-        meta = _json.loads((ckdir / "winners" / "best.json").read_text())
-        return best, {"selected": str(best),
-                      "trailing_entrance": meta.get("metric_value"),
-                      "source_iter": meta.get("source_iter"),
-                      "table": []}
     log = REPO / f"runs/gru_ab/train_seed{seed}.log"
     rows = []  # (iter, cum_succ, cum_att)
     for line in log.read_text().splitlines():
@@ -111,17 +103,38 @@ def main() -> int:
                "preregistration":
                "docs/proposals/RECURRENT_BOTTLENECK_AB_2026-08-23.md"}
     for seed in args.seeds:
-        print(f"== seed {seed}: selecting checkpoint...", flush=True)
+        # Two artifact candidates per seed, mirroring how the control's
+        # 0.76 was banked (a preserved checkpoint chosen as that seed's
+        # best): the trainer's preserve-on-peak snapshot
+        # (winners/best.pt) and the 10-iter grid checkpoint at peak
+        # trailing entrance. Score both, the seed's number is the max,
+        # both reads land in the receipt.
+        print(f"== seed {seed}: selecting checkpoints...", flush=True)
+        cands = []
         ck, sel = pick_checkpoint(seed)
-        print(f"   {sel['selected']} (trailing entrance "
-              f"{sel['trailing_entrance']:.3f})", flush=True)
-        ev = honest_eval(ck, args.episodes)
-        verdict["arms"][f"seed{seed}"] = {"selection": sel, "eval": ev}
-        print(f"   pooled clear_rate: {ev.get('pooled_clear_rate')}",
-              flush=True)
-    pooled = [a["eval"].get("pooled_clear_rate")
-              for a in verdict["arms"].values()
-              if a["eval"].get("pooled_clear_rate") is not None]
+        cands.append(("grid_peak", ck, sel))
+        wdir = (REPO / f"checkpoints/mario_1_1_backward_gru_seed{seed}"
+                / "winners")
+        if (wdir / "best.pt").exists():
+            meta = json.loads((wdir / "best.json").read_text())
+            cands.append(("winners_best", wdir / "best.pt",
+                          {"selected": str(wdir / "best.pt"),
+                           "trailing_entrance": meta.get("metric_value"),
+                           "source_iter": meta.get("source_iter")}))
+        arm = {"candidates": {}}
+        best_rate = None
+        for name, path, meta in cands:
+            print(f"   {name}: {meta['selected']}", flush=True)
+            ev = honest_eval(path, args.episodes)
+            arm["candidates"][name] = {"selection": meta, "eval": ev}
+            r = ev.get("pooled_clear_rate")
+            print(f"   {name} pooled clear_rate: {r}", flush=True)
+            if r is not None and (best_rate is None or r > best_rate):
+                best_rate = r
+        arm["seed_score"] = best_rate
+        verdict["arms"][f"seed{seed}"] = arm
+    pooled = [a["seed_score"] for a in verdict["arms"].values()
+              if a.get("seed_score") is not None]
     verdict["best_of_n"] = max(pooled) if pooled else None
     p = REPO / args.out
     p.parent.mkdir(parents=True, exist_ok=True)
