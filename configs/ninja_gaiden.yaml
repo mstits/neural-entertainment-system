@@ -49,7 +49,14 @@ solve:
   #          and the saturation gate.
   #   $00F3  carries the jump/ballistic signature.
   #   $001F  decrements on death, agreed by 5 of 5 independent runs.
-  progress: {lo: 0x0086}
+  # 2026-08-23: $0086 was a screen-local byte — the progress-signal
+  # gate showed it wraps unpaired on long rolls. Replaced by the PPU
+  # scroll odometer: gate re-run SOUND at 126 distinct over 1384 px
+  # (runs/odometer/gate_ninja_gaiden_2026-08-23.json). $001F stays as
+  # the death byte with its known start-state caveat (reads 0 at the
+  # very first frames; decrement detection is unaffected once play
+  # begins, per the same gate run reporting lives correctly mid-roll).
+  progress: {source: odometer, axis: x}
   y: 0x00F3
   lives: 0x001F
   # DELIBERATELY EMPTY. Observing a stage-advance byte requires a real
