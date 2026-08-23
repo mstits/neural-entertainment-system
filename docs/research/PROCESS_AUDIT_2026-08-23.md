@@ -109,3 +109,26 @@ item-effect association learning), and a CLASSIFIER-ROUTER — the
 progress-signal gate and TOTALITY class detection choosing which
 modules arm per game, so "classify and navigate a given game from
 beginning to end" is the standard pipeline rather than per-game craft.
+
+## Shelf dispositions: ANSWERED (engine-run, 2026-08-23)
+
+All six evals ran autonomously the moment the machine freed. Answers:
+
+1. **Joint-policy transfer signal: CLOSED.** Pooled honest 100-episode
+   rates: 1-1 = 32/100 (vs specialist 43), 1-2 = 1/100 (vs banked 38).
+   The falsifier's 0.52 flicker does not replicate; naive pooling stays
+   falsified on both levels, now with full-protocol receipts
+   (runs/engine/logs/shelf_joint_*.log). The shared-substrate line does
+   not revive on this evidence; the trunk-plus-heads experiment remains
+   distinct and unscheduled.
+2. **1-4 endpoint: 51/100 pooled — EXACTLY the banked rate.** The 0.633
+   probe was winner's curse, as the discipline predicted (0.633 -> 0.51).
+   Two further reads: (a) the corrected-ladder re-run did NOT raise the
+   rate, so the memo's falsifier resolves — the backward ladder was not
+   a material driver of 1-4's 51, and the inert-ladder caveat closes
+   with "no measurable effect either way"; (b) unlike 1-2's continued
+   PPO (31 -> 8), 1-4's consolidation endpoint HELD its banked level —
+   consolidation and raw continued training age very differently, which
+   sharpens Finding 2 of the options negative.
+3. Remaining from the audit shelf: SWA (needs a script; still queued),
+   hazard->Go-Explore weighting (Castlevania module dependency).
