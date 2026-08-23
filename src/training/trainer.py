@@ -5137,7 +5137,7 @@ class Trainer:
                     "from %s (critic stays fresh)", len(_kl_loaded), _kl_ckpt,
                 )
             _run_end_steps = (iter_offset + num_iters) * (
-                self.num_envs * self.rollout_steps)
+                self.num_instances * self.rollout_steps)
             if self._kl_anchor.actor_freeze_steps > _run_end_steps:
                 log.warning(
                     "[vanilla_ppo] KL ANCHOR: actor_freeze_steps %.3g "
