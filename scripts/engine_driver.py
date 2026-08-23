@@ -715,6 +715,65 @@ def plan(state: dict, repo: Path = REPO,
                  "13x13 tile observation lacks the resolution to see "
                  "threats: do not integrate."))
 
+    # 2c. SHELF DISPOSITIONS (PROCESS_AUDIT_2026-08-23): signals we
+    #     nearly left on the table, each owed its >=100-episode answer.
+    #     The joint-policy follow-up is the big one — the interference
+    #     falsifier's joint checkpoint scored 0.52 on 1-1 vs the
+    #     specialist's 0.43 and the positive signal was filed under the
+    #     experiment's negative headline. Argv mirrors the falsifier's
+    #     own _eval_game_command settings so the numbers are comparable
+    #     to the originals.
+    _shelf = [
+        ("shelf_joint_1_1", "runs/interference/joint.pt",
+         "mario_1_1_backward", "configs/mario_1_1_backward.yaml",
+         "runs/live_show/smb_4_4_micro/entrance_start.state"),
+        ("shelf_joint_1_2", "runs/interference/joint.pt",
+         "mario_1_2_consol2", "configs/mario_1_2_consol2.yaml",
+         "checkpoints/super_bros_placeholder"),
+        ("shelf_1_4_endpoint", None,
+         "mario_1_4_online_v1", "configs/mario_1_4_online_v1.yaml",
+         None),
+    ]
+    for sid, ck, game, prof_rel, start in _shelf:
+        prof_p = repo / prof_rel
+        if not prof_p.exists():
+            continue
+        try:
+            import yaml as _yaml
+            _prof = _yaml.safe_load(prof_p.read_text()) or {}
+        except Exception:
+            continue
+        rom = _prof.get("rom_path")
+        if start is None or "placeholder" in str(start):
+            start = _prof.get("start_state_path")
+        if ck is None:
+            cks = sorted((repo / "checkpoints" / game).glob(
+                "vanilla_ppo_iter_*.pt"))
+            ck = str(cks[-1].relative_to(repo)) if cks else None
+        if not (rom and start and ck):
+            continue
+        for seed in (7, 101):
+            candidates.append(Action(
+                id=f"{sid}_seed{seed}", kind="shelf_eval",
+                needs_emulator=True, timeout_h=4.0,
+                cmd=["scripts/eval_game.py", "--game", game,
+                     "--profile", prof_rel, "--rom", str(rom),
+                     "--checkpoint", str(ck),
+                     "--episodes", "50", "--max-steps", "3000",
+                     "--sequential", "--level-clear",
+                     "--start-state", str(start),
+                     "--eval-seed", str(seed),
+                     "--sticky-prob", "0.25", "--start-jitter", "16",
+                     "--eval-workers", "5", "--eval-rng", "per-episode"],
+                gate="Honest protocol; the record lands in the checkpoint "
+                     "dir's eval.jsonl. Joint gate: pooled 1-1 rate "
+                     "meaningfully above the specialist's 0.43 revives "
+                     "the shared-substrate line; at-or-below closes the "
+                     "signal with receipts. 1-4 endpoint gate: pooled "
+                     "rate vs the banked 0.51 decides whether "
+                     "re-consolidation genuinely raised the level.",
+                meta={"shelf": sid, "seed": seed}))
+
     # 3. Verify the banked EXHIBITION corpus once.
     candidates.append(Action(
         id="replay_sweep_full", kind="sweep", needs_emulator=True,
