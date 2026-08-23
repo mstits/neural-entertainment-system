@@ -22,8 +22,22 @@ WINDOW = 30  # iters of trailing entrance window
 
 
 def pick_checkpoint(seed: int) -> tuple[Path, dict]:
-    log = REPO / f"runs/gru_ab/train_seed{seed}.log"
     ckdir = REPO / f"checkpoints/mario_1_1_backward_gru_seed{seed}"
+    # The pre-registration names "each seed's best preserved checkpoint"
+    # as the scored artifact — that is the trainer's own preserve-on-
+    # peak snapshot (winners/best.pt, selected on the training-time
+    # entrance_trailing_rate, the same artifact class the control's
+    # banked 0.76 came from). The 10-iter grid selection below is the
+    # fallback for a run that produced no winners snapshot.
+    best = ckdir / "winners" / "best.pt"
+    if best.exists():
+        import json as _json
+        meta = _json.loads((ckdir / "winners" / "best.json").read_text())
+        return best, {"selected": str(best),
+                      "trailing_entrance": meta.get("metric_value"),
+                      "source_iter": meta.get("source_iter"),
+                      "table": []}
+    log = REPO / f"runs/gru_ab/train_seed{seed}.log"
     rows = []  # (iter, cum_succ, cum_att)
     for line in log.read_text().splitlines():
         m = LOG_RE.search(line)
