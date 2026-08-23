@@ -2943,8 +2943,24 @@ class Solver:
         # own roots reproduces the clear at exactly the recorded action count
         # with is_dead() FALSE at that frame in all 7 cases. Nothing banked
         # depends on the old order.
+        # DEBOUNCED (2026-08-23, the Rygar door lesson — same class as
+        # the level-key blip below): area/room transitions can blip the
+        # lives byte through 0 while the screen is blanked (Rygar $0303
+        # reads 0 for exactly 2 steps crossing the first door; receipt:
+        # the 45-min odometer run walled at gx 1536 = that door, every
+        # crossing burst killed by the blip). A momentary blip survives
+        # (nothing is recorded during it); only a PERSISTENT dead state
+        # (>= 3 consecutive observations) terminates the lineage. Real
+        # deaths confirm 2 steps later at zero cost — corpse frames are
+        # never banked because each blip step returns before recording.
         if game.is_dead(ram, self.start_lives):
+            if ctx is not None:
+                n = ctx["_dead_mm"] = ctx.get("_dead_mm", 0) + 1
+                if n < 3:
+                    return "live"   # blip: keep stepping, record nothing
             return "dead"
+        elif ctx is not None:
+            ctx["_dead_mm"] = 0
         # GAME-COMPLETE check (8-4 finale): the ending never advances the
         # world/level bytes (there is no next level) — the victory state is
         # operating mode $0770 == 2 with inputs locked (verified 2026-07-27,
@@ -3269,6 +3285,7 @@ class Solver:
             # only given the observations it needs to reach the verdict it
             # already reached live.
             needs_apu = bool(getattr(self, "_needs_apu", False))
+            _dmm = 0
             for i, a in enumerate(list(trace) + [0] * margin):
                 acts[0] = self.bitmasks[int(a)]
                 ram = pool.step_all(acts)[0][2]
@@ -3279,8 +3296,12 @@ class Solver:
                 if needs_apu:
                     ctx["_apu_mask"] = pool.apu_activity_all()[0]
                 if i < n and self.game.is_dead(ram, self.start_lives):
-                    out.update(verdict="dead", at=i + 1)
-                    break
+                    _dmm += 1
+                    if _dmm >= 3:   # transition-blip debounce (observe())
+                        out.update(verdict="dead", at=i + 1)
+                        break
+                else:
+                    _dmm = 0
                 if (self.game.is_finale(self.start_wd, ram)
                         or self.game.is_clear(self.start_wd, ram, ctx)):
                     out.update(ok=True, verdict="clear", at=i + 1)
@@ -3511,6 +3532,7 @@ class Solver:
                 pool.load_worker_state(0, pivot)
                 ctx: dict = {}
                 verdict, at = "no_clear", None
+                _dmm = 0
                 for i, a in enumerate(list(actions) + [0] * margin):
                     acts[0] = self.bitmasks[int(a)]
                     ram = pool.step_all(acts)[0][2]
@@ -3520,8 +3542,12 @@ class Solver:
                         ctx["_apu_mask"] = pool.apu_activity_all()[0]
                     if i < len(actions) and self.game.is_dead(
                             ram, self.start_lives):
-                        verdict, at = "dead", i + 1
-                        break
+                        _dmm += 1
+                        if _dmm >= 3:   # transition-blip debounce
+                            verdict, at = "dead", i + 1
+                            break
+                    else:
+                        _dmm = 0
                     if (self.game.is_finale(self.start_wd, ram)
                             or self.game.is_clear(self.start_wd, ram, ctx)):
                         verdict, at = "clear", i + 1
