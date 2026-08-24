@@ -4311,6 +4311,19 @@ class Solver:
                     src.barren = 0
                 else:
                     src.barren = getattr(src, "barren", 0) + 1
+                    # DEAD-ON-ARRIVAL retirement (the NG scene-9 corpse
+                    # lesson): a burst that died within its first few
+                    # steps was rooted at a state that was already doomed
+                    # when banked — the death byte lags the fatal hit, so
+                    # no bank-time check can screen these. One instant
+                    # death is proof enough; retire the cell immediately
+                    # instead of draining `throttle` bursts on it. Armed
+                    # with --frontier-throttle like the rest of the
+                    # barren machinery.
+                    if (self.frontier_throttle > 0
+                            and prev.get("died_at_burst_step") is not None
+                            and prev["died_at_burst_step"] <= 5):
+                        src.barren = max(src.barren, self.frontier_throttle)
         cell = self.select()
         if cell is None:
             # Fall back to the entrance root.
@@ -5457,6 +5470,8 @@ class Solver:
                     c["left"] += 200
                     c["extended"] = True
                 if status != "live" or c["left"] <= 0 or c["steps"] >= args.max_steps:
+                    if status == "dead":
+                        c["died_at_burst_step"] = args.burst - c["left"]
                     # A burst just completed: this is the only moment the
                     # gate sweep may fire (nothing in flight is discarded).
                     self._gate_boundary_hit = True

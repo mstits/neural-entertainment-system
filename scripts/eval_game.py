@@ -521,6 +521,7 @@ def _run_episodes_serial(
     action_select: str,
     temperature: float,
     eval_rng: str = "shared-stream",
+    dump_stick_dir=None,
 ) -> list[dict]:
     """Play `n_episodes` one after another in worker 0; return one record per
     episode, in episode order.
@@ -606,6 +607,7 @@ def _run_episodes_serial(
         ep_cleared = False
         step = 0
         _prev_action_idx = 0
+        _ep_sticks: list = []
         for step in range(max_steps):
             # Obs -> action. The policy object supplies the (obs -> logits)
             # mapping; everything else in this loop (reward, RAM byte proxy,
@@ -622,11 +624,20 @@ def _run_episodes_serial(
             # TRUSTWORTHY-obs harness (eval_game's obs matches training,
             # unlike eval_composite's tile adapter) this is the honest
             # perturbation test.
+            _chosen_idx = action_idx
             if sticky_prob > 0.0 and step > 0 and _sticky_rng.random() < sticky_prob:
                 action_idx = _prev_action_idx
             _prev_action_idx = action_idx
             bitmask = bitmasks[action_idx]
             r = pool.step_all(np.array([bitmask], dtype=np.uint8))
+            # Recovery-assay hook (opt-in, no effect otherwise): at every
+            # DIVERGENT stick (executed != chosen) snapshot the post-stick
+            # savestate. The assay adjudicates later whether a recovering
+            # continuation existed from exactly this state.
+            if dump_stick_dir is not None and action_idx != _chosen_idx:
+                _sp = dump_stick_dir / f"ep{ep:03d}_t{step:05d}.state"
+                _sp.write_bytes(bytes(pool.save_worker_state(0)))
+                _ep_sticks.append([int(step), str(_sp)])
             ram = r[0][2]
             reward, rew_done, _ = reward_fn.compute(ram, action=int(bitmask))
             ep_return += float(reward)
@@ -657,6 +668,7 @@ def _run_episodes_serial(
             elif rew_done or bool(r[0][3]) or ep_cleared:
                 break
         records.append({
+            "sticks": _ep_sticks,
             "ep_return": ep_return,
             "length": step + 1,
             "max_byte": ep_max_byte,
@@ -719,6 +731,7 @@ def eval_one_game(
     eval_workers: int = 1,
     eval_rng: str = "shared-stream",
     prev_action_feature: bool = False,
+    dump_stick_states: Optional[str] = None,
 ) -> dict:
     """Run N episodes; return a dict of eval stats."""
     if action_select not in _ACTION_SELECT_MODES:
@@ -1072,7 +1085,14 @@ def eval_one_game(
         action_select=action_select,
         temperature=temperature,
     )
-    if _parallel:
+    if dump_stick_states:
+        # The recovery-assay hook lives only in the serial loop; parallel
+        # lanes would interleave snapshots across workers.
+        _dsd = Path(dump_stick_states)
+        _dsd.mkdir(parents=True, exist_ok=True)
+        _records = _run_episodes_serial(
+            pool, eval_rng=eval_rng, dump_stick_dir=_dsd, **_executor_kwargs)
+    elif _parallel:
         _records = _run_episodes_parallel(pool, lanes=lanes, **_executor_kwargs)
     else:
         _records = _run_episodes_serial(pool, eval_rng=eval_rng, **_executor_kwargs)
@@ -1099,6 +1119,18 @@ def eval_one_game(
                 best_any = _rec["furthest_any"]
 
     pool.shutdown()
+
+    # Recovery-assay manifest: when dumping stick states, persist the
+    # per-episode records (stick lists + outcome) next to the snapshots
+    # so the adjudicator can map states -> episode fate without parsing
+    # stdout.
+    if dump_stick_states:
+        import json as _json
+        (Path(dump_stick_states).parent / "manifest.json").write_text(
+            _json.dumps({"records": [
+                {k: r.get(k) for k in
+                 ("sticks", "length", "cleared", "ep_return")}
+                for r in _records]}, indent=2) + "\n")
 
     result = {
         "game": game,
@@ -1225,6 +1257,13 @@ def main() -> int:
                         dest="temperature",
                         help="Softmax temperature for --action-select sampled. "
                              "Ignored when greedy. Must be > 0.")
+    parser.add_argument("--dump-stick-states", type=str, default=None,
+                        metavar="DIR",
+                        help="recovery assay: save the post-stick savestate "
+                             "at every DIVERGENT sticky application "
+                             "(executed != chosen) into DIR; per-episode "
+                             "stick lists ride the episode records. Forces "
+                             "the serial loop.")
     parser.add_argument("--eval-workers", type=int, default=1, dest="eval_workers",
                         metavar="K",
                         help="Run K episodes concurrently in a K-worker pool "
@@ -1319,6 +1358,7 @@ def main() -> int:
         eval_seed=args.eval_seed, action_select=args.action_select,
         temperature=args.temperature, eval_workers=args.eval_workers,
         eval_rng=args.eval_rng, prev_action_feature=args.prev_action_feature,
+        dump_stick_states=args.dump_stick_states,
     )
     print(json.dumps(result, indent=2))
     return 0
