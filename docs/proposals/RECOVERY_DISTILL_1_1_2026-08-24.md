@@ -100,3 +100,31 @@ states keep plain CE to the solver action. Two-rung LR ladder defined
 in advance: lr 1e-4; if the drift-stop fires, one retry at lr 1e-5
 (20 epochs). Same gate, same drift-stop, same mini-eval cadence.
 FAIL only after both rungs. Nothing else changes.
+
+## Variant A VERDICT: FAIL (both rungs)
+
+Rung 1 (lr 1e-4 + KL leash): drift-stop at epoch 0 (0.0). Rung 2
+(lr 1e-5): epoch 0 held 0.70, epoch 1 eroded to 0.60 — stop; best
+artifact 0.70 < baseline 0.767 < gate 0.80. Complete adjudication of
+the cloning family: cross-entropy on solver recovery actions — naive
+or KL-anchored, at 1e-4 or 1e-5 — erodes the artifact faster than it
+teaches. The solver's action style is off-manifold for this policy;
+imitation pressure of any tested strength is net-destructive.
+Receipts: runs/recovery_distill/train_history.json (both rungs'
+histories in task logs).
+
+## Variant B (registered before running): on-policy recovery PPO
+
+Salvage 3, via existing machinery: a backward-curriculum-style run
+whose restart distribution IS the mined post-stick states — the
+policy learns to survive FROM those states with ordinary on-policy
+PPO, no cloning target anywhere. Config = clone of the banked 1-1
+recipe with: states_dir -> the 27 mined post-stick states;
+kl_anchor_checkpoint -> the control (leash against peak instability,
+actor NOT frozen: actor_freeze_steps 0); short run (60 iters,
+checkpoints every 10); sticky-on rollouts as standard.
+Gate unchanged: preserved-best honest ≥ 0.80 PASS / ≤ 0.767 FAIL;
+drift semantics: any checkpoint < 0.70 honest is recorded but the run
+completes (PPO variance is not BC drift; the peak selector handles
+it). VOID: preflight refusal or the curriculum never restarts from
+the mined states.
