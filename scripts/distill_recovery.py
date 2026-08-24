@@ -104,6 +104,14 @@ def train(args) -> int:
         str(REPO / args.checkpoint), num_actions=len(bm),
         feature_dim=stacked_dim)
 
+    # Variant A: frozen control for the KL anchor leash
+    frozen, _ = build_tile_policy_from_checkpoint(
+        str(REPO / args.checkpoint), num_actions=len(bm),
+        feature_dim=stacked_dim)
+    frozen.eval()
+    for p_ in frozen.parameters():
+        p_.requires_grad_(False)
+
     rec_obs, rec_act = [], []
     for f in sorted((OUT / "demos").glob("ep*.npz")):
         d = np.load(f)
@@ -124,12 +132,23 @@ def train(args) -> int:
         act = np.concatenate([rec_act, anc_act[idx]])
         order = rng.permutation(len(act))
         net.train()
+        n_rec = len(rec_act)
         for i in range(0, len(order), args.batch):
             b = order[i:i + args.batch]
-            logits, _ = net.forward_ac(
-                torch.from_numpy(obs[b]).float().to(dev))
-            loss = F.cross_entropy(
-                logits, torch.from_numpy(act[b]).to(dev))
+            xb = torch.from_numpy(obs[b]).float().to(dev)
+            logits, _ = net.forward_ac(xb)
+            is_rec = torch.from_numpy(b < n_rec).to(dev)
+            # recovery states: CE to the solver action
+            ce = F.cross_entropy(
+                logits, torch.from_numpy(act[b]).to(dev),
+                reduction="none")
+            # anchor states: KL leash to the FROZEN control (variant A)
+            with torch.no_grad():
+                ref_logits, _ = frozen.forward_ac(xb)
+            kl = F.kl_div(F.log_softmax(logits, dim=-1),
+                          F.log_softmax(ref_logits, dim=-1),
+                          log_target=True, reduction="none").sum(-1)
+            loss = torch.where(is_rec, ce, args.kl_beta * kl).mean()
             opt.zero_grad(); loss.backward(); opt.step()
         ck = OUT / "ckpts" / f"distill_epoch{epoch:02d}.pt"
         net.eval()
@@ -189,6 +208,7 @@ if __name__ == "__main__":
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--drift-stop", type=float, default=0.70)
+    ap.add_argument("--kl-beta", type=float, default=1.0)
     a = ap.parse_args()
     import numpy as np  # noqa: F401  (demos phase uses np before import)
     sys.exit(build_demos(a) if a.phase == "demos" else train(a))

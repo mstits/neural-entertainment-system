@@ -90,3 +90,13 @@ runs/gru_ab/stick_probe_realpolicy.json (real-policy probe: divergence
 0.056; stateless MLP AUC 0.76, GRU 0.74 — with the real policy,
 recurrence adds NOTHING; the v26-override conclusion is confirmed on
 corrected data).
+
+## Variant A (registered 2026-08-24 evening, before running): KL anchor
+
+Change from the failed base: the anchor term becomes
+KL(net(anchor_obs) || FROZEN control(anchor_obs)) with weight 1.0 —
+an explicit leash to the control's distribution — while recovery
+states keep plain CE to the solver action. Two-rung LR ladder defined
+in advance: lr 1e-4; if the drift-stop fires, one retry at lr 1e-5
+(20 epochs). Same gate, same drift-stop, same mini-eval cadence.
+FAIL only after both rungs. Nothing else changes.
