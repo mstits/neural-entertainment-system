@@ -61,3 +61,31 @@ scripts/recovery_assay.py; the verdict below is filesystem-scored.)
 - Repeat the assay on 1-2 (the 21% level): if its fatal-window share
   is much larger, the 1-2 BANKED verdict gets a mechanical
   explanation and stays closed with better evidence.
+
+## Addendum: the 1-2 assay (same day)
+
+Collection: 60 honest episodes of the banked consol2 artifact from
+stage_03 (baseline reproduced 0.367; run scored 25/60), 1,337
+snapshots. 16 of 35 death-sticks adjudicated at 10 solver-min each
+(runs/recovery_assay_1_2/verdict.json):
+
+| | 1-1 | 1-2 |
+|---|---|---|
+| death-sticks recovered | 3/9 (33%) | 3/16 (19%) |
+| sticks ≤4 steps pre-death | 3/9 (33%) | **11/16 (69%)** |
+| … recovered of those | 0/3 | 1/11 |
+| implied honest ceiling | ~0.83–0.85 | **~0.53** |
+
+**1-2's fatal window dominates.** Two-thirds of its sticky deaths are
+decided within 4 steps — before any policy response is possible — and
+even 45-step-gap states at the pole mostly have no recovering
+continuation the solver can find. This is the mechanical explanation
+for the paradigm-exhaustion verdict: hazard veto, options, imitation,
+and recurrence all failed against a wall that is mostly PHYSICS at
+p=0.25. The 1-2 BANKED verdict stands, now with receipts; its honest
+ceiling under this protocol is ~0.5, and the banked ~0.37-0.40 sits
+much closer to its ceiling than 1-1's 0.767 does to its ~0.85.
+
+Routing rule going forward: run this assay BEFORE spending training
+effort on any level's sticky rate — the recoverable share IS the
+budget-worthiness signal.

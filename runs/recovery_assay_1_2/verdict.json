@@ -1,0 +1,152 @@
+{
+  "sampled": 16,
+  "recovered": 3,
+  "recovery_rate": 0.188,
+  "solver_minutes_each": 10.0,
+  "results": [
+    {
+      "episode": 0,
+      "t": 239,
+      "death_step": 241,
+      "state": "runs/recovery_assay_1_2/states/ep000_t00239.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep000_t0239"
+    },
+    {
+      "episode": 2,
+      "t": 239,
+      "death_step": 241,
+      "state": "runs/recovery_assay_1_2/states/ep002_t00239.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep002_t0239"
+    },
+    {
+      "episode": 3,
+      "t": 230,
+      "death_step": 233,
+      "state": "runs/recovery_assay_1_2/states/ep003_t00230.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 1, \"frontier\": 0, \"best_score\": 885, \"records\": 1, \"new_cells\": 1, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep003_t0230"
+    },
+    {
+      "episode": 4,
+      "t": 479,
+      "death_step": 483,
+      "state": "runs/recovery_assay_1_2/states/ep004_t00479.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 5, \"frontier\": 0, \"best_score\": 2114, \"records\": 91797, \"new_cells\": 5, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep004_t0479"
+    },
+    {
+      "episode": 6,
+      "t": 244,
+      "death_step": 246,
+      "state": "runs/recovery_assay_1_2/states/ep006_t00244.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep006_t0244"
+    },
+    {
+      "episode": 7,
+      "t": 230,
+      "death_step": 232,
+      "state": "runs/recovery_assay_1_2/states/ep007_t00230.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep007_t0230"
+    },
+    {
+      "episode": 9,
+      "t": 285,
+      "death_step": 286,
+      "state": "runs/recovery_assay_1_2/states/ep009_t00285.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep009_t0285"
+    },
+    {
+      "episode": 12,
+      "t": 371,
+      "death_step": 401,
+      "state": "runs/recovery_assay_1_2/states/ep012_t00371.state",
+      "recovered": true,
+      "solutions": 2,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 3295, \"frontier\": 3248, \"best_score\": 163266, \"records\": 5842, \"new_cells\": 3295, \"improvements\": 375}, 1 solutions -> runs/recovery_assay_1_2/solve_ep012_t0371"
+    },
+    {
+      "episode": 13,
+      "t": 557,
+      "death_step": 560,
+      "state": "runs/recovery_assay_1_2/states/ep013_t00557.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep013_t0557"
+    },
+    {
+      "episode": 14,
+      "t": 231,
+      "death_step": 233,
+      "state": "runs/recovery_assay_1_2/states/ep014_t00231.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep014_t0231"
+    },
+    {
+      "episode": 15,
+      "t": 210,
+      "death_step": 212,
+      "state": "runs/recovery_assay_1_2/states/ep015_t00210.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep015_t0210"
+    },
+    {
+      "episode": 16,
+      "t": 580,
+      "death_step": 600,
+      "state": "runs/recovery_assay_1_2/states/ep016_t00580.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep016_t0580"
+    },
+    {
+      "episode": 17,
+      "t": 335,
+      "death_step": 339,
+      "state": "runs/recovery_assay_1_2/states/ep017_t00335.state",
+      "recovered": true,
+      "solutions": 2,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 3135, \"frontier\": 3090, \"best_score\": 163267, \"records\": 7923, \"new_cells\": 3135, \"improvements\": 489}, 1 solutions -> runs/recovery_assay_1_2/solve_ep017_t0335"
+    },
+    {
+      "episode": 19,
+      "t": 310,
+      "death_step": 355,
+      "state": "runs/recovery_assay_1_2/states/ep019_t00310.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep019_t0310"
+    },
+    {
+      "episode": 24,
+      "t": 325,
+      "death_step": 371,
+      "state": "runs/recovery_assay_1_2/states/ep024_t00325.state",
+      "recovered": false,
+      "solutions": 0,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 0, \"frontier\": 0, \"best_score\": 0.0, \"records\": 0, \"new_cells\": 0, \"improvements\": 0}, 0 solutions -> runs/recovery_assay_1_2/solve_ep024_t0325"
+    },
+    {
+      "episode": 26,
+      "t": 1353,
+      "death_step": 1500,
+      "state": "runs/recovery_assay_1_2/states/ep026_t01353.state",
+      "recovered": true,
+      "solutions": 2,
+      "solver_tail": "[go_explore_solve] done: {\"cells\": 85, \"frontier\": 79, \"best_score\": 53267, \"records\": 1065, \"new_cells\": 85, \"improvements\": 38}, 1 solutions -> runs/recovery_assay_1_2/solve_ep026_t1353"
+    }
+  ]
+}
