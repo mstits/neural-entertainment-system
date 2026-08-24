@@ -442,6 +442,7 @@ def build_tile_policy_from_checkpoint(
     *,
     num_actions: int,
     feature_dim: int,
+    load_weights: bool = True,
 ) -> tuple[nn.Module, bool]:
     """Construct the tile policy whose architecture matches `checkpoint`.
 
@@ -458,6 +459,16 @@ def build_tile_policy_from_checkpoint(
     # carry only `net_state_dict` (no arch config), so shape inference is the
     # only reliable source. Falls back to the constructor defaults when a key
     # is absent (older/partial checkpoints).
+    # Accept a path too: a str/Path checkpoint is torch.loaded here.
+    # Previously a path input fell through every isinstance(dict) guard
+    # and the function silently returned a RANDOM default-width net —
+    # callers that skipped their own load_state_dict then trained or
+    # rolled uninitialized policies (2026-08-24: one training run and
+    # several data collections did exactly that before this bit).
+    if isinstance(checkpoint, (str, Path)):
+        import torch as _torch
+        checkpoint = _torch.load(str(checkpoint), map_location="cpu",
+                                 weights_only=False)
     sd = None
     if isinstance(checkpoint, dict):
         sd = checkpoint.get("net_state_dict") or checkpoint.get("state_dict")
@@ -480,7 +491,10 @@ def build_tile_policy_from_checkpoint(
             kwargs["hidden_dim"] = hidden
         if gru_ih is not None:
             kwargs["gru_dim"] = gru_ih // 3
-        return (TileRecurrentPolicyNetwork(**kwargs), True)
+        net = TileRecurrentPolicyNetwork(**kwargs)
+        if load_weights and sd is not None:
+            net.load_state_dict(sd)
+        return (net, True)
     # fc1.weight: (hidden_dim, feature_dim); fc2.weight: (trunk_dim, hidden_dim).
     hidden = _rows("fc1.weight")
     trunk = _rows("fc2.weight")
@@ -489,4 +503,7 @@ def build_tile_policy_from_checkpoint(
         kwargs["hidden_dim"] = hidden
     if trunk is not None:
         kwargs["trunk_dim"] = trunk
-    return (TilePolicyNetwork(**kwargs), False)
+    net = TilePolicyNetwork(**kwargs)
+    if load_weights and sd is not None:
+        net.load_state_dict(sd)
+    return (net, False)

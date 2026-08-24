@@ -668,7 +668,9 @@ def _run_episodes_serial(
             elif rew_done or bool(r[0][3]) or ep_cleared:
                 break
         records.append({
-            "sticks": _ep_sticks,
+            # only when the assay hook is armed — the serial/parallel
+            # byte-identity suite compares records across executors.
+            **({"sticks": _ep_sticks} if dump_stick_dir is not None else {}),
             "ep_return": ep_return,
             "length": step + 1,
             "max_byte": ep_max_byte,

@@ -1597,7 +1597,12 @@ class Trainer:
         control arm a true control.
         """
         net = self._make_network_raw(num_actions)
-        rl_cfg = self.game_profile.get("reinforce", {}) or {}
+        # getattr: characterization tests build bare Trainer.__new__
+        # instances without game_profile; for them (and any caller
+        # without a profile) the experiment-arm wrappers below are
+        # simply off, which is also the correct default.
+        rl_cfg = (getattr(self, "game_profile", None) or {}).get(
+            "reinforce", {}) or {}
 
         commit_cfg = rl_cfg.get("commitment_options") or {}
         if commit_cfg.get("enabled"):

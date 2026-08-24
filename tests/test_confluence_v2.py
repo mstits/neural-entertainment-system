@@ -799,9 +799,13 @@ def test_replay_verification_accepts_a_reproducing_finale(scripted) -> None:
 def test_replay_verification_rejects_a_candidate_that_dies_instead(scripted) -> None:
     # The Gradius signature: what the live hook called a clear replays as a
     # death. This is the case that must never reach solutions/.
-    _ScriptedPool.script = _frames([0, 0, 2])
+    # Persistent death (>= 3 frames — the post-debounce contract; a
+    # 1-frame flicker is a transition blip and survives by design).
+    _ScriptedPool.script = _frames([0, 2, 2, 2])
     fake = _verify_solver(None, scripted)
-    out = Solver.replay_verify(fake, "entrance", [1, 1])
+    # trace long enough that all three dead reads land IN-TRACE (the
+    # margin region only adjudicates clears, never deaths).
+    out = Solver.replay_verify(fake, "entrance", [1, 1, 1])
     assert out["ok"] is False and out["verdict"] == "dead"
 
 
@@ -948,11 +952,20 @@ def test_a_death_INSIDE_the_trace_still_rejects(scripted) -> None:
         def clear_verify_margin(self) -> int:
             return 5
 
-    _ScriptedPool.script = _frames([0, 0, 2, 1, 1, 1, 1])
+    # Death contract (2026-08-24, the Rygar door lesson): a PERSISTENT
+    # dead read (>= 3 consecutive frames) rejects; a single-frame
+    # flicker is a transition blip and survives with nothing recorded.
+    _ScriptedPool.script = _frames([0, 2, 2, 2, 1, 1, 1])
     fake = _verify_solver(None, scripted)
     fake.game = _M()
     out = Solver.replay_verify(fake, "entrance", [1, 1, 1])
-    assert out["verdict"] == "dead" and out["at"] == 2 and out["ok"] is False
+    assert out["verdict"] == "dead" and out["at"] == 3 and out["ok"] is False
+    # ...and the blip form no longer rejects (it would have poisoned
+    # every door crossing):
+    _ScriptedPool.script = _frames([0, 0, 2, 1, 1, 1, 1])
+    out2 = Solver.replay_verify(_verify_solver(None, scripted), "entrance",
+                                [1, 1, 1])
+    assert out2["verdict"] != "dead"
 
 
 def test_a_clear_inside_the_margin_reports_an_at_past_the_trace(

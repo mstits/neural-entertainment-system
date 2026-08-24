@@ -3309,7 +3309,7 @@ class Solver:
             for i, a in enumerate(list(trace) + [0] * margin):
                 acts[0] = self.bitmasks[int(a)]
                 ram = pool.step_all(acts)[0][2]
-                if self._odo:
+                if getattr(self, "_odo", False):
                     ram = self._xram_local(ram, pool)
                 # Same modality the live hook saw, or the replay judges a
                 # different detector than the one that fired.
@@ -3320,6 +3320,7 @@ class Solver:
                     if _dmm >= 3:   # transition-blip debounce (observe())
                         out.update(verdict="dead", at=i + 1)
                         break
+                    continue  # blip: no clear adjudication on a dying frame
                 else:
                     _dmm = 0
                 if (self.game.is_finale(self.start_wd, ram)
@@ -3556,7 +3557,7 @@ class Solver:
                 for i, a in enumerate(list(actions) + [0] * margin):
                     acts[0] = self.bitmasks[int(a)]
                     ram = pool.step_all(acts)[0][2]
-                    if self._odo:
+                    if getattr(self, "_odo", False):
                         ram = self._xram_local(ram, pool)
                     if needs_apu:
                         ctx["_apu_mask"] = pool.apu_activity_all()[0]
@@ -3566,6 +3567,8 @@ class Solver:
                         if _dmm >= 3:   # transition-blip debounce
                             verdict, at = "dead", i + 1
                             break
+                        continue  # blip: a dying frame must never
+                                  # adjudicate clear (dead-before-clear)
                     else:
                         _dmm = 0
                     if (self.game.is_finale(self.start_wd, ram)
@@ -4993,7 +4996,8 @@ class Solver:
             for wid, prog in enumerate(progs):
                 acts[wid] = prog[t - 1]
             results = self.pool.step_all(acts)
-            self._odo_refresh()
+            if getattr(self, "_odo", False):
+                self._odo_refresh()
             self.steps_done += int(self.args.workers)
             self._gate_counters["steps"] += int(self.args.workers)
             for wid, (t0, t1, t2) in enumerate(points):
@@ -5012,7 +5016,9 @@ class Solver:
                 # check that can only refuse. The sampler's job is just
                 # to record it, labelled by n_settle=t0 below.
                 if t <= t0 + 1:
-                    ram = self._xram(results[wid][2], wid)
+                    ram = (self._xram(results[wid][2], wid)
+                           if getattr(self, "_odo", False)
+                           else results[wid][2])
                     settle_pos[wid].append((self.game.progress(ram),
                                             self.game.y(ram)))
                 if t <= undirected[wid]:
@@ -5367,7 +5373,8 @@ class Solver:
                 c["pending"] = a
                 acts[i] = self.bitmasks[a]
             results = self.pool.step_all(acts)
-            self._odo_refresh()
+            if getattr(self, "_odo", False):
+                self._odo_refresh()
             # One byte per worker, read straight after the step (state read,
             # no stepping, no side effects). None unless a profile's clear
             # hook asked for the audio modality, so the default hot loop is
@@ -5380,7 +5387,9 @@ class Solver:
                 except Exception:
                     pass
             for i, c in enumerate(ctx):
-                ram = self._xram(results[i][2], i)
+                ram = (self._xram(results[i][2], i)
+                       if getattr(self, "_odo", False)
+                       else results[i][2])
                 if apu_all is not None:
                     c["_apu_mask"] = apu_all[i]
                 c["trace"].append(c["pending"])

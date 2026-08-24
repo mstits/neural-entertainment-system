@@ -133,7 +133,8 @@ def train(args) -> int:
             opt.zero_grad(); loss.backward(); opt.step()
         ck = OUT / "ckpts" / f"distill_epoch{epoch:02d}.pt"
         net.eval()
-        torch.save({"state_dict": net.state_dict(), "kind": "tile_mlp",
+        torch.save({"net_state_dict": net.state_dict(),
+                    "kind": "tile_mlp",
                     "num_actions": len(bm), "feature_dim": stacked_dim},
                    ck)
         # honest mini-eval (30 eps) — the drift stop and peak tracker
