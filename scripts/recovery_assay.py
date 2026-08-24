@@ -32,7 +32,7 @@ import argparse, json, subprocess, sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-OUT = REPO / "runs/recovery_assay"
+OUT = REPO / "runs/recovery_assay"   # overridden by --dir
 
 
 def collect(args) -> int:
@@ -198,5 +198,9 @@ if __name__ == "__main__":
     ap.add_argument("--sample", type=int, default=16)
     ap.add_argument("--minutes", type=float, default=3)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--dir", default=None,
+                    help="assay directory (default runs/recovery_assay)")
     a = ap.parse_args()
+    if a.dir:
+        globals()["OUT"] = REPO / a.dir
     sys.exit(collect(a) if a.mode == "collect" else adjudicate(a))
