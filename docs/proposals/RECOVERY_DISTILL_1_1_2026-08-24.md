@@ -128,3 +128,33 @@ drift semantics: any checkpoint < 0.70 honest is recorded but the run
 completes (PPO variance is not BC drift; the peak selector handles
 it). VOID: preflight refusal or the curriculum never restarts from
 the mined states.
+
+## Variant B VERDICT: FAIL — and the experiment's meta-conclusion
+
+Honest scores by checkpoint: iter10 0.33, iter20 0.07, iter30 0.0,
+iter40 0.07, iter50 0.0. Training telemetry matched: recovery-pool
+clears 0.49 -> 0.30 and entrance rate 0.31 -> 0.06 across the run.
+The KL anchor did not hold; erosion began immediately and the
+recovery-state restart distribution ACCELERATED the known
+peak-instability mode.
+
+**All three salvage families are now adjudicated FAIL on this
+artifact:** naive cloning (destroys at epoch 0), KL-leashed cloning
+(monotone erosion at 1e-4 and 1e-5), KL-anchored on-policy PPO
+(erosion from iter 1). Combined with the campaign's earlier results
+(hazard veto, options, recurrence, continued-PPO collapse), the
+meta-finding is:
+
+> The consolidated 48k artifact is an ISOLATED OPTIMUM. Every
+> gradient that touches it — imitation or on-policy, leashed or not —
+> makes it worse. The trainable slice the assay measured exists in
+> the world (the solver found the recoveries), but no post-hoc
+> mechanism tested can transfer it into this artifact.
+
+1-1's honest number remains the untouched control's 0.767. The
+precise v27 question this hands the research loop: is
+untrainability a property of consolidation itself (post-hoc
+improvement impossible; recovery states must be in the curriculum
+FROM THE START of a fresh run — config-only with this machinery), or
+of the parameter budget? The fresh-run test is the registered next
+candidate, sized for the engine, not run tonight.
