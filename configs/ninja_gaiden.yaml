@@ -57,6 +57,11 @@ solve:
   # very first frames; decrement detection is unaffected once play
   # begins, per the same gate run reporting lives correctly mid-roll).
   progress: {source: odometer, axis: x}
+  # Scene ordinal from the odometer's rendered-cut detector (pseudo-
+  # address ODO_LO+3): stage wipes / camera-locked boss rooms become
+  # area transitions, so the archive orders cells (scene, x) and the
+  # Act-1 boss-room entry at gx 6144 is depth, not regress.
+  area: 0x803
   y: 0x00F3
   lives: 0x001F
   # DELIBERATELY EMPTY. Observing a stage-advance byte requires a real

@@ -1675,6 +1675,20 @@ impl Pool {
         }
     }
 
+    /// Per-worker scene ordinal — bumped at every RENDERED scroll
+    /// discontinuity (stage wipe, room flip). Pairs with the odometer
+    /// as a lexicographic progress key: (scene, within-scene x).
+    fn get_odometer_scene_per_worker(&self) -> Vec<u32> {
+        self.workers
+            .iter()
+            .map(|cell| {
+                // SAFETY: sequential with step_all/reset_all.
+                let w = unsafe { &*cell.0.get() };
+                w.nes.ppu.odometer_scene
+            })
+            .collect()
+    }
+
     /// Per-worker accumulated global scroll position [(x, y); workers],
     /// in pixels. (0, 0) for workers with the odometer disabled.
     fn get_odometer_per_worker(&self) -> Vec<(i64, i64)> {

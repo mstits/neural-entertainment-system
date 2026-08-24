@@ -135,6 +135,15 @@ pub struct Ppu {
     pub odometer_enabled: bool,
     pub odometer_x: i64,
     pub odometer_y: i64,
+    // Scene ordinal: bumped on a RENDERED scroll discontinuity (a cut,
+    // wipe, or room flip that never blanks). The delta is NOT
+    // integrated across a cut — a stage transition must not read as a
+    // 512-px walk backwards (measured: Ninja Gaiden's Act-1 boss-room
+    // entry aliased to dx=-511 and pinned the search frontier at the
+    // cut for 2.5 h). Blank-gap re-anchors (death fades, door loads)
+    // do NOT bump the scene: they already re-anchor without
+    // integrating, and a respawn is not a new scene.
+    pub odometer_scene: u32,
     odo_prev_modal_x: i32,
     odo_prev_modal_y: i32,
     odo_have_prev: bool,
@@ -458,6 +467,7 @@ impl Ppu {
             odometer_enabled: false,
             odometer_x: 0,
             odometer_y: 0,
+            odometer_scene: 0,
             odo_prev_modal_x: 0,
             odo_prev_modal_y: 0,
             odo_have_prev: false,
@@ -2954,6 +2964,8 @@ pub struct Vram {
 /// and every banked savestate keeps decoding unchanged.
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct OdoState {
+    #[serde(default)]
+    pub scene: u32,
     pub enabled: bool,
     pub odometer_x: i64,
     pub odometer_y: i64,
@@ -2976,6 +2988,7 @@ impl Ppu {
 
     pub fn get_odo_state(&self) -> OdoState {
         OdoState {
+            scene: self.odometer_scene,
             enabled: self.odometer_enabled,
             odometer_x: self.odometer_x,
             odometer_y: self.odometer_y,
@@ -2986,6 +2999,7 @@ impl Ppu {
     }
 
     pub fn apply_odo_state(&mut self, o: &OdoState) {
+        self.odometer_scene = o.scene;
         self.odometer_enabled = o.enabled;
         self.odometer_x = o.odometer_x;
         self.odometer_y = o.odometer_y;
@@ -3084,8 +3098,19 @@ impl Ppu {
                 480
             };
             let dy = ((my - self.odo_prev_modal_y + ymod / 2).rem_euclid(ymod)) - ymod / 2;
-            self.odometer_x += dx as i64;
-            self.odometer_y += dy as i64;
+            // Rendered scene cut: hardware scroll moves at most ~8 px
+            // per frame; a per-frame modal delta past 64 px is a cut,
+            // never motion. Bump the scene ordinal and re-anchor
+            // WITHOUT integrating — a stage wipe must not read as a
+            // 512-px walk backwards (measured: Ninja Gaiden's Act-1
+            // boss-room entry aliased to dx=-511 and pinned the search
+            // frontier at the cut for 2.5 h).
+            if dx.unsigned_abs() > 64 || dy.unsigned_abs() > 64 {
+                self.odometer_scene = self.odometer_scene.wrapping_add(1);
+            } else {
+                self.odometer_x += dx as i64;
+                self.odometer_y += dy as i64;
+            }
         }
         self.odo_prev_modal_x = mx;
         self.odo_prev_modal_y = my;
@@ -4638,6 +4663,31 @@ mod odometer_tests {
         p.refresh_ppu_mask_cache();
         p.odo_capture_line();
         assert_eq!(p.odo_line_n, 1, "disabled rendering must not sample");
+    }
+
+    #[test]
+    fn rendered_cut_bumps_scene_and_does_not_integrate() {
+        let mut p = odo_ppu();
+        fold_uniform_frame(&mut p, 300, 0);
+        fold_uniform_frame(&mut p, 316, 0);
+        assert_eq!((p.odometer_x, p.odometer_scene), (16, 0));
+        // A wipe teleports the modal origin far beyond hardware speed.
+        fold_uniform_frame(&mut p, 100, 0);
+        assert_eq!(p.odometer_x, 16, "cut must not integrate");
+        assert_eq!(p.odometer_scene, 1);
+        // Motion resumes from the new anchor in the new scene.
+        fold_uniform_frame(&mut p, 108, 0);
+        assert_eq!((p.odometer_x, p.odometer_scene), (24, 1));
+    }
+
+    #[test]
+    fn blank_gap_does_not_bump_scene() {
+        let mut p = odo_ppu();
+        fold_uniform_frame(&mut p, 300, 0);
+        p.odo_line_n = 40;   // death fade: mostly blank
+        p.odo_fold_frame();
+        fold_uniform_frame(&mut p, 0, 0); // respawn far away, re-anchor
+        assert_eq!(p.odometer_scene, 0, "blank re-anchor is not a cut");
     }
 
     #[test]

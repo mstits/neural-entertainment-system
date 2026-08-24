@@ -2495,6 +2495,7 @@ class Solver:
             print(f"[go_explore_solve] progress source: PPU scroll odometer "
                   f"(axis {self.game.odometer_axis})", flush=True)
         self._odo_now: list = []
+        self._odo_scene: list = []
         self.pool.reset_all()
         self.provenance = hw_provenance(self.hw_flags, self.frame_skip)
         if self.hw_flags:
@@ -2845,7 +2846,9 @@ class Solver:
         (state read, no side effects) so _xram can extend RAM without a
         per-worker Rust round-trip."""
         if self._odo:
-            self._odo_now = (pool or self.pool).get_odometer_per_worker()
+            src = pool or self.pool
+            self._odo_now = src.get_odometer_per_worker()
+            self._odo_scene = src.get_odometer_scene_per_worker()
 
     def _xram(self, ram, wid: int):
         """Extend one worker's 2KB RAM snapshot with the scroll-odometer
@@ -2861,11 +2864,16 @@ class Solver:
         v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
         base = (np.frombuffer(ram, dtype=np.uint8)
                 if isinstance(ram, (bytes, bytearray)) else ram)
-        ext = np.empty(len(base) + 3, dtype=np.uint8)
+        ext = np.empty(len(base) + 4, dtype=np.uint8)
         ext[:len(base)] = base
         ext[ODO_LO] = v & 0xFF
         ext[ODO_LO + 1] = (v >> 8) & 0xFF
         ext[ODO_LO + 2] = (v >> 16) & 0xFF
+        # Scene ordinal (mod 256) at ODO_LO+3: profiles point solve.area
+        # here so cells key on (scene, within-scene x) — camera-locked
+        # rooms and stage wipes become area transitions, exactly the
+        # (area-order, gx) machinery the solver already has.
+        ext[ODO_LO + 3] = self._odo_scene[wid] & 0xFF
         return ext
 
     def _xram_local(self, ram, pool):
@@ -2877,11 +2885,12 @@ class Solver:
         v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
         base = (np.frombuffer(ram, dtype=np.uint8)
                 if isinstance(ram, (bytes, bytearray)) else ram)
-        ext = np.empty(len(base) + 3, dtype=np.uint8)
+        ext = np.empty(len(base) + 4, dtype=np.uint8)
         ext[:len(base)] = base
         ext[ODO_LO] = v & 0xFF
         ext[ODO_LO + 1] = (v >> 8) & 0xFF
         ext[ODO_LO + 2] = (v >> 16) & 0xFF
+        ext[ODO_LO + 3] = pool.get_odometer_scene_per_worker()[0] & 0xFF
         return ext
 
     def _step0(self, a: int):
