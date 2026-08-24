@@ -1,0 +1,146 @@
+{
+  "sampled": 14,
+  "recovered": 8,
+  "timeout_states": {
+    "n": 5,
+    "recovered": 5
+  },
+  "true_death_sticks": {
+    "n": 9,
+    "recovered": 3,
+    "recovery_rate": 0.333
+  },
+  "fatal_window": {
+    "sticks_1_2_steps_pre_death": 3,
+    "recovered_of_those": 0
+  },
+  "solver_minutes_each": 10,
+  "results": [
+    {
+      "episode": 6,
+      "t": 329,
+      "death_step": 331,
+      "gap": 2,
+      "timeout": false,
+      "recovered": false,
+      "solutions": 0
+    },
+    {
+      "episode": 15,
+      "t": 324,
+      "death_step": 1500,
+      "gap": 1176,
+      "timeout": true,
+      "recovered": true,
+      "solutions": 2
+    },
+    {
+      "episode": 20,
+      "t": 374,
+      "death_step": 1500,
+      "gap": 1126,
+      "timeout": true,
+      "recovered": true,
+      "solutions": 2
+    },
+    {
+      "episode": 25,
+      "t": 377,
+      "death_step": 389,
+      "gap": 12,
+      "timeout": false,
+      "recovered": false,
+      "solutions": 0
+    },
+    {
+      "episode": 30,
+      "t": 324,
+      "death_step": 1500,
+      "gap": 1176,
+      "timeout": true,
+      "recovered": true,
+      "solutions": 2
+    },
+    {
+      "episode": 31,
+      "t": 332,
+      "death_step": 350,
+      "gap": 18,
+      "timeout": false,
+      "recovered": false,
+      "solutions": 0
+    },
+    {
+      "episode": 32,
+      "t": 193,
+      "death_step": 207,
+      "gap": 14,
+      "timeout": false,
+      "recovered": true,
+      "solutions": 2
+    },
+    {
+      "episode": 33,
+      "t": 65,
+      "death_step": 73,
+      "gap": 8,
+      "timeout": false,
+      "recovered": false,
+      "solutions": 0
+    },
+    {
+      "episode": 37,
+      "t": 325,
+      "death_step": 326,
+      "gap": 1,
+      "timeout": false,
+      "recovered": false,
+      "solutions": 0
+    },
+    {
+      "episode": 42,
+      "t": 146,
+      "death_step": 160,
+      "gap": 14,
+      "timeout": false,
+      "recovered": true,
+      "solutions": 2
+    },
+    {
+      "episode": 43,
+      "t": 320,
+      "death_step": 1500,
+      "gap": 1180,
+      "timeout": true,
+      "recovered": true,
+      "solutions": 2
+    },
+    {
+      "episode": 45,
+      "t": 198,
+      "death_step": 209,
+      "gap": 11,
+      "timeout": false,
+      "recovered": true,
+      "solutions": 2
+    },
+    {
+      "episode": 52,
+      "t": 308,
+      "death_step": 309,
+      "gap": 1,
+      "timeout": false,
+      "recovered": false,
+      "solutions": 0
+    },
+    {
+      "episode": 53,
+      "t": 328,
+      "death_step": 1500,
+      "gap": 1172,
+      "timeout": true,
+      "recovered": true,
+      "solutions": 2
+    }
+  ]
+}

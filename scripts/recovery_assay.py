@@ -157,8 +157,15 @@ def adjudicate(args) -> int:
         r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
                            timeout=(args.minutes * 60 + 600))
         tail = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
-        recovered = '"solutions": 0' not in tail and '"solutions"' in tail
-        results.append({**s, "recovered": recovered, "solver_tail": tail})
+        # Ground truth is the FILESYSTEM, not stdout grep: the solver
+        # writes replay-verified sol_* files into <out>/solutions. (The
+        # original stdout parse looked for a progress-line format the
+        # done-line doesn't use and scored every run "no recovery" —
+        # including one that demonstrably solved.)
+        sols = list((out_dir / "solutions").glob("sol_*"))
+        recovered = len(sols) > 0
+        results.append({**s, "recovered": recovered,
+                        "solutions": len(sols), "solver_tail": tail})
         print(f"[{i+1}/{len(suspects)}] ep{s['episode']} t{s['t']} "
               f"(died at {s['death_step']}): "
               f"{'RECOVERED' if recovered else 'no recovery found'}",
