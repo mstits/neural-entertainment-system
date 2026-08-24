@@ -1,0 +1,288 @@
+{
+  "arms": {
+    "seed1": {
+      "selection": {
+        "selected": "/Users/stits/Documents/macos-emulation-and-training/checkpoints/mario_1_1_backward_gru_seed1/vanilla_ppo_iter_00240.pt",
+        "trailing_entrance": 0.12396978021978022,
+        "table": [
+          {
+            "iter": 10,
+            "trailing_entrance": 0.0,
+            "window_attempts": 105
+          },
+          {
+            "iter": 20,
+            "trailing_entrance": 0.0,
+            "window_attempts": 241
+          },
+          {
+            "iter": 30,
+            "trailing_entrance": 0.0,
+            "window_attempts": 375
+          },
+          {
+            "iter": 40,
+            "trailing_entrance": 0.0,
+            "window_attempts": 435
+          },
+          {
+            "iter": 50,
+            "trailing_entrance": 0.0,
+            "window_attempts": 435
+          },
+          {
+            "iter": 60,
+            "trailing_entrance": 0.0,
+            "window_attempts": 438
+          },
+          {
+            "iter": 70,
+            "trailing_entrance": 0.0,
+            "window_attempts": 429
+          },
+          {
+            "iter": 80,
+            "trailing_entrance": 0.0,
+            "window_attempts": 449
+          },
+          {
+            "iter": 90,
+            "trailing_entrance": 0.0,
+            "window_attempts": 467
+          },
+          {
+            "iter": 100,
+            "trailing_entrance": 0.0,
+            "window_attempts": 462
+          },
+          {
+            "iter": 110,
+            "trailing_entrance": 0.0,
+            "window_attempts": 452
+          },
+          {
+            "iter": 120,
+            "trailing_entrance": 0.0022,
+            "window_attempts": 445
+          },
+          {
+            "iter": 130,
+            "trailing_entrance": 0.0023,
+            "window_attempts": 444
+          },
+          {
+            "iter": 140,
+            "trailing_entrance": 0.0024,
+            "window_attempts": 420
+          },
+          {
+            "iter": 150,
+            "trailing_entrance": 0.0,
+            "window_attempts": 359
+          },
+          {
+            "iter": 160,
+            "trailing_entrance": 0.0,
+            "window_attempts": 279
+          },
+          {
+            "iter": 170,
+            "trailing_entrance": 0.0262,
+            "window_attempts": 1525
+          },
+          {
+            "iter": 180,
+            "trailing_entrance": 0.0286,
+            "window_attempts": 2833
+          },
+          {
+            "iter": 190,
+            "trailing_entrance": 0.0375,
+            "window_attempts": 4000
+          },
+          {
+            "iter": 200,
+            "trailing_entrance": 0.0505,
+            "window_attempts": 3819
+          },
+          {
+            "iter": 210,
+            "trailing_entrance": 0.0747,
+            "window_attempts": 3455
+          },
+          {
+            "iter": 220,
+            "trailing_entrance": 0.0917,
+            "window_attempts": 3229
+          },
+          {
+            "iter": 230,
+            "trailing_entrance": 0.1063,
+            "window_attempts": 3030
+          },
+          {
+            "iter": 240,
+            "trailing_entrance": 0.124,
+            "window_attempts": 2912
+          }
+        ]
+      },
+      "eval": {
+        "eval_seed_0": {
+          "game": "mario",
+          "status": "ok",
+          "checkpoint": "/Users/stits/Documents/macos-emulation-and-training/checkpoints/mario_1_1_backward_gru_seed1/vanilla_ppo_iter_00240.pt",
+          "recurrent": true,
+          "stage": "start",
+          "n_episodes": 50,
+          "mean_return": 1965.8959999998885,
+          "mean_length": 742.4,
+          "max_byte_seen": 0,
+          "mean_max_byte": 0.0,
+          "max_gx_per_episode": [
+            315,
+            1794,
+            2023,
+            2013,
+            2588,
+            1792,
+            686,
+            2914,
+            2946,
+            2946,
+            3161,
+            677,
+            1788,
+            3161,
+            2226,
+            316,
+            2914,
+            3155,
+            2226,
+            2227,
+            2572,
+            2914,
+            2227,
+            1793,
+            2915,
+            1244,
+            2898,
+            1793,
+            2595,
+            1272,
+            683,
+            316,
+            2914,
+            2354,
+            2914,
+            1241,
+            677,
+            2020,
+            2387,
+            677,
+            722,
+            2586,
+            1788,
+            2914,
+            3161,
+            1816,
+            2402,
+            1789,
+            2227,
+            1242
+          ],
+          "clear_rate": 0.06,
+          "action_select": "greedy",
+          "temperature": 1.0,
+          "sticky_prob": 0.25,
+          "start_jitter": 16,
+          "eval_seed": 0,
+          "stochastic": true,
+          "eval_workers": 1,
+          "eval_rng": "shared-stream",
+          "timestamp": 1787520962.359911,
+          "start_state": "runs/live_show/smb_4_4_micro/entrance_start.state"
+        },
+        "eval_seed_1": {
+          "game": "mario",
+          "status": "ok",
+          "checkpoint": "/Users/stits/Documents/macos-emulation-and-training/checkpoints/mario_1_1_backward_gru_seed1/vanilla_ppo_iter_00240.pt",
+          "recurrent": true,
+          "stage": "start",
+          "n_episodes": 50,
+          "mean_return": 2079.3393999998902,
+          "mean_length": 748.06,
+          "max_byte_seen": 0,
+          "mean_max_byte": 0.0,
+          "max_gx_per_episode": [
+            2011,
+            1818,
+            2914,
+            2915,
+            2899,
+            2914,
+            3161,
+            2914,
+            2914,
+            2899,
+            1790,
+            2914,
+            2226,
+            1248,
+            2226,
+            1665,
+            2010,
+            681,
+            2930,
+            2914,
+            2012,
+            1544,
+            2915,
+            2581,
+            1239,
+            723,
+            2011,
+            2402,
+            2914,
+            1657,
+            2774,
+            1820,
+            677,
+            2007,
+            1790,
+            3161,
+            2586,
+            2228,
+            3161,
+            2226,
+            316,
+            1792,
+            2226,
+            676,
+            2226,
+            1666,
+            2226,
+            1543,
+            2010,
+            1524
+          ],
+          "clear_rate": 0.06,
+          "action_select": "greedy",
+          "temperature": 1.0,
+          "sticky_prob": 0.25,
+          "start_jitter": 16,
+          "eval_seed": 1,
+          "stochastic": true,
+          "eval_workers": 1,
+          "eval_rng": "shared-stream",
+          "timestamp": 1787521103.7930481,
+          "start_state": "runs/live_show/smb_4_4_micro/entrance_start.state"
+        },
+        "pooled_clear_rate": 0.06
+      }
+    }
+  },
+  "control_banked": 0.76,
+  "preregistration": "docs/proposals/RECURRENT_BOTTLENECK_AB_2026-08-23.md",
+  "best_of_n": 0.06
+}
