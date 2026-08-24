@@ -61,10 +61,12 @@ TileRecurrentPolicyNetwork to competence on 1-1 backward.
    iters 182–223 left thin consolidation windows; seed 1's trailing
    rate was still rising at cutoff (0.026→0.33 over the final 80
    iters). An extension run (500 iters) is the cheapest direct probe.
-3. **Hidden-reset diagnostic.** Verify hidden state actually resets at
-   backward-curriculum rung restarts (the done-flag path) — a silent
-   carry-across-restarts bug would poison exactly this training shape.
-   Cheap: instrument one rollout, count resets vs episode boundaries.
+3. **Hidden-reset diagnostic — RUN, CLEAN.** Code audit 2026-08-23:
+   rung restarts happen at the iter boundary where h_rollout is
+   freshly zero-initialized (trainer.py:6576); mid-rollout episode
+   ends mask the hidden through done_buf (trainer.py:7461); the BPTT
+   replay consumes the same done_buf. No carry-across-restart path
+   exists, so the FAIL stands as FAIL, not VOID.
 
 ## Standing per the two-ledger discipline
 
