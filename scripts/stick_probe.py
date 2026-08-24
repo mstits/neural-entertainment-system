@@ -45,6 +45,10 @@ def main() -> int:
     ap.add_argument("--max-steps", type=int, default=600)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--epochs", type=int, default=8)
+    ap.add_argument("--no-stack", action="store_true",
+                    help="v26 spec: single-frame obs (stack of 1) — "
+                         "isolates whether recurrence alone recovers "
+                         "the temporal signal without the frame stack")
     ap.add_argument("--out", default="runs/gru_ab/stick_probe.json")
     args = ap.parse_args()
 
@@ -80,21 +84,26 @@ def main() -> int:
     episodes = []            # list of (X [T,712+n_act], y [T]) per episode
     for ep in range(args.episodes):
         pool.load_worker_state(0, blob)
-        stk = TileFeatureStacker(4, feat_dim)
+        stk = TileFeatureStacker(1 if args.no_stack else 4, feat_dim)
+        pol_stk = TileFeatureStacker(4, feat_dim)   # policy always 4-stack
         step = pool.step_all(np.zeros(1, dtype=np.uint8))[0]
-        obs = stk.reset(extractor.extract(step[2]))
+        feat = extractor.extract(step[2])
+        obs = stk.reset(feat)
+        pol_obs = pol_stk.reset(feat)
         prev_exec = 0
         X, Y = [], []
         for t in range(args.max_steps):
             with torch.no_grad():
                 logits = net.forward_ac(
-                    torch.from_numpy(obs[None]).float())[0]
+                    torch.from_numpy(pol_obs[None]).float())[0]
             chosen = int(logits.argmax(dim=-1).item())
             stuck = t > 0 and rng.random() < args.sticky
             executed = prev_exec if stuck else chosen
             step = pool.step_all(
                 np.array([bm[executed]], dtype=np.uint8))[0]
-            obs = stk.push(extractor.extract(step[2]))
+            feat = extractor.extract(step[2])
+            obs = stk.push(feat)
+            pol_obs = pol_stk.push(feat)
             row = np.zeros(len(obs) + n_act, dtype=np.float32)
             row[:len(obs)] = obs
             row[len(obs) + chosen] = 1.0
