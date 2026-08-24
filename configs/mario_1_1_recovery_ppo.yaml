@@ -127,7 +127,7 @@ reinforce:
     states_dir: "checkpoints/backward_states/1-1-recovery"
     tau_init: -1
     window_frames: 100000
-    advance_threshold: 1.1   # never advances: uniform pool, no ladder
+    advance_threshold: 1.0   # with min_attempts 1e6 the gate never fires: uniform pool, no ladder
     advance_actions: 40
     min_attempts: 1000000
     entrance_weight: 1.0
