@@ -1,0 +1,11 @@
+{
+  "history": [
+    {
+      "epoch": 0,
+      "clear_rate": 0.03333333333333333,
+      "loss": 3.350330114364624
+    }
+  ],
+  "best_rate": 0.03333333333333333,
+  "best_checkpoint": "/Users/stits/Documents/macos-emulation-and-training/runs/recovery_distill/ckpts/distill_epoch00.pt"
+}

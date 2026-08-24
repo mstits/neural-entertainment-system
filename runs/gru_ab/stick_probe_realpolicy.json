@@ -1,0 +1,18 @@
+{
+  "mlp": {
+    "test_acc": 0.9423,
+    "test_auc": 0.7605,
+    "base_rate": 0.0575,
+    "test_steps": 4800
+  },
+  "gru": {
+    "test_acc": 0.9425,
+    "test_auc": 0.7402,
+    "base_rate": 0.0575,
+    "test_steps": 4800
+  },
+  "steps": 24000,
+  "episodes": 40,
+  "checkpoint": "checkpoints/_preserved/backward_1_1_seed3_iter140.pt",
+  "sticky": 0.25
+}

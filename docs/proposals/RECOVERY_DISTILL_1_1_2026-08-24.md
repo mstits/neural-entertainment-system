@@ -56,3 +56,37 @@ Either verdict generalizes: PASS makes recovery distillation a
 standard post-solve step for every game with a solver; FAIL bounds
 what solver-as-teacher can do at this parameter budget and hands v27
 a precise question.
+
+## VERDICT (2026-08-24 evening): FAIL-by-drift, at epoch 0
+
+Executed with the loader fix in place (28dc163 — the first attempt
+trained a random net and was void). With the REAL control loaded:
+epoch 0 (13 Adam steps, lr 1e-4, 1,620 recovery + 1,620 anchor pairs)
+took honest greedy 0.767 -> 0.033; the registered drift-stop fired
+immediately. Sampled-mode eval of the same artifact reads 0.17 — the
+damage is genuine policy degradation, not only argmax-tie flipping
+(though knife-edge greedy margins likely amplify it; epoch-0 loss
+3.35 >> ln(6) shows the recovery targets strongly contradict the
+policy's distribution).
+
+The named risk fired as written: short-clip + on-manifold anchor +
+low LR was NOT enough to hold the manifold. Recovery knowledge cannot
+be pushed into this artifact by naive cross-entropy at any useful
+rate before the artifact's own competence erodes.
+
+Salvage candidates (each needs its own registration):
+1. KL-anchored distillation — add a KL penalty to the CONTROL's own
+   logits on anchor states (the kl_anchor machinery exists in the
+   trainer); directly opposes drift instead of hoping the data mix
+   does.
+2. LR 1e-5 with 10x epochs — test whether any usable rate exists
+   below the damage threshold.
+3. Advantage-filtered RL fine-tune on post-stick states (rollout from
+   the mined states with the solver tape as a dense reference) —
+   on-policy, no cloning pressure.
+
+Receipts: runs/recovery_distill/{train_history.json, ckpts/},
+runs/gru_ab/stick_probe_realpolicy.json (real-policy probe: divergence
+0.056; stateless MLP AUC 0.76, GRU 0.74 — with the real policy,
+recurrence adds NOTHING; the v26-override conclusion is confirmed on
+corrected data).
