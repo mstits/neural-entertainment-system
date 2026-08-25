@@ -36,3 +36,53 @@ solve:
   # camera is ever observed to move. Receipts:
   # runs/onboard_wave2/gate_ice_climber*.json
   progress: {source: odometer, axis: x}
+  # scripts/discover_observables.py 3-probe protocol, forward=up (the
+  # game's real objective is height, even though the camera didn't
+  # scroll under any simple held direction — see the odometer gate
+  # above). No progress candidate isolated (matches the odometer
+  # finding: holding one direction produces no monotone RAM signal
+  # either, because Ice Climber's ascent needs timed jumps into
+  # breakable blocks, not a sustained d-pad hold). y and lives below
+  # are its top-scored candidates, needed only to satisfy GenericGame's
+  # required solve keys for the wave-3 solver smoke; NOT independently
+  # verified against a real death/climb. Receipt:
+  # runs/onboard_wave3/observe_ice_climber_up.json
+  y: 0x00EA          # score=90.1, distinct=7 samples, frac_at_mode=0.76
+  lives: 0x002C       # decrements on death, agreed by 3 of 5 runs
+  level_key: []       # empty until a real clear is captured
+
+# Wave-3 solver smoke (2026-08-25, --workers 2 --minutes 4 --seed 0):
+# runs/onboard_wave3/smoke_ice_climber/ — 8 cells, 0 solutions, 83,812
+# steps. Frontier froze inside the FIRST minute and stayed flat for the
+# remaining 3 (three consecutive STALL WARNINGs). All 8 archived cell
+# keys are identical except the animation-phase digit ((frame>>2)&7) —
+# i.e. the search found exactly ONE reachable (area, y-band, gx-bucket)
+# state in 83k steps, not eight distinct places.
+#
+# Deepest-cell diagnostic (scripts/diag_ice_climber_deepest.py, receipt
+# runs/onboard_wave3/diag_ice_climber_deepest.txt): loaded the
+# highest-best_steps archived cell into a 1-worker pool and held each
+# of 10 actions ~150 steps. lives stayed 1->1 under every hold (not a
+# death/underflow). The y@0x00EA byte free-runs an IDENTICAL
+# 170->14->93 sequence under noop/right/left/up/down/A/B/right+A/
+# left+A — nine different inputs producing byte-identical RAM traces
+# is the signature of a non-interactive scripted window (matches the
+# mint receipt's own note that Ice Climber's mountain-intro pan
+# "ignores inputs"), not a skill wall. `start` alone differs (churn
+# 11.2/step vs ~46-56 for everything else, y pinned constant) —
+# consistent with pause — which confirms input IS wired correctly and
+# read by the core; it just doesn't matter during this window.
+#
+# Classification: CAMERA_STATIC_AGENT_ACTIVE. The odometer is the
+# wrong surface for this game's opening screen (no horizontal or
+# vertical camera scroll happens until the player climbs high enough
+# via precise jump timing, which no held-direction driver or 4-minute
+# random search produced) — same class as Punch-Out in wave 1. This is
+# an instrument-class mismatch, not a death/scene/trap bug, so none of
+# the generic config-level fixes (death debounce, modular lives,
+# solve.area scene keys) apply: lives never dropped, no scene/area
+# byte was discovered, and the freeze is the SAME single non-scrolling
+# room throughout. Real progress needs a non-scroll observable (a
+# height/round counter analogous to Kid Icarus's altitude bytes) that
+# a future pass should search for with better-than-random climbing
+# behavior, not a hold-direction probe.

@@ -28,4 +28,66 @@ action_space:
 
 solve:
   rom: "roms/Bionic Commando (USA).nes"
+  # Odometer gate (reused from runs/onboard_wave2/gate_bionic_commando.json,
+  # 2026-08-24, forward=right, 1200 steps): SIGNAL SOUND — still advancing.
+  # 122 distinct positions, range 0..483, tail_distinct=4, high byte
+  # present, oam_churn 1067/1199. Hardware surface — same purity class as
+  # pixels/OAM. Copy re-filed under runs/onboard_wave3/
+  # gate_bionic_commando_reused.json for this onboarding pass.
   progress: {source: odometer, axis: x}
+  # scripts/discover_observables.py 3-probe protocol, forward=right,
+  # 2026-08-25. Receipt: runs/onboard_wave3/bionic_commando_observables.json
+  # The paired spatial candidate $00B7|$0097<<8 SATURATES (camera-clamp:
+  # caps at the scroll-window limit and re-bases at room transitions,
+  # sat_observed_max=7936 over 172 rebases) — confirms the odometer
+  # above is the right progress axis, not this RAM pair.
+  area: 0x0097   # room/screen counter (steps at transitions, non-saturating)
+  # No y candidate: find_y's ballistic-jump probe (settle, then A x8 in
+  # place) returned ZERO candidates in zero page / $0300-$033F under its
+  # standard thresholds (16<=range<=200, bounded rest mode, >=6 distinct
+  # heights) — no bounded rise-and-return arc anywhere in that window.
+  # A broader unfiltered scan (random right/left/up/down/A/B + 5 compound
+  # holds, 500 steps) confirms it: nothing in that window traces a jump
+  # arc, only flags/counters or genuinely constant bytes. This matches
+  # Bionic Commando's known control scheme within this measurement itself
+  # (A does not produce a positional excursion) — the mechanism is
+  # grapple-swing traversal, not a jump button, so there is no ballistic Y
+  # for this instrument to find. 0x0004 is one of the addresses that read
+  # fully constant across BOTH probes; it is wired here only because
+  # GenericGame requires a `y` key, carries no positional information, and
+  # does not affect cell diversity (it never varies). Not a real signal —
+  # do not read anything into it.
+  y: 0x0004
+  lives: 0x00C1   # decrements on death, agreed by 5 of 5 runs (discover_observables)
+  level_key: []   # coverage baseline; wire a stage-advance byte once a real clear is captured
+
+  # SMOKE RECEIPT (2026-08-25, 2 workers x 4 min, seed 0, shared machine
+  # under heavy contention — RG-1 zelda 12-worker job + 2 sibling
+  # onboarding smokes running concurrently, sps depressed to 231-298):
+  #   1126 cells, 30 distinct area values (0..29), best_score 160472
+  #   (runs/onboard_wave3/smoke_bionic_commando/). progress.jsonl's
+  #   summary fields (max_area=31, max_gx_in_max_area=246, max_sect=16,
+  #   c_local=89) go flat after t=60s — LOOKS like a frozen frontier,
+  #   but is a reporting artifact: those fields track the single
+  #   highest-numbered area byte ever seen and gx only within THAT one
+  #   area, and 0x0097 is a room/scene ID, not a monotonic depth counter
+  #   (same non-monotonic-axis lesson as Excitebike/Ice Climber). The
+  #   archive itself keeps growing throughout the run (337 -> 677 -> 938
+  #   -> 1126 cells at the four 60s checkpoints) and spans 30 distinct
+  #   area values end to end, i.e. real lateral/forward coverage kept
+  #   happening in areas the summary stat doesn't credit.
+  #   Deepest-cell diagnostic (runs/onboard_wave3/diag_deepest_bionic_
+  #   commando.log): loaded the top-best_score archive cell (area=29,
+  #   odometer x=472) into a 1-worker pool and held each of 11 actions
+  #   for 150 steps. EVERY action (including noop) triggers an automatic
+  #   area change 29->1 within ~30 steps regardless of input (a scripted
+  #   scene transition, not a player-driven room change); holding right
+  #   (or right+A/right+B) continues through it to area 16 then 22 with
+  #   odometer x climbing 472->697 — i.e. real further progress that
+  #   exceeds the run's reported max_gx (246). No death: lives read
+  #   1->2 (an increase, not the decrement the death detector watches
+  #   for) under every action, consistent with a checkpoint/base-entry
+  #   side effect of the same scripted transition, not a kill. No
+  #   trap-cell, no underflow, no skill-wall found.
+  #   Verdict: SOUND_ADVANCING. No config fix applied — level_key stays
+  #   empty per the same wait-for-a-real-clear convention as Rygar/GnG.

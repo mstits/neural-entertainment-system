@@ -31,4 +31,40 @@ solve:
   rom: "roms/1942 (Japan, USA).nes"
   # Gate trace 2026-08-24: dominant axis is y (x=0, y=787 over 1200
   # steps) — vertical scroller. runs/onboard_wave2/gate_1942.json
-  progress: {source: odometer, axis: y}
+  # Re-confirmed onboard wave 3 with forward=right/up/A, all three
+  # SIGNAL SOUND with the same "flat tail" behaviour finding —
+  # runs/onboard_wave3/gate_1942_{right,up,A}.json.
+  #
+  # SIGN (onboard wave 3, 2026-08-25): the gate script re-bases its
+  # trace to its own observed minimum, so its "min 0 / max 787" does
+  # NOT tell you which way the raw counter runs. Measured directly
+  # (deepest-cell + root-state hold diagnostic,
+  # runs/onboard_wave3/diag_1942_{deepest,root,lifecycle_noop}.log):
+  # 1942's raw y odometer counts DOWN while the plane flies forward —
+  # every one of noop/right/left/up/down/A/B held from the verified-
+  # live start state drove raw y strictly negative. go_explore_solve's
+  # `_xram` clamps negative reads to 0 (every other odometer profile is
+  # a right-scroller, so "forward" was always the increasing
+  # direction) — the unsigned read pinned the smoke's progress column
+  # at 0 for the full run (7 cells, best_score 0 throughout,
+  # runs/onboard_wave3/smoke_1942/archive.stats.json). Added a signed
+  # `axis: -y` (go_explore_solve.py 2026-08-25) to flip the sign before
+  # the clamp; re-smoked at runs/onboard_wave3/smoke_1942_v2 — 7 cells
+  # -> 106 cells, best_score 0 -> 764, frontier 65 still open, growing
+  # through the full 4-minute budget. SOUND_ADVANCING.
+  progress: {source: odometer, axis: -y}
+  # discover_observables.py --forward up, 5/5-run agreement
+  # (runs/onboard_wave3/discover_1942_up.json). $0083 is the
+  # jump/ballistic-signature candidate it reports for `y`; $00C9
+  # decrements on death (lives) — GenericGame's modular-decrement
+  # is_dead already handles the 0->255 wrap this byte does at the real
+  # Game Over (confirmed in the lifecycle diagnostic: y tracks real
+  # flight 0..~-670, then goes flat once lives hits 255 for good and
+  # the screen freezes — the SAME "game stops" tail the gate saw).
+  # Neither `y` nor `lives` is the progress observable (that stays the
+  # certified odometer above) — these feed is_dead / cell_fn only.
+  y: 0x0083
+  lives: 0x00C9
+  # Empty until a real clear is captured; guessing it is authored
+  # semantics. The solver can search but cannot yet recognise winning.
+  level_key: []

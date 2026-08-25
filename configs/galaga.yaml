@@ -4,9 +4,62 @@ rom_path: "roms/Galaga - Demons of Death (USA).nes"
 start_state_path: "roms/Galaga - Demons of Death (USA)_start.state.bin"
 
 description: |
-  Galaga - Demons of Death (NES), minimal onboarding profile for the
-  odometer progress gate. Structure copied from configs/rygar.yaml;
-  no game knowledge injected.
+  Galaga - Demons of Death (NES), onboarding profile (wave 3,
+  2026-08-25). Structure copied from configs/rygar.yaml; no game
+  knowledge injected — every address below came from this repo's own
+  probes (discover_observables.py's 3-probe protocol and the odometer
+  gate), never from a disassembly or RAM-map site.
+
+  CAMERA-STATIC, AGENT-ACTIVE (fixed single-screen shooter): the PPU
+  scroll odometer was gated on all four candidate forward drivers —
+  right (runs/onboard_wave2/gate_galaga.json), left
+  (gate_galaga_left.json), A/fire (gate_galaga_A.json), and a fourth
+  driver (gate_galaga_y.json) — and all four are byte-identical:
+  distinct=1, min=max=0 over 1200 steps, oam_churn=1199/1200 (sprites
+  ARE moving; the camera never scrolls under any input). This matches
+  the genre: Galaga never scrolls its background under any input, so
+  the odometer is architecturally the wrong instrument here, not a
+  broken one. Re-checked wave 3 (runs/onboard_wave3/gate_galaga.json,
+  copy of the wave-2 receipt — no re-gate needed, it already covers
+  4 drivers).
+
+  Because the odometer cannot supply a search gradient, `progress`
+  below is wired to a RAM byte instead ($0091), found by
+  discover_observables.py's own pure protocol
+  (runs/onboard_wave3/discover_galaga.json). CAVEAT: $0091 rises under
+  BOTH forward (net +872/1200) and reverse (net +234/1200) holds, and
+  is flat under noop — consistent with an activity/wave counter, not a
+  true bidirectional position (a real ship-x would fall under
+  reverse). The wave-2 mint receipt's own R-vs-L divergence probe found
+  ship-x at 0x0014/0x0016/0x0017/0x0203/0x0703/0x0707 instead (opposite
+  screen edges under opposite holds) — $0091 is almost certainly NOT
+  ship position. It is wired anyway as the best available forward-ish
+  signal so the solver smoke has something non-degenerate to search
+  over; treat any solver "progress" number against this profile as
+  provisional until validated against a real wave-clear.
+  `y: 0x000B` is a verified-constant byte (std==0 over the same
+  1200-step rollout) — Galaga's ship never moves vertically, so this
+  is an honest placeholder that collapses the y-band dimension to one
+  bucket rather than fabricating a vertical axis that does not exist.
+  `lives: 0x0073` — discover_observables' hp/lives probe, 5-of-5
+  agreement, decrements on death.
+
+  SMOKE (2026-08-25, 2 workers / 4 min / seed 0,
+  runs/onboard_wave3/smoke_galaga): cells=1, frontier=0, max_area=0,
+  max_gx=0, 98,443 steps, 0 solutions, 4 consecutive "stuck at 1 cells"
+  stall warnings. The archive never left the entrance cell for the
+  entire run — this is not a mid-search freeze at a round number (no
+  deeper cell exists to run the deepest-cell diagnostic on), it is
+  zero movement from step 0, confirming at the solver level what the
+  odometer gate already showed at the instrument level: there is no
+  usable spatial search gradient here, RAM candidate included.
+  CLASSIFICATION: CAMERA_STATIC_AGENT_ACTIVE. Galaga is architecturally
+  a fixed single-screen shooter (no scrolling ever, whole-game genre
+  fact, not a per-input wall) whose real objective is score/wave
+  clears, not position — Go-Explore's position-frontier search is the
+  wrong tool for this genre without a HUD-digit score decode (out of
+  scope for this onboarding pass; would need its own discovery work
+  under the same purity constraints).
 
 frame_skip: 4
 
@@ -28,4 +81,14 @@ action_space:
 
 solve:
   rom: "roms/Galaga - Demons of Death (USA).nes"
-  progress: {source: odometer, axis: x}
+  # RAM candidate, NOT the odometer — see caveat above. discover_observables
+  # recommended $0091 (runs/onboard_wave3/discover_galaga.json); likely an
+  # activity/wave counter rather than true ship position.
+  progress: {lo: 0x0091}
+  # No vertical dimension exists in this genre (ship is bottom-rail-only).
+  # 0x000B verified constant (std==0) over the full 1200-step forward hold.
+  y: 0x000B
+  # No stage-advance byte discovered/attempted yet; coverage baseline only.
+  level_key: []
+  # discover_observables hp/lives probe, 5-of-5 agreement, decrements on death.
+  lives: 0x0073

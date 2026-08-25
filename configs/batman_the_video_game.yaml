@@ -7,6 +7,12 @@ description: |
   Batman - The Video Game (NES), minimal onboarding profile. Generic
   controller, odometer progress source. No game internals.
 
+  Start state provenance: roms/Batman - The Video Game (USA)_start.state.bin
+  minted 2026-08-24, wave 2 (runs/onboard_wave2/mint_batman_the_video_game.json)
+  — right/left 120f-hold divergence 278 RAM / 140 OAM bytes, cross-checked by
+  an independent fresh Pool reload; visual check confirms live Stage-1
+  side-scroller gameplay, not a title-screen demo.
+
 frame_skip: 4
 
 action_space:
@@ -27,4 +33,36 @@ action_space:
 
 solve:
   rom: "roms/Batman - The Video Game (USA).nes"
+  # Progress-signal gate on the PPU scroll odometer: passed, 318 distinct
+  # values over 1200 steps, net max 1222 px, no high-byte saturation.
+  # Receipt: runs/onboard_wave2/gate_batman_the_video_game.json.
+  # (Flat over the roll's last quarter — see runs/onboard_wave3/
+  # diagnostic notes; not re-gated, the RAM-byte progress candidate below
+  # was left as a discovered fallback, not swapped in, since the odometer
+  # receipt already reads SOUND.)
   progress: {source: odometer, axis: x}
+  # Discovered by scripts/discover_observables.py's 3-probe protocol
+  # (forward-hold / NOOP-hold / reverse-hold) from this profile's own
+  # start state, 2026-08-25. No RAM map, no disassembly, no walkthrough.
+  # Receipt: runs/onboard_wave3/observables_batman.json
+  #
+  #   $00D5|$00A3<<8  discovered RAM-byte progress pair (net +22112,
+  #                   mono=0.94, passes wrap + saturation gates) — kept
+  #                   here as a receipted fallback, not wired as the
+  #                   active `progress:` source (the odometer already
+  #                   gates SOUND and is the hardware-surface signal
+  #                   this project prefers).
+  #   $0042  jump/ballistic signature ("y").
+  #   $00EE  room/screen counter; flagged CAMERA-CLAMP SATURATOR by the
+  #          gate (saturates, cap=1) — left unwired as `area:` for that
+  #          reason.
+  #   $00B7  decrements on death, agreed by 5 of 5 independent runs.
+  y: 0x0042
+  lives: 0x00B7
+  # DELIBERATELY EMPTY. Observing a stage-advance byte requires a real
+  # clear, and nothing has cleared yet. With an empty level_key the
+  # solver explores for coverage but cannot declare a solution — it can
+  # search, and it cannot yet recognise winning. Guessing a byte here is
+  # the authored-semantics class the purity line forbids, so it stays
+  # empty until a clear is actually captured.
+  level_key: []

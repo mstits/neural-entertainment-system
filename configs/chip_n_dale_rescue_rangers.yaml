@@ -34,7 +34,51 @@ action_space:
 
 solve:
   rom: "roms/Chip 'n Dale Rescue Rangers (USA).nes"
-  # PPU scroll odometer — hardware surface, same purity class as
-  # pixels/OAM. Gate verdict recorded in
-  # runs/onboard_wave2/gate_chip_n_dale_rescue_rangers.json.
-  progress: {source: odometer, axis: x}
+  # PPU scroll odometer tried FIRST (wave2 + wave3 receipts) and rejected:
+  # --forward right holds flat at 80px after 26 steps and never moves again
+  # through 1500 steps, reproduced under right, right+A, right+B and
+  # right+A+B alike (runs/onboard_wave3/gate_chip_n_dale*.json;
+  # scratchpad diagnostic showed last odometer change at step=26, then
+  # dead flat while OAM keeps churning — the room's camera has a small,
+  # fixed scroll window, not a continuous side-scroll). A no-op control
+  # confirmed the shift is player-driven, not a scripted intro pan.
+  # up/down/A/B/left were all CAMERA_STATIC_AGENT_ACTIVE-or-inert too
+  # (same receipts dir). This is NEEDS_SCENE_KEYS: the odometer's own
+  # 32-distinct-value floor cannot be met by a game built from small,
+  # separately-scrolled rooms.
+  #
+  # scripts/discover_observables.py's 3-probe protocol independently
+  # confirmed the same camera-clamp on the paired spatial bytes
+  # ($0028|$00DA<<8 and $0025|$0023<<8: net_forward=80/40, saturates=true,
+  # camera_clamp=true) and recommended the room/screen counter below as
+  # the non-saturating progress axis instead (receipt:
+  # runs/onboard_wave3/discover_chip_n_dale.json).
+  progress: {lo: 0x0023}   # room/screen counter (steps at transitions; monotone, non-saturating)
+  # capped spatial secondary (fine within-room X, DO NOT use as sole progress): $0028|$00DA<<8
+  #   progress: {lo: 0x0028, hi: 0x00DA}  # camera-clamp saturates at the scroll-window limit
+  area: 0x0023   # room/screen counter (drives sect transitions) — the scene-key fix
+  y: 0x0012      # jump/ballistic signature (discover_observables, 3-probe)
+  level_key: []  # coverage baseline; wire a stage-advance byte once a real clear is captured
+  lives: 0x0052  # decrements on death, 5-of-5 run agreement (discover_observables)
+
+# --- wave3 solver smoke + deepest-cell diagnostic (2026-08-25) ---
+# 2-worker / 4-minute go_explore smoke on the scene-key config above:
+# 231 cells, 0 solutions, area@0x23 frozen at the ROOT value (36) for the
+# entire run — the room/screen counter never once incremented despite
+# 88,765 steps of active search (receipt:
+# runs/onboard_wave3/smoke_chip_n_dale/{archive.stats.json,progress.jsonl}).
+# Deepest-cell diagnostic (scripts/diag_chip_n_dale_deepest.py, receipt
+# runs/onboard_wave3/diag_chip_n_dale_deepest.log) loaded the archive's
+# top-scoring cell (886 steps deep, barren=5 — the search's OWN
+# barren-tracker already flags it a dead end) and held every action for
+# 150 steps: area@0x23 never moved under ANY of noop/right/left/up/down/
+# A/B/right+A/right+B/left+A/left+B/down+B/up+B; odometer y never moved
+# under up or down either; holding right (or right+A, right+B)
+# specifically drove lives 1->0 within ~30 frames (a hazard sits just
+# past the camera's ~80px scroll cap). This is a real, receipted skill
+# wall in the starting room, not an instrument fault — the scene-key
+# byte is confirmed to move at all (root->deep-cell area went 36->36,
+# i.e. it hasn't been observed to increment yet in any receipt here) so
+# treat it as APPLIED BUT UNCONFIRMED until a longer/wider run crosses
+# a room transition. Classification: SOUND_GAME_STOPS / skill-wall,
+# trap-cell flavor (camera-clamp + immediate death on rightward holds).

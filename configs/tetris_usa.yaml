@@ -30,4 +30,38 @@ action_space:
 
 solve:
   rom: "roms/Tetris (USA).nes"
+  # ODOMETER GATE (read from runs/onboard_wave2/, not re-run — all 4
+  # already complete/consistent): forward=right/left/A/down, 1200 steps
+  # each. Every direction: camera range x=0,y=0 (Tetris never scrolls —
+  # a single static playfield is correct for this genre, not a wall)
+  # and oam_churn 98-121/1199, below the >300 "agent active" threshold
+  # in all four. Receipts: runs/onboard_wave2/gate_tetris_usa.json,
+  # gate_tetris_usa_left.json, gate_tetris_usa_A.json,
+  # gate_tetris_usa_down.json.
+  #
+  # LEAGUE ONBOARDING VERDICT 2026-08-25 (runs/onboard_wave3/): BLOCKED,
+  # not a game finding. go_explore_solve.py's GenericGame hard-requires
+  # solve.y / solve.level_key / solve.lives (platformer-shaped: y is a
+  # jump/ballistic signature). Ran discover_observables.py's own
+  # 3-probe protocol (forward=right/left/down; measurement only, no
+  # internet RAM map) to try to fill them —
+  # runs/onboard_wave3/discover_tetris_{right,left,down}.json — and
+  # found: 0 progress candidates in any direction, no room counter, no
+  # y ballistic signature, and a "lives" candidate that names a
+  # DIFFERENT address on every direction (0x06BF / 0x0040 / 0x004E) —
+  # a real lives/game-over byte should be forward-invariant, so this is
+  # the signature of noise the same-run 5-of-5 agreement check cannot
+  # catch, not a real signal.
+  #
+  # Tetris's real progress (lines cleared / score / level) is a decimal
+  # HUD field — the same class DuckTales needed a bespoke tile-decode
+  # adapter for (`progress: {tiles, blank, scale}`) — but no automated
+  # tool in this repo discovers HUD-tile addresses from probes alone
+  # (only a manual config key exists), and hand-picking tile addresses
+  # from outside knowledge would break the purity line. Do NOT point
+  # go_explore_solve at this profile: it crashes on KeyError('y')
+  # before any search runs (confirmed), and stubbing a placeholder y
+  # would manufacture fake cell diversity from an unrelated byte —
+  # dishonest eval, not done. Full summary:
+  # runs/onboard_wave3/tetris_usa_onboard_summary.json.
   progress: {source: odometer, axis: x}

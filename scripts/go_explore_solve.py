@@ -1727,13 +1727,33 @@ class GenericGame:
         # instrument is certified by odometer_cert + the gate, not by
         # RAM verification.
         self.odometer_axis = None
+        self.odometer_sign = 1
         if str(p.get("source", "")).lower() == "odometer":
-            axis = str(p.get("axis", "x")).lower()
+            axis_raw = str(p.get("axis", "x")).lower()
+            # SIGNED axis (2026-08-25, the 1942 vertical-scroller find):
+            # `_xram` clamps the raw camera integral to >= 0 on the
+            # assumption that "forward" is the increasing direction —
+            # true for every prior odometer profile (all horizontal
+            # scrollers moving right). 1942's PPU scroll register counts
+            # DOWN while the plane flies forward (measured directly:
+            # every one of noop/right/left/up/down/A/B held from the
+            # verified-live start state moves raw y strictly negative,
+            # runs/onboard_wave3/diag_1942_root.log), so the unsigned
+            # read clamped every real frame of flight to 0 and the
+            # solver saw a permanently flat progress column (7 cells,
+            # best_score 0, over a full 4-minute smoke —
+            # runs/onboard_wave3/smoke_1942/archive.stats.json). `axis:
+            # -y` (leading sign, default +) flips the raw reading before
+            # the clamp so "forward" is monotone increasing again,
+            # exactly like every other profile.
+            sign = -1 if axis_raw.startswith("-") else 1
+            axis = axis_raw[1:] if axis_raw and axis_raw[0] in "+-" else axis_raw
             if axis not in ("x", "y"):
                 raise SystemExit(
-                    f"[go_explore_solve] progress.axis must be x or y, "
-                    f"got {axis!r}")
+                    f"[go_explore_solve] progress.axis must be x, y, -x or "
+                    f"-y, got {axis_raw!r}")
             self.odometer_axis = axis
+            self.odometer_sign = sign
             p = dict(p)
             p["lo"], p["hi"] = ODO_LO, ODO_LO + 1
         # Decoded HUD-field progress (optional): score/money games (DuckTales)
@@ -3605,6 +3625,7 @@ class Solver:
         # validated at parse) this expression is byte-identical to the
         # pre-roomgraph `x if axis == "x" else y`.
         v = y if axis == "y" else x
+        v *= getattr(self.game, "odometer_sign", 1)
         v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
         rf = self.room_fp is not None
         base = (np.frombuffer(ram, dtype=np.uint8)
@@ -3644,6 +3665,7 @@ class Solver:
         x, y = pool.get_odometer_per_worker()[0]
         axis = self.game.odometer_axis
         v = y if axis == "y" else x
+        v *= getattr(self.game, "odometer_sign", 1)
         v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
         rf = self.room_fp is not None
         base = (np.frombuffer(ram, dtype=np.uint8)

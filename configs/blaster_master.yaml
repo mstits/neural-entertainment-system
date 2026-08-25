@@ -10,9 +10,46 @@ description: |
   MEASUREMENT ONLY — start state minted 2026-08-24 by menu experiment
   (START, START, A; receipt runs/onboard_wave2/mint_blaster_master_usa.json).
   Fresh-pool verification shows side-scrolling gameplay with the camera
-  tracking the vehicle. No RAM observables discovered yet; progress is the
-  PPU scroll odometer, a hardware surface in the same purity class as
-  pixels/OAM.
+  tracking the vehicle. Progress is the PPU scroll odometer, a hardware
+  surface in the same purity class as pixels/OAM.
+
+  ODOMETER GATE (2026-08-24 wave2, reconfirmed 2026-08-25 wave3):
+  --forward right, 1200 steps, 126 distinct, range 0..636, oam_churn
+  1080/1199 -> PASS "SIGNAL SOUND — game stops" (flat for the last
+  quarter). --forward left/up/A/down are all inert from this start
+  state (range 0, oam_churn <=18/1199 — camera static, agent inert):
+  right is the only real forward driver here.
+  Receipts: runs/onboard_wave3/gate_blaster_master_{right,left,up,A,down}.json
+
+  ROOM-COUNTER DIAGNOSTIC (2026-08-25, scripts/discover_observables.py
+  3-probe protocol, --forward right; receipt
+  runs/onboard_wave3/observables_blaster_master.json): the odometer's
+  flat tail is explained, not a stall. $0048|$0020<<8 (fine in-room X)
+  is flagged CAMERA-CLAMP SATURATOR by the probe itself — it caps at
+  the scroll-window limit and rebases at room transitions, which is
+  exactly the shape an odometer integral hits after enough rooms. The
+  probe recommends the non-saturating room/screen counter $0020 as
+  true forward progress and doubles as the scene key (Ninja
+  Gaiden/Metroid pattern: `area:` rides the same address so the
+  archive orders cells (scene, x) instead of one over-clamped x).
+  Also discovered: y=$007D (jump/ballistic candidate, 2 candidates
+  agreed jump signature), lives=$00BE (decrements on death, 5/5 runs
+  agreed). level_key is empty — no clear byte captured yet, coverage
+  baseline only.
+
+  SOLVER SMOKE (2026-08-25, 2 workers / 4 min / seed 0, machine under
+  parallel-onboarding contention — throughput ~250-275 sps rather than
+  the ~500+ sps seen on an idle core; not a game finding):
+  cells 2855->4557->6745->9287 across the four 1-min windows,
+  max_gx_in_max_area 478->479->735->1244, stall_flat_windows 0
+  throughout, 6189 improvements / 55030 records, 0 solutions.
+  max_area pegged at 255 from minute 1 on — the single-byte room
+  counter's ceiling, not a stall (gx inside area=255 kept climbing the
+  whole run; note for future work if this game needs >255 rooms
+  tracked, area would need widening). Verdict: SOUND_ADVANCING — cells
+  and gx still climbing with zero flat windows at cutoff.
+  Receipts: runs/onboard_wave3/smoke_blaster_master/
+  (archive.stats.json, progress.jsonl).
 
 frame_skip: 4
 
@@ -36,3 +73,15 @@ action_space:
 solve:
   rom: "roms/Blaster Master (USA).nes"
   progress: {source: odometer, axis: x}
+  # Scene key so the solver orders cells (scene, x) rather than one
+  # camera-clamped x integral (Ninja Gaiden/Metroid area: pattern).
+  # Discovered by discover_observables.py, not injected: room/screen
+  # counter, non-saturating over the probe window.
+  area: 0x0020
+  # Jump/ballistic-signature candidate (discover_observables, 2
+  # candidates agreed: 0x7d, 0x78 — took the higher-confidence one).
+  y: 0x007D
+  # Decrements on death, agreed by 5 of 5 independent probe runs.
+  lives: 0x00BE
+  # No clear byte captured yet — coverage baseline only.
+  level_key: []

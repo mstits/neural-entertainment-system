@@ -6,9 +6,57 @@ rom_hashes:
 start_state_path: "roms/Paperboy (USA)_start.state.bin"
 
 description: |
-  Paperboy (NES), minimal onboarding profile. Structure copied from
-  configs/rygar.yaml; no game knowledge encoded — generic controller,
-  odometer progress source pending gate verdict.
+  Paperboy (NES), onboarding profile (wave 3, 2026-08-25). Structure
+  copied from configs/rygar.yaml; no game knowledge encoded — generic
+  controller, odometer progress source.
+  Start state: roms/Paperboy (USA)_start.state.bin, minted wave 2
+  (runs/onboard_wave2/mint_paperboy_usa.json) — liveness verified by
+  input-divergence probe (RIGHT vs LEFT vs A all diverge RAM+OAM from
+  a fresh reload; not a title/demo screen).
+  Odometer gate (runs/onboard_wave2/gate_paperboy.json, carried
+  forward unchanged into runs/onboard_wave3/gate_paperboy.json — no
+  re-gate needed, receipt was already complete and sound):
+  --forward right, 1200 steps, 1009 distinct, range 0..2005,
+  tail_distinct 236 (still moving in the final window, not frozen),
+  oam_churn 717/1199 — verdict SIGNAL SOUND, still advancing.
+  y / lives discovered by scripts/discover_observables.py's own
+  3-probe protocol (forward-hold / NOOP-hold / reverse-hold) against
+  this exact start state, 2026-08-25. No RAM map, no disassembly, no
+  walkthrough. Receipt: runs/onboard_wave3/discover_paperboy.json
+    $0081  room/screen counter — monotone, non-saturating (candidate
+           progress source; NOT used because the odometer already
+           gated SOUND and is the preferred hardware surface, same
+           reasoning as rygar/ninja_gaiden/gradius/excitebike).
+    $0050|$0081<<8  spatial pair — flagged camera-clamp SATURATOR by
+           the discovery tool (caps at scroll-window limit, rebases
+           at room transitions); this is why $0081 is a fallback
+           rather than the odometer-preferred choice, and why the
+           odometer's hardware-surface reading is trusted over any
+           RAM-derived spatial byte here.
+    $0051  y candidate, highest discovery score (81.6 vs next-best
+           62.0): base 108, deviates over an 11-value / 124-unit
+           range with plurality (66%) at rest — ballistic-shaped.
+    $000B  lives candidate: decrements by 1, reaches empty, spends
+           its stock across all 3 death events it was watched
+           through, agreed by 3 of 5 independent probe runs (moderate
+           confidence — lower agreement than a typical 5/5 lives
+           byte; kept as the discovery tool's own top recommendation
+           over a 5/5-agreeing candidate ($000B4) that never reached
+           empty and never spent its stock, i.e. read as a counter
+           other than remaining lives).
+  SOLVER SMOKE (runs/onboard_wave3/smoke_paperboy, 2 workers, 4 min,
+  seed 0, run under heavy machine contention from ~8 other concurrent
+  wave-3 onboarding smokes — sps held steady ~304-320 throughout, no
+  sign of a contention-induced stall): cells 1->455->632->774->869
+  across the four 60s windows (still climbing every window, no
+  freeze), frontier 773, best_score/max_gx_in_max_area 3273 (not a
+  round-number boundary; gx pinned for the final two 60s windows
+  while total cells kept growing, i.e. the search kept finding new
+  y-band/room cells at that x — no diagnostic triggered), max_area 0
+  (area left unwired — the discovery tool's room counter is a
+  fallback progress source, not adopted, so no area key was carried
+  into the solve: block), 0 solutions in the smoke budget (expected;
+  level_key is the empty coverage baseline). Verdict SOUND_ADVANCING.
 
 frame_skip: 4
 
@@ -32,4 +80,6 @@ action_space:
 solve:
   rom: "roms/Paperboy (USA).nes"
   progress: {source: odometer, axis: x}
+  y: 0x0051
+  lives: 0x000B
   level_key: []

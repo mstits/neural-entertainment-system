@@ -6,6 +6,9 @@ start_state_path: "roms/Arkanoid (USA)_start.state.bin"
 description: |
   Arkanoid (NES), minimal onboarding profile. Structure copied from
   configs/rygar.yaml; no game-specific tuning yet.
+  Start state: roms/Arkanoid (USA)_start.state.bin (minted 2026-08-24, wave 2;
+  liveness receipt runs/onboard_wave2/mint_arkanoid_usa.json). Ball is already
+  launched and Round 1's brick wall is intact at this state.
 
 frame_skip: 4
 
@@ -28,4 +31,65 @@ action_space:
 
 solve:
   rom: "roms/Arkanoid (USA).nes"
-  progress: {source: odometer, axis: x}
+  # ODOMETER GATE, wave 2 (runs/onboard_wave2/gate_arkanoid.json /
+  # gate_arkanoid_left.json): PPU scroll odometer, axis=x, SOUND under both
+  # --forward right and --forward left (32 distinct / 1200 steps, 0..239,
+  # OAM churn 630+) but flat for the tail quarter — Arkanoid's paddle is
+  # screen-bounded, so x saturates against the wall rather than tracking any
+  # real level progress. --forward A is UNUSABLE (only 31 distinct, coarser
+  # than the direction probes). Kept below as a certified fallback only.
+  #   progress_odometer_fallback: {source: odometer, axis: x}
+  #
+  # DISCOVER_OBSERVABLES, wave 3 (runs/onboard_wave3/discover_arkanoid_right.json),
+  # 3-probe protocol (forward=right) from this profile's own start state —
+  # no RAM map, no disassembly, no walkthrough. $0016|$0010<<8 passes BOTH
+  # gates the odometer failed: gate1 rises-under-forward AND flat-under-noop,
+  # and the saturation gate (sat_saturates=false, sat_never_rose=false,
+  # 2 room/page transitions observed, no rebase-at-transition truncation).
+  # net_forward=256, mono_forward=1.00 over the 1200-step probe. This is the
+  # PRIMARY progress signal; the odometer above is the fallback if a future
+  # profile change breaks this pairing.
+  progress: {lo: 0x0016, hi: 0x0010}
+  # $0010 doubles as the room/screen counter (round/screen index) the
+  # archive cells with — same discovery run.
+  area: 0x0010
+  # y = strongest candidate by discriminative score (distinct=7, base=32,
+  # range=181) — ball/paddle vertical signature.
+  y: 0x0332
+  # Coverage baseline; no stage-clear byte captured yet (no real clear to
+  # observe one from).
+  level_key: []
+  # lives: decrements by 1 on death, agreed by 5/5 independent probe runs
+  # (runs_agreeing=5/5, reaches_empty=true, spends_its_stock=true).
+  # lives_at_start=1 -- this ROM's start state has only ONE ball in play,
+  # no continue/insert-coin mechanic. See SOLVER SMOKE below.
+  lives: 0x0021
+
+# SOLVER SMOKE, wave 3 (runs/onboard_wave3/smoke_arkanoid, 2 workers, 4 min,
+# seed 0): frontier froze at 5 cells almost immediately (STALL WARNING at
+# 2 min and 3 min), best_score=0 for the entire 84,836-step / 240s run --
+# the $0016|$0010 progress pair above never left (0,0) in ANY archived cell
+# despite passing the discovery-time gates under a pure forward-hold probe.
+#
+# DEEPEST-CELL DIAGNOSTIC (runs/onboard_wave3/diagnostic_arkanoid.json):
+# loaded the archive's deepest cell (303 steps from root) into a 1-worker
+# pool and held each of the 14 actions above individually for 150 steps.
+# ALL FOURTEEN produce zero change -- lives, progress, and the odometer are
+# frozen solid. Bare START and bare A (not in the action space) held alone
+# ALSO produce zero change; only START(30 steps) THEN A(120 steps) breaks
+# the freeze (lives 1->0, progress/odometer jump), but that transition's
+# semantics (resumed play vs. game-over -> attract loop) cannot be
+# determined without disassembly, which is out of scope under the purity
+# line. NOT treated as a config fix: 'start' is deliberately omitted from
+# action_space repo-wide (see configs/gradius.yaml's precedent) and adding
+# it back on this unconfirmed a guess risks feeding the solver an
+# attract-mode RAM churn as if it were real advancement.
+#
+# CLASSIFICATION: SOUND_GAME_STOPS (real skill wall, not a bug). Root cause:
+# a single starting life plus no continue mechanic means an undirected
+# explorer's paddle rarely stays under the ball long enough to survive past
+# the opening seconds -- the archive is small because nearly every
+# trajectory dies almost immediately, and once dead there is nothing left
+# for THIS action vocabulary to explore. Fixing this for real needs either
+# a directed/shaped paddle-tracking policy (future work, not a config
+# change) or accepting the skill wall as-is.
