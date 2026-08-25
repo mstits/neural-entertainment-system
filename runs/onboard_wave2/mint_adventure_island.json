@@ -1,0 +1,14 @@
+{
+  "target": "Adventure Island (USA)",
+  "status": "VOID",
+  "reason": "rom_not_found",
+  "detail": "No ROM file matching 'Adventure Island (USA).nes' exists in roms/. Only 'Adventure Island II (USA).nes' and 'Adventure Island 3 (USA).nes' are present. No prior mint attempt/sidecar for this exact title exists anywhere under runs/onboard_wave2/ or elsewhere in the repo, so this is not a retry -- it is a first attempt against a target that cannot be located.",
+  "searched": [
+    "roms/ (exact + case-insensitive glob)",
+    "runs/onboard_wave2/ (all mint_*.json, gate_*.json)",
+    "configs/auto/ (yaml configs, only adventure_island_ii found)",
+    "whole filesystem glob for 'Adventure Island*USA*'"
+  ],
+  "action_taken": "None -- no liveness probe was run since there is no state file, no ROM, and no established navigation context to diverge from. Did not substitute Adventure Island II/3 without explicit confirmation, since that silently changes the requested target.",
+  "next_step": "Confirm intended ROM: is 'Adventure Island (USA)' actually 'Adventure Island II (USA)' or 'Adventure Island 3 (USA)'? Or is the ROM missing from roms/ and needs to be added? Once resolved, mint attempt can proceed with the input-divergence liveness probe."
+}

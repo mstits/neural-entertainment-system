@@ -285,6 +285,83 @@ Honest status: exercised in production by the 2026-08-23 options
 re-run, whose arms were verified live (pair_actor max|Δ| = 0.85,
 fingerprints differing) before adjudication.
 
+**FORGE-PENDING-VALIDATION — the room-graph engine (T1-T4), commit
+`3601c45`, 2026-08-24.** Self-measured detection: the system's own
+Zelda/Metroid probe receipts (`docs/receipts/room_fp/{zelda,metroid}.md`)
+found the existing scene ordinal an unreliable room-identity signal —
+noisy in Metroid (spurious bumps at clamp/seam with no room actually
+left) and blind by design to Zelda cave/dungeon fades and Rygar's blank
+doors — which is what motivated a settled, masked blake2b-64 hash of
+the physical nametable VRAM as the identity signal instead, with the
+scene ordinal demoted to classifier evidence only. Agentic authorship:
+synthesized and judged from three independently authored designs
+(`docs/proposals/ROOMGRAPH_ENGINE_2026-08-24.md` Part I), D0 taken as
+chassis with D1's detector and D2's roadmap grafted on. Forged
+machinery, game-agnostic: RoomIndex (intern/lookup/directed edges,
+capped with telemetry, never crashes at cap), a pan/fade/warp
+transition classifier from integrated Δodometer + Δscene during the
+churn window (warp-classified settles — the Zelda-death signature —
+adopt the new room identity but mint no adjacency edge and are never
+routable, closing the death-edge gap without any per-game death
+observable), edge exemplars for sticky-replay validation, an aliasing
+audit, a room-pool router arm, and restore-lockstep invariants
+(append-only global structures, per-worker state re-derived on
+`_assign`, never accumulated across restores). Standard gates: default
+off; flags-off byte-identity verified against pre-branch HEAD on a
+16,000-step SMB solve, sha256-identical RAM/archive/traces across all
+8 workers; 703+ new/updated tests, full suite 3920 green at ship time.
+Gate RG-0 — the offline falsifier over banked probe fixtures
+(`tests/test_rg0_roomgraph.py`), mandatory before any live run per the
+BINDING cheap-premise-first sequencing rule — is **9/9 PASS**
+(re-run and reconfirmed 2026-08-25: `9 passed`), including all five
+design-mandated assertions: Zelda east-exit pans mint exactly one node,
+a Zelda death mints a warp with zero edges, idle Zelda hashes to one
+value post-mask, Metroid's two doors mint exactly two pan edges, and
+Metroid's scene noise mints zero extra nodes. Honest status, precise:
+RG-0 is an *offline* falsifier over fixtures — it proves the classifier
+and chassis behave correctly on banked probe data, nothing more. RG-1,
+the live pre-registered gate (§6 of the synthesis doc — 4 unattended
+90-minute Zelda runs on 12 workers, router-lift ≥1.25×, ≥30 distinct
+settled rooms, edge-replay validity on 20 sampled edges, SMB regression
+control, perf ≥90% baseline), is **registered but has not been run**.
+No live room-graph traversal exists yet; no RG-1 numbers exist; no
+Zelda/Metroid capability claim may be made from this entry alone.
+
+**FORGE-SHIPPED — ReDo dormant-neuron recycling
+(`src/training/redo.py`), commit `3bb93ef`, DR-mandated addendum to
+the v27 pre-registration, 2026-08-24, agreement-bound recalibration
+commit `5995272`, 2026-08-25.** Self-measured detection: DR review of
+the v27 fresh-recovery pre-registration (Decision B) held that an
+unmodified fresh 4×250-iteration run risked conflating a real capacity
+deficit with primacy bias / dormant-unit collapse, and mandated one
+config-only change — Sokar et al.'s ReDo — before any of the spend.
+The addendum pins every parameter and marks which are DR-mandated vs
+locally chosen: layer-mean-normalized dormancy score (correcting the
+DR's own "layer max" phrasing), tau=0.025, checked every gradient
+iteration after GA warmup, `fc1`/`fc2` hidden units only (policy/value
+heads excluded), Kaiming-uniform reinit on incoming weights with
+zeroed outgoing columns, and exact-slice-only Adam moment clears for
+touched units. Single arm (ReDo-on, 4 seeds × 250 iters) per the DR's
+own outcome mapping — cumulative-recycle telemetry alone proves
+whether the mechanism was live or inert, so no ReDo-off control was
+run. Standard gates: default off (`reinforce.redo_enabled`), 17 new
+tests covering dormancy detection, exact-slice resets, optimizer-moment
+handling, and OFF-arm byte-identical training; live end-to-end check
+confirmed OFF prints `[redo] disabled` and samples nothing, ON at
+tau=0.025 prints the armed line plus per-iteration
+dormant/recycled/agreement telemetry. ADDENDUM 2 (`5995272`) root-caused
+and revised the V7 agreement-bound pilot check against LayerNorm
+receipts via a tau-sweep (0.05–0.35), PASS under the corrected
+condition, with the V2 seed-0 pilot clean. Honest status: the mechanism
+is live and instrumented inside the currently-running v27 seed0 job
+(`checkpoints/mario_1_1_v27_recovery_seed0/run.log`) — as of iteration
+26/250 the telemetry reads `dormant fc1 0/64 fc2 0/32 recycled 0 cum 0
+agree 1.0000`, i.e. ReDo has not yet found any dormant units to recycle
+this early in training. Whether it ever fires, and whether firing
+changes the outcome, is unknown until the run progresses further; this
+entry certifies the mechanism shipped and is instrumented correctly,
+not that it mattered.
+
 ## Quarantine (Tier-3-contaminated artifacts)
 
 The following artifacts were produced with banned knowledge (a
@@ -600,3 +677,25 @@ curriculum from the start of a fresh run, to separate consolidation
 from parameter budget. The banked scoreboard is unchanged: 1-1 43%,
 1-2 38%, 1-3 21%, 1-4 51%; the separately banked backward-1-1 control
 stands at 0.767 with a measured ceiling of ~0.83–0.85.
+
+V27 FRESH-RECOVERY RUN — LAUNCHED, IN PROGRESS, NOT A VERDICT
+(2026-08-24/25, prereg `docs/proposals/V27_FRESH_RECOVERY_2026-08-24.md`,
+configs `configs/mario_1_1_v27_seed{0,1,2,3}.yaml`, checkpoints under
+`checkpoints/mario_1_1_v27_recovery_seed0/`). The registered follow-on
+above is now running, not merely planned: a 785-rung interleaved
+recovery ladder was minted (5/5 self-checks), pilots V1–V3 cleared, DR
+review returned Decision (B) — launch blocked pending the ReDo
+dormant-neuron-recycling amendment being folded into the
+pre-registration first (see the ReDo FORGE entry above for that
+amendment, and ADDENDUM 2 for the LayerNorm-recalibrated agreement
+bound that PASSed before launch). Design: 4 seeds × 250 iterations,
+60 envs, vanilla PPO on the SMB-tiles-pos encoder, gated against the
+banked backward-1-1 control (0.767). As of this writing only seed0 has
+started (`checkpoints/mario_1_1_v27_recovery_seed0/run.log`, iteration
+26/250, `best_fitness` climbing 3633→4196 over the last five logged
+iterations, `vanilla_ppo_max_world_level` 2, ReDo armed and reporting
+zero dormant units recycled so far); seeds 1–3 have not yet started.
+No honest-protocol number, no gate verdict, and no comparison to the
+0.767 control exists yet for this run. It is named here only so the
+launch is on the record as launched; the eventual result — pass, fail,
+or void — gets its own entry when the run actually finishes.
