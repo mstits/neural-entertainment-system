@@ -1,0 +1,4 @@
+{
+  "config_diff_check": "V1 PASS: diff <(configs/mario_1_1_v27_seed0.yaml) <(configs/mario_1_1_v28_seed0.yaml) shows only name + tile_hidden_dim/tile_trunk_dim lines, all four seeds symmetric",
+  "param_count": "V2 PASS: [policy] class=TilePolicyNetwork params=72039 (hidden=96, trunk/gru=32, features=712, actions=6) -- exact match"
+}
