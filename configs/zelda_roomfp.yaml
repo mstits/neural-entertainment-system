@@ -1,0 +1,89 @@
+name: "The Legend of Zelda (room-graph gate)"
+
+# ROOM-GRAPH GATE PROFILE (ROOMGRAPH_ENGINE_2026-08-24 §4, T4).
+# This is the RG-1 profile: configs/zelda.yaml stays the untouched
+# baseline (RG-1c integrity + RG-1d perf both compare against it), so
+# the fingerprint layer lives in this separate file. Every measured
+# claim below is receipted in docs/receipts/room_fp/zelda.md; the
+# probe fixtures it was derived from are under tests/fixtures/roomgraph/
+# and are replayed by the RG-0 offline falsifier
+# (tests/test_rg0_roomgraph.py) — which must pass before any live run.
+#
+# Root state for RG-1 runs: roms/zelda_start_ctrl.state.bin via
+# --root-state (the wave-2 mint receipt
+# runs/onboard_wave2/mint_legend_of_zelda.json re-verified it live).
+
+rom_path: "roms/Legend of Zelda, The (USA) (Rev A).nes"
+start_state_path: "roms/zelda_start_ctrl.state.bin"
+
+frame_skip: 4
+
+action_space:
+  # configs/zelda.yaml's measured space, unchanged (START stays out —
+  # empty-inventory menu). The four directional holds double as the
+  # room_advance transition maneuvers below.
+  - []                # no-op
+  - ["up"]
+  - ["down"]
+  - ["left"]
+  - ["right"]
+  - ["A"]             # sword
+  - ["B"]             # secondary item
+  - ["up", "A"]
+  - ["down", "A"]
+  - ["left", "A"]
+  - ["right", "A"]
+
+solve:
+  rom: "roms/Legend of Zelda, The (USA) (Rev A).nes"
+  # progress / y / lives: verbatim from configs/zelda.yaml's banked
+  # measurements (Link's on-screen X $0070 / Y $0084, fine HP $0670 as
+  # the damage-terminates-lineage proxy). See that file for the full
+  # measurement notes; nothing re-derived here.
+  progress: {lo: 0x0070}
+  y: 0x0084
+  lives: 0x0670
+  # level_key EMPTY is a correctness requirement (honest coverage, no
+  # fabricated clears) — same rationale as configs/zelda.yaml. Every
+  # RG-1 gate run asserts clear-count == 0.
+  level_key: []
+  # Room identity now rides the FINGERPRINT ordinal at the pseudo-RAM
+  # bytes 0x804/0x805 (written by Solver._xram), replacing the RAM
+  # screen-index 0x00EB the baseline profile uses. area = ordinal lo
+  # (novelty frontier); room_sig = the exact 16-bit ordinal feeding
+  # room_id -> sect/psig transits; room_advance points its telemetry
+  # and macro gate at the same byte.
+  area: 0x804
+  room_sig: [0x804, 0x805]
+  # buttons: a Zelda screen is left across any of its four edges —
+  # measured 114 crossings in the baseline profile's receipt, re-measured
+  # on the odometer surface 2026-08-24 (E pan +256 px / W pan -256 px /
+  # N pan -181 px, docs/receipts/room_fp/zelda.md). steps=45 as banked.
+  room_advance: {addr: 0x804, steps: 45, p: 0.06, near: 24,
+                 buttons: [["up"], ["down"], ["left"], ["right"]]}
+  room_fp:
+    # Auto volatility mask from our own idle/walk frames
+    # (scripts/room_fp_calibrate.py, receipt docs/receipts/room_fp/zelda.md):
+    # exactly one volatile byte — NT 214, the HUD heart tile that flips
+    # on every HP change. Post-mask: 300 idle frames = 1 hash, 210
+    # in-room walk frames = 1 hash.
+    mask: [[214, 215]]
+    # settle = ceil(56 / frame_skip) solver steps = 14 at fs4. NOT the
+    # design draft's 3: the east-pan fixture measured an 8-step (32-
+    # frame) mid-pan stable window (Zelda pre-draws columns, then
+    # scrolls over them — VRAM is scroll-invariant), and Metroid's
+    # mid-run repeating-terrain window is 12 steps. settle must outlast
+    # both or hybrid half-drawn rooms mint (measured: 3 rooms instead
+    # of 2 on the east-exit fixture at settle 3). Receipted.
+    settle: 14
+    min_lines: 200
+    # Classifier constants, probe-receipted 2026-08-24 (fixtures):
+    # pan = |Δodo| in [128, 384] on one axis, Δscene <= 1 (measured
+    # pans: E +256/W -256/N -181 px, each with the +1 pan-end scene
+    # snap). warp = Δscene >= 2 with the odometer flat (measured death
+    # flash: Δscene +2, Δodo (0,0)).
+    pan_odo: [128, 384]
+    warp_scene_min: 2
+    palette_cokey: false
+    max_rooms: 1024
+    sample_every: 1

@@ -44,6 +44,7 @@ import sys
 import threading
 import time
 import traceback
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -306,6 +307,15 @@ LINEAGE_KEY_AXES = (
     ("gx_bucket", "gx bucket px (--gx-bucket)"),
     ("y_band", "y band px (--y-band)"),
     ("cell_fn", "cell-key adapter"),
+    # Room-fingerprint schema (solve.room_fp): with it on, room ordinals
+    # ride the psig/area key slots, so two archives interned under
+    # different masks/settle/classifier constants — or one with and one
+    # without the feature — do not partition the same space. "" = off.
+    # ABSENT reads as "" (see resume_lineage_diff): every archive banked
+    # before the feature existed was necessarily built with it off, and
+    # refusing all of them as UNVERIFIABLE would break flags-off resume
+    # compatibility for a schema they could not have carried.
+    ("room_fp", "room fingerprint config (solve.room_fp)"),
 )
 
 
@@ -354,6 +364,12 @@ def key_config_axes(args, game) -> dict:
         "y_band": int(getattr(args, "y_band", Y_BAND)),
         "cell_fn": type(game).__name__,
         "smooth": str(getattr(game, "progress_smooth", "off") or "off"),
+        # sha8 over the identity-bearing solve.room_fp knobs (mask,
+        # settle, classifier constants, palette_cokey, max_rooms);
+        # "" when the profile has no room_fp block. Compared as a
+        # LINEAGE axis: interned ordinals ride the psig/area slots, so
+        # two intern schemas never partition the same space.
+        "room_fp": str(getattr(game, "room_fp_sha", "") or ""),
     }
 
 
@@ -416,6 +432,21 @@ def resume_lineage_diff(prev_stats: dict, provenance: dict,
     else:
         for axis, label in LINEAGE_KEY_AXES:
             if axis not in prev_key:
+                if axis == "room_fp":
+                    # Predates the room-fingerprint layer => built with
+                    # it off, which is a FACT, not a gap: match a
+                    # room_fp-off run silently (flags-off resume stays
+                    # byte-identical to pre-roomgraph behavior), refuse
+                    # a room_fp-on run as a real schema mismatch (its
+                    # cells embed no ordinals to compare against).
+                    if key_config.get(axis, ""):
+                        mismatch.append(
+                            f"{label}: archive predates room "
+                            f"fingerprinting (off) vs run "
+                            f"{key_config.get(axis)!r} — the resumed "
+                            f"cells carry no room ordinals in their "
+                            f"psig/area slots")
+                    continue
                 unverifiable.append(f"key_config.{axis} ({label}): not "
                                     f"recorded by the resumed archive")
                 continue
@@ -644,6 +675,354 @@ def _wd(ram) -> tuple:
 #: IndexError by design — a path that forgot the extension must not
 #: silently read zeros as progress.
 ODO_LO = 0x800
+
+# ---------------------------------------------------------------------
+# ROOM-GRAPH ENGINE — identity layer (ROOMGRAPH_ENGINE_2026-08-24 §2).
+#
+# Room identity = a SETTLED, masked blake2b-64 hash of the 2 KB physical
+# nametable VRAM (Pool.peek_nametables — a hardware surface, v23-legal),
+# interned to a discovery-order ordinal and written into the pseudo-RAM
+# extension at 0x804/0x805 beside the odometer bytes above. Profiles
+# then point `solve.area` / `solve.room_sig` / `solve.room_advance` at
+# these pseudo-addresses, so room-keyed cells, sect/psig transits and
+# door-entry macros all come from SHIPPED machinery — exactly the way
+# the scene ordinal already rides 0x803. Scene is CLASSIFIER EVIDENCE,
+# never identity: the probes measured it noisy in Metroid (spurious
+# bumps at clamp/seam) and blind to Zelda fades / Rygar blank doors.
+#
+# Everything below is pure and unit-testable without a Solver, a ROM or
+# a Pool (tests/test_room_fp.py); the hot-loop wiring is T2's.
+# ---------------------------------------------------------------------
+
+#: Pseudo-addresses of the room ordinal (little-endian uint16) in the
+#: extended snapshot, and the ORTHOGONAL odometer axis byte — the axis
+#: _xram's 0x800..0x802 integral does NOT carry, compressed to
+#: (clamp(v, 0, 0xFFFFFF) >> 4) & 0xFF so a Metroid profile can key
+#: y-bands on it (`y: 0x806`). Only present when `solve.room_fp` is
+#: configured: the extension is 7 bytes then, 4 otherwise, so every
+#: non-fp profile keeps its exact snapshot identity.
+ROOM_LO, ROOM_HI = 0x804, 0x805
+ODO_ALT = 0x806
+#: The "no settled room yet" sentinel a worker carries from _assign
+#: until its first fingerprint settles. Never interned (the intern
+#: table caps at 4096), so it can never alias a real ordinal.
+ROOM_UNKNOWN = 0xFFFF
+
+
+def room_fp_mask(ranges) -> np.ndarray:
+    """np.uint8[2048] KEEP-mask over the nametable snapshot: 1 keeps a
+    byte, 0 zeroes it before hashing. `ranges` = the profile's volatile
+    [lo, hi) byte spans (animated tiles, HUD counters), emitted by the
+    calibration script from variance over OUR OWN idle/walk frames —
+    no human reads the screen. Attribute bytes participate unless a
+    range says otherwise."""
+    m = np.ones(2048, dtype=np.uint8)
+    for lo, hi in ranges:
+        m[int(lo):int(hi)] = 0
+    return m
+
+
+def nt_fingerprint(nt, mask, palette=None) -> int:
+    """blake2b-64 of the masked 2 KB nametable snapshot, as an int.
+
+    blake2b (stdlib C) rather than a pure-Python FNV: 2 KB x workers x
+    steps makes the hash a hot-loop cost — an instrumentation choice,
+    not doctrine (noted as a deviation in the design). `palette` folds
+    the 32-byte palette RAM in as an optional co-key (default off:
+    fades must not fork rooms)."""
+    a = (np.frombuffer(nt, dtype=np.uint8)
+         if isinstance(nt, (bytes, bytearray)) else nt)
+    d = hashlib.blake2b(digest_size=8)
+    d.update((a * mask).tobytes())
+    if palette is not None:
+        d.update(bytes(palette))
+    return int.from_bytes(d.digest(), "little")
+
+
+def fp_settle(pend, h, settled_h, odo_xy, scene, step, settle):
+    """One worker's fingerprint-settle state transition (pure).
+
+    `pend` is the burst ctx's `fp_pend`: `(hash, n_consecutive,
+    onset_odo_xy, onset_scene, onset_step) | None`. A pend exists only
+    while the sampled hash differs from the worker's settled hash; its
+    ONSET fields are captured at the first diverging sample and
+    PRESERVED across intra-churn hash changes — a Zelda pan churns ~64
+    straight frames of partially-drawn nametables, and the classifier
+    needs the odometer integrated over the WHOLE churn window, not from
+    the final hash's first appearance (which lands near pan end, where
+    almost nothing is left to integrate).
+
+    Returns `(pend', fired)`; `fired` is None until `h` has repeated
+    `settle` consecutive samples, then `(h, (dx, dy), d_scene, steps)`
+    measured from onset. A sample matching `settled_h` cancels the
+    churn (false alarm) — mid-pan settles cannot fire because churning
+    frames never repeat `settle` times (probe-receipted, §2). Blank
+    frames never reach here: the caller gates on odo_debug rendered
+    lines and resets pend to None instead (`min_lines`, §2)."""
+    if settled_h is not None and h == settled_h:
+        return None, None
+    if pend is None:
+        pend = (h, 1, (int(odo_xy[0]), int(odo_xy[1])), int(scene),
+                int(step))
+    elif pend[0] != h:
+        pend = (h, 1, pend[2], pend[3], pend[4])
+    else:
+        pend = (h, pend[1] + 1, pend[2], pend[3], pend[4])
+    if pend[1] >= int(settle):
+        d_odo = (int(odo_xy[0]) - pend[2][0], int(odo_xy[1]) - pend[2][1])
+        return None, (h, d_odo, int(scene) - pend[3], int(step) - pend[4])
+    return pend, None
+
+
+def classify_transition(d_odo, d_scene, pan_odo=(128, 384),
+                        warp_scene_min=2):
+    """Transition-kind classifier from integrated Δodo + Δscene over the
+    churn window (pure; constants pre-registered from the 2026-08-24
+    probe receipts, see §2).
+
+      pan:  |Δodo| in [pan_min, pan_max] on EXACTLY one axis AND
+            Δscene <= 1 -> ("pan", dir) with dir E/W (+x/-x) or S/N
+            (+y/-y; NES y grows downward). Both games measured ~256 px.
+      warp: Δscene >= warp_scene_min AND |Δodo| < 32 on both axes ->
+            ("warp", None). Measured Zelda death: odometer modal
+            16->272->16 (flat at settle), scene +2. Warp settles ADOPT
+            the new room identity but mint NO adjacency edge and are
+            never routable — the game-agnostic death-edge guard
+            (Metroid has no probed death observable and must not need
+            one).
+      fade: otherwise -> ("fade", None). Hash flip, odo ~flat, scene
+            0..1 — Zelda caves/dungeons, Rygar doors: the class the
+            scene core is blind to by design."""
+    dx, dy = int(d_odo[0]), int(d_odo[1])
+    ds = int(d_scene)
+    lo, hi = int(pan_odo[0]), int(pan_odo[1])
+    in_x = lo <= abs(dx) <= hi
+    in_y = lo <= abs(dy) <= hi
+    if (in_x != in_y) and ds <= 1:
+        if in_x:
+            return ("pan", "E" if dx > 0 else "W")
+        return ("pan", "S" if dy > 0 else "N")
+    if ds >= int(warp_scene_min) and abs(dx) < 32 and abs(dy) < 32:
+        return ("warp", None)
+    return ("fade", None)
+
+
+def room_fp_config_sha(cfg: dict) -> str:
+    """Stable 8-hex digest of the identity-bearing room_fp knobs — the
+    lineage axis (`key_config["room_fp"]`) and room_index.json's
+    `config_sha`. Mask ranges are canonicalised (sorted) so a cosmetic
+    re-listing is not a new lineage; `sample_every` is EXCLUDED — a
+    perf fallback changes when the detector looks, not what a settled
+    ordinal means (the RG-1d re-measure path must not fork the
+    schema)."""
+    canon = {
+        "mask": sorted([int(lo), int(hi)] for lo, hi in cfg["mask"]),
+        "settle": int(cfg["settle"]),
+        "min_lines": int(cfg["min_lines"]),
+        "pan_odo": [int(cfg["pan_odo"][0]), int(cfg["pan_odo"][1])],
+        "warp_scene_min": int(cfg["warp_scene_min"]),
+        "palette_cokey": bool(cfg["palette_cokey"]),
+        "max_rooms": int(cfg["max_rooms"]),
+    }
+    return hashlib.sha256(
+        json.dumps(canon, sort_keys=True,
+                   separators=(",", ":")).encode()).hexdigest()[:8]
+
+
+def _deep_tuple(v):
+    """JSON round-trip repair for archive cell keys: lists back to the
+    nested tuples observe() built (an exemplar cell key must compare
+    equal to the live archive's keys or the edge-replay audit can never
+    find its cell)."""
+    if isinstance(v, list):
+        return tuple(_deep_tuple(x) for x in v)
+    return v
+
+
+class RoomIndex:
+    """Global room-identity intern table + kind-tagged directed
+    adjacency (ROOMGRAPH_ENGINE_2026-08-24 §2).
+
+    APPEND-ONLY/MONOTONE by construction — ordinals are discovery
+    order, edges only accumulate — so the structure is restore-order
+    independent (the §2 lockstep invariant: global state never has to
+    be rewound when a worker restores an older cell). Every mutator
+    takes `self.lock` (the R4 _door_lock shape); readers of a single
+    ordinal take it too, so the async flush can serialize a coherent
+    snapshot.
+
+    At `cap` the table HOLDS: a new hash returns None (caller keeps its
+    last ordinal), `cap_hits` counts it, nothing crashes — the
+    false-split failure mode (§7.2) degrades to telemetry, never to a
+    138 GB archive."""
+
+    VERSION = 1
+
+    def __init__(self, cap: int = 1024, config_sha: str = "") -> None:
+        self.hashes: dict = {}       # blake2b64 -> ordinal
+        self.ordinals: list = []     # ordinal -> blake2b64
+        self.meta: dict = {}         # ordinal -> {visits, bbox, aliased}
+        self.adj: dict = {}          # src -> {dst -> EdgeStat}; DIRECTED
+        self.warps: list = []        # recent warp settles (telemetry)
+        self.warp_count = 0          # ALL warp settles, ever
+        self.cap = int(cap)
+        self.cap_hits = 0
+        self.config_sha = str(config_sha)
+        self.lock = threading.Lock()
+
+    def intern(self, h: int, odo_xy=None):
+        """hash -> ordinal, minting the next discovery-order ordinal for
+        a new hash; updates visits and the odometer bbox (the
+        false-merge audit's evidence). Returns None at cap (hold-last).
+        """
+        with self.lock:
+            o = self.hashes.get(h)
+            if o is None:
+                if len(self.ordinals) >= self.cap:
+                    self.cap_hits += 1
+                    return None
+                o = len(self.ordinals)
+                self.hashes[h] = o
+                self.ordinals.append(h)
+                self.meta[o] = {"visits": 0, "bbox": None, "aliased": False}
+            m = self.meta[o]
+            m["visits"] += 1
+            if odo_xy is not None:
+                x, y = int(odo_xy[0]), int(odo_xy[1])
+                b = m["bbox"]
+                m["bbox"] = ([x, y, x, y] if b is None else
+                             [min(b[0], x), min(b[1], y),
+                              max(b[2], x), max(b[3], y)])
+            return o
+
+    def lookup(self, h: int):
+        """FROZEN read (replay paths): ordinal or None, never interns —
+        a replay must read the graph the live search built, not grow
+        it."""
+        with self.lock:
+            return self.hashes.get(h)
+
+    def hash_of(self, ordinal: int):
+        """FROZEN reverse read (restore seeding): the hash an ordinal
+        names, or None when no such room has been interned — which is
+        how a stale psig tail (ROOM_UNKNOWN bytes, a truncated resume)
+        is refused at _assign instead of aliasing a future room."""
+        with self.lock:
+            o = int(ordinal)
+            return self.ordinals[o] if 0 <= o < len(self.ordinals) else None
+
+    def record_edge(self, src: int, dst: int, kind: str, direction,
+                    frames: int, exemplar_cell=None,
+                    exemplar_actions=()) -> None:
+        """Commit one traversed adjacency edge (kind pan|fade). The
+        FIRST exemplar is kept (archive cell key at onset + last-32
+        action ring) so the sticky-replay edge-validity audit has a
+        stable trajectory to re-run; later traversals only accumulate
+        count/frames_mean. Warp-classified settles must never reach
+        here — refused loudly, because a warp minted as navigable is
+        the death-edge failure the classifier exists to close (§7.5).
+        """
+        if kind not in ("pan", "fade"):
+            raise ValueError(
+                f"room edge kind must be pan|fade, got {kind!r} — warp "
+                f"settles are telemetry (record_warp), never edges")
+        with self.lock:
+            e = self.adj.setdefault(int(src), {}).get(int(dst))
+            if e is None:
+                e = self.adj[int(src)][int(dst)] = {
+                    "kind": kind, "dir": direction, "count": 0,
+                    "frames_mean": 0.0, "exemplar_cell": None,
+                    "exemplar_actions": [], "validated": False,
+                    "validate_attempts": 0}
+            e["count"] += 1
+            e["frames_mean"] += (float(frames) - e["frames_mean"]) / e["count"]
+            if e["exemplar_cell"] is None and exemplar_cell is not None:
+                e["exemplar_cell"] = exemplar_cell
+                e["exemplar_actions"] = [int(a) for a
+                                         in exemplar_actions][-32:]
+
+    def record_warp(self, src, dst: int, d_scene: int, d_odo) -> None:
+        """A warp-classified settle: telemetry ONLY — no adjacency, ever
+        (bounded ring of recent events + a total count)."""
+        with self.lock:
+            self.warp_count += 1
+            if len(self.warps) < 256:
+                self.warps.append({
+                    "src": (None if src is None else int(src)),
+                    "dst": int(dst), "d_scene": int(d_scene),
+                    "d_odo": [int(d_odo[0]), int(d_odo[1])]})
+
+    def n_rooms(self) -> int:
+        with self.lock:
+            return len(self.ordinals)
+
+    def to_json(self) -> dict:
+        with self.lock:
+            return {
+                "version": self.VERSION,
+                "config_sha": self.config_sha,
+                "cap": self.cap,
+                "cap_hits": self.cap_hits,
+                "hashes": [f"{h:016x}" for h in self.ordinals],
+                "meta": {str(o): m for o, m in self.meta.items()},
+                "adj": {str(s): {str(d): e for d, e in dsts.items()}
+                        for s, dsts in self.adj.items()},
+                "warp_count": self.warp_count,
+                "warps": list(self.warps),
+            }
+
+    def save(self, path) -> None:
+        """Atomic tmp+rename on the archive.stats.json cadence + exit.
+        An OSError is loud, never fatal — a full disk must not kill a
+        live search over its telemetry sidecar."""
+        p = Path(path)
+        tmp = p.with_name(p.name + ".tmp")
+        try:
+            tmp.write_text(json.dumps(self.to_json()) + "\n")
+            os.replace(tmp, p)
+        except OSError as e:
+            print(f"[go_explore_solve] could not save room index {p}: {e}",
+                  flush=True)
+
+    @classmethod
+    def load(cls, path) -> "RoomIndex":
+        """Rebuild from room_index.json. Raises ValueError on a schema
+        version this build does not speak (the caller turns that into a
+        resume refusal, never a silent reinterpretation)."""
+        data = json.loads(Path(path).read_text())
+        if int(data.get("version", -1)) != cls.VERSION:
+            raise ValueError(
+                f"room_index version {data.get('version')!r} != "
+                f"{cls.VERSION}")
+        idx = cls(cap=int(data.get("cap", 1024)),
+                  config_sha=str(data.get("config_sha", "")))
+        for o, hx in enumerate(data.get("hashes") or []):
+            h = int(hx, 16)
+            idx.hashes[h] = o
+            idx.ordinals.append(h)
+        for o_s, m in (data.get("meta") or {}).items():
+            idx.meta[int(o_s)] = {
+                "visits": int(m.get("visits", 0)),
+                "bbox": (list(m["bbox"]) if m.get("bbox") else None),
+                "aliased": bool(m.get("aliased", False))}
+        for s_s, dsts in (data.get("adj") or {}).items():
+            row = idx.adj[int(s_s)] = {}
+            for d_s, e in dsts.items():
+                row[int(d_s)] = {
+                    "kind": str(e["kind"]), "dir": e.get("dir"),
+                    "count": int(e.get("count", 0)),
+                    "frames_mean": float(e.get("frames_mean", 0.0)),
+                    "exemplar_cell": _deep_tuple(e.get("exemplar_cell")),
+                    "exemplar_actions": [int(a) for a in
+                                         e.get("exemplar_actions") or []],
+                    "validated": bool(e.get("validated", False)),
+                    "validate_attempts": int(e.get("validate_attempts",
+                                                   0))}
+        idx.warp_count = int(data.get("warp_count", 0))
+        idx.warps = list(data.get("warps") or [])
+        idx.cap_hits = int(data.get("cap_hits", 0))
+        return idx
+
 
 GX_BUCKET = 16   # overridable via --gx-bucket (micro-search: 8)
 Y_BAND = 32      # overridable via --y-band (micro-search: 16)
@@ -1446,6 +1825,77 @@ class GenericGame:
         # psig transit machinery (built on SMB's $074E) counts CV room
         # progress even though gx resets in every room.
         self._room_sig = tuple(int(a) for a in s.get("room_sig", ()))
+        # ROOM FINGERPRINTING (optional, default OFF => byte-identical;
+        # ROOMGRAPH_ENGINE_2026-08-24 §4). `solve: room_fp: {mask,
+        # settle, min_lines, pan_odo, warp_scene_min, palette_cokey,
+        # max_rooms, sample_every}` arms the identity layer: the Solver
+        # settles a masked NT-hash per worker, interns it to a
+        # discovery ordinal and writes it at 0x804/0x805 in the
+        # pseudo-RAM extension, where `area` / `room_sig` /
+        # `room_advance.addr` / `y` may point (they read ram[addr]
+        # blindly, so 0x800-0x806 references need no code). The mask is
+        # emitted by scripts/room_fp_calibrate.py from OUR OWN
+        # idle/walk frames (auto volatility mask, receipt required per
+        # game under docs/receipts/room_fp/); the classifier constants
+        # are probe-receipted, game-agnostic. Validation is loud and at
+        # construction — a bad range must fail before any pool exists.
+        rf = s.get("room_fp")
+        self.room_fp = None
+        self.room_fp_sha = ""
+        if rf is not None:
+            cfg = {
+                "mask": [[int(lo), int(hi)] for lo, hi in
+                         (rf.get("mask") or ())],
+                "settle": int(rf.get("settle", 3)),
+                "min_lines": int(rf.get("min_lines", 200)),
+                "pan_odo": [int(v) for v in rf.get("pan_odo", (128, 384))],
+                "warp_scene_min": int(rf.get("warp_scene_min", 2)),
+                "palette_cokey": bool(rf.get("palette_cokey", False)),
+                "max_rooms": int(rf.get("max_rooms", 1024)),
+                "sample_every": int(rf.get("sample_every", 1)),
+            }
+            for lo, hi in cfg["mask"]:
+                if not (0 <= lo < hi <= 2048):
+                    raise SystemExit(
+                        f"[go_explore_solve] room_fp.mask range "
+                        f"[{lo}, {hi}) is not inside [0, 2048) — the "
+                        f"snapshot is the 2 KB physical nametable VRAM "
+                        f"and a mask outside it masks nothing.")
+            if cfg["settle"] < 1:
+                raise SystemExit(
+                    f"[go_explore_solve] room_fp.settle must be >= 1, "
+                    f"got {cfg['settle']}: a zero-sample settle would "
+                    f"adopt every churning mid-transition frame as a "
+                    f"room.")
+            if not (1 <= cfg["max_rooms"] <= 4096):
+                raise SystemExit(
+                    f"[go_explore_solve] room_fp.max_rooms must be in "
+                    f"[1, 4096], got {cfg['max_rooms']} — the ordinal "
+                    f"rides a uint16 slot and the cap is the false-"
+                    f"split blast shield.")
+            if (len(cfg["pan_odo"]) != 2
+                    or not 0 < cfg["pan_odo"][0] <= cfg["pan_odo"][1]):
+                raise SystemExit(
+                    f"[go_explore_solve] room_fp.pan_odo must be "
+                    f"[min, max] px with 0 < min <= max, got "
+                    f"{cfg['pan_odo']}.")
+            if cfg["warp_scene_min"] < 1:
+                raise SystemExit(
+                    f"[go_explore_solve] room_fp.warp_scene_min must be "
+                    f">= 1, got {cfg['warp_scene_min']}: at 0 every "
+                    f"odometer-flat settle classifies warp and no fade "
+                    f"edge can ever be banked.")
+            if not (0 <= cfg["min_lines"] <= 262):
+                raise SystemExit(
+                    f"[go_explore_solve] room_fp.min_lines must be in "
+                    f"[0, 262] (rendered scanlines), got "
+                    f"{cfg['min_lines']}.")
+            if cfg["sample_every"] < 1:
+                raise SystemExit(
+                    f"[go_explore_solve] room_fp.sample_every must be "
+                    f">= 1, got {cfg['sample_every']}.")
+            self.room_fp = cfg
+            self.room_fp_sha = room_fp_config_sha(cfg)
         # WIN-CONDITION hook (optional, default OFF). Many games have no clean
         # level_key that advances on a clear (contra/kirby/ducktales all ship
         # `level_key: []` = coverage baseline: deep frontier cells accrue but a
@@ -2021,6 +2471,146 @@ def derive_transition_macros(action_space: list, room_advance: dict | None) -> l
     return out
 
 
+# --- room-graph router (T3, ROOMGRAPH_ENGINE_2026-08-24 §3 rows 7-9) --
+# Selection-side ONLY: these helpers read the archive's own cells and
+# the RoomIndex adjacency — both derived purely from our rollouts — and
+# never touch score, keys, or the transit machinery. All geometry is in
+# CELL units (gx buckets / y bands, key[-1] / key[-2]): one coordinate
+# system for the boundary sublists, the router's routing and the
+# route-follow macro gate, whatever the profile's progress source is.
+
+
+def derive_direction_macros(action_space: list, steps: int = 20) -> dict:
+    """Direction-hold macros for the router's route-follow gate, derived
+    STRUCTURALLY from the profile's own action space — the
+    generalization of derive_transition_macros' up-only rule to all four
+    room sides. {side: [(action_idx, hold_steps), ...]}: every combo
+    containing that side's d-pad button qualifies (a Metroid door wants
+    right- or left-holds, some with shoot folded in; Zelda's stairs want
+    up — the injection samples uniformly among them). A side the space
+    cannot express gets an empty list and its rolls are inert."""
+    btn = {"E": "right", "W": "left", "N": "up", "S": "down"}
+    return {side: [(i, int(steps))
+                   for i, c in enumerate(action_space) if b in set(c)]
+            for side, b in btn.items()}
+
+
+def room_cell_ord(key, psig_off):
+    """The room ordinal a cell key carries in its threaded psig tail
+    (key[3]), or None. EXACTLY _room_seed's extraction (`psig_off` =
+    Solver._room_psig_off: negative lo/hi offsets from the tail's end +
+    the room_sig arity), so the router's pools group cells by the same
+    identity a restored worker re-seeds from. A lineage that has not
+    transited yet has psig () and belongs to no room; the ROOM_UNKNOWN
+    sentinel (a transit recorded before the worker's fingerprint had
+    settled) is likewise unroutable."""
+    if psig_off is None:
+        return None
+    sig = key[3]
+    lo_i, hi_i, n = psig_off
+    if not isinstance(sig, tuple) or len(sig) < n:
+        return None
+    try:
+        o = (int(sig[lo_i]) & 0xFF) | ((int(sig[hi_i]) & 0xFF) << 8)
+    except (TypeError, ValueError):
+        return None
+    return None if o == ROOM_UNKNOWN else o
+
+
+def aliased_rooms(adj: dict, min_traversals: int = 3) -> set:
+    """Fingerprint-aliasing audit (§7.1, D1 graft): one (src, kind, dir)
+    exit reaching >= 2 distinct dsts, each traversed >= min_traversals
+    times, means src's fingerprint is carrying more than one physical
+    room (enemies are OAM — invisible to the hash — so structurally
+    identical rooms CAN merge). Identity is left alone; the router
+    down-weights the marked node x0.25. Thresholds are D1's: a single
+    stray traversal is noise, two established destinations are not."""
+    out: set = set()
+    for src, dsts in adj.items():
+        fan: dict = {}
+        for dst, e in dsts.items():
+            if int(e.get("count", 0)) >= int(min_traversals):
+                fan.setdefault((e.get("kind"), e.get("dir")), set()).add(dst)
+        if any(len(v) >= 2 for v in fan.values()):
+            out.add(src)
+    return out
+
+
+def room_boundaries(cells, near: int):
+    """Per-side boundary sublists of one room's selectable cells: the
+    cells within `near` gx buckets (E/W) or y bands (N/S) of the room's
+    own cell-extent bbox — the states a worker would push PAST to leave
+    through that side. Returns ({side: [cells]}, (gx_lo, gx_hi, y_lo,
+    y_hi)), cell units. NES y grows downward, so N is the LOW band. The
+    bbox here is the archive's footprint, deliberately not the odometer
+    bbox in RoomIndex.meta — cells are keyed in profile progress/y
+    units and the two scales need never be reconciled (the meta bbox
+    serves the RG-1a false-merge audit, nothing here)."""
+    gxs = [int(c.key[-1]) for c in cells]
+    ybs = [int(c.key[-2]) for c in cells]
+    gx0, gx1, y0, y1 = min(gxs), max(gxs), min(ybs), max(ybs)
+    n = int(near)
+    sides = {
+        "E": [c for c in cells if int(c.key[-1]) >= gx1 - n],
+        "W": [c for c in cells if int(c.key[-1]) <= gx0 + n],
+        "S": [c for c in cells if int(c.key[-2]) >= y1 - n],
+        "N": [c for c in cells if int(c.key[-2]) <= y0 + n],
+    }
+    return sides, (gx0, gx1, y0, y1)
+
+
+def room_weight(in_artic: bool, aliased: bool, u: int, visits: float,
+                artic_w: float, exit_w: float) -> float:
+    """Router room weight (§3 row 8): w(r) = (1 + artic_w·[r ∈ artic] +
+    exit_w·U(r)) / sqrt(V(r)+1), aliased rooms x0.25. V(r) = the room's
+    summed times_chosen — the same count-prior family as the count
+    arm's 1/sqrt(times_chosen+1), and deliberately NO score term: the
+    score is exactly what makes an off-axis room look worthless."""
+    w = ((1.0 + (float(artic_w) if in_artic else 0.0)
+          + float(exit_w) * float(u))
+         / (float(visits) + 1.0) ** 0.5)
+    return w * 0.25 if aliased else w
+
+
+def room_frontier(ords, recent_k: int, degree: dict, artic: set,
+                  aliased: set, u: dict) -> list:
+    """The router's frontier set F (§3 row 8): recently-discovered rooms
+    (ordinal within recent_k of the newest — ordinals ARE discovery
+    order, so recency is a comparison, not a clock), graph leaves
+    (undirected degree <= 1, isolated rooms included), articulation
+    rooms, and un-aliased rooms with an unexplored boundary side
+    (U(r) > 0). Sorted so the weighted draw over F is deterministic
+    under a fixed seed regardless of pool-dict insertion order."""
+    ords = list(ords)
+    if not ords:
+        return []
+    mx = max(ords)
+    return sorted(o for o in ords
+                  if o >= mx - int(recent_k)
+                  or int(degree.get(o, 0)) <= 1
+                  or o in artic
+                  or (o not in aliased and int(u.get(o, 0)) > 0))
+
+
+def route_near_side(direction, bbox, gx_bucket: int, y_band: int,
+                    near: int) -> bool:
+    """Is a worker at (gx_bucket, y_band) within `near` cell units of
+    `bbox`'s `direction` side? The route-follow macro gate — the same
+    band room_boundaries uses, so a routed worker rolls its
+    direction-hold exactly where the router sampled its target cells."""
+    gx0, gx1, y0, y1 = bbox
+    n = int(near)
+    if direction == "E":
+        return gx_bucket >= gx1 - n
+    if direction == "W":
+        return gx_bucket <= gx0 + n
+    if direction == "S":
+        return y_band >= y1 - n
+    if direction == "N":
+        return y_band <= y0 + n
+    return False
+
+
 def update_stall(stall: dict, n_cells: int, now: float) -> None:
     """Pure state transition for the flat-archive stall watchdog: bumps
     `flat_windows` when the archive hasn't grown since the last call,
@@ -2497,16 +3087,47 @@ class Solver:
         apply_hw_flags(self.pool, self.hw_flags)
         self.pool.set_headless(True)
         self.pool.set_skip_preprocess(True)
-        self._odo = getattr(self.game, "odometer_axis", None) is not None
+        # `solve.room_fp` FORCES the odometer on even for RAM-progress
+        # profiles (Zelda): the rendered-lines gate, the Δodo classifier
+        # and the scene evidence all read it (§3 row 2). Nothing else
+        # changes for such a profile — progress still comes from its
+        # declared RAM bytes; only the pseudo-RAM extension appears.
+        self.room_fp = getattr(self.game, "room_fp", None)
+        self._odo = (getattr(self.game, "odometer_axis", None) is not None
+                     or self.room_fp is not None)
         if self._odo:
             if not hasattr(self.pool, "set_odometer_enabled"):
                 raise SystemExit(
-                    "[go_explore_solve] progress.source: odometer but this "
-                    "nes_core build has no odometer binding — rebuild "
+                    "[go_explore_solve] progress.source: odometer (or "
+                    "solve.room_fp, which needs it) but this nes_core "
+                    "build has no odometer binding — rebuild "
                     "(make build) before solving with this profile.")
             self.pool.set_odometer_enabled(True)
-            print(f"[go_explore_solve] progress source: PPU scroll odometer "
-                  f"(axis {self.game.odometer_axis})", flush=True)
+            if getattr(self.game, "odometer_axis", None) is not None:
+                print(f"[go_explore_solve] progress source: PPU scroll "
+                      f"odometer (axis {self.game.odometer_axis})",
+                      flush=True)
+        if self.room_fp is not None:
+            if not (hasattr(self.pool, "peek_nametables")
+                    and hasattr(self.pool, "odo_debug")):
+                raise SystemExit(
+                    "[go_explore_solve] solve.room_fp needs the "
+                    "peek_nametables + odo_debug bindings — rebuild "
+                    "nes_core (make build) and refresh the venv .so "
+                    "(maturin does not update it in place) before "
+                    "solving with this profile.")
+            if (self.room_fp["palette_cokey"]
+                    and not hasattr(self.pool, "palette_ram")):
+                raise SystemExit(
+                    "[go_explore_solve] room_fp.palette_cokey: true but "
+                    "this nes_core build has no palette_ram binding — "
+                    "rebuild (make build) before solving with this "
+                    "profile.")
+            print(f"[go_explore_solve] room fingerprinting ON: "
+                  f"settle={self.room_fp['settle']} "
+                  f"min_lines={self.room_fp['min_lines']} "
+                  f"max_rooms={self.room_fp['max_rooms']} "
+                  f"config_sha={self.game.room_fp_sha}", flush=True)
         self._odo_now: list = []
         self._odo_scene: list = []
         self.pool.reset_all()
@@ -2675,6 +3296,79 @@ class Solver:
         self._ortho_deep_yband = None     # extreme y-band AT the x frontier
         self._ortho_selections = 0
         self._ortho_cols_improved = 0
+        # --- ROOM-GRAPH ENGINE (default off => byte-identical) --------
+        # Identity + persistence live here (T1); the settle/classify hot
+        # loop, edge commits and the router arm are wired separately
+        # (T2/T3). All of it is inert unless the profile declares
+        # `solve.room_fp` (self.room_fp, resolved above with the
+        # odometer force); the router arm additionally needs
+        # --room-bias > 0. Per-worker ordinal state is DERIVED, never
+        # accumulated across restores (§2 lockstep invariants):
+        # _assign seeds _room_ord from cell metadata, and _xram only
+        # ever reads it.
+        self.room_bias = float(getattr(args, "room_bias", 0.0))
+        self.room_artic_weight = float(getattr(args, "room_artic_weight",
+                                               2.0))
+        self.room_exit_weight = float(getattr(args, "room_exit_weight",
+                                              1.0))
+        self.room_recent_k = int(getattr(args, "room_recent_k", 4))
+        self.room_index = None
+        self._room_mask = None
+        self._room_ord = np.full(int(args.workers), ROOM_UNKNOWN,
+                                 dtype=np.uint16)
+        self._room_settle_rejects = 0     # telemetry: min_lines/cap holds
+        self._room_router_picks = 0       # telemetry: router-arm picks
+        self._room_route_injections = 0   # telemetry: route-follow macros
+        # Router caches (T3), rebuilt by _refresh_sel_cache on its own
+        # cadence — the same single scan, §3 row 7. Empty and never
+        # touched unless BOTH the profile fingerprints and --room-bias
+        # arms the arm.
+        self._room_pools: dict = {}       # ordinal -> selectable cells
+        self._room_sides: dict = {}       # ordinal -> {side: boundary cells}
+        self._room_bounds: dict = {}      # ordinal -> cell-unit bbox
+        self._room_U: dict = {}           # ordinal -> unexplored-side count
+        self._room_V: dict = {}           # ordinal -> sum times_chosen
+        self._room_out_dirs: dict = {}    # ordinal -> dirs with out-edges
+        self._room_degree: dict = {}      # undirected adjacency degree
+        self._room_artic: set = set()     # articulation ordinals (inline)
+        self._room_aliased: set = set()   # aliasing-audit marks (monotone)
+        self._room_dir_macros: dict = {}  # side -> [(action_idx, hold)]
+        self._route_pick = None           # router arm -> _assign handoff
+        self._room_edges_committed = 0    # transits that banked a staged edge
+        self._room_edges_dropped = 0      # staged edges no transit consumed
+        self._room_restore_transits = 0   # transits at burst step <= 1 (tripwire: 0)
+        self._room_adoptions = 0          # first settles from ROOM_UNKNOWN
+        # Where the ordinal bytes sit in a threaded psig tail (negative
+        # offsets from the end + the room_sig arity), so _assign can
+        # seed _room_ord from the restored cell's lineage (§2 lockstep
+        # invariants). None when room_sig does not carry both bytes —
+        # then every burst seeds ROOM_UNKNOWN and re-settles.
+        self._room_psig_off = None
+        if self.room_fp is not None:
+            _rs = list(getattr(self.game, "_room_sig", ()) or ())
+            if ROOM_LO in _rs and ROOM_HI in _rs:
+                self._room_psig_off = (_rs.index(ROOM_LO) - len(_rs),
+                                       _rs.index(ROOM_HI) - len(_rs),
+                                       len(_rs))
+            else:
+                print(f"[go_explore_solve] room_fp is armed but "
+                      f"solve.room_sig {_rs} does not carry both ordinal "
+                      f"bytes (0x{ROOM_LO:03X}/0x{ROOM_HI:03X}): ordinal "
+                      f"changes cannot fire sect/psig transits, every "
+                      f"staged edge will be dropped and restores cannot "
+                      f"seed — point room_sig at [0x804, 0x805] "
+                      f"(ROOMGRAPH_ENGINE_2026-08-24 §4).", flush=True)
+        if self.room_fp is not None:
+            self._room_mask = room_fp_mask(self.room_fp["mask"])
+            self.room_index = RoomIndex(cap=self.room_fp["max_rooms"],
+                                        config_sha=self.game.room_fp_sha)
+            # Route-follow macros (§3 row 9): structural, from the
+            # action space alone — the same derivation family as the
+            # room_advance door macros, one list per room side. The
+            # hold length rides room_advance's own `steps` knob.
+            self._room_dir_macros = derive_direction_macros(
+                profile["action_space"],
+                int(ra.get("steps", 20)) if ra else 20)
         # --- GATE-OPENER ARM (default off => byte-identical) ----------
         # Every knob comes off its own argparse dest; the mode alone is
         # what holds the arm down, and it is checked FIRST in every hot
@@ -2869,15 +3563,29 @@ class Solver:
         backward-of-origin clamps to 0 — regress is not negative
         progress, it is no progress). No-op when the profile doesn't use
         the odometer, so non-odometer solves keep zero overhead and
-        their exact snapshot identity."""
+        their exact snapshot identity.
+
+        With `solve.room_fp` the extension is 7 bytes, not 4: the
+        settled room ordinal (uint16 LE) at ROOM_LO/ROOM_HI and the
+        ORTHOGONAL odometer axis at ODO_ALT ((v>>4)&0xFF). The length
+        switch is keyed on room_fp presence alone, so every non-fp
+        profile — SMB included — keeps its exact 4-byte extension and
+        snapshot identity (RG-1c control)."""
         if not self._odo:
             return ram
         x, y = self._odo_now[wid]
-        v = x if self.game.odometer_axis == "x" else y
+        axis = self.game.odometer_axis
+        # axis is None only when room_fp forced the odometer on for a
+        # RAM-progress profile; the primary slot then carries x and the
+        # ODO_ALT byte y. For declared odometer profiles ("x"/"y",
+        # validated at parse) this expression is byte-identical to the
+        # pre-roomgraph `x if axis == "x" else y`.
+        v = y if axis == "y" else x
         v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
+        rf = self.room_fp is not None
         base = (np.frombuffer(ram, dtype=np.uint8)
                 if isinstance(ram, (bytes, bytearray)) else ram)
-        ext = np.empty(len(base) + 4, dtype=np.uint8)
+        ext = np.empty(len(base) + (7 if rf else 4), dtype=np.uint8)
         ext[:len(base)] = base
         ext[ODO_LO] = v & 0xFF
         ext[ODO_LO + 1] = (v >> 8) & 0xFF
@@ -2887,24 +3595,238 @@ class Solver:
         # rooms and stage wipes become area transitions, exactly the
         # (area-order, gx) machinery the solver already has.
         ext[ODO_LO + 3] = self._odo_scene[wid] & 0xFF
+        if rf:
+            o = int(self._room_ord[wid])
+            ext[ROOM_LO] = o & 0xFF
+            ext[ROOM_HI] = (o >> 8) & 0xFF
+            alt = x if axis == "y" else y
+            alt = 0 if alt < 0 else (0xFFFFFF if alt > 0xFFFFFF
+                                     else int(alt))
+            ext[ODO_ALT] = (alt >> 4) & 0xFF
         return ext
 
-    def _xram_local(self, ram, pool):
+    def _xram_local(self, ram, pool, hold=None):
         """_xram against a FRESH single-worker pool (replay paths). The
         replay pool's odometer was enabled by the v3 blob it loaded, so
-        the read is coherent with what the live search saw."""
+        the read is coherent with what the live search saw.
+
+        With `solve.room_fp` the room ordinal is RE-DERIVED by hashing
+        the replay env's nametables against the FROZEN index — see
+        _replay_room_ord; `hold` is the caller's per-replay dict (its
+        clear-hook ctx) carrying the hold-last ordinal across steps. A
+        replay whose hash diverges therefore composes different
+        room_sig bytes and is marked UNVERIFIED by the existing
+        comparison, never silently passed."""
         x, y = pool.get_odometer_per_worker()[0]
-        v = x if self.game.odometer_axis == "x" else y
+        axis = self.game.odometer_axis
+        v = y if axis == "y" else x
         v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
+        rf = self.room_fp is not None
         base = (np.frombuffer(ram, dtype=np.uint8)
                 if isinstance(ram, (bytes, bytearray)) else ram)
-        ext = np.empty(len(base) + 4, dtype=np.uint8)
+        ext = np.empty(len(base) + (7 if rf else 4), dtype=np.uint8)
         ext[:len(base)] = base
         ext[ODO_LO] = v & 0xFF
         ext[ODO_LO + 1] = (v >> 8) & 0xFF
         ext[ODO_LO + 2] = (v >> 16) & 0xFF
         ext[ODO_LO + 3] = pool.get_odometer_scene_per_worker()[0] & 0xFF
+        if rf:
+            o = self._replay_room_ord(pool, hold)
+            ext[ROOM_LO] = o & 0xFF
+            ext[ROOM_HI] = (o >> 8) & 0xFF
+            alt = x if axis == "y" else y
+            alt = 0 if alt < 0 else (0xFFFFFF if alt > 0xFFFFFF
+                                     else int(alt))
+            ext[ODO_ALT] = (alt >> 4) & 0xFF
         return ext
+
+    def _replay_room_ord(self, pool, hold=None) -> int:
+        """The room ordinal for a REPLAY pool frame, derived against the
+        FROZEN index — lookup only, never intern: a replay must read
+        the graph the live search built, not grow it.
+
+        Blank frames (rendered lines under min_lines) and unknown
+        hashes HOLD the last known ordinal (`hold` is the caller's
+        per-replay dict; without one, ROOM_UNKNOWN). No settle loop
+        here: mid-transition churn hashes are simply unknown and hold,
+        and the first known settled-room hash snaps to its ordinal —
+        the same value the live worker carried."""
+        last = (ROOM_UNKNOWN if hold is None
+                else int(hold.get("_room_ord", ROOM_UNKNOWN)))
+        try:
+            lines = pool.odo_debug(0)[2]
+        except Exception:                          # noqa: BLE001
+            return last
+        if lines < self.room_fp["min_lines"]:
+            return last
+        pal = (bytes(pool.palette_ram(0))
+               if self.room_fp["palette_cokey"] else None)
+        h = nt_fingerprint(pool.peek_nametables(0), self._room_mask, pal)
+        o = self.room_index.lookup(h) if self.room_index is not None else None
+        if o is None:
+            return last
+        if hold is not None:
+            hold["_room_ord"] = int(o)
+        return int(o)
+
+    # ---- room-fingerprint hot loop (T2 wiring, §2 + §3 rows 4-5/9) ---
+
+    def _room_seed(self, wid: int, c: dict, psig=()) -> None:
+        """DERIVE (never accumulate) one worker's fingerprint state at
+        assignment — the §2 restore-lockstep invariant. The ordinal
+        comes from the restored cell's threaded psig tail (the room_sig
+        bytes room_id() folded at the lineage's last transit); a root
+        burst, an empty psig, or a tail naming no interned ordinal
+        seeds ROOM_UNKNOWN and self-heals by re-settle.
+
+        `fp_live` starts False: an edge may only be staged once THIS
+        burst has confirmed the settled hash live (a steady-state
+        sample, or its own settle) — so a stale seed can never bridge
+        a restore into a false adjacency edge, only re-settle."""
+        o, h = ROOM_UNKNOWN, None
+        if self._room_psig_off is not None and psig:
+            lo_i, hi_i, n = self._room_psig_off
+            if len(psig) >= n:
+                v = int(psig[lo_i]) | (int(psig[hi_i]) << 8)
+                hv = self.room_index.hash_of(v)
+                if hv is not None:
+                    o, h = v, hv
+        self._room_ord[wid] = o
+        c["fp_pend"] = None
+        c["fp_base"] = None           # onset baseline: derived, never
+        c["fp_ring"] = deque(maxlen=32)   # carried across a restore
+        c["fp_edge"] = None
+        c["fp_onset_key"] = None
+        c["fp_live"] = False
+        c["fp_h"] = h
+
+    def _room_step(self, wid: int, c: dict) -> None:
+        """Per-worker settle+classify, run BEFORE this step's _xram
+        (§3 row 4) so the ordinal the pseudo-RAM carries is this
+        frame's — the same ordinal flip then changes room_id() through
+        the profile's room_sig bytes and the EXISTING transit machinery
+        fires sect/psig exactly like SMB's $074E.
+
+        A staged edge (`c["fp_edge"]`) lives exactly one step: staged
+        here, committed by _room_transit inside this same iteration's
+        transit block. A survivor found on the NEXT sampled step means
+        the ordinal flip fired no transit (mis-wired room_sig) — it is
+        dropped and counted, never committed late against an unrelated
+        transit."""
+        rf = self.room_fp
+        ring = c.get("fp_ring")
+        if ring is None:      # ctx minted before arming (defensive)
+            ring = c["fp_ring"] = deque(maxlen=32)
+        ring.append(int(c["pending"]))
+        if c.get("fp_edge") is not None:
+            c["fp_edge"] = None
+            self._room_edges_dropped += 1
+        se = rf["sample_every"]
+        if se > 1 and int(c["burst_step"]) % se:
+            return
+        if self.pool.odo_debug(wid)[2] < rf["min_lines"]:
+            c["fp_pend"] = None       # blanks/fades are never sampled
+            c["fp_base"] = None       # ... and break the onset baseline
+            self._room_settle_rejects += 1
+            return
+        pal = (bytes(self.pool.palette_ram(wid))
+               if rf["palette_cokey"] else None)
+        h = nt_fingerprint(self.pool.peek_nametables(wid),
+                           self._room_mask, pal)
+        was = c.get("fp_pend")
+        # ONSET-BASELINE CONVENTION (RG-0-falsified, receipts under
+        # docs/receipts/room_fp/): a churn onset is stamped with the
+        # PREVIOUS rendered sample's odo/scene — the last pre-churn
+        # baseline — because a transition's odometer/scene movement
+        # lands in the same sampled step as its first NT flip (the
+        # measured Zelda death flash bumps the scene in the very frames
+        # of its first attribute rewrite; a current-sample onset reads
+        # Δscene +1-of-2 and the death mis-classifies fade -> edge). On
+        # non-minting calls the current sample is the settle endpoint.
+        base = c.get("fp_base")
+        if was is None and base is not None:
+            onset_odo, onset_scene = base
+        else:
+            onset_odo, onset_scene = (self._odo_now[wid],
+                                      self._odo_scene[wid])
+        pend, fired = fp_settle(was, h, c.get("fp_h"), onset_odo,
+                                onset_scene, c["burst_step"],
+                                rf["settle"])
+        c["fp_base"] = (self._odo_now[wid], self._odo_scene[wid])
+        c["fp_pend"] = pend
+        if was is None and (pend is not None or fired is not None):
+            # Churn onset: anchor the exemplar at the last cell observed
+            # BEFORE the transition began — the edge-replay audit's
+            # restore point (§2 graft 3). fp_settle preserves this onset
+            # across intra-churn hash flips, so it stays put mid-pan.
+            c["fp_onset_key"] = c.get("cur_key")
+        if fired is None:
+            if pend is None:
+                # Steady state (h == settled hash): the carried identity
+                # is confirmed live — edges may bridge from it now.
+                c["fp_live"] = True
+            return
+        h2, d_odo, d_scene, steps = fired
+        kind, direction = classify_transition(d_odo, d_scene,
+                                              rf["pan_odo"],
+                                              rf["warp_scene_min"])
+        prev_ord = int(self._room_ord[wid])
+        o = self.room_index.intern(h2, self._odo_now[wid])
+        if o is None:
+            # At cap: HOLD the last ordinal AND the last settled hash.
+            # Adopting the uncharted hash would let a later steady
+            # sample re-confirm fp_live against an identity the held
+            # ordinal does not name, and the next settle would bridge a
+            # false edge ACROSS the uncharted room. Held instead: the
+            # pend re-fires every `settle` samples while the worker
+            # stays there (cap_hits + settle_rejects count it), fp_live
+            # stays down, and no edge can mint — §7.2 degrades to
+            # telemetry, never to false adjacency.
+            c["fp_live"] = False
+            self._room_settle_rejects += 1
+            return
+        if kind == "warp":
+            # Telemetry only, NEVER adjacency (§2 graft 2): a death /
+            # teleport must not mint a navigable edge. Identity still
+            # adopts below, so cells key to the room the warp landed in.
+            self.room_index.record_warp(
+                None if prev_ord == ROOM_UNKNOWN else prev_ord, o,
+                d_scene, d_odo)
+        elif (prev_ord != ROOM_UNKNOWN and prev_ord != o
+                and c.get("fp_live")):
+            c["fp_edge"] = (prev_ord, o, kind, direction,
+                            int(steps) * self.frame_skip,
+                            c.get("fp_onset_key"), list(ring))
+        if prev_ord == ROOM_UNKNOWN:
+            # Adoption != transit (§2): a first settle from UNKNOWN is
+            # identity acquisition, not a traversal — nulling p0750
+            # makes it transit-free (and, via the guards above,
+            # edge-free) for root bursts and blind restores alike.
+            c["p0750"] = None
+            self._room_adoptions += 1
+        c["fp_h"] = h2
+        c["fp_live"] = True
+        self._room_ord[wid] = o
+
+    def _room_transit(self, c: dict) -> None:
+        """Room-side bookkeeping inside the EXISTING transit point (§3
+        row 5; the R4 recorder shape): commit the edge this step's
+        settle staged — kind-tagged, warp-vetoed upstream (a warp never
+        stages), exemplar-carrying — under the index lock. Transit
+        logic itself is untouched; this only consumes the stage.
+
+        Also counts transits on a burst's first step, which must stay
+        zero: p0750 is None at burst start, so a restore can never mint
+        a transit. The Zelda smoke asserts both properties."""
+        if c["burst_step"] <= 1:
+            self._room_restore_transits += 1
+        e = c.get("fp_edge")
+        if e is not None:
+            c["fp_edge"] = None
+            self.room_index.record_edge(e[0], e[1], e[2], e[3], e[4],
+                                        exemplar_cell=e[5],
+                                        exemplar_actions=e[6])
+            self._room_edges_committed += 1
 
     def _step0(self, a: int):
         acts = np.zeros(self.args.workers, dtype=np.uint8)
@@ -3189,19 +4111,25 @@ class Solver:
         # R4 edge recording: a cell-to-cell transition in OUR OWN rollout is
         # an edge of the maze's traversal graph. Interned ids keep the
         # adjacency compact at castle-archive scale (1M+ cells).
-        if ctx is not None and self.door_weight > 0:
-            pk = ctx.get("cur_key")
-            if pk is not None and pk != key:
-                ids = self._key_ids
-                ia = ids.get(pk)
-                if ia is None:
-                    ia = ids[pk] = len(ids)
-                ib = ids.get(key)
-                if ib is None:
-                    ib = ids[key] = len(ids)
-                with self._door_lock:
-                    self._adj.setdefault(ia, set()).add(ib)
-                    self._adj.setdefault(ib, set()).add(ia)
+        # cur_key is also kept fresh under room_fp (door arm off): the
+        # settle loop anchors each edge EXEMPLAR at the last cell
+        # observed before the churn began (§2 graft 3). Both gates off
+        # => the exact pre-roomgraph behavior, byte-identical.
+        if ctx is not None and (self.door_weight > 0
+                                or getattr(self, "room_fp", None) is not None):
+            if self.door_weight > 0:
+                pk = ctx.get("cur_key")
+                if pk is not None and pk != key:
+                    ids = self._key_ids
+                    ia = ids.get(pk)
+                    if ia is None:
+                        ia = ids[pk] = len(ids)
+                    ib = ids.get(key)
+                    if ib is None:
+                        ib = ids[key] = len(ids)
+                    with self._door_lock:
+                        self._adj.setdefault(ia, set()).add(ib)
+                        self._adj.setdefault(ib, set()).add(ia)
             ctx["cur_key"] = key
         score = sect * 10000 + gx + game.score_bonus(ram)
         cur = self.archive.cells.get(key)
@@ -3333,7 +4261,7 @@ class Solver:
                 acts[0] = self.bitmasks[int(a)]
                 ram = pool.step_all(acts)[0][2]
                 if getattr(self, "_odo", False):
-                    ram = self._xram_local(ram, pool)
+                    ram = self._xram_local(ram, pool, ctx)
                 # Same modality the live hook saw, or the replay judges a
                 # different detector than the one that fired.
                 if needs_apu:
@@ -3584,7 +4512,7 @@ class Solver:
                     acts[0] = self.bitmasks[int(a)]
                     ram = pool.step_all(acts)[0][2]
                     if getattr(self, "_odo", False):
-                        ram = self._xram_local(ram, pool)
+                        ram = self._xram_local(ram, pool, ctx)
                     if needs_apu:
                         ctx["_apu_mask"] = pool.apu_activity_all()[0]
                     # Tail included, same ordering as replay_verify.
@@ -3877,6 +4805,11 @@ class Solver:
         prev = getattr(self.args, "resume_archive", None)
         if prev:
             prev = Path(prev)
+            # Room-index half FIRST (§3 row 11): an archive whose cells
+            # embed room ordinals is only meaningful next to the intern
+            # table that minted them, and that check must not wait for
+            # a multi-GB unpickle either.
+            self._resume_room_index(prev)
             self.check_resume_lineage(prev)
             # The entrance observation above is already a cell of THIS
             # run's schema; the key audit below has to speak about the
@@ -3941,6 +4874,76 @@ class Solver:
         """This run's cell-key schema, as banked into archive.stats.json
         and compared on resume."""
         return key_config_axes(self.args, self.game)
+
+    def _resume_room_index(self, prev) -> None:
+        """Room-graph half of the --resume-archive check (§3 row 11).
+
+        A room_fp archive's cells carry interned ordinals in their
+        psig/area key slots; those ordinals are an ALPHABET defined by
+        room_index.json. Resuming without that file, or across a
+        different room_fp schema, is not a weaker lineage that an
+        override flag can accept — the resumed keys would be
+        reinterpreted under a different intern table — so every refusal
+        here is HARD (no --allow-* escape). When everything matches,
+        the loaded index becomes this run's, so new settles continue
+        the same discovery-order ordinals. Per-worker state needs no
+        repair: it self-heals from cell psig + re-settle (§2
+        invariants).
+
+        The on/off axis itself (archive fingerprinted, run not — or the
+        reverse) is the generic lineage diff's job (`room_fp` in
+        LINEAGE_KEY_AXES) with its usual overrides; this method owns
+        only the index file's existence and schema."""
+        prev = Path(prev)
+        try:
+            stats = json.loads((prev / "archive.stats.json").read_text())
+        except (OSError, ValueError):
+            stats = {}
+        banked_sha = str((stats.get("key_config") or {}).get("room_fp", "")
+                         or "")
+        run_sha = str(getattr(self.game, "room_fp_sha", "") or "")
+        if not banked_sha and not run_sha:
+            return
+        idx_path = prev / "room_index.json"
+        if not banked_sha:
+            # Archive off, run on: the lineage diff refuses it (absent
+            # reads as off). Nothing to load here.
+            return
+        if not idx_path.exists():
+            raise SystemExit(
+                f"[go_explore_solve] refusing to resume {prev}: its "
+                f"archive was built with room fingerprinting (room_fp "
+                f"{banked_sha}) but {idx_path.name} is missing — the "
+                f"cells' room ordinals are uninterpretable without the "
+                f"intern table that minted them.")
+        try:
+            idx = RoomIndex.load(idx_path)
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            raise SystemExit(
+                f"[go_explore_solve] refusing to resume {prev}: "
+                f"{idx_path.name} is unreadable or speaks a different "
+                f"schema ({e}).")
+        if idx.config_sha != banked_sha:
+            raise SystemExit(
+                f"[go_explore_solve] refusing to resume {prev}: "
+                f"{idx_path.name} carries config_sha {idx.config_sha!r} "
+                f"but the archive's lineage records room_fp "
+                f"{banked_sha!r} — the index on disk is not the one the "
+                f"cells were interned under.")
+        if run_sha and run_sha != banked_sha:
+            raise SystemExit(
+                f"[go_explore_solve] refusing to resume {prev}: this "
+                f"run's solve.room_fp hashes to {run_sha!r} but the "
+                f"archive was interned under {banked_sha!r} — a "
+                f"different mask/settle/classifier schema mints "
+                f"different ordinals for the same rooms.")
+        if run_sha:
+            self.room_index = idx
+            print(f"[seed] RESUMED room index from {idx_path}: "
+                  f"{idx.n_rooms()} rooms, "
+                  f"{sum(len(d) for d in idx.adj.values())} edges, "
+                  f"{idx.warp_count} warps (config_sha {idx.config_sha})",
+                  flush=True)
 
     def check_resume_lineage(self, prev) -> dict:
         """Refuse a --resume-archive whose lineage disagrees with this
@@ -4148,6 +5151,68 @@ class Solver:
             self._ortho_deep_yband = (
                 (min(ybs) if self.ortho_mode == "up" else max(ybs))
                 if ybs else None)
+        # ROOM ROUTER CACHE (T3, §3 row 7): the same single scan feeds
+        # the room pools. The ortho lesson holds — _sel_cells is never
+        # overwritten, and empty pools just make the arm fall through.
+        # Guarded on the ARM, not just the feature (getattr: duck-typed
+        # stand-ins in the tests predate the room attrs), so a
+        # fingerprinting run with --room-bias 0 pays nothing here.
+        if (getattr(self, "room_bias", 0.0) > 0
+                and getattr(self, "room_index", None) is not None):
+            poff = getattr(self, "_room_psig_off", None)
+            idx = self.room_index
+            pools: dict = {}
+            with idx.lock:
+                idx_n = len(idx.ordinals)
+            for c in self._sel_cells:
+                o = room_cell_ord(c.key, poff)
+                if o is not None and o < idx_n:
+                    pools.setdefault(o, []).append(c)
+            with idx.lock:
+                und: dict = {}
+                out_dirs: dict = {}
+                for s, dsts in idx.adj.items():
+                    for d, e in dsts.items():
+                        und.setdefault(s, set()).add(d)
+                        und.setdefault(d, set()).add(s)
+                        if e.get("dir"):
+                            out_dirs.setdefault(s, set()).add(e["dir"])
+                # Aliasing audit (§7.1): marks are MONOTONE — set, never
+                # cleared — like every other RoomIndex mutation, so the
+                # flag survives save/load and restore ordering.
+                for o in aliased_rooms(idx.adj):
+                    m = idx.meta.get(o)
+                    if m is not None:
+                        m["aliased"] = True
+                aliased = {o for o, m in idx.meta.items()
+                           if m.get("aliased")}
+            self._room_pools = pools
+            self._room_out_dirs = out_dirs
+            self._room_degree = {o: len(nb) for o, nb in und.items()}
+            # Inline, not the async door thread: the room graph is at
+            # most max_rooms nodes (§3 row 7) — three orders of
+            # magnitude below the cell graph the R4 daemon scans.
+            self._room_artic = self._articulation_points(und)
+            self._room_aliased = aliased
+            near = int(getattr(self, "transition_near", 24))
+            sides_all: dict = {}
+            bounds: dict = {}
+            u: dict = {}
+            vis: dict = {}
+            for o, pool in pools.items():
+                sides, bbox = room_boundaries(pool, near)
+                sides_all[o] = sides
+                bounds[o] = bbox
+                have = out_dirs.get(o, set())
+                # U(r): sides with boundary cells but no out-edge of
+                # that direction — the unexplored-boundary exit term.
+                u[o] = sum(1 for dr, cs in sides.items()
+                           if cs and dr not in have)
+                vis[o] = float(sum(int(c.times_chosen) for c in pool))
+            self._room_sides = sides_all
+            self._room_bounds = bounds
+            self._room_U = u
+            self._room_V = vis
 
     def _ortho_armed(self) -> bool:
         return ortho_armed(self.ortho_mode, self._pin_time, time.time(),
@@ -4207,6 +5272,65 @@ class Solver:
                 pick.explored = True
                 self._ortho_selections += 1
                 return pick
+        # ROOM-GRAPH ROUTER ARM (T3, §3 row 8) — between the ortho and
+        # count arms, gated on --room-bias (default 0.0): with the arm
+        # off there is no draw and no branch, so the default stream is
+        # byte-identical (the ortho gate-ordering lesson). Selection-
+        # side only — pure count prior, score untouched. Sample a room
+        # from the frontier set F by w(r), then a cell via the ortho
+        # arm's exact rejection loop + barren skip; an empty F, an
+        # unpopulated pool set, or an all-wall room falls through to
+        # the count arm exactly like an evicted ortho pool.
+        if getattr(self, "room_bias", 0.0) > 0:
+            pools = self._room_pools
+            if pools and self.rng.random() < self.room_bias:
+                front = room_frontier(pools.keys(), self.room_recent_k,
+                                      self._room_degree, self._room_artic,
+                                      self._room_aliased, self._room_U)
+                if front:
+                    w = np.array([room_weight(
+                        o in self._room_artic, o in self._room_aliased,
+                        self._room_U.get(o, 0), self._room_V.get(o, 0.0),
+                        self.room_artic_weight, self.room_exit_weight)
+                        for o in front])
+                    r = front[int(self.rng.choice(len(front),
+                                                  p=w / w.sum()))]
+                    sides = self._room_sides.get(r, {})
+                    have = self._room_out_dirs.get(r, set())
+                    # U(r)'s support: sides with boundary cells and no
+                    # out-edge yet. One of them (drawn uniformly) rides
+                    # to _assign as the burst's route_dir.
+                    open_sides = [d for d in ("E", "W", "N", "S")
+                                  if sides.get(d) and d not in have]
+                    route_dir = (open_sides[int(self.rng.integers(
+                        len(open_sides)))] if open_sides else None)
+                    pool = pools[r]
+                    # Boundary cells at p=0.40: the routed side's when a
+                    # side was drawn, else any side's.
+                    if self.rng.random() < 0.40:
+                        bpool = (sides.get(route_dir) if route_dir
+                                 else [c for cs in sides.values()
+                                       for c in cs])
+                        if bpool:
+                            pool = bpool
+                    pick = None
+                    for _ in range(64):
+                        cand = pool[int(self.rng.integers(len(pool)))]
+                        if (self.frontier_throttle > 0
+                                and getattr(cand, "barren", 0)
+                                >= self.frontier_throttle):
+                            continue
+                        pick = cand
+                        if self.rng.random() < 1.0 / (cand.times_chosen
+                                                      + 1) ** 0.5:
+                            break
+                    if pick is not None:
+                        pick.times_chosen += 1
+                        pick.explored = True
+                        self._room_router_picks += 1
+                        self._route_pick = (int(r), route_dir,
+                                            self._room_bounds.get(r))
+                        return pick
         if self.sel_mode == "count":
             # Count-based prior via O(1) rejection sampling: accept cell
             # with prob W/Wmax, W = 1/sqrt(times_chosen+1) * (score_norm
@@ -4357,16 +5481,27 @@ class Solver:
                             and prev.get("died_at_burst_step") is not None
                             and prev["died_at_burst_step"] <= 5):
                         src.barren = max(src.barren, self.frontier_throttle)
+        # T3 route handoff: cleared BEFORE every select() so a stale
+        # router stash can never survive a deep/count-arm pick (those
+        # arms return without touching it) and tag the wrong burst.
+        self._route_pick = None
         cell = self.select()
         if cell is None:
             # Fall back to the entrance root.
             self.pool.load_worker_state(wid, Path(self.args.root_state).read_bytes())
-            return {"key": None, "root": "entrance", "trace": [], "steps": 0,
-                    "left": self.args.burst, "burst_step": 0,
-                    "loops": 0, "prev_gx": -1,
-                    "sig": (), "sect": 0, "p0750": None, "psig": (),
-                    "kills": 0, "eslots": None, "ortho": False,
-                    "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
+            c = {"key": None, "root": "entrance", "trace": [], "steps": 0,
+                 "left": self.args.burst, "burst_step": 0,
+                 "loops": 0, "prev_gx": -1,
+                 "sig": (), "sect": 0, "p0750": None, "psig": (),
+                 "kills": 0, "eslots": None, "ortho": False,
+                 "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
+            # getattr: duck-typed Solver stand-ins in the tests carry
+            # _assign and nothing else, like every other arm read here.
+            if getattr(self, "room_fp", None) is not None:
+                # Root path: ROOM_UNKNOWN — the first settle adopts
+                # transit-free and edge-free (§2 lockstep invariants).
+                self._room_seed(wid, c, ())
+            return c
         self.pool.load_worker_state(wid, cell.state)
         rec = self.traces[cell.key]
         root_id, tb, loops, sig = rec[0], rec[1], rec[2], rec[3]
@@ -4387,6 +5522,23 @@ class Solver:
                 # rolls the hold-macro at ortho_macro_p for these.
                 "ortho": cell.key in self._ortho_ids,
                 "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
+        if getattr(self, "room_fp", None) is not None:
+            # Cell path: seed the ordinal from the restored lineage's
+            # threaded psig tail; per-worker fingerprint state is
+            # DERIVED here, never carried across restores (§2).
+            self._room_seed(wid, c, psig)
+        # T3 route attach (§3 row 9): a router-arm pick tags its burst
+        # with the target room and — when that room still has an
+        # unexplored boundary side — the side to push, plus the room's
+        # cell-unit bbox for the route-follow near gate. Attached ONLY
+        # on router picks, so a --room-bias 0 run's ctx dicts are
+        # byte-identical.
+        rp = self._route_pick
+        if rp is not None:
+            self._route_pick = None
+            c["route_room"] = rp[0]
+            if rp[1] is not None and rp[2] is not None:
+                c["route_dir"], c["route_bbox"] = rp[1], rp[2]
         # ARM C: hand this burst a queued candidate program. It happens at
         # ASSIGNMENT and nowhere else, so an injection can never arrive
         # mid-burst or preempt an in-flight macro; only bursts rooted
@@ -5376,6 +6528,24 @@ class Solver:
                     c["macro_a"], c["macro_hold"] = self.transition_macros[ti]
                     c["macro_left"] = c["macro_hold"] + 6
                     self._transition_injections += 1
+                # T3 route-follow OR-term (§3 row 9): a ROUTED worker
+                # standing near its target side rolls that side's
+                # direction-hold macro at the same room_advance p as
+                # the door gate — the sustained push through an
+                # unexplored boundary that stochastic sampling almost
+                # never emits. route_dir exists only on router-tagged
+                # bursts (--room-bias > 0), so the default path pays
+                # one dict get and draws nothing.
+                if (c.get("route_dir") is not None
+                        and c.get("route_near")
+                        and c.get("macro_left", 0) <= 0
+                        and self._room_dir_macros.get(c["route_dir"])
+                        and self.rng.random() < self.transition_p):
+                    dm = self._room_dir_macros[c["route_dir"]]
+                    c["macro_a"], c["macro_hold"] = dm[int(
+                        self.rng.integers(len(dm)))]
+                    c["macro_left"] = c["macro_hold"] + 6
+                    self._room_route_injections += 1
                 # Bursts rooted at an orthogonal-frontier cell roll the
                 # hold macro at ortho_macro_p instead of the profile's own
                 # rate: a stair mount IS a sustained up/up+right hold, and
@@ -5418,6 +6588,13 @@ class Solver:
                 except Exception:
                     pass
             for i, c in enumerate(ctx):
+                # ROOM FINGERPRINTING (§3 row 4, the only hot-loop
+                # insertion): settle+classify BEFORE _xram, which reads
+                # _room_ord — so the pseudo-RAM ordinal, room_id() and
+                # the transit below all see this frame's identity. One
+                # attribute test when the profile has no room_fp.
+                if self.room_fp is not None:
+                    self._room_step(i, c)
                 ram = (self._xram(results[i][2], i)
                        if getattr(self, "_odo", False)
                        else results[i][2])
@@ -5448,6 +6625,20 @@ class Solver:
                         _rv = int(ram[self.room_advance_addr])
                         if _rv > self.max_room:
                             self.max_room = _rv
+                # T3 route-follow (§3 row 9): a routed burst tracks
+                # whether it now stands within `near` cell units of its
+                # target side's bbox edge — read by the next pre-step
+                # macro roll exactly like at_frontier. route_dir exists
+                # only on router-tagged bursts (--room-bias > 0), so
+                # the default path pays one dict get here.
+                if c.get("route_dir") is not None:
+                    c["route_near"] = (
+                        c["gx"] >= 0
+                        and route_near_side(
+                            c["route_dir"], c["route_bbox"],
+                            c["gx"] // GX_BUCKET,
+                            game.y(ram) // Y_BAND,
+                            self.transition_near))
                 # ROOM IDENTITY (SMB: verified 2026-07-26, $074E changes
                 # 0.67/1k steps, only at full-screen transitions). A rid
                 # CHANGE is a true room transition.
@@ -5478,6 +6669,12 @@ class Solver:
                 if _transit and c["sect"] < self.args.sect_cap:
                     c["sect"] += 1
                     c["psig"] = _rid
+                # Room-graph edge commit (§3 row 5): transit logic above
+                # is UNTOUCHED — this only consumes the edge the settle
+                # staged this same step. Not gated on sect_cap: the
+                # graph keeps learning adjacency after psig saturates.
+                if _transit and self.room_fp is not None:
+                    self._room_transit(c)
                 c["p0750"] = _rid
                 if _lgx <= cap:
                     if c["prev_gx"] >= 0:
@@ -5662,6 +6859,35 @@ class Solver:
             line["door_macros_injected"] = self._transition_injections
             if self.room_advance_addr is not None:
                 line["max_room"] = self.max_room
+        # ROOM-GRAPH telemetry (§3 row 12): printed whenever the profile
+        # fingerprints, zero or not — "armed and never fired" and "never
+        # armed" are different readings (the torn-read lesson above).
+        # getattr guards: duck-typed progress_line stand-ins in the
+        # tests predate the room attrs.
+        if (getattr(self, "room_fp", None) is not None
+                and getattr(self, "room_index", None) is not None):
+            idx = self.room_index
+            with idx.lock:
+                kinds = [e["kind"] for dsts in idx.adj.values()
+                         for e in dsts.values()]
+                line["rooms"] = len(idx.ordinals)
+                line["edges_pan"] = sum(1 for k in kinds if k == "pan")
+                line["edges_fade"] = sum(1 for k in kinds if k == "fade")
+                line["warps_vetoed"] = idx.warp_count
+                line["aliased"] = sum(1 for m in idx.meta.values()
+                                      if m.get("aliased"))
+                line["room_cap_hits"] = idx.cap_hits
+            line["settle_rejects"] = getattr(self, "_room_settle_rejects", 0)
+            line["artic"] = len(getattr(self, "_room_artic", ()))
+            line["router_picks"] = getattr(self, "_room_router_picks", 0)
+            line["route_macros_injected"] = getattr(
+                self, "_room_route_injections", 0)
+            line["room_edges_committed"] = getattr(
+                self, "_room_edges_committed", 0)
+            line["room_edges_dropped"] = getattr(
+                self, "_room_edges_dropped", 0)
+            line["room_restore_transits"] = getattr(
+                self, "_room_restore_transits", 0)
         # Fabricated-clear telemetry: silent while nothing has been rejected
         # (so ordinary runs' progress lines are unchanged), loud the moment a
         # candidate fails to reproduce — the four-game detector gate reads
@@ -5720,6 +6946,11 @@ class Solver:
         with open(self.out / "traces.pkl", "wb") as f:
             pickle.dump(self.traces, f, protocol=pickle.HIGHEST_PROTOCOL)
         (self.out / "roots.json").write_text(json.dumps(self.roots, indent=2) + "\n")
+        # The intern table travels with the archive (§2 persistence):
+        # ordinals embedded in the flushed keys are meaningless without
+        # it, and _resume_room_index refuses a resume that lacks it.
+        if self.room_index is not None:
+            self.room_index.save(self.out / "room_index.json")
 
     def _maybe_flush_async(self) -> None:
         """Non-blocking periodic flush: a multi-GB archive.pkl pickle dump
@@ -5777,6 +7008,11 @@ class Solver:
                 pickle.dump(traces_snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
             (self.out / "roots.json").write_text(
                 json.dumps(roots_snapshot, indent=2) + "\n")
+            # RoomIndex serializes a coherent snapshot under its own
+            # lock (append-only + to_json holds it), so the background
+            # flush needs no extra coordination with the hot loop.
+            if self.room_index is not None:
+                self.room_index.save(self.out / "room_index.json")
         except Exception as e:
             print(f"[go_explore_solve] background flush failed (search "
                   f"continues, will retry next interval): {e}", flush=True)
@@ -5897,6 +7133,26 @@ def main() -> int:
     ap.add_argument("--door-interval", type=float, default=45.0,
                     help="Seconds between async door (articulation-point) "
                          "recomputations (R4).")
+    ap.add_argument("--room-bias", type=float, default=0.0,
+                    help="If >0: probability the selection router picks a "
+                         "ROOM first (frontier / articulation / unexplored-"
+                         "boundary weighted, pure count prior) and then a "
+                         "cell inside it (room-graph engine; needs "
+                         "solve.room_fp). 0 = router arm off, the default — "
+                         "the identity layer still runs whenever the "
+                         "profile declares room_fp.")
+    ap.add_argument("--room-artic-weight", type=float, default=2.0,
+                    help="Router weight bonus for rooms that are "
+                         "articulation points of the room adjacency graph "
+                         "(every route between the regions they separate "
+                         "passes through them).")
+    ap.add_argument("--room-exit-weight", type=float, default=1.0,
+                    help="Router weight per unexplored side U(r): sides "
+                         "with boundary cells but no out-edge of that "
+                         "direction.")
+    ap.add_argument("--room-recent-k", type=int, default=4,
+                    help="Frontier set includes rooms with ordinal >= "
+                         "max_ord - K (discovery-recency band).")
     ap.add_argument("--time-bins", action="store_true",
                     help="Append floor(log2(steps)) to the key prefix "
                          "(Time-Myopic Go-Explore, v6 recipe 4): slow "

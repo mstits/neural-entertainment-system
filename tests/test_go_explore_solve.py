@@ -3297,14 +3297,18 @@ def test_the_gate_injection_takes_the_slot_without_preempting_a_burst():
     body = src.split("def explore(self)", 1)[1]
     gate_at = body.index('c.get("gate_macro")')
     trans_at = body.index("self.transition_macros and")
+    route_at = body.index('c.get("route_dir")')
     hold_at = body.index("self.macros\n") if "self.macros\n" in body \
         else body.index("and self.macros")
-    assert gate_at < trans_at < hold_at, \
-        "the macro arms are no longer ordered gate > transition > hold"
+    assert gate_at < trans_at < route_at < hold_at, \
+        "the macro arms are no longer ordered gate > transition > " \
+        "route > hold"
     # Every arm is guarded by the same "slot is free" test, which is what
-    # makes an in-flight macro un-preemptable by construction.
+    # makes an in-flight macro un-preemptable by construction. Four arms
+    # since the room-graph route-follow OR-term (T3, ROOMGRAPH_ENGINE
+    # 2026-08-24 §3 row 9) joined gate/transition/hold in the slot.
     window = body[gate_at - 400:hold_at + 200]
-    assert window.count('c.get("macro_left", 0) <= 0') == 3
+    assert window.count('c.get("macro_left", 0) <= 0') == 4
 
     f = _arm_gate(SimpleNamespace(), gate_mode="enumerate")
     c = {"macro_left": 0, "steps": 41, "gate_macro": (2, 12),

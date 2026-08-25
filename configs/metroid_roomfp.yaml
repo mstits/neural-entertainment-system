@@ -1,0 +1,95 @@
+name: "Metroid (room-graph gate)"
+
+# ROOM-GRAPH GATE PROFILE (ROOMGRAPH_ENGINE_2026-08-24 §4, T4) for the
+# RG-2 secondary, report-only run. configs/metroid.yaml stays the
+# untouched baseline. Receipts: docs/receipts/room_fp/metroid.md;
+# fixtures: tests/fixtures/roomgraph/metroid_*.npz, replayed by
+# tests/test_rg0_roomgraph.py (the RG-0 offline falsifier).
+#
+# PURITY: progress/y ride the PPU scroll odometer and its pseudo-RAM
+# extension only; lives is the baseline profile's own receipted energy
+# proxy. No RAM-map knowledge enters here — the quarantine in
+# configs/metroid.yaml stands.
+
+rom_path: "roms/Metroid (USA).nes"
+start_state_path: "roms/Metroid (USA)_start.state.bin"
+
+frame_skip: 4
+
+action_space:
+  # configs/metroid.yaml's measured space, unchanged.
+  - []                 # NOOP
+  - ["right"]
+  - ["left"]
+  - ["A"]              # jump
+  - ["B"]              # fire
+  - ["right", "B"]
+  - ["left", "B"]
+  - ["right", "A"]     # run-jump right
+  - ["left", "A"]      # run-jump left
+  - ["up"]             # aim up
+  - ["up", "B"]        # shoot up
+  - ["down"]
+
+solve:
+  rom: "roms/Metroid (USA).nes"
+  # progress: the odometer x integral, as onboarded 2026-08-24
+  # (runs/onboard_wave1/gate_metroid.json — SIGNAL SOUND). Unchanged
+  # from the baseline profile.
+  progress: {source: odometer, axis: x}
+  # y = the ORTHOGONAL odometer axis, read from the pseudo-RAM byte
+  # 0x806 (ODO_ALT, written by Solver._xram when room_fp is armed:
+  # (clamp(v,0,0xFFFFFF)>>4)&0xFF). Metroid's vertical shafts freeze
+  # the x integral; the alt axis keeps banding cells there. Replaces
+  # the baseline's on-screen-Y 0x0052 for the gate run per §4.
+  y: 0x806
+  # area / room_sig: the fingerprint ordinal (0x804/0x805) replaces the
+  # scene-cut counter 0x803 the baseline uses — scene is a monotone
+  # counter with measured spurious bumps (seam + clamp: scene reached 8
+  # inside the first room on the two-lap fixture), demoted to
+  # classifier evidence per the design thesis.
+  area: 0x804
+  room_sig: [0x804, 0x805]
+  # buttons from the door probe receipts (docs/receipts/room_fp/metroid.md):
+  # both measured door crossings needed stand-and-shoot (B) then a
+  # rightward walk; the item-room crossing needed run-jump hops
+  # (right+A duty cycle). Left-side equivalents included for the
+  # return direction; up for shafts.
+  room_advance: {addr: 0x804, steps: 20, p: 0.06, near: 24,
+                 buttons: [["B"], ["right"], ["left"],
+                           ["right", "A"], ["left", "A"], ["up"]]}
+  # No reachable per-level clear byte: honest coverage baseline.
+  level_key: []
+  # lives = energy tens digit 0x0107, the baseline profile's receipted
+  # HP-decrease proxy (a decrease means Samus lost >=10 energy — the
+  # lineage is terminated). The 2026-08-24 death probe additionally
+  # found a sustained death-sequence byte (0x0020 == 4, with
+  # co-witnesses 0x0614 == 31 / 0x0673 == 6; three independent deaths,
+  # zero false fires across doors/idle/jiggle controls — receipt in
+  # docs/receipts/room_fp/metroid.md) but it is deliberately NOT wired
+  # here: the warp veto is the design's death defense, and RG-2 runs
+  # report-only. Future wiring is a T5/T6 decision.
+  lives: 0x0107
+  room_fp:
+    # Auto volatility mask: EMPTY. 300 idle frames + 120 in-room walk
+    # frames (no damage taken) = zero volatile NT bytes; both captures
+    # hash to exactly 1 fingerprint unmasked. Known residual: the EN
+    # energy-digit HUD tiles DO rewrite on damage (unmasked — no
+    # damage-free calibration capture can see them); a damage event
+    # inside a room can therefore fork its fingerprint. Documented in
+    # the receipt; the lives proxy terminates damaged lineages anyway.
+    mask: []
+    # Same law as Zelda: ceil(56 / frame_skip) = 14 at fs4. Metroid's
+    # own measured hazard is a 12-step mid-run stable window over
+    # repeating terrain (odo 256..328) that settles a phantom
+    # camera-view room at any smaller value.
+    settle: 14
+    min_lines: 200
+    # Measured door crossings: Δodo +254 px each, Δscene +1, churn
+    # every step of the 32-step door scroll (no mid-scroll stable
+    # window) — squarely inside the shared pan window.
+    pan_odo: [128, 384]
+    warp_scene_min: 2
+    palette_cokey: false
+    max_rooms: 1024
+    sample_every: 1

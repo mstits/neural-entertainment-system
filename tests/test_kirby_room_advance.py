@@ -107,7 +107,12 @@ def test_near_is_expressed_in_gx_buckets(ra):
 #   kirby.yaml — the original room-graph opt-in (configs/kirby.yaml).
 #   zelda.yaml — the overworld screen graph, receipted in
 #     docs/receipts/games/zelda_onboarding_2026-08-10.md.
-GATE_OPTED_IN = ["kirby.yaml", "zelda.yaml"]
+# Sorted glob order. The two *_roomfp.yaml gate profiles arm the gate at
+# the fingerprint-ordinal pseudo-byte 0x804 (ROOMGRAPH_ENGINE_2026-08-24
+# §4) — receipted in docs/receipts/room_fp/{metroid,zelda}.md and gated
+# offline by tests/test_rg0_roomgraph.py before any live run.
+GATE_OPTED_IN = ["kirby.yaml", "metroid_roomfp.yaml", "zelda.yaml",
+                 "zelda_roomfp.yaml"]
 
 
 def test_every_other_shipped_profile_stays_inert():
@@ -154,8 +159,10 @@ def test_allowlisted_gate_addr_is_the_profiles_own_observable(name):
     """No new external knowledge, enforced for every opted-in profile: the
     gate's addr must be a byte the profile ALREADY declares and receipts."""
     solve = yaml.safe_load((REPO / "configs" / name).read_text())["solve"]
-    declared = {solve["area"], solve["lives"], solve["y"],
-                solve["progress"]["lo"]}
-    if "hi" in solve["progress"]:
-        declared.add(solve["progress"]["hi"])
+    declared = {solve["area"], solve["lives"], solve["y"]}
+    # Odometer-source profiles (metroid_roomfp) declare no lo/hi RAM
+    # byte — progress is the hardware-surface integral itself.
+    for k in ("lo", "hi"):
+        if k in solve["progress"]:
+            declared.add(solve["progress"][k])
     assert solve["room_advance"]["addr"] in declared
