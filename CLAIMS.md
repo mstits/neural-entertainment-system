@@ -362,6 +362,94 @@ changes the outcome, is unknown until the run progresses further; this
 entry certifies the mechanism shipped and is instrumented correctly,
 not that it mattered.
 
+**FORGE-SHIPPED — engine_driver retry/abandon fix (the
+unattended-operation P0) plus six further scheduler/checkpoint
+hardening fixes, commit `5ce9304`, 2026-08-25.** Self-measured
+detection: a second independent audit pass over surfaces the first
+pass hadn't covered (`scripts/engine_driver.py`, the pyo3 bindings,
+`checkpoint_manager.py`, `checkpointing.py`, `go_explore.py`) found
+live evidence already sitting in the system's own state file
+(`runs/engine/state.json`) that the mechanism was firing. The defect:
+`_reap_one` wrote every non-recurring action's id into
+`state["completed"]` on its first termination regardless of outcome —
+success, verified failure, or an ambiguous crash alike — and because
+`offer()` permanently excludes anything already in `completed`, this
+made `MAX_ATTEMPTS_PER_ACTION`'s retry/abandon logic unreachable dead
+code for every single-shot action in the system (`honest_eval`,
+`config_*`, `mint_*`, `select_*` construct their `Action()` with no
+done_marker): any transient crash — OOM, a disk hiccup, a
+momentarily-locked ROM — permanently and silently froze that level at
+its current stage with zero diagnostic trace, exactly the failure
+class the "walk away for three weeks" mandate cannot tolerate. Fixed:
+`completed` is now written only on a verified success; a crash or
+verified failure stays retry-eligible up to the attempt cap, at which
+point `tick()`'s existing (previously dead) abandon branch becomes the
+real terminal-status writer. Six further generic fixes bundled in the
+same pass, named precisely: a timeout-killed heavy job never arming
+the `needs_quiet` settle clock (a SIGKILLed 14h campaign could be
+immediately followed by a benchmark on a hot machine); three
+shelf-disposition sites silently dropping skip reasons instead of
+journaling them; `Pool::load_worker_state` panicking uncatchably on a
+malformed 4-byte NCST-only blob and never clearing a worker's dead
+flag on a successful restore (a worker panicked once could stay
+short-circuited to zero-frame/done=true forever, even after a valid
+reload); `save_winner`'s two-file write (`best.pt` + `best.json`) not
+being one transaction, now reconciled against `best.pt`'s own embedded
+metric; `save_iter`'s non-per-writer tmp path allowing a torn write
+under a race between processes sharing a checkpoint_dir;
+`GoExploreArchive.load()` unpickling a cells dict with zero `cell_fn`
+key-schema validation. Gate: 29 new regression tests
+(`tests/test_checkpoint_manager_tmp_path_race.py`,
+`tests/test_engine_driver.py`, `tests/test_go_explore.py`,
+`tests/test_winner_checkpoints.py`); `make test-fast`: 3942 passed, 0
+failed; `cargo test --lib`: 634 passed, 0 failed. Touched
+`nes_core/src/pool.rs`, `scripts/engine_driver.py`,
+`src/training/checkpoint_manager.py`, `checkpointing.py`,
+`go_explore.py`. Honest status, stated plainly: every fixed path is
+exercised directly by its own regression test, but the fix has not yet
+been exercised by a real multi-week unattended run hitting an actual
+transient crash in production — no live crash-then-successful-retry
+event has been observed post-fix. The system is measurably safer for
+the "walk away for weeks" goal; it is not yet proven safe by a live
+long-duration trial, and no unattended-operation uptime claim may be
+made from this entry alone.
+
+**FORGE-VALIDATED — signed progress-axis odometer fix
+(`progress.axis` sign prefix, x/-x/y/-y), commit `9bb5122`,
+2026-08-25.** Self-measured detection: League onboarding wave 3's own
+solver-smoke telemetry, not a walkthrough — 1942's archive froze at 7
+cells, and the deepest-cell/root diagnostics
+(`diag_1942_{deepest,root}.log`) measured directly that every held
+action drove the odometer's raw y-reading strictly negative from a
+verified-live start state, exposing that `_xram`'s clamp-to-≥0
+assumption (forward always increases the odometer — true for every
+prior profile, all horizontal right-scrollers) is silently false for
+1942, whose vertically-scrolling engine counts the scroll register
+DOWN during forward flight. The forged fix is game-agnostic:
+`progress.axis` now accepts an optional leading sign (`x`, `-x`, `y`,
+`-y`) that flips the raw reading before the existing clamp is applied,
+implemented additively via `getattr` so every profile that doesn't
+specify a sign is unaffected. Gate/falsifier: the identical wall-clock
+smoke budget went from a 7-cell freeze
+(`runs/onboard_wave3/smoke_1942/`, v1) to 106 cells with an open
+frontier (`smoke_1942_v2/`, v2) — receipts
+`gate_1942_{right,up,A}.json`, `discover_1942_up.json`,
+`diag_1942_lifecycle_noop.log`, `summary_1942.json`; the fix's
+addition to the shared `go_explore_solve.py` path was verified not to
+disturb any other profile via the full regression run, `tests/
+test_room_fp.py` + go_explore_solve suites, 609 passed. Classified
+SOUND_ADVANCING (frontier open, not frozen), one of ten games
+processed this wave alongside League onboarding wave 1's twelve
+(`docs/research/LEAGUE_ONBOARDING_WAVE1_2026-08-24.md`,
+`LEAGUE_ONBOARDING_WAVE3_2026-08-25.md`). Honest status, stated
+plainly: the fix demonstrably unfroze 1942's search — the game itself
+remains unsolved (no clear, no `level_key` win predicate exercised) —
+and the fix has been live-validated on exactly one game; whether other
+games in the roster share the same latent negative-axis defect is
+untested (Galaga was flagged in the same wave as a candidate carrying
+the identical gap, not yet hit). No clear or League-inclusion claim
+beyond SOUND_ADVANCING is made from this entry.
+
 ## Quarantine (Tier-3-contaminated artifacts)
 
 The following artifacts were produced with banned knowledge (a
@@ -699,3 +787,93 @@ No honest-protocol number, no gate verdict, and no comparison to the
 0.767 control exists yet for this run. It is named here only so the
 launch is on the record as launched; the eventual result — pass, fail,
 or void — gets its own entry when the run actually finishes.
+
+V27 FRESH-RECOVERY VERDICT: FAIL — BEST-OF-4 0.530 (2026-08-25, prereg
+`docs/proposals/V27_FRESH_RECOVERY_2026-08-24.md` VERDICT section,
+commit `5b3363d`, receipts `runs/v27_fresh_recovery/gate/*.json`, 16
+files — 4 seeds × 2 checkpoint classes × 2 eval seeds × 50 episodes).
+Full honest-protocol scoring (cold entrance, greedy, sticky 0.25,
+jitter ±16, max-steps 1500), two checkpoints per seed
+(peak entrance-trailing-rate via `winners/best.pt`, and the final
+iter-240 checkpoint) per the registration's fixed selection rule: seed
+0 pooled 0.040 (final 0.020), seed 1 pooled 0.290 (final 0.020), seed 2
+pooled 0.530 (final 0.000), seed 3 pooled 0.170 (final 0.010).
+**Best-of-4 = 0.530** against a PASS bar of ≥0.80 and a FAIL bar of
+≤0.767 — not close on either bound; the best individual seed (0.53)
+does not even clear the control's own 0.767. Per the registration's
+own verdict language: from-the-start curriculum inclusion adds nothing
+at 48k parameters — the parameter-budget hypothesis takes the floor.
+This closes the curriculum-shape question the isolated-optimum finding
+left open (RECOVERY DISTILLATION entry above): post-hoc gradient work
+on the consolidated 48k artifact and from-scratch delivery of the
+identical mined recovery states (this run) have now both FAILed at the
+same parameter budget — **the sticky-wall research line is CLOSED on
+curriculum shape.** v28 (`docs/proposals/V28_CAPACITY_2026-08-25.md`,
+pre-registered before this verdict landed) is the standing next step,
+not a contingency; it tests the capacity hypothesis directly
+(`tile_hidden_dim` 64→96, 48,135→72,039 params, identical treatment
+and gate — its own entry follows below).
+
+SECONDARY FINDING, LEARNED ledger / architecture-training-dynamics
+class (2026-08-25, same receipts as above) — peak instability
+reproduces at full strength within a single from-scratch run, not only
+post-hoc: every seed's final iter-240 checkpoint scored catastrophically
+below its own peak checkpoint — seed 0: 0.02 vs 0.04, seed 1: 0.02 vs
+0.29, seed 2: 0.00 vs 0.53, seed 3: 0.01 vs 0.17. This is the same
+continued-PPO-collapses-a-peak pattern measured two days earlier on
+post-hoc training (−74% over 200 iters, OPTIONS MECHANISM entry
+above), but this is the first time it has been observed WITHIN a
+single run that was never post-hoc fine-tuned — the degradation is
+intrinsic to training, not an artifact of resuming an
+already-consolidated checkpoint. Preserve-on-peak (`winners/best.pt`)
+was load-bearing, not a convenience: without it this experiment's
+reported number would have been ~0.01, not 0.53. Conclusion, stated at
+the strength the data supports: peak instability looks like a property
+of this architecture/recipe class broadly; preserve-on-peak stays
+mandatory in every future arm of this line.
+
+SECONDARY FINDING, process/methodology class — binding, not a LEARNED,
+EXHIBITION, or FORGE result (2026-08-25, same receipts as above) —
+training telemetry massively overestimates the honest rate but still
+ranks seeds correctly: `entrance_trailing_rate` (0.87/0.93/1.00/0.97
+across seeds 0–3) predicted almost nothing about the absolute honest
+rate (0.04/0.29/0.53/0.17) — a 2–25× overestimate — while still
+correctly identifying seed 2 as best and seed 0 as worst. This is the
+starkest confirmation yet, at the largest measured gap in this
+project's history, of why the honest evaluation protocol (declared
+above) must remain the sole scoring authority: training telemetry is
+usable for within-run seed/checkpoint selection and unusable as a
+proxy for any gate number, cold or otherwise.
+
+V28 CAPACITY RUN — LAUNCHED, IN PROGRESS, NOT A VERDICT (2026-08-25,
+prereg `docs/proposals/V28_CAPACITY_2026-08-25.md`, configs
+`configs/mario_1_1_v28_seed{0,1,2,3}.yaml`, preflight receipts
+`runs/v28_capacity/preflight/{v1_v2_verdict.json,v3_verdict.json,
+tau0.15.log,tau0.20.log,tau0.25.log,tau0.30.log}`, commit `e4e35a7`).
+Tests the capacity hypothesis the v27 FAIL left standing: single-
+variable change vs. every v27 seed config — `tile_hidden_dim` 64→96
+(`tile_trunk_dim` 32 unchanged, written explicit), 48,135→72,039
+params (+1.50×) — same 785-rung merged ladder, same ReDo-mandatory
+treatment, same seeds/iters/hyperparameters, same gate (PASS ≥0.80,
+FAIL ≤0.767, identical artifact-selection rule). Preflight V1–V4 all
+PASS before launch: V1 config-diff shows only the two intended lines
+changed, symmetric across all four seeds; V2 param-count log line
+matches exactly (`params=72039 (hidden=96, trunk/gru=32, features=712,
+actions=6)`); V3 re-ran the ReDo tau-sweep at the new width rather than
+assuming the v27 calibration transfers — tau 0.15/0.20 gave 0
+recycles, tau 0.25 gave 9 recycled (agree 0.917, max_dlogit 0.176,
+finite), tau 0.30 gave 6 then 13 recycled (agree 0.83–0.85, finite) —
+and the isolated-event recycle boundary was re-measured per-width
+(~6 units at tau 0.30 for the 96-unit net, vs. 2 units at tau 0.30 for
+v27's 64-unit net), updating the soft-VOID trigger rather than
+guessing it proportionally; V4 (mechanism armed, not inert) confirmed
+live in seed 0's own log (`[redo] ENABLED tau=0.025 every_iters=1
+scope=fc1,fc2 sample=4096 reset_moments=true`). Status as of this
+writing: only seed 0 running (process confirmed live), at iteration 8
+of 250 (`runs/v28_capacity/train_seed0.log`), ~2,400–2,550
+env-steps/s (~162–170× realtime); seeds 1–3 have not started
+(sequential driver, `runs/v28_capacity/run_seeds.sh`). **No
+honest-protocol number and no gate verdict exist yet for v28, at any
+seed.** This machine is dedicated to this run; the eventual result —
+PASS, FAIL, or MARGINAL against the same 0.80/0.767 bar v27 was scored
+against — gets its own entry when all 4 seeds finish.
