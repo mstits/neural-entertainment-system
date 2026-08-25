@@ -212,6 +212,19 @@ solve:
   # with climb), hi = screen counter (0x04D1, +1/screen). progress =
   # ram[0x0750] | ram[0x04D1]<<8. The frontier IS altitude for this vertical
   # climber (screen scrolls UP only; falling off the bottom kills).
+  # ODOMETER-ERA ONBOARDING 2026-08-24 (runs/onboard_wave1/):
+  #   PPU-odometer gate: camera static under EVERY 1200-step hold driver
+  #   (right / up / A; x=0 y=0, OAM churn 586-1199/1199 = agent active) —
+  #   Kid Icarus's climb needs repeated jump presses no hold can produce,
+  #   so the hardware odometer cannot gate this game and the RAM altitude
+  #   pair below stays the progress source (gate_kid_icarus{,_up,_A}.json).
+  #   The gate's lone INSTRUMENT fault ("death byte reads 0") is a false
+  #   positive: solve.lives is the deliberate monotone sentinel 0x0130
+  #   (see DEATH note above); real death = player_state 0x00A6 -> 0.
+  #   Solver smoke (3 workers, 6 min, seed 0): 12 cells flat for 5 min at
+  #   gx 289, then breakout to 113 cells / max_gx 1784 (~screen 7) in the
+  #   final minute — SOUND_ADVANCING, no frontier freeze, no diagnostic
+  #   needed. Receipt: runs/onboard_wave1/smoke_kid_icarus/.
   progress: {lo: 0x0750, hi: 0x04D1}
   # Generous cap: a garbage transition read guard. Real stage-1 altitude tops
   # out well under this (screen 9 = ~2340; whole stage a few thousand); a true

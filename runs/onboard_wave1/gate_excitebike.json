@@ -1,0 +1,16 @@
+{
+  "profile": "configs/excitebike.yaml",
+  "odometer": true,
+  "steps": 1200,
+  "distinct": 1116,
+  "min": 0,
+  "max": 11062,
+  "tail_distinct": 300,
+  "has_high_byte": true,
+  "lives_at_start": 26,
+  "passed": true,
+  "instrument_findings": [],
+  "behaviour_findings": [],
+  "verdict": "SIGNAL SOUND \u2014 still advancing",
+  "oam_churn": 841
+}

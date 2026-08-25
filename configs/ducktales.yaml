@@ -146,6 +146,24 @@ reinforce:
 # DuckTalesReward) and belong in a FUTURE custom progress/is_clear hook (a
 # GenericGame extension that can decode the 7-tile field), not in the 2-byte
 # GenericGame path. level_key is left EMPTY (coverage baseline) accordingly.
+#
+# ODOMETER-ERA ONBOARDING 2026-08-24 (League wave 1).
+# Instrument check: progress_signal_gate --odometer --forward right PASSED —
+# "SIGNAL SOUND — game stops": axis=x, 104 distinct values over 0..319 px in
+# 1200 steps, OAM churn 594/1199 (agent alive), flat last quarter = Scrooge
+# sticks on the first obstacle under naive hold-right (the same behaviour the
+# 2026-08-02 discovery round saw; a driver limit, not an instrument fault).
+# Receipt: runs/onboard_wave1/gate_ducktales.json. This AMENDS the paragraph
+# above: the PPU scroll odometer (hardware surface, certified build) IS a
+# usable camera-x travel signal for DuckTales — `progress: {source: odometer,
+# axis: x}` is a viable alternative frontier if the money frontier ever
+# stalls. It is deliberately NOT switched in here: the decoded-money progress
+# below is the actual objective, and the score_jump clear threshold is in
+# money units and would be broken by the swap.
+# Solver smoke (money frontier, unchanged): 3 workers x 6 min, seed 0 —
+# 144 cells, best_score 480 (= $48,000), max_area 0 (Amazon), 0 solutions,
+# frontier advancing every 60 s window (360->480, stall_flat_windows 0).
+# Verdict: SOUND_ADVANCING. Receipt: runs/onboard_wave1/smoke_ducktales/.
 solve:
   rom: "roms/DuckTales (USA).nes"
   # progress = DECODED MONEY (the objective), 7 HUD digit tiles $0324-$032A

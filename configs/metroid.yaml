@@ -229,6 +229,33 @@ reinforce:
 # own; it is left byte-intact as a historical record and is logged, not
 # cited as authority, in
 # docs/receipts/games/metroid_purity_quarantine_2026-08-10.md.
+# ---------------------------------------------------------------------
+# ODOMETER-ERA ONBOARDING 2026-08-24 (League wave 1). Receipts:
+#   runs/onboard_wave1/gate_metroid.json        — odometer gate, right:
+#     PASS "SIGNAL SOUND — game stops" (87 distinct, 0..508 px).
+#   runs/onboard_wave1/gate_metroid_left.json   — left: FAIL (blocked
+#     alcove, 106 px) — right is the forward axis.
+#   runs/onboard_wave1/smoke_metroid/           — 6-min 3-worker smoke,
+#     RAM area 0x0074 (inert): 272 cells, max_gx 1045, frontier flat
+#     for the last 3 min.
+#   runs/onboard_wave1/diag_metroid_deepcell.json — deepest-cell
+#     diagnostic: hold-right from the 1045 cell advances the odometer
+#     1049->1446 and steps the scene counter 8->9 (door transition),
+#     lives steady — NOT a wall, the smoke just hadn't banked it; and
+#     the scene counter demonstrably sees Metroid's doors.
+#   runs/onboard_wave1/smoke_metroid_scene/     — 6-min re-smoke with
+#     area: 0x803 scene keys: 2596 cells, best lineage 16 room
+#     transits + gx 1274 px (past the old freeze), steady growth.
+# RUN-FLAG NOTE for long runs: max_sect hit the default --sect-cap 16
+# inside the first minute (Metroid door transits churn far faster than
+# SMB's ~5 rooms the default was sized for). Raise --sect-cap (e.g. 64+)
+# on anything longer than a smoke or the transit axis saturates.
+# SCENE-ORDINAL CAVEAT (honest limitation, not a defect): 0x803 is a
+# scene-cut COUNTER, not a room identity — re-crossing one door steps
+# it again, so a backtracking lineage inflates area (max_area 57 in the
+# scene smoke). Bounded by the sect cap and by x-dominant scoring, but
+# do not read max_area as "distinct rooms reached".
+# ---------------------------------------------------------------------
 solve:
   rom: "roms/Metroid (USA).nes"
   # progress = fine on-screen X (0x0051, 0-255) | coarse scroll-column
@@ -252,23 +279,37 @@ solve:
   # a 1500f drive), so its "keeps climbing" is transient, not world position.
   # It fails the persistence half of the saturation test; the verified
   # player-X pair above is the honest durable spine.
-  progress: {lo: 0x0051, hi: 0x0050}
+  #
+  # 2026-08-24 ODOMETER-ERA SWITCH: progress moved from the RAM pair
+  # {lo: 0x0051, hi: 0x0050} (measurement above stands, kept as the
+  # historical record) to the PPU scroll odometer — the hardware-surface
+  # signal, same purity class as pixels/OAM. Gate receipts:
+  #   runs/onboard_wave1/gate_metroid.json       — --odometer --forward
+  #     right: PASS "SIGNAL SOUND — game stops"; 1200 steps, 87 distinct,
+  #     range 0..508 px, flat last quarter = the start-room boundary
+  #     (dumb holds cannot open/exit the door; breaking past it is the
+  #     search's job — same reading as the RAM-pair 1500 ceiling above).
+  #   runs/onboard_wave1/gate_metroid_left.json  — --forward left: FAIL
+  #     (20 distinct, 106 px) — left of spawn is a short blocked alcove;
+  #     rightward is the sound forward axis.
+  progress: {source: odometer, axis: x}
   # y = on-screen Y (0x0052): spans 5 distinct 32-px bands (0,3,4,5,6)
   # across varied movement — a usable fine vertical coverage axis.
   # y_map (0x004F) stays constant (14) in the reachable region — too
   # static/coarse for a cell axis, so the fine screen-Y is used.
   y: 0x0052
-  # area = region index (0x0074, ram_mapping RAM_AREA). Starts 0 and
-  # leads the cell key / frontier — when the search reaches a new region
-  # it steps and the deep-frontier bias follows.
-  # Provenance caveat (not a quarantine, an open re-derivation): 0x0074
-  # held constant 0 through every scripted probe AND the whole 4-min
-  # solve, so what we have measured is its INERTNESS, not that it indexes
-  # a region. Harmless as the leading cell-key term — a constant term
-  # partitions nothing and costs nothing — but the label must be
-  # re-derived (reach a second region, watch it step) before any claim
-  # rests on it.
-  area: 0x0074
+  # area = odometer SCENE ordinal (pseudo-address 0x803, appended past
+  # the 2KB snapshot by Solver._xram — hardware surface, not a RAM
+  # byte). 2026-08-24: replaces 0x0074, which we only ever measured as
+  # INERT (constant 0 through every scripted probe and the 4-min solve
+  # — it partitioned nothing). The deepest-cell diagnostic
+  # (runs/onboard_wave1/diag_metroid_deepcell.json) shows the scene
+  # counter STEPS on Metroid's door transitions (8->9 while holding
+  # right through a door), so (scene, x) cells make rooms — including
+  # vertical shafts where the x integral freezes — distinct frontier
+  # territory. 0x0074's historical caveat stands: its "region index"
+  # label was never re-derived.
+  area: 0x803
   # No reachable per-level clear byte (item/boss state is unreachable
   # PRG-RAM): coverage baseline, level_key empty.
   level_key: []
@@ -292,7 +333,8 @@ solve:
   # no system-RAM lives counter and no clean death-state byte, so this is
   # the honest death signal.
   lives: 0x0107
-  # Guards transition-frame garbage: a mid-load coarse-column read can
-  # spike the <<8 term. Legit progress stays well under 16384 (map column
-  # is small); a garbage read above it is dropped, not archived.
-  progress_cap: 16384
+  # progress_cap history: 16384 guarded the OLD {0x0051|0x0050<<8} pair
+  # against mid-load garbage spikes in the <<8 term. The odometer is a
+  # clamped in-core integral with no torn/garbage-read mode, and long
+  # searches can legitimately travel past 16384 px, so the tuned cap is
+  # retired with the pair; the solver default (30000) applies.

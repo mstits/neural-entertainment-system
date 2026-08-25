@@ -1,0 +1,222 @@
+{
+ "deep_key": [
+  1,
+  0,
+  0,
+  [
+   62
+  ],
+  0,
+  [
+   1
+  ],
+  62,
+  0,
+  0,
+  1,
+  63
+ ],
+ "hold_steps": 150,
+ "results": [
+  {
+   "action": [],
+   "gx_start": 1007,
+   "gx_end": 1007,
+   "gx_max": 1007,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 251,
+   "odo_x_range": 0,
+   "odo_y_range": 0
+  },
+  {
+   "action": [
+    "right"
+   ],
+   "gx_start": 1007,
+   "gx_end": 1007,
+   "gx_max": 1009,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 251,
+   "odo_x_range": 0,
+   "odo_y_range": 0
+  },
+  {
+   "action": [
+    "left"
+   ],
+   "gx_start": 1007,
+   "gx_end": 854,
+   "gx_max": 1007,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 251,
+   "odo_x_range": 25,
+   "odo_y_range": 0
+  },
+  {
+   "action": [
+    "A"
+   ],
+   "gx_start": 1007,
+   "gx_end": 1007,
+   "gx_max": 1007,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 251,
+   "odo_x_range": 0,
+   "odo_y_range": 0
+  },
+  {
+   "action": [
+    "B"
+   ],
+   "gx_start": 1007,
+   "gx_end": 1007,
+   "gx_max": 1007,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 251,
+   "odo_x_range": 0,
+   "odo_y_range": 0
+  },
+  {
+   "action": [
+    "down"
+   ],
+   "gx_start": 1007,
+   "gx_end": 1007,
+   "gx_max": 1007,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 251,
+   "odo_x_range": 0,
+   "odo_y_range": 0
+  },
+  {
+   "action": [
+    "up"
+   ],
+   "gx_start": 1007,
+   "gx_end": 1007,
+   "gx_max": 1007,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 147,
+   "odo_x_range": 0,
+   "odo_y_range": 0
+  },
+  {
+   "action": [
+    "right",
+    "A"
+   ],
+   "gx_start": 1007,
+   "gx_end": 1007,
+   "gx_max": 1009,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 251,
+   "odo_x_range": 0,
+   "odo_y_range": 0
+  },
+  {
+   "action": [
+    "left",
+    "A"
+   ],
+   "gx_start": 1007,
+   "gx_end": 854,
+   "gx_max": 1007,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 251,
+   "odo_x_range": 25,
+   "odo_y_range": 0
+  },
+  {
+   "action": [
+    "right",
+    "B"
+   ],
+   "gx_start": 1007,
+   "gx_end": 1007,
+   "gx_max": 1009,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 251,
+   "odo_x_range": 0,
+   "odo_y_range": 0
+  },
+  {
+   "action": [
+    "right",
+    "down"
+   ],
+   "gx_start": 1007,
+   "gx_end": 1007,
+   "gx_max": 1007,
+   "areas": [
+    62
+   ],
+   "hp": [
+    6
+   ],
+   "y_min": 27,
+   "y_max": 251,
+   "odo_x_range": 0,
+   "odo_y_range": 0
+  }
+ ]
+}

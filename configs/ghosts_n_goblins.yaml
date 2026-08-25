@@ -166,12 +166,37 @@ reinforce:
 # progress value for that single frame if uncapped.
 solve:
   rom: "roms/Ghosts'n Goblins (USA).nes"
-  # progress = ram[0x006C] | ram[0x0065]<<8. See the block above for the
-  # rejection list (0x005D scroll bytes, 0x0083/0x0608 frame clocks,
-  # 0x06C2/0x05C0 camera-saturation) and the wrap/direction-sensitivity
-  # evidence for this pair.
-  progress: {lo: 0x006C, hi: 0x0065, smooth: hampel}
-  progress_cap: 8000
+  # 2026-08-24 (odometer-era onboarding): progress moved to the PPU scroll
+  # odometer — the hardware-surface signal (same purity class as pixels/OAM,
+  # same switch Rygar/NG made). Gate receipt:
+  # runs/onboard_wave1/gate_ghosts_n_goblins.json — SIGNAL SOUND, 1200-step
+  # forward-hold probe: axis=x, 117 distinct, range 0..285 px, high byte
+  # present, oam_churn 434/1199; tail flat because the scripted forward hold
+  # dies to the spawn-adjacent zombie (see START-STATE notes below), not
+  # because the instrument saturates.
+  # The previously-discovered RAM pair (progress = ram[0x006C] | ram[0x0065]
+  # <<8, hampel-smoothed, cap 8000 for the one-frame armor-init spike) stays
+  # documented above as the historical bootstrap-probe result; the odometer
+  # supersedes it as the solver's progress axis.
+  #
+  # SMOKE RECEIPTS (2026-08-24, 3 workers x 6 min each):
+  #   seed 0: 2081 cells, max_gx 2605, max_area 0
+  #           (runs/onboard_wave1/smoke_ghosts_n_goblins/)
+  #   seed 1: 4046 cells, max_gx 3327, max_area 0
+  #           (runs/onboard_wave1/smoke_ghosts_n_goblins_seed1/)
+  # Seed 0's last-3-window freeze at gx 2605 was diagnosed with the
+  # deepest-cell probe (runs/onboard_wave1/diag_deepest_ghosts_n_goblins
+  # .json): ALL 11 action holds from that cell produce byte-identical
+  # trajectories (x 2605->2717, lives 2->1 at step 15, armor byte 10->0,
+  # zero scene cuts) — inputs are locked, so the banked state was already
+  # inside the hit/death animation (the fatal hit latched BEFORE banking;
+  # the lives byte lags). Classic TRAP-CELL, not a door-blip/underflow/
+  # scene-cut (no config fix applies; the engine's retire-on-instant-death
+  # rule uses died<=5 burst steps and this one dies at 15, so the search
+  # must route around it from shallower cells — which seed 1 proves it
+  # does, passing 2605 by +722 px). Verdict: SOUND_ADVANCING; scene keys
+  # NOT warranted (continuously-scrolling game, scene counter flat).
+  progress: {source: odometer, axis: x}
   # No clean ballistic Y was isolable from the pinned spawn (the same
   # zombie-lock that killed the X probes also meant every "hold A" burst
   # coincided with an involuntary knockback-into-air from the adjacent

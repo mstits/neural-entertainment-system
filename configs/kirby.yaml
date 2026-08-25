@@ -102,6 +102,40 @@ solve:
   # Per-room scene id (58 start platform -> 62 horizontal room); constant within
   # a room, steps at doors, increases forward. Self-labels cells per room AND
   # drives room_id -> sect transitions so the search advances through doors.
+  #
+  # 2026-08-24 ODOMETER-ERA ONBOARDING — KNOWN LIMIT OF THIS BYTE.
+  # Gate: runs/onboard_wave1/gate_kirby.json (right: FAIL, camera moves 10px
+  # then clamps — the start room's exit is the door, as documented above) and
+  # gate_kirby_left.json (PASS — camera static, agent active, OAM churn
+  # 1199/1199). Smoke (runs/onboard_wave1/smoke_kirby, 3 workers x 6 min,
+  # seed 0): 1451 cells, sect 1 (start door 58->62 taken), gx swept the FULL
+  # room to the 1009 clamp by minute 2, then froze — max_area 62 /
+  # max_gx 1010 for the rest of the run despite 953 door macros.
+  # Deepest-cell diagnostic (runs/onboard_wave1/diag_kirby_deepcell.json +
+  # diag_kirby_door_probe.json + diag_kirby_cut_forensics.json):
+  #   * A settle-grounded UP-hold ~6 walk-steps left of the right camera
+  #     clamp FIRES a door: gx 991 -> 40 in one step. The search reaches it
+  #     fine — the freeze is representational, not skill.
+  #   * 0x004F DOES NOT CHANGE across that door (stays 62), so the post-door
+  #     state keys as (area 62, gx bucket 2) — colliding with the entrance of
+  #     room 62 and discarded as dominated. The frontier freeze IS this
+  #     collision.
+  #   * The post-door room is genuinely NEW content: 0 of 7 pre-cut nametable
+  #     hashes reappear among 59 post-cut hashes (peek_nametables, hardware
+  #     surface), and it scrolls freely (odo_x 0 -> 222, gx to 521+).
+  #   * The generic scene key `area: 0x803` (odometer scene ordinal) was
+  #     TESTED AND REJECTED for this game: rendering blanks for ~3 steps at
+  #     the door load (odo_debug votes 240 -> 0 -> 240), which the odometer
+  #     deliberately treats as a blank-gap re-anchor, NOT a cut — so doors
+  #     never bump the ordinal; meanwhile it bumped TWICE spuriously in ~300
+  #     steps of ordinary scrolling (diag_kirby_cut_forensics.json shows
+  #     scene=2 pre-cut). Keying cells on it would fragment the archive and
+  #     still miss every door. Do not wire 0x803 here.
+  # WHAT WOULD FIX IT (solver-side, not config): a nametable-fingerprint
+  # scene key — the core already exposes peek_nametables for exactly this
+  # ("detect discrete scene changes that bypass $2005 scrolling"), but the
+  # solver has no config surface for it yet. Until then Kirby's search is
+  # capped at "first two rooms of Vegetable Valley 1-1".
   area: 0x004F
   # Door-entry maneuver macros (discrete-transition gate — the room exit
   # door needs grounded + UP, which world-X can't gradient toward since the

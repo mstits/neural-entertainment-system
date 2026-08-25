@@ -167,14 +167,22 @@ reinforce:
 # bursts on phantom deaths).
 solve:
   rom: "roms/Gradius (USA).nes"
-  # 16-bit forced-scroll accumulator (lo $003E, hi $003F). $003E adjacent to
-  # $003F is the natural little-endian pair; $003F increments exactly when
-  # $003E wraps 255->0 (at_wrap 1.00). This is the stage-distance frontier.
-  progress: {lo: 0x003E, hi: 0x003F}
-  # Transition-garbage guard: observed values stay tiny ($003F in 0..3, val
-  # <= 836 in scripted lives); 20000 (page ~78) can never be reached in one
-  # stage yet clips a stray high $003F read on a mode transition.
-  progress_cap: 20000
+  # ODOMETER-ERA (2026-08-24): progress = the PPU scroll odometer (certified
+  # hardware surface, scripts/odometer_cert.py 5/5), x axis. Gate PASS:
+  # SIGNAL SOUND — still advancing, 1200 steps, 940 distinct, range 0..1714,
+  # oam_churn 1113/1199 (runs/onboard_wave1/gate_gradius.json). For this
+  # auto-scroller the camera odometer and the previously-wired 16-bit
+  # forced-scroll accumulator (lo $003E / hi $003F, monotone-while-alive,
+  # freezes during the death pause, depth-dependent checkpoint reset —
+  # discovery receipt runs/gradius/gradius_receipt.json) measure the SAME
+  # forced scroll; the odometer is preferred as the hardware surface.
+  # SMOKE (2026-08-24, 6 min / 3 workers / seed 0): 1296 cells, max_gx 3121,
+  # max_area 0, frontier 681->1711->2417->3121 and cells/improvements still
+  # climbing at cutoff — SOUND_ADVANCING (runs/onboard_wave1/smoke_gradius).
+  # The 3121 hold over the last two windows is not a round-number freeze
+  # (3072/4096 are the nearby boundaries); deeper frontier = surviving
+  # further into the difficulty ramp, expected to be slow in a 6-min smoke.
+  progress: {source: odometer, axis: x}
   # Vic Viper vertical position (head of the Y-trail $07C0-$07CF). VERIFIED-
   # LIVE: up- / down+. Drives the cell y-band, critical for a dodge-heavy
   # shmup. ($0320 OAM-Y mirrors it; $00A5 is the canonical RAM byte.)

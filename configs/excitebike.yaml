@@ -144,6 +144,22 @@ reinforce:
 # room counter) steps at the boundary so the PRIMARY progress keeps advancing.
 solve:
   rom: "roms/Excitebike (Japan, USA).nes"
+  # ODOMETER-ERA GATE 2026-08-24 (runs/onboard_wave1/gate_excitebike.json):
+  # PPU scroll odometer PASSES — SIGNAL SOUND, still advancing — under an
+  # A-hold (throttle): axis=x, 0..11062 px, 1116 distinct over 1200 steps,
+  # OAM churn 841/1199. NOTE: the gate's default --forward right is FLAT
+  # here (0 px, OAM static) because LEFT/RIGHT are air-lean controls that do
+  # nothing on a grounded bike — Excitebike's forward driver is A. So
+  # `progress: {source: odometer, axis: x}` is a certified fallback, but the
+  # RAM encoding below is kept as PRIMARY: it was discovered by this repo's
+  # own probes, is monotone 99.9%, and its hi-byte doubles as the area/room
+  # coordinate the archive cells with.
+  # SOLVER SMOKE 2026-08-24 (runs/onboard_wave1/smoke_excitebike, 3 workers,
+  # 6 min, seed 0): SOUND_ADVANCING — 85 cells, max_area 2 (of 3 section
+  # boundaries), max_gx_in_max_area 633, frontier growing every 60 s window
+  # (+23 cells in the final one), no freeze, no diagnostic needed. 0 finishes
+  # yet inside the smoke budget; the finale hook below banks the solution
+  # the moment section 3 is reached.
   # progress = section_index(0x03A4)<<8 | section_dist(0x00ED). Monotone 99.9%,
   # 0->773 full track; flat under NOOP (bike must be throttled to move).
   progress: {lo: 0x00ED, hi: 0x03A4}

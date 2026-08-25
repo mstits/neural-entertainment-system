@@ -1,0 +1,296 @@
+{
+  "deep_key": "(0, 0, 0, (), 0, (2, 3), 0, 0, 0, 1, 162)",
+  "best_score": 2605.0,
+  "best_steps": 1170,
+  "holds": [
+    {
+      "action": [],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    },
+    {
+      "action": [
+        "right"
+      ],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    },
+    {
+      "action": [
+        "left"
+      ],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    },
+    {
+      "action": [
+        "A"
+      ],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    },
+    {
+      "action": [
+        "B"
+      ],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    },
+    {
+      "action": [
+        "right",
+        "B"
+      ],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    },
+    {
+      "action": [
+        "right",
+        "A"
+      ],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    },
+    {
+      "action": [
+        "right",
+        "A",
+        "B"
+      ],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    },
+    {
+      "action": [
+        "down"
+      ],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    },
+    {
+      "action": [
+        "down",
+        "B"
+      ],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    },
+    {
+      "action": [
+        "up"
+      ],
+      "x0": 2605,
+      "x_end": 2717,
+      "x_max": 2717,
+      "x_min": 2605,
+      "y0": 0,
+      "y_end": 0,
+      "y_max": 0,
+      "y_min": 0,
+      "scene0": 0,
+      "scene_end": 0,
+      "scene_cuts": 0,
+      "lives0": 2,
+      "lives_end": 1,
+      "lives_min": 1,
+      "died_at": 15,
+      "armor0": 10,
+      "armor_end": 0,
+      "mode_vals": [
+        8,
+        10
+      ]
+    }
+  ]
+}

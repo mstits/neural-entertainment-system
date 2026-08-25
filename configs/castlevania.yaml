@@ -41,6 +41,20 @@ ram_mapping:
 # little-endian pair; death = lives decrement.
 solve:
   rom: "roms/Castlevania (USA).nes"
+  # Odometer-era League onboarding 2026-08-24: hardware-surface cross-check
+  # PASSED — PPU scroll odometer gate (progress_signal_gate.py --odometer,
+  # hold-right 1200 steps) reads SOUND/still-advancing: 905 distinct over
+  # 0..3055 px, tail still moving, OAM churn 1185/1199, lives@start=4
+  # (runs/onboard_wave1/gate_castlevania.json). The receipted RAM pair
+  # below stays primary because the whole solve contract (state_sig,
+  # hold_macros, entity_slots) is keyed to player-x, which the camera
+  # odometer only approximates; {source: odometer, axis: x} is a certified
+  # drop-in fallback if the pair ever fails a gate.
+  # Solver smoke (go_explore_solve --workers 3 --minutes 6 --seed 0,
+  # runs/onboard_wave1/smoke_castlevania): SOUND_ADVANCING — 3 replay-
+  # verified block clears (0,)->(1,) inside the first minute (best 559
+  # actions), 265 cells, max_gx 751 in block 0 = the block's extent at
+  # the clear transition, not a frozen frontier.
   progress: {lo: 0x0040, hi: 0x0041}
   y: 0x003F
   level_key: [0x0028]

@@ -101,6 +101,18 @@ reinforce:
 #     below) reading exactly 0 immediately beforehand. Lives is UNCHANGED at
 #     both transitions (2, then 1) -- proving these are real clears, not a
 #     death/reset artifact aliasing the byte.
+# ODOMETER-ERA GATE (League onboarding wave 1, 2026-08-24). PPU scroll
+# odometer traced under both sustained holds off the captured start state:
+# range x=0, y=0 over 1200 steps in each direction (receipts:
+# runs/onboard_wave1/gate_bubble_bobble.json [right],
+# runs/onboard_wave1/gate_bubble_bobble_left.json [left]; oam_churn 231/234
+# of 1199 steps — sprites animate, camera never moves). CONFIRMS the
+# single-fixed-screen finding below: the odometer is NOT this game's
+# progress surface; progress stays on the receipted RAM round counter
+# $0401. Solver smoke on this profile (workers 3, 6 min, seed 0,
+# runs/onboard_wave1/smoke_bubble_bobble/): 2 replay-verified round clears
+# (1,0)->(2,0) at 423 and 368 actions, cells 708->1360 monotone across all
+# six 60s windows, no frontier freeze — SOUND_ADVANCING.
 solve:
   rom: "roms/Bubble Bobble (USA).nes"
   # Round/level counter -- THE progress signal (no world-X frontier exists;

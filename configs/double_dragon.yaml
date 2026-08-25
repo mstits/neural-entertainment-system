@@ -6,6 +6,26 @@ name: "Double Dragon"
 # by driving real inputs from the Mode-A 1P Mission-1 start — NOT copied from
 # a doc. See `solve:` below for the Go-Explore solver adapter and
 # runs/double_dragon/double_dragon_receipt.json for the full discovery trail.
+#
+# ODOMETER-ERA ONBOARDING (2026-08-24) — SOUND_ADVANCING.
+#   PPU scroll odometer gate (progress_signal_gate.py --odometer, 1200 steps):
+#   camera NEVER scrolls under a held-forward driver in EITHER direction
+#   (range 0..0, oam_churn 1037/1199 right, 958/1199 left) — verdict
+#   "SIGNAL SOUND — camera static, agent active". That is the expected
+#   fight-gate signature for this combat-gated brawler, NOT an instrument
+#   fault: the camera clamps at each enemy wave, so the odometer is the
+#   wrong frontier axis here and the RAM room counter below (0x00B2, own
+#   3-probe discovery) stays the solver's progress signal.
+#   Receipts: runs/onboard_wave1/gate_double_dragon.json (right),
+#             runs/onboard_wave1/gate_double_dragon_left.json (left).
+#   Solver smoke (go_explore_solve, 3 workers, 6 min, seed 0): cells 793,
+#   frontier 770, best_score 3958, max_gx 4024 (= room 15, x≈184),
+#   max_area 0, 0 solutions, ~200 sps. Frontier still growing at cutoff
+#   (cells 385→793, gx 4002→4024, 395 improvements) — search advancing
+#   through the fight gates, no freeze, no diagnostic needed. Matches the
+#   original saturation probe that reached rooms 15-16 undirected.
+#   Receipt: runs/onboard_wave1/smoke_double_dragon/ (progress.jsonl,
+#   archive.stats.json).
 # ============================================================================
 #
 # Live Mission-1 boot. The generic capture_start_state.py masher FAILS on

@@ -101,14 +101,31 @@ reinforce:
 # is the newly-confirmed player-absolute-X odometer.
 solve:
   rom: "roms/Mega Man 2 (USA).nes"
-  # progress = MegaMan absolute X = ram[0x0460] | (ram[0x0440] << 8).
-  # 0x0460 = X low byte (screen-relative, wraps 255->0 per screen); 0x0440 =
-  # X high byte (screen/page index). Confirmed monotone: on a 7-state depth
-  # ladder the odometer == independently-measured cumulative displacement + 128
-  # byte-for-byte, and 0x0460 wraps EXACTLY when 0x0440 increments (gameplay-
-  # locked-wrap test PASS). Rejected the frame counter 0x001C/0x00EA (fixed
-  # 64-frame wrap cadence, motion-independent).
-  progress: {lo: 0x0460, hi: 0x0440}
+  # 2026-08-24 odometer-era onboarding: progress = PPU scroll odometer,
+  # x axis. Both candidate signals passed scripts/progress_signal_gate.py
+  # from this start state (Metal Man stage strip, right-hold, 1200 steps):
+  #   odometer:  SOUND, 91 distinct over 0..808 px, oam_churn 497/1199
+  #              (runs/onboard_wave1/gate_megaman2.json)
+  #   RAM pair {lo:0x0460, hi:0x0440} (player absolute X, receipted
+  #              runs/megaman/mm2_observables_receipt.json): SOUND,
+  #              47 distinct over 0..312
+  #              (runs/onboard_wave1/gate_megaman2_rampair.json)
+  # The odometer resolved ~2.6x further under the identical driver and is
+  # the certified hardware surface (scripts/odometer_cert.py 5/5), so it
+  # drives the search; the RAM pair is kept on record above as the
+  # cross-check. lives@start = 3, so deaths are detectable.
+  #
+  # Smoke (2026-08-24, go_explore_solve, 3 workers, 6 min, seed 0):
+  # SOUND_ADVANCING — done: 1128 cells, frontier 890, best_score 2981,
+  # max_gx 2981 px, max_area 0; the gx frontier moved in EVERY 60s
+  # window (824 -> 832 -> 1420 -> 2304 -> 2873 -> 2981) with no freeze,
+  # so no deepest-cell diagnostic was warranted.
+  # Receipt: runs/onboard_wave1/smoke_megaman2/progress.jsonl.
+  # If a longer run ever walls at a boss door or a vertical screen
+  # transition, the first lever is the odometer scene ordinal
+  # (`area: 0x803`, the Ninja Gaiden recipe) — NOT wired now because
+  # nothing in the smoke justified it.
+  progress: {source: odometer, axis: x}
   # 0x002E = MegaMan Y (ballistic): 164 grounded, 114 at jump apex.
   y: 0x002E
   # level_key EMPTY = coverage baseline. No stage/room advance byte is receipted

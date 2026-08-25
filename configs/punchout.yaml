@@ -122,3 +122,30 @@ reinforce:
   # problem, so RND helps. 0.0 = pure baseline.
   rnd_intrinsic_coef: 0.5
   rnd_loss_coef: 1.0
+# --- Odometer-era League onboarding (2026-08-24) ---------------------------
+rom_path: "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes"
+solve:
+  rom: "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes"
+  # PURITY NOTE: the ram_mapping block above cites internet RAM maps
+  # (Data Crystal / TASVideos) and is therefore NOT usable as a solver
+  # observable under the purity line. The only purity-clean progress
+  # surface tried here is the PPU scroll odometer (hardware surface,
+  # same purity class as pixels/OAM).
+  #
+  # ODOMETER GATE VERDICT 2026-08-24 (scripts/progress_signal_gate.py):
+  #   forward=right, 1200 steps: axis=x range 0..28, 16 distinct,
+  #     oam_churn 373/1199 — runs/onboard_wave1/gate_punchout.json
+  #   forward=left,  1200 steps: axis=x range 0..46, 17 distinct,
+  #     oam_churn 357/1199 — runs/onboard_wave1/gate_punchout_left.json
+  #   y range = 0 in BOTH runs, so axis: y is also dead.
+  # The 28-46 px x-wobble is screen shake, not scrolling. Verdict:
+  # CAMERA_STATIC_AGENT_ACTIVE — Punch-Out is a fixed-screen fight-gate
+  # game; the camera never scrolls, while the agent's sprites churn
+  # (OAM moving ~30% of steps). The odometer is the WRONG progress
+  # surface for this game class. League onboarding via the scroll
+  # pipeline is a no-go; this game needs a fight-gate progress
+  # mechanism (opponent-defeat / bout-outcome detection) built from
+  # purity-clean surfaces before go_explore_solve can drive it.
+  # Left declared so the gate receipt is reproducible, but DO NOT
+  # point go_explore_solve at this profile — no scroll gradient exists.
+  progress: {source: odometer, axis: x}

@@ -1,0 +1,16 @@
+{
+  "profile": "configs/castlevania.yaml",
+  "odometer": true,
+  "steps": 1200,
+  "distinct": 905,
+  "min": 0,
+  "max": 3055,
+  "tail_distinct": 284,
+  "has_high_byte": true,
+  "lives_at_start": 4,
+  "passed": true,
+  "instrument_findings": [],
+  "behaviour_findings": [],
+  "verdict": "SIGNAL SOUND \u2014 still advancing",
+  "oam_churn": 1185
+}

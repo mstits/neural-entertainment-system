@@ -1,0 +1,21 @@
+{
+  "profile": "configs/kid_icarus.yaml",
+  "odometer": true,
+  "steps": 1200,
+  "distinct": 1,
+  "min": 0,
+  "max": 0,
+  "tail_distinct": 1,
+  "has_high_byte": true,
+  "lives_at_start": 0,
+  "passed": false,
+  "instrument_findings": [
+    "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+  ],
+  "behaviour_findings": [
+    "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see",
+    "camera never moved over 1200 steps; agent active (OAM moving) \u2014 the game does not scroll under this driver, which is a skill/route wall, not an instrument fault"
+  ],
+  "verdict": "SIGNAL UNUSABLE",
+  "oam_churn": 1199
+}
