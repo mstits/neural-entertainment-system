@@ -1,0 +1,35 @@
+name: "Paperboy"
+
+rom_path: "roms/Paperboy (USA).nes"
+rom_hashes:
+  - "c82b4e3cfb6f56845b8064b5da780124"
+start_state_path: "roms/Paperboy (USA)_start.state.bin"
+
+description: |
+  Paperboy (NES), minimal onboarding profile. Structure copied from
+  configs/rygar.yaml; no game knowledge encoded — generic controller,
+  odometer progress source pending gate verdict.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Paperboy (USA).nes"
+  progress: {source: odometer, axis: x}
+  level_key: []

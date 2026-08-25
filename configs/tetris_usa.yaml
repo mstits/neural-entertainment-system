@@ -1,0 +1,33 @@
+name: "Tetris (USA)"
+
+rom_path: "roms/Tetris (USA).nes"
+start_state_path: "roms/Tetris (USA)_start.state.bin"
+
+description: |
+  Tetris (NES), minimal solver onboarding profile. Written from
+  MEASUREMENT ONLY — start state minted by menu experiment (START
+  presses, receipt runs/onboard_wave2/mint_tetris_usa.json). No RAM
+  map, no disassembly, no walkthrough.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Tetris (USA).nes"
+  progress: {source: odometer, axis: x}

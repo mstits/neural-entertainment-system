@@ -1,0 +1,38 @@
+name: "Ice Climber"
+
+rom_path: "roms/Ice Climber.nes"
+start_state_path: "roms/Ice Climber_start.state.bin"
+
+description: |
+  Ice Climber (NES), minimal onboarding profile. Structure copied from
+  configs/rygar.yaml; contents are measurement-only. No RAM map, no
+  disassembly, no walkthrough.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Ice Climber.nes"
+  # Gate 2026-08-24: odometer range x=0, y=0 over 1200 steps under ALL
+  # five hold-drivers tried (right, left, up, A, B) while OAM churned
+  # 421-1187/1199 — camera static, agent active. Axis choice is
+  # therefore unmeasured; x kept as the template default until the
+  # camera is ever observed to move. Receipts:
+  # runs/onboard_wave2/gate_ice_climber*.json
+  progress: {source: odometer, axis: x}

@@ -1,0 +1,31 @@
+name: "The Legend of Zelda"
+
+rom_path: "roms/Legend of Zelda, The (USA) (Rev A).nes"
+start_state_path: "roms/Legend of Zelda, The (USA) (Rev A)_start.state.bin"
+
+description: |
+  Minimal onboarding profile (wave 2), odometer progress gate. Start state
+  verified live-overworld (mint receipt runs/onboard_wave2/mint_legend_of_zelda.json).
+  Not a training profile — configs/zelda.yaml remains the training path.
+
+frame_skip: 4
+
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Legend of Zelda, The (USA) (Rev A).nes"
+  progress: {source: odometer, axis: x}

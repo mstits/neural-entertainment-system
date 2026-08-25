@@ -1,0 +1,40 @@
+name: "Chip 'n Dale Rescue Rangers"
+
+rom_path: "roms/Chip 'n Dale Rescue Rangers (USA).nes"
+rom_hashes:
+  - "785b8003d146cdcc9f3df1c29ea18ead"
+start_state_path: "roms/Chip 'n Dale Rescue Rangers (USA)_start.state.bin"
+
+description: |
+  Chip 'n Dale Rescue Rangers (NES, 1990), solver profile. Minimal
+  onboarding profile written from MEASUREMENT ONLY — no RAM map, no
+  disassembly, no walkthrough. Start state minted 2026-08-24 via the
+  input-divergence probe (receipt: runs/onboard_wave2/
+  mint_chip_n_dale_rescue_rangers.json; presses START,A; verdict_live
+  true, pause freezes).
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Chip 'n Dale Rescue Rangers (USA).nes"
+  # PPU scroll odometer — hardware surface, same purity class as
+  # pixels/OAM. Gate verdict recorded in
+  # runs/onboard_wave2/gate_chip_n_dale_rescue_rangers.json.
+  progress: {source: odometer, axis: x}

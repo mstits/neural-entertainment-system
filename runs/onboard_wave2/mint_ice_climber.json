@@ -1,0 +1,41 @@
+{
+  "rom": "Ice Climber.nes",
+  "state_path": "roms/Ice Climber_start.state.bin",
+  "result": "MINTED",
+  "frames_from_boot_at_capture": 1194,
+  "state_blob_bytes": 21164,
+  "navigation": {
+    "cumulative_sequence_from_power_on": [
+      "120 frames noop",
+      "press START (4f hold, 30f release), 180f noop  -> probe: ram_diff=2, oam_diff=0 (not live)",
+      "press START x2, 180f noop                      -> probe: ram_diff=3, oam_diff=0 (not live)",
+      "press A then START, 180f noop                  -> probe: ram_diff=3, oam_diff=0 (not live)",
+      "press A, 180f noop                             -> probe: ram_diff=31, oam_diff=12 (LIVE)",
+      "150f noop to skip the mountain-intro camera pan, then capture"
+    ],
+    "interpretation": "An early START press most likely began 1-player Game A; the intermediate probes landed inside Ice Climber's long mountain-intro pan (inputs ignored there), so liveness only registered once the pan handed over control. Probes reloaded their pre-probe state, so probe branches added no game-time frames.",
+    "each_probe": "save_worker_state -> 120f holding RIGHT vs reload -> 120f holding LEFT; compare 2KB RAM + OAM shadow page ($0200-$02FF)"
+  },
+  "liveness": {
+    "final_state_probe_60f_right_vs_left": {
+      "ram_diff_bytes": 28,
+      "oam_page_diff_bytes": 10,
+      "pixel_diff_count": 252
+    },
+    "pre_refine_probe_120f_right_vs_left": {
+      "ram_diff_bytes": 31,
+      "oam_page_diff_bytes": 12
+    },
+    "pre_refine_probe_180f_right_vs_left": {
+      "ram_diff_bytes": 50,
+      "oam_page_diff_bytes": 11,
+      "pixel_diff_count": 328
+    },
+    "visual_check": "rendered frames: start state shows player at bottom of mountain 1; after 180f RIGHT vs 180f LEFT the player stands at visibly different ground positions",
+    "pause_check": {
+      "during_intro_pan": {"unpaused_churn_60f": 260, "paused_churn_60f": 13},
+      "from_final_state_idle": {"unpaused_churn_60f": 25, "paused_churn_60f": 16},
+      "note": "START mid-pan froze RAM churn hard (260->13). From the idle final state churn is low either way, so that arm is weak evidence; the input-divergence probe plus visual frames are the primary receipts."
+    }
+  }
+}

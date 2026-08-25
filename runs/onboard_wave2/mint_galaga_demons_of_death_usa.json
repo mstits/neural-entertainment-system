@@ -1,0 +1,124 @@
+{
+  "rom": "Galaga - Demons of Death (USA).nes",
+  "state_path": "roms/Galaga - Demons of Death (USA)_start.state.bin",
+  "state_bytes": 21164,
+  "presses_used": "noop to frame 600 (logo/attract -> title menu '1 PLAYER/2 PLAYERS' on screen), START held 4 frames released 26, then noop settle to frame 1170",
+  "frames_from_boot_at_capture": 1170,
+  "navigation_timeline": {
+    "logo_attract": "frames 0..~500",
+    "title_menu": "on screen by frame 600 (screenshot-verified)",
+    "start_pressed_at": 600,
+    "stage1_entrance_input_lock": "input ignored until ~frame 1110-1170 (probes showed d_move=1 = joypad latch byte only, until frame 1170)"
+  },
+  "liveness": {
+    "probe": "input-divergence: save_worker_state -> 120f hold RIGHT vs 120f hold LEFT (d_move) and 180f RIGHT+A vs LEFT (d_move_fire) -> full-2KB RAM compare -> reload; cross-checked by loading the minted sidecar into NESEnvironment and re-running the branch pair with frame-pixel diff",
+    "pool_d_move_ram_bytes": 7,
+    "pool_d_move_fire_ram_bytes": 136,
+    "diverging_bytes_RvL": [
+      {
+        "addr": "0x0014",
+        "right": 140,
+        "left": 52,
+        "note": "ship x (opposite screen edges)"
+      },
+      {
+        "addr": "0x0016",
+        "right": 132,
+        "left": 44
+      },
+      {
+        "addr": "0x0017",
+        "right": 151,
+        "left": 63
+      },
+      {
+        "addr": "0x0044",
+        "right": 1,
+        "left": 2,
+        "note": "direction/last-input flag"
+      },
+      {
+        "addr": "0x0203",
+        "right": 140,
+        "left": 52,
+        "note": "shadow OAM sprite x"
+      },
+      {
+        "addr": "0x0703",
+        "right": 140,
+        "left": 52
+      },
+      {
+        "addr": "0x0707",
+        "right": 147,
+        "left": 59
+      }
+    ],
+    "env_crosscheck_ram_diff_bytes": 7,
+    "env_crosscheck_divergent_pixels": 224,
+    "interpretation": "no-scroll fixed shooter: pure L/R movement legitimately touches few RAM bytes (ship x + shadow OAM + mirrors) but the values sit at opposite screen edges; firing branch diverges 87-206 bytes across probes",
+    "pause_check": {
+      "churn_unpaused": 148,
+      "churn_paused": 145,
+      "note": "START mid-game does NOT freeze RAM churn (game appears to have no pause); primary divergence probe is decisive"
+    }
+  },
+  "attempt_log": [
+    {
+      "settle_frames_after_start": 60,
+      "ram_diff_120f_RvL": 1,
+      "ram_diff_180f_RAvL": 1,
+      "real_frame": 690
+    },
+    {
+      "settle_frames_after_start": 120,
+      "ram_diff_120f_RvL": 1,
+      "ram_diff_180f_RAvL": 2,
+      "real_frame": 750
+    },
+    {
+      "settle_frames_after_start": 180,
+      "ram_diff_120f_RvL": 1,
+      "ram_diff_180f_RAvL": 1,
+      "real_frame": 810
+    },
+    {
+      "settle_frames_after_start": 240,
+      "ram_diff_120f_RvL": 1,
+      "ram_diff_180f_RAvL": 1,
+      "real_frame": 870
+    },
+    {
+      "settle_frames_after_start": 300,
+      "ram_diff_120f_RvL": 1,
+      "ram_diff_180f_RAvL": 1,
+      "real_frame": 930
+    },
+    {
+      "settle_frames_after_start": 360,
+      "ram_diff_120f_RvL": 1,
+      "ram_diff_180f_RAvL": 1,
+      "real_frame": 990
+    },
+    {
+      "settle_frames_after_start": 420,
+      "ram_diff_120f_RvL": 1,
+      "ram_diff_180f_RAvL": 1,
+      "real_frame": 1050
+    },
+    {
+      "settle_frames_after_start": 480,
+      "ram_diff_120f_RvL": 1,
+      "ram_diff_180f_RAvL": 87,
+      "real_frame": 1110
+    },
+    {
+      "settle_frames_after_start": 540,
+      "ram_diff_120f_RvL": 7,
+      "ram_diff_180f_RAvL": 136,
+      "real_frame": 1170
+    }
+  ],
+  "failed_patterns": "START/A presses at frames 120-360 (logo still animating) produced zero divergence; START registers only once the title menu is up (~frame 600)",
+  "date": "2026-08-24"
+}

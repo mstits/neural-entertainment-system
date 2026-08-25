@@ -1,0 +1,78 @@
+{
+  "rom": "Chip 'n Dale Rescue Rangers (USA).nes",
+  "state_path": "/Users/stits/Documents/macos-emulation-and-training/roms/Chip 'n Dale Rescue Rangers (USA)_start.state.bin",
+  "state_bytes": 144049,
+  "presses_used": "START,A",
+  "press_release_frames": [
+    4,
+    30
+  ],
+  "frames_from_boot": 870,
+  "liveness_at_capture": {
+    "ram_diff_right_vs_left_120f": 215,
+    "oam_shadow_0200_diff_bytes": 108,
+    "pixel_diff_right_vs_left_120f": 97349,
+    "ram_diff_right20_vs_base": 101,
+    "ram_diff_right120_vs_base": 262,
+    "unpaused_60f_ram_churn": 54,
+    "paused_60f_ram_churn": 13,
+    "verdict_live": true,
+    "pause_freezes": true
+  },
+  "attempt_log": [
+    {
+      "pattern": "START",
+      "frames_from_boot_at_probe": 334,
+      "evidence": {
+        "ram_diff_right_vs_left_120f": 3,
+        "oam_shadow_0200_diff_bytes": 1,
+        "pixel_diff_right_vs_left_120f": 96,
+        "ram_diff_right20_vs_base": 61,
+        "ram_diff_right120_vs_base": 55,
+        "unpaused_60f_ram_churn": 43,
+        "paused_60f_ram_churn": 102,
+        "verdict_live": false,
+        "pause_freezes": false
+      }
+    },
+    {
+      "pattern": "START,START",
+      "frames_from_boot_at_probe": 582,
+      "evidence": {
+        "ram_diff_right_vs_left_120f": 1,
+        "oam_shadow_0200_diff_bytes": 0,
+        "pixel_diff_right_vs_left_120f": 0,
+        "ram_diff_right20_vs_base": 56,
+        "ram_diff_right120_vs_base": 62,
+        "unpaused_60f_ram_churn": 60,
+        "paused_60f_ram_churn": 88,
+        "verdict_live": false,
+        "pause_freezes": false
+      }
+    },
+    {
+      "pattern": "START,A",
+      "frames_from_boot_at_probe": 830,
+      "evidence": {
+        "ram_diff_right_vs_left_120f": 216,
+        "oam_shadow_0200_diff_bytes": 108,
+        "pixel_diff_right_vs_left_120f": 97349,
+        "ram_diff_right20_vs_base": 82,
+        "ram_diff_right120_vs_base": 281,
+        "unpaused_60f_ram_churn": 47,
+        "paused_60f_ram_churn": 12,
+        "verdict_live": true,
+        "pause_freezes": true
+      }
+    }
+  ],
+  "minted": "2026-08-24",
+  "method": "capture_start_state-style input-divergence probe (RIGHT vs LEFT 120f from saved state; RAM+OAM-shadow+pixel diff; growth + pause checks)",
+  "fresh_process_verification": {
+    "ram_diff_right_vs_left_120f": 215,
+    "oam_shadow_0200_diff_bytes": 108,
+    "pixel_diff_right_vs_left_120f": 97349,
+    "pool_1worker_load_worker_state": "OK (loaded, stepped 60 frames headless+skip_preprocess, re-saved 144049 bytes)",
+    "visual_check": "rendered frame = in-level gameplay (player sprite, HUD, level geometry), not menu/demo"
+  }
+}

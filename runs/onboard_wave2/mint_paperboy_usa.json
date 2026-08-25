@@ -1,0 +1,35 @@
+{
+  "rom": "roms/Paperboy (USA).nes",
+  "state_path": "roms/Paperboy (USA)_start.state.bin",
+  "status": "MINTED",
+  "provenance": "state file pre-existed (untracked in git, no prior sidecar found); this session verified it live per the input-divergence protocol rather than re-minting",
+  "presses_used": "unknown (pre-existing state); no navigation performed this session",
+  "frames_from_boot": null,
+  "state_bytes": 45741,
+  "state_format_prefix": "NCST\\x01",
+  "liveness": {
+    "probe": "load state into fresh 1-worker Pool (set_headless, skip_preprocess, frame_skip=1); 120f hold RIGHT vs reload + 120f hold LEFT; diff full 2KB RAM + peek_oam 256B",
+    "right_vs_left_120f": {
+      "ram_diff_bytes": 46,
+      "oam_diff_bytes": 29,
+      "zeropage_diff_bytes": 8,
+      "oam_shadow_0x200_diff_bytes": 29
+    },
+    "right_vs_left_300f": {
+      "ram_diff_bytes": 53,
+      "oam_diff_bytes": 29
+    },
+    "A_vs_noop_120f": {
+      "ram_diff_bytes": 45,
+      "oam_diff_bytes": 30
+    },
+    "pause_probe": {
+      "ram_churn_60f_unpaused": 129,
+      "ram_churn_60f_after_START_press": 131,
+      "note": "no freeze observed; Paperboy pause response not confirmed - inconclusive, not treated as evidence either way"
+    },
+    "visual_check": "frame rendered from the state file: live gameplay screen - isometric street, paperboy sprite on bike bottom-right, score 0 top-left, houses along top; not title/demo/menu (and divergence probe rules out attract demo)"
+  },
+  "verdict": "LIVE - inputs control the game (material RAM + OAM divergence on both steer and throw branches)",
+  "verified": "2026-08-24"
+}

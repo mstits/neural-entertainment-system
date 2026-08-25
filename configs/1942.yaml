@@ -1,0 +1,34 @@
+name: "1942"
+
+rom_path: "roms/1942 (Japan, USA).nes"
+rom_hashes:
+  - "4f90905fd77c1c9456bd5dfe1ceddc34"
+start_state_path: "roms/1942 (Japan, USA)_start.state.bin"
+
+description: |
+  1942 (NES), minimal onboarding profile. Generic controller, odometer
+  progress candidate; nothing inherited from another game's tactics.
+
+frame_skip: 4
+
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/1942 (Japan, USA).nes"
+  # Gate trace 2026-08-24: dominant axis is y (x=0, y=787 over 1200
+  # steps) — vertical scroller. runs/onboard_wave2/gate_1942.json
+  progress: {source: odometer, axis: y}

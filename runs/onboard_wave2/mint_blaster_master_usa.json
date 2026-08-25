@@ -1,0 +1,60 @@
+{
+  "rom": "Blaster Master (USA).nes",
+  "state_path": "/Users/stits/Documents/macos-emulation-and-training/roms/Blaster Master (USA)_start.state.bin",
+  "state_bytes": 144049,
+  "frames_from_boot": 822,
+  "presses_used": [
+    "START",
+    "START",
+    "A"
+  ],
+  "attempts": [
+    {
+      "attempt": 1,
+      "button": "START",
+      "frame_after_probe_base": 334,
+      "divergence_ram_bytes": 2,
+      "divergence_oam_page_bytes": 0
+    },
+    {
+      "attempt": 2,
+      "button": "START",
+      "frame_after_probe_base": 548,
+      "divergence_ram_bytes": 3,
+      "divergence_oam_page_bytes": 0
+    },
+    {
+      "attempt": 3,
+      "button": "A",
+      "frame_after_probe_base": 762,
+      "divergence_ram_bytes": 386,
+      "divergence_oam_page_bytes": 146,
+      "confirm_after_settle": {
+        "ram": 387,
+        "oam_page": 146
+      }
+    }
+  ],
+  "liveness": {
+    "probe": "save state; 120 frames RIGHT vs 120 frames LEFT; compare 2KB RAM",
+    "final_ram_divergence_bytes": 387,
+    "final_oam_page_divergence_bytes": 146,
+    "oam_note": "Pool exposes no peek_oam in this build; OAM proxy = RAM $0200-$02FF sprite-shadow (OAM DMA source page)",
+    "pause_check": {
+      "churn_unpaused_bytes": 38,
+      "churn_paused_bytes": 55
+    }
+  },
+  "minted_utc": "2026-08-24",
+  "verification_fresh_pool": {
+    "method": "new Pool, load_worker_state(state file), 120f RIGHT vs 120f LEFT from same snapshot",
+    "ram_divergence_bytes": 388,
+    "oam_page_divergence_bytes": 145,
+    "done_flags": false,
+    "visual": "frame renders confirm side-scrolling gameplay: player vehicle moves and camera scrolls right under RIGHT, vehicle pins to left wall under LEFT"
+  },
+  "caveats": [
+    "pause check inconclusive: 120f RAM churn 38 unpaused vs 55 after START press; START may open an animated subscreen rather than a hard freeze. Primary liveness evidence is the input-divergence probe + visual frames.",
+    "Pool.step_all tuples are (frame, preprocessed, ram, done) 4-tuples; with set_skip_preprocess the preprocessed slot is an empty (0,0) sentinel \u2014 RAM is index 2 (a first probe pass diffed the sentinel and read false zeros)."
+  ]
+}

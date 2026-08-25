@@ -1,0 +1,21 @@
+{
+  "rom": "roms/Legend of Zelda, The (USA) (Rev A).nes",
+  "state_path": "roms/Legend of Zelda, The (USA) (Rev A)_start.state.bin",
+  "provenance": {
+    "source": "reused pre-existing verified state roms/zelda_start_ctrl.state.bin (2026-07-07, wired into configs/zelda.yaml)",
+    "rom_compatibility": "zelda.nes (NES 2.0 header) and Legend of Zelda, The (USA) (Rev A).nes (iNES1 header) have byte-identical PRG/CHR payloads (cmp past 16-byte header); state loads cleanly against the Rev A file",
+    "presses_used": "none this session; state predates this mint and already sits in live overworld gameplay (sword equipped)",
+    "frames_from_boot": "unknown (historical state); N/A for reuse path"
+  },
+  "liveness": {
+    "probe": "input-divergence: load state, 120 frames holding RIGHT vs reload + 120 frames holding LEFT vs reload + 120 frames noop; compare 2KB RAM + full frame",
+    "ram_bytes_diverged_right_vs_left": 166,
+    "ram_bytes_diverged_right_vs_noop": 190,
+    "frame_pixels_diverged_right_vs_left": 35493,
+    "determinism_replay_ram_diff": 0,
+    "pause_probe": {"start_4f_release_30f_then_120f_ram_churn": 49, "unpaused_120f_ram_churn": 132},
+    "visual": "three branches render three distinct overworld screens/positions; HUD LIFE + enemies active",
+    "pool_reverification": "1-worker nes_core Pool (set_headless, set_skip_preprocess) on the final state file reproduces 166/2048 right-vs-left RAM divergence"
+  },
+  "date": "2026-08-24"
+}

@@ -1,0 +1,59 @@
+{
+  "rom": "roms/1942 (Japan, USA).nes",
+  "state_path": "roms/1942 (Japan, USA)_start.state.bin",
+  "status": "MINTED",
+  "presses_used": [
+    "START x1",
+    "START again"
+  ],
+  "winning_attempt": "START again",
+  "frames_from_boot": 546,
+  "liveness": {
+    "divergence_probe": {
+      "total_diff_bytes": 27,
+      "oam_shadow_diff_bytes": 5,
+      "zeropage_diff_bytes": 5,
+      "hold_frames": 120
+    },
+    "pause_probe": {
+      "noop_churn_bytes": 314,
+      "paused_churn_bytes": 315
+    },
+    "file_reverify_fresh_pool": {
+      "total_diff_bytes": 27,
+      "oam_shadow_diff_bytes": 5
+    },
+    "extended_verification": {
+      "right_vs_left_300f": {
+        "total_diff_bytes": 70,
+        "oam_shadow_diff_bytes": 5,
+        "zeropage_diff_bytes": 8
+      },
+      "A_vs_noop_180f": {
+        "total_diff_bytes": 76,
+        "oam_shadow_diff_bytes": 19
+      },
+      "visual": "rendered frames from minted state: gameplay screen (ocean + carrier deck, 1UP score header, R=3); plane centered after 120f noop vs at far-left edge after 120f hold-left",
+      "pause_probe_observation": "START mid-game did not freeze RAM churn (314 vs 315 bytes churned over 60f); no pause response observed - not treated as evidence either way"
+    }
+  },
+  "attempts": [
+    {
+      "attempt": "START x1",
+      "frames_from_boot_at_probe": 334,
+      "total_diff_bytes": 3,
+      "oam_shadow_diff_bytes": 0,
+      "zeropage_diff_bytes": 2,
+      "hold_frames": 120
+    },
+    {
+      "attempt": "START again",
+      "frames_from_boot_at_probe": 548,
+      "total_diff_bytes": 27,
+      "oam_shadow_diff_bytes": 5,
+      "zeropage_diff_bytes": 5,
+      "hold_frames": 120
+    }
+  ],
+  "method": "boot 120f noop; experimental START/A presses (4f press, 30f release); 180f settle; input-divergence probe: save state, 120f hold-right vs 120f hold-left from same state, diff full 2KB RAM + OAM shadow page $0200-$02FF (Pool has no peek_oam; $0200 sprite-DMA shadow is the OAM proxy)."
+}

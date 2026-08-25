@@ -1,0 +1,31 @@
+name: "Bionic Commando"
+
+rom_path: "roms/Bionic Commando (USA).nes"
+start_state_path: "roms/Bionic Commando (USA)_start.state.bin"
+
+description: |
+  Bionic Commando (NES), minimal onboarding profile. Structure copied
+  from the Rygar profile; nothing game-specific authored — progress is
+  the PPU scroll odometer (hardware surface).
+
+frame_skip: 4
+
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Bionic Commando (USA).nes"
+  progress: {source: odometer, axis: x}

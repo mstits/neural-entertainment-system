@@ -1,0 +1,30 @@
+name: "Batman - The Video Game"
+
+rom_path: "roms/Batman - The Video Game (USA).nes"
+start_state_path: "roms/Batman - The Video Game (USA)_start.state.bin"
+
+description: |
+  Batman - The Video Game (NES), minimal onboarding profile. Generic
+  controller, odometer progress source. No game internals.
+
+frame_skip: 4
+
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Batman - The Video Game (USA).nes"
+  progress: {source: odometer, axis: x}

@@ -1,0 +1,42 @@
+{
+  "rom": "Arkanoid (USA).nes",
+  "state_path": "/Users/stits/Documents/macos-emulation-and-training/roms/Arkanoid (USA)_start.state.bin",
+  "presses_used": "cumulative from boot: START(x1) @f120-334, START(x2) @f334-582, A(x1) @f582-796; each press 4f held / 30f release, 180f noop settle after each attempt (attempts share one boot, so all presses compounded)",
+  "frames_from_boot": 856,
+  "liveness": {
+    "probe": "save state; 120f hold RIGHT vs 120f hold LEFT; diff 2KB RAM",
+    "ram_diff_bytes": 192,
+    "oam_shadow_page_0x200_diff_bytes": 74,
+    "verified_from_written_file": {
+      "ram_diff_bytes": 192,
+      "oam_shadow_page_diff_bytes": 74
+    },
+    "pause_check": {
+      "ram_churn_60f_unpaused": 52,
+      "ram_churn_60f_paused": 16
+    }
+  },
+  "attempt_log": [
+    {
+      "pattern": "START",
+      "ram_diff": 4,
+      "oam_shadow_diff": 0,
+      "frames_from_boot": 334
+    },
+    {
+      "pattern": "START,START",
+      "ram_diff": 19,
+      "oam_shadow_diff": 7,
+      "frames_from_boot": 582
+    },
+    {
+      "pattern": "A",
+      "ram_diff": 38,
+      "oam_shadow_diff": 10,
+      "frames_from_boot": 796
+    }
+  ],
+  "state_bytes": 29357,
+  "minted": "2026-08-24",
+  "visual_check": "frame rendered from written state: Round 1 playfield, full brick wall, paddle bottom, ball in flight (live, launched)"
+}

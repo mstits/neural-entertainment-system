@@ -1,0 +1,31 @@
+name: "Arkanoid"
+
+rom_path: "roms/Arkanoid (USA).nes"
+start_state_path: "roms/Arkanoid (USA)_start.state.bin"
+
+description: |
+  Arkanoid (NES), minimal onboarding profile. Structure copied from
+  configs/rygar.yaml; no game-specific tuning yet.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Arkanoid (USA).nes"
+  progress: {source: odometer, axis: x}

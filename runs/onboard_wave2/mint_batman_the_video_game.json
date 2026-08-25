@@ -1,0 +1,78 @@
+{
+  "rom": "roms/Batman - The Video Game (USA).nes",
+  "state_path": "roms/Batman - The Video Game (USA)_start.state.bin",
+  "status": "MINTED",
+  "presses_used": [
+    "start",
+    "start",
+    "start",
+    "start",
+    "start"
+  ],
+  "frames_from_boot_at_capture": 1190,
+  "liveness": {
+    "probe": "save/right-120f vs reload/left-120f RAM comparison",
+    "ram_diverging_bytes": 278,
+    "oam_page_diverging_bytes": 140,
+    "threshold_ram_bytes": 20,
+    "pause_probe": {
+      "unpaused_60f_churn_bytes": 93,
+      "paused_60f_churn_bytes": 227,
+      "note": "anomalous: START at capture state did not reduce 60f RAM churn (possibly no pause or different pause timing in this title); not load-bearing \u2014 divergence probe + visual check are the evidence"
+    },
+    "file_reverify_fresh_pool": {
+      "date": "2026-08-24",
+      "ram_diverging_bytes": 278,
+      "zeropage_diverging_bytes": 64,
+      "oam_diverging_bytes": 140,
+      "oam_shadow_0200_diverging_bytes": 140,
+      "hold_frames": 120,
+      "pause_probe": {
+        "noop_churn_60f": 93,
+        "start_then_noop_churn_60f": 163,
+        "note": "still anomalous (churn not reduced by START); matches original mint, not load-bearing"
+      },
+      "note": "independent fresh 1-worker Pool loaded the state file from disk; right-vs-left 120f divergence matches original mint byte-for-byte (278 RAM / 140 OAM)"
+    }
+  },
+  "attempt_log": [
+    {
+      "round": 1,
+      "press": "start",
+      "frames_from_boot": 334,
+      "ram_diverging_bytes": 1,
+      "oam_page_diverging_bytes": 0
+    },
+    {
+      "round": 2,
+      "press": "start",
+      "frames_from_boot": 548,
+      "ram_diverging_bytes": 1,
+      "oam_page_diverging_bytes": 0
+    },
+    {
+      "round": 3,
+      "press": "start",
+      "frames_from_boot": 762,
+      "ram_diverging_bytes": 1,
+      "oam_page_diverging_bytes": 0
+    },
+    {
+      "round": 4,
+      "press": "start",
+      "frames_from_boot": 976,
+      "ram_diverging_bytes": 1,
+      "oam_page_diverging_bytes": 0
+    },
+    {
+      "round": 5,
+      "press": "start",
+      "frames_from_boot": 1190,
+      "ram_diverging_bytes": 278,
+      "oam_page_diverging_bytes": 140
+    }
+  ],
+  "minted": "2026-08-24T18:08:24",
+  "visual_verification": "rendered frames from the minted state: t0 = Stage 1 side-scroller gameplay (Batman sprite left, enemy right, BATMAN health HUD); hold-right 90f = Batman walks right with screen scroll; hold-left 90f = Batman pinned at left wall, enemy advances. Branches visibly diverge = live gameplay, not demo.",
+  "method": "1-worker nes_core Pool, headless+skip_preprocess, frame_skip=1; boot 120f noop; per round: press START 4f / release 30f, wait 180f, then input-divergence probe (save_worker_state; 120f hold-right vs reload + 120f hold-left; full-2KB RAM diff, OAM shadow page $0200-$02FF counted separately). Purity: experimental menu navigation only, no external game knowledge."
+}

@@ -1,0 +1,41 @@
+{
+  "rom": "Tetris (USA).nes",
+  "presses_used": [
+    "START",
+    "START",
+    "START",
+    "START",
+    "START"
+  ],
+  "press_cadence": "boot noop x120, then per press: START x4, noop x30, noop x180",
+  "menu_route": "legal(timer) -> title -> game-type(A-TYPE default) -> level select(0 default) -> gameplay",
+  "frames_from_boot": 1190,
+  "probe": "input-divergence, 3600-frame branches from saved state",
+  "liveness": {
+    "branch_frames": 3600,
+    "d_right_vs_left": 61,
+    "d_down_vs_noop": 45,
+    "d_right_vs_base": 121,
+    "d_noop_vs_base": 108,
+    "d_paused_vs_noop": 106,
+    "d_paused_vs_base": 77,
+    "oam_right_vs_left": 0,
+    "oam_down_vs_noop": 0
+  },
+  "live": true,
+  "state_path": "/Users/stits/Documents/macos-emulation-and-training/roms/Tetris (USA)_start.state.bin",
+  "state_bytes": 29361,
+  "reload_from_disk_churn_240f": 60,
+  "reverified_2026-08-24": {
+    "probe": "input-divergence, 120-frame branches from state on disk, frame_skip=1",
+    "ram_diff_right_vs_left": 10,
+    "ram_diff_right_vs_noop": 17,
+    "ram_diff_down_vs_noop": 40,
+    "oam_diff_right_vs_left": 4,
+    "oam_diff_down_vs_noop": 12,
+    "ram_diff_pause_vs_noop_120f": 87,
+    "ram_churn_paused_120f": 4,
+    "ram_churn_unpaused_120f": 33,
+    "verdict": "live"
+  }
+}

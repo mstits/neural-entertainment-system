@@ -1,0 +1,31 @@
+name: "Galaga - Demons of Death"
+
+rom_path: "roms/Galaga - Demons of Death (USA).nes"
+start_state_path: "roms/Galaga - Demons of Death (USA)_start.state.bin"
+
+description: |
+  Galaga - Demons of Death (NES), minimal onboarding profile for the
+  odometer progress gate. Structure copied from configs/rygar.yaml;
+  no game knowledge injected.
+
+frame_skip: 4
+
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Galaga - Demons of Death (USA).nes"
+  progress: {source: odometer, axis: x}

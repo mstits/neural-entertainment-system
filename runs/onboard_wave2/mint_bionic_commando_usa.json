@@ -1,0 +1,29 @@
+{
+  "rom": "Bionic Commando (USA).nes",
+  "minted": "2026-08-24",
+  "reminted": true,
+  "remint_reason": "prior start state FAILED the input-divergence probe on re-verification (right120 vs left120 = 0 RAM bytes, 0 OAM bytes via both Pool and NESEnvironment load paths); it sat on a dialogue/menu screen where only A diverged (761 bytes) and idling drifted non-interactive. Prior file backed up to roms/Bionic Commando (USA)_start.state.bin.bak-notlive-20260824",
+  "presses_used": ["START", "START", "A x55 (4-frame press, 30-frame release; long dialogue screens)"],
+  "frames_from_boot": 2098,
+  "liveness": {
+    "mint_env_dir_right90_vs_left90_ram_bytes": 180,
+    "mint_env_right20_vs_base_ram_bytes": 52,
+    "mint_env_right90_vs_base_ram_bytes": 209,
+    "mint_env_oam_right_vs_left_bytes": 73,
+    "verify_pool_right120_vs_left120_ram_bytes": 260,
+    "verify_pool_right120_vs_left120_oam_bytes": 72,
+    "verify_pool_right120_vs_noop120_ram_bytes": 149,
+    "verify_env_right120_vs_left120_ram_bytes": 260,
+    "verify_env_right120_vs_left120_oam_bytes": 72
+  },
+  "pause_check": {
+    "ram_churn_30f_unpaused": 106,
+    "ram_churn_30f_after_start_press": 74,
+    "note": "START reduces but does not freeze churn; divergence probe is the liveness gate"
+  },
+  "live": true,
+  "frame_png": "runs/onboard_wave2/mint_bionic_commando_usa_frame.png",
+  "frame_shows": "player parachuting into first area (live gameplay)",
+  "state_path": "/Users/stits/Documents/macos-emulation-and-training/roms/Bionic Commando (USA)_start.state.bin",
+  "state_bytes": 21169
+}

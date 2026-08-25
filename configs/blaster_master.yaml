@@ -1,0 +1,38 @@
+name: "Blaster Master"
+
+rom_path: "roms/Blaster Master (USA).nes"
+rom_hashes:
+  - "9c96408f7a7aa0da2c3b723759699506"
+start_state_path: "roms/Blaster Master (USA)_start.state.bin"
+
+description: |
+  Blaster Master (NES, 1988), minimal onboarding profile. Written from
+  MEASUREMENT ONLY — start state minted 2026-08-24 by menu experiment
+  (START, START, A; receipt runs/onboard_wave2/mint_blaster_master_usa.json).
+  Fresh-pool verification shows side-scrolling gameplay with the camera
+  tracking the vehicle. No RAM observables discovered yet; progress is the
+  PPU scroll odometer, a hardware surface in the same purity class as
+  pixels/OAM.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Blaster Master (USA).nes"
+  progress: {source: odometer, axis: x}
