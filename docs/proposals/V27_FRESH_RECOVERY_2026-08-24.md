@@ -299,3 +299,292 @@ amending this one — this document does not mutate silently.
   `runs/mario_1_1_v27_seed{0..3}.log`
 - Gate evals: `runs/v27_fresh_recovery/eval_seed{N}_{ckpt}_{es}.json`
 - Verdict: appended to THIS file, per house style.
+
+---
+
+# AMENDMENT 1 (registered 2026-08-24, before any v27 training ran) — DR v27 verdict: Decision (B). ReDo is mandatory; v27 launches as a single ReDo-on arm.
+
+The DR v27 consultation answered
+(`~/Documents/research-consult/responses/20260825T052330Z_v27_isolated_optimum.md`;
+line references below are to that file). Its verdict is **Decision (B)**,
+and this amendment is the registration the parent document promised for
+that case. The parent document above is unchanged; where this amendment
+and the parent conflict, this amendment governs.
+
+## B1. The DR's operative sentences (quoted, with line references)
+
+The verdict:
+
+> "Therefore, this report argues exclusively for **Decision (B)**: The
+> autopsy and established literature force exactly one config-only
+> change to the registered design before budget expenditure. The v27
+> design must integrate a targeted plasticity-preserving
+> regularizer—specifically, the Recycling Dormant Neurons (ReDo)
+> mechanism—into the fresh-run curriculum." (L122)
+
+The reason the unmodified design may not spend the budget:
+
+> "Launching the fresh-run interleave at 48k as currently registered
+> will almost certainly yield an uninterpretable, predictable-null
+> result." (L120)
+
+> "To accurately and definitively test whether the 48k budget is
+> sufficient, the experimental design must guarantee that all 48k
+> parameters remain fully active and available for gradient updates
+> throughout the entire 250-iteration lifecycle." (L207)
+
+The mandate is ONE change, and it is this one:
+
+> "the autopsy and literature mandate ONE specific config-only change
+> to the registered design: The integration of the Recycling Dormant
+> Neurons (ReDo) mechanism into the fresh-run configuration." (L227)
+
+The mechanism, as the DR specifies it (L233–L239):
+
+> "**Check Interval ($F$):** Every $F$ gradient update steps (e.g.,
+> every $1,000$ updates), evaluate the neural network to identify
+> dormancy across all layers" (L233)
+
+> "**Dormancy Threshold ($\tau$):** A neuron $i$ in layer $l$ is
+> strictly classified as dormant if its mean absolute activation across
+> a sample batch of states is less than a minimal threshold relative to
+> the layer's maximum activation. The standard threshold $\tau$ should
+> be set between $0.025$ and $0.1$" (L234)
+
+> "Reinitialize its incoming weights and bias by sampling from the
+> original initialization distribution (e.g., Kaiming Uniform)" (L236)
+
+> "Set its outgoing weights exactly to $0.0$" (L237)
+
+> "Because the outgoing weights are explicitly zeroed out, the
+> immediate forward-pass output of the network remains mathematically
+> identical before and after the ReDo step" (L238)
+
+## B2. Decided arm structure: ONE arm, ReDo-on, 4 seeds x 250 iters
+
+The DR does not ask for a ReDo-off arm or a 2x2. Its outcome analysis
+(section 6) reads entirely off "the ReDo-enabled v27 run" — "If the
+ReDo-enabled v27 run achieves the $\ge 0.80$ PASS threshold" (L249),
+"If the ReDo-enabled v27 run fails to clear the $0.767$ barrier"
+(L257) — and it classifies the ReDo-off design as unspendable:
+"Launching v27 as registered is a computational hazard that will yield
+an uninterpretable failure driven by primacy bias and dormant neurons"
+(L273). A ReDo-off control arm would be 4 x 250 iters spent producing
+exactly the predictable null the DR forbids.
+
+**Registered arm structure: the parent document's single arm, amended
+in place to ReDo-on.** Seeds 0–3, 250 iters each, merged 785-rung
+ladder, banked recipe otherwise verbatim, gate unchanged (PASS >= 0.80
+/ FAIL <= 0.767 / MARGINAL between, warp_rate 0.0). No second arm, no
+extra budget.
+
+The in-run substitute for a ReDo-off control is the dormancy telemetry
+itself (B5 read #4): if cumulative recycles over a run are ~0, ReDo
+was inert on this architecture and that run is behaviorally identical
+to the parent registration's arm — the attribution question
+("interleave or ReDo?") answers itself from the log, at zero extra
+budget. This matters because our net is SiLU with pre-activation
+LayerNorm, not the plain-ReLU stacks of the dormancy literature —
+hard-zero dormancy may be rarer here, and the telemetry measures
+whether the DR's confound ever materialized rather than assuming it.
+Either way the fork stays interpretable: recycles > 0 means the
+confound existed and was controlled; recycles ~0 means it never arose.
+
+## B3. The exact ReDo mechanism (registered)
+
+Implementation surface: `src/training/trainer.py` (this wave's file)
+plus the config schema defaults. Nothing in `scripts/go_explore_solve.py`
+or `nes_core` is touched. Scope: the policy net only (`TilePolicyNetwork`:
+fc1 712→64, LayerNorm, SiLU; fc2 64→32, LayerNorm, SiLU; actor 32→6;
+critic 32→1; ~48.1k params). The TileRND predictor is NOT in scope —
+it is exploration machinery, not the capacity under test.
+
+Where the DR pins a value, we take it. Where the DR gives a range, an
+"e.g.", or is silent, we take the literature-standard value and mark
+the choice **[ours, not DR's]**. Every such mark below is a registered
+decision made 2026-08-24, before launch.
+
+1. **Dormancy statistic.** For hidden unit $i$ of layer $l$ (fc1's 64
+   post-SiLU outputs; fc2's 32 post-SiLU outputs), over a sample batch:
+   $s_i^l = \mathbb{E}_x[|h_i^l(x)|] \,/\, \frac{1}{H_l}\sum_k \mathbb{E}_x[|h_k^l(x)|]$
+   — mean absolute post-activation, normalized by the **layer mean**.
+   Dormant iff $s_i^l \le \tau$. **[ours, not DR's — a deliberate
+   correction]**: the DR's L234 says "relative to the layer's maximum
+   activation"; the ReDo paper (Sokar et al. 2023, Definition 1)
+   normalizes by the layer's mean score, and its published thresholds
+   (including the 0.025–0.1 range the DR itself cites) are calibrated
+   to that normalization. We implement the paper's statistic so the
+   DR's own threshold range means what it meant in the literature.
+2. **Threshold.** $\tau = 0.025$. Inside the DR's mandated 0.025–0.1
+   range (L234); the exact point is the Sokar et al. default
+   **[ours, not DR's]**.
+3. **Recycle schedule.** The dormancy check runs at the END of every
+   trainer iteration that performed a gradient update, immediately
+   after the PPO/BC update and before checkpointing — i.e. $F \approx$
+   2,400 gradient updates (1024 x 60 rollout, minibatch 256, 10
+   epochs). The DR's L233 gives "$F$ gradient update steps (e.g.,
+   every $1,000$ updates)"; the iteration boundary is the nearest
+   audit-friendly hook (it is where the `[backward]` line already
+   prints) and the same order of magnitude **[ours, not DR's]**.
+   Constant schedule, no annealing, active from the first gradient
+   iteration through iter 250. Iterations with no gradient step (the
+   `warmup_gens_ga_only: 10` GA-only phase) log a skip and are not
+   checks — recycling under GA mutation would fight elite selection
+   and there is no optimizer state to handle **[ours — DR silent on
+   GA warmup]**.
+4. **Sample batch for the statistic.** min(4096, valid steps) states
+   drawn uniformly from the just-collected rollout buffer (valid,
+   non-padded steps only) — on-distribution by construction, zero
+   extra env interaction. The DR's L234 says only "a sample batch of
+   states" **[ours, not DR's]**.
+5. **What resets, per dormant unit $i$.**
+   - Incoming weights + bias: fc1 unit → `fc1.weight[i,:]`,
+     `fc1.bias[i]`; fc2 unit → `fc2.weight[i,:]`, `fc2.bias[i]`.
+     Re-sampled Kaiming-uniform (the DR's own example at L236). Note
+     our nets initialize orthogonal-with-gain-√2; a per-row orthogonal
+     re-sample is ill-defined, so the row is drawn Kaiming-uniform at
+     the layer's fan-in **[ours — forced by the architecture]**.
+   - LayerNorm affine for that unit: `norm1.weight[i]=1, norm1.bias[i]=0`
+     (resp. `norm2`) **[ours — DR silent; the paper's nets have no
+     pre-activation LN]**.
+   - Outgoing weights to exactly 0.0 (L237): fc1 unit →
+     `fc2.weight[:,i] = 0`; fc2 unit → `actor.weight[:,i] = 0` AND
+     `critic.weight[:,i] = 0`.
+   - Actor/critic head units themselves are never recycled. The DR's
+     L233 says "across all layers", but resetting a head row changes
+     the network output directly, violating the DR's own
+     identity-preservation requirement (L238); heads are outputs, not
+     hidden neurons, and the ReDo paper recycles hidden units only
+     **[ours, not DR's — forced by the DR's step 4]**.
+6. **Optimizer-state handling.** For every parameter entry touched in
+   (5) — incoming row, bias element, LN affine entries, outgoing
+   column entries — the Adam moments (`exp_avg`, `exp_avg_sq`) in the
+   persistent `_ppo_optimizer` are zeroed for exactly those slices.
+   Per-tensor `step` counters are left untouched (they are per-tensor,
+   not per-element; the bias-correction skew on recycled entries is
+   the ReDo-paper-standard tradeoff). The DR is silent on optimizer
+   state; stale Adam moments on re-initialized weights would apply a
+   large phantom update on the next step, so zeroing is the
+   literature-standard handling **[ours, not DR's]**. Interactions
+   with existing machinery: BC-replay's registered optimizer clear
+   (parent recipe, `bc_replay_every_gens: 20`) supersedes this on
+   those iterations — a full clear is a superset of the slice-zeroing;
+   the anti-collapse rollback (which restores a snapshot and rebuilds
+   the optimizer) likewise supersedes, and recycle counters simply
+   continue counting.
+7. **Identity-preservation caveat, registered honestly.** The DR's
+   L238 claim of mathematically identical output holds for plain MLPs.
+   Our net has PRE-ACTIVATION LayerNorm: re-initializing fc1 row $i$
+   changes pre-activation $i$, which shifts `norm1`'s per-sample
+   mean/variance and therefore perturbs the OTHER 63 units' normalized
+   values even though unit $i$'s outgoing weights are zero. The
+   perturbation is O(1/64) per recycled unit but is not zero, and this
+   artifact's greedy margins are knife-edge. Therefore every recycle
+   event logs, on the same sample batch, the pre/post greedy-argmax
+   agreement and max$|\Delta$logit$|$ (B6). This is a measured
+   diagnostic, not a silent assumption.
+
+## B4. Config knobs (default OFF — opt-in, like every arm)
+
+New `reinforce:` keys, schema defaults exactly as shown; an absent
+block means disabled everywhere. The banked config and every non-v27
+config are untouched and behave bit-identically:
+
+```yaml
+reinforce:
+  redo_enabled: false          # DEFAULT OFF. v27 seed configs set true.
+  redo_tau: 0.025              # dormancy threshold (DR range 0.025-0.1)
+  redo_check_every_iters: 1    # check cadence, trainer iterations
+  redo_sample_batch: 4096      # states drawn from the current rollout
+  redo_reset_optimizer_moments: true
+```
+
+The parent "Exact config diff" section is amended: the four
+`configs/mario_1_1_v27_seed{0,1,2,3}.yaml` files are regenerated to
+carry, in addition to the three registered keys (name, description,
+states_dir), the full `redo_*` block above with `redo_enabled: true`
+— written out explicitly (strict-config style), not left to schema
+defaults. The byte-identical-modulo-seed check re-runs on the
+regenerated four before launch. Everything else remains the banked
+recipe verbatim; ReDo is now the SECOND registered variable alongside
+the merged ladder, per the DR's mandate that the pair travel together.
+
+## B5. Gate and outcome mapping (numbers unchanged; meanings updated per DR §6)
+
+Gate numerically unchanged: best-of-4 pooled honest greedy, PASS
+>= 0.80, FAIL <= 0.767, MARGINAL in between, warp_rate 0.0, artifact
+selection and eval protocol exactly as the parent registers them.
+Verdict text is updated to the DR's mapping:
+
+- **PASS (>= 0.80)**: "Hypothesis A (Consolidation) is CONFIRMED"
+  and "Hypothesis B (Parameter Budget) is FALSIFIED" (L251–L252) —
+  the isolated optimum is a property of post-hoc consolidation;
+  recovery-in-curriculum-from-the-start plus plasticity preservation
+  transfers the slice at 48k; post-hoc fine-tuning is retired on this
+  stack and from-scratch curricula with embedded edge cases become
+  the recipe shape.
+- **FAIL (<= 0.767)**: "Because ReDo mathematically guarantees that
+  all 48k parameters were active and non-dormant when the agent
+  encountered the recovery bands, the failure cannot be attributed to
+  primacy bias, in-run plasticity loss, or warm-start interference
+  ... the 48k capacity represents a hard, fundamental ceiling" (L259).
+  Hypothesis B takes the floor; v28 is a capacity experiment;
+  consolidation is moot at 48k (L260). Caveat registered in B2: a
+  FAIL whose recycle telemetry shows ~0 recycles all run means the
+  dormancy confound never materialized on this architecture — the
+  capacity verdict stands (plasticity was measured-intact, not merely
+  assumed-intact), and the mechanism read must say so explicitly.
+- **MARGINAL**: unchanged from the parent — report per-seed spread,
+  no relaunch or extension without a further DR round.
+
+Mechanism reads: the parent's three reads stand, plus:
+
+4. **Dormancy/recycle telemetry**: per-layer dormant fraction and
+   recycle counts per iteration; cumulative recycles per seed; the
+   overlay of recycle events against the ladder cursor (do recycles
+   cluster where the DR predicts — at recovery-band stalls?); and the
+   identity-preservation series (agreement, max|Δlogit|) from B3.7.
+
+## B6. Mechanism-armed log evidence + VOID amendments
+
+Registered log lines (grep targets, exact prefixes):
+
+- Startup, treatment runs: `[redo] ENABLED tau=0.025 every_iters=1
+  scope=fc1,fc2 sample=4096 reset_moments=true`
+- Startup, any run with the block absent/false: `[redo] disabled`
+- Per check: `[redo] iter N: dormant fc1 a/64 fc2 b/32 recycled r
+  cum C agree A max_dlogit D`
+- GA-warmup skip: `[redo] iter N: skipped (no gradient step)`
+
+VOID conditions amended:
+
+- **V2 (preflight) — extended.** The seed-0 pilot log must contain the
+  `[redo] ENABLED tau=0.025` line; VOID if it is missing, or if any
+  treatment-run log contains `[redo] disabled`.
+- **V7 — ReDo forced-recycle preflight (new; the
+  mechanism-armed-but-inert class).** A 2-iter pilot at registered
+  τ=0.025 will recycle ~nothing (a fresh net has no dormant units), so
+  V2 alone cannot prove the recycle path executes. Before the 4-seed
+  spend, one additional 2-iter pilot runs on a THROWAWAY copy of the
+  seed-0 profile with `redo_tau: 0.5` pinned (forcing recycles by
+  construction — mirrors V3's throwaway `tau_init` pin). VOID unless
+  that pilot shows: (a) at least one `[redo] iter ... recycled r` line
+  with r >= 1; (b) agreement >= 0.98 and finite (non-NaN) max_dlogit
+  at every recycle event — the measured bound on B3.7's LayerNorm
+  caveat; (c) a post-pilot parameter diff confirming the recycled
+  units' outgoing columns are exactly zero at the recycle boundary.
+  Real runs then launch from the registered, unmodified configs at
+  τ=0.025. In real runs the agreement series is a monitored
+  diagnostic (B5 read #4), not a VOID condition — behavior under
+  recycling is the experiment, and only missing-mechanism evidence
+  voids.
+- **V1, V3–V6**: unchanged.
+
+Receipts additions: forced-recycle pilot under
+`runs/v27_fresh_recovery/preflight/redo_forced/`; the per-run redo
+telemetry lives in the existing training logs
+(`runs/mario_1_1_v27_seed{0..3}.log`).
+
+Sequencing unchanged from the parent: phase 0 and the V2/V3/V7 pilots
+spend minutes; the 4 x 250 launch happens only after all preflights
+pass on the regenerated ReDo-on configs.

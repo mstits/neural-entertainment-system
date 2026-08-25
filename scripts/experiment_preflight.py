@@ -46,6 +46,15 @@ MECHANISMS = {
         "profile_path": ("reinforce", "hazard_mask", "enabled"),
         "armed": r"\[hazard-mask\] ARMED",
     },
+    # V27 AMENDMENT 1 (V2-extended): a ReDo treatment run must show the
+    # exact registered armed line, and must NOT contain the disabled
+    # line anywhere (a supervisor relaunch that lost the flag would
+    # print it — mechanism-armed-but-inert class).
+    "redo": {
+        "profile_path": ("reinforce", "redo_enabled"),
+        "armed": r"\[redo\] ENABLED tau=0\.025",
+        "forbidden": r"\[redo\] disabled",
+    },
 }
 
 
@@ -92,7 +101,13 @@ def assess_mechanisms(profile: dict, log_text: str) -> tuple[bool, list]:
     for name, spec in MECHANISMS.items():
         if not profile_flag(profile, spec["profile_path"]):
             continue
-        if re.search(spec["armed"], log_text):
+        forbidden = spec.get("forbidden")
+        if forbidden and re.search(forbidden, log_text):
+            ok = False
+            notes.append(f"{name}: FORBIDDEN LINE {forbidden!r} PRESENT "
+                         f"IN LOG — the mechanism reports itself off in "
+                         f"a treatment run")
+        elif re.search(spec["armed"], log_text):
             notes.append(f"{name}: armed evidence present")
         else:
             ok = False

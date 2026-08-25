@@ -56,7 +56,13 @@ KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     "lr", "max_steps_per_traj", "num_envs", "num_instances",
     "pace_multiplier", "panic_isolation", "plr_enabled", "ppo_clip_eps",
     "ppo_minibatch_size", "preprocess_f16", "preserve_elite_diversity",
-    "prmdp", "recurrent", "recurrent_env_minibatch", "rnd_intrinsic_coef",
+    "prmdp", "recurrent", "recurrent_env_minibatch",
+    # ReDo — Recycling Dormant neurons (V27_FRESH_RECOVERY_2026-08-24.md
+    # AMENDMENT 1, B4). Default OFF; the v27 seed configs set
+    # redo_enabled: true explicitly.
+    "redo_check_every_iters", "redo_enabled", "redo_reset_optimizer_moments",
+    "redo_sample_batch", "redo_tau",
+    "rnd_intrinsic_coef",
     "rnd_loss_coef", "rnd_predictor_update_fraction", "rollout_steps",
     "sam_rho", "sil", "smb_curriculum", "steps", "sticky_action_prob",
     "sticky_episode_boundary_reset", "substage_ladder",

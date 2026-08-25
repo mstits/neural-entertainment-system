@@ -72,6 +72,7 @@ from src.training.genetic_algorithm import GeneticAlgorithm, Genome
 from src.training.ppo import (
     batched_gae, demo_anchor_loss, fold_intrinsic_into_rewards, ppo_losses,
 )
+from src.training.redo import maybe_check_and_recycle as _redo_maybe_check
 from src.training.metrics_sink import MetricsSink
 from src.utils.reward_functions import build_reward_function
 
@@ -926,6 +927,27 @@ class Trainer:
         # agent regresses to "random RL" performance — the "started
         # strong then tanked" pattern. Default 0 = disabled.
         self.warmup_gens_ga_only: int = int(rl_cfg.get("warmup_gens_ga_only", 0))
+        # ReDo — Recycling Dormant neurons (Sokar et al. 2023). Registered:
+        # docs/proposals/V27_FRESH_RECOVERY_2026-08-24.md AMENDMENT 1
+        # (B3 mechanism, B4 knobs, B6 armed-evidence log lines). Default
+        # OFF: an absent block or redo_enabled: false leaves every
+        # existing run bit-identical — the end-of-iteration hook returns
+        # before touching any RNG stream. Scope is the feedforward tile
+        # policy's hidden units (fc1/fc2) in the vanilla_ppo loop only;
+        # heads and the RND predictor are never recycled. The cumulative
+        # recycle counter is telemetry (B5 read #4), in-memory per run.
+        self.redo_enabled: bool = bool(rl_cfg.get("redo_enabled", False))
+        self.redo_tau: float = float(rl_cfg.get("redo_tau", 0.025))
+        self.redo_check_every_iters: int = max(
+            1, int(rl_cfg.get("redo_check_every_iters", 1))
+        )
+        self.redo_sample_batch: int = max(
+            1, int(rl_cfg.get("redo_sample_batch", 4096))
+        )
+        self.redo_reset_optimizer_moments: bool = bool(
+            rl_cfg.get("redo_reset_optimizer_moments", True)
+        )
+        self._redo_cum_recycled: int = 0
         # BC pretraining epoch count, threadable from YAML so different
         # games can use different schedules. Constructor still accepts
         # bc_epochs and YAML overrides it when set. Higher values mean
@@ -1146,6 +1168,16 @@ class Trainer:
         # trainer_mode: ga_ppo explicitly).
         _trainer_mode = str(rl_cfg.get("trainer_mode", "vanilla_ppo")).lower()
         self.vanilla_ppo_mode: bool = (_trainer_mode == "vanilla_ppo")
+        if self.redo_enabled and not self.vanilla_ppo_mode:
+            # Mechanism-armed-but-inert guard: ReDo hooks the vanilla_ppo
+            # iteration loop only. A treatment run in any other mode never
+            # prints the `[redo] ENABLED` line, so the V2 preflight voids
+            # it rather than reading a silent no-op as a result.
+            log.warning(
+                "[redo] configured but INERT: redo_enabled requires "
+                "trainer_mode=vanilla_ppo (got %s) — no dormancy checks "
+                "will run", _trainer_mode,
+            )
         if _trainer_mode in ("ga_ppo", "pure_ppo"):
             log.warning(
                 "trainer_mode=%s is the LEGACY GA path (plateaus on most "
@@ -3041,6 +3073,14 @@ class Trainer:
                 "Gen %d in GA-only warmup (%d/%d) — skipping PPO update",
                 gen, self.ga.generation, self.warmup_gens_ga_only,
             )
+            if self.redo_enabled:
+                # Registered skip line (AMENDMENT 1 B3.3/B6): a GA-only
+                # warmup generation performs no gradient step, so no
+                # dormancy check runs and there is no optimizer state
+                # to handle.
+                log.info(
+                    "[redo] iter %d: skipped (no gradient step)", gen
+                )
         if self.reinforce_enabled and not in_warmup:
             # Rank by fitness; pick top_k with non-trivial trajectories.
             indexed = list(enumerate(pop))
@@ -4851,6 +4891,39 @@ class Trainer:
         if self._ppo_optimizer is None:
             self._ppo_optimizer = self._build_ppo_optimizer(net)
         optimizer = self._ppo_optimizer
+
+        # ===== ReDo startup (V27_FRESH_RECOVERY AMENDMENT 1, B6) =====
+        # The two startup lines below are exact grep targets for the V2
+        # preflight: a treatment run must show `[redo] ENABLED tau=...`
+        # and is VOID if its log contains `[redo] disabled`. Do not
+        # reword. An armed-but-unsupported architecture therefore prints
+        # `[redo] disabled` (plus a loud warning) so the preflight voids
+        # the run instead of a silent no-op passing as a treatment.
+        redo_on = self.redo_enabled
+        if redo_on and not (
+            self._is_tile_mode and not self._recurrent
+            and all(
+                hasattr(net, a)
+                for a in ("fc1", "norm1", "fc2", "norm2", "actor", "critic")
+            )
+        ):
+            log.warning(
+                "[redo] configured but UNSUPPORTED here: ReDo needs the "
+                "feedforward tile policy (fc1/norm1/fc2/norm2 + actor/"
+                "critic heads); encoder=%s recurrent=%s net=%s",
+                self.encoder_kind, self._recurrent, type(net).__name__,
+            )
+            redo_on = False
+        if redo_on:
+            log.info(
+                "[redo] ENABLED tau=%g every_iters=%d scope=fc1,fc2 "
+                "sample=%d reset_moments=%s",
+                self.redo_tau, self.redo_check_every_iters,
+                self.redo_sample_batch,
+                "true" if self.redo_reset_optimizer_moments else "false",
+            )
+        else:
+            log.info("[redo] disabled")
 
         # Absolute iteration offset for resume-safe checkpoint naming.
         # The loop counter `it` always restarts at 0, so without an
@@ -7615,6 +7688,45 @@ class Trainer:
             obs_all = _upd["obs_all"]
             obs_flat = _upd["obs_flat"]
             mb_size = _upd["mb_size"]
+
+            # ===== ReDo dormancy check + recycle (AMENDMENT 1, B3) =====
+            # End-of-gradient-iteration hook: immediately after the PPO
+            # update, before checkpointing (B3.3). With fewer than 2
+            # valid rollout rows the minibatch loop above trained
+            # nothing, so the check is skipped with the registered line.
+            # The hook consumes no RNG when redo is off; a later anti-
+            # collapse rollback (snapshot restore + full optimizer
+            # rebuild) supersedes any recycle this iter, by design.
+            if redo_on and valid_indices.size < 2:
+                log.info(
+                    "[redo] iter %d: skipped (no gradient step)", global_it
+                )
+            else:
+                _rd = _redo_maybe_check(
+                    enabled=redo_on, net=net, optimizer=optimizer,
+                    obs_all=obs_all, valid_indices=valid_indices,
+                    tau=self.redo_tau,
+                    sample_batch=self.redo_sample_batch,
+                    check_every_iters=self.redo_check_every_iters,
+                    global_it=global_it,
+                    reset_optimizer_moments=(
+                        self.redo_reset_optimizer_moments
+                    ),
+                )
+                if _rd is not None:
+                    self._redo_cum_recycled += _rd.recycled
+                    log.info(
+                        "[redo] iter %d: dormant fc1 %d/%d fc2 %d/%d "
+                        "recycled %d cum %d agree %.4f max_dlogit %.6f",
+                        global_it, _rd.dormant_fc1, _rd.hidden_dim,
+                        _rd.dormant_fc2, _rd.trunk_dim, _rd.recycled,
+                        self._redo_cum_recycled, _rd.agree, _rd.max_dlogit,
+                    )
+                    if _rd.recycled:
+                        log.debug(
+                            "[redo] recycled unit indices: fc1=%s fc2=%s",
+                            _rd.fc1_indices, _rd.fc2_indices,
+                        )
 
             # ============== PR-MDP ADVERSARY UPDATE ==============
             # Plain PPO on the SAME rollout with negated rewards and its

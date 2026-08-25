@@ -8,15 +8,25 @@
 # property of consolidation itself, or of the parameter budget? This config
 # is the consolidation half of that fork.
 #
-# SINGLE VARIABLE vs the banked recipe (configs/mario_1_1_backward.yaml,
-# best-of-4 honest 0.76 over seeds 0-3 at 250 iters):
-# backward_curriculum.states_dir points at the MERGED ladder
+# TWO REGISTERED VARIABLES vs the banked recipe
+# (configs/mario_1_1_backward.yaml, best-of-4 honest 0.76 over seeds 0-3 at
+# 250 iters), per AMENDMENT 1 in the same proposal (DR v27 verdict:
+# Decision B — the pair travel together):
+# 1. backward_curriculum.states_dir points at the MERGED ladder
 # checkpoints/backward_states/1-1-v27 — the 758 tape rungs PLUS the 27 mined
 # post-stick recovery states (checkpoints/backward_states/1-1-recovery)
 # interleaved at their gx-mapped tape positions. A recovery rung is
 # identified in the [backward] iter log by its frame marker >= 900000
-# (entry.frame is telemetry-only: the window draw counts entries). Every
-# other key below is the banked recipe VERBATIM. No kl_anchor_checkpoint:
+# (entry.frame is telemetry-only: the window draw counts entries).
+# 2. ReDo (Recycling Dormant Neurons, Sokar et al. 2023) is ON — the
+# redo_* block below, mandated by the DR v27 consultation before the
+# budget is spent: dormant fc1/fc2 units are recycled at the end of
+# every gradient iteration so all 48k parameters stay trainable when
+# the recovery bands arrive. Recycle telemetry is the in-run
+# substitute for a ReDo-off arm: ~0 cumulative recycles proves the
+# mechanism was inert and the run reduces to the parent registration's
+# arm. Every other key below is the banked recipe VERBATIM. No
+# kl_anchor_checkpoint:
 # this is a fresh run — there is nothing to leash to, and the leash is an
 # adjudicated FAIL anyway (Variant A/B).
 #
@@ -38,8 +48,10 @@
 # jitter +-16, 50 eps x eval seeds {0,1}, max-steps 1500 — experiment
 # number = best-of-4 pooled, warp_rate must be 0.0.
 #   PASS >= 0.80   FAIL <= 0.767   else MARGINAL.
-# VOID conditions (merge gate, preflight, recovery-pool liveness, S1) are
-# in the proposal and are not optional.
+# VOID conditions (merge gate, preflight — including the V7 ReDo
+# forced-recycle pilot and the `[redo] ENABLED tau=0.025` armed-evidence
+# grep — recovery-pool liveness, S1) are in the proposal and are not
+# optional.
 name: Mario 1-1 v27 recovery seed3
 rom_path: "roms/Super Mario Bros. (World).nes"
 rom_hashes:
@@ -142,7 +154,23 @@ reinforce:
   smb_curriculum: false      # required: the stage-0 inline restart path
   num_envs: 60
 
-  # ---- the only moving part vs the banked recipe ----
+  # ---- registered variable #2: ReDo (AMENDMENT 1, B4) ----
+  # Recycling Dormant Neurons on the tile policy's hidden units
+  # (fc1/fc2): checked at the end of every gradient iteration on a
+  # 4096-state sample from the just-collected rollout; dormant units
+  # (mean |post-SiLU| <= tau of the layer mean, Sokar et al.
+  # Definition 1) get incoming row + bias re-sampled Kaiming-uniform,
+  # LN affine reset, outgoing columns zeroed exactly (actor AND critic
+  # for fc2 units), and their Adam moment slices cleared. Written out
+  # explicitly, strict-config style — the schema default is
+  # redo_enabled: false, so every non-v27 config is untouched.
+  redo_enabled: true
+  redo_tau: 0.025
+  redo_check_every_iters: 1
+  redo_sample_batch: 4096
+  redo_reset_optimizer_moments: true
+
+  # ---- registered variable #1: the merged ladder ----
   # Reverse curriculum over the MERGED ladder: 758 tape rungs + 27
   # recovery rungs = 785 entries, sorted by tape step. tau starts at the
   # last entry and walks back 40 tape steps whenever the trailing window
