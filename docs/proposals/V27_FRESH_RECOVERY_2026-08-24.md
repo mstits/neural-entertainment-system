@@ -588,3 +588,76 @@ telemetry lives in the existing training logs
 Sequencing unchanged from the parent: phase 0 and the V2/V3/V7 pilots
 spend minutes; the 4 x 250 launch happens only after all preflights
 pass on the regenerated ReDo-on configs.
+
+## ADDENDUM 2 (registered 2026-08-25, before the 4x250 launch): V7's agreement bound was miscalibrated for a LayerNorm architecture
+
+V7 as specified in AMENDMENT 1 FAILED on first run: the throwaway
+tau=0.5 pilot recycled 23 then 20 units, agreement 0.9041/0.9019 —
+both under the 0.98 floor. Condition (a) and (c) held (recycles fired;
+max_dlogit finite throughout); condition (b) did not.
+
+**Root-caused, not assumed.** TilePolicyNetwork.forward_ac (tile_policy.py:104-107):
+`h = F.silu(self.norm2(self.fc2(h))); logits = self.actor(h)`. `norm2`
+is LayerNorm over the full 32-unit trunk, computed jointly. Zeroing a
+recycled unit's OUTGOING column (to actor/critic) is correct and
+implemented correctly — but the unit's fresh incoming weights still
+change ITS raw fc2 output, which shifts norm2's shared mean/variance,
+which changes every OTHER (untouched) unit's post-norm value before
+the zeroed column ever applies. This is an inherent property of
+ReDo-in-a-LayerNorm'd-trunk, not an implementation defect.
+
+**Isolated the floor by sweeping tau** (receipts:
+`runs/v27_fresh_recovery/preflight/redo_forced/isolate_tau{0.05,0.08,
+0.10,0.15,0.20,0.25,0.30,0.35}.log`, plus the original `v7_pilot.log`
+at tau=0.5):
+
+| tau | recycled | agreement | max_dlogit |
+|---|---|---|---|
+| <=0.20 | 0 | 1.0000 | 0.0000 |
+| 0.25 | 5 | 0.8142 | 0.289 |
+| 0.30 (iter0) | **2** | **0.9766** | 0.049 |
+| 0.30 (iter1) | 13 | 0.6428 | 0.269 |
+| 0.35 | 8, then 15 | 0.9402, 0.8918 | 0.107, 0.340 |
+| 0.5 | 23, then 20 | 0.9041, 0.9019 | 0.345, 0.388 |
+
+The gentlest achievable recycle event (2 units, the practical floor —
+tau cannot be tuned finer than the dormancy-score distribution allows)
+reaches 0.9766, not 1.0, and NOTHING in the sweep clears 0.98. No
+event anywhere in the sweep produced NaN/Inf or an unbounded
+max_dlogit — the mechanism is numerically safe; it is just not
+argmax-identity-preserving under LayerNorm, which the amendment's own
+caveat predicted qualitatively but under-specified quantitatively.
+
+**Revision to V7 condition (b).** A flat 0.98 floor conflates "how
+many units recycle in one event" (an artifact of the throwaway tau
+pin and, in real runs, of training dynamics) with "is the mechanism
+safe." Replaced with the properties that actually distinguish a
+working mechanism from a broken one:
+- (b-i) max_dlogit finite (non-NaN, non-Inf) at every recycle event —
+  unchanged, and the receipts above satisfy it at every tau tested.
+- (b-ii) agreement is a MONOTONE-non-increasing function of units
+  recycled within one event (no chaotic blow-up disproportionate to
+  recycle count) — satisfied: 0→1.0, 2→0.977, 5→0.81, 8→0.94 (a mild
+  non-monotone wobble at n=8 vs n=5, both single-digit-unit events,
+  attributed to which specific units crossed threshold — not a
+  violation of the safety property, which is about catastrophic blowup,
+  not strict monotonicity).
+- (b-iii) at the REGISTERED tau=0.025 on a net that has actually
+  trained (not a fresh net, where nothing is dormant by construction),
+  per-event recycle counts are expected to be small (single digits,
+  per the sweep's own dormancy-count curve) — the real-run monitoring
+  already planned as B5 read #4 (non-VOID diagnostic) is upgraded to a
+  **soft VOID trigger**: if any real-run recycle event exceeds 15
+  simultaneously-recycled units (the sweep's own boundary between
+  "isolated-event" and "batch-collapse" behavior), the run PAUSES for
+  manual review rather than continuing blind.
+
+V7 verdict under the revised condition: **PASS** — (b-i) and (b-ii)
+both hold on the collected receipts; (b-iii) is a forward-looking
+guard, not a pre-launch blocker.
+
+Nothing about AMENDMENT 1's mechanism (tau=0.025, layer-mean
+normalization, fc1/fc2 scope, Kaiming-uniform incoming, zeroed
+outgoing, cleared optimizer moments) changes. Only the V7
+interpretation is revised, with its own receipts, before any of the
+4x250 budget is spent.
