@@ -219,6 +219,72 @@ upward (2,514 vs 1,471 new cells above y-band 9) — only the wall-class
 WORD borrowed from the discriminator is retracted. No clear was, or is,
 attributed to this arm either way.
 
+**FORGE-CERTIFIED — the in-core PPU scroll odometer (pseudo-addresses
+`0x800–0x802`), commits `c556e40` (core, v3 savestate envelope,
+certification) and `074f888` (rendered-cut scene detection, v4
+envelope), 2026-08-23/24.** The need was found in the system's own
+gate telemetry: Rygar, Kung Fu and Ninja Gaiden ran flat on every RAM
+progress scalar while their archives churned — no game-agnostic
+distance signal existed for scroll-driven games. The mechanism samples
+loopy_v + fine_x per scanline at dot 256, takes the modal scanline
+(HUD-split immune), folds wrap-aware dx `((Xc−Xp+256) mod 512)−256`
+with the attribute-table trap handled, and keeps the accumulator
+inside the core savestate struct so restores are exact by
+construction. Scene detection keys cells by a rendered-cut ordinal
+(masked hash AND scroll-discontinuity together). Gate: certification
+is five automated checks, fail-any-quarantine — **passed 5/5**
+(`runs/odometer/cert_smb_2026-08-23.json`; the cert and per-game
+gate JSONs are committed in `c3d7405`, and three deep-run log tails —
+`runs/odometer/{ng_deep,rygar_deep,rygar_v2}.log` — in `c1f9dbe`; the
+night/scene probe logs and the probe run dirs are local-only). Verdicts from its own
+gate probes: Rygar SIGNAL-SOUND (117 distinct / 470 px), Ninja Gaiden
+SIGNAL-SOUND (126 / 1,384 px), Contra cross-validated against the RAM
+pair (162 vs 163 distinct), Kung Fu reclassified camera-static /
+agent-active (OAM churn 540) — a skill wall, not an instrument fault.
+Scene keying moved the Ninja Gaiden frontier from a 2.5-hour pin at
+dx 6144 to 8 scenes crossed in 12 minutes (`runs/ng_odo_scene/`).
+Honest status, stated plainly: the odometer-celled Go-Explore probes
+(runs/ng_odo_*, runs/rygar_odo_*; committed log tails cover only the
+three deep runs, the rest are local) have produced **zero solutions** on Rygar and
+Ninja Gaiden — the instrument is certified, the games remain unsolved,
+and no clear is attributed to it. Any future clear it enables is an
+EXHIBITION result logged on its own terms.
+
+**FORGE-VALIDATED — generic death-detection fixes: transition-blip
+debounce and wrap-aware lives decrement, commits `1610093` and
+`084362c`, 2026-08-23.** Diagnosed from solver telemetry, not game
+knowledge: Rygar door transitions blip the lives byte through 0 for
+two steps (the same signature as the Bubble Bobble 52→51→53 key blip,
+2026-08-06), and Ninja Gaiden's lives byte underflows 0→255 so every
+death read as a gain and froze the frontier. The forged mechanisms are
+game-agnostic: death requires ≥3 consecutive dead observations, and a
+life loss is detected as `(start − cur) mod 256 ∈ 1..8`. Falsified
+live on the system's own runs: Rygar frontier gx 1536 → 5360 in six
+minutes post-fix; Ninja Gaiden deaths detected at the ~5838 frontier.
+Receipt caveat, stated plainly: the Rygar falsifier receipt
+(`runs/rygar_odo_debounce/`) exists on disk uncommitted, and the NG
+underflow probe was described inline in the commit with no banked
+file; the committed deep-run log tails
+(`runs/odometer/{ng_deep,rygar_deep,rygar_v2}.log`, commit `c1f9dbe`)
+partially cover both; the night/scene log tails on disk are likewise
+uncommitted.
+
+**FORGE-SHIPPED — mechanism-liveness preflight
+(`scripts/experiment_preflight.py`), trainer sentinel enforcement, and
+adjudicator fingerprint-identity refusal, commit `3bb10f6`,
+2026-08-23.** Forged from the week's own void ledger
+(`docs/research/PROCESS_AUDIT_2026-08-23.md`): four experiment arms —
+2-1 attempt 1, the 1-4 backward ladder, Phase-3 masked v1, and the
+Phase-3/options arms — each passed config verification while the
+mechanism under test was dead. The named root defect class: "an assay
+with no positive control." The machinery makes liveness a mandatory
+positive control before an arm may run, the trainer refuses the
+`actor_freeze_steps` sentinel outright, and the adjudicator refuses
+arms whose policy fingerprints are identical. Ships with tests.
+Honest status: exercised in production by the 2026-08-23 options
+re-run, whose arms were verified live (pair_actor max|Δ| = 0.85,
+fingerprints differing) before adjudication.
+
 ## Quarantine (Tier-3-contaminated artifacts)
 
 The following artifacts were produced with banned knowledge (a
@@ -371,3 +437,166 @@ adversarial-hardening phase (kernel adversary) degraded the policy and
 was rolled back — its receipts and the sharp-adversary telemetry
 (entropy 0.19 vs ln2, the first non-uniform adversary this project has
 trained) are banked for the hardening redesign.
+
+VOID AND PROCESS AUDIT (2026-08-22/23, receipts
+docs/research/PHASE3_HAZARD_VETO_NEGATIVE_2026-08-22.md,
+docs/research/PROCESS_AUDIT_2026-08-23.md, runs/options/verdict.json):
+the Phase-3 hazard-veto training arms and the first options A/B are
+**VOID** — both inherited `actor_freeze_steps: 1e12` from the campaign
+base profile and trained only critics; every training-side claim from
+those runs is withdrawn, with the prior text preserved in the named
+docs. What survives is scoped precisely: the Phase-3 eval-time finding
+(veto collapse, 31/100 → 0/100 — the policy dies standing still) was
+measured on a live policy and stands. Two further retractions from the
+same audit, marked as such: the hazard-model KILL verdict was false —
+benchmarked on a hot machine, retracted, `needs_quiet` added — and one
+"read never infer" violation was caught by the fingerprint check. The
+root defect class is named for the record: configs were verified,
+mechanism-aliveness never was. The fixes are the preflight/sentinel/
+fingerprint FORGE entry above. Claims-integrity sweep: the banked
+1-1/1-2/1-3/1-4 rates are unaffected.
+
+OPTIONS MECHANISM, RE-RUN AND FAIL (2026-08-23, prereg
+docs/proposals/OPTIONS_PREREG_2026-08-22.md, receipts
+runs/options/rerun2_eval_*.json, runs/options/verdict.json,
+docs/research/OPTIONS_NEGATIVE_2026-08-23.md): the first real
+adjudication after the void, both arms verified live. Gate: ≥ 0.372
+pooled strict honest on 1-2. **Control 8/100, treatment 0/100 — FAIL**
+(relative −1.0). The mechanism failed by overcommitment: the final
+treatment chose duration k=4 in 93.6% of 4,000 real 1-2 states (92.4%
+sampled mass) — the advantage-accumulation pathology v22 §4.1
+predicted — with training trailing 0.40 against honest 0/100. The
+no-rescue clause bars retuning; salvage candidates are recorded in the
+doc, none scheduled (the v23 Castlevania options dependency inherits
+this FAIL pending a new registered salvage). Side finding, measured
+and now binding: continued PPO collapsed the consolidated 1-2 peak
+31/100 → 8/100 in 200 iters (−74% relative, KL anchor active) — all
+future A/Bs carry preserve-on-peak in both arms and adjudicate
+peak-vs-peak. The banked 38/100 preserved checkpoint is untouched.
+
+SHELF DISPOSITIONS, ENGINE-RUN (2026-08-23, receipts
+runs/engine/logs/shelf_joint_*.log and shelf_1_4_endpoint_*.log — on
+disk, uncommitted at time of writing; doc
+docs/research/PROCESS_AUDIT_2026-08-23.md): two queued questions
+answered autonomously by the engine. Joint-policy transfer: pooled
+honest 100-ep **1-1 32/100** (vs specialist 43) and **1-2 1/100** (vs
+banked 38) — the earlier 0.52 flicker does not replicate; naive
+pooling stays falsified; CLOSED. 1-4 endpoint: **51/100 pooled —
+exactly the banked rate**; the 0.633 probe is retracted as winner's
+curse, and the corrected-ladder re-run closes the inert-ladder caveat
+as "no measurable effect either way." The consolidation endpoint HELD
+on 1-4 where continued PPO collapsed 1-2 (31 → 8) — the contrast is
+itself a banked observation. Still queued: SWA over 1-2 peaks;
+hazard→Go-Explore weighting.
+
+RECURRENT-BOTTLENECK A/B (2026-08-23, prereg
+docs/proposals/RECURRENT_BOTTLENECK_AB_2026-08-23.md, verdict
+docs/research/RECURRENT_AB_VERDICT_2026-08-23.md, receipts
+runs/gru_ab/verdict_seed{0..3}.json, runs/gru_ab/train_seed{0..3}.log,
+checkpoints/mario_1_1_backward_gru_seed{0..3}/): DR v25's policy-class
+prescription (sticky-0.25 makes the env a POMDP; a recurrent net
+should beat the feedforward control) tested against the banked
+backward-1-1 control (0.76 best-of-N honest,
+checkpoints/_preserved/backward_1_1_seed3_iter140.pt), single-variable
+treatment (TileRecurrentPolicyNetwork, 48,975 params, +1.7%).
+**Treatment best-of-4 honest sticky 0.06** (seeds 0.00/0.06/0.01/0.01,
+100 eps each) vs control 0.76 — **FAIL, mechanism untested**:
+deterministic ≈ sticky ≈ 0 on every seed, a learning failure, not a
+robustness failure, so v25's mechanism claim never reached test. FAIL,
+not VOID: the policy class was verified armed and the hidden-reset
+audit ran clean (no carry-across-restart path). Retraction, marked as
+such: the registration's acceptance that BC-through-stateless-fallback
+"cannot explain a between-arm difference in the PPO phase" was wrong —
+it can explain where PPO starts — and is retracted in the verdict doc.
+Salvage was ranked; only the hidden-reset diagnostic was run.
+
+STICK-DETECTION PROBE AND THE V26 OVERRIDE (2026-08-23, corrected
+2026-08-24; receipts runs/gru_ab/stick_probe.json,
+runs/gru_ab/stick_probe_nostack.json,
+runs/gru_ab/stick_probe_realpolicy.json,
+docs/research/V26_ADJUDICATION_2026-08-23.md): supervised
+stick-detection probe on 24k steps from the banked control
+(divergent-stick base rate 0.034): held-out AUC, stateless MLP 0.77
+single-frame / 0.83 four-frame stack, GRUCell 0.82 / 0.87 — **PASS by
+v26's own gate**, overridden on strategy: feedforward policies already
+carried AUC-0.83-grade stick access and still plateaued 0.21–0.51
+honest, so detection was never the binding constraint; the expensive
+recurrent-RL overhaul was declined. SUPERSEDED FIGURES, marked as
+such: those AUCs predate the `28dc163` loader fix; the corrected
+real-policy probe (divergent-stick base rate 0.0575 per the receipt)
+reads **MLP 0.76 vs GRU 0.74** —
+with real weights recurrence adds nothing and the GRU edge flips sign.
+The correction strengthens the override's direction; the pre-fix
+"+0.04/+0.05 GRU" figures (still uncorrected in the V26 doc and the
+v25 memory note) must not be quoted without this supersession.
+
+RECOVERY ASSAY, 1-1 AND 1-2 (2026-08-24, receipts
+runs/recovery_assay/{manifest,verdict}.json,
+runs/recovery_assay_1_2/verdict.json,
+docs/research/RECOVERY_ASSAY_VERDICT_2026-08-24.md): the sticky wall
+decomposed by adjudication. 60 honest episodes of the banked 1-1
+control (the collection run itself reproduced 0.767), 1,592 post-stick
+snapshots via the in-harness `--dump-stick-states` hook, last
+divergent stick per non-clear episode handed to a 10-minute 8-worker
+Go-Explore adjudicator — EXHIBITION machinery used as a measuring
+instrument; no learned claim rides the solver's clears. INTEGRITY
+RETRACTION, recorded, not silent: the first pass scored **0/14 twice**
+and both of those verdicts are VOID — (a) a 3-minute solver budget
+that a manual 10-minute probe disproved
+(runs/recovery_assay/probe_ep15_10min/), and (b) a stdout-grep success
+detector that could never fire; both fixed in
+scripts/recovery_assay.py, final scoring taken from the filesystem
+(solutions/ = ground truth). The stray first-pass debris at
+runs/recovery_assay_bad/ is that void's artifact and is named here so
+it is not a silent orphan. Result, 1-1: timeout sticks **5/5
+recovered** (sanity), true death-sticks **3/9 (33%)**, sticks 1–2
+steps pre-death **0/3** — the fatal window is real, the honest ceiling
+is strictly < 1.0 for any policy class, and perfect recovery training
+would move 1-1 from 0.767 to ~0.83–0.85. Same-day 1-2 addendum
+(banked consol2 from stage_03; the collection run cleared 25/60 per
+its manifest, alongside the verdict doc's 0.367 baseline reproduction;
+1,337 snapshots; 16/35 death-sticks adjudicated): **3/16 recovered
+(19%)**, with 11/16 sticks ≤ 4 steps pre-death → implied honest
+ceiling ~0.53. The 1-2 BANKED verdict stands, now with a mechanical
+explanation: at sticky-0.25 that wall is mostly physics, and the
+banked ~0.38 sits near its ceiling. New routing rule, binding: run
+this assay before spending training effort on any level's sticky rate.
+
+RECOVERY DISTILLATION — THREE FAMILIES, ALL FAIL (2026-08-24, prereg
+and appended verdicts docs/proposals/RECOVERY_DISTILL_1_1_2026-08-24.md,
+receipts runs/recovery_distill/train_history.json,
+runs/recovery_distill/ckpts/, runs/recovery_distill/variant_b_train.log,
+runs/gru_ab/stick_probe_realpolicy.json): the attempt to train the
+measured 33% recoverable slice into the banked 1-1 control (gate
+≥ 0.80 honest). VOID, retracted: the first attempt trained a random
+net — `build_tile_policy_from_checkpoint` silently returned an
+uninitialized network for path inputs; fixed in commit `28dc163`.
+RETRACTED on the same root cause, marked as such: the "0/60
+unjittered argmax-tie receipt" from that day's standalone loop — every
+standalone-loop anomaly of 2026-08-24 (the 0/60 collection, the t=54
+deaths, the 0.0 distill epochs) had rolled uninitialized policies;
+harness and solver receipts loaded correctly and are unaffected. With
+the real control loaded — base method: **FAIL-by-drift at epoch 0**,
+13 Adam steps at lr 1e-4 took honest greedy 0.767 → 0.033 (sampled
+0.17; epoch-0 loss 3.35 ≫ ln 6). Variant A (KL-anchored cloning,
+registered before running, two-rung LR ladder): **FAIL both rungs** —
+lr 1e-4 drift-stopped at epoch 0; lr 1e-5 best 0.70 < baseline 0.767
+< gate 0.80; cross-entropy on solver recovery actions is
+net-destructive at every tested strength. Variant B (on-policy
+recovery PPO from 27 mined post-stick states, KL-anchored, actor
+verified unfrozen): **FAIL** — honest 0.33 at iter 10 → 0.0 by iter
+30; recovery-pool clears 0.49 → 0.30; entrance rate 0.31 → 0.06.
+META-FINDING: the consolidated 48k artifact is an **isolated optimum**
+— every gradient that touched it made it worse; post-hoc improvement
+on this artifact is closed, and 1-1's honest number remains the
+untouched control's 0.767. Receipt caveat, stated plainly: the committed train_history.json
+(`8bded0d`) holds the base-method history (epoch-0 0.033, loss 3.35);
+the working-tree copy was later overwritten by variant A's rung-2
+history (0.70/0.60, uncommitted), variant A's rung-1 history lives
+only in task logs, and variant B's train log and checkpoints were on
+disk uncommitted at time of writing — named here to be banked, not
+lost. Registered next, not run: v27 — recovery states in the
+curriculum from the start of a fresh run, to separate consolidation
+from parameter budget. The banked scoreboard is unchanged: 1-1 43%,
+1-2 38%, 1-3 21%, 1-4 51%; the separately banked backward-1-1 control
+stands at 0.767 with a measured ceiling of ~0.83–0.85.
