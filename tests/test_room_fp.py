@@ -95,7 +95,24 @@ def test_palette_cokey_changes_the_hash_only_when_folded():
                                         ((0, -256), ("pan", "N"))])
 def test_pan_directions_come_from_the_single_moving_axis(d_odo, want):
     assert classify_transition(d_odo, 0) == want
-    assert classify_transition(d_odo, 1) == want    # scene <= 1 still pan
+    assert classify_transition(d_odo, 1) == want
+    assert classify_transition(d_odo, 2) == want     # scene noise: still pan
+    assert classify_transition(d_odo, 5) == want
+
+
+def test_a_pan_co_occurring_with_scene_noise_is_still_a_pan():
+    # 2026-08-25 hardening finding: the core's scene-cut heuristic
+    # fires on ordinary camera clamp/seam noise near screen edges —
+    # exactly where real pans happen (RG-0's own Metroid fixture:
+    # scene reaches 8 during two ordinary walking laps in ONE room,
+    # zero real transitions). The RG-0-receipted real door (+254px,
+    # Δscene+1) must classify identically whether or not a spurious
+    # extra scene bump lands in the same churn window — a `pan` gate
+    # that also required Δscene <= 1 silently demoted real doors to
+    # unrouted fades whenever noise and a pan coincided.
+    assert classify_transition((254, 0), 1) == ("pan", "E")
+    assert classify_transition((254, 0), 2) == ("pan", "E")
+    assert classify_transition((254, 0), 4) == ("pan", "E")
 
 
 def test_zelda_death_signature_classifies_warp():
@@ -103,6 +120,16 @@ def test_zelda_death_signature_classifies_warp():
     # +2. A warp adopts the new identity but must NEVER become an edge.
     assert classify_transition((0, 0), 2) == ("warp", None)
     assert classify_transition((16, -8), 3) == ("warp", None)
+
+
+def test_pan_and_warp_windows_stay_mutually_exclusive():
+    # The pan fix (dropping the Δscene gate) is safe only because a
+    # pan-sized single-axis delta can never ALSO satisfy the warp
+    # branch's both-axes-near-zero requirement. Pin that invariant
+    # directly so a future window-constant change can't silently
+    # reopen the smuggled-warp risk the docstring reasons about.
+    assert classify_transition((256, 0), 9) == ("pan", "E")   # not warp
+    assert classify_transition((0, 0), 9) == ("warp", None)   # not pan
 
 
 def test_fade_is_the_otherwise_class():
@@ -116,10 +143,15 @@ def test_both_axes_in_the_pan_window_is_not_a_pan():
     assert classify_transition((256, 256), 0) == ("fade", None)
 
 
-def test_a_pan_sized_move_with_a_scene_jump_is_not_a_pan():
-    # Δscene >= 2 with a 256 px move: not a pan (scene <= 1 fails), not
-    # a warp (odometer moved) — fade, the conservative class.
-    assert classify_transition((256, 0), 2) == ("fade", None)
+def test_a_pan_sized_move_with_a_scene_jump_is_still_a_pan():
+    # SUPERSEDES the pre-2026-08-25 contract (a pan-sized move with
+    # Δscene >= 2 used to read as "fade" — the exact bug the hardening
+    # audit caught: RG-0's own fixture shows Δscene noise firing on
+    # ORDINARY movement, so gating pan on Δscene <= 1 silently demoted
+    # real doors whenever noise coincided). Not a warp either (the
+    # odometer moved) — pan is correct: real spatial displacement always
+    # wins over a noisy scene counter.
+    assert classify_transition((256, 0), 2) == ("pan", "E")
 
 
 def test_warp_needs_a_flat_odometer_on_both_axes():
@@ -267,6 +299,33 @@ def test_record_edge_accumulates_and_keeps_the_first_exemplar():
     assert e["count"] == 2 and e["frames_mean"] == 15.0
     assert e["exemplar_cell"] == key         # FIRST exemplar is stable
     assert len(e["exemplar_actions"]) == 32  # last-32 action ring
+
+
+def test_record_edge_self_heals_a_fade_into_a_pan():
+    # 2026-08-25 hardening finding: a fade minted by an unlucky
+    # scene-noise co-occurrence used to be PERMANENT — a repeat
+    # traversal only ever touched count/frames_mean, never kind/dir,
+    # so a real door misclassified once stayed unrouted forever even
+    # after a clean re-traversal proved it was a pan.
+    idx = RoomIndex(cap=8)
+    idx.record_edge(0, 1, "fade", None, 12)
+    e = idx.adj[0][1]
+    assert e["kind"] == "fade" and e["dir"] is None
+    idx.record_edge(0, 1, "pan", "E", 8)              # clean traversal
+    e = idx.adj[0][1]
+    assert e["kind"] == "pan" and e["dir"] == "E"      # healed
+    assert e["count"] == 2                             # still accumulates
+
+
+def test_record_edge_never_downgrades_a_pan_to_a_fade():
+    # The reverse must not happen: noise on a LATER visit must not
+    # erase a clean direction read from an earlier one.
+    idx = RoomIndex(cap=8)
+    idx.record_edge(0, 1, "pan", "E", 8)
+    idx.record_edge(0, 1, "fade", None, 12)            # noisy repeat
+    e = idx.adj[0][1]
+    assert e["kind"] == "pan" and e["dir"] == "E"       # unchanged
+    assert e["count"] == 2
 
 
 def test_record_edge_refuses_the_warp_kind():

@@ -780,9 +780,20 @@ def classify_transition(d_odo, d_scene, pan_odo=(128, 384),
     churn window (pure; constants pre-registered from the 2026-08-24
     probe receipts, see §2).
 
-      pan:  |Δodo| in [pan_min, pan_max] on EXACTLY one axis AND
-            Δscene <= 1 -> ("pan", dir) with dir E/W (+x/-x) or S/N
-            (+y/-y; NES y grows downward). Both games measured ~256 px.
+      pan:  |Δodo| in [pan_min, pan_max] on EXACTLY one axis ->
+            ("pan", dir) with dir E/W (+x/-x) or S/N (+y/-y; NES y
+            grows downward). Both games measured ~256 px. Δscene is
+            NOT gated here (2026-08-25 hardening finding): the core's
+            scene-cut heuristic fires on ordinary camera clamp/seam
+            noise near screen edges — exactly where real pans happen
+            — so RG-0's own fixture proves a genuine door pan can
+            co-occur with a spurious scene bump in the same churn
+            window (test_rg0_4's +254px/Δscene+1 real door still reads
+            as a clean pan at Δscene+2). A pan-sized odometer delta on
+            exactly one axis is definitionally incompatible with the
+            warp branch below (which requires BOTH axes near-zero), so
+            dropping the old `Δscene <= 1` gate here cannot smuggle a
+            real warp through as a pan.
       warp: Δscene >= warp_scene_min AND |Δodo| < 32 on both axes ->
             ("warp", None). Measured Zelda death: odometer modal
             16->272->16 (flat at settle), scene +2. Warp settles ADOPT
@@ -798,7 +809,7 @@ def classify_transition(d_odo, d_scene, pan_odo=(128, 384),
     lo, hi = int(pan_odo[0]), int(pan_odo[1])
     in_x = lo <= abs(dx) <= hi
     in_y = lo <= abs(dy) <= hi
-    if (in_x != in_y) and ds <= 1:
+    if in_x != in_y:
         if in_x:
             return ("pan", "E" if dx > 0 else "W")
         return ("pan", "S" if dy > 0 else "N")
@@ -921,6 +932,16 @@ class RoomIndex:
         count/frames_mean. Warp-classified settles must never reach
         here — refused loudly, because a warp minted as navigable is
         the death-edge failure the classifier exists to close (§7.5).
+
+        SELF-HEAL (2026-08-25 hardening finding): a fade recorded with
+        dir=None never used to heal even when a LATER traversal of the
+        same edge classified cleanly as pan — count/frames_mean were
+        the only fields a repeat traversal touched, so one unlucky
+        scene-noise co-occurrence permanently blinded the router to an
+        already-mapped exit. A fade upgrades to pan (adopting the new
+        direction) on any later pan traversal; a pan is never
+        downgraded by a later fade — noise on one visit must not erase
+        a clean read from another.
         """
         if kind not in ("pan", "fade"):
             raise ValueError(
@@ -934,6 +955,9 @@ class RoomIndex:
                     "frames_mean": 0.0, "exemplar_cell": None,
                     "exemplar_actions": [], "validated": False,
                     "validate_attempts": 0}
+            elif e["kind"] == "fade" and kind == "pan" and direction is not None:
+                e["kind"] = "pan"
+                e["dir"] = direction
             e["count"] += 1
             e["frames_mean"] += (float(frames) - e["frames_mean"]) / e["count"]
             if e["exemplar_cell"] is None and exemplar_cell is not None:
