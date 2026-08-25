@@ -1,0 +1,5 @@
+  [PASS] learning alive: actor moved (max|Δ|=1.41e+00); critic 9.45e-01
+  [PASS] mechanism alive: no optional mechanisms declared (control arm)
+  [PASS] no fatal sentinel: freeze 0 < run end 1.54e+07
+
+preflight: PASS — spend the budget
