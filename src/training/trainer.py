@@ -4944,6 +4944,15 @@ class Trainer:
         iter_offset = ckpt.resume(
             net, optimizer, fresh_start=fresh_start,
         )
+        # RND is built lazily ABOVE (_exploration.build_rnd), before this
+        # resume() call populates _pending_rnd_state from the checkpoint —
+        # so build_rnd's own inline apply_pending_rnd_state() ran too early
+        # and no-opped. t._rnd is non-None now, so apply_pending_rnd_state's
+        # build-guard won't fire again on its own; call it explicitly here
+        # so a resumed run's staged predictor/target weights and obs/reward
+        # running stats actually land on the live RND module instead of
+        # being silently discarded for the rest of the process.
+        _exploration.apply_pending_rnd_state()
 
         # Surface an auto-resume for the whole run: the log line alone is
         # easy to miss, and a silent resume of a supposedly-fresh run has

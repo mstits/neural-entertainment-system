@@ -1463,7 +1463,7 @@ impl MarioReward {
 
         acc.add(
             "score",
-            self.score_weight * (score as i64 - self.prev_score as i64) as f64,
+            self.score_weight * (score as i64 - self.prev_score as i64).max(0) as f64,
         );
         self.prev_score = score;
 
@@ -5786,6 +5786,66 @@ fn double_dragon_forward_is_high_water_not_farmable() {
         let o3 = r.compute(&ram, 0, false);
         assert!((o3.reward - 8.0).abs() < 1.0,
                 "should reward only new progress beyond max (=8), got {}", o3.reward);
+    }
+
+    #[test]
+    fn mario_score_drop_is_clamped_not_penalized() {
+        // Regression guard: SMB's on-screen score is decoded digit-by-digit
+        // from RAM $07DE-$07E3 and rolls over from 999999 back to 000000
+        // once the 6-digit counter overflows during a long/high-scoring
+        // episode. Before this fix, the "score" term was the only
+        // score-delta reward in the file that was NOT clamped to
+        // non-negative, so a rollover (or any transient misread) produced
+        // an unbounded negative spike (~0.025 * -999900) with no
+        // corresponding death/termination. Every other hand-authored
+        // game's score term (Contra, Castlevania, Metroid, KungFu,
+        // KidIcarus, DoubleDragon) clamps with `.max(0)`; Mario must too.
+        let mut weights = HashMap::new();
+        weights.insert("score_delta".to_string(), 1.0);
+        weights.insert("forward_progress".to_string(), 0.0);
+        weights.insert("time_penalty".to_string(), 0.0);
+        weights.insert("checkpoint_scale".to_string(), 0.0);
+
+        let mut r = build_reward("mario", &weights).unwrap();
+        let mut ram = zram();
+        // Keep x, lives, and player_state constant throughout so the
+        // score term is the only non-zero contribution.
+        ram[0x006D] = 0;
+        ram[0x0086] = 0x40;
+        let _ = r.compute(&ram, 0, false); // first_step seeds prev_score=0
+
+        // Score climbs to 999900 (digits 9,9,9,9,0,0 at $07DE-$07E3).
+        ram[0x07DE] = 9;
+        ram[0x07DF] = 9;
+        ram[0x07E0] = 9;
+        ram[0x07E1] = 9;
+        ram[0x07E2] = 0;
+        ram[0x07E3] = 0;
+        let up = r.compute(&ram, 0, false);
+        assert!(
+            (up.reward - 999900.0).abs() < 1.0,
+            "expected the positive score delta to pass through unclamped, got {}",
+            up.reward
+        );
+
+        // Score wraps back to 000000 — a real NES rollover, or any
+        // transient misread of the digit window. The agent is still
+        // alive (no death/lives-drop), so this must NOT punch a huge
+        // negative reward through.
+        ram[0x07DE] = 0;
+        ram[0x07DF] = 0;
+        ram[0x07E0] = 0;
+        ram[0x07E1] = 0;
+        ram[0x07E2] = 0;
+        ram[0x07E3] = 0;
+        let wrap = r.compute(&ram, 0, false);
+        assert!(
+            wrap.reward >= 0.0,
+            "a decreasing/wrapped score must be clamped to a non-negative \
+             reward contribution, got {} (unclamped would be ~-999900)",
+            wrap.reward
+        );
+        assert!(!wrap.done, "a score wraparound alone must not end the episode");
     }
 
     #[test]

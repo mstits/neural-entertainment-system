@@ -17,6 +17,8 @@ import numpy as np
 import pytest
 
 from scripts.hazard_collect import (
+    CONTINUATION_NOOP,
+    CONTINUATION_POLICY,
     DEATH_STATES,
     NPZ_ARRAY_KEYS,
     OBS_HISTORY_GENUINE,
@@ -71,6 +73,11 @@ class StubPool:
         self._settled = [False] * num_workers
         self.load_calls = []
         self.step_calls = 0
+        # One entry per `step_all` call (settle step included at index 0),
+        # each a copy of the `actions` array as received — lets tests
+        # assert exactly which action (if any) was applied on each tick,
+        # not just the resulting ram/death bookkeeping.
+        self.action_log = []
 
     def load_worker_state(self, wid, blob):
         state_idx = int(blob.decode().split("#")[1])
@@ -81,6 +88,7 @@ class StubPool:
 
     def step_all(self, actions):
         self.step_calls += 1
+        self.action_log.append(np.array(actions, copy=True))
         out = []
         for i in range(self.num_workers):
             sidx = self._loaded_state_idx[i]
@@ -296,6 +304,81 @@ def test_run_fork_batch_dead_worker_holds_noop_rest_of_batch():
     # settle step + 6 horizon ticks = 7 step_all calls regardless of the
     # tick-2 death — every worker in a batch advances the same tick count.
     assert pool.step_calls == 7
+
+
+# ---------------------------------------------------------------------
+# Label-provenance root cause (P0): the fork used to hold ONE
+# uniformly-random action for every tick of the whole horizon, not just
+# the intervention tick — the exact mechanism
+# PHASE3_HAZARD_VETO_NEGATIVE_2026-08-22.md diagnosed as the cause of a
+# hazard model vetoing 77.4% of a working policy's own chosen actions.
+# These tests prove the fork now commits the forked action for exactly
+# ONE tick and either goes NOOP or defers to a supplied continuation
+# source for every tick after it.
+# ---------------------------------------------------------------------
+
+def test_run_fork_batch_holds_forked_action_only_for_intervention_tick():
+    pool = StubPool(num_workers=1, die_at_by_state={0: None})
+    run_fork_batch(pool, [(0, 3)], [fake_state_bytes(0)], BITMASKS,
+                   horizon=4, make_obs=make_obs, death_fn=death_fn)
+    # index 0 = settle NOOP, index 1 = the forked action (tick 1, the
+    # intervention), indices 2-4 = NOOP — the forked action is NOT held
+    # for the rest of the horizon.
+    assert len(pool.action_log) == 5
+    assert int(pool.action_log[0][0]) == 0
+    assert int(pool.action_log[1][0]) == BITMASKS[3]
+    assert int(pool.action_log[2][0]) == 0
+    assert int(pool.action_log[3][0]) == 0
+    assert int(pool.action_log[4][0]) == 0
+
+
+def test_run_fork_batch_default_continuation_is_never_the_forked_action_held():
+    # Regression guard for the exact confirmed defect: for any horizon
+    # > 1, ticks after the first must never replay the forked action
+    # under the default (no continue_action_fn) mode.
+    pool = StubPool(num_workers=1, die_at_by_state={0: None})
+    run_fork_batch(pool, [(0, 2)], [fake_state_bytes(0)], BITMASKS,
+                   horizon=5, make_obs=make_obs, death_fn=death_fn)
+    post_intervention_ticks = pool.action_log[2:]
+    assert all(int(a[0]) != BITMASKS[2] for a in post_intervention_ticks)
+    assert all(int(a[0]) == 0 for a in post_intervention_ticks)
+
+
+def test_run_fork_batch_uses_continue_action_fn_after_intervention_tick():
+    # A genuine policy-conditioned continuation is now a real, wired
+    # mechanism: a supplied continue_action_fn drives every tick after
+    # the intervention tick, and receives that tick's own ram.
+    pool = StubPool(num_workers=1, die_at_by_state={0: None})
+    calls = []
+
+    def continue_fn(ram, job_idx):
+        calls.append((int(ram[0]), job_idx))
+        return 5
+
+    run_fork_batch(pool, [(0, 3)], [fake_state_bytes(0)], BITMASKS,
+                   horizon=3, make_obs=make_obs, death_fn=death_fn,
+                   continue_action_fn=continue_fn)
+    assert int(pool.action_log[1][0]) == BITMASKS[3]  # intervention tick
+    assert int(pool.action_log[2][0]) == BITMASKS[5]  # continuation tick
+    assert int(pool.action_log[3][0]) == BITMASKS[5]  # continuation tick
+    assert len(calls) == 2
+    assert all(job_idx == 0 for _ram, job_idx in calls)
+
+
+def test_run_fork_batch_continue_action_fn_stops_once_worker_dies():
+    pool = StubPool(num_workers=1, die_at_by_state={0: 2})
+    calls = []
+
+    def continue_fn(ram, job_idx):
+        calls.append(job_idx)
+        return 1
+
+    run_fork_batch(pool, [(0, 3)], [fake_state_bytes(0)], BITMASKS,
+                   horizon=5, make_obs=make_obs, death_fn=death_fn,
+                   continue_action_fn=continue_fn)
+    # Dies on tick 2 -> continue_fn is only asked for tick 2 (the tick
+    # that observes the death), never for ticks 3-5 once dead.
+    assert len(calls) == 1
 
 
 def test_run_fork_batch_rejects_oversized_batch():
@@ -568,6 +651,11 @@ def test_build_provenance_fields(tmp_path):
     # Default (unspecified) is the honest conservative assumption: no
     # genuine history unless the caller explicitly proves otherwise.
     assert prov["obs_history_mode"] == OBS_HISTORY_RESET_DUPLICATE
+    # Default (unspecified) continuation_mode is NOOP — never a silent
+    # stand-in for the pre-fix "hold the forked action for the whole
+    # horizon" mechanism (module docstring "CORRECTION (label-provenance
+    # root cause)").
+    assert prov["continuation_mode"] == CONTINUATION_NOOP
 
 
 def test_build_provenance_missing_rom_hash_is_none(tmp_path):
@@ -589,6 +677,20 @@ def test_build_provenance_rejects_unknown_obs_history_mode(tmp_path):
         build_provenance("p.yaml", tmp_path / "missing.nes", [],
                          seed=0, forks_per_state=1, horizon=1, num_labels=0,
                          obs_history_mode="bogus")
+
+
+def test_build_provenance_records_policy_continuation_mode(tmp_path):
+    prov = build_provenance("p.yaml", tmp_path / "missing.nes", [],
+                            seed=0, forks_per_state=1, horizon=1,
+                            num_labels=1, continuation_mode=CONTINUATION_POLICY)
+    assert prov["continuation_mode"] == CONTINUATION_POLICY
+
+
+def test_build_provenance_rejects_unknown_continuation_mode(tmp_path):
+    with pytest.raises(ValueError):
+        build_provenance("p.yaml", tmp_path / "missing.nes", [],
+                         seed=0, forks_per_state=1, horizon=1, num_labels=0,
+                         continuation_mode="bogus")
 
 
 def test_save_dataset_roundtrip(tmp_path):

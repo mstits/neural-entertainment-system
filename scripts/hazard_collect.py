@@ -5,16 +5,37 @@ Research synthesis Phase 1 (docs/proposals/RESEARCH_SYNTHESIS_2026-08-17.md,
 hazard model, and this script is its data source.
 
 Mechanism (micro-forking): from a buffer of saved states, restore a worker to
-one of them, COMMIT one action for up to `--horizon` further ticks (an
-INTERVENTION, not a passively-observed rollout), and record whether the
-worker died and, if so, on which tick. A worker still alive when the horizon
-runs out is CENSORED — right-censored survival data, not a survivor-labelled
-zero — because a hazard model trained on "0 = safe" pseudo-labels for
-censored samples would systematically underestimate risk near the horizon
-boundary (the whole point of using IPCW / a survival loss downstream in
-Phase 2). This is what makes the dataset support causal survival analysis
-rather than a correlational classifier: the (state, action) pair is chosen
-by the collector, not by whatever the acting policy happened to prefer.
+one of them, COMMIT one action for exactly one tick (the INTERVENTION, not a
+passively-observed rollout), then observe for up to `--horizon - 1` further
+ticks, and record whether the worker died and, if so, on which tick. A
+worker still alive when the horizon runs out is CENSORED — right-censored
+survival data, not a survivor-labelled zero — because a hazard model trained
+on "0 = safe" pseudo-labels for censored samples would systematically
+underestimate risk near the horizon boundary (the whole point of using IPCW
+/ a survival loss downstream in Phase 2). This is what makes the dataset
+support causal survival analysis rather than a correlational classifier: the
+(state, action) pair at the intervention tick is chosen by the collector,
+not by whatever the acting policy happened to prefer.
+
+CORRECTION (label-provenance root cause, was: holding the forked action for
+the whole horizon): earlier revisions of this script held the ONE
+uniformly-random forked action for every tick of the fork, not just the
+intervention tick — i.e. the label answered "what happens if this action is
+committed to for the entire horizon under otherwise-random play", not "what
+happens right after this one action, observed honestly". That mismatch
+(diagnosed in docs/research/PHASE3_HAZARD_VETO_NEGATIVE_2026-08-22.md — "the
+labels are micro-forks with random continuations ... under random play the
+pit jump is lethal; under the trained policy it is the winning line") is why
+a hazard model trained on those labels vetoed 77.4% of a working policy's
+own chosen actions. This script now commits the forked action for the
+single intervention tick only; every tick after that is either NOOP
+(default — an honest "we asserted nothing about what happens next", not a
+second implicit random action) or driven by an optional caller-supplied
+`continue_action_fn` for genuine policy-conditioned continuation (see
+`run_fork_batch`). Every dataset's `meta_json` provenance records which
+applied via `continuation_mode` (`CONTINUATION_NOOP` or
+`CONTINUATION_POLICY`), the same disclosure discipline as
+`obs_history_mode` below — never silent.
 
 Restore points come from either a directory of `*.state` save-state blobs,
 or a single Go-Explore solution tape (`--states some.npy` + `--root-state`)
@@ -154,6 +175,15 @@ NPZ_ARRAY_KEYS = (
 OBS_HISTORY_GENUINE = "genuine"
 OBS_HISTORY_RESET_DUPLICATE = "reset-duplicate"
 
+# `continuation_mode` provenance values — see module docstring "CORRECTION
+# (label-provenance root cause)": what drives the ticks AFTER the single
+# forked intervention tick. `CONTINUATION_NOOP` (default) commits to
+# nothing beyond the intervention itself; `CONTINUATION_POLICY` means a
+# caller-supplied `continue_action_fn` chose every subsequent action (the
+# only mode that can honestly be called "the policy's own continuation").
+CONTINUATION_NOOP = "noop-after-intervention-tick"
+CONTINUATION_POLICY = "policy-conditioned"
+
 
 # ---------------------------------------------------------------------
 # Death predicate — profile-driven address, established state codes.
@@ -279,18 +309,36 @@ def run_fork_batch(pool, jobs: list[tuple[int, int]],
                     source_states: list[bytes], bitmasks: Sequence[int],
                     horizon: int,
                     make_obs: Callable[[np.ndarray, int], np.ndarray],
-                    death_fn: Callable[[np.ndarray], bool]) -> list[dict]:
+                    death_fn: Callable[[np.ndarray], bool],
+                    continue_action_fn: Callable[[np.ndarray, int], int] | None = None
+                    ) -> list[dict]:
     """Run one batch of forks (<= pool.num_workers) to completion.
 
     Per job: `pool.load_worker_state(i, source_states[state_idx])`, one
     NOOP settle step to read the pre-intervention RAM (the same
     restore-then-noop idiom `smodice_data.gen_for_solution` and
     `gen_iq_transitions.replay_states` use to get a consistent post-restore
-    observation), then the forked action is committed for up to `horizon`
-    further ticks. A worker that dies stops receiving new input (holds
-    NOOP) for the rest of the batch so every worker in the batch advances
-    the same number of ticks and stays index-aligned with its neighbours —
-    the same "alive" bookkeeping `smodice_data.gen_for_solution` uses.
+    observation), then the forked action is committed for exactly ONE tick
+    — the intervention itself, tick 1.
+
+    Every tick after the intervention (`t in [2, horizon]`) is driven by
+    `continue_action_fn(ram, job_index)` when supplied — the hook that
+    makes genuine policy-conditioned continuation possible — and is
+    otherwise NOOP. It is deliberately NOT the forked action held again:
+    that was the label-provenance root cause this function used to
+    reproduce (module docstring "CORRECTION (label-provenance root
+    cause)") — holding one uniformly-random action for the whole horizon
+    answers "what if this action were committed to forever under
+    otherwise-random play", not "what happens right after this one
+    action", and a hazard model trained on the former vetoed a working
+    policy's own chosen actions 77.4% of the time
+    (PHASE3_HAZARD_VETO_NEGATIVE_2026-08-22.md). NOOP asserts nothing
+    about the continuation instead of silently asserting a wrong one.
+
+    A worker that dies stops receiving new input (holds NOOP) for the
+    rest of the batch so every worker in the batch advances the same
+    number of ticks and stays index-aligned with its neighbours — the
+    same "alive" bookkeeping `smodice_data.gen_for_solution` uses.
 
     `make_obs(ram, state_idx)` takes the job's `source_state_idx` as well
     as the settle-step ram — callers use `state_idx` to look up genuine
@@ -313,18 +361,25 @@ def run_fork_batch(pool, jobs: list[tuple[int, int]],
     noop = np.zeros(w, dtype=np.uint8)
     settled = pool.step_all(noop)
     obs0 = [make_obs(settled[i][2], jobs[i][0]) for i in range(b)]
+    last_ram = [settled[i][2] for i in range(b)]
 
     died = [False] * b
     death_step: list[int | None] = [None] * b
     for t in range(1, horizon + 1):
         acts = np.zeros(w, dtype=np.uint8)
         for i, (_state_idx, action_id) in enumerate(jobs):
-            if not died[i]:
+            if died[i]:
+                continue
+            if t == 1:
                 acts[i] = bitmasks[action_id]
+            elif continue_action_fn is not None:
+                acts[i] = bitmasks[continue_action_fn(last_ram[i], i)]
+            # else: acts[i] stays 0 (NOOP) — no continuation source.
         stepped = pool.step_all(acts)
         for i in range(b):
             if died[i]:
                 continue
+            last_ram[i] = stepped[i][2]
             if death_fn(stepped[i][2]):
                 died[i] = True
                 death_step[i] = t
@@ -347,14 +402,21 @@ def collect_labels(pool, source_states: list[bytes], bitmasks: Sequence[int],
                     death_fn: Callable[[np.ndarray], bool],
                     rng: np.random.Generator,
                     progress_cb: Callable[[int, int], None] | None = None,
+                    continue_action_fn: Callable[[np.ndarray, int], int] | None = None,
                     ) -> list[dict]:
-    """Drive `run_fork_batch` over every job, chunked to `pool.num_workers`."""
+    """Drive `run_fork_batch` over every job, chunked to `pool.num_workers`.
+
+    `continue_action_fn`, when supplied, is forwarded to every batch
+    unchanged — see `run_fork_batch` for what it controls (the ticks after
+    the single forked intervention tick).
+    """
     jobs = build_fork_jobs(len(source_states), forks_per_state,
                            len(bitmasks), rng)
     results: list[dict] = []
     for chunk in batch_jobs(jobs, pool.num_workers):
         results.extend(run_fork_batch(pool, chunk, source_states, bitmasks,
-                                      horizon, make_obs, death_fn))
+                                      horizon, make_obs, death_fn,
+                                      continue_action_fn=continue_action_fn))
         if progress_cb is not None:
             progress_cb(len(results), len(jobs))
     return results
@@ -465,15 +527,27 @@ def pack_results(results: list[dict]) -> dict[str, np.ndarray]:
 def build_provenance(profile_path, rom_path, source_names: list[str],
                      seed: int, forks_per_state: int, horizon: int,
                      num_labels: int,
-                     obs_history_mode: str = OBS_HISTORY_RESET_DUPLICATE
+                     obs_history_mode: str = OBS_HISTORY_RESET_DUPLICATE,
+                     continuation_mode: str = CONTINUATION_NOOP,
                      ) -> dict:
     """`obs_history_mode` discloses how `obs` was built for this dataset:
     `OBS_HISTORY_GENUINE` (tape-replay source — real consecutive frames)
     or `OBS_HISTORY_RESET_DUPLICATE` (directory-of-*.state source — no
     recoverable antecedent frames, every stack slot is one duplicated
-    instant). See module docstring "Observation history"."""
+    instant). See module docstring "Observation history".
+
+    `continuation_mode` discloses what drove the ticks after the single
+    forked intervention tick: `CONTINUATION_NOOP` (default — no
+    continuation source, honest passive observation) or
+    `CONTINUATION_POLICY` (a `continue_action_fn` was supplied to
+    `run_fork_batch`/`collect_labels`). See module docstring "CORRECTION
+    (label-provenance root cause)" — this is never the pre-fix behavior of
+    holding the forked action for the whole horizon, which no mode name
+    here refers to because this script no longer does that."""
     if obs_history_mode not in (OBS_HISTORY_GENUINE, OBS_HISTORY_RESET_DUPLICATE):
         raise ValueError(f"unknown obs_history_mode: {obs_history_mode!r}")
+    if continuation_mode not in (CONTINUATION_NOOP, CONTINUATION_POLICY):
+        raise ValueError(f"unknown continuation_mode: {continuation_mode!r}")
     rom_p = Path(rom_path)
     return {
         "profile": str(profile_path),
@@ -487,6 +561,7 @@ def build_provenance(profile_path, rom_path, source_names: list[str],
         "num_labels": int(num_labels),
         "death_states": list(DEATH_STATES),
         "obs_history_mode": obs_history_mode,
+        "continuation_mode": continuation_mode,
     }
 
 
@@ -767,11 +842,24 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[hazard_collect] {len(source_states)} restore points "
           f"({rom_path}, {profile.get('name', args.profile)})", flush=True)
 
+    # No `continue_action_fn` is wired here — this CLI does not yet load a
+    # policy to drive post-intervention ticks, so every fork's ticks after
+    # the single forked intervention tick are NOOP (disclosed below as
+    # `continuation_mode`), never the pre-fix "hold the forked action for
+    # the whole horizon" — see module docstring "CORRECTION
+    # (label-provenance root cause)".
+    continue_action_fn = None
+    continuation_mode = (CONTINUATION_POLICY if continue_action_fn is not None
+                         else CONTINUATION_NOOP)
+    print(f"[hazard_collect] continuation_mode={continuation_mode} "
+          "(ticks after the forked intervention tick)", flush=True)
+
     if args.benchmark:
         t0 = time.perf_counter()
         results = collect_labels(pool, source_states, bitmasks,
                                  args.forks_per_state, args.horizon,
-                                 make_obs, death_fn, rng)
+                                 make_obs, death_fn, rng,
+                                 continue_action_fn=continue_action_fn)
         elapsed = time.perf_counter() - t0
         n_jobs = len(source_states) * args.forks_per_state
         n_batches = math.ceil(n_jobs / args.workers)
@@ -790,14 +878,15 @@ def main(argv: list[str] | None = None) -> int:
     t0 = time.perf_counter()
     results = collect_labels(pool, source_states, bitmasks,
                              args.forks_per_state, args.horizon,
-                             make_obs, death_fn, rng, progress_cb=progress)
+                             make_obs, death_fn, rng, progress_cb=progress,
+                             continue_action_fn=continue_action_fn)
     elapsed = time.perf_counter() - t0
     pool.shutdown()
 
     provenance = build_provenance(args.profile, rom_path, source_names,
                                   args.seed, args.forks_per_state,
                                   args.horizon, len(results),
-                                  obs_history_mode)
+                                  obs_history_mode, continuation_mode)
     arrays = save_dataset(args.out, results, provenance)
     n_batches = math.ceil(len(results) / args.workers) if results else 0
     ticks_per_worker = n_batches * (args.horizon + 1)

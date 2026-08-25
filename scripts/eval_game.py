@@ -884,6 +884,33 @@ def eval_one_game(
         # because they were, in effect, the same policy. Wrapped after the
         # state dict loads so the weights land on the real net.
         _hz = (profile.get("reinforce", {}) or {}).get("hazard_mask") or {}
+        if _hz.get("enabled") and is_recurrent:
+            # HazardMaskedPolicy overrides forward_ac only (it wraps the
+            # rollout/update call site); the recurrent step path in
+            # _TilePolicy.logits calls forward_ac_recurrent instead, which
+            # the wrapper does not define. Its __getattr__ then delegates
+            # straight to the WRAPPED net's own forward_ac_recurrent, so
+            # the veto would silently never execute — while net_kind and
+            # the printed message below would still claim it's armed.
+            # trainer.py's _make_network raises for this exact combination
+            # (commitment_options and plain tile_gru both set
+            # is_recurrent=True); mirror that refusal here instead of
+            # reporting a masked run that isn't.
+            return {
+                "game": game,
+                "status": "hazard_recurrent_conflict",
+                "checkpoint": str(ckpt),
+                "recurrent": True,
+                "net_kind": net_kind,
+                "detail": (
+                    "reinforce.hazard_mask.enabled is set but the loaded "
+                    f"policy ({net_kind}) is recurrent; HazardMaskedPolicy "
+                    "only overrides forward_ac, so the veto would never "
+                    "execute on the forward_ac_recurrent step path used by "
+                    "a recurrent policy. Refusing to eval rather than "
+                    "silently score an unmasked run as hazard_veto-armed."
+                ),
+            }
         if _hz.get("enabled") and not load_res.missing_keys:
             from src.training.hazard_mask import (
                 HazardMask, HazardMaskedPolicy)

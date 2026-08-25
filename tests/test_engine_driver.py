@@ -758,6 +758,97 @@ def test_the_real_hazard_action_now_validates():
     assert ok, why
 
 
+def test_the_real_hazard_collect_full_action_still_validates():
+    """Regression on the second live hazard call site.
+
+    Both --root-state and --out are supplied correctly here, so this
+    must keep validating even once conditionally-required flags are
+    enforced.
+    """
+    ok, why = ed.validate_action(ed.Action(
+        id="hazard_collect_full", kind="collect", needs_emulator=True,
+        cmd=["scripts/hazard_collect.py",
+             "--profile", "configs/mario_1_2_online_v2.yaml",
+             "--rom", "roms/Super Mario Bros. (World).nes",
+             "--states", "runs/ge_1_2_div_s1/solutions/sol_000.actions.npy",
+             "--root-state",
+             "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/stage_03.state",
+             "--forks-per-state", "120", "--out",
+             "runs/engine/hazard_labels.npz"],
+        gate="g"))
+    assert ok, why
+
+
+def _cond_script(tmp_path: Path) -> Path:
+    """A script shaped exactly like hazard_collect.py's two conditional
+    flags: --root-state (required when --states is a .npy tape) and
+    --out (required unless --benchmark)."""
+    p = tmp_path / "scripts" / "cond.py"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        'import argparse\n'
+        'ap = argparse.ArgumentParser()\n'
+        'ap.add_argument("--states", required=True)\n'
+        'ap.add_argument("--root-state", default=None,\n'
+        '                help="Required when --states is a .npy solution tape.")\n'
+        'ap.add_argument("--out", default=None,\n'
+        '                help="Output path. Required unless --benchmark.")\n'
+        'ap.add_argument("--benchmark", action="store_true")\n')
+    return p
+
+
+def test_conditional_requirements_reads_when_suffix_and_unless(tmp_path):
+    p = _cond_script(tmp_path)
+    cond = ed.conditional_requirements(p)
+    assert cond["--root-state"] == ("when_suffix", "states", "npy")
+    assert cond["--out"] == ("unless", "benchmark", None)
+
+
+def test_validation_rejects_npy_tape_missing_root_state(tmp_path):
+    """The exact structural gap the audit flagged: a .npy --states tape
+    passed without --root-state must not silently validate."""
+    _cond_script(tmp_path)
+    (tmp_path / "solve.npy").write_text("x")
+    bad = _act(["scripts/cond.py", "--states", "solve.npy",
+                "--benchmark"])
+    ok, why = ed.validate_action(bad, tmp_path)
+    assert not ok and "--root-state" in why
+
+    good = _act(["scripts/cond.py", "--states", "solve.npy",
+                 "--root-state", "solve.npy", "--benchmark"])
+    assert ed.validate_action(good, tmp_path)[0]
+
+
+def test_validation_does_not_require_root_state_for_a_directory_tape(tmp_path):
+    """A directory of *.state files is not a .npy tape: --root-state
+    stays optional, matching hazard_collect.py's own semantics."""
+    _cond_script(tmp_path)
+    states_dir = tmp_path / "states"
+    states_dir.mkdir()
+    ok, why = ed.validate_action(
+        _act(["scripts/cond.py", "--states", "states", "--benchmark"]),
+        tmp_path)
+    assert ok, why
+
+
+def test_validation_rejects_missing_out_without_benchmark(tmp_path):
+    """The second half of the structural gap: --out is required unless
+    --benchmark is set, and validate_action must enforce that too."""
+    _cond_script(tmp_path)
+    states_dir = tmp_path / "states"
+    states_dir.mkdir()
+    bad = _act(["scripts/cond.py", "--states", "states"])
+    ok, why = ed.validate_action(bad, tmp_path)
+    assert not ok and "--out" in why
+
+    good = _act(["scripts/cond.py", "--states", "states", "--benchmark"])
+    assert ed.validate_action(good, tmp_path)[0]
+
+    also_good = _act(["scripts/cond.py", "--states", "states",
+                      "--out", "out.npz"])
+    assert ed.validate_action(also_good, tmp_path)[0]
+
+
 def _interrupted(tmp_path, tag):
     d = tmp_path / "runs" / f"online_{tag}"
     d.mkdir(parents=True, exist_ok=True)

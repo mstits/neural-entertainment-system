@@ -159,15 +159,27 @@ def ppo_losses(
     # Entropy bonus.
     probs = log_probs_all.exp()
     per_row_entropy = -(probs * log_probs_all).sum(dim=-1)
+    # Unscaled, per-decision entropy in absolute nats. This is the value
+    # reported back up the stack (ppo_updater.py's last_entropy ->
+    # trainer.py's entropy_floor controller and SMB collapse detector),
+    # both of which compare against thresholds tuned for un-scaled,
+    # k=1 semantics (e.g. entropy_floor, ln(num_actions)). It must stay
+    # duration-agnostic so those absolute comparisons remain calibrated
+    # regardless of whether commitment_options is enabled.
+    entropy_reported = per_row_entropy.mean()
+    entropy_for_loss = entropy_reported
     if entropy_weights is not None:
         # Duration-scaled entropy for commitment options (v22): a k-step
         # decision's bonus is multiplied by k so 1000 env steps earn the
         # same total entropy whether spent as 1000 k=1 decisions or 250
         # k=4 decisions. Without this the optimizer itself drives the
         # policy back to k=1 by letting it decide (and collect the bonus)
-        # four times as often. None = exact legacy behavior.
-        per_row_entropy = per_row_entropy * entropy_weights.float()
-    entropy = per_row_entropy.mean()
+        # four times as often. None = exact legacy behavior. This scaled
+        # value is used ONLY for the optimizer's loss term below — it
+        # must never be the value returned/reported, or every downstream
+        # entropy-based control loop (entropy_floor, collapse detection)
+        # gets silently miscalibrated by a factor of ~k.
+        entropy_for_loss = (per_row_entropy * entropy_weights.float()).mean()
 
     # Value loss.
     if value_loss_kind == "mse":
@@ -175,8 +187,8 @@ def ppo_losses(
     else:
         value_loss = F.smooth_l1_loss(values_pred, value_targets)
 
-    loss = policy_loss + value_coef * value_loss - entropy_coef * entropy
-    return loss, policy_loss, value_loss, entropy
+    loss = policy_loss + value_coef * value_loss - entropy_coef * entropy_for_loss
+    return loss, policy_loss, value_loss, entropy_reported
 
 
 def demo_anchor_loss(logits, demo_actions, *, margin: float = 0.0):

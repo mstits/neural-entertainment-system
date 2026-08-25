@@ -117,8 +117,19 @@ reinforce:
   bc_replay_enabled: false
   preprocess_f16: false
   smb_curriculum: false
+  # STANDING INSTRUCTION — no hazard-veto revival (see
+  # docs/research/PHASE3_HAZARD_VETO_NEGATIVE_2026-08-22.md).
+  # This checkpoint's gate c_index (0.9170, PASS) is the exact model
+  # that produced a 77.4% chosen-action veto rate and collapsed the
+  # honest clear rate from 31/100 to 0/100: the veto removed the
+  # policy's skilled actions, not just unsafe ones. Discrimination on
+  # the fork distribution did not transfer to a sound decision rule.
+  # Do NOT flip enabled back to true against this checkpoint without a
+  # NEW experiment (hazard as reward shaping, policy-conditioned
+  # relabeling, or veto-with-alternative-ranking) and a fresh
+  # pre-registered gate.
   hazard_mask:
-    enabled: true
+    enabled: false
     checkpoint: runs/engine/hazard/hazard_model.pt
     threshold: 0.9
 max_episode_steps: 2400

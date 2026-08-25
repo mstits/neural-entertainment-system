@@ -145,6 +145,67 @@ def test_ppo_losses_entropy_of_uniform_logits() -> None:
     assert math.isclose(float(ent), math.log(num_actions), rel_tol=1e-5)
 
 
+def test_ppo_losses_reported_entropy_is_duration_unscaled() -> None:
+    # Regression for the v22 commitment-options miscalibration: the
+    # entropy tuple element (which flows to ppo_updater's last_entropy
+    # and then trainer.py's entropy_floor / SMB collapse-detector
+    # thresholds, both tuned in absolute per-decision nats) must stay
+    # equal to the PLAIN per-decision entropy even when entropy_weights
+    # duration-scales the optimizer's internal loss term. Uniform
+    # logits -> per-decision entropy is exactly log(num_actions),
+    # independent of whatever k the commitment durations carry.
+    num_actions = 6
+    batch = 4
+    logits = torch.zeros(batch, num_actions)
+    values_pred = torch.zeros(batch)
+    actions = torch.zeros(batch, dtype=torch.int64)
+    zeros = torch.zeros(batch)
+    entropy_weights = torch.tensor([1.0, 2.0, 4.0, 4.0])  # varying commitment k
+
+    _, _, _, ent_scaled = ppo_losses(
+        logits, values_pred, actions, zeros, zeros, zeros,
+        clip_eps=0.2, value_coef=0.5, entropy_coef=0.01, value_loss_kind="huber",
+        entropy_weights=entropy_weights,
+    )
+    _, _, _, ent_unweighted = ppo_losses(
+        logits, values_pred, actions, zeros, zeros, zeros,
+        clip_eps=0.2, value_coef=0.5, entropy_coef=0.01, value_loss_kind="huber",
+        entropy_weights=None,
+    )
+
+    # Reported entropy must match log(num_actions) exactly (not scaled
+    # by the mean commitment length k=2.75), and must be identical
+    # whether or not entropy_weights was supplied.
+    assert math.isclose(float(ent_scaled), math.log(num_actions), rel_tol=1e-5)
+    assert math.isclose(float(ent_scaled), float(ent_unweighted), rel_tol=1e-6)
+
+
+def test_ppo_losses_entropy_weights_still_scale_the_loss_gradient() -> None:
+    # The fix must not neuter the v22 duration-scaling incentive itself:
+    # the optimized `loss` (not the reported entropy) should still
+    # differ between k=1 and k=4 commitment weighting, because the
+    # entropy *bonus subtracted into the loss* is duration-scaled even
+    # though the *reported* entropy metric is not.
+    logits, values_pred, actions, lpo, adv, vt = _toy_inputs()
+    kwargs = dict(
+        clip_eps=0.2, value_coef=0.5, entropy_coef=0.5, value_loss_kind="huber",
+    )
+    loss_k1, _, _, ent_k1 = ppo_losses(
+        logits, values_pred, actions, lpo, adv, vt,
+        entropy_weights=torch.ones(logits.shape[0]), **kwargs,
+    )
+    loss_k4, _, _, ent_k4 = ppo_losses(
+        logits, values_pred, actions, lpo, adv, vt,
+        entropy_weights=torch.full((logits.shape[0],), 4.0), **kwargs,
+    )
+    # Reported entropy is duration-agnostic...
+    assert math.isclose(float(ent_k1), float(ent_k4), rel_tol=1e-6)
+    # ...but the loss the optimizer actually descends still reflects
+    # the k-scaled entropy bonus, so commitment_options keeps its
+    # intended training-time effect.
+    assert not math.isclose(float(loss_k1), float(loss_k4), rel_tol=1e-4)
+
+
 def test_ppo_losses_policy_loss_when_ratio_unity() -> None:
     # When new log-probs == old (ratio == 1), the clipped surrogate is
     # just advantages, so policy_loss == -mean(advantages).

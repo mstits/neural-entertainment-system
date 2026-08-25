@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -389,6 +390,77 @@ def script_flags(script: Path) -> tuple[set[str], set[str]]:
     return declared, required
 
 
+# Conditional-requirement phrasing this codebase already writes into
+# `add_argument(..., help=...)` for flags argparse itself cannot mark
+# `required=True` (because the requirement only holds sometimes). Matched
+# in order from most to least specific so "required when --states is a
+# .npy solution tape" is read as the suffix-qualified rule rather than
+# the bare "required when --states" one.
+_COND_WHEN_SUFFIX = re.compile(
+    r"[Rr]equired when --([\w-]+) is an? \.([A-Za-z0-9]+)\b")
+_COND_UNLESS = re.compile(r"[Rr]equired unless --([\w-]+)\b")
+_COND_WHEN = re.compile(r"[Rr]equired when --([\w-]+)\b")
+
+
+def conditional_requirements(script: Path) -> dict[str, tuple[str, str, Optional[str]]]:
+    """Flags a script requires only sometimes, enforced by its own
+    post-parse validation rather than argparse's `required=True`.
+
+    `script_flags()` cannot see these at all -- they are ordinary Python
+    in a `validate_args()`-style function, invisible to a scan for the
+    `required=True` keyword. hazard_collect.py has two: `--root-state`
+    is only required when `--states` is a `.npy` solution tape, and
+    `--out` is only required unless `--benchmark` is set. Both scripts
+    document the condition in the flag's own `help=` text, and this
+    project already writes that text in one of a few fixed phrasings --
+    the same convention read here, statically, with no import or
+    execution of the script.
+
+    Returns {flag: (kind, other_flag, ext)} where `kind` is
+    "when_suffix" (required when `other_flag`'s value ends in `.ext`),
+    "unless" (required unless `other_flag` is present), or "when"
+    (required whenever `other_flag` is present).
+    """
+    import ast
+    try:
+        tree = ast.parse(script.read_text())
+    except (OSError, SyntaxError):
+        return {}
+    out: dict[str, tuple[str, str, Optional[str]]] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"):
+            continue
+        names = [a.value for a in node.args
+                 if isinstance(a, ast.Constant) and isinstance(a.value, str)
+                 and a.value.startswith("--")]
+        if not names:
+            continue
+        help_text = None
+        for kw in node.keywords:
+            if kw.arg == "help" and isinstance(kw.value, ast.Constant) \
+                    and isinstance(kw.value.value, str):
+                help_text = kw.value.value
+        if not help_text:
+            continue
+        m = _COND_WHEN_SUFFIX.search(help_text)
+        if m:
+            for name in names:
+                out[name] = ("when_suffix", m.group(1), m.group(2))
+            continue
+        m = _COND_UNLESS.search(help_text)
+        if m:
+            for name in names:
+                out[name] = ("unless", m.group(1), None)
+            continue
+        m = _COND_WHEN.search(help_text)
+        if m:
+            for name in names:
+                out[name] = ("when", m.group(1), None)
+    return out
+
+
 def validate_action(action: Action, repo: Path = REPO) -> tuple[bool, str]:
     """Could this action actually run? Checked BEFORE it is ever launched.
 
@@ -423,6 +495,24 @@ def validate_action(action: Action, repo: Path = REPO) -> tuple[bool, str]:
     if missing:
         return False, (f"{script.name} requires {', '.join(missing)}, "
                        f"not supplied")
+    for flag, (kind, other, ext) in conditional_requirements(script).items():
+        if flag in action.cmd:
+            continue          # supplied — the condition doesn't matter
+        other_flag = f"--{other}"
+        other_present = other_flag in action.cmd
+        if kind == "unless":
+            triggered = not other_present
+        elif kind == "when":
+            triggered = other_present
+        else:  # when_suffix
+            triggered = False
+            if other_present:
+                idx = action.cmd.index(other_flag)
+                val = action.cmd[idx + 1] if idx + 1 < len(action.cmd) else ""
+                triggered = val.endswith(f".{ext}")
+        if triggered:
+            return False, (f"{script.name} requires {flag} "
+                           f"(conditionally required, not supplied)")
     for tok in action.cmd[1:]:
         if tok.startswith("--") or tok.startswith("-"):
             continue

@@ -387,11 +387,103 @@ def test_checkpoint_roundtrips_rnd_state_when_present() -> None:
         t._maybe_resume_vanilla_ppo(fresh_net, fresh_opt, fresh_start=False)
 
         assert t._pending_rnd_state is not None, "RND state was not staged on resume"
-        assert set(t._pending_rnd_state.keys()) == set(rnd_state.keys())
+
+
+def test_rnd_pending_state_actually_applies_to_live_module_after_late_resume() -> None:
+    """Regression for the resume-order bug: `ExplorationController.build_rnd`
+    runs BEFORE `CheckpointManager.resume` in `_run_vanilla_ppo`, so its
+    inline `apply_pending_rnd_state()` call fires while `_pending_rnd_state`
+    is still `None` (a no-op) — and since that guard is keyed on `t._rnd is
+    None`, it never fires again on its own. The fix calls
+    `apply_pending_rnd_state()` a second time, explicitly, right after
+    `ckpt.resume()` populates `_pending_rnd_state`. This test reproduces
+    that exact ordering (build first, stage second, apply-again third) and
+    asserts the checkpoint's RND weights actually land on the already-built
+    module — proving the 'novelty memory preserved across resume' log
+    message is no longer a lie."""
+    from src.training.exploration_controller import ExplorationController
+    from src.models.tile_rnd import TileRND
+
+    _seed_everything()
+    with tempfile.TemporaryDirectory(prefix="vppo_char_rnd_apply_") as tmp:
+        t = _bare_tile_trainer(Path(tmp))
+        t.rnd_intrinsic_coef = 0.1
+        t.rnd_loss_coef = 1.0
+        exploration = ExplorationController(t)
+
+        net = t._make_network()
+        net.to("cpu")
+        opt = t._build_ppo_optimizer(net)
+
+        # A distinguishable "trained" RND, perturbed away from any fresh
+        # init so a later equality check is meaningful.
+        src_rnd = TileRND(feature_dim=_TILE_FEATURE_DIM).to("cpu")
+        with torch.no_grad():
+            for p in src_rnd.parameters():
+                p.add_(torch.randn_like(p) * 5.0)
+        rnd_state = {k: v.detach().cpu() for k, v in src_rnd.state_dict().items()}
+
+        payload = {
+            "iter": 30,
+            "net_state_dict": {k: v.detach().cpu() for k, v in net.state_dict().items()},
+            "optimizer_state_dict": opt.state_dict(),
+            "rnd_state_dict": rnd_state,
+        }
+        torch.save(payload, str(Path(tmp) / "vanilla_ppo_iter_00030.pt"))
+
+        # --- Step 1: build_rnd() runs FIRST, exactly as _run_vanilla_ppo
+        # does at trainer.py:4885, well before resume(). _pending_rnd_state
+        # is still None here, so its inline apply is a no-op and t._rnd
+        # ends up randomly initialized (NOT equal to the checkpoint state).
+        _seed_everything(999)
+        exploration.build_rnd(log_msg="[test] RND enabled (%s): %d %f %f")
+        assert t._rnd is not None, "build_rnd should have built the module"
+        assert any(
+            not torch.equal(t._rnd.state_dict()[k], rnd_state[k])
+            for k in rnd_state
+        ), "test setup: freshly-built RND must differ from the checkpoint RND"
+
+        # --- Step 2: resume() runs SECOND, staging _pending_rnd_state from
+        # the checkpoint (trainer.py:4944, checkpoint_manager.py:139).
+        fresh_net = t._make_network()
+        fresh_net.to("cpu")
+        fresh_opt = t._build_ppo_optimizer(fresh_net)
+        t._maybe_resume_vanilla_ppo(fresh_net, fresh_opt, fresh_start=False)
+        assert t._pending_rnd_state is not None, "resume must stage RND state"
+
+        # --- Step 3: the fix — apply_pending_rnd_state() called explicitly
+        # after resume (trainer.py, right after `iter_offset = ckpt.resume(`).
+        exploration.apply_pending_rnd_state()
+
         for k in rnd_state:
-            assert torch.equal(t._pending_rnd_state[k], rnd_state[k]), (
-                f"RND param {k} did not round-trip identically"
+            assert torch.equal(t._rnd.state_dict()[k], rnd_state[k]), (
+                f"RND param {k} was not applied from the resumed checkpoint "
+                "-- the staged novelty memory was silently discarded"
             )
+        assert t._pending_rnd_state is None, (
+            "pending RND state must be consumed once applied"
+        )
+
+
+def test_run_vanilla_ppo_applies_pending_rnd_state_after_resume_in_source() -> None:
+    """Anchor the fix's call ORDER in `_run_vanilla_ppo` itself: the explicit
+    `apply_pending_rnd_state()` call must appear textually after
+    `ckpt.resume(`, not folded back into `build_rnd`'s pre-resume call site.
+    Without this ordering, a resumed run's staged RND state has nowhere left
+    to land (see `test_rnd_pending_state_actually_applies_to_live_module_
+    after_late_resume` for the behavioral half of this regression)."""
+    src = (ROOT / "src" / "training" / "trainer.py").read_text()
+    resume_idx = src.index("iter_offset = ckpt.resume(")
+    apply_idx = src.index(
+        "_exploration.apply_pending_rnd_state()", resume_idx
+    )
+    build_idx = src.index("_exploration.build_rnd(")
+    assert build_idx < resume_idx < apply_idx, (
+        "expected order in _run_vanilla_ppo: build_rnd() (pre-resume, "
+        "existing) -> ckpt.resume() -> apply_pending_rnd_state() (the fix); "
+        "an edit that reorders or drops the post-resume apply call will "
+        "silently reintroduce the discarded-novelty-memory bug"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -197,3 +197,39 @@ def test_vanilla_ppo_profile_declares_existing_start_state() -> None:
         f"start_state_path {ssp!r} does not exist; training would fall "
         f"back to the title-screen demo."
     )
+
+
+def test_mario_1_2_phase3_masked_hazard_veto_stays_disabled() -> None:
+    """Regression guard: the falsified hazard-veto must stay disarmed.
+
+    docs/research/PHASE3_HAZARD_VETO_NEGATIVE_2026-08-22.md is a
+    pre-registered, two-seed, >=100-episode negative: this exact
+    checkpoint (runs/engine/hazard/hazard_model.pt, gate c_index
+    0.9170 PASS) vetoed 77.4% of the control's chosen actions in
+    veto-active states and collapsed the honest clear rate from 31/100
+    to 0/100. The standing instruction is "no hazard-veto revival"
+    against this checkpoint absent a new, freshly pre-registered
+    experiment. Nothing in config_schema.py blocks enabled: true at
+    load time, so this config file is the only guard — this test
+    fails loudly if anyone flips the flag back on.
+    """
+    profile_path = CONFIG_DIR / "mario_1_2_phase3_masked.yaml"
+    with profile_path.open() as fh:
+        data = yaml.safe_load(fh)
+    hazard_mask = ((data.get("reinforce") or {}).get("hazard_mask")) or {}
+    assert hazard_mask.get("enabled") is not True, (
+        "mario_1_2_phase3_masked.yaml re-enables reinforce.hazard_mask "
+        "against the falsified checkpoint (c_index 0.9170, cited in "
+        "PHASE3_HAZARD_VETO_NEGATIVE_2026-08-22.md as the model that "
+        "collapsed the honest clear rate 31/100 -> 0/100). This is a "
+        "standing-instruction violation, not a config choice — revert."
+    )
+
+
+def test_mario_1_2_phase3_masked_profile_still_boots_with_veto_disabled() -> None:
+    """The hazard-veto fix must not regress the profile's ability to
+    construct a Trainer (hazard_mask is disabled, not deleted, so the
+    key must still be tolerated by the boot-contract check)."""
+    profile_path = CONFIG_DIR / "mario_1_2_phase3_masked.yaml"
+    data = yaml.safe_load(profile_path.read_text())
+    assert not _trainer_boot_problems(data), _trainer_boot_problems(data)
