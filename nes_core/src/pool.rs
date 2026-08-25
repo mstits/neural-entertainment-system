@@ -1562,9 +1562,22 @@ impl Pool {
             }
             body
         } else if raw.len() >= 4 && &raw[..4] == b"NCST" {
+            // Known prefix but unknown (or missing) version byte —
+            // surface a clear error instead of letting bincode eat the
+            // version byte. Bound-check the version byte access: a
+            // 4-byte blob with NCST prefix has no version byte at all,
+            // but this formerly accessed raw[4] unconditionally and
+            // panicked (mirrors the identical fix in
+            // `python.rs::load_state`).
+            let got = if raw.len() > POOL_STATE_MAGIC.len() - 1 {
+                format!("{:#04x}", raw[POOL_STATE_MAGIC.len() - 1])
+            } else {
+                "<missing>".to_string()
+            };
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "load_worker_state: unsupported NCST version byte {:#04x}",
-                raw[4],
+                "load_worker_state: unsupported NCST version byte {} (this build expects {:#04x})",
+                got,
+                POOL_STATE_MAGIC[POOL_STATE_MAGIC.len() - 1]
             )));
         } else {
             raw
@@ -1603,6 +1616,17 @@ impl Pool {
                  back to a cold boot for this worker."
             )));
         }
+        // A dead worker (panicked on a prior step/reset) gets a chance
+        // to REVIVE here: a successfully-applied state means the
+        // worker's Nes is now valid, so clear the flag before it can
+        // fall through the `step_all` dead short-circuit. Without
+        // this, `load_worker_state` returns `Ok(())` but the worker
+        // stays permanently dead — emitting zero-frame/done=true into
+        // every subsequent `step_all` call — until the pool's next
+        // `reset_all`, silently poisoning the policy on a cohort that
+        // curriculum code believed it had just reseeded. Mirrors the
+        // `w.dead = false` revival in `reset_all` above.
+        w.dead = false;
         w.audio.clear();
         // CRITICAL: clear frame_cycle_target. Without this, the next
         // `advance_one_frame` computes `target = stale_value + 29781`
@@ -3917,6 +3941,73 @@ mod pool_coverage_tests {
             assert!(
                 pool.load_worker_state(5, &blob).is_err(),
                 "worker_id past the pool must error",
+            );
+        });
+    }
+
+    // AUDIT P0: a 4-byte `NCST`-only blob (no version byte at all — a
+    // truncated/corrupt .state.bin cut off right after the magic, or a
+    // partial crash-mid-write) previously satisfied the
+    // `raw.len() >= 4 && &raw[..4] == b"NCST"` guard and then indexed
+    // `raw[4]` in the error-message format args, panicking with
+    // "index out of bounds: the len is 4 but the index is 4" instead of
+    // returning the documented catchable PyValueError. Mirrors the fix
+    // already shipped in `python.rs::load_state`.
+    #[test]
+    fn load_worker_state_four_byte_ncst_blob_does_not_panic() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let pool = pool_of(1, "lws_short_ncst");
+            let blob = PyBytes::new_bound(py, b"NCST");
+            let res = catch_unwind(AssertUnwindSafe(|| pool.load_worker_state(0, &blob)));
+            let res = match res {
+                Ok(r) => r,
+                Err(_) => panic!(
+                    "load_worker_state must not panic on a 4-byte NCST-only \
+                     blob (out-of-bounds raw[4]); it must return a catchable \
+                     PyValueError instead"
+                ),
+            };
+            assert!(
+                res.is_err(),
+                "a 4-byte NCST-only blob has no version byte and no decodable \
+                 body; load_worker_state must reject it with an Err",
+            );
+        });
+    }
+
+    // AUDIT P1: successfully applying a state into a worker previously
+    // marked `dead` (by a prior step/reset panic) must revive it —
+    // otherwise `load_worker_state` returns Ok(()) but the worker stays
+    // permanently dead, and every subsequent `step_all` short-circuits
+    // it to a zero-frame/done=true episode until the pool's next
+    // `reset_all`. Mirrors the `w.dead = false` revival in `reset_all`.
+    #[test]
+    fn load_worker_state_revives_dead_worker() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let pool = pool_of(1, "lws_revive");
+            let blob = pool
+                .save_worker_state(py, 0)
+                .expect("save_worker_state ok")
+                .expect("worker 0 in range");
+            {
+                let w = unsafe { worker_mut(&pool.workers[0]) };
+                w.dead = true;
+            }
+            pool.load_worker_state(0, &blob)
+                .expect("load_worker_state ok on a valid, ROM-matching blob");
+            let still_dead = unsafe { worker_mut(&pool.workers[0]) }.dead;
+            assert!(
+                !still_dead,
+                "load_worker_state must clear `dead` on a successful apply, \
+                 or the worker silently stays isolated forever",
+            );
+            let stepped = pool.step_all_native(&[0]);
+            assert!(
+                !stepped[0].3,
+                "a revived worker must not report done=true from the dead \
+                 short-circuit on its very next step",
             );
         });
     }

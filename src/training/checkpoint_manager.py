@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 
 import torch
 
@@ -324,7 +325,18 @@ class CheckpointManager:
                 # old bare torch.save-to-final-path could, converting
                 # a long run into a silent from-scratch restart under
                 # the supervisor. Mirrors save_checkpoint_atomic.
-                _tmp_path = ckpt_path.with_suffix(".pt.tmp")
+                #
+                # The tmp filename carries a pid+uuid suffix (not just
+                # the final path's name) so two writers sharing a
+                # checkpoint_dir at the same global_it boundary open
+                # DISTINCT inodes instead of racing torch.save's
+                # buffered writes onto one shared tmp file — the
+                # latter can interleave into a torn blob that
+                # os.replace then promotes to the canonical name,
+                # silently defeating the atomicity guarantee above.
+                _tmp_path = ckpt_path.with_suffix(
+                    f".pt.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}"
+                )
                 torch.save(_ckpt_payload, str(_tmp_path))
                 try:
                     _fd = os.open(str(_tmp_path), os.O_RDONLY)

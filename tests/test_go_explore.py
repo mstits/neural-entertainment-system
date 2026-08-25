@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import src.training.go_explore as go_explore
@@ -9,12 +11,14 @@ from src.training.go_explore import (
     EXPLORE_AFTER_FIRST_CLEAR,
     START_WINDOW_FRAMES,
     GoExploreArchive,
+    GoExploreSchemaError,
     filter_learnable,
     horizontal_neighbors,
     keep_exploring,
     learnable,
     ram_bytes_cell,
     ram_downsample_cell,
+    smb_gx_phase_cell,
     start_window,
 )
 
@@ -177,6 +181,106 @@ def test_save_load_roundtrip(tmp_path) -> None:
     assert arc2.cells[(2,)].state == b"B"
     assert arc2.cells[(2,)].best_score == 9.0
     assert arc2.cells[(1,)].best_steps == 10
+
+
+# ---- cell-key schema guard on load() (config-collision audit fix) ---
+#
+# smb_gx_phase_cell's LAST tuple component is `gx // gx_bucket`: two
+# configs (e.g. configs/mario_1_2_ar_bottleneck.yaml's gx_bucket=16 vs
+# configs/mario_1_2_cgsa.yaml's gx_bucket=32) produce identical-shaped,
+# identical-typed keys whose last component means a physically
+# different x-range depending on the bucket that built it. A resume
+# across the two must be refused, not silently merged.
+
+
+def test_load_raises_on_smb_gx_phase_bucket_mismatch(tmp_path) -> None:
+    arc = GoExploreArchive(smb_gx_phase_cell(gx_bucket=16, y_bucket=32))
+    arc.record(_ram(), b"A", score=5.0, steps=10)
+    path = tmp_path / "archive.pkl"
+    arc.save(path)
+
+    arc2 = GoExploreArchive(smb_gx_phase_cell(gx_bucket=32, y_bucket=32))
+    with pytest.raises(GoExploreSchemaError):
+        arc2.load(path)
+    # Refusal must be BEFORE the pickle is applied — the fresh archive's
+    # own (empty) state must survive the failed load untouched.
+    assert len(arc2) == 0
+
+
+def test_load_succeeds_with_matching_smb_gx_phase_config(tmp_path) -> None:
+    arc = GoExploreArchive(smb_gx_phase_cell(gx_bucket=16, y_bucket=32))
+    arc.record(_ram(), b"A", score=5.0, steps=10)
+    path = tmp_path / "archive.pkl"
+    arc.save(path)
+
+    arc2 = GoExploreArchive(smb_gx_phase_cell(gx_bucket=16, y_bucket=32))
+    arc2.load(path)  # must not raise
+    assert len(arc2) == 1
+
+
+def test_load_legacy_archive_without_key_schema_does_not_raise(
+    tmp_path,
+) -> None:
+    """An archive saved before this schema existed (or with no
+    key_schema recorded in its sidecar) cannot be verified either way —
+    this must stay a no-op compat load, not a new refusal."""
+    arc = GoExploreArchive(smb_gx_phase_cell(gx_bucket=16, y_bucket=32))
+    arc.record(_ram(), b"A", score=5.0, steps=10)
+    path = tmp_path / "archive.pkl"
+    arc.save(path)
+
+    stats_path = tmp_path / "archive.stats.json"
+    stats = json.loads(stats_path.read_text())
+    del stats["key_schema"]
+    stats_path.write_text(json.dumps(stats))
+
+    arc2 = GoExploreArchive(smb_gx_phase_cell(gx_bucket=32, y_bucket=32))
+    arc2.load(path)  # must not raise: nothing to compare against
+    assert len(arc2) == 1
+
+
+def test_load_skips_check_for_cell_fn_with_no_schema(tmp_path) -> None:
+    """A custom/bound cell_fn (e.g. go_explore_solve.py's `game.cell_fn`,
+    which runs its own separate lineage check) carries no `key_schema`
+    attribute, so this instance's schema is `{}` and the guard must be a
+    no-op regardless of what the sidecar says."""
+    arc = GoExploreArchive(smb_gx_phase_cell(gx_bucket=16, y_bucket=32))
+    arc.record(_ram(), b"A", score=5.0, steps=10)
+    path = tmp_path / "archive.pkl"
+    arc.save(path)
+
+    custom_cell_fn = lambda ram: (ram[0], )  # noqa: E731
+    arc2 = GoExploreArchive(custom_cell_fn)
+    assert arc2.key_schema == {}
+    arc2.load(path)  # must not raise
+    assert len(arc2) == 1
+
+
+def test_key_schema_auto_derived_from_cell_fn_factories() -> None:
+    assert GoExploreArchive(ram_bytes_cell([0x0760], bucket=4)).key_schema == {
+        "type": "ram_bytes", "addresses": [0x0760], "bucket": 4,
+    }
+    assert GoExploreArchive(
+        ram_downsample_cell(stride=32, bucket=8)
+    ).key_schema == {"type": "ram_downsample", "stride": 32, "bucket": 8}
+    assert GoExploreArchive(
+        smb_gx_phase_cell(gx_bucket=16, y_bucket=32)
+    ).key_schema == {
+        "type": "smb_gx_phase", "gx_bucket": 16, "y_bucket": 32,
+    }
+
+
+def test_stats_reports_key_schema(tmp_path) -> None:
+    arc = GoExploreArchive(smb_gx_phase_cell(gx_bucket=16, y_bucket=32))
+    assert arc.stats()["key_schema"] == {
+        "type": "smb_gx_phase", "gx_bucket": 16, "y_bucket": 32,
+    }
+    path = tmp_path / "archive.pkl"
+    arc.save(path)
+    stats = json.loads((tmp_path / "archive.stats.json").read_text())
+    assert stats["key_schema"] == {
+        "type": "smb_gx_phase", "gx_bucket": 16, "y_bucket": 32,
+    }
 
 
 # ---- QW3: neighbor-aware selection weight (W_location) --------------

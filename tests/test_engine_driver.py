@@ -178,6 +178,28 @@ def test_plan_skips_an_unrunnable_action_instead_of_emitting_it(monkeypatch):
     assert ed.plan({"completed": {}, "attempts": {}}) is None
 
 
+def test_shelf_dispositions_missing_files_are_journaled_not_silent(tmp_path):
+    """Regression: the shelf-loop's `continue`s used to bypass offer() and
+    the `skipped` journal entirely, so a missing profile/rom/start-state/
+    checkpoint for a shelf item (e.g. shelf_joint_1_1, the owed
+    >=100-episode interference follow-up) vanished from the plan with
+    zero trace in journal.jsonl, unlike every other rejection in plan().
+    """
+    result = ed.plan({"completed": {}, "attempts": {}, "last_run": {}},
+                     tmp_path)
+    assert result is None        # tmp_path has none of the real scripts
+    assert ed.JOURNAL.exists(), "plan_skipped must have been journaled"
+    rows = [json.loads(line) for line in ed.JOURNAL.read_text().splitlines()
+           if line.strip()]
+    skip_rows = [r for r in rows if r.get("type") == "plan_skipped"]
+    assert skip_rows, "no plan_skipped row was written"
+    all_skipped = [s for r in skip_rows for s in r.get("skipped", [])]
+    assert any(s.startswith("shelf_joint_1_1:") for s in all_skipped), (
+        f"shelf_joint_1_1's missing profile vanished with no trace: "
+        f"{all_skipped}")
+    assert any(s.startswith("shelf_1_4_endpoint:") for s in all_skipped)
+
+
 def test_plan_does_not_repeat_a_completed_nonrecurring_action():
     done: dict = {}
     seen = set()
@@ -358,6 +380,103 @@ def test_a_recurring_action_is_never_recorded_as_completed(tmp_path):
                          "recurring": True}}
     ed.reap(state, tmp_path)
     assert "suite" not in state["completed"]
+
+
+# ---- regression: a single crash must not out-run the attempt cap ----
+#
+# _reap_one used to write into state["completed"] on EVERY non-recurring
+# exit — success, verified failure, and the ambiguous "finished" (no
+# done_marker) case alike. offer() excludes anything already in
+# `completed` before tick()'s MAX_ATTEMPTS_PER_ACTION check ever runs, so
+# a single crash (transient OOM, a momentarily-locked ROM, a disk
+# hiccup) permanently retired the action id with no further attempt and
+# no diagnostic. honest_eval_action and the onboarding steps
+# (config_/mint_/select_) all carry no done_marker, so they hit this
+# exactly on their very first attempt.
+
+def test_reap_leaves_a_crashed_no_marker_action_retryable(tmp_path):
+    """No done_marker means the exit is unverifiable, not successful."""
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"id": "honest_eval_2_1_seed7", "pid": 999999,
+                         "started": 0.0, "timeout_h": 1.0,
+                         "done_marker": None, "recurring": False}}
+    rec = ed.reap(state, tmp_path)
+    assert rec["outcome"] == "finished"
+    assert "honest_eval_2_1_seed7" not in state["completed"], (
+        "an unverifiable exit must not permanently retire the action; "
+        "it must stay eligible for tick()'s attempt-cap retry")
+
+
+def test_reap_leaves_a_verified_failure_retryable(tmp_path):
+    """A verified failure gets to retry up to the cap, not zero retries."""
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"id": "config_2_2", "pid": 999999, "started": 0.0,
+                         "timeout_h": 1.0, "done_marker": "never.json",
+                         "recurring": False}}
+    rec = ed.reap(state, tmp_path)
+    assert rec["outcome"] == "failed"
+    assert "config_2_2" not in state["completed"], (
+        "a failed action must stay retryable, not retire on attempt one")
+
+
+def test_reap_leaves_a_timed_out_action_retryable(tmp_path, monkeypatch):
+    monkeypatch.setattr(ed.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(ed, "pid_alive", lambda pid: True)
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"id": "resume_1_4_phase5", "pid": 4242,
+                         "started": 0.0, "timeout_h": 0.001,
+                         "done_marker": None, "recurring": False}}
+    rec = ed.reap(state, tmp_path)
+    assert rec["outcome"] == "timeout"
+    assert "resume_1_4_phase5" not in state["completed"], (
+        "a timeout-kill must stay retryable too, for the same reason")
+
+
+def test_reap_still_retires_a_verified_success(tmp_path):
+    """The fix must not weaken the case that DOES have a verdict."""
+    marker = tmp_path / "done.json"
+    marker.write_text("{}")
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"id": "a", "pid": 999999, "started": 0.0,
+                         "timeout_h": 1.0, "done_marker": "done.json",
+                         "recurring": False}}
+    ed.reap(state, tmp_path)
+    assert state["completed"]["a"]["status"] == "succeeded"
+
+
+def test_a_crash_can_be_retried_up_to_the_attempt_cap_before_abandoning(
+        tmp_path, monkeypatch):
+    """End-to-end: the retry/abandon logic in tick() is now reachable.
+
+    Before the fix, the very first crash retired the action id in
+    `completed`, so the second call below would see plan() return None
+    (offer() excludes anything in `completed`) instead of relaunching,
+    and the attempt cap's own abandon branch (tick(), MAX_ATTEMPTS_PER_
+    ACTION) never ran at all.
+    """
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    monkeypatch.setattr(ed, "pid_alive", lambda pid: False)  # crashes fast
+    action = ed.Action(id="flaky", kind="k", cmd=["scripts/x.py"],
+                       needs_emulator=False, gate="g")
+    monkeypatch.setattr(
+        ed, "plan",
+        lambda s, repo=ed.REPO, emulator_only=None: (
+            None if "flaky" in s.get("completed", {}) else action))
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0}
+
+    rec1 = ed.tick(state, tmp_path)
+    assert rec1["decision"] == "launched"
+    assert state["attempts"]["flaky"] == 1
+
+    rec2 = ed.tick(state, tmp_path)      # reaps the crash, then relaunches
+    assert "flaky" not in state["completed"], (
+        "one crash must not have permanently retired the action")
+    assert rec2["decision"] == "launched"
+    assert state["attempts"]["flaky"] == 2
+
+    rec3 = ed.tick(state, tmp_path)      # reaps the 2nd crash, hits the cap
+    assert rec3["decision"] == "abandon"
+    assert state["completed"]["flaky"]["status"] == "abandoned"
 
 
 def test_reap_runs_before_anything_is_planned(monkeypatch):
@@ -748,6 +867,30 @@ def test_finishing_an_emulator_job_stamps_the_settle_clock(tmp_path):
                  "needs_emulator": True}}}
     ed.reap(state, tmp_path)
     assert state.get("last_heavy_finish", 0) > 0
+
+
+def test_a_timed_out_heavy_job_also_stamps_the_settle_clock(tmp_path,
+                                                             monkeypatch):
+    """Regression: the timeout-kill path used to skip this stamp entirely.
+
+    A 14-hour needs_emulator campaign that hangs and gets SIGKILLed by
+    the timeout branch loaded the machine exactly as much as one that
+    exits cleanly. Without this stamp, machine_quiet() has no record of
+    the load and can wave a benchmark through seconds after the kill —
+    reproducing the false-negative (100.1 vs 2,318.6 steps/s) the settle
+    window exists to prevent.
+    """
+    monkeypatch.setattr(ed.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(ed, "pid_alive", lambda pid: True)
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"emulator": {
+                 "id": "campaign_2_2", "pid": 4242, "started": 0.0,
+                 "timeout_h": 0.001, "done_marker": None, "recurring": False,
+                 "needs_emulator": True}}}
+    rec = ed.reap(state, tmp_path)
+    assert rec["outcome"] == "timeout"
+    assert state.get("last_heavy_finish", 0) > 0, (
+        "a timeout-killed heavy job must arm the settle window too")
 
 
 def test_a_quiet_requiring_action_is_skipped_not_failed(monkeypatch):

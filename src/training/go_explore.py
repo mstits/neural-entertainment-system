@@ -94,6 +94,11 @@ class Cell:
     explored: bool = False
 
 
+class GoExploreSchemaError(ValueError):
+    """Raised by `GoExploreArchive.load()` on a detected cell-key schema
+    mismatch between the archive on disk and this instance's cell_fn."""
+
+
 class GoExploreArchive:
     """A cell archive with first-return-then-explore selection.
 
@@ -108,6 +113,7 @@ class GoExploreArchive:
         *,
         seed: int = 0,
         neighbor_fn: Optional[NeighborFn] = None,
+        key_schema: Optional[dict] = None,
     ) -> None:
         self.cell_fn = cell_fn
         # Adjacency used by the W_location selection bonus. Defaults to
@@ -116,6 +122,26 @@ class GoExploreArchive:
         # zero W_LOCATION_COEF to disable the bonus entirely.
         self.neighbor_fn: NeighborFn = (
             neighbor_fn if neighbor_fn is not None else horizontal_neighbors
+        )
+        # What a cell KEY MEANS, as JSON-scalar config (cell type + its
+        # bucket/address parameters) — e.g. {"type": "smb_gx_phase",
+        # "gx_bucket": 16, "y_bucket": 32}. Two archives are only
+        # comparable (safe to `load()` into one another) if this agrees:
+        # `smb_gx_phase_cell(gx_bucket=16)` and `smb_gx_phase_cell(
+        # gx_bucket=32)` produce identically-shaped, identically-typed
+        # tuple keys whose last component means a physically different
+        # x-range depending on the bucket that built it, so a shape/type
+        # check alone cannot catch the mismatch — only comparing this
+        # config can. Auto-derived from `cell_fn.key_schema` when the
+        # factory functions below set it; explicit `key_schema` overrides.
+        # Left `{}` for a custom/bound cell_fn that sets no such
+        # attribute (e.g. scripts/go_explore_solve.py's `game.cell_fn`,
+        # which owns its own separate, more detailed lineage-check
+        # system) — `load()` skips the check whenever either side is
+        # empty, so this is purely additive for callers that opt in.
+        self.key_schema: dict = (
+            dict(key_schema) if key_schema is not None
+            else dict(getattr(cell_fn, "key_schema", None) or {})
         )
         self._cells: dict[CellKey, Cell] = {}
         self._rng = random.Random(seed)
@@ -249,6 +275,14 @@ class GoExploreArchive:
             "records": self.total_records,
             "new_cells": self.total_new_cells,
             "improvements": self.total_improvements,
+            # Cell-key schema this archive's cells were built under (see
+            # `__init__`); `{}` when the cell_fn carried none. Read back
+            # by `load()` on a LATER archive to refuse a resume whose
+            # cell_fn means something different, without changing the
+            # `.pkl`'s own on-disk shape — several other readers unpickle
+            # it directly as a bare `{key: Cell}` dict and must keep
+            # working unmodified.
+            "key_schema": dict(self.key_schema),
         }
 
     # ---- persistence ------------------------------------------------
@@ -307,7 +341,57 @@ class GoExploreArchive:
         os.replace(stats_tmp, path.with_suffix(".stats.json"))
 
     def load(self, path: str | Path) -> None:
-        with open(Path(path), "rb") as f:
+        """Load a previously-saved archive, refusing a cell-key schema
+        mismatch instead of silently mixing incomparable cells.
+
+        The mismatch this guards against does not change the pickled
+        keys' shape or type: `smb_gx_phase_cell(gx_bucket=16)` at
+        physical x=320 and `smb_gx_phase_cell(gx_bucket=32)` at physical
+        x=640 both key to a 4-tuple ending in `20` (`gx // gx_bucket`),
+        so nothing about the loaded `dict[CellKey, Cell]` itself reveals
+        the collision — only comparing the CONFIG that built the keys
+        can. That config travels out-of-band in the `.stats.json`
+        sidecar's `key_schema` field (see `stats()`), checked here
+        BEFORE the (possibly multi-GB) pickle is opened, exactly so a
+        cheap JSON read stands between a mismatched resume and a
+        collapsed archive.
+
+        The check is opt-in and two-sided: either an empty schema on
+        THIS instance (a custom/bound `cell_fn` with no `key_schema`
+        attribute, e.g. `go_explore_solve.py`'s own game classes, which
+        run a separate, more detailed lineage check already) or an empty
+        schema on the SAVED sidecar (an archive from before this schema
+        existed, or one written by a caller with no schema at all) skips
+        the comparison — this cannot newly refuse a resume that carried
+        no schema on either side; it only catches a stored, positive
+        disagreement between two recorded schemas.
+        """
+        path = Path(path)
+        sidecar = path.with_suffix(".stats.json")
+        if self.key_schema:
+            try:
+                raw_stats = json.loads(sidecar.read_text())
+            except (OSError, ValueError):
+                raw_stats = None
+            if isinstance(raw_stats, dict):
+                saved_schema = raw_stats.get("key_schema")
+                if (
+                    isinstance(saved_schema, dict)
+                    and saved_schema
+                    and saved_schema != self.key_schema
+                ):
+                    raise GoExploreSchemaError(
+                        "GoExploreArchive.load: cell-key schema mismatch — "
+                        f"archive {path} was built with cell_fn config "
+                        f"{saved_schema!r}, but this archive's cell_fn "
+                        f"config is {self.key_schema!r}. Loading it would "
+                        "silently merge cells keyed under different "
+                        "bucket/address meanings (same tuple shape, "
+                        "physically different locations). Refusing to "
+                        "load; use a matching cell config or a separate "
+                        "checkpoint_dir."
+                    )
+        with open(path, "rb") as f:
             self._cells = pickle.load(f)
 
 
@@ -330,6 +414,16 @@ def ram_bytes_cell(addresses: list[int], bucket: int = 1) -> CellFn:
     def _fn(ram: bytes) -> CellKey:
         return tuple((ram[a] // bucket) for a in addresses)
 
+    # Recorded by GoExploreArchive.__init__ / stats() / load() to detect
+    # a resume across two configs that key differently (see
+    # GoExploreSchemaError). `addresses` is copied to a plain list so the
+    # schema stays a JSON-scalar dict, comparable across a save/load
+    # round trip.
+    _fn.key_schema = {
+        "type": "ram_bytes",
+        "addresses": [int(a) for a in addresses],
+        "bucket": int(bucket),
+    }
     return _fn
 
 
@@ -345,6 +439,11 @@ def ram_downsample_cell(stride: int = 64, bucket: int = 16) -> CellFn:
     def _fn(ram: bytes) -> CellKey:
         return tuple((ram[i] // bucket) for i in range(0, len(ram), stride))
 
+    _fn.key_schema = {
+        "type": "ram_downsample",
+        "stride": int(stride),
+        "bucket": int(bucket),
+    }
     return _fn
 
 
@@ -375,6 +474,16 @@ def smb_gx_phase_cell(gx_bucket: int = 16, y_bucket: int = 32) -> CellFn:
             gx // gx_bucket,
         )
 
+    # `gx_bucket`/`y_bucket` are baked into what the LAST tuple component
+    # MEANS (`gx // gx_bucket`) but not into its type or shape — two
+    # configs produce identical-looking keys over different physical
+    # x-ranges. This is exactly the config `GoExploreArchive.load()`
+    # compares to refuse that resume (see GoExploreSchemaError).
+    _fn.key_schema = {
+        "type": "smb_gx_phase",
+        "gx_bucket": int(gx_bucket),
+        "y_bucket": int(y_bucket),
+    }
     return _fn
 
 

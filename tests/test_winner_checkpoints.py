@@ -134,6 +134,74 @@ def test_save_winner_leaves_no_tmp_files(tmp_path: Path) -> None:
     assert not list(wdir.glob("*.tmp"))
 
 
+def test_save_winner_stale_but_valid_sidecar_does_not_allow_downgrade(
+    tmp_path: Path,
+) -> None:
+    """Regression for the two-file-transaction race: best.pt and
+    best.json are two independently-atomic renames, so a kill between
+    them can leave a *validly-parseable* sidecar reporting a stale,
+    lower metric than what best.pt actually holds. A later call with a
+    metric worse than the true best (0.9) but better than the stale
+    sidecar (0.5) must NOT pass the gate and clobber the real winner —
+    the checkpoint's own embedded metric_value is the reconciled
+    source of truth, not the lagging sidecar alone."""
+    assert save_winner(_state(9.0), "mario", 0.9, tmp_path, source_iter=42) is True
+    best_pt, best_json = winner_paths(tmp_path)
+
+    # Simulate the kill window: best.pt already embeds 0.9 (verified
+    # below), but the sidecar never caught up and still shows the
+    # previous, lower value.
+    stale_meta = json.loads(best_json.read_text())
+    stale_meta["metric_value"] = 0.5
+    stale_meta["source_iter"] = 10
+    best_json.write_text(json.dumps(stale_meta))
+    assert torch.load(str(best_pt), weights_only=False)["metric_value"] == 0.9
+
+    wrote = save_winner(_state(1.0), "mario", 0.7, tmp_path, source_iter=100)
+    assert wrote is False
+
+    # The true best (0.9, iter 42) must survive untouched.
+    blob = load_winner("mario", tmp_path)
+    assert blob["metric_value"] == 0.9
+    assert torch.equal(blob["net_state_dict"]["w"], _state(9.0)["w"])
+
+
+def test_save_winner_stale_sidecar_still_allows_genuine_improvement(
+    tmp_path: Path,
+) -> None:
+    """A stale-low sidecar must not block a metric that genuinely beats
+    what best.pt actually holds (not just what the sidecar claims)."""
+    assert save_winner(_state(9.0), "mario", 0.9, tmp_path, source_iter=42) is True
+    _, best_json = winner_paths(tmp_path)
+    stale_meta = json.loads(best_json.read_text())
+    stale_meta["metric_value"] = 0.5
+    best_json.write_text(json.dumps(stale_meta))
+
+    wrote = save_winner(_state(3.0), "mario", 0.95, tmp_path, source_iter=200)
+    assert wrote is True
+    meta = load_winner_meta(tmp_path)
+    assert meta["metric_value"] == 0.95
+    assert meta["source_iter"] == 200
+
+
+def test_save_winner_missing_sidecar_reconciles_with_pt(tmp_path: Path) -> None:
+    """Regression for the kill-before-first-sidecar-ever-exists case:
+    best.pt was renamed into place (embedding metric_value=0.9) but the
+    process died before best.json was ever created, so the sidecar is
+    entirely absent rather than merely stale. A worse metric must still
+    be refused by falling back to best.pt's own embedded value."""
+    assert save_winner(_state(9.0), "mario", 0.9, tmp_path, source_iter=42) is True
+    _, best_json = winner_paths(tmp_path)
+    best_json.unlink()
+    assert load_winner_meta(tmp_path) is None
+
+    wrote = save_winner(_state(1.0), "mario", 0.7, tmp_path, source_iter=100)
+    assert wrote is False
+    blob = load_winner("mario", tmp_path)
+    assert blob["metric_value"] == 0.9
+    assert torch.equal(blob["net_state_dict"]["w"], _state(9.0)["w"])
+
+
 # --------------------------------------------------------------------------- #
 # rotation must never touch the winner
 # --------------------------------------------------------------------------- #

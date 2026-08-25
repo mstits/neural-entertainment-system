@@ -314,6 +314,28 @@ def load_winner_meta(out_dir: str | Path) -> Optional[dict]:
         return None
 
 
+def _read_best_pt_metric_value(out_dir: str | Path) -> Optional[float]:
+    """Return the `metric_value` embedded in `winners/best.pt`, or None.
+
+    `save_winner` embeds the metric a checkpoint was saved with directly
+    in the `.pt` blob (see below), which makes the blob its own ground
+    truth independent of the `best.json` sidecar. Any read failure
+    (file absent, corrupt torch blob, missing/non-numeric field, NaN)
+    returns None so callers fall back to sidecar-only comparison.
+    """
+    best_path, _ = winner_paths(out_dir)
+    if not best_path.exists():
+        return None
+    try:
+        import torch
+
+        blob = torch.load(str(best_path), map_location="cpu", weights_only=False)
+        val = float(blob.get("metric_value", float("-inf")))
+    except Exception:
+        return None
+    return val if math.isfinite(val) else None
+
+
 def save_winner(
     net_state: dict,
     game: str,
@@ -339,6 +361,20 @@ def save_winner(
     Excluded from rotation by construction: the file lives in `winners/`,
     which `rotate_old_checkpoints` skips. Atomic tmp+fsync+rename for both
     files so an interrupted save leaves the previous winner intact.
+
+    `best.pt` and `best.json` are written via two independent atomic
+    renames (pt first, then the sidecar) rather than one transaction, so
+    a kill/OOM between them can leave the sidecar reporting a stale,
+    lower metric than what `best.pt` actually holds. Since `best.pt`
+    embeds its own metric_value, the overwrite gate below reconciles
+    the sidecar's value against the checkpoint's own embedded value
+    (taking the max) so a lagging sidecar can never let a worse
+    checkpoint pass the gate and clobber a genuinely better one. A
+    sidecar file that exists but fails to parse is still treated as "no
+    recorded metric" (see `load_winner_meta`) and is not reconciled
+    against `best.pt` — that corrupt-file case is unrelated to the
+    kill-window race and must stay overwritable or a genuinely corrupt
+    sidecar could wedge winner retention forever.
     """
     try:
         metric_value = float(metric_value)
@@ -347,14 +383,29 @@ def save_winner(
     if not math.isfinite(metric_value):
         return False
 
+    _, meta_path = winner_paths(out_dir)
+    sidecar_present = meta_path.exists()
     prev = load_winner_meta(out_dir)
+
+    prev_val = float("-inf")
     if prev is not None:
         try:
             prev_val = float(prev.get("metric_value", float("-inf")))
         except (TypeError, ValueError):
             prev_val = float("-inf")  # corrupt value → allow overwrite
-        if prev_val >= metric_value:
-            return False
+
+    # Reconcile against best.pt's own embedded metric, except when the
+    # sidecar exists but failed to parse (prev is None with
+    # sidecar_present True) — that corrupt-file path is intentionally
+    # left alone so it stays overwritable rather than resurrecting a
+    # stale/higher value from the checkpoint blob.
+    if prev is not None or not sidecar_present:
+        pt_val = _read_best_pt_metric_value(out_dir)
+        if pt_val is not None and pt_val > prev_val:
+            prev_val = pt_val
+
+    if prev_val >= metric_value:
+        return False
 
     import torch
 

@@ -737,11 +737,17 @@ def plan(state: dict, repo: Path = REPO,
     for sid, ck, game, prof_rel, start in _shelf:
         prof_p = repo / prof_rel
         if not prof_p.exists():
+            # Unlike offer()'s rejections, this candidate never reaches
+            # offer() at all — it must self-report into `skipped` or an
+            # owed >=100-episode answer (e.g. shelf_joint_1_1) can vanish
+            # from the plan with zero trace in journal.jsonl.
+            skipped.append(f"{sid}: profile missing ({prof_rel})")
             continue
         try:
             import yaml as _yaml
             _prof = _yaml.safe_load(prof_p.read_text()) or {}
-        except Exception:
+        except Exception as exc:
+            skipped.append(f"{sid}: profile unreadable ({prof_rel}: {exc})")
             continue
         rom = _prof.get("rom_path")
         if start is None or "placeholder" in str(start):
@@ -751,6 +757,7 @@ def plan(state: dict, repo: Path = REPO,
                 "vanilla_ppo_iter_*.pt"))
             ck = str(cks[-1].relative_to(repo)) if cks else None
         if not (rom and start and ck):
+            skipped.append(f"{sid}: missing rom/start-state/checkpoint")
             continue
         for seed in (7, 101):
             candidates.append(Action(
@@ -991,8 +998,18 @@ def _reap_one(state: dict, slots: dict, lane: str,
             pass
         slots[lane] = None
         state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
-        state.setdefault("completed", {})[running["id"]] = {
-            "status": "timeout", "hours": round(age_h, 2)}
+        # A heavy job that ran long enough to be killed loaded the machine
+        # just as much as one that exited cleanly. Without this, a
+        # timeout-killed campaign never arms the post-heavy-job settle
+        # window (see machine_quiet), and a benchmark can launch
+        # immediately after a 14-hour campaign is SIGKILLed for hanging.
+        if running.get("needs_emulator"):
+            state["last_heavy_finish"] = time.time()
+        # No completed-write here: a hung run is not a verified failure of
+        # the action itself, and permanently retiring the id on a single
+        # timeout would make MAX_ATTEMPTS_PER_ACTION's retry/abandon path
+        # in tick() unreachable, exactly as an unconditional write would
+        # below. Let attempts/tick() decide whether to retry or abandon.
         rec = {"type": "reap", "action": running["id"], "outcome": "timeout",
                "hours": round(age_h, 2)}
         journal(rec)
@@ -1011,7 +1028,18 @@ def _reap_one(state: dict, slots: dict, lane: str,
         state["consecutive_failures"] = 0
     elif ok is False:
         state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
-    if not running.get("recurring"):
+    # Only a VERIFIED success (a done_marker that actually exists) retires
+    # the action id permanently. A verified failure, and the ambiguous
+    # "finished" case for actions with no done_marker (honest_eval,
+    # config/mint/select onboarding steps), must stay retryable: writing
+    # to `completed` here unconditionally is what made offer()'s `a.id in
+    # done` exclusion (above) fire before tick()'s MAX_ATTEMPTS_PER_ACTION
+    # retry/abandon logic (below, in tick()) ever got a chance to run — a
+    # single transient crash (OOM, a momentarily-locked ROM, a disk
+    # hiccup) would otherwise permanently and silently retire the action
+    # with no further attempt and no diagnostic. tick() itself records the
+    # terminal "abandoned" status once the attempt cap is actually spent.
+    if not running.get("recurring") and ok is True:
         state.setdefault("completed", {})[running["id"]] = {
             "status": outcome, "marker": marker}
     rec = {"type": "reap", "action": running["id"], "outcome": outcome,

@@ -136,7 +136,12 @@
       "best_score": 20.0,
       "records": 6,
       "new_cells": 2,
-      "improvements": 2
+      "improvements": 2,
+      "key_schema": {
+        "type": "smb_gx_phase",
+        "gx_bucket": 16,
+        "y_bucket": 32
+      }
     },
     "frontier_before_selection": 2,
     "cells": {
