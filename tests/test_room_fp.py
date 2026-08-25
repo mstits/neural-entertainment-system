@@ -894,19 +894,23 @@ def test_a_live_pan_stages_the_edge_and_the_transit_commits_it():
     _step(s, c, _nt(4), odo=(0, 0), action=2)          # churn onset
     _step(s, c, _nt(4), odo=(256, 0), action=3)        # +256 px: pan E
     assert int(s._room_ord[0]) == 1
-    src, dst, kind, direction, frames, exemplar, acts = c["fp_edge"]
+    src, dst, kind, direction, frames, exemplar, acts, cap_sig = c["fp_edge"]
     assert (src, dst, kind, direction) == (0, 1, "pan", "E")
     assert exemplar == ("cellA",)
     assert acts[-3:] == [1, 2, 3]      # the last-32 action ring
     # Churn window = 1 solver step from the first diverging sample,
     # frame-skip scaled.
     assert frames == 1 * s.frame_skip
+    # item-sig graft unarmed on this duck-typed stand-in (no
+    # _item_sig_armed attribute at all) => cap_sig defaults to 0.
+    assert cap_sig == 0
     # ... and the transit block (this same iteration) commits it:
     s._room_transit(c)
     e = s.room_index.adj[0][1]
     assert (e["kind"], e["dir"], e["count"]) == ("pan", "E", 1)
     assert e["exemplar_cell"] == ("cellA",)
     assert e["exemplar_actions"][-3:] == [1, 2, 3]
+    assert e["cap_hist"] == {"0": 1}
     assert c["fp_edge"] is None and s._room_edges_committed == 1
 
 

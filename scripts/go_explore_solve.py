@@ -924,7 +924,7 @@ class RoomIndex:
 
     def record_edge(self, src: int, dst: int, kind: str, direction,
                     frames: int, exemplar_cell=None,
-                    exemplar_actions=()) -> None:
+                    exemplar_actions=(), cap_sig: int = 0) -> None:
         """Commit one traversed adjacency edge (kind pan|fade). The
         FIRST exemplar is kept (archive cell key at onset + last-32
         action ring) so the sticky-replay edge-validity audit has a
@@ -942,6 +942,15 @@ class RoomIndex:
         direction) on any later pan traversal; a pan is never
         downgraded by a later fade — noise on one visit must not erase
         a clean read from another.
+
+        ITEM-SIG GRAFT (ITEM_SEMANTICS_ENGINE_2026-08-25 §2A/§3 row 1):
+        `cap_hist` buckets this traversal's `cap_sig` (the profile's
+        `state_sig` bit-vector at the moment this edge staged, 0 when
+        item-sig tracking is off or unset). Default `cap_sig=0` means
+        every pre-existing caller — and every caller while
+        `--item-sig-report` is off — writes bucket "0" exactly as
+        before this graft existed: no new observable, no behavior
+        change, additive only.
         """
         if kind not in ("pan", "fade"):
             raise ValueError(
@@ -954,12 +963,15 @@ class RoomIndex:
                     "kind": kind, "dir": direction, "count": 0,
                     "frames_mean": 0.0, "exemplar_cell": None,
                     "exemplar_actions": [], "validated": False,
-                    "validate_attempts": 0}
+                    "validate_attempts": 0, "cap_hist": {}}
             elif e["kind"] == "fade" and kind == "pan" and direction is not None:
                 e["kind"] = "pan"
                 e["dir"] = direction
             e["count"] += 1
             e["frames_mean"] += (float(frames) - e["frames_mean"]) / e["count"]
+            k = str(int(cap_sig))
+            e.setdefault("cap_hist", {})
+            e["cap_hist"][k] = e["cap_hist"].get(k, 0) + 1
             if e["exemplar_cell"] is None and exemplar_cell is not None:
                 e["exemplar_cell"] = exemplar_cell
                 e["exemplar_actions"] = [int(a) for a
@@ -1041,7 +1053,9 @@ class RoomIndex:
                                          e.get("exemplar_actions") or []],
                     "validated": bool(e.get("validated", False)),
                     "validate_attempts": int(e.get("validate_attempts",
-                                                   0))}
+                                                   0)),
+                    "cap_hist": {str(k): int(v) for k, v in
+                                (e.get("cap_hist") or {}).items()}}
         idx.warp_count = int(data.get("warp_count", 0))
         idx.warps = list(data.get("warps") or [])
         idx.cap_hits = int(data.get("cap_hits", 0))
@@ -3402,6 +3416,15 @@ class Solver:
                       f"staged edge will be dropped and restores cannot "
                       f"seed — point room_sig at [0x804, 0x805] "
                       f"(ROOMGRAPH_ENGINE_2026-08-24 §4).", flush=True)
+        # ITEM-SIG GRAFT (ITEM_SEMANTICS_ENGINE_2026-08-25 §3 row 5):
+        # report-only — armed only when --item-sig-report is passed AND
+        # the profile declares a state_sig (getattr, never a bare
+        # attribute read: SmbGame carries no state_sig_arity at all,
+        # and args.item_sig_report defaults False, so this is a no-op
+        # on every existing profile/flags-off path).
+        self._item_sig_armed = (bool(getattr(args, "item_sig_report", False))
+                                and getattr(self.game, "state_sig_arity",
+                                           0) > 0)
         if self.room_fp is not None:
             self._room_mask = room_fp_mask(self.room_fp["mask"])
             self.room_index = RoomIndex(cap=self.room_fp["max_rooms"],
@@ -3840,9 +3863,23 @@ class Solver:
                 d_scene, d_odo)
         elif (prev_ord != ROOM_UNKNOWN and prev_ord != o
                 and c.get("fp_live")):
+            # ITEM-SIG GRAFT (ITEM_SEMANTICS_ENGINE_2026-08-25 §3 row 2):
+            # cap_sig is the already-computed sig slot (index -3) of
+            # the last observed cell key, read only when armed by
+            # --item-sig-report AND the profile declares state_sig.
+            # getattr, not a bare attribute access: duck-typed Solver
+            # stand-ins in the tests carry _room_step and nothing else,
+            # like every other arm read here, and SmbGame carries no
+            # state_sig_arity at all so _item_sig_armed must never be
+            # assumed present. Unarmed, absent, or cur_key-less => 0,
+            # the pre-graft value, on every path.
+            cap_sig = (int(c["cur_key"][-3])
+                      if (getattr(self, "_item_sig_armed", False)
+                          and c.get("cur_key"))
+                      else 0)
             c["fp_edge"] = (prev_ord, o, kind, direction,
                             int(steps) * self.frame_skip,
-                            c.get("fp_onset_key"), list(ring))
+                            c.get("fp_onset_key"), list(ring), cap_sig)
         if prev_ord == ROOM_UNKNOWN:
             # Adoption != transit (§2): a first settle from UNKNOWN is
             # identity acquisition, not a traversal — nulling p0750
@@ -3871,7 +3908,8 @@ class Solver:
             c["fp_edge"] = None
             self.room_index.record_edge(e[0], e[1], e[2], e[3], e[4],
                                         exemplar_cell=e[5],
-                                        exemplar_actions=e[6])
+                                        exemplar_actions=e[6],
+                                        cap_sig=e[7])
             self._room_edges_committed += 1
 
     def _step0(self, a: int):
@@ -7199,6 +7237,14 @@ def main() -> int:
     ap.add_argument("--room-recent-k", type=int, default=4,
                     help="Frontier set includes rooms with ordinal >= "
                          "max_ord - K (discovery-recency band).")
+    ap.add_argument("--item-sig-report", action="store_true",
+                    help="Report-only (ITEM_SEMANTICS_ENGINE_2026-08-25): "
+                         "tag each room-graph edge's cap_hist with the "
+                         "profile's state_sig bit-vector at the moment "
+                         "the edge staged, for offline discover_item_"
+                         "bits.py analysis. No effect on selection, "
+                         "scoring, or cell keys. Needs solve.state_sig "
+                         "(GenericGame profiles only). Default off.")
     ap.add_argument("--time-bins", action="store_true",
                     help="Append floor(log2(steps)) to the key prefix "
                          "(Time-Myopic Go-Explore, v6 recipe 4): slow "

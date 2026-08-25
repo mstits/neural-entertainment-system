@@ -1,0 +1,1993 @@
+{
+  "root_state": "roms/zelda_start_ctrl.state.bin",
+  "rom": "roms/Legend of Zelda, The (USA) (Rev A).nes",
+  "claimed_addrs": [
+    112,
+    132,
+    1648
+  ],
+  "idle_mask_size": 340,
+  "idle_mask_addrs": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    8,
+    13,
+    14,
+    15,
+    17,
+    18,
+    19,
+    20,
+    21,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    38,
+    40,
+    41,
+    42,
+    43,
+    44,
+    51,
+    52,
+    74,
+    96,
+    97,
+    98,
+    102,
+    103,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    113,
+    114,
+    115,
+    116,
+    133,
+    134,
+    135,
+    136,
+    152,
+    153,
+    154,
+    155,
+    156,
+    173,
+    174,
+    175,
+    176,
+    192,
+    211,
+    229,
+    233,
+    254,
+    255,
+    497,
+    498,
+    499,
+    500,
+    501,
+    502,
+    503,
+    504,
+    505,
+    506,
+    507,
+    508,
+    512,
+    513,
+    514,
+    515,
+    584,
+    585,
+    586,
+    588,
+    589,
+    590,
+    596,
+    608,
+    609,
+    610,
+    611,
+    612,
+    613,
+    614,
+    615,
+    616,
+    617,
+    618,
+    619,
+    620,
+    621,
+    622,
+    623,
+    624,
+    625,
+    626,
+    627,
+    628,
+    629,
+    630,
+    631,
+    632,
+    633,
+    634,
+    635,
+    636,
+    637,
+    638,
+    639,
+    640,
+    641,
+    642,
+    643,
+    644,
+    645,
+    646,
+    647,
+    648,
+    649,
+    650,
+    651,
+    652,
+    653,
+    654,
+    655,
+    656,
+    657,
+    658,
+    659,
+    660,
+    661,
+    662,
+    663,
+    664,
+    665,
+    666,
+    667,
+    668,
+    669,
+    670,
+    671,
+    672,
+    673,
+    674,
+    675,
+    676,
+    677,
+    678,
+    679,
+    680,
+    681,
+    682,
+    683,
+    684,
+    685,
+    686,
+    687,
+    688,
+    689,
+    691,
+    692,
+    693,
+    694,
+    695,
+    696,
+    697,
+    699,
+    700,
+    701,
+    702,
+    703,
+    704,
+    705,
+    707,
+    708,
+    709,
+    710,
+    711,
+    712,
+    713,
+    715,
+    716,
+    717,
+    718,
+    719,
+    720,
+    721,
+    722,
+    723,
+    724,
+    725,
+    726,
+    727,
+    728,
+    729,
+    730,
+    731,
+    732,
+    733,
+    734,
+    735,
+    736,
+    737,
+    739,
+    740,
+    741,
+    742,
+    743,
+    744,
+    745,
+    747,
+    748,
+    749,
+    750,
+    751,
+    752,
+    753,
+    755,
+    756,
+    757,
+    758,
+    759,
+    760,
+    761,
+    763,
+    764,
+    765,
+    766,
+    767,
+    771,
+    772,
+    773,
+    774,
+    775,
+    776,
+    777,
+    778,
+    779,
+    780,
+    781,
+    782,
+    783,
+    784,
+    785,
+    786,
+    787,
+    788,
+    789,
+    790,
+    791,
+    792,
+    793,
+    794,
+    795,
+    796,
+    797,
+    798,
+    799,
+    800,
+    801,
+    802,
+    803,
+    804,
+    805,
+    833,
+    834,
+    835,
+    836,
+    977,
+    978,
+    979,
+    980,
+    997,
+    998,
+    999,
+    1000,
+    1043,
+    1044,
+    1045,
+    1046,
+    1056,
+    1057,
+    1058,
+    1059,
+    1093,
+    1094,
+    1095,
+    1096,
+    1107,
+    1108,
+    1264,
+    1308,
+    1313,
+    1520,
+    1522,
+    1525,
+    1540,
+    1541,
+    1543,
+    1544,
+    1545,
+    1546,
+    1547,
+    1548,
+    1549,
+    1550,
+    1551,
+    1552,
+    1553,
+    1554,
+    1555,
+    1556,
+    1557,
+    1558,
+    1559,
+    1560,
+    1563,
+    1564,
+    1565,
+    1569,
+    1570,
+    1584,
+    1648
+  ],
+  "n_rollouts": 12,
+  "rollouts": [
+    {
+      "rollout_id": "rg1_zelda_seed0_bias025:(0, 0, 0, (), 0, (), 255, 0, 0, 2, 4)",
+      "n_actions": 7,
+      "run": "rg1_zelda_seed0_bias025",
+      "cell_key": [
+        0,
+        0,
+        0,
+        [],
+        0,
+        [],
+        255,
+        0,
+        0,
+        2,
+        4
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+      "n_actions": 1169,
+      "run": "rg1_zelda_seed0_bias025",
+      "cell_key": [
+        15,
+        0,
+        0,
+        [
+          79,
+          79,
+          0
+        ],
+        0,
+        [],
+        79,
+        0,
+        0,
+        5,
+        13
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed0_bias025:(16, 0, 0, (68, 68, 1), 0, (), 142, 0, 0, 2, 5)",
+      "n_actions": 2573,
+      "run": "rg1_zelda_seed0_bias025",
+      "cell_key": [
+        16,
+        0,
+        0,
+        [
+          68,
+          68,
+          1
+        ],
+        0,
+        [],
+        142,
+        0,
+        0,
+        2,
+        5
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed0_bias000:(0, 0, 0, (), 0, (), 255, 0, 0, 2, 4)",
+      "n_actions": 7,
+      "run": "rg1_zelda_seed0_bias000",
+      "cell_key": [
+        0,
+        0,
+        0,
+        [],
+        0,
+        [],
+        255,
+        0,
+        0,
+        2,
+        4
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed0_bias000:(12, 0, 0, (73, 73, 0), 0, (), 73, 0, 0, 4, 3)",
+      "n_actions": 936,
+      "run": "rg1_zelda_seed0_bias000",
+      "cell_key": [
+        12,
+        0,
+        0,
+        [
+          73,
+          73,
+          0
+        ],
+        0,
+        [],
+        73,
+        0,
+        0,
+        4,
+        3
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed0_bias000:(16, 0, 0, (199, 199, 0), 0, (), 17, 0, 0, 5, 11)",
+      "n_actions": 2218,
+      "run": "rg1_zelda_seed0_bias000",
+      "cell_key": [
+        16,
+        0,
+        0,
+        [
+          199,
+          199,
+          0
+        ],
+        0,
+        [],
+        17,
+        0,
+        0,
+        5,
+        11
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed1_bias025:(0, 0, 0, (), 0, (), 255, 0, 0, 2, 4)",
+      "n_actions": 5,
+      "run": "rg1_zelda_seed1_bias025",
+      "cell_key": [
+        0,
+        0,
+        0,
+        [],
+        0,
+        [],
+        255,
+        0,
+        0,
+        2,
+        4
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed1_bias025:(13, 0, 0, (39, 39, 1), 0, (), 39, 0, 0, 4, 5)",
+      "n_actions": 1060,
+      "run": "rg1_zelda_seed1_bias025",
+      "cell_key": [
+        13,
+        0,
+        0,
+        [
+          39,
+          39,
+          1
+        ],
+        0,
+        [],
+        39,
+        0,
+        0,
+        4,
+        5
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed1_bias025:(16, 0, 0, (12, 12, 3), 1, (), 12, 0, 0, 2, 5)",
+      "n_actions": 2333,
+      "run": "rg1_zelda_seed1_bias025",
+      "cell_key": [
+        16,
+        0,
+        0,
+        [
+          12,
+          12,
+          3
+        ],
+        1,
+        [],
+        12,
+        0,
+        0,
+        2,
+        5
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed1_bias000:(0, 0, 0, (), 0, (), 255, 0, 0, 2, 4)",
+      "n_actions": 5,
+      "run": "rg1_zelda_seed1_bias000",
+      "cell_key": [
+        0,
+        0,
+        0,
+        [],
+        0,
+        [],
+        255,
+        0,
+        0,
+        2,
+        4
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed1_bias000:(12, 0, 0, (2, 2, 0), 0, (), 2, 0, 0, 4, 5)",
+      "n_actions": 915,
+      "run": "rg1_zelda_seed1_bias000",
+      "cell_key": [
+        12,
+        0,
+        0,
+        [
+          2,
+          2,
+          0
+        ],
+        0,
+        [],
+        2,
+        0,
+        0,
+        4,
+        5
+      ]
+    },
+    {
+      "rollout_id": "rg1_zelda_seed1_bias000:(16, 0, 0, (105, 105, 0), 0, (), 194, 0, 0, 6, 14)",
+      "n_actions": 1892,
+      "run": "rg1_zelda_seed1_bias000",
+      "cell_key": [
+        16,
+        0,
+        0,
+        [
+          105,
+          105,
+          0
+        ],
+        0,
+        [],
+        194,
+        0,
+        0,
+        6,
+        14
+      ]
+    }
+  ],
+  "stage12_raw_untruncated": {
+    "note": "Stage1-2 over the replayed rollouts AS-IS, no death truncation. Kept for the record: this is the reading any caller gets if they feed Stage1-2 raw RAM without excluding post-death frames.",
+    "n_keys_seen": 607,
+    "n_confirmed": 51,
+    "n_candidate": 18,
+    "n_rejected": 538,
+    "confirmed": [
+      {
+        "addr": 84,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 85,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 93,
+        "bit": null,
+        "monotone_rollouts": 5,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 53,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 94,
+        "bit": 1,
+        "monotone_rollouts": 5,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 53,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 123,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 126,
+        "bit": null,
+        "monotone_rollouts": 3,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0009,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 870,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 143,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 145,
+        "bit": 7,
+        "monotone_rollouts": 3,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0009,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 825,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 165,
+        "bit": null,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 7,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 235,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 580,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 587,
+        "bit": null,
+        "monotone_rollouts": 5,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0026,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 591,
+        "bit": null,
+        "monotone_rollouts": 5,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0026,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 599,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 846,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 848,
+        "bit": null,
+        "monotone_rollouts": 5,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 849,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 850,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 851,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 858,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 863,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 936,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 970,
+        "bit": null,
+        "monotone_rollouts": 3,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0009,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 870,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1031,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1032,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1040,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1158,
+        "bit": null,
+        "monotone_rollouts": 5,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1159,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1160,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1168,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1171,
+        "bit": null,
+        "monotone_rollouts": 5,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1172,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1173,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1181,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1182,
+        "bit": null,
+        "monotone_rollouts": 6,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1183,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1184,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1185,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1186,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1187,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1188,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1189,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1190,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1191,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1216,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1217,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1218,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1219,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1226,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1568,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1571,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 602,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1647,
+        "bit": null,
+        "monotone_rollouts": 4,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 580,
+          "position": [
+            null,
+            null
+          ]
+        }
+      }
+    ]
+  },
+  "stage12": {
+    "note": "Death-truncated (the fair run): each rollout cut at the first lives==0 frame before scanning.",
+    "n_rollouts_truncated_for_death": 4,
+    "n_keys_seen": 224,
+    "n_confirmed": 13,
+    "n_candidate": 15,
+    "n_rejected": 196,
+    "confirmed": [
+      {
+        "addr": 93,
+        "bit": null,
+        "monotone_rollouts": 5,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 53,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 94,
+        "bit": 1,
+        "monotone_rollouts": 5,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 53,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 125,
+        "bit": null,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 7,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 145,
+        "bit": 6,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 7,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 165,
+        "bit": null,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 7,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 495,
+        "bit": null,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 7,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 496,
+        "bit": null,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 7,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 541,
+        "bit": null,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 69,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 543,
+        "bit": null,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 69,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 545,
+        "bit": null,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 69,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 546,
+        "bit": 6,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 69,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 547,
+        "bit": null,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 69,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 969,
+        "bit": null,
+        "monotone_rollouts": 8,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0023,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed0_bias025:(15, 0, 0, (79, 79, 0), 0, (), 79, 0, 0, 5, 13)",
+          "step": 7,
+          "position": [
+            null,
+            null
+          ]
+        }
+      }
+    ],
+    "candidate": [
+      {
+        "addr": 80,
+        "bit": null,
+        "monotone_rollouts": 2,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias025:(16, 0, 0, (12, 12, 3), 1, (), 12, 0, 0, 2, 5)",
+          "step": 1062,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 196,
+        "bit": null,
+        "monotone_rollouts": 1,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0006,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias025:(16, 0, 0, (12, 12, 3), 1, (), 12, 0, 0, 2, 5)",
+          "step": 1062,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 215,
+        "bit": null,
+        "monotone_rollouts": 1,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0006,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias025:(16, 0, 0, (12, 12, 3), 1, (), 12, 0, 0, 2, 5)",
+          "step": 1062,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 847,
+        "bit": null,
+        "monotone_rollouts": 2,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias025:(16, 0, 0, (12, 12, 3), 1, (), 12, 0, 0, 2, 5)",
+          "step": 1110,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 851,
+        "bit": null,
+        "monotone_rollouts": 1,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0006,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias025:(16, 0, 0, (12, 12, 3), 1, (), 12, 0, 0, 2, 5)",
+          "step": 1110,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1161,
+        "bit": null,
+        "monotone_rollouts": 1,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0012,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias025:(16, 0, 0, (12, 12, 3), 1, (), 12, 0, 0, 2, 5)",
+          "step": 1062,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1322,
+        "bit": null,
+        "monotone_rollouts": 2,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias025:(16, 0, 0, (12, 12, 3), 1, (), 12, 0, 0, 2, 5)",
+          "step": 1110,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1575,
+        "bit": null,
+        "monotone_rollouts": 2,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias025:(16, 0, 0, (12, 12, 3), 1, (), 12, 0, 0, 2, 5)",
+          "step": 1062,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 145,
+        "bit": 5,
+        "monotone_rollouts": 1,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias000:(12, 0, 0, (2, 2, 0), 0, (), 2, 0, 0, 4, 5)",
+          "step": 188,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 848,
+        "bit": null,
+        "monotone_rollouts": 1,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias000:(12, 0, 0, (2, 2, 0), 0, (), 2, 0, 0, 4, 5)",
+          "step": 265,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1158,
+        "bit": null,
+        "monotone_rollouts": 1,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias000:(12, 0, 0, (2, 2, 0), 0, (), 2, 0, 0, 4, 5)",
+          "step": 194,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1171,
+        "bit": null,
+        "monotone_rollouts": 1,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias000:(12, 0, 0, (2, 2, 0), 0, (), 2, 0, 0, 4, 5)",
+          "step": 265,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 1182,
+        "bit": null,
+        "monotone_rollouts": 2,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0011,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias000:(12, 0, 0, (2, 2, 0), 0, (), 2, 0, 0, 4, 5)",
+          "step": 179,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 587,
+        "bit": null,
+        "monotone_rollouts": 1,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0026,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias000:(16, 0, 0, (105, 105, 0), 0, (), 194, 0, 0, 6, 14)",
+          "step": 1094,
+          "position": [
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "addr": 591,
+        "bit": null,
+        "monotone_rollouts": 1,
+        "total_rollouts": 12,
+        "reverts_seen": 0,
+        "change_rate": 0.0026,
+        "first_seen": {
+          "rollout_id": "rg1_zelda_seed1_bias000:(16, 0, 0, (105, 105, 0), 0, (), 194, 0, 0, 6, 14)",
+          "step": 1094,
+          "position": [
+            null,
+            null
+          ]
+        }
+      }
+    ]
+  },
+  "doctrine_crosscheck_reporting_only": {
+    "note": "0x066D/0x066E are disassembly-sourced ram_mapping addresses (configs/zelda.yaml); NEVER consulted as scanner input, checked here only to confirm the true-negative premise the gate depends on.",
+    "rupees_addr_0x066D_ever_changed": false,
+    "keys_addr_0x066E_ever_changed": false
+  },
+  "stage3a": {
+    "rg1_zelda_seed0_bias025": {
+      "n_edges": 2065,
+      "cap_hist_key_present_pregraft_run": false,
+      "leads_per_bit": {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0,
+        "6": 0,
+        "7": 0
+      },
+      "total_leads": 0
+    },
+    "rg1_zelda_seed0_bias000": {
+      "n_edges": 1160,
+      "cap_hist_key_present_pregraft_run": false,
+      "leads_per_bit": {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0,
+        "6": 0,
+        "7": 0
+      },
+      "total_leads": 0
+    },
+    "rg1_zelda_seed1_bias025": {
+      "n_edges": 2086,
+      "cap_hist_key_present_pregraft_run": false,
+      "leads_per_bit": {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0,
+        "6": 0,
+        "7": 0
+      },
+      "total_leads": 0
+    },
+    "rg1_zelda_seed1_bias000": {
+      "n_edges": 1399,
+      "cap_hist_key_present_pregraft_run": false,
+      "leads_per_bit": {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0,
+        "6": 0,
+        "7": 0
+      },
+      "total_leads": 0
+    }
+  },
+  "byte_identity_check": {
+    "method": "deterministic fake-clock monkeypatch (run_byteid_fakeclock.py) -- wall-clock deadlines are not step-count-reproducible under concurrent v28 training CPU contention, so time.time() was rebound (module-local only, never a global monkeypatch) to a fixed-delta synthetic clock so the deadline crosses after an EXACT, CPU-speed-independent number of engine steps.",
+    "baseline": "git show HEAD:scripts/go_explore_solve.py (pre-graft, copied to scripts/_is1a_pregraft_baseline.py)",
+    "treatment": "scripts/go_explore_solve.py working tree (post-graft, Task 1-3 uncommitted changes)",
+    "invocation": "--root-state roms/zelda_start_ctrl.state.bin --profile configs/zelda_roomfp.yaml --workers 1 --minutes 2.0 (fake) --seed 0 --want-solutions 0, --item-sig-report ABSENT on both",
+    "steps_pre": 5919,
+    "steps_post": 5919,
+    "done_pre": {
+      "cells": 287,
+      "frontier": 283,
+      "best_score": 50107,
+      "records": 5920,
+      "new_cells": 287,
+      "improvements": 344
+    },
+    "done_post": {
+      "cells": 287,
+      "frontier": 283,
+      "best_score": 50107,
+      "records": 5920,
+      "new_cells": 287,
+      "improvements": 344
+    },
+    "archive_pkl_sha256_match": true,
+    "traces_pkl_sha256_match": true,
+    "progress_jsonl_identical": true,
+    "archive_stats_json_identical": true,
+    "roots_json_identical": true,
+    "room_index_json": "identical on every field for all 3 committed edges EXCEPT the additive cap_hist key -- post-graft cap_hist == {\"0\": count} on every edge (exactly count, no other bucket ever populated); pre-graft has no cap_hist key at all (as designed/documented by Task 1)",
+    "verdict": "PASS -- reproduced live, not just synthetically"
+  },
+  "verdict": {
+    "stage12_zero_confirmed_criterion": "FAIL",
+    "stage12_detail": "51 confirmed (raw replay); 13 confirmed after a fair, already-claimed-observable-only death truncation (lives  == 0). Root-caused, not hand-waved: (A) death->CONTINUE-menu-transition RAM rewrite tail (cross-referenced against the lives byte hitting 0 shortly before the shared transition step in the raw replay); (B) shared, deterministic, action-independent early engine-init events -- 8 of 8 monotone-voting rollouts flip several addresses at IDENTICAL elapsed-step offsets (7, 53, 69) despite replaying genuinely different real mined action sequences, which is the signature of a root-clock artifact, not a gameplay-contingent flag. Rupees (0x066D) and keys (0x066E) -- disassembly-sourced, never consulted as scanner input -- confirmed to never move in ANY of the 12 replayed rollouts: the true-negative premise IS-1a is registered against still holds. Neither false-positive class is near any inventory address and neither is a purity violation.",
+    "byte_identity_criterion": "PASS (reproduced live)",
+    "overall_is1a": "FAIL",
+    "overall_rationale": "IS-1a (design doc SS6) requires BOTH criteria to hold. Byte-identity passes cleanly. The zero-confirmed criterion does not: even after a principled, already-claimed-observable-only mitigation, 13 non-item false positives remain, root-caused to two identified RAM-event classes. This is FAIL, not VOID: the measurement is sound and unconfounded (real banked lineages, real RAM, the real unmodified Stage1-2 code), and it answers the registered question honestly: as currently specified (SS9 Task 2 scope), Stage 1-2 does not yet achieve zero false confirmations on real, non-idle, single-root Zelda rollout data. Two concrete, named follow-up mitigations are recorded for whoever resumes this lane: (1) a death/lives-based rollout truncation ahead of scan_rollout, mirroring discover_observables.py own reset-threshold discipline for this exact game; (2) a cross-rollout transition-STEP consistency check that flags (rather than confirms) a candidate whose first-flip step is suspiciously identical across independently diverging real lineages."
+  }
+}
