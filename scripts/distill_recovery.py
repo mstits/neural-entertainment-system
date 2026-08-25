@@ -23,17 +23,47 @@ FUEL = REPO / "runs/recovery_distill/fuel"
 OUT = REPO / "runs/recovery_distill"
 
 
+def parse_clear_rate(stdout):
+    """clear_rate from eval_game stdout, or None when no result JSON
+    carries one (crash, early-exit status blob, format drift).  Status
+    blobs like {"status": "no_checkpoint"} parse cleanly but have no
+    clear_rate — they must NOT read as a valid eval."""
+    lines = stdout.splitlines()
+    for i in reversed([j for j, l in enumerate(lines)
+                       if l.startswith("{")]):
+        try:
+            blob = json.loads("\n".join(lines[i:]))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(blob, dict) and "clear_rate" in blob:
+            return blob["clear_rate"]
+    return None
+
+
 def build_demos(args) -> int:
     import numpy as np
     tapes = sorted((FUEL / "tapes").glob("*.actions.npy"))
+    if not tapes:
+        sys.exit(f"no tapes matching *.actions.npy under {FUEL / 'tapes'} "
+                 "— run scripts/mine_recovery_tapes.py first")
+    mining = FUEL / "mining.json"
+    if mining.exists():
+        banked = len(json.loads(mining.read_text())["tapes"])
+        if banked != len(tapes):
+            sys.exit(f"tape dir holds {len(tapes)} tapes but mining.json "
+                     f"banked {banked} — stale or partial fuel dir; the "
+                     "registered fuel count must match the mined count")
     print(f"{len(tapes)} tapes")
     (OUT / "demos").mkdir(parents=True, exist_ok=True)
+    failures = []
     for t in tapes:
         acts = np.load(t)
         clip = t.with_suffix("").with_suffix("")  # strip .actions.npy
         clipped = OUT / "demos" / (t.stem + ".clipped.npy")
         np.save(clipped, acts[: args.clip])
         outp = OUT / "demos" / (t.stem + ".npz")
+        # A stale .npz from a prior run would make a failed replay look ok.
+        outp.unlink(missing_ok=True)
         cmd = [str(REPO / ".venv/bin/python"),
                str(REPO / "scripts/replay_to_demos.py"),
                "--start-state", str(t.with_suffix(".start.state")),
@@ -41,7 +71,15 @@ def build_demos(args) -> int:
                "--profile", args.profile,
                "--out", str(outp)]
         r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
-        print(f"  {outp.name}: {'ok' if outp.exists() else r.stderr[-200:]}")
+        ok = r.returncode == 0 and outp.exists()
+        if not ok:
+            failures.append(t.name)
+        print(f"  {outp.name}: "
+              f"{'ok' if ok else f'FAILED (exit {r.returncode}) ' + r.stderr[-200:]}")
+    if failures:
+        sys.exit(f"replay_to_demos failed for {len(failures)}/{len(tapes)} "
+                 f"tapes ({', '.join(failures)}) — refusing to build a "
+                 "silently shrunken recovery set")
     # ---- anchor demos: the control's own greedy play (self-clone) ----
     if str(REPO) not in sys.path:
         sys.path.insert(0, str(REPO))
@@ -112,8 +150,12 @@ def train(args) -> int:
     for p_ in frozen.parameters():
         p_.requires_grad_(False)
 
+    demo_files = sorted((OUT / "demos").glob("ep*.npz"))
+    if not demo_files:
+        sys.exit(f"no recovery demos matching ep*.npz under "
+                 f"{OUT / 'demos'} — run phase demos first")
     rec_obs, rec_act = [], []
-    for f in sorted((OUT / "demos").glob("ep*.npz")):
+    for f in demo_files:
         d = np.load(f)
         rec_obs.append(d["obs_0"]); rec_act.append(d["act_0"])
     a = np.load(OUT / "demos" / "anchor_selfplay.npz")
@@ -126,6 +168,13 @@ def train(args) -> int:
     rng = np.random.default_rng(0)
     (OUT / "ckpts").mkdir(parents=True, exist_ok=True)
     history, best_rate, best_path = [], -1.0, None
+
+    def write_history():
+        # Written after every epoch so a broken eval keeps the ledger.
+        (OUT / "train_history.json").write_text(json.dumps(
+            {"history": history, "best_rate": best_rate,
+             "best_checkpoint": best_path}, indent=2) + "\n")
+
     for epoch in range(args.epochs):
         idx = rng.permutation(len(anc_act))[: len(rec_act)]
         obs = np.concatenate([rec_obs, anc_obs[idx]])
@@ -167,28 +216,32 @@ def train(args) -> int:
                "--action-select", "greedy"]
         r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
                            timeout=3600)
-        rate = None
-        lines = r.stdout.splitlines()
-        for i in reversed([j for j, l in enumerate(lines)
-                           if l.startswith("{")]):
-            try:
-                rate = json.loads("\n".join(lines[i:])).get("clear_rate")
-                break
-            except json.JSONDecodeError:
-                continue
+        rate = parse_clear_rate(r.stdout)
+        if r.returncode != 0 or rate is None:
+            # The 0.70 drift-stop and preserve-on-peak are the registered
+            # safety mechanisms; a rate of None would silently disable
+            # both, so a broken eval halts the run instead.
+            history.append({"epoch": epoch, "clear_rate": None,
+                            "loss": float(loss.item()),
+                            "eval_error": f"exit {r.returncode}"})
+            write_history()
+            sys.exit(f"mini-eval broke at epoch {epoch} (exit "
+                     f"{r.returncode}, clear_rate missing) — the drift-stop "
+                     f"and preserve-on-peak guards cannot run blind; stdout "
+                     f"tail: {r.stdout.strip()[-300:] or '<empty>'} stderr "
+                     f"tail: {r.stderr.strip()[-300:]}")
         history.append({"epoch": epoch, "clear_rate": rate,
                         "loss": float(loss.item())})
         print(f"epoch {epoch}: mini-eval clear_rate={rate} "
               f"loss={loss.item():.4f}", flush=True)
-        if rate is not None and rate > best_rate:
+        if rate > best_rate:
             best_rate, best_path = rate, str(ck)
-        if rate is not None and rate < args.drift_stop:
+        write_history()
+        if rate < args.drift_stop:
             print(f"DRIFT STOP: {rate} < {args.drift_stop} — halting "
                   f"per registration", flush=True)
             break
-    (OUT / "train_history.json").write_text(json.dumps(
-        {"history": history, "best_rate": best_rate,
-         "best_checkpoint": best_path}, indent=2) + "\n")
+    write_history()
     print(f"best mini-eval {best_rate} at {best_path}")
     return 0
 

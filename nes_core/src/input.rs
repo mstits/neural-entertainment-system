@@ -22,6 +22,18 @@ pub const BUTTON_SELECT: u8 = 1 << 2;
 pub const BUTTON_B: u8 = 1 << 1;
 pub const BUTTON_A: u8 = 1 << 0;
 
+/// Open-bus contribution on $4016/$4017 reads. The controller only
+/// drives D0 (and D1-D4 for expansion devices, all 0 on an NES-001);
+/// D7-D5 keep whatever was last on the data bus, which for the
+/// universal `LDA $4016` / `LDA $4016,Y` read idiom is the operand's
+/// high address byte — $40. So real hardware returns $41 for a
+/// pressed bit and $40 for a released one. Games that mask with
+/// `AND #$01` never notice, but Paperboy (USA) does `CMP #$41` on
+/// every bit of both pads: without this OR, every button on every
+/// controller reads released and the game is uncontrollable (title
+/// never even reacts to START). Mesen/FCEUX model the same constant.
+pub const CONTROLLER_OPEN_BUS: u8 = 0x40;
+
 #[derive(Copy, Clone, Default, Deserialize, Serialize)]
 pub enum Button {
     #[default]
@@ -187,9 +199,9 @@ impl Input {
     /// `read_byte`. Used by the bus `peek_byte` path.
     pub fn peek_byte(&self, address: u16) -> u8 {
         if address == 0x4016 {
-            self.game_pad_1.peek_button_state() as u8
+            CONTROLLER_OPEN_BUS | self.game_pad_1.peek_button_state() as u8
         } else if address == 0x4017 {
-            self.game_pad_2.peek_button_state() as u8
+            CONTROLLER_OPEN_BUS | self.game_pad_2.peek_button_state() as u8
         } else {
             0
         }
@@ -199,9 +211,9 @@ impl Input {
 impl Memory for Input {
     fn read_byte(&mut self, address: u16) -> u8 {
         if address == 0x4016 {
-            self.game_pad_1.next_button_state() as u8
+            CONTROLLER_OPEN_BUS | self.game_pad_1.next_button_state() as u8
         } else if address == 0x4017 {
-            self.game_pad_2.next_button_state() as u8
+            CONTROLLER_OPEN_BUS | self.game_pad_2.next_button_state() as u8
         } else {
             0
         }
@@ -338,7 +350,25 @@ mod two_player_tests {
     #[test]
     fn pad2_defaults_to_released() {
         let mut input = Input::new();
-        assert_eq!(poll(&mut input, 0x4017, 8), vec![0u8; 8]);
+        assert_eq!(poll(&mut input, 0x4017, 8), vec![0x40u8; 8]);
+    }
+
+    /// $4016/$4017 reads carry the $40 open-bus bits alongside the
+    /// data bit: $41 pressed / $40 released. Paperboy (USA) polls
+    /// with `CMP #$41` per bit, so a bare 0/1 return makes the whole
+    /// game ignore the controller — this pins the hardware value on
+    /// both the read and the side-effect-free peek path.
+    #[test]
+    fn controller_reads_carry_open_bus_bits() {
+        let mut input = Input::new();
+        input.game_pad_1.set_mask(BUTTON_A);
+        input.write_byte(0x4016, 1);
+        input.write_byte(0x4016, 0);
+        assert_eq!(input.peek_byte(0x4016), 0x41, "peek: A pressed = $41");
+        assert_eq!(input.read_byte(0x4016), 0x41, "read: A pressed = $41");
+        assert_eq!(input.peek_byte(0x4016), 0x40, "peek: B released = $40");
+        assert_eq!(input.read_byte(0x4016), 0x40, "read: B released = $40");
+        assert_eq!(input.peek_byte(0x4017), 0x40, "pad 2 released = $40");
     }
 
     /// Driving pad 1 must leave pad 2 untouched and vice versa. A
@@ -349,13 +379,13 @@ mod two_player_tests {
         let mut input = Input::new();
 
         input.game_pad_1.set_mask(0xFF);
-        assert_eq!(poll(&mut input, 0x4016, 8), vec![1u8; 8], "pad 1 all pressed");
-        assert_eq!(poll(&mut input, 0x4017, 8), vec![0u8; 8], "pad 2 must stay clear");
+        assert_eq!(poll(&mut input, 0x4016, 8), vec![0x41u8; 8], "pad 1 all pressed");
+        assert_eq!(poll(&mut input, 0x4017, 8), vec![0x40u8; 8], "pad 2 must stay clear");
 
         input.game_pad_1.set_mask(0x00);
         input.game_pad_2.set_mask(0xFF);
-        assert_eq!(poll(&mut input, 0x4016, 8), vec![0u8; 8], "pad 1 must be clear");
-        assert_eq!(poll(&mut input, 0x4017, 8), vec![1u8; 8], "pad 2 all pressed");
+        assert_eq!(poll(&mut input, 0x4016, 8), vec![0x40u8; 8], "pad 1 must be clear");
+        assert_eq!(poll(&mut input, 0x4017, 8), vec![0x41u8; 8], "pad 2 all pressed");
     }
 
     /// $4017 shifts pad 2 out in the hardware order A, B, Select,
@@ -377,9 +407,11 @@ mod two_player_tests {
         for (mask, expected) in cases {
             let mut input = Input::new();
             input.game_pad_2.set_mask(mask);
+            let expected: Vec<u8> =
+                expected.iter().map(|b| CONTROLLER_OPEN_BUS | b).collect();
             assert_eq!(
                 poll(&mut input, 0x4017, 8),
-                expected.to_vec(),
+                expected,
                 "pad 2 mask {mask:#04x} shifted out in the wrong bit order",
             );
         }

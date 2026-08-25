@@ -131,7 +131,11 @@ pub struct Ppu {
     // construction. Deltas are wrap-aware and accumulate into i64
     // odometers that serialize in the version-3 envelope so Go-Explore
     // restores stay coherent. Scratch arrays are per-frame and never
-    // serialized (saves occur on frame boundaries).
+    // serialized — but the cycle-locked advance (29781 CPU cycles vs
+    // ~29780.5 per PPU frame) drifts, so saves routinely land
+    // mid-visible-frame with line votes in flight: every restore path
+    // (apply_odo_state, and odo_reanchor for payload-less blobs) must
+    // clear the scratch rather than assume frame alignment.
     pub odometer_enabled: bool,
     pub odometer_x: i64,
     pub odometer_y: i64,
@@ -3006,6 +3010,23 @@ impl Ppu {
         self.odo_prev_modal_x = o.prev_modal_x;
         self.odo_prev_modal_y = o.prev_modal_y;
         self.odo_have_prev = o.have_prev;
+        // Saves land mid-visible-frame (cycle-locked drift), so the
+        // destination may hold line votes from its own abandoned frame.
+        // Those belong to a dead timeline and must not share the first
+        // post-restore fold.
+        self.odo_line_n = 0;
+    }
+
+    /// Re-anchor after restoring a blob that carries no odometer
+    /// payload (legacy/v1/v2 — every start-state and Go-Explore cell
+    /// minted before the odometer existed). The accumulator and the
+    /// enabled flag survive, but the fold anchor and any in-flight
+    /// line votes describe the pre-restore timeline: folding them
+    /// against the restored one splices a phantom delta or a phantom
+    /// scene bump.
+    pub fn odo_reanchor(&mut self) {
+        self.odo_have_prev = false;
+        self.odo_line_n = 0;
     }
 
     /// Capture this visible line's scroll ORIGIN from loopy_v + fine_x.
@@ -4507,6 +4528,33 @@ mod ppu_coverage_tests {
     }
 }
 
+// Test-only access to the private odometer scratch, shared with the
+// serialize tests (the restore-path regressions drive folds through
+// `apply_decoded`, which lives outside this module).
+#[cfg(test)]
+impl Ppu {
+    /// Feed one whole visible frame of identical line votes and fold.
+    pub(crate) fn odo_test_fold_uniform(&mut self, x: i32, y: i32) {
+        self.odo_line_x.iter_mut().for_each(|v| *v = x);
+        self.odo_line_y.iter_mut().for_each(|v| *v = y);
+        self.odo_line_n = 240;
+        self.odo_fold_frame();
+    }
+
+    /// Seed `n` in-flight line votes at origin (x, y) without folding —
+    /// the shape of a worker abandoned mid-frame by a cycle-locked save.
+    pub(crate) fn odo_test_seed_lines(&mut self, n: usize, x: i32, y: i32) {
+        let n = n.min(240);
+        self.odo_line_x[..n].iter_mut().for_each(|v| *v = x);
+        self.odo_line_y[..n].iter_mut().for_each(|v| *v = y);
+        self.odo_line_n = n;
+    }
+
+    pub(crate) fn odo_test_line_n(&self) -> usize {
+        self.odo_line_n
+    }
+}
+
 #[cfg(test)]
 mod odometer_tests {
     use super::*;
@@ -4705,5 +4753,77 @@ mod odometer_tests {
         // Restored anchor continues seamlessly: next frame at 140 adds 8.
         fold_uniform_frame(&mut q, 140, 0);
         assert_eq!(q.odometer_x, 40);
+    }
+
+    // Audit 2026-08 regression: cycle-locked saves land mid-visible-
+    // frame, so a restore target can hold line votes from its own
+    // abandoned frame. apply_odo_state must drop them or the dead
+    // timeline shares (and can win) the first post-restore fold.
+    #[test]
+    fn restore_does_not_mix_stale_line_votes_into_first_fold() {
+        // Source machine: anchored at origin 300, scene 0.
+        let mut src = odo_ppu();
+        fold_uniform_frame(&mut src, 292, 0);
+        fold_uniform_frame(&mut src, 300, 0);
+        let snap = src.get_odo_state();
+        assert_eq!(snap.scene, 0);
+
+        // Destination worker abandoned mid-frame: 130 stale votes at
+        // origin 999 from its own (dead) timeline.
+        let mut dst = odo_ppu();
+        dst.odo_line_x[..130].iter_mut().for_each(|v| *v = 999);
+        dst.odo_line_y[..130].iter_mut().for_each(|v| *v = 0);
+        dst.odo_line_n = 130;
+
+        dst.apply_odo_state(&snap);
+
+        // Post-restore lines vote the true origin 300 (a full frame of
+        // them now that the scratch was cleared).
+        let n0 = dst.odo_line_n;
+        for i in n0..240 {
+            dst.odo_line_x[i] = 300;
+            dst.odo_line_y[i] = 0;
+        }
+        dst.odo_line_n = 240;
+        dst.odo_fold_frame();
+
+        assert_eq!(
+            dst.odometer_scene, 0,
+            "phantom scene bump: stale dead-timeline votes won the fold (modal x = {})",
+            dst.odo_last_mx
+        );
+        // snap carried +8 (292 -> 300); the fold at 300 adds nothing.
+        assert_eq!(dst.odometer_x, 8, "restored anchor must integrate no delta");
+    }
+
+    #[test]
+    fn restore_clears_line_scratch() {
+        let mut src = odo_ppu();
+        fold_uniform_frame(&mut src, 300, 0);
+        let snap = src.get_odo_state();
+        let mut dst = odo_ppu();
+        dst.odo_line_n = 130;
+        dst.apply_odo_state(&snap);
+        assert_eq!(dst.odo_line_n, 0, "apply_odo_state must clear line scratch");
+    }
+
+    #[test]
+    fn reanchor_drops_anchor_and_scratch_but_keeps_accumulator() {
+        let mut p = odo_ppu();
+        fold_uniform_frame(&mut p, 300, 0);
+        fold_uniform_frame(&mut p, 316, 0);
+        assert_eq!(p.odometer_x, 16);
+        p.odo_line_n = 87; // mid-frame votes in flight
+
+        p.odo_reanchor();
+
+        assert!(p.odometer_enabled, "reanchor must not disable");
+        assert_eq!(p.odometer_x, 16, "accumulator survives");
+        assert!(!p.odo_have_prev, "fold anchor dropped");
+        assert_eq!(p.odo_line_n, 0, "line scratch dropped");
+        // Next fold re-anchors instead of integrating.
+        fold_uniform_frame(&mut p, 380, 0);
+        assert_eq!(p.odometer_x, 16);
+        assert_eq!(p.odometer_scene, 0);
     }
 }

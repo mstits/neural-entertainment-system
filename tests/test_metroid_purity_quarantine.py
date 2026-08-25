@@ -317,14 +317,29 @@ def test_quarantine_key_is_not_a_registered_profile_key():
 # 4. the working profile is unchanged
 # ---------------------------------------------------------------------------
 
+# ODO pseudo-addresses (0x800..0x803): the solver appends the PPU scroll
+# odometer integral + scene ordinal past the 2 KB RAM snapshot
+# (go_explore_solve ODO_LO). These are HARDWARE surfaces — the certified
+# scroll integral, not game RAM — so the quarantine treats them like
+# pixels/OAM, not like discovered bytes.
+ODO_PSEUDO = range(0x800, 0x804)
+
+
 def test_solve_block_consumes_only_verified_system_ram():
     solve = _profile_doc()["solve"]
     banned = _quarantined_prg_addresses(_profile_doc())
-    addrs = {"y": solve["y"], "area": solve["area"], "lives": solve["lives"],
-             "progress.lo": solve["progress"]["lo"],
-             "progress.hi": solve["progress"]["hi"]}
+    addrs = {"y": solve["y"], "area": solve["area"], "lives": solve["lives"]}
+    if "lo" in solve["progress"]:
+        addrs["progress.lo"] = solve["progress"]["lo"]
+        addrs["progress.hi"] = solve["progress"]["hi"]
+    else:
+        # odometer progress: no RAM bytes to audit — the observable is
+        # the in-core camera integral.
+        assert solve["progress"].get("source") == "odometer"
     for label, addr in addrs.items():
         assert isinstance(addr, int), f"solve.{label} is not an int address"
+        if addr in ODO_PSEUDO:
+            continue
         assert addr <= SYSTEM_RAM_TOP, (
             f"solve.{label} = {addr:#06x} is outside the 2 KB system RAM "
             f"get_ram exposes — it cannot have been observed."
@@ -339,12 +354,16 @@ def test_solve_addresses_are_the_receipted_ones():
     stay byte-identical in behaviour. These are the addresses in
     runs/metroid/metroid_receipt.json step2."""
     solve = _profile_doc()["solve"]
-    assert solve["progress"] == {"lo": 0x0051, "hi": 0x0050}
+    # 2026-08-24 onboarding wave 1: progress moved from the receipted RAM
+    # pair to the certified PPU odometer, and area to the scene ordinal
+    # pseudo-address 0x803 (see LEAGUE_ONBOARDING_WAVE1_2026-08-24.md —
+    # frozen 1045 frontier diagnosed as a door-blip and fixed in-wave).
+    # The REMAINING RAM addresses stay pinned to the receipt.
+    assert solve["progress"] == {"source": "odometer", "axis": "x"}
+    assert solve["area"] == 0x0803
     assert solve["y"] == 0x0052
-    assert solve["area"] == 0x0074
     assert solve["lives"] == 0x0107
     assert solve["level_key"] == []
-    assert solve["progress_cap"] == 16384
 
 
 def test_persistence_probe_rejection_note_is_preserved():

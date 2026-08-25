@@ -928,10 +928,14 @@ def test_without_the_margin_most_burst_alignments_reject_a_genuine_clear(
                for b in rejected)
 
 
-def test_the_margin_runs_only_the_clear_check_not_the_death_check(
-        scripted) -> None:
-    # An idle player dying AFTER the win is not evidence against the win. The
-    # margin's NOOP tail must never turn a reproduced clear into 'dead'.
+def test_the_margin_enforces_dead_before_clear(scripted) -> None:
+    # CONTRACT CHANGE (2026-08-24 hardening wave, audit P1): the margin
+    # used to run ONLY the clear check, which was a hole — a
+    # Gradius-class death arriving in the tail could not block a
+    # phase-lagged clear hook firing after it, so a dying lineage
+    # verified as a win. The margin now runs the SAME dead-before-clear
+    # ordering as the trace (with the 3-frame blip debounce), so a
+    # persistent tail death rejects.
     class _ClearThenDie(_ReplayGame):
         def clear_verify_margin(self) -> int:
             return 5
@@ -939,10 +943,18 @@ def test_the_margin_runs_only_the_clear_check_not_the_death_check(
     _ScriptedPool.script = _frames([0, 0, 0, 2, 2, 2, 2, 2])
     fake = _verify_solver(None, scripted)
     fake.game = _ClearThenDie()
-    # Trace of 2 actions, neither clear nor dead; frames 3+ (margin only) read
-    # DEAD. is_dead is bounded to the trace, so this is 'no_clear', not 'dead'.
+    # Trace of 2 actions, no clear; frames 3+ (margin) read persistently
+    # DEAD -> the debounce confirms at the 3rd consecutive read and the
+    # verdict is 'dead', never a fabricated clear.
     out = Solver.replay_verify(fake, "entrance", [1, 1])
-    assert out["verdict"] == "no_clear" and out["ok"] is False
+    assert out["verdict"] == "dead" and out["ok"] is False
+    # And a REAL phase-lagged clear that fires before any persistent
+    # death still verifies: frames read alive, clear fires in the tail.
+    _ScriptedPool.script = _frames([0, 0, 0, 1, 1, 1, 1, 1])
+    fake2 = _verify_solver(None, scripted)
+    fake2.game = _ClearThenDie()   # margin 5 — the tail must be reachable
+    out2 = Solver.replay_verify(fake2, "entrance", [1, 1])
+    assert out2["verdict"] == "clear" and out2["ok"] is True
 
 
 def test_a_death_INSIDE_the_trace_still_rejects(scripted) -> None:

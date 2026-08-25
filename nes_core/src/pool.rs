@@ -2742,7 +2742,7 @@ mod savestate_envelope_tests {
     /// anchor.
     fn restore_worker(rom: Vec<u8>, blob: &[u8]) -> Worker {
         let mut w = worker_from_rom(rom);
-        let (state, oam_dma) =
+        let (state, oam_dma, odo) =
             crate::serialize::decode_state(blob).expect("blob should decode");
         crate::serialize::apply_decoded(&mut w.nes, &state, &oam_dma, &odo);
         w.frame_cycle_target = None;

@@ -1010,9 +1010,7 @@ class Trainer:
         # with the tile encoder; the proven feedforward path is untouched
         # when this is off. Wired in _run_vanilla_ppo (rollout threads the
         # hidden state, the update replays sequences with truncated BPTT).
-        self._recurrent: bool = (
-            bool(rl_cfg.get("recurrent", False)) and self._is_tile_mode
-        )
+        self._recurrent: bool = self._resolve_recurrent(rl_cfg)
         # Envs per BPTT minibatch on the recurrent path. Each minibatch
         # replays this many full env trajectories through the GRU, so the
         # gradient batch is env_mb sequences. The per-sample
@@ -1583,6 +1581,22 @@ class Trainer:
 
         return _probe
 
+    def _resolve_recurrent(self, rl_cfg: dict) -> bool:
+        """True only for `recurrent: true` riding a tile encoder. A
+        recurrent knob on a pixel encoder is DROPPED — loudly, because
+        the policy class is the experimental variable in policy-class
+        A/Bs and a silent coercion to feedforward would be discoverable
+        only by autopsy (the run would train the CNN and leave no
+        [policy] evidence the knob was ignored)."""
+        requested = bool(rl_cfg.get("recurrent", False))
+        if requested and not self._is_tile_mode:
+            log.warning(
+                "[policy] reinforce.recurrent=true IGNORED: encoder %r "
+                "is not a tile encoder — the feedforward pixel policy "
+                "will train", self.encoder_kind,
+            )
+        return requested and self._is_tile_mode
+
     def _make_network(self, num_actions: int | None = None):
         """Build the policy, wrapping it in the Phase-3 hazard veto if armed.
 
@@ -1633,6 +1647,15 @@ class Trainer:
         cfg = rl_cfg.get("hazard_mask") or {}
         if not cfg.get("enabled"):
             return net
+        if self._recurrent:
+            # HazardMaskedPolicy masks inside forward_ac only; the
+            # recurrent rollout/update call forward_ac_recurrent, which
+            # __getattr__ delegates to the RAW net — the veto would
+            # print ARMED and then never execute.
+            raise ValueError(
+                "hazard_mask requires the non-recurrent policy (the "
+                "veto wraps forward_ac; the recurrent path bypasses it)"
+            )
         from src.training.hazard_mask import HazardMask, HazardMaskedPolicy
         mask = HazardMask.from_checkpoint(
             cfg["checkpoint"],
@@ -1682,11 +1705,20 @@ class Trainer:
                 self._tile_feature_dim, head_actions,
             )
             return net
-        return PolicyNetwork(
+        net = PolicyNetwork(
             num_actions=head_actions,
             encoder=self.encoder_kind,
             use_layernorm=self.use_layernorm,
         )
+        # Same armed-evidence contract as the tile branch: every run
+        # leaves positive log proof of the policy class that trained.
+        log.info(
+            "[policy] class=%s params=%d (encoder=%s, actions=%d)",
+            type(net).__name__,
+            sum(p.numel() for p in net.parameters()),
+            self.encoder_kind, head_actions,
+        )
+        return net
 
     def _obs_buffer_shape(self, n: int, max_steps: int) -> tuple[int, ...]:
         """Per-genome trajectory buffer shape. Pixel mode stores the
@@ -6257,7 +6289,11 @@ class Trainer:
         _adv_net = None
         _adv_opt = None
         if _adv_is_net:
-            _adv_net = self._make_network()
+            # RAW build: the experiment-arm wrappers in _make_network
+            # (hazard veto, commitment head) are protagonist arms — a
+            # hazard-masked ADVERSARY would be vetoed from exactly the
+            # death-causing actions it exists to force.
+            _adv_net = self._make_network_raw()
             _adv_net.to(self.device)
             _adv_opt = torch.optim.Adam(
                 _adv_net.parameters(),
@@ -6322,7 +6358,10 @@ class Trainer:
                     "the recurrent protagonist path"
                 )
             from src.training.kernel_adversary import KernelStickyAdversary
-            _kadv_net = self._make_network(num_actions=2)
+            # RAW build (same rule as the PR-MDP adversary above): the
+            # hazard veto's 6-action risky mask would masked_fill this
+            # 2-action head — a shape crash at the first decide().
+            _kadv_net = self._make_network_raw(num_actions=2)
             _kadv_net.to(self.device)
             _kadv = KernelStickyAdversary(
                 net=_kadv_net,
@@ -7086,6 +7125,16 @@ class Trainer:
                                 wave_prev_phi[i] = None
                                 wave_peak_phi[i] = 0.0
                                 wave_lost_count[i] = 0
+                        # A budget cut is a TIMEOUT for the critic too:
+                        # flag it so GAE bootstraps V(s) instead of 0 at
+                        # the cap (the Pardo time-limit correction the
+                        # lost-cut already gets), matching the scheduler's
+                        # censored-timeout accounting. Written AFTER the
+                        # wavefront block so the terminal charge above
+                        # still treats the cut as a non-clear (-peak) —
+                        # idling into the cap banks no shaping either way.
+                        if done and _bwd_env_trunc[i]:
+                            trunc_buf[t, i] = True
                         # Caption new events for the live stream. Per-env
                         # (one policy across N envs); the narrator's
                         # min-event-gap rate-limits so the grid doesn't spam.
@@ -7415,6 +7464,14 @@ class Trainer:
                                     prev_completion_total[i] = 0.0
                                     _stage0_reseed[i] = True
                                 except Exception:
+                                    # The restart never happened: drop the
+                                    # rung provenance assigned above, or
+                                    # the iter boundary scores a phantom
+                                    # truncation for an attempt with zero
+                                    # executed steps (the boundary path
+                                    # assigns src only after a successful
+                                    # load — same discipline).
+                                    _bwd_env_src[i] = -1
                                     active_in_iter[i] = False
                                     try:
                                         self.pool.set_worker_done(i, True)

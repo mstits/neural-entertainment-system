@@ -180,6 +180,13 @@ pub fn apply_decoded(
     // alone; a v3 snapshot is applied verbatim (that IS coherence).
     if odo.enabled {
         nes.ppu.apply_odo_state(odo);
+    } else {
+        // The accumulator survives, but the fold anchor and in-flight
+        // line votes still point at the pre-restore timeline; the
+        // first fold after the restore would otherwise integrate a
+        // phantom delta (or bump the scene) across two unrelated
+        // timelines.
+        nes.ppu.odo_reanchor();
     }
 }
 
@@ -603,5 +610,94 @@ mod tests {
         assert!(nes.ppu.odometer_enabled, "restore must not disable");
         assert_eq!(nes.ppu.odometer_x, 777);
         assert_eq!(nes.ppu.odometer_y, 42);
+    }
+
+    // Audit 2026-08 regressions: a blob without an odometer payload
+    // (legacy/v1/v2 — every start-state and Go-Explore cell minted
+    // before the odometer existed) keeps the accumulator but must
+    // re-anchor the fold, or the first post-restore fold splices the
+    // pre-restore timeline into the restored one.
+
+    #[test]
+    fn legacy_restore_does_not_splice_phantom_delta() {
+        let mut nes = fixture_machine();
+        let legacy = encode_state(&nes).expect("legacy encode");
+        nes.ppu.odometer_enabled = true;
+        nes.ppu.odo_test_fold_uniform(300, 0);
+        nes.ppu.odo_test_fold_uniform(316, 0);
+        assert_eq!(nes.ppu.odometer_x, 16);
+
+        let (state, oam_dma, odo) = decode_state(&legacy).expect("legacy decode");
+        assert!(!odo.enabled);
+        apply_decoded(&mut nes, &state, &oam_dma, &odo);
+
+        // First fold after the restore comes from the restored
+        // timeline's origin. A stale anchor at 316 would read 380 as
+        // motion and integrate a phantom +64; a re-anchored fold
+        // integrates nothing.
+        nes.ppu.odo_test_fold_uniform(380, 0);
+        assert_eq!(nes.ppu.odometer_x, 16, "phantom delta spliced across restore");
+        assert_eq!(nes.ppu.odometer_scene, 0);
+        // The anchor is live again: the next fold integrates normally.
+        nes.ppu.odo_test_fold_uniform(388, 0);
+        assert_eq!(nes.ppu.odometer_x, 24);
+    }
+
+    #[test]
+    fn legacy_restore_does_not_bump_scene() {
+        let mut nes = fixture_machine();
+        let legacy = encode_state(&nes).expect("legacy encode");
+        nes.ppu.odometer_enabled = true;
+        nes.ppu.odo_test_fold_uniform(300, 0);
+        nes.ppu.odo_test_fold_uniform(316, 0);
+
+        let (state, oam_dma, odo) = decode_state(&legacy).expect("legacy decode");
+        apply_decoded(&mut nes, &state, &oam_dma, &odo);
+
+        // Restored origin far from the stale anchor (|100 - 316| > 64):
+        // a stale anchor would read it as a rendered cut.
+        nes.ppu.odo_test_fold_uniform(100, 0);
+        assert_eq!(nes.ppu.odometer_scene, 0, "phantom scene bump across restore");
+        assert_eq!(nes.ppu.odometer_x, 16);
+    }
+
+    #[test]
+    fn legacy_restore_clears_in_flight_line_votes() {
+        let mut nes = fixture_machine();
+        let legacy = encode_state(&nes).expect("legacy encode");
+        nes.ppu.odometer_enabled = true;
+        // Worker abandoned mid-frame by a cycle-locked save.
+        nes.ppu.odo_test_seed_lines(130, 999, 0);
+
+        let (state, oam_dma, odo) = decode_state(&legacy).expect("legacy decode");
+        apply_decoded(&mut nes, &state, &oam_dma, &odo);
+        assert_eq!(
+            nes.ppu.odo_test_line_n(),
+            0,
+            "dead-timeline line votes survived the restore",
+        );
+    }
+
+    #[test]
+    fn cycle_locked_saves_land_mid_visible_frame() {
+        // Premise behind the re-anchor guards above: the cycle-locked
+        // advance (29781 CPU cycles) drifts against the true PPU frame
+        // (~29780.5), so save boundaries sweep the visible region
+        // rather than resting at vblank. Measured 284/600 mid-visible
+        // on this fixture when the guard was written.
+        let mut nes = fixture_machine();
+        let mut mid_visible = 0usize;
+        for _ in 0..600 {
+            advance_frames(&mut nes, 1);
+            if (1..240).contains(&nes.ppu.scanline) {
+                mid_visible += 1;
+            }
+        }
+        assert!(
+            mid_visible > 100,
+            "cycle-locked boundaries no longer land mid-frame ({mid_visible}/600); \
+             if the advance became frame-aligned, the restore scratch guards \
+             and this premise test can both be retired together",
+        );
     }
 }

@@ -24,7 +24,12 @@ High (>=0.8): the wall is a response-learning gap -> post-stick states
 become curriculum fuel (solver-as-teacher). Low (<=0.2): sticks are
 fate; the honest per-level ceilings are real.
 
-    .venv/bin/python scripts/recovery_assay.py collect
+The manifest adjudicate consumes normally comes from
+`eval_game --dump-stick-states` (the verified honest harness); collect
+is the diverged standalone fallback and refuses to overwrite an
+existing manifest without --force.
+
+    .venv/bin/python scripts/recovery_assay.py collect --dir runs/assay_x
     .venv/bin/python scripts/recovery_assay.py adjudicate --sample 16
 """
 from __future__ import annotations
@@ -35,7 +40,53 @@ REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "runs/recovery_assay"   # overridden by --dir
 
 
+def partition_suspects(records, max_steps):
+    """Split uncleared-with-sticks records into true-death suspects and
+    alive timeouts.  An episode at length >= max_steps hit the step cap
+    alive mid-level; the solver trivially finds the flag from an alive
+    state, so adjudicating those inflates recovery_rate (5 of 14 on the
+    banked run).  Same filter as mine_recovery_tapes.py."""
+    suspects, timeouts = [], []
+    for ep, m in enumerate(records):
+        if m["cleared"] or not m["sticks"]:
+            continue
+        if m["length"] >= max_steps:
+            timeouts.append(ep)
+            continue
+        t, sp = m["sticks"][-1]
+        suspects.append({"episode": ep, "t": t,
+                         "death_step": m["length"], "state": sp})
+    return suspects, timeouts
+
+
+def solver_solutions(r, out_dir):
+    """Solution tapes from a finished solver run, or a loud failure.
+
+    A crashed solver leaves an empty or missing solutions dir, and a
+    bare glob scores that as 'no recovery found' — the silent-zero
+    class.  A nonzero exit or a missing dir therefore aborts the assay
+    instead of being scored."""
+    if r.returncode != 0:
+        raise RuntimeError(
+            f"solver exited {r.returncode} for {out_dir.name} — refusing "
+            f"to score a crash as 'no recovery'; stderr tail: "
+            f"{r.stderr.strip()[-500:]}")
+    sol_dir = out_dir / "solutions"
+    if not sol_dir.is_dir():
+        raise RuntimeError(
+            f"solver exited 0 but left no solutions dir at {sol_dir} — "
+            "cannot distinguish 'no recovery' from a broken run")
+    # One solution == one .actions.npy; each also has a paired
+    # sol_NNN.json, so a bare 'sol_*' glob doubles the count.
+    return sorted(sol_dir.glob("sol_*.actions.npy"))
+
+
 def collect(args) -> int:
+    man_path = OUT / "manifest.json"
+    if man_path.exists() and not args.force:
+        sys.exit(f"REFUSING to overwrite {man_path} — it is the pipeline's "
+                 "input (adjudicate and mine_recovery_tapes read it). "
+                 "Pass --force or a fresh --dir.")
     if str(REPO) not in sys.path:
         sys.path.insert(0, str(REPO))
     import numpy as np, torch, yaml, nes_core
@@ -107,8 +158,11 @@ def collect(args) -> int:
                     or int(ram[0x00B5]) >= 2):
                 outcome = "death"
                 break
+        # Same per-record schema as eval_game --dump-stick-states —
+        # adjudicate and mine_recovery_tapes read cleared/length/sticks.
         manifest.append({"episode": ep, "outcome": outcome,
-                         "steps": t + 1, "sticks": sticks})
+                         "cleared": outcome == "clear",
+                         "length": t + 1, "sticks": sticks})
         # Snapshots from cleared episodes are controls we don't need in
         # bulk — drop all but the last two to bound disk.
         if outcome == "clear":
@@ -118,9 +172,9 @@ def collect(args) -> int:
         print(f"ep {ep}: {outcome} at step {t+1}, "
               f"{len(sticks)} divergent sticks", flush=True)
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "manifest.json").write_text(json.dumps({
+    man_path.write_text(json.dumps({
         "checkpoint": args.checkpoint, "episodes": args.episodes,
-        "sticky": args.sticky, "runs": manifest}, indent=2) + "\n")
+        "sticky": args.sticky, "records": manifest}, indent=2) + "\n")
     deaths = sum(1 for m in manifest if m["outcome"] == "death")
     clears = sum(1 for m in manifest if m["outcome"] == "clear")
     print(f"collected: {clears} clears, {deaths} deaths "
@@ -133,16 +187,26 @@ def adjudicate(args) -> int:
     # verified honest harness; the standalone collector reimplemented
     # the loop and diverged — 0/60 vs the harness's 0.767).
     man = json.loads((OUT / "manifest.json").read_text())
-    suspects = []
-    for ep, m in enumerate(man["records"]):
-        if not m["cleared"] and m["sticks"]:
-            t, sp = m["sticks"][-1]
-            suspects.append({"episode": ep, "t": t,
-                             "death_step": m["length"], "state": sp})
+    suspects, timeouts = partition_suspects(man["records"], args.max_steps)
     suspects = suspects[: args.sample]
     print(f"adjudicating {len(suspects)} death-preceding sticks "
-          f"({args.minutes} solver-min each)")
+          f"({args.minutes} solver-min each); "
+          f"{len(timeouts)} alive-timeout episodes skipped")
     results = []
+
+    def write_verdict(complete):
+        n = len(results)
+        rec = sum(1 for r in results if r["recovered"])
+        verdict = {"sampled": n, "recovered": rec,
+                   "recovery_rate": round(rec / n, 3) if n else None,
+                   "timeout_episodes_skipped": len(timeouts),
+                   "solver_minutes_each": args.minutes,
+                   "complete": complete,
+                   "results": results}
+        (OUT / "verdict.json").write_text(
+            json.dumps(verdict, indent=2) + "\n")
+        return verdict
+
     for i, s in enumerate(suspects):
         out_dir = OUT / f"solve_ep{s['episode']:03d}_t{s['t']:04d}"
         cmd = [str(REPO / ".venv/bin/python"),
@@ -162,23 +226,20 @@ def adjudicate(args) -> int:
         # original stdout parse looked for a progress-line format the
         # done-line doesn't use and scored every run "no recovery" —
         # including one that demonstrably solved.)
-        sols = list((out_dir / "solutions").glob("sol_*"))
+        sols = solver_solutions(r, out_dir)
         recovered = len(sols) > 0
         results.append({**s, "recovered": recovered,
                         "solutions": len(sols), "solver_tail": tail})
+        # Flush after every sample so a late crash keeps the ledger.
+        write_verdict(complete=False)
         print(f"[{i+1}/{len(suspects)}] ep{s['episode']} t{s['t']} "
               f"(died at {s['death_step']}): "
               f"{'RECOVERED' if recovered else 'no recovery found'}",
               flush=True)
-    n = len(results)
-    rec = sum(1 for r in results if r["recovered"])
-    verdict = {"sampled": n, "recovered": rec,
-               "recovery_rate": round(rec / n, 3) if n else None,
-               "solver_minutes_each": args.minutes,
-               "results": results}
-    (OUT / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
+    verdict = write_verdict(complete=True)
     print(json.dumps({k: verdict[k] for k in
-                      ("sampled", "recovered", "recovery_rate")}, indent=2))
+                      ("sampled", "recovered", "recovery_rate",
+                       "timeout_episodes_skipped")}, indent=2))
     return 0
 
 
@@ -200,6 +261,8 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--dir", default=None,
                     help="assay directory (default runs/recovery_assay)")
+    ap.add_argument("--force", action="store_true",
+                    help="collect: overwrite an existing manifest.json")
     a = ap.parse_args()
     if a.dir:
         globals()["OUT"] = REPO / a.dir

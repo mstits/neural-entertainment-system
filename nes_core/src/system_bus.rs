@@ -392,7 +392,7 @@ mod tests {
             // same bit the very next read returns.
             let peeked = bus.peek_byte(0x4016);
             let read = bus.read_byte(0x4016);
-            assert_eq!(peeked, 1, "$4016 peek should see A pressed");
+            assert_eq!(peeked, 0x41, "$4016 peek should see A pressed ($40 open bus | 1)");
             assert_eq!(peeked, read, "peek must match read for $4016");
         }
         // $4017 -> pad 2.
@@ -402,7 +402,7 @@ mod tests {
             let mut bus = parts.bus();
             let peeked = bus.peek_byte(0x4017);
             let read = bus.read_byte(0x4017);
-            assert_eq!(peeked, 1, "$4017 peek should see A pressed");
+            assert_eq!(peeked, 0x41, "$4017 peek should see A pressed ($40 open bus | 1)");
             assert_eq!(peeked, read, "peek must match read for $4017");
         }
     }

@@ -1139,6 +1139,19 @@ def inversion_armed(pin_secs: float, pin_gx: int, gx: int, floor: float,
             and floor <= gx <= pin_gx + 60 and elapsed >= pin_secs)
 
 
+def finisher_extension_ok(status: str, c: dict) -> bool:
+    """Burst-side eligibility for the finisher extension explore() grants at
+    the deepest frontier (the positional band check stays in the loop). One
+    grant per burst, and NEVER during a dead-blip: observe() returns "live"
+    for the first two consecutive dead reads, so `status == "live"` alone
+    would extend a lineage already dying at burst end — and its confirmed
+    death 1-2 steps into the extension would DOA-retire the deepest frontier
+    cell, the extension's own root. A free function so the blip guard is
+    testable without a ROM and a Pool."""
+    return (status == "live" and c["left"] <= 0
+            and not c.get("extended") and not c.get("_dead_mm"))
+
+
 def inverted_weights(action_space) -> list:
     """Exploration bias for the saturation window: reward the maneuvers the
     forward heuristic structurally prunes (leftward, downward)."""
@@ -2978,6 +2991,7 @@ class Solver:
                 n = ctx["_dead_mm"] = ctx.get("_dead_mm", 0) + 1
                 if n < 3:
                     return "live"   # blip: keep stepping, record nothing
+                ctx["_dead_cause"] = "lives"
             return "dead"
         elif ctx is not None:
             ctx["_dead_mm"] = 0
@@ -3016,6 +3030,11 @@ class Solver:
                 n = ctx["_key_mm"] = ctx.get("_key_mm", 0) + 1
                 if n < 3:
                     return "live"   # blip: keep stepping, record nothing
+                # Cause marker for _assign()'s DOA retirement: a key-change
+                # "dead" is a warp/reset — action-dependent, not proof the
+                # ROOT state was doomed — so it must never retire the source
+                # cell the way an instant lives-death does.
+                ctx["_dead_cause"] = "key"
             return "dead"
         elif ctx is not None:
             ctx["_key_mm"] = 0
@@ -3266,9 +3285,13 @@ class Solver:
         their evaluation stride from different origins — per-burst vs. root —
         and the trace ends on the live fire frame, so without a margin a
         genuine confluence clear fails to reproduce ~68% of the time purely on
-        phase. Only the CLEAR check runs in the margin: is_dead stays bounded
-        to the trace, because what happens to an idle player AFTER the win is
-        not evidence against it.
+        phase. Dead-before-clear holds on every frame INCLUDING the margin:
+        the live hook can never adjudicate clear on a dying frame (observe()
+        returns before its clear checks), and a tail-firing replay must not
+        be more permissive — a Gradius-class death that trips the detector
+        after the lives decrement would otherwise verify in the tail. A real
+        clear never requires the player to be persistently dead at
+        adjudication time.
 
         Returns {"ok": bool, "verdict": str, "at": int|None, "elapsed_s":
         float, "n_actions": int, "margin": int[, "error": str]} — never
@@ -3315,7 +3338,10 @@ class Solver:
                 # different detector than the one that fired.
                 if needs_apu:
                     ctx["_apu_mask"] = pool.apu_activity_all()[0]
-                if i < n and self.game.is_dead(ram, self.start_lives):
+                # Tail included: the margin exists so a phase-lagged clear
+                # can fire, and it must fire under the SAME dead-before-
+                # clear ordering the live hook enforced.
+                if self.game.is_dead(ram, self.start_lives):
                     _dmm += 1
                     if _dmm >= 3:   # transition-blip debounce (observe())
                         out.update(verdict="dead", at=i + 1)
@@ -3561,8 +3587,8 @@ class Solver:
                         ram = self._xram_local(ram, pool)
                     if needs_apu:
                         ctx["_apu_mask"] = pool.apu_activity_all()[0]
-                    if i < len(actions) and self.game.is_dead(
-                            ram, self.start_lives):
+                    # Tail included, same ordering as replay_verify.
+                    if self.game.is_dead(ram, self.start_lives):
                         _dmm += 1
                         if _dmm >= 3:   # transition-blip debounce
                             verdict, at = "dead", i + 1
@@ -4322,8 +4348,12 @@ class Solver:
                     # death is proof enough; retire the cell immediately
                     # instead of draining `throttle` bursts on it. Armed
                     # with --frontier-throttle like the rest of the
-                    # barren machinery.
+                    # barren machinery. Lives-deaths only: a key-change
+                    # "dead" (warp/reset, _dead_cause == "key") depends on
+                    # the burst's sampled actions, not the root state, so
+                    # one unlucky warp entry must not retire a live cell.
                     if (self.frontier_throttle > 0
+                            and prev.get("_dead_cause") != "key"
                             and prev.get("died_at_burst_step") is not None
                             and prev["died_at_burst_step"] <= 5):
                         src.barren = max(src.barren, self.frontier_throttle)
@@ -4332,7 +4362,8 @@ class Solver:
             # Fall back to the entrance root.
             self.pool.load_worker_state(wid, Path(self.args.root_state).read_bytes())
             return {"key": None, "root": "entrance", "trace": [], "steps": 0,
-                    "left": self.args.burst, "loops": 0, "prev_gx": -1,
+                    "left": self.args.burst, "burst_step": 0,
+                    "loops": 0, "prev_gx": -1,
                     "sig": (), "sect": 0, "p0750": None, "psig": (),
                     "kills": 0, "eslots": None, "ortho": False,
                     "prev": int(self.rng.choice(len(self.weights), p=self.weights))}
@@ -4345,7 +4376,7 @@ class Solver:
         # reads transitional garbage; the first real step re-arms it).
         c = {"key": cell.key, "root": root_id, "trace": list(tb),
                 "steps": cell.best_steps, "left": self.args.burst,
-                "loops": loops, "prev_gx": -1, "sig": sig,
+                "burst_step": 0, "loops": loops, "prev_gx": -1, "sig": sig,
                 "sect": sect, "p0750": None, "psig": psig, "cur_key": cell.key,
                 "kills": rec[6] if len(rec) > 6 else 0, "eslots": None,
                 # 8th element (gate_marks) is present only on lineages a
@@ -5395,6 +5426,7 @@ class Solver:
                 c["trace"].append(c["pending"])
                 c["steps"] += 1
                 c["left"] -= 1
+                c["burst_step"] += 1
                 # Loop-back detection: a discontinuous backward gx jump on a
                 # non-garbage frame advances the trajectory's maze phase
                 # (capped so wrong-path spirals can't explode the archive).
@@ -5472,15 +5504,18 @@ class Solver:
                 # from the deepest cell can end just short of the wd advance.
                 # A burst ending in the deepest-area top band gets one +200
                 # extension so it can actually complete the clear.
-                if (status == "live" and c["left"] <= 0
-                        and not c.get("extended")
+                if (finisher_extension_ok(status, c)
                         and game.area(ram) == self.max_area
                         and _lgx // 16 >= self.max_gx_in_area.get(self.max_area, 0) // 16 - 3):
                     c["left"] += 200
                     c["extended"] = True
                 if status != "live" or c["left"] <= 0 or c["steps"] >= args.max_steps:
                     if status == "dead":
-                        c["died_at_burst_step"] = args.burst - c["left"]
+                        # burst_step, never `args.burst - left`: the finisher
+                        # extension above adds 200 to `left`, which drives
+                        # that derivation negative and DOA-retires the
+                        # extension's own root cell in _assign().
+                        c["died_at_burst_step"] = c["burst_step"]
                     # A burst just completed: this is the only moment the
                     # gate sweep may fire (nothing in flight is discarded).
                     self._gate_boundary_hit = True
