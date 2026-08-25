@@ -661,3 +661,61 @@ normalization, fc1/fc2 scope, Kaiming-uniform incoming, zeroed
 outgoing, cleared optimizer moments) changes. Only the V7
 interpretation is revised, with its own receipts, before any of the
 4x250 budget is spent.
+
+## VERDICT (2026-08-25): FAIL — best-of-4 0.530
+
+Full honest-protocol scoring (cold entrance, greedy, sticky 0.25,
+jitter ±16, 50 eps × eval seeds {0,1}, max-steps 1500), two checkpoints
+per seed (peak entrance-trailing-rate via winners/best.pt, and the
+final iter-240 checkpoint) per the registration's fixed selection rule:
+
+| seed | winners/best pooled | final (iter240) pooled | seed best | training-time entrance_trailing_rate |
+|---|---|---|---|---|
+| 0 | 0.040 | 0.020 | 0.040 | 0.87 |
+| 1 | 0.290 | 0.020 | 0.290 | 0.93 |
+| 2 | 0.530 | 0.000 | 0.530 | 1.00 |
+| 3 | 0.170 | 0.010 | 0.170 | 0.97 |
+
+**best-of-4 = 0.530.** FAIL threshold is ≤0.767; PASS was ≥0.80.
+Neither ambiguous nor close — every seed falls well short, and the
+best individual seed (0.53) doesn't even clear the control's own
+number (0.767), let alone the trainable-slice PASS target.
+
+Per the registration's own verdict language: **from-the-start
+inclusion adds nothing at 48k parameters; the parameter-budget
+hypothesis takes the floor.** The isolated-optimum finding from the
+post-hoc distillation experiments does NOT generalize to "curricula
+built with recovery-from-the-start can't work" — this result says
+something narrower and just as important: at this parameter budget,
+neither post-hoc (distillation) nor from-scratch (v27) delivery of the
+mined recovery knowledge produces a competent policy. **v28 (the
+pre-registered capacity experiment, docs/proposals/V28_CAPACITY_2026-08-25.md)
+is now the standing next step**, not a contingency.
+
+## Secondary finding: peak instability reproduces at full strength on a fresh curriculum
+
+Every seed's FINAL checkpoint (iter 240) scored catastrophically below
+its own PEAK checkpoint — 0.02 vs 0.04, 0.02 vs 0.29, 0.00 vs 0.53,
+0.01 vs 0.17. This is the same continued-PPO-collapses-a-consolidated-
+peak pattern measured weeks ago on post-hoc training (-74% over 200
+iters) — but this is the FIRST time it's been observed on a policy
+that was NEVER post-hoc fine-tuned; it degraded from within its own
+single from-scratch run. Preserve-on-peak (already standard practice
+via winners/best.pt) is not an optional convenience here — without it,
+this experiment's reported number would have been ~0.01, not 0.53.
+This strengthens the case that peak instability is a property of this
+architecture/training-recipe class broadly, not an artifact of
+post-hoc intervention specifically.
+
+## Secondary finding: training telemetry massively overestimates honest rate, but ranks seeds correctly
+
+entrance_trailing_rate (0.87/0.93/1.00/0.97) predicted almost nothing
+about the ABSOLUTE honest rate (0.04/0.29/0.53/0.17) — a ~2-25x
+overestimate — but DID correctly identify seed 2 as the best and seed
+0 as the worst. Telemetry remains useful for within-run seed selection
+and utterly unusable as a stand-in for the honest gate, reconfirming
+(at a starker magnitude than any prior campaign) why this project's
+process requires the honest protocol as the sole scoring authority.
+
+Receipts: runs/v27_fresh_recovery/gate/*.json (16 files, all 50-episode
+runs, both eval seeds, both checkpoint classes, per seed).
