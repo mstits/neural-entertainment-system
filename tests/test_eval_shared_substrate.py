@@ -384,6 +384,33 @@ def test_run_level_leg_passes_the_given_checkpoint_through():
     assert seen == ["/fake/head_1_3.pt", "/fake/head_1_3.pt"]
 
 
+# ---- _run_eval_subprocess (subprocess.run monkeypatched, no emulator) ----
+
+
+def test_run_eval_subprocess_recovers_status_json_on_nonzero_exit():
+    """eval_game.py's own guards (e.g. no_rom) print a status JSON to
+    stdout and then exit non-zero with nothing on stderr -- that JSON
+    must still come back, not get swapped for an empty stderr detail
+    (regression: returncode used to be checked before stdout was ever
+    read)."""
+    import scripts.eval_shared_substrate as mod
+
+    no_rom_json = json.dumps(
+        {"status": "no_rom", "rom_path": "/missing/game.nes"})
+    real_subprocess_run = mod.subprocess.run
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(
+            cmd, returncode=1, stdout=no_rom_json, stderr="")
+
+    mod.subprocess.run = fake_run
+    try:
+        result = mod._run_eval_subprocess(["fake", "cmd"], timeout_s=1.0)
+    finally:
+        mod.subprocess.run = real_subprocess_run
+    assert result == {"status": "no_rom", "rom_path": "/missing/game.nes"}
+
+
 # ---- level_delta ----------------------------------------------------------
 
 

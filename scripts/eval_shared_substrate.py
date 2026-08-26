@@ -614,16 +614,20 @@ def _run_eval_subprocess(cmd: list[str], *, timeout_s: float) -> dict:
             timeout=timeout_s)
     except subprocess.TimeoutExpired:
         return {"status": "eval_timeout"}
-    if proc.returncode != 0:
-        return {"status": "eval_failed", "detail": proc.stderr.strip()[-500:]}
+    # Parse stdout before looking at the return code: eval_game.py's own
+    # guards (e.g. no_rom) print a status JSON to stdout and then exit
+    # non-zero, and that JSON is more informative than an empty stderr.
     text = proc.stdout.strip()
     start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end < start:
-        return {"status": "eval_failed", "detail": "no JSON on stdout"}
-    try:
-        return json.loads(text[start:end + 1])
-    except json.JSONDecodeError as e:
-        return {"status": "eval_failed", "detail": f"bad JSON: {e}"}
+    if start >= 0 and end >= start:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError as e:
+            if proc.returncode == 0:
+                return {"status": "eval_failed", "detail": f"bad JSON: {e}"}
+    if proc.returncode != 0:
+        return {"status": "eval_failed", "detail": proc.stderr.strip()[-500:]}
+    return {"status": "eval_failed", "detail": "no JSON on stdout"}
 
 
 def run_level_leg(

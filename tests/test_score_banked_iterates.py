@@ -200,6 +200,18 @@ def test_param_drift_skips_mismatched_and_missing_tensors():
     assert d["identical"] is False
 
 
+def test_param_drift_discloses_skipped_tensors_and_never_calls_a_resized_net_identical():
+    """A resized trunk (e.g. hidden_dim 64 vs 96) must not (a) vanish from the
+    report with no trace, or (b) let a bit-identical head make the whole pair
+    read as 'identical' while the trunk went uncompared."""
+    t0 = {"same": np.array([1.0, 2.0]), "trunk": np.zeros((64, 10))}
+    tt = {"same": np.array([1.0, 2.0]), "trunk": np.ones((96, 10))}
+    d = param_drift(tt, t0)
+    assert d["skipped_tensors"] == ["trunk"]
+    assert d["n_skipped"] == 1
+    assert d["identical"] is False
+
+
 # ==========================================================================
 # Iterate discovery + the stub cost model
 # ==========================================================================
@@ -290,3 +302,35 @@ def test_cli_stub_costs_the_curve_and_never_emulates_by_default(tmp_path):
     assert doc["iterates"][0]["drift"]["l2"] == pytest.approx(0.0)
     assert doc["iterates"][1]["drift"]["l2"] == pytest.approx(20.0)
     assert all("curve" not in r for r in doc["iterates"])
+
+
+def test_cli_survives_one_unloadable_iterate_and_keeps_the_rest(tmp_path):
+    """A later iterate that is truncated / has no recognisable state_dict must
+    not cost the whole sweep: the run must still exit 0, still print the
+    iterates already scored, and still honour --out — never a bare traceback
+    with nothing on stdout and no file on disk."""
+    import torch
+
+    torch.save(
+        {"net_state_dict": {"w": torch.full((2, 2), 10.0)}},
+        tmp_path / "vanilla_ppo_iter_00010.pt",
+    )
+    # No net_state_dict/state_dict/model_state_dict key, and not every value
+    # is tensor-shaped -> load_iterate() raises ValueError for this one.
+    torch.save({"not_a_policy": "garbage"}, tmp_path / "vanilla_ppo_iter_00020.pt")
+
+    out_path = tmp_path / "sweep.json"
+    out = subprocess.run(
+        [sys.executable, str(_ROOT / "scripts" / "score_banked_iterates.py"),
+         "--iterates", str(tmp_path / "vanilla_ppo_iter_*.pt"),
+         "--out", str(out_path)],
+        cwd=str(_ROOT), capture_output=True, text=True, timeout=300,
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    doc = json.loads(out.stdout)
+    assert doc["n_iterates"] == 2
+    rows = {r["iter"]: r for r in doc["iterates"]}
+    assert rows[10]["drift"]["l2"] == pytest.approx(0.0)
+    assert "error" in rows[20] and rows[20]["error"]
+    # --out must carry the same, not be left unwritten by the failure.
+    assert json.loads(out_path.read_text()) == doc

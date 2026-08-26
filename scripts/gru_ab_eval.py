@@ -70,8 +70,12 @@ def honest_eval(ckpt: Path, episodes: int) -> dict:
                "--episodes", str(episodes), "--sticky-prob", "0.25",
                "--start-jitter", "16", "--eval-seed", str(es),
                "--action-select", "greedy"]
-        r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
-                           timeout=7200)
+        try:
+            r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
+                               timeout=7200)
+        except subprocess.TimeoutExpired as e:
+            out[f"eval_seed_{es}"] = {"error": f"timed out after {e.timeout}s"}
+            continue
         # eval_game prints its result as indented multi-line JSON at the
         # end of stdout; parse from the LAST top-level '{' line onward.
         blob = None
@@ -86,7 +90,14 @@ def honest_eval(ckpt: Path, episodes: int) -> dict:
         out[f"eval_seed_{es}"] = blob if blob else {
             "error": (r.stdout + r.stderr)[-2000:]}
     ok = [v for v in out.values() if "clear_rate" in (v or {})]
-    if ok:
+    if len(ok) < len(out):
+        # Pooling fewer than both --eval-seed runs silently halves the
+        # "50 eps x 2 eval seeds = 100 episodes" protocol; refuse instead
+        # of reporting a partial number as if it were the full pool.
+        out["pooled_clear_rate_error"] = (
+            f"only {len(ok)}/{len(out)} eval-seed run(s) returned a "
+            "clear_rate; refusing to pool a partial result")
+    elif ok:
         cleared = sum(v["clear_rate"] * v.get("episodes", episodes) for v in ok)
         total = sum(v.get("episodes", episodes) for v in ok)
         out["pooled_clear_rate"] = round(cleared / total, 4)
@@ -102,13 +113,16 @@ def main() -> int:
     verdict = {"arms": {}, "control_banked": 0.76,
                "preregistration":
                "docs/proposals/RECURRENT_BOTTLENECK_AB_2026-08-23.md"}
+    p = REPO / args.out
+    p.parent.mkdir(parents=True, exist_ok=True)
     for seed in args.seeds:
         # Two artifact candidates per seed, mirroring how the control's
         # 0.76 was banked (a preserved checkpoint chosen as that seed's
         # best): the trainer's preserve-on-peak snapshot
         # (winners/best.pt) and the 10-iter grid checkpoint at peak
-        # trailing entrance. Score both, the seed's number is the max,
-        # both reads land in the receipt.
+        # trailing entrance. Honest-eval both for the receipt, but select
+        # the seed's score on the training-time trailing entrance rate
+        # ONLY — never on the honest eval outcome (see module docstring).
         print(f"== seed {seed}: selecting checkpoints...", flush=True)
         cands = []
         ck, sel = pick_checkpoint(seed)
@@ -122,22 +136,26 @@ def main() -> int:
                            "trailing_entrance": meta.get("metric_value"),
                            "source_iter": meta.get("source_iter")}))
         arm = {"candidates": {}}
-        best_rate = None
+        best_train_rate, seed_score = None, None
         for name, path, meta in cands:
             print(f"   {name}: {meta['selected']}", flush=True)
             ev = honest_eval(path, args.episodes)
             arm["candidates"][name] = {"selection": meta, "eval": ev}
             r = ev.get("pooled_clear_rate")
             print(f"   {name} pooled clear_rate: {r}", flush=True)
-            if r is not None and (best_rate is None or r > best_rate):
-                best_rate = r
-        arm["seed_score"] = best_rate
+            train_rate = meta.get("trailing_entrance")
+            if train_rate is not None and (
+                    best_train_rate is None or train_rate > best_train_rate):
+                best_train_rate, seed_score = train_rate, r
+        arm["seed_score"] = seed_score
         verdict["arms"][f"seed{seed}"] = arm
+        # Persist after every seed, not only once at the end: a later
+        # seed can still blow the multi-hour budget, and completed
+        # seeds' results must not be discarded when it does.
+        p.write_text(json.dumps(verdict, indent=2) + "\n")
     pooled = [a["seed_score"] for a in verdict["arms"].values()
               if a.get("seed_score") is not None]
     verdict["best_of_n"] = max(pooled) if pooled else None
-    p = REPO / args.out
-    p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(verdict, indent=2) + "\n")
     print(json.dumps({"best_of_n": verdict["best_of_n"],
                       "per_seed": pooled}, indent=2))

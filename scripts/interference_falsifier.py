@@ -1072,17 +1072,21 @@ def _run_eval(cmd: list[str]) -> dict:
                               text=True, timeout=CONFIG["probe_timeout_s"])
     except subprocess.TimeoutExpired:
         return {"status": "probe_timeout"}
+    # Parse stdout before looking at the return code: eval_game.py's own
+    # guards (e.g. no_rom) print a status JSON to stdout and then exit
+    # non-zero, and that JSON is more informative than an empty stderr.
+    text = proc.stdout.strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end >= start:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError as e:
+            if proc.returncode == 0:
+                return {"status": "probe_failed", "detail": f"bad JSON: {e}"}
     if proc.returncode != 0:
         return {"status": "probe_failed",
                 "detail": proc.stderr.strip()[-500:]}
-    text = proc.stdout.strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end < start:
-        return {"status": "probe_failed", "detail": "no JSON on stdout"}
-    try:
-        return json.loads(text[start:end + 1])
-    except json.JSONDecodeError as e:
-        return {"status": "probe_failed", "detail": f"bad JSON: {e}"}
+    return {"status": "probe_failed", "detail": "no JSON on stdout"}
 
 
 def _collect_with_real_pool(plan: dict) -> list[dict]:

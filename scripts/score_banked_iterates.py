@@ -187,19 +187,29 @@ def param_drift(theta_t: dict, theta_0: dict) -> dict:
     compared tensors, and the single largest per-tensor contribution — which
     is what tells you whether a run moved its trunk or only its heads.
 
+    A tensor present in both state_dicts but with a different shape (e.g. a
+    resized hidden layer) cannot be compared and is excluded from the sum —
+    but it is named in ``skipped_tensors`` rather than silently vanishing, so
+    a drift computed over a shrunken trunk cannot be mistaken for one over
+    the whole network.
+
     ``identical`` is the discriminator for the "was the scored network the
     trained network?" question: a drift of exactly 0 means the two
     state_dicts are the same weights, and no eval difference between them can
-    be real.
+    be real. It is never true while a tensor was skipped for a shape
+    mismatch — networks that disagree on shape are not identical, whatever
+    the comparable tensors say.
     """
     total_sq = 0.0
     base_sq = 0.0
     per_tensor: dict = {}
+    skipped: list = []
     shared = [k for k in theta_t if k in theta_0]
     for k in shared:
         a = _to_numpy(theta_t[k]).astype(np.float64).ravel()
         b = _to_numpy(theta_0[k]).astype(np.float64).ravel()
         if a.shape != b.shape:
+            skipped.append(k)
             continue
         d = float(np.sum((a - b) ** 2))
         per_tensor[k] = float(np.sqrt(d))
@@ -212,9 +222,11 @@ def param_drift(theta_t: dict, theta_0: dict) -> dict:
         "l2": l2,
         "relative": (l2 / base) if base > 0 else None,
         "n_tensors": len(per_tensor),
-        "identical": bool(l2 == 0.0 and per_tensor),
+        "identical": bool(l2 == 0.0 and per_tensor and not skipped),
         "largest_tensor": largest[0] if largest else None,
         "largest_tensor_l2": largest[1] if largest else None,
+        "skipped_tensors": sorted(skipped),
+        "n_skipped": len(skipped),
     }
 
 
@@ -486,25 +498,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     rows = []
     for p in paths:
-        row = score_one_iterate(
-            p, states=states, theta_0=theta_0,
-            tie_threshold=args.tie_threshold, dormant_tau=args.dormant_tau,
-            srank_delta=args.srank_delta,
-        )
-        if args.eval:
-            if not args.profile:
-                print("--eval needs --profile", file=sys.stderr)
-                return 2
-            row["curve"] = [
-                score_curve_cell(
-                    p, profile=args.profile, rom=args.rom,
-                    start_state=args.start_state, episodes=args.episodes,
-                    max_steps=args.max_steps, sticky_prob=args.sticky_prob,
-                    start_jitter=args.start_jitter, eval_seed=args.eval_seed,
-                    eval_workers=args.eval_workers, action_select=mode,
-                )
-                for mode in ("greedy", "sampled")
-            ]
+        try:
+            row = score_one_iterate(
+                p, states=states, theta_0=theta_0,
+                tie_threshold=args.tie_threshold, dormant_tau=args.dormant_tau,
+                srank_delta=args.srank_delta,
+            )
+            if args.eval:
+                if not args.profile:
+                    print("--eval needs --profile", file=sys.stderr)
+                    return 2
+                row["curve"] = [
+                    score_curve_cell(
+                        p, profile=args.profile, rom=args.rom,
+                        start_state=args.start_state, episodes=args.episodes,
+                        max_steps=args.max_steps, sticky_prob=args.sticky_prob,
+                        start_jitter=args.start_jitter, eval_seed=args.eval_seed,
+                        eval_workers=args.eval_workers, action_select=mode,
+                    )
+                    for mode in ("greedy", "sampled")
+                ]
+        except Exception as exc:
+            # One bad iterate (truncated .pt, unrecognised architecture) must
+            # not cost every iterate already scored this run: report it in
+            # its own row and keep going, so stdout/--out still land.
+            print(f"{p}: {exc}", file=sys.stderr)
+            row = {"path": str(p), "iter": iterate_number(p), "error": str(exc)}
         rows.append(row)
 
     out = {

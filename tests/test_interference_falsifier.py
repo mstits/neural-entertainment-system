@@ -47,11 +47,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from scripts.interference_falsifier import (  # noqa: E402
-    CONFIG, assert_seed_independence, balance_fifty_fifty, binom_p_at_least,
-    binom_p_at_most, build_collection_reference_command, build_gate_command,
-    build_manifest, collection_plan, discrimination_power,
-    interference_verdict, joint_bc, leg_decision, reference_prior,
-    steps_from, step3_gate, success_pairs_from_episodes,
+    CONFIG, _run_eval, assert_seed_independence, balance_fifty_fifty,
+    binom_p_at_least, binom_p_at_most, build_collection_reference_command,
+    build_gate_command, build_manifest, collection_plan,
+    discrimination_power, interference_verdict, joint_bc, leg_decision,
+    reference_prior, steps_from, step3_gate, success_pairs_from_episodes,
     verify_reference_receipts, write_joint_checkpoint, write_pooled_pairs,
     write_success_pairs,
 )
@@ -635,6 +635,28 @@ def test_collection_plan_carries_the_strict_keep_predicate():
         assert plan["keep"] == "strict_episode_success_only"
         assert plan["checkpoint"].endswith(
             CONFIG["specialists"][level]["checkpoint"])
+
+
+# ---- _run_eval (subprocess.run monkeypatched, no emulator) ---------------
+
+
+def test_run_eval_recovers_status_json_on_nonzero_exit(monkeypatch):
+    """eval_game.py's own guards (e.g. no_rom) print a status JSON to
+    stdout and then exit non-zero with nothing on stderr -- that JSON
+    must still come back, not get swapped for an empty stderr detail
+    (regression: returncode used to be checked before stdout was ever
+    read)."""
+    no_rom_json = json.dumps(
+        {"status": "no_rom", "rom_path": "/missing/game.nes"})
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(
+            cmd, returncode=1, stdout=no_rom_json, stderr="")
+
+    monkeypatch.setattr(
+        "scripts.interference_falsifier.subprocess.run", fake_run)
+    result = _run_eval(["fake", "cmd"])
+    assert result == {"status": "no_rom", "rom_path": "/missing/game.nes"}
 
 
 # ---- config / manifest / resumability -------------------------------------
