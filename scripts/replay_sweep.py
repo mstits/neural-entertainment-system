@@ -123,7 +123,8 @@ def read_tape(path: Path, root: Path = REPO) -> TapeSpec:
 
     actions = rec.get("actions_file") or str(path).replace(
         ".json", ".actions.npy")
-    core = ((rec.get("hw") or {}).get("nes_core") or {}).get("sha256_16")
+    core = ((rec.get("hw_provenance") or {}).get("nes_core")
+            or {}).get("sha256_16")
     return TapeSpec(
         tape=str(path.relative_to(root)) if path.is_absolute() else str(path),
         actions=actions,

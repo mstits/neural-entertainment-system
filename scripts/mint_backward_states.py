@@ -177,7 +177,14 @@ def main() -> int:
 
     rec = json.loads(sidecar.read_text()) if sidecar.exists() else {}
     want_wd = list(rec.get("clear_wd", [])) or None
-    cleared = want_wd is None or tail["end_wd"] == want_wd
+    if want_wd is None:
+        raise SystemExit(
+            f"[mint] no clear_wd recorded to verify against ({sidecar} "
+            f"missing or has no clear_wd) — refusing to mint an unverified "
+            f"ladder. Point --run at the solve that banked this tape, or "
+            f"pass --actions/--start-state from one whose sidecar records "
+            f"clear_wd.")
+    cleared = tail["end_wd"] == want_wd
     report = gx_report(entries, tolerance=int(args.gx_tolerance))
 
     meta = {

@@ -9,10 +9,14 @@ episode begins at the cold boot replays end-to-end in FCEUX with no
 savestate anchor: TAS-grade receipts for a claimed run.
 
 Usage:
-  python scripts/emit_fm2.py actions.npy out.fm2 --rom "roms/Super Mario Bros. (World).nes" [--frame-skip 4]
+  python scripts/emit_fm2.py actions.npy out.fm2 --rom "roms/Super Mario Bros. (World).nes" --profile configs/smb.yaml [--frame-skip 4]
 
-`actions.npy`: uint8 pool bitmasks, one per pool step (the project's
-RLDUTSBA bit layout — the same bytes `Pool.step_all` consumes).
+`actions.npy`: int64 action-space INDICES, one per pool step — the
+repo-wide solver "solution tape" convention (see
+`src/training/tape_replay.py`), not raw controller bitmasks. `--profile`
+names the YAML config whose `action_space` resolves each index to its
+RLDUTSBA bitmask via `action_space_to_bitmasks`, the same mapping every
+other tape consumer (`assemble_full_run.py`, `tape_replay.py`) uses.
 """
 from __future__ import annotations
 
@@ -24,11 +28,14 @@ import uuid
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts"))
 
 from convert_fm2 import _FM2_BIT_AT_POS, fceux_movie_to_bytes  # noqa: E402
+from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
 
 
 def mask_to_pad(mask: int) -> str:
@@ -71,13 +78,20 @@ def emit_fm2(actions: np.ndarray, rom_path: Path, frame_skip: int = 4,
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("actions", help="npy of uint8 pool-step bitmasks")
+    ap.add_argument("actions", help="npy of int64 action-space indices "
+                                     "(the solver 'solution tape' convention)")
     ap.add_argument("out", help="output .fm2 path")
     ap.add_argument("--rom", required=True)
+    ap.add_argument("--profile", required=True,
+                     help="YAML config whose action_space resolves each "
+                          "index to its controller bitmask")
     ap.add_argument("--frame-skip", type=int, default=4)
     args = ap.parse_args()
 
-    actions = np.load(args.actions).astype(np.uint8)
+    indices = np.load(args.actions).astype(np.int64)
+    profile = yaml.safe_load(Path(args.profile).read_text())
+    bitmasks = action_space_to_bitmasks(profile["action_space"])
+    actions = np.array([bitmasks[int(a)] for a in indices], dtype=np.uint8)
     text = emit_fm2(actions, Path(args.rom), frame_skip=args.frame_skip)
     Path(args.out).write_text(text)
 

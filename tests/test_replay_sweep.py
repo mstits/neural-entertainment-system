@@ -85,6 +85,19 @@ def test_report_records_gate_and_counts():
     json.dumps(r)  # must serialize
 
 
+def test_read_tape_extracts_core_sha16_from_hw_provenance(tmp_path):
+    """Tapes carry binary provenance under "hw_provenance", never "hw"
+    (checked: 0/355 banked tapes have "hw", 148 have "hw_provenance"
+    populated). Reading the wrong key silently drops core_sha16 to None
+    on every tape, which is the whole binary-provenance check gone dead."""
+    p = tmp_path / "sol_000.json"
+    p.write_text(json.dumps({
+        "hw_provenance": {"nes_core": {"sha256_16": "0320f3be9080b9f8"}},
+    }))
+    spec = read_tape(p, root=tmp_path)
+    assert spec.core_sha16 == "0320f3be9080b9f8"
+
+
 def test_spec_problems_names_each_missing_input(tmp_path):
     s = TapeSpec("t", "a.npy", "", "configs/none.yaml", [0, 0], None, 1, None)
     probs = spec_problems(s, root=tmp_path)

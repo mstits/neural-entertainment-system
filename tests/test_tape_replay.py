@@ -297,3 +297,32 @@ def test_resolve_chain_shuffle_seed_builds_a_matched_length_control(tmp_path):
 def test_resolve_chain_rejects_an_empty_spec():
     with pytest.raises(ValueError, match="empty chain"):
         tape_replay.resolve_chain([])
+
+
+def _solved_level(run, level, root_blob, actions=(0, 1, 2)):
+    """Bank a complete `lvl_<level>/solutions/sol_000.*` pair."""
+    sol = run / f"lvl_{level}" / "solutions"
+    sol.mkdir(parents=True)
+    np.save(sol / "sol_000.actions.npy", np.array(actions, dtype=np.int64))
+    (sol / "sol_000.json").write_text(
+        json.dumps({"root_state": str(root_blob)}))
+
+
+def test_run_dir_chain_warns_on_an_interrupted_level(tmp_path, capsys):
+    """PROVE-IT: a level dir whose solve crashed after `solutions/` was
+    created but before the tape/sidecar landed must not be silently
+    indistinguishable from a level that was never attempted — it should
+    at least print, even though it is still excluded from the chain."""
+    run = tmp_path / "run"
+    run.mkdir()
+    root_blob = run / "entrance.state"
+    root_blob.write_bytes(b"root")
+    _solved_level(run, "1-1", root_blob)
+    _solved_level(run, "1-2", root_blob)
+    (run / "lvl_1-3" / "solutions").mkdir(parents=True)  # crashed here
+
+    chain = tape_replay.run_dir_chain(run)
+
+    assert [s.label for s in chain] == ["lvl_1-1", "lvl_1-2"]
+    out = capsys.readouterr().out
+    assert "lvl_1-3" in out and "tape_replay" in out

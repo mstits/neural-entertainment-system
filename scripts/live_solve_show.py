@@ -52,7 +52,8 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 import nes_core  # noqa: E402
-from scripts.go_explore_solve import Solver, make_game, update_stall  # noqa: E402
+from scripts.go_explore_solve import (  # noqa: E402
+    Solver, make_game, resolve_hw_flags, update_stall)
 from scripts.go_explore_chain import extract_next_entrance  # noqa: E402
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
 
@@ -566,7 +567,8 @@ class Show:
         actions = np.load(sols[0]).astype(int)
         nxt, key = extract_next_entrance(
             self.profile, Path(prev_entrance).read_bytes(), actions,
-            self.show_dir / f"entrance_{self.level}_alt{attempt}.state")
+            self.show_dir / f"entrance_{self.level}_alt{attempt}.state",
+            hw_flags=resolve_hw_flags(self.profile))
         if nxt is None or self.game.label(key) != self.level:
             return None
         return nxt
@@ -667,7 +669,8 @@ class Show:
                     break
                 nxt, key = extract_next_entrance(
                     self.profile, Path(entrance).read_bytes(), actions,
-                    self.show_dir / f"entrance_after_{self.level}.state")
+                    self.show_dir / f"entrance_after_{self.level}.state",
+                    hw_flags=resolve_hw_flags(self.profile))
                 if nxt is not None:
                     prev_entrance, prev_level = entrance, self.level
                     entrance = nxt
@@ -887,7 +890,8 @@ class Show:
                 break
             nxt, key = extract_next_entrance(
                 self.profile, root_bytes, actions,
-                self.show_dir / f"entrance_after_{self.level}.state")
+                self.show_dir / f"entrance_after_{self.level}.state",
+                hw_flags=resolve_hw_flags(self.profile))
             if nxt is None:
                 self._set_mode("done")
                 self.status = (f"{self.level} SOLVED — no onward level "

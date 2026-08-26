@@ -345,6 +345,13 @@ def run_dir_chain(run_dir, *, solution: int = 0,
         level = d.name[4:]
         act, sidecar = solution_paths(run_dir, level, solution)
         if not act.exists() or not sidecar.exists():
+            state = ("no solutions/ dir" if not (d / "solutions").is_dir()
+                     else "incomplete tape/sidecar pair")
+            print(f"[tape_replay] {d.name}: {state} for "
+                  f"sol_{solution:03d} — SKIPPING (an interrupted solve "
+                  f"is otherwise indistinguishable from one never "
+                  f"attempted); the returned chain will be shorter than "
+                  f"the lvl_* dirs present", flush=True)
             continue
         root = root_state_for(sidecar, run_dir)
         out.append(TapeSegment(root=load_root(root, hw_flags),

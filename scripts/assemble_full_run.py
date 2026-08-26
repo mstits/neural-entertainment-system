@@ -13,10 +13,12 @@ finale (operating mode 2, the THANK YOU MARIO screen), and writes:
 
 Transition contract (mirrors go_explore_chain.extract_next_entrance): each
 level's solution actions are consumed only UP TO the first wd-change step,
-then 8 settle no-ops, then one convention no-op before the next level's
-actions (go_explore_solve steps one no-op after rooting). The 8-4 finale
-runs its full trace (the ending never changes wd) plus a tail of no-ops so
-the princess scene plays out on tape.
+then a settle — SETTLE_NOOPS no-ops, then no-ops held until wd is stable
+for STABLE_FOR consecutive steps (capped at SETTLE_CAP) — then one
+convention no-op before the next level's actions (go_explore_solve steps
+one no-op after rooting). The 8-4 finale runs its full trace (the ending
+never changes wd) plus a tail of no-ops so the princess scene plays out
+on tape.
 
 Optional: --video renders the verified tape to an mp4 via ffmpeg.
 """
@@ -44,6 +46,39 @@ START_MASK = 0x08
 # Boot prefix (mirrors the power_on_1-1.state creation exactly): one
 # convention step, 60 title-wait no-ops, 3 START presses, 36 settle no-ops.
 BOOT = [0] * 1 + [0] * 60 + [START_MASK] * 3 + [0] * 37  # byte-exact vs power_on_1-1.state
+
+# Entrance-settle contract — matches go_explore_chain.extract_next_entrance's
+# judge_transition defaults exactly (settle=8, stable_for=45,
+# settle_cap=600). A flat SETTLE_NOOPS-step settle can snapshot
+# mid-transition; holding for STABLE_FOR consecutive stable reads is what
+# the entrance blobs this splice must line up with actually do.
+SETTLE_NOOPS = 8
+STABLE_FOR = 45
+SETTLE_CAP = 600
+
+
+def settle_to_stable_wd(step, settle=SETTLE_NOOPS, stable_for=STABLE_FOR,
+                         settle_cap=SETTLE_CAP):
+    """Run `settle` no-ops, then no-ops until (world, level) holds stable
+    for `stable_for` consecutive steps (capped at `settle_cap`). Mirrors
+    go_explore_chain.extract_next_entrance's settle exactly, so this
+    splice lands on the same frame an extracted entrance blob would have
+    been snapshotted on. Returns the final ram."""
+    ram = None
+    for _ in range(settle):
+        ram = step(0)
+    key = (int(ram[0x75F]), int(ram[0x75C]))
+    stable = 0
+    for _ in range(settle_cap):
+        if stable >= stable_for:
+            break
+        ram = step(0)
+        k = (int(ram[0x75F]), int(ram[0x75C]))
+        if k == key:
+            stable += 1
+        else:
+            key, stable = k, 0
+    return ram
 
 
 def level_dirs():
@@ -130,8 +165,7 @@ def main():
             assert ok, "finale did not reach the victory mode"
             break
         assert transitioned, f"{name}: solution did not transition on-chain"
-        for _ in range(8):                # settle (mirrors entrance extraction)
-            ram = step(0)
+        ram = settle_to_stable_wd(step)   # settle (mirrors entrance extraction)
         receipts.append({"level": name, "end_step": len(tape),
                          "wd_after": [int(ram[0x75F]), int(ram[0x75C])],
                          "ok": True})

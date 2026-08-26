@@ -316,6 +316,25 @@ def sample_edges(edges, n_edges: int, seed: int):
     return rng.sample(edges, min(n_edges, len(edges)))
 
 
+def resolve_exemplar_state(e: dict, cells: dict) -> "bytes | None":
+    """The bytes to restore before replaying `e["exemplar_actions"]`.
+
+    Prefers `exemplar_state`, the frozen bytes copy `RoomIndex.record_edge`
+    captures at edge-commit time precisely so a reader never has to trust
+    `archive.pkl`'s mutable, domination-overwritten `.state` at key
+    `exemplar_cell` (see the module docstring's archive-drift section, and
+    `RoomIndex.load`'s "go back to the OLD mutable-key behavior" comment).
+    Falls back to the archive cell lookup only when `exemplar_state` is
+    absent -- an edge recorded before the frozen-copy fix existed."""
+    frozen = e.get("exemplar_state")
+    if frozen is not None:
+        return frozen
+    cell = cells.get(e["exemplar_cell"])
+    if cell is None or cell.state is None:
+        return None
+    return cell.state
+
+
 def run_one(run_dir: Path, solver, n_edges: int, sample_seed: int,
             sticky_p: float, sticky_seed: int, warmup_steps: int,
             tail_margin: int) -> dict:
@@ -341,14 +360,14 @@ def run_one(run_dir: Path, solver, n_edges: int, sample_seed: int,
 
     rows = []
     for src, dst, e in sample:
-        cell = cells.get(e["exemplar_cell"])
-        if cell is None or cell.state is None:
+        state = resolve_exemplar_state(e, cells)
+        if state is None:
             rows.append({"run": run_dir.name, "src": src, "dst": dst,
                          "kind": e["kind"], "dir": e.get("dir"),
                          "n_actions": len(e["exemplar_actions"]),
                          "error": "exemplar_cell missing from archive.pkl"})
             continue
-        state = cell.state
+        cell = cells.get(e["exemplar_cell"])
         actions = e["exemplar_actions"]
 
         init_ord = probe_initial_ordinal(solver, state, warmup_steps)
@@ -372,7 +391,7 @@ def run_one(run_dir: Path, solver, n_edges: int, sample_seed: int,
         rows.append({
             "run": run_dir.name, "src": src, "dst": dst, "kind": e["kind"],
             "dir": e.get("dir"), "n_actions": len(actions),
-            "cell_visits": int(cell.visits),
+            "cell_visits": (int(cell.visits) if cell is not None else None),
             "init_ordinal": init_ord, "start_bucket": start_bucket,
             "final_zero": final_zero, "match_zero": final_zero == dst,
             "final_sticky": final_sticky, "match_sticky": final_sticky == dst,

@@ -42,3 +42,22 @@ def test_clear_log_entries_are_appended_not_replaced() -> None:
                          "attempt": 1, "elapsed_s": 900, "t": time.time()})
     assert len(sh.clear_log) == 2
     assert [e["level"] for e in sh.clear_log] == ["1-1", "1-2"]
+
+
+def test_every_extract_next_entrance_call_threads_hw_flags() -> None:
+    """Every extract_next_entrance() call site must resolve and forward
+    hw_flags — otherwise a profile's solve.hw_flags: configures the
+    search pool but the post-clear entrance snapshot is minted on the
+    stock machine (hw_flags=()), and the next level's Solver.seed()
+    trips *** HW-FLAG LINEAGE MISMATCH *** against a root that was
+    never actually produced under the configured hardware."""
+    import inspect
+
+    for method in (Show._reenter, Show.run):
+        src = inspect.getsource(method)
+        calls = src.count("extract_next_entrance(")
+        threaded = src.count("hw_flags=resolve_hw_flags(self.profile)")
+        assert calls > 0
+        assert threaded == calls, (
+            f"{method.__qualname__}: {calls} extract_next_entrance() "
+            f"call(s) but only {threaded} pass hw_flags")
