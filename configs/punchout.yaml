@@ -147,5 +147,48 @@ solve:
   # mechanism (opponent-defeat / bout-outcome detection) built from
   # purity-clean surfaces before go_explore_solve can drive it.
   # Left declared so the gate receipt is reproducible, but DO NOT
-  # point go_explore_solve at this profile — no scroll gradient exists.
-  progress: {source: odometer, axis: x}
+  # point go_explore_solve at this profile via axis: x/y — no scroll
+  # gradient exists. Superseded below by the fight-gate progress source.
+
+  # --- Fight-gate progress (2026-08-25) -------------------------------------
+  # docs/proposals/FIGHTGATE_MECHANISM_2026-08-25.md built a generic,
+  # non-game-specific progress mechanism for exactly the CAMERA_STATIC_
+  # AGENT_ACTIVE class above: randomized attack-mash/approach-retreat
+  # probes (scripts/discover_observables.py --fight-gate) plus a decrement-
+  # consensus self/foe HP discriminator, with NO game knowledge or RAM map
+  # consulted going in. Blind discovery on this exact ROM/start-state
+  # (runs/fight_gate/discover_punchout.json) nominated addr 920 (=0x0398)
+  # — start=96 (0x60), attack_agree 5/5, defense_agree 0/5 — the SAME byte
+  # the ram_mapping block above cites from Data Crystal/TASVideos, now
+  # independently re-derived from purity-clean observables alone. A
+  # go_explore_solve smoke on the emitted candidate (runs/fight_gate/smoke/,
+  # 3 min, 12 workers) tracked cumulative opponent damage rising 0->81
+  # (bounded under the true 96 cap), 27 cells / 35 improvements / 0 crashes
+  # — the mechanism works end to end on this game.
+  #
+  # Two honest qualifications (named as follow-up, not fixed here):
+  #   1. The ranking heuristic does not uniquely surface 0x0398 as its #1
+  #      pick — it ranks #3 of 5 in foe_hp_candidates (behind addr 238 and
+  #      158, two zero-page bytes of unknown semantics that also pass the
+  #      decrement-consensus gates on this probe budget). The correct
+  #      candidate was picked here by cross-referencing the independently-
+  #      verified ram_mapping block, not by the discovery pass alone.
+  #   2. find_round_gate returned VOID (insufficient_probe: no bout
+  #      boundary crossed in 24,000 attack_mash/approach_retreat steps) —
+  #      an instrument-budget finding, not evidence against a round byte.
+  #      `round:` is therefore omitted below rather than guessed.
+  #
+  # League classification: CAMERA_STATIC_AGENT_ACTIVE -> SOUND_ADVANCING-
+  # eligible. The odometer verdict above stands (no scroll gradient on
+  # this game class); the fight_gate source is the correct, now-validated
+  # progress surface for go_explore_solve on this profile.
+  progress: {source: fight_gate, foe_hp: 0x0398, foe_hp_start: 0x60}
+  # y/level_key/lives are required by GenericGame regardless of progress
+  # source. No scroll axis exists on this game (see the odometer verdict
+  # above), so y is a placeholder, not a tracked observable. `lives` is
+  # wired to throw_ok (0x00BC): 0 = Mac down/between exchanges, the
+  # closest existing purity-clean analogue to a life-lost signal for a
+  # single-life bout — same values proven live in the fight_gate smoke.
+  y: 0x0061
+  level_key: []
+  lives: 0x00BC
