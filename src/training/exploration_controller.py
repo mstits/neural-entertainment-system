@@ -64,6 +64,13 @@ class ExplorationController:
         use, so it lands on the current device) and apply any resume-pending
         state. No-op when RND is disabled or already built.
 
+        Callers must invoke this again whenever `rnd_intrinsic_coef` may have
+        risen off a zero baseline (e.g. after a consolidate/consolidate_level
+        schedule step) — the build is gated on the CURRENT coefficient, not
+        just on startup, so a run that starts with RND off and ramps it up
+        later still gets the module built the first time it's actually
+        needed.
+
         `log_msg` is the caller's exact log format string (the vanilla and GA
         build sites differ only in that prefix — "[vanilla_ppo] RND enabled"
         vs "RND intrinsic motivation enabled" — so it is passed in to preserve
@@ -88,6 +95,18 @@ class ExplorationController:
                 t.rnd_intrinsic_coef,
                 t.rnd_loss_coef,
             )
+            # A build triggered by a mid-run coefficient ramp lands after
+            # `_ppo_optimizer` already exists (built once, over `net`
+            # params plus whatever `_rnd` held at the time — None here).
+            # Without this, the predictor trains via `.backward()` but
+            # `optimizer.step()` never touches it: same silent drop
+            # `_build_ppo_optimizer` documents for the rollback rebuild,
+            # just reached from the other direction (RND arrives late
+            # instead of the optimizer being rebuilt without it).
+            if getattr(t, "_ppo_optimizer", None) is not None:
+                t._ppo_optimizer.add_param_group(
+                    {"params": list(t._rnd.predictor.parameters())}
+                )
             self.apply_pending_rnd_state()
 
     def apply_pending_rnd_state(self) -> None:
@@ -96,7 +115,17 @@ class ExplorationController:
         resume runs — so the state can't be applied at load time. No-op when
         nothing is pending. Called right after each lazy build."""
         t = self.trainer
-        if t._pending_rnd_state is None or t._rnd is None:
+        if t._pending_rnd_state is None:
+            return
+        if t._rnd is None:
+            log.warning(
+                "[vanilla_ppo] resumed checkpoint staged an RND state but "
+                "RND is disabled this run (rnd_intrinsic_coef=%s) — the "
+                "restored predictor/normalization stats are being dropped "
+                "and will NOT carry into this run's checkpoints",
+                t.rnd_intrinsic_coef,
+            )
+            t._pending_rnd_state = None
             return
         try:
             t._rnd.load_state_dict(t._pending_rnd_state, strict=False)
@@ -130,7 +159,7 @@ class ExplorationController:
         return 0.0
 
     # ------------------------------------------------------------ Go-Explore
-    def build_go_explore(self, ge_cfg: dict) -> tuple:
+    def build_go_explore(self, ge_cfg: dict, *, fresh_start: bool = False) -> tuple:
         """Build the generic Go-Explore archive (first-return-then-explore).
 
         Called only when go_explore is enabled (the conductor gates on the
@@ -140,6 +169,14 @@ class ExplorationController:
         conductor rebuilds its `_ge_score` closure (which captures the rollout
         trackers) from `use_max_x` exactly as before. Every log line is
         preserved verbatim.
+
+        `fresh_start=True` (GUI "Resume" unticked / headless `--no-resume`)
+        skips loading any on-disk archive — a from-scratch run must not
+        inherit a prior run's visited cells and saved-state blobs, or the
+        next iter boundary can teleport the brand-new policy into a state
+        (e.g. deep into a later level) it never earned. The on-disk
+        `archive.pkl` is never deleted or moved (a paused experiment must
+        stay resumable); it is only skipped.
         """
         t = self.trainer
         from src.training.go_explore import (
@@ -172,7 +209,15 @@ class ExplorationController:
         )
         t._go_explore = go_explore_archive
         _ge_path = t.checkpoint_dir / "go_explore" / "archive.pkl"
-        if _ge_path.exists():
+        if fresh_start:
+            if _ge_path.exists():
+                log.info(
+                    "[vanilla_ppo] fresh start requested — ignoring saved "
+                    "go_explore archive at %s (file left untouched); "
+                    "starting from an empty archive",
+                    _ge_path,
+                )
+        elif _ge_path.exists():
             try:
                 go_explore_archive.load(_ge_path)
                 log.info(

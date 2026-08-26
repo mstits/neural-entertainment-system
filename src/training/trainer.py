@@ -6020,7 +6020,7 @@ class Trainer:
             # returns `_use_max_x` so the score closure (which captures the
             # rollout trackers) stays here in the conductor.
             go_explore_archive, _use_max_x = _exploration.build_go_explore(
-                _ge_cfg
+                _ge_cfg, fresh_start=fresh_start
             )
 
             def _ge_score(_i: int) -> float:  # noqa: F811
@@ -8951,6 +8951,20 @@ class Trainer:
                         clevel_step, clevel_ent_iters,
                     )
                     clevel_step += 1
+
+            # Either schedule above can raise rnd_intrinsic_coef off a
+            # zero baseline (RND started disabled, the consolidate/
+            # consolidate_level ramp turns it on). build_rnd's build is
+            # gated on the CURRENT coefficient, not just the pre-loop
+            # value, so it must be re-offered here — otherwise `_rnd`
+            # stays None forever and the coefficient climbs in the logs
+            # while zero intrinsic reward or predictor loss ever runs.
+            _exploration.build_rnd(
+                log_msg=(
+                    "[vanilla_ppo] RND enabled (%s): predictor=%d params, "
+                    "intrinsic_coef=%.3f, loss_coef=%.3f"
+                )
+            )
 
             self._emit_metrics(
                 generation=global_it,

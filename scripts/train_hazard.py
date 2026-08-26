@@ -30,6 +30,7 @@ import argparse
 import json
 import os
 import sys
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -58,10 +59,46 @@ from src.training.hazard_model import (  # noqa: E402
 
 REQUIRED_KEYS = ("obs", "action", "died", "steps_to_event", "censored")
 
+# scripts/hazard_collect.py's build_provenance() continuation_mode values
+# (CONTINUATION_NOOP, CONTINUATION_POLICY). Duplicated as literals rather
+# than imported so this script keeps its "never touches the emulator"
+# guarantee -- hazard_collect.py pulls in src.emulation at module scope.
+KNOWN_CONTINUATION_MODES = ("noop-after-intervention-tick", "policy-conditioned")
+
 
 # ---------------------------------------------------------------------------
 # Data loading + validation
 # ---------------------------------------------------------------------------
+
+
+def _check_data_provenance(path: str, npz) -> dict:
+    """Surface whether `path` carries hazard_collect.py's meta_json
+    provenance and an unrecognized continuation_mode. A stale
+    pre-fork-horizon-fix npz, or any hand-built file, can satisfy every
+    REQUIRED_KEYS/shape check below while never having asserted its
+    continuation_mode -- this makes that state visible on stdout and in
+    hazard_report.json instead of a normal-looking run."""
+    if "meta_json" not in npz:
+        print(f"[train_hazard] WARNING: {path} has no meta_json provenance "
+              f"-- continuation_mode is UNVERIFIED (expected one of "
+              f"{KNOWN_CONTINUATION_MODES}); this may be a stale "
+              f"pre-fork-horizon-fix or hand-built dataset.", file=sys.stderr)
+        return {"meta_json_present": False, "continuation_mode": None,
+                "verified": False}
+    raw = npz["meta_json"]
+    try:
+        meta = json.loads(str(raw))
+        continuation_mode = meta.get("continuation_mode")
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        continuation_mode = None
+    verified = continuation_mode in KNOWN_CONTINUATION_MODES
+    if not verified:
+        print(f"[train_hazard] WARNING: {path}'s meta_json has "
+              f"continuation_mode={continuation_mode!r}, not one of "
+              f"{KNOWN_CONTINUATION_MODES} -- UNVERIFIED provenance.",
+              file=sys.stderr)
+    return {"meta_json_present": True, "continuation_mode": continuation_mode,
+            "verified": verified}
 
 
 def load_and_validate(path: str) -> dict:
@@ -72,6 +109,7 @@ def load_and_validate(path: str) -> dict:
             f"{path}: missing required key(s) {missing}; hazard_collect.py's "
             f"schema is {REQUIRED_KEYS}")
     data = {k: np.asarray(npz[k]) for k in REQUIRED_KEYS}
+    data["_provenance"] = _check_data_provenance(path, npz)
     # Carry over an explicit source-state id column if the collector
     # wrote one (e.g. hazard_collect.py's `source_state_idx`) so
     # infer_source_groups can use it instead of falling back to
@@ -197,9 +235,15 @@ def main(argv=None) -> int:
 
     try:
         data = load_and_validate(args.data)
-    except (ValueError, FileNotFoundError, OSError) as e:
+    except (ValueError, FileNotFoundError, OSError, zipfile.BadZipFile) as e:
         print(f"[train_hazard] {e}", file=sys.stderr)
         return 2
+
+    provenance = data.pop("_provenance")
+    print(f"[train_hazard] data provenance: meta_json_present="
+          f"{provenance['meta_json_present']} "
+          f"continuation_mode={provenance['continuation_mode']} "
+          f"verified={provenance['verified']}")
 
     n = data["obs"].shape[0]
     horizon = float(args.horizon) if args.horizon else float(
@@ -284,6 +328,7 @@ def main(argv=None) -> int:
         "hidden_layers": args.hidden_layers, "seed": args.seed,
         "horizon": horizon, "gate_threshold": args.gate,
         "history": history, "gate": gate_result, "gate_verdict": verdict,
+        "data_provenance": provenance,
     }
     report_path = out_dir / "hazard_report.json"
     tmp_r = report_path.with_suffix(report_path.suffix + ".tmp")

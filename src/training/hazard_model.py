@@ -172,6 +172,11 @@ def discretize_time(steps_to_event: np.ndarray, edges: np.ndarray) -> np.ndarray
     "survived through the last bin we can represent").
     """
     steps_to_event = np.asarray(steps_to_event, dtype=np.float64)
+    if not np.all(np.isfinite(steps_to_event)):
+        raise ValueError(
+            "steps_to_event contains non-finite values (NaN/inf); a "
+            "corrupted label would otherwise silently clip into a "
+            "valid-looking bin")
     n_bins = len(edges) - 1
     idx = np.searchsorted(edges, steps_to_event, side="right") - 1
     return np.clip(idx, 0, n_bins - 1).astype(np.int64)
@@ -221,7 +226,11 @@ def discrete_time_survival_nll(logits: torch.Tensor, bin_idx: torch.Tensor,
     """
     if logits.ndim != 2:
         raise ValueError(f"logits must be 2D (N, n_bins), got shape {tuple(logits.shape)}")
+    if not torch.isfinite(logits).all():
+        raise ValueError("logits contains NaN/Inf")
     n, n_bins = logits.shape
+    if not torch.isfinite(bin_idx).all():
+        raise ValueError("bin_idx contains NaN/Inf")
     bin_idx = bin_idx.to(torch.long)
     if bin_idx.shape[0] != n:
         raise ValueError(f"bin_idx has {bin_idx.shape[0]} rows, logits has {n}")
@@ -230,6 +239,8 @@ def discrete_time_survival_nll(logits: torch.Tensor, bin_idx: torch.Tensor,
     censored = censored.to(torch.float32).reshape(-1)
     if censored.shape[0] != n:
         raise ValueError(f"censored has {censored.shape[0]} rows, logits has {n}")
+    if not torch.isfinite(censored).all():
+        raise ValueError("censored contains NaN/Inf")
 
     log_surv = F.logsigmoid(-logits)  # log(1 - h_j), (N, n_bins)
     log_fail = F.logsigmoid(logits)   # log(h_j),     (N, n_bins)
@@ -385,6 +396,11 @@ def concordance_index_ipcw(times: np.ndarray, events: np.ndarray,
     n = len(times)
     if not (len(events) == n and len(risk_scores) == n):
         raise ValueError("times, events, risk_scores must be the same length")
+    if n and not (np.all(np.isfinite(times)) and np.all(np.isfinite(risk_scores))):
+        raise ValueError(
+            "times and risk_scores must be finite -- a NaN/inf risk score "
+            "(e.g. from an unstable model) silently deflates or inflates "
+            "the C-index instead of raising")
     if tau is None:
         tau = float(times.max()) if n else 0.0
 
@@ -413,7 +429,9 @@ def concordance_index_ipcw(times: np.ndarray, events: np.ndarray,
         rj = risk_scores[later]
         concordant += w * (np.sum(ri > rj) + 0.5 * np.sum(ri == rj))
 
-    c_index = float(concordant / comparable) if comparable > 0 else float("nan")
+    c_index = (float(concordant / comparable)
+               if comparable > 0 and len(event_idx) >= 2
+               else float("nan"))
     return {
         "c_index": c_index,
         "n_pairs": n_pairs_evaluated,

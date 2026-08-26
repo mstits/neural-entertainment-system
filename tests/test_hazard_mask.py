@@ -185,6 +185,26 @@ def test_wrapper_delegates_unknown_attributes():
     assert p.tag == "base"
 
 
+def test_wrapper_refuses_forward_ac_recurrent_instead_of_bypassing_the_veto():
+    """__getattr__ delegates unknown names to the raw net; without an
+    explicit override, that would run the recurrent step path fully
+    unmasked with no exception, warning, or log. This must fail loud
+    instead."""
+    from src.training.hazard_mask import HazardMaskedPolicy
+
+    class _RecurrentNet(_Net):
+        def forward_ac_recurrent(self, x, h):
+            return self.lin(x), self.v(x), h
+
+    net = _RecurrentNet()
+    m = HazardMask(_Fixed([0.99, 0.0, 0.0, 0.0, 0.0, 0.0]), threshold=0.9,
+                   enabled=True)
+    p = HazardMaskedPolicy(net, m)
+    with pytest.raises(NotImplementedError, match="forward_ac_recurrent"):
+        p.forward_ac_recurrent(torch.zeros(1, OBS_DIM), torch.zeros(1, 4))
+    assert m.stats.steps == 0, "the veto must never have run"
+
+
 # ---- the -inf trap that voided the first Phase-3 masked arm ----
 
 def test_the_veto_value_is_finite():

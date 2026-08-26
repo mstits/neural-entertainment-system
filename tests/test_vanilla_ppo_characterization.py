@@ -486,6 +486,71 @@ def test_run_vanilla_ppo_applies_pending_rnd_state_after_resume_in_source() -> N
     )
 
 
+def test_apply_pending_rnd_state_warns_and_clears_when_rnd_disabled(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression: resuming with `rnd_intrinsic_coef == 0.0` (the documented
+    'pure baseline' A/B pattern, `configs/contra.yaml`:118-119) stages the
+    checkpoint's RND state via `CheckpointManager.resume`, but
+    `ExplorationController.build_rnd` never builds `t._rnd` at coef 0.0, so
+    the post-resume `apply_pending_rnd_state()` call used to hit its
+    `t._rnd is None` guard and return with no log and no clear -- leaving
+    the staged state to rot unused for the whole run. This run's own
+    checkpoints then save no `rnd_state_dict` at all (`CheckpointManager.
+    save_iter` only persists one when `t._rnd is not None`), so the
+    original trained predictor/normalization stats are gone forever with no
+    warning ever printed anywhere. The fix must warn once and explicitly
+    consume `_pending_rnd_state` so the drop is visible and the docstring's
+    'No-op when nothing is pending' contract actually holds."""
+    from src.training.exploration_controller import ExplorationController
+    from src.models.tile_rnd import TileRND
+
+    _seed_everything()
+    with tempfile.TemporaryDirectory(prefix="vppo_char_rnd_disabled_") as tmp:
+        t = _bare_tile_trainer(Path(tmp))
+        t.rnd_intrinsic_coef = 0.0  # baseline A/B run -- RND intentionally off
+        exploration = ExplorationController(t)
+
+        net = t._make_network()
+        net.to("cpu")
+        opt = t._build_ppo_optimizer(net)
+
+        rnd = TileRND(feature_dim=_TILE_FEATURE_DIM).to("cpu")
+        rnd_state = {k: v.detach().cpu() for k, v in rnd.state_dict().items()}
+
+        payload = {
+            "iter": 40,
+            "net_state_dict": {k: v.detach().cpu() for k, v in net.state_dict().items()},
+            "optimizer_state_dict": opt.state_dict(),
+            "rnd_state_dict": rnd_state,
+        }
+        torch.save(payload, str(Path(tmp) / "vanilla_ppo_iter_00040.pt"))
+
+        fresh_net = t._make_network()
+        fresh_net.to("cpu")
+        fresh_opt = t._build_ppo_optimizer(fresh_net)
+        t._maybe_resume_vanilla_ppo(fresh_net, fresh_opt, fresh_start=False)
+        assert t._pending_rnd_state is not None, "resume must stage RND state"
+
+        # build_rnd() is a no-op at coef == 0.0 -- t._rnd stays None for the
+        # whole run, exactly as it does in the real loop.
+        exploration.build_rnd(log_msg="[test] RND enabled (%s): %d %f %f")
+        assert t._rnd is None, "test setup: RND must stay disabled at coef=0.0"
+
+        with caplog.at_level(
+            "WARNING", logger="src.training.exploration_controller"
+        ):
+            exploration.apply_pending_rnd_state()
+
+        assert t._pending_rnd_state is None, (
+            "the staged RND state must be explicitly consumed once it is "
+            "determined undeliverable, not left dangling"
+        )
+        assert any(
+            "RND is disabled" in rec.getMessage() for rec in caplog.records
+        ), "dropping a staged RND state must be logged, not silent"
+
+
 # ---------------------------------------------------------------------------
 # Groups 1 + 2 — one real vanilla_ppo iteration (metrics dict + reward
 # buffer). Tile mode, CPU, tiny config. ROM/profile-gated so it skips

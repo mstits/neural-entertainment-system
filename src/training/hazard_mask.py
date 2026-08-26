@@ -197,6 +197,28 @@ class HazardMaskedPolicy(torch.nn.Module):
     def forward(self, *a, **k):
         return self.net.forward(*a, **k)
 
+    def forward_ac_recurrent(self, *a, **k):
+        """Refuse loudly rather than silently run the net unmasked.
+
+        The veto lives inside `forward_ac` only. Without this override,
+        `__getattr__` below would resolve the name straight through to
+        the wrapped net's own `forward_ac_recurrent` — every action
+        legal again, no exception, no warning, `mask.stats.steps` frozen
+        at 0. trainer.py and scripts/eval_game.py both refuse to build
+        this wrapper around a recurrent net for exactly that reason, but
+        that check lives in the callers, not here; this is the same
+        refusal made a property of the wrapper itself, so a caller that
+        skips or mis-copies the external check still fails loud instead
+        of quietly evaluating an unmasked policy as if it were armed.
+        """
+        raise NotImplementedError(
+            "HazardMaskedPolicy does not support forward_ac_recurrent: "
+            "the veto is implemented inside forward_ac only, so calling "
+            "the recurrent step path here would run the wrapped net "
+            "completely unmasked. Do not wrap a recurrent net with "
+            "HazardMaskedPolicy."
+        )
+
     # --- delegation: the wrapper must be invisible to everything else ---
     def state_dict(self, *a, **k):
         return self.net.state_dict(*a, **k)

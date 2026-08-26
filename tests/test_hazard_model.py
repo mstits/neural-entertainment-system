@@ -144,12 +144,31 @@ def test_survival_nll_rejects_out_of_range_bin_idx():
             logits, torch.tensor([0, 3]), torch.tensor([0.0, 0.0]))
 
 
+def test_survival_nll_rejects_non_finite_censored():
+    """A single NaN in `censored` must raise, not silently poison the
+    batch loss into nan (which optimizer.step() would then broadcast
+    into every model parameter with no error raised)."""
+    logits = torch.zeros(3, 4)
+    bin_idx = torch.tensor([0, 1, 2])
+    censored = torch.tensor([0.0, float("nan"), 1.0])
+    with pytest.raises(ValueError):
+        discrete_time_survival_nll(logits, bin_idx, censored)
+
+
 def test_discretize_time_bin_edges():
     edges = build_time_bin_edges(horizon=10.0, n_bins=5)  # width-2 bins
     steps = np.array([0.0, 1.9, 2.0, 5.5, 9.9, 100.0])
     idx = discretize_time(steps, edges)
     # bins: [0,2) [2,4) [4,6) [6,8) [8,10); last value clips into bin 4
     assert idx.tolist() == [0, 0, 1, 2, 4, 4]
+
+
+def test_discretize_time_rejects_non_finite_values():
+    edges = build_time_bin_edges(horizon=10.0, n_bins=5)
+    for bad in (np.nan, np.inf, -np.inf):
+        steps = np.array([0.0, 5.5, bad])
+        with pytest.raises(ValueError):
+            discretize_time(steps, edges)
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +267,18 @@ def test_c_index_perfect_ordering_is_one():
     assert result["n_comparable"] > 0
 
 
+def test_c_index_below_min_events_is_nan_not_a_lucky_one_pair():
+    """A single death row is not a gate signal: with only one event,
+    Uno's C-index is a coin flip dressed up as a number (here a perfect
+    1.0 from exactly one comparable pair), and must not be reported as
+    a real result."""
+    result = concordance_index_ipcw(
+        times=np.array([5.0, 10.0]), events=np.array([1.0, 0.0]),
+        risk_scores=np.array([9.0, 1.0]))
+    assert result["n_comparable"] > 0
+    assert np.isnan(result["c_index"])
+
+
 def test_c_index_worst_ordering_is_zero():
     n = 30
     times = np.arange(1, n + 1, dtype=np.float64)
@@ -297,6 +328,31 @@ def test_c_index_ipcw_weight_differs_from_unweighted_when_censoring_present():
     g = KaplanMeier.fit(times, 1 - events).eval_left(times)
     assert not np.allclose(g, 1.0), "fixture must actually produce censoring drops in G"
     assert 0.0 <= weighted["c_index"] <= 1.0
+
+
+def test_c_index_raises_on_non_finite_risk_score():
+    """A NaN/inf risk score for an event row must not silently corrupt
+    the gate metric -- NaN comparisons are always False, so an
+    unguarded NaN row would drop out of `concordant` while its full
+    pair-weight still counted toward `comparable`, quietly deflating
+    (or, for +inf, inflating) the reported C-index."""
+    times = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    events = np.array([1.0, 0.0, 1.0, 0.0, 0.0])
+    risk = np.array([5.0, 1.0, float("nan"), 1.0, 1.0])
+    with pytest.raises(ValueError):
+        concordance_index_ipcw(times, events, risk)
+
+    risk_inf = np.array([5.0, 1.0, float("inf"), 1.0, 1.0])
+    with pytest.raises(ValueError):
+        concordance_index_ipcw(times, events, risk_inf)
+
+
+def test_c_index_raises_on_non_finite_times():
+    times = np.array([1.0, 2.0, float("inf"), 4.0, 5.0])
+    events = np.array([1.0, 0.0, 1.0, 0.0, 0.0])
+    risk = np.array([5.0, 1.0, 4.0, 1.0, 1.0])
+    with pytest.raises(ValueError):
+        concordance_index_ipcw(times, events, risk)
 
 
 # ---------------------------------------------------------------------------
@@ -445,6 +501,24 @@ def test_train_hazard_load_and_validate_preserves_source_state_idx(tmp_path):
     assert train_groups & val_groups == set()
 
 
+def test_train_hazard_load_and_validate_flags_missing_provenance(tmp_path, capsys):
+    """A stale/hand-built npz that satisfies REQUIRED_KEYS but carries no
+    meta_json must not train and gate as if its continuation semantics
+    (hazard_collect.py's continuation_mode) had been confirmed -- the
+    absence has to be visible on stderr and in the returned provenance
+    dict, not silently accepted."""
+    data, _ = _make_forked_npz_dict(n_groups=6, forks_per_group=3, n_bins=5, seed=3)
+    npz_path = tmp_path / "stale_hazard_data.npz"
+    np.savez(npz_path, **data)
+
+    loaded = train_hazard.load_and_validate(str(npz_path))
+    provenance = loaded["_provenance"]
+    assert provenance["meta_json_present"] is False
+    assert provenance["verified"] is False
+    err = capsys.readouterr().err
+    assert "meta_json" in err and "UNVERIFIED" in err
+
+
 def test_train_hazard_dry_run_writes_nothing(tmp_path):
     data, _ = _make_forked_npz_dict(n_groups=10, forks_per_group=4, n_bins=6, seed=1)
     npz_path = tmp_path / "hazard_data.npz"
@@ -488,3 +562,21 @@ def test_train_hazard_end_to_end_writes_checkpoint_and_report(tmp_path):
     ckpt_payload = _torch.load(ckpt, weights_only=False)
     assert ckpt_payload["config"]["n_bins"] == 8
     assert "state_dict" in ckpt_payload
+
+
+def test_train_hazard_main_handles_truncated_npz_gracefully(tmp_path):
+    """Regression guard: a truncated npz (e.g. left behind by an
+    unattended hazard_collect.py crash mid-`np.savez`) must hit the
+    script's own graceful error path -- exit code 2, no traceback --
+    not an unhandled zipfile.BadZipFile."""
+    data, _ = _make_forked_npz_dict(n_groups=10, forks_per_group=4, n_bins=6, seed=2)
+    npz_path = tmp_path / "hazard_data.npz"
+    np.savez(npz_path, **data)
+    full_bytes = npz_path.read_bytes()
+    truncated_path = tmp_path / "truncated.npz"
+    truncated_path.write_bytes(full_bytes[: len(full_bytes) // 2])
+
+    rc = train_hazard.main([
+        "--data", str(truncated_path), "--out", str(tmp_path / "out"),
+    ])
+    assert rc == 2
