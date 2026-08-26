@@ -99,6 +99,30 @@ def test_write_run_manifest_is_atomic_overwrite(tmp_path: Path) -> None:
     assert not (tmp_path / "run_manifest.json.tmp").exists()
 
 
+def test_write_run_manifest_preserves_rom_md5_on_second_write_without_it(
+    tmp_path: Path,
+) -> None:
+    """train_game.py writes the correct rom_md5 first; vanilla_ppo's own
+    CheckpointManager.write_manifest has no rom_md5 kwarg and calls back
+    into write_run_manifest for the same checkpoint dir + ROM moments
+    later, defaulting rom_md5 to None. That second write must not
+    clobber the already-recorded MD5 with null."""
+    rom_path = "roms/Super Mario Bros. (World).nes"
+    write_run_manifest(
+        tmp_path, game="Super Mario Bros.", rom_path=rom_path,
+        start_state_path=None, seed=1, profile={"reinforce": {}},
+        num_envs=8, frame_skip=4,
+        rom_md5="deadbeefcafebabe1234567890abcde",
+    )
+    write_run_manifest(
+        tmp_path, game="Super Mario Bros.", rom_path=rom_path,
+        start_state_path=None, seed=1, profile={"reinforce": {}},
+        num_envs=8, frame_skip=4,
+    )
+    m = json.loads((tmp_path / "run_manifest.json").read_text())
+    assert m["rom_md5"] == "deadbeefcafebabe1234567890abcde"
+
+
 def test_dependency_snapshot_records_unknown_on_lookup_failure(monkeypatch) -> None:
     """A `pip`-metadata lookup failure must degrade to "unknown" per
     field, not raise out of a function called at the start of every

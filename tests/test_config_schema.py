@@ -44,6 +44,25 @@ def test_clean_profile_passes():
     assert validate_profile(prof) == []
 
 
+def test_episode_metrics_key_is_registered():
+    """episode_metrics gates the per-episode metrics sidecar (trainer.py
+    ``_rl_cfg.get("episode_metrics", False)``) — registering it here is
+    what test_registry_covers_everything_trainer_consumes enforces."""
+    prof = {"name": "x", "reinforce": {"episode_metrics": True}}
+    assert validate_profile(prof) == []
+
+
+def test_tensorboard_top_level_key_passes_strict():
+    """`tensorboard` is a real top-level knob (trainer.py reads it via
+    `game_profile.get("tensorboard", True)` to gate MetricsSink's
+    TensorBoard writer) — it must not be flagged as an unknown key, or
+    `--strict-config` aborts a launch over a knob that is neither a typo
+    nor ignored."""
+    prof = {"name": "x", "tensorboard": False}
+    assert validate_profile(prof) == []
+    check_profile(prof, strict=True)
+
+
 def test_strict_mode_raises():
     prof = {"reinforce": {"bogus_knob": 1}}
     with pytest.raises(ConfigSchemaError):

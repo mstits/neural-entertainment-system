@@ -142,6 +142,22 @@ def write_run_manifest(
     them as ``None`` records ``null`` (still a valid, if weaker, manifest).
     """
     rl = profile.get("reinforce", {}) or {}
+    path = Path(checkpoint_dir) / "run_manifest.json"
+    if rom_md5 is None:
+        # A same-run second writer (e.g. vanilla_ppo's own
+        # CheckpointManager.write_manifest, which has no rom_md5 kwarg to
+        # forward) can call back into this function after the launcher
+        # already wrote the correct MD5 to this same path, atomically
+        # clobbering it with `None` moments later. Preserve the prior
+        # value for the same ROM instead of losing it; a path with no
+        # prior manifest (or one for a different ROM) still records
+        # `null` as documented above.
+        try:
+            _prior = json.loads(path.read_text())
+            if _prior.get("rom_path") == str(rom_path):
+                rom_md5 = _prior.get("rom_md5")
+        except Exception:
+            pass
     manifest = {
         "game": game,
         "rom_path": str(rom_path),
@@ -158,7 +174,6 @@ def write_run_manifest(
         "hyperparams": {k: rl[k] for k in _PINNED_HYPERPARAMS if k in rl},
         "dependencies": dependency_snapshot(),
     }
-    path = Path(checkpoint_dir) / "run_manifest.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(manifest, indent=2))

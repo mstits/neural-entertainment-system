@@ -48,6 +48,10 @@ KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     "demo_anchor_enabled", "demo_anchor_margin", "demo_anchor_minibatch",
     "demo_anchor_paths", "device", "drq_aug", "drq_pad", "enabled",
     "encoder", "entropy_coef", "entropy_coef_max", "entropy_floor",
+    # Per-episode metrics sidecar (commit fe7035d, "observability:
+    # per-episode metrics sidecar"). Consumed by Trainer at
+    # trainer.py:5194/7393 to gate the sidecar writer.
+    "episode_metrics",
     "cgsa", "episodes_per_genome", "freeze_pre_ppo_elite", "gae_lambda", "gamma",
     "go_explore", "go_explore_fallback", "grad_clip",
     "gx_count_bonus_coef", "inherit_curriculum_on_fresh",
@@ -128,15 +132,17 @@ KNOWN_ADVERSARY_KEYS: frozenset[str] = frozenset({
 _ADVERSARY_MODES: frozenset[str] = frozenset({"kernel_sticky"})
 
 # Top-level profile keys read outside `reinforce` — by the launcher,
-# the GA path (`ga_params`), the Dreamer path (`dreamer`), and the
-# composite-eval manifest family (`levels`, `hysteresis_k`).
+# the GA path (`ga_params`), the Dreamer path (`dreamer`), the
+# composite-eval manifest family (`levels`, `hysteresis_k`), and
+# `tensorboard` (trainer.py's `game_profile.get("tensorboard", True)`,
+# gating MetricsSink's TensorBoard writer).
 KNOWN_TOP_KEYS: frozenset[str] = frozenset({
     "name", "game", "rom_path", "rom", "rom_hashes", "expected_md5",
     "rom_md5", "description", "frame_skip", "max_episode_steps",
     "start_state_path", "start_state", "ram_mapping", "reinforce",
     "reward_weights", "action_space", "curriculum", "env_spec", "seed",
     "ga_params", "dreamer", "levels", "hysteresis_k", "stop_after_worlds",
-    "plr_levels",
+    "plr_levels", "tensorboard",
 })
 
 
