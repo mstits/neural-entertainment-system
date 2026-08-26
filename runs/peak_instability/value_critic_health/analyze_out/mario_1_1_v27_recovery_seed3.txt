@@ -1,0 +1,39 @@
+=== mario_1_1_v27_recovery_seed3 (split at peak iter 60) ===
+metrics: checkpoints/mario_1_1_v27_recovery_seed3/metrics.jsonl (250 rows)
+split: generation>60  ->  A (match)=189 rows, B (rest)=61 rows, excluded (no generation)=0
+
+showing top 31 of 31 numeric fields, ranked by |effect size| (Cohen's-d-style; pooled std across both cohorts)
+
+field                              n_A/tot   n_B/tot      mean_A      mean_B      Δmean    Δmedian   effect  note
+-----------------------------------------------------------------------------------------------------------------
+ppo_entropy                        189/189     61/61      0.2267         1.2     -0.973     -1.057     -3.7  
+generation                         189/189     61/61         155          30        125        125     3.08  
+timestamp                          189/189     61/61   1.788e+09   1.788e+09       3205       3233     3.07  
+vanilla_ppo_rnd_loss               189/189     61/61   7.449e-06    0.002506  -0.002498  -0.002605    -1.62  
+vanilla_ppo_intrinsic_mean         189/189     61/61   3.923e-05    0.005638  -0.005599  -0.005548    -1.52  
+vanilla_ppo_max_world_level        189/189     61/61       1.249       1.951    -0.7021          0       -1  
+timing_update_ms                   189/189     61/61        2987        2737      250.3      42.26    0.904  
+vanilla_ppo_max_x                  189/189     61/61        3158        3259     -100.7         -1   -0.848  
+vanilla_ppo_clears                 189/189     61/61       16.39       35.33     -18.94        -35   -0.784  
+timing_rollout_forward_ms          189/189     61/61       184.1       156.8      27.28     -1.125    0.742  
+reward_completion                  125/189     59/61       8.473       13.95     -5.481     -10.83     -0.7  
+timing_gae_ms                      189/189     61/61       3.268       3.071     0.1964      0.054     0.69  
+episodes                           189/189     61/61       172.4       248.7     -76.29         16   -0.558  
+success_rate                       189/189     61/61      0.1675      0.2788    -0.1113    -0.2265   -0.439  
+avg_fitness                        189/189     61/61        1583        1375      207.9     -11.92    0.325  
+vanilla_ppo_samples_per_sec        189/189     61/61        2411        2430     -19.15     0.8485    -0.27  
+vanilla_ppo_realtime_x             189/189     61/61       160.7         162     -1.277    0.05657    -0.27  
+reward_time_penalty                189/189     61/61      -2.953       -2.74    -0.2136   -0.07467   -0.232  
+best_fitness                       189/189     61/61        3617        3762     -145.2     -608.9    -0.21  
+timing_emulation_ms                189/189     61/61   2.167e+04   2.175e+04     -81.79     -162.9   -0.139  
+reward_forward                     189/189     61/61        1437        1374      63.19     -154.3    0.127  
+ppo_policy_loss                    189/189     61/61       9.569    -0.01214      9.581    0.05275    0.105  
+ppo_loss                           189/189     61/61       17.14       7.553      9.586     0.5487    0.105  
+timing_rnd_intrinsic_ms            189/189     61/61       97.42       97.17     0.2502     -1.058   0.0447  
+timing_iter_reset_ms               189/189     60/61       25.82       25.75    0.06654      0.213   0.0419  
+timing_bookkeeping_ms              189/189     61/61      0.4106      0.4088   0.001794    0.01996   0.0126  
+ppo_value_loss                     189/189     61/61       30.29       30.27    0.01251      1.907  0.00143  
+demo_anchor_coef                   189/189     61/61           0           0          0          0        0  
+demo_anchor_loss                   189/189     61/61           0           0          0          0        0  
+vanilla_ppo_count_bonus_mean       189/189     61/61           0           0          0          0        0  
+vanilla_ppo_in_progress            189/189     61/61          60          60          0          0        0  

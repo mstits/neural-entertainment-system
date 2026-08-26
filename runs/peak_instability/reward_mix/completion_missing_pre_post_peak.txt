@@ -1,0 +1,12 @@
+run/seed      peak    pre_missing/total   post_missing/total
+v27/seed0       60                 0/60                6/190
+v27/seed1       50                 3/50               15/200
+v27/seed2       90                 0/90                4/160
+v27/seed3       60                 2/60               64/190
+v28/seed0       70                 0/70               46/180
+v28/seed1       60                 0/60               21/190
+v28/seed2      120                0/120               59/130
+v28/seed3       90                 0/90               59/160
+
+TOTAL pre-peak:  5/600 = 0.8%
+TOTAL post-peak: 274/1400 = 19.6%

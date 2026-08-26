@@ -1,0 +1,83 @@
+{
+  "tail_window": "iter 210-240",
+  "near_flag_threshold": 3200,
+  "per_run": [
+    {
+      "run": "v27_seed0",
+      "tail_n_iters": 31,
+      "tail_mean_episodes_per_iter": 174.5,
+      "tail_mean_success_rate": 0.0241,
+      "predicted_frac_iters_with_ge1_clear": 0.928,
+      "observed_frac_iters_maxx_near_flag": 1.0,
+      "gap_observed_minus_predicted": 0.072
+    },
+    {
+      "run": "v27_seed1",
+      "tail_n_iters": 31,
+      "tail_mean_episodes_per_iter": 173.4,
+      "tail_mean_success_rate": 0.0126,
+      "predicted_frac_iters_with_ge1_clear": 0.624,
+      "observed_frac_iters_maxx_near_flag": 0.71,
+      "gap_observed_minus_predicted": 0.086
+    },
+    {
+      "run": "v27_seed2",
+      "tail_n_iters": 31,
+      "tail_mean_episodes_per_iter": 193.3,
+      "tail_mean_success_rate": 0.0163,
+      "predicted_frac_iters_with_ge1_clear": 0.791,
+      "observed_frac_iters_maxx_near_flag": 0.903,
+      "gap_observed_minus_predicted": 0.112
+    },
+    {
+      "run": "v27_seed3",
+      "tail_n_iters": 31,
+      "tail_mean_episodes_per_iter": 204.3,
+      "tail_mean_success_rate": 0.0056,
+      "predicted_frac_iters_with_ge1_clear": 0.467,
+      "observed_frac_iters_maxx_near_flag": 0.548,
+      "gap_observed_minus_predicted": 0.081
+    },
+    {
+      "run": "v28_seed0",
+      "tail_n_iters": 31,
+      "tail_mean_episodes_per_iter": 220.5,
+      "tail_mean_success_rate": 0.001,
+      "predicted_frac_iters_with_ge1_clear": 0.112,
+      "observed_frac_iters_maxx_near_flag": 0.129,
+      "gap_observed_minus_predicted": 0.017
+    },
+    {
+      "run": "v28_seed1",
+      "tail_n_iters": 31,
+      "tail_mean_episodes_per_iter": 166.8,
+      "tail_mean_success_rate": 0.0221,
+      "predicted_frac_iters_with_ge1_clear": 0.874,
+      "observed_frac_iters_maxx_near_flag": 0.968,
+      "gap_observed_minus_predicted": 0.094
+    },
+    {
+      "run": "v28_seed2",
+      "tail_n_iters": 31,
+      "tail_mean_episodes_per_iter": 149.2,
+      "tail_mean_success_rate": 0.0023,
+      "predicted_frac_iters_with_ge1_clear": 0.204,
+      "observed_frac_iters_maxx_near_flag": 0.323,
+      "gap_observed_minus_predicted": 0.118
+    },
+    {
+      "run": "v28_seed3",
+      "tail_n_iters": 31,
+      "tail_mean_episodes_per_iter": 215.8,
+      "tail_mean_success_rate": 0.0036,
+      "predicted_frac_iters_with_ge1_clear": 0.388,
+      "observed_frac_iters_maxx_near_flag": 0.516,
+      "gap_observed_minus_predicted": 0.128
+    }
+  ],
+  "mean_abs_gap": 0.088,
+  "gap_range": [
+    0.017,
+    0.128
+  ]
+}

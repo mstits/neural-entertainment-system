@@ -1,0 +1,41 @@
+=== seed3 iter20 : 2026-08-26T06:27:55Z ===
+seed3 iter20: SKIP (already ok)
+=== seed3 iter50 : 2026-08-26T06:29:43Z ===
+seed3 iter50: clear_rate=0.6
+=== seed3 iter70 : 2026-08-26T06:30:17Z ===
+seed3 iter70: clear_rate=0.23333333333333334
+=== seed3 iter80 : 2026-08-26T06:30:59Z ===
+seed3 iter80: clear_rate=0.7
+=== seed3 iter90 : 2026-08-26T06:31:15Z ===
+seed3 iter90: clear_rate=0.6666666666666666
+=== seed3 iter100 : 2026-08-26T06:31:34Z ===
+seed3 iter100: clear_rate=0.5333333333333333
+=== seed3 iter120 : 2026-08-26T06:31:57Z ===
+seed3 iter120: clear_rate=0.3333333333333333
+=== seed3 iter160 : 2026-08-26T06:32:23Z ===
+seed3 iter160: clear_rate=0.03333333333333333
+=== seed3 iter200 : 2026-08-26T06:32:44Z ===
+seed3 iter200: clear_rate=0.0
+=== seed3 iter240 : 2026-08-26T06:32:52Z ===
+seed3 iter240: clear_rate=0.0
+=== seed0 iter20 : 2026-08-26T06:33:14Z ===
+seed0 iter20: clear_rate=0.0
+=== seed0 iter50 : 2026-08-26T06:33:51Z ===
+seed0 iter50: clear_rate=0.2
+=== seed0 iter60 : 2026-08-26T06:34:33Z ===
+seed0 iter60: clear_rate=0.4666666666666667
+=== seed0 iter70 : 2026-08-26T06:35:10Z ===
+seed0 iter70: clear_rate=0.4666666666666667
+=== seed0 iter80 : 2026-08-26T06:35:35Z ===
+seed0 iter80: clear_rate=0.43333333333333335
+=== seed0 iter90 : 2026-08-26T06:36:00Z ===
+seed0 iter90: clear_rate=0.7333333333333333
+=== seed0 iter120 : 2026-08-26T06:36:22Z ===
+seed0 iter120: clear_rate=0.4
+=== seed0 iter160 : 2026-08-26T06:36:43Z ===
+seed0 iter160: clear_rate=0.36666666666666664
+=== seed0 iter200 : 2026-08-26T06:37:01Z ===
+seed0 iter200: clear_rate=0.0
+=== seed0 iter240 : 2026-08-26T06:37:38Z ===
+seed0 iter240: clear_rate=0.0
+ALL DONE: 2026-08-26T06:38:02Z

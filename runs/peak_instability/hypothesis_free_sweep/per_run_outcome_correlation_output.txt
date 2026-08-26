@@ -1,0 +1,11 @@
+field                          spearman_rho_vs_honest_peak   per-run means (ordered v27s0..v28s3)
+ppo_value_loss                                      -0.786      33.43    31.75     25.4    30.28     27.8    29.79    30.58    26.72
+ppo_entropy                                          0.667     0.4344   0.5098   0.5308   0.4641   0.4897   0.4604   0.4629   0.4796
+reward_completion                                    0.857      8.497     10.8    16.14    10.23    13.29    10.97    15.89    14.18
+success_rate                                         0.667     0.1207   0.2522   0.4801   0.1946   0.3505   0.3564   0.2768    0.341
+vanilla_ppo_samples_per_sec                          0.262       2410     2383     2376     2416     2537     2146     2169     2640
+timing_rnd_intrinsic_ms                             -0.667      100.3    98.85    97.01    97.36    91.72    107.2    105.9    90.23
+ppo_policy_loss                                     -0.381      0.113  0.02472  0.01775    7.231  0.05023  0.02458  0.04047  0.08997
+
+run order: ['mario_1_1_v27_recovery_seed0', 'mario_1_1_v27_recovery_seed1', 'mario_1_1_v27_recovery_seed2', 'mario_1_1_v27_recovery_seed3', 'mario_1_1_v28_capacity_seed0', 'mario_1_1_v28_capacity_seed1', 'mario_1_1_v28_capacity_seed2', 'mario_1_1_v28_capacity_seed3']
+honest peak: [0.04, 0.29, 0.53, 0.17, 0.45, 0.23, 0.37, 0.67]

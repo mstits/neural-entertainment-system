@@ -1,0 +1,15 @@
+First iteration each run's backward curriculum reaches tau=0 (AT-ENTRANCE,
+the true cold-start entrance state used by the honest gate). All 8 runs
+reach this well before their honest-eval peak_iter (50-120) and hundreds
+of iterations before final_iter=240 -- ruling out 'the curriculum got
+harder over time' as a confound for the peak-to-final decline.
+
+run            first_AT-ENTRANCE_iter   honest_peak_iter
+v27_seed0                          29                 60
+v27_seed1                          25                 50
+v27_seed2                          24                 90
+v27_seed3                          24                 60
+v28_seed0                          25                 70
+v28_seed1                          22                 60
+v28_seed2                          29                120
+v28_seed3                          23                 90

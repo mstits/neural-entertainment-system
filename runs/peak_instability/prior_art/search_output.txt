@@ -1,0 +1,940 @@
+
+===== 1. Commit-message search: collapse / instability / degradation / entropy / plateau =====
+fe7035d observability: per-episode metrics sidecar + a generic cohort differ
+ee39fde hardening wave 3: 7 confirmed findings — the hazard-veto root cause finally fixed
+0848ca1 shelf answered: joint signal closed, 1-4 banked rate confirmed exactly
+88d00ff options: FAIL by overcommitment — and continued training collapses peaks
+e4e111c VOID: both experiments trained only critics — actor frozen by inherited 1e12
+fdfba4f options: v22 addendum — duration-scaled entropy and semi-MDP mechanics
+9e0b742 engine: a banked level's resume ranks below unscored work
+b1402c6 CLAIMS: World 1-3 at 21% honest strict — the pipeline transfers
+bc192f1 t1 watchdog: sanitize bundle path components and assert realpath containment
+ca463ce CLAIMS: consolidation round 2 — honest 1-2 at 38% strict
+2850460 night2: one-command cure-gate-consolidate orchestrator
+1a99467 refactor(trainer): Task 1 — extract CheckpointManager (real relocation)
+5f1258c test(trainer): C1-C5 characterization goldens — complete the extraction safety net
+5a9fd68 feat(bb): possession-state bit $0030==69 — the item dimension the archive was blind to
+a02971e feat(backward): entropy guard + B5 pre-registration + consolidation config
+a580f99 fix(backward): winner snapshot keys on trailing entrance rate, at-entrance only
+5f8dcb7 feat(solver): orthogonal-frontier arm — selection pressure for vertical rooms
+68361d0 feat(tracing): jitter-proof lockstep instruments — counter slip, state-fork onset, DMA parity
+c61ccee fix(rewards): Contra's forward-progress term read a dead byte
+3265ce6 docs(contra): weak-point hunt — receipted negative, wall unhittable from all banked geometry
+31d2cba feat(solver): receipted Contra observables + event-driven-PPU design note
+0152990 feat(training): SHAPO pivot — SAM-PPO replaces the collapsed PR-MDP adversary
+39cf5db feat(show): finale lap lingers 30s so the ending plays to the princess
+558552e fix(show): hero-cam get_best froze the show at large archives — O(archive) scan
+4a47b19 fix(show): hero cam GIL stall was the real throughput killer — not the chorus
+4d59d1a feat(solver): maze-aware cell keys (loop-count, route-sig, discovered bytes) + maze dossier
+711a314 feat(training): CGSA-PPO per-zone sticky curriculum + non-farmable wavefront shaping
+14b5739 feat(training): adaptive entropy floor + profile schema validation
+14010eb fix(training): self-healing — sticky log-prob clamp, poison-save guard, crash supervisor
+204bfbf feat(training): sticky-action training in the PPO rollout
+935e609 fix(training): end the World-2 reward desert + stage-0 freeze starvation
+ceeb31a fix(training): demo collection matches the training noise model (sticky actions)
+4d79512 perf(ppu): idle-HBlank early-return under skip_render
+4cf53b0 Fix Castlevania win predicate + persist anti-collapse baseline
+15a88d7 README rewrite: accurate, honest, end-to-end usable
+0b08dbe Wave 1: onboarding, reproducible wins, winner retention, crash-safety
+1a51232 Perf: defer per-minibatch loss .item() syncs to one per update
+72dd9ac SMB 1-4: dense platform-hop + Bowser-bridge ladder (autonomous ceiling reached)
+3649df7 SMB World 1: clear 1-3, calibrate 1-3/1-4 ladders, fix max_x metric, add BC pipeline
+042376e Real-loop learning-regression guard (catches the demo-bug class)
+d11f871 Bug-hunt top tier: vanilla_ppo cleanup, RND optimizer, minibatch perf, atomic state
+1d88d8c Curriculum advance: rolling-mean gate instead of brittle consecutive-N
+1ec4798 Fix curriculum-collapse: gated advance + mixed-stage + anti-collapse + safe resume
+bf3f3f7 vanilla_ppo: fix runaway done-events bug + report in-progress eps
+12f6341 BC anchor: end-to-end overhaul + state-action alignment fix
+7020a7d Extract MetricsSink → src/training/metrics_sink.py
+0995f63 Audit pass + carrot-only reward overhaul + adaptive mutation scaling
+f82ebe8 Strip enemy_death_extra and time_penalty — both were double-counting
+cbc7857 Enable RND curiosity bonus + drop entropy_coef back to 0.001
+b58b667 Restore exploration: gentler penalties, higher entropy, fewer episodes
+a2869d1 Freeze pre-PPO elite snapshot to prevent winning-policy regression
+--- instability ---
+0006493 v28 capacity VERDICT: FAIL — best-of-4 0.670, but the dose-response reads came back improving 3/4
+5b3363d v27 VERDICT: FAIL — best-of-4 0.530 vs the 0.767 bar
+--- entropy (all) ---
+fe7035d observability: per-episode metrics sidecar + a generic cohort differ
+ee39fde hardening wave 3: 7 confirmed findings — the hazard-veto root cause finally fixed
+88d00ff options: FAIL by overcommitment — and continued training collapses peaks
+cd00fdf options: full trainer + eval integration — the treatment arm is runnable
+937ee37 options: semi-MDP GAE math as pure, tested functions
+fdfba4f options: v22 addendum — duration-scaled entropy and semi-MDP mechanics
+b385eb3 phase 3 VOID: -inf logits NaN'd the actor, and eval never armed the veto
+d8e1c9e research: build the shelf — hazard engine, survival model, outcome detector, latent cells
+5fd3435 docs: research synthesis — five rounds converge on a hazard substrate
+0ecfbcc training: audit hardening + online-campaign mechanisms
+260df99 refactor(trainer): Task 0.5 — extract 5 typed config dataclasses (unwired, pure prep)
+b99f9d6 feat(config): mario_1_1_backward_v4 — real consolidate-mode weld from the backward iter-80 policy
+a02971e feat(backward): entropy guard + B5 pre-registration + consolidation config
+a580f99 fix(backward): winner snapshot keys on trailing entrance rate, at-entrance only
+41e16e5 feat(learning): reopen the learning track — sampled eval, sticky boundary fix, backward curriculum, segment probe, CGSA record correction
+71e78ed feat(show): control panel — full settings editor + profile load/save alongside the show
+0152990 feat(training): SHAPO pivot — SAM-PPO replaces the collapsed PR-MDP adversary
+bef163a feat(training): PR-MDP adversarial PPO (Tessler et al. ICML 2019) in vanilla_ppo
+8555536 test+docs: decomposition characterization tests + actor/learner spec & parity gate
+14b5739 feat(training): adaptive entropy floor + profile schema validation
+14010eb fix(training): self-healing — sticky log-prob clamp, poison-save guard, crash supervisor
+f1bd654 feat(training): honest anchor resume, gx-count frontier bonus, archive returns
+cb254ae feat(training): self-imitation robustifier + composite handoff capture
+206bd42 feat(training): level-scoped cold-gated consolidation + area-granular composite routing
+dde1d16 feat(training): bounded Go-Explore unstick burst for stalled ladder rungs
+c3fadf9 feat(training): SMB one-shot campaign stack — sequential metric, sub-stage ladder, cold probe, trainer glue
+f710bb1 docs: SMB one-shot campaign spec (1-1 through 1-4 cold-eval)
+270c263 feat: vanilla_ppo route for the SMB tile config
+4cf53b0 Fix Castlevania win predicate + persist anti-collapse baseline
+1a51232 Perf: defer per-minibatch loss .item() syncs to one per update
+af587d0 Document SMB World-1 autonomous training
+72dd9ac SMB 1-4: dense platform-hop + Bowser-bridge ladder (autonomous ceiling reached)
+3649df7 SMB World 1: clear 1-3, calibrate 1-3/1-4 ladders, fix max_x metric, add BC pipeline
+701995f SMB 1-2 underground: greedy clear via entropy-decay consolidation
+8b0db63 Contra screen-9 advancement-shaping config (banked negative)
+dedd930 contra_screen9: entropy_coef 0.02 -> 0.01 (policy wasn't committing)
+a307c39 Reproducibility manifest + mission-control scoreboard
+042376e Real-loop learning-regression guard (catches the demo-bug class)
+0cb2391 Pixel games to MPS — 4.7x faster CNN, makes Contra/Castlevania trainable
+28443c2 Phase 2: Castlevania on the unified vanilla_ppo + pixel path; Mega Man wired (MM2)
+c3bb1c4 Phase 2: convert Contra to the unified vanilla_ppo + pixel-CNN path
+8b81589 Per-step rollout perf + GA gae_lambda fix
+d11f871 Bug-hunt top tier: vanilla_ppo cleanup, RND optimizer, minibatch perf, atomic state
+1d88d8c Curriculum advance: rolling-mean gate instead of brittle consecutive-N
+3b0b5ec Fix root cause of "PPO won't learn": training ran on the title-screen demo
+6eeaa50 Wire RND intrinsic exploration into vanilla_ppo
+1ec4798 Fix curriculum-collapse: gated advance + mixed-stage + anti-collapse + safe resume
+5011678 Extract batched GAE + PPO loss from _run_vanilla_ppo into ppo.py
+7cee0d7 MetricsSink: enforce canonical dashboard schema for every trainer mode
+da4d806 vanilla_ppo: emit dashboard-compatible metric keys
+40cbf57 Vanilla PPO trainer mode — match the literature recipe
+12f6341 BC anchor: end-to-end overhaul + state-action alignment fix
+f2c561f GA hygiene: drop dead actions + tighten stale-restart trigger
+08005cd Sticky actions for jump-cutoff fix (Machado et al. 2018)
+cbc7857 Enable RND curiosity bonus + drop entropy_coef back to 0.001
+b58b667 Restore exploration: gentler penalties, higher entropy, fewer episodes
+1ab09ca Multi-episode genome eval to break the GA's single-episode noise floor
+1c7ef1f Fix structural blockers preventing PPO from learning
+
+===== 2. The -74% figure: every place it is quoted =====
+docs/research/CAPABILITY_REPORT_2026-08-24.md:208:the KL anchor active (−74% relative). Consolidated peaks are
+docs/research/CAPABILITY_REPORT_2026-08-25_DAY3.md:68:peak (31/100 → 8/100, −74%) — but v27's checkpoints were never
+docs/research/OPTIONS_NEGATIVE_2026-08-23.md:38:1-3" — now has a clean number: -74% relative in 200 iters.
+docs/proposals/RECURRENT_BOTTLENECK_AB_2026-08-23.md:10:overcommitment; peak instability −74%/200 iters under continued PPO
+docs/proposals/V28_CAPACITY_2026-08-25.md:573:PPO (−74% over 200 iters), then within v27's from-scratch runs
+docs/proposals/V27_FRESH_RECOVERY_2026-08-24.md:700:peak pattern measured weeks ago on post-hoc training (-74% over 200
+CLAIMS.md:759:31/100 → 8/100 in 200 iters (−74% relative, KL anchor active) — all
+CLAIMS.md:945:post-hoc training (−74% over 200 iters, OPTIONS MECHANISM entry
+CLAIMS.md:1068:degradation. Prior reproductions: post-hoc continued PPO (−74% over 200
+
+===== 3. Anti-collapse / KL-anchor / entropy-floor machinery: where it lives =====
+./.claude/worktrees/agent-a19b8dd6d2892e27f/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/agent-a19b8dd6d2892e27f/docs/smb_world1_training.md
+./.claude/worktrees/agent-a19b8dd6d2892e27f/README.md
+./.claude/worktrees/agent-a19b8dd6d2892e27f/src/training/oneshot_curriculum.py
+./.claude/worktrees/agent-a19b8dd6d2892e27f/src/training/trainer.py
+./.claude/worktrees/agent-a19b8dd6d2892e27f/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/agent-a202ec8c7044488d3/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/agent-a202ec8c7044488d3/docs/smb_world1_training.md
+./.claude/worktrees/agent-a202ec8c7044488d3/README.md
+./.claude/worktrees/agent-a202ec8c7044488d3/src/training/oneshot_curriculum.py
+./.claude/worktrees/agent-a202ec8c7044488d3/src/training/trainer.py
+./.claude/worktrees/agent-a202ec8c7044488d3/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/agent-a42135d0a19d20598/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/agent-a42135d0a19d20598/docs/smb_world1_training.md
+./.claude/worktrees/agent-a42135d0a19d20598/README.md
+./.claude/worktrees/agent-a42135d0a19d20598/src/training/oneshot_curriculum.py
+./.claude/worktrees/agent-a42135d0a19d20598/src/training/trainer.py
+./.claude/worktrees/agent-a42135d0a19d20598/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/agent-a8bdf144906d81514/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/agent-a8bdf144906d81514/docs/smb_world1_training.md
+./.claude/worktrees/agent-a8bdf144906d81514/README.md
+./.claude/worktrees/agent-a8bdf144906d81514/src/training/oneshot_curriculum.py
+./.claude/worktrees/agent-a8bdf144906d81514/src/training/trainer.py
+./.claude/worktrees/agent-a8bdf144906d81514/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_1dec20db-194-1/docs/smb_world1_training.md
+./.claude/worktrees/wf_1dec20db-194-1/README.md
+./.claude/worktrees/wf_1dec20db-194-1/src/training/trainer.py
+./.claude/worktrees/wf_1dec20db-194-1/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_1dec20db-194-2/docs/smb_world1_training.md
+./.claude/worktrees/wf_1dec20db-194-2/README.md
+./.claude/worktrees/wf_1dec20db-194-2/src/training/trainer.py
+./.claude/worktrees/wf_1dec20db-194-2/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_1dec20db-194-5/docs/smb_world1_training.md
+./.claude/worktrees/wf_1dec20db-194-5/README.md
+./.claude/worktrees/wf_1dec20db-194-5/src/training/trainer.py
+./.claude/worktrees/wf_1dec20db-194-5/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_1dec20db-194-6/docs/smb_world1_training.md
+./.claude/worktrees/wf_1dec20db-194-6/README.md
+./.claude/worktrees/wf_1dec20db-194-6/src/training/trainer.py
+./.claude/worktrees/wf_1dec20db-194-6/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_352e9438-5f9-10/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/wf_352e9438-5f9-10/docs/proposals/trainer_decomposition_plan.md
+./.claude/worktrees/wf_352e9438-5f9-10/docs/smb_world1_training.md
+./.claude/worktrees/wf_352e9438-5f9-10/README.md
+./.claude/worktrees/wf_352e9438-5f9-10/src/training/oneshot_curriculum.py
+./.claude/worktrees/wf_352e9438-5f9-10/src/training/trainer.py
+./.claude/worktrees/wf_352e9438-5f9-10/tests/test_vanilla_ppo_characterization.py
+./.claude/worktrees/wf_352e9438-5f9-10/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_47d60869-ad2-1/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/wf_47d60869-ad2-1/docs/smb_world1_training.md
+./.claude/worktrees/wf_47d60869-ad2-1/README.md
+./.claude/worktrees/wf_47d60869-ad2-1/src/training/trainer.py
+./.claude/worktrees/wf_47d60869-ad2-1/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_47d60869-ad2-2/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/wf_47d60869-ad2-2/docs/smb_world1_training.md
+./.claude/worktrees/wf_47d60869-ad2-2/README.md
+./.claude/worktrees/wf_47d60869-ad2-2/src/training/trainer.py
+./.claude/worktrees/wf_47d60869-ad2-2/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_47d60869-ad2-3/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/wf_47d60869-ad2-3/docs/smb_world1_training.md
+./.claude/worktrees/wf_47d60869-ad2-3/README.md
+./.claude/worktrees/wf_47d60869-ad2-3/src/training/trainer.py
+./.claude/worktrees/wf_47d60869-ad2-3/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_47d60869-ad2-4/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/wf_47d60869-ad2-4/docs/smb_world1_training.md
+./.claude/worktrees/wf_47d60869-ad2-4/README.md
+./.claude/worktrees/wf_47d60869-ad2-4/src/training/trainer.py
+./.claude/worktrees/wf_47d60869-ad2-4/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_47d60869-ad2-5/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/wf_47d60869-ad2-5/docs/smb_world1_training.md
+./.claude/worktrees/wf_47d60869-ad2-5/README.md
+./.claude/worktrees/wf_47d60869-ad2-5/src/training/oneshot_curriculum.py
+./.claude/worktrees/wf_47d60869-ad2-5/src/training/trainer.py
+./.claude/worktrees/wf_47d60869-ad2-5/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_47d60869-ad2-6/docs/proposals/smb_oneshot_campaign.md
+./.claude/worktrees/wf_47d60869-ad2-6/docs/smb_world1_training.md
+./.claude/worktrees/wf_47d60869-ad2-6/README.md
+./.claude/worktrees/wf_47d60869-ad2-6/src/training/oneshot_curriculum.py
+./.claude/worktrees/wf_47d60869-ad2-6/src/training/trainer.py
+./.claude/worktrees/wf_47d60869-ad2-6/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_7c78df60-566-1/docs/smb_world1_training.md
+./.claude/worktrees/wf_7c78df60-566-1/README.md
+./.claude/worktrees/wf_7c78df60-566-1/src/training/trainer.py
+./.claude/worktrees/wf_7c78df60-566-1/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_7c78df60-566-2/docs/smb_world1_training.md
+./.claude/worktrees/wf_7c78df60-566-2/README.md
+./.claude/worktrees/wf_7c78df60-566-2/src/training/trainer.py
+./.claude/worktrees/wf_7c78df60-566-2/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_7c78df60-566-3/docs/smb_world1_training.md
+./.claude/worktrees/wf_7c78df60-566-3/README.md
+./.claude/worktrees/wf_7c78df60-566-3/src/training/trainer.py
+./.claude/worktrees/wf_7c78df60-566-3/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_7c78df60-566-4/docs/smb_world1_training.md
+./.claude/worktrees/wf_7c78df60-566-4/README.md
+./.claude/worktrees/wf_7c78df60-566-4/src/training/trainer.py
+./.claude/worktrees/wf_7c78df60-566-4/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_977d6816-b78-1/docs/smb_world1_training.md
+./.claude/worktrees/wf_977d6816-b78-1/README.md
+./.claude/worktrees/wf_977d6816-b78-1/src/training/trainer.py
+./.claude/worktrees/wf_977d6816-b78-1/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_977d6816-b78-15/docs/smb_world1_training.md
+./.claude/worktrees/wf_977d6816-b78-15/README.md
+./.claude/worktrees/wf_977d6816-b78-15/src/training/trainer.py
+./.claude/worktrees/wf_977d6816-b78-15/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_977d6816-b78-16/docs/smb_world1_training.md
+./.claude/worktrees/wf_977d6816-b78-16/README.md
+./.claude/worktrees/wf_977d6816-b78-16/src/training/trainer.py
+./.claude/worktrees/wf_977d6816-b78-16/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_977d6816-b78-17/docs/smb_world1_training.md
+./.claude/worktrees/wf_977d6816-b78-17/README.md
+./.claude/worktrees/wf_977d6816-b78-17/src/training/trainer.py
+./.claude/worktrees/wf_977d6816-b78-17/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_977d6816-b78-18/docs/smb_world1_training.md
+./.claude/worktrees/wf_977d6816-b78-18/README.md
+./.claude/worktrees/wf_977d6816-b78-18/src/training/trainer.py
+./.claude/worktrees/wf_977d6816-b78-18/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_977d6816-b78-2/docs/smb_world1_training.md
+./.claude/worktrees/wf_977d6816-b78-2/README.md
+./.claude/worktrees/wf_977d6816-b78-2/src/training/trainer.py
+./.claude/worktrees/wf_977d6816-b78-2/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_977d6816-b78-25/docs/smb_world1_training.md
+./.claude/worktrees/wf_977d6816-b78-25/README.md
+./.claude/worktrees/wf_977d6816-b78-25/src/training/trainer.py
+./.claude/worktrees/wf_977d6816-b78-25/tests/test_vanilla_ppo_mode.py
+./.claude/worktrees/wf_977d6816-b78-26/docs/smb_world1_training.md
+./.claude/worktrees/wf_977d6816-b78-26/README.md
+./.claude/worktrees/wf_977d6816-b78-26/src/training/trainer.py
+./.claude/worktrees/wf_977d6816-b78-26/tests/test_vanilla_ppo_mode.py
+./docs/proposals/smb_oneshot_campaign.md
+./docs/proposals/trainer_decomposition_plan.md
+./docs/proposals/V27_FRESH_RECOVERY_2026-08-24.md
+./docs/smb_world1_training.md
+./README.md
+./scripts/night2_runner.py
+./scripts/soft_distill_cure.py
+./src/training/checkpoint_manager.py
+./src/training/oneshot_curriculum.py
+./src/training/trainer.py
+./tests/test_char_checkpoint_roundtrip.py
+./tests/test_checkpoint_manager_tmp_path_race.py
+./tests/test_curriculum_resume_checkpoint.py
+./tests/test_exploration_controller_rnd_rebuild.py
+./tests/test_night2_runner.py
+./tests/test_soft_distill_cure.py
+./tests/test_vanilla_ppo_characterization.py
+./tests/test_vanilla_ppo_mode.py
+--- kl_anchor.py / entropy_config.py consumers ---
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_cgsa_s1.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_cgsa_s2.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_cgsa.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_distill.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_javi.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_prmdp.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_rl_from_distill.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_robust_recurrent.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_robustify.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_shapo.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_1_2_solo.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_generalist_2level.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/mario_generalist_w1.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/configs/smb_4_4_micro.yaml
+./.claude/worktrees/wf_352e9438-5f9-10/docs/proposals/rust_actor_learner_design.md
+./.claude/worktrees/wf_352e9438-5f9-10/docs/proposals/trainer_decomposition_plan.md
+./.claude/worktrees/wf_352e9438-5f9-10/docs/research/FULL_DOSSIER_2026-07-22.md
+./.claude/worktrees/wf_352e9438-5f9-10/src/training/config_schema.py
+./.claude/worktrees/wf_352e9438-5f9-10/src/training/trainer.py
+./.claude/worktrees/wf_352e9438-5f9-10/tests/test_actor_learner_parity.py
+./.claude/worktrees/wf_352e9438-5f9-10/tests/test_config_schema.py
+./checkpoints/mario_1_1_backward_v4/runs/20260810_140256/game_profile.yaml
+./checkpoints/mario_1_1_pixel_phaseA/profile.yaml
+./checkpoints/mario_1_1_sticky_robust_v2/profile.yaml
+./checkpoints/mario_1_1_tile_gate_v2_consolidate/PHASEA_RESULT.md
+./checkpoints/mario_1_1_tile_gate_v2/profile.yaml
+./checkpoints/mario_1_1_tile_gate/profile.yaml
+./checkpoints/mario_1_2_backward/runs/20260809_083533/game_profile.yaml
+./checkpoints/mario_1_2_backward/runs/20260809_222300/game_profile.yaml
+./checkpoints/mario_1_2_backward/runs/20260813_194846/game_profile.yaml
+./checkpoints/mario_1_2_backward/runs/20260813_235104/game_profile.yaml
+./checkpoints/mario_1_2_backward/runs/20260814_000142/game_profile.yaml
+./checkpoints/mario_1_2_backward/runs/20260814_001254/game_profile.yaml
+./checkpoints/mario_1_2_backward/runs/20260814_002419/game_profile.yaml
+./checkpoints/mario_1_2_cgsa_s2/runs/20260724_133127/game_profile.yaml
+./checkpoints/mario_1_2_cgsa_s2/runs/20260724_180050/game_profile.yaml
+./checkpoints/mario_1_2_cgsa.collision_partial/runs/20260723_170233/game_profile.yaml
+./checkpoints/mario_1_2_cgsa.collision_partial/runs/20260723_210549/game_profile.yaml
+./checkpoints/mario_1_2_javi_non_farmable_wavefront_margin_bound_greedy_restarts/runs/20260722_193710/game_profile.yaml
+./checkpoints/mario_1_2_javi_non_farmable_wavefront_margin_bound_greedy_restarts/runs/20260722_212252/game_profile.yaml
+./checkpoints/mario_1_2_javi_non_farmable_wavefront_margin_bound_greedy_restarts/runs/20260722_223407/game_profile.yaml
+./checkpoints/mario_1_2_javi_non_farmable_wavefront_margin_bound_greedy_restarts/runs/20260723_100008/game_profile.yaml
+./checkpoints/mario_1_2_javi_non_farmable_wavefront_margin_bound_greedy_restarts/runs/20260723_105912/game_profile.yaml
+./checkpoints/mario_1_2_online_v2_attempt2/runs/20260814_201409/game_profile.yaml
+./checkpoints/mario_1_2_online_v2_attempt3/runs/20260814_210916/game_profile.yaml
+./checkpoints/mario_1_2_online_v2/runs/20260814_215348/game_profile.yaml
+./checkpoints/mario_1_2_online_v2/runs/20260814_230509/game_profile.yaml
+./checkpoints/mario_1_2_online_v2/runs/20260814_233326/game_profile.yaml
+./checkpoints/mario_1_2_online_v2/runs/20260815_000655/game_profile.yaml
+./checkpoints/mario_1_2_online_v2/runs/20260815_031128/game_profile.yaml
+./checkpoints/mario_1_2_online_v2/runs/20260815_034026/game_profile.yaml
+./checkpoints/mario_1_2_online_v2/runs/20260815_044126/game_profile.yaml
+./checkpoints/mario_1_2_online_v2/runs/20260815_051014/game_profile.yaml
+./checkpoints/mario_1_2_online_v2/runs/20260815_064030/game_profile.yaml
+./checkpoints/mario_1_2_options_treatment/runs/20260822_211222/game_profile.yaml
+./checkpoints/mario_1_2_options_treatment/runs/20260822_231520/game_profile.yaml
+./checkpoints/mario_1_2_phase3_control/runs/20260822_231519/game_profile.yaml
+./checkpoints/mario_1_2_phase3_masked/runs/20260821_223535/game_profile.yaml
+./checkpoints/mario_1_2_phase3_masked/runs/20260822_114239/game_profile.yaml
+./checkpoints/mario_1_2_prmdp_seed0/runs/20260729_102011/game_profile.yaml
+./checkpoints/mario_1_2_prmdp_seed0/runs/20260729_134213/game_profile.yaml
+./checkpoints/mario_1_2_prmdp_seed0/runs/20260730_084518/game_profile.yaml
+./checkpoints/mario_1_2_shapo_seed0/runs/20260730_172925/game_profile.yaml
+./checkpoints/mario_1_2_shapo_seed0/runs/20260730_173623/game_profile.yaml
+./checkpoints/mario_1_2_shapo_seed0/runs/20260730_175623/game_profile.yaml
+./checkpoints/mario_1_3_online_v1/runs/20260816_204839/game_profile.yaml
+./checkpoints/mario_1_3_online_v1/runs/20260816_212117/game_profile.yaml
+./checkpoints/mario_1_3_online_v1/runs/20260816_221854/game_profile.yaml
+./checkpoints/mario_1_3_online_v1/runs/20260816_225313/game_profile.yaml
+./checkpoints/mario_1_3_online_v1/runs/20260817_004619/game_profile.yaml
+./checkpoints/mario_1_3_online_v1/runs/20260817_005236/game_profile.yaml
+./checkpoints/mario_1_3_online_v1/runs/20260817_014924/game_profile.yaml
+./checkpoints/mario_1_3_online_v1/runs/20260817_183105/game_profile.yaml
+./checkpoints/mario_1_3_online_v1/runs/20260817_220736/game_profile.yaml
+./checkpoints/mario_1_4_online_v1/runs/20260817_085037/game_profile.yaml
+./checkpoints/mario_1_4_online_v1/runs/20260817_095139/game_profile.yaml
+./checkpoints/mario_1_4_online_v1/runs/20260817_104842/game_profile.yaml
+./checkpoints/mario_1_4_online_v1/runs/20260817_163431/game_profile.yaml
+./checkpoints/mario_1_4_online_v1/runs/20260819_163438/game_profile.yaml
+./checkpoints/mario_2_1_online_v1_INVALID_1_3_rungs_20260818_0827/runs/20260817_230657/game_profile.yaml
+./checkpoints/mario_2_1_online_v1/runs/20260818_090001/game_profile.yaml
+./checkpoints/mario_2_1_online_v1/runs/20260818_093015/game_profile.yaml
+./checkpoints/mario_2_1_online_v1/runs/20260818_104222/game_profile.yaml
+./checkpoints/mario_2_1_online_v1/runs/20260818_113731/game_profile.yaml
+./checkpoints/mario_2_1_online_v1/runs/20260818_195028/game_profile.yaml
+./checkpoints/mario_2_1_online_v1/runs/20260819_131329/game_profile.yaml
+./checkpoints/mario_2_level_generalist_plr_tile/runs/20260721_160501/game_profile.yaml
+./checkpoints/mario_2_level_generalist_plr_tile/runs/20260721_172620/game_profile.yaml
+./checkpoints/mario_world_1_generalist_plr_tile/runs/20260721_132858/game_profile.yaml
+./checkpoints/mario_world_1_generalist_plr_tile/runs/20260721_133115/game_profile.yaml
+./checkpoints/mario_world_1_generalist_plr_tile/runs/20260721_144223/game_profile.yaml
+./configs/campaign_1_3_consol2.yaml
+./configs/campaign_1_3.yaml
+./configs/campaign_1_4.yaml
+./configs/campaign_2_1.yaml
+./configs/campaign_2_2.yaml
+./configs/campaign_2_3.yaml
+./configs/campaign_2_4.yaml
+./configs/campaign_3_1.yaml
+./configs/campaign_3_2.yaml
+./configs/campaign_3_3.yaml
+./configs/campaign_3_4.yaml
+./configs/campaign_4_1.yaml
+./configs/campaign_4_2.yaml
+./configs/campaign_4_3.yaml
+./configs/campaign_4_4.yaml
+./configs/mario_1_1_backward_consol.yaml
+./configs/mario_1_1_backward_gru.yaml
+./configs/mario_1_1_backward_thr45.yaml
+./configs/mario_1_1_backward_v4.yaml
+./configs/mario_1_1_backward_v6.yaml
+./configs/mario_1_1_backward.yaml
+./configs/mario_1_1_recovery_ppo.yaml
+./configs/mario_1_1_v27_seed0.yaml
+./configs/mario_1_1_v27_seed1.yaml
+./configs/mario_1_1_v27_seed2.yaml
+./configs/mario_1_1_v27_seed3.yaml
+./configs/mario_1_1_v28_seed0.yaml
+./configs/mario_1_1_v28_seed1.yaml
+./configs/mario_1_1_v28_seed2.yaml
+./configs/mario_1_1_v28_seed3.yaml
+./configs/mario_1_2_ar_bottleneck.yaml
+./configs/mario_1_2_ar_combo.yaml
+./configs/mario_1_2_ar_lowent.yaml
+./configs/mario_1_2_ar_seedvar.yaml
+./configs/mario_1_2_backward.yaml
+./configs/mario_1_2_cgsa_s1.yaml
+./configs/mario_1_2_cgsa_s2.yaml
+./configs/mario_1_2_cgsa.yaml
+./configs/mario_1_2_consol2.yaml
+./configs/mario_1_2_distill.yaml
+./configs/mario_1_2_javi_dr10.yaml
+./configs/mario_1_2_javi.yaml
+./configs/mario_1_2_online_v2.yaml
+./configs/mario_1_2_options.yaml
+./configs/mario_1_2_phase3_control.yaml
+./configs/mario_1_2_phase3_masked.yaml
+./configs/mario_1_2_prmdp.yaml
+./configs/mario_1_2_rl_from_distill.yaml
+./configs/mario_1_2_robust_recurrent.yaml
+./configs/mario_1_2_robustify.yaml
+./configs/mario_1_2_shapo.yaml
+./configs/mario_1_2_solo.yaml
+./configs/mario_1_2_sticky_noanchor.yaml
+./configs/mario_1_3_backward.yaml
+./configs/mario_1_3_online_v1.yaml
+./configs/mario_1_4_online_v1.yaml
+./configs/mario_2_1_online_v1.yaml
+./configs/mario_2_2_online_v1.yaml
+./configs/mario_2_3_online_v1.yaml
+./configs/mario_2_4_online_v1.yaml
+./configs/mario_3_1_online_v1.yaml
+./configs/mario_3_2_online_v1.yaml
+./configs/mario_3_3_online_v1.yaml
+./configs/mario_3_4_online_v1.yaml
+./configs/mario_4_1_online_v1.yaml
+./configs/mario_4_2_online_v1.yaml
+./configs/mario_4_3_online_v1.yaml
+./configs/mario_4_4_online_v1.yaml
+./configs/mario_generalist_2level.yaml
+./configs/mario_generalist_w1.yaml
+./configs/overrides/online_1_2_escalations.yaml
+./configs/overrides/online_1_2_hardening4b.yaml
+./configs/smb_4_4_micro.yaml
+./configs/smb_blank_slate.yaml
+./docs/proposals/RECOVERY_DISTILL_1_1_2026-08-24.md
+./docs/proposals/rust_actor_learner_design.md
+./docs/proposals/trainer_decomposition_plan.md
+./docs/proposals/V27_FRESH_RECOVERY_2026-08-24.md
+./docs/proposals/V27_SUCCESSOR_PASS_2026-08-25.md
+./docs/receipts/one_three_coordination_2026-08-16.md
+./docs/research/B5_PREREG_2026-08-08.md
+./docs/research/FULL_DOSSIER_2026-07-22.md
+./runs/consol2_1_3_round2/phase_configs/phase_5.yaml
+./runs/consol2_1_3/phase_configs/phase_5.yaml
+./runs/online_1_2_attempt_ledger.md
+./runs/online_1_2_attempt1/phase_configs/phase_0.yaml
+./runs/online_1_2_attempt2/phase_configs/phase_0.yaml
+./runs/online_1_2_attempt2/phase_configs/phase_1.yaml
+./runs/online_1_2_attempt3/phase_configs/phase_0.yaml
+./runs/online_1_2_attempt3/phase_configs/phase_1.yaml
+./runs/online_1_2_attempt4/phase_configs/phase_0.yaml
+./runs/online_1_2_attempt4/phase_configs/phase_1.yaml
+./runs/online_1_2_attempt5/phase_configs/phase_0.yaml
+./runs/online_1_2_attempt5/phase_configs/phase_1.yaml
+./runs/online_1_2_attempt5/phase_configs/phase_2.yaml
+./runs/online_1_2_attempt6/phase_configs/phase_0.yaml
+./runs/online_1_2_attempt6/phase_configs/phase_1.yaml
+./runs/online_1_2_attempt7/phase_configs/phase_3.yaml
+./runs/online_1_2_attempt7/phase_configs/phase_4.yaml
+./runs/online_1_2/phase_configs/phase_5.yaml
+./runs/online_1_3_attempt1/phase_configs/phase_0.yaml
+./runs/online_1_3_attempt1/phase_configs/phase_1.yaml
+./runs/online_1_3_attempt1/phase_configs/phase_2.yaml
+./runs/online_1_3_attempt1/phase_configs/phase_3.yaml
+./runs/online_1_3_attempt1/phase_configs/phase_4.yaml
+./runs/online_1_3_attempt1/phase_configs/phase_5.yaml
+./runs/online_1_3/phase_configs/phase_5.yaml
+./runs/online_1_4_attempt1/phase_configs/phase_0.yaml
+./runs/online_1_4_attempt1/phase_configs/phase_1.yaml
+./runs/online_1_4_attempt1/phase_configs/phase_2.yaml
+./runs/online_1_4_attempt1/phase_configs/phase_3.yaml
+./runs/online_1_4/phase_configs/phase_5.yaml
+./runs/online_2_1_INVALID_1_3_rungs_20260818_0827/phase_configs/phase_0.yaml
+./runs/online_2_1_INVALID_1_3_rungs_20260818_0827/phase_configs/phase_1.yaml
+./runs/online_2_1/phase_configs/phase_0.yaml
+./runs/online_2_1/phase_configs/phase_1.yaml
+./runs/online_2_1/phase_configs/phase_2.yaml
+./runs/online_2_1/phase_configs/phase_3.yaml
+./runs/online_2_1/phase_configs/phase_5.yaml
+./runs/v27_fresh_recovery/preflight/ckpts_pilot_seed0/runs/20260824_222530/game_profile.yaml
+./runs/v27_fresh_recovery/preflight/redo_forced/throwaway_redo_forced_profile.yaml
+./runs/v27_fresh_recovery/preflight/redo/offarm_profile.yaml
+./runs/v27_fresh_recovery/preflight/throwaway_taupin_profile.yaml
+./scripts/campaign_report.py
+./scripts/hardening4b_ramp.py
+./scripts/make_campaign_config.py
+./scripts/run_consol2.py
+./scripts/run_online_campaign.py
+./src/training/config_schema.py
+./src/training/entropy_config.py
+./src/training/kl_anchor.py
+./src/training/ppo_updater.py
+./src/training/ppo.py
+./src/training/trainer.py
+./tests/test_actor_learner_parity.py
+./tests/test_campaign_1_3_package.py
+./tests/test_campaign_report.py
+./tests/test_config_schema.py
+./tests/test_consol2.py
+./tests/test_entropy_config.py
+./tests/test_hardening4b_catalog.py
+./tests/test_kl_anchor.py
+./tests/test_online_campaign.py
+./tests/test_ppo.py
+./tests/test_vanilla_ppo_backward_guard_smoke.py
+
+===== 4. Was entropy_floor / entropy_guard / kl_anchor_checkpoint enabled in the v27/v28 configs? =====
+configs/mario_1_1_v27_seed0.yaml:29:# kl_anchor_checkpoint:
+configs/mario_1_1_v27_seed0.yaml:133:  entropy_coef: 0.005        # the consolidation fix: floor OFF, coef 0.005
+configs/mario_1_1_v27_seed0.yaml:134:  entropy_floor: 0.0
+configs/mario_1_1_v27_seed0.yaml:135:  entropy_coef_max: 0.05
+configs/mario_1_1_v28_seed0.yaml:29:# kl_anchor_checkpoint:
+configs/mario_1_1_v28_seed0.yaml:133:  entropy_coef: 0.005        # the consolidation fix: floor OFF, coef 0.005
+configs/mario_1_1_v28_seed0.yaml:134:  entropy_floor: 0.0
+configs/mario_1_1_v28_seed0.yaml:135:  entropy_coef_max: 0.05
+
+===== 5. Same knobs in the banked 1-1 control this was copied 'verbatim' from =====
+configs/mario_1_1_backward.yaml:148:  entropy_coef: 0.005        # the consolidation fix: floor OFF, coef 0.005
+configs/mario_1_1_backward.yaml:149:  entropy_floor: 0.0
+configs/mario_1_1_backward.yaml:150:  entropy_coef_max: 0.05
+configs/mario_1_1_backward_v4.yaml:36:#   entropy_coef: 0.002        # a HARD FLOOR from iter 0, no decay
+configs/mario_1_1_backward_v4.yaml:274:  # Initial value only — `consolidate_level.schedule` ASSIGNS entropy_coef
+configs/mario_1_1_backward_v4.yaml:278:  entropy_coef: 0.005
+configs/mario_1_1_backward_v4.yaml:279:  # MUST stay 0.0. A non-zero entropy_floor arms the adaptive floor
+configs/mario_1_1_backward_v4.yaml:283:  entropy_floor: 0.0
+configs/mario_1_1_backward_v4.yaml:284:  entropy_coef_max: 0.05     # inert while entropy_floor is 0.0
+configs/mario_1_1_backward_v6.yaml:235:  # Initial value only — `consolidate_level.schedule` ASSIGNS entropy_coef and
+configs/mario_1_1_backward_v6.yaml:239:  entropy_coef: 0.005
+configs/mario_1_1_backward_v6.yaml:240:  # MUST stay 0.0. A non-zero entropy_floor arms the adaptive floor
+configs/mario_1_1_backward_v6.yaml:244:  entropy_floor: 0.0
+configs/mario_1_1_backward_v6.yaml:245:  entropy_coef_max: 0.05     # inert while entropy_floor is 0.0
+configs/mario_1_1_backward_consol.yaml:148:  entropy_coef: 0.002      # consolidation leg: June recipe (0.01->0.002) — convert sampled clears into greedy clears
+configs/mario_1_1_backward_consol.yaml:149:  entropy_floor: 0.0
+configs/mario_1_1_backward_consol.yaml:150:  entropy_coef_max: 0.05
+
+===== 6. Which configs DO ship entropy_guard =====
+configs/mario_1_3_backward.yaml
+configs/mario_1_2_backward.yaml
+--- introducing commit ---
+a02971e feat(backward): entropy guard + B5 pre-registration + consolidation config
+
+===== 7. trainer.py: the three distinct anti-collapse mechanisms and their scoping comments =====
+
+
+class BackwardEntropyGuard:
+    """Trailing-entropy floor scoped to the backward start-state curriculum.
+
+    THE RECEIPT (B4 v1, 2026-08-08). On the 1-1 reverse curriculum the
+    policy entropy fell 0.19 -> 0.04 after ~iter 130, and the collapsed
+    argmax then refused the final flag jump the sampled policy still
+    took: cold-entrance greedy 0.02 against sampled 0.50/0.63, with the
+    greedy episodes stalling at gx 3154-3157 — ten pixels short of the
+    pole. A reverse curriculum manufactures exactly that. The deep rungs
+    it starts on are nearly solved, so their advantage signal is small
+    and sharply peaked and the policy sharpens there, long before tau
+    reaches the entrance where the same policy still needs to explore.
+
+    Neither existing mechanism covers it. The anti-collapse rollback
+    (`SMB_ENTROPY_COLLAPSE_FRAC`) fires on entropy near ln(A) — a
+    MELTING policy, the opposite failure. The adaptive `entropy_floor`
+    controller does chase a low floor, but it is a whole-run knob: set
+    high enough to stop the entrance-era collapse it also fights the
+    early near-flag rungs, where sharpening is what the curriculum
+    wants. This guard is scoped to backward mode, keyed on a TRAILING
+    mean (one noisy minibatch entropy must never arm it), and hysteretic
+    (it disarms on a real recovery above `floor * recover_mult`, not on
+    the first iter that poked back over the line).
+
+    Pure and side-effect free: it decides, the caller applies the
+    multiplier to `entropy_coef` and writes the log line. Opt-in via
+    ``reinforce.backward_curriculum.entropy_guard: {floor, boost}``; with
+    the key absent no instance is built and the loop is byte-identical
+---
+            # below, silently drop the record, and leave the boost
+            # multiplying an already-boosted coefficient every iter,
+            # without bound. Enforced by
+            # tests/test_vanilla_ppo_backward_guard_smoke.py::
+            # test_guard_survives_an_active_entropy_floor_controller
+            # (the profile that ships the guard runs the controller at
+            # entropy_floor 0.02; the 1-1 profile has it off, so the
+            # other smokes in that file cannot see this).
+            if bwd_guard is not None and _bwd_guard_applied is not None:
+                if self.entropy_coef == _bwd_guard_applied:
+                    self.entropy_coef = _bwd_guard_base
+                _bwd_guard_base = _bwd_guard_applied = None
+
+            # Adaptive entropy-floor controller (opt-in via entropy_floor).
+            # Keeps the policy from collapsing to a brittle deterministic
+            # trajectory under sticky/jitter training — the mechanism that
+            # makes a policy actually survive the honest sticky eval rather
+            # than memorizing one start-locked path.
+            if self.entropy_floor > 0.0:
+                if last_entropy < self.entropy_floor:
+                    self.entropy_coef = min(
+                        self.entropy_coef * 1.5 + 1e-4, self.entropy_coef_max
+                    )
+                elif last_entropy > 1.5 * self.entropy_floor:
+                    self.entropy_coef = max(
+                        self.entropy_coef * 0.9, self._entropy_coef_base
+                    )
+
+            # Backward entropy guard, half 2 of 2: OBSERVE this iter's
+            # entropy and re-apply the multiplier on top of whatever the
+            # controllers above just decided. Runs last so the boost is
+            # the outermost factor; note the effective ceiling while
+            # armed is therefore entropy_coef_max * boost, by design —
+            # the floor controller's clamp bounds the base, not the
+            # emergency response to a collapse.
+            if bwd_guard is not None:
+                _bg_event = bwd_guard.observe(last_entropy)
+                if _bg_event == GUARD_ARM:
+                    log.warning(
+                        "[backward-guard] ARMED at iter %d: trailing "
+                        "entropy %.4f over %d iters < floor %.3f "
+                        "(B4 v1 collapsed 0.19 -> 0.04 here). "
+                        "entropy_coef %.5f -> %.5f (x%.2f) until the "
+                        "trailing mean recovers above %.3f.",
+                        global_it, bwd_guard.trailing_mean,
+                        bwd_guard.samples, bwd_guard.floor,
+
+===== 8. The 2026-07-20 entropy-floor-tried-and-degraded episode =====
+746ba14 docs(readme): "Where it stands today" — embed the World-1 playthrough + the honest gap
+646ac0f feat(demo): record a learned-policy playthrough to video/GIF
+8555536 test+docs: decomposition characterization tests + actor/learner spec & parity gate
+47f6031 docs: authoritative honest project status snapshot (scorecard, ledgers, roadmap)
+7560a40 docs+bench: measure the unmeasured claims; reconcile README to reality
+14b5739 feat(training): adaptive entropy floor + profile schema validation
+fb525c6 fix(provenance): close three allowlist-gate bypasses (audit P0)
+a33c663 fix: emulator use-after-free + systemic NaN backstop (full audit P0)
+f8130db docs(audit): bank stability audit synthesis + run-1 findings
+7b5fcee fix(training): fresh-start fence, run-lock, audit regression tests
+42dbaaa fix(eval): three integrity defects in published-number paths (audit P1)
+0b2a1dd fix(nes_core): close the FFI panic boundary (audit P0)
+a161d04 fix(training): close three silent crash/corruption paths (audit P0)
+--- memory receipt (point-in-time, verify against code) ---
+---
+name: project-capability-attempt1-failed-2026-07-20
+description: Sticky-from-cold + entropy-floor DEGRADED 1-1 (1.0 det -> 0/20 det). Entropy floor works as a mechanism; the APPROACH is wrong. Real fix = backward-algorithm robustification.
+metadata: 
+  node_type: memory
+  type: project
+  originSessionId: 41fc92fe-e029-4f13-b4af-7eba13dfaa59
+---
+
+**HONEST NEGATIVE RESULT (2026-07-20).** First attempt to make 1-1 survive
+the honest sticky eval FAILED. Do not repeat this approach.
+
+**What was tried:** warm-start the iter-1580 1-1 specialist (clears 1.0
+deterministic), train the WHOLE level from cold under sticky_action_prob
+0.25 + the new adaptive entropy floor (entropy_floor 0.5, coef_max 0.05).
+checkpoints/mario_1_1_sticky_robust_v2/.
+
+**Result:** the entropy floor DID its job mechanically — entropy held
+0.21-0.44, no catastrophic crash to 0.05 like the earlier calibration.
+But the policy DEGRADED: after ~490 iters the winner (training clear_rate
+0.09) clears **0/20 even DETERMINISTICALLY** (eval_composite, sticky 0),
+vs the original net's 10/10. Harness verified correct (original net =
+10/10 through the same harness). So sticky-from-cold + forced-high
+entropy pushed the policy OFF its learned solution and it never
+reconsolidated under the harder dynamics.
+
+**Diagnosis:** "train the whole level from cold under sticky" is the
+WRONG shape. The review's actual prescription was the BACKWARD ALGORITHM
+(Go-Explore phase 2, Salimans & Chen 2018 / Nature 2021): start episodes
+NEAR THE FLAG and recede the start backward as success holds, WITH sticky
+on — a curriculum that keeps the policy anchored to a working solution
+while hardening it against perturbation. I built the naive version, not
+the backward-schedule version. The backward scheduler (mint per-frame
+rung states from a clear trajectory, trailing-window start sampling, tau
+recedes on success) is specced in [[project-resume-2026-07-20]] Day-2 and
+is the real capability build — dedicated, not a knob flip.
+
+**What IS keepable:** the adaptive entropy floor (entropy_floor knob) is
+a sound mechanism and stays — it just isn't sufficient alone. The config
+schema, emulator benchmarks, README honesty, decomposition plan, and all
+the stability-audit fixes this session are real and committed
+(..7560a40).
+
+**Capability grade did NOT move.** Honest state: 1-1 still 0/50 under
+sticky; the fix is the backward-algorithm build, uncertain and multi-day.
+Report this straight — do not dress it up.
+
+**ATTEMPT #2 IN PROGRESS (correct approach): backward-ladder self-
+imitation under sticky via scripts/robustify_level.py --ladder
+--sticky-prob 0.25.** Confirmed prerequisite: original 1-1 net = 10/10
+deterministic but **0/30 under sticky-0.25** (textbook start-lock).
+Setup: 6 rung states along the net's own clean clear (deepest gx3266 at
+flag → gx2069), captured to checkpoints/mario_1_1_ladder/. robustify
+welds each rung's sticky-surviving clears (self-imitation BC, stays
+anchored — unlike the failed plain-PPO attempt) and recedes. Progress:
+rungs 0-4 (flag→gx2319) welded greedy 1.0; rung 5 (gx2069) hard
+(greedy 0.0 so far — longer suffix under sticky). Output
+checkpoints/mario_1_1_ladder/robust_1_1_sticky.pt (in-progress best).
+**Not done, success uncertain:** the ladder must still bridge gx2069 →
+level start (gx~40) via auto-harvested intermediates, and the EARLY
+level under sticky is the genuine hard part. THE honest number is the
+cold-start sticky eval from power-on (eval_composite --sticky-prob 0.25
+--start-jitter 16), which will only be meaningful once the ladder
+reaches the start. If it stalls mid-ladder, report that straight — a
+partial ladder that clears from gx1000 but not from cold is NOT a pass.
+
+**ATTEMPT #2 RESULT (full ladder, 15 rungs gx3266→gx219): STALLED at the
+predicted wall. Honest partial, NOT a pass.** Rungs 0-6 (flag → gx1979)
+welded to greedy 1.0 under sticky collection — the backward-ladder
+self-imitation MECHANISM genuinely produces sticky-robust suffix
+behavior. But rung_07 (gx1759) will NOT weld: 300+ epochs of full-rung
+BC + intermediate "solo" harvest collected only 1 sticky-surviving clear,
+greedy stuck at 0.0. The mid-level 1-1 section under sticky-0.25 is the
+bottleneck — exactly the review's "early x700→x1000 platform-hop is the
+true bottleneck" prediction. Cold-start sticky remains ~0/50. The
+approach welds the back ~55% but cannot bridge the mid/early level under
+sticky via BC-from-1-clear.
+
+**Honest capability verdict as of 2026-07-20:** 1-1 under the honest
+sticky protocol is still 0. Two serious attempts (plain-PPO+entropy-floor
+= degraded; backward-ladder self-imitation = welds back half, stalls
+mid-level). What this rules IN for next time: the wall is the mid-level
+under sticky, and BC-from-few-clears can't cross it. What might: (a)
+denser rungs + more collection budget through gx1500-1900 specifically;
+(b) PPO-on-reward (not BC) from the welded gx1979 basin receding, so the
+policy can IMPROVE beyond the 1 demo rather than clone it; (c) accept
+that a laptop-scale sticky-robust full 1-1 may need materially more
+compute than one afternoon. Report all of this straight — capability
+grade did NOT move; it is still C- / 0-demonstrated under honest eval.
+
+===== 9. B4/B5/B6: the prior 1-1-backward-curriculum entropy-collapse campaign (2026-08-08..11) =====
+# B5 Pre-Registration — Reverse Curriculum on SMB World 1-2
+
+**Date:** 2026-08-08. **Status:** registered BEFORE the first B5 episode was
+run. No 1-2 backward-curriculum number of any kind existed when this file
+was written; nothing below was chosen after seeing data.
+**Config:** `configs/mario_1_2_backward.yaml` (that file's `GATE B5` header
+is unchanged and remains the "solved" bar; this document is the operative
+pre-registration for the attempt).
+**Companions:** `DOSSIER_V3_2026-07-23.md` (the elimination record),
+`RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md` (the published 0/30 negative
+this attempt is measured against), `configs/mario_1_1_backward.yaml`
+(B4, the control).
+
+**Résumé (2026-08-11, read this first — full addenda chain below is
+intact, this only points at the endpoints):** B5 (this file, 1-2) ran to
+ground as MECHANISM-INCOMPLETE on run 2, then CLOSED on run 3 as a real
+capability wall at gx ~2674-2872 — see "RUN 3 FINAL VERDICT" below. B6
+(the follow-on 1-1 control, `mario_1_1_backward_v6`) then ran the
+honest-metric gate and FALSIFIED "the greedy gap is a selection
+problem" — see "B6 FINAL VERDICT" below. Both verdicts converge on one
+mechanism, named precisely in B6's instrument reading: CONFIDENT-WRONG
+NOOP SHARPENING, not the "argmax tie" language Addendum 1 uses further
+down — see the terminology addendum after Addendum 1.
+
+---
+
+## 1. Where the campaign stands (the receipts B5 inherits)
+
+| Run | What it measures | Result |
+| --- | --- | --- |
+| B1 | flagship pooled baseline | 0.65 pooled |
+| B2 | sampled eval of the same | 0.667 |
+| B3 | probe control, published negative | 0/30 (reproduced) |
+| B4 v1 | 1-1 reverse curriculum, first attempt | **FAILED cold gate: 0.02 greedy** |
+| B4 v2 | 1-1 reverse curriculum, re-keyed winner, 170 iters | running at time of writing |
+
+B5 is **gated on B4 v2 passing >= 0.63 pooled greedy cold**. A B5 number
+produced by machinery that cannot reproduce 1-1 is noise, and that is the
+whole reason B4 exists.
+
+### What B4 v1 taught, and what changed because of it
+
+1. **The winner snapshot was keyed on the wrong metric.** `best.pt` was
+   selected on the raw in-training `clear_rate`, which near-flag rung
+   restarts inflate, so it landed at **iter 80 — mid-ladder, before the
+   cursor ever reached the entrance** — and cold-scored 0.02 greedy.
+   *Fixed code-side (a580f99):* in backward mode the winner is keyed on the
+   `TauScheduler` trailing success window and only once the cursor is
+   at-entrance (at tau 0 the trailing window **is** entrance performance).
+   Pre-entrance nets are never retained as the deliverable. No config key —
+   unconditional for backward runs.
+2. **Entropy collapsed 0.19 -> 0.04 after ~iter 130.** The mid-ladder
+   policy actually travels 1-1 better than the baseline under sticky
+   (greedy episodes reach gx 3154-3157), but the collapsed **argmax refuses
+   the final flag jump the sampled policy still takes**: greedy 0.02 vs
+   sampled 0.50 / 0.63. Ten pixels short of the pole is not an exploration
+   failure, it is a sharpening failure.
+   *Fixed config-side (this attempt):*
+   `backward_curriculum.entropy_guard: {floor: 0.08, boost: 3.0}` — opt-in,
+   see §6.
+3. **The tau ladder walks faster than the run needs.** Measured on B4 v2:
+   19.3 s/iter at 60 envs (3.2-3.5k env-steps/s), full 757-rung ladder in
+   ~115 iters. That is the number §3 budgets against. *(Observed live
+   while this file was being written: B4 v2's log reads `tau=0/757 ...
+   advances=19  AT-ENTRANCE` at **iter 87** — 4.6 iters/advance, and
+   19.27 s/iter. Every budget below uses the slower 6.05 figure and is
+   therefore conservative.)*
+
+---
+
+...
+resolved caps: rung 1093 -> 602, rung 893 -> 1002, uncapped below tape
+step ~626 — the gauntlet and entrance run exactly as before).
+Statistical bars unchanged. The run-2 stall signature (trailing 0/0
+with rising truncations) is now structurally impossible; a genuinely
+unlearnable rung reads trailing 0/30.
+
+## RUN 3 FINAL VERDICT (2026-08-10, registered criterion, published)
+
+Stopped per the 150-iter stall criterion (fired ~iter 152; stopped at
+251). With BOTH repairs live and working — 29,944 SCORED attempts,
+budget 1002 steps — tau advanced 1093 -> 893 within the first 2 iters
+(the flag zone clears at >=20% trailing) and then held at rung 893
+(gx 2674, area 2) for 249 iters: trailing 0/30, entrance 0/717, zero
+successes ever recorded at the rung. The mechanism is no longer the
+story: THIS IS A REAL CAPABILITY WALL at gx ~2674-2872 (bank probes:
+rung 1000/gx 2872 clears naive in 83 steps; rung 900/gx 2674 does not
+clear naive in 300). The wall bites EARLIER on the backward ladder
+than the historical gauntlet (1600-2200) predicted. Tier-2 headline
+not attempted (tau never reached the entrance); per-cell table
+trivially all-zero at the stall rung. Seed 1 NOT run (stall verdict is
+seed-robust at 30k attempts). B5 CLOSES under the once-rule; the
+capability question moves to consultation (D1) with these receipts.
+
+## B6 FINAL VERDICT (2026-08-11, pre-registered gate, published)
+
+B6 (mario_1_1_backward_v6: v4 with ONE variable — the gate measures
+the honest metric; 30-ep sticky-0.25+jitter-16 probes, Wilson-LB
+accept vs incumbent point, ratchet broken, selection seed 7 walled
+from reporting seeds) ran 180+ iters, 3 honest accepts, snapshot
+banked. COLD GATE (fresh seeds 0/1): greedy 36/100 (0.30/0.42) —
+IDENTICAL to v4's blind-selected pick, z=0.00 vs the banked 36/100;
+sampled 34/60 PASS; warp 0. CONJUNCTIVE KILL FIRES: "the greedy gap
+is a selection problem" is FALSIFIED — no iterate in the arc has
+honest greedy competence above ~0.36. consolidate_level CLOSES for
+backward policies per the prereg. Mechanism (instrument receipts,
+/tmp/b6_instruments_*): the pathology is CONFIDENT-WRONG NOOP
+SHARPENING (margins rise 14x across the entropy collapse; late v4
+argmaxes noop at p~1.0 on half the pole rungs; dormancy 0.000
+everywhere — plasticity clean, ReDo not indicated; the greedy/sampled
+gap is trajectory-level, not per-state). The lane returns to bounded
+bets; the named externally-sourced candidates for any future bet:
+success-filtered self-imitation (Oh et al. 2018) and the
+rung-relative wavefront charge — both from the D1 triage, neither
+scheduled.
+
+===== 10. Was B4/B5/B6 (entropy_guard, CONFIDENT-WRONG NOOP SHARPENING) referenced when v27/v28 were registered? =====
+(no hits in either registration doc)
+
+===== 11. The KL-anchor collapse receipt (1-2, options experiment) and whether entropy_guard rode along =====
+4:**Result: control 8/100, treatment 0/100, relative -1.0. FAIL.** Both
+35:The CONTROL fell from the seed's 31/100 to **8/100** after 200
+44:38/100 (preserved checkpoint, untouched).
+--- did the options control's backward_curriculum block carry entropy_guard? ---
+  num_envs: 60
+  ppo_minibatch_size: 256
+  entropy_coef: 0.01
+  entropy_floor: 0.0
+  entropy_coef_max: 0.05
+  rnd_intrinsic_coef: 0.0
+  rnd_loss_coef: 0.0
+  sticky_action_prob: 0.0
+  sticky_episode_boundary_reset: true
+  wavefront_reward:
+    enabled: true
+    dmap: checkpoints/wavefront/mario_1_2_dmap.pkl
+    phi_target: 100.0
+    gamma: 0.99
+  wave_terminal_rule: monotone
+  kl_anchor_checkpoint: checkpoints/smodice_1_2/abl_A7/vanilla_ppo_iter_00000.pt
+  kl_beta_start: 0.5
+  kl_beta_end: 0.01
+  kl_beta_decay_steps: 50000000
+  actor_freeze_steps: 0
+  sil:
+    enabled: true
+    buffer_size: 64
+    bc_coef: 0.5
+  adversary:
+    budget_penalty: 0.1
+    entropy_coef: 0.01
+    epochs: 10
+    clip: 0.1
+    lr: 0.00025
+  backward_curriculum:
+    states_dir: checkpoints/online_1_2/restart_states
+    tau_init: -1
+    advance_actions: 1
+    advance_threshold: 0.3
+    min_attempts: 30
+    window_frames: 0
+    entrance_weight: 0.25
+    count_truncations: true
+    rung_step_budget:
+      base: 300
+      per_entry: 350
+
+===== 12. CLAIMS.md ledger entries carrying the -74% figure =====
+224:certification) and `074f888` (rendered-cut scene detection, v4
+237:gate JSONs are committed in `c3d7405`, and three deep-run log tails —
+645:x≈2674 barrier, flag height reached on both seeds. Prior state of the
+759:31/100 → 8/100 in 200 iters (−74% relative, KL anchor active) — all
+813:reads **MLP 0.76 vs GRU 0.74** —
+939:class (2026-08-25, same receipts as above) — peak instability
+945:post-hoc training (−74% over 200 iters, OPTIONS MECHANISM entry
+952:the strength the data supports: peak instability looks like a property
+1062:class (2026-08-25, same receipts as above) — peak instability
+1068:degradation. Prior reproductions: post-hoc continued PPO (−74% over 200
+
+===== 13. nes_core/KNOWN_ISSUES.md + CHANGELOG.md — direct hits =====
+CHANGELOG.md:156:  observable work collapse to a counter increment. ~5% single-env.
+CHANGELOG.md:408:  telemetry (loss/policy/value/entropy), depth + curriculum success
+CHANGELOG.md:442:  overwrite that historically collapsed the elite pool to a single
+CHANGELOG.md:521:  `ppo_value_loss`, `ppo_entropy`, optional `rnd_loss` /
+CHANGELOG.md:591:value_coef=0.5, entropy_coef=0.01) pinned via tests so they
+CHANGELOG.md:616:  cross-entropy on contradictory labels splits the difference into
+
+===== 14. analyze.py — what kind of tool it is (for the 'is the tool adequate' question) =====
+"""BubbleUp-lite: a generic cohort differ over metrics.jsonl.
+
+WHY THIS EXISTS. scoreboard.py, campaign_report.py and engine_status.py
+each join run_manifest.json + metrics.jsonl + eval.jsonl and compute one
+pre-decided thing. None of them let you ask a NEW question without
+writing new Python, and none of them answer "what's different about the
+generations where clear_rate dropped vs the ones where it didn't" across
+every field a trainer happens to emit -- a human has to think of the
+dimension (entropy? samples_per_sec? reward_time_penalty?) before they
+can even check it.
+
+This tool inverts that: give it a cohort split (any `field OP value`
+predicate over the rows) and it computes, for EVERY numeric field it can
+find across BOTH cohorts, how different that field's distribution looks
+between them -- then prints the fields ranked by how divergent they are.
+The field nobody thought to ask about is the one that surfaces at the
+top.
+
+Divergence metric: an effect size in the spirit of Cohen's d --
+`(mean_A - mean_B) / pooled_std` -- rather than a raw mean delta, because

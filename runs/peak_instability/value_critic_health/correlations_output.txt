@@ -1,0 +1,17 @@
+runs (n=8): ['v27_seed0', 'v27_seed1', 'v27_seed2', 'v27_seed3', 'v28_seed0', 'v28_seed1', 'v28_seed2', 'v28_seed3']
+honest_peak: [0.04, 0.29, 0.53, 0.17, 0.45, 0.23, 0.37, 0.67]
+
+vloss_at_peak_mean     (value loss at the honest-peak checkpoint)
+    pearson r = -0.478   spearman r = -0.405
+vloss_global_min       (lowest value loss anywhere in the run)
+    pearson r = -0.735   spearman r = -0.595
+vloss_first10_mean     (value loss during the shared early cold-start window)
+    pearson r = -0.476   spearman r = -0.381
+ent_at_peak_mean       (entropy at the honest-peak checkpoint (cross-check only, not this dimension's axis))
+    pearson r = -0.446   spearman r = -0.357
+
+N=8 -- report as a lead, not a finding. Direction of causation is not
+established: a lower value-loss floor could reflect a healthier critic
+enabling better policy learning, OR simply reflect that a policy that
+(for other reasons) finds a more consistent/higher-reward behavior
+produces lower-variance return targets that are trivially easier to fit.

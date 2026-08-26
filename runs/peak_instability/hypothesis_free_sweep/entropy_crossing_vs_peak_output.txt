@@ -1,0 +1,36 @@
+
+=== entropy crosses 0.50 ===
+run                              peak_iter  cross_iter    offset
+mario_1_1_v27_recovery_seed0            60        66.3       6.3
+mario_1_1_v27_recovery_seed1            50        86.8      36.8
+mario_1_1_v27_recovery_seed2            90        91.0       1.0
+mario_1_1_v27_recovery_seed3            60        80.7      20.7
+mario_1_1_v28_capacity_seed0            70        88.7      18.7
+mario_1_1_v28_capacity_seed1            60        76.7      16.7
+mario_1_1_v28_capacity_seed2           120        77.6     -42.4
+mario_1_1_v28_capacity_seed3            90        81.8      -8.2
+n=8/8 crossed; before-peak=2/8; median offset=+11.5; range -42.4 to +36.8
+
+=== entropy crosses 0.40 ===
+run                              peak_iter  cross_iter    offset
+mario_1_1_v27_recovery_seed0            60        87.0      27.0
+mario_1_1_v27_recovery_seed1            50        94.6      44.6
+mario_1_1_v27_recovery_seed2            90        97.6       7.6
+mario_1_1_v27_recovery_seed3            60        91.8      31.8
+mario_1_1_v28_capacity_seed0            70       100.9      30.9
+mario_1_1_v28_capacity_seed1            60        85.5      25.5
+mario_1_1_v28_capacity_seed2           120        95.6     -24.4
+mario_1_1_v28_capacity_seed3            90        94.0       4.0
+n=8/8 crossed; before-peak=1/8; median offset=+26.3; range -24.4 to +44.6
+
+=== entropy crosses 0.30 ===
+run                              peak_iter  cross_iter    offset
+mario_1_1_v27_recovery_seed0            60       100.9      40.9
+mario_1_1_v27_recovery_seed1            50       110.7      60.7
+mario_1_1_v27_recovery_seed2            90       116.9      26.9
+mario_1_1_v27_recovery_seed3            60       101.7      41.7
+mario_1_1_v28_capacity_seed0            70       113.7      43.7
+mario_1_1_v28_capacity_seed1            60       102.2      42.2
+mario_1_1_v28_capacity_seed2           120       107.6     -12.4
+mario_1_1_v28_capacity_seed3            90       115.5      25.5
+n=8/8 crossed; before-peak=1/8; median offset=+41.3; range -12.4 to +60.7

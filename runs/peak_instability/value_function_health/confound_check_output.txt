@@ -1,0 +1,9 @@
+run         honest  vrise_onset  entropy@vrise  entropy_at_peak entropy_at_decline
+v27_seed0    0.040           84         0.4115           0.6243
+v27_seed1    0.290          102         0.3717           0.9321
+v27_seed2    0.530          162         0.2737           0.5027
+v27_seed3    0.170           93         0.3984           0.7033
+v28_seed0    0.450          119         0.2991           0.7223
+v28_seed1    0.230          110         0.3046           0.7169
+v28_seed2    0.370          119         0.3078           0.3200
+v28_seed3    0.670          123         0.2882           0.4543

@@ -1,0 +1,13 @@
+param            v27_seed0   v27_seed2   v28_seed2   v28_seed3 
+fc1.weight       argmax= 30 d= -30  argmax= 50 d= -40  argmax= 30 d= -90  argmax= 60 d= -30
+fc1.bias         argmax= 20 d= -40  argmax=130 d= +40  argmax= 30 d= -90  argmax=180 d= +90
+norm1.weight     argmax= 20 d= -40  argmax= 20 d= -70  argmax= 20 d=-100  argmax= 20 d= -70
+norm1.bias       argmax= 20 d= -40  argmax= 20 d= -70  argmax= 30 d= -90  argmax= 20 d= -70
+fc2.weight       argmax= 20 d= -40  argmax= 20 d= -70  argmax= 40 d= -80  argmax= 30 d= -60
+fc2.bias         argmax= 20 d= -40  argmax= 20 d= -70  argmax= 20 d=-100  argmax= 20 d= -70
+norm2.weight     argmax= 30 d= -30  argmax= 30 d= -60  argmax= 20 d=-100  argmax= 20 d= -70
+norm2.bias       argmax= 20 d= -40  argmax= 20 d= -70  argmax= 20 d=-100  argmax= 20 d= -70
+actor.weight     argmax= 60 d=  +0  argmax= 20 d= -70  argmax=120 d=  +0  argmax= 40 d= -50
+actor.bias       argmax=110 d= +50  argmax=130 d= +40  argmax=230 d=+110  argmax=170 d= +80
+critic.weight    argmax= 20 d= -40  argmax= 20 d= -70  argmax= 20 d=-100  argmax= 20 d= -70
+critic.bias      argmax= 90 d= +30  argmax= 30 d= -60  argmax=140 d= +20  argmax= 30 d= -60

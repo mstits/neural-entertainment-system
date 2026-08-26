@@ -1,0 +1,43 @@
+=== Range check on candidate predictor: frac_iters_at_entrance ===
+  min=0.8840 max=0.9120 range=0.0280 (out of [0,1])
+  -> ESSENTIALLY CONSTANT across all 8 runs -- cannot explain the honest_peak spread (0.04-0.67)
+
+=== Correlations (N=8, exploratory -- report as leads not findings) ===
+  frac_iters_at_entrance vs honest_peak:        r=+0.388
+  frac_iters_at_entrance vs honest_final:       r=+0.291
+  frac_iters_at_entrance vs collapse(peak-final):r=+0.345
+  lag(peak - ladder-finish) vs honest_peak:     r=+0.619
+  lag(peak - ladder-finish) vs collapse:        r=+0.636
+
+=== Per-run: ladder-finish iter, peak iter, lag, % of run spent frozen at tau=0 ===
+  v27_seed0   AT-ENTRANCE@ 29  peak@ 60  lag= 31  frac_frozen=88.4%  honest_peak=0.040  honest_final=0.020
+  v27_seed1   AT-ENTRANCE@ 25  peak@ 50  lag= 25  frac_frozen=90.0%  honest_peak=0.290  honest_final=0.020
+  v27_seed2   AT-ENTRANCE@ 24  peak@ 90  lag= 66  frac_frozen=90.4%  honest_peak=0.530  honest_final=0.000
+  v27_seed3   AT-ENTRANCE@ 24  peak@ 60  lag= 36  frac_frozen=90.4%  honest_peak=0.170  honest_final=0.010
+  v28_seed0   AT-ENTRANCE@ 25  peak@ 70  lag= 45  frac_frozen=90.0%  honest_peak=0.450  honest_final=0.000
+  v28_seed1   AT-ENTRANCE@ 22  peak@ 60  lag= 38  frac_frozen=91.2%  honest_peak=0.230  honest_final=0.050
+  v28_seed2   AT-ENTRANCE@ 29  peak@120  lag= 91  frac_frozen=88.4%  honest_peak=0.370  honest_final=0.000
+  v28_seed3   AT-ENTRANCE@ 23  peak@ 90  lag= 67  frac_frozen=90.8%  honest_peak=0.670  honest_final=0.000
+
+lag stats: min=25 max=91 mean=49.9 median=41.5
+as % of 250 total iters: min=10.0% max=36.4% mean=20.0%
+
+=== Cumulative entrance-rate (ent_n/ent_d, cumulative since run start) turning point ===
+  v27_seed0  cum-ent_frac peaks at iter  83 (frac=0.201); best.json peak_iter= 60; final cum-ent_frac=0.092
+  v27_seed1  cum-ent_frac peaks at iter 109 (frac=0.342); best.json peak_iter= 50; final cum-ent_frac=0.169
+  v27_seed2  cum-ent_frac peaks at iter 173 (frac=0.447); best.json peak_iter= 90; final cum-ent_frac=0.253
+  v27_seed3  cum-ent_frac peaks at iter 106 (frac=0.347); best.json peak_iter= 60; final cum-ent_frac=0.112
+  v28_seed0  cum-ent_frac peaks at iter 127 (frac=0.412); best.json peak_iter= 70; final cum-ent_frac=0.222
+  v28_seed1  cum-ent_frac peaks at iter 131 (frac=0.459); best.json peak_iter= 60; final cum-ent_frac=0.193
+  v28_seed2  cum-ent_frac peaks at iter 120 (frac=0.396); best.json peak_iter=120; final cum-ent_frac=0.159
+  v28_seed3  cum-ent_frac peaks at iter 131 (frac=0.418); best.json peak_iter= 90; final cum-ent_frac=0.164
+
+=== truncated-counter per-iter delta by regime (mean truncations logged per iter) ===
+  v27_seed0  pre-AT-ENTRANCE(0-29)=  50.4/iter  AT-ENTRANCE->peak(29-60)=  44.1/iter  peak->end(60-249)=  50.9/iter
+  v27_seed1  pre-AT-ENTRANCE(0-25)=  49.2/iter  AT-ENTRANCE->peak(25-50)=  42.8/iter  peak->end(50-249)=  48.4/iter
+  v27_seed2  pre-AT-ENTRANCE(0-24)=  48.4/iter  AT-ENTRANCE->peak(24-90)=  40.4/iter  peak->end(90-249)=  39.9/iter
+  v27_seed3  pre-AT-ENTRANCE(0-24)=  48.1/iter  AT-ENTRANCE->peak(24-60)=  41.2/iter  peak->end(60-249)=  53.2/iter
+  v28_seed0  pre-AT-ENTRANCE(0-25)=  49.6/iter  AT-ENTRANCE->peak(25-70)=  44.1/iter  peak->end(70-249)=  47.3/iter
+  v28_seed1  pre-AT-ENTRANCE(0-22)=  47.6/iter  AT-ENTRANCE->peak(22-60)=  42.4/iter  peak->end(60-249)=  49.1/iter
+  v28_seed2  pre-AT-ENTRANCE(0-29)=  49.5/iter  AT-ENTRANCE->peak(29-120)=  31.4/iter  peak->end(120-249)=  54.3/iter
+  v28_seed3  pre-AT-ENTRANCE(0-23)=  47.6/iter  AT-ENTRANCE->peak(23-90)=  40.5/iter  peak->end(90-249)=  49.6/iter

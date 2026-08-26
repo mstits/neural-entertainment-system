@@ -1,0 +1,28 @@
+run/seed      peak  sh_tp@0 sh_tp@peak sh_tp@240 sh_fwd@0 sh_fwd@peak sh_fwd@240     net@0  net@peak   net@240
+v27/seed0       60    0.005      0.002     0.004    0.916       0.988      0.994    490.59   1974.13   1031.11
+v27/seed1       50    0.006      0.002     0.003    0.914       0.990      0.997    472.29   1824.92   1110.38
+v27/seed2       90    0.007      0.002     0.003    0.911       0.988      0.994    510.26   2564.31   1055.41
+v27/seed3       60    0.006      0.002     0.002    0.906       0.988      0.996    470.08   2152.62   1422.36
+v28/seed0       70    0.006      0.002     0.003    0.913       0.992      0.997    528.17   1874.18    823.30
+v28/seed1       60    0.006      0.002     0.002    0.909       0.989      0.995    524.17   2251.23   1577.82
+v28/seed2      120    0.006      0.002     0.004    0.910       0.987      0.996    510.30   2750.09   1285.58
+v28/seed3       90    0.006      0.002     0.002    0.906       0.990      0.998    451.42   2436.46   1179.05
+
+=== monotonicity check: does share_time_penalty trend upward over the FULL run? ===
+v27/seed0: pearson r(gen, share_time_penalty) = +0.595  (n=250)
+v27/seed1: pearson r(gen, share_time_penalty) = +0.595  (n=250)
+v27/seed2: pearson r(gen, share_time_penalty) = +0.465  (n=250)
+v27/seed3: pearson r(gen, share_time_penalty) = +0.019  (n=250)
+v28/seed0: pearson r(gen, share_time_penalty) = +0.566  (n=250)
+v28/seed1: pearson r(gen, share_time_penalty) = +0.238  (n=250)
+v28/seed2: pearson r(gen, share_time_penalty) = +0.627  (n=250)
+v28/seed3: pearson r(gen, share_time_penalty) = +0.165  (n=250)
+run/seed      peak  max_sh_tp  @iter  min_sh_tp  @iter  is_min@peak  sh_tp@peak+10  sh_tp@peak+40
+v27/seed0       60     0.0060    146     0.0016     32        False         0.0018         0.0020
+v27/seed1       50     0.0057      0     0.0015     74        False         0.0017         0.0017
+v27/seed2       90     0.0065      0     0.0015     55        False         0.0019         0.0022
+v27/seed3       60     0.0061      0     0.0016     87        False         0.0017         0.0018
+v28/seed0       70     0.0074    245     0.0013     92        False         0.0014         0.0016
+v28/seed1       60     0.0059      0     0.0014     96        False         0.0018         0.0017
+v28/seed2      120     0.0068    238     0.0016     16        False         0.0021         0.0020
+v28/seed3       90     0.0062      0     0.0015    158        False         0.0018         0.0019

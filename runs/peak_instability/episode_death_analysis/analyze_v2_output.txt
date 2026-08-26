@@ -1,0 +1,48 @@
+====================================================================================================
+ENTROPY OF DEATH-POSITION HISTOGRAM (fixed 50-unit bins, 0..3200, normalized by log2(64)=6 bits)
+Lower normalized entropy = more concentrated into few bins = closer to a single deterministic failure mode
+====================================================================================================
+seed0: peak H=2.913 bits (norm 0.486, n=55)   final H=3.647 bits (norm 0.608, n=100)   delta_norm(final-peak)=+0.122
+seed1: peak H=2.492 bits (norm 0.415, n=77)   final H=3.904 bits (norm 0.651, n=95)   delta_norm(final-peak)=+0.235
+seed2: peak H=3.492 bits (norm 0.582, n=63)   final H=3.749 bits (norm 0.625, n=100)   delta_norm(final-peak)=+0.043
+seed3: peak H=3.079 bits (norm 0.513, n=33)   final H=3.692 bits (norm 0.615, n=100)   delta_norm(final-peak)=+0.102
+
+mean delta_norm entropy (final-peak) across 4 seeds: +0.126
+(negative = final MORE concentrated than peak i.e. collapse-to-mode; positive = final MORE diffuse than peak)
+
+====================================================================================================
+LEVENE'S TEST (variance equality) and KS TEST (distribution shape), peak-deaths vs final-deaths, per seed
+====================================================================================================
+seed0: var(peak)=197559.3  var(final)=262958.1  Levene p=0.0038 (variances differ)   KS D=0.912 p=0.0000 (shapes differ)
+seed1: var(peak)=471035.8  var(final)=350599.3  Levene p=0.9449 (no sig. var diff)   KS D=0.620 p=0.0000 (shapes differ)
+seed2: var(peak)=615670.2  var(final)=273574.3  Levene p=0.0002 (variances differ)   KS D=0.443 p=0.0000 (shapes differ)
+seed3: var(peak)=359179.8  var(final)=416373.4  Levene p=0.8827 (no sig. var diff)   KS D=0.609 p=0.0000 (shapes differ)
+
+====================================================================================================
+TOP-5 EXACT-VALUE PILEUPS (where >1 episode ends at the identical gx)
+====================================================================================================
+seed0  peak  (n_death= 55): gx=2850(x8,15%), gx=2354(x7,13%), gx=3154(x7,13%), gx=2594(x4,7%), gx=2755(x3,5%)
+seed0  final (n_death=100): gx=1249(x4,4%), gx=594(x3,3%), gx=898(x3,3%), gx=899(x3,3%), gx=1554(x2,2%)
+seed1  peak  (n_death= 77): gx=2594(x18,23%), gx=2595(x10,13%), gx=3154(x6,8%), gx=1247(x5,6%), gx=2914(x4,5%)
+seed1  final (n_death= 95): gx=2354(x6,6%), gx=2022(x4,4%), gx=1244(x4,4%), gx=2025(x3,3%), gx=1247(x3,3%)
+seed2  peak  (n_death= 63): gx=434(x3,5%), gx=312(x3,5%), gx=1522(x3,5%), gx=1795(x2,3%), gx=1251(x2,3%)
+seed2  final (n_death=100): gx=434(x6,6%), gx=1250(x5,5%), gx=1247(x4,4%), gx=818(x3,3%), gx=898(x3,3%)
+seed3  peak  (n_death= 33): gx=2914(x9,27%), gx=1523(x2,6%), gx=2591(x2,6%), gx=2594(x2,6%), gx=1797(x1,3%)
+seed3  final (n_death=100): gx=434(x7,7%), gx=722(x5,5%), gx=678(x4,4%), gx=898(x4,4%), gx=1249(x4,4%)
+
+====================================================================================================
+CROSS-SEED: does the FINAL-checkpoint modal death bin land in the same place across seeds?
+(shared bin -> one common level hazard; scattered bins -> policy-specific idiosyncratic failure)
+====================================================================================================
+
+-- peak --
+seed0: modal 50-wide bin = [2350,2400) covering 12/55 = 22% of deaths; median=2752
+seed1: modal 50-wide bin = [2550,2600) covering 39/77 = 51% of deaths; median=2594
+seed2: modal 50-wide bin = [2550,2600) covering 17/63 = 27% of deaths; median=1784
+seed3: modal 50-wide bin = [2900,2950) covering 10/33 = 30% of deaths; median=2590
+
+-- final --
+seed0: modal 50-wide bin = [650,700) covering 15/100 = 15% of deaths; median=1242
+seed1: modal 50-wide bin = [2000,2050) covering 18/95 = 19% of deaths; median=1795
+seed2: modal 50-wide bin = [1200,1250) covering 18/100 = 18% of deaths; median=1247
+seed3: modal 50-wide bin = [1200,1250) covering 20/100 = 20% of deaths; median=1247

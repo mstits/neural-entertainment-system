@@ -1,0 +1,101 @@
+{
+  "length_triangulation": [
+    {
+      "run": "v27_seed0",
+      "train_approx_len_peak": 596.5,
+      "honest_mean_len_peak": 816.92,
+      "train_approx_len_final": 333.9,
+      "honest_mean_len_final": 343.47,
+      "train_len_pct_change": -44.0,
+      "honest_len_pct_change": -58.0
+    },
+    {
+      "run": "v27_seed1",
+      "train_approx_len_peak": 758.5,
+      "honest_mean_len_peak": 671.3,
+      "train_approx_len_final": 298.3,
+      "honest_mean_len_final": 445.54,
+      "train_len_pct_change": -60.7,
+      "honest_len_pct_change": -33.6
+    },
+    {
+      "run": "v27_seed2",
+      "train_approx_len_peak": 853.3,
+      "honest_mean_len_peak": 552.8,
+      "train_approx_len_final": 313.5,
+      "honest_mean_len_final": 348.47,
+      "train_len_pct_change": -63.3,
+      "honest_len_pct_change": -37.0
+    },
+    {
+      "run": "v27_seed3",
+      "train_approx_len_peak": 740.2,
+      "honest_mean_len_peak": 859.52,
+      "train_approx_len_final": 325.1,
+      "honest_mean_len_final": 349.25,
+      "train_len_pct_change": -56.1,
+      "honest_len_pct_change": -59.4
+    },
+    {
+      "run": "v28_seed0",
+      "train_approx_len_peak": 758.5,
+      "honest_mean_len_peak": 723.2,
+      "train_approx_len_final": 259.2,
+      "honest_mean_len_final": 327.06,
+      "train_len_pct_change": -65.8,
+      "honest_len_pct_change": -54.8
+    },
+    {
+      "run": "v28_seed1",
+      "train_approx_len_peak": 975.2,
+      "honest_mean_len_peak": 870.7,
+      "train_approx_len_final": 365.7,
+      "honest_mean_len_final": 416.0,
+      "train_len_pct_change": -62.5,
+      "honest_len_pct_change": -52.2
+    },
+    {
+      "run": "v28_seed2",
+      "train_approx_len_peak": 865.4,
+      "honest_mean_len_peak": 416.92,
+      "train_approx_len_final": 396.4,
+      "honest_mean_len_final": 475.96,
+      "train_len_pct_change": -54.2,
+      "honest_len_pct_change": 14.2
+    },
+    {
+      "run": "v28_seed3",
+      "train_approx_len_peak": 1077.9,
+      "honest_mean_len_peak": 525.67,
+      "train_approx_len_final": 320.0,
+      "honest_mean_len_final": 403.01,
+      "train_len_pct_change": -70.3,
+      "honest_len_pct_change": -23.3
+    }
+  ],
+  "confound_audit": {
+    "sticky_action_prob": {
+      "value": 0.25,
+      "applied_in_training": true,
+      "applied_in_honest_gate": true,
+      "source": "configs/mario_1_1_v27_seed0.yaml:138, mario_1_1_v28_seed0.yaml:138 -- comment: 'train under the protocol the gate measures'",
+      "verdict": "MATCHED -- not a train/honest divergence for these 8 runs"
+    },
+    "jitter": {
+      "honest_gate_value": "+/-16 frames",
+      "training_analog": "backward_curriculum.window_frames: 160 (restart drawn uniformly from a 160-frame window ending at tau)",
+      "source": "configs/mario_1_1_v27_seed0.yaml:184 (window_frames: 160)",
+      "verdict": "training's own position-randomization window is 10x WIDER than honest's jitter, not absent -- does not support a 'training is easier because unjittered' story"
+    },
+    "cold_start": {
+      "at_entrance_iters": "all 8 runs reach tau=0 (true entrance) by iter 22-29",
+      "peak_iters_range": "50-120",
+      "verdict": "NOT a live confound for the peak-to-final comparison window (iter 30-240) -- curriculum is already maxed out for the entire window under study; see honest_vs_telemetry/at_entrance_iters.txt"
+    },
+    "greedy_vs_sampled": {
+      "training": "categorical sample from policy logits",
+      "honest_gate": "argmax",
+      "verdict": "genuine, uncontrolled difference in these configs -- but a sibling dimension reports training entropy collapsing to ~0.05-0.08 nats by iter 200+, at which point a near-one-hot categorical's argmax and its typical sample coincide with high probability, shrinking (not eliminating) any greedy-specific effect late in training. Not independently re-measured here."
+    }
+  }
+}

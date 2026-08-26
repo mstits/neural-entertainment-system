@@ -1,0 +1,24 @@
+--- fc1.bias/fc1.weight ratio, iter20 -> iter240 ---
+  v27_seed0  iter20=0.285  iter240=0.291  growth=1.02x
+  v27_seed2  iter20=0.257  iter240=0.258  growth=1.01x
+  v28_seed2  iter20=0.265  iter240=0.273  growth=1.03x
+  v28_seed3  iter20=0.267  iter240=0.275  growth=1.03x
+
+--- fc2.bias/fc2.weight ratio, iter20 -> iter240 ---
+  v27_seed0  iter20=0.354  iter240=0.233  growth=0.66x
+  v27_seed2  iter20=0.347  iter240=0.245  growth=0.71x
+  v28_seed2  iter20=0.371  iter240=0.257  growth=0.69x
+  v28_seed3  iter20=0.369  iter240=0.238  growth=0.64x
+
+--- actor.bias/actor.weight ratio, iter20 -> iter240 ---
+  v27_seed0  iter20=0.314  iter240=1.272  growth=4.04x
+  v27_seed2  iter20=0.456  iter240=1.117  growth=2.45x
+  v28_seed2  iter20=0.585  iter240=1.191  growth=2.03x
+  v28_seed3  iter20=0.408  iter240=1.257  growth=3.09x
+
+--- critic.bias/critic.weight ratio, iter20 -> iter240 ---
+  v27_seed0  iter20=0.399  iter240=1.463  growth=3.67x
+  v27_seed2  iter20=0.517  iter240=1.274  growth=2.47x
+  v28_seed2  iter20=0.523  iter240=1.664  growth=3.18x
+  v28_seed3  iter20=0.467  iter240=1.612  growth=3.45x
+

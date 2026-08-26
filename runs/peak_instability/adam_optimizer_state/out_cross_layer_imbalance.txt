@@ -1,0 +1,20 @@
+--- v27_seed0 (peak=60) ---
+  iter  20: min=fc2.bias      (0.1348)  max=critic.weight (4.0160)  ratio=29.8x
+  iter  60: min=fc2.bias      (0.0837)  max=actor.weight  (4.8194)  ratio=57.6x
+  iter 240: min=fc2.bias      (0.0376)  max=actor.bias    (2.3535)  ratio=62.6x
+
+--- v27_seed2 (peak=90) ---
+  iter  20: min=fc2.bias      (0.1432)  max=actor.weight  (3.7540)  ratio=26.2x
+  iter  90: min=fc2.bias      (0.0666)  max=actor.weight  (3.2659)  ratio=49.1x
+  iter 240: min=fc2.bias      (0.0455)  max=fc1.weight    (2.3786)  ratio=52.3x
+
+--- v28_seed2 (peak=120) ---
+  iter  20: min=fc2.bias      (0.1631)  max=fc1.weight    (3.4188)  ratio=21.0x
+  iter 120: min=fc2.bias      (0.0906)  max=fc1.weight    (3.6405)  ratio=40.2x
+  iter 240: min=fc2.bias      (0.0475)  max=fc1.weight    (2.8811)  ratio=60.6x
+
+--- v28_seed3 (peak=90) ---
+  iter  20: min=fc2.bias      (0.1427)  max=fc1.weight    (3.4291)  ratio=24.0x
+  iter  90: min=fc2.bias      (0.0771)  max=fc1.weight    (4.0239)  ratio=52.2x
+  iter 240: min=fc2.bias      (0.0484)  max=fc1.weight    (2.9976)  ratio=61.9x
+

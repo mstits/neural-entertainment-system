@@ -1,0 +1,16 @@
+run         honest  lag(d0.5,r1.5)  lag(d0.5,r1.3)  lag(d0.5,r2.0)  lag(d0.6,r1.5)  lag(d0.7,r1.5)
+v27_seed0    0.040              -4               2            None              -8             -13
+v27_seed1    0.290              31              37              19              12               8
+v27_seed2    0.530               8              12               2               3              -8
+v27_seed3    0.170              14              20               2              12              10
+v28_seed0    0.450              26              39             -13              20               5
+v28_seed1    0.230              24              30               5              22              19
+v28_seed2    0.370               3               6              -4               2               2
+v28_seed3    0.670              11              18             -25               9             -10
+
+sign summary per config (positive = value-loss-rise leads decline):
+  decline<0.5xpeak, vloss>1.5xmin: n=8 pos=7 neg=1 zero=0 median=12.5
+  decline<0.5xpeak, vloss>1.3xmin: n=8 pos=8 neg=0 zero=0 median=19.0
+  decline<0.5xpeak, vloss>2.0xmin: n=7 pos=4 neg=3 zero=0 median=2.0
+  decline<0.6xpeak, vloss>1.5xmin: n=8 pos=7 neg=1 zero=0 median=10.5
+  decline<0.7xpeak, vloss>1.5xmin: n=8 pos=5 neg=3 zero=0 median=3.5

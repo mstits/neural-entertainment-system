@@ -1,0 +1,6 @@
+v27_fresh_recovery (48k params) -- SUPPLEMENTARY, different eval protocol, not pooled with v28
+====================================================================================================
+seed0: clear_rate peak=0.04 final=0.02   H_norm peak=0.570(n=96) final=0.606(n=98)  delta=+0.036   top-bin peak=[2350,+50) 24/96=25%   top-bin final=[300,+50) 16/98=16%
+seed1: clear_rate peak=0.29 final=0.02   H_norm peak=0.571(n=71) final=0.633(n=98)  delta=+0.062   top-bin peak=[2900,+50) 16/71=23%   top-bin final=[1500,+50) 19/98=19%
+seed2: clear_rate peak=0.53 final=0.00   H_norm peak=0.509(n=47) final=0.642(n=100)  delta=+0.133   top-bin peak=[3150,+50) 13/47=28%   top-bin final=[1250,+50) 11/100=11%
+seed3: clear_rate peak=0.17 final=0.01   H_norm peak=0.536(n=83) final=0.643(n=99)  delta=+0.107   top-bin peak=[2900,+50) 18/83=22%   top-bin final=[2000,+50) 19/99=19%

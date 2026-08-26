@@ -1,0 +1,17 @@
+run         peak  agree_peak_vs_240  agree_peak_vs_peak+10  agree_10_vs_20
+v27_seed0     60              0.354                  0.840           0.882
+           top disagreement (peak_action->iter240_action, count): [((4, 3), 131), ((4, 0), 114), ((4, 2), 92)]
+v27_seed1     50              0.367                  0.547           0.642
+           top disagreement (peak_action->iter240_action, count): [((3, 1), 87), ((2, 3), 82), ((3, 2), 64)]
+v27_seed2     90              0.394                  0.879           0.738
+           top disagreement (peak_action->iter240_action, count): [((4, 3), 115), ((4, 2), 98), ((3, 2), 58)]
+v27_seed3     60              0.291                  0.718           0.812
+           top disagreement (peak_action->iter240_action, count): [((4, 3), 123), ((4, 2), 103), ((2, 3), 77)]
+v28_seed0     70              0.315                  0.860           0.182
+           top disagreement (peak_action->iter240_action, count): [((2, 1), 87), ((2, 3), 69), ((3, 2), 68)]
+v28_seed1     60              0.365                  0.864           0.856
+           top disagreement (peak_action->iter240_action, count): [((4, 1), 103), ((4, 3), 102), ((4, 2), 76)]
+v28_seed2    120              0.374                  0.669           0.860
+           top disagreement (peak_action->iter240_action, count): [((4, 2), 106), ((4, 3), 67), ((4, 1), 38)]
+v28_seed3     90              0.360                  0.871           0.599
+           top disagreement (peak_action->iter240_action, count): [((4, 3), 142), ((4, 2), 84), ((3, 4), 51)]

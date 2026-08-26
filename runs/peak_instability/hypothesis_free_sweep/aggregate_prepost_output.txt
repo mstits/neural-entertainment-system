@@ -1,0 +1,47 @@
+mario_1_1_v27_recovery_seed0: peak_iter=60 post_n=189 pre_n=61 excluded=0
+mario_1_1_v27_recovery_seed1: peak_iter=50 post_n=199 pre_n=51 excluded=0
+mario_1_1_v27_recovery_seed2: peak_iter=90 post_n=159 pre_n=91 excluded=0
+mario_1_1_v27_recovery_seed3: peak_iter=60 post_n=189 pre_n=61 excluded=0
+mario_1_1_v28_capacity_seed0: peak_iter=70 post_n=179 pre_n=71 excluded=0
+mario_1_1_v28_capacity_seed1: peak_iter=60 post_n=189 pre_n=61 excluded=0
+mario_1_1_v28_capacity_seed2: peak_iter=120 post_n=129 pre_n=121 excluded=0
+mario_1_1_v28_capacity_seed3: peak_iter=90 post_n=159 pre_n=91 excluded=0
+
+====================================================================================================
+CROSS-RUN FIELD DIVERGENCE (post-peak vs pre-peak+peak), all 8 runs
+====================================================================================================
+field                          sign_agree   dir  median|d|    min d    max d  per-run d (v27s0 v27s1 v27s2 v27s3 v28s0 v28s1 v28s2 v28s3)
+-----------------------------------------------------------------------------------------------------------------------------------------
+ppo_entropy                        8/8    post<pre      3.695    -4.23    -2.09  -3.82 -4.23 -2.84 -3.70 -3.41 -4.18 -2.09 -2.72
+timestamp                          8/8    post>pre      3.214     2.90     3.56   3.12  2.97  3.34  3.07  3.21  2.90  3.44  3.56 [TRIVIAL]
+generation                         8/8    post>pre      3.180     2.98     3.46   3.08  2.98  3.34  3.08  3.18  3.08  3.46  3.34 [TRIVIAL]
+vanilla_ppo_rnd_loss               8/8    post<pre      1.616    -2.20    -0.98  -1.76 -2.20 -1.08 -1.62 -1.68 -1.56 -1.01 -0.98
+vanilla_ppo_intrinsic_mean         8/8    post<pre      1.534    -2.16    -0.97  -1.78 -2.16 -1.02 -1.52 -1.65 -1.53 -0.97 -0.99
+vanilla_ppo_max_world_level        8/8    post<pre      0.890    -1.35    -0.18  -0.39 -0.18 -0.33 -1.00 -0.89 -0.59 -1.35 -1.06
+vanilla_ppo_max_x                  8/8    post<pre      0.745    -0.99    -0.04  -0.21 -0.04 -0.20 -0.85 -0.75 -0.48 -0.99 -0.78
+vanilla_ppo_clears                 8/8    post<pre      0.597    -2.07    -0.15  -0.60 -0.15 -0.36 -0.78 -0.23 -0.41 -2.07 -0.96
+ppo_policy_loss                    8/8    post>pre      0.317     0.11     0.43   0.17  0.32  0.40  0.11  0.32  0.37  0.43  0.15
+reward_time_penalty                7/8    post<pre      1.255    -1.52     0.07  -1.28 -1.52 -1.26 -0.23 -1.42 -0.76  0.07 -0.25
+episodes                           7/8    post<pre      0.683    -1.19     0.05  -1.00 -1.19 -0.53 -0.56 -0.72 -0.68  0.05 -0.10
+reward_forward                     7/8    post>pre      0.497    -0.86     0.78   0.24  0.78  0.55  0.13  0.42  0.50 -0.86  0.03
+reward_completion                  6/8    post<pre      0.410    -1.19     0.34  -0.44 -0.27  0.22 -0.70  0.34 -0.41 -1.19 -0.14
+timing_emulation_ms                6/8    post<pre      0.406    -1.27     2.21  -0.08  0.20 -0.25 -0.14 -0.93  2.21 -0.41 -1.27
+avg_fitness                        6/8    post>pre      0.352    -0.88     1.12   0.35  1.12  0.01  0.33  0.33  0.46 -0.88 -0.29
+timing_bookkeeping_ms              6/8    post>pre      0.113    -0.64     0.28   0.07  0.10  0.11  0.01 -0.33  0.00  0.28 -0.64
+timing_rnd_intrinsic_ms            5/8    post<pre      0.699    -1.19     1.86  -0.14  0.04 -0.20  0.04 -0.70  1.86 -0.79 -1.19
+vanilla_ppo_samples_per_sec        5/8    post>pre      0.600    -2.50     1.59   0.11 -0.45  0.26 -0.27  1.04 -2.50  0.60  1.59
+vanilla_ppo_realtime_x             5/8    post>pre      0.600    -2.50     1.59   0.11 -0.45  0.26 -0.27  1.04 -2.50  0.60  1.59
+success_rate                       5/8    post<pre      0.351    -1.84     0.24  -0.35  0.24  0.17 -0.44  0.05 -0.01 -1.84 -0.69
+best_fitness                       5/8    post>pre      0.324    -1.01     0.72   0.32  0.72  0.20 -0.21  0.01  0.41 -1.01 -0.30
+timing_rollout_forward_ms          4/8    post<pre      0.742    -1.63     1.95  -0.63  0.57  0.17  0.74 -1.63  1.95 -0.34 -1.14
+timing_gae_ms                      4/8    post<pre      0.627    -0.94     2.20   0.25  0.63 -0.15  0.69 -0.11  2.20 -0.58 -0.94
+timing_update_ms                   4/8    post<pre      0.571    -0.58     1.07  -0.12  0.57 -0.24  0.90 -0.57  1.07  0.42 -0.58
+ppo_value_loss                     4/8    post<pre      0.345    -0.55     0.73  -0.55 -0.35 -0.16  0.00 -0.20  0.06  0.73  0.39
+ppo_loss                           4/8    post<pre      0.333    -0.43     0.75  -0.43 -0.33 -0.15  0.11 -0.17  0.08  0.75  0.40
+timing_iter_reset_ms               4/8    post<pre      0.185    -0.50     0.47  -0.48  0.02 -0.18  0.04 -0.14  0.18  0.47 -0.50
+demo_anchor_coef                   0/0        flat      0.000     0.00     0.00   0.00  0.00  0.00  0.00  0.00  0.00  0.00  0.00
+demo_anchor_loss                   0/0        flat      0.000     0.00     0.00   0.00  0.00  0.00  0.00  0.00  0.00  0.00  0.00
+vanilla_ppo_count_bonus_mean       0/0        flat      0.000     0.00     0.00   0.00  0.00  0.00  0.00  0.00  0.00  0.00  0.00
+vanilla_ppo_in_progress            0/0        flat      0.000     0.00     0.00   0.00  0.00  0.00  0.00  0.00  0.00  0.00  0.00
+
+peak iters used: {'mario_1_1_v27_recovery_seed0': 60, 'mario_1_1_v27_recovery_seed1': 50, 'mario_1_1_v27_recovery_seed2': 90, 'mario_1_1_v27_recovery_seed3': 60, 'mario_1_1_v28_capacity_seed0': 70, 'mario_1_1_v28_capacity_seed1': 60, 'mario_1_1_v28_capacity_seed2': 120, 'mario_1_1_v28_capacity_seed3': 90}

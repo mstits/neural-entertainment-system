@@ -1,0 +1,50 @@
+[
+  {
+    "run": "v28_seed3",
+    "iter": 10,
+    "count_match": true,
+    "n_saved_params": 22,
+    "n_built_params": 22,
+    "n_names": 22,
+    "state_dict_load_ok": true,
+    "bit_exact_reserialize": true,
+    "post_load_step_ok": true,
+    "fused_ok": true
+  },
+  {
+    "run": "v27_seed0",
+    "iter": 10,
+    "count_match": true,
+    "n_saved_params": 22,
+    "n_built_params": 22,
+    "n_names": 22,
+    "state_dict_load_ok": true,
+    "bit_exact_reserialize": true,
+    "post_load_step_ok": true,
+    "fused_ok": true
+  },
+  {
+    "run": "v27_seed2",
+    "iter": 10,
+    "count_match": true,
+    "n_saved_params": 22,
+    "n_built_params": 22,
+    "n_names": 22,
+    "state_dict_load_ok": true,
+    "bit_exact_reserialize": true,
+    "post_load_step_ok": true,
+    "fused_ok": true
+  },
+  {
+    "run": "v28_seed2",
+    "iter": 10,
+    "count_match": true,
+    "n_saved_params": 22,
+    "n_built_params": 22,
+    "n_names": 22,
+    "state_dict_load_ok": true,
+    "bit_exact_reserialize": true,
+    "post_load_step_ok": true,
+    "fused_ok": true
+  }
+]

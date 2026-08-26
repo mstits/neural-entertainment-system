@@ -1,0 +1,97 @@
+
+===== 1. entropy_guard: full config census (every configs/*.yaml) =====
+configs/mario_1_2_backward.yaml
+configs/mario_1_3_backward.yaml
+--- confirm ABSENT from every 1-1 lineage config, incl. v27/v28 ---
+configs/mario_1_1_backward.yaml: no entropy_guard
+configs/mario_1_1_backward_v4.yaml: no entropy_guard
+configs/mario_1_1_backward_v6.yaml: no entropy_guard
+configs/mario_1_1_backward_consol.yaml: no entropy_guard
+configs/mario_1_1_v27_seed0.yaml: no entropy_guard
+configs/mario_1_1_v28_seed0.yaml: no entropy_guard
+
+===== 2. Origin commit of the unconditional ANTI-COLLAPSE GUARD (trainer.py) =====
+1ec47985c7bd7d043d45c1efac86fcb3453be2f0 Fix curriculum-collapse: gated advance + mixed-stage + anti-collapse + safe resume
+--- its own stated trigger direction (entropy RISING, i.e. melting) ---
+--- v27/v28's actual entropy direction (falling), from v28 seed3 best run ---
+iter 19: 1.4656 | 59: 0.7318 | 119: 0.2910 | 179: 0.0796 | 239: 0.0716
+ln(6) = 1.791759469228055  => 90% threshold = 1.6125835223052496
+Every value above is below the 90%-of-ln(6) melting threshold at every logged iter -- the guard's fire condition is never approached in either direction that matters (it is a HIGH-entropy trigger; ours is a low-entropy trajectory throughout).
+
+===== 3. KL-anchor decay arithmetic for the -74% (1-2 OPTIONS control) run =====
+50:  enabled: true
+74:  rollout_steps: 1536
+75:  num_envs: 60
+85:    enabled: true
+91:  kl_beta_start: 0.5
+92:  kl_beta_end: 0.01
+93:  kl_beta_decay_steps: 50000000
+95:  sil:
+96:    enabled: true
+98:    bc_coef: 0.5
+122:    enabled: true
+steps consumed by iter 200: 18,432,000 (36.9% of decay horizon)
+kl_beta at iter 200 (linear decay assumed): 0.319 (start 0.5, end 0.01)
+--- kl_anchor.py's own stated purpose (docstring) ---
+"""KL-anchored warm start + critic warmup for the vanilla-PPO conductor.
+
+`reinforce.kl_anchor_checkpoint` names a solved-level policy checkpoint
+(`net_state_dict`, tile MLP — widths shape-inferred). At startup the live
+net receives the checkpoint's ACTOR weights (trunk + actor head; the critic
+head keeps its fresh orthogonal init), and a frozen full copy is kept as the
+prior. Two phases follow:
+
+* While global env-steps < `actor_freeze_steps`, actor gradients are
+  dropped before each optimizer step (critic-only warmup) — the loaded
+  actor stays bit-identical while the fresh critic learns its values.
+* After unfreeze, beta * KL(prior(.|s) || pi_theta(.|s)) is subtracted
+  per-step from the reward stream (reward-level penalty), with beta
+  decayed linearly `kl_beta_start` -> `kl_beta_end` over
+  `kl_beta_decay_steps` env-steps.
+
+D_KL(prior || pi) is exposed in metrics every iteration — the campaign's
+
+===== 4. Sanity check: was this the SAME run across Phase-3 and OPTIONS docs? =====
+49:  **31/100 pooled** (runs/phase3/eval2_control_seed{7,101}.json). Reused,
+
+===== 5. BackwardEntropyGuard's own docstring: what phenomenon it was scoped to =====
+class BackwardEntropyGuard:
+    """Trailing-entropy floor scoped to the backward start-state curriculum.
+
+    THE RECEIPT (B4 v1, 2026-08-08). On the 1-1 reverse curriculum the
+    policy entropy fell 0.19 -> 0.04 after ~iter 130, and the collapsed
+    argmax then refused the final flag jump the sampled policy still
+    took: cold-entrance greedy 0.02 against sampled 0.50/0.63, with the
+    greedy episodes stalling at gx 3154-3157 — ten pixels short of the
+    pole. A reverse curriculum manufactures exactly that. The deep rungs
+    it starts on are nearly solved, so their advantage signal is small
+    and sharply peaked and the policy sharpens there, long before tau
+    reaches the entrance where the same policy still needs to explore.
+
+    Neither existing mechanism covers it. The anti-collapse rollback
+    (`SMB_ENTROPY_COLLAPSE_FRAC`) fires on entropy near ln(A) — a
+    MELTING policy, the opposite failure. The adaptive `entropy_floor`
+    controller does chase a low floor, but it is a whole-run knob: set
+    high enough to stop the entrance-era collapse it also fights the
+    early near-flag rungs, where sharpening is what the curriculum
+    wants. This guard is scoped to backward mode, keyed on a TRAILING
+    mean (one noisy minibatch entropy must never arm it), and hysteretic
+    (it disarms on a real recovery above `floor * recover_mult`, not on
+    the first iter that poked back over the line).
+
+    Pure and side-effect free: it decides, the caller applies the
+    multiplier to `entropy_coef` and writes the log line. Opt-in via
+    ``reinforce.backward_curriculum.entropy_guard: {floor, boost}``; with
+    the key absent no instance is built and the loop is byte-identical
+    to a run without the feature.
+    """
+
+    __slots__ = ("floor", "boost", "trailing", "min_samples",
+                 "recover_mult", "_window", "_armed", "_armed_hist",
+                 "_arms")
+
+    def __init__(
+        self,
+        floor: float,
+        boost: float,
+        *,

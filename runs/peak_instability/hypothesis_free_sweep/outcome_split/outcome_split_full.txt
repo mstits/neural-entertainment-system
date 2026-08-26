@@ -1,0 +1,38 @@
+metrics: runs/peak_instability/hypothesis_free_sweep/outcome_split/pooled.jsonl (2000 rows)
+split: cohort==high  ->  A (match)=1000 rows, B (rest)=1000 rows, excluded (no cohort)=0
+
+showing top 31 of 31 numeric fields, ranked by |effect size| (Cohen's-d-style; pooled std across both cohorts)
+
+field                              n_A/tot   n_B/tot      mean_A      mean_B      Δmean    Δmedian   effect  note
+-----------------------------------------------------------------------------------------------------------------
+timestamp                        1000/1000 1000/1000   1.788e+09   1.788e+09  2.897e+04  4.402e+04      1.3  
+reward_completion                 832/1000  889/1000       14.93       10.09      4.839      5.833    0.548  
+timing_rnd_intrinsic_ms          1000/1000 1000/1000       96.22         101     -4.727     -3.404   -0.415  
+reward_time_penalty              1000/1000 1000/1000      -3.677      -3.212    -0.4645    -0.2353   -0.403  
+success_rate                     1000/1000 1000/1000      0.3621       0.231     0.1311     0.1434    0.397  
+ppo_value_loss                   1000/1000 1000/1000       27.62       31.31      -3.69     -4.294   -0.377  
+vanilla_ppo_samples_per_sec      1000/1000 1000/1000        2431        2339      91.98      7.622    0.362  
+vanilla_ppo_realtime_x           1000/1000 1000/1000         162       155.9      6.132     0.5081    0.362  
+reward_forward                   1000/1000 1000/1000        1699        1487      212.2      209.2    0.352  
+timing_gae_ms                    1000/1000 1000/1000       3.084       3.245    -0.1612   -0.09821   -0.335  
+avg_fitness                      1000/1000 1000/1000        1791        1593        198      194.3    0.266  
+vanilla_ppo_clears               1000/1000 1000/1000       30.47       24.15      6.316         19    0.254  
+timing_emulation_ms              1000/1000 1000/1000   2.199e+04   2.269e+04     -702.9     -75.29    -0.25  
+vanilla_ppo_max_x                1000/1000 1000/1000        3202        3232     -29.53          0   -0.195  
+episodes                         1000/1000 1000/1000       161.5       182.9     -21.36      -30.5   -0.187  
+timing_rollout_forward_ms        1000/1000 1000/1000       178.2       183.6     -5.391    -0.1086   -0.138  
+vanilla_ppo_max_world_level      1000/1000 1000/1000       1.651       1.744     -0.093          0   -0.133  
+timing_bookkeeping_ms            1000/1000 1000/1000      0.3592       0.384    -0.0248   -0.03679   -0.096  
+ppo_loss                         1000/1000 1000/1000       6.954       9.675     -2.721     -1.078  -0.0683  
+ppo_entropy                      1000/1000 1000/1000      0.4908      0.4672    0.02357    0.05791   0.0504  
+ppo_policy_loss                  1000/1000 1000/1000      0.0496       1.848     -1.799  -0.002503  -0.0453  
+timing_update_ms                 1000/1000 1000/1000        2896        2885      11.21      90.61   0.0422  
+timing_iter_reset_ms              996/1000  996/1000        26.4       26.18      0.217    -0.2212    0.042  
+best_fitness                     1000/1000 1000/1000        3913        3896      16.47      173.5   0.0237  
+vanilla_ppo_rnd_loss             1000/1000 1000/1000   0.0006752   0.0006391  3.609e-05  1.209e-05   0.0228  
+vanilla_ppo_intrinsic_mean       1000/1000 1000/1000    0.001625    0.001635 -9.619e-06  5.955e-05 -0.00246  
+demo_anchor_coef                 1000/1000 1000/1000           0           0          0          0        0  
+demo_anchor_loss                 1000/1000 1000/1000           0           0          0          0        0  
+generation                       1000/1000 1000/1000       124.5       124.5          0          0        0  
+vanilla_ppo_count_bonus_mean     1000/1000 1000/1000           0           0          0          0        0  
+vanilla_ppo_in_progress          1000/1000 1000/1000          60          60          0          0        0  

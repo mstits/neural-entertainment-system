@@ -1,0 +1,102 @@
+=== winners/best.json for the seed3/iter140 run (checkpoints/mario_1_1_backward) ===
+{
+  "game": "Mario 1-1 backward",
+  "metric_name": "entrance_trailing_rate",
+  "metric_value": 0.7666666666666667,
+  "source_iter": 120,
+  "git_sha": "14889d3",
+  "timestamp": "2026-08-14T17:01:43"
+}
+
+=== run_manifest.json (actual num_envs used) ===
+{
+  "game": "Mario 1-1 backward",
+  "rom_path": "roms/Super Mario Bros. (World).nes",
+  "rom_md5": null,
+  "start_state_path": "runs/live_show/smb_4_4_micro/entrance_start.state",
+  "seed": 3,
+  "git_commit": "14889d3",
+  "created_at": 1786751014.0327659,
+  "trainer_mode": "vanilla_ppo",
+  "encoder": "smb_tiles_pos",
+  "device": "cpu",
+  "num_envs": 24,
+  "frame_skip": 4,
+  "hyperparams": {
+    "lr": 0.0003,
+    "value_coef": 0.25,
+    "entropy_coef": 0.005,
+    "rollout_steps": 1024,
+    "steps": 10,
+    "value_loss": "huber",
+    "rnd_intrinsic_coef": 0.1,
+    "rnd_loss_coef": 1.0
+  }
+}
+
+=== eval.jsonl entries naming backward_1_1_seed3_iter140.pt ===
+{'game': 'mario', 'status': 'ok', 'checkpoint': 'checkpoints/_preserved/backward_1_1_seed3_iter140.pt', 'recurrent': False, 'stage': 'start', 'n_episodes': 30, 'mean_return': 3111.255666666615, 'mean_length': 481.1, 'max_byte_seen': 0, 'mean_max_byte': 0.0, 'clear_rate': 0.8666666666666667, 'action_select': 'greedy', 'temperature': 1.0, 'sticky_prob': 0.25, 'start_jitter': 16, 'eval_seed': 0, 'stochastic': True, 'eval_workers': 1, 'eval_rng': 'shared-stream', 'timestamp': 1787588532.88489, 'start_state': 'runs/live_show/smb_4_4_micro/entrance_start.state'}
+{'game': 'mario', 'status': 'ok', 'checkpoint': 'checkpoints/_preserved/backward_1_1_seed3_iter140.pt', 'recurrent': False, 'stage': 'start', 'n_episodes': 2, 'mean_return': 3167.169999999969, 'mean_length': 383.0, 'max_byte_seen': 0, 'mean_max_byte': 0.0, 'clear_rate': 1.0, 'action_select': 'greedy', 'temperature': 1.0, 'sticky_prob': 0.0, 'start_jitter': 0, 'eval_seed': 0, 'stochastic': False, 'eval_workers': 1, 'eval_rng': 'shared-stream', 'timestamp': 1787588574.865247, 'start_state': 'runs/live_show/smb_4_4_micro/entrance_start.state'}
+{'game': 'mario', 'status': 'ok', 'checkpoint': 'checkpoints/_preserved/backward_1_1_seed3_iter140.pt', 'recurrent': False, 'stage': 'start', 'n_episodes': 4, 'mean_return': 3166.972499999967, 'mean_length': 402.75, 'max_byte_seen': 0, 'mean_max_byte': 0.0, 'clear_rate': 1.0, 'action_select': 'greedy', 'temperature': 1.0, 'sticky_prob': 0.25, 'start_jitter': 16, 'eval_seed': 0, 'stochastic': True, 'eval_workers': 1, 'eval_rng': 'shared-stream', 'timestamp': 1787589070.539644, 'start_state': 'runs/live_show/smb_4_4_micro/entrance_start.state'}
+{'game': 'mario', 'status': 'ok', 'checkpoint': 'checkpoints/_preserved/backward_1_1_seed3_iter140.pt', 'recurrent': False, 'stage': 'start', 'n_episodes': 60, 'mean_return': 2979.3306666666144, 'mean_length': 478.6, 'max_byte_seen': 0, 'mean_max_byte': 0.0, 'clear_rate': 0.7666666666666667, 'action_select': 'greedy', 'temperature': 1.0, 'sticky_prob': 0.25, 'start_jitter': 16, 'eval_seed': 0, 'stochastic': True, 'eval_workers': 1, 'eval_rng': 'shared-stream', 'timestamp': 1787589192.769163, 'start_state': 'runs/live_show/smb_4_4_micro/entrance_start.state'}
+{'game': 'mario', 'status': 'ok', 'checkpoint': 'checkpoints/_preserved/backward_1_1_seed3_iter140.pt', 'recurrent': False, 'stage': 'start', 'n_episodes': 5, 'mean_return': 3166.9699999999666, 'mean_length': 403.0, 'max_byte_seen': 0, 'mean_max_byte': 0.0, 'clear_rate': 1.0, 'action_select': 'greedy', 'temperature': 1.0, 'sticky_prob': 0.25, 'start_jitter': 16, 'eval_seed': 0, 'stochastic': True, 'eval_workers': 1, 'eval_rng': 'shared-stream', 'timestamp': 1787610368.328964, 'start_state': 'runs/live_show/smb_4_4_micro/entrance_start.state'}
+
+=== control metrics.jsonl: iter/entropy/success_rate every 10 (truncated at 159) ===
+iter    0  entropy=1.7733  success_rate=0.981  clears=51
+iter   10  entropy=1.5741  success_rate=0.062  clears=13
+iter   20  entropy=1.5798  success_rate=0.000  clears=0
+iter   30  entropy=1.4829  success_rate=0.009  clears=2
+iter   40  entropy=1.3805  success_rate=0.079  clears=8
+iter   50  entropy=1.2658  success_rate=0.057  clears=7
+iter   60  entropy=1.1112  success_rate=0.021  clears=2
+iter   70  entropy=1.0346  success_rate=0.000  clears=0
+iter   80  entropy=0.9670  success_rate=0.069  clears=5
+iter   90  entropy=0.8221  success_rate=0.049  clears=4
+iter  100  entropy=0.8186  success_rate=0.465  clears=20
+iter  110  entropy=0.6840  success_rate=0.500  clears=19
+iter  120  entropy=0.6210  success_rate=0.821  clears=23
+iter  130  entropy=0.5536  success_rate=0.526  clears=20
+iter  140  entropy=0.4880  success_rate=0.846  clears=22
+iter  150  entropy=0.4146  success_rate=0.647  clears=22
+last row: iter 159  entropy=0.3457
+
+=== SAME CONFIG, full 250-iter run, num_envs=60, seed 0 (runs/mario_1_1_backward_seed0.log, 2026-08-08) ===
+n iters logged: 250
+iter    0  entropy=1.7808  train_clear_rate=0.879 (123/140)
+iter   10  entropy=1.6528  train_clear_rate=0.002 (1/659)
+iter   20  entropy=1.4444  train_clear_rate=0.029 (11/380)
+iter   30  entropy=1.2014  train_clear_rate=0.041 (10/244)
+iter   40  entropy=0.9705  train_clear_rate=0.252 (33/131)
+iter   50  entropy=0.7719  train_clear_rate=0.547 (47/86)
+iter   60  entropy=0.5977  train_clear_rate=0.495 (48/97)
+iter   70  entropy=0.4300  train_clear_rate=0.551 (49/89)
+iter   80  entropy=0.4439  train_clear_rate=0.659 (54/82)
+iter   90  entropy=0.3168  train_clear_rate=0.548 (51/93)
+iter  100  entropy=0.2704  train_clear_rate=0.215 (32/149)
+iter  110  entropy=0.2153  train_clear_rate=0.229 (32/140)
+iter  120  entropy=0.2053  train_clear_rate=0.230 (31/135)
+iter  130  entropy=0.1753  train_clear_rate=0.171 (22/129)
+iter  140  entropy=0.1295  train_clear_rate=0.000 (0/214)
+iter  150  entropy=0.1480  train_clear_rate=0.005 (1/209)
+iter  160  entropy=0.0987  train_clear_rate=0.000 (0/229)
+iter  170  entropy=0.1195  train_clear_rate=0.000 (0/267)
+iter  180  entropy=0.0783  train_clear_rate=0.000 (0/227)
+iter  190  entropy=0.1065  train_clear_rate=0.000 (0/214)
+iter  200  entropy=0.0770  train_clear_rate=0.000 (0/212)
+iter  210  entropy=0.0608  train_clear_rate=0.000 (0/185)
+iter  220  entropy=0.0726  train_clear_rate=0.005 (1/199)
+iter  230  entropy=0.0843  train_clear_rate=0.000 (0/201)
+iter  240  entropy=0.0629  train_clear_rate=0.000 (0/219)
+
+peak train-time clear rate: iter 0  rate=0.879  entropy=1.7808
+
+=== recovery_assay 60-ep collection (2026-08-24): single-seed reproduction of 0.767 ===
+cleared 46/60 = 0.7667 (single eval_seed=0, scripts/recovery_assay.py default)
+
+=== v27 gate: eval protocol actually used (per-seed, per eval-seed) ===
+n_episodes = 50
+eval_seed = 0
+eval_workers = 1
+eval_rng = shared-stream
+sticky_prob = 0.25
+start_jitter = 16

@@ -1,0 +1,34 @@
+====================================================================================================
+EARLY-FAILURE RATE (max_gx < 500, i.e. dies within roughly the first screen)
+====================================================================================================
+seed0  peak :   0/ 55 deaths < gx=500  (0%)
+seed0  final:  12/100 deaths < gx=500  (12%)
+
+seed1  peak :   0/ 77 deaths < gx=500  (0%)
+seed1  final:   4/ 95 deaths < gx=500  (4%)
+
+seed2  peak :   8/ 63 deaths < gx=500  (13%)
+seed2  final:  15/100 deaths < gx=500  (15%)
+
+seed3  peak :   0/ 33 deaths < gx=500  (0%)
+seed3  final:   7/100 deaths < gx=500  (7%)
+
+====================================================================================================
+SPEED PROXY: mean_length (steps) per receipt, and mean_max_gx-over-all-100/mean_length
+(aggregate-level only -- no per-episode length in the receipts, so this is a population
+ average, not a per-episode ratio. A drop in this ratio at final = slower net progress per
+ step averaged over the pool (consistent with stalling/backtracking), a rise = faster net
+ progress per step before failing (consistent with dying quickly while still moving forward).)
+====================================================================================================
+seed0  peak : mean_max_gx(pooled)= 2849.1  mean_length(avg of 2 receipts)=  723.2  gx/step=3.940
+seed0  final: mean_max_gx(pooled)= 1080.1  mean_length(avg of 2 receipts)=  327.1  gx/step=3.302
+
+seed1  peak : mean_max_gx(pooled)= 2522.8  mean_length(avg of 2 receipts)=  870.7  gx/step=2.897
+seed1  final: mean_max_gx(pooled)= 1795.4  mean_length(avg of 2 receipts)=  416.0  gx/step=4.316
+
+seed2  peak : mean_max_gx(pooled)= 2268.3  mean_length(avg of 2 receipts)=  416.9  gx/step=5.441
+seed2  final: mean_max_gx(pooled)= 1188.5  mean_length(avg of 2 receipts)=  476.0  gx/step=2.497
+
+seed3  peak : mean_max_gx(pooled)= 2882.5  mean_length(avg of 2 receipts)=  525.7  gx/step=5.484
+seed3  final: mean_max_gx(pooled)= 1301.9  mean_length(avg of 2 receipts)=  403.0  gx/step=3.230
+

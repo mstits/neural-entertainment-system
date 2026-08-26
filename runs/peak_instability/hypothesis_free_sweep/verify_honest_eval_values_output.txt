@@ -1,0 +1,20 @@
+=== v27 (winners-best = peak) ===
+seed0 peak pooled clear_rate=0.040  detail=[('seed0_winners-best_es0.json', 50, 0.06), ('seed0_winners-best_es1.json', 50, 0.02)]
+seed1 peak pooled clear_rate=0.290  detail=[('seed1_winners-best_es0.json', 50, 0.3), ('seed1_winners-best_es1.json', 50, 0.28)]
+seed2 peak pooled clear_rate=0.530  detail=[('seed2_winners-best_es0.json', 50, 0.54), ('seed2_winners-best_es1.json', 50, 0.52)]
+seed3 peak pooled clear_rate=0.170  detail=[('seed3_winners-best_es0.json', 50, 0.16), ('seed3_winners-best_es1.json', 50, 0.18)]
+=== v27 (iter_00240 = final) ===
+seed0 final pooled clear_rate=0.020  detail=[('seed0_vanilla_ppo_iter_00240_es0.json', 50, 0.02), ('seed0_vanilla_ppo_iter_00240_es1.json', 50, 0.02)]
+seed1 final pooled clear_rate=0.020  detail=[('seed1_vanilla_ppo_iter_00240_es0.json', 50, 0.0), ('seed1_vanilla_ppo_iter_00240_es1.json', 50, 0.04)]
+seed2 final pooled clear_rate=0.000  detail=[('seed2_vanilla_ppo_iter_00240_es0.json', 50, 0.0), ('seed2_vanilla_ppo_iter_00240_es1.json', 50, 0.0)]
+seed3 final pooled clear_rate=0.010  detail=[('seed3_vanilla_ppo_iter_00240_es0.json', 50, 0.02), ('seed3_vanilla_ppo_iter_00240_es1.json', 50, 0.0)]
+=== v28 (peak) ===
+seed0 peak pooled clear_rate=0.450  detail=[('seed0_peak_evalseed0_greedy.json', 50, 0.5), ('seed0_peak_evalseed1_greedy.json', 50, 0.4)]
+seed1 peak pooled clear_rate=0.230  detail=[('seed1_peak_evalseed0_greedy.json', 50, 0.26), ('seed1_peak_evalseed1_greedy.json', 50, 0.2)]
+seed2 peak pooled clear_rate=0.370  detail=[('seed2_peak_evalseed0_greedy.json', 50, 0.36), ('seed2_peak_evalseed1_greedy.json', 50, 0.38)]
+seed3 peak pooled clear_rate=0.670  detail=[('seed3_peak_evalseed0_greedy.json', 50, 0.62), ('seed3_peak_evalseed1_greedy.json', 50, 0.72)]
+=== v28 (final) ===
+seed0 final pooled clear_rate=0.000  detail=[('seed0_final_evalseed0_greedy.json', 50, 0.0), ('seed0_final_evalseed1_greedy.json', 50, 0.0)]
+seed1 final pooled clear_rate=0.050  detail=[('seed1_final_evalseed0_greedy.json', 50, 0.08), ('seed1_final_evalseed1_greedy.json', 50, 0.02)]
+seed2 final pooled clear_rate=0.000  detail=[('seed2_final_evalseed0_greedy.json', 50, 0.0), ('seed2_final_evalseed1_greedy.json', 50, 0.0)]
+seed3 final pooled clear_rate=0.000  detail=[('seed3_final_evalseed0_greedy.json', 50, 0.0), ('seed3_final_evalseed1_greedy.json', 50, 0.0)]

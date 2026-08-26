@@ -1,0 +1,106 @@
+================================================================================
+(a) Window independence check: new qualifying entrance episodes per
+    10-iter checkpoint gap (must be >=30 for the two checkpoints'
+    30-sample windows to be fully disjoint)
+================================================================================
+v27_seed0    min_delta= 118  (all 23 gaps >=30: True)
+v27_seed1    min_delta= 107  (all 23 gaps >=30: True)
+v27_seed2    min_delta=  70  (all 23 gaps >=30: True)
+v27_seed3    min_delta= 114  (all 23 gaps >=30: True)
+v28_seed0    min_delta=  90  (all 23 gaps >=30: True)
+v28_seed1    min_delta= 120  (all 23 gaps >=30: True)
+v28_seed2    min_delta=  91  (all 23 gaps >=30: True)
+v28_seed3    min_delta=  98  (all 23 gaps >=30: True)
+
+================================================================================
+(a) Checkpoint-spaced (10-iter) proxy trailing_rate noise vs binomial floor
+================================================================================
+run           mean_p  sd_diff1/sqrt2  sd_diff2/sqrt6  binom_sd(n=30)  ratio1  ratio2
+v27_seed0      0.144           0.079           0.072           0.064    1.24    1.13
+v27_seed1      0.245           0.143           0.140           0.078    1.82    1.78
+v27_seed2      0.329           0.110           0.093           0.086    1.28    1.09
+v27_seed3      0.200           0.102           0.085           0.073    1.39    1.17
+v28_seed0      0.331           0.108           0.095           0.086    1.26    1.10
+v28_seed1      0.298           0.120           0.104           0.083    1.44    1.24
+v28_seed2      0.141           0.094           0.098           0.064    1.48    1.54
+v28_seed3      0.275           0.144           0.127           0.082    1.77    1.56
+
+median ratio (1st-diff, trend-contaminated upper bound): 1.41
+median ratio (2nd-diff, linear-trend-robust):             1.21
+
+================================================================================
+(b) Winner's-curse MC: E[max of K=24 disjoint Binomial(30,p)/30 draws]
+================================================================================
+  p_true   E[max]  inflation   P(max>=.90)   P(max==1.0)
+    0.10    0.218      0.118         0.000         0.000
+    0.20    0.351      0.151         0.000         0.000
+    0.30    0.468      0.168         0.000         0.000
+    0.40    0.576      0.176         0.000         0.000
+    0.50    0.676      0.176         0.000         0.000
+    0.60    0.769      0.169         0.007         0.000
+    0.70    0.854      0.154         0.203         0.000
+    0.80    0.929      0.129         0.958         0.027
+    0.90    0.988      0.088         1.000         0.642
+
+================================================================================
+(b) Direct empirical test: proxy-vs-honest gap at a NON-selected
+    checkpoint (iter=240, terminal) vs at the ARGMAX-selected peak
+================================================================================
+run           proxy@240 honest_final   gap@240  metric@peak  honest@peak  gap@peak
+v27_seed0         0.030        0.020     0.010        0.867        0.040     0.827
+v27_seed1         0.000        0.020    -0.020        0.933        0.290     0.643
+v27_seed2         0.000        0.000     0.000        1.000        0.530     0.470
+v27_seed3         0.000        0.010    -0.010        0.967        0.170     0.797
+v28_seed0         0.000        0.000     0.000        0.967        0.450     0.517
+v28_seed1         0.030        0.050    -0.020        0.967        0.230     0.737
+v28_seed2         0.000        0.000     0.000        0.967        0.370     0.597
+v28_seed3         0.000        0.000     0.000        1.000        0.670     0.330
+
+mean/median gap @ iter240 (non-selected): -0.005 / +0.000
+mean/median gap @ peak (argmax-selected):  +0.615 / +0.620
+NOTE: iter=240 gap is measured near the metric floor (both series ~0-0.05
+for 7/8 runs) -- confirms no *structural* proxy-vs-honest bias near zero,
+but does NOT by itself confirm the same holds at mid-range true capability.
+
+================================================================================
+(b) Does a CONSTANT true rate = honest_peak, run through the same MC,
+    explain the observed ceiling-clustered metric_value?
+================================================================================
+run           honest_peak(p)  E[max24] pred  observed   resid
+v27_seed0              0.040          0.121     0.867   0.745
+v27_seed1              0.290          0.458     0.933   0.476
+v27_seed2              0.530          0.705     1.000   0.295
+v27_seed3              0.170          0.313     0.967   0.654
+v28_seed0              0.450          0.627     0.967   0.340
+v28_seed1              0.230          0.387     0.967   0.579
+v28_seed2              0.370          0.545     0.967   0.422
+v28_seed3              0.670          0.830     1.000   0.170
+
+mean residual (observed-predicted): +0.460  -> a flat true-rate-at-honest-peak model UNDER-predicts; some real,
+if partly transient, capability rise into the peak region is also needed.
+
+================================================================================
+(c) metric_value (argmax over ~24 draws) vs honest_peak -- rank vs scale
+================================================================================
+metric_value span: [0.867,1.000] = 0.133
+honest_peak  span: [0.040,0.670] = 0.630
+compression ratio (honest span / metric span): 4.73x
+Pearson r = 0.807, R^2 = 0.651, N=8 (LEAD not finding at this N)
+
+================================================================================
+(b2) new-best event count per run vs i.i.d. order-statistic null
+================================================================================
+null E[# running maxima in 24 i.i.d. draws, no trend] = 3.78
+observed: {'v27_seed0': 4, 'v27_seed1': 3, 'v27_seed2': 6, 'v27_seed3': 4, 'v28_seed0': 4, 'v28_seed1': 4, 'v28_seed2': 6, 'v28_seed3': 5}  mean = 4.5 (1.19x null)
+
+================================================================================
+(d) Local smoothness of the proxy around each run's own peak_iter
+================================================================================
+v27_seed0    peak=  60  -20:0.23, -10:0.33, +0:0.53, +10:0.40, +20:0.27   neighbor>peak(proxy)? False
+v27_seed1    peak=  50  -20:0.17, -10:0.20, +0:0.77, +10:0.60, +20:0.87   neighbor>peak(proxy)? False
+v27_seed2    peak=  90  -20:0.60, -10:0.53, +0:0.50, +10:0.67, +20:0.50   neighbor>peak(proxy)? True
+v27_seed3    peak=  60  -20:0.43, -10:0.60, +0:0.63, +10:0.67, +20:0.57   neighbor>peak(proxy)? True
+v28_seed0    peak=  70  -20:0.50, -10:0.77, +0:0.70, +10:0.90, +20:0.57   neighbor>peak(proxy)? True
+v28_seed1    peak=  60  -20:0.50, -10:0.57, +0:0.53, +10:0.73, +20:0.43   neighbor>peak(proxy)? True
+v28_seed2    peak= 120  -20:0.30, -10:0.27, +0:0.37, +10:0.17, +20:0.20   neighbor>peak(proxy)? False
+v28_seed3    peak=  90  -20:0.40, -10:0.60, +0:0.90, +10:0.63, +20:0.63   neighbor>peak(proxy)? False

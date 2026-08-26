@@ -1,0 +1,22 @@
+run          peak_iter   rnd@iter0    rnd@peak  death_iter  death-peak
+v27_seed0           60     0.00439    0.000005          41         -19
+v27_seed1           50     0.00521    0.000031          41          -9
+v27_seed2           90     0.00471    0.000010          37         -53
+v27_seed3           60     0.00566    0.000023          40         -20
+v28_seed0           70     0.00523    0.000030          48         -22
+v28_seed1           60     0.00513    0.000004          38         -22
+v28_seed2          120     0.00462    0.000023          48         -72
+v28_seed3           90     0.00603    0.000001          33         -57
+
+death_iter - peak_iter across 8 runs: [-72, -57, -53, -22, -22, -20, -19, -9]
+median = -22, all negative (death precedes peak) = True
+
+confound check: any scheduled entropy_coef/rnd_intrinsic_coef override fired in these runs?
+  v27_seed0: schedule/guard log lines = 0 (0 expected -- entropy_floor=0.0, smb_curriculum=false, no entropy_guard block in config)
+  v27_seed1: schedule/guard log lines = 0 (0 expected -- entropy_floor=0.0, smb_curriculum=false, no entropy_guard block in config)
+  v27_seed2: schedule/guard log lines = 0 (0 expected -- entropy_floor=0.0, smb_curriculum=false, no entropy_guard block in config)
+  v27_seed3: schedule/guard log lines = 0 (0 expected -- entropy_floor=0.0, smb_curriculum=false, no entropy_guard block in config)
+  v28_seed0: schedule/guard log lines = 0 (0 expected -- entropy_floor=0.0, smb_curriculum=false, no entropy_guard block in config)
+  v28_seed1: schedule/guard log lines = 0 (0 expected -- entropy_floor=0.0, smb_curriculum=false, no entropy_guard block in config)
+  v28_seed2: schedule/guard log lines = 0 (0 expected -- entropy_floor=0.0, smb_curriculum=false, no entropy_guard block in config)
+  v28_seed3: schedule/guard log lines = 0 (0 expected -- entropy_floor=0.0, smb_curriculum=false, no entropy_guard block in config)

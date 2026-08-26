@@ -1,0 +1,82 @@
+{
+  "v27_seed0": {
+    "entrance_iter_tau0": 29,
+    "honest_eval_peak_iter": 60,
+    "entrance_success_curve_peak_iter": 62,
+    "entrance_success_curve_peak_rate": 0.3555,
+    "entrance_success_curve_final_rate": 0.0186,
+    "curve_decays_after_peak": true,
+    "window": 20,
+    "n_windowed_points": 202
+  },
+  "v27_seed1": {
+    "entrance_iter_tau0": 25,
+    "honest_eval_peak_iter": 50,
+    "entrance_success_curve_peak_iter": 76,
+    "entrance_success_curve_peak_rate": 0.616,
+    "entrance_success_curve_final_rate": 0.0125,
+    "curve_decays_after_peak": true,
+    "window": 20,
+    "n_windowed_points": 206
+  },
+  "v27_seed2": {
+    "entrance_iter_tau0": 24,
+    "honest_eval_peak_iter": 90,
+    "entrance_success_curve_peak_iter": 107,
+    "entrance_success_curve_peak_rate": 0.6114,
+    "entrance_success_curve_final_rate": 0.0193,
+    "curve_decays_after_peak": true,
+    "window": 20,
+    "n_windowed_points": 207
+  },
+  "v27_seed3": {
+    "entrance_iter_tau0": 24,
+    "honest_eval_peak_iter": 60,
+    "entrance_success_curve_peak_iter": 67,
+    "entrance_success_curve_peak_rate": 0.5205,
+    "entrance_success_curve_final_rate": 0.0091,
+    "curve_decays_after_peak": true,
+    "window": 20,
+    "n_windowed_points": 207
+  },
+  "v28_seed0": {
+    "entrance_iter_tau0": 25,
+    "honest_eval_peak_iter": 70,
+    "entrance_success_curve_peak_iter": 94,
+    "entrance_success_curve_peak_rate": 0.6375,
+    "entrance_success_curve_final_rate": 0.0,
+    "curve_decays_after_peak": true,
+    "window": 20,
+    "n_windowed_points": 206
+  },
+  "v28_seed1": {
+    "entrance_iter_tau0": 22,
+    "honest_eval_peak_iter": 60,
+    "entrance_success_curve_peak_iter": 66,
+    "entrance_success_curve_peak_rate": 0.7023,
+    "entrance_success_curve_final_rate": 0.0437,
+    "curve_decays_after_peak": true,
+    "window": 20,
+    "n_windowed_points": 209
+  },
+  "v28_seed2": {
+    "entrance_iter_tau0": 29,
+    "honest_eval_peak_iter": 120,
+    "entrance_success_curve_peak_iter": 103,
+    "entrance_success_curve_peak_rate": 0.5395,
+    "entrance_success_curve_final_rate": 0.0037,
+    "curve_decays_after_peak": true,
+    "window": 20,
+    "n_windowed_points": 202
+  },
+  "v28_seed3": {
+    "entrance_iter_tau0": 23,
+    "honest_eval_peak_iter": 90,
+    "entrance_success_curve_peak_iter": 91,
+    "entrance_success_curve_peak_rate": 0.6447,
+    "entrance_success_curve_final_rate": 0.0018,
+    "curve_decays_after_peak": true,
+    "window": 20,
+    "n_windowed_points": 208
+  }
+}

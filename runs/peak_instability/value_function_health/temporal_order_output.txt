@@ -1,0 +1,9 @@
+run         honest  t_peak(trail)  t_peak(given)   t_vmin     vmin  decline_onset  vloss_rise_onset   lag(decl-vrise)
+v27_seed0    0.040             60             60       69    27.66             80                84                -4
+v27_seed1    0.290             69             50       74    17.66            109               102                 7
+v27_seed2    0.530             69             90      101    12.92            169               162                 7
+v27_seed3    0.170             81             60       59    17.65            105                93                12
+v28_seed0    0.450             84             70       86    15.04            142               119                23
+v28_seed1    0.230             89             60       63    14.75            132               110                22
+v28_seed2    0.370             58            120       70    19.58             85               119               -34
+v28_seed3    0.670             59             90       60    14.40            134               123                11

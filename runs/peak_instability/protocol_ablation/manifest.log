@@ -1,0 +1,17 @@
+=== peak_sticky0.0_greedy : ckpt=checkpoints/mario_1_1_v28_capacity_seed3/winners/best.pt sticky=0.0 select=greedy ===
+    -> status=ok  (runs/peak_instability/protocol_ablation/peak_sticky0.0_greedy.json)
+=== peak_sticky0.0_sampled : ckpt=checkpoints/mario_1_1_v28_capacity_seed3/winners/best.pt sticky=0.0 select=sampled ===
+    -> status=ok  (runs/peak_instability/protocol_ablation/peak_sticky0.0_sampled.json)
+=== peak_sticky0.25_greedy : ckpt=checkpoints/mario_1_1_v28_capacity_seed3/winners/best.pt sticky=0.25 select=greedy ===
+    -> status=ok  (runs/peak_instability/protocol_ablation/peak_sticky0.25_greedy.json)
+=== peak_sticky0.25_sampled : ckpt=checkpoints/mario_1_1_v28_capacity_seed3/winners/best.pt sticky=0.25 select=sampled ===
+    -> status=ok  (runs/peak_instability/protocol_ablation/peak_sticky0.25_sampled.json)
+=== final_sticky0.0_greedy : ckpt=checkpoints/mario_1_1_v28_capacity_seed3/vanilla_ppo_iter_00240.pt sticky=0.0 select=greedy ===
+    -> status=ok  (runs/peak_instability/protocol_ablation/final_sticky0.0_greedy.json)
+=== final_sticky0.0_sampled : ckpt=checkpoints/mario_1_1_v28_capacity_seed3/vanilla_ppo_iter_00240.pt sticky=0.0 select=sampled ===
+    -> status=ok  (runs/peak_instability/protocol_ablation/final_sticky0.0_sampled.json)
+=== final_sticky0.25_greedy : ckpt=checkpoints/mario_1_1_v28_capacity_seed3/vanilla_ppo_iter_00240.pt sticky=0.25 select=greedy ===
+    -> status=ok  (runs/peak_instability/protocol_ablation/final_sticky0.25_greedy.json)
+=== final_sticky0.25_sampled : ckpt=checkpoints/mario_1_1_v28_capacity_seed3/vanilla_ppo_iter_00240.pt sticky=0.25 select=sampled ===
+    -> status=ok  (runs/peak_instability/protocol_ablation/final_sticky0.25_sampled.json)
+done

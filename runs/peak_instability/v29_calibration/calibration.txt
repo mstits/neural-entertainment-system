@@ -1,0 +1,90 @@
+==========================================================================
+v29 CALIBRATION -- baselines for docs/proposals/V29_STABILITY_2026-08-25.md
+==========================================================================
+
+Peak iterations (winners/best.json, authoritative):
+  v27 s0   iter  60   entrance_trailing_rate = 0.8667
+  v27 s1   iter  50   entrance_trailing_rate = 0.9333
+  v27 s2   iter  90   entrance_trailing_rate = 1.0000
+  v27 s3   iter  60   entrance_trailing_rate = 0.9667
+  v28 s0   iter  70   entrance_trailing_rate = 0.9667
+  v28 s1   iter  60   entrance_trailing_rate = 0.9667
+  v28 s2   iter 120   entrance_trailing_rate = 0.9667
+  v28 s3   iter  90   entrance_trailing_rate = 1.0000
+
+TABLE 1 -- trailing-10 policy-entropy crossings (ppo_entropy, metrics.jsonl)
+           iteration at which the trailing mean first falls below each floor
+           -1 = never crosses within the 250-iter run
+
+run       peak   F0.20   F0.25   F0.30   F0.35   F0.40
+v27 s0      60     119     112     107      97      90
+v27 s1      50     160     157     119     111     103
+v27 s2      90     194     174     147     122     109
+v27 s3      60     131     123     108     102      98
+v28 s0      70     145     137     123     114     109
+v28 s1      60     143     129     116     102      92
+v28 s2     120     146     141     114     107     100
+v28 s3      90     160     135     124     117     109
+
+  floor 0.20: arms after the honest peak in 8/8 runs; arm-iteration span 119-194
+  floor 0.25: arms after the honest peak in 8/8 runs; arm-iteration span 112-174
+  floor 0.30: arms after the honest peak in 7/8 runs; arm-iteration span 107-147
+  floor 0.35: arms after the honest peak in 7/8 runs; arm-iteration span 97-122
+  floor 0.40: arms after the honest peak in 7/8 runs; arm-iteration span 90-109
+
+TABLE 2 -- the sharpening ratchet, peak -> iter 240 (checkpoint_autopsy metrics, fixed 800-state batch)
+
+run        pk |logit|max@pk     @240      x  ent@pk  ent@240  actorW@pk    @240      x
+v27 s0     60          24.5    261.6  10.66   0.732    0.068       4.77   16.35   3.43
+v27 s1     50          14.1    219.0  15.52   0.782    0.152       3.96   13.45   3.39
+v27 s2     90          36.9    131.6   3.57   0.405    0.126       6.68   14.46   2.17
+v27 s3     60          21.8    169.6   7.77   0.756    0.087       3.97   14.18   3.57
+v28 s0     70          22.3    204.8   9.17   0.747    0.115       6.55   16.89   2.58
+v28 s1     60          19.0    152.1   7.99   0.607    0.109       4.66   16.07   3.45
+v28 s2    120          40.2    105.5   2.63   0.511    0.096       8.06   16.38   2.03
+v28 s3     90          30.6    117.7   3.84   0.419    0.149       6.14   13.86   2.26
+
+  |logit|max growth ratio  : 2.63-15.52x  (8/8 grow)
+  batch entropy @ iter 240 : 0.068-0.152 nats  (ln 6 = 1.792)
+  actor.weight L2 ratio    : 2.03-3.57x  (8/8 grow)
+
+TABLE 3 -- retention control: R = honest(iter240) / honest(peak), 100 pooled episodes each
+
+run       H_peak  H_final       R   qualifies (peak>=0.30)  RETAINS?
+v27 s0     0.040    0.020   0.500                       no        no
+v27 s1     0.290    0.020   0.069                       no        no
+v27 s2     0.530    0.000   0.000                      yes        no
+v27 s3     0.170    0.010   0.059                       no        no
+v28 s0     0.450    0.000   0.000                      yes        no
+v28 s1     0.230    0.050   0.217                       no        no
+v28 s2     0.370    0.000   0.000                      yes        no
+v28 s3     0.670    0.000   0.000                      yes        no
+
+  seeds qualifying (H_peak >= 0.3): 4/8
+  R among qualifying seeds             : 0.000-0.000
+  seeds RETAINING under Gate 1         : 0/8
+  max H_final over all 8 runs          : 0.050
+
+  NOTE on the ratio guard: v27 s0 scores R = 0.500 on 0.020/0.040 -- a ratio
+  artifact of two near-zero numbers, which is exactly why Gate 1 also demands
+  an absolute H_final >= 0.30 and why 'qualifying' is defined on H_peak.
+
+TABLE 4 -- arm lead at the registered floor 0.30
+
+run       peak   arm  floor  lead  (forensics floor)
+v27 s0      60   107    128    21                142
+v27 s1      50   119    152    33                147
+v27 s2      90   147    187    40                183
+v27 s3      60   108    125    17                120
+v28 s0      70   123    184    61                179
+v28 s1      60   116    155    39                159
+v28 s2     120   114    145    31                139
+v28 s3      90   124    151    27                155
+
+  arm lead over the behavioural floor: 17-61 iterations, positive in 8/8 runs
+  -> at floor 0.30 the guard engages BEFORE behaviour craters in
+     every control run, with 17-61 iterations of runway, and
+     AFTER the honest peak in 7 of 8. That is the calibration
+     argument for 0.30 over 0.25 (arms too late: up to iter 174)
+     and over 0.40 (arms at iters 90-109, on top of the peaks).
+

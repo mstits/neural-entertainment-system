@@ -1,0 +1,57 @@
+====================================================================================================
+PROTOCOL ABLATION -- v28 seed3 -- is the collapse a stickiness-robustness
+artifact, or is capability genuinely gone at the final checkpoint?
+====================================================================================================
+
+30 episodes, single eval seed (0). SHAPE measurement, not a gate number.
+Fixed throughout: cold entrance start-state, start_jitter=16, eval_seed=0,
+eval_rng=per-episode, eval_workers=4, max_steps=1500.
+
+checkpoint sticky   select   clear_rate  mean_return  mean_length  n_ep 
+------------------------------------------------------------------------
+peak       sticky0.0 greedy   1.000       3167.2       378.8        30   
+peak       sticky0.0 sampled  0.833       2894.4       343.4        30   
+peak       sticky0.25 greedy   0.667       2774.6       417.2        30   
+peak       sticky0.25 sampled  0.667       2652.8       371.4        30   
+final      sticky0.0 greedy   0.033       1934.3       496.3        30   
+final      sticky0.0 sampled  0.000       1771.4       491.4        30   
+final      sticky0.25 greedy   0.000       1038.6       366.4        30   
+final      sticky0.25 sampled  0.033       1245.9       314.7        30   
+
+----------------------------------------------------------------------------------------------------
+KEY CELL: final checkpoint, sticky=0.0, greedy
+----------------------------------------------------------------------------------------------------
+  clear_rate = 0.033  (1/30 episodes)
+  100-ep pooled honest gate at this checkpoint (sticky 0.25, greedy) = 0.000
+  VERDICT: removing sticky actions entirely does NOT restore capability.
+  The final-checkpoint policy clears at most 1/30 episodes even with the
+  single most favorable protocol setting (no stickiness, greedy argmax).
+  Capability is genuinely gone -- collapse is not primarily a stickiness-
+  robustness artifact of the honest protocol.
+
+----------------------------------------------------------------------------------------------------
+STICKY 0.25 vs 0.0, holding action_select fixed (does stickiness cost the
+policy real clear rate, and by how much, at each checkpoint)
+----------------------------------------------------------------------------------------------------
+  peak   greedy  : sticky0.0=1.000  sticky0.25=0.667  delta=+0.333  relative_drop= 33.3%
+  peak   sampled : sticky0.0=0.833  sticky0.25=0.667  delta=+0.167  relative_drop= 20.0%
+  final  greedy  : sticky0.0=0.033  sticky0.25=0.000  delta=+0.033  relative_drop=100.0%
+  final  sampled : sticky0.0=0.000  sticky0.25=0.033  delta=-0.033  relative_drop=n/a (base rate 0)
+
+----------------------------------------------------------------------------------------------------
+GREEDY vs SAMPLED, holding sticky fixed (independent check on the entropy-
+collapse story: a near-deterministic policy should show ~no gap here)
+----------------------------------------------------------------------------------------------------
+  peak   sticky0.0 : greedy=1.000  sampled=0.833  gap=+0.167
+  peak   sticky0.25: greedy=0.667  sampled=0.667  gap=+0.000
+  final  sticky0.0 : greedy=0.033  sampled=0.000  gap=+0.033
+  final  sticky0.25: greedy=0.000  sampled=0.033  gap=-0.033
+
+----------------------------------------------------------------------------------------------------
+Cross-check against the 100-episode pooled honest gate receipts
+(runs/v28_capacity/gate/seed3_{peak,final}_evalseed{0,1}_greedy.json)
+----------------------------------------------------------------------------------------------------
+  peak  : this ablation's honest-setting cell (sticky0.25, greedy, n=30, eval_seed=0) = 0.667  vs 100-ep pooled gate = 0.670
+  final : this ablation's honest-setting cell (sticky0.25, greedy, n=30, eval_seed=0) = 0.000  vs 100-ep pooled gate = 0.000
+  (n=30 single-seed vs n=100 two-seed pooled -- agreement within sampling
+  noise validates the ablation harness reproduces the banked protocol.)

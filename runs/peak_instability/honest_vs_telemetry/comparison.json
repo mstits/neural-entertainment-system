@@ -1,0 +1,762 @@
+[
+  {
+    "run": "v27_seed0",
+    "gen": "v27",
+    "seed": "seed0",
+    "peak_iter": 60,
+    "final_iter": 240,
+    "n_iters_logged": 250,
+    "telemetry_peak": {
+      "avg_fitness": 2266.9477256108257,
+      "best_fitness": 4527.3955078125,
+      "success_rate": 0.5145631067961165,
+      "episodes": 103,
+      "vanilla_ppo_clears": 53,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3267,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.6135563254356384,
+      "ppo_loss": 6.836282730102539,
+      "ppo_policy_loss": 0.027121029794216156,
+      "ppo_value_loss": 27.248897552490234,
+      "vanilla_ppo_intrinsic_mean": 2.1779815142508596e-05,
+      "reward_forward": 1957.4666666666667,
+      "reward_completion": 20.0,
+      "reward_time_penalty": -3.337166666666628
+    },
+    "telemetry_final": {
+      "avg_fitness": 1186.6608813741932,
+      "best_fitness": 3555.75048828125,
+      "success_rate": 0.021739130434782608,
+      "episodes": 184,
+      "vanilla_ppo_clears": 4,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3266,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.0500180721282959,
+      "ppo_loss": 7.195023536682129,
+      "ppo_policy_loss": 0.02948785573244095,
+      "ppo_value_loss": 28.663122177124023,
+      "vanilla_ppo_intrinsic_mean": 2.4158633095794357e-05,
+      "reward_forward": 1032.4,
+      "reward_completion": 2.5,
+      "reward_time_penalty": -3.7881666666666205
+    },
+    "honest_peak": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.04,
+      "mean_return": 2142.180799999869,
+      "mean_length": 816.92,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.06,
+          "mean_return": 2144.7813999998602,
+          "mean_length": 855.86,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed0/winners/best.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.02,
+          "mean_return": 2139.580199999878,
+          "mean_length": 777.98,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed0/winners/best.pt"
+        }
+      ]
+    },
+    "honest_final": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.02,
+      "mean_return": 1279.9052999999826,
+      "mean_length": 343.47,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.02,
+          "mean_return": 1393.6983999999795,
+          "mean_length": 332.16,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed0/vanilla_ppo_iter_00240.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.02,
+          "mean_return": 1166.1121999999857,
+          "mean_length": 354.78,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed0/vanilla_ppo_iter_00240.pt"
+        }
+      ]
+    },
+    "winner_selector_metric_value": 0.8666666666666667
+  },
+  {
+    "run": "v27_seed1",
+    "gen": "v27",
+    "seed": "seed1",
+    "peak_iter": 50,
+    "final_iter": 240,
+    "n_iters_logged": 250,
+    "telemetry_peak": {
+      "avg_fitness": 2780.0640147644795,
+      "best_fitness": 4318.4482421875,
+      "success_rate": 0.7037037037037037,
+      "episodes": 81,
+      "vanilla_ppo_clears": 57,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3267,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.9723348617553711,
+      "ppo_loss": 4.718669414520264,
+      "ppo_policy_loss": -0.03387577086687088,
+      "ppo_value_loss": 19.02950668334961,
+      "vanilla_ppo_intrinsic_mean": 9.592857531970367e-05,
+      "reward_forward": 1812.95,
+      "reward_completion": 15.0,
+      "reward_time_penalty": -3.0303333333333016
+    },
+    "telemetry_final": {
+      "avg_fitness": 1257.1197286068814,
+      "best_fitness": 3029.586181640625,
+      "success_rate": 0.0,
+      "episodes": 206,
+      "vanilla_ppo_clears": 0,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3074,
+      "vanilla_ppo_max_world_level": 0,
+      "ppo_entropy": 0.09621980041265488,
+      "ppo_loss": 11.901520729064941,
+      "ppo_policy_loss": 0.04829119145870209,
+      "ppo_value_loss": 47.41474151611328,
+      "vanilla_ppo_intrinsic_mean": 0.00015634151350241154,
+      "reward_forward": 1113.3833333333334,
+      "reward_completion": null,
+      "reward_time_penalty": -3.006499999999967
+    },
+    "honest_peak": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.29,
+      "mean_return": 2449.536999999902,
+      "mean_length": 671.3,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.3,
+          "mean_return": 2553.376999999896,
+          "mean_length": 710.3,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed1/winners/best.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.28,
+          "mean_return": 2345.6969999999083,
+          "mean_length": 632.3,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed1/winners/best.pt"
+        }
+      ]
+    },
+    "honest_final": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.02,
+      "mean_return": 1201.5545999999915,
+      "mean_length": 445.54,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.0,
+          "mean_return": 1031.757200000004,
+          "mean_length": 482.28,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed1/vanilla_ppo_iter_00240.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.04,
+          "mean_return": 1371.3519999999792,
+          "mean_length": 408.8,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed1/vanilla_ppo_iter_00240.pt"
+        }
+      ]
+    },
+    "winner_selector_metric_value": 0.9333333333333333
+  },
+  {
+    "run": "v27_seed2",
+    "gen": "v27",
+    "seed": "seed2",
+    "peak_iter": 90,
+    "final_iter": 240,
+    "n_iters_logged": 250,
+    "telemetry_peak": {
+      "avg_fitness": 2559.703476376004,
+      "best_fitness": 4403.791015625,
+      "success_rate": 0.7638888888888888,
+      "episodes": 72,
+      "vanilla_ppo_clears": 55,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3267,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.5284087061882019,
+      "ppo_loss": 4.16118049621582,
+      "ppo_policy_loss": 0.018918685615062714,
+      "ppo_value_loss": 16.57957649230957,
+      "vanilla_ppo_intrinsic_mean": 3.7080910260556266e-05,
+      "reward_forward": 2543.3333333333335,
+      "reward_completion": 25.833333333333332,
+      "reward_time_penalty": -4.8548333333332705
+    },
+    "telemetry_final": {
+      "avg_fitness": 1165.0327561826123,
+      "best_fitness": 3587.75048828125,
+      "success_rate": 0.02040816326530612,
+      "episodes": 196,
+      "vanilla_ppo_clears": 4,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3266,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.1180012971162796,
+      "ppo_loss": 8.268061637878418,
+      "ppo_policy_loss": 0.10773401707410812,
+      "ppo_value_loss": 32.643646240234375,
+      "vanilla_ppo_intrinsic_mean": 5.010464883525856e-05,
+      "reward_forward": 1055.3,
+      "reward_completion": 3.3333333333333335,
+      "reward_time_penalty": -3.218999999999963
+    },
+    "honest_peak": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.53,
+      "mean_return": 2718.7119999999295,
+      "mean_length": 552.8,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.54,
+          "mean_return": 2781.0947999999316,
+          "mean_length": 552.52,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed2/winners/best.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.52,
+          "mean_return": 2656.329199999928,
+          "mean_length": 553.08,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed2/winners/best.pt"
+        }
+      ]
+    },
+    "honest_final": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.0,
+      "mean_return": 1280.8952999999858,
+      "mean_length": 348.47,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.0,
+          "mean_return": 1204.4781999999911,
+          "mean_length": 370.18,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed2/vanilla_ppo_iter_00240.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.0,
+          "mean_return": 1357.3123999999805,
+          "mean_length": 326.76,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed2/vanilla_ppo_iter_00240.pt"
+        }
+      ]
+    },
+    "winner_selector_metric_value": 1.0
+  },
+  {
+    "run": "v27_seed3",
+    "gen": "v27",
+    "seed": "seed3",
+    "peak_iter": 60,
+    "final_iter": 240,
+    "n_iters_logged": 250,
+    "telemetry_peak": {
+      "avg_fitness": 2552.1598834302054,
+      "best_fitness": 4305.58984375,
+      "success_rate": 0.6626506024096386,
+      "episodes": 83,
+      "vanilla_ppo_clears": 55,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3267,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.7556552886962891,
+      "ppo_loss": 4.881818771362305,
+      "ppo_policy_loss": -0.01802682876586914,
+      "ppo_value_loss": 19.614402770996094,
+      "vanilla_ppo_intrinsic_mean": 8.059448737185448e-05,
+      "reward_forward": 2134.8333333333335,
+      "reward_completion": 21.666666666666668,
+      "reward_time_penalty": -3.882166666666621
+    },
+    "telemetry_final": {
+      "avg_fitness": 1457.3998731986555,
+      "best_fitness": 3526.212890625,
+      "success_rate": 0.021164021164021163,
+      "episodes": 189,
+      "vanilla_ppo_clears": 4,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3266,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.05281531810760498,
+      "ppo_loss": 6.974922180175781,
+      "ppo_policy_loss": 0.013766065239906311,
+      "ppo_value_loss": 27.845672607421875,
+      "vanilla_ppo_intrinsic_mean": 1.6345484254998155e-05,
+      "reward_forward": 1422.8666666666666,
+      "reward_completion": 2.5,
+      "reward_time_penalty": -3.0051666666666317
+    },
+    "honest_peak": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.17,
+      "mean_return": 2495.3747999998673,
+      "mean_length": 859.52,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.16,
+          "mean_return": 2555.1161999998644,
+          "mean_length": 866.38,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed3/winners/best.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.18,
+          "mean_return": 2435.6333999998706,
+          "mean_length": 852.66,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed3/winners/best.pt"
+        }
+      ]
+    },
+    "honest_final": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.01,
+      "mean_return": 1651.467499999975,
+      "mean_length": 349.25,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.02,
+          "mean_return": 1618.7963999999818,
+          "mean_length": 314.36,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed3/vanilla_ppo_iter_00240.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.0,
+          "mean_return": 1684.1385999999682,
+          "mean_length": 384.14,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v27_recovery_seed3/vanilla_ppo_iter_00240.pt"
+        }
+      ]
+    },
+    "winner_selector_metric_value": 0.9666666666666667
+  },
+  {
+    "run": "v28_seed0",
+    "gen": "v28",
+    "seed": "seed0",
+    "peak_iter": 70,
+    "final_iter": 240,
+    "n_iters_logged": 250,
+    "telemetry_peak": {
+      "avg_fitness": 2868.9957998770255,
+      "best_fitness": 4322.0302734375,
+      "success_rate": 0.691358024691358,
+      "episodes": 81,
+      "vanilla_ppo_clears": 56,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3267,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.6882297992706299,
+      "ppo_loss": 4.725259780883789,
+      "ppo_policy_loss": 0.02957816980779171,
+      "ppo_value_loss": 18.796371459960938,
+      "vanilla_ppo_intrinsic_mean": 0.00011764383816625923,
+      "reward_forward": 1864.7833333333333,
+      "reward_completion": 12.5,
+      "reward_time_penalty": -3.105499999999967
+    },
+    "telemetry_final": {
+      "avg_fitness": 1005.7784272527896,
+      "best_fitness": 2544.75048828125,
+      "success_rate": 0.0,
+      "episodes": 237,
+      "vanilla_ppo_clears": 0,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 2595,
+      "vanilla_ppo_max_world_level": 0,
+      "ppo_entropy": 0.10049267113208771,
+      "ppo_loss": 11.031183242797852,
+      "ppo_policy_loss": 0.053538884967565536,
+      "ppo_value_loss": 43.912506103515625,
+      "vanilla_ppo_intrinsic_mean": 0.00013735123502556235,
+      "reward_forward": 825.4833333333333,
+      "reward_completion": null,
+      "reward_time_penalty": -2.187333333333316
+    },
+    "honest_peak": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.45,
+      "mean_return": 2821.0479999998934,
+      "mean_length": 723.2,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.5,
+          "mean_return": 2869.0391999999156,
+          "mean_length": 624.08,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed0/winners/best.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.4,
+          "mean_return": 2773.056799999871,
+          "mean_length": 822.32,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed0/winners/best.pt"
+        }
+      ]
+    },
+    "honest_final": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.0,
+      "mean_return": 1023.3393999999919,
+      "mean_length": 327.06,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.0,
+          "mean_return": 1072.3641999999818,
+          "mean_length": 387.58,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed0/vanilla_ppo_iter_00240.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.0,
+          "mean_return": 974.3146000000021,
+          "mean_length": 266.54,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed0/vanilla_ppo_iter_00240.pt"
+        }
+      ]
+    },
+    "winner_selector_metric_value": 0.9666666666666667
+  },
+  {
+    "run": "v28_seed1",
+    "gen": "v28",
+    "seed": "seed1",
+    "peak_iter": 60,
+    "final_iter": 240,
+    "n_iters_logged": 250,
+    "telemetry_peak": {
+      "avg_fitness": 2910.902147565569,
+      "best_fitness": 4403.80517578125,
+      "success_rate": 0.9365079365079365,
+      "episodes": 63,
+      "vanilla_ppo_clears": 59,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3267,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.6450783014297485,
+      "ppo_loss": 3.787851095199585,
+      "ppo_policy_loss": 0.028492014855146408,
+      "ppo_value_loss": 15.050323486328125,
+      "vanilla_ppo_intrinsic_mean": 7.860492587496992e-06,
+      "reward_forward": 2234.65,
+      "reward_completion": 20.833333333333332,
+      "reward_time_penalty": -4.257166666666614
+    },
+    "telemetry_final": {
+      "avg_fitness": 1517.6906946273077,
+      "best_fitness": 3621.11083984375,
+      "success_rate": 0.03571428571428571,
+      "episodes": 168,
+      "vanilla_ppo_clears": 6,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3267,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.08352355659008026,
+      "ppo_loss": 8.916367530822754,
+      "ppo_policy_loss": 0.05577630549669266,
+      "ppo_value_loss": 35.44401931762695,
+      "vanilla_ppo_intrinsic_mean": 6.5513372646819334e-06,
+      "reward_forward": 1577.0,
+      "reward_completion": 4.166666666666667,
+      "reward_time_penalty": -3.34599999999996
+    },
+    "honest_peak": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.23,
+      "mean_return": 2481.062999999861,
+      "mean_length": 870.7,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.26,
+          "mean_return": 2406.9949999998744,
+          "mean_length": 804.5,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed1/winners/best.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.2,
+          "mean_return": 2555.130999999847,
+          "mean_length": 936.9,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed1/winners/best.pt"
+        }
+      ]
+    },
+    "honest_final": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.05,
+      "mean_return": 1741.3999999999633,
+      "mean_length": 416.0,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.08,
+          "mean_return": 1760.8673999999644,
+          "mean_length": 407.26,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed1/vanilla_ppo_iter_00240.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.02,
+          "mean_return": 1721.932599999962,
+          "mean_length": 424.74,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed1/vanilla_ppo_iter_00240.pt"
+        }
+      ]
+    },
+    "winner_selector_metric_value": 0.9666666666666667
+  },
+  {
+    "run": "v28_seed2",
+    "gen": "v28",
+    "seed": "seed2",
+    "peak_iter": 120,
+    "final_iter": 240,
+    "n_iters_logged": 250,
+    "telemetry_peak": {
+      "avg_fitness": 2228.693936200209,
+      "best_fitness": 4440.974609375,
+      "success_rate": 0.8028169014084507,
+      "episodes": 71,
+      "vanilla_ppo_clears": 57,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3267,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.3158382773399353,
+      "ppo_loss": 4.834451198577881,
+      "ppo_policy_loss": -0.06258674710988998,
+      "ppo_value_loss": 19.594375610351562,
+      "vanilla_ppo_intrinsic_mean": 9.100297756958753e-05,
+      "reward_forward": 2724.85,
+      "reward_completion": 30.833333333333332,
+      "reward_time_penalty": -5.597333333333255
+    },
+    "telemetry_final": {
+      "avg_fitness": 1355.1647765128844,
+      "best_fitness": 3349.963623046875,
+      "success_rate": 0.0064516129032258064,
+      "episodes": 155,
+      "vanilla_ppo_clears": 1,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3266,
+      "vanilla_ppo_max_world_level": 1,
+      "ppo_entropy": 0.16198047995567322,
+      "ppo_loss": 5.580294132232666,
+      "ppo_policy_loss": -0.06480419635772705,
+      "ppo_value_loss": 22.583560943603516,
+      "vanilla_ppo_intrinsic_mean": 0.00012019443965982646,
+      "reward_forward": 1289.4666666666667,
+      "reward_completion": 0.8333333333333334,
+      "reward_time_penalty": -4.719833333333272
+    },
+    "honest_peak": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.37,
+      "mean_return": 2234.5807999999706,
+      "mean_length": 416.92,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.36,
+          "mean_return": 2128.0217999999704,
+          "mean_length": 439.82,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed2/winners/best.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.38,
+          "mean_return": 2341.1397999999704,
+          "mean_length": 394.02,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed2/winners/best.pt"
+        }
+      ]
+    },
+    "honest_final": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.0,
+      "mean_return": 1131.1303999999927,
+      "mean_length": 475.96,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.0,
+          "mean_return": 1131.3555999999908,
+          "mean_length": 446.44,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed2/vanilla_ppo_iter_00240.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.0,
+          "mean_return": 1130.9051999999945,
+          "mean_length": 505.48,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed2/vanilla_ppo_iter_00240.pt"
+        }
+      ]
+    },
+    "winner_selector_metric_value": 0.9666666666666667
+  },
+  {
+    "run": "v28_seed3",
+    "gen": "v28",
+    "seed": "seed3",
+    "peak_iter": 90,
+    "final_iter": 240,
+    "n_iters_logged": 250,
+    "telemetry_peak": {
+      "avg_fitness": 3193.227939538788,
+      "best_fitness": 4609.43017578125,
+      "success_rate": 1.0,
+      "episodes": 57,
+      "vanilla_ppo_clears": 59,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 3267,
+      "vanilla_ppo_max_world_level": 2,
+      "ppo_entropy": 0.44901159405708313,
+      "ppo_loss": 3.6830101013183594,
+      "ppo_policy_loss": -0.01219700276851654,
+      "ppo_value_loss": 14.789802551269531,
+      "vanilla_ppo_intrinsic_mean": 1.3056441275693942e-05,
+      "reward_forward": 2421.0666666666666,
+      "reward_completion": 20.0,
+      "reward_time_penalty": -4.607999999999942
+    },
+    "telemetry_final": {
+      "avg_fitness": 1236.9913914203644,
+      "best_fitness": 2946.463134765625,
+      "success_rate": 0.0,
+      "episodes": 192,
+      "vanilla_ppo_clears": 0,
+      "vanilla_ppo_in_progress": 60,
+      "vanilla_ppo_max_x": 2994,
+      "vanilla_ppo_max_world_level": 0,
+      "ppo_entropy": 0.0876874178647995,
+      "ppo_loss": 9.320708274841309,
+      "ppo_policy_loss": 0.07260144501924515,
+      "ppo_value_loss": 36.994171142578125,
+      "vanilla_ppo_intrinsic_mean": 2.1192461645114236e-05,
+      "reward_forward": 1181.8333333333333,
+      "reward_completion": null,
+      "reward_time_penalty": -2.7851666666666404
+    },
+    "honest_peak": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.67,
+      "mean_return": 2868.0832999999366,
+      "mean_length": 525.67,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.62,
+          "mean_return": 2790.749199999946,
+          "mean_length": 481.08,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed3/winners/best.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.72,
+          "mean_return": 2945.4173999999275,
+          "mean_length": 570.26,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed3/winners/best.pt"
+        }
+      ]
+    },
+    "honest_final": {
+      "n_files": 2,
+      "n_episodes_pooled": 100,
+      "clear_rate": 0.0,
+      "mean_return": 1245.0998999999806,
+      "mean_length": 403.01,
+      "per_eval_seed": [
+        {
+          "eval_seed": 0,
+          "clear_rate": 0.0,
+          "mean_return": 1133.7179999999864,
+          "mean_length": 380.2,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed3/vanilla_ppo_iter_00240.pt"
+        },
+        {
+          "eval_seed": 1,
+          "clear_rate": 0.0,
+          "mean_return": 1356.4817999999746,
+          "mean_length": 425.82,
+          "n_episodes": 50,
+          "checkpoint": "checkpoints/mario_1_1_v28_capacity_seed3/vanilla_ppo_iter_00240.pt"
+        }
+      ]
+    },
+    "winner_selector_metric_value": 1.0
+  }
+]

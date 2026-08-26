@@ -1,0 +1,10 @@
+run                               r(srank,iter)   r(srank,entropy)  srank@peak  srank@final
+-------------------------------------------------------------------------------------------
+mario_1_1_v27_recovery_seed0              0.935             -0.821           8           15
+mario_1_1_v27_recovery_seed1              0.924             -0.699           9           15
+mario_1_1_v27_recovery_seed2              0.729             -0.455           8           14
+mario_1_1_v27_recovery_seed3              0.804             -0.792          11           15
+mario_1_1_v28_capacity_seed0              0.838             -0.601           9           17
+mario_1_1_v28_capacity_seed1              0.687             -0.559          11           14
+mario_1_1_v28_capacity_seed2              0.880             -0.751          10           15
+mario_1_1_v28_capacity_seed3              0.850             -0.593          10           16

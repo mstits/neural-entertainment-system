@@ -1,0 +1,49 @@
+run         peak  nact@peak  nact@240 minfrac@peak  maxfrac@240 actorW@peak  actorW@240  actorW growth  fc1W@peak  fc1W@240  critW@peak  critW@240  logit@peak  logit@240
+v27_seed0     60          4         6        0.000        0.323       4.771      16.345           3.43x     54.836   105.033      25.863     28.425      21.600    200.146
+v27_seed1     50          6         6        0.001        0.378       3.964      13.452           3.39x     49.059   100.981      25.277     29.145      18.803    195.931
+v27_seed2     90          5         6        0.000        0.347       6.677      14.464           2.17x     62.616   100.080      26.131     27.750      24.671    125.676
+v27_seed3     60          4         6        0.000        0.344       3.969      14.179           3.57x     52.753    99.845      24.144     26.965      25.177    171.195
+v28_seed0     70          5         6        0.000        0.316       6.546      16.890           2.58x     68.129   121.212      27.024     28.266      40.735    221.372
+v28_seed1     60          6         6        0.005        0.296       4.662      16.071           3.45x     62.657   122.510      25.292     28.097      21.405    159.417
+v28_seed2    120          6         6        0.035        0.369       8.062      16.379           2.03x     87.470   123.621      27.363     29.196      31.214    118.778
+v28_seed3     90          6         6        0.003        0.367       6.143      13.864           2.26x     74.708   121.482      25.280     26.930      29.875    125.770
+
+=== (a)/(c) action-usage collapse check: n_actions_used trajectory ===
+v27_seed0  peak= 60 min_n_actions_used_over_run=4 trajectory=[4, 4, 4, 4, 5, 4, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+v27_seed1  peak= 50 min_n_actions_used_over_run=3 trajectory=[3, 3, 4, 5, 6, 5, 6, 6, 6, 6, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+v27_seed2  peak= 90 min_n_actions_used_over_run=2 trajectory=[2, 3, 4, 5, 4, 4, 4, 4, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+v27_seed3  peak= 60 min_n_actions_used_over_run=4 trajectory=[5, 4, 4, 4, 4, 4, 4, 4, 5, 5, 6, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+v28_seed0  peak= 70 min_n_actions_used_over_run=3 trajectory=[5, 3, 4, 5, 5, 5, 5, 6, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+v28_seed1  peak= 60 min_n_actions_used_over_run=3 trajectory=[3, 4, 4, 6, 5, 6, 6, 5, 5, 5, 4, 5, 5, 5, 6, 5, 6, 5, 6, 6, 6, 6, 6, 6]
+v28_seed2  peak=120 min_n_actions_used_over_run=4 trajectory=[5, 4, 5, 5, 5, 6, 6, 6, 6, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+v28_seed3  peak= 90 min_n_actions_used_over_run=3 trajectory=[4, 4, 3, 5, 6, 6, 6, 6, 6, 6, 6, 6, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+
+=== weight-delta-from-prev (is the net still moving at iter 240?) ===
+v27_seed0  relative_delta(230->240)=0.1283 cos(230,240)=0.99211
+v27_seed1  relative_delta(230->240)=0.1579 cos(230,240)=0.98803
+v27_seed2  relative_delta(230->240)=0.1722 cos(230,240)=0.98559
+v27_seed3  relative_delta(230->240)=0.1389 cos(230,240)=0.99066
+v28_seed0  relative_delta(230->240)=0.1823 cos(230,240)=0.98398
+v28_seed1  relative_delta(230->240)=0.1489 cos(230,240)=0.98929
+v28_seed2  relative_delta(230->240)=0.1474 cos(230,240)=0.98957
+v28_seed3  relative_delta(230->240)=0.1632 cos(230,240)=0.98721
+
+=== entropy vs weight-norm saturation timing (fc1/actor never plateau; norm2/critic plateau near peak) ===
+v27_seed0  peak= 60 critic_sat95=120 norm2_sat95=170 fc1_sat95=220 actor_sat95=230
+v27_seed1  peak= 50 critic_sat95=140 norm2_sat95=180 fc1_sat95=220 actor_sat95=230
+v27_seed2  peak= 90 critic_sat95=110 norm2_sat95=160 fc1_sat95=220 actor_sat95=230
+v27_seed3  peak= 60 critic_sat95=150 norm2_sat95=190 fc1_sat95=220 actor_sat95=230
+v28_seed0  peak= 70 critic_sat95=70 norm2_sat95=180 fc1_sat95=220 actor_sat95=220
+v28_seed1  peak= 60 critic_sat95=130 norm2_sat95=170 fc1_sat95=220 actor_sat95=230
+v28_seed2  peak=120 critic_sat95=140 norm2_sat95=170 fc1_sat95=220 actor_sat95=230
+v28_seed3  peak= 90 critic_sat95=120 norm2_sat95=190 fc1_sat95=220 actor_sat95=230
+
+=== honest score correlation sanity (from task-supplied table) ===
+v27_seed0  honest@peak=0.040 honest@final=0.020 entropy@peak=0.6401 maxfrac@peak=0.718 nact@peak=4
+v27_seed1  honest@peak=0.290 honest@final=0.020 entropy@peak=0.8513 maxfrac@peak=0.499 nact@peak=6
+v27_seed2  honest@peak=0.530 honest@final=0.000 entropy@peak=0.4781 maxfrac@peak=0.506 nact@peak=5
+v27_seed3  honest@peak=0.170 honest@final=0.010 entropy@peak=0.7593 maxfrac@peak=0.446 nact@peak=4
+v28_seed0  honest@peak=0.450 honest@final=0.000 entropy@peak=0.7238 maxfrac@peak=0.468 nact@peak=5
+v28_seed1  honest@peak=0.230 honest@final=0.050 entropy@peak=0.5966 maxfrac@peak=0.580 nact@peak=6
+v28_seed2  honest@peak=0.370 honest@final=0.000 entropy@peak=0.4526 maxfrac@peak=0.600 nact@peak=6
+v28_seed3  honest@peak=0.670 honest@final=0.000 entropy@peak=0.3554 maxfrac@peak=0.565 nact@peak=6

@@ -1,0 +1,818 @@
+{
+  "mario_1_1_v27_recovery_seed0": {
+    "peak_iter": 60,
+    "peak_honest_metric": 0.8666666666666667,
+    "max_gen_logged": 249,
+    "n_rows": 250,
+    "windows": {
+      "pre_peak_[0,peak)": {
+        "ppo_policy_loss": {
+          "n": 60,
+          "mean": -0.0009534867480397224,
+          "std": 0.06261838878029773,
+          "mean_abs": 0.05245176603396733
+        },
+        "ppo_value_loss": {
+          "n": 60,
+          "mean": 37.12704620361328,
+          "std": 9.489551474372794,
+          "mean_abs": 37.12704620361328
+        },
+        "ppo_entropy": {
+          "n": 60,
+          "mean": 1.1837360511223476,
+          "std": 0.328350147683398,
+          "mean_abs": 1.1837360511223476
+        },
+        "ppo_loss": {
+          "n": 60,
+          "mean": 9.277559773127239,
+          "std": 2.381197661599302,
+          "mean_abs": 9.277559773127239
+        }
+      },
+      "near_peak_[peak,peak+40)": {
+        "ppo_policy_loss": {
+          "n": 40,
+          "mean": 0.0772227264707908,
+          "std": 0.2950013363115893,
+          "mean_abs": 0.10123403805773705
+        },
+        "ppo_value_loss": {
+          "n": 40,
+          "mean": 34.846356058120726,
+          "std": 7.572062500862645,
+          "mean_abs": 34.846356058120726
+        },
+        "ppo_entropy": {
+          "n": 40,
+          "mean": 0.45601825043559074,
+          "std": 0.09510289692019963,
+          "mean_abs": 0.45601825043559074
+        },
+        "ppo_loss": {
+          "n": 40,
+          "mean": 8.786537277698518,
+          "std": 1.9872386681102474,
+          "mean_abs": 8.786537277698518
+        }
+      },
+      "late_[max-40,max]": {
+        "ppo_policy_loss": {
+          "n": 41,
+          "mean": 0.06856317048120063,
+          "std": 0.1257306851764851,
+          "mean_abs": 0.08449900252517403
+        },
+        "ppo_value_loss": {
+          "n": 41,
+          "mean": 25.858738689887815,
+          "std": 3.647318825612035,
+          "mean_abs": 25.858738689887815
+        },
+        "ppo_entropy": {
+          "n": 41,
+          "mean": 0.07178555533471631,
+          "std": 0.018746247662720053,
+          "mean_abs": 0.07178555533471631
+        },
+        "ppo_loss": {
+          "n": 41,
+          "mean": 6.532892634228962,
+          "std": 0.9235409794579671,
+          "mean_abs": 6.532892634228962
+        }
+      }
+    },
+    "frac_policy_loss_abs_lt_0.01": {
+      "pre_peak": 0.06666666666666667,
+      "near_peak": 0.125,
+      "late": 0.07317073170731707
+    },
+    "frac_policy_loss_abs_lt_0.005": {
+      "pre_peak": 0.016666666666666666,
+      "near_peak": 0.075,
+      "late": 0.0
+    },
+    "corr_abs_policy_loss_vs_entropy_full_run": -0.04200520359890092,
+    "corr_policy_loss_vs_entropy_full_run": -0.05768980166475183,
+    "corr_value_loss_vs_entropy_full_run": 0.26168263837065353,
+    "decomposition_check_mean_abs_residual": 0.0006442832865938684,
+    "decomposition_check_max_abs_residual": 0.005989614725113057,
+    "decomposition_check_n": 250
+  },
+  "mario_1_1_v27_recovery_seed1": {
+    "peak_iter": 50,
+    "peak_honest_metric": 0.9333333333333333,
+    "max_gen_logged": 249,
+    "n_rows": 250,
+    "windows": {
+      "pre_peak_[0,peak)": {
+        "ppo_policy_loss": {
+          "n": 50,
+          "mean": 0.009087882190942764,
+          "std": 0.05922139012384479,
+          "mean_abs": 0.04778812900185585
+        },
+        "ppo_value_loss": {
+          "n": 50,
+          "mean": 34.64820629119873,
+          "std": 10.522713823662869,
+          "mean_abs": 34.64820629119873
+        },
+        "ppo_entropy": {
+          "n": 50,
+          "mean": 1.339200575351715,
+          "std": 0.2638874039311266,
+          "mean_abs": 1.339200575351715
+        },
+        "ppo_loss": {
+          "n": 50,
+          "mean": 8.66778570175171,
+          "std": 2.6348801989787303,
+          "mean_abs": 8.66778570175171
+        }
+      },
+      "near_peak_[peak,peak+40)": {
+        "ppo_policy_loss": {
+          "n": 40,
+          "mean": 0.01971343408804387,
+          "std": 0.06795839971424364,
+          "mean_abs": 0.05290158938150853
+        },
+        "ppo_value_loss": {
+          "n": 40,
+          "mean": 21.169665598869322,
+          "std": 5.604108254655518,
+          "mean_abs": 21.169665598869322
+        },
+        "ppo_entropy": {
+          "n": 40,
+          "mean": 0.6961574852466583,
+          "std": 0.13206846573621894,
+          "mean_abs": 0.6961574852466583
+        },
+        "ppo_loss": {
+          "n": 40,
+          "mean": 5.3086756587028505,
+          "std": 1.4399601155720994,
+          "mean_abs": 5.3086756587028505
+        }
+      },
+      "late_[max-40,max]": {
+        "ppo_policy_loss": {
+          "n": 41,
+          "mean": 0.05121477886398391,
+          "std": 0.0817955844170709,
+          "mean_abs": 0.06621191689244858
+        },
+        "ppo_value_loss": {
+          "n": 41,
+          "mean": 37.910347077904675,
+          "std": 5.913106781042271,
+          "mean_abs": 37.910347077904675
+        },
+        "ppo_entropy": {
+          "n": 41,
+          "mean": 0.086169756222062,
+          "std": 0.018988307654746135,
+          "mean_abs": 0.086169756222062
+        },
+        "ppo_loss": {
+          "n": 41,
+          "mean": 9.528389919094923,
+          "std": 1.511306834173168,
+          "mean_abs": 9.528389919094923
+        }
+      }
+    },
+    "frac_policy_loss_abs_lt_0.01": {
+      "pre_peak": 0.14,
+      "near_peak": 0.1,
+      "late": 0.07317073170731707
+    },
+    "frac_policy_loss_abs_lt_0.005": {
+      "pre_peak": 0.12,
+      "near_peak": 0.0,
+      "late": 0.024390243902439025
+    },
+    "corr_abs_policy_loss_vs_entropy_full_run": -0.059035297695419785,
+    "corr_policy_loss_vs_entropy_full_run": -0.15615289837339436,
+    "corr_value_loss_vs_entropy_full_run": -0.1259281931390857,
+    "decomposition_check_mean_abs_residual": 0.0006869576331228178,
+    "decomposition_check_max_abs_residual": 0.007038184106349377,
+    "decomposition_check_n": 250
+  },
+  "mario_1_1_v27_recovery_seed2": {
+    "peak_iter": 90,
+    "peak_honest_metric": 1.0,
+    "max_gen_logged": 249,
+    "n_rows": 250,
+    "windows": {
+      "pre_peak_[0,peak)": {
+        "ppo_policy_loss": {
+          "n": 90,
+          "mean": 0.001186747041841348,
+          "std": 0.05369394047587241,
+          "mean_abs": 0.04370628915106257
+        },
+        "ppo_value_loss": {
+          "n": 90,
+          "mean": 26.619903341929117,
+          "std": 11.631791678827975,
+          "mean_abs": 26.619903341929117
+        },
+        "ppo_entropy": {
+          "n": 90,
+          "mean": 1.0272348344326019,
+          "std": 0.3701308074563355,
+          "mean_abs": 1.0272348344326019
+        },
+        "ppo_loss": {
+          "n": 90,
+          "mean": 6.652675864431593,
+          "std": 2.918639437574251,
+          "mean_abs": 6.652675864431593
+        }
+      },
+      "near_peak_[peak,peak+40)": {
+        "ppo_policy_loss": {
+          "n": 40,
+          "mean": 0.007998756226152181,
+          "std": 0.06811749619976061,
+          "mean_abs": 0.05160188255831599
+        },
+        "ppo_value_loss": {
+          "n": 40,
+          "mean": 15.511736369132995,
+          "std": 3.7583014843475935,
+          "mean_abs": 15.511736369132995
+        },
+        "ppo_entropy": {
+          "n": 40,
+          "mean": 0.3880117774009705,
+          "std": 0.05633597042338877,
+          "mean_abs": 0.3880117774009705
+        },
+        "ppo_loss": {
+          "n": 40,
+          "mean": 3.8840012431144713,
+          "std": 0.995306867199033,
+          "mean_abs": 3.8840012431144713
+        }
+      },
+      "late_[max-40,max]": {
+        "ppo_policy_loss": {
+          "n": 41,
+          "mean": 0.054370150606079796,
+          "std": 0.08703387168706822,
+          "mean_abs": 0.06793098724106462
+        },
+        "ppo_value_loss": {
+          "n": 41,
+          "mean": 30.493272083561596,
+          "std": 3.9778868401782512,
+          "mean_abs": 30.493272083561596
+        },
+        "ppo_entropy": {
+          "n": 41,
+          "mean": 0.13096438802597,
+          "std": 0.03873382421357094,
+          "mean_abs": 0.13096438802597
+        },
+        "ppo_loss": {
+          "n": 41,
+          "mean": 7.6770410421417985,
+          "std": 1.0065439487808705,
+          "mean_abs": 7.6770410421417985
+        }
+      }
+    },
+    "frac_policy_loss_abs_lt_0.01": {
+      "pre_peak": 0.1111111111111111,
+      "near_peak": 0.15,
+      "late": 0.0975609756097561
+    },
+    "frac_policy_loss_abs_lt_0.005": {
+      "pre_peak": 0.044444444444444446,
+      "near_peak": 0.1,
+      "late": 0.07317073170731707
+    },
+    "corr_abs_policy_loss_vs_entropy_full_run": -0.1307126769371079,
+    "corr_policy_loss_vs_entropy_full_run": -0.2229635468176683,
+    "corr_value_loss_vs_entropy_full_run": 0.1540119519900558,
+    "decomposition_check_mean_abs_residual": 0.0005989044107496575,
+    "decomposition_check_max_abs_residual": 0.006324007213116545,
+    "decomposition_check_n": 250
+  },
+  "mario_1_1_v27_recovery_seed3": {
+    "peak_iter": 60,
+    "peak_honest_metric": 0.9666666666666667,
+    "max_gen_logged": 249,
+    "n_rows": 250,
+    "windows": {
+      "pre_peak_[0,peak)": {
+        "ppo_policy_loss": {
+          "n": 60,
+          "mean": -0.012042629066854715,
+          "std": 0.05956473116464348,
+          "mean_abs": 0.04827133705839515
+        },
+        "ppo_value_loss": {
+          "n": 60,
+          "mean": 30.451212676366172,
+          "std": 10.048332411485342,
+          "mean_abs": 30.451212676366172
+        },
+        "ppo_entropy": {
+          "n": 60,
+          "mean": 1.207097515463829,
+          "std": 0.33184890197750233,
+          "mean_abs": 1.207097515463829
+        },
+        "ppo_loss": {
+          "n": 60,
+          "mean": 7.597272205352783,
+          "std": 2.514806417556038,
+          "mean_abs": 7.597272205352783
+        }
+      },
+      "near_peak_[peak,peak+40)": {
+        "ppo_policy_loss": {
+          "n": 40,
+          "mean": -0.006591571494936943,
+          "std": 0.06275604206140166,
+          "mean_abs": 0.048682115087285635
+        },
+        "ppo_value_loss": {
+          "n": 40,
+          "mean": 20.792277574539185,
+          "std": 4.383953731627204,
+          "mean_abs": 20.792277574539185
+        },
+        "ppo_entropy": {
+          "n": 40,
+          "mean": 0.5276010923087597,
+          "std": 0.11263697032281832,
+          "mean_abs": 0.5276010923087597
+        },
+        "ppo_loss": {
+          "n": 40,
+          "mean": 5.188861632347107,
+          "std": 1.124505461067287,
+          "mean_abs": 5.188861632347107
+        }
+      },
+      "late_[max-40,max]": {
+        "ppo_policy_loss": {
+          "n": 41,
+          "mean": 0.6251487411876641,
+          "std": 3.5960022062514647,
+          "mean_abs": 0.6348293190822005
+        },
+        "ppo_value_loss": {
+          "n": 41,
+          "mean": 30.576440252908846,
+          "std": 3.6923004375634187,
+          "mean_abs": 30.576440252908846
+        },
+        "ppo_entropy": {
+          "n": 41,
+          "mean": 0.08407995486404837,
+          "std": 0.014481763849361026,
+          "mean_abs": 0.08407995486404837
+        },
+        "ppo_loss": {
+          "n": 41,
+          "mean": 8.268841778359763,
+          "std": 3.526961255424201,
+          "mean_abs": 8.268841778359763
+        }
+      }
+    },
+    "frac_policy_loss_abs_lt_0.01": {
+      "pre_peak": 0.15,
+      "near_peak": 0.125,
+      "late": 0.0975609756097561
+    },
+    "frac_policy_loss_abs_lt_0.005": {
+      "pre_peak": 0.06666666666666667,
+      "near_peak": 0.075,
+      "late": 0.024390243902439025
+    },
+    "corr_abs_policy_loss_vs_entropy_full_run": -0.020521356692783245,
+    "corr_policy_loss_vs_entropy_full_run": -0.020707155502454035,
+    "corr_value_loss_vs_entropy_full_run": -0.07430585358232511,
+    "decomposition_check_mean_abs_residual": 0.000617102691903888,
+    "decomposition_check_max_abs_residual": 0.007204701900482391,
+    "decomposition_check_n": 250
+  },
+  "mario_1_1_v28_capacity_seed0": {
+    "peak_iter": 70,
+    "peak_honest_metric": 0.9666666666666667,
+    "max_gen_logged": 249,
+    "n_rows": 250,
+    "windows": {
+      "pre_peak_[0,peak)": {
+        "ppo_policy_loss": {
+          "n": 70,
+          "mean": 0.00878725681187851,
+          "std": 0.06960101269672954,
+          "mean_abs": 0.05488797249272466
+        },
+        "ppo_value_loss": {
+          "n": 70,
+          "mean": 29.3830415725708,
+          "std": 10.874222626239629,
+          "mean_abs": 29.3830415725708
+        },
+        "ppo_entropy": {
+          "n": 70,
+          "mean": 1.1569301971367427,
+          "std": 0.3370910168015175,
+          "mean_abs": 1.1569301971367427
+        },
+        "ppo_loss": {
+          "n": 70,
+          "mean": 7.3513955388750345,
+          "std": 2.733231440187073,
+          "mean_abs": 7.3513955388750345
+        }
+      },
+      "near_peak_[peak,peak+40)": {
+        "ppo_policy_loss": {
+          "n": 40,
+          "mean": 0.006397629179991782,
+          "std": 0.06971298883274467,
+          "mean_abs": 0.05453004313167185
+        },
+        "ppo_value_loss": {
+          "n": 40,
+          "mean": 17.599877500534056,
+          "std": 3.6707721303148695,
+          "mean_abs": 17.599877500534056
+        },
+        "ppo_entropy": {
+          "n": 40,
+          "mean": 0.5312777541577816,
+          "std": 0.11647279331181316,
+          "mean_abs": 0.5312777541577816
+        },
+        "ppo_loss": {
+          "n": 40,
+          "mean": 4.403734827041626,
+          "std": 0.9638144020973045,
+          "mean_abs": 4.403734827041626
+        }
+      },
+      "late_[max-40,max]": {
+        "ppo_policy_loss": {
+          "n": 41,
+          "mean": 0.15968625004426007,
+          "std": 0.3896682351226616,
+          "mean_abs": 0.16152262499147071
+        },
+        "ppo_value_loss": {
+          "n": 41,
+          "mean": 33.02699842685607,
+          "std": 5.622335397966129,
+          "mean_abs": 33.02699842685607
+        },
+        "ppo_entropy": {
+          "n": 41,
+          "mean": 0.10522008142093332,
+          "std": 0.019962445747131546,
+          "mean_abs": 0.10522008142093332
+        },
+        "ppo_loss": {
+          "n": 41,
+          "mean": 8.415928177717255,
+          "std": 1.477728341747346,
+          "mean_abs": 8.415928177717255
+        }
+      }
+    },
+    "frac_policy_loss_abs_lt_0.01": {
+      "pre_peak": 0.12857142857142856,
+      "near_peak": 0.125,
+      "late": 0.0975609756097561
+    },
+    "frac_policy_loss_abs_lt_0.005": {
+      "pre_peak": 0.05714285714285714,
+      "near_peak": 0.025,
+      "late": 0.07317073170731707
+    },
+    "corr_abs_policy_loss_vs_entropy_full_run": -0.09995984457179131,
+    "corr_policy_loss_vs_entropy_full_run": -0.15630396155384285,
+    "corr_value_loss_vs_entropy_full_run": 0.006764389766429554,
+    "decomposition_check_mean_abs_residual": 0.0007519281569122977,
+    "decomposition_check_max_abs_residual": 0.0066592764854433995,
+    "decomposition_check_n": 250
+  },
+  "mario_1_1_v28_capacity_seed1": {
+    "peak_iter": 60,
+    "peak_honest_metric": 0.9666666666666667,
+    "max_gen_logged": 249,
+    "n_rows": 250,
+    "windows": {
+      "pre_peak_[0,peak)": {
+        "ppo_policy_loss": {
+          "n": 60,
+          "mean": 0.0025231742144872743,
+          "std": 0.05305031536245628,
+          "mean_abs": 0.04186333934776485
+        },
+        "ppo_value_loss": {
+          "n": 60,
+          "mean": 29.479296445846558,
+          "std": 11.396967633232878,
+          "mean_abs": 29.479296445846558
+        },
+        "ppo_entropy": {
+          "n": 60,
+          "mean": 1.2249224613110223,
+          "std": 0.29104828433887764,
+          "mean_abs": 1.2249224613110223
+        },
+        "ppo_loss": {
+          "n": 60,
+          "mean": 7.368746670087178,
+          "std": 2.858232047244889,
+          "mean_abs": 7.368746670087178
+        }
+      },
+      "near_peak_[peak,peak+40)": {
+        "ppo_policy_loss": {
+          "n": 40,
+          "mean": 0.004432126006577164,
+          "std": 0.05101394023936365,
+          "mean_abs": 0.03999409651150927
+        },
+        "ppo_value_loss": {
+          "n": 40,
+          "mean": 17.391924095153808,
+          "std": 3.3880242797335645,
+          "mean_abs": 17.391924095153808
+        },
+        "ppo_entropy": {
+          "n": 40,
+          "mean": 0.49203178361058236,
+          "std": 0.11850784120037598,
+          "mean_abs": 0.49203178361058236
+        },
+        "ppo_loss": {
+          "n": 40,
+          "mean": 4.3499577164649965,
+          "std": 0.871248507314355,
+          "mean_abs": 4.3499577164649965
+        }
+      },
+      "late_[max-40,max]": {
+        "ppo_policy_loss": {
+          "n": 41,
+          "mean": 0.046310651002497205,
+          "std": 0.07192971198875095,
+          "mean_abs": 0.06809285096824169
+        },
+        "ppo_value_loss": {
+          "n": 41,
+          "mean": 31.04161434638791,
+          "std": 4.320123186831263,
+          "mean_abs": 31.04161434638791
+        },
+        "ppo_entropy": {
+          "n": 41,
+          "mean": 0.07663985632541703,
+          "std": 0.013783953895480192,
+          "mean_abs": 0.07663985632541703
+        },
+        "ppo_loss": {
+          "n": 41,
+          "mean": 7.806334228050418,
+          "std": 1.1193560892087613,
+          "mean_abs": 7.806334228050418
+        }
+      }
+    },
+    "frac_policy_loss_abs_lt_0.01": {
+      "pre_peak": 0.16666666666666666,
+      "near_peak": 0.125,
+      "late": 0.04878048780487805
+    },
+    "frac_policy_loss_abs_lt_0.005": {
+      "pre_peak": 0.06666666666666667,
+      "near_peak": 0.075,
+      "late": 0.04878048780487805
+    },
+    "corr_abs_policy_loss_vs_entropy_full_run": -0.1067347699242407,
+    "corr_policy_loss_vs_entropy_full_run": -0.18933409489881992,
+    "corr_value_loss_vs_entropy_full_run": -0.1375979369144515,
+    "decomposition_check_mean_abs_residual": 0.000608291854485854,
+    "decomposition_check_max_abs_residual": 0.00642058312892857,
+    "decomposition_check_n": 250
+  },
+  "mario_1_1_v28_capacity_seed2": {
+    "peak_iter": 120,
+    "peak_honest_metric": 0.9666666666666667,
+    "max_gen_logged": 249,
+    "n_rows": 250,
+    "windows": {
+      "pre_peak_[0,peak)": {
+        "ppo_policy_loss": {
+          "n": 120,
+          "mean": 0.008451047920001049,
+          "std": 0.09680119091753887,
+          "mean_abs": 0.05665053614260008
+        },
+        "ppo_value_loss": {
+          "n": 120,
+          "mean": 26.804717191060384,
+          "std": 9.822966074584217,
+          "mean_abs": 26.804717191060384
+        },
+        "ppo_entropy": {
+          "n": 120,
+          "mean": 0.8000607913980882,
+          "std": 0.4313648248633318,
+          "mean_abs": 0.8000607913980882
+        },
+        "ppo_loss": {
+          "n": 120,
+          "mean": 6.707116399208704,
+          "std": 2.4715456859191334,
+          "mean_abs": 6.707116399208704
+        }
+      },
+      "near_peak_[peak,peak+40)": {
+        "ppo_policy_loss": {
+          "n": 40,
+          "mean": 0.1270654898835346,
+          "std": 0.3090615137563766,
+          "mean_abs": 0.14582190548535437
+        },
+        "ppo_value_loss": {
+          "n": 40,
+          "mean": 44.68670153617859,
+          "std": 9.81934720719708,
+          "mean_abs": 44.68670153617859
+        },
+        "ppo_entropy": {
+          "n": 40,
+          "mean": 0.23294500559568404,
+          "std": 0.09869138636493378,
+          "mean_abs": 0.23294500559568404
+        },
+        "ppo_loss": {
+          "n": 40,
+          "mean": 11.29759681224823,
+          "std": 2.415037866244808,
+          "mean_abs": 11.29759681224823
+        }
+      },
+      "late_[max-40,max]": {
+        "ppo_policy_loss": {
+          "n": 41,
+          "mean": 0.03083517036696033,
+          "std": 0.059785681026693065,
+          "mean_abs": 0.05242701803856507
+        },
+        "ppo_value_loss": {
+          "n": 41,
+          "mean": 24.486994627045423,
+          "std": 4.02727779709376,
+          "mean_abs": 24.486994627045423
+        },
+        "ppo_entropy": {
+          "n": 41,
+          "mean": 0.13545992806917284,
+          "std": 0.04499582381220888,
+          "mean_abs": 0.13545992806917284
+        },
+        "ppo_loss": {
+          "n": 41,
+          "mean": 6.1519243077534,
+          "std": 1.0439813757930525,
+          "mean_abs": 6.1519243077534
+        }
+      }
+    },
+    "frac_policy_loss_abs_lt_0.01": {
+      "pre_peak": 0.14166666666666666,
+      "near_peak": 0.025,
+      "late": 0.12195121951219512
+    },
+    "frac_policy_loss_abs_lt_0.005": {
+      "pre_peak": 0.05,
+      "near_peak": 0.0,
+      "late": 0.024390243902439025
+    },
+    "corr_abs_policy_loss_vs_entropy_full_run": -0.09034378454248493,
+    "corr_policy_loss_vs_entropy_full_run": -0.13094044228112053,
+    "corr_value_loss_vs_entropy_full_run": -0.03690276212023781,
+    "decomposition_check_mean_abs_residual": 0.0007237243513017581,
+    "decomposition_check_max_abs_residual": 0.006709853410720612,
+    "decomposition_check_n": 250
+  },
+  "mario_1_1_v28_capacity_seed3": {
+    "peak_iter": 90,
+    "peak_honest_metric": 1.0,
+    "max_gen_logged": 249,
+    "n_rows": 250,
+    "windows": {
+      "pre_peak_[0,peak)": {
+        "ppo_policy_loss": {
+          "n": 90,
+          "mean": 0.0034579732455313206,
+          "std": 0.0605133056123112,
+          "mean_abs": 0.048709024913195106
+        },
+        "ppo_value_loss": {
+          "n": 90,
+          "mean": 24.492399650149874,
+          "std": 10.724402702013508,
+          "mean_abs": 24.492399650149874
+        },
+        "ppo_entropy": {
+          "n": 90,
+          "mean": 1.011527560485734,
+          "std": 0.41239088367555565,
+          "mean_abs": 1.011527560485734
+        },
+        "ppo_loss": {
+          "n": 90,
+          "mean": 6.123234915733337,
+          "std": 2.696403663940994,
+          "mean_abs": 6.123234915733337
+        }
+      },
+      "near_peak_[peak,peak+40)": {
+        "ppo_policy_loss": {
+          "n": 40,
+          "mean": -0.0032895140117034315,
+          "std": 0.08173955856578653,
+          "mean_abs": 0.06336293227504938
+        },
+        "ppo_value_loss": {
+          "n": 40,
+          "mean": 18.186225366592407,
+          "std": 4.567112228993515,
+          "mean_abs": 18.186225366592407
+        },
+        "ppo_entropy": {
+          "n": 40,
+          "mean": 0.3603895492851734,
+          "std": 0.06793976785757962,
+          "mean_abs": 0.3603895492851734
+        },
+        "ppo_loss": {
+          "n": 40,
+          "mean": 4.541469025611877,
+          "std": 1.196810589613513,
+          "mean_abs": 4.541469025611877
+        }
+      },
+      "late_[max-40,max]": {
+        "ppo_policy_loss": {
+          "n": 41,
+          "mean": 0.056763103822382484,
+          "std": 0.08567163198739539,
+          "mean_abs": 0.07383362803517318
+        },
+        "ppo_value_loss": {
+          "n": 41,
+          "mean": 32.13452888116604,
+          "std": 4.066967819896745,
+          "mean_abs": 32.13452888116604
+        },
+        "ppo_entropy": {
+          "n": 41,
+          "mean": 0.07241589966707113,
+          "std": 0.017096642532596473,
+          "mean_abs": 0.07241589966707113
+        },
+        "ppo_loss": {
+          "n": 41,
+          "mean": 8.090035508318644,
+          "std": 1.0428161674808125,
+          "mean_abs": 8.090035508318644
+        }
+      }
+    },
+    "frac_policy_loss_abs_lt_0.01": {
+      "pre_peak": 0.08888888888888889,
+      "near_peak": 0.175,
+      "late": 0.07317073170731707
+    },
+    "frac_policy_loss_abs_lt_0.005": {
+      "pre_peak": 0.05555555555555555,
+      "near_peak": 0.05,
+      "late": 0.024390243902439025
+    },
+    "corr_abs_policy_loss_vs_entropy_full_run": -0.05408699201798891,
+    "corr_policy_loss_vs_entropy_full_run": -0.0656220352848619,
+    "corr_value_loss_vs_entropy_full_run": -0.029786910687150427,
+    "decomposition_check_mean_abs_residual": 0.0006263797320797906,
+    "decomposition_check_max_abs_residual": 0.00790784329175942,
+    "decomposition_check_n": 250
+  }
+}
