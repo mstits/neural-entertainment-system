@@ -351,6 +351,105 @@ def coord_entity_windows(ram_hist: np.ndarray, gx_series: np.ndarray,
     return hits
 
 
+# ===========================================================================
+# Signal 4b -- entity wipe, divorced from the position-reset precondition
+# ===========================================================================
+#
+# coord_entity_windows above requires BOTH halves: a position reset toward a
+# level-start value AND the RAM wipe. That joint requirement is SMB-shaped
+# in a way the wipe half is not. Verified at the top level: on an odometer
+# profile (progress: {source: odometer}) the position readout deliberately
+# re-anchors WITHOUT integrating across a scene cut, so a real stage wipe
+# never reads as gx dropping -- the reset half is structurally unreachable,
+# not merely untuned. Worse, feeding coord_entity_windows a BACKWARD-WALK
+# gx series (a player retreating toward the origin, e.g. 1200 -> 20) still
+# satisfies the reset half, because "dropped by >= 300 and landed <= 200"
+# describes retreat just as well as it describes a level-start teleport --
+# see test_the_old_coord_did_fire_on_backward_walk. And on a single ram8
+# byte progress readout the reset half can never fire at all: the required
+# 300-unit drop does not fit in one byte (max range 0-255). A game-agnostic
+# detector cannot carry a term whose sole surviving trigger on some profiles
+# is the opposite of progress and whose trigger on others is arithmetically
+# impossible, so the position half is deleted here rather than repaired.
+#
+# entity_wipe_windows is the wipe half of coord_entity_windows (historical
+# lines 346-350 above), extracted verbatim -- same window/stride shape, same
+# before/after single-frame comparison, same _longest_true_run threshold --
+# and run with NO position readout of any kind: no gx_series parameter, no
+# game-specific observable, nothing but the raw RAM history.
+#
+# CORROBORATION ONLY, NEVER A STANDALONE OR MAJORITY-CARRIER VOTE. Every
+# documented false-positive class below is at least as strong a trigger as a
+# real clear: a death wipes the entity table exactly like a stage load (the
+# 2026-08-06 Gradius finding), a room transition wipes it (the Kirby
+# 3-fires-in-24s finding), a wave of enemies despawning together wipes it
+# (a combat blip), and an attract-loop restart wipes it. See
+# tests/test_entity_wipe_signal.py, which asserts this signal DOES fire on
+# every one of those shapes as a positive anti-vacuity control, not just on
+# a genuine clear.
+
+ENTITY_WIPE_EXCLUDE_DEFAULT: list[tuple[int, int]] = [(0x0100, 0x0200)]
+# The CPU stack page. Its call/return depth oscillates constantly and
+# manufactures nonzero->zero runs with no object-array semantics at all --
+# an unexamined false-positive source in coord_entity_windows above, which
+# scans the undifferentiated full 2 KiB. Excluded from the scan by default;
+# a profile whose measured null shows no structure here may still widen
+# `region` to cover it.
+
+
+def _entity_wipe_mask(n_bytes: int, region: list[tuple[int, int]] | None,
+                       exclude: list[tuple[int, int]] | None) -> np.ndarray:
+    """Boolean per-byte-position allow-list for the wipe scan. `region`
+    (default: the whole array) is the positive list of ranges to consider;
+    `exclude` (default: the stack page) is then subtracted from it. A byte
+    outside the mask reads as `False` in `wiped`, which both keeps it out of
+    any run AND stops a run from crossing an excluded gap and welding two
+    unrelated collapses into one contiguous one."""
+    if region:
+        mask = np.zeros(n_bytes, dtype=bool)
+        for lo, hi in region:
+            mask[lo:hi] = True
+    else:
+        mask = np.ones(n_bytes, dtype=bool)
+    for lo, hi in (exclude or ()):
+        mask[lo:hi] = False
+    return mask
+
+
+def entity_wipe_windows(ram_hist: np.ndarray, window: int = 60, stride: int = 15,
+                         region: list[tuple[int, int]] | None = None,
+                         exclude: list[tuple[int, int]] | None = None,
+                         min_bytes: int = ENTITY_WIPE_MIN_BYTES,
+                         tol: int = ENTITY_WIPE_TOL) -> list[tuple[int, int]]:
+    """A short window where a contiguous RAM block collapses from occupied
+    to (near) empty -- the object-array half of coord_entity_windows, with
+    NO position precondition of any kind. The run is discovered generically
+    by scanning for the longest contiguous occupied->empty span inside the
+    allowed region; no address is assumed to mean anything.
+
+    `min_bytes` and `tol` MUST come from a measured per-profile null (see
+    scripts/clear_calibrate.py): the null is driven from the profile's own
+    start state under ordinary play, and min_bytes is set above the 99.9th
+    percentile of the observed longest-wipe-run distribution. A profile
+    whose null has no separable upper tail should declare this signal
+    `enabled: false` rather than pick a number."""
+    if exclude is None:
+        exclude = ENTITY_WIPE_EXCLUDE_DEFAULT
+    t_total, n_bytes = ram_hist.shape
+    include = _entity_wipe_mask(n_bytes, region, exclude)
+    hits: list[tuple[int, int]] = []
+    for start in range(0, max(t_total - window, 0) + 1, stride):
+        end = min(start + window, t_total)
+        if end - start < 4:
+            continue
+        before = ram_hist[start].astype(np.int16)
+        after = ram_hist[end - 1].astype(np.int16)
+        wiped = (before > tol) & (after <= tol) & include
+        if _longest_true_run(wiped) >= min_bytes:
+            hits.append((start, end))
+    return hits
+
+
 def trailing_median(x: np.ndarray, k: int) -> np.ndarray:
     """Trailing k-sample median of a 1-D series (k <= 1 returns it unchanged).
 
