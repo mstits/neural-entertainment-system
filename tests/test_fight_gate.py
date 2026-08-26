@@ -30,7 +30,9 @@ from scripts.discover_observables import (
     RAM_SIZE,
     _corroborates_tally,
     _decrement_consensus,
+    _mark_mirror_siblings,
     _mass_reset_boundaries,
+    _range_plausibility_penalty,
     _regime_split,
     FIGHT_MASH_WEIGHTS,
     fight_health_from_drives,
@@ -253,6 +255,55 @@ def test_fight_health_ranking_prefers_varying_outcomes_over_identical_ones():
     assert res["addr"] == OPP
 
 
+def _punchout_receipt_scene():
+    """The exact attack-probe numbers from the live Punch-Out receipt
+    (`runs/fight_gate/discover_punchout.json`, the FIGHTGATE_MECHANISM
+    validation run): the true opp_hp byte (0x0398) and its two adjacent
+    display mirrors (0x0399/0x039A), alongside three zero-page decoys
+    that ALSO clear FH1+FH2 in that receipt with real (non-identical)
+    cross-rep spread — one of them wider than opp_hp's own. Rebuilt here
+    as a synthetic scene (one wrap-aware jump per rep reproducing each
+    candidate's reported `start`/`attack_nets`) so the regression needs
+    neither the ROM nor the receipt file to run.
+    """
+    reps = 5
+    addrs = {
+        0x0398: (96, [-50, -19, -74, -64, -96]),
+        0x0399: (96, [-50, -19, -74, -64, -96]),   # mirror
+        0x039A: (96, [-50, -19, -74, -64, -96]),   # mirror
+        0x009E: (253, [-198, -176, -176, -176, -253]),
+        0x00EE: (73, [-11, -89, -65, -73, -16]),
+        0x0711: (82, [-113, -113, -126, -113, -126]),
+    }
+    n = 200
+    atk = []
+    for k in range(reps):
+        cols = {addr: _stepped_col(n, start, {50: start + nets[k]})
+                for addr, (start, nets) in addrs.items()}
+        atk.append(_drive(n, cols))
+    apr = [_drive(n, {}) for _ in range(reps)]
+    return atk, apr
+
+
+def test_fight_health_ranks_the_true_byte_first_on_the_punchout_receipt():
+    """Registered qualification (FIGHTGATE_MECHANISM_2026-08-25.md): on
+    the live Punch-Out receipt, the true opp_hp byte (0x0398) cleared
+    FH1+FH2 but ranked #3 of 5 distinct addresses under the spread
+    tiebreak alone — beaten by two zero-page decoys with equal or wider
+    cross-rep spread. Two further, general corroboration terms must
+    move it to #1: `_mark_mirror_siblings` credits it for having two
+    byte-for-byte adjacent mirrors (a HUD/shadow-copy signature neither
+    decoy has), and `_range_plausibility_penalty` demotes both decoys
+    for a net magnitude that exceeds their own starting value (a
+    free-running-counter signature the true byte does not show)."""
+    atk, apr = _punchout_receipt_scene()
+    res = fight_health_from_drives(atk, apr)
+    assert res["kind"] == "foe_hp"
+    assert res["addr"] == 0x0398
+    top3 = [c["addr"] for c in res["foe_hp_candidates"][:3]]
+    assert set(top3) == {0x0398, 0x0399, 0x039A}
+
+
 def test_fight_health_tally_corroboration_is_advisory_not_a_gate():
     """A candidate with NO periodic partner still wins on FH1+FH2 alone
     (§3.2 point 6: disagreement never disqualifies)."""
@@ -277,6 +328,42 @@ def test_corroborates_tally_false_with_no_windows_or_no_movement():
     hist[:, OPP] = 96
     assert _corroborates_tally(hist, [], OPP) is False
     assert _corroborates_tally(hist, [(0, 40)], OPP) is False
+
+
+# --- _mark_mirror_siblings / _range_plausibility_penalty (ranking) -------
+
+def test_mark_mirror_siblings_credits_an_exact_adjacent_match():
+    cands = [
+        {"addr": 0x0398, "start": 96, "attack_nets": [-50, -19, -74]},
+        {"addr": 0x0399, "start": 96, "attack_nets": [-50, -19, -74]},
+        {"addr": 0x00EE, "start": 73, "attack_nets": [-11, -89, -65]},
+    ]
+    _mark_mirror_siblings(cands)
+    assert cands[0]["mirror_siblings"] == 1
+    assert cands[1]["mirror_siblings"] == 1
+    assert cands[2]["mirror_siblings"] == 0
+
+
+def test_mark_mirror_siblings_ignores_a_near_address_that_disagrees():
+    cands = [
+        {"addr": 0x0398, "start": 96, "attack_nets": [-50, -19, -74]},
+        {"addr": 0x0399, "start": 96, "attack_nets": [-11, -19, -74]},  # close but not equal
+        {"addr": 0x0500, "start": 96, "attack_nets": [-50, -19, -74]},  # equal but too far
+    ]
+    _mark_mirror_siblings(cands, window=4)
+    assert cands[0]["mirror_siblings"] == 0
+    assert cands[1]["mirror_siblings"] == 0
+    assert cands[2]["mirror_siblings"] == 0
+
+
+def test_range_plausibility_penalty_is_zero_within_start():
+    c = {"start": 96, "attack_nets": [-50, -19, -74, -96]}
+    assert _range_plausibility_penalty(c) == 0.0
+
+
+def test_range_plausibility_penalty_rises_past_start():
+    c = {"start": 73, "attack_nets": [-11, -89, -65]}
+    assert _range_plausibility_penalty(c) == pytest.approx((89 - 73) / 73)
 
 
 # --- _mass_reset_boundaries / round_gate_from_drives (§3.4) ---------------

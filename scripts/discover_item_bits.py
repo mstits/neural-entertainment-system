@@ -37,6 +37,17 @@ STAGE 1 — per-rollout candidate proposal (`scan_rollout`).
     supersedes that address's bit-plane scan — the whole byte already
     explains the event, and proposing all eight planes on top of it is
     noise, not evidence.
+    DEATH TRUNCATION (`lives_addr`, IS-1a mitigation 1,
+    `runs/item_semantics/is1a/IS1A_VERDICT_2026-08-25.md`): when given
+    the column index of the SAME lives byte death detection already
+    uses elsewhere (`go_explore_solve.py`'s `SmbGame`/`GenericGame`
+    `.lives`), the rollout is cut at the first frame whose lives value
+    has moved away from the rollout's own starting value by the same
+    wrap-aware amount `GenericGame.is_dead` already treats as death
+    (`(start - cur) % 256 in 1..8`) BEFORE any address is scanned — so
+    a death's post-death menu/HUD RAM rewrite is never read as a
+    candidate item-bit flag. No new address; the same one death
+    detection already claims.
 
 STAGE 2 — cross-rollout confirmation (`confirm_across_rollouts`).
     Folds N independent rollouts' Stage-1 proposals into one ledger per
@@ -53,6 +64,19 @@ STAGE 2 — cross-rollout confirmation (`confirm_across_rollouts`).
     of how many other rollouts confirmed it cleanly — a key does not
     self-heal back to candidate/confirmed; it must be re-derived from
     scratch (dropped from the ledger and resubmitted).
+    ROOT-CLOCK ARTIFACT REJECTION (`root_clock_min_lineages`/`root_
+    clock_tolerance`, IS-1a mitigation 2,
+    `runs/item_semantics/is1a/IS1A_VERDICT_2026-08-25.md`): a real
+    gameplay-contingent flag's first-flip step should vary with what
+    the player actually did across independently-diverging rollouts —
+    a key whose first-flip step lands within `root_clock_tolerance`
+    steps across `root_clock_min_lineages`-or-more of the rollouts that
+    proposed it cleanly is instead a fixed-timing engine-init artifact
+    (the IS-1a residual-13 finding: 8-of-8 surviving rollouts proposing
+    the same address at the identical elapsed step despite each
+    replaying a genuinely different real trajectory) and is rejected
+    with `root_clock_artifact = True`, never promoted on K-of-N count
+    alone.
 
 IDLE-PREFILTER (`compute_idle_mask`, INDEPENDENT §2). A mask, frozen
 once per lineage, of every address that moves AT ALL during genuine
@@ -139,6 +163,19 @@ DEFAULT_MAX_ITEM_BITS = 8
 DEFAULT_VERIFY = {"n_trials": 20, "control_bits": 5,
                   "verdict_gap": 0.5, "control_flatness": 0.2}
 
+#: Cross-lineage step-offset consistency gate (IS1A_VERDICT_2026-08-25.md
+#: mitigation 2) — see `confirm_across_rollouts`. The default is 8, not
+#: `DEFAULT_CONFIRM_K`'s 3: the IS-1a residual-13 finding's own evidence
+#: bar was "8 of the 8 (or more)" surviving rollouts sharing an
+#: identical first-flip step, and a bar this low must stay well above
+#: the small (3-5 rollout) batch sizes this file's own K-of-N tests use
+#: for their synthetic fixtures — those intentionally reuse one fixed
+#: offset across every "hit" rollout to isolate the counting logic
+#: under test, which is indistinguishable, by step-offset alone, from a
+#: real root-clock artifact at a low lineage count.
+DEFAULT_ROOT_CLOCK_MIN_LINEAGES = 8
+DEFAULT_ROOT_CLOCK_TOLERANCE = 0
+
 STATUSES = ("candidate", "confirmed", "rejected")
 
 
@@ -154,6 +191,14 @@ class ItemBitCandidate:
     plane of the byte is the flag while the rest of the byte is not
     trusted. Either way the promotion target a profile's `state_sig:`
     consumes is the same `{addr, match, mod}` triple.
+
+    `root_clock_artifact` names WHY a `"rejected"` status was assigned
+    when the reason is the cross-lineage step-offset check
+    (`confirm_across_rollouts`'s `root_clock_min_lineages`/`root_clock_
+    tolerance`, IS1A_VERDICT_2026-08-25.md mitigation 2) rather than
+    `reverts_seen`/a low `monotone_rollouts` count — the same
+    named-reason convention `idle_excluded`/`reverts_seen`/`change_rate`
+    already use.
     """
     addr: int
     bit: Optional[int] = None
@@ -166,6 +211,7 @@ class ItemBitCandidate:
     total_rollouts: int = 0
     status: str = "candidate"
     first_seen: Optional[dict] = None
+    root_clock_artifact: bool = False
 
     @property
     def key(self) -> tuple:
@@ -184,6 +230,7 @@ class ItemBitCandidate:
             "total_rollouts": int(self.total_rollouts),
             "status": str(self.status),
             "first_seen": self.first_seen,
+            "root_clock_artifact": bool(self.root_clock_artifact),
         }
 
     @classmethod
@@ -200,6 +247,7 @@ class ItemBitCandidate:
             total_rollouts=int(d.get("total_rollouts", 0)),
             status=str(d.get("status", "candidate")),
             first_seen=d.get("first_seen"),
+            root_clock_artifact=bool(d.get("root_clock_artifact", False)),
         )
 
 
@@ -316,7 +364,8 @@ def scan_rollout(log: np.ndarray, *, rollout_id=None, xy: Optional[np.ndarray] =
                  idle_mask: frozenset = frozenset(),
                  max_change_rate: float = DEFAULT_MAX_CHANGE_RATE,
                  scan_bits: bool = True,
-                 addrs: Optional[Iterable[int]] = None) -> dict:
+                 addrs: Optional[Iterable[int]] = None,
+                 lives_addr: Optional[int] = None) -> dict:
     """Propose `(addr, bit)` candidates from ONE rollout's RAM log
     (`log[step, addr]`, uint8-valued). Pure — no ROM, no Pool.
 
@@ -328,8 +377,30 @@ def scan_rollout(log: np.ndarray, *, rollout_id=None, xy: Optional[np.ndarray] =
     otherwise (`reverts_seen` and/or `change_rate` name why) — an
     address that never changes at all is not reported either way, it
     is simply inert over this rollout.
+
+    `lives_addr`, when given, is the column index of the SAME lives
+    byte this project's own death detection already keys off of
+    (`go_explore_solve.py`'s `SmbGame.lives`/`GenericGame.lives` — a
+    profile's already-claimed `solve.lives:` address, never a new one
+    discovered here). The rollout is truncated to the steps strictly
+    BEFORE the first frame whose lives value has moved away from
+    `log[0, lives_addr]` by the same wrap-aware amount
+    `GenericGame.is_dead` already treats as death (`(start - cur) % 256
+    in 1..8` — the 2026-08-23 Ninja Gaiden underflow fix, robust to
+    both a plain decrement and a 0 -> 255 wrap). Without this, a
+    rollout that ends in death keeps scanning through the post-death
+    menu's RAM rewrite and reports its unrelated HUD/menu-state churn
+    as candidate item-bit flags — the IS-1a root cause
+    (`runs/item_semantics/is1a/IS1A_VERDICT_2026-08-25.md`).
     """
     log = np.asarray(log)
+    if (lives_addr is not None and log.shape[0] > 0
+            and 0 <= lives_addr < log.shape[1]):
+        lives_col = log[:, lives_addr].astype(np.int64)
+        delta = (int(lives_col[0]) - lives_col) % 256
+        died = np.flatnonzero((delta >= 1) & (delta <= 8))
+        if died.size:
+            log = log[:int(died[0])]
     n = log.shape[0]
     ncols = min(log.shape[1], RAM_SIZE)
     scan_addrs = range(ncols) if addrs is None else addrs
@@ -400,7 +471,12 @@ def confirm_across_rollouts(rollout_logs: Sequence[np.ndarray], *,
                             max_change_rate: float = DEFAULT_MAX_CHANGE_RATE,
                             scan_bits: bool = True,
                             rollout_ids: Optional[Sequence] = None,
-                            xy_logs: Optional[Sequence] = None) -> dict:
+                            xy_logs: Optional[Sequence] = None,
+                            lives_addr: Optional[int] = None,
+                            root_clock_min_lineages: int =
+                                DEFAULT_ROOT_CLOCK_MIN_LINEAGES,
+                            root_clock_tolerance: int =
+                                DEFAULT_ROOT_CLOCK_TOLERANCE) -> dict:
     """Fold `len(rollout_logs)` independent Stage-1 scans into one
     ledger keyed by `(addr, bit)`.
 
@@ -416,10 +492,34 @@ def confirm_across_rollouts(rollout_logs: Sequence[np.ndarray], *,
     permanently overrides the key to `"rejected"` regardless of how
     many other rollouts confirmed it — this is checked LAST, after the
     K-of-N arithmetic, so a revert can never be out-voted.
+
+    `lives_addr` is forwarded verbatim to `scan_rollout` on every
+    rollout — see its docstring. Each rollout is truncated at its OWN
+    death boundary before scanning, so a mixed batch (some rollouts die
+    in-window, some don't) is handled per-rollout, not batch-wide.
+
+    ROOT-CLOCK ARTIFACT REJECTION (IS-1a mitigation 2,
+    `runs/item_semantics/is1a/IS1A_VERDICT_2026-08-25.md`): a
+    gameplay-contingent flag fires at a step that depends on what the
+    player actually did, so its first-flip step should VARY across
+    independently-diverging rollouts. A key whose per-rollout
+    `first_seen["step"]` lands within `root_clock_tolerance` steps of
+    every other rollout's, across at least `root_clock_min_lineages` of
+    the rollouts that proposed it cleanly, is instead the signature of
+    a deterministic engine-init/sound-engine/animation-parity timer
+    that fires at the same elapsed step regardless of the 8+
+    independently-mined real trajectories that triggered it (the IS-1a
+    residual-13 root cause) — rejected here with `root_clock_artifact
+    = True` rather than promoted, exactly the same way a revert is
+    rejected regardless of an otherwise-passing K-of-N count. Additive:
+    a key seen candidate-shaped in fewer than `root_clock_min_lineages`
+    rollouts, or whose first-flip steps actually spread out (real
+    gameplay-contingent timing), is completely unaffected.
     """
     n = len(rollout_logs)
     ledger: dict = {}
     ever_reverted: set = set()
+    first_steps: dict = {}
 
     for i, log in enumerate(rollout_logs):
         rid = rollout_ids[i] if rollout_ids is not None else i
@@ -427,7 +527,7 @@ def confirm_across_rollouts(rollout_logs: Sequence[np.ndarray], *,
         per_roll = scan_rollout(
             log, rollout_id=rid, xy=xy, claimed_addrs=claimed_addrs,
             idle_mask=idle_mask, max_change_rate=max_change_rate,
-            scan_bits=scan_bits)
+            scan_bits=scan_bits, lives_addr=lives_addr)
         for key, cand in per_roll.items():
             if cand.reverts_seen > 0:
                 ever_reverted.add(key)
@@ -443,11 +543,27 @@ def confirm_across_rollouts(rollout_logs: Sequence[np.ndarray], *,
                 entry.monotone_rollouts += 1
                 if entry.first_seen is None:
                     entry.first_seen = cand.first_seen
+                if cand.first_seen is not None:
+                    first_steps.setdefault(key, []).append(
+                        cand.first_seen["step"])
+
+    root_clock_flagged: set = set()
+    # A floor of 2: a single lineage's first-flip step has zero spread
+    # by definition, so "identical across lineages" is meaningless
+    # (and would falsely flag every single-rollout candidate) below 2.
+    min_lineages = max(2, int(root_clock_min_lineages))
+    tolerance = max(0, int(root_clock_tolerance))
+    for key, steps in first_steps.items():
+        if len(steps) >= min_lineages and (max(steps) - min(steps)) <= tolerance:
+            root_clock_flagged.add(key)
 
     for key, entry in ledger.items():
         entry.total_rollouts = n
         if key in ever_reverted:
             entry.status = "rejected"
+        elif key in root_clock_flagged:
+            entry.status = "rejected"
+            entry.root_clock_artifact = True
         elif entry.monotone_rollouts >= confirm_k:
             entry.status = "confirmed"
         elif entry.monotone_rollouts >= 1:

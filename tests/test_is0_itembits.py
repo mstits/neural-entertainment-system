@@ -369,6 +369,202 @@ def test_is0_6_confirm_k_is_configurable_not_hardcoded():
 
 
 # =======================================================================
+# DEATH TRUNCATION (`lives_addr`) — registered follow-up to IS-1a
+# (runs/item_semantics/is1a/IS1A_VERDICT_2026-08-25.md, mitigation 1):
+# a rollout that dies mid-window must be cut BEFORE its post-death
+# menu/HUD RAM rewrite is scanned, using the SAME lives byte and the
+# SAME wrap-aware decrement math (`(start - cur) % 256 in 1..8`) that
+# go_explore_solve.py's GenericGame.is_dead already uses for death
+# detection — no new address invented here.
+# =======================================================================
+
+LIVES_ADDR = 300
+PRE_DEATH_ADDR = 301
+POST_DEATH_ADDR = 302
+
+
+def _mk_death_rollout(n=500, death_step=250, pre_step=100, post_step=350,
+                      start_lives=3):
+    log = _zeros(n)
+    log[:, LIVES_ADDR] = start_lives
+    log[death_step:, LIVES_ADDR] = start_lives - 1   # one-life death
+    log[pre_step:, PRE_DEATH_ADDR] = 1               # genuine pre-death flag
+    log[post_step:, POST_DEATH_ADDR] = 1             # post-death menu churn
+    return log
+
+
+def test_death_truncation_never_flags_a_ram_change_that_happens_after_the_lives_decrement():
+    log = _mk_death_rollout()
+    # Sanity: without truncation both changes look like clean candidates —
+    # proves the truncation, not some other filter, removes the
+    # post-death one below.
+    naive = scan_rollout(log)
+    assert naive[(PRE_DEATH_ADDR, None)].status == "candidate"
+    assert naive[(POST_DEATH_ADDR, None)].status == "candidate"
+
+    out = scan_rollout(log, lives_addr=LIVES_ADDR)
+    assert (POST_DEATH_ADDR, None) not in out, (
+        "a RAM change occurring after the lives decrement must never be "
+        "reported as a candidate — it is the post-death menu rewrite, "
+        "not an item-bit flag")
+    assert (POST_DEATH_ADDR, 0) not in out    # bit-plane scan too
+
+
+def test_death_truncation_leaves_a_genuine_pre_death_flag_intact():
+    log = _mk_death_rollout()
+    out = scan_rollout(log, lives_addr=LIVES_ADDR)
+    cand = out[(PRE_DEATH_ADDR, None)]
+    assert cand.status == "candidate"
+    assert cand.first_seen["step"] == 100
+
+
+def test_death_truncation_is_opt_in_and_a_noop_without_lives_addr():
+    log = _mk_death_rollout()
+    out = scan_rollout(log)     # no lives_addr — old behavior preserved
+    assert (POST_DEATH_ADDR, None) in out
+    assert out[(POST_DEATH_ADDR, None)].status == "candidate"
+
+
+def test_death_truncation_handles_the_ninja_gaiden_style_zero_wraparound():
+    # GenericGame.is_dead's 2026-08-23 fix: a lives counter that
+    # DISPLAYS remaining lives can read 0 in normal play, so death
+    # decrements 0 -> 255, and a plain `<` comparison never fires. The
+    # SAME wrap-aware `(start - cur) % 256 in 1..8` math must catch
+    # this here too.
+    n = 500
+    log = _zeros(n)
+    log[:, LIVES_ADDR] = 0
+    log[250:, LIVES_ADDR] = 255            # 0 -> 255 wrap on death
+    log[350:, POST_DEATH_ADDR] = 1         # post-death churn
+    out = scan_rollout(log, lives_addr=LIVES_ADDR)
+    assert (POST_DEATH_ADDR, None) not in out
+
+
+def test_death_truncation_no_death_in_the_window_scans_the_full_log():
+    n = 500
+    log = _zeros(n)
+    log[:, LIVES_ADDR] = 3                 # never decrements
+    log[350:, PRE_DEATH_ADDR] = 1
+    out = scan_rollout(log, lives_addr=LIVES_ADDR)
+    assert out[(PRE_DEATH_ADDR, None)].status == "candidate"
+
+
+def test_confirm_across_rollouts_forwards_lives_addr_per_rollout():
+    # Threaded through to the Stage-2 wrapper so a caller need not
+    # pre-truncate every rollout by hand the way
+    # runs/item_semantics/is1a/run_is1a_stage12_3a.py's IS1A_VERDICT_
+    # 2026-08-25.md documents having to do before this fix. Each
+    # rollout gets its OWN pre_step (real gameplay-contingent timing
+    # varies) so this stays isolated from the separate root-clock-
+    # artifact mitigation, which rejects a key whose first-flip step is
+    # suspiciously IDENTICAL across lineages.
+    logs = [_mk_death_rollout(pre_step=80),
+            _mk_death_rollout(pre_step=100),
+            _mk_death_rollout(pre_step=120)]
+    ledger = confirm_across_rollouts(logs, lives_addr=LIVES_ADDR,
+                                     confirm_k=3)
+    assert (POST_DEATH_ADDR, None) not in ledger
+    assert ledger[(PRE_DEATH_ADDR, None)].status == "confirmed"
+
+
+# =======================================================================
+# ROOT-CLOCK ARTIFACT REJECTION (`root_clock_min_lineages`/`root_clock_
+# tolerance`) — registered follow-up to IS-1a
+# (runs/item_semantics/is1a/IS1A_VERDICT_2026-08-25.md, mitigation 2):
+# the residual-13 finding was 8-of-8 (or more) independently-diverging
+# real rollouts proposing the SAME address at the IDENTICAL elapsed
+# first-flip step despite each replaying a genuinely different real
+# action sequence — the signature of a deterministic engine-init/
+# sound-engine/animation-parity timer, not a gameplay-contingent
+# pickup. A real item's flip time should vary with what the player did.
+# =======================================================================
+
+ROOT_CLOCK_ADDR = 400
+
+
+def _mk_offset_rollout(step, addr=ROOT_CLOCK_ADDR, n=500):
+    log = _zeros(n)
+    log[step:, addr] = 1
+    return log
+
+
+def test_root_clock_rejects_identical_first_flip_step_across_8_lineages():
+    # 8 independently-built rollouts that all happen to flip at the
+    # SAME elapsed step — exactly IS-1a's residual-13 shape. Without
+    # this gate these would cleanly K-of-N confirm (monotone_rollouts
+    # == 8, well over confirm_k=3).
+    logs = [_mk_offset_rollout(200) for _ in range(8)]
+    ledger = confirm_across_rollouts(logs, confirm_k=3)
+    entry = ledger[(ROOT_CLOCK_ADDR, None)]
+    assert entry.monotone_rollouts == 8
+    assert entry.status == "rejected"
+    assert entry.root_clock_artifact is True
+
+
+def test_root_clock_survives_when_first_flip_step_varies_across_lineages():
+    # Same 8-lineage batch size, but each one's first-flip step is
+    # different — the real gameplay-contingent shape. Must promote
+    # exactly as Stage 2's ordinary K-of-N arithmetic already would.
+    steps = [150, 210, 175, 300, 140, 260, 190, 225]
+    logs = [_mk_offset_rollout(s) for s in steps]
+    ledger = confirm_across_rollouts(logs, confirm_k=3)
+    entry = ledger[(ROOT_CLOCK_ADDR, None)]
+    assert entry.monotone_rollouts == 8
+    assert entry.status == "confirmed"
+    assert entry.root_clock_artifact is False
+
+
+def test_root_clock_gate_is_a_noop_below_the_default_min_lineages():
+    # The exact shape of this file's own long-standing K-of-N synthetic
+    # fixtures elsewhere (_mk_rollout: one hardcoded offset reused
+    # across every "hit" rollout, purely to isolate the counting logic
+    # under test) — but only 5 lineages, well under the default
+    # root_clock_min_lineages bar of 8 (drawn from the IS-1a incident's
+    # own "8 of 8" evidence, deliberately kept above ordinary small
+    # confirmation batch sizes). An ordinary small batch must be
+    # completely unaffected by this additive gate.
+    logs = [_mk_offset_rollout(150) for _ in range(5)]
+    ledger = confirm_across_rollouts(logs, confirm_k=3)
+    entry = ledger[(ROOT_CLOCK_ADDR, None)]
+    assert entry.status == "confirmed"
+    assert entry.root_clock_artifact is False
+
+
+def test_root_clock_min_lineages_is_configurable():
+    # The same 5-identical-lineage batch as above, but the caller
+    # explicitly opts into a stricter bar — must now be caught.
+    logs = [_mk_offset_rollout(150) for _ in range(5)]
+    ledger = confirm_across_rollouts(logs, confirm_k=3,
+                                     root_clock_min_lineages=5)
+    entry = ledger[(ROOT_CLOCK_ADDR, None)]
+    assert entry.status == "rejected"
+    assert entry.root_clock_artifact is True
+
+
+def test_root_clock_tolerance_widens_what_counts_as_identical():
+    steps = [200, 201, 200, 202, 200, 201, 200, 202]   # spread == 2
+    logs = [_mk_offset_rollout(s) for s in steps]
+
+    strict = confirm_across_rollouts(logs, confirm_k=3)   # tolerance=0
+    assert strict[(ROOT_CLOCK_ADDR, None)].root_clock_artifact is False
+    assert strict[(ROOT_CLOCK_ADDR, None)].status == "confirmed"
+
+    loose = confirm_across_rollouts(logs, confirm_k=3,
+                                    root_clock_tolerance=2)
+    assert loose[(ROOT_CLOCK_ADDR, None)].root_clock_artifact is True
+    assert loose[(ROOT_CLOCK_ADDR, None)].status == "rejected"
+
+
+def test_root_clock_artifact_flag_round_trips_through_dict():
+    c = ItemBitCandidate(addr=ROOT_CLOCK_ADDR, bit=None, status="rejected",
+                         root_clock_artifact=True)
+    d = c.to_dict()
+    assert d["root_clock_artifact"] is True
+    back = ItemBitCandidate.from_dict(d)
+    assert back.root_clock_artifact is True
+
+
+# =======================================================================
 # Bit-plane candidates (§2B's "both shapes supported") — not an IS-0
 # numbered item on its own, but required Stage-1 coverage: a raw byte
 # that is noisy from unrelated bits must still let ONE clean plane

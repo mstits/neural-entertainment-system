@@ -32,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import gzip
 import hashlib
@@ -936,6 +937,21 @@ def _deep_tuple(v):
     return v
 
 
+# Exemplar-action ring bounds (RG-1e, docs/receipts/room_graph/
+# RG1_zelda_2026-08-25.md): a flat 32-step ring is fine for a pan/warp
+# (measured well under it) but truncates a Zelda `fade` — a scripted,
+# largely input-independent wipe whose real duration can run past 32
+# steps — cutting off the actions between onset and the truncated
+# window's start; replaying "exemplar_cell + exemplar_actions" then
+# never reaches the settle it is supposed to reproduce. FLOOR keeps
+# every already-working short traversal at exactly its old length;
+# CEILING bounds the worst case (a pathological/never-settling churn)
+# so per-edge storage and the live per-worker ring buffer both stay
+# bounded instead of growing with churn length.
+EXEMPLAR_RING_FLOOR = 32
+EXEMPLAR_RING_CEILING = 128
+
+
 class RoomIndex:
     """Global room-identity intern table + kind-tagged directed
     adjacency (ROOMGRAPH_ENGINE_2026-08-24 §2).
@@ -1010,14 +1026,18 @@ class RoomIndex:
 
     def record_edge(self, src: int, dst: int, kind: str, direction,
                     frames: int, exemplar_cell=None,
-                    exemplar_actions=(), cap_sig: int = 0) -> None:
+                    exemplar_actions=(), cap_sig: int = 0,
+                    exemplar_state: "bytes | None" = None) -> None:
         """Commit one traversed adjacency edge (kind pan|fade). The
-        FIRST exemplar is kept (archive cell key at onset + last-32
-        action ring) so the sticky-replay edge-validity audit has a
-        stable trajectory to re-run; later traversals only accumulate
-        count/frames_mean. Warp-classified settles must never reach
-        here — refused loudly, because a warp minted as navigable is
-        the death-edge failure the classifier exists to close (§7.5).
+        FIRST exemplar is kept (archive cell key at onset + a trailing
+        action ring, EXEMPLAR_RING_FLOOR..EXEMPLAR_RING_CEILING actions
+        long and grounded in this settle's own measured `frames` — see
+        the module-level EXEMPLAR_RING_FLOOR comment, RG-1e) so the
+        sticky-replay edge-validity audit has a stable trajectory; later
+        traversals only accumulate count/frames_mean. Warp-classified
+        settles must never reach here — refused loudly, because a warp
+        minted as navigable is the death-edge failure the classifier
+        exists to close (§7.5).
 
         SELF-HEAL (2026-08-25 hardening finding): a fade recorded with
         dir=None never used to heal even when a LATER traversal of the
@@ -1037,6 +1057,24 @@ class RoomIndex:
         `--item-sig-report` is off — writes bucket "0" exactly as
         before this graft existed: no new observable, no behavior
         change, additive only.
+
+        FROZEN EXEMPLAR (RG1_zelda_2026-08-25 §RG-1a/RG-1e finding):
+        `exemplar_cell` is a Go-Explore archive KEY, and `GoExploreArchive`
+        is domination-based — a later, better-scoring visit to that same
+        cell overwrites its `Cell.state` in place, so reading the archive
+        back through `exemplar_cell` after the fact is not guaranteed to
+        reproduce the state that was live when this edge was recorded
+        (measured 86.6% stability, root-caused to exactly this). Fix:
+        `exemplar_state`, when the caller has one, is a bytes COPY of the
+        `pool.save_worker_state()` blob taken at record time — bytes are
+        immutable, so once stored here no later domination of the source
+        archive cell can change it. `exemplar_cell` is kept unchanged
+        alongside it (still useful as a human-readable locator / for
+        pre-existing consumers), it just stops being the ONLY way to get
+        the state back. A caller that passes nothing (or an archive-less
+        stand-in) gets `exemplar_state=None`, and a reader must then fall
+        back to the old mutable-key lookup — this is additive, not a
+        replacement, so archives banked before this graft still load.
         """
         if kind not in ("pan", "fade"):
             raise ValueError(
@@ -1048,7 +1086,8 @@ class RoomIndex:
                 e = self.adj[int(src)][int(dst)] = {
                     "kind": kind, "dir": direction, "count": 0,
                     "frames_mean": 0.0, "exemplar_cell": None,
-                    "exemplar_actions": [], "validated": False,
+                    "exemplar_actions": [], "exemplar_state": None,
+                    "validated": False,
                     "validate_attempts": 0, "cap_hist": {}}
             elif e["kind"] == "fade" and kind == "pan" and direction is not None:
                 e["kind"] = "pan"
@@ -1060,8 +1099,22 @@ class RoomIndex:
             e["cap_hist"][k] = e["cap_hist"].get(k, 0) + 1
             if e["exemplar_cell"] is None and exemplar_cell is not None:
                 e["exemplar_cell"] = exemplar_cell
+                # Ring length grounded in the MEASURED transition
+                # duration (`frames`, already steps*frame_skip from the
+                # settle that fired this edge) rather than a flat
+                # constant (RG-1e). `frames` is always >= the true
+                # step count the live ring accumulated, so clamping to
+                # it never under-covers a real transition; the floor
+                # keeps every pan/warp-sized (short) traversal at
+                # exactly the pre-fix 32, and the ceiling bounds a
+                # pathological one.
+                ring_len = max(EXEMPLAR_RING_FLOOR,
+                               min(int(frames), EXEMPLAR_RING_CEILING))
                 e["exemplar_actions"] = [int(a) for a
-                                         in exemplar_actions][-32:]
+                                         in exemplar_actions][-ring_len:]
+                e["exemplar_state"] = (bytes(exemplar_state)
+                                       if exemplar_state is not None
+                                       else None)
 
     def record_warp(self, src, dst: int, d_scene: int, d_odo) -> None:
         """A warp-classified settle: telemetry ONLY — no adjacency, ever
@@ -1078,6 +1131,18 @@ class RoomIndex:
         with self.lock:
             return len(self.ordinals)
 
+    @staticmethod
+    def _edge_to_json(e: dict) -> dict:
+        """Shallow-copy one edge record, base64-encoding `exemplar_state`
+        (raw state bytes are not JSON-serializable). Never mutates `e` —
+        the live adjacency dict a search is still writing to must not be
+        touched by a concurrent stats-flush."""
+        d = dict(e)
+        st = d.get("exemplar_state")
+        d["exemplar_state"] = (base64.b64encode(st).decode("ascii")
+                               if st is not None else None)
+        return d
+
     def to_json(self) -> dict:
         with self.lock:
             return {
@@ -1087,7 +1152,8 @@ class RoomIndex:
                 "cap_hits": self.cap_hits,
                 "hashes": [f"{h:016x}" for h in self.ordinals],
                 "meta": {str(o): m for o, m in self.meta.items()},
-                "adj": {str(s): {str(d): e for d, e in dsts.items()}
+                "adj": {str(s): {str(d): self._edge_to_json(e)
+                                for d, e in dsts.items()}
                         for s, dsts in self.adj.items()},
                 "warp_count": self.warp_count,
                 "warps": list(self.warps),
@@ -1130,6 +1196,14 @@ class RoomIndex:
         for s_s, dsts in (data.get("adj") or {}).items():
             row = idx.adj[int(s_s)] = {}
             for d_s, e in dsts.items():
+                # exemplar_state is base64 text on disk, absent entirely
+                # on an archive banked before the RG-1a/RG-1e frozen-copy
+                # fix. Absent/null => None, which is NOT a crash: it is
+                # the documented fallback signal telling a reader (e.g.
+                # scripts/rg1e_edge_validity.py) to go back to the OLD
+                # mutable-key behavior (look `exemplar_cell` up in the
+                # live archive) for this one edge, same as it always did.
+                st_b64 = e.get("exemplar_state")
                 row[int(d_s)] = {
                     "kind": str(e["kind"]), "dir": e.get("dir"),
                     "count": int(e.get("count", 0)),
@@ -1137,6 +1211,8 @@ class RoomIndex:
                     "exemplar_cell": _deep_tuple(e.get("exemplar_cell")),
                     "exemplar_actions": [int(a) for a in
                                          e.get("exemplar_actions") or []],
+                    "exemplar_state": (base64.b64decode(st_b64)
+                                      if st_b64 else None),
                     "validated": bool(e.get("validated", False)),
                     "validate_attempts": int(e.get("validate_attempts",
                                                    0)),
@@ -3978,7 +4054,7 @@ class Solver:
         self._room_ord[wid] = o
         c["fp_pend"] = None
         c["fp_base"] = None           # onset baseline: derived, never
-        c["fp_ring"] = deque(maxlen=32)   # carried across a restore
+        c["fp_ring"] = deque(maxlen=EXEMPLAR_RING_CEILING)  # restore-carried
         c["fp_edge"] = None
         c["fp_onset_key"] = None
         c["fp_live"] = False
@@ -4000,7 +4076,7 @@ class Solver:
         rf = self.room_fp
         ring = c.get("fp_ring")
         if ring is None:      # ctx minted before arming (defensive)
-            ring = c["fp_ring"] = deque(maxlen=32)
+            ring = c["fp_ring"] = deque(maxlen=EXEMPLAR_RING_CEILING)
         ring.append(int(c["pending"]))
         if c.get("fp_edge") is not None:
             c["fp_edge"] = None
@@ -4115,16 +4191,35 @@ class Solver:
 
         Also counts transits on a burst's first step, which must stay
         zero: p0750 is None at burst start, so a restore can never mint
-        a transit. The Zelda smoke asserts both properties."""
+        a transit. The Zelda smoke asserts both properties.
+
+        FROZEN EXEMPLAR (RG1_zelda_2026-08-25 §RG-1a/RG-1e finding):
+        `e[5]` (the staged exemplar) is an ARCHIVE CELL KEY, and
+        `GoExploreArchive.record` mutates `Cell.state` in place on a
+        later dominating visit — so the key alone can go stale. Look the
+        key up in `self.archive` right here, at commit time, and hand
+        `record_edge` a bytes COPY of whatever state is live under it
+        RIGHT NOW; that copy can never be touched by a later domination
+        (bytes are immutable). `getattr` guards `self.archive` because
+        the T2 hot-loop unit tests drive this method off a duck-typed
+        stand-in that carries no archive at all — that path simply gets
+        `exemplar_state=None`, same as before this graft existed."""
         if c["burst_step"] <= 1:
             self._room_restore_transits += 1
         e = c.get("fp_edge")
         if e is not None:
             c["fp_edge"] = None
+            archive = getattr(self, "archive", None)
+            cell = (archive.cells.get(e[5])
+                    if archive is not None and e[5] is not None else None)
+            exemplar_state = (bytes(cell.state)
+                              if cell is not None and cell.state is not None
+                              else None)
             self.room_index.record_edge(e[0], e[1], e[2], e[3], e[4],
                                         exemplar_cell=e[5],
                                         exemplar_actions=e[6],
-                                        cap_sig=e[7])
+                                        cap_sig=e[7],
+                                        exemplar_state=exemplar_state)
             self._room_edges_committed += 1
 
     def _step0(self, a: int):

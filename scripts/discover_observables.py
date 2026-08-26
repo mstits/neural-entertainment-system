@@ -1610,6 +1610,45 @@ def find_hp_lives(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
 # (§1's CAMERA_STATIC_AGENT_ACTIVE receipt), so there is no fallback
 # progress signal to lean on here the way a room-based game always has.
 # --------------------------------------------------------------------------
+def _settled_start(col: np.ndarray, *, min_stable: int = DEATH_MIN_AGREE,
+                   horizon: int = SETTLE_CAP) -> int:
+    """The first value `col` holds for `min_stable` consecutive reads.
+
+    `attack_mash`/`approach_retreat` log the RAM state AFTER each rep's
+    own first drawn action already ran — `Discoverer._reload()` only
+    settles the machine up to the point play begins, not up to the
+    point every HUD element has finished animating. A health bar that
+    chips away over several frames rather than jumping straight to its
+    new value (a real, common NES pattern, not a display-only effect)
+    means `log[0, addr]` can land mid-chip: two reps that truly started
+    the bout from the SAME reloaded stock then read as different
+    "starts" purely because one rep's first action happened to land a
+    hit whose tween was still in flight at frame 0 and the other's
+    didn't touch the byte at all. `same_start` below would wrongly
+    reject a real self/foe-HP candidate on that basis alone.
+
+    Same debounce discipline `DEATH_MIN_AGREE` already encodes
+    elsewhere in this module (a reading only counts once it has held,
+    not on first appearance): scan forward for the first run of
+    `min_stable` identical consecutive reads and report that value,
+    bounded to the first `horizon` frames — the same settle-window cap
+    `settle_steps` uses — so a real, later combat plateau many frames
+    in is never mistaken for the start. A column that never settles
+    inside that window falls back to the raw first read, i.e. the old
+    behaviour, since there is nothing better to fall back to.
+    """
+    head = col[:max(int(horizon), 1)]
+    n = len(head)
+    if n == 0:
+        raise ValueError("col must be non-empty")
+    k = min(min_stable, n)
+    for i in range(n - k + 1):
+        window = head[i:i + k]
+        if bool((window == window[0]).all()):
+            return int(window[0])
+    return int(head[0])
+
+
 def _decrement_consensus(logs: Sequence[np.ndarray], addr: int, *,
                          min_agree: int = DEATH_MIN_AGREE) -> dict:
     """How many differently-seeded reps show `addr` net DECREASING
@@ -1645,6 +1684,10 @@ def _decrement_consensus(logs: Sequence[np.ndarray], addr: int, *,
     starts non-empty; this is a generic plausibility bound, not a
     Punch-Out special case, and it is what separates $0398 (start 96)
     from its animation-counter aliases in that exact live trace.
+
+    `starts` is read through `_settled_start`, not `log[0, addr]`
+    directly — see that function's docstring for the capture-timing
+    edge case this closes.
     """
     agreeing = 0
     nets: list[int] = []
@@ -1657,7 +1700,7 @@ def _decrement_consensus(logs: Sequence[np.ndarray], addr: int, *,
         dw = np.where(d < -128, d + 256, np.where(d > 128, d - 256, d))
         end = _regime_split(dw)
         regime = dw[:end]
-        starts.append(int(log[0, addr]))
+        starts.append(_settled_start(col))
         net = int(regime.sum())
         nets.append(net)
         if net < 0 and bool((regime < 0).any()):
@@ -1686,6 +1729,73 @@ def _corroborates_tally(hist: np.ndarray, windows: Sequence[tuple], addr: int
         if int(np.diff(seg).sum()) < 0:
             return True
     return False
+
+
+#: How many bytes away a genuine display-mirror copy of a stat can sit.
+#: Chosen to catch an adjacent-byte HUD/shadow-copy mirror (a stat
+#: written a second time, unchanged, to drive another digit or render
+#: pass) while staying far too narrow to let two independently-moving
+#: zero-page counters that just happen to sit near each other pass as
+#: siblings. Not tuned to any one game's memory map.
+FIGHT_MIRROR_WINDOW = 4
+
+
+def _mark_mirror_siblings(cands: list[dict],
+                          window: int = FIGHT_MIRROR_WINDOW) -> None:
+    """Annotate each candidate in `cands` with `mirror_siblings`: how
+    many OTHER candidates within `window` bytes carry the EXACT same
+    `start` and the EXACT same per-rep `attack_nets` sequence.
+
+    A stat that drives more than one on-screen readout — a HUD tile,
+    a duplicate used by a different render pass, one half of a BCD
+    pair — is often written byte-for-byte identically to more than one
+    nearby address every frame, so a neighbour that matches perfectly
+    is not independent evidence against a candidate, it is a second
+    witness FOR it. An animation-frame or elapsed-step counter has no
+    reason to be copied to a neighbouring address at all. Measured live
+    on Punch-Out (`runs/fight_gate/discover_punchout.json`): the true
+    opp_hp byte (start=96, nets=[-50,-19,-74,-64,-96]) has two
+    neighbours carrying that identical start+nets pair; neither
+    zero-page decoy that also clears FH1+FH2 in that same receipt has
+    any. Purely corroborating — a candidate with zero siblings is left
+    unboosted, never rejected, the same discipline `_corroborates_tally`
+    already uses for its periodic-tally check.
+    """
+    for c in cands:
+        c["mirror_siblings"] = sum(
+            1 for other in cands
+            if other is not c
+            and abs(other["addr"] - c["addr"]) <= window
+            and other["start"] == c["start"]
+            and other["attack_nets"] == c["attack_nets"])
+
+
+def _range_plausibility_penalty(c: dict) -> float:
+    """>= 0; higher means less physically plausible as a single-regime
+    stock reading, used as a ranking demotion (never a hard gate).
+
+    `_decrement_consensus` only ends a regime at the first RISE
+    (`_regime_split`); a byte that free-wheels downward through
+    repeated 0->255 wraps without ever rising is never cut off, so its
+    reported cumulative net can run past its own `start`. A real
+    HP/stock byte can lose AT MOST what it started with before hitting
+    zero — losing MORE than that within one regime means it wrapped
+    at least once more, the signature of a free-running counter, not a
+    bigger hit. Measured live on Punch-Out
+    (`runs/fight_gate/discover_punchout.json`): the true opp_hp byte's
+    worst net (-96) never exceeds its start (96) — ratio 0.0 — while
+    two zero-page decoys that also clear FH1+FH2 in that same receipt
+    worst out at 89/73 and 126/82, both well over 1.0. Continuous, not
+    a cliff: a real byte a few counts past its start from some other
+    cause is demoted, not disqualified, the same discipline the spread
+    tiebreak already uses for suspiciously-identical outcomes.
+    """
+    nets = c["attack_nets"]
+    start = c["start"] or 0
+    if not nets or start <= 0:
+        return 0.0
+    worst = max(abs(n) for n in nets)
+    return max(0.0, (worst - start) / start)
 
 
 def fight_health_from_drives(attack_drives: Sequence[Mapping],
@@ -1720,6 +1830,17 @@ def fight_health_from_drives(attack_drives: Sequence[Mapping],
     candidate — never to filter. The actual self/foe split is Gate FH2;
     a collision with `find_hp_lives` is reported as a named finding
     (§5.4 failure mode 1), never silently resolved either way.
+
+    Passing FH1+FH2 only narrows the field; among survivors the ranking
+    (`_rank` below) adds two further corroboration terms on top of the
+    original agreement/spread score, both measured against the live
+    Punch-Out receipt where spread alone was not enough to put the true
+    byte first: `_mark_mirror_siblings` rewards an adjacent byte that
+    mirrors a candidate's start+nets exactly, and
+    `_range_plausibility_penalty` demotes a candidate whose net
+    magnitude exceeds its own starting value (a free-running-counter
+    signature a real single-regime stock can't show). Neither is a
+    gate — both only reorder candidates that already cleared FH1+FH2.
     """
     atk_logs = [np.asarray(d["log"]) for d in attack_drives
                if len(np.asarray(d["log"])) > 1]
@@ -1759,6 +1880,12 @@ def fight_health_from_drives(attack_drives: Sequence[Mapping],
         }
         (self_cands if fh2["passes"] else foe_cands).append(entry)
 
+    # Full-pool corroboration passes, run BEFORE ranking/truncation so a
+    # candidate's siblings are whatever cleared FH1+FH2, not whatever
+    # survived an earlier, weaker ranking's cut to `top`.
+    _mark_mirror_siblings(foe_cands)
+    _mark_mirror_siblings(self_cands)
+
     def _rank(c: dict) -> tuple:
         # Prefer a WIDER spread of net damage across the differently-
         # seeded reps over a narrower one. Measured live on Punch-Out
@@ -1777,10 +1904,26 @@ def fight_health_from_drives(attack_drives: Sequence[Mapping],
         # seeds are down-ranked, never hard-rejected (a real byte could
         # legitimately tie by chance) — demoted, not dropped, the same
         # discipline `moves_while_idle` already uses there.
+        #
+        # Spread alone is not enough: measured live on the real
+        # Punch-Out receipt (runs/fight_gate/discover_punchout.json),
+        # TWO zero-page decoys clear FH1+FH2 with real (non-identical)
+        # cross-rep spread wider than the true opp_hp byte's, and both
+        # out-rank it under spread alone. Two further, independent
+        # corroboration terms (each pre-registered as a general rule,
+        # not a per-game special case) come first: `mirror_siblings`
+        # rewards a candidate for having an adjacent byte that mirrors
+        # its start+nets exactly (a HUD/shadow-copy signature the true
+        # byte has and the decoys do not), and the plausibility penalty
+        # demotes a candidate whose net magnitude free-wheels past its
+        # own starting value (a free-running counter signature the two
+        # decoys have and the true byte does not). Together they move
+        # the true byte from rank #3 of 5 to rank #1 on that receipt.
         nets = c["attack_nets"]
         spread = (max(nets) - min(nets)) if nets else 0
         worst_net = min(nets) if nets else 0
-        return (-c["attack_agree"], -spread, worst_net, c["addr"])
+        return (-c["attack_agree"], _range_plausibility_penalty(c),
+                -c["mirror_siblings"], -spread, worst_net, c["addr"])
     foe_cands.sort(key=_rank)
     self_cands.sort(key=_rank)
     foe_cands, self_cands = foe_cands[:top], self_cands[:top]

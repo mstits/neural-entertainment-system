@@ -21,14 +21,17 @@ import numpy as np
 import pytest
 
 from scripts.discover_observables import (
+    DEATH_MIN_AGREE,
     LEARNFUN_SHORTLIST,
     LIVES_MAX_DROP,
     LIVES_MAX_TICKS,
     SETTLE_CAP,
     _col_stats,
+    _decrement_consensus,
     _flat_under_noop,
     _saturates_conclusively,
     _saturation_from_logs,
+    _settled_start,
     _wrap_deltas,
     emit_solve_yaml,
     gate_summary,
@@ -608,3 +611,108 @@ def test_nothing_watched_reports_that_rather_than_no_counter():
     cands, ev = lives_from_death_drives([])
     assert cands == []
     assert ev["usable"] == 0
+
+
+# ---------------------------------------------------------------------
+# _settled_start / _decrement_consensus's `same_start` gate
+# (FIGHTGATE_MECHANISM_2026-08-25.md's attack_mash/approach_retreat
+# probes) — the capture-timing edge case: `attack_mash` logs the RAM
+# state AFTER a rep's own first (independently-seeded, per-rep) action
+# already ran, so `log[0, addr]` is not guaranteed to be at rest. A
+# health-bar/tally byte that chips away over several frames instead of
+# jumping straight to its new value puts that transient in `log[0]`
+# whenever a rep's opening action happens to land — and a naive
+# frame-0 read then tells two reps that truly began the bout at the
+# SAME stock apart, purely on capture timing.
+# ---------------------------------------------------------------------
+
+FIGHT_HP = 0x0398   # Punch-Out's own mac_hp, named in _decrement_consensus
+
+
+def _tweening(n: int, sequence, hold: int) -> np.ndarray:
+    """A byte that plays back `sequence` frame by frame — an
+    in-flight HP-bar/tally animation still resolving — then holds at
+    `hold` for the rest of the log. `sequence` need not include `hold`
+    itself; playback just runs out and holding takes over."""
+    col = np.empty(n, dtype=np.uint8)
+    seq = list(sequence)
+    for t in range(n):
+        col[t] = seq[t] if t < len(seq) else hold
+    return col
+
+
+def test_settled_start_waits_out_an_in_flight_tween():
+    """The bug this replaces: trusting `col[0]` outright. Here frame 0
+    is mid-animation (40), not the value the bout actually rests at
+    (96) — `_settled_start` must wait for the read to hold before
+    reporting it, rather than repeating the first thing it saw."""
+    tweening = _tweening(20, [40, 70, 88], hold=96)
+    assert int(tweening[0]) == 40          # the naive frame-0 read: wrong
+    assert _settled_start(tweening) == 96  # the settled read: correct
+
+
+def test_settled_start_is_immediate_when_there_is_no_tween_at_all():
+    """A rep whose opening action never touched the byte has nothing
+    to wait out — frame 0 already IS the settled value."""
+    already_stable = np.full(20, 96, dtype=np.uint8)
+    assert _settled_start(already_stable) == 96
+
+
+def test_settled_start_needs_min_stable_consecutive_reads_not_two():
+    """A single repeat is not enough to call it settled — the byte
+    could just be pausing mid-tween on its way to somewhere else.
+    `min_stable` (DEATH_MIN_AGREE by default) sets the bar."""
+    col = _tweening(20, [40, 40, 70, 88], hold=96)
+    assert _settled_start(col, min_stable=2) == 40   # two reads is enough here
+    assert _settled_start(col, min_stable=DEATH_MIN_AGREE) == 96
+
+
+def test_settled_start_falls_back_to_the_raw_first_read_if_it_never_settles():
+    """A column that keeps changing for the whole window has nothing
+    to report but the old behaviour: whatever frame 0 was."""
+    col = np.arange(20, dtype=np.uint8)  # never repeats
+    assert _settled_start(col) == int(col[0]) == 0
+
+
+def test_settled_start_is_bounded_so_a_later_plateau_is_not_mistaken_for_it():
+    """The scan is capped at `horizon` frames (SETTLE_CAP, the same
+    settle-window bound `settle_steps` uses) so a real, later combat
+    plateau many frames in is never read back as the probe's start."""
+    col = _tweening(200, list(range(40, 40 + SETTLE_CAP + 10)), hold=200)
+    # never stable inside the first `horizon` frames -> falls back raw
+    assert _settled_start(col, horizon=SETTLE_CAP) == int(col[0])
+
+
+def test_decrement_consensus_same_start_survives_an_in_flight_tween():
+    """Two reps that truly started the bout at the same stock (96)
+    must not be told apart just because one of them was captured while
+    its own opening action's chip-away tween was still resolving."""
+    n = 300
+
+    def _rep(sequence):
+        log = np.zeros((n, RAM), dtype=np.uint8)
+        log[:, FIGHT_HP] = _tweening(n, sequence, hold=96)
+        return log
+
+    logs = [_rep([40, 70, 88]),   # frame 0 mid-tween
+            _rep([96])]           # frame 0 already at rest
+    result = _decrement_consensus(logs, FIGHT_HP)
+    assert result["same_start"] is True
+    assert result["start"] == 96
+
+
+def test_decrement_consensus_same_start_still_rejects_genuinely_different_starts():
+    """The fix must not paper over a REAL disagreement — two reps
+    that settle at different resting values are not the same start,
+    tween or no tween."""
+    n = 300
+
+    def _rep(sequence, hold):
+        log = np.zeros((n, RAM), dtype=np.uint8)
+        log[:, FIGHT_HP] = _tweening(n, sequence, hold=hold)
+        return log
+
+    logs = [_rep([40, 70, 88], hold=96),
+            _rep([10, 20], hold=64)]
+    result = _decrement_consensus(logs, FIGHT_HP)
+    assert result["same_start"] is False

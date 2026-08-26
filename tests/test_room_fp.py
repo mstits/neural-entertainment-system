@@ -19,6 +19,8 @@ import numpy as np
 import pytest
 
 from scripts.go_explore_solve import (
+    EXEMPLAR_RING_CEILING,
+    EXEMPLAR_RING_FLOOR,
     ODO_ALT,
     ODO_LO,
     ROOM_HI,
@@ -35,6 +37,7 @@ from scripts.go_explore_solve import (
     room_fp_config_sha,
     room_fp_mask,
 )
+from src.training.go_explore import GoExploreArchive
 
 # ---------------------------------------------------------------------
 # mask + fingerprint
@@ -301,6 +304,33 @@ def test_record_edge_accumulates_and_keeps_the_first_exemplar():
     assert len(e["exemplar_actions"]) == 32  # last-32 action ring
 
 
+def test_record_edge_grounds_ring_length_in_measured_transition_duration():
+    # RG-1e (docs/receipts/room_graph/RG1_zelda_2026-08-25.md): a flat
+    # 32-step ring truncates a Zelda `fade` -- a scripted,
+    # input-independent wipe whose real duration can run well past 32
+    # steps -- cutting off the actions between onset and the truncated
+    # window's start, so replaying "exemplar_cell + exemplar_actions"
+    # can never reach the settle it is supposed to reproduce. The ring
+    # length must be grounded in the settle's own measured `frames`,
+    # not a flat constant: a short pan keeps exactly its old length,
+    # a long fade gets a longer one (never past EXEMPLAR_RING_CEILING).
+    idx = RoomIndex(cap=8)
+    long_run = list(range(EXEMPLAR_RING_CEILING + 40))
+    idx.record_edge(0, 1, "pan", "E", 10, exemplar_cell=("cellA",),
+                    exemplar_actions=list(long_run))
+    idx.record_edge(2, 3, "fade", None, 400, exemplar_cell=("cellB",),
+                    exemplar_actions=list(long_run))
+
+    pan_actions = idx.adj[0][1]["exemplar_actions"]
+    fade_actions = idx.adj[2][3]["exemplar_actions"]
+    assert len(pan_actions) == EXEMPLAR_RING_FLOOR       # unchanged floor
+    assert len(fade_actions) > len(pan_actions)          # fade gets more
+    assert len(fade_actions) == EXEMPLAR_RING_CEILING    # capped, bounded
+    # both keep the MOST RECENT actions (the ones ending at settle)
+    assert pan_actions[-1] == long_run[-1]
+    assert fade_actions[-1] == long_run[-1]
+
+
 def test_record_edge_self_heals_a_fade_into_a_pan():
     # 2026-08-25 hardening finding: a fade minted by an unlucky
     # scene-noise co-occurrence used to be PERMANENT — a repeat
@@ -362,6 +392,90 @@ def test_save_load_roundtrip_preserves_identity_and_exemplar_keys(tmp_path):
     assert e["exemplar_cell"] == key
     assert e["exemplar_actions"] == [3, 3, 5]
     assert e["kind"] == "fade" and e["count"] == 1
+
+
+def test_frozen_exemplar_state_survives_a_later_archive_domination():
+    """RG1_zelda_2026-08-25 SS RG-1a/RG-1e root cause: `exemplar_cell` is
+    a Go-Explore ARCHIVE KEY, and `GoExploreArchive.record` mutates the
+    Cell it points at IN PLACE ("existing.state = state") whenever a
+    later visit dominates that same cell -- so reading the archive back
+    through `exemplar_cell` after the fact is not guaranteed to be the
+    state that was actually live when the edge was recorded (measured
+    86.6% stability, below the 95% target). `exemplar_state` is a bytes
+    COPY taken at record time and must not move when that domination
+    happens later -- this is the whole fix, proven end to end against
+    the real `GoExploreArchive`, not a hand-rolled stand-in."""
+    archive = GoExploreArchive(cell_fn=lambda ram: (0,))
+    key = (0,)
+    archive.record(ram=b"\x00" * 8, state=b"original-state",
+                   score=1.0, steps=10, key=key)
+
+    idx = RoomIndex(cap=8)
+    onset_cell = archive.cells[key]
+    idx.record_edge(0, 1, "pan", "E", 10, exemplar_cell=key,
+                    exemplar_actions=[1, 2, 3],
+                    exemplar_state=bytes(onset_cell.state))
+    e = idx.adj[0][1]
+    assert e["exemplar_cell"] == key
+    assert e["exemplar_state"] == b"original-state"
+
+    # Simulate the archive cell being overwritten by a LATER, higher-
+    # scoring visit to the SAME cell -- exactly the domination RG-1a/
+    # RG-1e traced the stability shortfall to.
+    dominated = archive.record(ram=b"\x01" * 8, state=b"dominated-state",
+                               score=2.0, steps=5, key=key)
+    assert dominated is True
+    assert archive.cells[key].state == b"dominated-state"
+
+    # The OLD lookup path (follow exemplar_cell back into the live
+    # archive) is now stale, reproducing the RG-1a/RG-1e failure mode...
+    stale = archive.cells[e["exemplar_cell"]].state
+    assert stale == b"dominated-state"
+    # ...but the frozen copy this fix stores alongside it is untouched.
+    assert e["exemplar_state"] == b"original-state"
+
+
+def test_frozen_exemplar_state_is_none_when_the_caller_has_none():
+    # Every pre-existing caller (and the T2 hot-loop tests, whose
+    # duck-typed Solver stand-in carries no `archive` at all) passes
+    # nothing for exemplar_state -- additive, not a required field.
+    idx = RoomIndex(cap=8)
+    idx.record_edge(0, 1, "pan", "E", 10, exemplar_cell=(0,),
+                    exemplar_actions=[1])
+    assert idx.adj[0][1]["exemplar_state"] is None
+
+
+def test_exemplar_state_survives_the_json_roundtrip(tmp_path):
+    idx = RoomIndex(cap=8, config_sha="cafe1234")
+    key = (0,)
+    idx.record_edge(0, 1, "pan", "E", 10, exemplar_cell=key,
+                    exemplar_actions=[1, 2, 3],
+                    exemplar_state=b"\x00\x01\xffstate-blob")
+    idx.save(tmp_path / "room_index.json")
+    back = RoomIndex.load(tmp_path / "room_index.json")
+    assert back.adj[0][1]["exemplar_state"] == b"\x00\x01\xffstate-blob"
+
+
+def test_an_archive_banked_before_the_frozen_field_still_loads(tmp_path):
+    # Backward-compat: a room_index.json written before this graft
+    # existed has no "exemplar_state" key at all in its edge records.
+    # Loading it must default to None (the documented old-mutable-key
+    # fallback signal), never raise.
+    p = tmp_path / "room_index.json"
+    p.write_text(json.dumps({
+        "version": RoomIndex.VERSION, "config_sha": "old", "cap": 8,
+        "cap_hits": 0, "hashes": [], "meta": {},
+        "adj": {"0": {"1": {
+            "kind": "pan", "dir": "E", "count": 1, "frames_mean": 10.0,
+            "exemplar_cell": [0], "exemplar_actions": [1, 2, 3],
+            "validated": False, "validate_attempts": 0, "cap_hist": {},
+        }}},
+        "warp_count": 0, "warps": [],
+    }))
+    back = RoomIndex.load(p)
+    e = back.adj[0][1]
+    assert e["exemplar_state"] is None
+    assert e["exemplar_cell"] == (0,)
 
 
 def test_load_refuses_a_version_it_does_not_speak(tmp_path):
@@ -914,6 +1028,38 @@ def test_a_live_pan_stages_the_edge_and_the_transit_commits_it():
     assert c["fp_edge"] is None and s._room_edges_committed == 1
 
 
+def test_a_live_pan_freezes_the_exemplar_state_at_transit_commit_time():
+    """Solver-level wiring for the RG1_zelda_2026-08-25 fix: _room_transit
+    must fetch the CURRENT state under the staged exemplar_cell from
+    self.archive at commit time and freeze a copy, so a LATER
+    domination of that same archive cell (the exact mechanism RG-1a/
+    RG-1e root-caused the 86.6% stability shortfall to) cannot change
+    what got recorded."""
+    s = _hot_self()
+    s.archive = GoExploreArchive(cell_fn=lambda ram: ("unused",))
+    s.archive.record(ram=b"\x00", state=b"onset-state", score=1.0,
+                     steps=1, key=("cellA",))
+    s.room_index.intern(nt_fingerprint(_nt(3), s._room_mask))   # A=0
+    c = _ctx(s, psig=(9, 9, 0, 0))
+    _step(s, c, _nt(3), odo=(0, 0), action=1)          # confirm live
+    c["cur_key"] = ("cellA",)          # last cell observed pre-churn
+    _step(s, c, _nt(4), odo=(0, 0), action=2)          # churn onset
+    _step(s, c, _nt(4), odo=(256, 0), action=3)        # +256 px: pan E
+    s._room_transit(c)
+    e = s.room_index.adj[0][1]
+    assert e["exemplar_cell"] == ("cellA",)
+    assert e["exemplar_state"] == b"onset-state"
+
+    # A LATER, unrelated visit dominates the SAME archive cell (higher
+    # score, fewer steps) -- exactly RG-1a/RG-1e's diagnosed mechanism.
+    dominated = s.archive.record(ram=b"\x01", state=b"later-dominated",
+                                 score=99.0, steps=1, key=("cellA",))
+    assert dominated is True
+    assert s.archive.cells[("cellA",)].state == b"later-dominated"
+    # The edge already committed keeps its frozen copy, unmoved.
+    assert e["exemplar_state"] == b"onset-state"
+
+
 def test_a_warp_settle_adopts_identity_but_mints_no_edge():
     s = _hot_self()
     s.room_index.intern(nt_fingerprint(_nt(3), s._room_mask))   # A=0
@@ -985,16 +1131,58 @@ def test_sample_every_skips_the_hash_but_keeps_the_ring():
     assert list(c["fp_ring"]) == [7, 8]
 
 
-def test_the_ring_carries_at_most_the_last_32_actions():
+def test_the_live_ring_carries_at_most_the_ceiling_actions():
+    # RG-1e (docs/receipts/room_graph/RG1_zelda_2026-08-25.md): the raw
+    # per-worker ring `_room_step` stages into `fp_edge` (BEFORE
+    # `record_edge` grounds a length in the measured duration) is
+    # bounded by EXEMPLAR_RING_CEILING, not a flat 32 -- a long churn
+    # must not have its early actions evicted before the settle that
+    # needs them even fires.
     s = _hot_self()
     s.room_index.intern(nt_fingerprint(_nt(3), s._room_mask))
     c = _ctx(s, psig=(9, 9, 0, 0))
-    for a in range(40):
+    n = EXEMPLAR_RING_CEILING + 8
+    for a in range(n):
         _step(s, c, _nt(3), action=a)
-    _step(s, c, _nt(4), action=40)
-    _step(s, c, _nt(4), action=41)
+    _step(s, c, _nt(4), action=n)
+    _step(s, c, _nt(4), action=n + 1)
     acts = c["fp_edge"][6]
-    assert len(acts) == 32 and acts[-1] == 41 and acts[0] == 10
+    assert (len(acts) == EXEMPLAR_RING_CEILING
+            and acts[-1] == n + 1 and acts[0] == 10)
+
+
+def test_a_long_fade_keeps_the_whole_churn_not_just_its_last_32_steps():
+    # The end-to-end reproduction of the RG-1e finding: a scripted
+    # Zelda fade churns through many DISTINCT partially-drawn hashes
+    # (never repeating early, so settle cannot fire) before landing on
+    # its final hash for `settle` consecutive samples. The committed
+    # exemplar_actions must span the WHOLE churn from onset to settle
+    # -- under the pre-fix flat-32 ring, the onset action below would
+    # have been evicted long before the settle fired.
+    s = _hot_self(cfg=_cfg(mask=[], settle=2))
+    s.room_index.intern(nt_fingerprint(_nt(3), s._room_mask))   # A=0
+    c = _ctx(s, psig=(9, 9, 0, 0))
+    _step(s, c, _nt(3), odo=(0, 0), action=-1)          # confirm live
+    c["cur_key"] = ("cellA",)           # last cell observed pre-churn
+    n_churn = EXEMPLAR_RING_FLOOR + 8   # longer than the old flat cap
+    for i in range(n_churn):
+        # a fresh partially-drawn hash every step: odo/scene held flat
+        # so the settle classifies "fade", not "pan"/"warp".
+        _step(s, c, _nt(10 + i), odo=(0, 0), action=i)
+    _step(s, c, _nt(200), odo=(0, 0), action=n_churn)       # settle #1
+    _step(s, c, _nt(200), odo=(0, 0), action=n_churn + 1)   # fires
+
+    (src, dst, kind, direction, frames, exemplar,
+     acts, cap_sig) = c["fp_edge"]
+    assert kind == "fade" and exemplar == ("cellA",)
+    expected = [-1] + list(range(n_churn)) + [n_churn, n_churn + 1]
+    assert acts == expected             # nothing evicted: onset kept
+
+    s._room_transit(c)
+    e = s.room_index.adj[0][1]
+    # record_edge's own length grounds in `frames` too, so the commit
+    # never re-truncates a churn this long back down to 32.
+    assert e["exemplar_actions"] == expected
 
 
 def test_the_restore_transit_tripwire_counts_only_first_step_transits():
