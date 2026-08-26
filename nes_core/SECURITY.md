@@ -426,9 +426,41 @@ refuse to load with a clear error:
 - `NCST\x01` body → loaded normally.
 - `NCST\x02...` or higher → `PyValueError("unsupported NCST version
   byte ...")`. Prevents silent corruption on layout change.
-- No magic prefix → accepted as a legacy naked-bincode body (kept for
-  backwards-compat with older `.state.bin` files). Will be flipped to
-  strict refusal once every on-disk blob is migrated.
+- No magic prefix → **behaviour differs by loader, and the previous
+  wording here was wrong.** Corrected 2026-08-25 after an attempted
+  "migrate every naked blob, then flip to strict refusal" change was
+  investigated and abandoned:
+
+  - `Pool::load_start_state` treats a non-magic file as a **legacy
+    action-replay tape**, not as a bincode body: the bytes are replayed
+    frame-by-frame as NES controller input on worker 0, and the
+    resulting state is snapshotted and broadcast to the other workers.
+    This path is live and load-bearing — it is documented nowhere else
+    in this file, which is the defect this entry fixes.
+  - `Pool::load_worker_state` and `python.rs::load_state` pass a
+    non-magic blob to `decode_state` as a bincode body. Verified
+    2026-08-25: every naked `.state.bin` currently on disk is **already
+    refused** by these two loaders (`invalid u8 while decoding bool`),
+    so the permissive fallback protects zero real files today.
+
+  All 8 remaining non-magic `.state.bin` files under `roms/` were
+  measured and are **button tapes, not savestates** — 12 distinct byte
+  values, all NES button bitmasks (0/1/2/4/8/16/32/64/128 and sums),
+  versus 256 distinct values plus an `NCST\x01` prefix on a real state.
+  They are consumed by ~15 callers including `tests/parity/
+  test_zelda_input_replay.py`, which is inside the `make parity`
+  baseline.
+
+  Consequence: "migrate every blob to NCST, then flip to strict
+  refusal" is **unsatisfiable as stated** — prefixing a tape with
+  `NCST\x01` injects five bogus input frames (`N`=0x4E, `C`=0x43,
+  `S`=0x53, `T`=0x54, `\x01`) that desynchronise every replay, and
+  routes the file into the bincode branch where it fails. The correct
+  close, if this is ever taken up, is: leave `load_start_state`'s
+  replay branch permissive **by design**, flip only the other two
+  loaders (which already refuse these files in practice), and rename
+  the tapes to `*.tape.bin` so the format is not implied by the
+  extension. That rename touches ~15 call sites and is not done here.
 
 Callers who care about durability (curriculum auto-promotion, play
 recordings) should write the prefixed output directly — which
