@@ -555,10 +555,24 @@ def test_breaking_one_thing_moves_the_quorum_verdict(mutation, expected) -> None
 # 9. The control this was built from: same tapes, same detector, one key.
 # ==========================================================================
 
-CONTROL = REPO / "runs" / "clear_control_2026-08-26" / "cv_odometer_swap.json"
+#: Checked into docs/receipts/ ON PURPOSE. This lived under runs/, which is
+#: gitignored, so the one end-to-end control tying the adjudicator to real
+#: banked tapes SKIPPED on any fresh checkout — and a skip is not a pass.
+#: Every other test in this module runs on synthetic profile dicts; this is
+#: the only one whose input is a measurement.
+CONTROL = REPO / "docs" / "receipts" / "clear_control" / "cv_odometer_swap_2026-08-26.json"
 
 
-@pytest.mark.skipif(not CONTROL.exists(), reason="control receipt not banked")
+def test_the_control_receipt_is_checked_in() -> None:
+    """Fail, never skip. If the receipt goes missing the control below
+    would silently stop running, which is how the odometer arm's 0/3 got
+    filed as a miss in the first place."""
+    assert CONTROL.exists(), (
+        f"{CONTROL.relative_to(REPO)} is missing — the clear-quorum "
+        f"control has no input and this module is down to synthetic dicts")
+
+
+
 def test_the_cv_odometer_swap_control_now_reports_unreachable_not_a_miss() -> None:
     """The banked receipt, replayed through the adjudicator rather than
     through the emulator. Its own numbers are the specification: under the

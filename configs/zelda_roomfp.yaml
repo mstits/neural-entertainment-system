@@ -44,6 +44,26 @@ action_space:
   - ["left", "A"]
   - ["right", "A"]
 
+# $0070 and $0084 are quarantined addresses (q_link_x / q_link_y in
+# configs/zelda.yaml's quarantine block) used here as solve coordinates,
+# i.e. as pre-probe exclusions in scripts/observatory.py. Admissible only
+# because both were independently re-derived by measurement on this ROM;
+# the receipt is checked in. See configs/zelda.yaml for the same block.
+rediscovered_addresses:
+  - address: "0x0070"
+    role: solve.progress.lo
+    method: >-
+      Held-direction differential from roms/zelda_start.state.bin, 45 steps
+      per arm, restricted to the within-screen prefix: RIGHT 89->240, LEFT
+      78->0, flat under UP/DOWN and no-op. Rank 1 of 3.
+    receipt: docs/receipts/rediscovery/zelda_coordinates_2026-08-26.json
+  - address: "0x0084"
+    role: solve.y
+    method: >-
+      Same run: DOWN 134->189, UP 131->85, flat under LEFT/RIGHT and no-op.
+      Rank 1 of 3 on the vertical axis.
+    receipt: docs/receipts/rediscovery/zelda_coordinates_2026-08-26.json
+
 solve:
   rom: "roms/Legend of Zelda, The (USA) (Rev A).nes"
   # progress / y / lives: verbatim from configs/zelda.yaml's banked

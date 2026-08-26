@@ -61,10 +61,12 @@ v2 method (adopted from a research consultation)
    (c) mirrors: non-constant columns identical across the corpus — keep the
        lowest address, exclude the rest.
    EXTENSIONS (the spec permits extending the list): the 6502 hardware stack
-   page ($0100-$01FF, pure execution scratch) and the profile's own
-   ram_mapping addresses (already-known observables — the tool discovers NEW
-   ones; the target $0004 is NOT among them). Every exclusion + reason is
-   written to the receipt.
+   page ($0100-$01FF, pure execution scratch) and the profile's own solve-block
+   coordinate bytes (they ARE the cell key this conditions on, not candidates
+   for it). The profile's `ram_mapping` block is deliberately NOT excluded —
+   it is annotation, and excluding it let an outside RAM map steer this
+   instrument away from the bytes under quarantine (see pre_probe_exclusions).
+   Every exclusion + reason is written to the receipt.
 
 DEVIATIONS from the consultation spec (receipted, necessary for acceptance):
   * Statistic is the raw numerator I(P;dY|C), NOT the normalized U=I/H(P|C).
@@ -128,6 +130,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import yaml
@@ -162,28 +165,11 @@ def blob_ram(blob: bytes) -> np.ndarray:
     return np.frombuffer(blob[RAM_OFF:RAM_OFF + RAM_LEN], dtype=np.uint8)
 
 
-def coordinate_and_mapping_exclusions(profile: dict) -> tuple[set, set, list]:
-    """Pre-probe exclusion inputs derived from a profile's own declared
-    bytes: the solve-block coordinate/level keys, and the (separately
-    tracked, non-excluding) `ram_mapping` annotation set.
-
-    Returns `(coord_bytes, mapped, excl_log)`:
-      * `coord_bytes` — bytes that legitimately belong in the pre-probe
-        EXCLUSION set. These are the cell-key observables (solve.progress
-        lo/hi, solve.y, solve.lives, solve.level_key) — they ARE the search
-        key the archive is bucketed on, not candidates for discovery.
-      * `mapped` — every int-parseable value in the profile's `ram_mapping`
-        block. Deliberately NOT folded into the exclusion set: a profile's
-        address table is an annotation about what this project has already
-        named, not evidence about the ROM. Excluding it is how an external
-        RAM map — quarantined or not — steers this project's own discovery
-        instrument away from precisely the bytes it exists to (re)discover.
-        Callers use `mapped` only to tag receipt rows "known": True/False.
-      * `excl_log` — receipt entries for this stage. The `ram_mapping` entry
-        carries `"excludes": False` so a reader of the receipt (or a test)
-        can tell "documented, but still probed" apart from an actual
-        exclusion.
-    """
+def _coordinate_bytes(profile: dict) -> set:
+    """The profile's own cell-key observables (solve.progress lo/hi,
+    solve.y, solve.lives, solve.level_key). These ARE the search key the
+    archive is bucketed on, so they are not candidates for discovery and
+    legitimately belong in the pre-probe exclusion set."""
     solve = profile.get("solve", {}) or {}
     coord_bytes: set = set()
     if solve:
@@ -194,7 +180,56 @@ def coordinate_and_mapping_exclusions(profile: dict) -> tuple[set, set, list]:
                 coord_bytes.add(int(a))
         for a in solve.get("level_key", []):
             coord_bytes.add(int(a))
-    mapped = {int(a) for a in (profile.get("ram_mapping", {}) or {}).values()}
+    return coord_bytes
+
+
+def _mapping_bytes(profile: dict) -> set:
+    """Every int-parseable value in the profile's `ram_mapping` block.
+
+    Private ON PURPOSE, and returned to `main()` only behind the
+    `is_known` predicate built in `pre_probe_exclusions`. See that
+    function's docstring for why no caller may hold this as a set.
+    """
+    return {int(a) for a in (profile.get("ram_mapping", {}) or {}).values()}
+
+
+def pre_probe_exclusions(profile: dict,
+                         full: np.ndarray) -> tuple[set, Callable[[int], bool], list]:
+    """THE pre-probe exclusion set, computed in one place.
+
+    Returns `(excluded, is_known, excl_log)`.
+
+    `excluded` is the complete set gating candidate generation at the
+    `if b in excluded: continue` loop below: the profile's coordinate
+    bytes, the 6502 stack page, the detected OAM DMA page, and detected
+    mirrors. That is the whole list. A profile's `ram_mapping` block is
+    NOT in it and cannot be added to it by a caller, because a caller
+    never receives it as a set — only as the `is_known(addr)` predicate,
+    which is for tagging receipt rows `"known": True/False` and cannot be
+    unioned into anything.
+
+    That callable is not a stylistic choice, it is the fix. Until
+    2026-08-26 this computation lived inline in `main()` as
+    `known = coord_bytes | mapped; excluded |= known`, so every address
+    in a profile's `ram_mapping` — including the six quarantined Zelda
+    addresses that `configs/zelda_gui_tuned.yaml` was carrying — was
+    removed from candidate generation before the first probe ran. An
+    outside RAM map was deciding what this project's own discovery
+    instrument was permitted to rediscover, which is the exact inverse of
+    what the quarantine is for. Extracting the computation without also
+    removing the set from the caller's reach would leave a one-line
+    regression available (`excluded |= mapped`) that a test driving this
+    function could not see. Re-introducing the defect now requires
+    re-plumbing a return value, not adding an `if`.
+
+    `full` is the (n_cells, RAM_LEN) uint8 stack of archive RAM images
+    that the OAM and mirror detectors measure; nothing else about the
+    archive is needed, so this whole function is drivable from a
+    synthetic array in a unit test.
+    """
+    coord_bytes = _coordinate_bytes(profile)
+    mapped = _mapping_bytes(profile)
+    known = coord_bytes | mapped
 
     excl_log: list = []
     if coord_bytes:
@@ -212,7 +247,24 @@ def coordinate_and_mapping_exclusions(profile: dict) -> tuple[set, set, list]:
                                    "evidence about the ROM.",
                          "excludes": False,
                          "bytes": sorted(f"0x{a:04X}" for a in mapped)})
-    return coord_bytes, mapped, excl_log
+
+    excluded: set = set(coord_bytes)
+    stack = set(range(STACK_LO, STACK_HI))
+    excluded |= stack
+    excl_log.append({"region": f"0x{STACK_LO:04X}-0x{STACK_HI - 1:04X}",
+                     "reason": "6502 CPU stack page (execution scratch)",
+                     "bytes": len(stack)})
+    oam_e, oam_l = detect_oam(full)
+    excluded |= oam_e
+    excl_log += oam_l
+    mir_e, mir_l = detect_mirrors(full, excluded)
+    excluded |= mir_e
+    excl_log += mir_l
+    print(f"[observatory] pre-probe exclusions: {len(excluded)} bytes "
+          f"(coord {len(coord_bytes)}, stack {len(stack)}, OAM {len(oam_e)}, "
+          f"mirrors {len(mir_e)}; ram_mapping {len(mapped)} bytes annotated, "
+          f"NOT excluded)")
+    return excluded, known.__contains__, excl_log
 
 
 def build_probes(profile: dict) -> list[tuple[str, int]]:
@@ -527,27 +579,10 @@ def main() -> int:
     n_full = len(cells)
 
     # ---- exclusions: coord/level + stack (pre-probe) -----------------------
-    # See coordinate_and_mapping_exclusions() docstring for why
-    # `ram_mapping` is tracked in `known` for receipt tagging but never
-    # folded into `excluded`.
-    coord_bytes, mapped, excl_log = coordinate_and_mapping_exclusions(profile)
-    known = coord_bytes | mapped
-    excluded: set = set(coord_bytes)
-    stack = set(range(STACK_LO, STACK_HI))
-    excluded |= stack
-    excl_log.append({"region": f"0x{STACK_LO:04X}-0x{STACK_HI - 1:04X}",
-                     "reason": "6502 CPU stack page (execution scratch)",
-                     "bytes": len(stack)})
-    oam_e, oam_l = detect_oam(full)
-    excluded |= oam_e
-    excl_log += oam_l
-    mir_e, mir_l = detect_mirrors(full, excluded)
-    excluded |= mir_e
-    excl_log += mir_l
-    print(f"[observatory] pre-probe exclusions: {len(excluded)} bytes "
-          f"(coord {len(coord_bytes)}, stack {len(stack)}, OAM {len(oam_e)}, "
-          f"mirrors {len(mir_e)}; ram_mapping {len(mapped)} bytes annotated, "
-          f"NOT excluded)")
+    # The whole computation lives in pre_probe_exclusions(). `is_known` is
+    # a predicate, not a set, so there is nothing here to fold back into
+    # `excluded` — see that function's docstring.
+    excluded, is_known, excl_log = pre_probe_exclusions(profile, full)
 
     prober = Prober(game, profile, probes)
 
@@ -670,7 +705,7 @@ def main() -> int:
             # reporting only, so a reader can tell "already documented"
             # apart from "genuinely new" without the instrument itself
             # ever being blind to either.
-            "known": b in known,
+            "known": is_known(b),
             "outcome_hist": hist,
         })
         print(f"  ${b:04X} == {v:3d}  MI {s:7.3f}  support {int(ind.sum()):3d}"

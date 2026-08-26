@@ -1,0 +1,397 @@
+{
+  "rom": "roms/Legend of Zelda, The (USA) (Rev A).nes",
+  "state": "roms/Legend of Zelda, The (USA) (Rev A)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": null,
+    "candidates": [
+      {
+        "lo": 112,
+        "hi": null,
+        "kind": "single",
+        "label": "$0070",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 79,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 46,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 208,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 233,
+        "hi": 19,
+        "kind": "pair",
+        "label": "$00E9|$0013<<8",
+        "wrap_coupled": 2,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 23,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 23,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 3094,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      }
+    ],
+    "recommended": {
+      "lo": 112,
+      "hi": null,
+      "label": "$0070",
+      "kind": "spatial",
+      "as_progress": "$0070",
+      "saturates": false
+    }
+  },
+  "room_counters": [],
+  "y": [
+    {
+      "addr": 41,
+      "base": 30,
+      "mode": 0,
+      "max_dev": 37,
+      "range": 67,
+      "distinct": 21,
+      "frac_at_mode": 0.47,
+      "score": 31.7
+    },
+    {
+      "addr": 133,
+      "base": 118,
+      "mode": 118,
+      "max_dev": 32,
+      "range": 52,
+      "distinct": 14,
+      "frac_at_mode": 0.47,
+      "score": 24.6
+    },
+    {
+      "addr": 113,
+      "base": 150,
+      "mode": 150,
+      "max_dev": 36,
+      "range": 46,
+      "distinct": 20,
+      "frac_at_mode": 0.45,
+      "score": 20.6
+    },
+    {
+      "addr": 44,
+      "base": 0,
+      "mode": 0,
+      "max_dev": 25,
+      "range": 25,
+      "distinct": 11,
+      "frac_at_mode": 0.71,
+      "score": 17.8
+    },
+    {
+      "addr": 114,
+      "base": 95,
+      "mode": 94,
+      "max_dev": 19,
+      "range": 20,
+      "distinct": 7,
+      "frac_at_mode": 0.66,
+      "score": 13.2
+    },
+    {
+      "addr": 134,
+      "base": 145,
+      "mode": 147,
+      "max_dev": 15,
+      "range": 19,
+      "distinct": 6,
+      "frac_at_mode": 0.66,
+      "score": 12.5
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 1545,
+    "start": 1,
+    "detail": {
+      "addr": 1545,
+      "start": 1,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 0,
+      "refill_cycles": 0,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": [],
+      "behaviour": {
+        "addr": 1545,
+        "passed": true,
+        "verdict": "PASS",
+        "failed": [],
+        "reason": null,
+        "checks": {
+          "oscillation": {
+            "verdict": "pass",
+            "cycles": 0,
+            "worst_drive": 0,
+            "first_cycle_step": null,
+            "logs_watched": 8,
+            "tolerated": 3,
+            "note": "0 down-and-back cycles over 8 drives, worst drive 0 (<= 3)"
+          },
+          "empties_while_alive": {
+            "verdict": "inconclusive",
+            "empty_step": 25,
+            "note": "camera never moved in this arm \u2014 no liveness witness available (camera-static game)",
+            "per_arm": {
+              "hold": "inconclusive",
+              "mash": "inconclusive",
+              "idle": "inconclusive"
+            }
+          },
+          "fires_on_movement": {
+            "verdict": "pass",
+            "hold_first_drop": 25,
+            "idle_first_drop": 284,
+            "onset_window": 12,
+            "note": "hold first drop=25, idle first drop=284"
+          }
+        }
+      }
+    },
+    "lives_candidates": [
+      {
+        "addr": 1545,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "refill_cycles": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": [],
+        "behaviour": {
+          "addr": 1545,
+          "passed": true,
+          "verdict": "PASS",
+          "failed": [],
+          "reason": null,
+          "checks": {
+            "oscillation": {
+              "verdict": "pass",
+              "cycles": 0,
+              "worst_drive": 0,
+              "first_cycle_step": null,
+              "logs_watched": 8,
+              "tolerated": 3,
+              "note": "0 down-and-back cycles over 8 drives, worst drive 0 (<= 3)"
+            },
+            "empties_while_alive": {
+              "verdict": "inconclusive",
+              "empty_step": 25,
+              "note": "camera never moved in this arm \u2014 no liveness witness available (camera-static game)",
+              "per_arm": {
+                "hold": "inconclusive",
+                "mash": "inconclusive",
+                "idle": "inconclusive"
+              }
+            },
+            "fires_on_movement": {
+              "verdict": "pass",
+              "hold_first_drop": 25,
+              "idle_first_drop": 284,
+              "onset_window": 12,
+              "note": "hold first drop=25, idle first drop=284"
+            }
+          }
+        }
+      },
+      {
+        "addr": 515,
+        "start": 88,
+        "drop": 8,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "refill_cycles": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": [],
+        "behaviour": {
+          "addr": 515,
+          "passed": true,
+          "verdict": "PASS",
+          "failed": [],
+          "reason": null,
+          "checks": {
+            "oscillation": {
+              "verdict": "pass",
+              "cycles": 0,
+              "worst_drive": 0,
+              "first_cycle_step": null,
+              "logs_watched": 8,
+              "tolerated": 3,
+              "note": "0 down-and-back cycles over 8 drives, worst drive 0 (<= 3)"
+            },
+            "empties_while_alive": {
+              "verdict": "inconclusive",
+              "note": "the byte never arrived at zero in this arm",
+              "per_arm": {
+                "hold": "inconclusive",
+                "mash": "inconclusive",
+                "idle": "inconclusive"
+              }
+            },
+            "fires_on_movement": {
+              "verdict": "pass",
+              "hold_first_drop": 104,
+              "idle_first_drop": null,
+              "onset_window": 12,
+              "note": "hold first drop=104, idle first drop=None"
+            }
+          }
+        }
+      },
+      {
+        "addr": 1544,
+        "start": 8,
+        "drop": 8,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 3,
+        "refill_cycles": 2,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": true,
+        "mirrors": [],
+        "behaviour": {
+          "addr": 1544,
+          "passed": true,
+          "verdict": "PASS",
+          "failed": [],
+          "reason": null,
+          "checks": {
+            "oscillation": {
+              "verdict": "pass",
+              "cycles": 4,
+              "worst_drive": 1,
+              "first_cycle_step": 26,
+              "logs_watched": 8,
+              "tolerated": 3,
+              "note": "4 down-and-back cycles over 8 drives, worst drive 1 (<= 3)"
+            },
+            "empties_while_alive": {
+              "verdict": "inconclusive",
+              "empty_step": 25,
+              "note": "camera never moved in this arm \u2014 no liveness witness available (camera-static game)",
+              "per_arm": {
+                "hold": "inconclusive",
+                "mash": "inconclusive",
+                "idle": "inconclusive"
+              }
+            },
+            "fires_on_movement": {
+              "verdict": "pass",
+              "hold_first_drop": 25,
+              "idle_first_drop": 26,
+              "onset_window": 12,
+              "note": "hold first drop=25, idle first drop=26"
+            }
+          }
+        }
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 533,
+        "value": 10,
+        "mirrors": 3,
+        "hud_run": 3,
+        "churn": 0.0
+      },
+      {
+        "addr": 541,
+        "value": 10,
+        "mirrors": 3,
+        "hud_run": 3,
+        "churn": 0.0
+      },
+      {
+        "addr": 549,
+        "value": 10,
+        "mirrors": 3,
+        "hud_run": 3,
+        "churn": 0.0
+      },
+      {
+        "addr": 108,
+        "value": 14,
+        "mirrors": 2,
+        "hud_run": 2,
+        "churn": 0.0
+      },
+      {
+        "addr": 602,
+        "value": 3,
+        "mirrors": 2,
+        "hud_run": 2,
+        "churn": 0.0
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 3
+    },
+    "behaviour_gate": {
+      "watched": 3,
+      "passed": 3,
+      "rejected": 0,
+      "odometer": true,
+      "steps_per_arm": 320,
+      "picked": 1545,
+      "outranked_rejects": 0,
+      "skipped_addrs": [],
+      "rejections": []
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs; behaviour gate PASS)"
+  }
+}

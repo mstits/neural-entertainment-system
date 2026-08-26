@@ -1,0 +1,596 @@
+[
+  {
+    "run": "runs/cv_smoke/solutions/sol_000",
+    "source": "ram_pair",
+    "clear_verdict": "FIREABLE",
+    "detector_constructed": true,
+    "refusal": null,
+    "quorum": {
+      "verdict": "FIREABLE",
+      "roster": "live",
+      "required": 2.0,
+      "ceiling": 2.0,
+      "reason": "FIREABLE: eligible signals can cast up to 2 against clear.min_signals=2, with transition evidence among them. Whether the vote ever DOES fire on a real clear is an empirical question this module does not touch \u2014 FIREABLE is not evidence that it works.",
+      "eligible": [
+        "coord",
+        "tally"
+      ],
+      "eligible_slots": [
+        "S_TRANSITION",
+        "S_CADENCE"
+      ],
+      "signals": {
+        "coord": {
+          "state": "ALIVE",
+          "slot": "S_TRANSITION",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "progress is a 16-bit {lo, hi} pair; null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        },
+        "tally": {
+          "state": "ALIVE",
+          "slot": "S_CADENCE",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        },
+        "apu": {
+          "state": "DEAD",
+          "slot": "S_CADENCE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path"
+        },
+        "scene_cut": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "room_fp_transition": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "input_lock": {
+          "state": "NOT_WIRED",
+          "slot": "S_ARMING",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord); arming condition only, never a sole term"
+        },
+        "oam_quiesce": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "entity_wipe": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "lock_release_novelty": {
+          "state": "NOT_WIRED",
+          "slot": "S_IRREVERSIBLE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        }
+      }
+    },
+    "truth_clear_action": 367,
+    "detector_fire_action": 379,
+    "hit": true,
+    "checks": 22,
+    "tally_checks": 22,
+    "coord_checks": 4,
+    "both_checks": 4,
+    "progress_span": [
+      14,
+      679
+    ],
+    "max_single_step_drop": 592,
+    "coord_drop_min_required": 300
+  },
+  {
+    "run": "runs/cv_smoke/solutions/sol_000",
+    "source": "odometer",
+    "clear_verdict": "UNREACHABLE",
+    "detector_constructed": false,
+    "refusal": "UNREACHABLE: the eligible signals top out at 1 against clear.min_signals=2, so no observation sequence can make this hook true. coord=DEAD (progress.source: odometer \u2014 the camera integral freezes and re-anchors across a scene cut (nes_core/src/ppu.rs odo_fold_frame) and clamps backward-of-origin to 0 (Solver._xram), so the backwards drop of >= 300 px that `coord` requires never appears); apu=DEAD (clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path). A null from this configuration is VOID, not a miss: it must not enter a hit-rate denominator and must never be cited as \"searched and found none\".",
+    "quorum": {
+      "verdict": "UNREACHABLE",
+      "roster": "live",
+      "required": 2.0,
+      "ceiling": 1.0,
+      "reason": "UNREACHABLE: the eligible signals top out at 1 against clear.min_signals=2, so no observation sequence can make this hook true. coord=DEAD (progress.source: odometer \u2014 the camera integral freezes and re-anchors across a scene cut (nes_core/src/ppu.rs odo_fold_frame) and clamps backward-of-origin to 0 (Solver._xram), so the backwards drop of >= 300 px that `coord` requires never appears); apu=DEAD (clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path). A null from this configuration is VOID, not a miss: it must not enter a hit-rate denominator and must never be cited as \"searched and found none\".",
+      "eligible": [
+        "tally"
+      ],
+      "eligible_slots": [
+        "S_CADENCE"
+      ],
+      "signals": {
+        "coord": {
+          "state": "DEAD",
+          "slot": "S_TRANSITION",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "progress.source: odometer \u2014 the camera integral freezes and re-anchors across a scene cut (nes_core/src/ppu.rs odo_fold_frame) and clamps backward-of-origin to 0 (Solver._xram), so the backwards drop of >= 300 px that `coord` requires never appears"
+        },
+        "tally": {
+          "state": "ALIVE",
+          "slot": "S_CADENCE",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        },
+        "apu": {
+          "state": "DEAD",
+          "slot": "S_CADENCE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path"
+        },
+        "scene_cut": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "room_fp_transition": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "input_lock": {
+          "state": "NOT_WIRED",
+          "slot": "S_ARMING",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord); arming condition only, never a sole term"
+        },
+        "oam_quiesce": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "entity_wipe": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "lock_release_novelty": {
+          "state": "NOT_WIRED",
+          "slot": "S_IRREVERSIBLE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        }
+      }
+    },
+    "truth_clear_action": 367,
+    "detector_fire_action": null,
+    "hit": null,
+    "checks": 22,
+    "tally_checks": 22,
+    "coord_checks": 0,
+    "both_checks": 0,
+    "progress_span": [
+      0,
+      512
+    ],
+    "max_single_step_drop": 4,
+    "coord_drop_min_required": 300
+  },
+  {
+    "run": "runs/cv_chain_a/lvl_00_0/solutions/sol_000",
+    "source": "ram_pair",
+    "clear_verdict": "FIREABLE",
+    "detector_constructed": true,
+    "refusal": null,
+    "quorum": {
+      "verdict": "FIREABLE",
+      "roster": "live",
+      "required": 2.0,
+      "ceiling": 2.0,
+      "reason": "FIREABLE: eligible signals can cast up to 2 against clear.min_signals=2, with transition evidence among them. Whether the vote ever DOES fire on a real clear is an empirical question this module does not touch \u2014 FIREABLE is not evidence that it works.",
+      "eligible": [
+        "coord",
+        "tally"
+      ],
+      "eligible_slots": [
+        "S_TRANSITION",
+        "S_CADENCE"
+      ],
+      "signals": {
+        "coord": {
+          "state": "ALIVE",
+          "slot": "S_TRANSITION",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "progress is a 16-bit {lo, hi} pair; null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        },
+        "tally": {
+          "state": "ALIVE",
+          "slot": "S_CADENCE",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        },
+        "apu": {
+          "state": "DEAD",
+          "slot": "S_CADENCE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path"
+        },
+        "scene_cut": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "room_fp_transition": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "input_lock": {
+          "state": "NOT_WIRED",
+          "slot": "S_ARMING",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord); arming condition only, never a sole term"
+        },
+        "oam_quiesce": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "entity_wipe": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "lock_release_novelty": {
+          "state": "NOT_WIRED",
+          "slot": "S_IRREVERSIBLE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        }
+      }
+    },
+    "truth_clear_action": 487,
+    "detector_fire_action": 499,
+    "hit": true,
+    "checks": 28,
+    "tally_checks": 28,
+    "coord_checks": 4,
+    "both_checks": 4,
+    "progress_span": [
+      14,
+      696
+    ],
+    "max_single_step_drop": 592,
+    "coord_drop_min_required": 300
+  },
+  {
+    "run": "runs/cv_chain_a/lvl_00_0/solutions/sol_000",
+    "source": "odometer",
+    "clear_verdict": "UNREACHABLE",
+    "detector_constructed": false,
+    "refusal": "UNREACHABLE: the eligible signals top out at 1 against clear.min_signals=2, so no observation sequence can make this hook true. coord=DEAD (progress.source: odometer \u2014 the camera integral freezes and re-anchors across a scene cut (nes_core/src/ppu.rs odo_fold_frame) and clamps backward-of-origin to 0 (Solver._xram), so the backwards drop of >= 300 px that `coord` requires never appears); apu=DEAD (clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path). A null from this configuration is VOID, not a miss: it must not enter a hit-rate denominator and must never be cited as \"searched and found none\".",
+    "quorum": {
+      "verdict": "UNREACHABLE",
+      "roster": "live",
+      "required": 2.0,
+      "ceiling": 1.0,
+      "reason": "UNREACHABLE: the eligible signals top out at 1 against clear.min_signals=2, so no observation sequence can make this hook true. coord=DEAD (progress.source: odometer \u2014 the camera integral freezes and re-anchors across a scene cut (nes_core/src/ppu.rs odo_fold_frame) and clamps backward-of-origin to 0 (Solver._xram), so the backwards drop of >= 300 px that `coord` requires never appears); apu=DEAD (clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path). A null from this configuration is VOID, not a miss: it must not enter a hit-rate denominator and must never be cited as \"searched and found none\".",
+      "eligible": [
+        "tally"
+      ],
+      "eligible_slots": [
+        "S_CADENCE"
+      ],
+      "signals": {
+        "coord": {
+          "state": "DEAD",
+          "slot": "S_TRANSITION",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "progress.source: odometer \u2014 the camera integral freezes and re-anchors across a scene cut (nes_core/src/ppu.rs odo_fold_frame) and clamps backward-of-origin to 0 (Solver._xram), so the backwards drop of >= 300 px that `coord` requires never appears"
+        },
+        "tally": {
+          "state": "ALIVE",
+          "slot": "S_CADENCE",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        },
+        "apu": {
+          "state": "DEAD",
+          "slot": "S_CADENCE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path"
+        },
+        "scene_cut": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "room_fp_transition": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "input_lock": {
+          "state": "NOT_WIRED",
+          "slot": "S_ARMING",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord); arming condition only, never a sole term"
+        },
+        "oam_quiesce": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "entity_wipe": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "lock_release_novelty": {
+          "state": "NOT_WIRED",
+          "slot": "S_IRREVERSIBLE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        }
+      }
+    },
+    "truth_clear_action": 487,
+    "detector_fire_action": null,
+    "hit": null,
+    "checks": 28,
+    "tally_checks": 28,
+    "coord_checks": 0,
+    "both_checks": 0,
+    "progress_span": [
+      0,
+      512
+    ],
+    "max_single_step_drop": 4,
+    "coord_drop_min_required": 300
+  },
+  {
+    "run": "runs/cv_chain_poweron/lvl_00_0/solutions/sol_000",
+    "source": "ram_pair",
+    "clear_verdict": "FIREABLE",
+    "detector_constructed": true,
+    "refusal": null,
+    "quorum": {
+      "verdict": "FIREABLE",
+      "roster": "live",
+      "required": 2.0,
+      "ceiling": 2.0,
+      "reason": "FIREABLE: eligible signals can cast up to 2 against clear.min_signals=2, with transition evidence among them. Whether the vote ever DOES fire on a real clear is an empirical question this module does not touch \u2014 FIREABLE is not evidence that it works.",
+      "eligible": [
+        "coord",
+        "tally"
+      ],
+      "eligible_slots": [
+        "S_TRANSITION",
+        "S_CADENCE"
+      ],
+      "signals": {
+        "coord": {
+          "state": "ALIVE",
+          "slot": "S_TRANSITION",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "progress is a 16-bit {lo, hi} pair; null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        },
+        "tally": {
+          "state": "ALIVE",
+          "slot": "S_CADENCE",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        },
+        "apu": {
+          "state": "DEAD",
+          "slot": "S_CADENCE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path"
+        },
+        "scene_cut": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "room_fp_transition": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "input_lock": {
+          "state": "NOT_WIRED",
+          "slot": "S_ARMING",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord); arming condition only, never a sole term"
+        },
+        "oam_quiesce": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "entity_wipe": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "lock_release_novelty": {
+          "state": "NOT_WIRED",
+          "slot": "S_IRREVERSIBLE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        }
+      }
+    },
+    "truth_clear_action": 783,
+    "detector_fire_action": 799,
+    "hit": true,
+    "checks": 43,
+    "tally_checks": 43,
+    "coord_checks": 4,
+    "both_checks": 4,
+    "progress_span": [
+      14,
+      702
+    ],
+    "max_single_step_drop": 592,
+    "coord_drop_min_required": 300
+  },
+  {
+    "run": "runs/cv_chain_poweron/lvl_00_0/solutions/sol_000",
+    "source": "odometer",
+    "clear_verdict": "UNREACHABLE",
+    "detector_constructed": false,
+    "refusal": "UNREACHABLE: the eligible signals top out at 1 against clear.min_signals=2, so no observation sequence can make this hook true. coord=DEAD (progress.source: odometer \u2014 the camera integral freezes and re-anchors across a scene cut (nes_core/src/ppu.rs odo_fold_frame) and clamps backward-of-origin to 0 (Solver._xram), so the backwards drop of >= 300 px that `coord` requires never appears); apu=DEAD (clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path). A null from this configuration is VOID, not a miss: it must not enter a hit-rate denominator and must never be cited as \"searched and found none\".",
+    "quorum": {
+      "verdict": "UNREACHABLE",
+      "roster": "live",
+      "required": 2.0,
+      "ceiling": 1.0,
+      "reason": "UNREACHABLE: the eligible signals top out at 1 against clear.min_signals=2, so no observation sequence can make this hook true. coord=DEAD (progress.source: odometer \u2014 the camera integral freezes and re-anchors across a scene cut (nes_core/src/ppu.rs odo_fold_frame) and clamps backward-of-origin to 0 (Solver._xram), so the backwards drop of >= 300 px that `coord` requires never appears); apu=DEAD (clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path). A null from this configuration is VOID, not a miss: it must not enter a hit-rate denominator and must never be cited as \"searched and found none\".",
+      "eligible": [
+        "tally"
+      ],
+      "eligible_slots": [
+        "S_CADENCE"
+      ],
+      "signals": {
+        "coord": {
+          "state": "DEAD",
+          "slot": "S_TRANSITION",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "progress.source: odometer \u2014 the camera integral freezes and re-anchors across a scene cut (nes_core/src/ppu.rs odo_fold_frame) and clamps backward-of-origin to 0 (Solver._xram), so the backwards drop of >= 300 px that `coord` requires never appears"
+        },
+        "tally": {
+          "state": "ALIVE",
+          "slot": "S_CADENCE",
+          "weight": 1.0,
+          "null_rate": null,
+          "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        },
+        "apu": {
+          "state": "DEAD",
+          "slot": "S_CADENCE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "clear.apu_weight is 0, so no ApuActivitySignal is constructed and the vote is the shipped integer path"
+        },
+        "scene_cut": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "room_fp_transition": {
+          "state": "NOT_WIRED",
+          "slot": "S_TRANSITION",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "input_lock": {
+          "state": "NOT_WIRED",
+          "slot": "S_ARMING",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord); arming condition only, never a sole term"
+        },
+        "oam_quiesce": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "entity_wipe": {
+          "state": "NOT_WIRED",
+          "slot": "S_DESPAWN",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        },
+        "lock_release_novelty": {
+          "state": "NOT_WIRED",
+          "slot": "S_IRREVERSIBLE",
+          "weight": 0.0,
+          "null_rate": null,
+          "reason": "built and tested 2026-08-26, reaches no production path (the live vote is tally+coord+apu; the offline harness weights audio+tally+lock+coord)"
+        }
+      }
+    },
+    "truth_clear_action": 783,
+    "detector_fire_action": null,
+    "hit": null,
+    "checks": 43,
+    "tally_checks": 43,
+    "coord_checks": 0,
+    "both_checks": 0,
+    "progress_span": [
+      0,
+      512
+    ],
+    "max_single_step_drop": 4,
+    "coord_drop_min_required": 300
+  }
+]

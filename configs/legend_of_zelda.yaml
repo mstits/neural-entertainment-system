@@ -31,6 +31,35 @@ action_space:
   - ["down", "B"]
   - ["up", "B"]
 
+# Two of the addresses this profile's solve block declares are numerically
+# identical to addresses recorded in a purity quarantine block elsewhere in
+# the tree (configs/zelda_gui_tuned.yaml: q_link_x 0x0070, q_song 0x0609).
+# Solve-block coordinates become PRE-PROBE EXCLUSIONS in
+# scripts/observatory.py (they are the archive's cell key), so a quarantined
+# byte landing here would be removed from the discovery instrument's own
+# candidate space — the same steering defect BREACH PATH 2 was, arriving by
+# a different door. It is admissible here ONLY because each one was
+# independently re-derived from this ROM by measurement, and the receipt is
+# checked into the tree so the claim can be audited rather than believed.
+# tests/test_purity_quarantine_sweep.py enforces this: a quarantined address
+# in a solve block with no entry below, or an entry whose receipt file is
+# missing, fails the sweep.
+rediscovered_addresses:
+  - address: "0x0070"
+    role: solve.progress.lo
+    method: >-
+      discover_observables.py forward/noop differential over this profile's
+      own verified-live start state: rises under held forward, flat under
+      noop, net_forward=79, mono_forward=1.00, does not saturate.
+    receipt: docs/receipts/rediscovery/legend_of_zelda_discover_2026-08-26.json
+  - address: "0x0609"
+    role: solve.lives
+    method: >-
+      discover_observables.py find_hp_lives: decrements by 1 on death from
+      lives_at_start=1, agreed by 5 of 5 independent probe runs, behaviour
+      gate PASS (3 watched, 3 passed, 0 rejected).
+    receipt: docs/receipts/rediscovery/legend_of_zelda_discover_2026-08-26.json
+
 solve:
   rom: "roms/Legend of Zelda, The (USA) (Rev A).nes"
   # D3 fix (2026-08-26): this block used to be rom+progress only, so

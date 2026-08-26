@@ -1,0 +1,104 @@
+[
+  {
+    "run": "runs/cv_smoke/solutions/sol_000",
+    "source": "ram_pair",
+    "truth_clear_action": 367,
+    "detector_fire_action": 379,
+    "hit": true,
+    "checks": 22,
+    "tally_checks": 22,
+    "coord_checks": 4,
+    "both_checks": 4,
+    "progress_span": [
+      14,
+      679
+    ],
+    "max_single_step_drop": 592,
+    "coord_drop_min_required": 300
+  },
+  {
+    "run": "runs/cv_smoke/solutions/sol_000",
+    "source": "odometer",
+    "truth_clear_action": 367,
+    "detector_fire_action": null,
+    "hit": false,
+    "checks": 22,
+    "tally_checks": 22,
+    "coord_checks": 0,
+    "both_checks": 0,
+    "progress_span": [
+      0,
+      512
+    ],
+    "max_single_step_drop": 4,
+    "coord_drop_min_required": 300
+  },
+  {
+    "run": "runs/cv_chain_a/lvl_00_0/solutions/sol_000",
+    "source": "ram_pair",
+    "truth_clear_action": 487,
+    "detector_fire_action": 499,
+    "hit": true,
+    "checks": 28,
+    "tally_checks": 28,
+    "coord_checks": 4,
+    "both_checks": 4,
+    "progress_span": [
+      14,
+      696
+    ],
+    "max_single_step_drop": 592,
+    "coord_drop_min_required": 300
+  },
+  {
+    "run": "runs/cv_chain_a/lvl_00_0/solutions/sol_000",
+    "source": "odometer",
+    "truth_clear_action": 487,
+    "detector_fire_action": null,
+    "hit": false,
+    "checks": 28,
+    "tally_checks": 28,
+    "coord_checks": 0,
+    "both_checks": 0,
+    "progress_span": [
+      0,
+      512
+    ],
+    "max_single_step_drop": 4,
+    "coord_drop_min_required": 300
+  },
+  {
+    "run": "runs/cv_chain_poweron/lvl_00_0/solutions/sol_000",
+    "source": "ram_pair",
+    "truth_clear_action": 783,
+    "detector_fire_action": 799,
+    "hit": true,
+    "checks": 43,
+    "tally_checks": 43,
+    "coord_checks": 4,
+    "both_checks": 4,
+    "progress_span": [
+      14,
+      702
+    ],
+    "max_single_step_drop": 592,
+    "coord_drop_min_required": 300
+  },
+  {
+    "run": "runs/cv_chain_poweron/lvl_00_0/solutions/sol_000",
+    "source": "odometer",
+    "truth_clear_action": 783,
+    "detector_fire_action": null,
+    "hit": false,
+    "checks": 43,
+    "tally_checks": 43,
+    "coord_checks": 0,
+    "both_checks": 0,
+    "progress_span": [
+      0,
+      512
+    ],
+    "max_single_step_drop": 4,
+    "coord_drop_min_required": 300
+  }
+]

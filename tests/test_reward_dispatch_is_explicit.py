@@ -249,10 +249,17 @@ def test_declared_reward_ids_are_all_valid():
     # check has nothing to reject and passes for free — the exact shape
     # of gate that has shipped green twice this week. Assert it has
     # something to work on before asserting it found nothing wrong.
-    assert len(declared) >= 128, (
-        f"only {len(declared)} profiles declare reward_id; the migration "
-        f"wrote 128, so this check is running on an unmigrated roster and "
-        f"would pass vacuously"
+    # Derived, not a magic constant: the frozen baseline is the list of
+    # every profile that resolved to a specialized arm on migration day,
+    # and each of those had to declare the key. A hardcoded count instead
+    # couples this test to roster size and reds on any unrelated profile
+    # being added or removed, with a misleading message.
+    required = set(json.loads(BASELINE_PATH.read_text()))
+    missing = sorted(rel for rel in required if rel not in declared)
+    assert not missing, (
+        f"{len(missing)} profile(s) from the frozen dispatch baseline no "
+        f"longer declare reward_id: {missing[:10]}. This check would then "
+        f"be running on a partly-unmigrated roster and passing vacuously"
     )
     bad = {rel: rid for rel, rid in declared.items() if rid not in valid_ids()}
     assert not bad, f"invalid reward_id values: {bad}"

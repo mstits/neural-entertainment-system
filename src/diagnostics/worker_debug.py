@@ -50,11 +50,15 @@ def debug_dir() -> Path:
     return p
 
 
-# RAM addresses used by the Zelda profile — we only use these for Zelda
-# freeze detection. Other games can override via WorkerDebug constructor
-# or we'll just skip the freeze check.
-ZELDA_LINK_X = 0x0070
-ZELDA_LINK_Y = 0x0084
+# NO GAME CONSTANTS LIVE HERE. This module used to carry
+# `ZELDA_LINK_X = 0x0070` / `ZELDA_LINK_Y = 0x0084` and select them with
+# `if "zelda" in self.game`, i.e. a display-name substring choosing two
+# hand-authored addresses — both of which are recorded in this project's
+# purity quarantine (q_link_x / q_link_y). Same defect class as BREACH
+# PATH 1 in the reward dispatch: the name is not a declaration, and a
+# quarantined address must not arrive by inference. The freeze check now
+# runs only on coordinates a CALLER passes in explicitly, and is skipped
+# otherwise.
 
 
 # Bitmask bits copied from nes_environment so we can detect "the agent
@@ -75,9 +79,19 @@ class WorkerDebug:
     FREEZE_WINDOW = 60          # steps over which "unchanged position" = frozen
     CORRUPT_BLACK_PIXEL_FRAC = 0.40  # >= 40% of frame is exact (0,0,0) → probably corrupt
 
-    def __init__(self, worker_id: int, game: str = "unknown") -> None:
+    def __init__(self, worker_id: int, game: str = "unknown",
+                 pos_addrs: Optional[tuple[int, int]] = None,
+                 hud_rows: int = 0) -> None:
+        """`game` is a LABEL for the log line and nothing else — it selects
+        no behaviour. `pos_addrs` is the (x, y) RAM pair the freeze check
+        watches; without it the freeze check is skipped rather than guessed
+        at. `hud_rows` is how many top scanlines to exclude from the
+        black-frame corruption metric (a legitimately dark HUD is not
+        corruption); 0 means measure the whole frame."""
         self.worker_id = worker_id
         self.game = game.lower()
+        self.pos_addrs = pos_addrs
+        self.hud_rows = int(hud_rows)
         self._golden_ram_crc: Optional[int] = None
         self._reset_count = 0
         self._step_count = 0
@@ -92,10 +106,12 @@ class WorkerDebug:
         self._log(f"worker {worker_id} debug mode enabled, game={game}")
 
     @classmethod
-    def maybe(cls, worker_id: int, game: str = "unknown") -> Optional["WorkerDebug"]:
+    def maybe(cls, worker_id: int, game: str = "unknown",
+              pos_addrs: Optional[tuple[int, int]] = None,
+              hud_rows: int = 0) -> Optional["WorkerDebug"]:
         if not is_enabled():
             return None
-        return cls(worker_id, game)
+        return cls(worker_id, game, pos_addrs=pos_addrs, hud_rows=hud_rows)
 
     # ------------------------------------------------------------------
 
@@ -144,13 +160,11 @@ class WorkerDebug:
         self._step_count += 1
         self._action_history.append(action_bitmask)
 
-        # Freeze check (Zelda-only for now — positions vary by game).
-        # The redundant `self.game == "zelda"` was a leftover; substring
-        # match covers exact equality too.
-        if "zelda" in self.game:
-            link_x = ram[ZELDA_LINK_X]
-            link_y = ram[ZELDA_LINK_Y]
-            self._pos_history.append((link_x, link_y))
+        # Freeze check. Runs only when the caller declared which two RAM
+        # bytes hold the position — never inferred from the game name.
+        if self.pos_addrs is not None:
+            ax, ay = self.pos_addrs
+            self._pos_history.append((ram[ax], ram[ay]))
             self._directional_hist.append(bool(action_bitmask & _DIRECTIONAL_MASK))
 
             if len(self._pos_history) == self.FREEZE_WINDOW:
@@ -162,16 +176,13 @@ class WorkerDebug:
                 if len(positions) == 1 and dir_inputs >= self.FREEZE_WINDOW // 2:
                     self._dump_frozen(ram, frame, list(positions)[0], dir_inputs)
 
-        # Corruption check: % of exact-black pixels in the play area.
-        # The HUD region (Zelda's top 56 rows) is legitimately dark so
-        # we exclude it from the metric for that game; for other games
-        # use the whole frame since HUD layouts differ. The check fires
-        # only when "obviously corrupt" — most games don't naturally
-        # produce frames that are 40%+ pure-black-(0,0,0) RGB pixels.
-        if "zelda" in self.game:
-            play_area = frame[56:, :, :]
-        else:
-            play_area = frame
+        # Corruption check: % of exact-black pixels in the play area. A
+        # legitimately dark HUD would inflate that fraction, so the caller
+        # may declare how many top scanlines to skip; default 0 measures
+        # the whole frame. The check fires only when "obviously corrupt" —
+        # most games don't naturally produce frames that are 40%+
+        # pure-black-(0,0,0) RGB pixels.
+        play_area = frame[self.hud_rows:, :, :] if self.hud_rows else frame
         black_mask = np.all(play_area == 0, axis=-1)
         black_frac = float(black_mask.mean())
         if black_frac >= self.CORRUPT_BLACK_PIXEL_FRAC:

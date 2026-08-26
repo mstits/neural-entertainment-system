@@ -33,27 +33,15 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 
-# Kept as a thin lookup for callers that still import it from this
-# module (e.g. legacy tests). The Rust mixer doesn't use song-byte
-# RAM reads anymore — chiptune + NSF are gone — so this is a
-# compatibility shim that returns the historical address. If a caller
-# doesn't know about a game, they get None and skip song updates.
-_SONG_ADDRESSES = {
-    "zelda": 0x0605,
-    "mario": 0x00F7,
-    "contra": 0x00F0,
-    "megaman": 0x00F0,
-    "castlevania": 0x00F0,
-    "metroid": 0x0050,
-}
-
-
-def song_address_for(game_name: str) -> "int | None":
-    lower = (game_name or "").lower()
-    for frag, addr in _SONG_ADDRESSES.items():
-        if frag in lower:
-            return addr
-    return None
+# The song-byte lookup that used to live here is DELETED, not disabled.
+# It mapped a display-name substring ("zelda", "mario", "contra", ...) to a
+# hand-authored RAM address, which is the same defect class as BREACH
+# PATH 1 in the reward dispatch: a name is not a declaration, and an
+# address chosen by inference has no provenance. It was also dead — the
+# Rust mixer stopped reading song bytes when chiptune and NSF playback were
+# removed, nothing in the tree read `mixer.song_addr`, and the whole table
+# survived only as a compatibility shim. If a caller ever needs a song
+# byte again it must pass the address explicitly, with a receipt.
 
 
 class AudioMixer:
@@ -93,8 +81,10 @@ class AudioMixer:
         # set_mode().
         self._mode: str = "mute"
         self.volume: float = 0.4
-        # Some callers (narrator path) look up song_addr on the mixer.
-        self.song_addr = song_address_for(game)
+        # Retained as an attribute so any legacy caller reading it gets
+        # None rather than an AttributeError. It is never inferred from
+        # the game name; see the note at the top of this module.
+        self.song_addr = None
 
     def start(self) -> None:
         self._inner.start()

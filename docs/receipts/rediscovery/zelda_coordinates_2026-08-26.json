@@ -1,0 +1,210 @@
+{
+  "generated": "2026-08-26",
+  "instrument": "held-direction differential over configs/zelda.yaml's own verified start state (roms/zelda_start.state.bin), frame_skip 4, 45 steps per arm",
+  "method": "nominate by measured DIRECTIONAL REVERSIBILITY only: a byte qualifies on an axis when the two opposing holds move it in opposite directions while both perpendicular holds and the no-op hold leave it exactly flat; ranked by the smaller of the two net displacements. Screen index nominated as a byte that settles constant within every arm but to different constants across arms. No RAM map, no disassembly, no name lookup enters this ranking.",
+  "arms": {
+    "noop": 45,
+    "right": 45,
+    "left": 45,
+    "up": 45,
+    "down": 45
+  },
+  "top_horizontal": [
+    {
+      "addr": 235,
+      "label": "$00EB",
+      "net_right": 1,
+      "net_left": -1,
+      "reversible": true,
+      "score": 1,
+      "endpoints": {
+        "noop": [
+          119,
+          119
+        ],
+        "right": [
+          119,
+          120
+        ],
+        "left": [
+          119,
+          118
+        ],
+        "up": [
+          119,
+          119
+        ],
+        "down": [
+          119,
+          119
+        ]
+      }
+    }
+  ],
+  "top_vertical": [
+    {
+      "addr": 132,
+      "label": "$0084",
+      "net_down": 55,
+      "net_up": -46,
+      "reversible": true,
+      "score": 46,
+      "endpoints": {
+        "noop": [
+          133,
+          133
+        ],
+        "right": [
+          133,
+          133
+        ],
+        "left": [
+          133,
+          133
+        ],
+        "up": [
+          131,
+          85
+        ],
+        "down": [
+          134,
+          189
+        ]
+      }
+    }
+  ],
+  "top_horizontal_within_screen": [
+    {
+      "addr": 112,
+      "label": "$0070",
+      "net_right": 151,
+      "net_left": -78,
+      "reversible": true,
+      "score": 78,
+      "steps_before_screen_change": {
+        "noop": 45,
+        "right": 37,
+        "left": 16,
+        "up": 45,
+        "down": 45
+      },
+      "endpoints": {
+        "noop": [
+          84,
+          84
+        ],
+        "right": [
+          89,
+          240
+        ],
+        "left": [
+          78,
+          0
+        ],
+        "up": [
+          88,
+          88
+        ],
+        "down": [
+          88,
+          88
+        ]
+      }
+    },
+    {
+      "addr": 8,
+      "label": "$0008",
+      "net_right": 112,
+      "net_left": -15,
+      "reversible": true,
+      "score": 15,
+      "steps_before_screen_change": {
+        "noop": 45,
+        "right": 37,
+        "left": 16,
+        "up": 45,
+        "down": 45
+      },
+      "endpoints": {
+        "noop": [
+          15,
+          15
+        ],
+        "right": [
+          15,
+          127
+        ],
+        "left": [
+          15,
+          0
+        ],
+        "up": [
+          15,
+          15
+        ],
+        "down": [
+          15,
+          15
+        ]
+      }
+    },
+    {
+      "addr": 13,
+      "label": "$000D",
+      "net_right": 22,
+      "net_left": -2,
+      "reversible": true,
+      "score": 2,
+      "steps_before_screen_change": {
+        "noop": 45,
+        "right": 37,
+        "left": 16,
+        "up": 45,
+        "down": 45
+      },
+      "endpoints": {
+        "noop": [
+          3,
+          3
+        ],
+        "right": [
+          3,
+          25
+        ],
+        "left": [
+          3,
+          1
+        ],
+        "up": [
+          3,
+          3
+        ],
+        "down": [
+          3,
+          3
+        ]
+      }
+    }
+  ],
+  "screen_index_byte": "$00EB",
+  "screen_index_candidates": {
+    "$0084": [
+      85,
+      133,
+      189
+    ],
+    "$0098": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "$00FA": [
+      0,
+      1,
+      2,
+      4,
+      8
+    ]
+  }
+}

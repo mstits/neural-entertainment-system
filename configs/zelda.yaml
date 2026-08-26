@@ -34,6 +34,12 @@ description: >
 # an independent differential re-derivation on this ROM, per the
 # rediscovery_rule below — never by deleting the q_ prefix in place.
 quarantined_external_knowledge:
+  # The ROM this contamination record is about. Address numbering is
+  # per-ROM: 0x0010 means nothing in common between this game and
+  # Arkanoid, so tests/test_purity_quarantine_sweep.py scopes every
+  # check to profiles running THIS rom. A block that omits this key
+  # is treated as applying to every profile (fail-closed).
+  applies_to_rom: "roms/Legend of Zelda, The (USA) (Rev A).nes"
   provenance: "aldonunez/zelda1-disassembly + Data Crystal RAM map (external, undiscovered)"
   status: UNVERIFIED_EXTERNAL
   rediscovery_rule: >
@@ -265,6 +271,44 @@ dreamer:
 # $00E8 as "room" and $000A as "hp" — both junk (receipt §5). The substitute
 # is the same discipline with a stricter event track: a screen transition is
 # only counted when OUR OWN rendered play area really changes.
+# Three of this profile's solve-block coordinates are numerically identical
+# to addresses recorded in the quarantine block above ($0070 q_link_x,
+# $0084 q_link_y, $00EB q_world_map_x). Solve coordinates are the archive's
+# cell key and become PRE-PROBE EXCLUSIONS in scripts/observatory.py, so a
+# quarantined byte reaching them removes itself from the discovery
+# instrument's own candidate space — the same steering defect as BREACH
+# PATH 2, through a second door. They are admissible ONLY as independent
+# re-derivations, and the receipt is checked into the tree so the claim can
+# be audited rather than believed. tests/test_purity_quarantine_sweep.py
+# enforces this.
+rediscovered_addresses:
+  - address: "0x0084"
+    role: solve.y
+    method: >-
+      Held-direction differential from this profile's own verified start
+      state (roms/zelda_start.state.bin), 45 steps per arm, frame_skip 4.
+      Nominated by measured reversibility alone: DOWN 134->189, UP 131->85,
+      exactly flat under LEFT/RIGHT and under no-op. Rank 1 of 3 qualifying
+      zero-page bytes on the vertical axis.
+    receipt: docs/receipts/rediscovery/zelda_coordinates_2026-08-26.json
+  - address: "0x00EB"
+    role: solve.area
+    method: >-
+      Same run. Rank 1 on the horizontal axis over the full hold (RIGHT
+      119->120, LEFT 119->118) and the only byte that both settles constant
+      within every arm and settles to different constants across arms — the
+      screen-index signature, measured, not looked up.
+    receipt: docs/receipts/rediscovery/zelda_coordinates_2026-08-26.json
+  - address: "0x0070"
+    role: solve.progress.lo
+    method: >-
+      Same run, stage 2. A screen-relative x re-bases at every screen edge,
+      so it fails a whole-hold reversibility test by construction; re-run on
+      the prefix of each arm before the stage-1 screen-index byte changes,
+      $0070 is rank 1 of 3 (RIGHT 89->240, LEFT 78->0, flat under UP/DOWN
+      and no-op).
+    receipt: docs/receipts/rediscovery/zelda_coordinates_2026-08-26.json
+
 solve:
   rom: "roms/Legend of Zelda, The (USA) (Rev A).nes"
   # ROOT STATE. Use roms/zelda_start.state.bin with --root-state. The

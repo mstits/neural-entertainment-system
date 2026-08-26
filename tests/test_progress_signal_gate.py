@@ -10,8 +10,11 @@ verdict as a healthy one — the 1942 pre-fix false PASS.
 from __future__ import annotations
 
 from scripts.progress_signal_gate import (
+    STASIS_MIN_MEDIAN_CHURN,
     assess,
+    assess_hold,
     first_exhaustion_index,
+    first_stasis_index,
     note_camera_static,
     truncate_at_exhaustion,
 )
@@ -174,11 +177,30 @@ def test_death_followed_by_a_frozen_tail_shorter_than_the_quarter_window():
     assert first_exhaustion_index(trace, start_lives=1) is None
 
 
-def test_start_lives_zero_or_none_never_truncates():
+def test_a_lives_byte_flat_at_zero_records_no_death():
+    # d == 0 for every step: nothing to detect from the lives byte alone.
+    # (The frozen-surface detector is what covers this shape; see
+    # test_stasis_catches_the_terminal_death_the_lives_byte_misses.)
     trace = [0] * 1200
     assert first_exhaustion_index(trace, start_lives=0) is None
     assert truncate_at_exhaustion(1200, trace, 0) == 1200
     assert truncate_at_exhaustion(1200, trace, None) == 1200
+
+
+def test_start_lives_zero_is_not_exempt_from_truncation():
+    """Regression for the pinned-inapplicable D5 fix.
+
+    `first_exhaustion_index` used to bail on `start_lives in (None, 0)`
+    before looking at the trace, and a test asserted that as correct. On
+    the D5 sweep's OWN receipt (runs/onboard_wave6_d5_sweep_v3.json) four
+    profiles flagged contaminated — bad_dudes, ducktales_2, ninja_gaiden,
+    paperboy — all read `lives_at_start: 0`, so the fix could not apply to
+    any of them. The modular check handles the case fine: a 0 -> 255
+    underflow is `(0 - 255) % 256 == 1`.
+    """
+    trace = [0] * 192 + [255] * 1008          # the bad_dudes shape
+    assert first_exhaustion_index(trace, start_lives=0) == 192
+    assert truncate_at_exhaustion(len(trace), trace, 0) == 192
 
 
 def test_no_lives_trace_never_truncates():
@@ -195,3 +217,172 @@ def test_wrap_style_death_is_still_detected():
     trace = [1] * 500 + [255] * 700
     idx = first_exhaustion_index(trace, start_lives=1)
     assert idx == 500
+
+
+# ==========================================================================
+# THE D1 CLASS INSIDE THIS GATE: a terminal death the lives byte never
+# reports. `first_exhaustion_index` reuses `GenericGame.is_dead`'s modular
+# check `1 <= (start - cur) % 256 <= 8`, which defect D1 proved blind to a
+# death that leaves the byte UNCHANGED — on ninja_gaiden_ii the byte at
+# $004C sat flat at 1 straight through GAME OVER. The gate needs a second,
+# independent detector or it certifies a frozen GAME OVER screen as live
+# play, which is exactly the contamination D5 exists to remove.
+# ==========================================================================
+
+def _live_churn(n: int, level: int = 200) -> list[int]:
+    """Ordinary play: a busy surface, a few hundred bytes moving per step."""
+    return [level + (i % 17) for i in range(n)]
+
+
+def test_stasis_catches_the_terminal_death_the_lives_byte_misses() -> None:
+    churn = _live_churn(800) + [0] * 400          # froze at step 800
+    lives_flat = [1] * 1200                       # the NG2 shape: d == 0
+
+    assert first_exhaustion_index(lives_flat, start_lives=1) is None, (
+        "premise check: the lives byte must be blind to this, or this test "
+        "is not exercising the D1 class")
+
+    idx, reason = first_stasis_index(churn)
+    assert idx == 800, reason
+    assert truncate_at_exhaustion(1200, lives_flat, 1, churn) == 800
+
+
+def test_ordinary_play_never_looks_like_stasis() -> None:
+    """The false-positive direction. A gate that fires on live play would
+    truncate every hold on the roster and fail everything."""
+    churn = _live_churn(1200)
+    idx, reason = first_stasis_index(churn)
+    assert idx is None, reason
+    assert truncate_at_exhaustion(1200, [3] * 1200, 3, churn) == 1200
+
+
+def test_a_brief_pause_is_not_an_absorbing_state() -> None:
+    """Fades, door transitions and boss intros freeze the surface for a
+    moment and then resume. Only a tail that never restarts counts."""
+    churn = _live_churn(500) + [0] * 100 + _live_churn(600)
+    idx, reason = first_stasis_index(churn)
+    assert idx is None, reason
+
+
+def test_a_short_frozen_tail_is_not_enough() -> None:
+    churn = _live_churn(1150) + [0] * 50          # under the 25% floor
+    idx, _ = first_stasis_index(churn)
+    assert idx is None
+
+
+def test_a_profile_too_quiet_to_judge_disarms_out_loud() -> None:
+    """Refuse rather than guess: under the churn floor a frozen surface
+    and ordinary play are not separable, so the test must say so instead
+    of manufacturing a verdict."""
+    churn = [2] * 600 + [0] * 600                 # median 2 < floor
+    idx, reason = first_stasis_index(churn)
+    assert idx is None
+    assert "DISARMED" in reason
+    assert str(STASIS_MIN_MEDIAN_CHURN) in reason
+
+
+def test_stasis_tolerance_scales_with_the_profiles_own_churn() -> None:
+    """A busy game's "frozen" is not a quiet game's "frozen". Tolerance is
+    5% of the profile's own live median, so residual counter ticks on a
+    dead screen still read as frozen on a busy profile."""
+    churn = _live_churn(600, level=1000) + [7] * 600   # 7 <= 5% of ~1000
+    idx, reason = first_stasis_index(churn)
+    assert idx == 600, reason
+
+
+def test_the_earliest_of_the_two_detectors_wins() -> None:
+    lives = [1] * 300 + [0] * 900                 # death recorded at 300
+    churn = _live_churn(800) + [0] * 400          # surface froze at 800
+    assert truncate_at_exhaustion(1200, lives, 1, churn) == 300
+
+
+# ==========================================================================
+# assess_hold(): the wiring itself. Every judgement between the last
+# emulator step and the printed verdict used to live inline in main(),
+# where deleting `xy = xy[:keep]` restored the death-blind hold and failed
+# nothing. These drive the production path.
+# ==========================================================================
+
+def _rising(n: int) -> list[int]:
+    return [i * 3 for i in range(n)]
+
+
+def test_assess_hold_drops_the_dead_tail_on_the_ram_path() -> None:
+    live, dead = 400, 800
+    trace = _rising(live) + [9999] * dead
+    lives = [1] * live + [0] * dead
+    v = assess_hold(ram_trace=trace, lives_trace=lives, lives0=1,
+                    churn=_live_churn(live) + [0] * dead,
+                    has_high_byte=True, requested_steps=live + dead)
+    assert v["steps"] == live, "the post-death tail was assessed as live play"
+    assert v["dropped_tail_steps"] == dead
+    assert v["max"] == trace[live - 1]
+
+
+def test_assess_hold_drops_the_dead_tail_on_the_odometer_path() -> None:
+    live, dead = 400, 800
+    xy = [(i * 4, 0) for i in range(live)] + [(99999, 0)] * dead
+    lives = [1] * live + [0] * dead
+    v = assess_hold(xy=xy, lives_trace=lives, lives0=1,
+                    churn=_live_churn(live) + [0] * dead,
+                    oam_changed=[True] * (live + dead),
+                    progress_cfg={"source": "odometer", "axis": "x"},
+                    requested_steps=live + dead)
+    assert v["steps"] == live
+    assert v["dropped_tail_steps"] == dead
+    assert v["odometer_range"]["x"] == (live - 1) * 4
+    assert v["oam_churn"] == live
+
+
+def test_assess_hold_fails_a_frozen_tail_the_lives_byte_never_saw() -> None:
+    """The D1 class end to end: surface froze, declared death observable
+    said nothing. That is an INSTRUMENT fault — the profile cannot see its
+    own terminal states — so the gate must refuse, not quietly truncate."""
+    live, dead = 400, 800
+    v = assess_hold(ram_trace=_rising(live) + [9999] * dead,
+                    lives_trace=[1] * (live + dead), lives0=1,
+                    churn=_live_churn(live) + [0] * dead,
+                    has_high_byte=True, requested_steps=live + dead)
+    assert v["passed"] is False
+    assert "blind" in v["verdict"]
+    assert any("no death recorded" in f.lower() or "D1" in f
+               for f in v["instrument_findings"])
+    assert v["exhaustion"]["stasis_index"] == live
+    assert v["exhaustion"]["lives_index"] is None
+
+
+def test_assess_hold_does_not_cry_blind_when_the_lives_byte_did_its_job() -> None:
+    """Negative control for the finding above. If it fired whenever a hold
+    ended on a dead screen it would flag every 1-life profile on the
+    roster and mean nothing."""
+    live, dead = 400, 800
+    v = assess_hold(ram_trace=_rising(live) + [9999] * dead,
+                    lives_trace=[1] * live + [0] * dead, lives0=1,
+                    churn=_live_churn(live) + [0] * dead,
+                    has_high_byte=True, requested_steps=live + dead)
+    assert "blind" not in v["verdict"]
+    assert v["exhaustion"]["lives_index"] == live
+
+
+def test_assess_hold_still_blocks_a_static_camera() -> None:
+    """D6, driven through the production path rather than by calling
+    note_camera_static() directly."""
+    v = assess_hold(xy=[(0, 0)] * 1200, lives_trace=[3] * 1200, lives0=3,
+                    churn=_live_churn(1200),
+                    oam_changed=[True] * 1200,
+                    progress_cfg={"source": "odometer", "axis": "x"},
+                    requested_steps=1200)
+    assert v["passed"] is False
+    assert v["verdict"] == "SIGNAL UNUSABLE — camera static"
+    assert v["odometer_range"] == {"x": 0, "y": 0}
+
+
+def test_assess_hold_passes_a_clean_hold() -> None:
+    """Anti-vacuity: the checks above are only meaningful if this function
+    can still return a positive."""
+    v = assess_hold(ram_trace=_rising(1200), lives_trace=[3] * 1200, lives0=3,
+                    churn=_live_churn(1200), has_high_byte=True,
+                    requested_steps=1200)
+    assert v["passed"] is True, v["instrument_findings"]
+    assert v["dropped_tail_steps"] == 0
+    assert v["verdict"].startswith("SIGNAL SOUND")

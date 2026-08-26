@@ -97,6 +97,11 @@ def _replay_report(rom: str, profile_path: str, ckpt_path: str,
     reward_fn = build_reward_function(profile)
     reward_fn.reset()
 
+    _solve = profile.get("solve") or {}
+    _px = (_solve.get("progress") or {}).get("lo")
+    _py = _solve.get("y")
+    pos_addrs = (int(_px), int(_py)) if _px is not None and _py is not None else None
+
     actions = Counter()
     positions = []
     map_cells = set()
@@ -124,10 +129,16 @@ def _replay_report(rom: str, profile_path: str, ckpt_path: str,
         # wall-bump) score this replay accurately.
         r, rew_done, level_id = reward_fn.compute(ram, action=bitmask)
         total_reward += r
-        # Position / map
-        link_x = env.get_ram(0x0070) if "zelda" in profile["name"].lower() else 0
-        link_y = env.get_ram(0x0084) if "zelda" in profile["name"].lower() else 0
-        positions.append((link_x, link_y))
+        # Position / map. The coordinate pair comes from the profile's own
+        # solve block (the addresses it declares and receipts), never from
+        # a display-name substring picking hand-authored constants: this
+        # used to read `0x0070`/`0x0084` whenever the name contained
+        # "zelda", and both of those are addresses under this project's
+        # purity quarantine. No solve coordinates declared -> no position
+        # column, which is a missing diagnostic, not a wrong one.
+        if pos_addrs is not None:
+            positions.append((env.get_ram(pos_addrs[0]),
+                              env.get_ram(pos_addrs[1])))
         map_cells.add(level_id)
         if done or rew_done:
             break

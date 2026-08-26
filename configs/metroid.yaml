@@ -79,6 +79,12 @@ ram_mapping:
 # this ROM, so they are dead weight until they are.
 # =====================================================================
 quarantined_external_knowledge:
+  # The ROM this contamination record is about. Address numbering is
+  # per-ROM: 0x0010 means nothing in common between this game and
+  # Arkanoid, so tests/test_purity_quarantine_sweep.py scopes every
+  # check to profiles running THIS rom. A block that omits this key
+  # is treated as applying to every profile (fail-closed).
+  applies_to_rom: "roms/Metroid (USA).nes"
   provenance: >
     Third-party community RAM map (datacrystal-class), copied into this
     profile before the purity line was enforced here. Never re-derived

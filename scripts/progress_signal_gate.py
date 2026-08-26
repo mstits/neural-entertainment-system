@@ -67,14 +67,28 @@ def first_exhaustion_index(lives_trace: list, start_lives: int) -> int | None:
     respawn (the lives byte keeps varying afterward), not a
     non-interactive tail.
 
-    Returns None when there is nothing to exhaust (no lives byte, it
-    starts at 0, or no death is ever recorded) or the trace keeps
-    varying after the death it does record.
+    A lives byte that reads 0 at the start state is NOT exempt. It used
+    to be (`start_lives in (None, 0) -> return None`), which pinned the
+    whole D5 fix out of reach on exactly the profiles the D5 sweep had
+    flagged as contaminated: bad_dudes, ducktales_2, ninja_gaiden and
+    paperboy all report `lives_at_start: 0` and all four show the
+    died-then-frozen-tail shape (runs/onboard_wave6_d5_sweep_v3.json).
+    The modular check handles that case perfectly well — a 0 -> 255
+    underflow is `(0 - 255) % 256 == 1` — and `assess()` independently
+    fails any profile whose death byte reads 0 at the start state, so
+    the only effect of dropping the exemption is that a contaminated
+    tail is now dropped instead of silently assessed.
+
+    Returns None when there is nothing to exhaust (no lives byte, or no
+    death is ever recorded) or the trace keeps varying after the death
+    it does record.
     """
-    if not lives_trace or start_lives in (None, 0):
+    if not lives_trace or start_lives is None:
         return None
     death = None
     for i, v in enumerate(lives_trace):
+        if v is None:
+            continue
         d = (int(start_lives) - int(v)) % 256
         if 1 <= d <= 8:
             death = i
@@ -85,16 +99,91 @@ def first_exhaustion_index(lives_trace: list, start_lives: int) -> int | None:
     return death if tail and len(set(tail)) == 1 else None
 
 
-def truncate_at_exhaustion(n: int, lives_trace, start_lives: int | None) -> int:
-    """How many LEADING steps of an `n`-step hold to keep before
-    handing the trace to `assess()` — all of them, unless the lives
-    byte truly exhausts partway through (see `first_exhaustion_index`),
-    in which case the game-over/attract tail is dropped rather than
-    silently believed."""
-    if lives_trace is None or start_lives in (None, 0):
-        return n
-    idx = first_exhaustion_index(lives_trace, start_lives)
-    return n if idx is None else idx
+#: Below this many bytes of median per-step RAM churn a profile is too
+#: quiet for the stasis test to separate "frozen" from "ordinary play",
+#: so the test DISARMS with the measured reason recorded rather than
+#: guessing. Same floor and the same refusal-to-guess discipline as the
+#: solver's TerminalStasisSignal.
+STASIS_MIN_MEDIAN_CHURN = 8
+#: A frozen surface is one whose per-step churn sits at or under this
+#: fraction of the profile's own live median.
+STASIS_TOL_FRACTION = 0.05
+#: ...and does so for at least this fraction of the hold. A brief pause
+#: (a fade, a door transition, a boss intro) is not an absorbing state.
+STASIS_MIN_TAIL_FRACTION = 0.25
+
+
+def first_stasis_index(churn: list[int]) -> tuple[int | None, str]:
+    """First step of a terminal STASIS tail: the point after which the
+    whole RAM surface stops moving and never restarts.
+
+    Why this exists next to `first_exhaustion_index`, which already
+    detects exhaustion from the lives byte: defect D1 (2026-08-26)
+    proved the lives byte can be BLIND to a terminal state. On
+    ninja_gaiden_ii the byte at $004C sat flat at 1 straight through
+    GAME OVER, so `(start - cur) % 256` was 0 the whole time and the
+    modular check — which exists to catch the 0 -> 255 wrap — reported
+    nothing. The solver grew `TerminalStasisSignal` for that. This gate
+    re-imported the same blind predicate in the same commit wave and
+    would happily assess a frozen GAME OVER screen as live play, which
+    is the exact contamination D5 exists to remove.
+
+    The claim here is deliberately weaker than "the player is dead": it
+    is "this surface stopped moving and stayed stopped". Tolerance is
+    derived from the profile's OWN median churn rather than a constant,
+    so a quiet game and a busy one are held to the same relative
+    standard, and a profile too quiet to discriminate disarms out loud.
+
+    Returns `(index, reason)`. `index` is None when no stasis tail is
+    found or the test disarmed; `reason` always carries the measurement,
+    so a receipt records why the test said nothing.
+    """
+    n = len(churn)
+    if n < 8:
+        return None, f"trace too short for a stasis test ({n} steps)"
+    live = sorted(churn[: max(n // 2, 1)])
+    median = live[len(live) // 2]
+    if median < STASIS_MIN_MEDIAN_CHURN:
+        return None, (
+            f"DISARMED: median live churn {median} bytes/step is under the "
+            f"{STASIS_MIN_MEDIAN_CHURN}-byte floor — this profile is too "
+            f"quiet for a frozen surface to be told apart from ordinary play")
+    tol = max(1, int(median * STASIS_TOL_FRACTION))
+    idx = n
+    while idx > 0 and churn[idx - 1] <= tol:
+        idx -= 1
+    tail = n - idx
+    if tail < max(int(n * STASIS_MIN_TAIL_FRACTION), 1):
+        return None, (
+            f"no stasis tail (median churn {median}, tol {tol}, longest "
+            f"frozen tail {tail} of {n} steps)")
+    return idx, (
+        f"surface frozen from step {idx}: {tail} of {n} steps at or under "
+        f"{tol} bytes/step against a live median of {median}")
+
+
+def truncate_at_exhaustion(n: int, lives_trace, start_lives: int | None,
+                           churn: list[int] | None = None) -> int:
+    """How many LEADING steps of an `n`-step hold to keep before handing
+    the trace to `assess()` — all of them, unless the hold ran off the
+    end of live play, in which case the game-over/attract tail is
+    dropped rather than silently believed.
+
+    Two independent detectors, EARLIEST wins: the declared lives byte
+    (`first_exhaustion_index`) and the surface itself
+    (`first_stasis_index`). One is there because the other can be blind;
+    see `first_stasis_index`.
+    """
+    idxs = []
+    if lives_trace is not None and start_lives is not None:
+        i = first_exhaustion_index(lives_trace, start_lives)
+        if i is not None:
+            idxs.append(i)
+    if churn:
+        i, _ = first_stasis_index(list(churn))
+        if i is not None:
+            idxs.append(i)
+    return min(idxs) if idxs else n
 
 
 def note_camera_static(v: dict, oam_churn: int, steps: int) -> dict:
@@ -130,7 +219,12 @@ def note_camera_static(v: dict, oam_churn: int, steps: int) -> dict:
         f"regardless of agent activity; this profile has not been "
         f"demonstrated capable of returning a positive on this axis and "
         f"must not drive a search with it")
-    v["passed"] = not v["instrument_findings"]
+    # NOT `not v["instrument_findings"]`. That idiom is what D6 was: a
+    # verdict computed from the ABSENCE of findings is one reordering or
+    # one early return away from certifying the thing it was meant to
+    # reject, and this function's whole job is to reject. A camera-static
+    # axis is disqualifying on its own terms, so say so directly.
+    v["passed"] = False
     v["verdict"] = "SIGNAL UNUSABLE — camera static"
     return v
 
@@ -244,6 +338,85 @@ def assess(trace: list[int], lives_at_start: int | None,
     }
 
 
+def assess_hold(*, xy: list | None = None, ram_trace: list | None = None,
+                lives_trace: list | None = None, lives0: int | None = None,
+                churn: list[int] | None = None,
+                oam_changed: list[bool] | None = None,
+                progress_cfg: dict | None = None,
+                has_high_byte: bool = False,
+                requested_steps: int | None = None) -> dict:
+    """EVERYTHING that happens between the last emulator step and the
+    printed verdict, as one pure function over recorded traces.
+
+    This exists because it used to live inline in `main()`, where no test
+    could reach it. Verification of the D5/D6 work found the consequence:
+    deleting either `xy = xy[:keep]` or `trace = trace[:keep]` restored
+    the death-blind hold and failed nothing, and the `rx == 0 and ry == 0`
+    branch that D6 fixed was likewise reachable only by booting a ROM.
+    `main()` below now collects traces and calls this; it holds no
+    decision of its own.
+
+    Pass `xy` (odometer point list) or `ram_trace` (paired RAM reads),
+    not both.
+    """
+    assert (xy is None) != (ram_trace is None), \
+        "assess_hold takes exactly one of xy= / ram_trace="
+    progress_cfg = progress_cfg or {}
+    n_raw = len(xy if xy is not None else ram_trace)
+    requested = requested_steps if requested_steps is not None else n_raw
+
+    keep = truncate_at_exhaustion(n_raw, lives_trace, lives0, churn)
+    dropped = n_raw - keep
+    stasis_idx, stasis_reason = (first_stasis_index(list(churn))
+                                 if churn else (None, "no churn recorded"))
+    lives_idx = (first_exhaustion_index(lives_trace, lives0)
+                 if lives_trace is not None and lives0 is not None else None)
+
+    if xy is not None:
+        xy = xy[:keep]
+        oam_churn = sum(oam_changed[:keep]) if oam_changed else 0
+        rx = max(p[0] for p in xy) - min(p[0] for p in xy) if xy else 0
+        ry = max(p[1] for p in xy) - min(p[1] for p in xy) if xy else 0
+        axis, sign = resolve_odometer_axis(progress_cfg, rx, ry)
+        signed = [p[axis] * sign for p in xy]
+        base = min(signed) if signed else 0
+        trace = [int(s - base) for s in signed]
+        v = assess(trace, lives0, True,
+                   (signed[-1] - signed[0]) if signed else None)
+        if rx == 0 and ry == 0:
+            v = note_camera_static(v, oam_churn, requested)
+        v["oam_churn"] = oam_churn
+        v["odometer_range"] = {"x": rx, "y": ry}
+        v["axis"] = "xy"[axis]
+    else:
+        v = assess(list(ram_trace[:keep]), lives0, has_high_byte)
+
+    # THE D1 CLASS, reported rather than absorbed. A surface that froze
+    # while the declared death observable said nothing means the profile
+    # cannot see its own terminal states — the same defect this file's
+    # docstring already records for Ninja Gaiden's death byte, and an
+    # instrument fault, not a fact about the game.
+    if stasis_idx is not None and lives_idx is None:
+        v["instrument_findings"].append(
+            f"the hold ran into a frozen surface with NO death recorded by "
+            f"the declared lives byte ({stasis_reason}) — the death "
+            f"observable is blind to this terminal state (defect D1 class), "
+            f"so everything after step {stasis_idx} was a non-interactive "
+            f"screen this gate cannot certify")
+        v["passed"] = False
+        v["verdict"] = "SIGNAL UNUSABLE — death observable blind to a frozen tail"
+
+    v["requested_steps"] = requested
+    v["dropped_tail_steps"] = dropped
+    v["exhaustion"] = {
+        "lives_index": lives_idx,
+        "stasis_index": stasis_idx,
+        "stasis_reason": stasis_reason,
+        "kept_steps": keep,
+    }
+    return v
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--profile", required=True)
@@ -296,78 +469,60 @@ def main(argv: list[str] | None = None) -> int:
 
     first = pool.step_all(np.zeros(1, dtype=np.uint8))[0][2]
     lives0 = int(first[lives_addr]) if lives_addr is not None else None
-    trace = []
-    dropped = 0
-    if args.odometer:
-        xy = []
-        oam_changed = []
-        lives_trace = []
-        prev_oam = None
-        for _ in range(args.steps):
-            ram = pool.step_all(a)[0][2]
+    prev_ram = np.frombuffer(bytes(first), dtype=np.uint8).astype(np.int16)
+
+    # ---- collect, decide nothing ------------------------------------------
+    # Every judgement below the loop lives in assess_hold(), which is a pure
+    # function over these traces and is driven directly by
+    # tests/test_progress_signal_gate.py. main() must stay dumb: an inline
+    # decision here is one no test can reach, which is how the D5 truncation
+    # and the D6 camera-static branch both shipped unguarded.
+    xy: list = []
+    oam_changed: list = []
+    lives_trace: list = []
+    churn: list = []
+    trace: list = []
+    prev_oam = None
+    for _ in range(args.steps):
+        ram = pool.step_all(a)[0][2]
+        cur = np.frombuffer(bytes(ram), dtype=np.uint8).astype(np.int16)
+        # Per-step RAM churn: the surface measurement the stasis test needs,
+        # because the declared lives byte can be blind to a terminal state
+        # (defect D1). One 2 KB compare per step.
+        churn.append(int(np.count_nonzero(cur != prev_ram)))
+        prev_ram = cur
+        lives_trace.append(int(ram[lives_addr]) if lives_addr is not None else None)
+        if args.odometer:
             xy.append(pool.get_odometer_per_worker()[0])
             oam = bytes(pool.peek_oam(0))
             oam_changed.append(prev_oam is not None and oam != prev_oam)
             prev_oam = oam
-            lives_trace.append(int(ram[lives_addr]) if lives_addr is not None else None)
-        # D5: drop a persistent post-exhaustion tail (game-over/attract
-        # screen) before computing ANY stat from this hold — camera
-        # panning or OAM churn on a dead screen is not evidence the game
-        # is still advancing. See truncate_at_exhaustion's docstring.
-        keep = truncate_at_exhaustion(len(xy), lives_trace, lives0)
-        dropped = len(xy) - keep
-        xy = xy[:keep]
-        oam_churn = sum(oam_changed[:keep])
-        if dropped:
-            print(f"[progress_signal_gate] lives exhausted at step {keep} "
-                  f"of {args.steps} — dropping {dropped} trailing steps "
-                  f"(game-over/attract tail) before assessing")
-        rx = max(p[0] for p in xy) - min(p[0] for p in xy)
-        ry = max(p[1] for p in xy) - min(p[1] for p in xy)
-        axis, sign = resolve_odometer_axis(solve.get("progress") or {}, rx, ry)
-        signed = [p[axis] * sign for p in xy]
-        base = min(signed)
-        trace = [int(s - base) for s in signed]
-        print(f"odometer trace: axis={'xy'[axis]} "
-              f"(range x={rx}, y={ry}) oam_churn={oam_churn}/{max(len(xy) - 1, 0)}")
-        # i64 integral: no wrap exists, so run assess as a paired signal.
-        # `signed[-1] - signed[0]` is the net motion UNDER the resolved
-        # sign, before the `- base` shift above folds it into a
-        # nonnegative trace — that shift preserves order but assess()
-        # never looks at order, only set-based distinct/tail counts, so
-        # a raw axis that runs backward under this sign (undeclared or
-        # wrong-signed `progress.axis`) renders exactly as clean a trace
-        # as a genuinely forward-increasing one without this.
-        v = assess(trace, lives0, True, signed[-1] - signed[0])
-        # The odometer measures the CAMERA, and the build is certified
-        # (scripts/odometer_cert.py) before this gate runs, so a flat
-        # odometer is a real reading, not noise. But real or not, zero
-        # range on this axis means the solver would see a constant —
-        # see note_camera_static() for why that still has to block.
-        if rx == 0 and ry == 0:
-            v = note_camera_static(v, oam_churn, args.steps)
-        v["oam_churn"] = oam_churn
-    else:
-        lives_trace = []
-        for _ in range(args.steps):
-            ram = pool.step_all(a)[0][2]
+        else:
             trace.append(int(ram[lo]) + (int(ram[hi]) << 8 if hi is not None else 0))
-            lives_trace.append(int(ram[lives_addr]) if lives_addr is not None else None)
-        # D5 (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md §9.6): this
-        # loop used to run the full hold no matter what, so a 1-life
-        # game (Arkanoid) that lost its only ball ~halfway through kept
-        # stepping a frozen post-game-over screen for the rest of the
-        # window, and an incidental byte flip on that dead screen was
-        # read back as a real "room transition". Drop the exhausted tail
-        # before assessing.
-        keep = truncate_at_exhaustion(len(trace), lives_trace, lives0)
-        dropped = len(trace) - keep
-        trace = trace[:keep]
-        if dropped:
-            print(f"[progress_signal_gate] lives exhausted at step {keep} "
-                  f"of {args.steps} — dropping {dropped} trailing steps "
-                  f"(game-over/attract tail) before assessing")
-        v = assess(trace, lives0, hi is not None)
+
+    if args.odometer:
+        v = assess_hold(xy=xy, lives_trace=lives_trace, lives0=lives0,
+                        churn=churn, oam_changed=oam_changed,
+                        progress_cfg=solve.get("progress") or {},
+                        requested_steps=args.steps)
+        print(f"odometer trace: axis={v['axis']} "
+              f"(range x={v['odometer_range']['x']}, "
+              f"y={v['odometer_range']['y']}) "
+              f"oam_churn={v['oam_churn']}/{max(v['steps'] - 1, 0)}")
+    else:
+        v = assess_hold(ram_trace=trace, lives_trace=lives_trace, lives0=lives0,
+                        churn=churn, has_high_byte=hi is not None,
+                        requested_steps=args.steps)
+    dropped = v["dropped_tail_steps"]
+    if dropped:
+        print(f"[progress_signal_gate] hold ran off the end of live play at "
+              f"step {v['exhaustion']['kept_steps']} of {args.steps} — "
+              f"dropping {dropped} trailing steps (game-over/attract tail) "
+              f"before assessing; lives_index="
+              f"{v['exhaustion']['lives_index']}, stasis_index="
+              f"{v['exhaustion']['stasis_index']} "
+              f"({v['exhaustion']['stasis_reason']})")
+
     print(f"progress-signal gate: {'PASS' if v['passed'] else 'FAIL'} — "
           f"{v['verdict']}  ({args.profile})")
     print(f"  {v['steps']} steps, {v['distinct']} distinct, "
@@ -379,10 +534,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  [BEHAVIOUR]  {f}")
     if dropped:
         print(f"  [D5] {dropped} trailing steps of the requested "
-              f"{args.steps} were dropped — the lives byte exhausted "
-              f"and never recovered (game-over/attract tail), so "
-              f"everything above is assessed on the {v['steps']} steps "
-              f"before that, not the full hold.")
+              f"{args.steps} were dropped — the hold ran off the end of "
+              f"live play (lives byte exhausted and/or the surface froze "
+              f"and never restarted), so everything above is assessed on "
+              f"the {v['steps']} steps before that, not the full hold.")
     if v["passed"] and not v["behaviour_findings"]:
         print("  signal is usable: enough resolution, no unpaired wrap, "
               "still moving late, death detectable")
@@ -391,8 +546,6 @@ def main(argv: list[str] | None = None) -> int:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps({"profile": args.profile,
                                  "odometer": bool(args.odometer),
-                                 "requested_steps": args.steps,
-                                 "dropped_tail_steps": dropped,
                                  **v}, indent=2) + "\n")
     return 0 if v["passed"] else 1
 

@@ -627,6 +627,119 @@ the two structs a source citation directly named, not a full sweep.
 `configs/zelda.yaml`'s `ram_mapping:` block carries the same addresses
 a second time as YAML and is quarantined separately, below.
 
+### BREACHED 2026-08-26 — the quarantine was defeated by two independent paths
+
+**Full record: `docs/research/PURITY_BREACH_2026-08-26.md`. Read it before
+citing any observatory receipt.** Both paths are closed; the summary here
+is the ledger entry, not the analysis.
+
+**Path 1 — inheritance by display name.** `nes_core/src/rewards.rs`
+dispatched rewards on `name.contains("zelda")`. `configs/legend_of_zelda.yaml`
+— 31 lines, no `ram_mapping`, no address of any kind, no reward weights,
+and passing the outside-provenance lint that `configs/zelda.yaml` trips —
+therefore ran `ZeldaReward` **including its quarantined win predicate**
+(`RAM_GANON_DEFEATED = 0x0672`, provenance "aldonunez disassembly + Data
+Crystal", status `UNVERIFIED_EXTERNAL`). Measured on the pre-fix binary:
+flipping that one byte on an otherwise-zeroed 2 KB buffer took the profile
+from `(-0.001, False)` to `(19999.999, True)` with `episode_success()`
+True. Two more profiles were inheriting the same way and were not in the
+original finding: `configs/zelda_roomfp.yaml` (same 0x0672 jackpot,
+reproduced) and `configs/metroid_roomfp.yaml` (silently acquired the
+ledger-BLOCKED `MetroidReward`). The dispatch existed from the initial
+commit `55e5333` (2026-04-27) to `c89a816` (2026-08-26) — **121 days**;
+it was a breach *of the quarantine* only for the 1 day the quarantine had
+existed, and the three inheriting profiles for 2 days. Closed
+structurally: `build_reward` takes `reward_id` and no longer receives the
+display name at all, so the defect is not expressible without re-plumbing
+a parameter.
+
+**Path 2 — the exclusion-set inversion, and the worse of the two.**
+`configs/zelda_gui_tuned.yaml` (a fourth Zelda profile, picker-visible,
+pinned bootable) carried a live 13-entry int-valued `ram_mapping` under the
+comment "Win chain (disassembly + emulator-verified)", six values of which
+were the exact quarantined addresses. `scripts/observatory.py` parsed
+those ints and folded them into its **pre-probe exclusion set**, the gate
+on candidate-predicate generation. An external RAM map was therefore
+deciding which bytes this project's own discovery instrument was permitted
+to nominate, and the bytes it removed were precisely the ones under
+quarantine — whose documented exit condition is rediscovery *by that
+instrument*. Not a weakened quarantine: the quarantine inverted, with the
+contamination record used as the blindfold. Live from `c9d3d95`
+(2026-07-31, when the fold was added; the addresses had been in that config
+since `d0f315e`, 2026-07-12) to 2026-08-26 — **26 days**. Closed: only
+solve-block coordinate bytes are excluded now, `ram_mapping` is annotation
+tagged `"known": true/false`, and the caller receives a membership
+*predicate* rather than a set, so `excluded |= mapped` cannot be re-added
+as a one-liner.
+
+**Path 3 — the test that could not catch either.**
+`tests/test_zelda_purity_quarantine.py` hardcoded one of the five Zelda
+configs, and nothing anywhere asserted that a profile declaring no reward
+gets the generic one. Closed: the guard is parametrised over the same
+predicate the dispatch used, plus a tree-wide sweep sourced from the
+quarantine blocks themselves.
+
+**Effect on banked results.** 13 of the 14 `observatory_v2.json` receipts
+in `runs/` were produced with a folded exclusion set; their own logs record
+it. They split two ways:
+
+- **Externally steered — negatives VOID, positives stand.**
+  `runs/megaman/mm2_bootstrap2`, `runs/gradius/gradius_bootstrap`,
+  `runs/kid_icarus/kid_icarus_bootstrap`, `runs/kungfu/kungfu_bootstrap`
+  excluded addresses that originate outside this project. Whatever those
+  passes *found* was found by probing and stands. Any claim of the form
+  "the instrument looked and there is nothing there" does not: for the
+  excluded bytes it did not look. **Gradius's "stage byte NOT FOUND" is
+  withdrawn** — that pass was pre-blinded to six candidate bytes. The same
+  withdrawal applies to any "exhaustively searched" phrasing on the other
+  three. Re-running under the fixed instrument is the only thing that
+  restores a negative.
+- **Self-derived — results stand.** `contra`, `bubble_bobble`,
+  `castlevania`, `double_dragon`, `ducktales`, `excitebike`,
+  `ghosts_n_goblins`, `kirby`, `metroid` folded only their own
+  `[VERIFIED: ...]`-receipted addresses. Narrower than intended, but no
+  outside knowledge entered.
+
+**No CONFIRMED clear is affected.** `bubble_bobble`, `castlevania`,
+`excitebike` and `tetris_b` — the only four profiles that can witness their
+own clear — carry no external RAM map; their sole external-provenance
+mentions are negative citations. **No Learned-ledger claim is retracted**:
+the 2026-08-25 check that neither struct appears anywhere else in this file
+was re-run and still holds. `zelda_roomfp`'s 443,419-cell / zero-solution
+archive was already VOID for want of an admissible target signal; the
+breach voids it a second time, independently, because that profile was
+running the quarantined win predicate throughout.
+
+**Standing rule, now mechanised.** A quarantined address may re-enter a
+profile only as an independent rediscovery, declared in a machine-readable
+`rediscovered_addresses:` entry naming role, method and a receipt path that
+exists in the tree (`runs/` is gitignored and does not count). Enforced for
+both `ram_mapping` and `solve:` by
+`tests/test_purity_quarantine_sweep.py`, ROM-scoped via each quarantine
+block's `applies_to_rom:` key so cross-game address collisions are not
+reported as contamination. The three Zelda solve coordinates that needed
+this were re-derived live on 2026-08-26 by held-direction differential with
+no map consulted — receipt
+`docs/receipts/rediscovery/zelda_coordinates_2026-08-26.json`.
+
+**Still live, explicitly.** `ZeldaReward` and `MetroidReward` are built
+almost entirely from quarantined addresses and remain reachable by profiles
+that *explicitly* declare `reward_id: zelda` / `metroid`
+(`configs/zelda.yaml`, `configs/zelda_gui_tuned.yaml`). Flipping 0x0672
+still returns `episode_success() == True` for those. The rule above stands
+unchanged: neither struct may produce a Learned-ledger claim. Making the
+structs themselves inert is a real behaviour change on live training
+profiles and belongs in its own dated change.
+
+**Related class, closed the same day.** Three further name-substring→
+hardcoded-address sites were found in Python and fixed:
+`src/diagnostics/worker_debug.py` and `scripts/diagnose.py` both read the
+quarantined 0x0070/0x0084 pair under `"zelda" in <name>`, and
+`src/audio/ram_music.py` carried a whole substring→address table (deleted).
+`tests/test_no_new_name_dispatch.py` holds a **shrink-only** inventory of
+the eight display-name dispatch sites that remain in `src/` and `scripts/`
+— it may lose entries, never gain one, and a stale entry is a hard failure.
+
 ## Enforcement
 
 `configs/demo_allowlist.txt` is the checked-in list of demo banks

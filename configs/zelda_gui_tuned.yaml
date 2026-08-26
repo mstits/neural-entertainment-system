@@ -55,6 +55,12 @@ description: >
 # test_the_two_quarantine_blocks_do_not_drift pins this set equal to
 # zelda.yaml's — do not edit one without the other.
 quarantined_external_knowledge:
+  # The ROM this contamination record is about. Address numbering is
+  # per-ROM: 0x0010 means nothing in common between this game and
+  # Arkanoid, so tests/test_purity_quarantine_sweep.py scopes every
+  # check to profiles running THIS rom. A block that omits this key
+  # is treated as applying to every profile (fail-closed).
+  applies_to_rom: "roms/Legend of Zelda, The (USA) (Rev A).nes"
   provenance: "aldonunez/zelda1-disassembly + Data Crystal RAM map (external, undiscovered)"
   status: UNVERIFIED_EXTERNAL
   rediscovery_rule: >
