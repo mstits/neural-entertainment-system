@@ -1,0 +1,4 @@
+odometer trace: axis=x (range x=1806, y=0) oam_churn=591/599
+progress-signal gate: PASS — SIGNAL SOUND — still advancing  (configs/ninja_gaiden_ii.yaml)
+  600 steps, 396 distinct, range 0..1806, high byte=True, lives@start=1
+  signal is usable: enough resolution, no unpaired wrap, still moving late, death detectable

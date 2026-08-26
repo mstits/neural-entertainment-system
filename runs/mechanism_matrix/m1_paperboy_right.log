@@ -1,0 +1,4 @@
+odometer trace: axis=x (range x=1012, y=1012) oam_churn=349/599
+progress-signal gate: FAIL — SIGNAL UNUSABLE  (configs/paperboy.yaml)
+  600 steps, 510 distinct, range 0..1012, high byte=True, lives@start=0
+  [INSTRUMENT] death byte reads 0 at the start state — a decrement underflows and no death can be detected

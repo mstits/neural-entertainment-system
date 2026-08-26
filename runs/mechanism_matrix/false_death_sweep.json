@@ -1,0 +1,839 @@
+{
+ "1942": {
+  "config": "configs/1942.yaml",
+  "display_name": "1942",
+  "lives_addr": 201,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "-y"
+  },
+  "room_fp": false,
+  "rom": "roms/1942 (Japan, USA).nes",
+  "start_state_path": "roms/1942 (Japan, USA)_start.state.bin",
+  "lives_at_root": 0
+ },
+ "arkanoid": {
+  "config": "configs/arkanoid.yaml",
+  "display_name": "Arkanoid",
+  "lives_addr": 33,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 22,
+   "hi": 16
+  },
+  "room_fp": false,
+  "rom": "roms/Arkanoid (USA).nes",
+  "start_state_path": "roms/Arkanoid (USA)_start.state.bin",
+  "lives_at_root": 1
+ },
+ "bad_dudes": {
+  "config": "configs/bad_dudes.yaml",
+  "display_name": "Bad Dudes",
+  "lives_addr": 847,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Bad Dudes (USA).nes",
+  "start_state_path": "roms/Bad Dudes (USA)_start.state.bin",
+  "lives_at_root": 0
+ },
+ "batman_the_video_game": {
+  "config": "configs/batman_the_video_game.yaml",
+  "display_name": "Batman - The Video Game",
+  "lives_addr": 183,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Batman - The Video Game (USA).nes",
+  "start_state_path": "roms/Batman - The Video Game (USA)_start.state.bin",
+  "lives_at_root": 8
+ },
+ "bionic_commando": {
+  "config": "configs/bionic_commando.yaml",
+  "display_name": "Bionic Commando",
+  "lives_addr": 193,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Bionic Commando (USA).nes",
+  "start_state_path": "roms/Bionic Commando (USA)_start.state.bin",
+  "lives_at_root": 2
+ },
+ "blaster_master": {
+  "config": "configs/blaster_master.yaml",
+  "display_name": "Blaster Master",
+  "lives_addr": 190,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Blaster Master (USA).nes",
+  "start_state_path": "roms/Blaster Master (USA)_start.state.bin",
+  "lives_at_root": 1
+ },
+ "bubble_bobble": {
+  "config": "configs/bubble_bobble.yaml",
+  "display_name": "Bubble Bobble",
+  "lives_addr": 46,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [
+   1025,
+   1122
+  ],
+  "clear_mode": "byte_change",
+  "has_finale": false,
+  "progress": {
+   "lo": 1025
+  },
+  "room_fp": false,
+  "rom": "roms/Bubble Bobble (USA).nes",
+  "start_state_path": "roms/Bubble Bobble (USA)_start.state.bin",
+  "lives_at_root": 3
+ },
+ "castlevania": {
+  "config": "configs/castlevania.yaml",
+  "display_name": "Castlevania",
+  "lives_addr": 42,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [
+   40
+  ],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 64,
+   "hi": 65
+  },
+  "room_fp": false,
+  "rom": "roms/Castlevania (USA).nes",
+  "start_state_path": "roms/Castlevania (USA)_start.state.bin",
+  "lives_at_root": 4
+ },
+ "castlevania_iii": {
+  "config": "configs/castlevania_iii.yaml",
+  "display_name": "Castlevania III - Dracula's Curse",
+  "lives_addr": 1697,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 87
+  },
+  "room_fp": false,
+  "rom": "roms/Castlevania III - Dracula's Curse (USA).nes",
+  "start_state_path": "roms/Castlevania III - Dracula's Curse (USA)_start.state.bin",
+  "lives_at_root": 1
+ },
+ "chip_n_dale_rescue_rangers": {
+  "config": "configs/chip_n_dale_rescue_rangers.yaml",
+  "display_name": "Chip 'n Dale Rescue Rangers",
+  "lives_addr": 82,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 35
+  },
+  "room_fp": false,
+  "rom": "roms/Chip 'n Dale Rescue Rangers (USA).nes",
+  "start_state_path": "roms/Chip 'n Dale Rescue Rangers (USA)_start.state.bin",
+  "lives_at_root": 0
+ },
+ "contra": {
+  "config": "configs/contra.yaml",
+  "display_name": "Contra",
+  "lives_addr": 50,
+  "player_state": 44,
+  "death_states": [
+   1,
+   2
+  ],
+  "level_key": [],
+  "clear_mode": "confluence",
+  "has_finale": false,
+  "progress": {
+   "lo": 101,
+   "hi": 100,
+   "smooth": "hampel"
+  },
+  "room_fp": false,
+  "rom": "roms/Contra (USA).nes",
+  "start_state_path": "roms/Contra (USA)_start.state.bin",
+  "lives_at_root": 2,
+  "player_state_at_root": 3
+ },
+ "darkwing_duck": {
+  "config": "configs/darkwing_duck.yaml",
+  "display_name": "Darkwing Duck",
+  "lives_addr": 0,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Darkwing Duck (USA).nes",
+  "start_state_path": "roms/Darkwing Duck (USA)_start.state.bin",
+  "lives_at_root": 239
+ },
+ "double_dragon": {
+  "config": "configs/double_dragon.yaml",
+  "display_name": "Double Dragon",
+  "lives_addr": 67,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 90,
+   "hi": 178
+  },
+  "room_fp": false,
+  "rom": "roms/Double Dragon (USA).nes",
+  "start_state_path": "roms/Double Dragon (USA)_start.state.bin",
+  "lives_at_root": 2
+ },
+ "double_dragon_ii": {
+  "config": "configs/double_dragon_ii.yaml",
+  "display_name": "Double Dragon II - The Revenge",
+  "lives_addr": 30,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Double Dragon II - The Revenge (USA) (Rev A).nes",
+  "start_state_path": "roms/Double Dragon II - The Revenge (USA) (Rev A)_start.state.bin",
+  "lives_at_root": 3
+ },
+ "ducktales": {
+  "config": "configs/ducktales.yaml",
+  "display_name": "DuckTales (USA)",
+  "lives_addr": 221,
+  "player_state": 14,
+  "death_states": [
+   0
+  ],
+  "level_key": [],
+  "clear_mode": "score_jump",
+  "has_finale": false,
+  "progress": {
+   "tiles": [
+    804,
+    805,
+    806,
+    807,
+    808,
+    809,
+    810
+   ],
+   "blank": 36,
+   "scale": 100
+  },
+  "room_fp": false,
+  "rom": "roms/DuckTales (USA).nes",
+  "start_state_path": "roms/DuckTales (USA)_start.state.bin",
+  "lives_at_root": 3,
+  "player_state_at_root": 4
+ },
+ "ducktales_2": {
+  "config": "configs/ducktales_2.yaml",
+  "display_name": "DuckTales 2 (USA)",
+  "lives_addr": 11,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/DuckTales 2 (USA).nes",
+  "start_state_path": "roms/DuckTales 2 (USA)_start.state.bin",
+  "lives_at_root": 0
+ },
+ "excitebike": {
+  "config": "configs/excitebike.yaml",
+  "display_name": "Excitebike",
+  "lives_addr": 17,
+  "player_state": 242,
+  "death_states": [
+   1,
+   2,
+   4
+  ],
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": true,
+  "progress": {
+   "lo": 237,
+   "hi": 932
+  },
+  "room_fp": false,
+  "rom": "roms/Excitebike (Japan, USA).nes",
+  "start_state_path": "roms/Excitebike (Japan, USA)_start.state.bin",
+  "lives_at_root": 26,
+  "player_state_at_root": 0
+ },
+ "galaga": {
+  "config": "configs/galaga.yaml",
+  "display_name": "Galaga - Demons of Death",
+  "lives_addr": 115,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 145
+  },
+  "room_fp": false,
+  "rom": "roms/Galaga - Demons of Death (USA).nes",
+  "start_state_path": "roms/Galaga - Demons of Death (USA)_start.state.bin",
+  "lives_at_root": 0
+ },
+ "ghosts_n_goblins": {
+  "config": "configs/ghosts_n_goblins.yaml",
+  "display_name": "Ghosts'n Goblins",
+  "lives_addr": 1813,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Ghosts'n Goblins (USA).nes",
+  "start_state_path": "roms/Ghosts'n Goblins (USA)_start.state.bin",
+  "lives_at_root": 2
+ },
+ "gradius": {
+  "config": "configs/gradius.yaml",
+  "display_name": "Gradius",
+  "lives_addr": 32,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": "confluence",
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Gradius (USA).nes",
+  "start_state_path": "roms/Gradius (USA)_start.state.bin",
+  "lives_at_root": 3
+ },
+ "ice_climber": {
+  "config": "configs/ice_climber.yaml",
+  "display_name": "Ice Climber",
+  "lives_addr": 44,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Ice Climber.nes",
+  "start_state_path": "roms/Ice Climber_start.state.bin",
+  "lives_at_root": 1
+ },
+ "journey_to_silius": {
+  "config": "configs/journey_to_silius.yaml",
+  "display_name": "Journey to Silius",
+  "lives_addr": 185,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Journey to Silius (USA).nes",
+  "start_state_path": "roms/Journey to Silius (USA)_start.state.bin",
+  "lives_at_root": 0
+ },
+ "kid_icarus": {
+  "config": "configs/kid_icarus.yaml",
+  "display_name": "Kid Icarus",
+  "lives_addr": 304,
+  "player_state": 166,
+  "death_states": [
+   0
+  ],
+  "level_key": [
+   304
+  ],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 1872,
+   "hi": 1233
+  },
+  "room_fp": false,
+  "rom": "roms/Kid Icarus (USA, Europe).nes",
+  "start_state_path": "roms/Kid Icarus (USA, Europe)_start.state.bin",
+  "lives_at_root": 0,
+  "player_state_at_root": 7
+ },
+ "kirby": {
+  "config": "configs/kirby.yaml",
+  "display_name": "Kirby's Adventure (USA) (Rev A)",
+  "lives_addr": 37,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 131,
+   "hi": 149
+  },
+  "room_fp": false,
+  "rom": "roms/Kirby's Adventure (USA) (Rev A).nes",
+  "start_state_path": "roms/Kirby's Adventure (USA) (Rev A)_start.state.bin",
+  "lives_at_root": 6
+ },
+ "kungfu": {
+  "config": "configs/kungfu.yaml",
+  "display_name": "Kung Fu",
+  "lives_addr": 92,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 148
+  },
+  "room_fp": false,
+  "rom": "roms/Kung Fu (Japan, USA).nes",
+  "start_state_path": "roms/Kung Fu (Japan, USA)_start.state.bin",
+  "lives_at_root": 3
+ },
+ "legend_of_zelda": {
+  "config": "configs/legend_of_zelda.yaml",
+  "display_name": "The Legend of Zelda",
+  "lives_addr": null,
+  "player_state": null,
+  "death_states": null,
+  "level_key": null,
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Legend of Zelda, The (USA) (Rev A).nes",
+  "start_state_path": "roms/Legend of Zelda, The (USA) (Rev A)_start.state.bin",
+  "lives_at_root": null,
+  "skip_reason": "no solve.lives declared"
+ },
+ "lost_levels": {
+  "config": "configs/lost_levels.yaml",
+  "display_name": "Super Mario Bros. 2 (Japan) \u2014 The Lost Levels",
+  "lives_addr": null,
+  "player_state": null,
+  "death_states": null,
+  "level_key": null,
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": null,
+  "room_fp": false,
+  "rom": null,
+  "start_state_path": "roms/Super Mario Bros. 2; The Lost Levels (Japan)_start.state.bin",
+  "lives_at_root": null,
+  "skip_reason": "no solve.lives declared"
+ },
+ "mega_man_3": {
+  "config": "configs/mega_man_3.yaml",
+  "display_name": "Mega Man 3 (USA)",
+  "lives_addr": 26,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Mega Man 3 (USA).nes",
+  "start_state_path": "roms/Mega Man 3 (USA)_start.state.bin",
+  "lives_at_root": 0
+ },
+ "mega_man_usa": {
+  "config": "configs/mega_man_usa.yaml",
+  "display_name": "Mega Man (USA)",
+  "lives_addr": 166,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Mega Man (USA).nes",
+  "start_state_path": "roms/Mega Man (USA)_start.state.bin",
+  "lives_at_root": 2
+ },
+ "megaman": {
+  "config": "configs/megaman.yaml",
+  "display_name": "Mega Man",
+  "lives_addr": 168,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Mega Man 2 (USA).nes",
+  "start_state_path": "roms/Mega Man 2 (USA)_start.state.bin",
+  "lives_at_root": 3
+ },
+ "metroid": {
+  "config": "configs/metroid.yaml",
+  "display_name": "Metroid",
+  "lives_addr": 263,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Metroid (USA).nes",
+  "start_state_path": "roms/Metroid (USA)_start.state.bin",
+  "lives_at_root": 3
+ },
+ "metroid_roomfp": {
+  "config": "configs/metroid_roomfp.yaml",
+  "display_name": "Metroid (room-graph gate)",
+  "lives_addr": 263,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": true,
+  "rom": "roms/Metroid (USA).nes",
+  "start_state_path": "roms/Metroid (USA)_start.state.bin",
+  "lives_at_root": 3
+ },
+ "ninja_gaiden": {
+  "config": "configs/ninja_gaiden.yaml",
+  "display_name": "Ninja Gaiden",
+  "lives_addr": 31,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Ninja Gaiden (USA).nes",
+  "start_state_path": "roms/Ninja Gaiden (USA)_start.state.bin",
+  "lives_at_root": 0
+ },
+ "ninja_gaiden_ii": {
+  "config": "configs/ninja_gaiden_ii.yaml",
+  "display_name": "Ninja Gaiden II",
+  "lives_addr": 76,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Ninja Gaiden II - The Dark Sword of Chaos (USA).nes",
+  "start_state_path": "roms/Ninja Gaiden II - The Dark Sword of Chaos (USA)_start.state.bin",
+  "lives_at_root": 1
+ },
+ "ninja_gaiden_iii": {
+  "config": "configs/ninja_gaiden_iii.yaml",
+  "display_name": "Ninja Gaiden III - The Ancient Ship of Doom",
+  "lives_addr": 123,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Ninja Gaiden III - The Ancient Ship of Doom (USA).nes",
+  "start_state_path": "roms/Ninja Gaiden III - The Ancient Ship of Doom (USA)_start.state.bin",
+  "lives_at_root": 1
+ },
+ "paperboy": {
+  "config": "configs/paperboy.yaml",
+  "display_name": "Paperboy",
+  "lives_addr": 11,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Paperboy (USA).nes",
+  "start_state_path": "roms/Paperboy (USA)_start.state.bin",
+  "lives_at_root": 0
+ },
+ "power_blade": {
+  "config": "configs/power_blade.yaml",
+  "display_name": "Power Blade",
+  "lives_addr": 1994,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Power Blade (USA).nes",
+  "start_state_path": "roms/Power Blade (USA)_start.state.bin",
+  "lives_at_root": 1
+ },
+ "punchout": {
+  "config": "configs/punchout.yaml",
+  "display_name": "Punch-Out",
+  "lives_addr": 188,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "fight_gate",
+   "foe_hp": 920,
+   "foe_hp_start": 96
+  },
+  "room_fp": false,
+  "rom": "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes",
+  "start_state_path": "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A)_start.state.bin",
+  "lives_at_root": 1
+ },
+ "rygar": {
+  "config": "configs/rygar.yaml",
+  "display_name": "Rygar",
+  "lives_addr": 771,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Rygar (USA).nes",
+  "start_state_path": "roms/Rygar (USA)_start.state.bin",
+  "lives_at_root": 1
+ },
+ "shatterhand": {
+  "config": "configs/shatterhand.yaml",
+  "display_name": "Shatterhand (USA)",
+  "lives_addr": 81,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Shatterhand (USA).nes",
+  "start_state_path": "roms/Shatterhand (USA)_start.state.bin",
+  "lives_at_root": 0
+ },
+ "super_c": {
+  "config": "configs/super_c.yaml",
+  "display_name": "Super C",
+  "lives_addr": 135,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 164
+  },
+  "room_fp": false,
+  "rom": "roms/Super C (USA).nes",
+  "start_state_path": "roms/Super C (USA)_start.state.bin",
+  "lives_at_root": 1
+ },
+ "tetris_b": {
+  "config": "configs/tetris_b.yaml",
+  "display_name": "Tetris B-TYPE",
+  "lives_addr": 144,
+  "player_state": 72,
+  "death_states": [
+   10
+  ],
+  "level_key": [],
+  "clear_mode": "byte_change",
+  "has_finale": false,
+  "progress": {
+   "lo": 216
+  },
+  "room_fp": false,
+  "rom": "roms/Tetris (USA).nes",
+  "start_state_path": "roms/Tetris (USA)_btype_start.state.bin",
+  "lives_at_root": 37,
+  "player_state_at_root": 1
+ },
+ "tetris_usa": {
+  "config": "configs/tetris_usa.yaml",
+  "display_name": "Tetris (USA)",
+  "lives_addr": null,
+  "player_state": null,
+  "death_states": null,
+  "level_key": null,
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "source": "odometer",
+   "axis": "x"
+  },
+  "room_fp": false,
+  "rom": "roms/Tetris (USA).nes",
+  "start_state_path": "roms/Tetris (USA)_start.state.bin",
+  "lives_at_root": null,
+  "skip_reason": "no solve.lives declared"
+ },
+ "zelda": {
+  "config": "configs/zelda.yaml",
+  "display_name": "The Legend of Zelda",
+  "lives_addr": 1648,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 112
+  },
+  "room_fp": false,
+  "rom": "roms/Legend of Zelda, The (USA) (Rev A).nes",
+  "start_state_path": "roms/zelda_start_ctrl.state.bin",
+  "lives_at_root": 253
+ },
+ "zelda_roomfp": {
+  "config": "configs/zelda_roomfp.yaml",
+  "display_name": "The Legend of Zelda (room-graph gate)",
+  "lives_addr": 1648,
+  "player_state": null,
+  "death_states": null,
+  "level_key": [],
+  "clear_mode": null,
+  "has_finale": false,
+  "progress": {
+   "lo": 112
+  },
+  "room_fp": true,
+  "rom": "roms/Legend of Zelda, The (USA) (Rev A).nes",
+  "start_state_path": "roms/zelda_start_ctrl.state.bin",
+  "lives_at_root": 253
+ }
+}

@@ -1,0 +1,4 @@
+odometer trace: axis=x (range x=262, y=230) oam_churn=563/599
+progress-signal gate: PASS — SIGNAL SOUND — game stops  (configs/super_c.yaml)
+  600 steps, 70 distinct, range 0..262, high byte=True, lives@start=1
+  [BEHAVIOUR]  flat for the last quarter of the roll — the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see

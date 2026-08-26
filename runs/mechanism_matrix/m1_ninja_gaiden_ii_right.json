@@ -1,0 +1,16 @@
+{
+  "profile": "configs/ninja_gaiden_ii.yaml",
+  "odometer": true,
+  "steps": 600,
+  "distinct": 396,
+  "min": 0,
+  "max": 1806,
+  "tail_distinct": 95,
+  "has_high_byte": true,
+  "lives_at_start": 1,
+  "passed": true,
+  "instrument_findings": [],
+  "behaviour_findings": [],
+  "verdict": "SIGNAL SOUND \u2014 still advancing",
+  "oam_churn": 591
+}

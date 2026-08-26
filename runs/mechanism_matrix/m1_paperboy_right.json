@@ -1,0 +1,18 @@
+{
+  "profile": "configs/paperboy.yaml",
+  "odometer": true,
+  "steps": 600,
+  "distinct": 510,
+  "min": 0,
+  "max": 1012,
+  "tail_distinct": 124,
+  "has_high_byte": true,
+  "lives_at_start": 0,
+  "passed": false,
+  "instrument_findings": [
+    "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+  ],
+  "behaviour_findings": [],
+  "verdict": "SIGNAL UNUSABLE",
+  "oam_churn": 349
+}

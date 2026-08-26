@@ -1,0 +1,18 @@
+{
+  "profile": "configs/rygar.yaml",
+  "odometer": true,
+  "steps": 600,
+  "distinct": 117,
+  "min": 0,
+  "max": 470,
+  "tail_distinct": 1,
+  "has_high_byte": true,
+  "lives_at_start": 1,
+  "passed": true,
+  "instrument_findings": [],
+  "behaviour_findings": [
+    "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+  ],
+  "verdict": "SIGNAL SOUND \u2014 game stops",
+  "oam_churn": 133
+}

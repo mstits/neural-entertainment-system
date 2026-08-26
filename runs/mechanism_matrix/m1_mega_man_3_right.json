@@ -1,0 +1,18 @@
+{
+  "profile": "configs/mega_man_3.yaml",
+  "odometer": true,
+  "steps": 600,
+  "distinct": 95,
+  "min": 0,
+  "max": 367,
+  "tail_distinct": 48,
+  "has_high_byte": true,
+  "lives_at_start": 0,
+  "passed": false,
+  "instrument_findings": [
+    "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+  ],
+  "behaviour_findings": [],
+  "verdict": "SIGNAL UNUSABLE",
+  "oam_churn": 557
+}

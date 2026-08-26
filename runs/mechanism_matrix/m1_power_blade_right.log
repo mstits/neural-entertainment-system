@@ -1,0 +1,5 @@
+odometer trace: axis=x (range x=86, y=0) oam_churn=599/599
+progress-signal gate: FAIL — SIGNAL UNUSABLE  (configs/power_blade.yaml)
+  600 steps, 23 distinct, range 0..86, high byte=True, lives@start=1
+  [INSTRUMENT] only 23 distinct values in 600 steps (< 32) — too coarse to be a search gradient
+  [BEHAVIOUR]  flat for the last quarter of the roll — the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see

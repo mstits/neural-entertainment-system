@@ -1,0 +1,21 @@
+{
+ "darkwing_duck_tool_nominated_0x0090": {
+  "0x90": 0,
+  "0x9a": 1
+ },
+ "mega_man_usa_superseded_0x0410_vs_fixed_0x00A6": {
+  "0x410": 0,
+  "0xa6": 2
+ },
+ "ice_climber_wired_0x2C_vs_unused_0x91": {
+  "0x2c": 1,
+  "0x91": 0
+ },
+ "power_blade_tool_top_pick_0x0530_vs_wired_0x07CA": {
+  "0x530": 0,
+  "0x7ca": 1
+ },
+ "ninja_gaiden_wired_0x001F": {
+  "0x1f": 0
+ }
+}

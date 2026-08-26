@@ -1,0 +1,5 @@
+odometer trace: axis=x (range x=0, y=0) oam_churn=58/599
+progress-signal gate: PASS — SIGNAL SOUND — camera static, agent inert (OAM static too)  (configs/tetris_usa.yaml)
+  600 steps, 1 distinct, range 0..0, high byte=True, lives@start=None
+  [BEHAVIOUR]  flat for the last quarter of the roll — the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see
+  [BEHAVIOUR]  camera never moved over 600 steps; agent inert (OAM static too) — the game does not scroll under this driver, which is a skill/route wall, not an instrument fault

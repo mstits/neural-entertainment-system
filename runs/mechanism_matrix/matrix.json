@@ -1,0 +1,534 @@
+{
+ "generated": "2026-08-26",
+ "rows": 43,
+ "columns": [
+  "M1 odo",
+  "M2 room",
+  "M3 fight",
+  "M4 item",
+  "M5 death",
+  "M6 clear",
+  "M7 deep",
+  "M8 cut"
+ ],
+ "legend": {
+  "A": "APPLIES",
+  "N": "NOT_APPLICABLE",
+  "X": "BROKEN",
+  "?": "NOT_TESTED"
+ },
+ "matrix": {
+  "1942": {
+   "profile": "1942",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "?"
+  },
+  "Arkanoid": {
+   "profile": "arkanoid",
+   "M1 odo": "N",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "?"
+  },
+  "Bad Dudes": {
+   "profile": "bad_dudes",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Batman - The Video Game": {
+   "profile": "batman_the_video_game",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Bionic Commando": {
+   "profile": "bionic_commando",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "?"
+  },
+  "Blaster Master": {
+   "profile": "blaster_master",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "A"
+  },
+  "Bubble Bobble": {
+   "profile": "bubble_bobble",
+   "M1 odo": "N",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "A",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Castlevania": {
+   "profile": "castlevania",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "A",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Castlevania III": {
+   "profile": "castlevania_iii",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Chip 'n Dale Rescue Rangers": {
+   "profile": "chip_n_dale_rescue_rangers",
+   "M1 odo": "N",
+   "M2 room": "?",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "A"
+  },
+  "Contra": {
+   "profile": "contra",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Darkwing Duck": {
+   "profile": "darkwing_duck",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Double Dragon": {
+   "profile": "double_dragon",
+   "M1 odo": "N",
+   "M2 room": "N",
+   "M3 fight": "A",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "X",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Double Dragon II": {
+   "profile": "double_dragon_ii",
+   "M1 odo": "N",
+   "M2 room": "?",
+   "M3 fight": "A",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "DuckTales": {
+   "profile": "ducktales",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "DuckTales 2": {
+   "profile": "ducktales_2",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Excitebike": {
+   "profile": "excitebike",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "A",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Galaga": {
+   "profile": "galaga",
+   "M1 odo": "N",
+   "M2 room": "N",
+   "M3 fight": "A",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "?"
+  },
+  "Ghosts'n Goblins": {
+   "profile": "ghosts_n_goblins",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "A"
+  },
+  "Gradius": {
+   "profile": "gradius",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Ice Climber": {
+   "profile": "ice_climber",
+   "M1 odo": "N",
+   "M2 room": "N",
+   "M3 fight": "X",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "A"
+  },
+  "Journey to Silius": {
+   "profile": "journey_to_silius",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Kid Icarus": {
+   "profile": "kid_icarus",
+   "M1 odo": "N",
+   "M2 room": "?",
+   "M3 fight": "A",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Kirby's Adventure": {
+   "profile": "kirby",
+   "M1 odo": "N",
+   "M2 room": "A",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "X",
+   "M7 deep": "A",
+   "M8 cut": "A"
+  },
+  "Kung Fu": {
+   "profile": "kungfu",
+   "M1 odo": "N",
+   "M2 room": "N",
+   "M3 fight": "X",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Mega Man (USA)": {
+   "profile": "mega_man_usa",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Mega Man 2": {
+   "profile": "megaman",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "N",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "?"
+  },
+  "Mega Man 3": {
+   "profile": "mega_man_3",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Metroid": {
+   "profile": "metroid",
+   "M1 odo": "A",
+   "M2 room": "A",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "A"
+  },
+  "Ninja Gaiden": {
+   "profile": "ninja_gaiden",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "A"
+  },
+  "Ninja Gaiden II": {
+   "profile": "ninja_gaiden_ii",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Ninja Gaiden III": {
+   "profile": "ninja_gaiden_iii",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Paperboy": {
+   "profile": "paperboy",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Power Blade": {
+   "profile": "power_blade",
+   "M1 odo": "N",
+   "M2 room": "?",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Punch-Out!!": {
+   "profile": "punchout",
+   "M1 odo": "N",
+   "M2 room": "N",
+   "M3 fight": "A",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Rygar": {
+   "profile": "rygar",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Shatterhand": {
+   "profile": "shatterhand",
+   "M1 odo": "A",
+   "M2 room": "?",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Super C": {
+   "profile": "super_c",
+   "M1 odo": "A",
+   "M2 room": "N",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Tetris (Type-A)": {
+   "profile": "tetris_usa",
+   "M1 odo": "N",
+   "M2 room": "N",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "?",
+   "M6 clear": "?",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  },
+  "Tetris (Type-B)": {
+   "profile": "tetris_b",
+   "M1 odo": "N",
+   "M2 room": "N",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "?"
+  },
+  "The Legend of Zelda": {
+   "profile": "zelda",
+   "M1 odo": "N",
+   "M2 room": "A",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "X",
+   "M6 clear": "?",
+   "M7 deep": "A",
+   "M8 cut": "?"
+  },
+  "Super Mario Bros.": {
+   "profile": "mario/smb adapter",
+   "M1 odo": "?",
+   "M2 room": "?",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "A",
+   "M7 deep": "A",
+   "M8 cut": "?"
+  },
+  "Lost Levels": {
+   "profile": "lost_levels",
+   "M1 odo": "?",
+   "M2 room": "?",
+   "M3 fight": "?",
+   "M4 item": "?",
+   "M5 death": "A",
+   "M6 clear": "A",
+   "M7 deep": "?",
+   "M8 cut": "?"
+  }
+ },
+ "tally": {
+  "M1 odo": {
+   "A": 26,
+   "N": 15,
+   "?": 2
+  },
+  "M2 room": {
+   "N": 22,
+   "?": 18,
+   "A": 3
+  },
+  "M3 fight": {
+   "N": 18,
+   "?": 18,
+   "A": 5,
+   "X": 2
+  },
+  "M4 item": {
+   "?": 43
+  },
+  "M5 death": {
+   "X": 12,
+   "A": 30,
+   "?": 1
+  },
+  "M6 clear": {
+   "?": 36,
+   "A": 5,
+   "X": 2
+  },
+  "M7 deep": {
+   "A": 13,
+   "?": 30
+  },
+  "M8 cut": {
+   "?": 36,
+   "A": 7
+  }
+ }
+}

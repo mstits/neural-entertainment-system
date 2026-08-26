@@ -1,0 +1,4 @@
+odometer trace: axis=x (range x=367, y=0) oam_churn=557/599
+progress-signal gate: FAIL — SIGNAL UNUSABLE  (configs/mega_man_3.yaml)
+  600 steps, 95 distinct, range 0..367, high byte=True, lives@start=0
+  [INSTRUMENT] death byte reads 0 at the start state — a decrement underflows and no death can be detected

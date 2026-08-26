@@ -1,0 +1,5 @@
+odometer trace: axis=x (range x=245, y=0) oam_churn=599/599
+progress-signal gate: FAIL — SIGNAL UNUSABLE  (configs/shatterhand.yaml)
+  600 steps, 61 distinct, range 0..245, high byte=True, lives@start=0
+  [INSTRUMENT] death byte reads 0 at the start state — a decrement underflows and no death can be detected
+  [BEHAVIOUR]  flat for the last quarter of the roll — the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see
