@@ -155,14 +155,29 @@ def test_confluence_on_a_sixteen_bit_pair_is_allowed_through() -> None:
     assert "not evidence that it works" in r.reason
 
 
-def test_arming_the_apu_vote_rescues_a_dead_coord() -> None:
-    """The escape hatch, and proof the rule is about the VOTE ARITHMETIC
-    rather than a blanket "odometer + confluence is banned". tally(1) +
-    apu(1) reaches min_signals=2 even with coord dead."""
+def test_arming_the_apu_vote_no_longer_rescues_a_dead_coord() -> None:
+    """CONTRACT CHANGE, 2026-08-26 — Rule 5, the required class.
+
+    This used to pass: tally(1) + apu(1) reached min_signals=2 with coord
+    dead, and the ceiling arithmetic called that REACHABLE. The escape
+    hatch is now closed, because the shape it permits is the one that was
+    measured firing. runs/clear_control_2026-08-26/bb_offline_r99.json:
+    the detector crossed at frame 320 on {audio: 1, tally: 1, lock: 1,
+    coord: 0} — three corroborators summing to exactly THRESHOLD with zero
+    transition evidence — 1736 frames before the true clear at 2056.
+
+    Corroborators agree with each other about a scene change none of them
+    observed. At least one eligible signal has to be TRANSITION EVIDENCE
+    ("a scene committed" / "the world did not come back"), and with the
+    six shelf signals unwired, `coord` is the only one there is.
+
+    No shipped profile is affected: contra and contra_blank are the only
+    two declaring confluence and neither arms apu_weight."""
     r = clear_reachability(_profile(
         progress={"source": "odometer", "axis": "x"},
         clear={"mode": "confluence", "apu_weight": 1.0}))
-    assert r.verdict == REACHABLE
+    assert r.verdict == UNFIREABLE
+    assert "TRANSITION EVIDENCE" in r.reason
 
 
 def test_min_signals_above_the_ceiling_is_refused() -> None:

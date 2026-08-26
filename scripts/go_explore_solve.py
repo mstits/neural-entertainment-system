@@ -1890,6 +1890,12 @@ class GenericGame:
 
     def __init__(self, profile: dict) -> None:
         s = profile["solve"]
+        # Kept so _new_clear_detector can ASK clear_reachability which of
+        # this profile's signals can fire rather than re-deriving it here.
+        # The same anti-drift discipline clear_observation_budget already
+        # uses when it builds a throwaway detector instead of copying the
+        # warm-up arithmetic: one adjudicator, everybody asks it.
+        self._profile = profile
         self.rom = str(REPO / s["rom"])
         p = s["progress"]
         # PPU SCROLL ODOMETER progress (optional): `progress: {source:
@@ -2343,6 +2349,7 @@ class GenericGame:
         _sd = str(Path(__file__).resolve().parent)   # scripts/ on path
         if _sd not in _sys.path:
             _sys.path.insert(0, _sd)
+        import clear_reachability
         from clear_detect import StreamingConfluenceDetector
         return StreamingConfluenceDetector(
             self.progress, window=self._conf_window,
@@ -2351,7 +2358,14 @@ class GenericGame:
             persist_checks=self._conf_persist,
             progress_median=self._conf_median,
             apu_weight=self._conf_apu_weight,
-            apu_params=self._conf_apu)
+            apu_params=self._conf_apu,
+            # A profile votes solely on the signals that CAN fire for it.
+            # go_explore_solve already refuses an UNREACHABLE profile at
+            # launch (clear_reachability.enforce), so this cannot rescue a
+            # dead hook; what it does is stop a signal the quorum marked
+            # DEGENERATE from being counted as a corroborator that happened
+            # to be silent.
+            eligibility=clear_reachability.clear_quorum(self._profile))
 
     def clear_observation_budget(self) -> int:
         """Observations a FRESH clear-hook ctx must be fed before this hook is

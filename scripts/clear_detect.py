@@ -90,6 +90,10 @@ from go_explore_solve import (  # noqa: E402
     RoomIndex, classify_transition, fp_settle, nt_fingerprint, room_fp_mask,
 )
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
+# Per-signal admissibility. Pure: no ROM, no emulator, no nes_core -- it
+# reads this file's own constants by AST rather than importing it, so the
+# dependency runs one way only and a bare checkout can still lint a profile.
+import clear_reachability  # noqa: E402
 
 FRAME_HZ = 60                     # NTSC
 FS = 4                             # solver convention: frame_skip used to record traces
@@ -1733,6 +1737,18 @@ class SceneCutSignal:
 # Streaming confluence detector (live solver hot-loop form)
 # ===========================================================================
 
+class UnfireableHook(RuntimeError):
+    """A clear detector was asked to run on a profile it cannot fire for.
+
+    Raised by StreamingConfluenceDetector.from_profile rather than
+    returned, and carrying clear_reachability's per-signal table in the
+    message, because the failure this ends is a silent one: a harness
+    constructed the detector on a profile whose `coord` half was
+    arithmetically dead, ran its checks, and wrote the resulting silence
+    down as a measurement. An instrument that could not have said yes has
+    to refuse to start, not produce a zero."""
+
+
 class StreamingConfluenceDetector:
     """Live, RAM-only streaming form of the confluence clear detector, meant
     for the Go-Explore solver's per-step is_clear hook (GenericGame with
@@ -1805,14 +1821,78 @@ class StreamingConfluenceDetector:
       Masks are optional per push: with none supplied the signal simply never
       accumulates and votes 0, which is the safe direction (a caller that
       forgot to plumb the audio modality gets a stricter detector, not a
-      looser one)."""
+      looser one).
+
+    v4 (2026-08-26) -- ELIGIBILITY AND THE REQUIRED CLASS.
+
+      A profile votes solely on signals that CAN fire for it. `eligibility`
+      is the per-signal table from clear_reachability.clear_quorum: a
+      signal it marks DEAD (coord on an odometer/fight_gate/single-byte
+      progress) or DEGENERATE (a MEASURED null fire-rate at or above
+      MAX_NULL_RATE -- `tally` fired on 22/22, 28/28, 43/43 Castlevania
+      checks and 30/30 Bubble Bobble checks) contributes 0 to the vote
+      instead of being counted as a corroborator that happened to be
+      silent. Default None = every wired signal eligible, which is the
+      shipped path byte-for-byte: no profile carries a measured null today
+      and a DEAD signal already votes 0 by never firing.
+
+      RULE 5, THE REQUIRED CLASS: a fire additionally requires TRANSITION
+      EVIDENCE -- an eligible signal answering "a scene committed" or "the
+      world did not come back". With the six shelf signals unwired that is
+      `coord` alone. At the shipped min_signals=2 over {tally, coord} this
+      changes nothing (the sum already forces coord), and every existing
+      receipt is unmoved. What it forbids is the arithmetic that WAS
+      measured firing: runs/clear_control_2026-08-26/bb_offline_r99.json
+      crossed at frame 320 on {audio: 1, tally: 1, lock: 1, coord: 0},
+      1736 frames before the true clear -- three corroborators agreeing
+      with each other about a scene change none of them observed. Arming
+      another corroborator can no longer make firing easier, which is the
+      trap the v3 apu_weight note above warns about in writing.
+
+      `from_profile` is the guarded constructor: it REFUSES to build a
+      detector whose quorum is UNREACHABLE. That is the point the offline
+      control harness needed and did not have -- it constructed this class
+      directly on bubble_bobble and tetris_b, whose progress readouts span
+      1 and 32 units against coord's required 300, ran 30 and 220 checks,
+      and wrote `streaming_hit: false`."""
+
+    #: Signals this class can actually derive. Anything else in the
+    #: eligibility table is either the offline harness's (audio, lock) or
+    #: on the shelf, and is ignored here rather than silently counted.
+    VOTING_SIGNALS = ("tally", "coord", "apu")
+
+    @classmethod
+    def from_profile(cls, profile: dict, progress_fn, **overrides):
+        """Build the detector this profile describes, or refuse.
+
+        Raises UnfireableHook when clear_reachability.clear_quorum reports
+        UNREACHABLE, in the same "reason in the message, never a silent
+        no-op" shape InputLockSignal.probe() and SceneCutSignal.__init__
+        already use. A harness that cannot construct cannot go on to write
+        a hit rate over rows that were incapable of a hit."""
+        q = clear_reachability.clear_quorum(profile)
+        if not q.ok:
+            raise UnfireableHook(q.reason + "\n" + q.table())
+        solve = profile.get("solve") or {}
+        cl = solve.get("clear") or {}
+        kw = dict(window=int(cl.get("window", 240)),
+                  stride=int(cl.get("stride", 20)),
+                  min_signals=cl.get("min_signals"),
+                  persist_checks=cl.get("persist_checks"),
+                  progress_median=cl.get("progress_median"),
+                  apu_weight=float(cl.get("apu_weight", 0.0) or 0.0),
+                  apu_params=dict(cl.get("apu") or {}),
+                  eligibility=q)
+        kw.update(overrides)
+        return cls(progress_fn, **kw)
 
     def __init__(self, progress_fn, window: int = 240, stride: int = 20,
                  min_signals: int | None = None,
                  persist_checks: int | None = None,
                  progress_median: int | None = None,
                  apu_weight: float | None = None,
-                 apu_params: dict | None = None):
+                 apu_params: dict | None = None,
+                 eligibility=None):
         self._progress = progress_fn
         self.window = int(window)
         self.stride = int(stride)
@@ -1831,6 +1911,26 @@ class StreamingConfluenceDetector:
         self.apu_weight = 0.0 if apu_weight is None else float(apu_weight)
         self._apu = (ApuActivitySignal(**(apu_params or {}))
                      if self.apu_weight > 0 else None)
+        # Rule 1 + Rule 2. None = every signal this class derives is
+        # eligible, which is the shipped path exactly; a quorum table
+        # narrows it to the signals that can fire for this profile.
+        self.eligibility = eligibility
+        table = getattr(eligibility, "signal_state", None) or {}
+        self._eligible = frozenset(
+            n for n in self.VOTING_SIGNALS
+            if n not in table or table[n].eligible)
+        # Rule 5. The signals that answer "a scene committed" / "the world
+        # did not come back", as opposed to corroborators that answer
+        # "something changed". Read off the table rather than hardcoded so
+        # wiring a new transition signal does not need a second edit here.
+        self._transition = frozenset(
+            n for n in self.VOTING_SIGNALS
+            if (table[n].transition_evidence if n in table else n == "coord"))
+        # A signal must be BOTH eligible and transition evidence to satisfy
+        # Rule 5. An ineligible one contributing 0 to the sum while still
+        # unlocking the required class would be the same double-standard
+        # the eligibility mask exists to remove.
+        self._required = self._transition & self._eligible
         self._ram: list[np.ndarray] = []
         self._gx: list[int] = []
         self._n = 0
@@ -1840,6 +1940,7 @@ class StreamingConfluenceDetector:
         self.n_checks = 0
         self.n_votes = 0
         self.n_apu_votes = 0
+        self.n_required_class_vetoes = 0
 
     def reset(self) -> None:
         """Un-latch AND discard the rolling evidence window.
@@ -1890,17 +1991,34 @@ class StreamingConfluenceDetector:
         gx = np.array(self._gx, dtype=np.int64)
         if self.progress_median > 1:
             gx = trailing_median(gx, self.progress_median)
-        tally = 1 if score_tally_windows(hist) else 0
-        coord = 1 if coord_entity_windows(hist, gx) else 0
+        fired = {
+            "tally": 1 if score_tally_windows(hist) else 0,
+            "coord": 1 if coord_entity_windows(hist, gx) else 0,
+        }
         self.n_checks += 1
+        # A signal this profile cannot fire contributes 0 rather than
+        # being counted as a corroborator that happened to be quiet.
+        tally = fired["tally"] if "tally" in self._eligible else 0
+        coord = fired["coord"] if "coord" in self._eligible else 0
         if self._apu is None:
             # Byte-identical to the shipped integer path.
             passed = (tally + coord) >= self.min_signals
         else:
             apu = self._apu.vote()
+            fired["apu"] = apu
             self.n_apu_votes += apu
+            if "apu" not in self._eligible:
+                apu = 0
             passed = ((tally + coord + self.apu_weight * apu)
                       >= self.min_signals - 1e-9)
+        # RULE 5. Corroborators alone cannot carry a clear, however many of
+        # them agree: at least one signal answering "a scene committed"
+        # must have fired. At the shipped min_signals=2 over {tally, coord}
+        # the sum already forces this, so no existing receipt moves; what
+        # it forbids is the frame-320 shape (three corroborators, coord=0).
+        if passed and not any(fired.get(n) for n in self._required):
+            passed = False
+            self.n_required_class_vetoes += 1
         if passed:
             self.n_votes += 1
             self._streak += 1
@@ -1942,6 +2060,12 @@ class StreamingConfluenceDetector:
         hook is unfirable by construction; that is reported as an
         unsatisfiable budget rather than as a number a caller could meet."""
         if self.window < 16:
+            return 1 << 30
+        if not self._required:
+            # Rule 5 can never be satisfied: no eligible signal answers
+            # "a scene committed". Reported as an unsatisfiable budget
+            # rather than as a number a caller could meet and then read
+            # the resulting silence as a verdict.
             return 1 << 30
         stride = max(1, self.stride)
         need = 16
@@ -2138,6 +2262,10 @@ class Harness(NamedTuple):
     bitmasks: object
     dir_index: int
     profile: str | None
+    #: The parsed profile, not just its path. summarize_runs resolves
+    #: per-signal eligibility from it, and re-reading the YAML there would
+    #: let the receipt's quorum drift from the adapter that actually ran.
+    profile_dict: dict | None = None
 
     def provenance(self) -> dict:
         """Receipt block naming what actually replayed, so a reader can tell
@@ -2185,7 +2313,7 @@ def build_harness(profile_path: str | None = None) -> Harness:
     return Harness(make_game(prof), space,
                    int(prof.get("frame_skip", FS)),
                    action_space_to_bitmasks(space),
-                   _lock_probe_index(space), str(profile_path))
+                   _lock_probe_index(space), str(profile_path), prof)
 
 
 def run_ground_truth_test(run_bases: list[str], verbose: bool = True,
@@ -2288,37 +2416,134 @@ def run_ground_truth_test(run_bases: list[str], verbose: bool = True,
                   f"hit={hit} fp={fp} contrib={report['contributions_at_detect']} "
                   f"({elapsed:.1f}s)", flush=True)
 
-    n_valid = sum(1 for r in per_run if "error" not in r)
-    n_hit = sum(1 for r in per_run if r.get("within_tolerance"))
-    total_fp = sum(r.get("false_positive_crossings", 0) for r in per_run if "error" not in r)
-    hit_rate = (n_hit / n_valid) if n_valid else 0.0
+    return summarize_runs(per_run, profile=harness.profile_dict,
+                          harness=harness.provenance())
+
+
+HIT_RATE_GATE = 0.80
+MAX_FALSE_POSITIVES_PER_LEVEL = 1
+
+
+def summarize_runs(per_run: list[dict], profile: dict | None = None,
+                   harness: dict | None = None,
+                   roster: str = clear_reachability.OFFLINE) -> dict:
+    """Fold replay rows into a receipt, with the denominator fixed.
+
+    THE DEFECT THIS REPLACES. The old fold was
+
+        n_valid  = sum(1 for r in per_run if "error" not in r)
+        hit_rate = (n_hit / n_valid) if n_valid else 0.0
+
+    which puts a row the instrument could not have scored into the
+    denominator and then reports the resulting quotient as a failure.
+    runs/clear_control_2026-08-26/bb_offline_r99.json therefore reads
+    `n_valid: 2, hit_rate: 0.0, hit_rate_pass: false` on two Bubble Bobble
+    rows whose progress observable spans ONE unit against the >= 300 drop
+    `coord` requires -- a FAIL-shaped number manufactured from a
+    VOID-shaped measurement, inside the instrument built to end exactly
+    that confusion. That is the 41-VOID/0-FAIL adjudication in miniature.
+
+    THE RULE, applied here and everywhere else a clear result is recorded:
+    an instrument that could not have said yes contributes no denominator.
+    Unreachable rows get their own column, leave `n_valid`, and when
+    nothing measurable remains `hit_rate` is None -- not 0.0 -- with
+    `hit_rate_pass` None rather than False. `all([])` is True, so the
+    false-positive gate is given the same treatment: a vacuous PASS over
+    zero rows is the same defect pointing the other way.
+
+    Each row is classified with the four-valued verdict. A row may carry
+    its own `profile` dict (overriding the argument), and a bounded replay
+    may carry `n_observations` against `warmup_observations` -- feeding a
+    windowed detector fewer observations than it needs and reading its
+    silence as a verdict is a structural no-op, which is what UNDER_WARMUP
+    exists to say out loud."""
+    quorums: dict[int, object] = {}
+    rows = []
+    for raw in per_run:
+        row = dict(raw)
+        prof = row.pop("profile", None)
+        if not isinstance(prof, dict):
+            prof = profile
+        q = None
+        if isinstance(prof, dict):
+            q = quorums.get(id(prof))
+            if q is None:
+                q = clear_reachability.clear_quorum(prof, roster=roster)
+                quorums[id(prof)] = q
+        need = row.get("warmup_observations")
+        seen = row.get("n_observations")
+        if "error" in row:
+            row["verdict"] = clear_reachability.ERROR
+        elif q is not None and not q.ok:
+            row["verdict"] = clear_reachability.UNREACHABLE
+            row["unreachable_reason"] = q.reason
+        elif row.get("within_tolerance"):
+            row["verdict"] = clear_reachability.CLEAR
+        elif (need is not None and seen is not None and seen < need
+              and not row.get("within_tolerance")):
+            row["verdict"] = clear_reachability.UNDER_WARMUP
+        else:
+            row["verdict"] = clear_reachability.NO_CLEAR
+        rows.append(row)
+
+    measured = [r for r in rows
+                if r["verdict"] in clear_reachability.MEASURED_VERDICTS]
+    n_valid = len(measured)
+    n_hit = sum(1 for r in measured if r.get("within_tolerance"))
+    n_unreachable = sum(1 for r in rows
+                        if r["verdict"] == clear_reachability.UNREACHABLE)
+    n_under_warmup = sum(1 for r in rows
+                         if r["verdict"] == clear_reachability.UNDER_WARMUP)
+    n_error = sum(1 for r in rows
+                  if r["verdict"] == clear_reachability.ERROR)
+    total_fp = sum(r.get("false_positive_crossings", 0) for r in measured)
+    hit_rate = (n_hit / n_valid) if n_valid else None
+    fp_pass = (all(r.get("false_positive_crossings", 0)
+                   <= MAX_FALSE_POSITIVES_PER_LEVEL for r in measured)
+               if n_valid else None)
 
     # per-signal contribution tally, over the runs that produced a detection
     signal_fire_counts = {"audio": 0, "tally": 0, "lock": 0, "coord": 0}
-    for r in per_run:
+    for r in measured:
         c = r.get("contributions_at_detect")
         if c:
             for k, v in c.items():
-                signal_fire_counts[k] += int(v)
+                signal_fire_counts[k] = signal_fire_counts.get(k, 0) + int(v)
+
+    if n_valid:
+        verdict = (clear_reachability.CLEAR if n_hit
+                   else clear_reachability.NO_CLEAR)
+    elif n_unreachable:
+        verdict = clear_reachability.UNREACHABLE
+    elif n_under_warmup:
+        verdict = clear_reachability.UNDER_WARMUP
+    else:
+        verdict = clear_reachability.ERROR
 
     summary = {
-        "harness": harness.provenance(),
+        "harness": harness,
+        "verdict": verdict,
         "tolerance_frames": TOLERANCE_FRAMES,
-        "n_runs": len(per_run),
+        "n_runs": len(rows),
         "n_valid": n_valid,
+        "n_unreachable": n_unreachable,
+        "n_under_warmup": n_under_warmup,
+        "n_error": n_error,
         "n_hit_within_tolerance": n_hit,
         "hit_rate": hit_rate,
-        "hit_rate_gate": 0.80,
-        "hit_rate_pass": hit_rate >= 0.80,
+        "hit_rate_gate": HIT_RATE_GATE,
+        "hit_rate_pass": (None if hit_rate is None
+                          else hit_rate >= HIT_RATE_GATE),
         "total_false_positive_crossings": total_fp,
-        "max_false_positives_per_level_gate": 1,
-        "false_positive_gate_pass": all(r.get("false_positive_crossings", 0) <= 1
-                                         for r in per_run if "error" not in r),
+        "max_false_positives_per_level_gate": MAX_FALSE_POSITIVES_PER_LEVEL,
+        "false_positive_gate_pass": fp_pass,
         "signal_fire_counts_at_detect": signal_fire_counts,
         "weights": WEIGHTS,
         "threshold": THRESHOLD,
-        "per_run": per_run,
+        "per_run": rows,
     }
+    if quorums:
+        summary["clear_quorum"] = next(iter(quorums.values())).as_dict()
     return summary
 
 
@@ -2372,11 +2597,26 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(summary, indent=2) + "\n")
 
-    print(f"\n[clear_detect] hit rate {summary['hit_rate']:.2f} "
+    def _gate(v):
+        # None is not FAIL. A gate with nothing measurable under it has no
+        # verdict, and printing one is how a VOID becomes a FAIL in a doc.
+        return "PASS" if v else ("VOID" if v is None else "FAIL")
+
+    rate = summary["hit_rate"]
+    print(f"\n[clear_detect] hit rate "
+          f"{'n/a' if rate is None else format(rate, '.2f')} "
           f"({summary['n_hit_within_tolerance']}/{summary['n_valid']}) "
-          f"gate>=0.80: {'PASS' if summary['hit_rate_pass'] else 'FAIL'}")
+          f"gate>={HIT_RATE_GATE:.2f}: {_gate(summary['hit_rate_pass'])}")
+    if summary["n_unreachable"]:
+        print(f"[clear_detect] {summary['n_unreachable']} run(s) UNREACHABLE "
+              f"— excluded from the denominator, not counted as misses")
+        q = summary.get("clear_quorum") or {}
+        for name, sig in (q.get("signals") or {}).items():
+            print(f"[clear_detect]   {name:<20} {sig['state']:<10} "
+                  f"{sig['reason']}")
     print(f"[clear_detect] false positives total={summary['total_false_positive_crossings']} "
-          f"gate<=1/level: {'PASS' if summary['false_positive_gate_pass'] else 'FAIL'}")
+          f"gate<={MAX_FALSE_POSITIVES_PER_LEVEL}/level: "
+          f"{_gate(summary['false_positive_gate_pass'])}")
     print(f"[clear_detect] receipt written to {out_path}")
     return 0
 
