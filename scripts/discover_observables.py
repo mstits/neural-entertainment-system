@@ -1801,6 +1801,7 @@ def _range_plausibility_penalty(c: dict) -> float:
 def fight_health_from_drives(attack_drives: Sequence[Mapping],
                              defense_drives: Sequence[Mapping], *,
                              self_hp_addr: Optional[int] = None,
+                             noop_stats: Optional[Mapping] = None,
                              top: int = 6) -> dict:
     """Pure core of `find_fight_health` (§3.2/§3.3). Ranks foe-HP
     candidates from two sequences of RAM logs shaped exactly like
@@ -1814,6 +1815,29 @@ def fight_health_from_drives(attack_drives: Sequence[Mapping],
     same "watch the whole run, let cross-rep agreement do the work"
     discipline, applied to two probes instead of one:
 
+      * Gate FH0 — the NOOP-oscillation veto (2026-08-25 follow-up,
+        named from the Kung Fu finding below). `noop_stats` is
+        whatever `Discoverer.noop_stats()` already produces for the
+        SAME idle-prefilter machinery `_flat_under_noop` uses in the
+        spatial/progress pipeline (§ `_spatial`) — no new probe is
+        collected here, the pure-NOOP window this mechanism needs
+        (NOOP_N=240 steps, well inside the 200-400 range a spawn/
+        despawn or animation cycle needs to show itself) was already
+        being driven for Gate 1's own free-running-counter check. A
+        candidate that is NOT `_flat_under_noop` — moves away from its
+        own idle value and/or churns — under ZERO player input is a
+        background/animation/timer signature by construction (nothing
+        else can make RAM move while the pad is untouched), so it is
+        REJECTED here, the same hard-gate treatment as FH1/FH2, not
+        merely reordered by `_rank` below. A soft demotion is not
+        enough: on the real Kung Fu receipt
+        (`runs/fight_gate/discover_kungfu.json`) the offending byte
+        (0x00B1) was the ONLY candidate with 5/5 attack agreement, so a
+        tiebreak that only reorders survivors would still have crowned
+        it — only dropping it outright surfaces the honest "nothing
+        plausible was found" result. Skipped entirely (no candidate is
+        rejected) when `noop_stats` is omitted, so every existing
+        caller/test that predates this gate is unaffected.
       * Gate FH1 — decrements under `attack_drives` (offense-heavy,
         randomized).
       * Gate FH2 — the self/foe discriminator, the one truly new idea
@@ -1831,16 +1855,16 @@ def fight_health_from_drives(attack_drives: Sequence[Mapping],
     a collision with `find_hp_lives` is reported as a named finding
     (§5.4 failure mode 1), never silently resolved either way.
 
-    Passing FH1+FH2 only narrows the field; among survivors the ranking
-    (`_rank` below) adds two further corroboration terms on top of the
-    original agreement/spread score, both measured against the live
-    Punch-Out receipt where spread alone was not enough to put the true
-    byte first: `_mark_mirror_siblings` rewards an adjacent byte that
-    mirrors a candidate's start+nets exactly, and
+    Passing FH0+FH1+FH2 only narrows the field; among survivors the
+    ranking (`_rank` below) adds two further corroboration terms on top
+    of the original agreement/spread score, both measured against the
+    live Punch-Out receipt where spread alone was not enough to put the
+    true byte first: `_mark_mirror_siblings` rewards an adjacent byte
+    that mirrors a candidate's start+nets exactly, and
     `_range_plausibility_penalty` demotes a candidate whose net
     magnitude exceeds its own starting value (a free-running-counter
     signature a real single-regime stock can't show). Neither is a
-    gate — both only reorder candidates that already cleared FH1+FH2.
+    gate — both only reorder candidates that already cleared FH0+FH1+FH2.
     """
     atk_logs = [np.asarray(d["log"]) for d in attack_drives
                if len(np.asarray(d["log"])) > 1]
@@ -1859,12 +1883,20 @@ def fight_health_from_drives(attack_drives: Sequence[Mapping],
     if apr_logs:
         width = min(width, min(l.shape[1] for l in apr_logs))
     scan = min(LIVES_SCAN_TOP, width)
+    if noop_stats is not None:
+        scan = min(scan, len(np.asarray(noop_stats["net"])))
 
     foe_cands: list[dict] = []
     self_cands: list[dict] = []
+    noop_vetoed: list[int] = []
     for i in range(scan):
         fh1 = _decrement_consensus(atk_logs, i, min_agree=DEATH_MIN_AGREE)
         if not fh1["passes"]:
+            continue
+        flat_under_noop = (_flat_under_noop(noop_stats, i)
+                           if noop_stats is not None else None)
+        if flat_under_noop is False:
+            noop_vetoed.append(i)
             continue
         fh2 = _decrement_consensus(apr_logs, i, min_agree=DEATH_MIN_AGREE)
         entry = {
@@ -1875,13 +1907,16 @@ def fight_health_from_drives(attack_drives: Sequence[Mapping],
             "defense_watched": fh2["watched"],
             "fh1_decrements_under_offense": True,
             "fh2_flat_under_defense": not fh2["passes"],
+            "flat_under_noop": flat_under_noop,
             "self_hp_conflict": bool(self_hp_addr is not None
                                      and abs(i - self_hp_addr) <= 1),
         }
         (self_cands if fh2["passes"] else foe_cands).append(entry)
+    if noop_vetoed:
+        ev["noop_vetoed"] = noop_vetoed
 
     # Full-pool corroboration passes, run BEFORE ranking/truncation so a
-    # candidate's siblings are whatever cleared FH1+FH2, not whatever
+    # candidate's siblings are whatever cleared FH0+FH1+FH2, not whatever
     # survived an earlier, weaker ranking's cut to `top`.
     _mark_mirror_siblings(foe_cands)
     _mark_mirror_siblings(self_cands)
@@ -1965,7 +2000,12 @@ def find_fight_health(rom: str, state: bytes, *, disc: Optional[Discoverer] = No
                       hp_lives: Optional[dict] = None, top: int = 6) -> dict:
     """Live-probe wrapper: runs `attack_mash` + `approach_retreat` (and
     `find_hp_lives`, unless the caller already has it) and hands them to
-    `fight_health_from_drives`. See that function for the gates."""
+    `fight_health_from_drives`. See that function for the gates.
+
+    `noop_stats=disc.noop_stats()` reuses the SAME idle-prefilter probe
+    `_flat_under_noop`/`_spatial` already drive this Discoverer through
+    for Gate 1 — no separate NOOP probe is run here, it is whatever the
+    Discoverer already has cached or drives on first access."""
     own = disc is None
     if own:
         disc = Discoverer(rom, state, frame_skip, forward)
@@ -1974,7 +2014,8 @@ def find_fight_health(rom: str, state: bytes, *, disc: Optional[Discoverer] = No
             hp_lives = find_hp_lives(rom, state, disc=disc, forward=forward)
         return fight_health_from_drives(
             disc.attack_mash(), disc.approach_retreat(),
-            self_hp_addr=hp_lives.get("addr"), top=top)
+            self_hp_addr=hp_lives.get("addr"), noop_stats=disc.noop_stats(),
+            top=top)
     finally:
         if own:
             disc.close()

@@ -28,6 +28,7 @@ import pytest
 from scripts.discover_observables import (
     DEATH_MIN_AGREE,
     RAM_SIZE,
+    _col_stats,
     _corroborates_tally,
     _decrement_consensus,
     _mark_mirror_siblings,
@@ -79,6 +80,34 @@ def _stepped_col(n: int, start: int, events: dict) -> np.ndarray:
             cur = events[t]
         col[t] = cur
     return (col % 256).astype(np.uint8)
+
+
+def _noop_stats(n: int, cols: dict) -> dict:
+    """`Discoverer.noop_stats()`'s shape, built from a synthetic idle log
+    the same way `_drive` builds an attack/defense one — every column
+    defaults to a constant (flat) 0, so a candidate not named in `cols`
+    is `_flat_under_noop` by default."""
+    log = np.zeros((n, RAM_SIZE), dtype=np.uint8)
+    for addr, col in cols.items():
+        log[:, addr] = col
+    return _col_stats(log)
+
+
+def _autonomous_round_trip(n: int, base: int, low: int) -> np.ndarray:
+    """A byte that ramps DOWN from `base` to `low` and back UP to `base`
+    over the window, entirely on its own schedule — no event is keyed
+    to a player action anywhere in this helper, unlike `_stepped_col`.
+    This is the Kung Fu 0x00B1 signature named in the commit that
+    introduced the NOOP-oscillation veto: "the byte cycles 0->135->0
+    on its own ... with NO player input at all". Net over the full
+    window is ~0 (it returns to where it started) but churn is high
+    (every step moves), which is exactly the pattern `_flat_under_noop`
+    (net<=4 AND churn<2.0) is built to reject and a pure net/endpoint
+    check alone would miss."""
+    mid = max(n // 2, 1)
+    down = np.linspace(base, low, mid, dtype=np.int64)
+    up = np.linspace(low, base, n - mid, dtype=np.int64)
+    return (np.concatenate([down, up]) % 256).astype(np.uint8)
 
 
 # --- _regime_split -------------------------------------------------------
@@ -302,6 +331,115 @@ def test_fight_health_ranks_the_true_byte_first_on_the_punchout_receipt():
     assert res["addr"] == 0x0398
     top3 = [c["addr"] for c in res["foe_hp_candidates"][:3]]
     assert set(top3) == {0x0398, 0x0399, 0x039A}
+
+
+# --- Gate FH0: the NOOP-oscillation veto ----------------------------------
+#
+# Named from the Kung Fu finding ("fight-gate: Kung Fu, Ice Climber, Galaga
+# tried — none validate"): addr 0x00B1 ranked #1 despite a follow-up
+# isolated-input probe (pure NOOP, zero buttons, 1200 steps) CONFIRMING it
+# cycles 0->135->0 on its own — an autonomous enemy spawn/despawn timer, not
+# a combat byte. `_flat_under_noop`/`noop_stats` already existed for this
+# exact purpose in the spatial/progress pipeline (Gate 1); this section
+# proves it is now WIRED into `fight_health_from_drives`'s ranking too.
+
+def test_fight_health_noop_veto_rejects_a_candidate_that_oscillates_under_noop():
+    """Minimal, receipt-independent proof of the mechanism: a byte that
+    would otherwise be the ONLY foe_hp candidate (clears FH1+FH2 cleanly,
+    varying nets across reps) is dropped entirely once `noop_stats` shows
+    it wandering away from its own idle value and back with zero player
+    input — a soft demotion would not be enough here, since with only one
+    candidate in the pool a tiebreak reorder still leaves it ranked #1."""
+    n = 300
+    TIMER = 0x0050
+    atk = []
+    for k, drop in enumerate([12, 30, 21, 15, 40]):
+        atk.append(_drive(n, {TIMER: _stepped_col(n, 135, {50 + k: 135 - drop})}))
+    apr = [_drive(n, {}) for _ in range(5)]
+
+    baseline = fight_health_from_drives(atk, apr)
+    assert baseline["kind"] == "foe_hp" and baseline["addr"] == TIMER
+
+    noop = _noop_stats(240, {TIMER: _autonomous_round_trip(240, 135, 0)})
+    res = fight_health_from_drives(atk, apr, noop_stats=noop)
+    assert res["kind"] == "none"
+    assert TIMER not in [c["addr"] for c in res["foe_hp_candidates"]]
+    assert res["probe_evidence"]["noop_vetoed"] == [TIMER]
+
+
+def test_fight_health_noop_veto_is_a_noop_when_noop_stats_is_omitted():
+    """Every existing caller/test that predates this gate must see
+    byte-identical behaviour: the veto only ever engages when the
+    (optional) `noop_stats` argument is actually supplied."""
+    n = 300
+    TIMER = 0x0050
+    atk = [_drive(n, {TIMER: _stepped_col(n, 135, {50 + k: 135 - d})})
+           for k, d in enumerate([12, 30, 21, 15, 40])]
+    apr = [_drive(n, {}) for _ in range(5)]
+    res = fight_health_from_drives(atk, apr)
+    assert res["kind"] == "foe_hp" and res["addr"] == TIMER
+    assert "noop_vetoed" not in res["probe_evidence"]
+
+
+def _kungfu_receipt_scene():
+    """The exact foe_hp candidate numbers from the live Kung Fu receipt
+    (`runs/fight_gate/discover_kungfu.json`): discovery's #1 pick 0x00B1
+    plus its two identical mirror siblings (0x00B2, 0x00B3), the fourth
+    identical-net candidate 0x0269, and the two candidates the commit
+    left unresolved — 0x01F9 (near-identical nets, never probed live)
+    and 0x066C (genuine cross-rep variance, the commit's own suggested
+    "re-probe this one next" candidate). Rebuilt as a synthetic scene
+    the same way `_punchout_receipt_scene` rebuilds Punch-Out's, so the
+    regression needs neither the ROM nor the receipt file to run."""
+    B1, B2, B3, ADDR_269, ADDR_1F9, ADDR_66C = 0x00B1, 0x00B2, 0x00B3, 0x0269, 0x01F9, 0x066C
+    reps = 5
+    addrs = {
+        B1: (135, [-1, -1, -1, -1, -1]),
+        B2: (135, [-1, -1, -1, -1, -1]),
+        B3: (135, [-1, -1, -1, -1, -1]),
+        ADDR_269: (248, [-70, -70, -70, -70, -70]),
+        ADDR_1F9: (215, [-55, -55, -55, -3, -55]),
+        ADDR_66C: (159, [-12, -17, -16, -12, -12]),
+    }
+    n = 200
+    atk = []
+    for k in range(reps):
+        cols = {addr: _stepped_col(n, start, {50: start + nets[k]})
+                for addr, (start, nets) in addrs.items()}
+        atk.append(_drive(n, cols))
+    apr = [_drive(n, {}) for _ in range(reps)]
+    return atk, apr, (B1, B2, B3, ADDR_269, ADDR_1F9, ADDR_66C)
+
+
+def test_fight_health_noop_veto_rejects_every_kungfu_timer_candidate():
+    """Registered qualification, closed: on the live Kung Fu receipt the
+    #1 pick (0x00B1) and three siblings (0x00B2/0x00B3/0x0269) clear
+    FH1+FH2 exactly as well as a real foe-HP byte, and only a direct
+    isolated-input NOOP probe told them apart from the two candidates
+    (0x01F9, 0x066C) never confirmed either way. Once that probe's data
+    is wired in as `noop_stats`, all four confirmed-autonomous bytes are
+    rejected outright — none may appear in `foe_hp_candidates`, and none
+    may be `res["addr"]` even if it is the only survivor."""
+    atk, apr, (b1, b2, b3, addr_269, addr_1f9, addr_66c) = _kungfu_receipt_scene()
+
+    baseline = fight_health_from_drives(atk, apr)
+    assert b1 in [c["addr"] for c in baseline["foe_hp_candidates"]]
+    assert baseline["addr"] == b1          # the un-vetoed bug this closes
+
+    noop = _noop_stats(240, {
+        b1: _autonomous_round_trip(240, 135, 0),
+        b2: _autonomous_round_trip(240, 135, 0),
+        b3: _autonomous_round_trip(240, 135, 0),
+        addr_269: _autonomous_round_trip(240, 248, 40),
+        # addr_1f9 / addr_66c intentionally omitted -> flat (default 0),
+        # matching the commit's "never confirmed either way" disposition.
+    })
+    res = fight_health_from_drives(atk, apr, noop_stats=noop)
+    vetoed = {b1, b2, b3, addr_269}
+    survivors = {c["addr"] for c in res["foe_hp_candidates"]}
+    assert vetoed.isdisjoint(survivors)
+    assert res["addr"] not in vetoed
+    assert vetoed == set(res["probe_evidence"]["noop_vetoed"])
 
 
 def test_fight_health_tally_corroboration_is_advisory_not_a_gate():
