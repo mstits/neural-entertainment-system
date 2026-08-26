@@ -46,7 +46,9 @@ description: |
   this profile's own root state: a zero-start byte underflows 0 -> 255
   on its first change, and GenericGame's wrap-aware is_dead reads that
   as a death, so every episode died in its first frames (go_explore
-  smoke frozen at 1 cell, 32,890 steps, 0 solutions — see smoke_before/
+  smoke frozen at 1 cell, 32,890 steps, 0 solutions (expected; level_key
+  is the empty coverage baseline — a constant, not a search outcome;
+  annotated 2026-08-26) — see smoke_before/
   below). Root cause was tool-level, fixed upstream in
   discover_observables.py commit 158ec74 (reaches_empty/spends_its_stock
   were structurally vacuous at start==0, so a zero-start byte could
@@ -64,7 +66,9 @@ description: |
 
   SMOKE (2026-08-25, 2 workers / 4 min / seed 0,
   runs/onboard_wave3/smoke_galaga): cells=1, frontier=0, max_area=0,
-  max_gx=0, 98,443 steps, 0 solutions, 4 consecutive "stuck at 1 cells"
+  max_gx=0, 98,443 steps, 0 solutions (expected; level_key is the empty
+  coverage baseline — a constant, not a search outcome; annotated
+  2026-08-26), 4 consecutive "stuck at 1 cells"
   stall warnings. The archive never left the entrance cell for the
   entire run — this is not a mid-search freeze at a round number (no
   deeper cell exists to run the deepest-cell diagnostic on), it is

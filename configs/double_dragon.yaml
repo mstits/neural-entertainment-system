@@ -20,7 +20,9 @@ name: "Double Dragon"
 #             runs/onboard_wave1/gate_double_dragon_left.json (left).
 #   Solver smoke (go_explore_solve, 3 workers, 6 min, seed 0): cells 793,
 #   frontier 770, best_score 3958, max_gx 4024 (= room 15, x≈184),
-#   max_area 0, 0 solutions, ~200 sps. Frontier still growing at cutoff
+#   max_area 0, 0 solutions (expected; level_key is the empty coverage
+#   baseline — a constant, not a search outcome; annotated 2026-08-26),
+#   ~200 sps. Frontier still growing at cutoff
 #   (cells 385→793, gx 4002→4024, 395 improvements) — search advancing
 #   through the fight gates, no freeze, no diagnostic needed. Matches the
 #   original saturation probe that reached rooms 15-16 undirected.

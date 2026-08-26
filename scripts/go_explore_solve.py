@@ -54,6 +54,9 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import clear_reachability  # noqa: E402  (profile lint; no nes_core dependency)
 from nes_core import Pool  # noqa: E402
 from src.training import interaction_basis as ib  # noqa: E402
 from src.training.go_explore import GoExploreArchive, keep_exploring  # noqa: E402
@@ -3306,6 +3309,28 @@ class Solver:
         self.out = Path(args.out)
         (self.out / "solutions").mkdir(parents=True, exist_ok=True)
         profile = yaml.safe_load(Path(args.profile).read_text())
+        # CLEAR-REACHABILITY PRE-FLIGHT (2026-08-26). Runs before the pool
+        # exists, like every other profile check here, so a bad profile
+        # costs zero emulator seconds.
+        #
+        # Two outcomes, and the SECOND one is the reason this exists.
+        # `enforce` aborts a run whose declared clear machinery provably
+        # cannot fire (Gradius shipped exactly that from 2026-08-24 to
+        # 2026-08-26). But the far commoner case is a profile with NO clear
+        # predicate at all — 37 of 45 today — where `solutions` in
+        # progress.jsonl is a compile-time 0 and `--want-solutions` is
+        # inert. That is a legitimate coverage baseline and is allowed to
+        # run; what is NOT allowed is letting it run silently, because ten
+        # separate documents went on to cite that constant as though a
+        # search had asked a question and got "no"
+        # (docs/research/CLEAR_DETECTION_CAMPAIGN_2026-08-26.md). The
+        # banner puts the disclaimer in the run's own log, where every
+        # receipt is written from.
+        _reach = clear_reachability.enforce(profile, str(args.profile))
+        _banner = clear_reachability.launch_banner(profile, str(args.profile))
+        if _banner:
+            print(_banner, flush=True)
+        self.clear_reachability = _reach
         self.bitmasks = action_space_to_bitmasks(profile["action_space"])
         self.weights = np.array(action_weights(profile["action_space"]))
         self.weights /= self.weights.sum()

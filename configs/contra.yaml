@@ -168,6 +168,35 @@ solve:
   # clear to date; if it never fires, raise stride/window before assuming
   # the signals don't apply to this game's actual level-transition RAM
   # shape.
+  #
+  # CORRECTION 2026-08-26 — the "raise stride/window" advice is struck.
+  # It presumes the signals apply and only the tuning is off. Nothing
+  # measured supports that, and retuning is the cheapest thing to try
+  # rather than the thing most likely to be wrong. What is actually
+  # known, from code rather than from anything about this game:
+  #   * the live streaming hook votes on TWO signals only, `tally` and
+  #     `coord`, at min_signals=2 — both must agree. The offline
+  #     detector's `audio` and `lock` signals do not survive into the
+  #     solver hook, which is handed a RAM snapshot and nothing else.
+  #   * `coord` is arithmetically POSSIBLE here and this is worth
+  #     stating, because it is not true everywhere: `progress` below is
+  #     a 16-bit {lo, hi} pair, so the >= 300 backwards drop `coord`
+  #     demands is representable. On an odometer-sourced profile it is
+  #     not, which is what silently disarmed Gradius on 2026-08-24 (see
+  #     configs/gradius.yaml).
+  #   * whether `tally` has any referent in Contra is a fact about the
+  #     GAME. It can be settled by measuring a real clear and by nothing
+  #     else. Asserting it either way from recalled knowledge is the
+  #     authored-semantics class CLAIMS.md Tier 3 forbids, so this
+  #     comment does not assert it.
+  # Honest status: UNTESTED — never observed to fire on a genuine clear
+  # of this or any game (the only production fires were the two false
+  # positives withdrawn 2026-08-06). Do not cite `solutions: 0` from any
+  # Contra run as evidence the search tried and failed; with
+  # `level_key: []` above, is_clear()'s opening test is `() > ()` and
+  # the count is a constant. The real next step is capturing one clear
+  # by any means and deriving the predicate from it, not retuning a
+  # window against a signal nobody has seen.
   clear: {mode: confluence}
   # RE-VERIFIED 2026-08-10: the 3-probe protocol independently re-derives
   # $0032 as the lives byte (start 2, decrements on death, churn 1.11) —

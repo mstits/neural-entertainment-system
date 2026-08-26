@@ -19,8 +19,19 @@ is stated, a material difference is named, and a stopping rule is registered
 
 ## 0. The one-paragraph version
 
-Contra was shelved after ten campaigns produced zero solutions with the
-frontier pinned at exactly the same value every time. Re-entering it is
+Contra was shelved after ten campaigns left the frontier pinned at exactly
+the same value every time.
+
+> **CORRECTION 2026-08-26.** This sentence read "…after ten campaigns
+> produced zero solutions with the frontier pinned at exactly the same
+> value every time." The "zero solutions" half is struck. `configs/contra.yaml`
+> ships `level_key: []`, so `GenericGame.is_clear`'s opening test is
+> `() > ()` — False for every RAM state — and the `clear: {mode: confluence}`
+> fallback has never been shown to fire on a real clear of any game. The
+> solution count across those ten campaigns was therefore not a search
+> outcome; it was fixed before the first step ran. **The shelving decision
+> is unaffected and stands on the frontier pin at gx 3072 alone**, which is
+> a genuine measurement. See the ADDENDUM at the end of §1. Re-entering it is
 justified only if something is different. Three things are, and they are
 dated: replay-verified banking plus the counterfactual gate (2026-08-08 /
 2026-08-10), the wall discriminator (2026-08-10), and a fresh observable
@@ -37,8 +48,9 @@ why the honest reading of the GATED label is weaker than it looks.
 ## 1. The prior, stated
 
 Ten campaigns, `runs/breadth_contra/`, 2026-07-31 → 2026-08-01. **162 GB on
-disk, 95,161,110 emulator steps, 74,636 s (20.7 h) of solver wall clock,
-zero solutions.** In nine of the ten the frontier
+disk, 95,161,110 emulator steps, 74,636 s (20.7 h) of solver wall clock, and
+a frontier that never left gx 3072 in nine of the ten.** ~~zero solutions~~
+(struck 2026-08-26 — see the ADDENDUM below). In nine of the ten the frontier
 (`max_gx_in_max_area`) reached **3072** — screen 12, the fixed-camera base
 wall — within the first minute and never moved again. The tenth was a
 control with deliberately broken observables.
@@ -67,6 +79,47 @@ this table exactly. That matters because §5's gate is now built out of these
 numbers: `FOOTPRINT_FLOOR` is `poweron_to_wall`'s 7,427 and `SPAN_BASE` is
 the 385 confirmed across all five. The four largest archives (13-46 GB) were
 not re-read; their rows stand as originally recorded.
+
+### ADDENDUM (2026-08-26) — the prior is restated without the solution count
+
+The registered prior above bolded *"…95,161,110 emulator steps, 74,636 s
+(20.7 h) of solver wall clock, zero solutions."* Compute multiplied against
+a zero reads as **"we ran 95M steps against a live win test and it never
+fired."** No win test was live.
+
+`configs/contra.yaml` ships `level_key: []`, so the opening branch of
+`GenericGame.is_clear` is `level_key(ram) > tuple(start_key)` evaluated as
+`() > ()` — False for every RAM state. The `clear: {mode: confluence}`
+fallback is a 2-of-2 vote between `tally` and `coord` (the offline
+detector's `audio` and `lock` signals do not survive into the live solver
+hook, which sees only a RAM snapshot), and it has never been observed to
+fire on a genuine clear of any game — the only times it ever fired in
+production were the two false positives withdrawn on 2026-08-06. So across
+all ten campaigns the solution counter was a constant, and citing it
+alongside the compute total implies a corroboration that was never
+available.
+
+**What actually carries the shelving, and it is enough:** the frontier pin.
+Nine of ten runs reached gx 3072 inside the first minute and never moved
+again, across 2.2M-cell archives and eight distinct doctrine variants. That
+is a real, reproduced, load-bearing measurement, and the GATED taxonomy
+label and the orthogonal-arm prescription rest on it, not on the solution
+count. Nothing in §5's gate, §7's commands or §8's honest reading changes.
+
+**What is now UNKNOWN that this document implied was known:** whether
+Contra's confluence hook could fire at all. Contra's `progress` is a 16-bit
+`{lo: 0x65, hi: 0x64}` pair, so `coord`'s required ≥300 backwards drop is
+arithmetically *possible* here — unlike an odometer-sourced profile, where
+it is not. Whether `tally` has any referent in this game is a fact about the
+game that can only be settled by measuring it, and the purity line (CLAIMS.md
+Tier 3) forbids asserting it from recalled knowledge in either direction. The
+honest status is UNTESTED, and `scripts/clear_reachability.py` deliberately
+passes this profile for exactly that reason rather than refusing it on a
+hunch.
+
+Source: `docs/research/CLEAR_DETECTION_CAMPAIGN_2026-08-26.md`. The same
+correction applies to the r1_ortho orchestrator verdict later in this
+document ("52,539 cells, 0 solutions"), annotated in place.
 
 The fresh campaigns' own progress series also fix the budget arithmetic §5
 depends on. At **t = 1740 s** — the registered budget — the five *fresh*
@@ -665,6 +718,13 @@ Reported, not fixed — both fall outside the `solve:` block.
 30 min, seed 0: G-0 PASS (ortho engaged: 12,455 selections, 197
 cols_improved), G-A FAIL (frontier ended AT gx 3072 — the 10-campaign
 wall to the pixel — not past it), 52,539 cells, 0 solutions.
+<!-- CORRECTION 2026-08-26: "0 solutions" here is a constant, not a
+     result — configs/contra.yaml has level_key: [] so is_clear()'s
+     opening test is `() > ()`, and the confluence fallback has never
+     been shown to fire. The verdict rests on the gx 3072 frontier pin
+     and the 52,539-cell footprint, both real. See the §1 ADDENDUM. -->
+(Solution count struck 2026-08-26 — see the §1 ADDENDUM; the verdict
+is unchanged, and rests on the frontier pin and the cell footprint.)
 Taxonomy: **GATED** — Contra's wall is NAMED for the first time, and
 it joins the CV hall and the BB 99-1 boss room in the same class.
 Contra remains demoted per the registration (gate not passed); the

@@ -41,10 +41,23 @@ dx=−511 wall root-caused.
 - Headline receipt: `runs/ng_odo_scene/` (max_area 8, 8 scenes crossed
   in 12 min vs 2.5 h pinned at 6144 pre-scene).
 
-**CLAIM (EXHIBITION, honest negative): NG and Rygar are gate-SOUND but
-UNSOLVED** — scene keying moved the frontier (area 0 → 9, best_score
-74783), not to a clear. 0 solutions in all 15 odometer-celled probe
-runs.
+**CLAIM (EXHIBITION, depth-only): NG and Rygar are gate-SOUND, and
+their clear status is UNMEASURED** — scene keying moved the frontier
+(area 0 → 9, best_score 74783). No clear predicate was wired in any of
+the 15 odometer-celled probe runs, so none of them could bank a
+solution; this claim is about frontier depth only.
+
+> **CORRECTION 2026-08-26.** Previously: *"NG and Rygar are gate-SOUND
+> but UNSOLVED — … 0 solutions in all 15 odometer-celled probe runs."*
+> That "0 solutions in all 15 runs" is one constant reported fifteen
+> times, not fifteen independent negatives. All 15 ran on profiles
+> shipping `level_key: []` with no `clear:` block, which makes
+> `GenericGame.is_clear`'s opening test `() > ()` — False for every RAM
+> state. **The "gate-SOUND" half stands**: that gate is the odometer,
+> certified separately 5/5 and untouched by this. What is struck is the
+> word UNSOLVED and the solution count behind it — neither game is
+> scorable as solved or unsolved, because the question was never asked.
+> Source: `docs/research/CLEAR_DETECTION_CAMPAIGN_2026-08-26.md`.
 - Pre-scene plateaus: `runs/ng_odo_night/` (3 h, 17.7M steps, best
   6144), `runs/rygar_odo_night/` (3 h, 21.5M steps, 5680px); also
   `runs/{ng,rygar}_odo_{smoke,v2,debounce,deep}/`.

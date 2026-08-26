@@ -250,6 +250,40 @@ Ninja Gaiden — the instrument is certified, the games remain unsolved,
 and no clear is attributed to it. Any future clear it enables is an
 EXHIBITION result logged on its own terms.
 
+ADDENDUM 1 (2026-08-26) — **"zero solutions" is struck as evidence; it
+was a constant, not a measurement.** The certification above is
+untouched: the instrument that passed 5/5 is the ODOMETER, a progress
+observable, and every gate verdict, distinct-px count and frontier
+number in this entry stands. What does not stand is the sentence
+citing "zero solutions" as an honest negative. `GenericGame.is_clear`
+opens with `if self.level_key(ram) > tuple(start_key)`, and
+`configs/rygar.yaml` and `configs/ninja_gaiden.yaml` both ship
+`level_key: []` with no `clear:` and no `finale:` block. The test is
+therefore `() > ()`, which is False in Python for every RAM state that
+can exist. No clear predicate was wired on either profile, so no
+solution could have been banked at any budget, on any seed, for any
+length of run. The number was fixed before the first step was taken.
+
+Read the sentence instead as: *no clear predicate exists for either
+game, so solved/unsolved is UNMEASURED here — not measured-and-negative.
+The load-bearing evidence in this entry is frontier depth only (NG area
+9 / best_score 74,783; Rygar 5,680 px).* The direction of the original
+error is conservative — it understated rather than overstated what the
+system can do — but "the search looked and found nothing" and "nothing
+ever looked" are different claims and this ledger will not merge them.
+
+Found by the 2026-08-26 clear-detection census
+(`docs/research/CLEAR_DETECTION_CAMPAIGN_2026-08-26.md`); the algebra
+independently re-verified at the top level, and confirmed against disk
+— of 300 run directories containing a `solutions/` folder, every one
+belongs to SMB/Lost Levels, Castlevania or Bubble Bobble (the three
+profiles with a non-empty `level_key`) plus the two already-withdrawn
+detector-gate false positives. Guarded going forward by
+`scripts/clear_reachability.py`, which refuses a profile declaring
+clear machinery that cannot fire and makes every solve run print
+`[clear] NO REACHABLE CLEAR PREDICATE` at launch when its solution
+count is a constant.
+
 **FORGE-VALIDATED — generic death-detection fixes: transition-blip
 debounce and wrap-aware lives decrement, commits `1610093` and
 `084362c`, 2026-08-23.** Diagnosed from solver telemetry, not game

@@ -206,7 +206,43 @@ solve:
   # under random exploration) produced none either. Still untried on a
   # real Gradius boss-clear — the veto only closes the death failure
   # mode, not a hypothetical unrelated one.
-  clear: {mode: confluence}
+  #
+  # CORRECTION 2026-08-26 — HOOK WITHDRAWN, AND WHY THE TEXT ABOVE STOPPED
+  # BEING TRUE. Everything above is accurate for the config as it stood on
+  # 2026-08-06, when progress was the RAM pair {lo: 0x003E, hi: 0x003F} —
+  # that pair really did reset to 0 on a death, which is exactly how the
+  # false fire at 205 actions was produced and then vetoed. On 2026-08-24
+  # the League onboarding wave (commit 09299fa) swapped this profile to
+  # `progress: {source: odometer, axis: x}` for better frontier coverage.
+  # That swap silently DISARMED the win condition, and nothing noticed
+  # because a hook that never fires looks identical to a hook that has not
+  # fired yet:
+  #   * the streaming detector votes on `tally` + `coord` at min_signals=2
+  #     (audio and lock do not survive into the live solver hook), so both
+  #     must agree;
+  #   * `coord` (scripts/clear_detect.py coord_entity_windows) requires the
+  #     progress readout to fall by >= COORD_RESET_DROP_MIN = 300 and land
+  #     at <= 200;
+  #   * the odometer cannot fall. nes_core/src/ppu.rs odo_fold_frame drops
+  #     the anchor on a mostly-blank frame (< 120 rendered lines) and
+  #     RE-ANCHORS on the next rendered one rather than integrating across
+  #     the discontinuity, so a stage wipe or death fade FREEZES the
+  #     integral; Solver._xram then clamps backward-of-origin to 0; and
+  #     Solver._assign rebuilds the detector's ctx (and its rolling window)
+  #     on every state restore, so a restore cannot smuggle a drop in
+  #     either.
+  # Ceiling: 1 of the 2 votes needed. The hook was inert from 2026-08-24
+  # onward, so "54+ min of unattended search that could never bank a win"
+  # was NOT fixed — it was fixed for eighteen days and then silently
+  # unfixed. Removing the declaration rather than leaving a dead one:
+  # advertising a win condition the code cannot reach is what made the
+  # blindness invisible in the first place. Gradius is now, honestly, a
+  # coverage baseline — same as `level_key: []` above already says.
+  # To re-arm, either point `progress` back at an observable that really
+  # does reset across the terminal transition, or set `apu_weight: 1.0`
+  # so tally+apu can reach 2 without coord. `make clear-lint`
+  # (scripts/clear_reachability.py) now refuses this combination at
+  # profile-load time, so it cannot silently recur.
   # Remaining ships. VERIFIED-LIVE: 3 at spawn, steps 3->2->1->0 exactly on
   # each death (then wraps to 255 at game-over). start_lives=3 => is_dead
   # fires on the first life lost. Robust across bullet/collision/terrain deaths.

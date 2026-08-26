@@ -42,7 +42,9 @@ description: |
   the ~500+ sps seen on an idle core; not a game finding):
   cells 2855->4557->6745->9287 across the four 1-min windows,
   max_gx_in_max_area 478->479->735->1244, stall_flat_windows 0
-  throughout, 6189 improvements / 55030 records, 0 solutions.
+  throughout, 6189 improvements / 55030 records, 0 solutions (expected;
+  level_key is the empty coverage baseline — a constant, not a search
+  outcome; annotated 2026-08-26).
   max_area pegged at 255 from minute 1 on — the single-byte room
   counter's ceiling, not a stall (gx inside area=255 kept climbing the
   whole run; note for future work if this game needs >255 rooms

@@ -461,16 +461,34 @@ def test_every_game_adapter_defines_needs_apu() -> None:
 
 
 def test_the_shipped_confluence_profiles_stay_on_the_default_path() -> None:
+    # DISCOVERED, NOT HARDCODED (2026-08-26) — see the twin of this test in
+    # tests/test_confluence_v2.py for why. Naming contra.yaml and
+    # gradius.yaml literally made this assert that a hook was DECLARED,
+    # never that it could FIRE, so it stayed green throughout the eighteen
+    # days Gradius's hook was inert.
     import pathlib
 
     import yaml
+
+    from scripts.clear_reachability import clear_reachability
+
     repo = pathlib.Path(__file__).resolve().parent.parent
-    for name in ("contra.yaml", "gradius.yaml"):
-        cl = ((yaml.safe_load((repo / "configs" / name).read_text())
-               .get("solve") or {}).get("clear") or {})
-        assert cl.get("mode") == "confluence", name
+    found = {}
+    for path in sorted((repo / "configs").glob("*.yaml")):
+        prof = yaml.safe_load(path.read_text())
+        if not isinstance(prof, dict):
+            continue
+        cl = (prof.get("solve") or {}).get("clear") or {}
+        if cl.get("mode") == "confluence":
+            found[path.name] = (prof, cl)
+
+    assert found, ("no profile ships clear: {mode: confluence} — retire this "
+                   "test with the hook rather than let it pass vacuously")
+    for name, (prof, cl) in found.items():
         for knob in ("apu_weight", "apu"):
             assert knob not in cl, f"{name} silently opted into {knob}"
+        r = clear_reachability(prof)
+        assert r.ok, f"{name} declares a hook that cannot fire: {r.reason}"
 
 
 class _PoolWithApu:
@@ -1345,18 +1363,32 @@ def test_the_recommended_configuration_reports_its_real_cost() -> None:
 
 
 def test_the_shipped_profiles_warm_up_inside_a_single_burst() -> None:
-    # contra/gradius run the default confluence: 20 observations of warm-up
-    # against a 64-action burst, so nothing about them changes and nothing
-    # warns.
+    # Every shipped confluence profile runs the default knobs: 20
+    # observations of warm-up against a 64-action burst, so nothing about
+    # them changes and nothing warns.
+    #
+    # DISCOVERED, NOT HARDCODED (2026-08-26): the literal ("contra.yaml",
+    # "gradius.yaml") pair went red when Gradius's provably-inert hook was
+    # correctly withdrawn — the test was pinned to the roster rather than
+    # to the property.
     import pathlib
 
     import yaml
     repo = pathlib.Path(__file__).resolve().parent.parent
-    for name in ("contra.yaml", "gradius.yaml"):
-        prof = yaml.safe_load((repo / "configs" / name).read_text())
+    checked = 0
+    for path in sorted((repo / "configs").glob("*.yaml")):
+        prof = yaml.safe_load(path.read_text())
+        if not isinstance(prof, dict):
+            continue
+        if ((prof.get("solve") or {}).get("clear") or {}).get("mode") \
+                != "confluence":
+            continue
         g = GenericGame(prof)
-        assert g.clear_observation_budget() == g.clear_verify_margin() == 20
-        assert g.clear_observation_budget() < 64        # the --burst default
+        assert g.clear_observation_budget() == g.clear_verify_margin() == 20, \
+            path.name
+        assert g.clear_observation_budget() < 64, path.name   # --burst default
+        checked += 1
+    assert checked, "no shipped confluence profile to check"
 
 
 # ---- the live-burst diagnostic -------------------------------------------

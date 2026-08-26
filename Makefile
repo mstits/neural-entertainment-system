@@ -1,7 +1,8 @@
 .PHONY: help test parity engine show launcher control-panel bench bench-hot bench-scaling bench-phases bench-all \
         build build-pgo build-pgo-apply selftest clean clean-rust train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
-        ppu_layout_check ppu-batch-profile rust-check unsafe-inventory-check
+        ppu_layout_check ppu-batch-profile rust-check unsafe-inventory-check \
+        clear-lint
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -106,7 +107,16 @@ rust-check:
 unsafe-inventory-check:
 	.venv/bin/python scripts/check_unsafe_inventory.py
 
-test: rust-check unsafe-inventory-check
+# Refuse a solve profile that declares clear machinery it cannot fire, and
+# name every profile whose `solutions` count is a compile-time constant
+# rather than a search outcome. See scripts/clear_reachability.py for why
+# `() > ()` made 40 of 45 profiles structurally unable to bank a win.
+clear-lint:
+	@.venv/bin/python scripts/clear_reachability.py --all --quiet
+	@echo "  (drop --quiet for the per-profile listing, including every"
+	@echo "   profile whose solution count is a constant)"
+
+test: rust-check unsafe-inventory-check clear-lint
 	. .venv/bin/activate && pytest tests/ -q --timeout=120
 
 test-fast:

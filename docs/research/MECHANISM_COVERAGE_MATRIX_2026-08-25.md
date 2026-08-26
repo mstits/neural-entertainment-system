@@ -330,6 +330,34 @@ onboarding smoke run banked in this repository, exactly **two games ever
 emitted a single solution file**: Castlevania (3) and Bubble Bobble (2).
 Every other game's `solutions/` directory does not exist.
 
+> **UPDATE 2026-08-26 — the Gradius row was too generous.** It is
+> classed above as "a predicate is wired but has never once fired".
+> Verified since: Gradius's hook could not have fired. On 2026-08-24
+> the League onboarding wave (commit `09299fa`) swapped that profile
+> from `progress: {lo: 0x003E, hi: 0x003F}` to
+> `progress: {source: odometer, axis: x}`, and the confluence vote
+> needs `coord`, which requires the progress readout to fall by ≥300.
+> The odometer cannot fall: `nes_core/src/ppu.rs odo_fold_frame` drops
+> its anchor on a mostly-blank frame and re-anchors rather than
+> integrating across the discontinuity, so a stage wipe FREEZES the
+> integral; `Solver._xram` clamps backward-of-origin to 0; and
+> `Solver._assign` rebuilds the detector's rolling window on every
+> state restore. Ceiling: 1 of the 2 votes needed. So the class for
+> Gradius was **"wired and structurally unfireable"**, and a progress
+> change made in an unrelated wave silently disarmed a win condition
+> with nothing to notice. The dead declaration has been withdrawn from
+> `configs/gradius.yaml` (it is now honestly in the "nothing at all"
+> class, count 31 → 32 and the "never fired" class 5 → 4), and
+> `scripts/clear_reachability.py` now refuses that combination at
+> solver launch so it cannot recur silently.
+>
+> Contra's row is **unchanged and correct as written**: its progress is
+> a 16-bit `{lo, hi}` pair, so `coord`'s required drop is arithmetically
+> possible there and "wired but never fired" is the honest class. Ruling
+> it structurally dead would require asserting that the game has no
+> timer→score tally, which is a fact about the title obtainable only by
+> measuring it — the authored-semantics class the purity line forbids.
+
 Two compounding facts make this worse than a missing feature:
 
 1. **`clear_detect.py` has no per-game entry point.** Its CLI exposes

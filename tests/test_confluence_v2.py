@@ -25,13 +25,20 @@ replay-verification gate on the banking path (happy + mismatch).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+import yaml
+
 from scripts.clear_detect import StreamingConfluenceDetector, trailing_median
+from scripts.clear_reachability import clear_reachability
 from scripts.go_explore_solve import GenericGame, Solver
+
+#: Top-level profile directory, for the shipped-profile assertions below.
+CONFIGS = Path(__file__).resolve().parent.parent / "configs"
 
 # --------------------------------------------------------------------------
 # A synthetic 2 KiB RAM layout. Addresses are arbitrary test fixtures — the
@@ -640,18 +647,35 @@ def test_an_unconfigured_profile_arms_none_of_the_v2_knobs() -> None:
 
 
 def test_the_shipped_confluence_profiles_stay_on_the_default_path() -> None:
-    # contra + gradius ship `clear: {mode: confluence}` today. Their behavior
-    # must not change under a v2 binary — the knobs are opt-in per profile.
-    import yaml
-    from pathlib import Path
-
-    repo = Path(__file__).resolve().parent.parent
-    for name in ("contra.yaml", "gradius.yaml"):
-        prof = yaml.safe_load((repo / "configs" / name).read_text())
+    # Whichever profiles ship `clear: {mode: confluence}` must not change
+    # behavior under a v2 binary — the knobs are opt-in per profile.
+    #
+    # DISCOVERED, NOT HARDCODED (2026-08-26). This test named contra.yaml
+    # and gradius.yaml literally and asserted each still declared the hook.
+    # That is the census pattern in miniature: it checked that a hook was
+    # DECLARED and never that it could FIRE, so it stayed green for the
+    # eighteen days Gradius's hook was inert after its progress was swapped
+    # to the odometer (commit 09299fa), and it would have gone red for the
+    # correct withdrawal of that dead hook rather than for the defect.
+    # Globbing keeps it honest as profiles come and go; the reachability
+    # assertion is the part the old form was missing.
+    found = {}
+    for path in sorted(CONFIGS.glob("*.yaml")):
+        prof = yaml.safe_load(path.read_text())
+        if not isinstance(prof, dict):
+            continue
         cl = (prof.get("solve") or {}).get("clear") or {}
-        assert cl.get("mode") == "confluence", name
+        if cl.get("mode") == "confluence":
+            found[path.name] = (prof, cl)
+
+    assert found, ("no profile ships clear: {mode: confluence} — if the hook "
+                   "was retired, retire this test with it rather than "
+                   "leaving it to pass vacuously")
+    for name, (prof, cl) in found.items():
         for knob in ("persist_checks", "progress_median", "room_veto"):
             assert knob not in cl, f"{name} silently opted into {knob}"
+        r = clear_reachability(prof)
+        assert r.ok, f"{name} declares a hook that cannot fire: {r.reason}"
 
 
 # --------------------------------------------------------------------------

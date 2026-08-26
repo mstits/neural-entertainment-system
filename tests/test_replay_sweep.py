@@ -20,7 +20,8 @@ sys.path.insert(0, str(ROOT))
 from scripts.replay_sweep import (  # noqa: E402
     KNOWN_BAD, TapeSpec, Verdict, build_consumer_index, build_report,
     discover_tapes, evaluate_gate, read_tape, resolve_hw_flags,
-    resolve_profile, resolve_from_siblings, sibling_profiles, spec_problems,
+    resolve_profile, resolve_from_siblings, resolve_start_key,
+    sibling_profiles, spec_problems,
     verify_ram_trace,
 )
 
@@ -271,3 +272,64 @@ def test_unscorable_is_neither_a_pass_nor_a_gate_failure():
     assert ok, msg
     assert "1 UNSCORABLE" in msg
     assert msg.startswith("1/2"), msg
+
+
+# --------------------------------------------------------------------------
+# start_wd: [] is a RECORDED key, not a missing one (2026-08-26)
+# --------------------------------------------------------------------------
+
+def test_an_empty_recorded_start_key_is_not_treated_as_missing():
+    """`start_wd: []` is what every `level_key: []` profile banks — 40 of
+    the 45 solve profiles. A truthiness test collapsed it onto None and the
+    sweep reported `ERROR: start_wd not recorded` for a tape that had
+    recorded it, which evaluate_gate then counted as a failure."""
+    spec = TapeSpec(tape="t.json", actions="a.npy", root_state="r.state",
+                    profile="configs/p.yaml", start_wd=[], clear_wd=[],
+                    steps=3, core_sha16="abc")
+    assert resolve_start_key(spec) == ()
+
+
+def test_a_genuinely_absent_start_key_is_still_None():
+    """The mirror: the fix must not make "not recorded" unreportable."""
+    spec = TapeSpec(tape="t.json", actions="a.npy", root_state="r.state",
+                    profile="configs/p.yaml", start_wd=None, clear_wd=None,
+                    steps=3, core_sha16="abc")
+    assert resolve_start_key(spec) is None
+
+
+def test_a_populated_start_key_round_trips():
+    assert resolve_start_key(_spec()) == (0, 0)
+
+
+def test_an_empty_key_tape_reaches_the_unscorable_handler():
+    """The consequence of the bug, tested end-to-end through the verifier:
+    with start_wd == clear_wd == [] the correct verdict is UNSCORABLE
+    ("banked under a predicate this verifier does not implement"), which
+    the ERROR branch used to pre-empt by `continue`-ing first."""
+    spec = TapeSpec(tape="t.json", actions="a.npy", root_state="r.state",
+                    profile="configs/p.yaml", start_wd=[], clear_wd=[],
+                    steps=3, core_sha16="abc")
+    v = verify_ram_trace([{"c": 0}, {"c": 0}], spec, lambda r: bool(r["c"]))
+    assert v.status == "UNSCORABLE", v
+    assert "does not implement" in v.reason
+
+
+def test_the_real_detector_gate_tapes_carry_an_empty_recorded_key():
+    """Anchors the two tests above to the artifacts that reproduce it, so
+    this cannot become a synthetic-only regression test."""
+    found = 0
+    for name in ("kirby", "double_dragon"):
+        p = (ROOT / "runs" / "detector_gate_20260810" / name /
+             "solutions" / "sol_000.json")
+        if not p.exists():
+            continue
+        meta = json.loads(p.read_text())
+        assert meta.get("start_wd") == [], p
+        assert not meta["start_wd"], "must be falsy — that was the trap"
+        assert resolve_start_key(
+            TapeSpec("t", "a", "r", "p", meta["start_wd"],
+                     meta.get("clear_wd"), None, None)) == ()
+        found += 1
+    if not found:
+        pytest.skip("detector_gate_20260810 tapes not present (runs/ is "
+                    "gitignored); the synthetic cases above still cover it")

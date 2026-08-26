@@ -76,7 +76,9 @@ solve:
 
 # --- wave3 solver smoke + deepest-cell diagnostic (2026-08-25) ---
 # 2-worker / 4-minute go_explore smoke on the scene-key config above:
-# 231 cells, 0 solutions, area@0x23 frozen at the ROOT value (36) for the
+# 231 cells, 0 solutions (expected; level_key is the empty coverage
+# baseline — a constant, not a search outcome; annotated 2026-08-26),
+# area@0x23 frozen at the ROOT value (36) for the
 # entire run — the room/screen counter never once incremented despite
 # 88,765 steps of active search (receipt:
 # runs/onboard_wave3/smoke_chip_n_dale/{archive.stats.json,progress.jsonl}).

@@ -341,9 +341,19 @@ ceiling per wall, and five adjudicated negatives with receipts.
 
 EXHIBITION (unchanged headline, new frontiers): SMB all 32 levels
 solver-complete (2026-07-27, db44fc7). New this window: NG frontier
-area 9 / score 74,783, Rygar 5,680 px — both UNSOLVED (0 solutions);
-Bubble Bobble 2 and Castlevania 3 smoke solutions in wave-1 (in
-flight).
+area 9 / score 74,783, Rygar 5,680 px — both depth-only results, with
+no win predicate wired on either profile, so neither is scorable as
+solved or unsolved; Bubble Bobble 2 and Castlevania 3 smoke solutions
+in wave-1 (in flight).
+
+> **CORRECTION 2026-08-26.** This read "— both UNSOLVED (0 solutions)".
+> The parenthetical presented a compile-time constant as corroboration:
+> `configs/ninja_gaiden.yaml` and `configs/rygar.yaml` both ship
+> `level_key: []` with no `clear:` block, so `is_clear`'s opening test
+> is `() > ()`, False for every RAM state, and no run at any budget
+> could have banked a solution. The frontier figures are real and
+> unchanged. Source:
+> `docs/research/CLEAR_DETECTION_CAMPAIGN_2026-08-26.md`.
 
 FORGE (no rates claimed, per ledger rules): odometer shipped +
 certified 5/5; scene detection shipped; two generic death-semantics

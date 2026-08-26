@@ -47,6 +47,11 @@ content, not a new axiom.
    games reach T1 within 1 h unattended; ≥⅓ reach T3 within a
    show-night budget; zero fabricated clears (detector-verified).
 
+   **⚠ See ADDENDUM B (2026-08-26) below before running a League
+   cycle against this text — the T1 rate is currently UNDEFINED for
+   40 of 45 solve-profiles and the fabrication clause is vacuous on
+   those same profiles.**
+
    *Amendment A1, 2026-08-10 — PROPOSED, not in force.* The three
    lines above are the registered text and stay the text the ledger is
    scored against until the owner signs this amendment into
@@ -87,6 +92,64 @@ content, not a new axiom.
      because the excluded games are the part a reader most needs to
      audit. The second detector modality this leans on shipped in
      `e5e0957`.
+
+   ### ADDENDUM B, 2026-08-26 — the T1 denominator, and a vacuous half of the fabrication clause
+
+   *Unlike Amendment A1 this is not a proposed loosening; it is a
+   correction of fact about what the registered text currently
+   measures. The registered text is not edited — it stays the text the
+   ledger is scored against — but a cycle run against it today would
+   produce a number that is about the instrument, not the agent.*
+
+   **T1 is unreachable by construction for 40 of the 45 profiles that
+   carry a `solve:` block.** T1 is defined as a *verified level-1
+   clear*, and verification runs through `GenericGame.is_clear`, which
+   opens with `if self.level_key(ram) > tuple(start_key)`. Forty of the
+   45 profiles ship `level_key: []` (two more omit the key entirely),
+   which makes that test `() > ()` — False in Python for every RAM
+   state that can exist. Exactly three profiles have a non-empty key
+   that can advance (Castlevania, Bubble Bobble, Kid Icarus) and five
+   more have any other reachable outcome path at all. A
+   stratified-random League sample drawn today therefore scores near
+   zero on T1 **for instrument reasons**, and the gate measures the
+   detector rather than the agent.
+
+   **A1's scorability criterion does not cover this, and must not be
+   read as if it did.** A1 defines scorable as *"a progress or
+   room-counter observable that clears the probe's NOOP-flatness and
+   saturation gates"* — a claim about a PROGRESS observable. A win
+   predicate is a different instrument. A game can be fully scorable
+   under A1, with a certified odometer and a healthy frontier, and
+   still be structurally unable to report a tier. Ninja Gaiden and
+   Rygar are precisely that case today.
+
+   **The fabrication clause is simultaneously a vacuous pass on those
+   same profiles.** "Zero fabricated clears (detector-verified)" cannot
+   fail where no clear can be banked: it reports PASS identically
+   whether the detector is sound or entirely absent. The 2026-08-10
+   Zelda receipt shipped exactly this reading — "fabrication tripwire
+   CLEAN" on a profile with no reachable predicate — and has been
+   corrected.
+
+   **Required before this gate is run:** a game with no witnessed clear
+   is UNSCORABLE for T1 and must be excluded from the T1 denominator,
+   with the exclusion listed per the A1 publication form; if it is not
+   excluded, the cycle's T1 rate is reported VOID rather than as a
+   number. The mechanical test is
+   `scripts/clear_reachability.py --all`, which classifies every
+   profile as REACHABLE (a hook that can fire), NONE (no predicate — 37
+   today) or UNFIREABLE (a declared hook that provably cannot fire, and
+   a hard refusal at solver launch). Only REACHABLE profiles belong in
+   the T1 denominator.
+
+   **Credit where it is due:**
+   `docs/research/MECHANISM_COVERAGE_MATRIX_2026-08-25.md` §3b published
+   an independent and correct version of this one day before the census
+   found it — *"the roster can currently verify a T1 on 5 of 43
+   games… A game can be scorable under A1 and still be unable to report
+   a tier."* This Basis text was simply never reconciled against it.
+   That reconciliation is this addendum. Source:
+   `docs/research/CLEAR_DETECTION_CAMPAIGN_2026-08-26.md`.
 
 ## Dependency-ordered path (each unlocks the next)
 

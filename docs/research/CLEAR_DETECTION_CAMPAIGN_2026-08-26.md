@@ -285,3 +285,148 @@ All 29 campaign configs YAML-parsed clean: **29 parsed OK, 0 missing, 0 parse fa
 Evidence lives under `runs/clear_detection/<game>/` and `runs/clear_census/<game>/`
 (31 verdict files, 29 profiles: Kung Fu and Rygar are mirrored across both trees;
 `runs/clear_census/1942/` is an empty stub, that verdict lives under `runs/clear_detection/1942/`).
+
+---
+
+## 10. Follow-up landed: the distorted claims are corrected, and a guard now refuses
+
+*Added 2026-08-26, after this census. Every code fact §1–§8 rests on was
+re-verified independently at the top level before any document was touched.*
+
+### 10.1 Corrections applied
+
+Each is an annotation, not a deletion — the original text stays, struck or
+marked, with the correction dated beside it.
+
+| Document | What was struck | What it actually meant |
+|---|---|---|
+| `CLAIMS.md` (odometer FORGE entry) | "have produced **zero solutions** on Rygar and Ninja Gaiden … the games remain unsolved" | No clear predicate exists on either profile, so solved/unsolved is UNMEASURED. The 5/5 odometer certification is untouched — that instrument is a *progress* observable. |
+| `docs/receipts/games/contra_reentry_2026-08-10.md` §0, §1, r1_ortho verdict | "ten campaigns produced zero solutions"; the bolded "…95,161,110 emulator steps … zero solutions" prior; "52,539 cells, 0 solutions" | The shelving stands on the **gx 3072 frontier pin**, reproduced in nine of ten runs. The solution count was fixed before the first step and is struck from the prior. |
+| `docs/research/RECEIPTS_INDEX_2026-08-24.md` | "NG and Rygar are gate-SOUND but **UNSOLVED** … 0 solutions in all 15 probe runs" | One constant reported fifteen times. "gate-SOUND" stands (that gate is the odometer); "UNSOLVED" does not. |
+| `docs/research/CAPABILITY_REPORT_2026-08-24.md` | "both UNSOLVED (0 solutions)" | Depth-only results; not scorable either way. |
+| `docs/receipts/games/zelda_onboarding_2026-08-10.md` (orchestrator verdict) | "fabrication tripwire CLEAN", twice | A vacuous gate: it reports PASS identically whether the detector is sound or absent. The doc's own §Read-outs already said this correctly and needed no change. |
+| `docs/proposals/TOTALITY_BASIS_2026-08-08.md` | — (ADDENDUM B added; registered text deliberately unedited) | T1 is unreachable by construction for 40 of 45 profiles, so a League cycle run today measures the detector, not the agent. A1's "scorable" covers *progress* observables and does not save it. Games with no witnessed clear leave the T1 denominator, or the rate is VOID. |
+| `docs/research/MECHANISM_COVERAGE_MATRIX_2026-08-25.md` | Gradius's class, "wired but never fired" | "Wired and structurally unfireable" — see §10.2. The rest of §3b was already correct one day before this census and is the document the others should have been reconciled against. |
+| `configs/gradius.yaml` | `clear: {mode: confluence}` | Withdrawn; see §10.2. |
+| `configs/contra.yaml` | "if it never fires, raise stride/window" | Struck as unfounded. Status is UNTESTED — see §10.3 for why it is *not* struck as impossible. |
+| `configs/{galaga,chip_n_dale_rescue_rangers,double_dragon,blaster_master,ice_climber}.yaml` | bare "0 solutions" in smoke receipts | Annotated "(expected; level_key is the empty coverage baseline)", matching the four sibling configs that already got this right. |
+
+**Two flagged claims were inspected and deliberately left alone**, because an
+over-correction is its own defect: `configs/ducktales.yaml` (a live
+`score_jump` predicate — its 0 is a real negative) and
+`configs/bubble_bobble.yaml` (a non-empty `level_key`; the config's own
+diagnosis, that the one-byte key could not see a transition the search kept
+making, is exactly right).
+
+### 10.2 A new finding this census did not have: Gradius was disarmed by an unrelated commit
+
+`configs/gradius.yaml`'s win-condition comment described a hook that was
+wired and then hardened against a measured false fire — and that comment was
+**true when it was written**. On 2026-08-06 the profile's progress was the
+RAM pair `{lo: 0x003E, hi: 0x003F}`, which really did reset to 0 on a death;
+that is how the false fire at 205 actions was produced, and the lives-drop
+veto really did close it.
+
+On **2026-08-24 the League onboarding wave (`09299fa`) swapped the profile to
+`progress: {source: odometer, axis: x}`** for better frontier coverage. That
+swap silently disarmed the win condition, and nothing noticed, because a hook
+that *never* fires is indistinguishable from one that *has not fired yet*:
+
+* the live streaming detector votes on `tally` + `coord` at `min_signals=2`
+  (`audio` and `lock` do not survive into the solver hook);
+* `coord` requires the progress readout to fall by ≥ `COORD_RESET_DROP_MIN`
+  (300) and land ≤ 200;
+* the odometer cannot fall. `nes_core/src/ppu.rs odo_fold_frame` drops its
+  anchor on a mostly-blank frame (< 120 rendered lines) and **re-anchors**
+  rather than integrating across the discontinuity, so a stage wipe freezes
+  the integral instead of rewinding it; `Solver._xram` clamps
+  backward-of-origin to 0; and `Solver._assign` rebuilds the detector's ctx —
+  and with it its rolling window — on every state restore, so a restore
+  cannot smuggle a drop in either.
+
+Ceiling: **1 of the 2 votes needed.** So "54+ min of unattended search that
+could never bank a win" was not fixed; it was fixed for eighteen days and
+then silently unfixed by a commit about something else. The dead declaration
+is withdrawn rather than left in place — advertising a win condition the code
+cannot reach is what made the blindness invisible.
+
+### 10.3 Where this census over-claimed, and the correction is narrower than it prescribed
+
+§Strategy asserted that Contra's confluence vote is unreachable because
+"`tally` has no referent in this game" — and likewise for Metroid, Kirby,
+Zelda. **That is a fact about a title, and it can only be established by
+measuring.** Asserting it from recalled knowledge is the authored-semantics
+class CLAIMS.md Tier 3 forbids, and the fact that it points in the pessimistic
+direction does not exempt it.
+
+The purity-clean statement is narrower and is what shipped: Contra's
+`progress` is a 16-bit `{lo, hi}` pair, so `coord`'s required drop is
+arithmetically **possible** there, unlike on an odometer-sourced profile. Its
+honest status is **UNTESTED**, not impossible. `configs/contra.yaml` now says
+that, and the guard below deliberately passes Contra rather than refusing it.
+
+### 10.4 The guard
+
+`scripts/clear_reachability.py` (+ `tests/test_clear_reachability.py`,
+`make clear-lint`, wired into `make test`). It answers one question per
+profile, with no ROM, no emulator, and no game knowledge:
+
+* **REACHABLE** — some declared hook can fire (8 profiles today).
+* **NONE** — no clear machinery declared (37 today). Legal and common, but
+  `solutions` is a compile-time 0 and `--want-solutions` is inert.
+* **UNFIREABLE / DEGENERATE** — machinery IS declared and provably cannot
+  fire, or is trivially true. **Hard refusal**, raised from `Solver.__init__`
+  before the pool is built, so a bad profile costs zero emulator seconds.
+
+Rules cover: `level_key: []` with no hook; confluence whose `min_signals`
+exceeds the votes that can be cast (odometer/fight_gate progress, or a
+single RAM byte that tops out at 255 < 300); `byte_change` with no `addr`;
+`score_jump` with a non-positive threshold; an unknown mode; and a `finale`
+whose `level_key` arity can never match. `COORD_RESET_DROP_MIN` is read out
+of `clear_detect.py` rather than copied, and a rename raises rather than
+defaulting.
+
+**The line that would have prevented all ten distorted claims** now prints at
+every launch of a predicate-less run, into the log every receipt is written
+from:
+
+```
+[clear] [configs/rygar.yaml] NO REACHABLE CLEAR PREDICATE — … This run
+CANNOT bank a solution: `solutions: 0` is a compile-time constant, not a
+search result, and --want-solutions is inert. … Cite it only as "no clear
+predicate wired", never as "searched and found none".
+```
+
+Every test is written against *what would this report if the mechanism were
+absent?* — including a mutation suite that breaks one rule at a time and
+requires the verdict to **move**, and `test_the_guard_is_not_a_constant`,
+which fails any guard that answers the same thing for every input. That is
+the property `adjudicate_soak._check_budget` and the Zelda "fabrication
+tripwire" both lacked.
+
+### 10.5 A live defect found while tracing consumers, fixed
+
+`scripts/replay_sweep.py` computed `start_key = tuple(spec.start_wd) if
+spec.start_wd else None`. `start_wd` is `Optional[list]`, and its two falsy
+values mean opposite things: `None` = "no key was recorded", `[]` = "a key
+was recorded and it is empty" — which is what **every `level_key: []`
+profile banks**. The sweep therefore reported `ERROR: "start_wd not
+recorded"` for tapes that had recorded it; `evaluate_gate` counts ERROR as a
+failure and never as a skip; and the handler written for exactly this shape
+(`clear_wd == start_wd` → UNSCORABLE) was unreachable, because the ERROR
+branch `continue`s first. Reproduced on both
+`runs/detector_gate_20260810/{kirby,double_dragon}` tapes. Fixed with `is
+not None`, extracted to a named `resolve_start_key` so it is testable, and
+covered by five tests including one anchored to the two real tapes.
+
+### 10.6 Two test files were pinned to the roster instead of the property
+
+`test_the_shipped_confluence_profiles_stay_on_the_default_path` (in both
+`tests/test_confluence_v2.py` and `tests/test_detector_v3.py`) and
+`test_the_shipped_profiles_warm_up_inside_a_single_burst` hardcoded
+`("contra.yaml", "gradius.yaml")` and asserted each still **declared** the
+hook — never that it could **fire**. They stayed green throughout the
+eighteen days Gradius's hook was inert, and would have gone red for the
+*correct* withdrawal of it. All three now discover confluence profiles by
+globbing, assert the set is non-empty so they cannot pass vacuously, and
+additionally assert reachability.

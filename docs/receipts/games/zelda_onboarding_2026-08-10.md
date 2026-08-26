@@ -397,14 +397,52 @@ per-minute proxies.
 Seed 1 (30 min, 8 workers): 12,885 cells, max_room 127, max_sect 16
 (= the default --sect-cap — SATURATED, the Lost Levels lesson; raise
 --sect-cap next session), 20,117 door macros injected, best_score
-160,254, 0 solutions (fabrication tripwire CLEAN — no clear: wired,
-so any bank would have been a detector defect). Taxonomy: PROGRESSING
+160,254, 0 solutions (~~fabrication tripwire CLEAN~~ — struck
+2026-08-26: structurally guaranteed, so NOT a tripwire reading; see
+the CORRECTION below). Taxonomy: PROGRESSING
 (map_delta 11 in the final window — still finding rooms at budget).
 
 Seed 2 (30 min): 10,025 cells, best_score 160,255, 0 solutions
-(tripwire clean). Taxonomy: COVERAGE_LIMITED. Cross-seed verdict per
+(~~tripwire clean~~ — same correction). Taxonomy: COVERAGE_LIMITED. Cross-seed verdict per
 the plan's rule (divergent verdicts -> report the WEAKER claim):
 **COVERAGE_LIMITED, with the split noted** — both seeds healthy, no
 gate signature, next-arm = longer budget + raised --sect-cap; no
 profile change. D2's gated prediction NOT yet observed at this budget
 (gating likely appears only at item-locked boundaries deeper in).
+
+### CORRECTION 2026-08-26 — the "fabrication tripwire" was vacuous
+
+Both seed lines above called `0 solutions` a CLEAN tripwire reading. It
+was not a reading at all. `configs/zelda_roomfp.yaml` ships
+`level_key: []` and no `clear:` block, so `GenericGame.is_clear`'s
+opening test is `level_key(ram) > tuple(start_key)` evaluated as
+`() > ()` — False for every RAM state that can exist. There is no code
+path by which either seed could have banked a solution, which means the
+check reports PASS **identically whether the clear detector is sound or
+entirely absent**. A check that cannot fail certifies nothing.
+
+Read those parentheticals instead as: *0 solutions, which is
+structurally guaranteed and therefore not a fabrication check — no
+fabrication check ran on this game.*
+
+This is an internal inconsistency in this document, not a
+misunderstanding by its author: the §Read-outs section above already
+states it correctly — *"`solutions: 0` for the whole run, which is the
+point of `level_key: []`"* — and that passage needs no change. Only the
+orchestrator verdict's tripwire framing is struck.
+
+Every other figure in both verdicts is a real measurement and stands
+untouched: 12,885 / 10,025 cells, max_room 127, the saturated
+max_sect 16, 20,117 door macros, best_score 160,254/160,255, and both
+taxonomy labels — none of which route through `is_clear`
+(`wall_taxonomy._evidence` computes `topo_delta` from
+max_area+max_sect+max_room and `map_delta` from max_gx).
+
+This is exactly the failure mode that shipped twice elsewhere this
+week — a gate that passes whether or not the mechanism exists. The
+guard added on 2026-08-26 (`scripts/clear_reachability.py`) refuses a
+profile that declares clear machinery it cannot fire, and makes every
+solve run print `[clear] NO REACHABLE CLEAR PREDICATE` at launch when
+its solution count is a constant, so a future receipt cannot mistake
+the constant for a tripwire. Source:
+`docs/research/CLEAR_DETECTION_CAMPAIGN_2026-08-26.md`.

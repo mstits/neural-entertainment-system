@@ -349,6 +349,31 @@ def verify_ram_trace(
                    f"trace of {n} frames never satisfied is_clear", n)
 
 
+def resolve_start_key(spec: TapeSpec) -> tuple | None:
+    """The tape's recorded entrance key, or None if it recorded none.
+
+    `is not None`, NOT truthiness (fixed 2026-08-26). `start_wd` is
+    `Optional[list]`, and the two falsy values mean opposite things:
+
+        None  the sidecar did not record a key at all
+        []    the key WAS recorded, and it is empty
+
+    An empty recorded key is not an edge case, it is the common case —
+    every profile shipping `level_key: []` banks exactly that, which is 40
+    of the 45 solve profiles. The previous `if spec.start_wd else None`
+    collapsed both onto None, so the sweep reported
+    `ERROR: "start_wd not recorded"` for tapes that HAD recorded it.
+    `evaluate_gate` counts ERROR as a failure and never as a skip, so those
+    tapes were scored as sweep failures; worse, the handler written for
+    exactly this shape (`clear_wd == start_wd` -> UNSCORABLE, in
+    `verify_ram_trace`) could never run, because the ERROR branch
+    `continue`s before the trace is ever verified.
+
+    Reproduced on both `runs/detector_gate_20260810/{kirby,double_dragon}`
+    tapes, each carrying `start_wd: []` and `clear_wd: []`."""
+    return tuple(spec.start_wd) if spec.start_wd is not None else None
+
+
 def evaluate_gate(verdicts: Sequence[Verdict],
                   known_bad: Sequence[str] = KNOWN_BAD) -> tuple[bool, str]:
     """The pre-registered gate. ERROR counts as failure, never as a skip."""
@@ -460,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
             game = make_game(profile)
             root = load_root(REPO / spec.root_state, hw_flags)
             actions = np.load(REPO / spec.actions, allow_pickle=False)
-            start_key = tuple(spec.start_wd) if spec.start_wd else None
+            start_key = resolve_start_key(spec)
             with TapePlayer(rom=rom, bitmasks=bitmasks,
                             frame_skip=frame_skip, hw_flags=hw_flags) as pl:
                 rams = [ram for _step, ram in pl.play(root, actions)]

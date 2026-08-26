@@ -52,7 +52,9 @@ solve:
   level_key: []       # empty until a real clear is captured
 
 # Wave-3 solver smoke (2026-08-25, --workers 2 --minutes 4 --seed 0):
-# runs/onboard_wave3/smoke_ice_climber/ — 8 cells, 0 solutions, 83,812
+# runs/onboard_wave3/smoke_ice_climber/ — 8 cells, 0 solutions (expected;
+# level_key is the empty coverage baseline — a constant, not a search
+# outcome; annotated 2026-08-26), 83,812
 # steps. Frontier froze inside the FIRST minute and stayed flat for the
 # remaining 3 (three consecutive STALL WARNINGs). All 8 archived cell
 # keys are identical except the animation-phase digit ((frame>>2)&7) —
