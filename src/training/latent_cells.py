@@ -649,6 +649,7 @@ class LatentCellCodebook:
 
         if n_dead == 0 or z_e_batch.shape[0] == 0:
             self._usage_since_reinit.zero_()
+            self.reinit_pass_count += 1
             return 0
 
         alive_mask = ~dead_mask

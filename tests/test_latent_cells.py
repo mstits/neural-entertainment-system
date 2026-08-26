@@ -255,6 +255,159 @@ def test_reinit_dead_codes_noop_when_nothing_dead() -> None:
     assert codebook.reinit_dead_codes(windows) == dead_before
 
 
+def test_reinit_dead_codes_noop_still_counts_as_pass() -> None:
+    # A fully-utilized codebook: every slot cleared the usage threshold,
+    # so the early-return (n_dead == 0) branch fires. It still resets
+    # usage-since-reinit -- that's a real, meaningful "a pass ran" side
+    # effect -- so the pass counter must move too, or callers checking
+    # reinit_pass_count can't tell a scheduled pass ran from it never
+    # having fired at all.
+    config = _tiny_config(codebook_size=4, dead_code_usage_threshold=1)
+    codebook = LatentCellCodebook(config)
+    codebook._usage_since_reinit = torch.tensor([1, 2, 1, 3])
+
+    z_e = torch.randn(6, config.latent_dim)
+    reinit_count = codebook._reinit_dead_codes(z_e)
+
+    assert reinit_count == 0
+    assert codebook.reinit_pass_count == 1
+    assert torch.equal(codebook._usage_since_reinit, torch.zeros(4, dtype=torch.long))
+
+
+def test_cell_id_is_a_codebook_slot_not_a_permanent_identity() -> None:
+    # KNOWN LIMITATION, pinned deliberately. A reinit pass overwrites a
+    # dead codeword's embedding in place, so the raw index it lived at
+    # gets handed to whatever region of latent space moves in -- the
+    # same integer can mean two different things across a pass. Ditto,
+    # more pervasively, for ordinary training: `train_step`'s codebook
+    # loss moves every live codeword a little on every step, so
+    # `encode_to_cell` only promises the stability its docstring claims
+    # ("the same window always returns the same id until the model is
+    # trained or a reinit pass moves a codeword").
+    #
+    # The tempting fix -- folding a per-slot reinit generation counter
+    # into the returned id (raw_id + generation * codebook_size) -- was
+    # tried and rejected: it pushes ids outside [0, codebook_size) and
+    # silently inverts `occupancy` and `dead_code_count`, which both use
+    # codebook_size as their denominator. See
+    # test_cell_ids_stay_inside_the_codebook_across_many_reinit_passes.
+    # A real fix has to give the diagnostics a generation-aware
+    # denominator (or map (slot, generation) through a monotonic id
+    # registry and teach occupancy/dead_code_count about it), not just
+    # rescale the id.
+    config = _tiny_config(
+        window_frames=1,
+        ram_bytes=16,
+        codebook_size=8,
+        hidden_dim=32,
+        latent_dim=8,
+        dead_code_reinit_interval=0,
+        dead_code_usage_threshold=1,
+        seed=0,
+    )
+    codebook = LatentCellCodebook(config)
+    window_a = np.full((config.window_frames, config.ram_bytes), 20, dtype=np.uint8)
+    window_c = np.full((config.window_frames, config.ram_bytes), 200, dtype=np.uint8)
+
+    id_a = codebook.encode_to_cell(window_a, timestamp_s=0.0)
+
+    # Every slot but window_a's was revisited, so window_a's is the one
+    # reinit targets.
+    codebook._usage_since_reinit[:] = 1
+    codebook._usage_since_reinit[id_a] = 0
+    assert codebook.reinit_dead_codes([window_c]) == 1
+
+    id_c = codebook.encode_to_cell(window_c, timestamp_s=1.0)
+
+    # The contract that IS load-bearing: an id is always a real slot.
+    assert 0 <= id_a < config.codebook_size
+    assert 0 <= id_c < config.codebook_size
+    # And the limitation itself: a recycled slot re-uses its id.
+    assert id_c == id_a
+
+
+def test_cell_ids_stay_inside_the_codebook_across_many_reinit_passes() -> None:
+    # The whole diagnostics layer treats `codebook_size` as the
+    # denominator for a cell id: `occupancy` divides distinct ids by it,
+    # `dead_code_count` subtracts distinct ids from it, and
+    # `_VQVAE.quantize` documents its indices as "always in
+    # [0, config.codebook_size)". So whatever `encode_to_cell` returns
+    # has to live in that range too, over a whole run -- not just over
+    # the first reinit pass.
+    #
+    # This is the regime that matters: production K=512 with the
+    # production reinit machinery running many passes, which is what a
+    # real run does (dead_code_reinit_interval=200 over a
+    # hundred-thousand-step run is hundreds of passes). If ids can grow
+    # past K, both log-level diagnostics silently invert -- occupancy
+    # pins at 1.0 and dead_code_count pins at 0 no matter how much of
+    # the codebook is actually dead -- and because these ids are the
+    # Go-Explore cell identity, that reads out as "the archive is
+    # discovering everything" precisely when it isn't.
+    k = LatentCellConfig().codebook_size  # production size: 512
+    config = _tiny_config(
+        ram_bytes=64,
+        latent_dim=8,
+        hidden_dim=32,
+        codebook_size=k,
+        dead_code_reinit_interval=5,
+        dead_code_usage_threshold=1,
+        lr=1e-2,
+        seed=0,
+    )
+    codebook = LatentCellCodebook(config)
+    windows = [
+        np.full((config.window_frames, config.ram_bytes), int(v), dtype=np.uint8)
+        for v in np.linspace(5, 250, 40)
+    ]
+
+    timestamp = 0.0
+    for step in range(1, 101):
+        codebook.train_step(windows)
+        if step % config.dead_code_reinit_interval == 0:
+            # Re-encode the same states after every reinit pass, the way
+            # a Go-Explore archive re-cells states it keeps returning to.
+            for window in windows:
+                codebook.encode_to_cell(window, timestamp_s=timestamp)
+                timestamp += 1.0
+
+    # Guards on the regime, so this can never pass vacuously: the run
+    # must actually have churned the codebook, and must have logged more
+    # encodes than there are slots (otherwise distinct-id saturation
+    # could not be observed either way).
+    assert codebook.reinit_pass_count >= 20
+    assert codebook.total_codes_reinitialized > k
+    log = codebook.discovery_log()
+    assert len(log) > k
+
+    ids = {e.cell_id for e in log}
+    assert min(ids) >= 0
+    assert max(ids) < k, (
+        f"encode_to_cell returned cell id {max(ids)} for a codebook of size {k}; "
+        "ids outside [0, codebook_size) break occupancy()/dead_code_count(), "
+        "which use codebook_size as their denominator"
+    )
+    assert len(ids) <= k, (
+        f"{len(ids)} distinct cell ids from a {k}-slot codebook -- distinct cells "
+        "cannot outnumber the slots that produce them"
+    )
+
+    # The log sees a subset of usage (encode_to_cell calls only; the
+    # live counters also see train_step), so the log-level diagnostics
+    # must bound the live ones from the pessimistic side. Reporting MORE
+    # of the codebook occupied, or FEWER codes dead, than the live model
+    # itself knows about is the inversion this test exists to catch.
+    live_used = int((codebook._lifetime_usage > 0).sum().item())
+    assert occupancy(log, k) <= codebook.occupancy() + 1e-9, (
+        f"log occupancy {occupancy(log, k)} exceeds live occupancy "
+        f"{codebook.occupancy()} -- the log cannot have seen usage the live "
+        "counters did not"
+    )
+    assert dead_code_count(log, k) >= k - live_used, (
+        f"log reports {dead_code_count(log, k)} dead codes but the live codebook "
+        f"has {k - live_used} entries never used at all"
+    )
+
 def test_train_step_triggers_automatic_reinit_on_interval() -> None:
     config = _tiny_config(codebook_size=8, dead_code_reinit_interval=5, dead_code_usage_threshold=1)
     codebook = LatentCellCodebook(config)
@@ -371,3 +524,84 @@ def test_construction_does_not_perturb_global_torch_rng() -> None:
     after = torch.rand(4)
 
     assert torch.equal(before, after)
+
+
+def test_repeated_reinit_of_one_slot_keeps_the_kill_criterion_readable() -> None:
+    # The many-pass version of the single-pass aliasing scenario above,
+    # at the production codebook size. Same premise, iterated: one state
+    # region, one codebook slot, and a reinit pass each interval in
+    # which that slot was the one under the usage threshold. A real run
+    # does hundreds of passes (dead_code_reinit_interval=200 over a
+    # 100k-step run), so "survives one pass" is not the bar.
+    #
+    # The trajectory here is the encoder's worst case and the exact
+    # thing the v19 round pre-registered a kill for: the agent is stuck,
+    # revisiting one region forever, discovering nothing. Every
+    # log-level diagnostic in this module has to keep saying so --
+    # `occupancy` and `dead_code_count` divide by / subtract from
+    # `codebook_size`, and `check_discovery_kill_criterion` counts
+    # first-sightings, so all three are only meaningful while a cell id
+    # names a codebook slot. A per-slot counter folded into the id makes
+    # each revisit of an unchanged region read as a brand-new cell, and
+    # that inverts all three at once: occupancy pins at 1.0,
+    # dead_code_count pins at 0, and the pre-registered kill can never
+    # fire on the very run it was written to stop.
+    k = LatentCellConfig().codebook_size  # production size: 512
+    config = _tiny_config(
+        window_frames=1,
+        ram_bytes=16,
+        latent_dim=8,
+        hidden_dim=32,
+        codebook_size=k,
+        dead_code_reinit_interval=0,  # passes forced explicitly below
+        dead_code_usage_threshold=1,
+        seed=0,
+    )
+    codebook = LatentCellCodebook(config)
+    window = np.full((config.window_frames, config.ram_bytes), 20, dtype=np.uint8)
+
+    # 600 revisits, one per minute, with a reinit pass after each -- long
+    # enough to outnumber the 512 slots, so distinct-id saturation is
+    # observable rather than merely asserted about.
+    n_visits = 600
+    for visit in range(n_visits):
+        cell_id = codebook.encode_to_cell(window, timestamp_s=visit * 60.0)
+        # The slot this region occupies is the one that fell under the
+        # threshold this interval; everything else saw traffic. Same
+        # setup the single-pass test above uses, held for every pass.
+        slot = cell_id % k
+        codebook._usage_since_reinit[:] = 1
+        codebook._usage_since_reinit[slot] = 0
+        assert codebook.reinit_dead_codes([window]) == 1
+
+    # Regime guards, so this cannot pass vacuously.
+    assert codebook.reinit_pass_count == n_visits
+    assert int((codebook._lifetime_usage > 0).sum().item()) == 1, (
+        "test setup expects the region to keep landing on one slot"
+    )
+    log = codebook.discovery_log()
+    assert len(log) == n_visits > k
+
+    # One slot of 512 was ever selected. Both readouts of "how much of
+    # the codebook has ever been used" have to agree on that; the log
+    # saw every encode_to_cell call and no train_step ran, so there is
+    # no usage for them to legitimately disagree about.
+    assert codebook.occupancy() == pytest.approx(1 / k)
+    assert occupancy(log, k) == pytest.approx(codebook.occupancy()), (
+        f"log occupancy {occupancy(log, k)} vs live {codebook.occupancy()} -- "
+        "distinct cell ids outran the slots that produced them, so occupancy "
+        "no longer measures a fraction of the codebook"
+    )
+    assert dead_code_count(log, k) == k - 1, (
+        f"log reports {dead_code_count(log, k)} dead codes; {k - 1} slots were "
+        "never selected even once"
+    )
+
+    # And the kill the module exists to compute: 10 hours of revisiting
+    # one region is zero discovery after the first sighting, which is
+    # below 2 new cells/hr for far more than 3 consecutive hours.
+    result = check_discovery_kill_criterion(log)
+    assert result.triggered is True, (
+        f"discovery rates {result.rates_per_hour[:6]} -- a run that visited one "
+        "state region 600 times and nothing else must trip the pre-registered kill"
+    )
