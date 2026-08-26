@@ -301,6 +301,16 @@ def _canonical_json(obj) -> bytes:
     return json.dumps(obj, sort_keys=True, indent=1).encode()
 
 
+def _segment_sort_key(seg_dir: Path):
+    # Segment dirs are named seg_{count:04d}_{name} — :04d is a
+    # *minimum* width, not a cap, so past 9999 segments "seg_10000_x"
+    # sorts lexically before "seg_9999_x". Sort on the numeric count.
+    try:
+        return (int(seg_dir.name.split("_", 2)[1]), seg_dir.name)
+    except (IndexError, ValueError):
+        return (-1, seg_dir.name)
+
+
 def verify_receipt_trail(soak_dir: Path) -> list:
     """Recompute the receipt hash chain; return a list of problems.
 
@@ -316,7 +326,8 @@ def verify_receipt_trail(soak_dir: Path) -> list:
         return [f"missing soak_manifest.json in {soak_dir}"]
     prev_hash = _sha256_file(manifest_p)
     seg_root = soak_dir / "segments"
-    seg_dirs = sorted(seg_root.iterdir()) if seg_root.exists() else []
+    seg_dirs = (sorted(seg_root.iterdir(), key=_segment_sort_key)
+                if seg_root.exists() else [])
     for seg_dir in seg_dirs:
         rp = seg_dir / "receipt.json"
         if not rp.exists():
@@ -651,6 +662,7 @@ class SoakHarness:
         started = time.time()
         self._emit("segment_start", **seg_ref, config=entry.config,
                    budget_s=entry.budget_s)
+        crashed_via_exception = False
         try:
             result = self.backend.run_segment(entry, seg_dir)
             if result.outcome not in OUTCOMES:
@@ -659,6 +671,7 @@ class SoakHarness:
         except BaseException as e:  # noqa: BLE001 — crash-only: contain, log, advance
             if isinstance(e, (KeyboardInterrupt, SystemExit)):
                 raise
+            crashed_via_exception = True
             bundle = self.log_intervention(
                 f"segment crashed: {type(e).__name__}: {e}",
                 segment=seg_ref, exc=e)
@@ -667,6 +680,16 @@ class SoakHarness:
                 detail={"error": f"{type(e).__name__}: {e}",
                         "bundle": str(bundle)},
             )
+        if result.outcome == OUTCOME_CRASH and not crashed_via_exception:
+            # A backend can score CRASH by normal return (e.g. SolverBackend
+            # on a hang or early death) without raising; route it through
+            # log_intervention too so it is never a silent, unbundled CRASH.
+            bundle = self.log_intervention(
+                "segment outcome CRASH: "
+                f"{(result.detail or {}).get('diagnosis', 'no diagnosis')}",
+                segment=seg_ref)
+            result.detail = dict(result.detail or {})
+            result.detail["bundle"] = str(bundle)
         self._outcome_counts[result.outcome] += 1
         if result.outcome == OUTCOME_UNSCORABLE:
             self._queue_unscorable(seg_ref, result.detail or

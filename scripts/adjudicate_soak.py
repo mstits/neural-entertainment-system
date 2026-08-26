@@ -16,6 +16,9 @@ gameplay:
 - every BUDGET segment was a real attempt: solver exited cleanly, met a
   step floor, and banked zero solutions (a solution in a BUDGET tail is
   a missed clear);
+- a game's config_sha256 never changes between two of that game's own
+  rotation slots (a mid-soak edit to its profile config is a defect
+  even when every receipt is internally hash-chained);
 - the rotation strictly cycles the manifest's roster order;
 - optionally, the roster file still hashes to the manifest's value.
 
@@ -56,8 +59,16 @@ def _seed_of(detail: dict):
     return None
 
 
+def _segment_index(seg_dir: Path) -> int:
+    # Segment dirs are named seg_{count:04d}_{name}; count stops
+    # zero-padding past 9999, so a plain string sort desyncs from
+    # chronological order once a soak crosses that many segments
+    # (e.g. "seg_10000_x" < "seg_1000_y" lexicographically).
+    return int(seg_dir.name.split("_")[1])
+
+
 def _segment_dirs(soak_dir: Path) -> list:
-    return sorted((soak_dir / "segments").glob("seg_*"))
+    return sorted((soak_dir / "segments").glob("seg_*"), key=_segment_index)
 
 
 def check_trail(soak_dir: Path, roster_path: Path | None = None,
@@ -114,6 +125,7 @@ def check_trail(soak_dir: Path, roster_path: Path | None = None,
 
     tally: Counter = Counter()
     per_game: dict = {}
+    config_by_game: dict = {}
     clears: list = []
     tapes: dict = {}
     scored = 0
@@ -135,6 +147,13 @@ def check_trail(soak_dir: Path, roster_path: Path | None = None,
         d = r.get("detail") or {}
         tally[outcome] += 1
         per_game.setdefault(name, Counter())[outcome] += 1
+        cfg_sha = r.get("config_sha256")
+        prior_cfg = config_by_game.setdefault(name, cfg_sha)
+        if cfg_sha != prior_cfg:
+            problems.append(
+                f"{seg.name}: config_sha256 {cfg_sha!r} differs from an "
+                f"earlier {name!r} segment's {prior_cfg!r} — config "
+                "changed mid-soak")
         if not r.get("backend_scoreable"):
             problems.append(f"{seg.name}: receipt not backend_scoreable")
         if outcome not in KNOWN_OUTCOMES:

@@ -243,6 +243,39 @@ def test_rotation_break_flagged(tmp_path):
     assert any("rotation order" in p for p in problems)
 
 
+def test_rotation_order_survives_unpadded_segment_counts(tmp_path):
+    # seg_{count:04d}_{name} stops zero-padding once count exceeds 9999, so
+    # a plain lexicographic sort put "seg_10000_alpha" before both
+    # "seg_1000_alpha" and "seg_9999_beta" (they agree through "seg_1000"
+    # then "0" < "_"), scrambling chronological order and flagging a
+    # correctly-rotated trail as broken.
+    soak = tmp_path / "soak_big"
+    _write_json(soak / "soak_manifest.json", {
+        "selfcheck": False, "backend_scoreable": True,
+        "roster": [{"name": g} for g in ROSTER],
+        "roster_sha256": "0" * 64,
+    })
+    names = ["seg_1000_alpha", "seg_9999_beta", "seg_10000_alpha"]
+    games = ["alpha", "beta", "alpha"]
+    for name, game in zip(names, games):
+        seg = soak / "segments" / name
+        seg.mkdir(parents=True)
+        _write_json(seg / "receipt.json", {
+            "name": game, "outcome": "BUDGET", "backend_scoreable": True,
+            "detail": {"argv": [], "solver_exit": 0,
+                      "progress_last": {"solutions": 0, "steps": 500_000}},
+        })
+    _write_json(soak / "final_receipt.json", {
+        "status": "completed", "segments": 3,
+        "outcomes": {"CLEAR": 0, "BUDGET": 3, "STALL": 0, "CRASH": 0,
+                    "UNSCORABLE": 0},
+        "interventions": 0, "passed_zero_interventions": True,
+        "backend_scoreable": True, "selfcheck": False,
+    })
+    problems = check_trail(soak)["problems"]
+    assert not any("rotation order" in p for p in problems), problems
+
+
 def test_unscorable_routed_to_info_not_problems(tmp_path):
     outcomes = list(CLEAN)
     outcomes[1] = ("beta", "UNSCORABLE", {})
@@ -313,3 +346,25 @@ def test_clean_trail_still_passes_after_the_new_checks(tmp_path):
     soak = make_trail(tmp_path, CLEAN)
     assert check_trail(soak)["problems"] == []
     assert main([str(soak)]) == 0
+
+
+def test_config_changed_between_a_games_own_rotation_slots_flagged(tmp_path):
+    """soak_harness.py hashes each segment's resolved config into its
+    receipt as config_sha256. If a game's profile config is edited on
+    disk between two of that game's own rotation slots, every receipt
+    stays internally hash-chained (nothing was edited after writing) but
+    the game was not judged under one fixed config for the whole soak —
+    that must be flagged even though --verify sees nothing wrong."""
+    soak = make_trail(tmp_path, CLEAN)
+    seg2 = soak / "segments" / "seg_0002_beta" / "receipt.json"
+    rec2 = json.loads(seg2.read_text())
+    rec2["config_sha256"] = "1" * 64
+    _write_json(seg2, rec2)
+    seg4 = soak / "segments" / "seg_0004_beta" / "receipt.json"
+    rec4 = json.loads(seg4.read_text())
+    rec4["config_sha256"] = "2" * 64
+    _write_json(seg4, rec4)
+    problems = check_trail(soak)["problems"]
+    assert any("config_sha256" in p and "beta" in p for p in problems), (
+        problems)
+    assert main([str(soak)]) == 1

@@ -188,6 +188,7 @@ class SolverBackend(SegmentBackend):
         last_progress_t = t0
         last_rec: dict = {}
         prog_pos = 0
+        saw_progress = False
         with log_path.open("wb") as logf:
             proc = subprocess.Popen(
                 argv, stdout=logf, stderr=subprocess.STDOUT,
@@ -202,6 +203,7 @@ class SolverBackend(SegmentBackend):
                 recs, prog_pos = self._read_new_progress(progress, prog_pos)
                 now = time.monotonic()
                 if recs:
+                    saw_progress = True
                     last_progress_t = now
                     last_rec = recs[-1]
                     flat = int(last_rec.get("stall_flat_windows", 0) or 0)
@@ -212,7 +214,13 @@ class SolverBackend(SegmentBackend):
                     end_reason = "exited"
                     break
                 if now >= deadline:
-                    end_reason = "budget"
+                    # A segment that never produced a single progress
+                    # record despite the process staying alive for the
+                    # whole budget is silently wedged, not healthily
+                    # budget-exhausted — the hang_timeout_s watchdog below
+                    # can never fire for budget_s <= hang_timeout_s, so
+                    # catch that case here instead of misreporting BUDGET.
+                    end_reason = "budget" if saw_progress else "hang"
                     break
                 if now - last_progress_t > self.hang_timeout_s:
                     end_reason = "hang"
@@ -254,8 +262,8 @@ class SolverBackend(SegmentBackend):
             return SegmentResult(OUTCOME_BUDGET, detail)
         if end_reason == "hang":
             detail["diagnosis"] = (
-                f"no progress record for >{self.hang_timeout_s:g}s with "
-                "the solver process still alive; killed")
+                f"no progress record for {elapsed:.0f}s (solver process "
+                "still alive the whole segment); killed")
             return SegmentResult(OUTCOME_CRASH, detail)
         # exited: rc==0 at (or near) the solver's own --minutes deadline
         # is the normal budget path; anything else is an early death.
@@ -282,7 +290,14 @@ class SolverBackend(SegmentBackend):
             problems.append("sidecar.replay_verified is not true")
         start_wd = sidecar.get("start_wd")
         clear_wd = sidecar.get("clear_wd")
-        if start_wd is not None and start_wd == clear_wd:
+        # start_wd/clear_wd both come straight from the profile's
+        # level_key(); a GenericGame profile using the level_key: []
+        # coverage-baseline convention (paired with a non-level_key clear
+        # signal such as byte_change or finale — e.g. configs/tetris_b.yaml)
+        # always writes both as [], so this comparison only means "no level
+        # transition" when the clear signal itself IS the level_key advance.
+        if (mode in ("smb_engine", "level_key")
+                and start_wd is not None and start_wd == clear_wd):
             problems.append(
                 f"start_wd == clear_wd ({start_wd}): no level transition")
         if not tape_p.exists():
