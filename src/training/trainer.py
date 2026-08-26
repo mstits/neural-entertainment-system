@@ -7807,6 +7807,12 @@ class Trainer:
             last_entropy = _upd["last_entropy"]
             last_loss = _upd["last_loss"]
             last_rnd_loss = _upd["last_rnd_loss"]
+            last_clip_fraction = _upd["last_clip_fraction"]
+            last_approx_kl = _upd["last_approx_kl"]
+            last_grad_norm = _upd["last_grad_norm"]
+            adv_mean = _upd["adv_mean"]
+            adv_std = _upd["adv_std"]
+            explained_variance = _upd["explained_variance"]
             _demo_coef = _upd["demo_coef"]
             _demo_loss_accum = _upd["demo_loss_accum"]
             _demo_loss_n = _upd["demo_loss_n"]
@@ -9110,6 +9116,15 @@ class Trainer:
                 vanilla_ppo_rnd_loss=last_rnd_loss,
                 vanilla_ppo_intrinsic_mean=rnd_intrinsic_mean,
                 vanilla_ppo_count_bonus_mean=count_bonus_mean,
+                # V29_STABILITY_2026-08-25.md F0: the five previously
+                # missing PPO-update scalars. Pure observations — none
+                # of the five feed back into the update itself.
+                vanilla_ppo_clip_fraction=last_clip_fraction,
+                vanilla_ppo_approx_kl=last_approx_kl,
+                vanilla_ppo_grad_norm=last_grad_norm,
+                vanilla_ppo_adv_mean=adv_mean,
+                vanilla_ppo_adv_std=adv_std,
+                vanilla_ppo_explained_variance=explained_variance,
                 demo_anchor_coef=_demo_coef,
                 demo_anchor_loss=(
                     float(_demo_loss_accum) / _demo_loss_n

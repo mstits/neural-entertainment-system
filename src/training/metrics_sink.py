@@ -71,6 +71,14 @@ DASHBOARD_OPTIONAL_KEYS: frozenset[str] = frozenset({
     # generation. GA/PPO-hybrid path only; always 0 when quiet, never
     # null/missing.
     "nan_rows_this_gen",
+    # Vanilla-PPO-path trust-region + critic-fit diagnostics
+    # (V29_STABILITY_2026-08-25.md F0 — "the five missing scalars").
+    # Pure observations of the K-epoch update; not on any training path
+    # of the GA/PPO-hybrid or Dreamer modes, so OPTIONAL rather than
+    # REQUIRED avoids a spurious once-per-session warning there.
+    "vanilla_ppo_clip_fraction", "vanilla_ppo_approx_kl",
+    "vanilla_ppo_grad_norm", "vanilla_ppo_adv_mean", "vanilla_ppo_adv_std",
+    "vanilla_ppo_explained_variance",
 })
 
 

@@ -77,6 +77,38 @@ def test_vanilla_ppo_path_emits_required_keys() -> None:
         )
 
 
+def test_vanilla_ppo_path_emits_v29_diagnostic_scalars() -> None:
+    """The five V29_STABILITY_2026-08-25.md F0 scalars (clip fraction,
+    approx KL, grad norm, advantage mean/std, critic explained variance)
+    must reach `_emit_metrics` from `_run_vanilla_ppo`, and must be
+    registered as OPTIONAL (not REQUIRED — they are vanilla-PPO-path
+    specific and would spuriously warn on the GA/PPO-hybrid and Dreamer
+    paths, which never compute them)."""
+    block = _extract_emit_block(
+        TRAINER_SRC, "def _run_vanilla_ppo", "def _save_checkpoint",
+    )
+    new_keys = (
+        "vanilla_ppo_clip_fraction",
+        "vanilla_ppo_approx_kl",
+        "vanilla_ppo_grad_norm",
+        "vanilla_ppo_adv_mean",
+        "vanilla_ppo_adv_std",
+        "vanilla_ppo_explained_variance",
+    )
+    for key in new_keys:
+        assert key not in DASHBOARD_REQUIRED_KEYS, (
+            f"{key!r} must stay OPTIONAL — forcing it REQUIRED would "
+            f"spuriously warn on trainer modes that never compute it."
+        )
+        assert key in DASHBOARD_OPTIONAL_KEYS, (
+            f"{key!r} missing from DASHBOARD_OPTIONAL_KEYS registration."
+        )
+        assert f"{key}=" in block, (
+            f"_run_vanilla_ppo missing emit key {key!r} — V29's F0 "
+            f"instrumentation pass must thread it to _emit_metrics."
+        )
+
+
 def test_metrics_sink_warns_on_missing_required_key(tmp_path) -> None:
     sink = MetricsSink(
         metrics_path=tmp_path / "metrics.jsonl",

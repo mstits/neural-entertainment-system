@@ -126,6 +126,7 @@ def ppo_losses(
     entropy_coef: float,
     value_loss_kind: str,
     entropy_weights: torch.Tensor | None = None,
+    diagnostics: dict | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """PPO clipped-surrogate + value + entropy loss for one minibatch.
 
@@ -140,6 +141,14 @@ def ppo_losses(
         value_coef:    value-loss weight.
         entropy_coef:  entropy-bonus weight (subtracted from the loss).
         value_loss_kind: "mse" for squared error, else Huber (smooth_l1).
+        diagnostics:   optional out-dict. When given, populated in place
+                       with `"clip_fraction"` and `"approx_kl"` detached
+                       scalar tensors derived from the surrogate `ratio`
+                       already computed below — no extra forward pass.
+                       None (the default) skips the block entirely, so
+                       every caller that doesn't ask for it pays nothing
+                       (V29_STABILITY_2026-08-25.md F0: these two are
+                       vanilla-PPO-path diagnostics, not a loss term).
 
     Returns `(loss, policy_loss, value_loss, entropy)`. Only `loss`
     carries grad for `.backward()`; the other three are reported as
@@ -155,6 +164,25 @@ def ppo_losses(
     clipped = torch.clamp(ratio, 1.0 - clip, 1.0 + clip)
     policy_obj = torch.min(ratio * advantages, clipped * advantages)
     policy_loss = -policy_obj.mean()
+
+    if diagnostics is not None:
+        with torch.no_grad():
+            # Fraction of rows where the clip actually bound — the
+            # standard PPO trust-region-pressure gauge (near 0 = the
+            # step is timid relative to clip_eps; near 1 = almost every
+            # row is clipped).
+            diagnostics["clip_fraction"] = (
+                (ratio - 1.0).abs() > clip
+            ).float().mean().detach()
+            # k3 approx-KL estimator (Schulman,
+            # http://joschu.net/blog/kl-approx.html): unbiased and
+            # always >= 0 in expectation, unlike the naive
+            # `(log_probs_old - log_probs_new).mean()` (k1), which is
+            # zero-mean but can go negative on a single minibatch and
+            # is noisier at the sample sizes here.
+            diagnostics["approx_kl"] = (
+                (ratio - 1.0) - torch.log(ratio)
+            ).mean().detach()
 
     # Entropy bonus.
     probs = log_probs_all.exp()

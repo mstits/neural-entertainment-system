@@ -161,6 +161,25 @@ class PPOUpdater:
             adv_mean, adv_std = 0.0, 1.0
         advantages_norm = (advantages - adv_mean) / adv_std
 
+        # Critic explained variance: 1 - Var(returns - V) / Var(returns),
+        # on the SAME valid rows as the advantage stats above, using the
+        # rollout-time critic predictions (`value_buf`, pre-update) against
+        # the GAE targets (`value_targets`) that just came out of
+        # `batched_gae` — both already in scope, so this is a read of
+        # existing arrays, not a new pass. This is the live-training
+        # sibling of the offline `scripts/critic_explained_variance.py`
+        # (V29_STABILITY_2026-08-25.md F1): EV == 1 means the critic's
+        # pre-update predictions perfectly explain this iter's returns;
+        # EV <= 0 means it does no better (or worse) than predicting the
+        # mean return.
+        _valid_targets = value_targets.reshape(-1)[valid_flat]
+        _valid_values = value_buf.reshape(-1)[valid_flat]
+        _target_var = float(np.var(_valid_targets)) if _valid_targets.size else 0.0
+        explained_variance = (
+            1.0 - float(np.var(_valid_targets - _valid_values)) / _target_var
+            if _target_var > 1e-8 else 0.0
+        )
+
         # ============== K-EPOCH PPO UPDATE ==============
         # Flatten (rollout_steps, num_envs, ...) → (rollout_steps * num_envs, ...)
         total_n = rollout_steps * num_envs
@@ -187,6 +206,19 @@ class PPOUpdater:
         # loop and sets last_* itself) is unaffected.
         _last_policy_t = _last_value_t = _last_entropy_t = None
         _last_loss_t = _last_rnd_t = None
+        # Final-minibatch trust-region diagnostics (V29_STABILITY_2026-
+        # 08-25.md F0), captured the same way as the loss scalars above:
+        # tensors held across the loop, floated once at the end so no
+        # extra MPS sync happens per minibatch. `_diag` is the out-dict
+        # `ppo_losses` fills in place with `clip_fraction`/`approx_kl`
+        # from the ratio it already computes — passed only on the
+        # primary (non-SHAPO-pass-B/C) call below, since that call's
+        # policy/value/entropy/loss are the ones reported everywhere
+        # else in this function.
+        _diag: dict = {}
+        _last_grad_norm_t = None
+        _last_clip_frac_t = None
+        _last_approx_kl_t = None
         mb_size = max(1, t.ppo_minibatch_size)
         # Build the full-rollout tensors ONCE per iter and index them
         # with a torch permutation inside the minibatch loop, instead
@@ -370,7 +402,17 @@ class PPOUpdater:
                     value_loss_kind=t.value_loss_kind,
                     entropy_weights=(entw_all[mb_idx]
                                      if entw_all is not None else None),
+                    diagnostics=_diag,
                 )
+                # Pulled out right after the call (not read from `_diag`
+                # at the end of the function): a minibatch that goes on
+                # to hit the non-finite-loss backstop below never
+                # updates `_last_policy_t`/etc either, so these two must
+                # stay in lockstep with that "last SUCCESSFUL minibatch"
+                # convention rather than reporting a skipped step's
+                # diagnostics.
+                _mb_clip_frac_t = _diag.get("clip_fraction")
+                _mb_approx_kl_t = _diag.get("approx_kl")
                 # Demo anchor (DQfD-style): every PPO minibatch also
                 # draws a demo minibatch from the fixed bank and adds
                 # CE(+large-margin) on the demo actions, decayed by
@@ -548,7 +590,10 @@ class PPOUpdater:
                         optimizer.zero_grad(set_to_none=True)
                         continue
                     _c_loss.backward()
-                    torch.nn.utils.clip_grad_norm_(
+                    # clip_grad_norm_ returns the PRE-clip total norm —
+                    # already computed for the clip itself, so reporting
+                    # it is free (V29_STABILITY_2026-08-25.md F0).
+                    _last_grad_norm_t = torch.nn.utils.clip_grad_norm_(
                         net.parameters(), t.reinforce_grad_clip
                     )
                     if _actor_frozen:
@@ -556,7 +601,7 @@ class PPOUpdater:
                     optimizer.step()
                 else:
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(
+                    _last_grad_norm_t = torch.nn.utils.clip_grad_norm_(
                         net.parameters(), t.reinforce_grad_clip
                     )
                     if _actor_frozen:
@@ -567,7 +612,12 @@ class PPOUpdater:
                 _last_value_t = value_loss.detach()
                 _last_entropy_t = entropy.detach()
                 _last_loss_t = loss.detach()
+                _last_clip_frac_t = _mb_clip_frac_t
+                _last_approx_kl_t = _mb_approx_kl_t
         # Single MPS sync for the final minibatch's scalars.
+        last_clip_fraction = 0.0
+        last_approx_kl = 0.0
+        last_grad_norm = 0.0
         if _last_policy_t is not None:
             last_policy_loss = float(_last_policy_t.item())
             last_value_loss = float(_last_value_t.item())
@@ -575,6 +625,11 @@ class PPOUpdater:
             last_loss = float(_last_loss_t.item())
         if _last_rnd_t is not None:
             last_rnd_loss = float(_last_rnd_t.item())
+        if _last_clip_frac_t is not None:
+            last_clip_fraction = float(_last_clip_frac_t.item())
+            last_approx_kl = float(_last_approx_kl_t.item())
+        if _last_grad_norm_t is not None:
+            last_grad_norm = float(_last_grad_norm_t.item())
         t._gen_timer.add("update", time.perf_counter_ns() - _upd_t0)
         return {
             "reward_buf": reward_buf,
@@ -587,6 +642,17 @@ class PPOUpdater:
             "last_entropy": last_entropy,
             "last_loss": last_loss,
             "last_rnd_loss": last_rnd_loss,
+            # V29_STABILITY_2026-08-25.md F0: the five missing scalars —
+            # final-minibatch clip fraction / approx KL / grad norm
+            # (trust-region pressure), and the once-per-iter advantage
+            # mean/std + critic explained variance computed above the
+            # K-epoch loop over the full valid batch.
+            "last_clip_fraction": last_clip_fraction,
+            "last_approx_kl": last_approx_kl,
+            "last_grad_norm": last_grad_norm,
+            "adv_mean": adv_mean,
+            "adv_std": adv_std,
+            "explained_variance": explained_variance,
             "demo_coef": _demo_coef,
             "demo_loss_accum": _demo_loss_accum,
             "demo_loss_n": _demo_loss_n,
