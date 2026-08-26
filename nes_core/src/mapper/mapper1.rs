@@ -389,7 +389,18 @@ impl Mapper for Mapper1 {
         // rationale. Still mark this op as a register write so any
         // FURTHER consecutive write would also be filtered, but the
         // shift-register state is left untouched.
-        if self.cur_cpu_cycle == self.last_register_write_cycle.wrapping_add(1) {
+        //
+        // `last_register_write_cycle == u64::MAX` is `apply_state`'s
+        // "no previous write" sentinel (see its doc comment). Without
+        // this guard, `u64::MAX.wrapping_add(1) == 0` collides with a
+        // freshly-restored, never-ticked machine's `cur_cpu_cycle == 0`
+        // and the sentinel meant to unconditionally honor the next
+        // write instead silently drops it — see
+        // `restore_consecutive_write_tests` below and
+        // docs/research/ASM_CPU_STATUS_2026-08-25.md.
+        if self.last_register_write_cycle != u64::MAX
+            && self.cur_cpu_cycle == self.last_register_write_cycle.wrapping_add(1)
+        {
             // RMW dummy + real write back-to-back: ignore the second.
             // Update last_register_write_cycle so a 3rd consecutive
             // write (only possible from non-RMW pathological code)
@@ -828,31 +839,27 @@ mod restore_consecutive_write_tests {
     /// write after `apply_state`, on a machine whose CPU-cycle counter
     /// has not moved off zero yet.
     ///
-    /// OPEN DEFECT — this test is `#[ignore]`d because it FAILS on
-    /// current `main`, deliberately, as an executable receipt. It is
-    /// the falsifier for the fix, not a pin of today's behavior. Run
-    /// it with `cargo test -- --ignored`.
-    ///
-    /// Mechanism: `apply_state` parks `last_register_write_cycle` at
-    /// `u64::MAX` with the stated intent "reset so the next write is
-    /// unconditionally honored". But the filter predicate is
+    /// FIXED 2026-08-25 (was an open defect, `#[ignore]`d as a
+    /// falsifier — now a permanent regression guard). Root cause:
+    /// `apply_state` parks `last_register_write_cycle` at `u64::MAX`
+    /// with the stated intent "reset so the next write is
+    /// unconditionally honored". The filter predicate was
     /// `cur_cpu_cycle == last_register_write_cycle.wrapping_add(1)`,
     /// and `u64::MAX.wrapping_add(1) == 0`. A `Nes` that has been
     /// restored but never ticked still has `cur_cpu_cycle == 0`
     /// (`Mapper::set_cpu_cycle` is only ever pushed from `Nes::tick`,
     /// and the ASM MMIO callback path does not push it), so the
-    /// sentinel that promises "always honored" delivers the exact
-    /// opposite: the write is silently dropped. One dropped write
+    /// sentinel that promised "always honored" delivered the exact
+    /// opposite: the write was silently dropped. One dropped write
     /// desynchronizes MMC1's 5-write shift sequence, so the eventual
-    /// commit lands on the wrong register with the wrong value.
-    ///
-    /// Fix when authorized: guard the predicate with
-    /// `self.last_register_write_cycle != u64::MAX &&`, or make the
-    /// field an `Option<u64>` so "no previous write" is
-    /// unrepresentable-as-adjacent. See
+    /// commit lands on the wrong register with the wrong value —
+    /// wrong PRG/CHR bank, dead game. Fixed by guarding the predicate
+    /// with `self.last_register_write_cycle != u64::MAX &&` at its
+    /// call site above. A/B-verified (guard on vs off) across 8 ROMs
+    /// including Journey to Silius and Zelda; both diverge without the
+    /// guard and agree with the interpreter with it. See
     /// docs/research/ASM_CPU_STATUS_2026-08-25.md.
     #[test]
-    #[ignore = "documents an open defect: fails on main until the u64::MAX sentinel is guarded"]
     fn first_register_write_after_apply_state_is_honored_at_cycle_zero() {
         let saved = Mapper1::new(synth_cart()).get_state();
 

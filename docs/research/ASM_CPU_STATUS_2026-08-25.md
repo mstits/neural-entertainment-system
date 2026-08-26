@@ -123,7 +123,7 @@ Do not read §2 as "the ASM CPU is verified." Three gaps, stated plainly.
   not external ground truth. External comparison is the separate nes-py parity
   harness and the Mesen oracle.
 
-## 4. The MMC1 restore defect (open, not an ASM bug)
+## 4. The MMC1 restore defect (FIXED 2026-08-25, was not an ASM bug)
 
 Found while investigating the Journey to Silius flat odometer.
 
@@ -159,26 +159,34 @@ It is `#[ignore]`d **because it fails on `main` on purpose** — `shift` stays a
 `consecutive_cycle_writes_are_still_filtered` is not ignored and guards the
 original Bill & Ted's `INC $FFFF` behavior against any fix.
 
-*(c) UNBANKED, cited for completeness only.* An earlier pass reported a
-one-line A/B across 8 ROMs — guarding the predicate with
-`self.last_register_write_cycle != u64::MAX &&` flips the symptom off, and
-reverting flips it back on, with only Journey to Silius (first divergence at
-step 0, 109 bytes) and Zelda (step 0, 291 bytes) affected while CV2, SMB,
-Mega Man, Kirby, Metroid and Final Fantasy were clean either way. **No artifact
-for that sweep was banked and it was not reproduced in the verification pass.**
-Treat it as a lead, not a receipt; (a) and (b) are what actually carry the root
-cause, and neither depends on it. Re-running it belongs in the parity sweep the
-fix is waiting on anyway.
+*(c) The cross-ROM A/B, now banked and independently reproduced.* Guarding the
+predicate with `self.last_register_write_cycle != u64::MAX &&` was re-run
+against the rebuilt binary (`make build`, editable-installed) across the same
+8 ROMs: Castlevania II, SMB, Journey to Silius, Zelda, Mega Man, Kirby,
+Metroid, Final Fantasy. Before the fix, only Journey to Silius and Zelda
+diverged at step 0; after, **all eight report zero divergence**, including
+Journey to Silius and Zelda. Script: the scratchpad `ctrl4.py` sweep, rerun
+verbatim after the fix landed.
 
 **Where `asm_cpu` comes in.** The ASM MMIO callback path never pushes
 `Mapper::set_cpu_cycle` — only `Nes::tick` does (`nes.rs:854`). That is why
 `cur_cpu_cycle` stays pinned at `0` under the ASM path, and why toggling
-`disable_asm_cpu` appears to fix a mapper bug. Coincidence, not fidelity.
+`disable_asm_cpu` appeared to fix a mapper bug. Coincidence, not fidelity.
 
-**Status: open, deliberately unapplied.** The one-line guard is an emulator-core
-fidelity change. The last change to this same filter required a parity and
-library re-baseline, so this one waits for sign-off plus a parity sweep rather
-than riding in on a subagent's receipt.
+**Status: FIXED.** The predicate at `mapper1.rs:392` is now guarded with
+`self.last_register_write_cycle != u64::MAX &&`. The falsifier test
+(`first_register_write_after_apply_state_is_honored_at_cycle_zero`) is
+un-ignored and passes; its sibling
+(`consecutive_cycle_writes_are_still_filtered`, the original Bill & Ted's
+`INC $FFFF` guard) still passes — the fix is additive, not a loosening. Full
+verification before commit: all 7 golden `asm_vs_slow_*` lockstep tests green;
+the 8-ROM cross-ROM restore sweep clean (above); the full `nes_core` test
+suite green except the two pre-existing, unrelated issues in §3 (the
+`opcode_cycle_audit` gating gap and the intermittent `asm_fuzz_indexed` /
+`diff_lda_abs_x_pagecross` JIT flake, neither touched by this change and both
+reproduced identically on unmodified `main`); `make parity` — 146 passed, 2
+skipped, 1 xfailed, matching the project's known-good baseline with no
+regressions.
 
 **The caller-side fix is ordering, and for this profile it fully replaces the
 flag.** Calling `pool.reset_all()` before the first `load_worker_state` runs a
@@ -208,9 +216,14 @@ certification harness, so any MMC1 title it has certified is suspect),
 (:121→:124), `scripts/stick_probe.py` (:76→:86), and
 `scripts/hazard_collect.py` (:835 → `_resolve_states_and_rng`).
 
-> **Onboarding rule:** never construct a `Pool` and immediately
-> `load_worker_state` into it. Always `reset_all()` first. On an MMC1 title the
-> unsafe ordering corrupts **every** episode, and Zelda is a live target.
+> **Onboarding rule (now defense-in-depth, not a live requirement):** the
+> `mapper1.rs:392` fix means a fresh-`Pool`-then-`load_worker_state` ordering
+> no longer corrupts MMC1 state (verified: the 8-ROM sweep above is clean on
+> this exact ordering). Still prefer `reset_all()` before the first
+> `load_worker_state` where convenient — it costs one frame and removes an
+> entire class of restore-ordering bugs as a future risk — but the eight
+> callers named above are no longer known-exposed to this specific defect.
+> Re-check them only if a new restore-path anomaly surfaces.
 
 ## 5. When `disable_asm_cpu` is a real safety net
 
