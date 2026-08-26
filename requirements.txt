@@ -6,31 +6,31 @@
 # Neural network + training
 # torch is installed separately in install_macos.sh to ensure MPS support
 numpy>=1.24,<2.0
-scipy>=1.11
+scipy>=1.11,<2.0
 
 # GUI
-PyQt6>=6.6.0
-pyqtgraph>=0.13.3
+PyQt6>=6.6.0,<7
+pyqtgraph>=0.13.3,<1
 
 # Config and utilities
-PyYAML>=6.0
-click>=8.1.0
-rich>=13.7.0
+PyYAML>=6.0,<7
+click>=8.1.0,<9
+rich>=13.7.0,<16
 
 # Metrics and visualization
-matplotlib>=3.8.0
-tensorboard>=2.15.0
+matplotlib>=3.8.0,<4
+tensorboard>=2.15.0,<3
 
 # Checkpointing and serialization
-dill>=0.3.7
+dill>=0.3.7,<1
 
 # Dev tooling
-pytest>=7.4.0
-pytest-cov>=4.1.0
+pytest>=7.4.0,<10
+pytest-cov>=4.1.0,<8
 # pytest-timeout backs the `--timeout` used by every `make test*` target;
 # pytest-qt backs the GUI UAT tests. Without these a fresh clone's first
 # quality signal (`make test`) errors on an unrecognized argument.
-pytest-timeout>=2.1.0
-pytest-qt>=4.2.0
-ruff>=0.1.9
-mypy>=1.7.0
+pytest-timeout>=2.1.0,<3
+pytest-qt>=4.2.0,<5
+ruff>=0.1.9,<1
+mypy>=1.7.0,<2

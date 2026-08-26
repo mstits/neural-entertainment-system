@@ -48,7 +48,7 @@ source .venv/bin/activate
 pip install --upgrade pip setuptools wheel
 
 # PyTorch with MPS support (comes with standard macOS wheel)
-pip install torch torchvision
+pip install torch==2.11.0 torchvision==0.26.0
 
 # Core dependencies
 pip install -r requirements.txt
