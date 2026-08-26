@@ -83,6 +83,12 @@ sys.path.insert(0, str(REPO / "scripts"))
 import nes_core  # noqa: E402
 
 from go_explore_solve import SmbGame  # noqa: E402  (repo's own verified SMB adapter)
+# Room-graph identity layer (ROOMGRAPH_ENGINE_2026-08-24 Sec2): pure, already
+# receipted in tests/test_room_fp.py. Reused verbatim by RoomFpTransitionSignal
+# below -- no new hashing/classification logic is introduced in this file.
+from go_explore_solve import (  # noqa: E402
+    RoomIndex, classify_transition, fp_settle, nt_fingerprint, room_fp_mask,
+)
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
 
 FRAME_HZ = 60                     # NTSC
@@ -1346,6 +1352,200 @@ class LockReleaseNoveltyTrack:
         return {"n": self.n, "n_candidates": self.n_candidates,
                 "n_respawn_shaped": self.n_respawn_shaped,
                 "n_fires": self.n_fires, "n_seen": len(self._seen)}
+
+
+# ===========================================================================
+# Signal -- room-fingerprint transition (opt-in; novel-room discovery)
+# ===========================================================================
+#
+# The ROOMGRAPH_ENGINE_2026-08-24 identity layer (masked NT-hash -> settle ->
+# classify -> intern) already exists and is already receipted -- it drives
+# cells and door macros in go_explore_solve.py today, and the clear hook
+# simply cannot see it. Nothing below is new hashing or classification
+# logic; every pure step is imported verbatim (room_fp_mask, nt_fingerprint,
+# fp_settle, classify_transition, RoomIndex). This is the thin, stateful
+# wrapper that feeds those functions one observation at a time and turns
+# "a new room identity settled" into a vote.
+
+#: `classify_transition`'s three possible kinds. `warp` is excluded from the
+#: default vote set: RG-2 already refuses to mint a warp-classified settle as
+#: adjacency (it is a scripted, largely input-independent identity change --
+#: the measured Zelda death-flash signature, odometer flat / scene +2), and
+#: the clear vote must inherit that refusal rather than re-derive it. A
+#: profile with a game-specific reason to trust warp settles may opt back in
+#: explicitly via `kind`.
+ROOM_FP_KINDS = ("pan", "fade", "warp")
+ROOM_FP_DEFAULT_KIND = ("pan", "fade")
+#: Observations the vote stays raised after a qualifying settle -- the same
+#: held-pulse shape ApuActivitySignal uses (see its `hold`), so a
+#: corroborating signal arriving a few observations later still overlaps
+#: this vote instead of needing to land on the exact settle step.
+ROOM_FP_HOLD = 60
+
+
+class RoomFpTransitionSignal:
+    """A SETTLED change of room identity: the masked blake2b-64 hash of
+    nametable VRAM held a new value for `settle` consecutive samples, the
+    churn window's (d_odo, d_scene) classified, and the resulting identity
+    interned to a discovery ordinal. Votes when the settled identity is one
+    NOT previously seen by this instance (`novel_only`) and its classified
+    kind is one this instance was told to trust (`kind`).
+
+    PURITY. The surface is 2 KB physical nametable VRAM (`Pool.
+    peek_nametables`), optionally co-keyed with the 32-byte palette RAM
+    (`Pool.palette_ram`) -- both hardware surfaces of the same class as
+    pixels and OAM. No address is named by meaning anywhere in this class:
+    the mask that reaches `nt_fingerprint` is an opaque KEEP/DROP array a
+    caller measured from ITS OWN idle/walk frames (scripts/
+    room_fp_calibrate.py), not an authored map of what a byte means.
+
+    THE FIRST SETTLE IS BASELINE, NOT A TRANSITION. Exactly like the live
+    solver's own worker-seed adoption (`_room_transit`'s "adoption !=
+    transit" invariant; tests/test_room_fp.py
+    test_root_first_settle_adopts_transit_free_and_edge_free), the very
+    first fingerprint this instance ever settles on has no prior room to
+    have transitioned FROM. It is interned quietly to seed identity #0 and
+    is NEVER classified or voted on -- a fresh detector dropped into the
+    middle of an ordinary room must not fire on the act of noticing that
+    room for the first time.
+
+    NOVELTY is scoped to THIS INSTANCE's own discovery table, and `reset()`
+    rebuilds that table from empty -- i.e. per-episode by construction (the
+    honest default: a lineage restored from an archived cell has visited
+    nothing as far as a fresh instance is concerned). A caller that wants
+    per-run (not per-episode) novelty simply never calls reset() mid-run.
+
+    KIND IS A VOTE FILTER, NOT A DISCOVERY FILTER: identity is interned (and
+    can seed later novelty checks) for EVERY settle regardless of its
+    classified kind, but the VOTE only considers settles whose kind is in
+    `kind` (default {pan, fade} -- see ROOM_FP_KINDS above for why warp is
+    excluded by default).
+
+    FALSE POSITIVES THIS SIGNAL CANNOT DISCRIMINATE ON ITS OWN. An ordinary
+    ROOM TRANSITION is not a false positive of this signal, it is its
+    TARGET -- the measured Kirby result (3 fires in 24 s, every one an
+    ordinary area 58->62 room change) is exactly what `novel_only` exists to
+    tame, and even then only within ONE episode: a room-based game's first
+    visit to every one of its rooms is, correctly, novel. This signal's role
+    in a larger vote is therefore "something loaded", never "the level
+    ended" -- it must never be a standalone or majority-carrier vote, the
+    same discipline entity_wipe/oam_quiesce are held to, and a room-based
+    profile needs a progress corroborator (progress_advance) to turn
+    "novel room" into "level ended". A DEATH FADE settles a new fingerprint
+    too (the measured Zelda death flash) but classifies `warp`, excluded by
+    default. PAUSE/MENU overlays rewrite the nametable and are mitigated by
+    the mask, not eliminated by this class.
+    """
+
+    def __init__(self, mask_ranges=(), *, settle: int = 3,
+                 min_lines: int = 200, pan_odo=(128, 384),
+                 warp_scene_min: int = 2, palette_cokey: bool = False,
+                 max_rooms: int = 1024, kind=ROOM_FP_DEFAULT_KIND,
+                 novel_only: bool = True, hold: int = ROOM_FP_HOLD):
+        bad_kind = set(kind) - set(ROOM_FP_KINDS)
+        if bad_kind:
+            raise ValueError(
+                f"room_fp_transition kind must be a subset of "
+                f"{ROOM_FP_KINDS}, got {sorted(bad_kind)}")
+        self.mask = room_fp_mask(mask_ranges)
+        self.settle = max(1, int(settle))
+        self.min_lines = int(min_lines)
+        self.pan_odo = (int(pan_odo[0]), int(pan_odo[1]))
+        self.warp_scene_min = int(warp_scene_min)
+        self.palette_cokey = bool(palette_cokey)
+        self.max_rooms = max(1, int(max_rooms))
+        self.kind = frozenset(kind)
+        self.novel_only = bool(novel_only)
+        self.hold = max(1, int(hold))
+        self.reset()
+
+    def reset(self) -> None:
+        """Drop the settle machinery AND the discovery table.
+
+        A fresh episode has visited nothing -- the same "re-earn it"
+        direction every other signal's reset() takes here (see
+        ApuActivitySignal.reset()): keeping the table would let a room
+        visited just before a veto/episode boundary read as "not novel"
+        the instant the new episode starts."""
+        self._pend = None
+        self._settled_h: int | None = None
+        self._rooms = RoomIndex(cap=self.max_rooms)
+        self._step = 0
+        self.trigger_step: int | None = None
+        self.n_triggers = 0
+        self.n_settles = 0
+        self.last_kind: str | None = None
+        self.last_direction = None
+        self.last_novel: bool | None = None
+        self.last_ordinal: int | None = None
+
+    def push(self, nt, odo_xy=(0, 0), scene: int = 0,
+             rendered_lines: int | None = None, palette=None) -> None:
+        """Feed one observation: the nametable snapshot, the odometer's
+        integrated (x, y) and the scene ordinal (both already produced by
+        the certified odometer for every profile that arms room_fp), and
+        optionally the rendered-scanline count and the 32-byte palette RAM.
+
+        `rendered_lines`, when supplied, gates a BLANK frame (stage wipe /
+        fade-to-black / load screen) exactly the way the live hot loop does:
+        a blank cancels any pending churn instead of letting `fp_settle`
+        adopt "the screen is black" as a room of its own (`fp_settle`'s own
+        docstring: "Blank frames never reach here"). A caller that never
+        observes a blank simply never passes it, and this gate is then
+        permanently open (matches every non-blank push)."""
+        self._step += 1
+        if rendered_lines is not None and rendered_lines < self.min_lines:
+            self._pend = None
+            return
+        h = nt_fingerprint(nt, self.mask,
+                            palette if self.palette_cokey else None)
+        was_baseline = self._settled_h is None
+        self._pend, fired = fp_settle(self._pend, h, self._settled_h,
+                                      odo_xy, scene, self._step, self.settle)
+        if fired is None:
+            return
+        h_settled, d_odo, d_scene, _frames = fired
+        self._settled_h = h_settled
+        self.n_settles += 1
+        ordinal = self._rooms.intern(h_settled, odo_xy)
+        novel = ordinal is not None and self._rooms.meta[ordinal]["visits"] == 1
+        if was_baseline:
+            # Adoption, not a transition: seed identity and stop -- the same
+            # transit-free/edge-free rule the live worker-seed path enforces.
+            # No kind, no novelty check, no vote.
+            self.last_kind = None
+            self.last_direction = None
+            self.last_novel = None
+            self.last_ordinal = ordinal
+            return
+        kind, direction = classify_transition(d_odo, d_scene, self.pan_odo,
+                                              self.warp_scene_min)
+        self.last_kind = kind
+        self.last_direction = direction
+        self.last_novel = novel
+        self.last_ordinal = ordinal
+        if kind in self.kind and (novel or not self.novel_only):
+            self.trigger_step = self._step
+            self.n_triggers += 1
+
+    def vote(self) -> int:
+        """1 while the last qualifying fire is inside its hold window, else
+        0 -- ApuActivitySignal's held-pulse shape, not a latch: a vote that
+        never dropped back to 0 would look the same on the second room a
+        game ever loads as it does on the fiftieth."""
+        if self.trigger_step is None:
+            return 0
+        return int(self._step - self.trigger_step < self.hold)
+
+    def n_rooms(self) -> int:
+        return self._rooms.n_rooms()
+
+    def stats(self) -> dict:
+        return {"step": self._step, "n_rooms": self.n_rooms(),
+                "n_settles": self.n_settles, "n_triggers": self.n_triggers,
+                "trigger_step": self.trigger_step,
+                "last_kind": self.last_kind, "last_novel": self.last_novel,
+                "cap_hits": self._rooms.cap_hits}
 
 
 # ===========================================================================
