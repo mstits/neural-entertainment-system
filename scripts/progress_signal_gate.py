@@ -121,6 +121,17 @@ def main(argv: list[str] | None = None) -> int:
     pool.set_headless(True); pool.set_skip_preprocess(True)
     if args.odometer:
         pool.set_odometer_enabled(True)
+    # MUST precede load_worker_state, and is NOT redundant with it.
+    # Restoring into a Pool that has never stepped leaves the mapper's
+    # CPU-cycle counter at 0, which collides with MMC1's post-restore
+    # `last_register_write_cycle = u64::MAX` sentinel (MAX + 1 wraps to
+    # 0) and makes the RMW consecutive-write filter silently eat the
+    # first bank-select write after the load — wrong PRG/CHR bank, dead
+    # game, flat odometer. reset_all() runs a frame first, so the
+    # counter is far off zero by the time the restored ROM writes.
+    # Same ordering go_explore_solve.py and discover_observables.py
+    # already use. See docs/research/ASM_CPU_STATUS_2026-08-25.md.
+    pool.reset_all()
     pool.load_worker_state(0, (REPO / prof["start_state_path"]).read_bytes())
     a = np.array([bm[idx]], dtype=np.uint8)
 

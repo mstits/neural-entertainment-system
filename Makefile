@@ -119,6 +119,15 @@ pool-test:
 	DYLD_INSERT_LIBRARIES=$$(.venv/bin/python -c "import sysconfig;print(sysconfig.get_config_var('LIBDIR'))")/libpython3.11.dylib \
 	cargo test --manifest-path nes_core/Cargo.toml --lib --features python -- --test-threads=1
 
+# `asm_cpu` (AArch64 6502 fast path) is ON by default here, and that is a
+# deliberate, receipted decision — not drift. Rationale, the list of which
+# ROMs/mappers are lockstep-verified clean vs unverified, and the rule for
+# when `disable_asm_cpu` is a real safety net vs superstition:
+#   docs/research/ASM_CPU_STATUS_2026-08-25.md
+# Do not flip this default without re-reading that doc; an older memory
+# claiming "default builds skip asm_cpu" is stale (it never held in this
+# repo's history) and the fidelity premise behind it is refuted by the
+# nes_core/tests/asm_vs_slow_*.rs family.
 build:
 	(cd nes_core && ../.venv/bin/maturin develop --release --features "python,asm_cpu")
 

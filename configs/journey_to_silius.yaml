@@ -14,17 +14,92 @@ description: |
   gameplay confirmed at frame 315, +40 settle; receipt
   runs/onboard_wave4/silius_mint.log).
 
-  INSTRUMENT NOTE: the default Pool (disable_asm_cpu=False) produces
-  a flat odometer for this title regardless of which button is held
-  (right/left/up/down/A all identical, range x=0) — the known ASM-CPU
-  PPU/NMI-batching bug already on record for SMB. Verified against
-  nes_core.NESEnvironment (interpreter-only) and visually against
-  rendered frames: real scroll growth exists (odo_x 0->783 by
-  frame ~800 under held RIGHT). Every receipt below (gate/discover/
-  smoke) was produced with pool.set_disable_asm_cpu(True) patched in
-  post-construction via a throwaway driver script — no repo script
-  was edited. A permanent fix belongs in go_explore_solve.py's
-  apply_hw_flags path; out of scope for this onboarding pass.
+  INSTRUMENT NOTE (root cause CORRECTED 2026-08-25 — read this before
+  trusting the older asm_cpu framing that used to sit here).
+
+  The observed symptom was real: under the default Pool this title
+  produced a flat odometer regardless of which button was held
+  (right/left/up/down/A all identical, range x=0), while
+  nes_core.NESEnvironment and rendered frames showed genuine scroll
+  growth (odo_x 0->783 by frame ~800 under held RIGHT). The
+  ATTRIBUTION was wrong. This is NOT "the known ASM-CPU PPU/NMI-
+  batching bug already on record for SMB" — that framing was wrong on
+  both the mechanism and the SMB attribution, and it is retracted.
+
+  What it actually is: an MMC1 state-restore defect, plus a Pool
+  ordering bug in the gate tool that triggered it.
+  nes_core/src/mapper/mapper1.rs:540 (apply_state) parks
+  last_register_write_cycle at u64::MAX, commented "reset so the next
+  write is unconditionally honored". The RMW consecutive-write filter
+  at mapper1.rs:392 tests `cur_cpu_cycle == last_register_write_cycle
+  .wrapping_add(1)`, and u64::MAX.wrapping_add(1) == 0. A Pool that
+  was constructed and immediately restored has never ticked, so
+  cur_cpu_cycle is still 0 — the sentinel that promises "always
+  honored" silently DROPS the first MMC1 bank-select write after the
+  load. One dropped write desynchronizes MMC1's 5-write shift
+  sequence, the commit lands on the wrong register, the game gets a
+  wrong PRG/CHR bank and stops functioning. Flat odometer.
+
+  Falsifier receipts. (a) End-to-end A/B on two banked gate receipts —
+  same ROM, same start state, same held input, same 1200 steps, both on
+  the DEFAULT ASM path, the only difference being the reset_all()
+  ordering repair. gate_journey_to_silius_right.json (unrepaired):
+  2 distinct, range 0..4, oam_churn 1/1199 — dead machine.
+  gate_journey_to_silius_right_resetall.json (repaired): 137 distinct,
+  range 0..783, oam_churn 842/1199 — alive. (b) Source-level unit test:
+  mapper1.rs::restore_consecutive_write_tests — the `#[ignore]`d
+  first_register_write_after_apply_state_is_honored_at_cycle_zero
+  fails on main (shift stays 0x10, should be 0x18) and is the ready
+  falsifier for the fix. Run with `cargo test -- --ignored`.
+
+  asm_cpu is NOT exonerated but is NOT the bug either: the ASM MMIO
+  callback path never pushes Mapper::set_cpu_cycle (only Nes::tick
+  does, nes.rs:854), which is why cur_cpu_cycle stays pinned at 0 and
+  why toggling disable_asm_cpu appears to "fix" it. The ASM CPU is
+  byte-exact on this ROM — nes_core/tests/asm_vs_slow_silius.rs
+  lockstep-runs 1.5M instructions (~156 frames, DMC x MMC1) with zero
+  divergence, and the ASM path is confirmed reachable here
+  (prg_asm_ptr present, identical final PC=$C8B6 and cycle count
+  4,658,918 with the flag on and off). See
+  docs/research/ASM_CPU_STATUS_2026-08-25.md.
+
+  Consequence for this profile: disable_asm_cpu remains a DOCUMENTED
+  WORKAROUND for the MMC1 restore defect above, not a fidelity fix and
+  not an admission of an ASM CPU gap. The receipts below (gate/
+  discover/smoke) were produced with pool.set_disable_asm_cpu(True)
+  patched in post-construction via a throwaway driver script — no repo
+  script was edited at the time — and they remain valid, because the
+  workaround does inoculate against the real defect.
+
+  The preferred fix is ORDERING, not the flag: call pool.reset_all()
+  before the first load_worker_state, which runs a frame and gets
+  cur_cpu_cycle off zero. go_explore_solve.py and
+  discover_observables.py already do this and were never exposed;
+  scripts/progress_signal_gate.py did not and has been repaired
+  (2026-08-25).
+
+  WORKAROUND NO LONGER NEEDED FOR THIS PROFILE — verified, not assumed.
+  The gate was re-run on current HEAD with the repaired ordering and
+  NO disable_asm_cpu patch of any kind, on the default ASM path:
+  runs/onboard_wave4/gate_journey_to_silius_right_resetall.json gives
+  range 0..783, distinct 137, tail_distinct 1, oam_churn 842 over the
+  same 1200 forward-held steps — every trace metric matching the older
+  *_asmfix.json receipt that needed the flag (the two JSON files carry
+  different field sets, so they are not byte-identical documents; the
+  measured trace is what matches). So the ASM path and the
+  interpreter produce the same trace here, and the flag was only ever
+  papering over the restore defect. Reach for it on this ROM again only
+  if that reproduction stops holding.
+
+  The FAIL verdict in that receipt is unchanged and is NOT the
+  instrument: it is the same pre-existing pair already recorded below —
+  the naive constant-RIGHT hold plateaus in its last quarter (the
+  richer action set clears it, see SOLVER SMOKE), and $00B9 reads 0 at
+  the start state so a decrement underflows.
+
+  The mapper1.rs sentinel guard itself is a real emulator-core fidelity
+  change and is left UNAPPLIED pending sign-off plus a parity
+  re-baseline, since the last MMC1 filter change needed one.
   Odometer gate (runs/onboard_wave4/gate_journey_to_silius_right_asmfix.json):
   axis x, range 783 over 1200 forward-held steps, distinct 137,
   oam_churn 842/1199 (agent clearly alive), tail flat under a naive

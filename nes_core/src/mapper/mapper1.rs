@@ -802,3 +802,94 @@ mod prg_window_tests {
         assert_eq!(p0, p1, "CHR window pointer must be stable across rebuilds");
     }
 }
+
+#[cfg(test)]
+mod restore_consecutive_write_tests {
+    use super::*;
+
+    fn synth_cart() -> Cartridge {
+        Cartridge {
+            mapper: 1,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: 8,
+            prg_rom: vec![0u8; 8 * PRG_ROM_BANK_SIZE as usize],
+            chr_num_banks: 1,
+            chr: vec![0u8; 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    /// The consecutive-write filter must never eat the FIRST register
+    /// write after `apply_state`, on a machine whose CPU-cycle counter
+    /// has not moved off zero yet.
+    ///
+    /// OPEN DEFECT — this test is `#[ignore]`d because it FAILS on
+    /// current `main`, deliberately, as an executable receipt. It is
+    /// the falsifier for the fix, not a pin of today's behavior. Run
+    /// it with `cargo test -- --ignored`.
+    ///
+    /// Mechanism: `apply_state` parks `last_register_write_cycle` at
+    /// `u64::MAX` with the stated intent "reset so the next write is
+    /// unconditionally honored". But the filter predicate is
+    /// `cur_cpu_cycle == last_register_write_cycle.wrapping_add(1)`,
+    /// and `u64::MAX.wrapping_add(1) == 0`. A `Nes` that has been
+    /// restored but never ticked still has `cur_cpu_cycle == 0`
+    /// (`Mapper::set_cpu_cycle` is only ever pushed from `Nes::tick`,
+    /// and the ASM MMIO callback path does not push it), so the
+    /// sentinel that promises "always honored" delivers the exact
+    /// opposite: the write is silently dropped. One dropped write
+    /// desynchronizes MMC1's 5-write shift sequence, so the eventual
+    /// commit lands on the wrong register with the wrong value.
+    ///
+    /// Fix when authorized: guard the predicate with
+    /// `self.last_register_write_cycle != u64::MAX &&`, or make the
+    /// field an `Option<u64>` so "no previous write" is
+    /// unrepresentable-as-adjacent. See
+    /// docs/research/ASM_CPU_STATUS_2026-08-25.md.
+    #[test]
+    #[ignore = "documents an open defect: fails on main until the u64::MAX sentinel is guarded"]
+    fn first_register_write_after_apply_state_is_honored_at_cycle_zero() {
+        let saved = Mapper1::new(synth_cart()).get_state();
+
+        let mut restored = Mapper1::new(synth_cart());
+        // A freshly-constructed machine that has never ticked: nothing
+        // has pushed a CPU cycle into the mapper yet.
+        assert_eq!(restored.cur_cpu_cycle, 0);
+        restored.apply_state(&saved);
+
+        // One ordinary shift-register write (bit 7 clear, bit 0 set).
+        restored.prg_write_byte(0x8000, 0x01);
+
+        assert_eq!(
+            restored.shift, 0x18,
+            "first MMC1 register write after apply_state was swallowed by \
+             the RMW consecutive-write filter (shift still at its default \
+             {SHIFT_REGISTER_DEFAULT:#04X})"
+        );
+    }
+
+    /// The filter itself must still work: two writes on back-to-back
+    /// CPU cycles are the RMW dummy+real pair, and the second is
+    /// ignored. This is the Bill & Ted's `INC $FFFF` case and it must
+    /// survive any fix to the sentinel above.
+    #[test]
+    fn consecutive_cycle_writes_are_still_filtered() {
+        let mut m = Mapper1::new(synth_cart());
+        m.set_cpu_cycle(1000);
+        m.prg_write_byte(0x8000, 0x01);
+        let after_first = m.shift;
+        assert_eq!(after_first, 0x18);
+
+        m.set_cpu_cycle(1001);
+        m.prg_write_byte(0x8000, 0x01);
+        assert_eq!(
+            m.shift, after_first,
+            "RMW dummy+real pair: the second write must be ignored"
+        );
+    }
+}
