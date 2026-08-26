@@ -1,0 +1,23 @@
+
+=== Kung Fu (Japan, USA).nes — forward='right' ===
+[room counter] none   (candidates: [])
+[progress candidates]  gate1=rises+flat-noop, sat=saturation gate:
+              $00F8  kind=single netF=    66 mono=1.00 wrapPair=0 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+              $00F4  kind=single netF=    41 mono=1.00 wrapPair=0 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+[recommended progress] $00F8
+[y] 0x004A  (candidates: ['0x4a', '0x33'])
+[hp/lives] kind=lives addr=0x01FC — is_dead on lives decrement (-1, agreed by 4 of 5 runs)
+[fight_health] kind=foe_hp addr=0x00B1 self_hp_conflict=508 — is_foe_hp on offense-driven decrement (agreed by 5 of 5 attack reps; flat under 5 defense-only reps)
+[round_gate] kind=no_round_signal addr=none — 46 bout boundary(ies) observed across 24000 steps, but no byte was both stable within a bout and monotone across boundaries without resetting to start — behaviour finding
+
+--- paste-ready solve: ---
+solve:
+  rom: "roms/Kung Fu (Japan, USA).nes"
+  progress: {lo: 0x00F8}   # passes wrap + saturation
+  y: 0x004A   # jump/ballistic signature
+  level_key: []   # coverage baseline; wire a stage-advance byte here once a real clear is captured
+  lives: 0x01FC   # decrements on death
+  # fight_health (unused: spatial progress already isolated): foe_hp candidate 0x00B1
+  # round_gate: no_round_signal — 46 bout boundary(ies) observed across 24000 steps, but no byte was both stable within a bout and monotone across boundaries without resetting to start — behaviour finding
+
+[out] runs/fight_gate/discover_kungfu.json

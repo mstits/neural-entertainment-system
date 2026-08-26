@@ -180,13 +180,101 @@ reinforce:
 # instrument that answers whether search can push the frontier past 240.
 solve:
   rom: "roms/Kung Fu (Japan, USA).nes"
+  # ODOMETER-ERA progress (2026-08-03..08-06), STILL ACTIVE below despite
+  # being known-bad. $0094 is this profile's own-rollout "position" byte
+  # (see the long comment above this block for its full saturation history:
+  # clamps 128->236-240 and never confirmed to correlate with a real
+  # scroll/room transition). The 2026-08-24 odometer gate (docs/research/
+  # CAPABILITY_REPORT_2026-08-24.md, "Kung Fu | UNUSABLE, cause unknown |
+  # camera static, agent ACTIVE (OAM churn 540) = SKILL wall") independently
+  # classified Kung Fu CAMERA_STATIC_AGENT_ACTIVE -- the fixed-screen
+  # fight-gate class, same as Punch-Out -- meaning $0094 was never a
+  # scroll-position signal to begin with; it is the wrong progress surface
+  # for this game class. A 2026-08-25 attempt to supersede it with the
+  # fight-gate mechanism (see the commented-out block below) was tried and
+  # its own follow-up validation probe CONFIRMED the candidate byte
+  # implausible (an autonomous enemy spawn/despawn timer, not combat
+  # damage) -- so that replacement is disabled, not promoted, and $0094
+  # is restored as the active (if still unhelpful) value rather than
+  # leaving a confirmed-wrong source live. `progress:` is a required key
+  # (go_explore_solve.py's GenericGame reads `s["progress"]` unconditionally)
+  # so this profile cannot simply go without one.
   progress: {lo: 0x0094}
+
+  # --- Fight-gate progress (2026-08-25) -------------------------------------
+  # docs/proposals/FIGHTGATE_MECHANISM_2026-08-25.md's generic, non-game-
+  # specific mechanism for the CAMERA_STATIC_AGENT_ACTIVE class: randomized
+  # attack-mash/approach-retreat probes (scripts/discover_observables.py
+  # --fight-gate) plus a decrement-consensus self/foe HP discriminator, no
+  # game knowledge or RAM map consulted going in. Blind discovery on this
+  # exact ROM/start-state (runs/fight_gate/discover_kungfu.json) nominated
+  # addr 177 (=0x00B1) -- start=135 (0x87), attack_agree 5/5, defense_agree
+  # 0/5, tally_corroborated -- as its ranked #1 foe_hp_candidate.
+  #
+  # THREE honest qualifications, more serious than Punch-Out's (named as
+  # follow-up, not fixed here -- see the live smoke result recorded below
+  # before trusting this address):
+  #   1. PLAUSIBILITY FLAG on the #1 pick itself. 0x00B1 and its two mirror
+  #      siblings (0x00B2, 0x00B3) plus a fourth candidate (0x0269) show
+  #      EXACTLY IDENTICAL net deltas across all 5 independently-seeded
+  #      attack reps (-1,-1,-1,-1,-1 / -70,-70,-70,-70,-70) -- zero cross-
+  #      rep variance regardless of which random actions each rep took.
+  #      scripts/discover_observables.py's own ranking docstring
+  #      (~line 1894-1906) names this exact signature as "driven by ELAPSED
+  #      STEP COUNT alone (a background/attract timer), not by how many
+  #      punches actually landed" and says it should be down-ranked -- but
+  #      that tiebreak sits AFTER the mirror-sibling bonus in the sort key,
+  #      so 0x00B1 wins #1 via its two identical neighbors despite the zero-
+  #      spread pattern the same docstring calls suspicious. addr=0x066C
+  #      (start=159) shows genuine cross-rep variance (-12,-17,-16,-12,-12,
+  #      the shape a hits-landed counter should have) but ranks lower here
+  #      (no mirror siblings, one small leak under defense, 1/5).
+  #   2. NO independent cross-check exists the way Punch-Out had one.
+  #      ram_mapping above has no regular-enemy HP byte at all -- only
+  #      boss_energy (0x04A5, itself only CROSS-SOURCED, never independently
+  #      verified live, idled at 0x30 in every probe). None of the six
+  #      foe_hp_candidates sits at or near 0x04A5, so this run neither
+  #      confirms nor refutes that existing field.
+  #   3. find_round_gate returned no_round_signal (46 bouts crossed over
+  #      24,000 attack_mash/approach_retreat steps -- a real BEHAVIOUR
+  #      finding, not VOID/insufficient_probe like Punch-Out) -- no byte was
+  #      both stable-within-a-bout and monotone-across-boundaries. `round:`
+  #      is omitted below; a bout boundary falls back to the mass-RAM-reset
+  #      detector the Solver already applies for deaths/reloads.
+  #
+  # VERDICT (2026-08-25, post-wiring validation): the plausibility flag
+  # above is CONFIRMED, not just suspected. A direct isolated-input probe
+  # (pure NOOP, zero buttons pressed for 1200 frame_skip=4 steps) shows
+  # 0x00B1 cycling 0 -> 135 -> 0 repeatedly on its own, including one
+  # ramp (134->135->136->141->150->163->179->195->211->219) with NO player
+  # input at all -- the game's own enemy spawn/walk-in/despawn cycle, not
+  # combat outcome. This is exactly the FH1/FH2-pattern false positive the
+  # design doc's decrement-consensus gate cannot see (attacking coincides
+  # with the same autonomous cycle, producing a fake "decrements under
+  # offense" signal). A go_explore_solve smoke on this exact wired file
+  # (30s/4 workers) ran clean (16 cells, 12 improvements, 0 crashes) and
+  # max_gx_in_max_area rose 0->255 -- but per the probe above that rise is
+  # not evidence of learned combat; it is the same autonomous cycle. DO
+  # NOT treat this as a validated fight-gate signal. League classification
+  # stays CAMERA_STATIC_AGENT_ACTIVE, qualified/plausibility-flagged --
+  # NOT promoted to SOUND_ADVANCING. Left wired (rather than reverted) so
+  # the failed-validation receipt is reproducible; the recommended next
+  # step is either re-probing addr 0x066C (start=159, the candidate with
+  # genuine cross-rep variance) or building a fight-gate discriminator
+  # that vetoes a candidate showing any NOOP-only oscillation before it
+  # can rank #1. DISABLED (not deleted): $0094 above is the active value
+  # again, so a future `go_explore_solve.py --profile configs/kungfu.yaml`
+  # run cannot silently pick up this confirmed-implausible signal just
+  # because it reads as syntactically valid YAML.
+  # progress: {source: fight_gate, foe_hp: 0x00B1, foe_hp_start: 0x87}
   # Player pose byte (own-rollout isolated-input probe): 0 = stand/walk,
   # 4 = duck (DOWN held), 128 = airborne (A held); rock-flat under NOOP,
   # returns to 0 the instant the button releases. A discrete pose flag
   # rather than a continuous height -- Kung Fu's jump-kick has no simulated
   # parabolic arc in RAM -- but it cleanly separates grounded/ducking/
-  # airborne cells, which is what the archive needs.
+  # airborne cells, which is what the archive needs. Required by
+  # GenericGame regardless of progress source; unaffected by the fight-gate
+  # switch above (foe_hp/foe_hp_start replace lo/hi internally, not y).
   y: 0x0014
   level_key: []
   # NOT wired (2026-08-06): considered clear: {mode: confluence} (the

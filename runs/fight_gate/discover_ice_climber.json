@@ -1,0 +1,541 @@
+{
+  "rom": "roms/Ice Climber.nes",
+  "state": "roms/Ice Climber_start.state.bin",
+  "forward": "up",
+  "progress": {
+    "forward": "up",
+    "room_counter": null,
+    "candidates": [],
+    "recommended": null
+  },
+  "room_counters": [],
+  "y": [
+    {
+      "addr": 234,
+      "base": 0,
+      "mode": 44,
+      "max_dev": 118,
+      "range": 118,
+      "distinct": 7,
+      "frac_at_mode": 0.76,
+      "score": 90.1
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 44,
+    "start": 1,
+    "detail": {
+      "addr": 44,
+      "start": 1,
+      "drop": 1,
+      "runs_agreeing": 3,
+      "runs_watched": 5,
+      "spends": 3,
+      "refilled_runs": 3,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    "lives_candidates": [
+      {
+        "addr": 44,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 3,
+        "runs_watched": 5,
+        "spends": 3,
+        "refilled_runs": 3,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1051,
+        "start": 1,
+        "drop": 2,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          1052,
+          1307,
+          1308
+        ]
+      },
+      {
+        "addr": 21,
+        "start": 8,
+        "drop": 4,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "moves_while_idle": false,
+        "mirrors": [
+          112
+        ]
+      },
+      {
+        "addr": 90,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": true,
+        "mirrors": []
+      },
+      {
+        "addr": 145,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": true,
+        "mirrors": [
+          147
+        ]
+      }
+    ],
+    "hp_candidates": [],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 15
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 3 of 5 runs)"
+  },
+  "fight_health": {
+    "kind": "foe_hp",
+    "addr": 1616,
+    "detail": {
+      "addr": 1616,
+      "start": 235,
+      "attack_nets": [
+        -235,
+        -235,
+        -235,
+        -235,
+        -235
+      ],
+      "attack_agree": 5,
+      "attack_watched": 5,
+      "defense_nets": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "defense_agree": 0,
+      "defense_watched": 5,
+      "fh1_decrements_under_offense": true,
+      "fh2_flat_under_defense": true,
+      "self_hp_conflict": false,
+      "mirror_siblings": 0,
+      "tally_corroborated": true
+    },
+    "foe_hp_candidates": [
+      {
+        "addr": 1616,
+        "start": 235,
+        "attack_nets": [
+          -235,
+          -235,
+          -235,
+          -235,
+          -235
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 720,
+        "start": 248,
+        "attack_nets": [
+          -91,
+          -91,
+          -91,
+          -91,
+          -91
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 1600,
+        "start": 155,
+        "attack_nets": [
+          -91,
+          -91,
+          -91,
+          -91,
+          -91
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 1598,
+        "start": 56,
+        "attack_nets": [
+          -56,
+          -56,
+          -56,
+          -56,
+          -56
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 770,
+        "start": 166,
+        "attack_nets": [
+          -31,
+          -31,
+          -31,
+          -31,
+          -31
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 15,
+        "start": 1,
+        "attack_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      }
+    ],
+    "self_hp_candidates": [
+      {
+        "addr": 1350,
+        "start": 1,
+        "attack_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 4
+      },
+      {
+        "addr": 1352,
+        "start": 1,
+        "attack_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 4
+      },
+      {
+        "addr": 1353,
+        "start": 1,
+        "attack_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 4
+      },
+      {
+        "addr": 1349,
+        "start": 1,
+        "attack_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 3
+      },
+      {
+        "addr": 1354,
+        "start": 1,
+        "attack_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 3
+      },
+      {
+        "addr": 1410,
+        "start": 1,
+        "attack_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 3
+      }
+    ],
+    "self_hp_conflict": 44,
+    "tally_windows_found": 346,
+    "probe_evidence": {
+      "attack_reps": 5,
+      "attack_usable": 5,
+      "defense_reps": 5,
+      "defense_usable": 5
+    },
+    "note": "is_foe_hp on offense-driven decrement (agreed by 5 of 5 attack reps; flat under 5 defense-only reps)"
+  },
+  "round_gate": {
+    "kind": "round_gate",
+    "addr": 1025,
+    "candidates": [
+      {
+        "addr": 1025,
+        "start": 1,
+        "resets_seen": 19,
+        "steps_up": 19
+      },
+      {
+        "addr": 1026,
+        "start": 1,
+        "resets_seen": 19,
+        "steps_up": 19
+      },
+      {
+        "addr": 1027,
+        "start": 1,
+        "resets_seen": 19,
+        "steps_up": 19
+      },
+      {
+        "addr": 1029,
+        "start": 1,
+        "resets_seen": 19,
+        "steps_up": 19
+      },
+      {
+        "addr": 1030,
+        "start": 1,
+        "resets_seen": 19,
+        "steps_up": 19
+      },
+      {
+        "addr": 1033,
+        "start": 1,
+        "resets_seen": 19,
+        "steps_up": 19
+      }
+    ],
+    "void": false,
+    "drives": 10,
+    "usable": 10,
+    "probe_steps": 24000,
+    "bouts_observed": 19,
+    "note": "steps at every one of 19 observed bout boundary(ies), never back to its own start value"
+  }
+}

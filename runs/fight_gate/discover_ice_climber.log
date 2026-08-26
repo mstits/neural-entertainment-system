@@ -1,0 +1,20 @@
+
+=== Ice Climber.nes — forward='up' ===
+[room counter] none   (candidates: [])
+[progress candidates]  gate1=rises+flat-noop, sat=saturation gate:
+[recommended progress] none
+[y] 0x00EA  (candidates: ['0xea'])
+[hp/lives] kind=lives addr=0x002C — is_dead on lives decrement (-1, agreed by 3 of 5 runs)
+[fight_health] kind=foe_hp addr=0x0650 self_hp_conflict=44 — is_foe_hp on offense-driven decrement (agreed by 5 of 5 attack reps; flat under 5 defense-only reps)
+[round_gate] kind=round_gate addr=0x0401 — steps at every one of 19 observed bout boundary(ies), never back to its own start value
+
+--- paste-ready solve: ---
+solve:
+  rom: "roms/Ice Climber.nes"
+  # FIGHT-GATE PROGRESS: no spatial frontier isolated; foe_hp cleared Gate FH1+FH2 (agreed by 5 of 5 randomized attack-mash reps, flat under 5 pure-defense reps).
+  progress: {source: fight_gate, foe_hp: 0x0650, foe_hp_start: 0xEB, round: 0x0401}
+  y: 0x00EA   # jump/ballistic signature
+  level_key: []   # coverage baseline; wire a stage-advance byte here once a real clear is captured
+  lives: 0x002C   # decrements on death
+
+[out] runs/fight_gate/discover_ice_climber.json

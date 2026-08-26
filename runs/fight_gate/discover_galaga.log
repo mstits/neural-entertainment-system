@@ -1,0 +1,22 @@
+
+=== Galaga - Demons of Death (USA).nes — forward='right' ===
+[room counter] none   (candidates: [])
+[progress candidates]  gate1=rises+flat-noop, sat=saturation gate:
+              $0091  kind=single netF=   872 mono=0.97 wrapPair=0 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+              $0092  kind=single netF=    88 mono=0.96 wrapPair=0 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+[recommended progress] $0091
+[y] none  (candidates: [])
+[hp/lives] kind=lives addr=0x0073 — is_dead on lives decrement (-1, agreed by 5 of 5 runs)
+[fight_health] kind=foe_hp addr=0x07A0 self_hp_conflict=115 — is_foe_hp on offense-driven decrement (agreed by 5 of 5 attack reps; flat under 5 defense-only reps)
+[round_gate] kind=no_round_signal addr=none — 10 bout boundary(ies) observed across 24000 steps, but no byte was both stable within a bout and monotone across boundaries without resetting to start — behaviour finding
+
+--- paste-ready solve: ---
+solve:
+  rom: "roms/Galaga - Demons of Death (USA).nes"
+  progress: {lo: 0x0091}   # passes wrap + saturation
+  level_key: []   # coverage baseline; wire a stage-advance byte here once a real clear is captured
+  lives: 0x0073   # decrements on death
+  # fight_health (unused: spatial progress already isolated): foe_hp candidate 0x07A0
+  # round_gate: no_round_signal — 10 bout boundary(ies) observed across 24000 steps, but no byte was both stable within a bout and monotone across boundaries without resetting to start — behaviour finding
+
+[out] runs/fight_gate/discover_galaga.json

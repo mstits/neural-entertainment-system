@@ -1,0 +1,541 @@
+{
+  "rom": "roms/Galaga - Demons of Death (USA).nes",
+  "state": "roms/Galaga - Demons of Death (USA)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": null,
+    "candidates": [
+      {
+        "lo": 145,
+        "hi": null,
+        "kind": "single",
+        "label": "$0091",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 872,
+        "mono_forward": 0.972,
+        "net_noop": 0,
+        "net_reverse": 234,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 234,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 146,
+        "hi": null,
+        "kind": "single",
+        "label": "$0092",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 88,
+        "mono_forward": 0.957,
+        "net_noop": 0,
+        "net_reverse": 70,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 174,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      }
+    ],
+    "recommended": {
+      "lo": 145,
+      "hi": null,
+      "label": "$0091",
+      "kind": "spatial",
+      "as_progress": "$0091",
+      "saturates": false
+    }
+  },
+  "room_counters": [],
+  "y": [],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 115,
+    "start": 0,
+    "detail": {
+      "addr": 115,
+      "start": 0,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 0,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    "lives_candidates": [
+      {
+        "addr": 115,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1124,
+        "start": 2,
+        "drop": 2,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1997,
+        "start": 0,
+        "drop": 2,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 2001,
+        "start": 0,
+        "drop": 2,
+        "runs_agreeing": 3,
+        "runs_watched": 5,
+        "spends": 3,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1172,
+        "start": 40,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 18,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "moves_while_idle": false,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 51
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  },
+  "fight_health": {
+    "kind": "foe_hp",
+    "addr": 1952,
+    "detail": {
+      "addr": 1952,
+      "start": 240,
+      "attack_nets": [
+        -117,
+        -117,
+        -117,
+        -117,
+        -117
+      ],
+      "attack_agree": 5,
+      "attack_watched": 5,
+      "defense_nets": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "defense_agree": 0,
+      "defense_watched": 5,
+      "fh1_decrements_under_offense": true,
+      "fh2_flat_under_defense": true,
+      "self_hp_conflict": false,
+      "mirror_siblings": 0,
+      "tally_corroborated": true
+    },
+    "foe_hp_candidates": [
+      {
+        "addr": 1952,
+        "start": 240,
+        "attack_nets": [
+          -117,
+          -117,
+          -117,
+          -117,
+          -117
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 1951,
+        "start": 218,
+        "attack_nets": [
+          -96,
+          -96,
+          -96,
+          -96,
+          -96
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 1939,
+        "start": 249,
+        "attack_nets": [
+          -227,
+          -205,
+          -205,
+          -321,
+          -219
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 1162,
+        "start": 165,
+        "attack_nets": [
+          -544,
+          -416,
+          -512,
+          -512,
+          -544
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 1163,
+        "start": 165,
+        "attack_nets": [
+          -640,
+          -416,
+          -544,
+          -512,
+          -544
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 2028,
+        "start": 240,
+        "attack_nets": [
+          -97,
+          0,
+          -109,
+          -9,
+          -256
+        ],
+        "attack_agree": 4,
+        "attack_watched": 5,
+        "defense_nets": [
+          -95,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 1,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "mirror_siblings": 0,
+        "tally_corroborated": true
+      }
+    ],
+    "self_hp_candidates": [
+      {
+        "addr": 36,
+        "start": 36,
+        "attack_nets": [
+          -36,
+          -36,
+          -36,
+          -36,
+          -36
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -36,
+          -36,
+          -36,
+          -36,
+          -36
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 6
+      },
+      {
+        "addr": 57,
+        "start": 63,
+        "attack_nets": [
+          -54,
+          -54,
+          -54,
+          -54,
+          -54
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -63,
+          -63,
+          -63,
+          -63,
+          -63
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 5
+      },
+      {
+        "addr": 58,
+        "start": 63,
+        "attack_nets": [
+          -54,
+          -54,
+          -54,
+          -54,
+          -54
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -63,
+          -63,
+          -63,
+          -63,
+          -63
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 5
+      },
+      {
+        "addr": 59,
+        "start": 63,
+        "attack_nets": [
+          -54,
+          -54,
+          -54,
+          -54,
+          -54
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -63,
+          -63,
+          -63,
+          -63,
+          -63
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 5
+      },
+      {
+        "addr": 60,
+        "start": 63,
+        "attack_nets": [
+          -54,
+          -54,
+          -54,
+          -54,
+          -54
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -63,
+          -63,
+          -63,
+          -63,
+          -63
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 5
+      },
+      {
+        "addr": 35,
+        "start": 36,
+        "attack_nets": [
+          -36,
+          -36,
+          -36,
+          -36,
+          -36
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -36,
+          -36,
+          -36,
+          -36,
+          -36
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false,
+        "mirror_siblings": 5
+      }
+    ],
+    "self_hp_conflict": 115,
+    "tally_windows_found": 391,
+    "probe_evidence": {
+      "attack_reps": 5,
+      "attack_usable": 5,
+      "defense_reps": 5,
+      "defense_usable": 5
+    },
+    "note": "is_foe_hp on offense-driven decrement (agreed by 5 of 5 attack reps; flat under 5 defense-only reps)"
+  },
+  "round_gate": {
+    "kind": "no_round_signal",
+    "addr": null,
+    "candidates": [],
+    "void": false,
+    "drives": 10,
+    "usable": 10,
+    "probe_steps": 24000,
+    "bouts_observed": 10,
+    "note": "10 bout boundary(ies) observed across 24000 steps, but no byte was both stable within a bout and monotone across boundaries without resetting to start \u2014 behaviour finding"
+  }
+}
