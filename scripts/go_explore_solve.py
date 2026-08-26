@@ -7183,6 +7183,7 @@ class Solver:
                 f"cells for {self._stall['flat_windows']} min straight — "
                 f"possible frozen/dead state\n")
         line = {
+            "schema_version": 1,
             "t": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "elapsed_s": round(elapsed),
             "cells": n_cells,

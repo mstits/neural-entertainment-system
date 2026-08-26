@@ -54,6 +54,11 @@ DASHBOARD_OPTIONAL_KEYS: frozenset[str] = frozenset({
     "depth_scalar", "depth_leaf",
     "rnd_loss", "rnd_intrinsic_avg",
     "wm_total", "wm_recon", "wm_kl", "wm_reward", "wm_continue",
+    # Count of policy-logit rows `_safe_sample_from_logits` substituted
+    # a uniform distribution for (NaN/Inf — network divergence) this
+    # generation. GA/PPO-hybrid path only; always 0 when quiet, never
+    # null/missing.
+    "nan_rows_this_gen",
 })
 
 
@@ -126,6 +131,13 @@ class MetricsSink:
                     sorted(DASHBOARD_REQUIRED_KEYS),
                 )
         metrics["timestamp"] = time.time()
+        # Schema marker (start at 1) — lets a reader tell which field set
+        # a line was written under across runs, since old lines have no
+        # such marker at all and JSON lines from different eras of this
+        # sink otherwise carry silently different key sets. `generation`
+        # is a per-run counter, not this: it resets every run and says
+        # nothing about which fields a given run's trainer mode emitted.
+        metrics["schema_version"] = 1
         with open(self.metrics_path, "a") as f:
             f.write(json.dumps(metrics) + "\n")
         if self._queue is not None:
@@ -148,7 +160,8 @@ class MetricsSink:
                 return
         gen = metrics.get("generation", 0)
         for k, v in metrics.items():
-            if isinstance(v, (int, float)) and k not in ("generation", "timestamp"):
+            if (isinstance(v, (int, float))
+                    and k not in ("generation", "timestamp", "schema_version")):
                 try:
                     self._tb_writer.add_scalar(k, float(v), gen)
                 except Exception:

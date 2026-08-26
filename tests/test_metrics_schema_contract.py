@@ -49,6 +49,13 @@ def test_ga_ppo_path_emits_required_keys() -> None:
     # of _run_one_generation contains the literal strings.
     assert "best_fitness" in block
     assert "avg_fitness" in block
+    # nan_rows_this_gen: the policy-divergence row count from
+    # `_safe_sample_from_logits` must reach metrics.jsonl, not just the
+    # text log, and must default to 0 rather than being omitted.
+    assert "nan_rows_this_gen=" in block, (
+        "_run_one_generation must emit nan_rows_this_gen so NaN/Inf "
+        "policy divergence is visible in metrics.jsonl."
+    )
 
 
 def test_vanilla_ppo_path_emits_required_keys() -> None:

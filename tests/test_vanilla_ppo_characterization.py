@@ -85,7 +85,9 @@ def test_safe_sample_from_nonfinite_logits_never_crashes_and_stays_finite() -> N
         valid distribution and never reaches the `bad_rows` fallback;
       * an all-(-Inf) row sanitizes to all-equal -> uniform;
       * every returned log-prob is finite (the crash guard's real job),
-        three CPU tensors of the right shape, and finite rows are intact.
+        three CPU tensors of the right shape, and finite rows are intact;
+      * `n_bad_rows` (the 4th return value, threaded into metrics.jsonl
+        as `nan_rows_this_gen`) is 0 here — see the honest_note below.
 
     (See honest_note: the explicit uniform `bad_rows` substitution is
     effectively unreachable through logits alone — nan_to_num+clamp always
@@ -104,8 +106,11 @@ def test_safe_sample_from_nonfinite_logits_never_crashes_and_stays_finite() -> N
     )
 
     out = _safe_sample_from_logits(logits)
-    assert len(out) == 3, "expected (sampled, chosen_lp, log_probs_all)"
-    sampled, chosen_lp, log_probs_all = out
+    assert len(out) == 4, "expected (sampled, chosen_lp, log_probs_all, n_bad_rows)"
+    sampled, chosen_lp, log_probs_all, n_bad_rows = out
+    # nan_to_num+clamp sanitizes every row above to something finite
+    # before the bad_rows check runs, so the fallback never fires here.
+    assert n_bad_rows == 0
 
     # Shapes + CPU (the helper pulls device->host once).
     assert sampled.shape == (4,)

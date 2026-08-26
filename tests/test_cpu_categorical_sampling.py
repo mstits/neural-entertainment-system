@@ -150,7 +150,7 @@ def test_vanilla_replica_logprob_pairing_from_mps_logits():
 def test_safe_sample_logprob_pairing_cpu():
     torch.manual_seed(2)
     logits = torch.randn(12, 8)
-    sampled, chosen_lp, log_probs_all = _safe_sample_from_logits(logits)
+    sampled, chosen_lp, log_probs_all, _ = _safe_sample_from_logits(logits)
     assert log_probs_all.device.type == "cpu"
     assert chosen_lp.device.type == "cpu"
     assert sampled.device.type == "cpu"
@@ -164,7 +164,7 @@ def test_safe_sample_returns_cpu_from_mps_logits():
     caller's three `.cpu()` transfers collapse to a no-op."""
     torch.manual_seed(3)
     logits = torch.randn(12, 8, device="mps")
-    sampled, chosen_lp, log_probs_all = _safe_sample_from_logits(logits)
+    sampled, chosen_lp, log_probs_all, _ = _safe_sample_from_logits(logits)
     assert sampled.device.type == "cpu"
     assert chosen_lp.device.type == "cpu"
     assert log_probs_all.device.type == "cpu"

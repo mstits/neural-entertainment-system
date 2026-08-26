@@ -74,6 +74,7 @@ from src.training.ppo import (
 )
 from src.training.redo import maybe_check_and_recycle as _redo_maybe_check
 from src.training.metrics_sink import MetricsSink
+from src.training.notifications import StallNotifier
 from src.utils.reward_functions import build_reward_function
 
 
@@ -93,7 +94,8 @@ def _safe_sample_from_logits(
     logits: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Sample one action per row from policy logits without crashing on
-    NaN/Inf inputs. Returns (sampled_actions, chosen_log_probs).
+    NaN/Inf inputs. Returns (sampled_actions, chosen_log_probs, log_probs_all,
+    n_bad_rows).
 
     The PPO loss occasionally produces a network update that drives
     weights to NaN/Inf — usually when an outsized advantage estimate
@@ -126,7 +128,8 @@ def _safe_sample_from_logits(
     probs = log_probs_all.exp()
 
     bad_rows = (~torch.isfinite(probs).all(dim=-1)) | (probs.sum(dim=-1) <= 0)
-    if bad_rows.any():
+    n_bad_rows = int(bad_rows.sum())
+    if n_bad_rows:
         n_actions = probs.size(-1)
         uniform_p = 1.0 / float(n_actions)
         probs[bad_rows] = uniform_p
@@ -134,7 +137,7 @@ def _safe_sample_from_logits(
         log.warning(
             "policy logits contained NaN/Inf — substituted uniform "
             "distribution for %d row(s). Network may have diverged.",
-            int(bad_rows.sum()),
+            n_bad_rows,
         )
 
     sampled = torch.multinomial(probs, 1).squeeze(-1)
@@ -144,8 +147,10 @@ def _safe_sample_from_logits(
     # while keeping PPO's importance ratio correct: when sticky replaces
     # the sampled action with the previous one, we need the log-prob of
     # the OVERRIDDEN action under the CURRENT policy distribution, not
-    # the sampled-action's log-prob.
-    return sampled, chosen_lp, log_probs_all
+    # the sampled-action's log-prob. `n_bad_rows` lets callers accumulate
+    # a per-generation NaN/Inf divergence count for metrics.jsonl instead
+    # of the event being visible only in the text log.
+    return sampled, chosen_lp, log_probs_all, n_bad_rows
 
 
 # The 1-2 "gauntlet": the residual hard core of the level in global-x
@@ -1491,6 +1496,13 @@ class Trainer:
         # section surfaces immediately.
         from src.training.timing import GenTimer
         self._gen_timer = GenTimer()
+        # Count of policy-logit rows `_safe_sample_from_logits` had to
+        # substitute a uniform distribution for (NaN/Inf — network
+        # divergence) since the last emit. Snapshotted into
+        # `nan_rows_this_gen` and reset alongside `_gen_timer` so the
+        # divergence event is visible in metrics.jsonl, not just the
+        # text log.
+        self._nan_rows_this_gen = 0
         # Depth tracker — watches per-step RAM for new-all-time-deep
         # positions (dungeon+room for Zelda, world+level+x for Mario,
         # etc.). New records are captioned through the narrator and
@@ -3198,6 +3210,12 @@ class Trainer:
         timing_metrics = self._gen_timer.snapshot()
         self._gen_timer.reset()
 
+        # Policy-divergence count accumulated by `_safe_sample_from_logits`
+        # across this generation's step loop. Defaults to 0 (not
+        # null/missing) when no NaN/Inf substitution happened.
+        nan_rows_this_gen = self._nan_rows_this_gen
+        self._nan_rows_this_gen = 0
+
         # Current all-time depth record key (per game-specific lex order).
         # Surfaces in the dashboard as a "deepest reached" curve so the
         # user can watch curriculum progress at a glance even when raw
@@ -3226,6 +3244,7 @@ class Trainer:
             stage=self.curriculum.current_stage.name,
             success_rate=self.curriculum.stage_success_rate(),
             episodes=self.curriculum.episodes_in_stage,
+            nan_rows_this_gen=nan_rows_this_gen,
             **breakdown_metrics,
             **timing_metrics,
             **ppo_stats,
@@ -3567,7 +3586,8 @@ class Trainer:
                             stacked_params, stacked_buffers, x
                         )  # (N, 1, num_actions)
                         stacked_logits = stacked_logits.squeeze(1).float()
-                        sampled, chosen_lp, log_probs_all = _safe_sample_from_logits(stacked_logits)
+                        sampled, chosen_lp, log_probs_all, n_bad_rows = _safe_sample_from_logits(stacked_logits)
+                    self._nan_rows_this_gen += n_bad_rows
                     sampled_cpu = sampled.cpu().numpy()
                     lp_cpu = chosen_lp.cpu().numpy()
                     log_probs_all_cpu = log_probs_all.cpu().numpy()
@@ -3587,7 +3607,8 @@ class Trainer:
                         # Concat on device, sample once via the defensive
                         # helper, transfer once.
                         cat_logits = torch.cat(per_row_logits, dim=0).float()
-                        sampled, chosen_lp, log_probs_all = _safe_sample_from_logits(cat_logits)
+                        sampled, chosen_lp, log_probs_all, n_bad_rows = _safe_sample_from_logits(cat_logits)
+                    self._nan_rows_this_gen += n_bad_rows
                     sampled_cpu = sampled.cpu().numpy()
                     lp_cpu = chosen_lp.cpu().numpy()
                     log_probs_all_cpu = log_probs_all.cpu().numpy()
@@ -5417,6 +5438,37 @@ class Trainer:
         ge_burst_quota = 0
         ge_iters_since_advance = 0   # stall clock; reset on advance / arm / retract
         ge_bursts_done = 0
+        # Human-notify latch (pure addition — no effect on control flow).
+        # `ge_iters_since_advance` is bounded by design: the burst arm/
+        # retract housekeeping above resets it to 0 every ~(stall_patience
+        # + burst_iters) iters as long as the self-correcting Go-Explore
+        # fallback keeps engaging, so it only climbs PAST `stall_patience`
+        # when that automated recovery itself can't engage (blocked by an
+        # active consolidation freeze, or the frontier genuinely isn't
+        # being reached at all) — i.e. exactly the case where the built-in
+        # fallback has nothing left to try and a human should look. A
+        # threshold near `stall_patience` (or the much smaller, purely
+        # noise-smoothing `SMB_ADVANCE_WINDOW` rolling-mean window used by
+        # the ordinary advance gate a few hundred lines below) would fire
+        # on every routine burst cycle instead, so it's sized as a
+        # multiple of `stall_patience` — the existing "how long is too
+        # long" threshold for this exact counter — rather than of that
+        # unrelated, fast-smoothing window. 3x gives the fallback two full
+        # arm/retract cycles to unstick things on its own before paging a
+        # human on the third.
+        ge_stall_notify_multiplier = max(
+            1, int(_geb_cfg.get("stall_notify_multiplier", 3))
+        )
+        ge_stall_notify_threshold = ge_stall_patience * ge_stall_notify_multiplier
+        stall_notifier = StallNotifier(
+            threshold=ge_stall_notify_threshold,
+            title="Training stalled",
+            message_fn=lambda n: (
+                f"[{self.game_profile.get('name', 'unknown')}] "
+                f"{self.checkpoint_dir.name}: frontier has not advanced in "
+                f"{n} iters (notify threshold {ge_stall_notify_threshold})."
+            ),
+        )
         # Restore the rolling advance history + burst bookkeeping from a
         # resumed checkpoint (staged by CheckpointManager.resume). Without
         # it every resume re-earned the advance window from an empty
@@ -5437,6 +5489,11 @@ class Trainer:
             ge_burst_quota = int(_cr.get("ge_burst_quota", 0))
             ge_iters_since_advance = int(_cr.get("ge_iters_since_advance", 0))
             ge_bursts_done = int(_cr.get("ge_bursts_done", 0))
+            # Restore the notify latch too — without it, resuming mid-stall
+            # (ge_iters_since_advance already past threshold) would re-fire
+            # a notification for the same stall episode that already
+            # notified before the restart.
+            stall_notifier.notified = bool(_cr.get("ge_stall_notified", False))
             self._pending_curriculum_resume = None
             log.info(
                 "[vanilla_ppo] curriculum resume state RESTORED: "
@@ -8048,6 +8105,7 @@ class Trainer:
                 # early (no harvest — the capture already seeded the new rung).
                 if ge_burst_on:
                     ge_iters_since_advance = 0
+                    stall_notifier.reset()  # genuine advance — new stall episode
                     if ge_burst_active:
                         ge_burst_active = False
                         ge_archive = None
@@ -8916,6 +8974,9 @@ class Trainer:
                 progress_metrics["vanilla_ppo_ge_stall_iters"] = int(
                     ge_iters_since_advance
                 )
+                progress_metrics["vanilla_ppo_ge_stall_notified"] = int(
+                    stall_notifier.notified
+                )
 
             # Apply the consolidation coefficient schedule (or the cyclic
             # fallback oscillation) for the NEXT update.
@@ -9560,6 +9621,18 @@ class Trainer:
             # `stall_patience` iters of no advance.
             if ge_burst_on:
                 ge_iters_since_advance += 1
+                # Pure addition: surface a prolonged stall to a human via a
+                # macOS notification. Fires at most once per stall episode
+                # (see StallNotifier) and can never affect training —
+                # notify_macos swallows every failure (missing osascript,
+                # non-macOS host, etc.) and logs a warning instead.
+                try:
+                    stall_notifier.maybe_notify(ge_iters_since_advance)
+                except Exception as _e:
+                    log.warning(
+                        "[vanilla_ppo] stall notification check failed "
+                        "(non-fatal): %s", _e,
+                    )
             # Clear per-iter clear-counter + per-env completion-baseline.
             # Reward fns were just reset() above, so their `completion`
             # breakdowns are back to 0 — match that here.
@@ -9607,6 +9680,7 @@ class Trainer:
                     "ge_burst_active": bool(ge_burst_active),
                     "ge_burst_remaining": int(ge_burst_remaining),
                     "ge_burst_quota": int(ge_burst_quota),
+                    "ge_stall_notified": bool(stall_notifier.notified),
                     "ge_iters_since_advance": int(ge_iters_since_advance),
                     "ge_bursts_done": int(ge_bursts_done),
                 },
