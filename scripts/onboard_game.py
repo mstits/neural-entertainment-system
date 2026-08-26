@@ -727,9 +727,9 @@ def next_arm(verdict: Any, *, base_command: Optional[Sequence[str]] = None,
 
     An emitted command names `--resume-archive` only when the dir it
     points at holds a complete flushed snapshot (`RESUME_ARTIFACTS`),
-    and never on the INDETERMINATE arm — see `resume_ready` and the
-    comment on the resume-eligibility block below. `.notes` records the
-    decision either way.
+    and never on the INDETERMINATE or KEY_BLIND arms — see `resume_ready`
+    and the comment on the resume-eligibility block below. `.notes`
+    records the decision either way.
 
     A verdict may also carry a DESCRIPTOR — a non-verdict annotation
     saying what the archive looks like. It is read here only to be
@@ -907,7 +907,8 @@ def next_arm(verdict: Any, *, base_command: Optional[Sequence[str]] = None,
                     f"{reasons}. No coverage statistic over this key means "
                     f"anything until the key can see where progress happens.",
                     command=rebuild([("--gx-bucket", "8"), ("--y-band", "16"),
-                                     ("--minutes", longer())]),
+                                     ("--minutes", longer())],
+                                    may_resume=False),
                     edits=edits)
 
     if cls == BARREN:
@@ -1208,14 +1209,17 @@ def refine_from_tapes(profile_path: str | Path, chain: Any, *,
     else:
         notes.append("tape ranking agrees with the draft's progress byte")
 
+    rendered = _render_refinement(prof, block, tape, source=profile_path,
+                                  notes=notes)
+    blockers.extend(lint_profile_text(rendered))
+
     refined_path: Optional[Path] = None
     if write:
         refined_path = (
             Path(out_path) if out_path is not None
             else profile_path.with_name(profile_path.stem + ".refined.yaml"))
         refined_path.parent.mkdir(parents=True, exist_ok=True)
-        refined_path.write_text(_render_refinement(
-            prof, block, tape, source=profile_path, notes=notes))
+        refined_path.write_text(rendered)
     return RefinementResult(profile_path=profile_path, refined_path=refined_path,
                             findings=findings, gates=dict(tape.get("gates") or {}),
                             quality=dict(tape.get("quality") or {}),

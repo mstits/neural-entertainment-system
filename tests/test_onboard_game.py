@@ -684,6 +684,21 @@ def test_a_key_blind_run_shrinks_the_buckets_and_names_the_missing_axis():
     assert any("solve.y is absent" in e for e in arm.profile_edits)
 
 
+def test_a_key_blind_run_never_resumes_even_with_a_snapshot(tmp_path):
+    """KEY_BLIND shrinks --gx-bucket/--y-band, which are the cell key's
+    own axes. Resuming from a snapshot built under the old bucket sizes
+    would hand the solver a lineage mismatch on startup (`resume_lineage_
+    diff` flags gx_bucket/y_band, and `check_resume_lineage` SystemExits
+    on it since this arm never passes --allow-lineage-mismatch) — so this
+    arm re-instruments from the root exactly like INDETERMINATE."""
+    run = _snapshot(tmp_path / "calib")
+    assert resume_ready(run)
+    arm = next_arm(_verdict(WallClass.KEY_BLIND), base_command=BASE,
+                   run_dir=run, profile={"solve": {"area": AREA}})
+    assert "--resume-archive" not in arm.command
+    assert any("NOT resuming" in n for n in arm.notes)
+
+
 def test_an_indeterminate_run_is_re_instrumented_not_just_extended():
     arm = next_arm(_verdict(WallClass.INDETERMINATE,
                             missing=("frontier_bucket_cells",)),
@@ -1151,6 +1166,24 @@ def test_refinement_with_nothing_clearing_the_gates_blocks(rom, state, tmp_path)
                      tape=_fake_tape_findings(passing=False))
     assert res.blockers and "cleared both gates" in res.blockers[0]
     assert res.changed is False
+
+
+def test_refinement_blocks_on_a_draft_carrying_quarantined_material(rom, state, tmp_path):
+    """The draft is hand-edited between onboard() and --refine-chain by
+    design (the docstring's own example is trimming action_space), so a
+    stray top-level block surviving that edit has to be caught here too
+    — the same mechanical lint onboard() runs on its draft, or every
+    gate the module calls 'mechanical enforcement' is bypassed on this
+    write path."""
+    report, _ = _run(rom, tmp_path)
+    prof = yaml.safe_load(report.profile_path.read_text())
+    prof["quarantine"] = {"note": "pasted from a gamefaqs walkthrough"}
+    report.profile_path.write_text(yaml.safe_dump(prof, sort_keys=False))
+
+    res, _ = _refine(report.profile_path, "chain")
+
+    assert any("unrecognized top-level key: quarantine" in b for b in res.blockers)
+    assert any("gamefaqs" in b for b in res.blockers)
 
 
 def test_refinement_can_be_previewed_without_writing(rom, state, tmp_path):
