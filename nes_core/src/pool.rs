@@ -666,6 +666,39 @@ unsafe fn worker_mut(cell: &WorkerCell) -> &mut Worker {
     &mut *cell.0.get()
 }
 
+/// RAII marker for an in-flight rayon dispatch across `self.workers`.
+/// `enter` flips `Pool::in_parallel_section` on and panics immediately
+/// if it was already on (a `step_all`/`reset_all` dispatch re-entered
+/// while another was still in flight — itself a misuse this guard
+/// exists to catch); `Drop` flips it back off unconditionally,
+/// including on unwind, so a panic inside the guarded span can never
+/// leave the flag stuck on and permanently trip every later sequential
+/// call. See `Pool::in_parallel_section` and `Pool::assert_no_parallel_dispatch`.
+struct ParallelSectionGuard<'a> {
+    flag: &'a std::sync::atomic::AtomicBool,
+}
+
+impl<'a> ParallelSectionGuard<'a> {
+    fn enter(flag: &'a std::sync::atomic::AtomicBool) -> Self {
+        let was_open = flag.swap(true, std::sync::atomic::Ordering::AcqRel);
+        assert!(
+            !was_open,
+            "nes_core::Pool: step_all/reset_all re-entered while a rayon \
+             dispatch across self.workers was already in flight — this \
+             violates the Pool's documented single-caller sequencing (see \
+             the WorkerCell SAFETY note) and would otherwise silently \
+             alias a WorkerCell two dispatches both think they own.",
+        );
+        Self { flag }
+    }
+}
+
+impl Drop for ParallelSectionGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 struct AudioVecSink<'a> {
     buf: &'a mut Vec<i16>,
 }
@@ -839,6 +872,22 @@ pub struct Pool {
     /// `peek_u16_consistent` can lazily build a worker's scratch Nes
     /// (same ROM, independent instance) on first use.
     rom_bytes: Vec<u8>,
+    /// Reentrancy guard for the "exactly one Pool entry point touching
+    /// `self.workers` at a time" invariant the `WorkerCell`/`worker_mut`
+    /// SAFETY notes above depend on for soundness. Set for the duration
+    /// of every rayon dispatch across `self.workers` — `step_all`'s
+    /// worker closure and `reset_all`'s reset loop + its
+    /// `collect_results` call — via `ParallelSectionGuard`, and checked
+    /// by `assert_no_parallel_dispatch` at the top of every other
+    /// method that touches `self.workers`/`WorkerCell`. A caller that
+    /// violates the documented sequencing (e.g. invoking
+    /// `save_worker_state` from another thread while `step_all` is
+    /// still running) trips an immediate, loud panic instead of
+    /// silently aliasing a `WorkerCell` a rayon task still owns. Pure
+    /// addition: one `Acquire` load per guarded call in the
+    /// correct-usage path, where this flag is always `false` — it
+    /// changes behavior ONLY in the misuse case.
+    in_parallel_section: std::sync::atomic::AtomicBool,
 }
 
 #[pymethods]
@@ -912,6 +961,7 @@ impl Pool {
             spectator_subframe_skip: std::sync::atomic::AtomicBool::new(true),
             pool_pace_next_target: std::sync::Mutex::new(None),
             rom_bytes,
+            in_parallel_section: std::sync::atomic::AtomicBool::new(false),
         };
 
         if let Some(p) = start_state_path {
@@ -926,6 +976,10 @@ impl Pool {
     /// (remains in the pool but short-circuits to zero-frame on
     /// future calls), so one bad worker can't poison the other 15.
     fn reset_all<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        // Guard spans the whole method, including the nested
+        // `collect_results` call below (its own par_iter also touches
+        // `self.workers`) — see `ParallelSectionGuard`.
+        let _guard = ParallelSectionGuard::enter(&self.in_parallel_section);
         // Load the flag once outside the rayon closure — per-closure
         // atomic loads would reintroduce the overhead this gate exists
         // to avoid. Acquire pairs with the Release store in
@@ -1068,6 +1122,7 @@ impl Pool {
         py: Python<'py>,
         worker_id: usize,
     ) -> PyResult<Bound<'py, PyBytes>> {
+        self.assert_no_parallel_dispatch();
         if worker_id >= self.num_workers {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "worker_id out of range",
@@ -1085,6 +1140,7 @@ impl Pool {
         py: Python<'py>,
         worker_id: usize,
     ) -> PyResult<Bound<'py, pyo3::types::PyByteArray>> {
+        self.assert_no_parallel_dispatch();
         if worker_id >= self.num_workers {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "worker_id out of range",
@@ -1118,6 +1174,7 @@ impl Pool {
     /// call `set_worker_audio` — between the two, the LAST call wins
     /// for the audio-enable state.
     fn set_worker_pace(&self, worker_id: usize, on: bool) {
+        self.assert_no_parallel_dispatch();
         if worker_id >= self.num_workers {
             return;
         }
@@ -1148,6 +1205,7 @@ impl Pool {
     /// same audio-enable flag as a back-compat side effect. Between
     /// the two, the LAST call wins. Out-of-range ids are ignored.
     fn set_worker_audio(&self, worker_id: usize, on: bool) {
+        self.assert_no_parallel_dispatch();
         if worker_id >= self.num_workers {
             return;
         }
@@ -1222,6 +1280,7 @@ impl Pool {
     /// the memory barrier we need so writes from the worker threads
     /// are visible.
     fn peek_max_x_per_worker(&self) -> Vec<u32> {
+        self.assert_no_parallel_dispatch();
         self.workers
             .iter()
             .map(|cell| {
@@ -1283,6 +1342,7 @@ impl Pool {
     /// code may compete for L1i; experimental toggle for benching.
     /// Off by default (asm_cpu stays on, matches GUI / single-env).
     fn set_disable_asm_cpu(&self, on: bool) -> PyResult<()> {
+        self.assert_no_parallel_dispatch();
         // SAFETY: called sequentially from Python — never overlaps
         // with an in-flight step_all/reset_all rayon dispatch.
         for cell in &self.workers {
@@ -1307,6 +1367,7 @@ impl Pool {
     /// per-game ONLY after the lockstep + Mesen-oracle + parity
     /// gate passes at that budget. Measured ladder: 1 -> 8 -> 16.
     fn set_asm_bulk_cycles(&self, cycles: i64) -> PyResult<()> {
+        self.assert_no_parallel_dispatch();
         if !(1..=16).contains(&cycles) {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 format!("asm_bulk_cycles must be in 1..=16, got {cycles}"),
@@ -1326,6 +1387,7 @@ impl Pool {
     /// see the Cpu field doc for the ground-truth receipt. Default
     /// OFF (legacy LaiNES-parity early commit).
     fn set_hw_mmio_read_timing(&self, on: bool) {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1338,6 +1400,7 @@ impl Pool {
     /// `Nes` field doc. Takes effect on each worker's next reset.
     /// Default OFF (legacy boot accounting).
     fn set_hw_reset_alignment(&self, on: bool) {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1349,6 +1412,7 @@ impl Pool {
     /// mirror is `NESEnvironment::set_hw_dmc_stall_timing`; see the
     /// `Apu` field doc. Default OFF (legacy flat-4 stall).
     fn set_hw_dmc_stall_timing(&self, on: bool) {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1364,6 +1428,7 @@ impl Pool {
     /// inputPolled schedule. Config, not state: survives
     /// `load_worker_state`. Default OFF.
     fn set_hw_frame_anchor(&self, on: bool) {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1376,6 +1441,7 @@ impl Pool {
     /// mirror is `NESEnvironment::set_hw_nmi_poll_timing`; see the
     /// Cpu field doc. Disables ASM/bulk fast paths while on.
     fn set_hw_nmi_poll_timing(&self, on: bool) {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1388,6 +1454,7 @@ impl Pool {
     /// `NESEnvironment::set_hw_nmi_subcycle_phase`; see the `Nes`
     /// field doc. Disables ASM/bulk fast paths while on. Default OFF.
     fn set_hw_nmi_subcycle_phase(&self, on: bool) {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1404,6 +1471,7 @@ impl Pool {
     /// worker BEFORE any worker is mutated, so a refusal leaves the pool
     /// uniformly configured.
     fn set_hw_vblank_read_race(&self, on: bool) -> PyResult<()> {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         if on {
             for (i, cell) in self.workers.iter().enumerate() {
@@ -1429,6 +1497,7 @@ impl Pool {
     /// on every worker? Single-env mirror is
     /// `NESEnvironment::vblank_read_race_prereqs_met`.
     fn vblank_read_race_prereqs_met(&self) -> bool {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1442,6 +1511,7 @@ impl Pool {
     /// Hardware-true PPU-register write timing on every worker —
     /// single-env mirror is `NESEnvironment::set_hw_mmio_write_timing`.
     fn set_hw_mmio_write_timing(&self, on: bool) {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1453,6 +1523,7 @@ impl Pool {
     /// `NESEnvironment::set_hw_event_ppu`; see the `Nes` field doc.
     /// Observably identical to the legacy inline interleave. Default OFF.
     fn set_hw_event_ppu(&self, on: bool) {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1465,6 +1536,7 @@ impl Pool {
     /// `NESEnvironment::set_ppu_read_dot_offset` (event-driven PPU
     /// Stage 3). 0..=2 (clamped); default 2 = byte-identical.
     fn set_ppu_read_dot_offset(&self, offset: u8) {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1475,6 +1547,7 @@ impl Pool {
     /// Write-side mirror of `set_ppu_read_dot_offset` on every worker —
     /// single-env mirror is `NESEnvironment::set_ppu_write_dot_offset`.
     fn set_ppu_write_dot_offset(&self, offset: u8) {
+        self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
@@ -1487,6 +1560,7 @@ impl Pool {
     /// writing games for a measured +10-27% single-env throughput.
     /// Accepts "off", "verify", "replace".
     fn set_batched_render_mode(&self, mode: &str) -> PyResult<()> {
+        self.assert_no_parallel_dispatch();
         let bmode = match mode {
             "off" => crate::ppu::BatchedRenderMode::Off,
             "verify" => crate::ppu::BatchedRenderMode::Verify,
@@ -1513,6 +1587,7 @@ impl Pool {
         py: Python<'py>,
         worker_id: usize,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        self.assert_no_parallel_dispatch();
         if worker_id >= self.num_workers {
             return Ok(None);
         }
@@ -1540,6 +1615,7 @@ impl Pool {
         worker_id: usize,
         data: &Bound<'_, PyBytes>,
     ) -> PyResult<()> {
+        self.assert_no_parallel_dispatch();
         if worker_id >= self.num_workers {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "worker_id out of range",
@@ -1656,6 +1732,7 @@ impl Pool {
         lo_addr: u16,
         hi_addr: u16,
     ) -> PyResult<(u16, bool)> {
+        self.assert_no_parallel_dispatch();
         if worker_id >= self.num_workers {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "worker_id out of range",
@@ -1679,6 +1756,7 @@ impl Pool {
     /// the v3 savestate envelope, so `load_worker_state` restores stay
     /// coherent automatically.
     fn set_odometer_enabled(&self, enabled: bool) {
+        self.assert_no_parallel_dispatch();
         for cell in &self.workers {
             // SAFETY: called sequentially from Python — never overlaps
             // an in-flight step_all/reset_all rayon dispatch.
@@ -1699,6 +1777,7 @@ impl Pool {
     /// discontinuity (stage wipe, room flip). Pairs with the odometer
     /// as a lexicographic progress key: (scene, within-scene x).
     fn get_odometer_scene_per_worker(&self) -> Vec<u32> {
+        self.assert_no_parallel_dispatch();
         self.workers
             .iter()
             .map(|cell| {
@@ -1712,6 +1791,7 @@ impl Pool {
     /// Per-worker accumulated global scroll position [(x, y); workers],
     /// in pixels. (0, 0) for workers with the odometer disabled.
     fn get_odometer_per_worker(&self) -> Vec<(i64, i64)> {
+        self.assert_no_parallel_dispatch();
         self.workers
             .iter()
             .map(|cell| {
@@ -1727,6 +1807,7 @@ impl Pool {
     /// rendered_lines_voting) from the most recent frame fold. Triage
     /// surface for flat odometers.
     fn odo_debug(&self, worker_id: usize) -> PyResult<(i32, i32, usize)> {
+        self.assert_no_parallel_dispatch();
         if worker_id >= self.num_workers {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
                 "worker_id out of range",
@@ -1751,6 +1832,7 @@ impl Pool {
                 "worker_id out of range",
             ));
         }
+        self.assert_no_parallel_dispatch();
         // SAFETY: sequential with step_all/reset_all.
         let w = unsafe { &*self.workers[worker_id].0.get() };
         Ok(PyBytes::new_bound(py, w.nes.ppu.nametable_snapshot()))
@@ -1768,6 +1850,7 @@ impl Pool {
                 "worker_id out of range",
             ));
         }
+        self.assert_no_parallel_dispatch();
         // SAFETY: sequential with step_all/reset_all.
         let w = unsafe { &*self.workers[worker_id].0.get() };
         Ok(PyBytes::new_bound(py, w.nes.ppu.oam_snapshot()))
@@ -1784,6 +1867,7 @@ impl Pool {
     /// the trainer can log/act on it instead of training on a dead cohort.
     #[getter]
     fn num_dead(&self) -> usize {
+        self.assert_no_parallel_dispatch();
         let mut n = 0;
         for cell in &self.workers {
             // Sequential getter — never overlaps step_all/reset_all.
@@ -1805,6 +1889,28 @@ impl Pool {
 }
 
 impl Pool {
+    /// Panics if called while a `step_all`/`reset_all` rayon dispatch
+    /// across `self.workers` is in flight. Every "sequential" Pool
+    /// method that touches `self.workers`/`WorkerCell` calls this
+    /// first — see `Pool::in_parallel_section` and the `WorkerCell`
+    /// SAFETY note for the invariant this enforces. Single `Acquire`
+    /// atomic load in the correct-usage path (the flag is always
+    /// `false` there): a pure addition that changes behavior ONLY in
+    /// the misuse case.
+    #[inline(always)]
+    fn assert_no_parallel_dispatch(&self) {
+        assert!(
+            !self
+                .in_parallel_section
+                .load(std::sync::atomic::Ordering::Acquire),
+            "nes_core::Pool: a sequential method was called while \
+             step_all/reset_all is still dispatching across \
+             self.workers — this violates the Pool's documented \
+             single-caller sequencing (see the WorkerCell SAFETY note) \
+             and would otherwise silently race an in-flight rayon task.",
+        );
+    }
+
     /// Decode one Python action argument into `num_workers` button
     /// masks. `what` names the argument in error messages so a 2P
     /// caller can tell which of the two lanes was malformed.
@@ -1845,6 +1951,7 @@ impl Pool {
     /// Python-free core of `apu_activity_all`. Dead workers report
     /// 0x00 (nothing is sounding in a worker that isn't running).
     fn apu_activity_all_native(&self) -> Vec<u8> {
+        self.assert_no_parallel_dispatch();
         (0..self.num_workers)
             .map(|idx| {
                 // SAFETY: called sequentially from Python (or a test) —
@@ -1917,7 +2024,12 @@ impl Pool {
         // The `&mut Worker` reborrowed from the UnsafeCell is valid
         // for the lifetime of this closure — no aliasing, so it
         // crosses the `catch_unwind` boundary soundly.
-        let collected: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> = self
+        let collected: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> = {
+            // Guard covers exactly the rayon dispatch below — dropped
+            // before `pace_pool_step`, which never touches
+            // `self.workers`. See `ParallelSectionGuard`.
+            let _guard = ParallelSectionGuard::enter(&self.in_parallel_section);
+            self
             .workers
             .par_iter()
             .zip(actions_vec.par_iter())
@@ -2080,7 +2192,8 @@ impl Pool {
                     }
                 }
             })
-            .collect();
+            .collect()
+        };
         // Pool-level pacing: ONE sleep on this (calling) thread after
         // the parallel block joins. Rayon threads never sleep, so N
         // paced workers cost the same as one — no ~thread-count
@@ -2160,6 +2273,7 @@ impl Pool {
     }
 
     fn load_start_state(&self, path: &std::path::Path) -> PyResult<()> {
+        self.assert_no_parallel_dispatch();
         let raw = std::fs::read(path).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "failed to read start state {}: {e}",
