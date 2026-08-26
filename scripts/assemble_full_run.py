@@ -95,6 +95,37 @@ def level_dirs():
     return out
 
 
+def recorded_profile(sol: Path) -> str | None:
+    """The action_space profile `sol` was solved under, per its sidecar
+    json, if recorded. Solver args live under `solver_args` on some
+    sidecars and at top level on others (mirrors
+    scripts/replay_sweep.py's `pick`); absent on legacy sidecars that
+    predate this field."""
+    j = Path(str(sol).replace(".actions.npy", ".json"))
+    if not j.exists():
+        return None
+    rec = json.loads(j.read_text())
+    return rec.get("profile") or (rec.get("solver_args") or {}).get("profile")
+
+
+def check_recorded_profile(sol: Path, bm, profile: str) -> None:
+    """Raise if `sol` was recorded solved under a different action_space
+    profile than `profile` (the one `bm` was built from) whose bitmasks
+    actually disagree with `bm`. Silent when no profile is recorded
+    (legacy sidecars) or when the recorded profile's bitmasks agree —
+    only a real mismatch can splice a wrong-but-plausible button tape."""
+    rp = recorded_profile(sol)
+    if rp is None or rp == profile:
+        return
+    rp_bm = action_space_to_bitmasks(
+        yaml.safe_load(Path(rp).read_text())["action_space"])
+    assert tuple(rp_bm) == tuple(bm), (
+        f"{sol}: recorded solved under profile {rp!r} whose action_space "
+        f"bitmasks {rp_bm} disagree with this run's --profile {profile!r} "
+        f"bitmasks {bm} — decoding it through the wrong table would "
+        f"silently splice a wrong-but-plausible button tape")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", default="configs/smb_4_4_micro.yaml")
@@ -144,6 +175,7 @@ def main():
     ram = step(0)                         # solver rooting convention no-op
 
     for name, sol in levels:
+        check_recorded_profile(sol, bm, args.profile)
         acts = np.load(sol).astype(int)
         start_wd = (int(ram[0x75F]), int(ram[0x75C]))
         is_finale = (start_wd == (7, 3))

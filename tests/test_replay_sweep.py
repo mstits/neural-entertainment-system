@@ -19,8 +19,8 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.replay_sweep import (  # noqa: E402
     KNOWN_BAD, TapeSpec, Verdict, build_consumer_index, build_report,
-    discover_tapes, evaluate_gate, read_tape, resolve_profile,
-    resolve_from_siblings, sibling_profiles, spec_problems,
+    discover_tapes, evaluate_gate, read_tape, resolve_hw_flags,
+    resolve_profile, resolve_from_siblings, sibling_profiles, spec_problems,
     verify_ram_trace,
 )
 
@@ -96,6 +96,50 @@ def test_read_tape_extracts_core_sha16_from_hw_provenance(tmp_path):
     }))
     spec = read_tape(p, root=tmp_path)
     assert spec.core_sha16 == "0320f3be9080b9f8"
+
+
+def test_resolve_hw_flags_reads_the_tapes_own_recorded_lineage(tmp_path):
+    """A tape's own hw_provenance.hw_flags must win over the profile's
+    defaults even when its root has no .state.json sidecar to fall back
+    on (checked: 0/355 banked tapes have a top-level "hw" key, 148 have
+    "hw_provenance"). Reading "hw" instead of "hw_provenance" silently
+    drops this to the default on every tape — the exact false-FAIL bug
+    that hit three Castlevania tapes."""
+    root_state = tmp_path / "checkpoints" / "root.state"
+    root_state.parent.mkdir(parents=True)
+    root_state.write_bytes(b"")
+    tape = tmp_path / "sol_000.json"
+    tape.write_text(json.dumps({
+        "hw_provenance": {"hw_flags": [
+            "reset_alignment", "mmio_read_timing",
+            "dmc_stall_timing", "nmi_poll_timing"]},
+    }))
+    spec = TapeSpec(tape="sol_000.json", actions="a.npy",
+                    root_state=str(root_state.relative_to(tmp_path)),
+                    profile="configs/p.yaml", start_wd=[0, 0],
+                    clear_wd=[0, 1], steps=3, core_sha16=None)
+    got = resolve_hw_flags(spec, default_hw_flags=(), root=tmp_path)
+    assert got == ("reset_alignment", "mmio_read_timing",
+                   "dmc_stall_timing", "nmi_poll_timing")
+
+
+def test_resolve_hw_flags_falls_back_to_sidecar_then_default(tmp_path):
+    root_state = tmp_path / "checkpoints" / "root.state"
+    root_state.parent.mkdir(parents=True)
+    root_state.write_bytes(b"")
+    tape = tmp_path / "sol_000.json"
+    tape.write_text(json.dumps({}))
+    spec = TapeSpec(tape="sol_000.json", actions="a.npy",
+                    root_state=str(root_state.relative_to(tmp_path)),
+                    profile="configs/p.yaml", start_wd=[0, 0],
+                    clear_wd=[0, 1], steps=3, core_sha16=None)
+    assert resolve_hw_flags(spec, default_hw_flags=("default",),
+                            root=tmp_path) == ("default",)
+
+    (tmp_path / (str(root_state.relative_to(tmp_path)) + ".json")
+     ).write_text(json.dumps({"hw_flags": ["from_sidecar"]}))
+    assert resolve_hw_flags(spec, default_hw_flags=("default",),
+                            root=tmp_path) == ("from_sidecar",)
 
 
 def test_spec_problems_names_each_missing_input(tmp_path):

@@ -241,6 +241,35 @@ def resolve_from_siblings(spec: TapeSpec, sibs: dict[str, str],
     return spec
 
 
+def resolve_hw_flags(spec: TapeSpec, default_hw_flags: tuple,
+                     root: Path = REPO) -> tuple:
+    """The tape's own recorded hw flags win over the profile's defaults.
+
+    Replaying under different flags diverges the trace and produces a
+    false FAIL — three Castlevania tapes failed exactly this way while
+    same-family tapes with matching lineage passed. The tape's own
+    lineage wins; a tape with no recorded lineage replays under the
+    profile's.
+    """
+    rec_hw = ((json.loads((root / spec.tape).read_text()).get("hw_provenance")
+              or {}).get("hw_flags"))
+    if rec_hw is None:
+        # Older tapes carry no lineage of their own, but their ROOT often
+        # does: entrance blobs ship a .state.json sidecar recording the
+        # hw flags the machine ran with. Three Castlevania tapes failed
+        # as "never satisfied is_clear" purely because their root was
+        # built under ['reset_alignment','mmio_read_timing',
+        # 'dmc_stall_timing','nmi_poll_timing'] and the replay ran under
+        # the profile's defaults — the trace diverges from frame one.
+        side = root / (spec.root_state + ".json")
+        if side.exists():
+            try:
+                rec_hw = json.loads(side.read_text()).get("hw_flags")
+            except (OSError, json.JSONDecodeError):
+                rec_hw = None
+    return tuple(rec_hw) if rec_hw is not None else default_hw_flags
+
+
 def spec_problems(spec: TapeSpec, root: Path = REPO) -> list[str]:
     """Everything missing BEFORE the emulator is started.
 
@@ -426,30 +455,8 @@ def main(argv: list[str] | None = None) -> int:
                 profile, rom=rom_hint)
             # The tape records the hw flags it was made under. Replaying
             # under different flags diverges the trace and produces a
-            # false FAIL — three Castlevania tapes failed exactly this way
-            # while same-family tapes with matching lineage passed. The
-            # tape's own lineage wins; a tape with no recorded lineage
-            # replays under the profile's.
-            rec_hw = (json.loads((REPO / spec.tape).read_text())
-                      .get("hw") or {}).get("hw_flags")
-            if rec_hw is None:
-                # Older tapes carry no lineage of their own, but their
-                # ROOT often does: entrance blobs ship a .state.json
-                # sidecar recording the hw flags the machine ran with.
-                # Three Castlevania tapes failed as "never satisfied
-                # is_clear" purely because their root was built under
-                # ['reset_alignment','mmio_read_timing','dmc_stall_timing',
-                # 'nmi_poll_timing'] and the replay ran under the
-                # profile's defaults — the trace diverges from frame one.
-                side = REPO / (spec.root_state + ".json")
-                if side.exists():
-                    try:
-                        rec_hw = (json.loads(side.read_text())
-                                  .get("hw_flags"))
-                    except (OSError, json.JSONDecodeError):
-                        rec_hw = None
-            if rec_hw is not None:
-                hw_flags = tuple(rec_hw)
+            # false FAIL — see resolve_hw_flags for the recovery order.
+            hw_flags = resolve_hw_flags(spec, hw_flags)
             game = make_game(profile)
             root = load_root(REPO / spec.root_state, hw_flags)
             actions = np.load(REPO / spec.actions, allow_pickle=False)

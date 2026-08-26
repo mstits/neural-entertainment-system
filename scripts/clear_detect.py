@@ -989,26 +989,32 @@ def run_ground_truth_test(run_bases: list[str], verbose: bool = True) -> dict:
             continue
         root_bytes = root_path.read_bytes()
 
-        env = nes_core.NESEnvironment(game.rom, frame_skip=1)
-        env.reset()
-        env.set_audio_output_enabled(True)
-        env.load_state(root_bytes)
-        for _ in range(FS):   # rooting convention: one NOOP = FS raw frames
-            env.step(0)
+        env = None
+        try:
+            env = nes_core.NESEnvironment(game.rom, frame_skip=1)
+            env.reset()
+            env.set_audio_output_enabled(True)
+            env.load_state(root_bytes)
+            for _ in range(FS):   # rooting convention: one NOOP = FS raw frames
+                env.step(0)
 
-        ram0 = np.array(env.get_ram_range(0, 2048), dtype=np.uint8)
-        start_wd = tuple(game.level_key(ram0))
-        expected_start = tuple(meta["start_wd"])
-        if start_wd != expected_start:
-            per_run.append({"run": base, "error":
-                             f"root replay mismatch: got {start_wd}, expected {expected_start}"})
-            env.close()
+            ram0 = np.array(env.get_ram_range(0, 2048), dtype=np.uint8)
+            start_wd = tuple(game.level_key(ram0))
+            expected_start = tuple(meta["start_wd"])
+            if start_wd != expected_start:
+                per_run.append({"run": base, "error":
+                                 f"root replay mismatch: got {start_wd}, expected {expected_start}"})
+                continue
+
+            t0 = time.time()
+            report = run_episode(env, game, bitmasks, dir_bitmask, actions, start_wd)
+            elapsed = time.time() - t0
+        except Exception as e:
+            per_run.append({"run": base, "error": f"replay failed: {e}"})
             continue
-
-        t0 = time.time()
-        report = run_episode(env, game, bitmasks, dir_bitmask, actions, start_wd)
-        elapsed = time.time() - t0
-        env.close()
+        finally:
+            if env is not None:
+                env.close()
 
         true_f = report["true_clear_frame"]
         det_f = report["detected_frame"]

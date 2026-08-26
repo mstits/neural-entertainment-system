@@ -11,7 +11,14 @@ for the emulator.
 
 from __future__ import annotations
 
+import json
+
+import numpy as np
+import pytest
+import yaml
+
 import scripts.assemble_full_run as afr
+from src.training.profile_utils import action_space_to_bitmasks
 
 
 def _scripted_step(wd_sequence):
@@ -61,3 +68,77 @@ def test_settle_rides_out_a_transient_key_past_the_old_fixed_8_step_point():
         f"expected settle to consume settle + stable_for + 1 steps, got "
         f"{step.calls['n']}"
     )
+
+
+def _write_profile(path, action_space):
+    path.write_text(yaml.safe_dump({"action_space": action_space}))
+
+
+def test_check_recorded_profile_catches_a_reordered_action_space(tmp_path):
+    """A sidecar recording a different --profile than the one this run
+    is decoding with must be rejected when that profile's action_space
+    bitmasks actually disagree — the silent-mis-decode scenario: same
+    length, differently-ordered button lists, so every action index is
+    still in range and nothing raises IndexError, but the button masks
+    those indices map to are wrong."""
+    action_space = [
+        [], ["right"], ["right", "A"], ["right", "B"],
+        ["right", "A", "B"], ["A"], ["left"], ["left", "A"],
+        ["down"], ["down", "right"], ["down", "left"],
+    ]
+    reordered = [
+        [], ["right", "A"], ["right"], ["right", "A", "B"],
+        ["right", "B"], ["left"], ["A"], ["down"],
+        ["left", "A"], ["down", "left"], ["down", "right"],
+    ]
+    default_profile = tmp_path / "default.yaml"
+    other_profile = tmp_path / "other.yaml"
+    _write_profile(default_profile, action_space)
+    _write_profile(other_profile, reordered)
+    bm = action_space_to_bitmasks(action_space)
+    assert bm != action_space_to_bitmasks(reordered), (
+        "fixture is broken: the two profiles must actually disagree"
+    )
+
+    sols = tmp_path / "solutions"
+    sols.mkdir()
+    sol = sols / "sol_000.actions.npy"
+    np.save(sol, np.arange(len(action_space), dtype=np.int64))
+    (sols / "sol_000.json").write_text(
+        json.dumps({"profile": str(other_profile)}))
+
+    with pytest.raises(AssertionError):
+        afr.check_recorded_profile(sol, bm, str(default_profile))
+
+
+def test_check_recorded_profile_silent_when_bitmasks_agree(tmp_path):
+    """A recorded profile at a different path but with an identical
+    action_space (so identical bitmasks) is not a mismatch."""
+    action_space = [[], ["right"], ["A"]]
+    default_profile = tmp_path / "default.yaml"
+    same_profile = tmp_path / "same.yaml"
+    _write_profile(default_profile, action_space)
+    _write_profile(same_profile, action_space)
+    bm = action_space_to_bitmasks(action_space)
+
+    sols = tmp_path / "solutions"
+    sols.mkdir()
+    sol = sols / "sol_000.actions.npy"
+    np.save(sol, np.arange(len(action_space), dtype=np.int64))
+    (sols / "sol_000.json").write_text(
+        json.dumps({"profile": str(same_profile)}))
+
+    afr.check_recorded_profile(sol, bm, str(default_profile))  # must not raise
+
+
+def test_check_recorded_profile_silent_when_unrecorded(tmp_path):
+    """Legacy sidecars (or no sidecar at all) that never recorded which
+    profile solved them must not block assembly — there is nothing to
+    check against, and closing that separate recording gap is out of
+    scope for this check."""
+    sols = tmp_path / "solutions"
+    sols.mkdir()
+    sol = sols / "sol_000.actions.npy"
+    np.save(sol, np.arange(3, dtype=np.int64))
+
+    afr.check_recorded_profile(sol, (0, 1, 2), "configs/anything.yaml")
