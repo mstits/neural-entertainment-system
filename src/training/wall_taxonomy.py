@@ -1174,7 +1174,7 @@ def _evidence(tel: WallTelemetry, window: int) -> dict[str, Any]:
         "topo_delta": topo,
         "map_delta": b.max_gx - a.max_gx,
         "solutions": b.solutions,
-        "frozen_windows": max(r.stall_flat_windows for r in recs[n - window - 1:]),
+        "frozen_windows": b.stall_flat_windows,
         # Reported-only diagnostics (every one REFUTED as a gate).
         "doors_delta": b.doors - a.doors,
         "raw_coverage_saturation": saturation(recs, "cells", window),

@@ -599,6 +599,26 @@ def test_frozen_archive_without_an_archive_snapshot_is_barren():
     assert "frozen_windows" in v.reasons[-1]
 
 
+def test_frozen_windows_reads_the_last_record_not_the_windows_stale_peak():
+    """A historical stall peak earlier in the trailing window must not
+    outlive a mid-window recovery. Record index 1 (the start of the
+    trailing window) carries a genuine past stall of 13 windows; every
+    record since has reset and is climbing, with the LAST record sitting
+    at 2. `frozen_windows` has to report the run's current state, not
+    the max ever seen inside the window — otherwise a search that is
+    actively discovering new cells reads as permanently frozen."""
+    recs = make_records(n=12, cells_start=10_000, cells_end=20_000)
+    stall_by_index = [0, 13, 0, 1, 0, 1, 2, 0, 1, 2, 1, 2]
+    recs = tuple(
+        ProgressRecord(**{**r.__dict__, "stall_flat_windows": stall_by_index[i]})
+        for i, r in enumerate(recs)
+    )
+    tel = WallTelemetry(records=recs)
+    v = gated_wall_verdict(tel)
+    assert v.evidence["frozen_windows"] == 2
+    assert v.wall_class is WallClass.INDETERMINATE
+
+
 def test_trivially_small_archive_is_barren_independently_of_the_stall_flag():
     tel = WallTelemetry(records=make_records(
         n=30, cells_start=40, cells_end=48, frozen=0))
