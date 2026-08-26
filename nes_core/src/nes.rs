@@ -1197,10 +1197,15 @@ impl Nes {
         }
         self.ppu.reset();
         self.apu.reset();
-        // Mapper has been reset (during cpu.reset above? actually
-        // mapper isn't reset here — that's Mapper::reset and isn't
-        // called from Nes::reset). But re-cache anyway so first
-        // ASM dispatch sees the right pointer.
+        // Cartridge-side state (PRG/CHR bank registers, mirroring,
+        // WRAM banking, any live scanline-IRQ counter) does not reset
+        // with the CPU/PPU/APU — it lives in the mapper, so it needs
+        // its own reset() call or a "reset" leaves stale banking and
+        // even a spurious pending IRQ in place. Every Mapper impl
+        // provides one; wire it up here.
+        self.mapper.reset();
+        // Re-cache after the mapper reset so first ASM dispatch sees
+        // the right pointer.
         self.cached_prg_asm_ptr = self.mapper.prg_asm_ptr();
         self.cached_asm_bulk_cycles = self.mapper.asm_bulk_cycles();
         self.cached_ppu_batchable = self.ppu_batchable();
@@ -2990,5 +2995,78 @@ mod unsupported_mapper_boundary_tests {
             panic!("panic payload was neither &str nor String");
         };
         assert_eq!(msg, format!("Unsupported mapper number: {mapper_num}"));
+    }
+}
+
+/// Regression coverage for `Nes::reset()` skipping the mapper.
+/// Cartridge-side state — PRG/CHR bank-select registers, mirroring,
+/// WRAM banking, and (for MMC3-class mappers) a live scanline-IRQ
+/// counter — lives entirely in the mapper and is untouched by
+/// cpu/ppu/apu reset. Without `self.mapper.reset()` wired into
+/// `Nes::reset()`, the "cold reset" fallback used by `pool.rs`'s
+/// `Worker::reset` and `python.rs`'s `restore_or_reset` would silently
+/// keep stale banking/mirroring — and even a spurious pending MMC3
+/// IRQ — instead of true power-on state.
+#[cfg(test)]
+mod mapper_reset_tests {
+    use super::*;
+    use crate::cartridge::{Cartridge, Mirroring};
+
+    // MMC3 (mapper 4) register addresses. Any even/odd address in
+    // each range works; the mapper only looks at bit 0 and the
+    // $C000/$E000 split.
+    const PRG_BANK_SELECT: u16 = 0x8000;
+    const PRG_BANK_DATA: u16 = 0x8001;
+    const IRQ_LATCH: u16 = 0xC000;
+    const IRQ_RELOAD: u16 = 0xC001;
+    const IRQ_ENABLE: u16 = 0xE001;
+
+    fn mmc3_cart() -> Cartridge {
+        Cartridge {
+            mapper: 4,
+            sub_mapper: 0,
+            mirroring: Mirroring::Horizontal,
+            default_mirroring: Mirroring::Horizontal,
+            prg_rom_num_banks: 8,
+            prg_rom: vec![0u8; 8 * 16 * 1024],
+            chr_num_banks: 8,
+            chr: vec![0u8; 8 * 8 * 1024],
+            prg_ram: vec![0u8; 8 * 1024],
+            is_battery_backed: false,
+            is_nes20: false,
+            md5: String::new(),
+        }
+    }
+
+    /// Arm a live MMC3 IRQ (latch=3, four scanline clocks — the same
+    /// sequence `mapper4.rs`'s
+    /// `heuristic_clock_fires_irq_after_latch_plus_one` uses) exactly
+    /// as SMB3/Kirby's Adventure/Zelda II/Castlevania III would
+    /// mid-level, then confirm `Nes::reset()` clears it instead of
+    /// leaving a stale IRQ (and stale bank select) live after a
+    /// "cold reset".
+    #[test]
+    fn reset_clears_live_mapper_state() {
+        let mut nes = Nes::new(mmc3_cart());
+
+        // Select a non-zero PRG bank via the bank-select/data pair.
+        nes.mapper.prg_write_byte(PRG_BANK_SELECT, 0x06);
+        nes.mapper.prg_write_byte(PRG_BANK_DATA, 0x05);
+
+        // Arm and fire the scanline-IRQ counter.
+        nes.mapper.prg_write_byte(IRQ_LATCH, 3);
+        nes.mapper.prg_write_byte(IRQ_RELOAD, 0);
+        nes.mapper.prg_write_byte(IRQ_ENABLE, 0);
+        for _ in 0..4 {
+            nes.mapper.on_scanline_tick();
+        }
+        assert!(nes.mapper.irq_pending(), "test setup should arm a live IRQ");
+
+        nes.reset();
+
+        assert!(
+            !nes.mapper.irq_pending(),
+            "Nes::reset() must clear mapper-side state (e.g. a pending IRQ), not just cpu/ppu/apu"
+        );
     }
 }
