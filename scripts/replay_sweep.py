@@ -349,6 +349,40 @@ def verify_ram_trace(
                    f"trace of {n} frames never satisfied is_clear", n)
 
 
+def clear_predicate(game, start_key: tuple) -> Callable[[Any], bool]:
+    """The tape's own win test — `is_clear` OR `is_finale` (fixed 2026-08-26).
+
+    `GenericGame` reaches a win through two independent methods, and the
+    sweep was only asking one of them:
+
+        is_clear(start_key, ram)   opens `level_key(ram) > tuple(start_key)`
+        is_finale(start_key, ram)  opens `tuple(start_key) == tuple(f["level_key"])`
+
+    Strict-greater vs equality, on the same empty key, is the whole
+    difference. With `level_key: []` — 40 of the 45 solve profiles — the
+    first is `() > ()`, False for every RAM state that can exist, while the
+    second is `() == ()`, True, leaving a live byte test. So a profile whose
+    only hook is `finale:` wins through a method the sweep never called, and
+    every one of its tapes was scored `FAIL: never satisfied is_clear`.
+
+    Excitebike is the only such profile today and it has no banked tape in
+    the sweep's corpus, so nothing was mis-scored in practice — but this is
+    exactly the shape the clear-detection campaign exists to catch: the
+    check reports the same thing whether the predicate works or is absent.
+    `scripts/clear_detect.py` already gets this right (it checks both); this
+    brings the sweep in line.
+
+    `getattr` rather than a bare call: the adapter is duck-typed, and a
+    caller-supplied game without the second method must degrade to the
+    first, not raise mid-sweep."""
+    def _fires(ram) -> bool:
+        if game.is_clear(start_key, ram):
+            return True
+        finale = getattr(game, "is_finale", None)
+        return bool(finale(start_key, ram)) if finale is not None else False
+    return _fires
+
+
 def resolve_start_key(spec: TapeSpec) -> tuple | None:
     """The tape's recorded entrance key, or None if it recorded none.
 
@@ -494,7 +528,7 @@ def main(argv: list[str] | None = None) -> int:
                                         "start_wd not recorded"))
                 continue
             verdicts.append(verify_ram_trace(
-                rams, spec, lambda ram: bool(game.is_clear(start_key, ram))))
+                rams, spec, clear_predicate(game, start_key)))
         except BaseException as e:   # noqa: BLE001 — see below
             # BaseException, not Exception: machine_from_profile aborts
             # with SystemExit when a profile carries no rom key, and

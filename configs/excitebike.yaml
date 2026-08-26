@@ -160,7 +160,14 @@ solve:
   # boundaries), max_gx_in_max_area 633, frontier growing every 60 s window
   # (+23 cells in the final one), no freeze, no diagnostic needed. 0 finishes
   # yet inside the smoke budget; the finale hook below banks the solution
-  # the moment section 3 is reached.
+  # the moment the race is WON.
+  # CORRECTION 2026-08-26 — "the moment section 3 is reached" is struck. It is
+  # wrong, and by a measurable amount: section_index hits 3 when the bike
+  # ENTERS the last section, 113 raw frames (28 agent steps) before ready_flag
+  # reaches 2 on the banked win, and 40 agent steps before it under hold-A.
+  # The hook banks on ready_flag == 2, not on section 3. Reaching the final
+  # section is NOT the finish line — see the DIVERGENCE note on the hook below,
+  # where the same conflation is a live defect in the RL reward.
   # progress = section_index(0x03A4)<<8 | section_dist(0x00ED). Monotone 99.9%,
   # 0->773 full track; flat under NOOP (bike must be throttled to move).
   progress: {lo: 0x00ED, hi: 0x03A4}
@@ -197,4 +204,40 @@ solve:
   # WIN = crossing the finish line. ready_flag 0x000E: 0 racing, 1 staged/remount,
   # 2 = FINISHED — ==2 appears ONLY at/after the finish (section_index=3, never
   # mid-race), so this finale hook DUMPS A SOLUTION the instant the race is won.
+  #
+  # CONFIRMED 2026-08-26 — one of 4 predicates on the whole roster that has been
+  # WATCHED FIRING on a real, rendered clear (docs/research/DETECTOR_REPAIR_2026-08-26.md).
+  # Re-replayed sol_000 (runs/excitebike/excitebike_bootstrap) under the repaired
+  # profile-driven harness: is_finale fires at raw frame 4574 of 6176. Rendered
+  # witness = FINISH line, checkered flag, cleared TIME.
+  #
+  # WHY THIS SURVIVES THE `() > ()` CENSUS BUG, and is_clear does not. The two
+  # win methods open with different comparisons on the SAME empty key:
+  #     is_clear   `level_key(ram) > tuple(start_key)`   -> `() > ()`  = False, always
+  #     is_finale  `tuple(start_key) == tuple(f[...])`   -> `() == ()` = True, then a byte test
+  # Strict-greater is an algebraic identity on an empty key; equality is not. So
+  # this profile's is_clear arm is inert and always has been — the win has never
+  # come through it — while the finale arm is a live read of 0x000E. Any other
+  # profile that ever grows a `finale:` block inherits the same exemption, and
+  # must NOT be assumed dead just because its level_key is empty.
+  #
+  # ANTI-VACUITY (this hook can fail, and does — measured 2026-08-26):
+  #   - 3000 agent steps of pure NOOP idle: 0 fires; ready_flag never exceeds 1.
+  #   - 3000 agent steps of uniform-random mashing (64 tumble + 21 crash-onset +
+  #     1848 overheat-remount frames): 0 fires; max section reached 1.
+  #   - all 3 section boundaries inside the winning tape (raw frames 21, 2440,
+  #     4461): ready_flag == 0. It does not shadow section_index.
+  #
+  # CAVEAT, so this is not over-read: hold-A-only wins unaided at agent step
+  # 1195. The predicate is sound; the banked solution is not evidence that a
+  # hard search was solved, and must not be cited as one.
+  #
+  # DIVERGENCE — NOT FIXED HERE, and it is the RL metric that is wrong, not this
+  # hook. nes_core/src/rewards.rs ExcitebikeReward fires completion_bonus and
+  # sets finished/done on `section >= FINAL_SECTION(3) && section > start_section`
+  # — that is ENTERING the last section, not crossing the line. Measured on two
+  # independent trajectories: 113 raw frames (28 agent steps) early on sol_000,
+  # and 40 agent steps early under hold-A. So the solver predicate and
+  # episode_success() are reporting DIFFERENT EVENTS, and every historical
+  # Excitebike episode_success figure is the earlier one.
   finale: {addr: 0x000E, value: 2, level_key: []}

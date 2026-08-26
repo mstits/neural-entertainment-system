@@ -20,8 +20,8 @@ sys.path.insert(0, str(ROOT))
 from scripts.replay_sweep import (  # noqa: E402
     KNOWN_BAD, TapeSpec, Verdict, build_consumer_index, build_report,
     discover_tapes, evaluate_gate, read_tape, resolve_hw_flags,
-    resolve_profile, resolve_from_siblings, resolve_start_key,
-    sibling_profiles, spec_problems,
+    clear_predicate, resolve_profile, resolve_from_siblings,
+    resolve_start_key, sibling_profiles, spec_problems,
     verify_ram_trace,
 )
 
@@ -333,3 +333,72 @@ def test_the_real_detector_gate_tapes_carry_an_empty_recorded_key():
     if not found:
         pytest.skip("detector_gate_20260810 tapes not present (runs/ is "
                     "gitignored); the synthetic cases above still cover it")
+
+
+# --- the win test: is_clear OR is_finale -----------------------------------
+# `GenericGame` reaches a win two ways. `is_clear` opens with
+# `level_key(ram) > tuple(start_key)`; `is_finale` opens with
+# `tuple(start_key) == tuple(f["level_key"])`. On the empty key that 40 of
+# 45 solve profiles ship, the first is `() > ()` (False, always) and the
+# second is `() == ()` (True), leaving a live byte test. Asking only the
+# first scores a finale-hooked tape `FAIL: never satisfied is_clear`.
+
+
+class _FinaleOnlyGame:
+    """A profile whose only reachable hook is `finale:` — Excitebike's
+    shape. `is_clear` is the `() > ()` identity and never fires."""
+    def is_clear(self, start_key, ram):
+        return tuple() > tuple(start_key)
+
+    def is_finale(self, start_key, ram):
+        return bool(ram["ready"] == 2)
+
+
+class _NoFinaleGame:
+    """A duck-typed adapter that predates `is_finale` entirely."""
+    def is_clear(self, start_key, ram):
+        return bool(ram.get("c"))
+
+
+def test_a_finale_only_win_is_not_scored_as_a_failure():
+    fires = clear_predicate(_FinaleOnlyGame(), ())
+    v = verify_ram_trace([{"ready": 0}, {"ready": 0}, {"ready": 2}],
+                         _spec(), fires)
+    assert v.status == "PASS" and v.replayed_steps == 2, v
+
+
+def test_the_finale_arm_can_fail():
+    """Anti-vacuity: the same predicate on a tape that never reaches the
+    finale byte must still FAIL. Without this the test above would pass
+    just as well against a predicate hardwired to True."""
+    fires = clear_predicate(_FinaleOnlyGame(), ())
+    v = verify_ram_trace([{"ready": 0}] * 4, _spec(), fires)
+    assert v.status == "FAIL", v
+
+
+def test_is_clear_still_carries_the_verdict_on_its_own():
+    """The finale arm is additive — it must not shadow `is_clear`."""
+    fires = clear_predicate(_NoFinaleGame(), ())
+    assert verify_ram_trace([{"c": 0}, {"c": 1}], _spec(), fires).status == "PASS"
+    assert verify_ram_trace([{"c": 0}] * 3, _spec(), fires).status == "FAIL"
+
+
+def test_an_adapter_without_is_finale_degrades_instead_of_raising():
+    """One duck-typed input must never end a 298-tape sweep."""
+    fires = clear_predicate(_NoFinaleGame(), ())
+    assert fires({"c": 0}) is False
+
+
+def test_a_real_finale_profile_exists_and_its_is_clear_arm_is_inert():
+    """Anchors the synthetic cases to a shipped config, so this cannot
+    become a synthetic-only regression test. Excitebike is the only
+    `finale:`-hooked profile on the roster; its `level_key` is empty, so
+    the arm the sweep used to ask exclusively is the `() > ()` identity."""
+    import yaml
+    cfg = yaml.safe_load((ROOT / "configs" / "excitebike.yaml").read_text())
+    solve = cfg["solve"]
+    assert solve["level_key"] == []
+    assert solve["finale"]["level_key"] == []
+    assert tuple(solve["level_key"]) == tuple(solve["finale"]["level_key"])
+    # strict-greater is dead on this key; equality is not
+    assert not (tuple(solve["level_key"]) > tuple(solve["level_key"]))
