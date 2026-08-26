@@ -103,3 +103,34 @@ def test_retention_else_branch_routes_through_selector_in_source() -> None:
     `vppo_success_rate` bare."""
     assert "_wm_val, _wm_name = _select_winner_metric(" in _TRAINER_SRC
     assert "cold_rate=last_cold_metrics.get(" in _TRAINER_SRC
+
+
+def test_plr_per_level_probe_failure_uses_sentinel_not_zero() -> None:
+    """PLR cold-probe winner-selection block (~trainer.py:8474-8494): a
+    failed `cold_probe.probe()` call for one level (e.g. a transiently
+    unreadable entry-state file) returns `cold_seq_clear_rate=None`. That
+    must not collapse into a fabricated 0.0 — indistinguishable from a
+    genuine 0% clear rate, and able to force `_weakest` to 0.0 for a round
+    that never actually measured the level. Every other cold-rate site in
+    this file (see the ladder-path sibling, and
+    `test_sentinel_cold_rate_is_not_treated_as_honest` above) uses the
+    -1.0 failure sentinel instead; the PLR per-level/holdout loops must
+    match."""
+    assert (
+        '_per_level[_lvl] = float(_c.get("cold_seq_clear_rate") or 0.0)'
+        not in _TRAINER_SRC
+    )
+    assert (
+        '_hold[_lvl] = float(_c.get("cold_seq_clear_rate") or 0.0)'
+        not in _TRAINER_SRC
+    )
+    assert (
+        "_per_level[_lvl] = (\n"
+        "                        float(_lvl_rate) if _lvl_rate is not None else -1.0\n"
+        "                    )"
+    ) in _TRAINER_SRC
+    assert (
+        "_hold[_lvl] = (\n"
+        "                        float(_hold_rate) if _hold_rate is not None else -1.0\n"
+        "                    )"
+    ) in _TRAINER_SRC

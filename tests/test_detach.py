@@ -143,6 +143,20 @@ def test_log_is_appended_not_truncated(tmp_path):
     _reap(pid)
 
 
+def test_launch_records_the_failure_in_the_log_before_reraising(tmp_path):
+    """A launch that never starts still leaves a legible trace in <log>.
+
+    Popen failing (missing interpreter mid-rebuild, bad cwd, ...) used to
+    raise with the log left empty -- the one place a human checks after
+    an unattended caller dies has no clue which command failed or why.
+    """
+    log = tmp_path / "run.log"
+    missing = tmp_path / "no-such-interpreter"
+    with pytest.raises(OSError):
+        launch([str(missing), "-c", "pass"], log)
+    assert log.read_text().strip(), "log left empty on a failed launch"
+
+
 def test_stdin_is_devnull_so_a_read_cannot_hang(tmp_path):
     """A detached process blocking on stdin has no terminal to free it."""
     log = tmp_path / "run.log"

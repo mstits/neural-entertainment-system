@@ -14,6 +14,9 @@ the failure class cannot silently return. Mapped one test per defect:
      (smb_sequential; the headline metric).
   4. Supervisor panic catch — the supervisor must catch BaseException
      (PyO3 PanicException), not just Exception.
+  5. Run-lock PID-reuse — a stale `.run.lock` whose PID has been
+     reassigned to an unrelated live process (reboot/OOM-kill) must be
+     reclaimed, not treated as still held forever.
 """
 from __future__ import annotations
 
@@ -127,3 +130,24 @@ def test_supervisor_catches_baseexception():
         "supervisor must catch BaseException to survive PyO3 PanicException"
     # And SystemExit must still propagate (not be swallowed as a crash).
     assert "except SystemExit" in src
+
+
+def test_run_lock_survives_pid_reuse():
+    """A bare `os.kill(pid, 0)` can't tell a live trainer from an
+    unrelated process that inherited its PID after a reboot/OOM-kill.
+    The run-lock liveness check must also verify the PID's start-time
+    fingerprint, so a recycled PID is reclaimed instead of blocking
+    every later unattended restart forever."""
+    from scripts.train_game import _pid_start_time, _run_lock_pid_is_live
+
+    my_pid = os.getpid()
+    my_start = _pid_start_time(my_pid)
+    if my_start is None:
+        pytest.skip("`ps -o lstart=` unavailable on this host")
+
+    # Genuine case: same PID, same recorded start time -> still live.
+    assert _run_lock_pid_is_live(my_pid, my_start) is True
+
+    # PID-reuse case: the PID is alive, but the fingerprint recorded in
+    # the lock belongs to a different (long-gone) process -> reclaimable.
+    assert _run_lock_pid_is_live(my_pid, "Wed Jan  1 00:00:00 2020") is False

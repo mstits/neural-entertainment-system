@@ -70,11 +70,22 @@ def launch(cmd: list[str], log_path: str | Path,
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "ab", buffering=0) as log, \
             open(os.devnull, "rb") as devnull:
-        proc = subprocess.Popen(
-            cmd, stdout=log, stderr=subprocess.STDOUT, stdin=devnull,
-            cwd=str(cwd) if cwd else None,
-            start_new_session=True,   # os.setsid() in the child
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=log, stderr=subprocess.STDOUT, stdin=devnull,
+                cwd=str(cwd) if cwd else None,
+                start_new_session=True,   # os.setsid() in the child
+            )
+        except OSError as exc:
+            # Popen can fail before the child ever runs (missing
+            # interpreter mid-rebuild, bad cwd, ...). Unguarded, that
+            # raises with the log left empty -- the one place a human
+            # checks after an unattended caller dies has no clue which
+            # command failed or why. Record it here, then still raise:
+            # this script does not silently swallow a launch failure.
+            log.write(f"detach.py: launch failed for {cmd!r}: {exc}\n"
+                      .encode())
+            raise
     return proc.pid
 
 

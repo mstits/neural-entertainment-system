@@ -8481,7 +8481,10 @@ class Trainer:
                         rom_path=self.rom_path,
                         game=str(self.game_profile.get("name", "mario")),
                     )
-                    _per_level[_lvl] = float(_c.get("cold_seq_clear_rate") or 0.0)
+                    _lvl_rate = _c.get("cold_seq_clear_rate")
+                    _per_level[_lvl] = (
+                        float(_lvl_rate) if _lvl_rate is not None else -1.0
+                    )
                 _hold: dict = {}
                 for _lvl, _ss in plr_ctx.holdout.items():
                     _c = _cold_probe.probe(
@@ -8491,7 +8494,10 @@ class Trainer:
                         rom_path=self.rom_path,
                         game=str(self.game_profile.get("name", "mario")),
                     )
-                    _hold[_lvl] = float(_c.get("cold_seq_clear_rate") or 0.0)
+                    _hold_rate = _c.get("cold_seq_clear_rate")
+                    _hold[_lvl] = (
+                        float(_hold_rate) if _hold_rate is not None else -1.0
+                    )
                 _weakest = min(_per_level.values()) if _per_level else -1.0
                 _mean = (
                     sum(_per_level.values()) / len(_per_level)

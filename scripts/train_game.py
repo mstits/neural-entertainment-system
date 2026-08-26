@@ -472,6 +472,50 @@ def resolve_profile_path(game: str, explicit: Optional[str]) -> Path:
     return p
 
 
+def _pid_start_time(pid: int) -> Optional[str]:
+    """Best-effort start-time fingerprint for `pid` (via `ps -o lstart=`).
+
+    Used to tell a still-running process apart from an unrelated one
+    that has since recycled the same PID. Returns None if `ps` is
+    unavailable or the PID can't be resolved — callers must treat that
+    as "unknown", never as "confirmed different process".
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out or None
+
+
+def _run_lock_pid_is_live(pid: int, recorded_start: str) -> bool:
+    """True iff `pid` is still the process that recorded `recorded_start`.
+
+    A bare `os.kill(pid, 0)` only proves *some* process currently holds
+    that PID (success), or that one exists but isn't ours
+    (PermissionError) — not that it's the same process that wrote the
+    run-lock. Under an unclean shutdown (OOM-kill, power loss) macOS can
+    reissue the dead trainer's PID to an unrelated process within
+    seconds of boot, which would make a stale `.run.lock` look live
+    forever and permanently block every later unattended restart against
+    that checkpoint dir. Comparing start-time fingerprints catches PID
+    reuse; when either fingerprint can't be determined this stays
+    conservative and reports live, matching the pre-fix behavior.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass  # some process holds this PID, not us — check the fingerprint
+    if not recorded_start:
+        return True
+    current_start = _pid_start_time(pid)
+    return current_start is None or current_start == recorded_start
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Single-command headless training launcher per game.",
@@ -641,23 +685,25 @@ def main() -> int:
     try:
         if _lock.exists():
             try:
-                _old_pid = int(_lock.read_text().split()[0])
-                _os.kill(_old_pid, 0)  # raises if no such process
-                log.error(
-                    "[launcher] checkpoint dir is locked by live PID %d "
-                    "(%s). Refusing to run two trainers on one dir. Stop "
-                    "the other run or pick a different dir.",
-                    _old_pid, _lock,
-                )
-                return 1
-            except (ProcessLookupError, ValueError, IndexError):
+                _lock_lines = _lock.read_text().splitlines()
+                _old_pid = int(_lock_lines[0].split()[0])
+                _old_start = _lock_lines[1] if len(_lock_lines) > 1 else ""
+            except (ValueError, IndexError):
                 log.warning("[launcher] reclaiming stale run-lock %s", _lock)
-            except PermissionError:
-                # PID exists but is not ours — treat as live, abort.
-                log.error("[launcher] checkpoint dir locked by another "
-                          "process; refusing to run.")
-                return 1
-        _lock.write_text(f"{_os.getpid()} {rom_path}\n")
+            else:
+                if _run_lock_pid_is_live(_old_pid, _old_start):
+                    log.error(
+                        "[launcher] checkpoint dir is locked by live PID %d "
+                        "(%s). Refusing to run two trainers on one dir. Stop "
+                        "the other run or pick a different dir.",
+                        _old_pid, _lock,
+                    )
+                    return 1
+                log.warning("[launcher] reclaiming stale run-lock %s", _lock)
+        _lock.write_text(
+            f"{_os.getpid()}\n{_pid_start_time(_os.getpid()) or ''}\n"
+            f"{rom_path}\n"
+        )
         import atexit as _atexit
         _atexit.register(lambda: _lock.exists() and _lock.unlink())
     except OSError as exc:
@@ -691,10 +737,13 @@ def main() -> int:
     resume_from = None
     if args.resume:
         # For vanilla_ppo, auto-resume is built into _run_vanilla_ppo
-        # itself and is gated by `fresh_start` below. For GA modes, we'd
-        # resolve a latest gen_*.pt here; passing None lets the trainer
-        # handle it. `--no-resume` forces a fresh run through both paths.
-        pass
+        # itself and is gated by `fresh_start` below. For GA modes,
+        # resolve the latest gen_*.pt here so Trainer.run() actually
+        # resumes instead of falling through to a fresh `ga.initialize()`.
+        # `--no-resume` forces a fresh run through both paths.
+        from src.training.checkpointing import find_latest_checkpoint
+        latest = find_latest_checkpoint(trainer.checkpoint_dir)
+        resume_from = str(latest) if latest else None
 
     # Self-healing supervisor: a training process must NEVER die and stay
     # dead. Any trainer exception (numeric collapse, worker panic, MPS

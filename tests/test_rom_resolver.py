@@ -18,6 +18,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
+import sys
+import time
+import types
 from pathlib import Path
 
 import pytest
@@ -236,3 +240,60 @@ def test_resolve_start_state_sidecar_does_not_mask_missing_declared(tg, tmp_path
     profile = {"start_state_path": str(tmp_path / "gone.state.bin")}
     with pytest.raises(SystemExit, match="gone.state.bin"):
         tg.resolve_start_state(profile, str(rom))
+
+
+# --------------------------------------------------------------------------
+# main() — GA-mode --resume must resolve the latest checkpoint
+# --------------------------------------------------------------------------
+
+def test_main_resume_resolves_latest_ga_checkpoint(tg, tmp_path, monkeypatch):
+    """`--resume` (the default) must resolve the latest gen_*.pt in the
+    trainer's checkpoint dir and pass it to Trainer.run() as
+    `resume_from`. Before the fix this block was a bare `pass`, so
+    every GA-mode launch — including every supervisor-triggered
+    restart after a crash — silently cold-started from a fresh random
+    population instead of resuming."""
+    rom = _touch(tmp_path / "g.nes")
+    state = _touch(tmp_path / "start.state.bin", b"state")
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text(
+        f"name: Test Game\nstart_state_path: {state}\n"
+    )
+
+    ckpt_dir = tmp_path / "checkpoints"
+    ckpt_dir.mkdir()
+    older = _touch(ckpt_dir / "gen_00001.pt", b"old")
+    newer = _touch(ckpt_dir / "gen_00002.pt", b"new")
+    now = time.time()
+    os.utime(older, (now - 100, now - 100))
+    os.utime(newer, (now - 10, now - 10))
+
+    calls: dict = {}
+
+    class FakeTrainer:
+        def __init__(self, **kwargs):
+            self.checkpoint_dir = ckpt_dir
+
+        def run(self, num_generations, resume_from=None, fresh_start=False):
+            calls["resume_from"] = resume_from
+            calls["fresh_start"] = fresh_start
+
+    fake_mod = types.ModuleType("src.training.trainer")
+    fake_mod.Trainer = FakeTrainer
+    monkeypatch.setitem(sys.modules, "src.training.trainer", fake_mod)
+
+    monkeypatch.setattr(sys, "argv", [
+        "train_game.py",
+        "--profile", str(profile_path),
+        "--rom", str(rom),
+        "--iters", "1",
+        "--no-supervise",
+    ])
+
+    rc = tg.main()
+
+    assert rc == 0
+    assert calls.get("resume_from") == str(newer), (
+        "GA-mode --resume must resolve to the newest gen_*.pt checkpoint, "
+        f"got {calls.get('resume_from')!r}"
+    )
