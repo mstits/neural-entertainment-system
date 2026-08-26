@@ -1394,6 +1394,20 @@ LIVES_MAX_DROP = 8
 #: one, and would otherwise satisfy every other test here.
 LIVES_MAX_TICKS = 6
 
+#: How long the first regime must last before the stock it appears to have
+#: spent is credited. `_regime_split` ends that regime at the first RISE,
+#: and a rise arriving a handful of steps in is not a refill — nothing was
+#: spent yet to refill. 32 steps is ~128 frames (~2.1 s at the default
+#: frame_skip=4): an order of magnitude above the 3-9 step bounce measured
+#: on Bad Dudes $00CD, and far below any life a curated root state can lose
+#: (a root that kills the player inside two seconds is not a usable root).
+LIVES_MIN_REGIME = 32
+#: ...and how many times a stock may be refilled inside one drive at all.
+#: DEATH_MAX_N is budgeted at "a life or two", so two refills is already
+#: generous; the measured oscillator runs 5-18 per drive (100+ under a
+#: heavier mash). A stock refills rarely, an animation counter cycles.
+LIVES_MAX_REFILLS = 2
+
 
 def _regime_split(mv: np.ndarray) -> int:
     """Index of the end of the FIRST regime in a wrap-aware delta column.
@@ -1411,12 +1425,59 @@ def _regime_split(mv: np.ndarray) -> int:
     live on Punch-Out's own mac_hp: 0 -> 72 inside a single 1000-step
     probe with no death and no round change) — same shape of event,
     same fix, reused rather than re-derived twice.
+
+    The index this returns is NOT self-validating, and callers must not
+    treat it as one: it says where the first rise is, never that the
+    regime before it was long enough, or rare enough, to have held a
+    stock. Truncating to a 3-step regime and then asking "was the stock
+    spent?" answers yes for any byte that ticked once. `_regime_cycles`
+    below is the missing half; `lives_from_death_drives` gates on both.
+    Deliberately left unparameterized so the fight-gate path keeps the
+    exact behaviour its live receipts were measured under.
     """
     nz = np.nonzero(mv)[0]
     if not nz.size:
         return len(mv)
     ups = nz[mv[nz] > 0]
     return int(ups[0]) if ups.size else len(mv)
+
+
+def _regime_cycles(mv: np.ndarray) -> int:
+    """How many times a wrap-aware delta column is REFILLED over the
+    whole trace — the count `_regime_split` throws away by returning
+    only the first boundary.
+
+    A refill event is a rise that follows a fall, so a tweened restore
+    (a bar that ramps back up over several frames, or with a flat frame
+    in the middle) counts ONCE, not once per ascending sample. Only the
+    fall->rise turn is counted, which is what "refilled" means.
+
+    This is the rate half of the stock test. A stock is refilled rarely
+    — at a continue, at a round change — while an animation or attack
+    counter cycles constantly, and that difference is measurable without
+    knowing what the byte means. Measured on Bad Dudes
+    (docs/research/FALSE_DEATH_FANOUT_2026-08-26.md): $00CD toggles
+    2 -> 0 -> 2 five to eighteen times per 700-step drive (100+ under a
+    heavier randomized mash) against one refill for the SMB control's
+    real counter and one for Punch-Out's mac_hp across a 1000-step probe.
+
+    Pure and caller-neutral, but gated on only by `lives_from_death_drives`
+    (see `LIVES_MAX_REFILLS`). `fight_health_from_drives` is exposed to
+    the same shape in principle — a byte its attack macros drive up and
+    down would clear FH1/FH2 the same way — but it already rejects on
+    FH0 (moves under NOOP), on `start > 0`, and demotes on
+    `_range_plausibility_penalty`, and its Gate FH1/FH2/FH3 thresholds
+    were fixed against a live Punch-Out receipt whose raw logs are not
+    banked. Adopting this there is a one-line opt-in once a receipt
+    exists to set the cap against; guessing at it blind would risk the
+    one game the fight gate is known to work on.
+    """
+    nz = np.nonzero(mv)[0]
+    if not nz.size:
+        return 0
+    signs = np.sign(mv[nz])
+    return int(np.count_nonzero((signs > 0)
+                                & np.concatenate(([True], signs[:-1] < 0))))
 
 
 def lives_from_death_drives(drives: Sequence[Mapping], *,
@@ -1439,6 +1500,10 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
         the last life still reads as one step down);
       * it changes only a few times in the whole run — the test that
         rejects a countdown timer, which passes everything above;
+      * it is spent over a regime long enough to have HELD a life, and
+        refilled at most a couple of times in the whole drive — the two
+        tests that reject an oscillator, which passes everything above
+        (`LIVES_MIN_REGIME` / `LIVES_MAX_REFILLS`);
       * it starts from the same value in every rep, which it must, since
         every rep starts from the same state;
       * and the runs AGREE. Seeds end differently, so a byte the level
@@ -1471,6 +1536,7 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
             continue
         step: Optional[int] = None
         agreeing = refills = spends = 0
+        cycles = 0
         floor = True
         stock = True
         ok = True
@@ -1480,6 +1546,42 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
             if not nz.size:
                 continue                       # this run never ended: abstain
             end = _regime_split(mv)
+            # The regime is only evidence if it could have HELD a life.
+            # `_regime_split` stops at the first rise and says nothing
+            # about how soon that rise came or how often it recurs, so a
+            # byte that falls and bounces back within a few steps gets a
+            # few-step "first regime" carrying exactly one down-tick --
+            # which satisfies `reaches_empty` and `spends_its_stock`
+            # below for free, spent == start by construction. That is the
+            # same vacuity as the zero-start case noted further down,
+            # reached through the truncation instead of through the start
+            # value. Two independent halves, because each catches what the
+            # other misses:
+            #   * duration -- a refill that lands before LIVES_MIN_REGIME
+            #     is not a refill; nothing had been spent yet to restore.
+            #   * rate -- a stock is refilled rarely, an animation counter
+            #     cycles. LIVES_MAX_REFILLS is judged over the WHOLE trace,
+            #     so it fires wherever the toggles happen to fall, while
+            #     the duration half only sees the first one.
+            # Measured on Bad Dudes (FALSE_DEATH_FANOUT_2026-08-26.md):
+            # $00CD toggles 2 -> 0 -> 2 five to eighteen times per 700-step
+            # drive, first toggle at step 3 under an attack mash, and was
+            # the tool's own top pick. Wiring it fires `GenericGame.is_dead`
+            # on ordinary A/B presses dozens of times an episode -- a wrong
+            # lives nomination does not degrade death detection, it INVERTS
+            # it, so this REJECTS rather than demoting: the honest "no
+            # candidate found" is worth more than a ranked oscillator, and
+            # 6 of the 11 profiles in that fanout had no real stock to
+            # promote in the first place.
+            # NOT a magnitude test. The third candidate fix -- require the
+            # refill to plausibly restore the stock -- is refuted by this
+            # very trace: $00CD refills 0 -> 2, exactly its own start.
+            run_cycles = _regime_cycles(mv)
+            if run_cycles > LIVES_MAX_REFILLS or (end < len(mv)
+                                                   and end < LIVES_MIN_REGIME):
+                ok = False
+                break
+            cycles = max(cycles, run_cycles)
             down = mv[:end][mv[:end] < 0]
             if not down.size or down.size > LIVES_MAX_TICKS:
                 ok = False
@@ -1519,6 +1621,7 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
             "addr": i, "start": start, "drop": -step,
             "runs_agreeing": agreeing, "runs_watched": len(logs),
             "spends": spends, "refilled_runs": refills,
+            "refill_cycles": cycles,
             "reaches_empty": floor, "spends_its_stock": stock,
             "starts_nonzero": bool(start > 0),
             "moves_while_idle": bool(idle_moved[i]),
@@ -1554,7 +1657,7 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
     # signature. Keep the first, record the rest against it.
     kept: list[dict] = []
     _sig = lambda c: (c["start"], c["drop"], c["runs_agreeing"], c["spends"],
-                      c["refilled_runs"], c["reaches_empty"],
+                      c["refilled_runs"], c["refill_cycles"], c["reaches_empty"],
                       c["spends_its_stock"], c["moves_while_idle"],
                       c["starts_nonzero"])
     for c in out:

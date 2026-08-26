@@ -798,3 +798,119 @@ def test_starts_nonzero_is_reported_per_candidate():
         "candidates must record starts_nonzero so a reader can audit the rank"
     )
     assert cands[0]["starts_nonzero"] is True
+
+
+# ---------------------------------------------------------------------------
+# Regime-truncation vacuity (2026-08-26) -- loophole 2, the same failure
+# shape as the zero-start guard above through a different door.
+#
+# `_regime_split` ends the first regime at the first RISE, because a refill
+# legitimately starts a new regime (a continue, a new bout). It had no
+# minimum-duration guard and no cap on how OFTEN that may happen, so a byte
+# that falls and bounces back within a handful of steps got a handful-of-steps
+# "first regime" holding exactly ONE down-tick -- which satisfies both
+# `reaches_empty` and `spends_its_stock` trivially (spent == start).
+#
+# Measured on Bad Dudes (docs/research/FALSE_DEATH_FANOUT_2026-08-26.md): the
+# tool's top pick $00CD toggles 2 -> 0 -> 2 five to eighteen times per 700-step
+# drive, first toggle at step 3, tied to the attack macros. Wiring it fires
+# `GenericGame.is_dead` on ordinary A/B presses dozens of times an episode --
+# strictly worse than leaving the profile alone, because a wrong lives
+# nomination does not degrade death detection, it INVERTS it.
+# ---------------------------------------------------------------------------
+
+BAD_DUDES_N = 700          # DEATH_MAX_N, the real drive budget
+OSC = 0x00CD               # the measured address, kept for readability
+
+
+def _toggling(n: int, level: int, *, first: int, period: int,
+              width: int = 2, low: int = 0) -> np.ndarray:
+    """The Bad Dudes $00CD shape: a byte parked at `level` that drops to
+    `low` and bounces back `width` steps later, over and over."""
+    col = np.full(n, level, dtype=np.uint8)
+    for t in range(first, n, period):
+        col[t:min(t + width, n)] = low
+    return col
+
+
+def _blip_once(n: int, level: int, *, first: int, width: int = 4) -> np.ndarray:
+    """The same shape with the repetition removed: ONE fall-and-bounce,
+    early, then flat forever. The general form of the loophole -- an
+    oscillation count alone cannot see it, only the duration guard can."""
+    col = np.full(n, level, dtype=np.uint8)
+    col[first:first + width] = 0
+    return col
+
+
+def test_an_attack_animation_toggle_is_not_a_life_counter():
+    """Bad Dudes $00CD, at its measured rate. Every rep toggles far more
+    often than a stock can be refilled, so it must not be nominated at
+    all -- an honest empty result beats a nomination that inverts death."""
+    drives = [{"log": _life_drive(BAD_DUDES_N,
+                                  **{str(OSC): _toggling(BAD_DUDES_N, 2,
+                                                         first=3 + k,
+                                                         period=90)})["log"]}
+              for k in range(5)]
+    cands, _ev = lives_from_death_drives([{"log": d["log"]} for d in drives])
+    assert [c["addr"] for c in cands] == [], (
+        f"an attack-animation toggle was nominated as a stock: "
+        f"{[(c['addr'], c['start'], c['spends']) for c in cands]}")
+
+
+def test_the_toggle_never_outranks_a_real_stock_in_the_same_drive():
+    """The ranking half: where a game DOES carry a real counter, the
+    oscillator must not sit above it."""
+    n = BAD_DUDES_N
+    drives = []
+    for k in range(5):
+        drives.append(_life_drive(
+            n,
+            **{str(OSC): _toggling(n, 2, first=3 + k, period=90),
+               str(LIVES_HIGH): _falling(n, 2, (200 + 9 * k, 460 + 9 * k))}))
+    cands, _ev = lives_from_death_drives(drives)
+    ranked = [c["addr"] for c in cands]
+    assert LIVES_HIGH in ranked, f"the real stock was lost: {ranked}"
+    assert ranked[0] == LIVES_HIGH, f"oscillator outranked the stock: {ranked}"
+    assert OSC not in ranked, f"oscillator still nominated: {ranked}"
+
+
+def test_a_single_early_bounce_is_not_a_spent_stock():
+    """The general shape, with the repetition removed: one fall-and-bounce
+    a few steps in. The first regime is too short to have HELD a life, so
+    the stock it appears to spend is an artifact of the truncation."""
+    n = BAD_DUDES_N
+    drives = [{"log": _life_drive(
+        n, **{str(OSC): _blip_once(n, 2, first=3 + k)})["log"]}
+        for k in range(5)]
+    cands, _ev = lives_from_death_drives(drives)
+    assert [c["addr"] for c in cands] == [], (
+        f"a 4-step bounce was credited as a spent stock: "
+        f"{[(c['addr'], c['start'], c['spends']) for c in cands]}")
+
+
+def test_a_continue_refill_hundreds_of_steps_in_is_still_a_life_counter():
+    """The guard must not eat the case the split exists FOR: a counter
+    spent to nothing and handed a fresh stock at a continue, measured on
+    the SMB control as 1 -> 0 -> 255 and back up to 2."""
+    n = BAD_DUDES_N
+    drives = [_life_drive(n, **{str(LIVES_HIGH): _falling(
+        n, 1, (150 + 9 * k, 330 + 9 * k),
+        refill_at=(480 + 9 * k,), refill_to=2)}) for k in range(4)]
+    cands, _ev = lives_from_death_drives(drives)
+    assert [c["addr"] for c in cands] == [LIVES_HIGH]
+    assert cands[0]["refilled_runs"] == 4
+
+
+def test_a_slow_oscillator_is_caught_even_when_its_first_regime_is_long():
+    """The two halves of the guard are independently load-bearing. Here the
+    first bounce lands 300 steps in, so the duration half sees nothing --
+    only counting refills across the WHOLE trace catches it. (The Bad Dudes
+    measurement spans both: 5-18 toggles per drive, first at step 3.)"""
+    n = BAD_DUDES_N
+    drives = [_life_drive(n, **{str(OSC): _toggling(n, 2, first=300 + k,
+                                                    period=90)})
+              for k in range(5)]
+    cands, _ev = lives_from_death_drives(drives)
+    assert [c["addr"] for c in cands] == [], (
+        f"a slow oscillator was nominated as a stock: "
+        f"{[(c['addr'], c['start'], c['spends']) for c in cands]}")
