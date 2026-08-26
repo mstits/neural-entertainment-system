@@ -506,9 +506,41 @@ cross-referencing the independently-verified `ram_mapping`, not by
 discovery rank alone); `find_round_gate` returned VOID
 (`insufficient_probe`, no bout boundary crossed in 24,000 probe steps)
 so `round:` is omitted from the profile rather than guessed. No
-League-inclusion claim beyond SOUND_ADVANCING-eligible is made; Kung
-Fu, Ice Climber, and Galaga — the other three games this mechanism
-targeted — are untested.
+League-inclusion claim beyond SOUND_ADVANCING-eligible is made.
+
+*Extension, 2026-08-25 (later the same day) — the other three targets
+tried, none validate.* Kung Fu, Ice Climber, and Galaga (the remaining
+CAMERA_STATIC_AGENT_ACTIVE games) each ran the same blind discovery.
+**Kung Fu**: the ranking's #1 pick (0x00B1) cleared FH1+FH2 mechanically
+but was flagged suspicious by the discovery pass itself (zero cross-rep
+variance across 5 independently-seeded reps — the "elapsed-step timer"
+signature the ranking docstring names); a follow-up isolated-input
+probe (pure NOOP, 1200 steps) CONFIRMED it tracks the game's autonomous
+enemy spawn/despawn cycle, not combat damage. The candidate wiring was
+committed to `configs/kungfu.yaml` as a fully receipted negative finding
+but left COMMENTED OUT — the pre-existing (also non-functional, not
+newly regressed) odometer-era value stays the active `progress:` —
+mirroring the disclose-and-disable pattern already established for
+`configs/mario_1_2_phase3_masked.yaml`: a confirmed-implausible source
+does not stay live in a profile `go_explore_solve.py` can pick up by
+path alone. **Ice Climber**: VOID — every candidate showed byte-
+identical net deltas across all 5 reps (worse than Kung Fu's borderline
+case), cross-checked against an existing wave-3 receipt that already
+diagnosed this exact ROM/state/forward combination as a scripted,
+input-ignoring intro window this run never escaped; genre mismatch also
+noted (enemies die in one hit, no on-screen HP resource exists).
+**Galaga**: VOID — all 6 candidates carried a disqualifying flag (zero
+variance, or net damage exceeding the candidate's own starting value,
+or a leak under the defense-only probe); wave-shooter genre mismatch
+noted (no per-invader HP bar in the actual game). Neither profile was
+touched. All three: `find_round_gate` returned a genuine
+no_round_signal behaviour finding (not VOID) after crossing 10-46 bout
+boundaries — no purity-clean round byte was found in any of them.
+Honest reading: the mechanism generalizes as a DISCOVERY tool (it
+correctly told all three apart from Punch-Out's true positive, using
+only signal it computed itself) but has so far only produced one
+usable progress source out of four attempts — 1-for-4, not evidence of
+broad applicability to the CAMERA_STATIC_AGENT_ACTIVE class as a whole.
 
 ## Quarantine (Tier-3-contaminated artifacts)
 
