@@ -564,6 +564,35 @@ captured through a chain traversal that included the tainted 4-2 pilot:
 usable as scaffolding for Exhibition work only, regenerated before any
 Learned-ledger use.
 
+**BLOCKED, not yet quarantined — `ZeldaReward` and `MetroidReward`
+(`nes_core/src/rewards.rs`), surfaced 2026-08-25 during an external
+research audit's review, not by a Learned-ledger run hitting it.**
+Both structs declare their own compiled RAM address constants
+independent of any config file (e.g. `ZeldaReward::RAM_GANON_DEFEATED
+= 0x0672`, commented "aldonunez disassembly + empirically verified");
+`MetroidReward`'s equivalent gap was already noted in-line at
+`configs/metroid.yaml` on 2026-08-10 ("MetroidReward in rewards.rs
+uses HARDCODED address constants; this ram_mapping block is
+documentation only") but never carried through to this ledger. Neither
+struct is named in the Tier-2 freeze above (which covers only the five
+SMB `LEVEL_*` ladders) or in the Quarantine section. **Checked before
+writing this entry: neither `ZeldaReward` nor `MetroidReward` appears
+anywhere else in this file** — no Learned-ledger clear rate, honest
+eval, or capability claim has ever been built on either, so this is a
+live gap in the provenance system, not a retraction of an existing
+claim. **Rule, effective now: neither struct may be used to produce a
+Learned-ledger claim until this entry is resolved** — either by
+re-deriving each address from this project's own discovery tools
+(`discover_observables.py`, the item-semantics engine) and replacing
+the disassembly-sourced constant, or by a deliberate, dated decision to
+extend the Tier-2 freeze to name them explicitly, the same way the SMB
+ladders were. Follow-up, not done here: the same pattern (a bespoke
+bare-metal reward struct in `rewards.rs`) should be audited across
+every other per-game reward for the same gap — this entry covers only
+the two structs a source citation directly named, not a full sweep.
+`configs/zelda.yaml`'s `ram_mapping:` block carries the same addresses
+a second time as YAML and is quarantined separately, below.
+
 ## Enforcement
 
 `configs/demo_allowlist.txt` is the checked-in list of demo banks

@@ -18,24 +18,44 @@ description: >
   and the action space effectively includes menu navigation.
   This profile is a starting point; reward shaping will need heavy iteration.
 
-ram_mapping:
-  # Link's position
-  link_x:          0x0070
-  link_y:          0x0084
-  # Overworld / dungeon location
-  world_map_x:     0x00EB
-  world_map_y:     0x00EC
-  dungeon_level:   0x10
-  # Inventory / stats
-  current_hearts:  0x066F  # current HP (4 bits per heart)
-  max_hearts:      0x066F  # upper 4 bits
-  rupees:          0x066D
-  bombs:           0x0658
-  keys:            0x066E
-  triforce_pieces: 0x0671  # bitfield, 1 bit/fragment; 0xFF = all 8 (opens L9)
-  # Win chain (disassembly + emulator-verified): the REAL victory signals.
-  ganon_defeated:  0x0672  # 0->1 when Ganon dies — THE win flag
-  song:            0x0609  # active track: 0x10=ending (rescued), 0x02=Ganon fight
+# QUARANTINED 2026-08-25 (external research audit review, CLAIMS.md's
+# Quarantine section carries the full note). Every address below is
+# disassembly-sourced (aldonunez/zelda1-disassembly + Data Crystal), not
+# independently re-derived by this project's own discovery tools, and
+# none carries a [VERIFIED: ...] receipt the way configs/metroid.yaml's
+# surviving ram_mapping entries do. NOT the reward's source — ZeldaReward
+# (nes_core/src/rewards.rs) declares its own identical hardcoded
+# constants and never reads this block; this was always a parallel,
+# undisclosed copy. Values are strings, not ints, so a tool folding
+# ram_mapping the way scripts/observatory.py does (int(a) over
+# .values()) raises instead of silently consuming a banned address.
+# A key here may be promoted back to a real ram_mapping entry only after
+# an independent differential re-derivation on this ROM, per the
+# rediscovery_rule below — never by deleting the q_ prefix in place.
+quarantined_external_knowledge:
+  provenance: "aldonunez/zelda1-disassembly + Data Crystal RAM map (external, undiscovered)"
+  status: UNVERIFIED_EXTERNAL
+  rediscovery_rule: >
+    A quarantined byte is dead until re-derived from scratch by this
+    project's own differential protocol on this ROM: drive input from
+    the verified start state, watch the byte move, record wrap /
+    reversibility / saturation-and-persistence evidence in a receipt.
+    A byte that passes enters a NEW ram_mapping entry with its own
+    [VERIFIED: ...] tag; the quarantined entry itself is never promoted
+    in place and never cited as the reason a byte was chosen.
+  q_link_x:          "0x0070"
+  q_link_y:          "0x0084"
+  q_world_map_x:     "0x00EB"
+  q_world_map_y:     "0x00EC"
+  q_dungeon_level:   "0x10"
+  q_current_hearts:  "0x066F"  # current HP (4 bits per heart)
+  q_max_hearts:      "0x066F"  # upper 4 bits
+  q_rupees:          "0x066D"
+  q_bombs:           "0x0658"
+  q_keys:            "0x066E"
+  q_triforce_pieces: "0x0671"  # bitfield, 1 bit/fragment; 0xFF = all 8 (opens L9)
+  q_ganon_defeated:  "0x0672"  # 0->1 when Ganon dies -- claimed win flag
+  q_song:            "0x0609"  # active track: 0x10=ending, 0x02=Ganon fight
 
 reward_weights:
   # Zelda reward hierarchy, round 4.
@@ -228,9 +248,11 @@ dreamer:
 #
 # PURITY. Every address below was measured on THIS emulator, from our own
 # scripted rollouts, with our own rendered pixels as the only ground truth.
-# The pre-existing `ram_mapping:` above descends from a disassembly and is
-# NOT the source for anything here — where a probe happens to land on the
-# same address that is a coincidence recorded in the receipt, not evidence.
+# The pre-existing `quarantined_external_knowledge:` above (formerly
+# `ram_mapping:`, quarantined 2026-08-25) descends from a disassembly and
+# is NOT the source for anything here — where a probe happens to land on
+# the same address that is a coincidence recorded in the receipt, not
+# evidence.
 # Receipt (protocol, sample counts, rejected candidates):
 #   docs/receipts/games/zelda_onboarding_2026-08-10.md
 #
