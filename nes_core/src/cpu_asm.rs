@@ -721,6 +721,15 @@ pub unsafe extern "C" fn nes_asm_bus_write_byte(
 
 /// Install the dispatch table on first call; idempotent + thread-safe.
 #[inline]
+/// Idempotent installer. EVERY caller, tests included, must use this
+/// rather than `install_opcode_table` directly: that function resets all
+/// 256 entries to `Lunimpl` before repopulating them, so a second thread
+/// calling it mid-run wipes the dispatch table out from under a test that
+/// is already executing -- its ASM block then exits immediately with PC
+/// still at its entry address. That is the cause of the intermittent
+/// `cpu_asm::tests::diff_*` failures under parallel test threads
+/// (deterministically green under --test-threads=1, red in roughly 1 run
+/// in 10 otherwise). Diagnosed during hardening wave 5, 2026-08-26.
 pub fn install_opcode_table_once() {
     INSTALL_ONCE.call_once(|| {
         install_opcode_table();
@@ -963,7 +972,7 @@ mod tests {
     /// sum of the intended instructions' cycle counts so the ASM
     /// exits at the same boundary as `run_rust(n)`.
     fn run_asm(init: &DiffInit, cycles_budget: i64) -> DiffSnapshot {
-        install_opcode_table();
+        install_opcode_table_once();
         let mut prg = vec![0u8; 32 * 1024];
         for (addr, byte) in &init.prg_bytes {
             let off = (*addr as usize) & 0x7FFF;
@@ -2304,7 +2313,7 @@ mod tests {
     /// would read.
     #[test]
     fn debug_addresses() {
-        install_opcode_table();
+        install_opcode_table_once();
         unsafe {
             let table_addr = &raw const nes_asm_opcode_table as *const [usize; 256] as usize;
             let op_nop_addr = &raw const nes_asm_op_nop as *const usize as usize;
@@ -2328,7 +2337,7 @@ mod tests {
     /// starting from $C000, and verify the final state.
     #[test]
     fn skeleton_smoke() {
-        install_opcode_table();
+        install_opcode_table_once();
 
         let mut ram = vec![0u8; 2048];
         let mut prg = vec![0u8; 32 * 1024];
@@ -2366,7 +2375,7 @@ mod tests {
 
     #[test]
     fn bne_taken_and_not_taken() {
-        install_opcode_table();
+        install_opcode_table_once();
         let mut ram = vec![0u8; 2048];
         let mut prg = vec![0u8; 32 * 1024];
 
@@ -2397,7 +2406,7 @@ mod tests {
 
     #[test]
     fn jmp_abs_lands_correctly() {
-        install_opcode_table();
+        install_opcode_table_once();
         let mut ram = vec![0u8; 2048];
         let mut prg = vec![0u8; 32 * 1024];
 
@@ -2485,7 +2494,7 @@ mod tests {
     /// opcode we haven't ported yet.
     #[test]
     fn unimpl_exits_cleanly() {
-        install_opcode_table();
+        install_opcode_table_once();
         let mut ram = vec![0u8; 2048];
         let mut prg = vec![0u8; 32 * 1024];
 
