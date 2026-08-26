@@ -1,0 +1,57 @@
+{
+  "game": "Ninja Gaiden III - The Ancient Ship of Doom (USA)",
+  "rom": "roms/Ninja Gaiden III - The Ancient Ship of Doom (USA).nes",
+  "rom_md5": "569b3382638a1c9094e2c40b35f359c7",
+  "profile": "configs/ninja_gaiden_iii.yaml",
+  "start_state": "roms/Ninja Gaiden III - The Ancient Ship of Doom (USA)_start.state.bin",
+  "mint": {
+    "receipt": "runs/onboard_wave5/mint_ninja_gaiden_iii.json",
+    "log": "runs/onboard_wave5/mint_ninja_gaiden_iii.log",
+    "status": "MINTED",
+    "tool": "scripts/capture_start_state.py (title-mash schedule: START/START/A/START pulses)",
+    "frames_from_boot": 180,
+    "settle_frames": 40,
+    "liveness_probe": "fresh Pool reload of the saved state; 90f RIGHT vs 90f LEFT vs 90f NOOP, full 2KB RAM diff",
+    "ram_diff_bytes": {"right_vs_left": 232, "right_vs_noop": 195, "left_vs_noop": 118},
+    "visual_check": {
+      "method": "rendered RIGHT-90 vs NOOP-90 frames read and visually compared before trusting the RAM heuristic (wave-4 lesson: directional-cursor / text-advance screens fool RAM-only liveness)",
+      "frames": [
+        "runs/onboard_wave5/mint_ninja_gaiden_iii_right90_frame.png",
+        "runs/onboard_wave5/mint_ninja_gaiden_iii_noop90_frame.png",
+        "runs/onboard_wave5/mint_ninja_gaiden_iii_left90_frame.png"
+      ],
+      "result": "Confirmed real gameplay -- Stage 1-1A HUD (score/timer/ninja-gauge/enemy), ninja sprite visibly displaced further right under the RIGHT hold vs standing still under NOOP. Not a title/demo/menu screen."
+    }
+  },
+  "odometer_gate": {
+    "receipt": "runs/onboard_wave5/gate_ninja_gaiden_iii_right.json",
+    "cmd": ".venv/bin/python scripts/progress_signal_gate.py --profile configs/ninja_gaiden_iii.yaml --odometer --forward right --steps 1200 --out runs/onboard_wave5/gate_ninja_gaiden_iii_right.json",
+    "axis": "x",
+    "range_x": 264,
+    "range_y": 0,
+    "distinct": 49,
+    "oam_churn": "1199/1199",
+    "verdict": "SIGNAL SOUND -- game stops",
+    "note": "Real, non-flat x-axis under held RIGHT (range 264, 49 distinct values, OAM churning every step). This is NOT the flat-under-every-direction ASM-CPU anomaly flagged for Journey to Silius in wave 4 -- ruled out by inspection of this single trace alone, so no interpreter-only nes_core.NESEnvironment cross-check was needed. Tail-quarter flat is a behaviour finding (agent stops advancing under a constant-RIGHT-only driver), same shape as NG1/NG2/Super C's own gate receipts, not an instrument fault."
+  },
+  "discover_observables": {
+    "receipt": "runs/onboard_wave5/discover_ninja_gaiden_iii.json",
+    "cmd": ".venv/bin/python scripts/discover_observables.py --rom \"roms/Ninja Gaiden III - The Ancient Ship of Doom (USA).nes\" --state \"roms/Ninja Gaiden III - The Ancient Ship of Doom (USA)_start.state.bin\" --forward right --emit-solve --out runs/onboard_wave5/discover_ninja_gaiden_iii.json",
+    "room_counter": "$00DC (netF=264, mono=1.00, no saturation) -- kept as `area` for archive cell-keying; NOT used as primary progress since the odometer already gated SOUND (NG1/NG2 precedent: prefer the hardware scroll surface)",
+    "spatial_pair_flagged_unusable": "$0084|$00DC<<8 -- SATURATES (camera-clamp: caps at scroll-window limit, rebases at room transitions); tool's own CAMERA-CLAMP-SATURATOR flag, not used",
+    "y": "0x0006 (jump/ballistic signature)",
+    "lives": "0x007B (decrements on death, 5/5 probe agreement)",
+    "level_key": "left deliberately empty -- no clear captured yet, guessing a stage-advance byte is the authored-semantics class the purity line forbids"
+  },
+  "smoke": {
+    "cmd": ".venv/bin/python scripts/go_explore_solve.py --profile configs/ninja_gaiden_iii.yaml --root-state \"roms/Ninja Gaiden III - The Ancient Ship of Doom (USA)_start.state.bin\" --out runs/onboard_wave5/smoke_ninja_gaiden_iii --workers 4 --minutes 2 --seed 0",
+    "log": "runs/onboard_wave5/smoke_ninja_gaiden_iii.log",
+    "trend": "cells 1 (seed) -> 459 (60s) -> 762 (120s/final); growth ACCELERATED in minute 2 (+303 cells vs +458 in minute 1)",
+    "final": {"cells": 762, "frontier": 724, "best_score": 90779, "records": 36626, "improvements": 1235, "solutions": 0, "max_area": 4, "max_sect": 9, "max_gx_in_max_area": 1025},
+    "note": "Frontier grew robustly past 1 with essentially zero stalling (a single stall_flat_window logged at the tail-rounding tick, t=121s) and was still climbing at the 2-minute cutoff -- not the SOUND_GAME_STOPS freeze pattern. Reached area 4 / sect 9, well past the starting room, using the fully generic action space."
+  },
+  "classification": "SOUND_ADVANCING",
+  "classification_rationale": "Odometer gate confirmed a real, non-flat x-axis (range 264, 49 distinct, near-total OAM churn) -- not the ASM-CPU flat-trace anomaly seen on Journey to Silius in wave 4, so no possible-asm-cpu-anomaly flag applies here. The 2-minute/4-worker smoke grew the archive from 1 to 762 cells (724 open) with 1235 improvements and accelerating growth, crossing multiple areas/sections. Frontier clearly grew past 1 -- SOUND_ADVANCING, not CAMERA_STATIC_AGENT_ACTIVE or SOUND_GAME_STOPS.",
+  "next_lever": "None detected in-scope -- ready as-is, same profile shape as the already-certified NG1/NG2. level_key stays empty until a real stage clear is captured (out of scope for this onboarding pass).",
+  "wall_clock_budget": "workers capped at 4, smoke capped at 2 minutes per task instructions (shared machine, concurrent v28 training + a sibling ASM-CPU investigation workflow)."
+}

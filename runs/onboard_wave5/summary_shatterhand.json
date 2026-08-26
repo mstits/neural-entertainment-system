@@ -1,0 +1,57 @@
+{
+  "game": "Shatterhand (USA)",
+  "rom": "roms/Shatterhand (USA).nes",
+  "rom_md5": "8512058a61eb9e37372edc5e11cfcdb2",
+  "profile": "configs/shatterhand.yaml",
+  "start_state": "roms/Shatterhand (USA)_start.state.bin",
+  "mint": {
+    "receipt": "runs/onboard_wave5/mint_shatterhand.json",
+    "status": "MINTED",
+    "method": "bespoke throwaway driver (scratchpad, not committed) mashing START/A/DOWN from cold boot, mirroring scripts/capture_start_state.py's is_controllable heuristic",
+    "frames_from_boot": 690,
+    "liveness_probe": "save state; 120f RIGHT vs 120f LEFT vs 120f NOOP; diff full 2KB RAM",
+    "settle_check_ram_diff_right_vs_left": 151,
+    "settle_check_ram_diff_right_vs_noop": 179,
+    "fresh_pool_reverification": {
+      "ram_divergence_right_vs_left": 151,
+      "ram_divergence_right_vs_noop": 179
+    },
+    "visual_confirmation": {
+      "frames": [
+        "runs/onboard_wave5/mint_shatterhand_noop_frame.png",
+        "runs/onboard_wave5/mint_shatterhand_right90_frame.png",
+        "runs/onboard_wave5/mint_shatterhand_noop90_frame.png"
+      ],
+      "note": "Rendered and visually inspected BEFORE trusting the RAM-divergence heuristic alone (per the wave-4 false-positive-mint lessons). Stage 1 factory-rooftop gameplay confirmed: lives HUD ('L-' + heart icons), score HUD ('000000'), ladders/crane background, and a visibly displaced/turned player sprite comparing the RIGHT-90 render against the NOOP-90 render from the same state. Not a title screen, directional cursor, or text-advance screen."
+    }
+  },
+  "odometer_gate": {
+    "receipt": "runs/onboard_wave5/gate_shatterhand_right.json",
+    "cmd": ".venv/bin/python scripts/progress_signal_gate.py --profile configs/shatterhand.yaml --odometer --forward right --steps 1200 --out runs/onboard_wave5/gate_shatterhand_right.json",
+    "axis": "x",
+    "range_x": 245,
+    "range_y": 0,
+    "distinct": 61,
+    "oam_churn": "1199/1199",
+    "verdict": "SIGNAL SOUND -- game stops",
+    "note": "Real, non-flat x-axis under held RIGHT with full OAM churn (agent clearly active/animating every step) -- no need to invoke the possible-asm-cpu-anomaly cross-check (that check applies only when the trace comes back completely flat under every direction; this one did not)."
+  },
+  "discover_observables": {
+    "receipt": "runs/onboard_wave5/discover_shatterhand.json",
+    "cmd": ".venv/bin/python scripts/discover_observables.py --rom \"roms/Shatterhand (USA).nes\" --state \"roms/Shatterhand (USA)_start.state.bin\" --forward right --emit-solve --out runs/onboard_wave5/discover_shatterhand.json",
+    "progress": "none isolated -- odometer already gated SOUND and is used as the hardware-surface progress source, same reasoning as ninja_gaiden_ii / ducktales_2",
+    "y": "0x009F (jump/ballistic signature, top-scored candidate 94.7)",
+    "lives": "0x0051 (decrements on death, 5/5 probe agreement, reaches empty, refills across runs) -- CAVEAT: reads 0 at the start state itself, same shape as Mega Man's flagged-not-confirmed 0x0410 lead in wave 4",
+    "room_counter": "none found"
+  },
+  "smoke": {
+    "cmd": ".venv/bin/python scripts/go_explore_solve.py --profile configs/shatterhand.yaml --root-state \"roms/Shatterhand (USA)_start.state.bin\" --out runs/onboard_wave5/smoke_shatterhand --workers 4 --minutes 2 --seed 0",
+    "trend": "cells 1 (seed) -> 16 (60s) -> 16 (120s/final, byte-identical)",
+    "final": {"cells": 16, "frontier": 0, "best_score": 53, "records": 31736, "improvements": 73, "solutions": 0},
+    "note": "The tool itself raised 'STALL WARNING: stuck at 16 cells for 2 min straight -- possible frozen/dead state' (stall_flat_windows=2, c_local_delta=0). Growth happened in minute 1 (1->16) then completely froze in minute 2 with the frontier fully closed (0 open cells) -- this is the exact shape wave 4 classified Mega Man as SOUND_GAME_STOPS on (frozen at 10 cells in minute 2 despite a real 72px x-axis), not the Super C shape (which still ticked +1 cell in minute 2). The x-axis here is real and larger (245px, full OAM churn) so this is not a camera-static / dead-agent finding."
+  },
+  "classification": "SOUND_GAME_STOPS",
+  "classification_rationale": "Odometer gate confirms a real, non-flat x-axis (245px range, 1199/1199 OAM churn -- agent unambiguously alive and animating). The 2-minute/4-worker smoke grew the archive from 1 to 16 cells in minute 1, then went completely flat (byte-identical cells/frontier/best_score) through minute 2, triggering the harness's own built-in stall warning. Frozen frontier despite a real, confirmed axis is the SOUND_GAME_STOPS shape, not SOUND_ADVANCING (which requires growth to continue, however slowly, through the budget) and not CAMERA_STATIC_AGENT_ACTIVE (there is a real axis here).",
+  "next_lever": "The discovered lives byte (0x0051) reads 0 at the start state -- flagged, not confirmed, same pattern as Mega Man's wave-4 lead. If that is not literally 'lives remaining,' a decrement on the first hit could underflow toward 255 and read as an unrecoverable death, killing every worker at the same early obstacle and starving the frontier at 16 cells / gx 53. Re-running discover_observables against a slightly-advanced (post-first-hazard) state, or instrumenting a raw per-step lives/death trace during a short solver burst, would confirm or rule this out before committing more compute.",
+  "wall_clock_budget": "workers capped at 4, smoke capped at 2 minutes per task instructions (shared machine, concurrent v28 training + an ASM-CPU investigation workflow both running)."
+}

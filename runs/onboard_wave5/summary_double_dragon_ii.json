@@ -1,0 +1,50 @@
+{
+  "game": "Double Dragon II - The Revenge (USA) (Rev A)",
+  "rom": "roms/Double Dragon II - The Revenge (USA) (Rev A).nes",
+  "rom_md5": "b94be0bf2e861bca19339920cd786f53",
+  "profile": "configs/double_dragon_ii.yaml",
+  "start_state": "roms/Double Dragon II - The Revenge (USA) (Rev A)_start.state.bin",
+  "mint": {
+    "status": "MINTED",
+    "method": "scripts/capture_start_state.py --game double_dragon_ii --rom \"roms/Double Dragon II - The Revenge (USA) (Rev A).nes\" --out \"roms/Double Dragon II - The Revenge (USA) (Rev A)_start.state.bin\" --max-frames 2500 (generic START/A mash schedule)",
+    "winning_frame": 345,
+    "settle_frames": 40,
+    "liveness_probe": "tool's own RIGHT20-vs-RIGHT90-vs-LEFT90 RAM-growth+directionality check passed",
+    "visual_check": "REQUIRED per wave-4 lesson (a RAM-only pass can be fooled by a directional-cursor or text-advance screen), performed before trusting the mint: the raw saved-state frame itself rendered as a FLAT MID-TRANSITION GREY frame (a screen-wipe/fade, not a menu or a false-positive cursor screen). Stepping the exact same saved state forward under pure NOOP resolved within ~1-2s into stable, unambiguous Stage-1 gameplay: 'B11' warehouse backdrop, P1/P2 HUD with HI SCORE, P1 x3 lives, player + enemy sprites on the street. Then re-drove RIGHT (180f) vs LEFT (180f) vs A (180f) from the same saved byte-state and rendered each: RIGHT shows the player and a trailing enemy walking right past the loading-dock door; LEFT shows the player kicking a downed enemy near the left edge -- visibly distinct scenes, confirming real input-driven gameplay, not a cutscene or menu. Frames: scratchpad dd2_frame_345.png (flat grey at capture), dd2_noop_60.png/dd2_noop_600.png (resolved gameplay), dd2_RIGHT_180.png / dd2_LEFT_180.png (directional divergence) -- not committed (matches wave 1-4 practice of not committing frame captures)."
+  },
+  "odometer_gate": {
+    "cmd": ".venv/bin/python scripts/progress_signal_gate.py --profile configs/double_dragon_ii.yaml --odometer --forward {right,left,up,down} --steps 1200 --out runs/onboard_wave5/gate_double_dragon_ii_{dir}.json",
+    "receipts": [
+      "runs/onboard_wave5/gate_double_dragon_ii_right.json",
+      "runs/onboard_wave5/gate_double_dragon_ii_left.json",
+      "runs/onboard_wave5/gate_double_dragon_ii_up.json",
+      "runs/onboard_wave5/gate_double_dragon_ii_down.json"
+    ],
+    "result": "range x=0 y=0 under EVERY held direction (1200 steps each); oam_churn 949-1073/1199 (agent alive/animating throughout, rules out a frozen/dead pool)",
+    "verdict_raw": "SIGNAL SOUND -- camera static, agent active (all four gate calls)",
+    "asm_cpu_cross_check": {
+      "why": "task instructions: a completely-flat trace under every direction must be checked against the ASM-CPU NMI-batching anomaly (docs/research/LEAGUE_ONBOARDING_WAVE4_2026-08-25.md headline finding) before concluding CAMERA_STATIC, by constructing nes_core.NESEnvironment directly (interpreter-only, no ASM-CPU toggle) the same way the Journey to Silius attempt did.",
+      "method": "held RIGHT for 1200 steps (frame_skip=4) from the exact same start state via nes_core.NESEnvironment(...) directly (bypassing Pool/ASM-CPU entirely), tracking env.get_odometer() every step.",
+      "result": "range x=0 y=0 -- IDENTICAL to the Pool/ASM-CPU result. The interpreter-only path and the ASM-CPU path AGREE (both flat), unlike Journey to Silius where they DISAGREED (interpreter showed real scroll, ASM-CPU was flat).",
+      "conclusion": "NOT the ASM-CPU flat-trace anomaly. The PPU scroll register genuinely never moves under a simple held-single-direction driver in this game. Consistent with the sibling DD1 profile's own documented precedent (configs/double_dragon.yaml): a combat-gated brawler whose camera locks per fight zone and only advances the PPU scroll on a real room-clear transition, which a static single-direction 1200-step probe never reaches."
+    }
+  },
+  "discover_observables": {
+    "cmd": ".venv/bin/python scripts/discover_observables.py --rom \"roms/Double Dragon II - The Revenge (USA) (Rev A).nes\" --state \"roms/Double Dragon II - The Revenge (USA) (Rev A)_start.state.bin\" --profile configs/double_dragon_ii.yaml --forward right --emit-solve --out runs/onboard_wave5/discover_double_dragon_ii.json",
+    "progress": "none isolated by the automatic 3-probe pass (no room counter, no progress candidate) -- unlike DD1's 0x00B2, which needed bespoke combat-biased multi-worker saturation probes beyond this tool's standard pass; out of scope for this game's ~8-minute onboarding budget",
+    "y": "0x0045 (jump/ballistic candidate, 7 distinct values, range 173)",
+    "lives": "0x001E (decrements on death by 3, agreed 5 of 5 probe runs)",
+    "room_counter": "none found"
+  },
+  "smoke": {
+    "cmd": ".venv/bin/python scripts/go_explore_solve.py --profile configs/double_dragon_ii.yaml --root-state \"roms/Double Dragon II - The Revenge (USA) (Rev A)_start.state.bin\" --out runs/onboard_wave5/smoke_double_dragon_ii --workers 4 --minutes 2 --seed 0",
+    "trend": "cells 1 (seed) -> 133 (60s) -> 195 (120s/final)",
+    "final": {"cells": 195, "frontier": 126, "best_score": 763, "records": 37787, "improvements": 562, "max_gx_in_max_area": 763, "sps": 317},
+    "note": "Frontier grew continuously through the full 2-minute window (1->133->195 cells, 126 still open at cutoff, c_local_elasticity 0.70 -- still climbing, not stalled) despite the odometer gate reading flat under every simple held-direction probe. The solver's mixed-action play (combat + movement + jump, not a single held direction) evidently does cross real room/scroll transitions that the static single-direction odometer probe never reached -- same shape as DD1's own onboarding (odometer said camera-static, the real solve smoke found real progress). max_gx_in_max_area (763) was still increasing at the 120s mark (729 -> 763 between the 60s and 120s checkpoints), not saturated."
+  },
+  "classification": "SOUND_ADVANCING",
+  "classification_rationale": "Frontier grew well past 1 cell (1 -> 133 -> 195) with 562 improvements and 126 cells still open at the 2-minute cutoff, growth rate not yet decaying (c_local_elasticity 0.70). This overrides the raw odometer gate's flat single-direction reading, which was cross-checked against the ASM-CPU flat-trace anomaly (ruled out: interpreter-only and ASM-CPU paths agree) and against DD1's own documented camera-lock-per-fight precedent (expected for this brawler engine, not an instrument fault).",
+  "next_lever": "No RAM progress/room-counter byte isolated yet by the automatic probe (unlike DD1's hand-found 0x00B2) -- a combat-biased multi-worker saturation probe, same technique DD1's own onboarding used, is the likely next step if this game needs a tighter reward signal than the odometer-plus-generic-cell-key the smoke already used successfully.",
+  "wall_clock_budget": "Workers capped at 4, smoke capped at 2 minutes, per task instructions (shared machine, concurrent v28 training + a sibling ASM-CPU investigation workflow both using this machine). Total onboarding wall-clock for this one game (mint + 4x odometer gate + interpreter cross-check + discover_observables + smoke) stayed within the ~8-minute target.",
+  "commits": "none made by this task, per instructions."
+}

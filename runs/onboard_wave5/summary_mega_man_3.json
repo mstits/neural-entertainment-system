@@ -1,0 +1,37 @@
+{
+  "game": "Mega Man 3 (USA)",
+  "rom": "roms/Mega Man 3 (USA).nes",
+  "wave": "onboard_wave5",
+  "date": "2026-08-25",
+  "steps": {
+    "1_mint": {
+      "status": "MINTED",
+      "note": "The generic house masher (scripts/capture_start_state.py, undirected START/A pulses only) genuinely stalled forever on this ROM: tried at both --max-frames 2000 (default) and --max-frames 4000/--check-every 60, both returning 'never became controllable'. A rendered-frame probe (scratchpad, not committed) at f=1800 and f=3600 showed IDENTICAL frames -- MM3's stage-select screen, whose 3x3 grid's CENTER cell is a static Mega Man portrait / 'PUSH START' idle prompt, not a selectable robot-master box. This is exactly the directional-cursor-screen trap named in the task: an undirected masher can never leave it, and a RAM-only liveness heuristic run from that stuck point would never fire. Fixed with a custom scripted, frame-timed sequence: house masher through logo/story/title to f=1900 (stage-select fully up), then ONE RIGHT tap + START to move off the center decoration onto an adjacent box (landed on Top Man), then a 900-frame settle through the name-card + fade-in into live gameplay.",
+      "cmd": "custom script (scratchpad/mm3_mint.py, house masher f<1900 + RIGHT-tap + START + 900f settle) -- not scripts/capture_start_state.py, whose undirected masher cannot escape this screen",
+      "result": "wrote roms/Mega Man 3 (USA)_start.state.bin, 152399 bytes",
+      "liveness_probe": "runs/onboard_wave5/mint_mega_man_3.json -- right_vs_left_120f=329, right_vs_noop_120f=337, left_vs_noop_120f=59, a_vs_noop_120f=30 (2KB RAM range)",
+      "visual_confirmation": "MANDATORY per task instructions -- rendered frame at the capture point shows live Top Man stage gameplay (conveyor-block room, Mega Man sprite, two HUD energy meters), not a menu/cursor/text screen. Also visually confirmed the FAILURE mode itself (identical stage-select frames at f=1800/f=3600) before attempting the scripted fix, ruling out 'just needs more time' the same way wave 4's Castlevania III / Power Blade mint_failed calls were confirmed with two independent probe designs.",
+      "false_positive_note": "This mint would have been vulnerable to exactly the RAM-only-heuristic trap the task warns about (a directional-cursor screen fooling input-divergence alone) IF the generic masher's stuck point had been probed with RIGHT-vs-LEFT-vs-NOOP directly -- moving the cursor left vs right from the stage-select screen DOES diverge RAM (different robot-master box highlighted), which could false-positive as 'live gameplay' on a cursor screen. Caught here by rendering the frame BEFORE trusting any RAM diff, per the task's explicit instruction."
+    },
+    "2_gate": {
+      "status": "PASS",
+      "cmd": ".venv/bin/python scripts/progress_signal_gate.py --profile configs/mega_man_3.yaml --odometer --forward right --steps 1200 --out runs/onboard_wave5/gate_mega_man_3_right.json",
+      "verdict": "SIGNAL SOUND -- still advancing",
+      "detail": "axis=x, range x=551 (y=0), oam_churn=1122/1199, 142 distinct values over 1200 steps. NOT flat under any measured direction -- no possible-asm-cpu-anomaly flag needed; the odometer shows a real, richly-distributed scroll axis from the minted start state (Top Man's stage)."
+    },
+    "3_observables": {
+      "cmd": ".venv/bin/python scripts/discover_observables.py --rom \"roms/Mega Man 3 (USA).nes\" --state \"roms/Mega Man 3 (USA)_start.state.bin\" --forward right --emit-solve --out runs/onboard_wave5/discover_mega_man_3.json",
+      "result": "room counter: none; progress candidates: none (odometer remains the only forward-progress signal, same shape as configs/mega_man_usa.yaml and configs/ninja_gaiden_ii.yaml). y=0x0012 (jump/ballistic, sole candidate). lives=0x001A (decrements on death, 5/5 probe agreement, reaches empty, refills after death in all 5 watched runs).",
+      "caveat": "lives candidate 0x001A reads 0 at the root state -- the SAME shape as wave 4's Mega Man (USA) flagged risk (a byte that idles at 0 could underflow toward 255 on a naive decrement and be misread as instant death). Flagged in the config's solve.lives comment. In THIS run it did not manifest as a problem -- see step 5: the frontier grew enormously (1 -> 1025 cells) despite lives=0 at the seed, so whatever this byte actually tracks, it did not starve the search this session."
+    },
+    "4_config": "configs/mega_man_3.yaml (new; modeled on configs/mega_man_usa.yaml)",
+    "5_smoke": {
+      "cmd": ".venv/bin/python scripts/go_explore_solve.py --profile configs/mega_man_3.yaml --root-state \"roms/Mega Man 3 (USA)_start.state.bin\" --out runs/onboard_wave5/smoke_mega_man_3 --workers 4 --minutes 2 --seed 0",
+      "result": "cells 1(seed) -> 760 -> 1025 across the two 60s windows (growing in BOTH windows, stall_flat_windows=0), frontier ended at 902 OPEN (nowhere near exhausted), best_score/max_gx_in_max_area=1908, 44284 records / 2175 improvements, 0 solutions (expected for a 2-minute smoke).",
+      "observation": "Frontier grew past 1 by more than two orders of magnitude and kept growing through the full budget -- this is an unambiguous, healthy search, not a frozen frontier. The lives=0x001A-reads-0-at-root caveat flagged in step 3 visibly did NOT block exploration here (contrast with the sibling Mega Man (USA) wave-4 result, which froze at 10 cells under the analogous flagged byte)."
+    }
+  },
+  "classification": "SOUND_ADVANCING",
+  "classification_rationale": "Odometer gate confirmed a real, well-distributed forward scroll axis (PASS, not flat under any tested direction -- no possible-asm-cpu-anomaly). The go_explore smoke's frontier grew from 1 seed cell to 1025 cells with 902 still open, growing in both one-minute windows with zero stall_flat_windows -- squarely 'frontier grows past 1' (rule 5's SOUND_ADVANCING case), not a frozen frontier (SOUND_GAME_STOPS) and not camera-static (no axis anywhere would be required for that, and a strong axis exists here).",
+  "next_lever": "None required to bank as-is. The lives=0x001A caveat (reads 0 at root, same shape as the wave-4 Mega Man (USA) finding) is worth a deeper look before running a real solve campaign, even though it did not visibly starve this smoke -- confirm what the byte actually represents (e.g. it could be an 'extra lives beyond the current life' counter, which legitimately starts at 0 in several Capcom titles, rather than a broken read)."
+}

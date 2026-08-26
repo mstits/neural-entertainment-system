@@ -1,0 +1,54 @@
+{
+  "game": "Bad Dudes (USA)",
+  "rom": "roms/Bad Dudes (USA).nes",
+  "rom_md5": "e5f71b547f6a8c6166c55b1baa7d21c5",
+  "profile": "configs/bad_dudes.yaml",
+  "start_state": "roms/Bad Dudes (USA)_start.state.bin",
+  "mint": {
+    "receipt": "runs/onboard_wave5/bad_dudes_mint.log",
+    "status": "MINTED",
+    "cmd": ".venv/bin/python scripts/capture_start_state.py --game bad_dudes --rom \"roms/Bad Dudes (USA).nes\" --out \"roms/Bad Dudes (USA)_start.state.bin\" --max-frames 3600",
+    "frames_from_boot": 2235,
+    "settle_frames": 40,
+    "note": "First attempt at the tool's default --max-frames 2000 timed out (never became controllable) -- Data East's boot sequence (Data East logo -> title -> 1/2 PLAYER select -> 'THE PRESIDENT HAS BEEN KIDNAPPED BY NINJAS...' story cutscene -> 'PLAYER 1 / P-3' stage-intro card) runs past frame 2000. Raised budget to 3600 and it minted cleanly.",
+    "visual_check": {
+      "frames": [
+        "runs/onboard_wave5/bad_dudes_start_state_frame.png",
+        "runs/onboard_wave5/bad_dudes_check_0060.png",
+        "runs/onboard_wave5/bad_dudes_check_0150.png",
+        "runs/onboard_wave5/bad_dudes_check_0300.png"
+      ],
+      "finding": "The captured state itself lands mid-transition on a 'PLAYER 1 / P-3' stage-intro card -- NOT gameplay by itself. Applied the wave-4 lesson (never trust the RAM-only input-divergence heuristic alone) and stepped the loaded state forward under held NOOP: the card is a fixed-duration automatic wipe (advances with zero input dependency) that resolves into unambiguous Stage 1 gameplay within ~60 frames -- scrolling bridge/skyline backdrop, ticking TIME counter, HP bar, an enemy sprite walking onscreen by frame 300. This is NOT the directional-cursor or text-advance false-positive class flagged in wave 4 (DuckTales 2's world-map, Darkwing Duck's story briefing) -- it is a one-shot cutscene wipe with no input-controllable menu state, so the tool's own RIGHT-vs-LEFT divergence read is trustworthy here."
+    }
+  },
+  "odometer_gate": {
+    "receipt": "runs/onboard_wave5/gate_bad_dudes_right.json",
+    "cmd": ".venv/bin/python scripts/progress_signal_gate.py --profile configs/bad_dudes.yaml --odometer --forward right --steps 1200 --out runs/onboard_wave5/gate_bad_dudes_right.json",
+    "axis": "x",
+    "range_x": 1280,
+    "range_y": 0,
+    "distinct": 380,
+    "oam_churn": "1044/1199",
+    "verdict": "SIGNAL SOUND -- game stops",
+    "note": "Real, non-zero x-axis on the first probed direction (range 1280) -- explicitly NOT the ASM-CPU flat-under-every-direction anomaly Journey to Silius hit in wave 4, so no possible-asm-cpu-anomaly flag needed and no NESEnvironment cross-check was required. Flat tail in the last quarter is a behaviour finding (naive constant-RIGHT hold stalls somewhere), not an instrument fault."
+  },
+  "discover_observables": {
+    "receipt": "runs/onboard_wave5/discover_bad_dudes.json",
+    "cmd": ".venv/bin/python scripts/discover_observables.py --rom \"roms/Bad Dudes (USA).nes\" --state \"roms/Bad Dudes (USA)_start.state.bin\" --forward right --frame-skip 4 --emit-solve --out runs/onboard_wave5/discover_bad_dudes.json",
+    "progress_ram_candidate": "$0069|$00B1<<8 (net_forward +1280, mono 1.00, passes wrap + saturation gates) -- NOT used as the config's progress source; kept the odometer since it already gated SOUND (same reasoning as journey_to_silius/ninja_gaiden_ii)",
+    "y": "0x00F2 (jump/ballistic signature)",
+    "lives": "0x034F (decrements on death, 5/5 probe agreement)",
+    "room_counter": "0x00B1",
+    "caveat": "0x034F reads 0 at the start state (same shape as Mega Man's wave-4 flagged lead: a byte read as 'lives' that starts at 0 risks reading as a deaths-counter, not remaining-lives, and could underflow on decrement). Flagged, not confirmed, and NOT blocking here: the smoke below never froze, so whatever this byte's true semantics, it is not starving exploration inside this budget."
+  },
+  "smoke": {
+    "cmd": ".venv/bin/python scripts/go_explore_solve.py --out runs/onboard_wave5/smoke_bad_dudes --root-state \"roms/Bad Dudes (USA)_start.state.bin\" --profile configs/bad_dudes.yaml --workers 4 --minutes 2 --seed 0",
+    "trend": "cells 1 (seed) -> 884 (60s) -> 1324 (120s/final)",
+    "final": {"cells": 1324, "frontier": 1234, "best_score": 1280, "records": 39128, "improvements": 2144, "solutions": 0, "stall_flat_windows": 0},
+    "note": "Frontier grew immediately and kept growing through both checkpoints (1->884->1324), with 2144 archive improvements and zero stall-flat windows recorded -- a clean SOUND_ADVANCING profile, not the SOUND_GAME_STOPS freeze pattern. max_gx_in_max_area held at 1280 in both checkpoints, matching the odometer gate's own independently-measured range ceiling -- flagged as a possible early wall worth watching on a longer run, but unlike Super C's near-stall this frontier stayed 93% open (1234/1324) and still climbing at the 2-minute mark, so it reads as budget-limited exploration, not a stuck search."
+  },
+  "classification": "SOUND_ADVANCING",
+  "classification_rationale": "Real, non-flat odometer x-axis on the first probed direction (range 1280, high OAM churn = agent alive) plus a RAM progress byte that independently passes both discovery gates; the 2-minute/4-worker smoke grew the archive from 1 to 1324 cells with 2144 improvements, frontier 93% open and still climbing at the end of the budget, zero stall windows. No possible-asm-cpu-anomaly (odometer was never flat).",
+  "next_lever": "Longer unattended run to see whether the frontier keeps growing past the shared gx~1280 ceiling both the gate and the smoke independently landed on; the 0x034F lives-byte-reads-0-at-start caveat is worth a quick confirm (same class as Mega Man's flagged lead) before this config is used for a real solve.",
+  "wall_clock_budget": "workers capped at 4, smoke capped at 2 minutes per task instructions (shared machine, concurrent v28 training + an ASM-CPU investigation workflow); total wall-clock across mint/gate/discover/smoke ~6.3 minutes."
+}

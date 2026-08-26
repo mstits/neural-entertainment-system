@@ -1,0 +1,16 @@
+{
+  "rom": "roms/Mega Man 3 (USA).nes",
+  "rom_md5": "75b924155cafee335c9ea7a01bfc8efb",
+  "state_path": "roms/Mega Man 3 (USA)_start.state.bin",
+  "state_bytes": 152399,
+  "mint_method": "scripted frame-timed navigation (generic house masher through logo/story/title to stage-select at f=1900, then a game-specific RIGHT tap + START to escape the stage-select screen's non-selectable center decoration, landing on Top Man's stage; 900-frame settle through the name-card + fade-in into live gameplay)",
+  "false_positive_check": "the generic undirected masher (pure START/A pulses, no directional taps) genuinely stalls forever on the stage-select screen -- confirmed identical rendered frames at f=1800 and f=3600, and capture_start_state.py's generic masher independently failed at both --max-frames 2000 and --max-frames 4000. This is the directional-cursor-screen trap named in the task: the center grid cell is a static Mega Man portrait/PUSH-START prompt, not a selectable box, so an undirected masher can never leave it.",
+  "visual_confirmation": "rendered frame at capture point shows live Top Man stage gameplay (conveyor-block room, Mega Man sprite, HUD energy meters) -- not a menu/cursor/text screen. Saved to scratchpad (not committed): mm3_CANDIDATE_start.png / mm3_trans_f700.png",
+  "liveness": {
+    "probe": "load state; 120 frames RIGHT vs LEFT vs A vs NOOP; compare 2KB RAM",
+    "right_vs_left_120f": 329,
+    "right_vs_noop_120f": 337,
+    "a_vs_noop_120f": 30,
+    "left_vs_noop_120f": 59
+  }
+}

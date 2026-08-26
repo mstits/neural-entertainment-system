@@ -1,0 +1,116 @@
+name: "Castlevania III - Dracula's Curse"
+
+rom_path: "roms/Castlevania III - Dracula's Curse (USA).nes"
+rom_hashes:
+  - "d16a502d0125f23cc3d980ddc6b6f2e8"
+start_state_path: "roms/Castlevania III - Dracula's Curse (USA)_start.state.bin"
+
+description: |
+  Castlevania III - Dracula's Curse (NES, Konami), onboarding profile
+  (wave 5, 2026-08-25 -- RETRY of wave 4's mint_failed). Structure
+  copied from configs/ninja_gaiden_ii.yaml / configs/darkwing_duck.yaml;
+  no game knowledge encoded -- generic controller, discovered-RAM
+  progress source confirmed by the odometer.
+
+  WAVE 4 FAILURE, and what was actually wrong: wave 4 blind-mashed
+  START on a fixed timer and probed only full-2KB-RAM divergence. Two
+  probes (a 120-frame RIGHT/LEFT/A/NOOP divergence check, and a
+  7200-step / 8-minute extended trace) both came back reading a
+  persistent ~440-478 byte/100-frame RAM churn that never responded to
+  additional START presses, and were read as an unskippable
+  cinematic/attract loop. runs/onboard_wave4/castlevania_iii_mint_failed.json,
+  runs/onboard_wave4/castlevania_iii_boot_trace.log.
+
+  WAVE 5 FIX -- frame-timed, screen-aware scripted input (rendering +
+  visually inspecting nes_core.NESEnvironment.get_frame() at every
+  decision point, not just RAM diffs): a pure-NOOP walk with screenshots
+  every 100 frames showed the real sequence -- Konami logo -> castle-art
+  splash -> title card ("Castlevania III Dracula's Curse", TM AND (c)
+  1990) -> an auto-starting, seemingly non-skippable story-text crawl
+  ("During 15th century Europe, there lived a person named Dracula...").
+  This crawl IS what wave 4's extended probe was stuck inside -- its
+  RAM churn (text scrolling + a torch/border animation) looks exactly
+  like real gameplay churn, which is why the old heuristic misread it.
+
+  The actual fix: a direct A-vs-START fork test from mid-crawl (900
+  frames each) showed A-mash changes almost nothing (2 RAM bytes vs
+  NOOP) while START-mash changes a lot (738 bytes) AND the rendered
+  frame after START-mash shows real Stage-1 gameplay (HUD "SCORE 000000
+  TIME 0493 BLK 1-01", Trevor Belmont sprite, ruined-castle terrain,
+  enemies) -- START *does* skip the crawl, contrary to what the wave-4
+  probe's fixed periodic-START schedule (which also kept pressing START
+  throughout, unknowingly toggling PAUSE) made it look like.
+  skiptest_castlevania_iii_noop_textcrawl.png vs
+  skiptest_castlevania_iii_startmash_gameplay.png.
+
+  The remaining trap: once in live gameplay, START is also the PAUSE
+  button, so continued START-mashing toggles pause on every further
+  press. A pulse-by-pulse sweep (10-on/20-off cadence, each pulse
+  independently probed with a fresh RIGHT-vs-LEFT-vs-NOOP 120-frame
+  divergence check) showed real gameplay divergence (~72-170 RAM bytes)
+  on roughly every OTHER pulse from pulse ~3 onward, alternating with a
+  frozen/paused ~2-byte-diff read on the pulses in between -- exactly
+  the shape of a toggle. Pulse 21 (of a 10-on/20-off mash starting at
+  frame 2400) lands UNPAUSED: RIGHT-vs-LEFT diverges 162 bytes,
+  RIGHT-vs-NOOP 175 bytes over 120 held frames, from the SAME saved
+  candidate state, both confirmed visually (right-probe frame shows the
+  camera scrolled right + Trevor mid-whip-attack; left-probe frame
+  shows him still pinned near the left edge) and by full-RAM diff.
+  mint_castlevania_iii.json, mint_castlevania_iii_frame.png,
+  probe_castlevania_iii_{right,left}120.png.
+
+  ODOMETER GATE (2026-08-25, runs/onboard_wave5/gate_castlevania_iii_right.json):
+  --forward right, 1200 steps: axis x, range 0..512, 130 distinct
+  values, OAM churn 1199/1199 (full agent animation every step).
+  verdict PASS -- SIGNAL SOUND (behaviour note: flat in the final
+  quarter, i.e. the hold-right driver hits a wall/enemy/pit before the
+  probe ends -- expected for a pure hold with no jump/attack input, not
+  an instrument fault).
+
+  DISCOVER_OBSERVABLES (2026-08-25, runs/onboard_wave5/discover_castlevania_iii.json,
+  via scripts/onboard_game.py which re-ran the full probe protocol
+  against this exact minted state): the spatial pair $0056|$0057<<8
+  SATURATES (camera-clamp), so progress uses the room/screen counter
+  $0057 directly (steps at transitions, does not saturate). y = $0002
+  (jump/ballistic signature). lives = $06A1 (decrements on death, 5/5
+  probe agreement, reaches empty). level_key deliberately empty --
+  coverage baseline, no stage-clear byte captured yet.
+
+  SOLVER SMOKE (2026-08-25, 4 workers / 2 min / seed 0,
+  runs/onboard_wave5/smoke_castlevania_iii/): cells 1 -> 52 (60s) -> 173
+  (120s, still climbing), frontier 162 open at cutoff (not stuck),
+  max_area (room/screen counter) 0 -> 1 -> 2 (real room transitions),
+  max_sect 6 -> 16, improvements 231/41573 records, 0 solutions
+  (expected; level_key is the empty coverage baseline). Verdict:
+  SOUND_ADVANCING.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["left", "A"]
+  - ["right", "B"]
+  - ["left", "B"]
+  - ["up", "A"]
+  - ["right", "up"]
+  - ["down", "B"]
+
+solve:
+  rom: "roms/Castlevania III - Dracula's Curse (USA).nes"
+  # PROGRESS WARNING: spatial $0056|$0057<<8 SATURATES (camera-clamp:
+  # caps at the scroll-window limit and re-bases at room transitions).
+  # True progress = the room/screen counter below (confirmed by the
+  # odometer gate independently -- see description).
+  progress: {lo: 0x0057}   # room/screen counter (steps at transitions; monotone, non-saturating)
+  area: 0x0057   # room/screen counter (drives sect transitions)
+  y: 0x0002   # jump/ballistic signature
+  level_key: []   # coverage baseline; wire a stage-advance byte once a real clear is captured
+  lives: 0x06A1   # decrements on death

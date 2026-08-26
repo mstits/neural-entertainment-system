@@ -1,0 +1,80 @@
+name: "Bad Dudes"
+
+rom_path: "roms/Bad Dudes (USA).nes"
+rom_hashes:
+  - "e5f71b547f6a8c6166c55b1baa7d21c5"
+start_state_path: "roms/Bad Dudes (USA)_start.state.bin"
+
+description: |
+  Bad Dudes (NES), onboarding profile (wave 5, 2026-08-25). Structure
+  copied from configs/ninja_gaiden_ii.yaml (generic action set, no game
+  knowledge encoded).
+
+  Start state: roms/Bad Dudes (USA)_start.state.bin, minted this session
+  via scripts/capture_start_state.py (generic START/A menu-mash driver,
+  --max-frames 3600; gameplay confirmed at frame 2235, +40 settle;
+  receipt runs/onboard_wave5/bad_dudes_mint.log). The generic
+  --max-frames 2000 default false-NEGATIVED first (game never became
+  controllable within that budget) because Data East's Stage 1 intro
+  (title -> 1/2 PLAYER select -> "THE PRESIDENT" story cutscene ->
+  "PLAYER 1" stage-intro card) runs past frame 2000; raising the budget
+  to 3600 cleared it.
+
+  VISUAL CHECK (runs/onboard_wave5/bad_dudes_start_state_frame.png,
+  bad_dudes_check_0060.png..0300.png): the captured state itself lands
+  mid-transition on a "PLAYER 1 / P-3" stage-intro card, which is NOT
+  gameplay by itself -- but the card is a fixed-duration automatic
+  transition (advances under held NOOP, no input dependency) and
+  resolves into real Stage 1 gameplay (scrolling bridge backdrop, TIME
+  counter ticking, HP bar, an enemy sprite walking onscreen) within ~60
+  frames regardless of input. Confirmed NOT a directional-cursor or
+  text-advance false positive: this is a one-shot cutscene wipe, not an
+  input-controllable menu, and gameplay unambiguously follows it.
+
+  Odometer gate (runs/onboard_wave5/gate_bad_dudes_right.json): --forward
+  right, 1200 steps, axis x, range 0..1280, 380 distinct, oam_churn
+  1044/1199 (agent clearly alive) — PASS, SIGNAL SOUND (tail-quarter flat
+  noted as a behaviour finding, not an instrument fault; not the ASM-CPU
+  flat-under-every-direction anomaly seen on Journey to Silius in wave 4
+  — this trace is a real, non-zero axis on the first probed direction).
+
+  y / lives discovered by scripts/discover_observables.py's own 3-probe
+  protocol against this exact start state, 2026-08-25. No RAM map, no
+  disassembly, no walkthrough. Receipt:
+  runs/onboard_wave5/discover_bad_dudes.json
+    $0069|$00B1<<8  progress pair candidate (netF=1280, mono=1.00,
+           passes wrap + saturation) — NOT used because the odometer
+           already gated SOUND and is the preferred hardware surface
+           (same reasoning as journey_to_silius/ninja_gaiden_ii).
+    $00F2  y candidate (jump/ballistic signature).
+    $034F  lives candidate — decrements on death, 5 of 5 probe agreement.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Bad Dudes (USA).nes"
+  progress: {source: odometer, axis: x}
+  # y / lives discovered by scripts/discover_observables.py's 3-probe
+  # protocol; see receipt cited above.
+  y: 0x00F2
+  lives: 0x034F
+  # DELIBERATELY EMPTY — no clear captured yet; guessing a stage-advance
+  # byte here is the authored-semantics class the purity line forbids.
+  level_key: []

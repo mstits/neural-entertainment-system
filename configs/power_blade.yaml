@@ -1,0 +1,128 @@
+name: "Power Blade"
+
+rom_path: "roms/Power Blade (USA).nes"
+rom_hashes:
+  - "316f5b34bb7affd2b5d45ebaa3fd076f"
+start_state_path: "roms/Power Blade (USA)_start.state.bin"
+
+description: |
+  Power Blade (NES, Taito, 1991), onboarding profile (wave 5, retry of a
+  wave-4 mint_failed). Structure copied from configs/darkwing_duck.yaml /
+  configs/blaster_master.yaml; no game knowledge encoded — generic
+  controller, odometer progress source.
+
+  WAVE 4 FAILURE (runs/onboard_wave4/power_blade_mint_failed.json): a
+  timing-based boot mash reached a screen that LOOKED like gameplay
+  (player sprite, ladders, HUD) but every input was byte-identical to
+  NOOP on both RAM and OAM — correctly read at the time as a probing
+  dead end, not forced into the pipeline.
+
+  WAVE 5 FIX (this session, frame-timed + screen-aware, per-screen PNGs
+  in runs/onboard_wave5/): the wave-4 candidate was almost certainly
+  captured mid-transition (fade / walk-in), not in a genuinely inert
+  screen. This pass rendered and visually inspected every screen
+  transition before deciding the next input:
+    1. NOOP 60f: TAITO logo / title, START+CONTINUE menu.
+    2. START mashed (8x 4-on/20-off pulses, frames 60-252): walks title
+       -> LEVEL NORMAL/EXPERT difficulty select -> confirms NORMAL ->
+       lands mid an unskippable rooftop cutscene (two-character cinematic
+       over a city skyline).
+    3. Pure NOOP x660 (frames 252-912): the cutscene is non-interactive
+       and auto-advances on its own -- confirmed by holding NOOP alone --
+       landing on the PROJECT-X sector-select map (all 6 sectors ACTIVE).
+    4. START x10 (no directional bias, default cursor) + NOOP settle
+       (frames 912-1132): fades into live gameplay -- player sprite, an
+       ENEMY/PLAYER POWER HUD, a x2 lives counter, and a real countdown
+       TIME (started 0998).
+
+  LIVENESS (runs/onboard_wave5/mint_power_blade.json +
+  power_blade_verify_*.png): a first verification pass had a script bug
+  (probe screenshots were rendered from a stale, unstepped env object)
+  that was caught by re-inspecting the images and finding them
+  suspiciously identical; a corrected re-run rendered each probe's own
+  env. Result: RIGHT vs LEFT diverge by 209/2048 RAM bytes at 120f (269
+  vs 325 vs base; NOOP/A/B/DOWN cluster at the ~156-165 baseline), OAM
+  diverges 148 (RIGHT) vs 193 (LEFT) vs 82 (NOOP/A/B baseline) at 120f.
+  Visual confirmation: RIGHT scrolls the camera into a corridor with a
+  statue/ladders (TIME 0998->0996 at 120f, ->0975 at 1500f, still
+  counting down -- not frozen); LEFT scrolls into open sky with clouds,
+  a completely different, opposite-direction view; NOOP leaves the
+  player standing still in the entry doorway while TIME still ticks
+  down. Both the RAM/OAM divergence AND the rendered frames agree: this
+  is live, input-driven gameplay, not a scripted screen.
+
+  discover_observables.py (runs/onboard_wave5/discover_power_blade.json):
+  no clean RAM progress byte recommended (every spatial candidate but
+  one is a CAMERA-CLAMP SATURATOR; the one non-saturator, $00C3, was
+  never promoted because it wasn't the heaviest-churn byte and no room
+  counter exists as a fallback) -- progress stays on the PPU-scroll
+  odometer, same reasoning as configs/ducktales_2.yaml. y=$00E0
+  (jump/ballistic candidate). lives: the tool's own top pick ($0530, 5/5
+  agreement) was CAUGHT AND REJECTED -- it reads 0 at the start state
+  under the exact Pool harness progress_signal_gate.py / the solver use
+  (reset_all -> load_worker_state -> one NOOP step), which underflows to
+  255 on first decrement (the Ninja Gaiden $001F trap). Replaced with
+  the next-ranked candidate, $07CA (4/5 agreement), which reads 1 under
+  the identical harness.
+
+  ODOMETER GATE (runs/onboard_wave5/gate_power_blade_{right,left,up,
+  down}.json): --forward right/left are real, symmetric, bidirectional
+  horizontal scroll axes (range 0..86 / 0..87) that cap hard almost
+  immediately (23 distinct values in 1200 steps, flat for the back
+  half) -- same shape as configs/darkwing_duck.yaml's gate. --forward up
+  is near-zero (range 0..1); --forward down is fully camera-static but
+  PASSES ("SIGNAL SOUND — camera static, agent active"). A real axis
+  exists, so per the established rule (a real axis routes to a solver
+  smoke, not an automatic wall verdict from the raw hold-only probe)
+  the smoke below is the actual gate.
+
+  SOLVER SMOKE (runs/onboard_wave5/smoke_power_blade.log, 4 workers /
+  2 min / seed 0): cells and max_gx were ALREADY saturated at the first
+  60s checkpoint (18 cells, max_gx=88, frontier 1) and did not move at
+  all in the second 60s window -- explicit "STALL WARNING: stuck at 18
+  cells for 2 min straight". This matches, almost to the pixel, the raw
+  single-direction odometer probe's independent cap (gx 86 under pure
+  RIGHT, 87 under pure LEFT): three independent methods converge on the
+  same ~86-88 gx ceiling with the agent still animating (OAM churning)
+  throughout, not frozen. Verdict: SIGNAL SOUND, EARLY WALL -- the state
+  is genuinely live and controllable (see LIVENESS above); the search
+  has not found a way past an obstacle within the first ~90 world-units
+  of Sector 6 in the smoke budget. Reads as a real early skill/route
+  wall (an enemy, gap, or locked path just past spawn), not a broken
+  start state or an instrument fault -- not root-caused further, out of
+  scope for this onboarding pass.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["up", "A"]
+  - ["down", "A"]
+
+solve:
+  rom: "roms/Power Blade (USA).nes"
+  progress: {source: odometer, axis: x}
+  # Jump/ballistic candidate (discover_observables.py, --forward right).
+  y: 0x00E0
+  # discover_observables' TOP-ranked candidate ($0530, 5/5 agreement)
+  # was REJECTED: progress_signal_gate.py's own pool harness
+  # (reset_all + load_worker_state + one NOOP step, the exact sequence
+  # the real gate/solver use) reads $0530==0 at the start state, which
+  # underflows to 255 on first decrement -- the same instrument trap
+  # documented for Ninja Gaiden's $001F. Substituted the next-ranked
+  # candidate that is non-zero under the identical harness: $07CA
+  # (4/5 probe-run agreement, reaches_empty, spends_its_stock, starts
+  # at 1 under Pool.reset_all()+load_worker_state()+step_all(NOOP)).
+  lives: 0x07CA
+  level_key: []

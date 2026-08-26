@@ -1,0 +1,69 @@
+name: "Ninja Gaiden III - The Ancient Ship of Doom"
+
+rom_path: "roms/Ninja Gaiden III - The Ancient Ship of Doom (USA).nes"
+rom_hashes:
+  - "569b3382638a1c9094e2c40b35f359c7"
+start_state_path: "roms/Ninja Gaiden III - The Ancient Ship of Doom (USA)_start.state.bin"
+
+description: |
+  Ninja Gaiden III: The Ancient Ship of Doom (NES), onboarding profile
+  (wave 5, 2026-08-25). Structure copied from configs/ninja_gaiden_ii.yaml
+  (NG1/NG2 adjacency); no game knowledge encoded — generic controller,
+  odometer progress source pending gate.
+
+  Start state: roms/Ninja Gaiden III - The Ancient Ship of Doom
+  (USA)_start.state.bin, minted this wave
+  (runs/onboard_wave5/mint_ninja_gaiden_iii.json) — liveness verified by
+  input-divergence probe (RIGHT vs LEFT vs NOOP diverge 232/195/118 RAM
+  bytes from a fresh reload) AND by a rendered-frame visual check
+  (Stage 1-1A HUD, ninja sprite visibly displaced further right under a
+  90-frame RIGHT hold vs a 90-frame NOOP hold from the same state) —
+  not a title/demo screen.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Ninja Gaiden III - The Ancient Ship of Doom (USA).nes"
+  # Odometer gate (runs/onboard_wave5/gate_ninja_gaiden_iii_right.json):
+  # --forward right, 1200 steps, axis x, range 0..264, 49 distinct,
+  # oam_churn 1199/1199 -- PASS, SIGNAL SOUND (tail-quarter flat noted
+  # as a behaviour finding, same shape as NG1/NG2/Super C, not an
+  # instrument fault). NG1/NG2 precedent: prefer the odometer as
+  # progress source once it gates SOUND.
+  progress: {source: odometer, axis: x}
+  # y / lives / room-counter discovered by scripts/discover_observables.py's
+  # own 3-probe protocol against this exact start state, 2026-08-25. No
+  # RAM map, no disassembly, no walkthrough.
+  # Receipt: runs/onboard_wave5/discover_ninja_gaiden_iii.json
+  #   $00DC  room/screen counter (netF=264, mono=1.00, no saturation) --
+  #          not used as primary progress (odometer already gated SOUND
+  #          and is the preferred hardware surface), kept as `area` for
+  #          archive cell-keying since it steps cleanly at transitions.
+  #   $0084|$00DC<<8  spatial pair -- SATURATES (camera-clamp, caps at
+  #          scroll-window limit + rebases at room transitions). Flagged
+  #          by the discovery tool itself; not used.
+  #   $0006  y candidate -- jump/ballistic signature.
+  #   $007B  lives candidate -- decrements on death, 5 of 5 agreement.
+  area: 0x00DC
+  y: 0x0006
+  lives: 0x007B
+  # DELIBERATELY EMPTY -- no clear captured yet; guessing a stage-advance
+  # byte here is the authored-semantics class the purity line forbids.
+  level_key: []

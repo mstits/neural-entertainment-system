@@ -1,0 +1,133 @@
+{
+  "rom": "roms/Shatterhand (USA).nes",
+  "found_live": true,
+  "frames_from_boot": 690,
+  "attempts": [
+    {
+      "frame": 30,
+      "ram_diff_right_vs_left": 0,
+      "ram_diff_right_vs_noop": 0
+    },
+    {
+      "frame": 60,
+      "ram_diff_right_vs_left": 0,
+      "ram_diff_right_vs_noop": 0
+    },
+    {
+      "frame": 90,
+      "ram_diff_right_vs_left": 0,
+      "ram_diff_right_vs_noop": 0
+    },
+    {
+      "frame": 120,
+      "ram_diff_right_vs_left": 0,
+      "ram_diff_right_vs_noop": 0
+    },
+    {
+      "frame": 150,
+      "ram_diff_right_vs_left": 0,
+      "ram_diff_right_vs_noop": 0
+    },
+    {
+      "frame": 180,
+      "ram_diff_right_vs_left": 3,
+      "ram_diff_right_vs_noop": 3
+    },
+    {
+      "frame": 210,
+      "ram_diff_right_vs_left": 3,
+      "ram_diff_right_vs_noop": 3
+    },
+    {
+      "frame": 240,
+      "ram_diff_right_vs_left": 3,
+      "ram_diff_right_vs_noop": 3
+    },
+    {
+      "frame": 270,
+      "ram_diff_right_vs_left": 3,
+      "ram_diff_right_vs_noop": 3
+    },
+    {
+      "frame": 300,
+      "ram_diff_right_vs_left": 3,
+      "ram_diff_right_vs_noop": 4
+    },
+    {
+      "frame": 330,
+      "ram_diff_right_vs_left": 0,
+      "ram_diff_right_vs_noop": 0
+    },
+    {
+      "frame": 360,
+      "ram_diff_right_vs_left": 0,
+      "ram_diff_right_vs_noop": 0
+    },
+    {
+      "frame": 390,
+      "ram_diff_right_vs_left": 0,
+      "ram_diff_right_vs_noop": 0
+    },
+    {
+      "frame": 420,
+      "ram_diff_right_vs_left": 1,
+      "ram_diff_right_vs_noop": 1
+    },
+    {
+      "frame": 450,
+      "ram_diff_right_vs_left": 1,
+      "ram_diff_right_vs_noop": 1
+    },
+    {
+      "frame": 480,
+      "ram_diff_right_vs_left": 1,
+      "ram_diff_right_vs_noop": 1
+    },
+    {
+      "frame": 510,
+      "ram_diff_right_vs_left": 1,
+      "ram_diff_right_vs_noop": 1
+    },
+    {
+      "frame": 540,
+      "ram_diff_right_vs_left": 1,
+      "ram_diff_right_vs_noop": 1
+    },
+    {
+      "frame": 570,
+      "ram_diff_right_vs_left": 1,
+      "ram_diff_right_vs_noop": 1
+    },
+    {
+      "frame": 600,
+      "ram_diff_right_vs_left": 1,
+      "ram_diff_right_vs_noop": 1
+    },
+    {
+      "frame": 630,
+      "ram_diff_right_vs_left": 1,
+      "ram_diff_right_vs_noop": 1
+    },
+    {
+      "frame": 660,
+      "ram_diff_right_vs_left": 1,
+      "ram_diff_right_vs_noop": 1
+    },
+    {
+      "frame": 690,
+      "ram_diff_right_vs_left": 42,
+      "ram_diff_right_vs_noop": 42
+    }
+  ],
+  "settle_check": {
+    "ram_diff_right_vs_left": 151,
+    "ram_diff_right_vs_noop": 179
+  },
+  "still_live_after_settle": true,
+  "state_path": "/Users/stits/Documents/macos-emulation-and-training/roms/Shatterhand (USA)_start.state.bin",
+  "state_bytes": 152399,
+  "verification_fresh_pool": {
+    "ram_divergence_right_vs_left": 151,
+    "ram_divergence_right_vs_noop": 179
+  }
+}

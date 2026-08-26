@@ -1,0 +1,70 @@
+name: "Shatterhand (USA)"
+
+rom_path: "roms/Shatterhand (USA).nes"
+rom_hashes:
+  - "8512058a61eb9e37372edc5e11cfcdb2"
+start_state_path: "roms/Shatterhand (USA)_start.state.bin"
+
+description: |
+  Shatterhand (NES, 1989, Natsume/Jaleco), onboarding profile
+  (wave 5, 2026-08-25). Generic controller + generic cell key; no game
+  knowledge encoded.
+
+  START STATE: roms/Shatterhand (USA)_start.state.bin, minted this
+  wave (runs/onboard_wave5/mint_shatterhand.json) via a START/A/DOWN
+  pulse mash from cold boot. Liveness verified by input-divergence
+  probe (RIGHT vs LEFT vs NOOP diverge 151/179 RAM bytes from a fresh
+  reload after a settle window) AND by a rendered-frame visual check
+  (runs/onboard_wave5/mint_shatterhand_{noop,right90,noop90}_frame.png):
+  Stage 1 factory-rooftop gameplay is visible — lives HUD ("L-" hearts),
+  score HUD, ladders, background cranes — with the player sprite
+  visibly displaced/turned between the RIGHT-90 and NOOP-90 renders
+  from the same state. Not a title/demo/menu screen.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["up", "A"]
+  - ["down", "B"]
+
+solve:
+  rom: "roms/Shatterhand (USA).nes"
+  # Odometer gate (runs/onboard_wave5/gate_shatterhand_right.json):
+  # --forward right, 1200 steps, axis x, range 0..245, 61 distinct,
+  # oam_churn 1199/1199 (agent fully active) -> PASS, SIGNAL SOUND
+  # (flat tail is a behaviour finding — game stops under naive
+  # constant-RIGHT, not an instrument fault).
+  progress: {source: odometer, axis: x}
+  # y / lives discovered by scripts/discover_observables.py's own
+  # 3-probe protocol against this exact start state, 2026-08-25. No RAM
+  # map, no disassembly, no walkthrough.
+  # Receipt: runs/onboard_wave5/discover_shatterhand.json
+  #   No RAM progress candidate isolated by the probe (odometer already
+  #   gated SOUND and is the preferred hardware surface, same reasoning
+  #   as ninja_gaiden_ii/ducktales_2).
+  #   $009F  y candidate — jump/ballistic signature (score 94.7 top hit).
+  #   $0051  lives candidate — decrements on death, 5 of 5 probe
+  #          agreement, reaches empty and refills across runs. CAVEAT:
+  #          reads 0 at the start state itself (same shape flagged,
+  #          not confirmed, for Mega Man's 0x0410 in wave 4) — if this
+  #          is not literally "remaining lives" a decrement could
+  #          underflow toward 255. Not confirmed as a defect here; the
+  #          smoke below did not stall, so left as-is.
+  y: 0x009F
+  lives: 0x0051
+  # DELIBERATELY EMPTY — no clear captured yet; guessing a stage-advance
+  # byte here is the authored-semantics class the purity line forbids.
+  level_key: []

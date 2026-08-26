@@ -1,0 +1,84 @@
+name: "Mega Man 3 (USA)"
+
+rom_path: "roms/Mega Man 3 (USA).nes"
+rom_hashes:
+  - "75b924155cafee335c9ea7a01bfc8efb"
+start_state_path: "roms/Mega Man 3 (USA)_start.state.bin"
+
+description: |
+  Mega Man 3 (NES, 1990), onboarding profile (wave 5, 2026-08-25).
+  Structure copied from configs/mega_man_usa.yaml (MM1 wave-4
+  adjacency); no game knowledge encoded -- generic controller,
+  odometer progress source.
+
+  Start state: roms/Mega Man 3 (USA)_start.state.bin, minted this
+  session by a SCRIPTED, frame-timed navigation (receipt
+  runs/onboard_wave5/mint_mega_man_3.json), not the generic blind
+  masher alone. The generic house masher (capture_start_state.py,
+  pure undirected START/A pulses) genuinely stalls forever on MM3's
+  stage-select screen at both --max-frames 2000 and --max-frames
+  4000 -- confirmed by rendered frames identical at f=1800 and
+  f=3600. This IS the directional-cursor-screen trap: the 3x3
+  stage-select grid's CENTER cell is a static Mega Man
+  portrait/"PUSH START" prompt, not a selectable robot-master box,
+  so an undirected masher can never leave it (it just re-triggers
+  the same idle prompt). One scripted RIGHT tap moves the cursor
+  onto an adjacent box (landed on Top Man); START then commits it.
+  Visually confirmed at the capture frame: live Top Man stage
+  gameplay (conveyor-block room, Mega Man sprite, two HUD energy
+  meters) -- not a menu, cursor, or text screen. Liveness also
+  confirmed by input-divergence probe from a fresh reload:
+  right_vs_left_120f=329, right_vs_noop_120f=337,
+  left_vs_noop_120f=59, a_vs_noop_120f=30 (2KB RAM range) --
+  directional input moves the player and RIGHT/LEFT diverge from
+  each other and from NOOP.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Mega Man 3 (USA).nes"
+  # Odometer gate (runs/onboard_wave5/gate_mega_man_3_right.json):
+  # --forward right, 1200 steps, axis x, range 0..551, 142 distinct,
+  # oam_churn 1122/1199 -> PASS "SIGNAL SOUND -- still advancing". No
+  # RAM-derived progress byte was isolated by discover_observables.py
+  # (room counter: none, progress candidates: none -- gate/saturation
+  # checks did not clear one), so the odometer is the only forward-
+  # progress signal and drives the search (same shape as
+  # configs/mega_man_usa.yaml and configs/ninja_gaiden_ii.yaml).
+  progress: {source: odometer, axis: x}
+  # y / lives from scripts/discover_observables.py's 3-probe protocol
+  # against this exact start state (receipt
+  # runs/onboard_wave5/discover_mega_man_3.json). No RAM map, no
+  # disassembly, no walkthrough.
+  #   $0012  y candidate (jump/ballistic signature), sole candidate found.
+  #   $001A  lives candidate: decrements by 1 on death, agreed by 5 of 5
+  #          independent probe runs, reaches empty, refills after death
+  #          in all 5 watched runs.
+  # CAVEAT (flagged, not independently resolved -- same shape as the
+  # wave-4 Mega Man (USA) finding): this candidate reads 0 at the root
+  # state, not a small positive count. If this byte is not literally
+  # "remaining lives" but some other counter that idles at 0, a death
+  # decrement could underflow toward 255 and be misread as instant
+  # death, starving the search frontier. Watch the smoke's own seed log
+  # and frontier growth for this signature before trusting a
+  # SOUND_GAME_STOPS verdict as a genuine game-difficulty wall.
+  y: 0x0012
+  lives: 0x001A
+  level_key: []   # coverage baseline; no stage/room-advance byte captured yet

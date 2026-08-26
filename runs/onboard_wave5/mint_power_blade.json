@@ -1,0 +1,57 @@
+{
+  "rom": "roms/Power Blade (USA).nes",
+  "rom_md5": "316f5b34bb7affd2b5d45ebaa3fd076f",
+  "state_path": "roms/Power Blade (USA)_start.state.bin",
+  "state_bytes": 152399,
+  "frames_from_boot": 1132,
+  "status": "MINTED",
+  "prior_attempt": "runs/onboard_wave4/power_blade_mint_failed.json (Wave 4) reached a screen that visually resembled gameplay but was byte-identical to NOOP on RAM+OAM under every input -- correctly read at the time as a probing dead end. That candidate was never saved. This session's diagnosis: the wave-4 candidate was almost certainly captured mid-transition (fade / walk-in settle), not a genuinely inert screen -- confirmed by reproducing a live, controllable state at a nearby point in the same boot flow once frame-timed, screen-aware navigation (visual confirmation at every screen) was used instead of blind timing.",
+  "method": "Frame-timed, screen-aware scripted input. A visually-inspected PNG was rendered at every screen-type transition BEFORE deciding the next input, using nes_core.NESEnvironment.get_frame() directly (no nes-py, no Pool for boot -- Pool used later only for the odometer/discover_observables/solver-smoke stages).",
+  "boot_sequence": [
+    {"phase": "power-on settle", "frames": "0-60", "input": "NOOP", "screen": "mint_power_blade_00_title.png -- TAITO logo / POWER BLADE title, START+CONTINUE menu"},
+    {"phase": "title -> difficulty-select -> confirm NORMAL -> cutscene begins", "frames": "60-252", "input": "8x (START held 4f / NOOP 20f) pulses", "screen": "mint_power_blade_01_cutscene_reached.png -- rooftop cutscene (two-character cinematic over a city skyline); intermediate LEVEL NORMAL/EXPERT difficulty-select screen visually confirmed mid-sequence"},
+    {"phase": "non-interactive intro cutscene auto-advances", "frames": "252-912", "input": "NOOP only (verified: no input consumed -- cutscene ignores buttons and free-runs to completion)", "screen": "mint_power_blade_02_stage_select.png -- PROJECT-X sector map, all 6 sectors ACTIVE"},
+    {"phase": "confirm default cursor sector, settle into gameplay", "frames": "912-1132", "input": "START x10 (no directional bias -- default cursor), then NOOP settle", "screen": "mint_power_blade_03_gameplay_candidate.png -- live gameplay: player sprite, ENEMY/PLAYER POWER HUD bars, lives x2, countdown TIME 0998, ladders/platforms"}
+  ],
+  "liveness_probe": {
+    "note": "A first verification pass (script pb_mint_final2.py) had a bug: probe screenshots were rendered from a stale, unstepped env object (the fresh per-button env was used only for the RAM/OAM diff, not for save_frame). This was CAUGHT by re-inspecting the images -- 7 different button holds produced 7 pixel-identical PNGs, which is itself the tell -- and re-run correctly (pb_verify_clean.py) rendering each probe's own env. The numbers below are from the corrected run; screenshots are runs/onboard_wave5/power_blade_verify_*.png.",
+    "probe": "fresh NESEnvironment; load candidate state; hold each of RIGHT/LEFT/UP/DOWN/A/B/NOOP for 120 frames independently from the same reload; diff full 2KB RAM + peek_oam() against an unstepped base",
+    "ram_diff_vs_base_120f": {"RIGHT": 269, "LEFT": 325, "UP": 451, "DOWN": 160, "A": 160, "B": 165, "NOOP": 156},
+    "oam_diff_vs_base_120f": {"RIGHT": 148, "LEFT": 193, "UP": 206, "DOWN": 80, "A": 82, "B": 82, "NOOP": 82},
+    "right_vs_left_ram_diff_120f": 209,
+    "long_hold_check": {
+      "input": "RIGHT held continuously for 1500 frames (~25s), checkpointed every 300 frames",
+      "ram_diff_vs_base_1500f": 312,
+      "visual": "power_blade_verify_right_hold_300/600/900/1200/1500f.png show the camera scrolling into a corridor with a statue and ladders, revealing new geometry not visible at frame 0",
+      "time_counter": "HUD TIME counter genuinely decrements under RIGHT hold: 0998 (t=0) -> 0996 (120f) -> 0975 (1500f) -- ruled out a frozen/paused screen"
+    },
+    "visual_contrast": "RIGHT scrolls into a corridor with a statue/ladders; LEFT scrolls into open sky with clouds -- a completely different, opposite-direction view; NOOP leaves the player standing still in the entry doorway while TIME still ticks down. Both the RAM/OAM divergence numbers AND the rendered frames agree.",
+    "verdict": "LIVE"
+  },
+  "discover_observables": {
+    "receipt": "runs/onboard_wave5/discover_power_blade.json",
+    "room_counter": "none found",
+    "recommended_progress_byte": "none -- top fine byte ($00C3, net_forward=64, mono=1.00, does not saturate) was not promoted to 'recommended' because it was not the single heaviest-churn (F0) byte and no room counter exists as a fallback; every other spatial candidate ($0066/$006A/$0086/$0072/$0077) is a CAMERA-CLAMP SATURATOR. Progress stays on the PPU-scroll odometer, same reasoning as configs/ducktales_2.yaml / configs/darkwing_duck.yaml.",
+    "y_candidate": "0x00E0 (jump/ballistic signature: base=54, mode=54, range=69, distinct=6)",
+    "lives_candidate_CORRECTED": "discover_observables' top-ranked lives candidate ($0530, 5/5 run agreement) was REJECTED after cross-checking under the exact Pool harness progress_signal_gate.py and the real solver use (reset_all() -> load_worker_state() -> one step_all(NOOP)): it reads 0 at the start state, which underflows to 255 on first decrement -- the identical instrument trap documented for Ninja Gaiden's $001F in progress_signal_gate.py. Substituted the next-ranked candidate that is non-zero under the identical harness: $07CA (4/5 run agreement, reaches_empty=true, spends_its_stock=true, reads 1 at start under Pool.reset_all()+load_worker_state()+step_all(NOOP))."
+  },
+  "odometer_gate": {
+    "tool": "scripts/progress_signal_gate.py --odometer",
+    "receipts": ["runs/onboard_wave5/gate_power_blade_right.json", "runs/onboard_wave5/gate_power_blade_left.json", "runs/onboard_wave5/gate_power_blade_up.json", "runs/onboard_wave5/gate_power_blade_down.json"],
+    "right": {"distinct": 23, "range": "0..86", "verdict": "SIGNAL UNUSABLE (too coarse: 23<32 distinct; flat for last quarter)"},
+    "left": {"distinct": 23, "range": "0..87", "verdict": "SIGNAL UNUSABLE (same shape, mirrored)"},
+    "up": {"distinct": 2, "range": "0..1", "verdict": "SIGNAL UNUSABLE (near-zero vertical scroll)"},
+    "down": {"distinct": 1, "range": "0..0", "verdict": "PASS -- SIGNAL SOUND, camera static, agent active (OAM moving)"},
+    "note": "RIGHT and LEFT both show a real, symmetric, bidirectional horizontal scroll axis that caps hard at gx~86-88 almost immediately -- the same shape as configs/darkwing_duck.yaml's odometer gate (a real axis exists, so per that established rule this routes to the solver smoke as the actual arbiter, not an automatic wall verdict from the raw hold-only probe)."
+  },
+  "solver_smoke": {
+    "command": "scripts/go_explore_solve.py --workers 4 --minutes 2 --seed 0 --profile configs/power_blade.yaml --root-state 'roms/Power Blade (USA)_start.state.bin'",
+    "log": "runs/onboard_wave5/smoke_power_blade.log",
+    "archive_dir": "runs/onboard_wave5/smoke_power_blade/",
+    "result": {"cells": 18, "frontier": 1, "best_score_max_gx": 88, "records": 45273, "improvements": 88, "solutions": 0, "steps": 45524, "stall_flat_windows": 2},
+    "finding": "cells and max_gx were ALREADY saturated at the first 60s checkpoint (18 cells, max_gx=88) and did not move at all in the second 60s window -- explicit 'STALL WARNING: stuck at 18 cells for 2 min straight'. This matches, almost to the pixel, the raw single-direction odometer probe's independent cap (gx 86 under pure RIGHT, 87 under pure LEFT) -- THREE independent methods (naive RIGHT hold, naive LEFT hold, and a mixed 13-action/4-worker go_explore search) converge on the same ~86-88 gx ceiling with the agent still animating (OAM churning) throughout, not frozen.",
+    "verdict": "SIGNAL SOUND, EARLY WALL -- the state is genuinely live and controllable (see liveness_probe above); the search has not found a way past an obstacle within the first ~90 world-units of Sector 6 in the 2-minute smoke budget. This reads as a real early skill/route wall (an enemy, gap, or locked path just past spawn) rather than a broken start state or an instrument fault, but has not been root-caused further -- out of scope for this onboarding pass."
+  },
+  "config_written": "configs/power_blade.yaml",
+  "minted_utc": "2026-08-25"
+}

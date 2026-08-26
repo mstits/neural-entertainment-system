@@ -1,0 +1,20 @@
+{
+  "profile": "configs/power_blade.yaml",
+  "odometer": true,
+  "steps": 1200,
+  "distinct": 23,
+  "min": 0,
+  "max": 87,
+  "tail_distinct": 1,
+  "has_high_byte": true,
+  "lives_at_start": 1,
+  "passed": false,
+  "instrument_findings": [
+    "only 23 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+  ],
+  "behaviour_findings": [
+    "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+  ],
+  "verdict": "SIGNAL UNUSABLE",
+  "oam_churn": 1199
+}

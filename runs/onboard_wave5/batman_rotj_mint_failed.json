@@ -1,0 +1,34 @@
+{
+  "rom": "roms/Batman - Return of the Joker (USA).nes",
+  "rom_md5_header": "mapper=69 (Sunsoft FME-7), PRG=8x16K, CHR=32x8K",
+  "status": "mint_failed",
+  "reason": "Never became controllable within a generous probe budget under two independent probe designs. capture_start_state.py's generic mash schedule (START/START/A/START pulses, 6-on/10-off cadence) ran to 2400 frames then re-ran to 6000 frames (100 emulated seconds) -- both attempts returned 'never became controllable', no candidate state written. A second, independent probe (raw NOOP hold, no scripted mashing) advanced 3600 frames (60 emulated seconds) sampling cpu_state()/ppu_state()/peek_nametables()/rendered frames every 60-900 frames: the physical nametable VRAM stayed 0/2048 nonzero bytes at every single sample point (visually confirmed via 11 rendered frames, all pure black, runs/onboard_wave5/probe_seq_*.png), 2KB CPU RAM stayed pinned at 155-156/2048 nonzero bytes the entire time (no meaningful state change), and the CPU program counter never left a ~32-byte address window (0xC8E0-0xC900) across the full 60 seconds -- the signature of a boot-time spin loop (most likely a wait-for-PPU-status/IRQ poll) that never resolves, not a slow logo fade or an unskippable-but-eventually-live cutscene.",
+  "asm_cpu_anomaly_cross_check": {
+    "why": "task brief flagged the possibility this mapper hits the same ASM-CPU NMI/PPU-batching flat-trace anomaly documented for Journey to Silius in docs/research/LEAGUE_ONBOARDING_WAVE4_2026-08-25.md -- checked directly before calling this a game-side mint failure.",
+    "method": "constructed nes_core.Pool(num_workers=1) twice, explicitly calling pool.set_disable_asm_cpu(True) (true interpreter, no ASM 6502 core) vs leaving the field at its Rust default False (ASM CPU on, matches Pool's live default per pool.rs / nes.rs:269) -- NOT just calling nes_core.NESEnvironment bare, because direct code inspection (nes_core/src/python.rs) showed NESEnvironment exposes no set_disable_asm_cpu at all and constructs Nes::new() with the same disable_asm_cpu:false default as Pool, so it is NOT a true interpreter-only cross-check by itself in the currently-installed build (Makefile's `make build` compiles the asm_cpu feature in unconditionally) -- only Pool's explicit setter can force interpreter-only execution.",
+    "disable_asm_cpu_false_600f": {"ram_nonzero": "156/2048", "nametable_nonzero": "0/2048"},
+    "disable_asm_cpu_false_1800f": {"ram_nonzero": "156/2048", "nametable_nonzero": "0/2048"},
+    "disable_asm_cpu_true_600f": {"ram_nonzero": "155/2048", "nametable_nonzero": "0/2048"},
+    "disable_asm_cpu_true_1800f": {"ram_nonzero": "155/2048", "nametable_nonzero": "0/2048"},
+    "verdict": "IDENTICAL stuck state in both ASM-CPU-on and true-interpreter modes -- rules out the ASM-CPU NMI-batching anomaly as the explanation. This is a genuine, instrument-independent boot hang, not a repeat of the Journey to Silius instrument bug. Not tagged possible-asm-cpu-anomaly."
+  },
+  "probe_summary": {
+    "probe_1_mint_tool": {
+      "method": "scripts/capture_start_state.py generic mash schedule",
+      "max_frames_tried": [2400, 6000],
+      "result": "never became controllable at either budget; no state file written"
+    },
+    "probe_2_extended_noop_trace": {
+      "method": "raw NOOP for 3600 frames via nes_core.NESEnvironment, sampled at 60/120/300/600/900/1200/1500/1800/2100/2400/3000/3600",
+      "nametable_nonzero_at_every_sample": "0/2048",
+      "ram_nonzero_range": "155-156/2048 (static)",
+      "cpu_pc_range_observed": "0xC8E0-0xC900 (never escapes)",
+      "nmi_pended_observed": "False at every sample"
+    }
+  },
+  "images": [
+    "runs/onboard_wave5/batman_rotj_probe_seq_00060.png .. batman_rotj_probe_seq_03600.png (11 frames, all-black, visually confirmed before concluding -- per the wave-4 lesson to never trust a RAM-only heuristic alone)"
+  ],
+  "conclusion": "mint_failed -- no start state banked (roms/Batman - Return of the Joker (USA)_start.state.bin was never written). Confirmed with two independent probe designs (scripted mash + long extended NOOP trace) and an explicit ASM-CPU-vs-interpreter cross-check that rules out the known instrument anomaly. Gate/discover/config/smoke steps skipped -- no live start state exists to gate.",
+  "checked_utc": "2026-08-25"
+}

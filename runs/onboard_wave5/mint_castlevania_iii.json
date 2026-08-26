@@ -1,0 +1,22 @@
+{
+  "rom": "Castlevania III - Dracula's Curse (USA).nes",
+  "frame_reached": 3030,
+  "boot_sequence": [
+    "NOOP x2400 (Konami logo -> castle-art screen -> title text -> onset of story text crawl)",
+    "START pulse-mash, 10-on/20-off cadence, pulses 1-20 (frames 2400-3030): pulses ~3-6 first break out of the text crawl into live BLK 1-01 gameplay; from pulse ~7 onward each further Start pulse toggles PAUSE, so odd/even pulse-count parity matters -- pulse 20 (even, well past entry) lands UNPAUSED"
+  ],
+  "visual_confirmation": "MINT_candidate_pulse20.png: live Stage 1 gameplay -- HUD 'SCORE 000000 TIME 04XX BLK 1-01', Trevor Belmont sprite on ruined-castle terrain, enemy sprites visible. NOT the story-text screen, NOT title screen.",
+  "liveness_probe": {
+    "method": "save candidate state; reload fresh env; hold RIGHT/LEFT/NOOP/A for 120 frames each from the same candidate; diff full 2KB RAM",
+    "right_vs_left_120f": 162,
+    "right_vs_noop_120f": 175,
+    "left_vs_noop_120f": 207,
+    "a_vs_noop_120f": 10,
+    "right20_vs_base": 238,
+    "right120_vs_base": 300,
+    "ram_size": 2048
+  },
+  "verdict": "LIVE",
+  "state_path": "/Users/stits/Documents/macos-emulation-and-training/roms/Castlevania III - Dracula's Curse (USA)_start.state.bin",
+  "state_bytes": 210703
+}

@@ -1,0 +1,227 @@
+{
+  "rom": "roms/Shatterhand (USA).nes",
+  "state": "roms/Shatterhand (USA)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": null,
+    "candidates": [],
+    "recommended": null
+  },
+  "room_counters": [],
+  "y": [
+    {
+      "addr": 159,
+      "base": 136,
+      "mode": 33,
+      "max_dev": 103,
+      "range": 199,
+      "distinct": 7,
+      "frac_at_mode": 0.53,
+      "score": 94.7
+    },
+    {
+      "addr": 150,
+      "base": 191,
+      "mode": 181,
+      "max_dev": 98,
+      "range": 134,
+      "distinct": 6,
+      "frac_at_mode": 0.53,
+      "score": 70.5
+    },
+    {
+      "addr": 144,
+      "base": 101,
+      "mode": 144,
+      "max_dev": 43,
+      "range": 43,
+      "distinct": 6,
+      "frac_at_mode": 0.53,
+      "score": 22.6
+    },
+    {
+      "addr": 212,
+      "base": 0,
+      "mode": 35,
+      "max_dev": 35,
+      "range": 35,
+      "distinct": 7,
+      "frac_at_mode": 0.53,
+      "score": 18.4
+    },
+    {
+      "addr": 213,
+      "base": 0,
+      "mode": 35,
+      "max_dev": 35,
+      "range": 35,
+      "distinct": 7,
+      "frac_at_mode": 0.53,
+      "score": 18.4
+    },
+    {
+      "addr": 214,
+      "base": 0,
+      "mode": 15,
+      "max_dev": 23,
+      "range": 23,
+      "distinct": 6,
+      "frac_at_mode": 0.55,
+      "score": 12.7
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 81,
+    "start": 0,
+    "detail": {
+      "addr": 81,
+      "start": 0,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "moves_while_idle": false,
+      "mirrors": [
+        83,
+        1107,
+        1142,
+        1454,
+        1463,
+        1465,
+        1611
+      ]
+    },
+    "lives_candidates": [
+      {
+        "addr": 81,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          83,
+          1107,
+          1142,
+          1454,
+          1463,
+          1465,
+          1611
+        ]
+      },
+      {
+        "addr": 1182,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 2,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1610,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 4,
+        "runs_watched": 5,
+        "spends": 4,
+        "refilled_runs": 4,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1760,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 3,
+        "runs_watched": 5,
+        "spends": 3,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          1768
+        ]
+      },
+      {
+        "addr": 409,
+        "start": 2,
+        "drop": 2,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 117,
+        "value": 8,
+        "mirrors": 20,
+        "hud_run": 12,
+        "churn": 0.0
+      },
+      {
+        "addr": 329,
+        "value": 8,
+        "mirrors": 20,
+        "hud_run": 12,
+        "churn": 1.11
+      },
+      {
+        "addr": 333,
+        "value": 8,
+        "mirrors": 20,
+        "hud_run": 12,
+        "churn": 0.0
+      },
+      {
+        "addr": 37,
+        "value": 6,
+        "mirrors": 10,
+        "hud_run": 6,
+        "churn": 0.0
+      },
+      {
+        "addr": 40,
+        "value": 6,
+        "mirrors": 10,
+        "hud_run": 6,
+        "churn": 0.0
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 95
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  }
+}

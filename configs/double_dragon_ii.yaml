@@ -1,0 +1,71 @@
+name: "Double Dragon II - The Revenge"
+
+rom_path: "roms/Double Dragon II - The Revenge (USA) (Rev A).nes"
+rom_hashes:
+  - "b94be0bf2e861bca19339920cd786f53"
+start_state_path: "roms/Double Dragon II - The Revenge (USA) (Rev A)_start.state.bin"
+
+description: |
+  Double Dragon II: The Revenge (NES), onboarding profile (wave 5,
+  2026-08-25). Structure copied from configs/double_dragon.yaml (DD1
+  adjacency, same combat-gated-brawler genre) and configs/ninja_gaiden_ii.yaml
+  (wave-4 onboarding template); no game knowledge encoded — generic
+  controller, progress source pending gate.
+
+  Start state: roms/Double Dragon II - The Revenge (USA) (Rev A)_start.state.bin,
+  minted this wave via scripts/capture_start_state.py's generic masher
+  (gameplay confirmed at frame 345 + 40 settle). Liveness verified by
+  input-divergence probe (RIGHT vs LEFT vs A diverge in RAM $0040-$0060
+  from the same saved state) AND by a rendered-frame visual check: the
+  raw saved-state frame itself is a flat mid-transition grey (a fade
+  frame, not a menu), but forward simulation from that exact byte state
+  shows real Stage 1 ("B11" warehouse) gameplay -- P1/P2 HUD, 3 lives,
+  player + enemy sprites -- with RIGHT (player + enemy walk right past
+  the loading-dock door) and LEFT (player kicks a downed enemy near the
+  left edge) producing visibly distinct scenes. Not a title/demo/menu
+  false positive.
+
+frame_skip: 4
+
+# A GENERIC controller (mirrors configs/double_dragon.yaml's button set
+# for this same 2.5D brawler engine: UP/DOWN move along street depth,
+# A/B are context attacks, A+B is jump). Tuned move-priority combos
+# would encode game-specific tactics, so kept generic per the wave-4/5
+# onboarding convention.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["A", "B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+
+solve:
+  rom: "roms/Double Dragon II - The Revenge (USA) (Rev A).nes"
+  # Odometer gate (runs/onboard_wave5/gate_double_dragon_ii_{right,left,up,down}.json):
+  # range x=0 y=0 under EVERY held direction (1200 steps each), oam_churn
+  # ~950-1073/1199 (agent alive/animating). Cross-checked directly against
+  # nes_core.NESEnvironment (interpreter-only, no ASM-CPU toggle) the same
+  # way wave 4's Journey to Silius attempt did: ALSO flat (range x=0 y=0)
+  # under held RIGHT -- the two paths AGREE, unlike Journey to Silius where
+  # they disagreed. This is NOT the ASM-CPU flat-trace anomaly; the PPU
+  # scroll register genuinely never moves here. Consistent with the sibling
+  # DD1 profile's own documented precedent (configs/double_dragon.yaml):
+  # this combat-gated brawler engine locks the camera per fight and only
+  # advances it on a room transition the generic prober never reaches.
+  progress: {source: odometer, axis: x}
+  # discover_observables.py's automatic 3-probe pass (own scripted rollouts,
+  # runs/onboard_wave5/discover_double_dragon_ii.json) found NO progress
+  # candidate and NO room counter (unlike DD1's 0x00B2, which needed
+  # bespoke combat-biased multi-worker saturation probes beyond this
+  # tool's standard pass to isolate -- out of scope for this game's
+  # onboarding budget).
+  y: 0x0045   # jump/ballistic candidate, 7 distinct values, range 173
+  lives: 0x001E   # decrements on death (-3), agreed 5 of 5 probe runs
+  level_key: []

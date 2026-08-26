@@ -1,0 +1,165 @@
+{
+  "rom": "roms/Double Dragon II - The Revenge (USA) (Rev A).nes",
+  "state": "roms/Double Dragon II - The Revenge (USA) (Rev A)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": null,
+    "candidates": [],
+    "recommended": null
+  },
+  "room_counters": [],
+  "y": [
+    {
+      "addr": 69,
+      "base": 130,
+      "mode": 130,
+      "max_dev": 130,
+      "range": 173,
+      "distinct": 7,
+      "frac_at_mode": 0.71,
+      "score": 122.9
+    },
+    {
+      "addr": 148,
+      "base": 79,
+      "mode": 79,
+      "max_dev": 21,
+      "range": 21,
+      "distinct": 12,
+      "frac_at_mode": 0.71,
+      "score": 14.9
+    },
+    {
+      "addr": 11,
+      "base": 14,
+      "mode": 11,
+      "max_dev": 13,
+      "range": 19,
+      "distinct": 6,
+      "frac_at_mode": 0.37,
+      "score": 7.0
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 30,
+    "start": 3,
+    "detail": {
+      "addr": 30,
+      "start": 3,
+      "drop": 3,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    "lives_candidates": [
+      {
+        "addr": 30,
+        "start": 3,
+        "drop": 3,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1862,
+        "start": 152,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 946,
+        "start": 255,
+        "drop": 1,
+        "runs_agreeing": 4,
+        "runs_watched": 5,
+        "spends": 4,
+        "refilled_runs": 4,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 31,
+        "start": 4,
+        "drop": 2,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 9,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 6,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": true,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 1107,
+        "value": 3,
+        "mirrors": 8,
+        "hud_run": 2,
+        "churn": 0.0
+      },
+      {
+        "addr": 1183,
+        "value": 3,
+        "mirrors": 8,
+        "hud_run": 2,
+        "churn": 0.0
+      },
+      {
+        "addr": 509,
+        "value": 6,
+        "mirrors": 5,
+        "hud_run": 2,
+        "churn": 0.0
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 48
+    },
+    "note": "is_dead on lives decrement (-3, agreed by 5 of 5 runs)"
+  }
+}

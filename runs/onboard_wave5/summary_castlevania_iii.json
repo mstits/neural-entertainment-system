@@ -1,0 +1,64 @@
+{
+  "game": "Castlevania III - Dracula's Curse (USA)",
+  "rom": "roms/Castlevania III - Dracula's Curse (USA).nes",
+  "rom_md5": "d16a502d0125f23cc3d980ddc6b6f2e8",
+  "profile": "configs/castlevania_iii.yaml",
+  "start_state": "roms/Castlevania III - Dracula's Curse (USA)_start.state.bin",
+  "retry_of": "runs/onboard_wave4/castlevania_iii_mint_failed.json (Wave 4 mint_failed)",
+  "mint": {
+    "receipt": "runs/onboard_wave5/mint_castlevania_iii.json",
+    "script": "runs/onboard_wave5/mint_castlevania_iii_script.py",
+    "status": "MINTED",
+    "method": "Frame-timed, screen-aware scripted boot using nes_core.NESEnvironment directly, rendering + visually inspecting env.get_frame() at every decision point instead of trusting RAM-diff timing alone (the wave-4 gap). NOOP x2400 to clear Konami logo/castle-art/title-card and reach the onset of the opening story-text crawl, then a START pulse-mash (10-on/20-off cadence). A direct A-mash-vs-START-mash fork test (900 frames each from the same mid-crawl snapshot) proved A does almost nothing (2 RAM bytes vs NOOP) while START skips the crawl outright into live Stage-1 gameplay (738 bytes vs NOOP, and the rendered frame shows the HUD + player sprite, not text). Once in gameplay, START doubles as PAUSE, so a further pulse-by-pulse sweep (each pulse independently probed with a fresh 120-frame RIGHT/LEFT/NOOP divergence check from that exact point) found the sequence alternates live/paused on every subsequent press; pulse 21 (frame 3030) lands UNPAUSED.",
+    "frames_from_boot": 3030,
+    "liveness_probe": "save candidate state; reload into a fresh NESEnvironment; hold RIGHT/LEFT/NOOP/A for 120 frames each; diff full 2KB RAM",
+    "right_vs_left_120f": 162,
+    "right_vs_noop_120f": 175,
+    "left_vs_noop_120f": 207,
+    "a_vs_noop_120f": 10,
+    "growth_check": "right20_vs_base=238 -> right120_vs_base=300: still growing, not a saturated menu cursor",
+    "visual_confirmation": {
+      "frames": [
+        "runs/onboard_wave5/mint_castlevania_iii_frame.png",
+        "runs/onboard_wave5/probe_castlevania_iii_right120.png",
+        "runs/onboard_wave5/probe_castlevania_iii_left120.png",
+        "runs/onboard_wave5/skiptest_castlevania_iii_noop_textcrawl.png",
+        "runs/onboard_wave5/skiptest_castlevania_iii_startmash_gameplay.png"
+      ],
+      "note": "Actually viewed (not just RAM-inferred). mint_castlevania_iii_frame.png: HUD reads 'SCORE 000000 TIME 04XX BLK 1-01', Trevor Belmont sprite standing on ruined-castle terrain, enemy sprites visible -- live Stage 1, not title/text/menu. probe_castlevania_iii_right120.png vs probe_castlevania_iii_left120.png: the RIGHT-probe frame shows the camera scrolled right and the player mid-whip-attack against newly-revealed terrain; the LEFT-probe frame shows the player still pinned near the left edge against the original terrain -- visibly different outcomes from the same starting state under different held input, not a frozen/scripted screen. skiptest_*.png: the NOOP-continued fork is still inside the black-background scrolling story-text box; the START-mash fork from the identical starting point is in colored in-level gameplay -- direct visual proof START (and only START, not A) breaks out of the crawl."
+    }
+  },
+  "odometer_gate": {
+    "receipt": "runs/onboard_wave5/gate_castlevania_iii_right.json",
+    "cmd": ".venv/bin/python scripts/progress_signal_gate.py --profile configs/onboard/castlevania_iii_-_dracula_s_curse__usa_.yaml --forward right --odometer --out runs/onboard_wave5/gate_castlevania_iii_right.json",
+    "axis": "x",
+    "range_x": 512,
+    "range_y": 0,
+    "distinct": 130,
+    "oam_churn": "1199/1199",
+    "verdict": "SIGNAL SOUND -- game stops",
+    "note": "Real, non-flat x-axis under held RIGHT with full OAM churn (agent unambiguously alive and animating every step). Flat final quarter is a pure hold-right driver hitting an obstacle with no jump/attack input, not an instrument fault -- confirms the minted state is genuinely live, independent of the mint-time RAM-divergence probe."
+  },
+  "discover_observables": {
+    "receipt": "runs/onboard_wave5/discover_castlevania_iii.json",
+    "cmd": ".venv/bin/python scripts/onboard_game.py --rom \"roms/Castlevania III - Dracula's Curse (USA).nes\" --json",
+    "progress": "$0057 room/screen counter (spatial pair $0056|$0057<<8 rejected -- saturates/camera-clamps)",
+    "area": "$0057 (same room/screen counter, drives sect transitions)",
+    "y": "$0002 (jump/ballistic signature)",
+    "lives": "$06A1 (decrements on death, 5/5 probe agreement, reaches empty, refills across runs)",
+    "level_key": "empty -- coverage baseline, no stage-clear byte captured this pass"
+  },
+  "smoke": {
+    "cmd": ".venv/bin/python scripts/go_explore_solve.py --out runs/onboard_wave5/smoke_castlevania_iii --root-state \"roms/Castlevania III - Dracula's Curse (USA)_start.state.bin\" --profile configs/onboard/castlevania_iii_-_dracula_s_curse__usa_.yaml --minutes 2 --workers 4 --want-solutions 1 --max-steps 4000 --flush-secs 30 --seed 0",
+    "trend": "cells 1 (seed) -> 52 (60s) -> 173 (120s/final, still climbing)",
+    "final": {"cells": 173, "frontier": 162, "best_score": 160001, "records": 41573, "new_cells": 173, "improvements": 231, "solutions": 0},
+    "max_area_progression": "0 -> 1 -> 2 (real room/screen transitions during the smoke)",
+    "max_sect_progression": "6 -> 16",
+    "note": "Frontier stayed wide open (162 of 173 cells) at cutoff with no stall warning from the harness -- healthy, still-growing archive, not a freeze. 0 solutions is expected (level_key is the empty coverage baseline, no stage-clear detector wired yet)."
+  },
+  "classification": "SOUND_ADVANCING",
+  "classification_rationale": "Three independent lines of evidence agree this is genuinely live, controllable gameplay, closing the wave-4 mint_failed verdict: (1) a rendered-frame visual check at the mint candidate and at both ends of a RIGHT-vs-LEFT divergence probe shows the camera/player state diverging visibly under different held input, not a static or scripted screen; (2) a full-RAM divergence probe from the same saved state shows real, non-saturating growth under RIGHT (162-207 bytes vs LEFT/NOOP, still growing from 20 to 120 held frames); (3) the odometer gate independently confirms a real 512px x-axis with full OAM churn under held RIGHT. The 2-minute/4-worker smoke then grew the archive 1 -> 173 cells with the frontier still wide open and the room/screen counter advancing through 2 real transitions -- the SOUND_ADVANCING shape (still climbing at cutoff), not a freeze.",
+  "wave4_root_cause_confirmed": "Wave 4's mint_failed verdict was a probing-technique limitation, not a real unskippable-boot property: the game DOES have a real, START-skippable opening cinematic (the classic Dracula backstory text crawl), and wave 4's periodic-START mash schedule was in fact hitting the crawl-skip trigger, but its blind full-RAM-diff heuristic misread the crawl's own high churn (text scrolling + border torch animation) as still-scripted content, AND once past the crawl its continued mashing was toggling PAUSE on alternating presses, landing its final snapshot on a paused frame (near-zero RAM divergence under any input) that looked identical to a frozen demo loop. Both effects are resolved here by (a) rendering and visually inspecting frames at every decision point instead of trusting RAM diffs alone, and (b) a pulse-by-pulse RIGHT/LEFT/NOOP divergence sweep that isolated exactly which pulse-count lands unpaused.",
+  "next_lever": "level_key is empty (coverage baseline only) -- no stage-1-clear byte captured yet; the natural next step is a longer, non-smoke solve run down this room chain to bank a real clear and let refine_from_tapes re-rank the progress byte, following the same recipe already used for other wave onboards.",
+  "wall_clock_budget": "workers capped at 4 throughout (mint probing used 1, the smoke used 4); mint + probing + gate + discover + smoke took roughly 15 minutes wall-clock, within the retry's extended budget for this harder boot sequence."
+}
