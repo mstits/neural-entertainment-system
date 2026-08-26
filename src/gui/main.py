@@ -70,7 +70,19 @@ def _run_trainer(
         try:
             with open(rw_override_path) as _fh:
                 override = yaml.safe_load(_fh) or {}
-        except Exception:
+        except Exception as exc:
+            # Falling back to baseline weights here is fine, but doing it
+            # silently is not: a checkpoint later claimed to be "trained
+            # with reward config X" would be silently false. Surface it
+            # the same way construction/run failures are surfaced below.
+            import logging as _logging
+            _logging.getLogger(__name__).exception(
+                "failed to load reward_overrides_path=%s — "
+                "training with profile baseline reward weights instead",
+                rw_override_path,
+            )
+            if error_holder is not None:
+                error_holder.append(exc)
             override = {}
         for section in ("reward_weights", "reinforce", "ga_params", "dreamer"):
             if section in override:
@@ -299,13 +311,14 @@ class AppController:
                 "[start] IGNORED — prior training thread still alive. "
                 "Wait for Stop to complete before restarting."
             )
-            if hasattr(self.main_window, "_show_status"):
-                try:
-                    self.main_window._show_status(
-                        "Start ignored: previous training still shutting down."
-                    )
-                except Exception:
-                    pass
+            # MainWindow._on_start() emits start_requested (this slot runs
+            # synchronously in-place, same-thread signal) and then
+            # unconditionally re-enables its buttons and overwrites the
+            # status line with "Starting training…" once this call
+            # returns. Any correction made here would be clobbered before
+            # the user ever sees it, so defer it to the next event-loop
+            # iteration, after that overwrite has already happened.
+            QTimer.singleShot(0, self._revert_ignored_start)
             return
         _log.info(
             "[start] prior state: thread=%s grid_window=%s",
@@ -333,6 +346,7 @@ class AppController:
             profile_data = yaml.safe_load(Path(config["profile_path"]).read_text())
             merged = dict(profile_data.get("reward_weights", {}))
         except Exception:
+            profile_data = {}
             merged = {}
         overrides_path = config.get("reward_overrides_path")
         if overrides_path:
@@ -370,7 +384,12 @@ class AppController:
             out_dir="highlights",
         )
 
-        metrics_path = Path("./checkpoints") / "metrics.jsonl"
+        # Mirror Trainer.__init__'s own derive_checkpoint_dir("./checkpoints",
+        # game_profile.get("name")) call exactly (same default base, same
+        # profile dict, same key) so the dashboard watches the file the
+        # trainer thread actually writes to instead of a flat legacy path.
+        from src.training.profile_utils import derive_checkpoint_dir
+        metrics_path = derive_checkpoint_dir("./checkpoints", profile_data.get("name")) / "metrics.jsonl"
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
         # Unified observer view. Replaces the standalone MetricsWindow as
         # the primary "watch learning happen" surface.
@@ -427,6 +446,26 @@ class AppController:
         self.narrator_timer = QTimer(self.app)
         self.narrator_timer.timeout.connect(self._drain_narrator)
         self.narrator_timer.start(50)
+
+    def _revert_ignored_start(self) -> None:
+        """Undo the optimistic button/status state MainWindow._on_start()
+        applies right after emitting start_requested, for the case where
+        this controller ignored that request (prior training thread still
+        mid-shutdown). Run via QTimer.singleShot so it lands after
+        MainWindow's own handler has finished."""
+        mw = self.main_window
+        mw.start_btn.setEnabled(True)
+        mw.stop_btn.setEnabled(False)
+        mw.tune_btn.setEnabled(False)
+        mw.audio_btn.setEnabled(False)
+        mw.dashboard_btn.setEnabled(False)
+        if hasattr(mw, "_show_status"):
+            try:
+                mw._show_status(
+                    "Start ignored: previous training still shutting down."
+                )
+            except Exception:
+                pass
 
     def _on_tick(self) -> None:
         self._drain_metrics()
@@ -788,12 +827,25 @@ class AppController:
             return
         import time as _time
         if _time.monotonic() >= self._shutdown_deadline:
-            # Thread won't join. Clear the reference and let it die
-            # with the interpreter. (We can't forcibly kill a Python
-            # thread; the Rust pool drops its workers when trainer.run
-            # returns, which should happen on the next step_all.)
+            # Thread won't join within the deadline -- it is still
+            # alive and running for real. Do NOT clear training_thread
+            # or call _finalize_stop() here: that would re-enable Start
+            # while this orphaned Trainer keeps running, letting a
+            # second Trainer spin up on the same checkpoint_dir. Leave
+            # the reference in place so _on_start's alive-thread guard
+            # keeps rejecting a fresh Start until this thread actually
+            # dies (at which point _on_start's own reap-dead-thread
+            # branch finalizes it normally). (We can't forcibly kill a
+            # Python thread; the Rust pool drops its workers when
+            # trainer.run returns, which should happen on the next
+            # step_all.)
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[stop] training thread did not join within the "
+                "shutdown deadline -- abandoning join; thread is "
+                "still alive and running"
+            )
             self._stop_shutdown_timer()
-            self._finalize_stop()
 
     def _stop_shutdown_timer(self) -> None:
         if self._shutdown_timer is not None:
