@@ -78,6 +78,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from nes_core import Pool  # noqa: E402
+from scripts.clear_detect import score_tally_windows  # noqa: E402
 from src.training.lexicographic_objectives import (  # noqa: E402
     NEVER_WIRE_AS_REWARD, WHOLE_MOVIE_REPS, concentration,
     concentration_verdict, learn_objectives, rank_locations,
@@ -107,6 +108,24 @@ DEATH_MAX_N = 700    # steps per run — long enough to spend a life or two
 #: How many runs must show the same drop. A run in which the player never
 #: died simply abstains; none may contradict.
 DEATH_MIN_AGREE = 3
+
+#: Fight-gate probe budgets (FIGHTGATE_MECHANISM_2026-08-25.md §3.1/§5.4).
+#: A fixed-rhythm mash never reaches live combat (Pilot Evidence #1/#2 on
+#: Punch-Out: 400 and 600 steps of a deterministic cycle never moved
+#: opp_hp at all); a RANDOMIZED mash landed a hit within 1000 steps
+#: (Pilot Evidence #3). The shipped default sits meaningfully above that
+#: floor rather than at it (§5.4 failure mode 2's named mitigation), at
+#: the same ADVANCE_N order of magnitude every other maneuver drive uses.
+ATTACK_N = 2400      # randomized offense-heavy mash (Gate FH1)
+APPROACH_N = 2400    # pure-defense control, no attack input at all (Gate FH2)
+FIGHT_REPS = 5        # one seed per rep, same discipline as DEATH_REPS
+
+#: attack_mash's action distribution over the SAME six-symbol vocabulary
+#: every game in this roster already defines for its action space — A, B,
+#: A|B (both at once), forward, reverse, NOOP — weighted toward offense
+#: (0.60 combined on A/B/A|B) rather than any fixed rhythm. Order matches
+#: the mask tuple built in `attack_mash`.
+FIGHT_MASH_WEIGHTS = np.array([0.25, 0.25, 0.10, 0.15, 0.15, 0.10])
 
 #: The lives/health scan reads all of system RAM. Persistent counters are
 #: routinely kept OUTSIDE the zero page (the zero page is scratch a game
@@ -311,6 +330,17 @@ class Discoverer:
         idx = np.where(d[warmup:] > thr)[0]
         return int(idx[0]) + warmup if len(idx) else len(log)
 
+    def _reset_boundaries(self, log: np.ndarray, warmup: int = 25) -> list[int]:
+        """EVERY mass-RAM-rewrite boundary in `log`, not just the first.
+
+        `_first_reset` stops at the first one because every other probe
+        here only needs to know where to TRUNCATE. `find_round_gate`
+        needs the whole sequence — a long attack_mash/approach_retreat
+        rep can plausibly end more than one bout — so this calls the
+        pure boundary finder with this Discoverer's calibrated
+        threshold. See `_mass_reset_boundaries` for the math."""
+        return _mass_reset_boundaries(log, self.reset_threshold(log), warmup)
+
     def _macros(self) -> tuple[list, np.ndarray]:
         """The maneuver vocabulary the driving probes share.
 
@@ -376,6 +406,78 @@ class Discoverer:
                 log[t] = self._step(seg[si][0])
             out.append({"rep": rep, "log": log, "steps": DEATH_MAX_N})
         self._cache["deaths"] = out
+        return out
+
+    def attack_mash(self, reps: int = FIGHT_REPS, n: int = ATTACK_N) -> list[dict]:
+        """Randomized attack-heavy drive for the fight-gate probe
+        (FIGHTGATE_MECHANISM_2026-08-25.md §3.1).
+
+        Modeled on `death_drives`: never reloads mid-run, seeds
+        differently per rep, hands back the whole log — the adjudication
+        (`find_fight_health`) needs the raw sequence, not an event
+        boundary. Each step draws INDEPENDENTLY from the six-symbol
+        vocabulary every game in this roster's action space already
+        defines (A, B, A|B, forward, reverse, NOOP), weighted toward
+        offense (FIGHT_MASH_WEIGHTS: 0.60 combined on A/B/A|B).
+
+        A FIXED short cycle is deliberately never used here: Pilot
+        Evidence #1 (alternating A/B, 400 steps) and #2 (a fixed
+        dodge+attack cycle, 600 steps) both left opp_hp completely
+        unmoved on Punch-Out — the same failure `configs/punchout.yaml`
+        already names ("the generic masher does NOT reach live gameplay
+        on this dump"). Only Pilot Evidence #3's independent-per-step
+        random draws moved it, which is why every action here is drawn
+        fresh from `rng`, not sequenced through a macro table.
+        """
+        if "atk" in self._cache:
+            return self._cache["atk"]
+        fwd, rev = self.fwd, self.rev
+        masks = np.array([A, B, A | B, fwd, rev, NOOP], dtype=np.int64)
+        p = FIGHT_MASH_WEIGHTS
+        out: list[dict] = []
+        for rep in range(reps):
+            rng = np.random.default_rng(self.seed * 977 + rep * 31 + 101)
+            self._reload()
+            log = np.empty((n, RAM_SIZE), dtype=np.uint8)
+            draws = rng.choice(len(masks), size=n, p=p)
+            for t in range(n):
+                log[t] = self._step(int(masks[draws[t]]))
+            out.append({"rep": rep, "log": log, "steps": n})
+        self._cache["atk"] = out
+        return out
+
+    def approach_retreat(self, reps: int = FIGHT_REPS,
+                         n: int = APPROACH_N) -> list[dict]:
+        """Alternating forward/reverse bursts with NO attack input at
+        all — the pure-defense control condition (§3.1).
+
+        Burst lengths are drawn from a small distribution (3-10 steps)
+        per rep so the cadence itself is not a fixed rhythm either. Its
+        only job is to give `find_fight_health`'s Gate FH2 a probe where
+        the player is not landing (or even attempting) a hit, so a
+        foe-HP byte is provably distinguishable from the player's own
+        HP (which takes damage under an offense-only probe too, per
+        Pilot Evidence #1) and from a byte that merely tracks "the
+        player is doing anything."
+        """
+        if "apr" in self._cache:
+            return self._cache["apr"]
+        fwd, rev = self.fwd, self.rev
+        out: list[dict] = []
+        for rep in range(reps):
+            rng = np.random.default_rng(self.seed * 977 + rep * 31 + 202)
+            self._reload()
+            log = np.empty((n, RAM_SIZE), dtype=np.uint8)
+            going_fwd = True
+            left = int(rng.integers(3, 11))
+            for t in range(n):
+                if left <= 0:
+                    going_fwd = not going_fwd
+                    left = int(rng.integers(3, 11))
+                left -= 1
+                log[t] = self._step(fwd if going_fwd else rev)
+            out.append({"rep": rep, "log": log, "steps": n})
+        self._cache["apr"] = out
         return out
 
     def advance(self) -> tuple[np.ndarray, np.ndarray]:
@@ -1283,6 +1385,30 @@ LIVES_MAX_DROP = 8
 LIVES_MAX_TICKS = 6
 
 
+def _regime_split(mv: np.ndarray) -> int:
+    """Index of the end of the FIRST regime in a wrap-aware delta column.
+
+    A run that outlives its stock gets it REFILLED — a new game hands
+    the player a fresh life, a fixed-ring fight hands the loser a fresh
+    opponent — in however many stores the game feels like. Everything
+    from the first RISE on is a different regime (a different life, a
+    different bout), so a stock's spend is judged only up to there, not
+    across it.
+
+    Shared by `lives_from_death_drives` (a life counter refilled at a
+    continue) and `find_fight_health` (an opponent's HP bar refilled by
+    a round change, FIGHTGATE_MECHANISM_2026-08-25.md Gate FH3, measured
+    live on Punch-Out's own mac_hp: 0 -> 72 inside a single 1000-step
+    probe with no death and no round change) — same shape of event,
+    same fix, reused rather than re-derived twice.
+    """
+    nz = np.nonzero(mv)[0]
+    if not nz.size:
+        return len(mv)
+    ups = nz[mv[nz] > 0]
+    return int(ups[0]) if ups.size else len(mv)
+
+
 def lives_from_death_drives(drives: Sequence[Mapping], *,
                             idle_stats: Optional[Mapping] = None,
                             top: int = 6) -> tuple[list, dict]:
@@ -1343,12 +1469,7 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
             nz = np.nonzero(mv)[0]
             if not nz.size:
                 continue                       # this run never ended: abstain
-            # A run that outlives the stock gets it REFILLED — a new game
-            # hands the player a fresh one, in however many stores the
-            # game feels like. Everything from the first rise on is a
-            # different regime, so the counter is judged up to there.
-            ups = nz[mv[nz] > 0]
-            end = int(ups[0]) if ups.size else len(mv)
+            end = _regime_split(mv)
             down = mv[:end][mv[:end] < 0]
             if not down.size or down.size > LIVES_MAX_TICKS:
                 ok = False
@@ -1364,7 +1485,7 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
                 break
             agreeing += 1
             spends += int(down.size)
-            refills += int(bool(ups.size))
+            refills += int(end < len(mv))         # a rise was found: refilled
             # A stock is spent to nothing, exactly once: it hits empty,
             # and what came out of it accounts for what was in it. Debris
             # knocked down by a level reload satisfies neither.
@@ -1483,10 +1604,379 @@ def find_hp_lives(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
 
 
 # --------------------------------------------------------------------------
+# FIGHT-GATE — foe HP + round/opponent index for camera-static combat games
+# with no spatial frontier at all (FIGHTGATE_MECHANISM_2026-08-25.md).
+# Punch-Out is the validation target: both odometer axes read flat/noise
+# (§1's CAMERA_STATIC_AGENT_ACTIVE receipt), so there is no fallback
+# progress signal to lean on here the way a room-based game always has.
+# --------------------------------------------------------------------------
+def _decrement_consensus(logs: Sequence[np.ndarray], addr: int, *,
+                         min_agree: int = DEATH_MIN_AGREE) -> dict:
+    """How many differently-seeded reps show `addr` net DECREASING
+    within its first regime (`_regime_split`) — the same
+    DEATH_MIN_AGREE-style agreement discipline `lives_from_death_drives`
+    uses, generalized from a life counter's fixed -1 tick to a
+    variable-magnitude HP bar. A punch does not always deal the same
+    damage the way a lost life always costs exactly one, so direction
+    and net magnitude are judged; the per-event size is NOT required to
+    match across (or even within) reps, unlike the stock-counter test.
+
+    Pure — `logs` is whatever a live probe or a synthetic trace hands
+    it, so both Gate FH1 (offense probe) and Gate FH2 (defense-only
+    probe) in `fight_health_from_drives` are the SAME call against two
+    different log sets.
+
+    `fight_health_from_drives` calls this once per candidate ADDRESS
+    (up to 2048 of them) per probe set, so this diffs only the ONE
+    column it needs rather than calling `_wrap_deltas` on the whole
+    (n, 2048) log — that full-matrix diff is fine at `_col_stats`'
+    call rate (once per probe) but is a quadratic blow-up at this call
+    rate (once per address per probe).
+
+    Requires `start > 0`: a stock has something in it when the probe
+    begins. Measured live on Punch-Out (roms/Mike Tyson's Punch-Out!!,
+    single-worker attack_mash/approach_retreat probe): several zero-
+    page bytes tied to Little Mac's OWN punch animation (not to whether
+    it lands) pass FH1+FH2 exactly as well as the true opp_hp byte —
+    they decrement hard under attack_mash (pressing A/B drives the
+    animation) and sit flat under approach_retreat (no A/B at all) —
+    and every one of them starts the probe at 0, wrapping DOWN through
+    255 instead of draining from a full value. A real HP/stock reading
+    starts non-empty; this is a generic plausibility bound, not a
+    Punch-Out special case, and it is what separates $0398 (start 96)
+    from its animation-counter aliases in that exact live trace.
+    """
+    agreeing = 0
+    nets: list[int] = []
+    starts: list[int] = []
+    for log in logs:
+        if len(log) < 2:
+            continue
+        col = log[:, addr].astype(np.int16)
+        d = np.diff(col)
+        dw = np.where(d < -128, d + 256, np.where(d > 128, d - 256, d))
+        end = _regime_split(dw)
+        regime = dw[:end]
+        starts.append(int(log[0, addr]))
+        net = int(regime.sum())
+        nets.append(net)
+        if net < 0 and bool((regime < 0).any()):
+            agreeing += 1
+    watched = len(nets)
+    same_start = bool(len(set(starts)) <= 1) if starts else False
+    start = starts[0] if starts else None
+    need = min(min_agree, max(watched, 1))
+    return {"addr": addr, "agreeing": agreeing, "watched": watched,
+            "nets": nets, "same_start": same_start, "start": start,
+            "passes": bool(watched > 0 and agreeing >= need and same_start
+                          and start is not None and start > 0)}
+
+
+def _corroborates_tally(hist: np.ndarray, windows: Sequence[tuple], addr: int
+                        ) -> bool:
+    """Does `addr` net-decrease inside a window `score_tally_windows`
+    already flagged as a periodic anti-correlated timer/tally exchange
+    (§3.2 point 6 — corroboration, not a gate)? A foe-HP byte owes
+    nothing periodic, so disagreement never disqualifies a candidate;
+    this only ever RAISES confidence when it fires."""
+    for start, end in windows:
+        if end - start < 2:
+            continue
+        seg = hist[start:end, addr].astype(np.int16)
+        if int(np.diff(seg).sum()) < 0:
+            return True
+    return False
+
+
+def fight_health_from_drives(attack_drives: Sequence[Mapping],
+                             defense_drives: Sequence[Mapping], *,
+                             self_hp_addr: Optional[int] = None,
+                             top: int = 6) -> dict:
+    """Pure core of `find_fight_health` (§3.2/§3.3). Ranks foe-HP
+    candidates from two sequences of RAM logs shaped exactly like
+    `Discoverer.attack_mash` / `approach_retreat` produce — or a
+    synthetic trace built the same way — so the adjudication is
+    testable without a ROM.
+
+    Directly parallel to `lives_from_death_drives` but inverted: a
+    foe's stock empties from OUR offense, not from an event we can't
+    locate either, so there is no reset boundary to find — just the
+    same "watch the whole run, let cross-rep agreement do the work"
+    discipline, applied to two probes instead of one:
+
+      * Gate FH1 — decrements under `attack_drives` (offense-heavy,
+        randomized).
+      * Gate FH2 — the self/foe discriminator, the one truly new idea
+        this mechanism needs (§3.3): a real foe-HP byte must NOT show
+        the same decrement-consensus under `defense_drives` (no attack
+        input at all). Pilot Evidence #1 is the failure this closes —
+        an offense-only probe alone makes the PLAYER's own HP look
+        exactly like what Gate FH1 is searching for.
+      * Gate FH3 — the refill regime split is Gate FH1/FH2's
+        `_regime_split` call, already reused, not a separate pass.
+
+    `self_hp_addr` (`find_hp_lives`'s own nominated address, or None)
+    is used only to ANNOTATE a `self_hp_conflict` flag on every foe_hp
+    candidate — never to filter. The actual self/foe split is Gate FH2;
+    a collision with `find_hp_lives` is reported as a named finding
+    (§5.4 failure mode 1), never silently resolved either way.
+    """
+    atk_logs = [np.asarray(d["log"]) for d in attack_drives
+               if len(np.asarray(d["log"])) > 1]
+    apr_logs = [np.asarray(d["log"]) for d in defense_drives
+               if len(np.asarray(d["log"])) > 1]
+    ev = {"attack_reps": len(attack_drives), "attack_usable": len(atk_logs),
+         "defense_reps": len(defense_drives), "defense_usable": len(apr_logs)}
+    if not atk_logs:
+        return {"kind": "insufficient_probe", "addr": None,
+                "foe_hp_candidates": [], "self_hp_candidates": [],
+                "self_hp_conflict": self_hp_addr, "probe_evidence": ev,
+                "note": "no usable attack_mash rep (every run was too "
+                        "short to judge) — instrument finding"}
+
+    width = min(l.shape[1] for l in atk_logs)
+    if apr_logs:
+        width = min(width, min(l.shape[1] for l in apr_logs))
+    scan = min(LIVES_SCAN_TOP, width)
+
+    foe_cands: list[dict] = []
+    self_cands: list[dict] = []
+    for i in range(scan):
+        fh1 = _decrement_consensus(atk_logs, i, min_agree=DEATH_MIN_AGREE)
+        if not fh1["passes"]:
+            continue
+        fh2 = _decrement_consensus(apr_logs, i, min_agree=DEATH_MIN_AGREE)
+        entry = {
+            "addr": i, "start": fh1["start"],
+            "attack_nets": fh1["nets"], "attack_agree": fh1["agreeing"],
+            "attack_watched": fh1["watched"],
+            "defense_nets": fh2["nets"], "defense_agree": fh2["agreeing"],
+            "defense_watched": fh2["watched"],
+            "fh1_decrements_under_offense": True,
+            "fh2_flat_under_defense": not fh2["passes"],
+            "self_hp_conflict": bool(self_hp_addr is not None
+                                     and abs(i - self_hp_addr) <= 1),
+        }
+        (self_cands if fh2["passes"] else foe_cands).append(entry)
+
+    def _rank(c: dict) -> tuple:
+        # Prefer a WIDER spread of net damage across the differently-
+        # seeded reps over a narrower one. Measured live on Punch-Out
+        # (single-worker attack_mash probe): several zero-page bytes
+        # decremented by the EXACT SAME amount in all 3 reps regardless
+        # of which random actions each rep took — the signature of a
+        # byte driven by ELAPSED STEP COUNT alone (a background/attract
+        # timer), not by how many punches actually landed, which DOES
+        # vary run to run. The true opp_hp byte's nets in that same
+        # trace were [-58, -19, -74]: three different outcomes from
+        # three different random sequences, exactly what a combat-
+        # reactive stock should show. This is the same "different seeds
+        # should decorrelate a coincidence" logic
+        # `lives_from_death_drives` already leans on for agreement,
+        # applied in reverse: SUSPICIOUSLY IDENTICAL outcomes across
+        # seeds are down-ranked, never hard-rejected (a real byte could
+        # legitimately tie by chance) — demoted, not dropped, the same
+        # discipline `moves_while_idle` already uses there.
+        nets = c["attack_nets"]
+        spread = (max(nets) - min(nets)) if nets else 0
+        worst_net = min(nets) if nets else 0
+        return (-c["attack_agree"], -spread, worst_net, c["addr"])
+    foe_cands.sort(key=_rank)
+    self_cands.sort(key=_rank)
+    foe_cands, self_cands = foe_cands[:top], self_cands[:top]
+
+    tally_hist = np.concatenate(atk_logs)
+    tally_windows = score_tally_windows(tally_hist)
+    for c in foe_cands:
+        c["tally_corroborated"] = _corroborates_tally(tally_hist, tally_windows,
+                                                       c["addr"])
+
+    if foe_cands:
+        best = foe_cands[0]
+        return {"kind": "foe_hp", "addr": best["addr"], "detail": best,
+                "foe_hp_candidates": foe_cands,
+                "self_hp_candidates": self_cands,
+                "self_hp_conflict": self_hp_addr,
+                "tally_windows_found": len(tally_windows),
+                "probe_evidence": ev,
+                "note": (f"is_foe_hp on offense-driven decrement (agreed "
+                         f"by {best['attack_agree']} of "
+                         f"{best['attack_watched']} attack reps; flat "
+                         f"under {best['defense_watched']} defense-only "
+                         "reps)")}
+    return {"kind": "none", "addr": None, "foe_hp_candidates": [],
+            "self_hp_candidates": self_cands, "self_hp_conflict": self_hp_addr,
+            "tally_windows_found": len(tally_windows), "probe_evidence": ev,
+            "note": (
+                f"{len(self_cands)} address(es) decremented under BOTH "
+                "probes (self_hp_candidates: self/foe aliasing, §5.4 "
+                "failure mode 1) and none cleared FH2"
+                if self_cands else
+                "no byte cleared FH1 (decrements under offense) at all — "
+                f"a behaviour finding given {ev['attack_usable']} usable "
+                "attack-mash reps")}
+
+
+def find_fight_health(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
+                      frame_skip: int = 4, forward: str = "right",
+                      hp_lives: Optional[dict] = None, top: int = 6) -> dict:
+    """Live-probe wrapper: runs `attack_mash` + `approach_retreat` (and
+    `find_hp_lives`, unless the caller already has it) and hands them to
+    `fight_health_from_drives`. See that function for the gates."""
+    own = disc is None
+    if own:
+        disc = Discoverer(rom, state, frame_skip, forward)
+    try:
+        if hp_lives is None:
+            hp_lives = find_hp_lives(rom, state, disc=disc, forward=forward)
+        return fight_health_from_drives(
+            disc.attack_mash(), disc.approach_retreat(),
+            self_hp_addr=hp_lives.get("addr"), top=top)
+    finally:
+        if own:
+            disc.close()
+
+
+def _mass_reset_boundaries(log: np.ndarray, threshold: float,
+                           warmup: int = 25) -> list[int]:
+    """Every index in `log` where the frame-to-frame changed-byte count
+    exceeds `threshold` — the same mass-RAM-rewrite signature
+    `Discoverer._first_reset` uses for the FIRST such boundary, applied
+    repeatedly with a short cooldown so one multi-frame rewrite is never
+    counted twice. Pure: `threshold` is whatever the caller calibrated
+    (`Discoverer.reset_threshold` live, a fixed value in a test)."""
+    if len(log) < warmup + 2:
+        return []
+    d = (np.diff(log.astype(np.int16), axis=0) != 0).sum(1)
+    idx = np.where(d[warmup:] > threshold)[0] + warmup
+    out: list[int] = []
+    last = -10
+    for i in idx:
+        if int(i) - last > 5:
+            out.append(int(i))
+        last = int(i)
+    return out
+
+
+def round_gate_from_drives(drives: Sequence[Mapping], *, threshold: float,
+                           top: int = 6) -> dict:
+    """Pure core of `find_round_gate` (§3.4). `drives` is whatever
+    `Discoverer.attack_mash`/`approach_retreat` produced (or a synthetic
+    trace shaped the same way); `threshold` is the mass-reset churn
+    calibration (`Discoverer.reset_threshold` live, a fixed value in a
+    test) — pure, so this is testable without a ROM.
+
+    A candidate must be: stable within a bout (flat aside from the
+    boundary itself), monotone non-decreasing across every observed
+    boundary, and — the check a room counter never needed — NOT reset
+    back to its own start value at a boundary the way a life-counter-
+    triggered level reload is (a lost bout on a multi-life game reloads
+    the SAME opponent; a won bout advances to the NEXT one).
+
+    A probe that never crosses a single boundary returns
+    `insufficient_probe` — an INSTRUMENT finding (raise the budget),
+    never conflated with `no_round_signal`, the BEHAVIOUR finding
+    reserved for a probe that ran long enough and genuinely found
+    nothing (§2's VOID/FAIL split).
+    """
+    logs = [np.asarray(d["log"]) for d in drives if len(np.asarray(d["log"])) > 1]
+    bounds = [_mass_reset_boundaries(log, threshold) for log in logs]
+    total_bounds = sum(len(b) for b in bounds)
+    total_steps = sum(len(l) for l in logs)
+    ev = {"drives": len(drives), "usable": len(logs),
+         "probe_steps": total_steps, "bouts_observed": total_bounds}
+    if total_bounds == 0:
+        return {"kind": "insufficient_probe", "addr": None, "candidates": [],
+                "void": True, **ev,
+                "note": (f"no bout boundary observed across {total_steps} "
+                         "attack_mash/approach_retreat steps — INSTRUMENT "
+                         "finding (raise the probe budget), not evidence "
+                         "against a round-gate byte")}
+
+    scan = min(LIVES_SCAN_TOP, min(l.shape[1] for l in logs))
+    cands = []
+    for i in range(scan):
+        ok = True
+        resets_seen = steps_up = reset_to_start = 0
+        start_val: Optional[int] = None
+        for log, bnd in zip(logs, bounds):
+            if not bnd:
+                continue
+            col = log[:, i].astype(np.int64)
+            if start_val is None:
+                start_val = int(col[0])
+            prev_b = 0
+            for b in bnd:
+                seg = col[prev_b:b]
+                if len(seg) > 3 and int(np.ptp(seg[1:])) > 2:
+                    ok = False
+                    break
+                before, after = int(col[b - 1]), int(col[min(b + 1, len(col) - 1)])
+                resets_seen += 1
+                if after < before:
+                    ok = False
+                    break
+                if after == start_val:
+                    reset_to_start += 1
+                if after > before:
+                    steps_up += 1
+                prev_b = b
+            if not ok:
+                break
+        if not ok or resets_seen == 0 or steps_up == 0 or reset_to_start > 0:
+            continue
+        cands.append({"addr": i, "start": start_val,
+                     "resets_seen": resets_seen, "steps_up": steps_up})
+    cands.sort(key=lambda c: (-c["steps_up"], c["addr"]))
+    cands = cands[:top]
+    return {"kind": "round_gate" if cands else "no_round_signal",
+            "addr": cands[0]["addr"] if cands else None,
+            "candidates": cands, "void": False, **ev,
+            "note": (
+                f"steps at every one of {total_bounds} observed bout "
+                "boundary(ies), never back to its own start value"
+                if cands else
+                f"{total_bounds} bout boundary(ies) observed across "
+                f"{total_steps} steps, but no byte was both stable within "
+                "a bout and monotone across boundaries without resetting "
+                "to start — behaviour finding")}
+
+
+def find_round_gate(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
+                    frame_skip: int = 4, forward: str = "right",
+                    top: int = 6) -> dict:
+    """Live-probe wrapper: runs `attack_mash` + `approach_retreat` (reused
+    from `find_fight_health`'s probes when driven through `discover_all` —
+    `Discoverer` caches both) and hands them to `round_gate_from_drives`.
+    """
+    own = disc is None
+    if own:
+        disc = Discoverer(rom, state, frame_skip, forward)
+    try:
+        atk = disc.attack_mash()
+        apr = disc.approach_retreat()
+        drives = atk + apr
+        ref_log = np.asarray(drives[0]["log"]) if drives else np.zeros((1, RAM_SIZE))
+        thr = disc.reset_threshold(ref_log)
+        return round_gate_from_drives(drives, threshold=thr, top=top)
+    finally:
+        if own:
+            disc.close()
+
+
+# --------------------------------------------------------------------------
 # Full discovery + emitters.
 # --------------------------------------------------------------------------
 def discover_all(rom: str, state_path: str, *, frame_skip: int = 4,
-                 forward: str = "right", seed: int = 1) -> dict:
+                 forward: str = "right", seed: int = 1,
+                 fight_gate: bool = False) -> dict:
+    """Run the four standard passes; with `fight_gate=True` (the CLI's
+    `--fight-gate`), also run `find_fight_health` + `find_round_gate`
+    (§3) and fold their output into the findings dict under
+    `fight_health` / `round_gate`. Those two keys are ABSENT — not
+    `None` — when `fight_gate` is left at its default, so a profile
+    that never asks for `--fight-gate` gets a byte-identical findings
+    dict to before this mechanism existed (§3.5)."""
     state = Path(state_path).read_bytes()
     disc = Discoverer(rom, state, frame_skip, forward, seed)
     try:
@@ -1501,9 +1991,16 @@ def discover_all(rom: str, state_path: str, *, frame_skip: int = 4,
         y = find_y(rom, state, disc=disc, forward=forward,
                    exclude=tuple(a for a in excl if a is not None))
         hl = find_hp_lives(rom, state, disc=disc, forward=forward)
-        return {"rom": rom, "state": state_path, "forward": forward,
-                "progress": prog, "room_counters": rooms, "y": y,
-                "hp_lives": hl}
+        out = {"rom": rom, "state": state_path, "forward": forward,
+              "progress": prog, "room_counters": rooms, "y": y,
+              "hp_lives": hl}
+        if fight_gate:
+            fh = find_fight_health(rom, state, disc=disc, forward=forward,
+                                   hp_lives=hl)
+            out["fight_health"] = fh
+            out["round_gate"] = find_round_gate(rom, state, disc=disc,
+                                                forward=forward)
+        return out
     finally:
         disc.close()
 
@@ -1515,6 +2012,7 @@ def emit_solve_yaml(rom: str, findings: dict) -> str:
     y = findings["y"]
     hl = findings["hp_lives"]
     rec = prog["recommended"]
+    round_gate_inlined = False
     lines = ["solve:"]
     try:
         rel = str(Path(rom).resolve().relative_to(REPO))
@@ -1563,6 +2061,29 @@ def emit_solve_yaml(rom: str, findings: dict) -> str:
                          "# fine | page; passes wrap + saturation (keeps climbing)")
         else:
             lines.append(f"  progress: {{lo: 0x{lo:04X}}}   # passes wrap + saturation")
+    elif findings.get("fight_health", {}).get("kind") == "foe_hp":
+        # FIGHT-GATE (FIGHTGATE_MECHANISM_2026-08-25.md §3.5): only reached
+        # when NO spatial frontier was isolated above — a camera-static
+        # combat game (Punch-Out) has none to fall back to, so this is
+        # the honest degraded case, not a blocker (§4.2).
+        fh = findings["fight_health"]
+        rg = findings.get("round_gate") or {}
+        d = fh["detail"]
+        lines.append(f"  # FIGHT-GATE PROGRESS: no spatial frontier isolated; "
+                     f"foe_hp cleared Gate FH1+FH2 (agreed by "
+                     f"{d['attack_agree']} of {d['attack_watched']} "
+                     "randomized attack-mash reps, flat under "
+                     f"{d['defense_watched']} pure-defense reps).")
+        if d.get("self_hp_conflict"):
+            lines.append("  # WARNING: this address is within 1 of the "
+                         "find_hp_lives candidate — self/foe aliasing "
+                         "(§5.4 failure mode 1); CONFIRM by hand before "
+                         "trusting.")
+        round_gate_inlined = rg.get("kind") == "round_gate"
+        round_field = f", round: 0x{rg['addr']:04X}" if round_gate_inlined else ""
+        lines.append(f"  progress: {{source: fight_gate, "
+                     f"foe_hp: 0x{fh['addr']:04X}, "
+                     f"foe_hp_start: 0x{d['start']:02X}{round_field}}}")
     else:
         lines.append("  # progress: <none isolated — inspect candidates in the receipt>")
 
@@ -1579,6 +2100,21 @@ def emit_solve_yaml(rom: str, findings: dict) -> str:
         else:
             lines.append(f"  lives: 0x{hl['addr']:04X}   # HUD health "
                          f"(=={hl.get('value')}); death proxy: is_dead on health<start")
+
+    # Fight-gate discovery is reported even when it did NOT become the
+    # active progress source (a spatial frontier already won above, or
+    # the probe came back empty) — a finding is never silently dropped.
+    if "fight_health" in findings and rec:
+        fh = findings["fight_health"]
+        if fh.get("kind") == "foe_hp":
+            lines.append(f"  # fight_health (unused: spatial progress "
+                         f"already isolated): foe_hp candidate "
+                         f"0x{fh['addr']:04X}")
+        else:
+            lines.append(f"  # fight_health: {fh['kind']} — {fh.get('note', '')}")
+    if findings.get("round_gate") is not None and not round_gate_inlined:
+        rg = findings["round_gate"]
+        lines.append(f"  # round_gate: {rg['kind']} — {rg.get('note', '')}")
     return "\n".join(lines) + "\n"
 
 
@@ -1603,6 +2139,16 @@ def _print_report(findings: dict, emit: bool) -> None:
     hl = findings["hp_lives"]
     print(f"[hp/lives] kind={hl['kind']} addr="
           f"{('0x%04X' % hl['addr']) if hl.get('addr') is not None else 'none'} — {hl['note']}")
+    if "fight_health" in findings:
+        fh = findings["fight_health"]
+        print(f"[fight_health] kind={fh['kind']} addr="
+              f"{('0x%04X' % fh['addr']) if fh.get('addr') is not None else 'none'} "
+              f"self_hp_conflict={fh.get('self_hp_conflict')} — {fh.get('note', '')}")
+    if "round_gate" in findings:
+        rg = findings["round_gate"]
+        print(f"[round_gate] kind={rg['kind']} addr="
+              f"{('0x%04X' % rg['addr']) if rg.get('addr') is not None else 'none'} "
+              f"— {rg.get('note', '')}")
     if emit:
         print("\n--- paste-ready solve: ---")
         print(emit_solve_yaml(findings["rom"], findings))
@@ -1731,6 +2277,11 @@ def main() -> int:
     ap.add_argument("--selftest", action="store_true",
                     help="Verify against Contra + Kirby ground truth and write "
                     "runs/discover_observables_selftest.json.")
+    ap.add_argument("--fight-gate", action="store_true",
+                    help="Also run find_fight_health + find_round_gate "
+                    "(FIGHTGATE_MECHANISM_2026-08-25.md §3) for camera-static "
+                    "combat games with no spatial frontier at all (Punch-Out). "
+                    "No effect on any other flag's output.")
     args = ap.parse_args()
 
     if args.selftest:
@@ -1750,7 +2301,7 @@ def main() -> int:
     forward = forward or "right"
 
     findings = discover_all(args.rom, args.state, frame_skip=fs, forward=forward,
-                            seed=args.seed)
+                            seed=args.seed, fight_gate=args.fight_gate)
     _print_report(findings, emit=args.emit_solve)
     if args.out:
         Path(args.out).write_text(json.dumps(findings, indent=2, default=int) + "\n")

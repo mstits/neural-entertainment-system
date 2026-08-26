@@ -708,6 +708,92 @@ ODO_ALT = 0x806
 #: table caps at 4096), so it can never alias a real ordinal.
 ROOM_UNKNOWN = 0xFFFF
 
+# ---------------------------------------------------------------------
+# FIGHT-GATE — cumulative-damage progress for camera-static combat games
+# with no spatial frontier at all (FIGHTGATE_MECHANISM_2026-08-25.md §4).
+# Punch-Out is the validation target: both odometer axes read flat/noise
+# (the CAMERA_STATIC_AGENT_ACTIVE receipt quoted in that document's §1),
+# so a discovered foe-HP byte (`scripts/discover_observables.py`'s new
+# `find_fight_health`) is integrated into a monotone "total damage dealt"
+# frontier the SAME way the odometer's camera integral is: written into
+# the pseudo-RAM extension so cells, the glitch filter and macros all
+# read it through the ordinary lo/hi path, with NO new cell/archive code.
+# ---------------------------------------------------------------------
+
+#: Pseudo-address pair for the cumulative-damage integral (little-endian
+#: uint16, clamped [0, 0xFFFF]) — the next free slot after the
+#: odometer/room-fp block above. A fight_gate profile always reserves
+#: the FULL 0x800..0x808 range (9 bytes), even on a profile with no
+#: odometer/room_fp of its own, so this pair's ABSOLUTE address never
+#: moves: FIGHT_LO/FIGHT_HI are indices into the extended snapshot, not
+#: offsets from wherever the odometer block happened to end. Every
+#: non-fight-gate profile is untouched — this range is only allocated
+#: when `self._fight` is True (see Solver._xram).
+FIGHT_LO, FIGHT_HI = 0x807, 0x808
+
+#: Mass-RAM-rewrite churn floor for the "no round byte" fallback
+#: (a fixed-ring game like Punch-Out — §4.2: no round/opponent-index
+#: byte exists, so a bout boundary is detected the same way
+#: discover_observables.Discoverer.reset_threshold's floor calibrates
+#: it offline: a death/level-reload/bout-transition rewrites far more
+#: of RAM than one frame of ordinary play). A profile with a `round`
+#: byte never touches this path at all.
+FIGHT_RESET_THRESHOLD = 350.0
+
+
+def fight_gate_step(prev_hp, now_hp: int, *, is_transition: bool, cum: int,
+                    cap: int = 0xFFFF) -> tuple[int, int]:
+    """One step of the fight-gate cumulative-damage integral (design doc
+    §4.1). Pure: no RAM array, no Solver, no emulator — every branch is
+    exercised directly with plain integers
+    (tests/test_fight_gate.py).
+
+    `prev_hp` is the foe-HP byte's PREVIOUS reading (None the first time
+    a fresh worker is observed — there is nothing to diff against yet).
+    `now_hp` is this step's reading. `is_transition` is True on the step
+    a round-gate byte advances (or, with no round byte, the mass-RAM-
+    reset detector fires) — the opponent-refill boundary.
+
+    On a transition (or the very first observation), the running
+    baseline is RE-ARMED to `now_hp` and NO delta is banked for that
+    step: comparing a fresh opponent's full HP against whatever the
+    PREVIOUS opponent's near-empty reading happened to be (or a load
+    frame's transient garbage) is exactly the `foe_hp_start - 0` fake
+    windfall the design names — the fix is to never compute a delta
+    across the boundary at all, only re-baseline from it.
+
+    Every other step banks `max(0, prev_hp - now_hp)` — a DROP is
+    damage; a rise (a refill mid-probe with no round/reset signal at
+    all, or read noise the wrong way) contributes nothing. Same non-
+    negative-clamp discipline the PPU scroll odometer integral already
+    uses ("regress is not negative progress, it is no progress").
+
+    Returns `(new_cum, new_prev_hp)`, both written back by the caller.
+    """
+    if prev_hp is None or is_transition:
+        return cum, int(now_hp)
+    dropped = int(prev_hp) - int(now_hp)
+    if dropped > 0:
+        cum = min(cap, cum + dropped)
+    return cum, int(now_hp)
+
+
+def fight_gate_mass_reset(prev_ram, ram, *, threshold: float) -> bool:
+    """The generic mass-RAM-rewrite signature
+    `discover_observables.Discoverer._first_reset` already uses to find
+    a death or level reload, reused here to flag a bout boundary for a
+    fixed-ring fight-gate profile with no round byte. `prev_ram` is the
+    previous step's raw snapshot (None on a worker's first observed
+    step — never a reset). Pure: `threshold` is whatever the caller
+    calibrated."""
+    if prev_ram is None:
+        return False
+    n = min(len(prev_ram), len(ram))
+    changed = int(np.count_nonzero(
+        np.asarray(prev_ram[:n]).astype(np.int16)
+        != np.asarray(ram[:n]).astype(np.int16)))
+    return changed > threshold
+
 
 def room_fp_mask(ranges) -> np.ndarray:
     """np.uint8[2048] KEEP-mask over the nametable snapshot: 1 keeps a
@@ -1770,6 +1856,37 @@ class GenericGame:
             self.odometer_sign = sign
             p = dict(p)
             p["lo"], p["hi"] = ODO_LO, ODO_LO + 1
+        # FIGHT-GATE progress (optional): `progress: {source: fight_gate,
+        # foe_hp: <addr>[, foe_hp_start: <val>][, round: <addr>]}` — a
+        # camera-static combat game with no spatial frontier at all
+        # (Punch-Out, FIGHTGATE_MECHANISM_2026-08-25.md §4). `foe_hp` and
+        # `round` come from `scripts/discover_observables.py --fight-gate`
+        # (`find_fight_health` / `find_round_gate`), never hand-picked from
+        # a RAM map — the same purity discipline every other solve address
+        # in this file already follows. The progress observable is a
+        # cumulative-damage integral the Solver accumulates into the
+        # pseudo-RAM extension at FIGHT_LO/FIGHT_HI (fight_gate_step, one
+        # call per worker per step in Solver._xram) — exactly the odometer
+        # branch above's relationship to ODO_LO, so every existing lo/hi
+        # consumer (cells, the glitch filter, macros, progress_cap) needs
+        # no changes. `round` is optional: with none (Punch-Out has none,
+        # §4.2), a bout boundary is instead detected by the mass-RAM-reset
+        # signature (`fight_gate_mass_reset`) the Solver already applies
+        # for deaths/reloads elsewhere.
+        self.foe_hp_addr = None
+        self.foe_hp_start = 0
+        self.fight_round_addr = None
+        if str(p.get("source", "")).lower() == "fight_gate":
+            if "foe_hp" not in p:
+                raise SystemExit(
+                    "[go_explore_solve] progress: {source: fight_gate} "
+                    "needs foe_hp: <addr> (from find_fight_health).")
+            self.foe_hp_addr = int(p["foe_hp"])
+            self.foe_hp_start = int(p.get("foe_hp_start", 0))
+            self.fight_round_addr = (int(p["round"]) if "round" in p
+                                     else None)
+            p = dict(p)
+            p["lo"], p["hi"] = FIGHT_LO, FIGHT_HI
         # Decoded HUD-field progress (optional): score/money games (DuckTales)
         # have no monotone spatial frontier — the objective is a multi-tile
         # decimal HUD field. `progress: {tiles: [addrs MSB-first], blank: B,
@@ -3188,6 +3305,33 @@ class Solver:
                   f"config_sha={self.game.room_fp_sha}", flush=True)
         self._odo_now: list = []
         self._odo_scene: list = []
+        # FIGHT-GATE cumulative-damage integral (§4.1). Unlike the
+        # odometer, whose camera-integral state lives INSIDE nes_core and
+        # round-trips through load_worker_state for free, this total is
+        # Python-side per-worker state: `_fight_prev_hp`/`_fight_cum` are
+        # reset only here and on every `_assign()` load (see there), never
+        # re-derived from an archived cell's own history. That is correct
+        # for the pre-registered single-worker validation smoke
+        # (FIGHTGATE_MECHANISM_2026-08-25.md §5.2, a continuous root-to-
+        # entrance lineage) and for a fresh worker seeded at the entrance;
+        # it is a KNOWN, documented gap for the general multi-worker
+        # archive case, where a Go-Explore restore to an ARCHIVED cell
+        # (as opposed to a fresh entrance load) does not yet re-derive the
+        # total from that cell's own banked damage — future work, not
+        # silently pretended away.
+        self._fight = getattr(self.game, "foe_hp_addr", None) is not None
+        nw = int(args.workers)
+        self._fight_prev_hp: list = [None] * nw
+        self._fight_cum = np.zeros(nw, dtype=np.uint32)
+        self._fight_round_prev: list = [None] * nw
+        self._fight_prev_ram: list = [None] * nw
+        if self._fight:
+            rd = getattr(self.game, "fight_round_addr", None)
+            tail = (f"round=0x{rd:04X}" if rd is not None
+                    else "no round byte -> mass-reset fallback")
+            print(f"[go_explore_solve] progress source: fight-gate "
+                  f"cumulative damage (foe_hp=0x{self.game.foe_hp_addr:04X}, "
+                  f"{tail})", flush=True)
         self.pool.reset_all()
         self.provenance = hw_provenance(self.hw_flags, self.frame_skip)
         if self.hw_flags:
@@ -3624,53 +3768,94 @@ class Solver:
             self._odo_now = src.get_odometer_per_worker()
             self._odo_scene = src.get_odometer_scene_per_worker()
 
+    def _fight_step(self, base: np.ndarray, wid: int) -> int:
+        """Advance the fight-gate cumulative-damage integral for one
+        worker by one step, from this call's raw (pre-extension) RAM
+        snapshot. Owns per-worker state indexing and transition
+        detection only — the actual accounting is the pure
+        `fight_gate_step` helper (tests/test_fight_gate.py exercises it
+        directly with synthetic traces)."""
+        now = int(base[self.game.foe_hp_addr])
+        round_addr = self.game.fight_round_addr
+        if round_addr is not None:
+            r_now = int(base[round_addr])
+            r_prev = self._fight_round_prev[wid]
+            self._fight_round_prev[wid] = r_now
+            is_transition = r_prev is not None and r_now != r_prev
+        else:
+            is_transition = fight_gate_mass_reset(
+                self._fight_prev_ram[wid], base,
+                threshold=FIGHT_RESET_THRESHOLD)
+            self._fight_prev_ram[wid] = np.array(base, copy=True)
+        cum, prev = fight_gate_step(
+            self._fight_prev_hp[wid], now, is_transition=is_transition,
+            cum=int(self._fight_cum[wid]))
+        self._fight_prev_hp[wid] = prev
+        self._fight_cum[wid] = cum
+        return cum
+
     def _xram(self, ram, wid: int):
         """Extend one worker's 2KB RAM snapshot with the scroll-odometer
         integral at ODO_LO..ODO_LO+2 (little-endian, clamped to 24 bits;
         backward-of-origin clamps to 0 — regress is not negative
-        progress, it is no progress). No-op when the profile doesn't use
-        the odometer, so non-odometer solves keep zero overhead and
-        their exact snapshot identity.
+        progress, it is no progress) and/or the fight-gate cumulative-
+        damage integral at FIGHT_LO/FIGHT_HI (§4.1). No-op when the
+        profile uses neither, so every other solve keeps zero overhead
+        and its exact snapshot identity.
 
-        With `solve.room_fp` the extension is 7 bytes, not 4: the
+        With `solve.room_fp` the extension carries 3 more bytes: the
         settled room ordinal (uint16 LE) at ROOM_LO/ROOM_HI and the
-        ORTHOGONAL odometer axis at ODO_ALT ((v>>4)&0xFF). The length
-        switch is keyed on room_fp presence alone, so every non-fp
-        profile — SMB included — keeps its exact 4-byte extension and
-        snapshot identity (RG-1c control)."""
-        if not self._odo:
+        ORTHOGONAL odometer axis at ODO_ALT ((v>>4)&0xFF). With
+        `progress.source: fight_gate` the extension is ALWAYS the full
+        9 bytes (0x800..0x808), independent of odometer/room_fp,
+        because FIGHT_LO/HI are fixed absolute addresses past the whole
+        odometer/room-fp block — any bytes in that block a fight_gate
+        profile doesn't otherwise populate (no odometer axis, no
+        room_fp) read as zero, never uninitialized. The length switch
+        is keyed on room_fp/fight_gate presence alone, so every profile
+        declaring neither — SMB included — keeps its exact 4-byte
+        extension and snapshot identity (RG-1c control)."""
+        fight = getattr(self, "_fight", False)
+        if not (self._odo or fight):
             return ram
-        x, y = self._odo_now[wid]
-        axis = self.game.odometer_axis
-        # axis is None only when room_fp forced the odometer on for a
-        # RAM-progress profile; the primary slot then carries x and the
-        # ODO_ALT byte y. For declared odometer profiles ("x"/"y",
-        # validated at parse) this expression is byte-identical to the
-        # pre-roomgraph `x if axis == "x" else y`.
-        v = y if axis == "y" else x
-        v *= getattr(self.game, "odometer_sign", 1)
-        v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
-        rf = self.room_fp is not None
         base = (np.frombuffer(ram, dtype=np.uint8)
                 if isinstance(ram, (bytes, bytearray)) else ram)
-        ext = np.empty(len(base) + (7 if rf else 4), dtype=np.uint8)
+        rf = self.room_fp is not None
+        ext_len = 9 if fight else (7 if rf else 4)
+        ext = np.zeros(len(base) + ext_len, dtype=np.uint8)
         ext[:len(base)] = base
-        ext[ODO_LO] = v & 0xFF
-        ext[ODO_LO + 1] = (v >> 8) & 0xFF
-        ext[ODO_LO + 2] = (v >> 16) & 0xFF
-        # Scene ordinal (mod 256) at ODO_LO+3: profiles point solve.area
-        # here so cells key on (scene, within-scene x) — camera-locked
-        # rooms and stage wipes become area transitions, exactly the
-        # (area-order, gx) machinery the solver already has.
-        ext[ODO_LO + 3] = self._odo_scene[wid] & 0xFF
-        if rf:
-            o = int(self._room_ord[wid])
-            ext[ROOM_LO] = o & 0xFF
-            ext[ROOM_HI] = (o >> 8) & 0xFF
-            alt = x if axis == "y" else y
-            alt = 0 if alt < 0 else (0xFFFFFF if alt > 0xFFFFFF
-                                     else int(alt))
-            ext[ODO_ALT] = (alt >> 4) & 0xFF
+        if self._odo:
+            x, y = self._odo_now[wid]
+            axis = self.game.odometer_axis
+            # axis is None only when room_fp forced the odometer on for a
+            # RAM-progress profile; the primary slot then carries x and
+            # the ODO_ALT byte y. For declared odometer profiles ("x"/
+            # "y", validated at parse) this expression is byte-identical
+            # to the pre-roomgraph `x if axis == "x" else y`.
+            v = y if axis == "y" else x
+            v *= getattr(self.game, "odometer_sign", 1)
+            v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
+            ext[ODO_LO] = v & 0xFF
+            ext[ODO_LO + 1] = (v >> 8) & 0xFF
+            ext[ODO_LO + 2] = (v >> 16) & 0xFF
+            # Scene ordinal (mod 256) at ODO_LO+3: profiles point
+            # solve.area here so cells key on (scene, within-scene x) —
+            # camera-locked rooms and stage wipes become area
+            # transitions, exactly the (area-order, gx) machinery the
+            # solver already has.
+            ext[ODO_LO + 3] = self._odo_scene[wid] & 0xFF
+            if rf:
+                o = int(self._room_ord[wid])
+                ext[ROOM_LO] = o & 0xFF
+                ext[ROOM_HI] = (o >> 8) & 0xFF
+                alt = x if axis == "y" else y
+                alt = 0 if alt < 0 else (0xFFFFFF if alt > 0xFFFFFF
+                                         else int(alt))
+                ext[ODO_ALT] = (alt >> 4) & 0xFF
+        if fight:
+            cum = self._fight_step(base, wid)
+            ext[FIGHT_LO] = cum & 0xFF
+            ext[FIGHT_HI] = (cum >> 8) & 0xFF
         return ext
 
     def _xram_local(self, ram, pool, hold=None):
@@ -3684,29 +3869,59 @@ class Solver:
         clear-hook ctx) carrying the hold-last ordinal across steps. A
         replay whose hash diverges therefore composes different
         room_sig bytes and is marked UNVERIFIED by the existing
-        comparison, never silently passed."""
-        x, y = pool.get_odometer_per_worker()[0]
-        axis = self.game.odometer_axis
-        v = y if axis == "y" else x
-        v *= getattr(self.game, "odometer_sign", 1)
-        v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
-        rf = self.room_fp is not None
+        comparison, never silently passed.
+
+        With `progress.source: fight_gate`, the cumulative-damage
+        integral is tracked in `hold` under `_fight_*` keys instead of a
+        Solver-owned per-worker array — a replay is one continuous
+        lineage with no restore-to-an-archived-cell step, so `hold`
+        alone is enough state (mirrors `_replay_room_ord`'s use of it)."""
+        fight = getattr(self, "_fight", False)
         base = (np.frombuffer(ram, dtype=np.uint8)
                 if isinstance(ram, (bytes, bytearray)) else ram)
-        ext = np.empty(len(base) + (7 if rf else 4), dtype=np.uint8)
+        rf = self.room_fp is not None
+        ext_len = 9 if fight else (7 if rf else 4)
+        ext = np.zeros(len(base) + ext_len, dtype=np.uint8)
         ext[:len(base)] = base
-        ext[ODO_LO] = v & 0xFF
-        ext[ODO_LO + 1] = (v >> 8) & 0xFF
-        ext[ODO_LO + 2] = (v >> 16) & 0xFF
-        ext[ODO_LO + 3] = pool.get_odometer_scene_per_worker()[0] & 0xFF
-        if rf:
-            o = self._replay_room_ord(pool, hold)
-            ext[ROOM_LO] = o & 0xFF
-            ext[ROOM_HI] = (o >> 8) & 0xFF
-            alt = x if axis == "y" else y
-            alt = 0 if alt < 0 else (0xFFFFFF if alt > 0xFFFFFF
-                                     else int(alt))
-            ext[ODO_ALT] = (alt >> 4) & 0xFF
+        if self._odo:
+            x, y = pool.get_odometer_per_worker()[0]
+            axis = self.game.odometer_axis
+            v = y if axis == "y" else x
+            v *= getattr(self.game, "odometer_sign", 1)
+            v = 0 if v < 0 else (0xFFFFFF if v > 0xFFFFFF else int(v))
+            ext[ODO_LO] = v & 0xFF
+            ext[ODO_LO + 1] = (v >> 8) & 0xFF
+            ext[ODO_LO + 2] = (v >> 16) & 0xFF
+            ext[ODO_LO + 3] = pool.get_odometer_scene_per_worker()[0] & 0xFF
+            if rf:
+                o = self._replay_room_ord(pool, hold)
+                ext[ROOM_LO] = o & 0xFF
+                ext[ROOM_HI] = (o >> 8) & 0xFF
+                alt = x if axis == "y" else y
+                alt = 0 if alt < 0 else (0xFFFFFF if alt > 0xFFFFFF
+                                         else int(alt))
+                ext[ODO_ALT] = (alt >> 4) & 0xFF
+        if fight:
+            h = hold if hold is not None else {}
+            now = int(base[self.game.foe_hp_addr])
+            round_addr = self.game.fight_round_addr
+            if round_addr is not None:
+                r_now = int(base[round_addr])
+                r_prev = h.get("_fight_round_prev")
+                h["_fight_round_prev"] = r_now
+                is_transition = r_prev is not None and r_now != r_prev
+            else:
+                is_transition = fight_gate_mass_reset(
+                    h.get("_fight_prev_ram"), base,
+                    threshold=FIGHT_RESET_THRESHOLD)
+                h["_fight_prev_ram"] = np.array(base, copy=True)
+            cum, prev = fight_gate_step(
+                h.get("_fight_prev_hp"), now, is_transition=is_transition,
+                cum=int(h.get("_fight_cum", 0)))
+            h["_fight_prev_hp"] = prev
+            h["_fight_cum"] = cum
+            ext[FIGHT_LO] = cum & 0xFF
+            ext[FIGHT_HI] = (cum >> 8) & 0xFF
         return ext
 
     def _replay_room_ord(self, pool, hold=None) -> int:
@@ -4344,7 +4559,7 @@ class Solver:
             for i, a in enumerate(list(trace) + [0] * margin):
                 acts[0] = self.bitmasks[int(a)]
                 ram = pool.step_all(acts)[0][2]
-                if getattr(self, "_odo", False):
+                if getattr(self, "_odo", False) or getattr(self, "_fight", False):
                     ram = self._xram_local(ram, pool, ctx)
                 # Same modality the live hook saw, or the replay judges a
                 # different detector than the one that fired.
@@ -4595,7 +4810,7 @@ class Solver:
                 for i, a in enumerate(list(actions) + [0] * margin):
                     acts[0] = self.bitmasks[int(a)]
                     ram = pool.step_all(acts)[0][2]
-                    if getattr(self, "_odo", False):
+                    if getattr(self, "_odo", False) or getattr(self, "_fight", False):
                         ram = self._xram_local(ram, pool, ctx)
                     if needs_apu:
                         ctx["_apu_mask"] = pool.apu_activity_all()[0]
@@ -5537,6 +5752,24 @@ class Solver:
                                              daemon=True)
         self._door_thread.start()
 
+    def _fight_reset(self, wid: int) -> None:
+        """Re-baseline one worker's fight-gate state after a fresh
+        `load_worker_state` (entrance or an archived cell) — a no-op
+        when `progress.source: fight_gate` isn't configured. The
+        cumulative-damage total starts over at 0 for whatever this
+        worker does from here, exactly the `_fight_prev_hp is None`
+        first-observation case `fight_gate_step` already handles: the
+        very first post-load read is a re-arm, never a delta against
+        stale pre-load state. See the KNOWN GAP note above
+        `self._fight` in `__init__` — this is the honest, documented
+        limit of that choice, not a silent one."""
+        if not self._fight:
+            return
+        self._fight_prev_hp[wid] = None
+        self._fight_cum[wid] = 0
+        self._fight_round_prev[wid] = None
+        self._fight_prev_ram[wid] = None
+
     def _assign(self, wid: int, prev: dict | None = None) -> dict:
         # R2 bookkeeping: credit or debit the cell the finished burst
         # was rooted at. A burst that recorded nothing novel increments
@@ -5573,6 +5806,8 @@ class Solver:
         if cell is None:
             # Fall back to the entrance root.
             self.pool.load_worker_state(wid, Path(self.args.root_state).read_bytes())
+            if getattr(self, "_fight", False):
+                self._fight_reset(wid)
             c = {"key": None, "root": "entrance", "trace": [], "steps": 0,
                  "left": self.args.burst, "burst_step": 0,
                  "loops": 0, "prev_gx": -1,
@@ -5587,6 +5822,8 @@ class Solver:
                 self._room_seed(wid, c, ())
             return c
         self.pool.load_worker_state(wid, cell.state)
+        if getattr(self, "_fight", False):
+            self._fight_reset(wid)
         rec = self.traces[cell.key]
         root_id, tb, loops, sig = rec[0], rec[1], rec[2], rec[3]
         sect = rec[4] if len(rec) > 4 else 0
@@ -6285,6 +6522,7 @@ class Solver:
                 if t <= t0 + 1:
                     ram = (self._xram(results[wid][2], wid)
                            if getattr(self, "_odo", False)
+                           or getattr(self, "_fight", False)
                            else results[wid][2])
                     settle_pos[wid].append((self.game.progress(ram),
                                             self.game.y(ram)))
@@ -6681,6 +6919,7 @@ class Solver:
                     self._room_step(i, c)
                 ram = (self._xram(results[i][2], i)
                        if getattr(self, "_odo", False)
+                       or getattr(self, "_fight", False)
                        else results[i][2])
                 if apu_all is not None:
                     c["_apu_mask"] = apu_all[i]

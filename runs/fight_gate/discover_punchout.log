@@ -1,0 +1,29 @@
+
+=== Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes — forward='right' ===
+[room counter] 0x0040   (candidates: ['0x40', '0x8', '0xa', '0xe', '0x12', '0x17'])
+[progress candidates]  gate1=rises+flat-noop, sat=saturation gate:
+     $00E9|$00C1<<8  kind=pair   netF= 14378 mono=1.00 wrapPair=4 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+     $00E8|$00C1<<8  kind=pair   netF=  7189 mono=1.00 wrapPair=4 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+     $0019|$00C1<<8  kind=pair   netF=  3594 mono=1.00 wrapPair=3 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+     $0071|$001C<<8  kind=pair   netF=   128 mono=1.00 wrapPair=2 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+     $0045|$001C<<8  kind=pair   netF=   116 mono=1.00 wrapPair=2 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+     $007F|$001C<<8  kind=pair   netF=    99 mono=1.00 wrapPair=2 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+     $0013|$000A<<8  kind=pair   netF=    80 mono=1.00 wrapPair=2 rev=0 | sat: rebase=0 cap=0  (both gates OK)
+[recommended progress] $0019|$00C1<<8
+[y] 0x0061  (candidates: ['0x61', '0x53'])
+[hp/lives] kind=lives addr=0x00BC — is_dead on lives decrement (-1, agreed by 5 of 5 runs)
+[fight_health] kind=foe_hp addr=0x00EE self_hp_conflict=188 — is_foe_hp on offense-driven decrement (agreed by 5 of 5 attack reps; flat under 5 defense-only reps)
+[round_gate] kind=insufficient_probe addr=none — no bout boundary observed across 24000 attack_mash/approach_retreat steps — INSTRUMENT finding (raise the probe budget), not evidence against a round-gate byte
+
+--- paste-ready solve: ---
+solve:
+  rom: "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes"
+  progress: {lo: 0x0019, hi: 0x00C1}   # fine | page; passes wrap + saturation (keeps climbing)
+  area: 0x0040   # room/screen counter (drives sect transitions)
+  y: 0x0061   # jump/ballistic signature
+  level_key: []   # coverage baseline; wire a stage-advance byte here once a real clear is captured
+  lives: 0x00BC   # decrements on death
+  # fight_health (unused: spatial progress already isolated): foe_hp candidate 0x00EE
+  # round_gate: insufficient_probe — no bout boundary observed across 24000 attack_mash/approach_retreat steps — INSTRUMENT finding (raise the probe budget), not evidence against a round-gate byte
+
+[out] runs/fight_gate/discover_punchout.json

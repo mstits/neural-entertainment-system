@@ -1,0 +1,105 @@
+{
+  "mac_hp_0x392": {
+    "foe_rank": null,
+    "foe_entry": null,
+    "self_rank": null,
+    "self_entry": null,
+    "raw_fh1_attack": {
+      "addr": 914,
+      "agreeing": 3,
+      "watched": 5,
+      "nets": [
+        -22,
+        -96,
+        0,
+        -33,
+        0
+      ],
+      "same_start": false,
+      "start": 85,
+      "passes": false
+    },
+    "raw_fh2_defense": {
+      "addr": 914,
+      "agreeing": 5,
+      "watched": 5,
+      "nets": [
+        -96,
+        -96,
+        -96,
+        -96,
+        -96
+      ],
+      "same_start": true,
+      "start": 96,
+      "passes": true
+    }
+  },
+  "mac_hp_mirror_0x391": {
+    "foe_rank": null,
+    "foe_entry": null,
+    "self_rank": null,
+    "self_entry": null,
+    "raw_fh1_attack": {
+      "addr": 913,
+      "agreeing": 3,
+      "watched": 5,
+      "nets": [
+        -22,
+        -96,
+        0,
+        -33,
+        0
+      ],
+      "same_start": false,
+      "start": 85,
+      "passes": false
+    },
+    "raw_fh2_defense": {
+      "addr": 913,
+      "agreeing": 5,
+      "watched": 5,
+      "nets": [
+        -96,
+        -96,
+        -96,
+        -96,
+        -96
+      ],
+      "same_start": true,
+      "start": 96,
+      "passes": true
+    }
+  },
+  "opp_hp_0x398": {
+    "foe_rank": 0,
+    "foe_entry": {
+      "addr": 920,
+      "start": 96,
+      "attack_nets": [
+        -58,
+        -19,
+        -74,
+        -64,
+        -96
+      ],
+      "attack_agree": 5,
+      "attack_watched": 5,
+      "defense_nets": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "defense_agree": 0,
+      "defense_watched": 5,
+      "fh1_decrements_under_offense": true,
+      "fh2_flat_under_defense": true,
+      "self_hp_conflict": false,
+      "tally_corroborated": true
+    },
+    "self_rank": null,
+    "self_entry": null
+  }
+}

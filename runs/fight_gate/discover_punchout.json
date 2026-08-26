@@ -1,0 +1,775 @@
+{
+  "rom": "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes",
+  "state": "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": 64,
+    "candidates": [
+      {
+        "lo": 233,
+        "hi": 193,
+        "kind": "pair",
+        "label": "$00E9|$00C1<<8",
+        "wrap_coupled": 4,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 14378,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 3,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 41983,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 232,
+        "hi": 193,
+        "kind": "pair",
+        "label": "$00E8|$00C1<<8",
+        "wrap_coupled": 4,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 7189,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 3,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 41983,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 25,
+        "hi": 193,
+        "kind": "pair",
+        "label": "$0019|$00C1<<8",
+        "wrap_coupled": 3,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 3594,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 3,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 41983,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 113,
+        "hi": 28,
+        "kind": "pair",
+        "label": "$0071|$001C<<8",
+        "wrap_coupled": 2,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 128,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 128,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 3,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 256,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 69,
+        "hi": 28,
+        "kind": "pair",
+        "label": "$0045|$001C<<8",
+        "wrap_coupled": 2,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 116,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 116,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 3,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 256,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 127,
+        "hi": 28,
+        "kind": "pair",
+        "label": "$007F|$001C<<8",
+        "wrap_coupled": 2,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 99,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 99,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 3,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 256,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 19,
+        "hi": 10,
+        "kind": "pair",
+        "label": "$0013|$000A<<8",
+        "wrap_coupled": 2,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 80,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 80,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 3,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 256,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      }
+    ],
+    "recommended": {
+      "lo": 25,
+      "hi": 193,
+      "label": "$0019|$00C1<<8",
+      "kind": "spatial",
+      "as_progress": "$0019|$00C1<<8",
+      "saturates": false
+    }
+  },
+  "room_counters": [
+    {
+      "addr": 64,
+      "steps": 3,
+      "rebase_hits": 2,
+      "distinct": 5,
+      "churn": 2.22,
+      "values": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "addr": 8,
+      "steps": 1,
+      "rebase_hits": 1,
+      "distinct": 2,
+      "churn": 0.56,
+      "values": [
+        0,
+        50
+      ]
+    },
+    {
+      "addr": 10,
+      "steps": 1,
+      "rebase_hits": 1,
+      "distinct": 2,
+      "churn": 0.56,
+      "values": [
+        0,
+        1
+      ]
+    },
+    {
+      "addr": 14,
+      "steps": 1,
+      "rebase_hits": 1,
+      "distinct": 2,
+      "churn": 0.56,
+      "values": [
+        7,
+        12
+      ]
+    },
+    {
+      "addr": 18,
+      "steps": 1,
+      "rebase_hits": 1,
+      "distinct": 2,
+      "churn": 0.56,
+      "values": [
+        0,
+        1
+      ]
+    },
+    {
+      "addr": 23,
+      "steps": 1,
+      "rebase_hits": 1,
+      "distinct": 2,
+      "churn": 0.56,
+      "values": [
+        0,
+        1
+      ]
+    }
+  ],
+  "y": [
+    {
+      "addr": 97,
+      "base": 1,
+      "mode": 0,
+      "max_dev": 83,
+      "range": 84,
+      "distinct": 6,
+      "frac_at_mode": 0.53,
+      "score": 44.2
+    },
+    {
+      "addr": 83,
+      "base": 27,
+      "mode": 22,
+      "max_dev": 25,
+      "range": 49,
+      "distinct": 12,
+      "frac_at_mode": 0.42,
+      "score": 20.6
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 188,
+    "start": 1,
+    "detail": {
+      "addr": 188,
+      "start": 1,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    "lives_candidates": [
+      {
+        "addr": 188,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 100,
+        "start": 34,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 839,
+        "start": 20,
+        "drop": 1,
+        "runs_agreeing": 4,
+        "runs_watched": 5,
+        "spends": 4,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 803,
+        "start": 2,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 10,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": true,
+        "mirrors": []
+      },
+      {
+        "addr": 29,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": true,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 128,
+        "value": 8,
+        "mirrors": 7,
+        "hud_run": 4,
+        "churn": 0.0
+      },
+      {
+        "addr": 840,
+        "value": 8,
+        "mirrors": 7,
+        "hud_run": 4,
+        "churn": 0.0
+      },
+      {
+        "addr": 784,
+        "value": 2,
+        "mirrors": 4,
+        "hud_run": 3,
+        "churn": 0.0
+      },
+      {
+        "addr": 803,
+        "value": 2,
+        "mirrors": 4,
+        "hud_run": 3,
+        "churn": 1.11
+      },
+      {
+        "addr": 1053,
+        "value": 11,
+        "mirrors": 3,
+        "hud_run": 3,
+        "churn": 0.56
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 25
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  },
+  "fight_health": {
+    "kind": "foe_hp",
+    "addr": 238,
+    "detail": {
+      "addr": 238,
+      "start": 73,
+      "attack_nets": [
+        -11,
+        -89,
+        -65,
+        -73,
+        -16
+      ],
+      "attack_agree": 5,
+      "attack_watched": 5,
+      "defense_nets": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "defense_agree": 0,
+      "defense_watched": 5,
+      "fh1_decrements_under_offense": true,
+      "fh2_flat_under_defense": true,
+      "self_hp_conflict": false,
+      "tally_corroborated": true
+    },
+    "foe_hp_candidates": [
+      {
+        "addr": 238,
+        "start": 73,
+        "attack_nets": [
+          -11,
+          -89,
+          -65,
+          -73,
+          -16
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 158,
+        "start": 253,
+        "attack_nets": [
+          -198,
+          -176,
+          -176,
+          -176,
+          -253
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 920,
+        "start": 96,
+        "attack_nets": [
+          -50,
+          -19,
+          -74,
+          -64,
+          -96
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 921,
+        "start": 96,
+        "attack_nets": [
+          -50,
+          -19,
+          -74,
+          -64,
+          -96
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 922,
+        "start": 96,
+        "attack_nets": [
+          -50,
+          -19,
+          -74,
+          -64,
+          -96
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "tally_corroborated": true
+      },
+      {
+        "addr": 1809,
+        "start": 82,
+        "attack_nets": [
+          -113,
+          -113,
+          -126,
+          -113,
+          -126
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "defense_agree": 0,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": true,
+        "self_hp_conflict": false,
+        "tally_corroborated": true
+      }
+    ],
+    "self_hp_candidates": [
+      {
+        "addr": 775,
+        "start": 203,
+        "attack_nets": [
+          -21961,
+          -21826,
+          -21826,
+          -21961,
+          -2464
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -10528,
+          -10395,
+          -10528,
+          -10528,
+          -11536
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false
+      },
+      {
+        "addr": 1834,
+        "start": 78,
+        "attack_nets": [
+          -3253,
+          -3743,
+          -3287,
+          -3258,
+          -2045
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -2805,
+          -2805,
+          -2805,
+          -2805,
+          -2981
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false
+      },
+      {
+        "addr": 99,
+        "start": 102,
+        "attack_nets": [
+          -64,
+          -32,
+          -31,
+          -352,
+          -31
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -352,
+          -352,
+          -352,
+          -352,
+          -352
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false
+      },
+      {
+        "addr": 64,
+        "start": 1,
+        "attack_nets": [
+          -1,
+          -1,
+          -1,
+          -1,
+          -255
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -255,
+          -255,
+          -255,
+          -255,
+          0
+        ],
+        "defense_agree": 4,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false
+      },
+      {
+        "addr": 57,
+        "start": 53,
+        "attack_nets": [
+          -308,
+          -175,
+          -175,
+          -177,
+          -149
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -322,
+          -322,
+          -322,
+          -322,
+          -322
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false
+      },
+      {
+        "addr": 785,
+        "start": 168,
+        "attack_nets": [
+          -156,
+          -156,
+          -156,
+          -156,
+          -18
+        ],
+        "attack_agree": 5,
+        "attack_watched": 5,
+        "defense_nets": [
+          -75,
+          -74,
+          -75,
+          -75,
+          -82
+        ],
+        "defense_agree": 5,
+        "defense_watched": 5,
+        "fh1_decrements_under_offense": true,
+        "fh2_flat_under_defense": false,
+        "self_hp_conflict": false
+      }
+    ],
+    "self_hp_conflict": 188,
+    "tally_windows_found": 337,
+    "probe_evidence": {
+      "attack_reps": 5,
+      "attack_usable": 5,
+      "defense_reps": 5,
+      "defense_usable": 5
+    },
+    "note": "is_foe_hp on offense-driven decrement (agreed by 5 of 5 attack reps; flat under 5 defense-only reps)"
+  },
+  "round_gate": {
+    "kind": "insufficient_probe",
+    "addr": null,
+    "candidates": [],
+    "void": true,
+    "drives": 10,
+    "usable": 10,
+    "probe_steps": 24000,
+    "bouts_observed": 0,
+    "note": "no bout boundary observed across 24000 attack_mash/approach_retreat steps \u2014 INSTRUMENT finding (raise the probe budget), not evidence against a round-gate byte"
+  }
+}
