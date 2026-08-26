@@ -1,0 +1,55 @@
+{
+  "game": "Shatterhand",
+  "old_addr": "0x0051",
+  "old_reads_zero_confirmed": true,
+  "old_root_peek": {"addr": 81, "value": 0, "consistent": true},
+  "tool_fix_commit": "158ec74",
+  "rerun_receipt": "runs/false_death_fanout/shatterhand/discover_shatterhand_fixed.json",
+  "new_addr": "0x0199",
+  "new_addr_dec": 409,
+  "new_root_value": 2,
+  "new_candidate_detail": {
+    "starts_nonzero": true,
+    "runs_agreeing": 5,
+    "runs_watched": 5,
+    "spends": 5,
+    "refilled_runs": 5,
+    "reaches_empty": true,
+    "spends_its_stock": true,
+    "moves_while_idle": false,
+    "drop": 2
+  },
+  "independent_reverification": {
+    "root_peek": {"addr": 409, "value": 2, "consistent": true},
+    "idle_hold_80_steps": {"distinct_values": [2], "note": "constant, no idle drift"},
+    "constant_right_hold_700_steps": {"distinct_values": [2], "note": "constant, no free-run under naive hold (matches gate_shatterhand_right's own flat-tail finding)"}
+  },
+  "old_lives_note": "0x0051 (81) does not appear in the top-5 ranked candidates at all under the fixed tool -- fully demoted, not merely reordered",
+  "config_edited": true,
+  "config_path": "configs/shatterhand.yaml",
+  "smoke_protocol": "go_explore_solve.py --workers 2 --minutes 1 --seed 1, same root state, before/after config edit only",
+  "smoke_before": {
+    "lives_addr": "0x0051",
+    "receipt": "runs/false_death_fanout/shatterhand/smoke_before/archive.stats.json",
+    "cells": 16,
+    "frontier": 0,
+    "steps": 23112,
+    "sps": 385,
+    "max_gx": 53,
+    "note": "frozen -- reproduces wave5 smoke_shatterhand SOUND_GAME_STOPS exactly"
+  },
+  "smoke_after": {
+    "lives_addr": "0x0199",
+    "receipt": "runs/false_death_fanout/shatterhand/smoke_after/archive.stats.json",
+    "cells": 232,
+    "frontier": 175,
+    "steps": 16462,
+    "sps": 274,
+    "max_gx": 1023,
+    "note": "frontier open and climbing -- SOUND_ADVANCING"
+  },
+  "cells_before": 16,
+  "cells_after": 232,
+  "cells_delta_factor": 14.5,
+  "notes": "Confirms wave5 doc's own prediction (docs/research/LEAGUE_ONBOARDING_WAVE5_2026-08-25.md) that Shatterhand's SOUND_GAME_STOPS freeze at 16 cells was the lives-underflow shape. 700 steps * frame_skip 4 (2800 emulated frames) constant-RIGHT alone never provoked a death byte transition in the standalone reverification probe -- the tool's own 5/5-agreeing randomized death-drive schedule is what actually witnesses the decrement; this is noted as a scope caveat on the standalone probe, not a gap in the tool's own evidence."
+}

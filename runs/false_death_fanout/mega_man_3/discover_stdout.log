@@ -1,0 +1,17 @@
+
+=== Mega Man 3 (USA).nes — forward='right' ===
+[room counter] none   (candidates: [])
+[progress candidates]  gate1=rises+flat-noop, sat=saturation gate:
+[recommended progress] none
+[y] 0x0012  (candidates: ['0x12'])
+[hp/lives] kind=lives addr=0x0029 — is_dead on lives decrement (-1, agreed by 5 of 5 runs)
+
+--- paste-ready solve: ---
+solve:
+  rom: "roms/Mega Man 3 (USA).nes"
+  # progress: <none isolated — inspect candidates in the receipt>
+  y: 0x0012   # jump/ballistic signature
+  level_key: []   # coverage baseline; wire a stage-advance byte here once a real clear is captured
+  lives: 0x0029   # decrements on death
+
+[out] runs/false_death_fanout/mega_man_3/discover_mega_man_3_postfix.json

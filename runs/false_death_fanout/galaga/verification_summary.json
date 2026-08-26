@@ -1,0 +1,92 @@
+{
+  "game": "Galaga - Demons of Death (USA)",
+  "profile": "configs/galaga.yaml",
+  "tool_fix_commit": "158ec74",
+  "old_addr": "0x0073",
+  "old_root_value": 0,
+  "old_root_value_confirmed_independently": true,
+  "new_addr": "0x0464",
+  "new_root_value": 2,
+  "new_addr_verification": {
+    "idle_240_steps_distinct_values": [
+      2
+    ],
+    "play_900_steps_change_events": [
+      {
+        "step": 276,
+        "from": 2,
+        "to": 0
+      }
+    ],
+    "behaves_like_stock": true
+  },
+  "ranked_candidates_from_fixed_tool": [
+    {
+      "addr": "0x0464",
+      "start": 2,
+      "drop": 2,
+      "runs_agreeing": "5/5",
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": false
+    },
+    {
+      "addr": "0x0494",
+      "start": 40,
+      "drop": 1,
+      "runs_agreeing": "5/5",
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": false
+    },
+    {
+      "addr": "0x0103",
+      "start": 1,
+      "drop": 6,
+      "runs_agreeing": "5/5",
+      "reaches_empty": false,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": [
+        "0x0105"
+      ]
+    },
+    {
+      "addr": "0x0107",
+      "start": 1,
+      "drop": 6,
+      "runs_agreeing": "3/5",
+      "reaches_empty": false,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": false
+    },
+    {
+      "addr": "0x0073",
+      "start": 0,
+      "drop": 1,
+      "runs_agreeing": "5/5",
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": false,
+      "moves_while_idle": false,
+      "note": "OLD ADDRESS \u2014 correctly demoted to last place by the fix"
+    }
+  ],
+  "smoke_before": {
+    "cells": 1,
+    "steps": 32890,
+    "sps": 548,
+    "root_lives_seeded": 0
+  },
+  "smoke_after": {
+    "cells": 1,
+    "steps": 26412,
+    "sps": 440,
+    "root_lives_seeded": 2
+  },
+  "verdict": "Death-detection defect CONFIRMED and FIXED: root lives now seeds correctly at 2 instead of 0 (roots.json before/after). Search-cells metric did NOT improve (1 -> 1) \u2014 this is a NULL result on cells, expected and consistent with this profile's own pre-existing CAMERA_STATIC_AGENT_ACTIVE classification (Galaga never scrolls under any input; go_explore's position-frontier search has no spatial gradient to exploit here regardless of lives correctness). The lives fix is real and verified; it does not by itself unblock Go-Explore for this genre, which is a distinct, already-documented architectural gap (HUD-digit score decode, out of scope here)."
+}

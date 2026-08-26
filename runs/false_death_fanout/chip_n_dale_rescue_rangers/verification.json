@@ -1,0 +1,19 @@
+{
+  "game": "Chip 'n Dale Rescue Rangers (USA)",
+  "old_addr": "0x0052",
+  "old_addr_root_value": 0,
+  "old_addr_confirmed_not_lives": "facing-direction flag: reads 1 while RIGHT held, 2 while LEFT held, 0 otherwise (UP/DOWN/A/B/NOOP); unaffected by elapsed idle time",
+  "tool_fix_commit": "158ec74",
+  "discover_observables_rerun": "runs/false_death_fanout/chip_n_dale_rescue_rangers/discover.json",
+  "note_on_residual_gap": "The fixed reaches_empty/spends_its_stock gates correctly stop demoting only at start==0 in the death-drive log. 0x0052's logged 'start' is sampled from death_drives log[0], which already has ONE forward-input step applied on top of the untouched root -- so a byte whose value is purely a function of currently-held direction (not a real stock) can read starts_nonzero=true as an artifact of that first probe input, independent of the 158ec74 fix. Confirmed by direct probe (see probe_inputs output below) and by hand-verifying the tool's own #1-ranked candidate before trusting it, per task step 3.",
+  "verified_new_addr": "0x0646",
+  "verified_new_addr_root_value": 2,
+  "verification_method": [
+    "root peek: 0x0646 == 2 immediately after state load and after 120 idle (NOOP) steps",
+    "400-step pure-idle hold: 0x0646 stays exactly 2 the entire time (does not free-run, does not move while idle)",
+    "5 death-drive reps (random forward+macro schedule, 700 steps each): 0x0646 flat at 2 until a single high-churn (death/reload) event, then steps 2->0 in exactly one frame; 3/5 reps died and dropped at churn=162/76/129 (vs an ordinary-motion baseline well under that); the 2/5 reps that survived the full 700 steps never moved off 2 (abstain, not contradiction)"
+  ],
+  "smoke_before": {"lives_addr": "0x0052", "seed_lives_reported": 0, "cells": 76, "frontier": 74, "steps": 25826, "sps": 430, "best_score": 70036, "max_area": 38, "max_sect": 7},
+  "smoke_after": {"lives_addr": "0x0646", "seed_lives_reported": 2, "cells": 81, "frontier": 77, "steps": 22792, "sps": 380, "best_score": 110036, "max_area": 37, "max_sect": 11},
+  "unblock_verdict": "modest, real improvement (76->81 cells, +6.6%), not a Mega-Man-sized jump; max_sect rose 7->11 and best_score rose 70036->110036 in the same 1-minute budget, consistent with the search no longer treating frame-1 of every episode as a death. Single 1-minute runs are noisy -- reported as measured, not oversold. This game's earlier receipts (wave3 diagnostic) already show a real, separate skill-wall/hazard just past the camera's ~80px scroll clamp, so 0x0052 was not the only thing standing between this profile and deeper search."
+}

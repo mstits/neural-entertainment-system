@@ -1,0 +1,10 @@
+rep=0 regime_end=126 total_len=699 changes_before_end=1 TOTAL_changes_in_whole_run=18 (ups=9 downs=9)
+   first changes (idx, before, after): [(118, 2, 0), (126, 0, 2), (202, 2, 0), (208, 0, 2), (210, 2, 0), (218, 0, 2), (423, 2, 0), (431, 0, 2), (443, 2, 6), (447, 6, 2), (448, 2, 0), (452, 0, 1), (458, 1, 0), (460, 0, 1), (471, 1, 0)]
+rep=1 regime_end=75 total_len=699 changes_before_end=1 TOTAL_changes_in_whole_run=12 (ups=6 downs=6)
+   first changes (idx, before, after): [(66, 2, 0), (75, 0, 2), (280, 2, 0), (289, 0, 2), (356, 2, 0), (362, 0, 2), (441, 2, 0), (450, 0, 2), (499, 2, 6), (502, 6, 2), (503, 2, 0), (508, 0, 1)]
+rep=2 regime_end=28 total_len=699 changes_before_end=1 TOTAL_changes_in_whole_run=14 (ups=7 downs=7)
+   first changes (idx, before, after): [(23, 2, 0), (28, 0, 2), (362, 2, 0), (367, 0, 2), (435, 2, 0), (443, 0, 2), (456, 2, 0), (465, 0, 2), (491, 2, 0), (499, 0, 2), (557, 2, 6), (561, 6, 2), (562, 2, 0), (566, 0, 1)]
+rep=3 regime_end=9 total_len=699 changes_before_end=1 TOTAL_changes_in_whole_run=15 (ups=8 downs=7)
+   first changes (idx, before, after): [(6, 2, 0), (9, 0, 2), (88, 2, 0), (97, 0, 2), (105, 2, 0), (113, 0, 2), (134, 2, 0), (142, 0, 2), (348, 2, 0), (356, 0, 2), (406, 2, 0), (411, 0, 2), (573, 2, 6), (579, 6, 0), (585, 0, 1)]
+rep=4 regime_end=275 total_len=699 changes_before_end=1 TOTAL_changes_in_whole_run=5 (ups=3 downs=2)
+   first changes (idx, before, after): [(267, 2, 0), (275, 0, 2), (316, 2, 0), (321, 0, 2), (692, 2, 6)]

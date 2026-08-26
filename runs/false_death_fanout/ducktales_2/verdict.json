@@ -1,0 +1,44 @@
+{
+  "game": "DuckTales 2 (USA)",
+  "profile": "configs/ducktales_2.yaml",
+  "tool_fix_commit": "158ec74",
+  "step1_root_confirmation": {
+    "addr": "0x000B",
+    "method": "load start state, step 150x NOOP (headless Pool, no driving), read RAM[0x000B] every step",
+    "result": "constant 0 across all 150 idle steps -- reads 0 at true root, confirmed",
+    "verdict": "DEFECT CONFIRMED for this profile"
+  },
+  "step2_renomination": {
+    "cmd": ".venv/bin/python3 scripts/discover_observables.py --rom \"roms/DuckTales 2 (USA).nes\" --state \"roms/DuckTales 2 (USA)_start.state.bin\" --forward right --emit-solve --out runs/false_death_fanout/ducktales_2/discover_ducktales_2_postfix.json",
+    "top_pick_after_fix": "0x000B (addr 11) again -- UNCHANGED from the pre-fix nomination",
+    "why_the_fix_did_not_move_it": "lives_from_death_drives's 'start' is log[0] of the death-drive rollout, i.e. RAM AFTER (settle-steps of NOOP) + ONE forced forward-hold step, not the true pre-input root. addr 0x000B flips 0->1 within that single forced step (it is a fast-toggling byte, not a stock), so starts_nonzero reads True relative to the probe window even though the byte demonstrably reads 0 at the real root with zero input. This is a distinct, narrower instrument gap adjacent to the fixed one, not a re-occurrence of it.",
+    "full_ranked_candidates_top8_plus_demoted": [
+      {"addr": "0x000B (11)", "start": 1, "starts_nonzero": true, "reaches_empty": true, "spends_its_stock": true, "runs_agreeing": "5/5", "mirrors": [136, 779, 1626, 1911, 2031, 2033], "root_value_true_idle": 0},
+      {"addr": "0x008E (142)", "start": 2, "starts_nonzero": true, "reaches_empty": true, "spends_its_stock": true, "runs_agreeing": "5/5", "mirrors": [2034], "root_value_true_idle": 2},
+      {"addr": "0x0009 (9)", "start": 3, "starts_nonzero": true, "reaches_empty": true, "spends_its_stock": true, "runs_agreeing": "5/5", "mirrors": [13, 1421, 1522, 1945, 2035], "root_value_true_idle": 0},
+      {"addr": "0x00B0 (176)", "start": 4, "starts_nonzero": true, "reaches_empty": true, "spends_its_stock": true, "runs_agreeing": "5/5", "mirrors": [1391, 2036], "root_value_true_idle": 4},
+      {"addr": "0x0154 (340)", "start": 5, "starts_nonzero": true, "reaches_empty": true, "spends_its_stock": true, "runs_agreeing": "5/5", "mirrors": [2037], "root_value_true_idle": 5},
+      {"addr": "0x0796 (1942)", "start": 6, "starts_nonzero": true, "reaches_empty": true, "spends_its_stock": true, "runs_agreeing": "5/5", "mirrors": [1944, 2038], "root_value_true_idle": "not probed, expect 6"},
+      {"addr": "0x07F7 (2039)", "start": 7, "starts_nonzero": true, "reaches_empty": true, "spends_its_stock": true, "runs_agreeing": "5/5", "mirrors": [], "root_value_true_idle": "not probed, expect 7"},
+      {"addr": "0x0775 (1909)", "start": 8, "starts_nonzero": true, "reaches_empty": true, "spends_its_stock": true, "runs_agreeing": "5/5", "mirrors": [2040], "root_value_true_idle": "not probed, expect 8"}
+    ],
+    "demoted_start_zero_family_confirms_fix_works": [
+      "addr 1474 start=0 starts_nonzero=False (correctly demoted below the nonzero family by the fix)",
+      "addr 1553, 1505, 2021, 1923, 2020 -- same start=0 family, all correctly demoted"
+    ]
+  },
+  "step3_verification": {
+    "method": "for each of the 5 reported lives_candidates (11, 142, 9, 176, 340): (a) read true root value under 150 pure-NOOP steps; (b) trace every value change across all 5 death-drive rollouts (700 steps each) and its offset from the run's own mass-RAM-rewrite (reload/death) events",
+    "finding": "NONE of the 5 candidates -- nor the 3 further same-shaped candidates visible when the rank cutoff is widened past top=6 (addr 1942=6, 2039=7, 1909=8) -- behave like a real stock. Two failure shapes: (A) addr 11 (root=0), addr 9 (root=0), addr 176 (root=4) FREE-RUN: 15-38 value changes across a single 700-step drive, oscillating repeatedly through 0/low-value/255, uncorrelated with any mass-RAM-rewrite (death/reload) event. (B) addr 142 (root=2) and addr 340 (root=5) dip to 0 and INSTANTLY (1-8 frames later) recover to their exact original baseline in every one of 5 runs, 2-4 times per 700-step run -- most of these dip/recover pairs do not line up with the run's own mass-RAM-rewrite timestamp at all (only 1 of ~3-4 dips per candidate per run falls near an actual reload), and addr 340 additionally passes through a nonsense intermediate value (55) mid-transition on 3 of 5 runs -- not a lives byte draining or a level reload, more consistent with a transient hit-flash/animation-cycle timer.",
+    "cross_family_pattern": "addr 11, 142, 9, 176, 340, 1942, 2039, 1909 form ONE family: start values 1,2,3,4,5,6,7,8 respectively, IDENTICAL statistical signature (5/5 agree, spends=5, refilled_runs=5, reaches_empty=True, spends_its_stock=True), and mostly-sequential mirror addresses clustering at 2031/2033-2040 (top of the 2KB internal RAM). This is the signature of ONE shared periodic RAM-clear/redraw effect (plausibly an OAM-shadow or attribute-row blank-then-redraw tied to the Niagara level's mist/waterfall animation) hitting several unrelated RAM cells simultaneously, not eight independent life stocks. discover_observables.py's structural checks (reaches_empty / spends_its_stock / 5-of-5 agreement) cannot distinguish 'drained to empty by a death' from 'blanked to 0 for a few frames by an unrelated redraw and then restored,' because both look identical inside a single 700-step window with no requirement that the recovery coincide with an actual level-reload event.",
+    "verdict": "NO CANDIDATE VERIFIES. The #1 rank (0x000B itself) is provably the same false byte the task set out to replace, still on top after the fix, for a reason adjacent to (not a recurrence of) the fixed bug. The next four ranks are equally spurious for an unrelated reason (shared periodic redraw artifact)."
+  },
+  "step4_config_edit": "NOT MADE. No verified better candidate exists. configs/ducktales_2.yaml left untouched, per task instructions (\"If NO... leave the config alone -- that is an honest instrument gap, not a failure. Commit nothing.\"). The literal 'no candidate reads nonzero' clause does not apply verbatim (several candidates DO read nonzero at true root), but the deeper requirement -- a VERIFIED real stock -- is unmet by every candidate produced, so the same conclusion follows.",
+  "step5_measurement": {
+    "cmd": ".venv/bin/python3 scripts/go_explore_solve.py --profile configs/ducktales_2.yaml --root-state \"roms/DuckTales 2 (USA)_start.state.bin\" --out runs/false_death_fanout/ducktales_2/smoke_before --workers 2 --minutes 1 --seed 0",
+    "before_result": {"cells": 564, "frontier": 490, "best_score": 1716, "max_gx_in_max_area": 1716, "records": 25866, "improvements": 1037, "steps": 26086, "sps": 435, "solutions": 0},
+    "after_result": null,
+    "note": "No config edit was made, so there is no 'after' to compare -- before/after is the same run. Reported for the record: unlike the Mega Man USA case this task cited (frozen at 10 cells), DuckTales 2's existing baseline with the known-bad lives=0x000B already shows HEALTHY monotonic cell growth (1 -> 564 cells in 60s at --workers 2, matching the shape of the wave4 onboarding smoke at --workers 4/--minutes 2 which reached 863 cells with frontier 733, never stuck at 1). The false-death byte is real (root reads 0, and is_dead's modular-decrement check does fire spuriously roughly half the time this byte's phase happens to sample high-then-drop -- see is_dead in scripts/go_explore_solve.py line ~2654) but its practical effect on THIS profile's go_explore search is evidently much milder than the Mega Man case, not a frontier freeze. This game may simply not be blocked the same way, or the true blocker (if any) is elsewhere (e.g. the already-documented camera-clamp progress saturation, or the naive-hold-right obstacle noted in the onboarding receipt) rather than the lives byte."
+  },
+  "final_notes": "Old address 0x000B / new address: no change. This is an honest instrument gap: the tool-level fix (commit 158ec74) is confirmed working as designed (it correctly demotes the start==0 family: addr 1474/1553/1505/2021/1923/2020), but DuckTales 2's RAM layout happens to have a SECOND, unrelated false-positive family with nonzero starts that the fix was never meant to catch, and manual verification is what caught it. Commit nothing; config unedited."
+}

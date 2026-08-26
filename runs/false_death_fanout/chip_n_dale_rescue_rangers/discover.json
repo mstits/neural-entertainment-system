@@ -1,0 +1,268 @@
+{
+  "rom": "roms/Chip 'n Dale Rescue Rangers (USA).nes",
+  "state": "roms/Chip 'n Dale Rescue Rangers (USA)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": 35,
+    "candidates": [
+      {
+        "lo": 40,
+        "hi": 218,
+        "kind": "pair",
+        "label": "$0028|$00DA<<8",
+        "wrap_coupled": 5,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 80,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 3,
+        "sat_n_transitions": 9,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 2042,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      },
+      {
+        "lo": 252,
+        "hi": 218,
+        "kind": "pair",
+        "label": "$00FC|$00DA<<8",
+        "wrap_coupled": 5,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 80,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 3,
+        "sat_n_transitions": 9,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 2042,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      },
+      {
+        "lo": 37,
+        "hi": 35,
+        "kind": "pair",
+        "label": "$0025|$0023<<8",
+        "wrap_coupled": 3,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 40,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": true,
+        "sat_cap_tail_len": 874,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 9,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 9866,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      }
+    ],
+    "recommended": {
+      "lo": 35,
+      "hi": null,
+      "label": "$0023",
+      "as_progress": "$0023 (room counter \u2014 spatial $0025|$0023<<8 SATURATES / camera-clamp)",
+      "spatial_saturator": "$0025|$0023<<8",
+      "spatial_cap": 9866,
+      "saturates": false,
+      "kind": "room_counter_fallback"
+    }
+  },
+  "room_counters": [
+    {
+      "addr": 35,
+      "rebase_hits": 0,
+      "steps": 9,
+      "distinct": 1,
+      "role": "progress_page_as_screen_counter",
+      "values": [
+        36
+      ]
+    }
+  ],
+  "y": [
+    {
+      "addr": 18,
+      "base": 156,
+      "mode": 156,
+      "max_dev": 67,
+      "range": 67,
+      "distinct": 11,
+      "frac_at_mode": 0.74,
+      "score": 49.4
+    },
+    {
+      "addr": 196,
+      "base": 0,
+      "mode": 0,
+      "max_dev": 35,
+      "range": 35,
+      "distinct": 8,
+      "frac_at_mode": 0.37,
+      "score": 12.9
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 82,
+    "start": 1,
+    "detail": {
+      "addr": 82,
+      "start": 1,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    "lives_candidates": [
+      {
+        "addr": 82,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1606,
+        "start": 2,
+        "drop": 2,
+        "runs_agreeing": 3,
+        "runs_watched": 5,
+        "spends": 3,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1462,
+        "start": 130,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 7,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 6,
+        "start": 158,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 585,
+        "start": 142,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 191,
+        "value": 3,
+        "mirrors": 42,
+        "hud_run": 16,
+        "churn": 0.0
+      },
+      {
+        "addr": 836,
+        "value": 3,
+        "mirrors": 42,
+        "hud_run": 16,
+        "churn": 0.0
+      },
+      {
+        "addr": 201,
+        "value": 2,
+        "mirrors": 28,
+        "hud_run": 16,
+        "churn": 0.0
+      },
+      {
+        "addr": 248,
+        "value": 2,
+        "mirrors": 28,
+        "hud_run": 16,
+        "churn": 0.56
+      },
+      {
+        "addr": 270,
+        "value": 2,
+        "mirrors": 28,
+        "hud_run": 16,
+        "churn": 0.0
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 41
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  }
+}

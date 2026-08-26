@@ -1,0 +1,257 @@
+{
+  "rom": "roms/Paperboy (USA).nes",
+  "state": "roms/Paperboy (USA)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": 129,
+    "candidates": [
+      {
+        "lo": 37,
+        "hi": null,
+        "kind": "single",
+        "label": "$0025",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 16,
+        "mono_forward": 0.917,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": true,
+        "sat_cap_tail_len": 892,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 27,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 232,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      },
+      {
+        "lo": 80,
+        "hi": 129,
+        "kind": "pair",
+        "label": "$0050|$0081<<8",
+        "wrap_coupled": 1,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 52,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 5,
+        "sat_n_transitions": 27,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 40960,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      }
+    ],
+    "recommended": {
+      "lo": 129,
+      "hi": null,
+      "label": "$0081",
+      "as_progress": "$0081 (room counter \u2014 spatial $0050|$0081<<8 SATURATES / camera-clamp)",
+      "spatial_saturator": "$0050|$0081<<8",
+      "spatial_cap": 40960,
+      "saturates": false,
+      "kind": "room_counter_fallback"
+    }
+  },
+  "room_counters": [
+    {
+      "addr": 129,
+      "rebase_hits": 0,
+      "steps": 27,
+      "distinct": 1,
+      "role": "progress_page_as_screen_counter",
+      "values": [
+        135
+      ]
+    }
+  ],
+  "y": [
+    {
+      "addr": 81,
+      "base": 108,
+      "mode": 191,
+      "max_dev": 124,
+      "range": 124,
+      "distinct": 11,
+      "frac_at_mode": 0.66,
+      "score": 81.6
+    },
+    {
+      "addr": 1,
+      "base": 161,
+      "mode": 35,
+      "max_dev": 153,
+      "range": 157,
+      "distinct": 6,
+      "frac_at_mode": 0.39,
+      "score": 62.0
+    },
+    {
+      "addr": 162,
+      "base": 211,
+      "mode": 191,
+      "max_dev": 20,
+      "range": 40,
+      "distinct": 11,
+      "frac_at_mode": 0.66,
+      "score": 26.3
+    },
+    {
+      "addr": 210,
+      "base": 0,
+      "mode": 0,
+      "max_dev": 30,
+      "range": 30,
+      "distinct": 9,
+      "frac_at_mode": 0.79,
+      "score": 23.7
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 178,
+    "start": 4,
+    "detail": {
+      "addr": 178,
+      "start": 4,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 11,
+      "refilled_runs": 0,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    "lives_candidates": [
+      {
+        "addr": 178,
+        "start": 4,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 11,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 180,
+        "start": 4,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 7,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 229,
+        "start": 171,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 979,
+        "start": 253,
+        "drop": 1,
+        "runs_agreeing": 4,
+        "runs_watched": 5,
+        "spends": 4,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 527,
+        "start": 26,
+        "drop": 8,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 10,
+        "refilled_runs": 1,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 174,
+        "value": 2,
+        "mirrors": 35,
+        "hud_run": 3,
+        "churn": 0.0
+      },
+      {
+        "addr": 864,
+        "value": 4,
+        "mirrors": 14,
+        "hud_run": 3,
+        "churn": 1.67
+      },
+      {
+        "addr": 863,
+        "value": 3,
+        "mirrors": 11,
+        "hud_run": 3,
+        "churn": 1.67
+      },
+      {
+        "addr": 1011,
+        "value": 3,
+        "mirrors": 11,
+        "hud_run": 3,
+        "churn": 1.11
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 32
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  }
+}

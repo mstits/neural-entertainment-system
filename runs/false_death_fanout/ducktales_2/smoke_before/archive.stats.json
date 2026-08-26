@@ -1,0 +1,29 @@
+{
+  "cells": 564,
+  "frontier": 490,
+  "best_score": 1716,
+  "records": 25866,
+  "new_cells": 564,
+  "improvements": 1037,
+  "key_schema": {},
+  "hw_provenance": {
+    "hw_flags": [],
+    "frame_skip": 4,
+    "nes_core": {
+      "dist_version": "0.1.0",
+      "module": "nes_core.abi3.so",
+      "sha256_16": "e9b44272d84bfd83"
+    }
+  },
+  "key_config": {
+    "tb": 0,
+    "kk": 1,
+    "sig_arity": 0,
+    "sig_sha": "",
+    "gx_bucket": 16,
+    "y_band": 32,
+    "cell_fn": "GenericGame",
+    "smooth": "off",
+    "room_fp": ""
+  }
+}

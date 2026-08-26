@@ -1,0 +1,63 @@
+{
+  "game": "Kid Icarus",
+  "config": "configs/kid_icarus.yaml",
+  "tool_fix": "commit 158ec74 (discover_observables: reject zero-start lives candidates)",
+  "1_confirm_defect": {
+    "old_addr": "0x0130",
+    "root_value": 0,
+    "confirmed": true,
+    "detail": "0x0130 (documented as stage_index, an internal 0-based sub-stage counter) reads 0 at the profile's own start state, matching the sweep's flag (runs/mechanism_matrix/false_death_sweep.json: lives_at_root=0 for kid_icarus)."
+  },
+  "2_renomination": {
+    "cmd": ".venv/bin/python3 scripts/discover_observables.py --rom \"roms/Kid Icarus (USA, Europe).nes\" --state \"roms/Kid Icarus (USA, Europe)_start.state.bin\" --forward up --emit-solve --out runs/false_death_fanout/kid_icarus/discover_kid_icarus.json",
+    "top_pick": {"addr": "0x0129", "start": 0, "drop": 1, "runs_agreeing": 5,
+                 "reaches_empty": true, "spends_its_stock": true,
+                 "starts_nonzero": false, "moves_while_idle": false},
+    "full_ranked_candidates": [
+      {"addr": "0x0129", "start": 0, "drop": 1, "runs_agreeing": 5, "runs_watched": 5,
+       "spends": 5, "refilled_runs": 0, "reaches_empty": true, "spends_its_stock": true,
+       "starts_nonzero": false, "moves_while_idle": false, "mirrors": ["0x012A"]},
+      {"addr": "0x02FE", "start": 1, "drop": 1, "runs_agreeing": 5, "runs_watched": 5,
+       "spends": 5, "refilled_runs": 5, "reaches_empty": true, "spends_its_stock": true,
+       "starts_nonzero": true, "moves_while_idle": true, "mirrors": []},
+      {"addr": "0x00E1", "start": 3, "drop": 3, "runs_agreeing": 5, "runs_watched": 5,
+       "spends": 5, "refilled_runs": 5, "reaches_empty": true, "spends_its_stock": true,
+       "starts_nonzero": true, "moves_while_idle": true, "mirrors": []},
+      {"addr": "0x0037", "start": 4, "drop": 4, "runs_agreeing": 5, "runs_watched": 5,
+       "spends": 5, "refilled_runs": 0, "reaches_empty": true, "spends_its_stock": true,
+       "starts_nonzero": true, "moves_while_idle": true, "mirrors": []},
+      {"addr": "0x0309", "start": 10, "drop": 1, "runs_agreeing": 5, "runs_watched": 5,
+       "spends": 5, "refilled_runs": 5, "reaches_empty": false, "spends_its_stock": false,
+       "starts_nonzero": true, "moves_while_idle": true, "mirrors": []}
+    ]
+  },
+  "3_verification": {
+    "top_pick_0x0129": {
+      "root_value": 0,
+      "verdict": "REJECTED -- fails the >0 root-value bar on its own",
+      "raw_behavior": "Traced directly across all 5 death-drive rollouts (700 steps each, seeded differently): 0x0129 sits at 0 for a variable number of frames (6 to 267, seed-dependent), then makes a single 0->255 transition and stays at 255 for the remainder of the run. In every rep this transition is UNCORRELATED with death: HP (0x00A6) stays 7 and stage_index (0x0130) stays 0 across the transition. This is the same underflow-artifact class the commit fixed, one step later than the case the fix explicitly covers: the 'arrival at zero' check (log[1:end+1]) is satisfied because the byte is STILL reading its start value (0) for many frames after index 0, not because it genuinely returned to zero from a nonzero state. The fix closes the index-0-only case but not this 'stays-at-its-own-start-value-then-flips' case. Using this address as lives would reproduce the exact false-death bug this campaign targets."
+    },
+    "other_candidates": {
+      "0x02FE": "start=1, oscillates 0/1 every ~5 steps for the entire run, uncorrelated with HP/stage -- an animation or blink-timer flag, not a stock.",
+      "0x00E1": "start=3 (or 0, seed-dependent), oscillates 0<->3 repeatedly on a ~40-60 step cadence, uncorrelated with HP/stage -- looks like a sound/animation state machine, not a stock.",
+      "0x0037": "start=4, single 4->0 transition in the first 2 steps then flat -- a one-shot post-load initialization value, not tied to any death event (HP=7/stage=0 throughout); too early and too uniform across seeds to be a gameplay response.",
+      "0x0309": "start=10, drifts 9/10/11 continuously on no fixed cadence, uncorrelated with HP/stage -- a free-running counter (explicitly demoted by the tool itself: reaches_empty=false, spends_its_stock=false)."
+    },
+    "verdict": "NO candidate in the fixed tool's full ranked output is a verified real lives/life-counter byte. The top pick fails root>0. The four nonzero-start candidates all fail the behavioral bar (steps down toward zero, correlated with death, does not free-run, does not move while idle) -- every one of them moves_while_idle=true and none correlates with the HP byte or the stage-index byte across any of the 5 independent rollouts."
+  },
+  "cross_check_against_prior_investigation": {
+    "note": "configs/kid_icarus.yaml already carries an extensive, dated (2026-08-03/2026-08-23) investigation reaching the same conclusion by a different route: 'Kid Icarus has NO life count -- the only clean death signal is HP (0x00A6) reaching 0 ... no separate flag exists.' It deliberately set solve.lives=0x0130 as a documented monotone no-op SENTINEL (only ever increases on a real stage clear, never decreases), specifically to avoid the underflow trap this whole campaign targets, and wired real death exclusively through solve.player_state=0x00A6 / death_states=[0]. This is a load-bearing design choice, not an accidental artifact of a naive sweep.",
+    "false_death_sweep_cross_check": "runs/mechanism_matrix/false_death_sweep.json confirms kid_icarus is 1 of the 11 flagged profiles (lives_at_root=0) but is the ONLY one of the 11 with a player_state fallback already wired (player_state=0x00A6, player_state_at_root=7). The other 10 have player_state=None -- for those, the false-zero lives byte was the ONLY death signal, so the vacuous-gate bug inverted death detection outright. For Kid Icarus it did not: the nominated byte (0x0130) never decrements by construction, so the wrap-around underflow path in GenericGame.is_dead ((start-cur)%256 in 1..8) structurally cannot fire from it, and real death was never at risk."
+  },
+  "5_measure": {
+    "edit_made": false,
+    "rationale": "No verified better candidate exists (see 3_verification), so per task step 4 the config is left untouched -- there is no 'after' state to compare against a 'before'.",
+    "baseline_smoke_run_anyway": {
+      "purpose": "sanity-check that the UNEDITED profile is not, in fact, blocked by anything resembling the false-death pattern",
+      "cmd": ".venv/bin/python3 scripts/go_explore_solve.py --profile configs/kid_icarus.yaml --root-state \"roms/Kid Icarus (USA, Europe)_start.state.bin\" --out runs/false_death_fanout/kid_icarus/smoke_baseline --workers 2 --minutes 1 --seed 0",
+      "result": "cells 1(seed) -> 32, frontier 18, max_gx_in_max_area=380, steps=24368, sps=406, stall_flat_windows=0/1 (never froze), 81 improvements, 0 solutions.",
+      "interpretation": "Healthy, growing frontier in a single minute -- no frozen-at-1/frozen-at-low-N pattern of the kind the false-zero-lives bug produces elsewhere (Mega Man USA froze at 10 cells). Consistent with the conclusion that this profile was never actually degraded by the discovery-tool defect."
+    }
+  },
+  "conclusion": "Honest instrument gap, not a fix: Kid Icarus has no discoverable discrete lives/stock byte from this start state, in the fixed tool's output or by direct inspection. The config's existing design (lives=0x0130 as a monotone no-decrement sentinel + player_state=0x00A6 as the real death signal) already sidesteps the class of bug the tool-level fix targets and is empirically healthy (32 cells / 1 min, no stall). Config left unmodified. Nothing committed."
+}

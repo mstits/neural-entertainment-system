@@ -41,8 +41,26 @@ description: |
   1200-step rollout) — Galaga's ship never moves vertically, so this
   is an honest placeholder that collapses the y-band dimension to one
   bucket rather than fabricating a vertical axis that does not exist.
-  `lives: 0x0073` — discover_observables' hp/lives probe, 5-of-5
-  agreement, decrements on death.
+  `lives: 0x0464` — RE-NOMINATED 2026-08-26 (false-death-fanout sweep,
+  runs/false_death_fanout/galaga/). The prior address, 0x0073, read 0 at
+  this profile's own root state: a zero-start byte underflows 0 -> 255
+  on its first change, and GenericGame's wrap-aware is_dead reads that
+  as a death, so every episode died in its first frames (go_explore
+  smoke frozen at 1 cell, 32,890 steps, 0 solutions — see smoke_before/
+  below). Root cause was tool-level, fixed upstream in
+  discover_observables.py commit 158ec74 (reaches_empty/spends_its_stock
+  were structurally vacuous at start==0, so a zero-start byte could
+  never be demoted and routinely outranked a real counter). Re-running
+  the fixed tool against this profile's real ROM/state demoted 0x0073
+  to last place in its own ranked output (starts_nonzero=false) and
+  nominated 0x0464 instead: root value 2 (verified independently, not
+  just trusted from the tool), flat over a 240-step idle rollout (does
+  not free-run, does not move while idle), and steps down exactly once
+  (2 -> 0, a clean -2) partway through a 900-step play rollout — behaves
+  like a real stock, not a HUD counter or clock. discover_observables:
+  5-of-5 run agreement, reaches_empty=true, spends_its_stock=true,
+  starts_nonzero=true. Full ranked candidate list, before/after smoke
+  receipts, and root-state peeks under runs/false_death_fanout/galaga/.
 
   SMOKE (2026-08-25, 2 workers / 4 min / seed 0,
   runs/onboard_wave3/smoke_galaga): cells=1, frontier=0, max_area=0,
@@ -90,5 +108,7 @@ solve:
   y: 0x000B
   # No stage-advance byte discovered/attempted yet; coverage baseline only.
   level_key: []
-  # discover_observables hp/lives probe, 5-of-5 agreement, decrements on death.
-  lives: 0x0073
+  # RE-NOMINATED 2026-08-26: old addr 0x0073 read 0 at root (see description
+  # above for the tool-level fix, commit 158ec74). New addr 0x0464 reads 2 at
+  # root, verified via independent peek + idle/play rollout.
+  lives: 0x0464

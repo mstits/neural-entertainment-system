@@ -1,0 +1,23 @@
+{
+  "game": "1942",
+  "old_addr": "0x00C9",
+  "old_root_value": 0,
+  "old_reads_zero_confirmed": true,
+  "discover_cmd": "python3 scripts/discover_observables.py --rom \"roms/1942 (Japan, USA).nes\" --state \"roms/1942 (Japan, USA)_start.state.bin\" --forward up --emit-solve --out runs/false_death_fanout/1942/discover_1942_up.json",
+  "discover_out": "runs/false_death_fanout/1942/discover_1942_up.json",
+  "lives_candidates_ranked": [
+    {"addr": "0x0524", "start": 1, "starts_nonzero": true, "reaches_empty": true, "spends_its_stock": true, "refilled_runs": "5/5"},
+    {"addr": "0x0436", "start": 3, "starts_nonzero": true, "reaches_empty": false, "spends_its_stock": false, "refilled_runs": "5/5"},
+    {"addr": "0x00C9", "start": 0, "starts_nonzero": false, "reaches_empty": true, "spends_its_stock": true, "refilled_runs": "4/5", "note": "the old (pre-fix) top nomination; now demoted to rank 3"},
+    {"addr": "0x06AF", "start": 0, "starts_nonzero": false, "reaches_empty": true, "spends_its_stock": true, "refilled_runs": "3/5", "mirrors": ["0x06B0"]},
+    {"addr": "0x0435", "start": 0, "starts_nonzero": false, "reaches_empty": true, "spends_its_stock": true, "refilled_runs": "0/5"}
+  ],
+  "new_addr": "0x0524",
+  "new_root_value": 1,
+  "verification": "300-step idle NOOP rollout: flat at 1 the whole way (does not free-run, does not move while idle). 700-step held-up rollout: steps 1 -> 0 at t=65 (death), refills 0 -> 1 at t=471 (continue), drops again 1 -> 0 at t=479 -- matches lives-with-continue semantics.",
+  "config_edited": true,
+  "smoke_before": {"cmd": "go_explore_solve.py --profile configs/1942.yaml (lives=0x00C9) --workers 2 --minutes 1 --seed 0", "cells": 101, "frontier": 62, "best_score": 764, "steps": 32520, "sps": 542},
+  "smoke_after": {"cmd": "go_explore_solve.py --profile configs/1942.yaml (lives=0x0524) --workers 2 --minutes 1 --seed 0", "cells": 121, "frontier": 92, "best_score": 1265, "steps": 29224, "sps": 487},
+  "delta": {"cells": "101 -> 121 (+20, +20%)", "frontier": "62 -> 92 (+48%)", "best_score": "764 -> 1265 (+66%)"},
+  "notes": "Unlike Mega Man (frontier frozen at 10), 1942's old 0x00C9 was not catastrophically blocking -- lifecycle diagnostic (onboard_wave3) showed it happens to wrap 0->255 at the TRUE final Game Over rather than spuriously in the first frames, so episodes were not dying on frame 1. The fix still produced a clear, real improvement (cells +20%, best_score +66%) with a verified nonzero stock byte, not a null result."
+}

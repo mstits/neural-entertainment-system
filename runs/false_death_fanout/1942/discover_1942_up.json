@@ -1,0 +1,247 @@
+{
+  "rom": "roms/1942 (Japan, USA).nes",
+  "state": "roms/1942 (Japan, USA)_start.state.bin",
+  "forward": "up",
+  "progress": {
+    "forward": "up",
+    "room_counter": null,
+    "candidates": [
+      {
+        "lo": 4,
+        "hi": null,
+        "kind": "single",
+        "label": "$0004",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 128,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 128,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 223,
+        "hi": null,
+        "kind": "single",
+        "label": "$00DF",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 91,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 91,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 221,
+        "hi": null,
+        "kind": "single",
+        "label": "$00DD",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 78,
+        "mono_forward": 0.919,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 78,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      }
+    ],
+    "recommended": {
+      "lo": 221,
+      "hi": null,
+      "label": "$00DD",
+      "kind": "spatial",
+      "as_progress": "$00DD",
+      "saturates": false
+    }
+  },
+  "room_counters": [],
+  "y": [
+    {
+      "addr": 131,
+      "base": 125,
+      "mode": 125,
+      "max_dev": 89,
+      "range": 89,
+      "distinct": 7,
+      "frac_at_mode": 0.84,
+      "score": 74.9
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 1316,
+    "start": 1,
+    "detail": {
+      "addr": 1316,
+      "start": 1,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    "lives_candidates": [
+      {
+        "addr": 1316,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1078,
+        "start": 3,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 11,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 201,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 4,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": false,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1711,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 4,
+        "runs_watched": 5,
+        "spends": 4,
+        "refilled_runs": 3,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": false,
+        "moves_while_idle": false,
+        "mirrors": [
+          1712
+        ]
+      },
+      {
+        "addr": 1077,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 3,
+        "runs_watched": 5,
+        "spends": 3,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": false,
+        "moves_while_idle": false,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 159,
+        "value": 2,
+        "mirrors": 6,
+        "hud_run": 4,
+        "churn": 0.0
+      },
+      {
+        "addr": 496,
+        "value": 2,
+        "mirrors": 6,
+        "hud_run": 4,
+        "churn": 0.0
+      },
+      {
+        "addr": 510,
+        "value": 2,
+        "mirrors": 6,
+        "hud_run": 4,
+        "churn": 0.0
+      },
+      {
+        "addr": 1074,
+        "value": 2,
+        "mirrors": 6,
+        "hud_run": 4,
+        "churn": 1.11
+      },
+      {
+        "addr": 1076,
+        "value": 2,
+        "mirrors": 6,
+        "hud_run": 4,
+        "churn": 0.0
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 160
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  }
+}

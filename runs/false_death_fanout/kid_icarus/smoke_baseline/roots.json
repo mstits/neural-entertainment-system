@@ -1,0 +1,18 @@
+{
+  "entrance": {
+    "path": "roms/Kid Icarus (USA, Europe)_start.state.bin",
+    "start_wd": [
+      0
+    ],
+    "lives": 0,
+    "hw_provenance": {
+      "hw_flags": [],
+      "frame_skip": 4,
+      "nes_core": {
+        "dist_version": "0.1.0",
+        "module": "nes_core.abi3.so",
+        "sha256_16": "e9b44272d84bfd83"
+      }
+    }
+  }
+}

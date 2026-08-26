@@ -1,0 +1,25 @@
+
+=== Chip 'n Dale Rescue Rangers (USA).nes — forward='right' ===
+[room counter] 0x0023   (candidates: ['0x23'])
+[progress candidates]  gate1=rises+flat-noop, sat=saturation gate:
+     $0028|$00DA<<8  kind=pair   netF=    80 mono=1.00 wrapPair=5 rev=0 | sat: rebase=3 cap=0  <<< CAMERA-CLAMP SATURATOR
+     $00FC|$00DA<<8  kind=pair   netF=    80 mono=1.00 wrapPair=5 rev=0 | sat: rebase=3 cap=0  <<< CAMERA-CLAMP SATURATOR
+     $0025|$0023<<8  kind=pair   netF=    40 mono=1.00 wrapPair=3 rev=0 | sat: rebase=0 cap=1  <<< CAMERA-CLAMP SATURATOR
+[recommended progress] $0023 (room counter — spatial $0025|$0023<<8 SATURATES / camera-clamp)
+[y] 0x0012  (candidates: ['0x12', '0xc4'])
+[hp/lives] kind=lives addr=0x0052 — is_dead on lives decrement (-1, agreed by 5 of 5 runs)
+
+--- paste-ready solve: ---
+solve:
+  rom: "roms/Chip 'n Dale Rescue Rangers (USA).nes"
+  # PROGRESS WARNING: spatial $0025|$0023<<8 SATURATES (camera-clamp: caps at the scroll-window limit
+  #   and re-bases at room transitions). True progress = the room/screen counter below.
+  progress: {lo: 0x0023}   # room/screen counter (steps at transitions; monotone, non-saturating)
+  # capped spatial secondary (fine within-room X, DO NOT use as sole progress): $0028|$00DA<<8
+  #   progress: {lo: 0x0028, hi: 0x00DA}  # progress_cap: 2450
+  area: 0x0023   # room/screen counter (drives sect transitions)
+  y: 0x0012   # jump/ballistic signature
+  level_key: []   # coverage baseline; wire a stage-advance byte here once a real clear is captured
+  lives: 0x0052   # decrements on death
+
+[out] runs/false_death_fanout/chip_n_dale_rescue_rangers/discover.json

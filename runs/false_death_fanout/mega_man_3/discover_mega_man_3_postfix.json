@@ -1,0 +1,166 @@
+{
+  "rom": "roms/Mega Man 3 (USA).nes",
+  "state": "roms/Mega Man 3 (USA)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": null,
+    "candidates": [],
+    "recommended": null
+  },
+  "room_counters": [],
+  "y": [
+    {
+      "addr": 18,
+      "base": 180,
+      "mode": 180,
+      "max_dev": 51,
+      "range": 51,
+      "distinct": 7,
+      "frac_at_mode": 0.74,
+      "score": 37.6
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 41,
+    "start": 1,
+    "detail": {
+      "addr": 41,
+      "start": 1,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": [
+        1056
+      ]
+    },
+    "lives_candidates": [
+      {
+        "addr": 41,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          1056
+        ]
+      },
+      {
+        "addr": 1828,
+        "start": 5,
+        "drop": 5,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 130,
+        "start": 185,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 174,
+        "start": 2,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 598,
+        "start": 2,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          602,
+          606,
+          610
+        ]
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 217,
+        "value": 5,
+        "mirrors": 9,
+        "hud_run": 3,
+        "churn": 0.0
+      },
+      {
+        "addr": 44,
+        "value": 3,
+        "mirrors": 8,
+        "hud_run": 2,
+        "churn": 0.0
+      },
+      {
+        "addr": 694,
+        "value": 3,
+        "mirrors": 8,
+        "hud_run": 2,
+        "churn": 1.68
+      },
+      {
+        "addr": 698,
+        "value": 3,
+        "mirrors": 8,
+        "hud_run": 2,
+        "churn": 1.68
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 57
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  }
+}

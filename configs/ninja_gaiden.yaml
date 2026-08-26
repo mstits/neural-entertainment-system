@@ -56,6 +56,28 @@ solve:
   # the death byte with its known start-state caveat (reads 0 at the
   # very first frames; decrement detection is unaffected once play
   # begins, per the same gate run reporting lives correctly mid-roll).
+  #
+  # 2026-08-26: re-audited after discover_observables.py's zero-start
+  # nomination fix (commit 158ec74). Confirmed $001F reads 0 at this
+  # profile's root state and the fixed tool correctly demotes it
+  # (starts_nonzero=False; it's a flicker artifact, 12-26 unpaired
+  # 0<->255 ticks/700-step run, that only ever cleared the OLD vacuous
+  # reaches_empty/spends_its_stock checks). The fixed tool's new top
+  # nomination, $0386 (starts at 1, one clean decrement to 0, never
+  # refills, zero idle churn, 5/5 run agreement), LOOKED like a real
+  # stock under every static gate but FAILED behavioral verification:
+  # cross-checked against the odometer, forward progress keeps climbing
+  # for 100+ further steps after $0386 hits 0 (94px -> 426px over the
+  # next ~450 frames) -- the character is demonstrably still alive and
+  # playing. $0386 tracks rightward movement into the level, not death
+  # (probably a consumed item/sub-weapon/status flag). Wiring it in as
+  # `lives` collapsed a go_explore smoke from 1096 cells/1046 frontier
+  # to 24 cells/0 frontier (--workers 2 --minutes 1 each,
+  # runs/false_death_fanout/ninja_gaiden/smoke_{before,after}.log) by
+  # firing false deaths on every healthy, still-progressing worker.
+  # No verified better candidate exists -- left as $001F, an honest
+  # instrument gap, not a fix. Receipts:
+  # runs/false_death_fanout/ninja_gaiden/.
   progress: {source: odometer, axis: x}
   # Scene ordinal from the odometer's rendered-cut detector (pseudo-
   # address ODO_LO+3): stage wipes / camera-locked boss rooms become

@@ -55,16 +55,27 @@ solve:
   progress: {source: odometer, axis: -y}
   # discover_observables.py --forward up, 5/5-run agreement
   # (runs/onboard_wave3/discover_1942_up.json). $0083 is the
-  # jump/ballistic-signature candidate it reports for `y`; $00C9
-  # decrements on death (lives) — GenericGame's modular-decrement
-  # is_dead already handles the 0->255 wrap this byte does at the real
-  # Game Over (confirmed in the lifecycle diagnostic: y tracks real
-  # flight 0..~-670, then goes flat once lives hits 255 for good and
-  # the screen freezes — the SAME "game stops" tail the gate saw).
+  # jump/ballistic-signature candidate it reports for `y`.
+  #
+  # RE-NOMINATED 2026-08-26 (false-death fanout sweep, tool-level fix
+  # commit 158ec74): the old `lives: 0x00C9` reads 0 at this profile's
+  # own root state (confirmed directly: fresh Pool + load_worker_state,
+  # ram[0x00C9] == 0). Both of lives_from_death_drives' acceptance
+  # gates are structurally vacuous at start == 0, so 0x00C9 was
+  # nominated for free rather than earned; with the fix it now carries
+  # `starts_nonzero: false` and is demoted to rank 3 of 5 candidates
+  # (runs/false_death_fanout/1942/discover_1942_up.json). The new
+  # top-ranked candidate, $0524, reads 1 at root (starts_nonzero:
+  # true), is flat across 300 idle NOOP steps (does not free-run, does
+  # not move while idle), and under a held-`up` 700-step rollout steps
+  # down 1 -> 0 at t=65 then refills 0 -> 1 at t=471 before dropping
+  # again at t=479 — real stock-with-continue behaviour, not debris.
+  # Re-ranked candidate table + a --workers 2 --minutes 1 before/after
+  # go_explore_solve smoke are both under runs/false_death_fanout/1942/.
   # Neither `y` nor `lives` is the progress observable (that stays the
   # certified odometer above) — these feed is_dead / cell_fn only.
   y: 0x0083
-  lives: 0x00C9
+  lives: 0x0524
   # Empty until a real clear is captured; guessing it is authored
   # semantics. The solver can search but cannot yet recognise winning.
   level_key: []

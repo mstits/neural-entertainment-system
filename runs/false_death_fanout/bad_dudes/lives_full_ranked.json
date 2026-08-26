@@ -1,0 +1,309 @@
+{
+  "lives_candidates": [
+    {
+      "addr": 205,
+      "start": 2,
+      "drop": 2,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    {
+      "addr": 4,
+      "start": 8,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 0,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    {
+      "addr": 166,
+      "start": 17,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    {
+      "addr": 174,
+      "start": 5,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": [
+        176
+      ]
+    },
+    {
+      "addr": 533,
+      "start": 2,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    {
+      "addr": 648,
+      "start": 130,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 0,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    {
+      "addr": 702,
+      "start": 3,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 0,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    {
+      "addr": 1559,
+      "start": 142,
+      "drop": 2,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    {
+      "addr": 585,
+      "start": 255,
+      "drop": 5,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    {
+      "addr": 847,
+      "start": 0,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": false,
+      "moves_while_idle": false,
+      "mirrors": [
+        952,
+        998,
+        1014,
+        1016,
+        1018,
+        1020,
+        1040
+      ]
+    },
+    {
+      "addr": 1022,
+      "start": 0,
+      "drop": 1,
+      "runs_agreeing": 3,
+      "runs_watched": 5,
+      "spends": 3,
+      "refilled_runs": 3,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": false,
+      "moves_while_idle": false,
+      "mirrors": [
+        1028
+      ]
+    },
+    {
+      "addr": 141,
+      "start": 1,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": true,
+      "mirrors": [
+        159,
+        541,
+        812,
+        815,
+        836
+      ]
+    },
+    {
+      "addr": 857,
+      "start": 1,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 4,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": true,
+      "mirrors": []
+    },
+    {
+      "addr": 813,
+      "start": 3,
+      "drop": 3,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": true,
+      "mirrors": []
+    },
+    {
+      "addr": 32,
+      "start": 3,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": true,
+      "mirrors": [
+        538
+      ]
+    },
+    {
+      "addr": 1564,
+      "start": 4,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": true,
+      "mirrors": []
+    },
+    {
+      "addr": 1610,
+      "start": 2,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": true,
+      "mirrors": [
+        1611
+      ]
+    },
+    {
+      "addr": 1624,
+      "start": 9,
+      "drop": 2,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": false,
+      "spends_its_stock": false,
+      "starts_nonzero": true,
+      "moves_while_idle": true,
+      "mirrors": []
+    },
+    {
+      "addr": 1010,
+      "start": 0,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": false,
+      "moves_while_idle": true,
+      "mirrors": [
+        1024,
+        1026,
+        1030,
+        1218
+      ]
+    }
+  ],
+  "evidence": {
+    "drives": 5,
+    "usable": 5,
+    "steps": [
+      700,
+      700,
+      700,
+      700,
+      700
+    ],
+    "nominated": 39
+  }
+}

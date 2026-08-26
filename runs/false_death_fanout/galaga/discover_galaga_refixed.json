@@ -1,0 +1,176 @@
+{
+  "rom": "roms/Galaga - Demons of Death (USA).nes",
+  "state": "roms/Galaga - Demons of Death (USA)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": null,
+    "candidates": [
+      {
+        "lo": 145,
+        "hi": null,
+        "kind": "single",
+        "label": "$0091",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 872,
+        "mono_forward": 0.972,
+        "net_noop": 0,
+        "net_reverse": 234,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 234,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      },
+      {
+        "lo": 146,
+        "hi": null,
+        "kind": "single",
+        "label": "$0092",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 88,
+        "mono_forward": 0.957,
+        "net_noop": 0,
+        "net_reverse": 70,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 174,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      }
+    ],
+    "recommended": {
+      "lo": 145,
+      "hi": null,
+      "label": "$0091",
+      "kind": "spatial",
+      "as_progress": "$0091",
+      "saturates": false
+    }
+  },
+  "room_counters": [],
+  "y": [],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 1124,
+    "start": 2,
+    "detail": {
+      "addr": 1124,
+      "start": 2,
+      "drop": 2,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 0,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    "lives_candidates": [
+      {
+        "addr": 1124,
+        "start": 2,
+        "drop": 2,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1172,
+        "start": 40,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 18,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 259,
+        "start": 1,
+        "drop": 6,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          261
+        ]
+      },
+      {
+        "addr": 263,
+        "start": 1,
+        "drop": 6,
+        "runs_agreeing": 3,
+        "runs_watched": 5,
+        "spends": 3,
+        "refilled_runs": 3,
+        "reaches_empty": false,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 115,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": false,
+        "moves_while_idle": false,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 51
+    },
+    "note": "is_dead on lives decrement (-2, agreed by 5 of 5 runs)"
+  }
+}

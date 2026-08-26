@@ -59,7 +59,20 @@ solve:
   area: 0x0023   # room/screen counter (drives sect transitions) — the scene-key fix
   y: 0x0012      # jump/ballistic signature (discover_observables, 3-probe)
   level_key: []  # coverage baseline; wire a stage-advance byte once a real clear is captured
-  lives: 0x0052  # decrements on death, 5-of-5 run agreement (discover_observables)
+  # OLD: 0x0052 read 0 at the root state -- a zero-start byte underflows
+  # 0->255 on its first change, which GenericGame.is_dead reads as a death
+  # on frame one of every episode (the false-death-fanout defect, tool fix
+  # commit 158ec74). Re-verified by hand post-fix: 0x0052 is not a lives
+  # byte at all -- it is a facing-direction flag (reads 1 while holding
+  # right, 2 while holding left, 0 otherwise; confirmed by direct probe),
+  # which only topped the fixed tool's re-nomination because its "start"
+  # field is sampled after the death-drive's first forward-input step, not
+  # the true idle root -- a second, narrower gap the 158ec74 fix does not
+  # cover. Re-nominated by hand-verifying the next real candidate instead:
+  # 0x0646 reads 2 at the untouched root state, holds flat at 2 across 400
+  # idle (no-input) steps, and drops 2->0 exactly once, only in runs that
+  # end in a high-churn (death/reload) event, never in runs that survive.
+  lives: 0x0646  # verified stock counter, root=2 (see comment above)
 
 # --- wave3 solver smoke + deepest-cell diagnostic (2026-08-25) ---
 # 2-worker / 4-minute go_explore smoke on the scene-key config above:

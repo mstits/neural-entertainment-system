@@ -56,15 +56,34 @@ solve:
   #   gated SOUND and is the preferred hardware surface, same reasoning
   #   as ninja_gaiden_ii/ducktales_2).
   #   $009F  y candidate — jump/ballistic signature (score 94.7 top hit).
-  #   $0051  lives candidate — decrements on death, 5 of 5 probe
-  #          agreement, reaches empty and refills across runs. CAVEAT:
-  #          reads 0 at the start state itself (same shape flagged,
-  #          not confirmed, for Mega Man's 0x0410 in wave 4) — if this
-  #          is not literally "remaining lives" a decrement could
-  #          underflow toward 255. Not confirmed as a defect here; the
-  #          smoke below did not stall, so left as-is.
+  #   $0051  lives candidate (ORIGINAL, now REPLACED) — read 0 at this
+  #          exact root state (confirmed 2026-08-26); the wave-5 CAVEAT
+  #          above was the correct call. This was the zero-start-byte
+  #          defect in discover_observables.py's lives_from_death_drives
+  #          (both reaches_empty and spends_its_stock are structurally
+  #          vacuous at start==0), fixed at the tool level in commit
+  #          158ec74. Re-running the fixed tool against this same start
+  #          state demotes $0051 out of the top-5 ranked candidates
+  #          entirely and nominates $0199 instead.
+  #   $0199  lives candidate (2026-08-26, post-fix) — root value 2
+  #          (verified > 0, not an underflow trap), starts_nonzero=true,
+  #          5 of 5 probe agreement, reaches empty (arrived-at, not the
+  #          start sample), spends its stock, refills 5/5 runs, does not
+  #          move while idle. Independently reverified here: 80-step
+  #          idle hold and a 700-step constant-RIGHT hold both leave it
+  #          pinned at 2 (no free-run, no idle drift).
+  #          Receipt: runs/false_death_fanout/shatterhand/
+  #          discover_shatterhand_fixed.json
+  #   go_explore_solve smoke (--workers 2 --minutes 1, same root state):
+  #     before (lives=$0051): 16 cells, 23112 steps, 385 sps, frozen —
+  #       reproduces wave 5's SOUND_GAME_STOPS stall exactly.
+  #     after  (lives=$0199): 232 cells (14.5x), 175 still on the open
+  #       frontier (not frozen), max_gx 53 -> 1023, 16462 steps, 274 sps.
+  #       SOUND_GAME_STOPS -> SOUND_ADVANCING.
+  # Receipts: runs/false_death_fanout/shatterhand/{discover_shatterhand_fixed,
+  # smoke_before/archive.stats.json, smoke_after/archive.stats.json}.json
   y: 0x009F
-  lives: 0x0051
+  lives: 0x0199
   # DELIBERATELY EMPTY — no clear captured yet; guessing a stage-advance
   # byte here is the authored-semantics class the purity line forbids.
   level_key: []

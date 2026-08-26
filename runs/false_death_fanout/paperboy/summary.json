@@ -1,0 +1,266 @@
+{
+  "game": "Paperboy",
+  "profile": "configs/paperboy.yaml",
+  "old_addr": "0x000B",
+  "step1_confirm_defect": {
+    "method": "loaded roms/Paperboy (USA)_start.state.bin into a fresh headless Pool (frame_skip=1), stepped one NOOP, read RAM[0x0B] directly (independent of discover_observables.py)",
+    "root_value": 0,
+    "held_across_additional_5_noop_steps": true,
+    "verdict": "CONFIRMED \u2014 0x000B reads 0 at root, exactly the vacuous-gate defect class fixed in 158ec74"
+  },
+  "step2_refixed_discovery": {
+    "cmd": "python3 scripts/discover_observables.py --rom \"roms/Paperboy (USA).nes\" --state \"roms/Paperboy (USA)_start.state.bin\" --profile configs/paperboy.yaml --out runs/false_death_fanout/paperboy/discover_paperboy_refixed.json --emit-solve",
+    "top_nomination": {
+      "addr": "0x00B2 (178)",
+      "start_value": 4,
+      "runs_agreeing": "5/5"
+    },
+    "note": "0x000B (11) no longer surfaces in the truncated top-5 lives_candidates list at all \u2014 full un-truncated ranking pulled separately below.",
+    "full_ranked_list_untruncated": [
+      {
+        "addr_dec": 178,
+        "addr_hex": "0x00B2",
+        "start_value": 4,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 11,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle_per_tool": false
+      },
+      {
+        "addr_dec": 180,
+        "addr_hex": "0x00B4",
+        "start_value": 4,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 7,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle_per_tool": false
+      },
+      {
+        "addr_dec": 229,
+        "addr_hex": "0x00E5",
+        "start_value": 171,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle_per_tool": false
+      },
+      {
+        "addr_dec": 979,
+        "addr_hex": "0x03D3",
+        "start_value": 253,
+        "drop": 1,
+        "runs_agreeing": 4,
+        "runs_watched": 5,
+        "spends": 4,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle_per_tool": false
+      },
+      {
+        "addr_dec": 527,
+        "addr_hex": "0x020F",
+        "start_value": 26,
+        "drop": 8,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 10,
+        "refilled_runs": 1,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle_per_tool": false
+      },
+      {
+        "addr_dec": 531,
+        "addr_hex": "0x0213",
+        "start_value": 34,
+        "drop": 8,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 10,
+        "refilled_runs": 1,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle_per_tool": false
+      },
+      {
+        "addr_dec": 523,
+        "addr_hex": "0x020B",
+        "start_value": 18,
+        "drop": 8,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle_per_tool": false,
+        "mirrors": [
+          543
+        ]
+      },
+      {
+        "addr_dec": 11,
+        "addr_hex": "0x000B",
+        "start_value": 0,
+        "drop": 1,
+        "runs_agreeing": 3,
+        "runs_watched": 5,
+        "spends": 3,
+        "refilled_runs": 3,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": false,
+        "moves_while_idle_per_tool": false,
+        "note": "the OLD nomination \u2014 now demoted to 8th of 11 purely by the new starts_nonzero gate, exactly as designed"
+      },
+      {
+        "addr_dec": 188,
+        "addr_hex": "0x00BC",
+        "start_value": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle_per_tool": true
+      },
+      {
+        "addr_dec": 1181,
+        "addr_hex": "0x049D",
+        "start_value": 24,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle_per_tool": true
+      },
+      {
+        "addr_dec": 163,
+        "addr_hex": "0x00A3",
+        "start_value": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": false,
+        "moves_while_idle_per_tool": true
+      }
+    ]
+  },
+  "step3_independent_verification": {
+    "method": "for each of the 8 candidates NOT already flagged moves_while_idle by the tool, loaded the root state into an independent Pool and held pure NOOP for 3000 steps (12.5x the tool's own 240-step idle window), watching for free-running / cyclic behavior the tool's short idle window could not see.",
+    "result": "EVERY top candidate checked (178, 180, 229, 979, 527, 531, 523, 1181) free-runs under pure idle: each decrements AND refills repeatedly with zero player input, on cadences the tool's 240-step idle probe is too short to catch (first idle transition on 0x00B2 lands at step 364, i.e. outside the probe window). Several share exact tick boundaries (364, 1085, 1731, 2311, 2857 recur across 0x00B2, 0x020B/0x020F/0x0213, and even the OLD address 0x000B itself), indicating a shared background scene-animation clock rather than distinct life counters. The current config address 0x000B was also independently re-checked and shows the identical free-running signature (0<->255 flicker on the same cadence family).",
+    "top_candidate_0x00B2_idle_trace": [
+      [
+        0,
+        null,
+        4
+      ],
+      [
+        364,
+        4,
+        3
+      ],
+      [
+        481,
+        3,
+        2
+      ],
+      [
+        597,
+        2,
+        1
+      ],
+      [
+        714,
+        1,
+        0
+      ],
+      [
+        972,
+        0,
+        4
+      ],
+      [
+        1598,
+        4,
+        0
+      ],
+      [
+        1728,
+        0,
+        4
+      ],
+      [
+        1969,
+        4,
+        0
+      ],
+      [
+        2098,
+        0,
+        4
+      ],
+      [
+        2723,
+        4,
+        0
+      ],
+      [
+        2853,
+        0,
+        4
+      ]
+    ],
+    "verdict": "NONE of the tool's ranked lives_candidates for Paperboy from this start state behave like a real stock (steps down only on death, does not free-run, does not move while idle). This game's low-RAM lives-shaped region appears saturated with animated-background-prop frame counters that coincidentally satisfy the short-window decrement heuristics."
+  },
+  "step4_decision": {
+    "config_edited": false,
+    "reason": "No candidate survives independent behavioral verification, so there is no VERIFIED better candidate to swap in. Per instructions, only edit solve.lives when a verified candidate exists; leaving configs/paperboy.yaml untouched is the honest outcome here, not a null result to paper over."
+  },
+  "step5_measurement": {
+    "before_cmd": "python3 scripts/go_explore_solve.py --profile configs/paperboy.yaml --root-state \"roms/Paperboy (USA)_start.state.bin\" --out runs/false_death_fanout/paperboy/smoke_before --workers 2 --minutes 1 --seed 0",
+    "before": {
+      "cells": 507,
+      "frontier": 439,
+      "best_score_max_gx": 3271,
+      "steps": 26406,
+      "sps": 440,
+      "solutions": 0,
+      "seed_note": "seed line reports lives=0 at root, i.e. the CURRENT config's false-zero lives byte is live in this run"
+    },
+    "after": null,
+    "after_reason": "No config edit was made (no verified candidate), so there is nothing to A/B \u2014 running an 'after' smoke against an unchanged config would just remeasure noise, not a fix. Reporting cells_after=null rather than re-running the identical config as if it were a comparison."
+  },
+  "verdict": "HONEST INSTRUMENT GAP for Paperboy: the tool-level fix (158ec74) correctly demoted the old vacuous zero-start byte (0x000B, now ranked 8th of 11 instead of 1st), proving the fix works exactly as designed. But every candidate that rose to the top in its place is itself a free-running background-animation counter, not a lives stock, once checked over a longer idle window than the discovery tool's own 240-step probe uses. This game has no lives byte discoverable by this generic decrement-based heuristic from this start state. Config left unchanged. Nothing committed."
+}

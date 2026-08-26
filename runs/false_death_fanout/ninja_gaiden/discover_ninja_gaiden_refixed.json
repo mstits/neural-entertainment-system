@@ -1,0 +1,207 @@
+{
+  "rom": "roms/Ninja Gaiden (USA).nes",
+  "state": "roms/Ninja Gaiden (USA)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": null,
+    "candidates": [
+      {
+        "lo": 134,
+        "hi": null,
+        "kind": "single",
+        "label": "$0086",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": true,
+        "net_forward": 92,
+        "mono_forward": 0.96,
+        "net_noop": 0,
+        "net_reverse": -17,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 128,
+        "sat_never_rose": false,
+        "saturates": false,
+        "camera_clamp": false
+      }
+    ],
+    "recommended": {
+      "lo": 134,
+      "hi": null,
+      "label": "$0086",
+      "kind": "spatial",
+      "as_progress": "$0086",
+      "saturates": false
+    }
+  },
+  "room_counters": [],
+  "y": [
+    {
+      "addr": 243,
+      "base": 17,
+      "mode": 1,
+      "max_dev": 51,
+      "range": 67,
+      "distinct": 6,
+      "frac_at_mode": 0.39,
+      "score": 26.4
+    },
+    {
+      "addr": 181,
+      "base": 10,
+      "mode": 0,
+      "max_dev": 16,
+      "range": 26,
+      "distinct": 27,
+      "frac_at_mode": 0.32,
+      "score": 8.2
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 902,
+    "start": 1,
+    "detail": {
+      "addr": 902,
+      "start": 1,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 0,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "starts_nonzero": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    "lives_candidates": [
+      {
+        "addr": 902,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1705,
+        "start": 2,
+        "drop": 2,
+        "runs_agreeing": 4,
+        "runs_watched": 5,
+        "spends": 4,
+        "refilled_runs": 4,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 9,
+        "start": 7,
+        "drop": 7,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1566,
+        "start": 15,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 14,
+        "refilled_runs": 5,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1569,
+        "start": 250,
+        "drop": 1,
+        "runs_agreeing": 4,
+        "runs_watched": 5,
+        "spends": 8,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "starts_nonzero": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 931,
+        "value": 15,
+        "mirrors": 27,
+        "hud_run": 2,
+        "churn": 0.56
+      },
+      {
+        "addr": 933,
+        "value": 15,
+        "mirrors": 27,
+        "hud_run": 2,
+        "churn": 0.56
+      },
+      {
+        "addr": 935,
+        "value": 15,
+        "mirrors": 27,
+        "hud_run": 2,
+        "churn": 0.56
+      },
+      {
+        "addr": 936,
+        "value": 15,
+        "mirrors": 27,
+        "hud_run": 2,
+        "churn": 0.56
+      },
+      {
+        "addr": 937,
+        "value": 15,
+        "mirrors": 27,
+        "hud_run": 2,
+        "churn": 0.56
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 48
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  }
+}

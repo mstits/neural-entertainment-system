@@ -1,0 +1,64 @@
+{
+  "game": "Journey to Silius",
+  "config": "configs/journey_to_silius.yaml",
+  "tool_fix": "commit 158ec74 (discover_observables: reject zero-start lives candidates)",
+  "step1_confirm_defect": {
+    "old_addr": "0x00B9",
+    "root_value": 0,
+    "confirmed": true,
+    "method": "load_worker_state + one NOOP step_all, read ram[0xB9] from the returned RAM buffer"
+  },
+  "step2_renominate": {
+    "invocation": "scripts/discover_observables.py --rom 'roms/Journey to Silius (USA).nes' --state 'roms/Journey to Silius (USA)_start.state.bin' --profile configs/journey_to_silius.yaml --emit-solve --out runs/false_death_fanout/journey_to_silius/discover_journey_to_silius_fixed.json",
+    "top_recommendation": {"addr": "0x0135", "start": 1, "starts_nonzero": true,
+      "reaches_empty": true, "spends_its_stock": true, "moves_while_idle": false,
+      "runs_agreeing": "5/5", "mirrors": ["0x05AD"]},
+    "note": "0x00B9 no longer appears in the top-5 shown by find_hp_lives (top=6 truncation); a separate run with top=50 against the SAME probe sequence (identical evidence.nominated=70) confirms it is demoted, not removed: rank 10 of 24 groups, start=0, starts_nonzero=false -- exactly the sort-key behavior commit 158ec74 documents.",
+    "full_ranked_list_top9_with_starts_nonzero_and_root_value": [
+      {"rank": 1, "addr": "0x0135", "start_field": 1, "starts_nonzero": true},
+      {"rank": 2, "addr": "0x000A", "start_field": 2, "starts_nonzero": true},
+      {"rank": 3, "addr": "0x0001", "start_field": 3, "starts_nonzero": true},
+      {"rank": 4, "addr": "0x012A", "start_field": 8, "starts_nonzero": true},
+      {"rank": 5, "addr": "0x0502", "start_field": 11, "starts_nonzero": true},
+      {"rank": 6, "addr": "0x0012", "start_field": 11, "starts_nonzero": true},
+      {"rank": 7, "addr": "0x0053", "start_field": 3, "starts_nonzero": true},
+      {"rank": 8, "addr": "0x01A9", "start_field": 16, "starts_nonzero": true},
+      {"rank": 9, "addr": "0x027C", "start_field": 248, "starts_nonzero": true},
+      {"rank": 10, "addr": "0x00B9", "start_field": 0, "starts_nonzero": false,
+       "note": "the OLD nominee -- correctly demoted below every nonzero-start candidate"}
+    ]
+  },
+  "step3_verify_rank1": {
+    "addr": "0x0135",
+    "root_value_confirmed": 1,
+    "idle_200_steps": "flat at 1, no free-run, no idle movement -- PASSES the idle check",
+    "right_hold_probe": "FAILS: value drops 1 -> 0 within 4 steps (16 frames) of a bare RIGHT hold, with NO death, NO hazard contact, NO A/B press required. RIGHT+A and RIGHT+B reproduce the same 4-5 step drop. B-mash while stationary does NOT move it (rules out an ammo/shot counter). Conclusion: this byte transitions on the onset of rightward SCROLL/MOVEMENT itself (most likely a spawn-grace or intro-state flag), not on death.",
+    "verdict": "DISQUALIFIED -- fires on ordinary forward movement, not death"
+  },
+  "step3_verify_other_ranked_candidates": {
+    "0x000A": "drops 2->0 at step 15 of plain RIGHT-hold; same movement-triggered pattern, just delayed (looks like a short invulnerability/spawn timer, not a life stock)",
+    "0x0001": "cycles 0/1/3 with ~5-step period under RIGHT-hold -- an animation/frame counter, not a stock",
+    "0x012A": "drops to 0 within 4 steps of RIGHT-hold, then free-runs UP to 34 later in the same 300-step hold -- fails 'does not free-run'",
+    "0x0502, 0x0012, 0x0053, 0x01A9, 0x027C": "stable under a bare 300-step RIGHT-hold (good), but over a longer 2500-step randomized rollout (biased forward + occasional macros, matching the discovery tool's own death-drive recipe) none of them shows a clean single-drop-and-stay tied to an actual death: they wobble by small amounts (a few units) with no corroborating RAM-churn spike (max churn 244 across the whole 2500-step trace, no reload-sized event >300 ever observed) -- i.e. no verifiable death occurred in this rollout at all to correlate any byte against.",
+    "0x00B9_control": "the OLD nominee also just flickers 0<->255 six times over the same 2500-step rollout with no correlated churn spike -- consistent with the bug report's own characterization: on this game domain, this signature is generically noisy and none of it should be trusted as 'death' without an independent event boundary."
+  },
+  "step4_config_edit": {
+    "edited": false,
+    "reason": "no verified better candidate. Rank-1 (0x0135) is empirically disqualified (fires on mere rightward movement); ranks 2-4 show the same or a related non-death signature; ranks 5-9 could not be corroborated against any observed death event in a 2500-step rollout. configs/journey_to_silius.yaml left untouched (lives: 0x00B9)."
+  },
+  "step5_measure_unblock": {
+    "before": {
+      "config_lives": "0x00B9 (unmodified)",
+      "invocation": "scripts/go_explore_solve.py --out runs/false_death_fanout/journey_to_silius/smoke_before --root-state 'roms/Journey to Silius (USA)_start.state.bin' --profile configs/journey_to_silius.yaml --workers 2 --minutes 1 --seed 0",
+      "cells": 774, "frontier": 624, "max_gx_in_max_area": 1269, "steps": 24970, "sps": 416, "solutions": 0
+    },
+    "after_TRIAL_ONLY_not_kept": {
+      "config_lives": "0x0135 (edited for this A/B measurement only, then reverted -- never committed)",
+      "invocation": "scripts/go_explore_solve.py --out runs/false_death_fanout/journey_to_silius/smoke_after --root-state 'roms/Journey to Silius (USA)_start.state.bin' --profile configs/journey_to_silius.yaml --workers 2 --minutes 1 --seed 0",
+      "cells": 2, "frontier": 0, "max_gx_in_max_area": 7, "steps": 23442, "sps": 391, "solutions": 0,
+      "interpretation": "catastrophic collapse (774 -> 2 cells, 1269px -> 7px), NOT an improvement. Matches the direct-probe finding: 0x0135 reads start_lives=1 at root and drops to 0 on literally the first rightward-movement action any worker takes (this is a forced right-scroller, so 'the first action' is unavoidable), which GenericGame.is_dead's wrap-aware check (delta 1-8) reads as an instant death on essentially every rollout."
+    },
+    "verdict": "NULL / NEGATIVE RESULT, stated plainly. The fixed tool's #1 nomination for this profile is unusable -- worse than the original zero-start bug for this specific game, because it manufactures a false death on move #1 rather than after some exploration. The config was reverted and nothing from this trial is kept."
+  },
+  "overall_verdict": "Instrument gap, not a fix. Journey to Silius has no lives byte discoverable from this start state via the current death_drives probe methodology that survives direct behavioral verification. The zero-start defect (0x00B9) is real and confirmed, and the tool-level fix (commit 158ec74) correctly demoted it in the ranking -- but nothing else the probe surfaced behaves like a genuine death-triggered life stock; the probe's own 5 x 700-step death drives most likely never produced a real death for this ROM (no RAM-churn reload event was found in an independent 2500-step randomized rollout either), so every 'candidate' downstream of the demoted byte is coincidental small-amplitude RAM noise (spawn timers, animation counters, HUD digits), not lives. Config left unmodified. Nothing committed."
+}
