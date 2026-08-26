@@ -110,7 +110,21 @@ class CheckpointManager:
         latest = None
         for cand in candidates:
             try:
-                state = torch.load(str(cand), map_location=self.trainer.device)
+                # weights_only=True: `save_iter` (checkpoint_manager.py, the
+                # sole writer of vanilla_ppo_iter_*.pt) builds this blob out
+                # of net/optimizer/RND/PR-MDP-adversary state_dicts (tensors
+                # + PyTorch's own plain-dict Adam state), gx_counts (a
+                # dict[int, int]), and the backward/curriculum-resume
+                # state_dicts, which their own docstrings guarantee are
+                # "pure JSON/pickle-safe types" — no custom class instances
+                # anywhere in the payload. Verified by loading a broad
+                # sample of real checkpoints (every naming variant under
+                # checkpoints/, including a freshly-written one with every
+                # optional field populated) with this flag before it shipped.
+                state = torch.load(
+                    str(cand), map_location=self.trainer.device,
+                    weights_only=True,
+                )
                 latest = cand
                 break
             except Exception as exc:

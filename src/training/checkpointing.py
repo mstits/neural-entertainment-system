@@ -329,7 +329,13 @@ def _read_best_pt_metric_value(out_dir: str | Path) -> Optional[float]:
     try:
         import torch
 
-        blob = torch.load(str(best_path), map_location="cpu", weights_only=False)
+        # weights_only=True: `save_winner` (below) is the only writer of
+        # `winners/best.pt` and puts nothing in it beyond plain tensors
+        # and str/int/float primitives (net_state_dict, iter, metric_name,
+        # metric_value) — no custom class instances, so the restricted
+        # unpickler covers it. Verified by loading every winners/best.pt
+        # under checkpoints/ on disk with this flag before it shipped.
+        blob = torch.load(str(best_path), map_location="cpu", weights_only=True)
         val = float(blob.get("metric_value", float("-inf")))
     except Exception:
         return None
@@ -471,7 +477,10 @@ def load_winner(game: str, out_dir: str | Path) -> Optional[dict]:
     try:
         import torch
 
-        return torch.load(str(best_path), map_location="cpu")
+        # weights_only=True: same blob format as `_read_best_pt_metric_value`
+        # above — tensors + str/int/float only, no custom types — so the
+        # restricted unpickler is sufficient here too.
+        return torch.load(str(best_path), map_location="cpu", weights_only=True)
     except Exception as exc:  # corrupt/partial file — don't crash the caller
         log.warning("[winner] failed to load %s: %s", best_path, exc)
         return None
