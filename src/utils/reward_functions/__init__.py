@@ -14,10 +14,20 @@ Parity verified via `scripts/test_rewards_parity.py` on 500-step random-
 RAM sequences per game. The Rust hot path is ~8.6x faster than the
 Python it replaced.
 
-Games with hand-authored rewards: Zelda, Mario, Contra, Mega Man,
-Castlevania, Metroid (substring match on `profile["name"]`). Any other
-game falls back to a generic axis-free reward (RAM-churn motion,
-survival, auto-detected score bytes) so it can train out of the box.
+Which reward a profile gets is decided by ONE thing: its top-level
+`reward_id` key. The valid ids are `nes_core.reward_ids()`. A profile
+that declares none gets `generic` — an axis-free reward (RAM-churn
+motion, survival, auto-detected score bytes) that reads no
+hand-authored address and carries no win predicate, so a profile can
+never inherit a clear it did not ask for. An id outside the table is a
+`ValueError`, not a silent downgrade.
+
+The display name selects nothing. It used to, by case-insensitive
+substring, which handed configs/legend_of_zelda.yaml — 31 lines, no
+reward weights, no addresses — Zelda's quarantined win predicate purely
+because its title contains "Zelda", while withholding Mario's reward
+from configs/smb_4_4_micro.yaml because its title does not contain
+"mario".
 """
 
 from __future__ import annotations
@@ -41,10 +51,11 @@ __all__ = ["RewardFunction", "build_reward_function"]
 
 
 def build_reward_function(game_profile: dict) -> RewardFunction:
-    """Factory — maps profile["name"] (case-insensitive substring) to
-    a concrete `nes_core.RewardFunction`, falling back to the generic
-    reward for any game without a hand-authored one. Raises `ImportError`
-    if the Rust wheel isn't available."""
+    """Factory — maps profile["reward_id"] to a concrete
+    `nes_core.RewardFunction`. A missing / empty id resolves to
+    `generic`; an id outside `nes_core.reward_ids()` raises `ValueError`
+    naming the valid set. Raises `ImportError` if the Rust wheel isn't
+    available."""
     import nes_core
 
     return nes_core.build_reward_function(game_profile)

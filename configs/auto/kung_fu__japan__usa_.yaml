@@ -4,6 +4,7 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "Kung Fu (Japan, USA)"
+reward_id: kung_fu
 rom_filename: "Kung Fu (Japan, USA).nes"
 rom_hashes:
   - "27e5c62c6c169896bf80bafb6595ceb8"

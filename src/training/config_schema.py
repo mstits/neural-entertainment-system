@@ -137,7 +137,7 @@ _ADVERSARY_MODES: frozenset[str] = frozenset({"kernel_sticky"})
 # `tensorboard` (trainer.py's `game_profile.get("tensorboard", True)`,
 # gating MetricsSink's TensorBoard writer).
 KNOWN_TOP_KEYS: frozenset[str] = frozenset({
-    "name", "game", "rom_path", "rom", "rom_hashes", "expected_md5",
+    "name", "reward_id", "game", "rom_path", "rom", "rom_hashes", "expected_md5",
     "rom_md5", "description", "frame_skip", "max_episode_steps",
     "start_state_path", "start_state", "ram_mapping", "reinforce",
     "reward_weights", "action_space", "curriculum", "env_spec", "seed",

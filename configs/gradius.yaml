@@ -1,4 +1,5 @@
 name: "Gradius"
+reward_id: gradius
 # Live stage-1 gameplay state (scripts/capture_start_state.py --game gradius).
 # Without it the emulator cold-boots to the TITLE + attract-mode demo, which
 # ignores controller input — training there gives zero learning signal.

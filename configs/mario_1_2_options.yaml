@@ -2,6 +2,7 @@
 # Phase-3 control config except reinforce.commitment_options — asserted
 # key-by-key at generation. Control: 31/100 honest. Gate: >=0.372.
 name: Mario 1-2 options treatment
+reward_id: mario
 rom_path: roms/Super Mario Bros. (World).nes
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

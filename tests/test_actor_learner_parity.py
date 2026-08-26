@@ -86,6 +86,7 @@ _SMB_STATE = _find_state()
 # so the reference rollout does not depend on any external config.
 _PROFILE = {
     "name": "mario",
+    "reward_id": "mario",
     "reward_weights": {
         "forward_progress": 1.0,
         "checkpoint_scale": 0.0,

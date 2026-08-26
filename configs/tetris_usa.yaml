@@ -1,4 +1,5 @@
 name: "Tetris (USA)"
+reward_id: tetris
 
 rom_path: "roms/Tetris (USA).nes"
 start_state_path: "roms/Tetris (USA)_start.state.bin"

@@ -16,6 +16,7 @@
 # This directly answers the user's "why does it break 1-1 -> 1-2" question.
 
 name: Mario 2-level generalist (PLR, tile)
+reward_id: mario
 rom_path: "roms/Super Mario Bros. (World).nes"
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

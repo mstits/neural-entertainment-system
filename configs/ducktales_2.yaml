@@ -1,4 +1,7 @@
 name: "DuckTales 2 (USA)"
+# UNAUDITED INHERITANCE: DuckTalesReward was authored against DuckTales 1.
+# Never verified on DuckTales 2. Preserves today's behaviour.
+reward_id: ducktales
 
 rom_path: "roms/DuckTales 2 (USA).nes"
 rom_hashes:

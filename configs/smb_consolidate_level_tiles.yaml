@@ -27,6 +27,7 @@
 # ladder, and per-level predicate are all encoder-agnostic.
 
 name: "Super Mario Bros. (one-shot, tiles)"
+reward_id: mario
 rom_hashes:
   - "811b027eaf99c2def7b933c5208636de"
 

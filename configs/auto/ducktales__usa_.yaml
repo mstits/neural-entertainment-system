@@ -4,6 +4,7 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "DuckTales (USA)"
+reward_id: ducktales
 rom_filename: "DuckTales (USA).nes"
 rom_hashes:
   - "34fd4014afd15b562d7100f641f900ab"

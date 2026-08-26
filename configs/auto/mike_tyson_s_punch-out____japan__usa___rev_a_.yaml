@@ -4,6 +4,7 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "Mike Tyson's Punch-Out!! (Japan, USA) (Rev A)"
+reward_id: punch_out
 rom_filename: "Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes"
 rom_hashes:
   - "c119a5a9b0e2959ad5d11562f9f4ce55"

@@ -1,7 +1,8 @@
 //! Per-run depth tracker — pure logic, shared by Python via PyO3 wrapper.
 //!
-//! Extracts a 3-tuple "depth key" from a RAM snapshot using a
-//! per-game reader, and records the furthest key any worker has
+//! Extracts a 3-tuple "depth key" from a RAM snapshot using the
+//! reader the profile explicitly declared (never one inferred from
+//! its display name), and records the furthest key any worker has
 //! reached in this run. Returns a structured record when a new depth
 //! is set, `None` otherwise.
 
@@ -21,16 +22,20 @@ pub enum GameKind {
 }
 
 impl GameKind {
-    /// Case-insensitive substring match, same contract as the Python
-    /// `_depth_reader_for` lookup.
-    pub fn from_name(name: &str) -> Self {
-        let lower = name.to_ascii_lowercase();
-        if lower.contains("zelda") {
-            Self::Zelda
-        } else if lower.contains("mario") {
-            Self::Mario
-        } else {
-            Self::Generic
+    /// Select the RAM reader from an explicitly declared id, never from
+    /// the game's display name. The id set is a strict subset of
+    /// `rewards::REWARD_IDS` (`mario` / `zelda`; everything else,
+    /// including `None`, reads generic), so it cannot drift away from
+    /// the reward table.
+    ///
+    /// Passing `None` — a profile that declares no `reward_id` — yields
+    /// `Generic`, which reads only the first two RAM bytes and can
+    /// therefore never inherit another game's hand-authored offsets.
+    pub fn from_reward_id(id: Option<&str>) -> Self {
+        match crate::rewards::normalise_reward_id(id.unwrap_or("")).as_str() {
+            "zelda" => Self::Zelda,
+            "mario" => Self::Mario,
+            _ => Self::Generic,
         }
     }
 
@@ -107,9 +112,12 @@ pub struct Record {
 }
 
 impl DepthTracker {
-    pub fn new(game: &str) -> Self {
+    /// `depth_id` is the profile's declared `reward_id`, not its display
+    /// name. Named `depth_id` rather than `reward_id` so a profile can
+    /// later decouple the two with a one-line config addition.
+    pub fn new(depth_id: Option<&str>) -> Self {
         Self {
-            kind: GameKind::from_name(game),
+            kind: GameKind::from_reward_id(depth_id),
             best: None,
         }
     }
@@ -158,7 +166,7 @@ mod tests {
 
     #[test]
     fn zelda_key_is_dungeon_mx_my() {
-        let mut t = DepthTracker::new("The Legend of Zelda");
+        let mut t = DepthTracker::new(Some("zelda"));
         let ram = ram_of(0x00ED, &[(0x10, 2), (0xEB, 4), (0xEC, 7)]);
         let rec = t.observe(&ram, 0, "alice", 0).unwrap();
         assert_eq!(rec.key, (2, 4, 7));
@@ -167,7 +175,7 @@ mod tests {
 
     #[test]
     fn mario_key_is_world_level_x16() {
-        let mut t = DepthTracker::new("Super Mario Bros");
+        let mut t = DepthTracker::new(Some("mario"));
         let ram = ram_of(
             0x0800,
             &[(0x075F, 1), (0x0760, 2), (0x006D, 1), (0x0086, 100)],
@@ -178,7 +186,7 @@ mod tests {
 
     #[test]
     fn strict_improvement_only() {
-        let mut t = DepthTracker::new("zelda");
+        let mut t = DepthTracker::new(Some("zelda"));
         let ram_a = ram_of(0x00ED, &[(0x10, 1), (0xEB, 2), (0xEC, 3)]);
         let ram_b = ram_of(0x00ED, &[(0x10, 1), (0xEB, 2), (0xEC, 3)]);
         let ram_c = ram_of(0x00ED, &[(0x10, 1), (0xEB, 2), (0xEC, 4)]);
@@ -188,8 +196,36 @@ mod tests {
     }
 
     #[test]
+    fn display_name_cannot_select_a_reader() {
+        // The whole defect in one assertion: a profile whose title says
+        // "Zelda" but which declares no depth id must read the generic
+        // key (first two RAM bytes), not Zelda's $10/$EB/$EC offsets.
+        let ram = ram_of(0x0800, &[(0x00, 1), (0x01, 2), (0x10, 3), (0xEB, 0x22), (0xEC, 0x33)]);
+        let mut t = DepthTracker::new(None);
+        assert_eq!(t.observe(&ram, 0, "x", 0).unwrap().key, (0, 1, 2));
+        // ...and the id, not the name, is what turns the Zelda reader on.
+        let mut t2 = DepthTracker::new(Some("zelda"));
+        assert_eq!(t2.observe(&ram, 0, "x", 0).unwrap().key, (3, 0x22, 0x33));
+    }
+
+    #[test]
+    fn unknown_depth_id_reads_generic_not_a_borrowed_map() {
+        let ram = ram_of(0x0800, &[(0x00, 5), (0x01, 6), (0x10, 9)]);
+        let mut t = DepthTracker::new(Some("tetris"));
+        assert_eq!(t.observe(&ram, 0, "x", 0).unwrap().key, (0, 5, 6));
+    }
+
+    #[test]
+    fn depth_id_is_normalised_like_a_reward_id() {
+        assert_eq!(GameKind::from_reward_id(Some("Mario")), GameKind::Mario);
+        assert_eq!(GameKind::from_reward_id(Some(" zelda ")), GameKind::Zelda);
+        assert_eq!(GameKind::from_reward_id(Some("")), GameKind::Generic);
+        assert_eq!(GameKind::from_reward_id(None), GameKind::Generic);
+    }
+
+    #[test]
     fn short_ram_returns_none() {
-        let mut t = DepthTracker::new("zelda");
+        let mut t = DepthTracker::new(Some("zelda"));
         let ram = vec![0u8; 16];
         assert!(t.observe(&ram, 0, "x", 0).is_none());
     }

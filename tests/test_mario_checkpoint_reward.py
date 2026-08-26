@@ -8,6 +8,7 @@ import nes_core
 def _profile(checkpoint_scale: float = 1.0) -> dict:
     return {
         "name": "mario",
+        "reward_id": "mario",
         "reward_weights": {
             "forward_progress": 1.0,
             "checkpoint_scale": checkpoint_scale,

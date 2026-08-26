@@ -4,6 +4,7 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "Excitebike (Japan, USA)"
+reward_id: excitebike
 rom_filename: "Excitebike (Japan, USA).nes"
 rom_hashes:
   - "d7fe15cf2bc7b6582c07d12b3cf3bede"

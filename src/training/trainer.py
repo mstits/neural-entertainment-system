@@ -1512,6 +1512,10 @@ class Trainer:
         self._depth_tracker = DepthTracker(
             game=game_profile.get("name", "unknown"),
             memo_path=self.checkpoint_dir / "depth_memo.jsonl",
+            # The RAM reader follows the profile's DECLARED reward arm,
+            # not its display name. A profile with no reward_id gets the
+            # generic reader.
+            depth_id=game_profile.get("reward_id"),
         )
         # Auto-curriculum: checkpoints of worker save-states at new
         # depth records land here so the NEXT training run can start

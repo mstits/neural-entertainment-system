@@ -1,4 +1,5 @@
 name: Mario 2-2 water
+reward_id: mario
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de
 description: 'Tile-scout vanilla PPO targeting SMB 2-2, the first underwater level.

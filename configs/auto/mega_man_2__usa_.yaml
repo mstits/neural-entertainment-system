@@ -4,6 +4,7 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "Mega Man 2 (USA)"
+reward_id: mega_man
 rom_filename: "Mega Man 2 (USA).nes"
 rom_hashes:
   - "8e4bc5b03ffbd4ef91400e92e50dd294"

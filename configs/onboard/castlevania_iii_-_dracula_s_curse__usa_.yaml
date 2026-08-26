@@ -3,6 +3,9 @@
 # trusting any address, and re-generate rather than editing in
 # place while the draft is still being calibrated.
 name: Castlevania III - Dracula's Curse (USA)
+# UNAUDITED INHERITANCE: CV1-authored reward applied to CV3. Preserves
+# today's behaviour; not verified on this ROM.
+reward_id: castlevania
 start_state_path: roms/Castlevania III - Dracula's Curse (USA)_start.state.bin
 rom_hashes:
 - d16a502d0125f23cc3d980ddc6b6f2e8

@@ -53,6 +53,7 @@
 # grep — recovery-pool liveness, S1) are in the proposal and are not
 # optional.
 name: Mario 1-1 v27 recovery seed2
+reward_id: mario
 rom_path: "roms/Super Mario Bros. (World).nes"
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

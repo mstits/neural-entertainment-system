@@ -4,6 +4,7 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "Ghosts'n Goblins (USA)"
+reward_id: ghosts
 rom_filename: "Ghosts'n Goblins (USA).nes"
 rom_hashes:
   - "6dd3872fff67b4f324a740aa87ac2b93"

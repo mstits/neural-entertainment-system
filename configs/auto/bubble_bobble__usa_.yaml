@@ -4,6 +4,7 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "Bubble Bobble (USA)"
+reward_id: bubble_bobble
 rom_filename: "Bubble Bobble (USA).nes"
 rom_hashes:
   - "e6cb4e0faf2e944b2a0c8d78a399ac7f"

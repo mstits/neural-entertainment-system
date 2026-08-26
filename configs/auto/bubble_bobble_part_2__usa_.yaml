@@ -4,6 +4,9 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "Bubble Bobble Part 2 (USA)"
+# UNAUDITED INHERITANCE: BubbleBobbleReward was authored against Bubble
+# Bobble 1, a different game. Preserves today's behaviour.
+reward_id: bubble_bobble
 rom_filename: "Bubble Bobble Part 2 (USA).nes"
 rom_hashes:
   - "253dd3c4d45badba360aff138683282d"

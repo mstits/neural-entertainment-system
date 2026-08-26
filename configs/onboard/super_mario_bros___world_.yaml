@@ -3,6 +3,7 @@
 # trusting any address, and re-generate rather than editing in
 # place while the draft is still being calibrated.
 name: Super Mario Bros. (World)
+reward_id: mario
 start_state_path: roms/Super Mario Bros. (World)_start.state.bin
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

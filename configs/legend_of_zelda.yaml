@@ -1,4 +1,9 @@
 name: "The Legend of Zelda"
+# reward_id: explicit dispatch. This profile declares no reward weights;
+# generic is the axis-free arm with no win predicate. It previously
+# inherited ZeldaReward (and its quarantined 0x0672 predicate) purely
+# because its display name contains "Zelda".
+reward_id: generic
 
 rom_path: "roms/Legend of Zelda, The (USA) (Rev A).nes"
 start_state_path: "roms/Legend of Zelda, The (USA) (Rev A)_start.state.bin"

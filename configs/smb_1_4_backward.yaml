@@ -1,4 +1,5 @@
 name: "Mario 1-4 go-explore"   # SAME ckpt dir -> --resume the go_explore policy (iter 790)
+reward_id: mario
 
 # BACKWARD-CURRICULUM phase 1 for 1-4. Validated facts (2026-07-07):
 #   * From the bridge (world-x ~2432) the trained policy crosses to world 2

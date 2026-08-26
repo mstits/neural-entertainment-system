@@ -1,4 +1,5 @@
 name: "Bubble Bobble"
+reward_id: bubble_bobble
 # TODO (user): fill in rom_hashes (see `make setup-check`).
 # Start state CAPTURED (scripts/capture_start_state.py --game bubble_bobble):
 # controllable round-1 gameplay confirmed at frame 1695 (title/menu mashed

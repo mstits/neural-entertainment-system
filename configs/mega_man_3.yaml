@@ -1,4 +1,7 @@
 name: "Mega Man 3 (USA)"
+# UNAUDITED INHERITANCE: MegaManReward was authored against Mega Man 1.
+# Never verified on MM3. Preserves today's behaviour.
+reward_id: mega_man
 
 rom_path: "roms/Mega Man 3 (USA).nes"
 rom_hashes:

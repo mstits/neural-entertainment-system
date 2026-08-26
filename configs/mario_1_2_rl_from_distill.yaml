@@ -14,6 +14,7 @@
 # --level-clear --sticky-prob 0.25 --start-jitter 16.
 
 name: Mario 1-2 RL from distilled init
+reward_id: mario
 rom_path: "roms/Super Mario Bros. (World).nes"
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

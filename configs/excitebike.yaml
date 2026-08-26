@@ -1,4 +1,5 @@
 name: "Excitebike"
+reward_id: excitebike
 # Live Selection-A race state, captured right at the GO of the start
 # countdown. Without it the emulator cold-boots to the title/attract demo,
 # which ignores controller input -> zero learning signal.

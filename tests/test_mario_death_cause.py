@@ -21,6 +21,7 @@ PLAYER_STATE_DYING = 0x0B
 def _profile() -> dict:
     return {
         "name": "mario",
+        "reward_id": "mario",
         "reward_weights": {
             "forward_progress": 0.0,
             "score_delta": 0.0,
@@ -182,6 +183,7 @@ def test_extras_default_to_zero_for_backward_compat() -> None:
     every game profile that hasn't been migrated."""
     profile = {
         "name": "mario",
+        "reward_id": "mario",
         "reward_weights": {
             "forward_progress": 0.0,
             "score_delta": 0.0,

@@ -181,6 +181,7 @@
 #     bottom of this file).
 
 name: Mario 1-1 backward v4
+reward_id: mario
 rom_path: "roms/Super Mario Bros. (World).nes"
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

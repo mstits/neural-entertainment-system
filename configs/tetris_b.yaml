@@ -1,4 +1,5 @@
 name: "Tetris B-TYPE"
+reward_id: tetris
 
 # =====================================================================
 # NES Tetris (Nintendo, 1989) — B-TYPE. Totality basis class 7:

@@ -1,4 +1,5 @@
 name: "Double Dragon"
+reward_id: double_dragon
 # ============================================================================
 # STATUS: TRAINABLE reward SHIPPED (DoubleDragonReward). Start state CAPTURED
 # (Go-Explore bootstrap pass) and the game IS registered in train_game.py.

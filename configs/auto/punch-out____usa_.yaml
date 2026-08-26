@@ -4,6 +4,7 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "Punch-Out!! (USA)"
+reward_id: punch_out
 rom_filename: "Punch-Out!! (USA).nes"
 rom_hashes:
   - "3e4af91097aece830b3039af3f2c0802"

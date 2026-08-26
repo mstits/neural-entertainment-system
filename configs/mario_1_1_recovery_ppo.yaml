@@ -7,6 +7,7 @@
 # is reused as a uniform restart pool: the window covers every entry
 # and the advance gate can never fire.
 name: Mario 1-1 recovery PPO
+reward_id: mario
 rom_path: "roms/Super Mario Bros. (World).nes"
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

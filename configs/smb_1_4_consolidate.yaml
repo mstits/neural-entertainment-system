@@ -1,4 +1,5 @@
 name: "Mario 1-4 go-explore"   # SAME name -> same ckpt dir -> --resume from iter 790
+reward_id: mario
 
 # CONSOLIDATION phase for 1-4. The Go-Explore run reached a ~15% stochastic
 # clear rate but stayed at high entropy (~1.87) — it explores but never

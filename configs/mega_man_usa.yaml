@@ -1,4 +1,5 @@
 name: "Mega Man (USA)"
+reward_id: mega_man
 
 rom_path: "roms/Mega Man (USA).nes"
 rom_hashes:

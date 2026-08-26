@@ -10,6 +10,11 @@
 # a fresh, empty show dir, so the swarm has to actually find it.
 
 name: SMB 4-4 micro (full controller)
+# reward_id: explicit dispatch — preserves today's behaviour.
+# TODO: same defect as configs/smb_4_4_micro.yaml — declares
+# MarioReward-only weights that GenericReward ignores. Flipping to
+# reward_id: mario is a separate, measured change.
+reward_id: generic
 rom_path: roms/Super Mario Bros. (World).nes
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

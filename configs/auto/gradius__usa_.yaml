@@ -4,6 +4,7 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "Gradius (USA)"
+reward_id: gradius
 rom_filename: "Gradius (USA).nes"
 rom_hashes:
   - "fcc019dc8054403fd28b8de03d7e16aa"

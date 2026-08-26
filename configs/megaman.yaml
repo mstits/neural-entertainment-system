@@ -1,4 +1,5 @@
 name: "Mega Man"
+reward_id: mega_man
 # NOTE: the reward fn + RAM map are calibrated for Mega Man 2 and
 # verified against datacrystal.tcrf.net/wiki/Mega_Man_2/RAM_map:
 #   $0460 X (screen-relative, wraps per screen), $04A0 Y, $06C0 HP

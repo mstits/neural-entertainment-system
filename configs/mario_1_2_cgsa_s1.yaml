@@ -27,6 +27,7 @@
 # EVAL UNCHANGED: cold greedy + sticky-0.25 + jitter-16 from the entrance.
 
 name: Mario 1-2 CGSA s1
+reward_id: mario
 rom_path: "roms/Super Mario Bros. (World).nes"
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

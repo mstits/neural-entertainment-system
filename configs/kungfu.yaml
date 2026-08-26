@@ -1,4 +1,5 @@
 name: "Kung Fu"
+reward_id: kung_fu
 # Live Floor-1 gameplay start state. It loads at the "1-PLAYER 1-FLOOR"
 # intro banner (game_mode $0051 == 1, Thomas briefly frozen); control is
 # handed over ~40 frames later when $0051 flips to 2 and grippers spawn.

@@ -1,4 +1,9 @@
 name: "Castlevania III - Dracula's Curse"
+# UNAUDITED INHERITANCE: this is CastlevaniaReward, authored against CV1's
+# $0044/$002A/$0028 and its Dracula stage-0x12 win predicate. Never verified
+# on CV3. Declared explicitly to preserve today's behaviour, not because it
+# is known correct.
+reward_id: castlevania
 
 rom_path: "roms/Castlevania III - Dracula's Curse (USA).nes"
 rom_hashes:

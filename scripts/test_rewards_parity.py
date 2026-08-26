@@ -75,12 +75,12 @@ def run_game(game_name: str, profile: dict, n_steps: int = 500, seed: int = 42) 
 
 def main() -> None:
     profiles = [
-        {"name": "zelda", "reward_weights": {}},
-        {"name": "mario", "reward_weights": {}},
-        {"name": "contra", "reward_weights": {}},
-        {"name": "megaman", "reward_weights": {}},
-        {"name": "castlevania", "reward_weights": {}},
-        {"name": "metroid", "reward_weights": {}},
+        {"name": "zelda", "reward_id": "zelda", "reward_weights": {}},
+        {"name": "mario", "reward_id": "mario", "reward_weights": {}},
+        {"name": "contra", "reward_id": "contra", "reward_weights": {}},
+        {"name": "megaman", "reward_id": "mega_man", "reward_weights": {}},
+        {"name": "castlevania", "reward_id": "castlevania", "reward_weights": {}},
+        {"name": "metroid", "reward_id": "metroid", "reward_weights": {}},
     ]
     print("Rust reward parity test (500 steps per game)")
     print("-" * 60)

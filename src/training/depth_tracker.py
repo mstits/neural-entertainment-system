@@ -6,6 +6,11 @@ Thin Python façade over `nes_core.DepthTracker`. Per-game RAM readers
 `nes_core/src/depth_tracker.rs`; this module handles the JSONL memo
 file I/O (Rust doesn't need to know about file paths).
 
+The reader is selected by the profile's explicitly declared
+`reward_id` (passed through as `depth_id`), never by substring-matching
+the display name — that is what used to hand any profile titled
+"...Zelda..." the Zelda RAM offsets whether or not it meant them.
+
 What depth-tracking gives us:
 
 * **New-record narration.** When a worker pushes past the previous
@@ -39,9 +44,19 @@ class DepthTracker:
     dict on a strictly-greater depth key; `None` otherwise.
     """
 
-    def __init__(self, game: str, memo_path: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        game: str,
+        memo_path: Optional[Path] = None,
+        depth_id: Optional[str] = None,
+    ) -> None:
+        # `game` is the memo label only. `depth_id` — the profile's
+        # declared `reward_id` — picks the RAM reader. Omitting it
+        # means the generic reader (first two RAM bytes), never a
+        # reader inferred from the display name.
         self.game = game
-        self._inner = nes_core.DepthTracker(game)
+        self.depth_id = depth_id
+        self._inner = nes_core.DepthTracker(game, depth_id=depth_id)
         # Bounded ring — the durable record is the memo JSONL
         # (_append_memo); this in-memory copy only backs the optional
         # dump(). An unbounded list grew for the whole run with no

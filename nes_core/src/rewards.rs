@@ -14,9 +14,11 @@
 //!
 //! The Python trainer constructs these through
 //! `nes_core.build_reward_function(game_profile_dict)` — a factory
-//! that inspects `profile["name"]` and `profile["reward_weights"]`
-//! and dispatches to the right enum variant. Same surface as the
-//! Python `build_reward_function` it replaces.
+//! that reads `profile["reward_id"]` (defaulting to `"generic"`) and
+//! `profile["reward_weights"]` and dispatches to the right enum
+//! variant. The profile's DISPLAY NAME is never consulted: it used to
+//! be, by substring, which silently handed Zelda's quarantined win
+//! predicate to every profile whose title contained "Zelda".
 
 use std::collections::{HashMap, HashSet};
 
@@ -65,6 +67,31 @@ pub enum Reward {
 }
 
 impl Reward {
+    /// The `reward_id` this variant corresponds to. Round-trips with
+    /// `build_reward`: `build_reward(r.kind(), w)` rebuilds the same
+    /// arm. Exposed to Python as `RewardFunction.kind`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Reward::Zelda(_) => "zelda",
+            Reward::Mario(_) => "mario",
+            Reward::Contra(_) => "contra",
+            Reward::MegaMan(_) => "mega_man",
+            Reward::Castlevania(_) => "castlevania",
+            Reward::Metroid(_) => "metroid",
+            Reward::Tetris(_) => "tetris",
+            Reward::BubbleBobble(_) => "bubble_bobble",
+            Reward::PunchOut(_) => "punch_out",
+            Reward::KungFu(_) => "kung_fu",
+            Reward::Gradius(_) => "gradius",
+            Reward::Excitebike(_) => "excitebike",
+            Reward::Ghosts(_) => "ghosts",
+            Reward::DuckTales(_) => "ducktales",
+            Reward::KidIcarus(_) => "kid_icarus",
+            Reward::DoubleDragon(_) => "double_dragon",
+            Reward::Generic(_) => "generic",
+        }
+    }
+
     pub fn reset(&mut self) {
         match self {
             Reward::Zelda(r) => r.reset(),
@@ -4406,322 +4433,380 @@ fn w(weights: &HashMap<String, f64>, key: &str, default: f64) -> f64 {
     weights.get(key).copied().unwrap_or(default)
 }
 
-pub fn build_reward(name: &str, weights: &HashMap<String, f64>) -> Option<Reward> {
-    let name = name.to_lowercase();
-    if name.contains("mario") {
-        return Some(Reward::Mario(MarioReward::new(
-            w(weights, "forward_progress", 1.0),
-            w(weights, "score_delta", 0.025),
-            w(weights, "death_penalty", -15.0),
-            w(weights, "completion_bonus", 100.0),
-            w(weights, "time_penalty", -0.01),
-            // Dense progress checkpoints (default off for back-compat —
-            // tile-mode profiles set 1.0 to enable).
-            w(weights, "checkpoint_scale", 0.0),
-            // Air bonus: per-step reward when airborne AND vel_x>0.
-            // 0.0 (default) preserves existing behavior. tile-mode
-            // profiles can opt in (~0.5-1.0) to give PPO direct
-            // gradient on jump-while-running, addressing the
-            // observed "stuck before staircase" failure mode.
-            w(weights, "air_bonus", 0.0),
-            // Death-cause differentiation (both default 0 = back-
-            // compat). Negative values strengthen the death signal
-            // for the specific failure mode; e.g. pit_fall_extra
-            // -15 doubles the penalty for falling vs running into
-            // an enemy, teaching PPO to commit to jumps earlier.
-            w(weights, "pit_fall_extra", 0.0),
-            w(weights, "enemy_death_extra", 0.0),
-            // Periodic survival bonus — defaults disabled.
-            w(weights, "survival_bonus", 0.0),
-            w(weights, "survival_block_steps", 150.0) as u32,
-            // Jump-clear bonus — defaults disabled. Fires when Mario
-            // lands at least min_dx X-units past the takeoff point.
-            w(weights, "jump_clear_bonus", 0.0),
-            w(weights, "jump_clear_min_dx", 16.0) as u32,
-        )));
+/// Every reward arm a profile may declare through its top-level
+/// `reward_id` key. This table is the complete selector set: an id
+/// outside it yields `None`, which the Python boundary turns into a
+/// loud `ValueError` rather than a silent downgrade to `generic`.
+///
+/// Exported to Python as `nes_core.reward_ids()` so the roster lint
+/// derives its valid-id set from the code instead of a second copy.
+pub const REWARD_IDS: &[&str] = &[
+    "generic",
+    "mario",
+    "zelda",
+    "contra",
+    "mega_man",
+    "castlevania",
+    "metroid",
+    "tetris",
+    "bubble_bobble",
+    "punch_out",
+    "kung_fu",
+    "gradius",
+    "excitebike",
+    "ghosts",
+    "ducktales",
+    "kid_icarus",
+    "double_dragon",
+];
+
+/// Canonicalise a declared id before lookup: trim, lowercase, and fold
+/// `-` / ` ` to `_`. So `"Kung Fu"`, `"kung-fu"` and `"kung_fu"` all
+/// resolve to the same arm.
+pub fn normalise_reward_id(id: &str) -> String {
+    id.trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c == '-' || c == ' ' { '_' } else { c })
+        .collect()
+}
+
+/// Build the reward arm a profile explicitly declared.
+///
+/// Takes the profile's `reward_id`, NEVER its display name. The display
+/// name is not a parameter of this function, so selecting a reward by
+/// matching on it is structurally impossible here — that is the point.
+/// Substring dispatch on `name` previously handed Zelda's quarantined
+/// win predicate to any profile whose title contained "Zelda" (including
+/// configs/legend_of_zelda.yaml, which declares no reward at all) while
+/// withholding Mario's reward from configs/smb_4_4_micro.yaml, whose
+/// title does not contain "mario". The name is not a usable selector in
+/// either direction.
+///
+/// Returns `None` for an id outside `REWARD_IDS`. Callers must surface
+/// that as an error; falling back to `generic` would recreate the silent
+/// downgrade this change exists to remove.
+pub fn build_reward(reward_id: &str, weights: &HashMap<String, f64>) -> Option<Reward> {
+    let id = normalise_reward_id(reward_id);
+    match id.as_str() {
+        "mario" => {
+            Some(Reward::Mario(MarioReward::new(
+                w(weights, "forward_progress", 1.0),
+                w(weights, "score_delta", 0.025),
+                w(weights, "death_penalty", -15.0),
+                w(weights, "completion_bonus", 100.0),
+                w(weights, "time_penalty", -0.01),
+                // Dense progress checkpoints (default off for back-compat —
+                // tile-mode profiles set 1.0 to enable).
+                w(weights, "checkpoint_scale", 0.0),
+                // Air bonus: per-step reward when airborne AND vel_x>0.
+                // 0.0 (default) preserves existing behavior. tile-mode
+                // profiles can opt in (~0.5-1.0) to give PPO direct
+                // gradient on jump-while-running, addressing the
+                // observed "stuck before staircase" failure mode.
+                w(weights, "air_bonus", 0.0),
+                // Death-cause differentiation (both default 0 = back-
+                // compat). Negative values strengthen the death signal
+                // for the specific failure mode; e.g. pit_fall_extra
+                // -15 doubles the penalty for falling vs running into
+                // an enemy, teaching PPO to commit to jumps earlier.
+                w(weights, "pit_fall_extra", 0.0),
+                w(weights, "enemy_death_extra", 0.0),
+                // Periodic survival bonus — defaults disabled.
+                w(weights, "survival_bonus", 0.0),
+                w(weights, "survival_block_steps", 150.0) as u32,
+                // Jump-clear bonus — defaults disabled. Fires when Mario
+                // lands at least min_dx X-units past the takeoff point.
+                w(weights, "jump_clear_bonus", 0.0),
+                w(weights, "jump_clear_min_dx", 16.0) as u32,
+            )))
+        }
+        "zelda" => {
+            Some(Reward::Zelda(ZeldaReward::new(
+                w(weights, "exploration_bonus", 20.0),
+                w(weights, "rupee_collected", 2.0),
+                w(weights, "heart_container", 30.0),
+                w(weights, "heart_recovery", 5.0),
+                w(weights, "triforce_piece", 50.0),
+                w(weights, "damage_taken", -5.0),
+                w(weights, "death_penalty", -20.0),
+                w(weights, "time_penalty", -0.001),
+                w(weights, "motion", 0.0),
+                w(weights, "stagnation", -0.05),
+                w(weights, "stagnation_window", 30.0) as usize,
+                w(weights, "wall_bump", -0.5),
+                w(weights, "enemy_kill", 3.0),
+                w(weights, "dungeon_enter", 15.0),
+                w(weights, "new_item", 25.0),
+                w(weights, "item_tier_upgrade", 15.0),
+                w(weights, "first_sword", 100.0),
+                w(weights, "key_collected", 10.0),
+                w(weights, "magic_key", 30.0),
+                w(weights, "map_compass", 8.0),
+                w(weights, "item_used", 3.0),
+                w(weights, "item_cycle", 0.5),
+                w(weights, "activity_timeout_steps", 120.0) as usize,
+                // Win-chain milestones. Defaults dwarf the exploration bonus
+                // (128 screens x 50 = 6400) so reaching Ganon strictly dominates
+                // map-wandering: all-fragments 3000, Level-9 entry 5000, Ganon
+                // fight 5000, the win 20000. Tunable per profile.
+                w(weights, "all_fragments", 3000.0),
+                w(weights, "level9_enter", 5000.0),
+                w(weights, "ganon_reached", 5000.0),
+                w(weights, "win_bonus", 20000.0),
+            )))
+        }
+        "contra" => {
+            Some(Reward::Contra(ContraReward::new(
+                w(weights, "forward_progress", 0.5),
+                w(weights, "score_delta", 0.01),
+                w(weights, "weapon_upgrade", 5.0),
+                w(weights, "death_penalty", -25.0),
+                w(weights, "time_penalty", -0.005),
+                w(weights, "screen_progress_bonus", 0.0),
+                w(weights, "completion_bonus", 0.0),
+                w(weights, "clear_screen", 255.0) as u8,
+            )))
+        }
+        "mega_man" => {
+            Some(Reward::MegaMan(MegaManReward::new(
+                w(weights, "forward_progress", 0.1),
+                w(weights, "health_delta", -2.0),
+                w(weights, "boss_damage", 5.0),
+                w(weights, "boss_killed", 75.0),
+                w(weights, "death_penalty", -30.0),
+                w(weights, "time_penalty", -0.002),
+            )))
+        }
+        "castlevania" => {
+            Some(Reward::Castlevania(CastlevaniaReward::new(
+                w(weights, "forward_progress", 0.5),
+                w(weights, "health_delta", -1.5),
+                w(weights, "heart_collected", 0.5),
+                w(weights, "boss_damage", 3.0),
+                w(weights, "boss_killed", 50.0),
+                w(weights, "stage_cleared", 100.0),
+                w(weights, "death_penalty", -25.0),
+                w(weights, "time_penalty", -0.005),
+            )))
+        }
+        "metroid" => {
+            Some(Reward::Metroid(MetroidReward::new(
+                w(weights, "exploration_bonus", 8.0),
+                w(weights, "missile_collected", 3.0),
+                w(weights, "energy_tank", 200.0),   // filled-tank milestone (accessible)
+                w(weights, "new_item", 30.0),       // unused: item flags are WRAM-only
+                w(weights, "boss_damage", 20.0),    // per Mother-Brain hit
+                w(weights, "boss_killed", 5000.0),  // TERMINAL win (MB dead + escaped)
+                w(weights, "health_delta", -1.0),
+                w(weights, "death_penalty", -25.0),
+                w(weights, "time_penalty", -0.002),
+            )))
+        }
+        "tetris" => {
+            Some(Reward::Tetris(TetrisReward::new(
+                w(weights, "line_clear_bonus", 100.0),
+                w(weights, "score_delta", 0.1),
+                w(weights, "top_out_penalty", -50.0),
+                w(weights, "height_penalty", -0.5),
+                w(weights, "hole_penalty", -2.0),
+                w(weights, "survival_weight", 0.01),
+                w(weights, "time_penalty", -0.001),
+                w(weights, "line_goal", 10.0) as u32,
+                // Board shaping (aggregate height / holes) is opt-in like Mario's
+                // checkpoint_scale — 0.0 disables it (and its unverified
+                // EMPTY_CELL sentinel). Profiles set 1.0 to enable.
+                w(weights, "board_shaping", 0.0),
+            )))
+        }
+        "bubble_bobble" => {
+            Some(Reward::BubbleBobble(BubbleBobbleReward::new(
+                w(weights, "round_clear_bonus", 200.0),
+                w(weights, "score_delta", 0.05),
+                w(weights, "enemy_defeat", 10.0),
+                w(weights, "death_penalty", -25.0),
+                w(weights, "survival_weight", 0.01),
+                w(weights, "time_penalty", -0.002),
+                w(weights, "round_goal", 1.0) as u8,
+                // 0 = enemy-count shaping DISABLED until a verified address exists.
+                w(weights, "enemy_count_addr", 0.0) as usize,
+            )))
+        }
+        // "punch-out" only (NOT bare "punch"): the library also ships "Power Punch
+        // II", whose RAM layout differs — it must fall through to Generic.
+        "punch_out" => {
+            Some(Reward::PunchOut(PunchOutReward::new(
+                w(weights, "opp_damage", 0.5), // per opp-HP unit lost (landed punches)
+                w(weights, "knockdown_bonus", 25.0), // each opponent knockdown
+                w(weights, "star_bonus", 2.0), // each star banked (clean counter)
+                w(weights, "mac_damage", -0.3), // per Mac-HP unit lost
+                w(weights, "mac_knockdown", -20.0), // each knockdown Mac takes
+                w(weights, "win_bonus", 500.0), // TERMINAL: match won (dominates shaping)
+                w(weights, "loss_penalty", -50.0), // TERMINAL: Mac TKO'd (losses++)
+                w(weights, "time_penalty", -0.002),
+            )))
+        }
+        "kung_fu" => {
+            Some(Reward::KungFu(KungFuReward::new(
+                w(weights, "forward_progress", 0.05),
+                w(weights, "score_delta", 0.05),
+                w(weights, "floor_clear_bonus", 500.0),
+                w(weights, "game_clear_bonus", 5000.0),
+                // Boss-HP shaping OFF by default: $04A5 is cross-sourced but was
+                // never seen behaving as boss HP in live play (idles at 0x30, only
+                // 0 on the death reset). Set >0 once verified to add per-hit boss
+                // shaping (guarded against the death-frame reset in compute()).
+                w(weights, "boss_damage", 0.0),
+                w(weights, "health_penalty", -0.05),
+                w(weights, "death_penalty", -25.0),
+                w(weights, "time_penalty", -0.005),
+                w(weights, "survival_weight", 0.01),
+                // floors_cleared >= floor_goal == a real stage-clear win (default
+                // 1 = clear Floor 1). game_clear_floor = the $0058 value that means
+                // the game is beaten / Sylvia rescued (terminal jackpot).
+                w(weights, "floor_goal", 1.0) as u8,
+                w(weights, "game_clear_floor", 5.0) as u8,
+            )))
+        }
+        "gradius" => {
+            Some(Reward::Gradius(GradiusReward::new(
+                // SURVIVAL is the dense progress signal for an auto-scroller; over a
+                // full 2500-step episode it tops out near 0.05*2500 = 125, so the
+                // stage-clear win (1000) strictly dominates it and the power-ups.
+                w(weights, "survival_weight", 0.05),
+                w(weights, "powerup_bonus", 5.0),
+                w(weights, "capsule_bonus", 2.0),
+                w(weights, "stage_clear_bonus", 1000.0),
+                w(weights, "death_penalty", -25.0),
+                w(weights, "time_penalty", -0.002),
+                // 0 = stage-clear WIN detection DISABLED (never-false-positive
+                // default): Gradius's stage-number byte is undocumented and no
+                // empirical candidate proved stable mid-stage, so the win stays
+                // unreachable until the real address is verified off a live
+                // stage-1->2 transition and set here (as Contra's clear_screen).
+                w(weights, "stage_addr", 0.0) as usize,
+            )))
+        }
+        "excitebike" => {
+            Some(Reward::Excitebike(ExcitebikeReward::new(
+                // Per unit of within-section distance (0x00ED). A full clean race
+                // accrues ~265 distance total, so at 1.0 the shaping sum stays well
+                // under the completion bonus.
+                w(weights, "forward_progress", 1.0),
+                // Milestone each time a track section is completed (0x03A4 +1);
+                // ~3 fire per race.
+                w(weights, "section_bonus", 25.0),
+                // Small throttle-holding shaping, <= this per step (normalized).
+                w(weights, "speed_bonus", 0.02),
+                // One-shot on a crash/tumble (0x00F2 -> 2).
+                w(weights, "crash_penalty", -8.0),
+                // One-shot on the engine overheating and stalling (0x03B6 >= 32).
+                w(weights, "overheat_penalty", -5.0),
+                // TERMINAL: crossing the finish line (0x03A4 reaches the final
+                // section). Dominates the entire shaping sum (~365) so finishing
+                // strictly beats forever-accruing distance; there is no time limit
+                // and the episode ends here, so laps cannot be farmed.
+                w(weights, "completion_bonus", 1000.0),
+                w(weights, "time_penalty", -0.005),
+            )))
+        }
+        "ghosts" => {
+            Some(Reward::Ghosts(GhostsReward::new(
+                w(weights, "forward_progress", 0.05),
+                w(weights, "kill_weight", 0.05),
+                w(weights, "armor_hit_penalty", -8.0),
+                w(weights, "death_penalty", -25.0),
+                w(weights, "stage_cleared", 500.0),
+                w(weights, "survival_weight", 0.01),
+                w(weights, "time_penalty", -0.005),
+                // Path-B "area reload" win: deep world-x then a collapse to ~0.
+                // clear_min_progress must be tuned to a real Stage-1 length once a
+                // stage transition is reachable; keep it above spawn noise so it
+                // can never false-fire. Set very high to disable Path B.
+                w(weights, "clear_min_progress", 1500.0) as i32,
+                w(weights, "reset_threshold", 200.0) as i32,
+                // 0 = optional VERIFIED-stage-byte win path DISABLED (no stage byte
+                // is verified on this ROM yet). 0 = score/kill shaping DISABLED (no
+                // clean score byte isolated). Set to a verified address to enable.
+                w(weights, "stage_addr", 0.0) as usize,
+                w(weights, "score_addr", 0.0) as usize,
+            )))
+        }
+        "ducktales" => {
+            Some(Reward::DuckTales(DuckTalesReward::new(
+                w(weights, "forward_progress", 0.01),
+                w(weights, "treasure_weight", 0.0005),
+                // Dominant win: a level boss's $1,000,000 main treasure = a clear.
+                w(weights, "level_clear_bonus", 2000.0),
+                w(weights, "damage_penalty", -5.0),
+                w(weights, "death_penalty", -25.0),
+                w(weights, "survival_weight", 0.01),
+                w(weights, "time_penalty", -0.001),
+                // Single-step money jump marking a boss's main treasure
+                // ($1,000,000) vs the largest gem (a $50,000 red diamond).
+                w(weights, "win_treasure_value", 500000.0) as u64,
+                w(weights, "level_goal", 1.0) as u32,
+            )))
+        }
+        "kid_icarus" => {
+            Some(Reward::KidIcarus(KidIcarusReward::new(
+                w(weights, "score_delta", 0.02),
+                w(weights, "health_delta", -3.0),
+                w(weights, "stage_cleared", 300.0),
+                w(weights, "boss_damage", 5.0),
+                w(weights, "boss_killed", 500.0),
+                w(weights, "death_penalty", -25.0),
+                w(weights, "time_penalty", -0.005),
+                // Opt-in vertical-climb shaping. DISABLED by default (weight 0 /
+                // addr 0): no verified vertical-scroll accumulator exists on this
+                // ROM (Pit's on-screen Y lives in OAM; blind play never scrolled
+                // the camera to expose a monotonic altitude byte). Set both to
+                // enable once a climb byte (larger = higher) is verified.
+                w(weights, "altitude_weight", 0.0),
+                w(weights, "altitude_addr", 0.0) as usize,
+            )))
+        }
+        // Base Double Dragon only. The library also ships "Battletoads-Double
+        // Dragon", "Double Dragon II", and "Double Dragon III" — different RAM
+        // maps. They no longer need excluding by name: a profile gets this arm
+        // only by declaring `reward_id: double_dragon`, and those three declare
+        // `generic`.
+        "double_dragon" => {
+            Some(Reward::DoubleDragon(DoubleDragonReward::new(
+                w(weights, "forward_progress", 0.5), // per new-ground px (per-section high-water)
+                w(weights, "enemy_defeat", 25.0),    // per enemy killed ($0042 rise) — dense gate signal
+                w(weights, "heart_earned", 15.0),    // per heart / move unlock ($0040 rise)
+                w(weights, "score_delta", 0.01),     // tiny strike-landed shaping ($0044-46)
+                w(weights, "health_penalty", -0.2),  // per life-bar unit lost ($03B4 drop)
+                w(weights, "death_penalty", -30.0),  // per life lost + on game over
+                w(weights, "mission_clear", 2000.0), // TERMINAL win — dominates all shaping
+                w(weights, "time_penalty", -0.01),
+                // 0x0030 best-effort mission/scene counter (win key). Replace with a
+                // verified address post assisted Mission-1 clear; no recompile needed.
+                w(weights, "mission_addr", 48.0) as usize,
+                // Opt-in coarse-scroll ($03B2) cross-section progress; 0 = disabled.
+                w(weights, "section_scale", 0.0),
+            )))
+        }
+        // The default arm, and the safe one. Axis-free progress signals
+        // (RAM-churn motion proxy, survival, auto-detected monotonic score
+        // bytes, stuck detection) — it reads no hand-authored address and
+        // carries no win predicate, so it can never manufacture an
+        // `episode_success()` a profile did not ask for. A profile that
+        // forgets to declare `reward_id` lands here, on a reward that cannot
+        // witness a clear, rather than on one that can.
+        "generic" => {
+            Some(Reward::Generic(GenericReward::new(
+                w(weights, "motion_weight", 0.01),
+                w(weights, "survival_weight", 0.01),
+                w(weights, "time_penalty", -0.001),
+                w(weights, "score_weight", 0.1),
+                w(weights, "stuck_steps", 240.0) as usize,
+                w(weights, "warmup_steps", 60.0) as usize,
+            )))
+        }
+        _ => None,
     }
-    if name.contains("zelda") {
-        return Some(Reward::Zelda(ZeldaReward::new(
-            w(weights, "exploration_bonus", 20.0),
-            w(weights, "rupee_collected", 2.0),
-            w(weights, "heart_container", 30.0),
-            w(weights, "heart_recovery", 5.0),
-            w(weights, "triforce_piece", 50.0),
-            w(weights, "damage_taken", -5.0),
-            w(weights, "death_penalty", -20.0),
-            w(weights, "time_penalty", -0.001),
-            w(weights, "motion", 0.0),
-            w(weights, "stagnation", -0.05),
-            w(weights, "stagnation_window", 30.0) as usize,
-            w(weights, "wall_bump", -0.5),
-            w(weights, "enemy_kill", 3.0),
-            w(weights, "dungeon_enter", 15.0),
-            w(weights, "new_item", 25.0),
-            w(weights, "item_tier_upgrade", 15.0),
-            w(weights, "first_sword", 100.0),
-            w(weights, "key_collected", 10.0),
-            w(weights, "magic_key", 30.0),
-            w(weights, "map_compass", 8.0),
-            w(weights, "item_used", 3.0),
-            w(weights, "item_cycle", 0.5),
-            w(weights, "activity_timeout_steps", 120.0) as usize,
-            // Win-chain milestones. Defaults dwarf the exploration bonus
-            // (128 screens x 50 = 6400) so reaching Ganon strictly dominates
-            // map-wandering: all-fragments 3000, Level-9 entry 5000, Ganon
-            // fight 5000, the win 20000. Tunable per profile.
-            w(weights, "all_fragments", 3000.0),
-            w(weights, "level9_enter", 5000.0),
-            w(weights, "ganon_reached", 5000.0),
-            w(weights, "win_bonus", 20000.0),
-        )));
-    }
-    if name.contains("contra") {
-        return Some(Reward::Contra(ContraReward::new(
-            w(weights, "forward_progress", 0.5),
-            w(weights, "score_delta", 0.01),
-            w(weights, "weapon_upgrade", 5.0),
-            w(weights, "death_penalty", -25.0),
-            w(weights, "time_penalty", -0.005),
-            w(weights, "screen_progress_bonus", 0.0),
-            w(weights, "completion_bonus", 0.0),
-            w(weights, "clear_screen", 255.0) as u8,
-        )));
-    }
-    if name.contains("mega man") || name.contains("megaman") {
-        return Some(Reward::MegaMan(MegaManReward::new(
-            w(weights, "forward_progress", 0.1),
-            w(weights, "health_delta", -2.0),
-            w(weights, "boss_damage", 5.0),
-            w(weights, "boss_killed", 75.0),
-            w(weights, "death_penalty", -30.0),
-            w(weights, "time_penalty", -0.002),
-        )));
-    }
-    if name.contains("castlevania") {
-        return Some(Reward::Castlevania(CastlevaniaReward::new(
-            w(weights, "forward_progress", 0.5),
-            w(weights, "health_delta", -1.5),
-            w(weights, "heart_collected", 0.5),
-            w(weights, "boss_damage", 3.0),
-            w(weights, "boss_killed", 50.0),
-            w(weights, "stage_cleared", 100.0),
-            w(weights, "death_penalty", -25.0),
-            w(weights, "time_penalty", -0.005),
-        )));
-    }
-    if name.contains("metroid") {
-        return Some(Reward::Metroid(MetroidReward::new(
-            w(weights, "exploration_bonus", 8.0),
-            w(weights, "missile_collected", 3.0),
-            w(weights, "energy_tank", 200.0),   // filled-tank milestone (accessible)
-            w(weights, "new_item", 30.0),       // unused: item flags are WRAM-only
-            w(weights, "boss_damage", 20.0),    // per Mother-Brain hit
-            w(weights, "boss_killed", 5000.0),  // TERMINAL win (MB dead + escaped)
-            w(weights, "health_delta", -1.0),
-            w(weights, "death_penalty", -25.0),
-            w(weights, "time_penalty", -0.002),
-        )));
-    }
-    if name.contains("tetris") {
-        return Some(Reward::Tetris(TetrisReward::new(
-            w(weights, "line_clear_bonus", 100.0),
-            w(weights, "score_delta", 0.1),
-            w(weights, "top_out_penalty", -50.0),
-            w(weights, "height_penalty", -0.5),
-            w(weights, "hole_penalty", -2.0),
-            w(weights, "survival_weight", 0.01),
-            w(weights, "time_penalty", -0.001),
-            w(weights, "line_goal", 10.0) as u32,
-            // Board shaping (aggregate height / holes) is opt-in like Mario's
-            // checkpoint_scale — 0.0 disables it (and its unverified
-            // EMPTY_CELL sentinel). Profiles set 1.0 to enable.
-            w(weights, "board_shaping", 0.0),
-        )));
-    }
-    if name.contains("bubble bobble") || name.contains("bubblebobble") {
-        return Some(Reward::BubbleBobble(BubbleBobbleReward::new(
-            w(weights, "round_clear_bonus", 200.0),
-            w(weights, "score_delta", 0.05),
-            w(weights, "enemy_defeat", 10.0),
-            w(weights, "death_penalty", -25.0),
-            w(weights, "survival_weight", 0.01),
-            w(weights, "time_penalty", -0.002),
-            w(weights, "round_goal", 1.0) as u8,
-            // 0 = enemy-count shaping DISABLED until a verified address exists.
-            w(weights, "enemy_count_addr", 0.0) as usize,
-        )));
-    }
-    // "punch-out" only (NOT bare "punch"): the library also ships "Power Punch
-    // II", whose RAM layout differs — it must fall through to Generic.
-    if name.contains("punch-out") || name.contains("punch out") || name.contains("punchout") {
-        return Some(Reward::PunchOut(PunchOutReward::new(
-            w(weights, "opp_damage", 0.5), // per opp-HP unit lost (landed punches)
-            w(weights, "knockdown_bonus", 25.0), // each opponent knockdown
-            w(weights, "star_bonus", 2.0), // each star banked (clean counter)
-            w(weights, "mac_damage", -0.3), // per Mac-HP unit lost
-            w(weights, "mac_knockdown", -20.0), // each knockdown Mac takes
-            w(weights, "win_bonus", 500.0), // TERMINAL: match won (dominates shaping)
-            w(weights, "loss_penalty", -50.0), // TERMINAL: Mac TKO'd (losses++)
-            w(weights, "time_penalty", -0.002),
-        )));
-    }
-    if name.contains("kung fu") {
-        return Some(Reward::KungFu(KungFuReward::new(
-            w(weights, "forward_progress", 0.05),
-            w(weights, "score_delta", 0.05),
-            w(weights, "floor_clear_bonus", 500.0),
-            w(weights, "game_clear_bonus", 5000.0),
-            // Boss-HP shaping OFF by default: $04A5 is cross-sourced but was
-            // never seen behaving as boss HP in live play (idles at 0x30, only
-            // 0 on the death reset). Set >0 once verified to add per-hit boss
-            // shaping (guarded against the death-frame reset in compute()).
-            w(weights, "boss_damage", 0.0),
-            w(weights, "health_penalty", -0.05),
-            w(weights, "death_penalty", -25.0),
-            w(weights, "time_penalty", -0.005),
-            w(weights, "survival_weight", 0.01),
-            // floors_cleared >= floor_goal == a real stage-clear win (default
-            // 1 = clear Floor 1). game_clear_floor = the $0058 value that means
-            // the game is beaten / Sylvia rescued (terminal jackpot).
-            w(weights, "floor_goal", 1.0) as u8,
-            w(weights, "game_clear_floor", 5.0) as u8,
-        )));
-    }
-    if name.contains("gradius") {
-        return Some(Reward::Gradius(GradiusReward::new(
-            // SURVIVAL is the dense progress signal for an auto-scroller; over a
-            // full 2500-step episode it tops out near 0.05*2500 = 125, so the
-            // stage-clear win (1000) strictly dominates it and the power-ups.
-            w(weights, "survival_weight", 0.05),
-            w(weights, "powerup_bonus", 5.0),
-            w(weights, "capsule_bonus", 2.0),
-            w(weights, "stage_clear_bonus", 1000.0),
-            w(weights, "death_penalty", -25.0),
-            w(weights, "time_penalty", -0.002),
-            // 0 = stage-clear WIN detection DISABLED (never-false-positive
-            // default): Gradius's stage-number byte is undocumented and no
-            // empirical candidate proved stable mid-stage, so the win stays
-            // unreachable until the real address is verified off a live
-            // stage-1->2 transition and set here (as Contra's clear_screen).
-            w(weights, "stage_addr", 0.0) as usize,
-        )));
-    }
-    if name.contains("excitebike") || name.contains("excite bike") {
-        return Some(Reward::Excitebike(ExcitebikeReward::new(
-            // Per unit of within-section distance (0x00ED). A full clean race
-            // accrues ~265 distance total, so at 1.0 the shaping sum stays well
-            // under the completion bonus.
-            w(weights, "forward_progress", 1.0),
-            // Milestone each time a track section is completed (0x03A4 +1);
-            // ~3 fire per race.
-            w(weights, "section_bonus", 25.0),
-            // Small throttle-holding shaping, <= this per step (normalized).
-            w(weights, "speed_bonus", 0.02),
-            // One-shot on a crash/tumble (0x00F2 -> 2).
-            w(weights, "crash_penalty", -8.0),
-            // One-shot on the engine overheating and stalling (0x03B6 >= 32).
-            w(weights, "overheat_penalty", -5.0),
-            // TERMINAL: crossing the finish line (0x03A4 reaches the final
-            // section). Dominates the entire shaping sum (~365) so finishing
-            // strictly beats forever-accruing distance; there is no time limit
-            // and the episode ends here, so laps cannot be farmed.
-            w(weights, "completion_bonus", 1000.0),
-            w(weights, "time_penalty", -0.005),
-        )));
-    }
-    if name.contains("ghosts") {
-        return Some(Reward::Ghosts(GhostsReward::new(
-            w(weights, "forward_progress", 0.05),
-            w(weights, "kill_weight", 0.05),
-            w(weights, "armor_hit_penalty", -8.0),
-            w(weights, "death_penalty", -25.0),
-            w(weights, "stage_cleared", 500.0),
-            w(weights, "survival_weight", 0.01),
-            w(weights, "time_penalty", -0.005),
-            // Path-B "area reload" win: deep world-x then a collapse to ~0.
-            // clear_min_progress must be tuned to a real Stage-1 length once a
-            // stage transition is reachable; keep it above spawn noise so it
-            // can never false-fire. Set very high to disable Path B.
-            w(weights, "clear_min_progress", 1500.0) as i32,
-            w(weights, "reset_threshold", 200.0) as i32,
-            // 0 = optional VERIFIED-stage-byte win path DISABLED (no stage byte
-            // is verified on this ROM yet). 0 = score/kill shaping DISABLED (no
-            // clean score byte isolated). Set to a verified address to enable.
-            w(weights, "stage_addr", 0.0) as usize,
-            w(weights, "score_addr", 0.0) as usize,
-        )));
-    }
-    if name.contains("ducktales") {
-        return Some(Reward::DuckTales(DuckTalesReward::new(
-            w(weights, "forward_progress", 0.01),
-            w(weights, "treasure_weight", 0.0005),
-            // Dominant win: a level boss's $1,000,000 main treasure = a clear.
-            w(weights, "level_clear_bonus", 2000.0),
-            w(weights, "damage_penalty", -5.0),
-            w(weights, "death_penalty", -25.0),
-            w(weights, "survival_weight", 0.01),
-            w(weights, "time_penalty", -0.001),
-            // Single-step money jump marking a boss's main treasure
-            // ($1,000,000) vs the largest gem (a $50,000 red diamond).
-            w(weights, "win_treasure_value", 500000.0) as u64,
-            w(weights, "level_goal", 1.0) as u32,
-        )));
-    }
-    if name.contains("kid icarus") {
-        return Some(Reward::KidIcarus(KidIcarusReward::new(
-            w(weights, "score_delta", 0.02),
-            w(weights, "health_delta", -3.0),
-            w(weights, "stage_cleared", 300.0),
-            w(weights, "boss_damage", 5.0),
-            w(weights, "boss_killed", 500.0),
-            w(weights, "death_penalty", -25.0),
-            w(weights, "time_penalty", -0.005),
-            // Opt-in vertical-climb shaping. DISABLED by default (weight 0 /
-            // addr 0): no verified vertical-scroll accumulator exists on this
-            // ROM (Pit's on-screen Y lives in OAM; blind play never scrolled
-            // the camera to expose a monotonic altitude byte). Set both to
-            // enable once a climb byte (larger = higher) is verified.
-            w(weights, "altitude_weight", 0.0),
-            w(weights, "altitude_addr", 0.0) as usize,
-        )));
-    }
-    // Base Double Dragon only. The library also ships "Battletoads-Double
-    // Dragon", "Double Dragon II", and "Double Dragon III" — different RAM maps
-    // — so exclude them (they fall through to Generic until authored).
-    if name.contains("double dragon")
-        && !name.contains("battletoads")
-        && !name.contains(" ii")
-    {
-        return Some(Reward::DoubleDragon(DoubleDragonReward::new(
-            w(weights, "forward_progress", 0.5), // per new-ground px (per-section high-water)
-            w(weights, "enemy_defeat", 25.0),    // per enemy killed ($0042 rise) — dense gate signal
-            w(weights, "heart_earned", 15.0),    // per heart / move unlock ($0040 rise)
-            w(weights, "score_delta", 0.01),     // tiny strike-landed shaping ($0044-46)
-            w(weights, "health_penalty", -0.2),  // per life-bar unit lost ($03B4 drop)
-            w(weights, "death_penalty", -30.0),  // per life lost + on game over
-            w(weights, "mission_clear", 2000.0), // TERMINAL win — dominates all shaping
-            w(weights, "time_penalty", -0.01),
-            // 0x0030 best-effort mission/scene counter (win key). Replace with a
-            // verified address post assisted Mission-1 clear; no recompile needed.
-            w(weights, "mission_addr", 48.0) as usize,
-            // Opt-in coarse-scroll ($03B2) cross-section progress; 0 = disabled.
-            w(weights, "section_scale", 0.0),
-        )));
-    }
-    // Fallback for any ROM without a hand-authored reward. Uses generic,
-    // axis-free progress signals (RAM-churn motion proxy, survival,
-    // auto-detected monotonic score bytes, stuck detection) so a
-    // brand-new game — Tetris, Bubble Bobble, anything in the library —
-    // constructs a working reward instead of returning None (which the
-    // Python layer turned into a hard ValueError at trainer build).
-    Some(Reward::Generic(GenericReward::new(
-        w(weights, "motion_weight", 0.01),
-        w(weights, "survival_weight", 0.01),
-        w(weights, "time_penalty", -0.001),
-        w(weights, "score_weight", 0.1),
-        w(weights, "stuck_steps", 240.0) as usize,
-        w(weights, "warmup_steps", 60.0) as usize,
-    )))
 }
 
 #[cfg(test)]
@@ -5255,7 +5340,7 @@ fn dt_set_money(ram: &mut [u8], dollars: u64) {
 #[test]
 fn ducktales_level_clear_only_on_main_treasure() {
     let weights = HashMap::new();
-    let mut r = build_reward("DuckTales (USA)", &weights).unwrap();
+    let mut r = build_reward("ducktales", &weights).unwrap();
     let mut ram = vec![0u8; 2048];
     ram[0x00DD] = 3; // alive, so HP never ends the episode here
     dt_set_money(&mut ram, 0);
@@ -5499,21 +5584,27 @@ fn double_dragon_forward_is_high_water_not_farmable() {
 }
 
     #[test]
-    fn build_reward_falls_back_to_generic_for_unknown_game() {
+    fn build_reward_dispatches_on_the_declared_id_only() {
         let weights = HashMap::new();
-        // A game with no hand-authored reward must still construct a
-        // working reward (the generic fallback), not None.
+        // A game with no hand-authored reward declares `generic` and
+        // gets a working axis-free reward, not None.
         assert!(
-            matches!(build_reward("galaga", &weights), Some(Reward::Generic(_))),
-            "unknown game must fall back to GenericReward"
+            matches!(build_reward("generic", &weights), Some(Reward::Generic(_))),
+            "the generic id must construct GenericReward"
         );
-        assert!(
-            matches!(build_reward("pac-man", &weights), Some(Reward::Generic(_))),
-            "unknown game must fall back to GenericReward"
-        );
+        // An id outside REWARD_IDS is an ERROR, not a silent downgrade.
+        // `galaga` and `pac-man` were game names that used to reach this
+        // function; they are not reward ids and must not resolve to one.
+        assert!(build_reward("galaga", &weights).is_none());
+        assert!(build_reward("pac-man", &weights).is_none());
+        assert!(build_reward("mrio", &weights).is_none());
+        // The defect this replaced, asserted directly: a DISPLAY NAME
+        // containing a game token no longer selects that game's arm.
+        assert!(build_reward("The Legend of Zelda", &weights).is_none());
+        assert!(build_reward("Super Mario Bros.", &weights).is_none());
         // Named games still dispatch to their specific reward.
         assert!(matches!(
-            build_reward("super mario bros", &weights),
+            build_reward("mario", &weights),
             Some(Reward::Mario(_))
         ));
         assert!(matches!(
@@ -5526,15 +5617,45 @@ fn double_dragon_forward_is_high_water_not_farmable() {
             Some(Reward::Tetris(_))
         ));
         assert!(matches!(
-            build_reward("bubble bobble", &weights),
+            build_reward("bubble_bobble", &weights),
             Some(Reward::BubbleBobble(_))
         ));
     }
 
     #[test]
+    fn every_reward_id_constructs_and_round_trips_through_kind() {
+        let weights = HashMap::new();
+        for id in REWARD_IDS {
+            let r = build_reward(id, &weights)
+                .unwrap_or_else(|| panic!("REWARD_IDS lists {id:?} but build_reward returns None"));
+            assert_eq!(
+                r.kind(),
+                *id,
+                "kind() must round-trip the id build_reward was given"
+            );
+        }
+    }
+
+    #[test]
+    fn reward_ids_are_normalised_before_lookup() {
+        let weights = HashMap::new();
+        for spelling in ["Kung Fu", "kung-fu", "  KUNG_FU  "] {
+            assert_eq!(
+                build_reward(spelling, &weights).map(|r| r.kind()),
+                Some("kung_fu"),
+                "{spelling:?} must normalise to kung_fu"
+            );
+        }
+        assert_eq!(
+            build_reward("Punch-Out", &weights).map(|r| r.kind()),
+            Some("punch_out")
+        );
+    }
+
+    #[test]
     fn generic_reward_computes_without_panicking_on_arbitrary_ram() {
         let weights = HashMap::new();
-        let mut r = build_reward("galaga", &weights).unwrap();
+        let mut r = build_reward("generic", &weights).unwrap();
         let mut ram = zram();
         // A few steps with changing RAM must produce finite rewards.
         for i in 0..8u8 {
@@ -5596,7 +5717,7 @@ fn double_dragon_forward_is_high_water_not_farmable() {
         weights.insert("score_delta".to_string(), 0.0);
         weights.insert("survival_weight".to_string(), 0.0);
         weights.insert("time_penalty".to_string(), 0.0);
-        let mut r = build_reward("bubble bobble", &weights).unwrap();
+        let mut r = build_reward("bubble_bobble", &weights).unwrap();
         let mut ram = zram();
         ram[0x0401] = 1; // round 1
         ram[0x002E] = 3; // 3 lives
@@ -5621,7 +5742,7 @@ fn double_dragon_forward_is_high_water_not_farmable() {
         weights.insert("score_delta".to_string(), 0.0);
         weights.insert("survival_weight".to_string(), 0.0);
         weights.insert("time_penalty".to_string(), 0.0);
-        let mut r = build_reward("bubble bobble", &weights).unwrap();
+        let mut r = build_reward("bubble_bobble", &weights).unwrap();
         let mut ram = zram();
         ram[0x0401] = 1;
         ram[0x002E] = 3;

@@ -43,6 +43,7 @@ pytestmark = pytest.mark.skipif(
 def _smb_profile() -> dict:
     return {
         "name": "Super Mario Bros.",
+        "reward_id": "mario",
         "reward_weights": {
             "forward_progress": 1.0,
             "death_penalty": -15.0,

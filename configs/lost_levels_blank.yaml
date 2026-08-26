@@ -9,6 +9,7 @@
 # stem gives an empty show dir, so the swarm has to find it live.
 
 name: "Super Mario Bros. 2 (Japan) — The Lost Levels"
+reward_id: mario
 # THE TRANSFER DEMO: Lost Levels runs on the SMB1 ENGINE (same physics,
 # same RAM map), so it carries NO solve: section and auto-routes to the
 # byte-exact SmbGame adapter — the exact solver that cleared SMB1

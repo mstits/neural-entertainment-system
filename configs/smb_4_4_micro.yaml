@@ -1,4 +1,11 @@
 name: SMB 4-4 micro (full controller)
+# reward_id: explicit dispatch — preserves today's behaviour.
+# TODO: this profile declares nine MarioReward-only weights
+# (forward_progress, air_bonus, jump_clear_bonus, checkpoint_scale, ...)
+# which GenericReward ignores, and its level_id comes back "stage_1"
+# not "1-1". Switching to reward_id: mario is a real behaviour change
+# on a profile with banked live-show receipts — its own change.
+reward_id: generic
 rom_path: roms/Super Mario Bros. (World).nes
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

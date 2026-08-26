@@ -1,4 +1,5 @@
 name: "DuckTales (USA)"
+reward_id: ducktales
 # Live gameplay start-state (scripts/capture_start_state.py). The masher lands
 # in THE AMAZON (level 0 — the default LAND SELECT cursor and the canonical
 # speedrun opener). Verified: reaches Amazon gameplay (~frame 105); HUD shows

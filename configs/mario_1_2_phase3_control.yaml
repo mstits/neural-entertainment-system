@@ -2,6 +2,7 @@
 # only difference from the masked arm is the absence of
 # reinforce.hazard_mask, asserted key-by-key at generation time.
 name: Mario 1-2 phase3 control
+reward_id: mario
 rom_path: roms/Super Mario Bros. (World).nes
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

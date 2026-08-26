@@ -3,6 +3,7 @@
 # trusting any address, and re-generate rather than editing in
 # place while the draft is still being calibrated.
 name: Bubble Bobble (USA)
+reward_id: bubble_bobble
 start_state_path: roms/Bubble Bobble (USA)_start.state.bin
 rom_hashes:
 - e6cb4e0faf2e944b2a0c8d78a399ac7f

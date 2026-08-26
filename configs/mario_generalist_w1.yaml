@@ -28,6 +28,7 @@
 # That trainer change is the immediately-next build; this file is its spec.
 
 name: Mario World-1 generalist (PLR, tile)
+reward_id: mario
 rom_path: "roms/Super Mario Bros. (World).nes"
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

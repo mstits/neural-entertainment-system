@@ -1,4 +1,5 @@
 name: "Tetris"
+reward_id: tetris
 # TODO (user): supply your legally-owned dump as roms/Tetris (USA).nes, fill in
 # rom_hashes below (see `make setup-check`), and capture a LIVE gameplay start
 # state PAST the A-TYPE menu with a piece actively falling:

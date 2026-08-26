@@ -6,6 +6,7 @@
 # gate, depth tracker), so the SMB machinery stays fully active under this
 # name — only the checkpoint directory changes.
 name: "Super Mario Bros. (tiles, vanilla)"
+reward_id: mario
 rom_hashes:
   # MD5 hashes of known-good Super Mario Bros. ROM dumps
   - "811b027eaf99c2def7b933c5208636de"

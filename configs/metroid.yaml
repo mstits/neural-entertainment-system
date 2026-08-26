@@ -1,4 +1,5 @@
 name: "Metroid"
+reward_id: metroid
 # Live start-room gameplay state (Brinstar, 30 energy). Verified: loads
 # via NCST instant-load, input moves Samus (x-on-map 0x0050 advances,
 # health 0x0106/0x0107 reads 30), i.e. real gameplay, NOT the title-screen

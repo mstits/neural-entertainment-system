@@ -28,6 +28,7 @@
 # GATE: cold GREEDY + sticky-0.25 + jitter-16 from the 1-2 entrance >= 60%.
 
 name: Mario 1-2 JAVI (non-farmable wavefront + margin-bound greedy + restarts)
+reward_id: mario
 rom_path: "roms/Super Mario Bros. (World).nes"
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

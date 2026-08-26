@@ -4,6 +4,7 @@
 # castlevania, metroid) take precedence over auto-stubs of the same
 # game.
 name: "Kid Icarus (USA, Europe)"
+reward_id: kid_icarus
 rom_filename: "Kid Icarus (USA, Europe).nes"
 rom_hashes:
   - "d464e3e3877a759b8053210baaebc890"

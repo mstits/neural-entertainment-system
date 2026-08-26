@@ -1176,6 +1176,15 @@ impl RewardFunction {
         self.inner.episode_success()
     }
 
+    /// Which reward arm this instance actually resolved to — the id
+    /// from `REWARD_IDS`, not the profile's display name. Exists so a
+    /// test can assert dispatch exactly instead of inferring it from a
+    /// numeric reward delta several arms could plausibly produce.
+    #[getter]
+    fn kind(&self) -> &'static str {
+        self.inner.kind()
+    }
+
     /// Episode-cumulative reward breakdown (per signal → total). The
     /// trainer reads this at episode end for the metrics / narrator
     /// path. Returns a fresh dict so Python-side mutations don't
@@ -1298,14 +1307,37 @@ fn extract_smb_tiles_v2<'py>(
 
 /// Factory — mirrors `src/utils/reward_functions/__init__.py::build_reward_function`.
 /// Accepts a game profile dict and returns a ready-to-use RewardFunction.
+///
+/// THE SINGLE DOOR to reward dispatch, and the only place the default
+/// lives. Resolution, in full:
+///
+///   * `reward_id` absent / `None` / `""` -> `"generic"`
+///   * `reward_id` in `rewards::REWARD_IDS` -> that arm
+///   * `reward_id` anything else -> `ValueError` naming the valid set
+///
+/// The last rule is deliberate: a typo like `reward_id: mrio` must be
+/// loud. Falling back to `generic` on an unrecognised id would rebuild
+/// the silent-downgrade class this change exists to remove.
+///
+/// `profile["name"]` is not read here at all. It is a display label.
 #[pyfunction]
 fn build_reward_function(profile: &Bound<'_, pyo3::types::PyDict>) -> PyResult<RewardFunction> {
-    let name: String = profile
-        .get_item("name")?
-        .ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyKeyError, _>("profile must contain 'name'")
-        })?
-        .extract()?;
+    let reward_id: String = match profile.get_item("reward_id")? {
+        None => String::from("generic"),
+        Some(v) if v.is_none() => String::from("generic"),
+        Some(v) => {
+            let s: String = v.extract().map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "profile['reward_id'] must be a string",
+                )
+            })?;
+            if s.trim().is_empty() {
+                String::from("generic")
+            } else {
+                s
+            }
+        }
+    };
 
     // Extract reward_weights as HashMap<String, f64>. Python-side YAML
     // loads yield dict[str, float | int], so we coerce numeric types
@@ -1325,9 +1357,10 @@ fn build_reward_function(profile: &Bound<'_, pyo3::types::PyDict>) -> PyResult<R
         }
     }
 
-    let inner = crate::rewards::build_reward(&name, &weights).ok_or_else(|| {
+    let inner = crate::rewards::build_reward(&reward_id, &weights).ok_or_else(|| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "no reward function for game: {name}"
+            "unknown reward_id {reward_id:?}; valid ids are: {}",
+            crate::rewards::REWARD_IDS.join(", ")
         ))
     })?;
     Ok(RewardFunction {
@@ -1445,10 +1478,15 @@ struct DepthTracker {
 
 #[pymethods]
 impl DepthTracker {
+    /// `game` is a display label only — it selects nothing. `depth_id`
+    /// (the profile's declared `reward_id`) picks the RAM reader;
+    /// omitting it means generic.
     #[new]
-    fn new(game: &str) -> Self {
+    #[pyo3(signature = (game, depth_id = None))]
+    fn new(game: &str, depth_id: Option<&str>) -> Self {
+        let _ = game;
         Self {
-            inner: crate::depth_tracker::DepthTracker::new(game),
+            inner: crate::depth_tracker::DepthTracker::new(depth_id),
         }
     }
 
@@ -1569,6 +1607,15 @@ fn supported_mappers() -> Vec<u16> {
          228, 232, 234]
 }
 
+/// The complete set of ids a profile's `reward_id` key may declare.
+/// The roster lint derives its valid-id half from this rather than
+/// keeping a second copy, so adding a reward arm cannot leave the lint
+/// silently behind.
+#[pyfunction]
+fn reward_ids() -> Vec<&'static str> {
+    crate::rewards::REWARD_IDS.to_vec()
+}
+
 #[pymodule]
 fn nes_core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NESEnvironment>()?;
@@ -1583,6 +1630,7 @@ fn nes_core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_smb_tiles_v2, m)?)?;
     m.add_function(wrap_pyfunction!(rom_info, m)?)?;
     m.add_function(wrap_pyfunction!(supported_mappers, m)?)?;
+    m.add_function(wrap_pyfunction!(reward_ids, m)?)?;
     m.add("BUTTON_RIGHT", BUTTON_RIGHT)?;
     m.add("BUTTON_LEFT", BUTTON_LEFT)?;
     m.add("BUTTON_DOWN", BUTTON_DOWN)?;

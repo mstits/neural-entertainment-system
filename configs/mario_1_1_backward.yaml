@@ -69,6 +69,7 @@
 # EASIEST level, and the reverse-curriculum line is dead for this stack.
 
 name: Mario 1-1 backward
+reward_id: mario
 rom_path: "roms/Super Mario Bros. (World).nes"
 rom_hashes:
 - 811b027eaf99c2def7b933c5208636de

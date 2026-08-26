@@ -19,6 +19,7 @@ import nes_core
 def _profile() -> dict:
     return {
         "name": "mario",
+        "reward_id": "mario",
         "reward_weights": {
             "forward_progress": 1.0,
             "checkpoint_scale": 0.0,  # disable dense checkpoints for clean comparison

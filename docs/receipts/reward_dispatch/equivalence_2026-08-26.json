@@ -1,0 +1,265 @@
+{
+  "what": "Reward-dispatch migration equivalence receipt: display-name substring dispatch -> explicit reward_id.",
+  "method": "Real emulation, not synthetic RAM. Per profile: boot the ROM through nes_core.Pool (1 worker, the profile's own frame_skip and start_state_path), step 600 frames with a fixed seeded action sequence (random.Random(1234)), feed every RAM snapshot to the profile's reward function, and SHA-256 the (reward, done, level_id) stream. Pre-change side ran the HEAD binary (79f587c, built from a git worktree with roms/checkpoints/runs symlinked in) against the HEAD configs; post-change side ran the new binary against the migrated configs. Identical hash => identical reward trajectory.",
+  "pre_change_commit": "4eb80a62a9f38a6c85035ff1ba2b1217cb20cf0a",
+  "steps_per_profile": 600,
+  "action_seed": 1234,
+  "profiles_compared": 25,
+  "identical": 24,
+  "intended_differences": [
+    "configs/legend_of_zelda.yaml"
+  ],
+  "structural_proof": "All 17 reward-arm construction expressions (Reward::X(XReward::new(...)) argument lists) are textually identical to HEAD modulo indentation \u2014 only the selector around them changed.",
+  "profiles": {
+    "configs/arkanoid.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "generic",
+      "pre_change_trace_sha256": "9e8e3845618897996f1f8fb8356bfdec30449fb8990cb73619f8037b07992b3b",
+      "post_change_trace_sha256": "9e8e3845618897996f1f8fb8356bfdec30449fb8990cb73619f8037b07992b3b",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/bubble_bobble.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "bubble_bobble",
+      "pre_change_trace_sha256": "415898bd748c95a23fb38a4203c2f624e2f9f82d4832f9a9162b2e331f800147",
+      "post_change_trace_sha256": "415898bd748c95a23fb38a4203c2f624e2f9f82d4832f9a9162b2e331f800147",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/castlevania.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "castlevania",
+      "pre_change_trace_sha256": "9b5d0193dca2d0d34c43f14f401f597ce1adb115246d17c29540cb9977d6272c",
+      "post_change_trace_sha256": "9b5d0193dca2d0d34c43f14f401f597ce1adb115246d17c29540cb9977d6272c",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/contra.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "contra",
+      "pre_change_trace_sha256": "dd2646cf7d645e34c025cdf035bf3ff77abbe179ca98c68ecb8a37186cf1739d",
+      "post_change_trace_sha256": "dd2646cf7d645e34c025cdf035bf3ff77abbe179ca98c68ecb8a37186cf1739d",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/double_dragon.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "double_dragon",
+      "pre_change_trace_sha256": "a9256ffa7ed1ae3afdb7c9e467294d312834378818cfa1d00290a33b65a26cd5",
+      "post_change_trace_sha256": "a9256ffa7ed1ae3afdb7c9e467294d312834378818cfa1d00290a33b65a26cd5",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/ducktales.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "ducktales",
+      "pre_change_trace_sha256": "1b0ef6d8184b1bfd00676e87a688feda6059463163d2c860f8134708b5fe67b4",
+      "post_change_trace_sha256": "1b0ef6d8184b1bfd00676e87a688feda6059463163d2c860f8134708b5fe67b4",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/excitebike.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "excitebike",
+      "pre_change_trace_sha256": "43dd02238f9ae2ca49fe66d10178944ef62c80c26a80f651dc00f9e9c6a4f4b6",
+      "post_change_trace_sha256": "43dd02238f9ae2ca49fe66d10178944ef62c80c26a80f651dc00f9e9c6a4f4b6",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/ghosts_n_goblins.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "ghosts",
+      "pre_change_trace_sha256": "6c1cffc846c21950b87febb1506db4cb6668895f3b385befd4856c6f392d9241",
+      "post_change_trace_sha256": "6c1cffc846c21950b87febb1506db4cb6668895f3b385befd4856c6f392d9241",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/gradius.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "gradius",
+      "pre_change_trace_sha256": "b28eb2ccc79192406ca518d09ecec3306340dc88d83d4dcaf5fda34225d18f3e",
+      "post_change_trace_sha256": "b28eb2ccc79192406ca518d09ecec3306340dc88d83d4dcaf5fda34225d18f3e",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/kid_icarus.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "kid_icarus",
+      "pre_change_trace_sha256": "9b5d0193dca2d0d34c43f14f401f597ce1adb115246d17c29540cb9977d6272c",
+      "post_change_trace_sha256": "9b5d0193dca2d0d34c43f14f401f597ce1adb115246d17c29540cb9977d6272c",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/kungfu.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "kung_fu",
+      "pre_change_trace_sha256": "62ca67f4a10abb5df16e15c3d477e4b47d672ae9ea8d26811d92e598b752a513",
+      "post_change_trace_sha256": "62ca67f4a10abb5df16e15c3d477e4b47d672ae9ea8d26811d92e598b752a513",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/legend_of_zelda.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "generic",
+      "pre_change_trace_sha256": "58110a73b3da917fa104fb442a952339f16474c6cdc8bb3e348c781170ac76a6",
+      "post_change_trace_sha256": "b16cc604d2a44158a30c81446498701b467215a04a87427b90dfac4ad1560207",
+      "identical": false,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/lost_levels.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "mario",
+      "pre_change_trace_sha256": "6fdab6293e50fbc0e7ae314e8c0f9b8ca071bbfb3e767900d27ea88d8fe36ab6",
+      "post_change_trace_sha256": "6fdab6293e50fbc0e7ae314e8c0f9b8ca071bbfb3e767900d27ea88d8fe36ab6",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/mario.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "mario",
+      "pre_change_trace_sha256": "2a2aa087bfa5c32df01996995d0167a7a7f380fca1880a5f028d0663b88e05bf",
+      "post_change_trace_sha256": "2a2aa087bfa5c32df01996995d0167a7a7f380fca1880a5f028d0663b88e05bf",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/mario_1_2_javi.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "mario",
+      "pre_change_trace_sha256": "d501f75b336ad0c7c48b5176fb391d64c983c3f3cc21a764ee76f08146eba4b4",
+      "post_change_trace_sha256": "d501f75b336ad0c7c48b5176fb391d64c983c3f3cc21a764ee76f08146eba4b4",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/mario_canonical.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "mario",
+      "pre_change_trace_sha256": "15a77e380d3babb7166b46e644484572b3d00423891a7cdd029cc2dc6580520d",
+      "post_change_trace_sha256": "15a77e380d3babb7166b46e644484572b3d00423891a7cdd029cc2dc6580520d",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/mario_tiles.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "mario",
+      "pre_change_trace_sha256": "98358362add392225263523c12756838649f91e5c62d2f5ac7986471a660e4da",
+      "post_change_trace_sha256": "98358362add392225263523c12756838649f91e5c62d2f5ac7986471a660e4da",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/megaman.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "mega_man",
+      "pre_change_trace_sha256": "fb05aac6a27c88d464b9ec5271fe212498d6e0fe0242d903efc9c94204799eed",
+      "post_change_trace_sha256": "fb05aac6a27c88d464b9ec5271fe212498d6e0fe0242d903efc9c94204799eed",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/metroid.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "metroid",
+      "pre_change_trace_sha256": "bb29518c6ab7baac960b9f3570c74bdfb016c62485806b5cbe63f19c8e6ffb95",
+      "post_change_trace_sha256": "bb29518c6ab7baac960b9f3570c74bdfb016c62485806b5cbe63f19c8e6ffb95",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/punchout.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "punch_out",
+      "pre_change_trace_sha256": "d067d756192377026470520d5ab0624367bd585ca51c4bb6a04b868ea51141f4",
+      "post_change_trace_sha256": "d067d756192377026470520d5ab0624367bd585ca51c4bb6a04b868ea51141f4",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/smb_4_4_micro.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "generic",
+      "pre_change_trace_sha256": "b8091d69c678c4a839144f914fab61ec06ef05bdbe203e81faf241c7a1149a0a",
+      "post_change_trace_sha256": "b8091d69c678c4a839144f914fab61ec06ef05bdbe203e81faf241c7a1149a0a",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/smb_blank_slate.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "generic",
+      "pre_change_trace_sha256": "386f1c7f45168f5bec47d816f45c99962f1e2ecc71d3763f15f66b9f09459a77",
+      "post_change_trace_sha256": "386f1c7f45168f5bec47d816f45c99962f1e2ecc71d3763f15f66b9f09459a77",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/tetris_b.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "tetris",
+      "pre_change_trace_sha256": "cac1dfef681e8a3e4e5089adeea3152cb747312be69bcf15bfaa91f95a3adfd8",
+      "post_change_trace_sha256": "cac1dfef681e8a3e4e5089adeea3152cb747312be69bcf15bfaa91f95a3adfd8",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/zelda.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "zelda",
+      "pre_change_trace_sha256": "f5acd93dd14442e32ff39df01f8ed65fef1bc4b1cbaa607b7a2ab67a05f23d6a",
+      "post_change_trace_sha256": "f5acd93dd14442e32ff39df01f8ed65fef1bc4b1cbaa607b7a2ab67a05f23d6a",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    },
+    "configs/zelda_gui_tuned.yaml": {
+      "pre_change_status": "ok",
+      "post_change_status": "ok",
+      "post_change_reward_id": "zelda",
+      "pre_change_trace_sha256": "dcc4dd7c55493fd2df6677bbec7630fdfadaf947f6f612ef2874cd79d4f1483e",
+      "post_change_trace_sha256": "dcc4dd7c55493fd2df6677bbec7630fdfadaf947f6f612ef2874cd79d4f1483e",
+      "identical": true,
+      "pre_change_episode_success": false,
+      "post_change_episode_success": false
+    }
+  }
+}

@@ -1,4 +1,5 @@
 name: "Kid Icarus"
+reward_id: kid_icarus
 # Live Stage 1-1 (Underworld) gameplay state. WITHOUT it the emulator
 # cold-boots to the title screen, whose attract-mode demo auto-plays and
 # ignores controller input — training there gives zero learning signal

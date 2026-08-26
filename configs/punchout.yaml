@@ -1,4 +1,5 @@
 name: "Punch-Out"
+reward_id: punch_out
 # Assigned dump: Mike Tyson's Punch-Out!! (Japan, USA) (Rev A), mapper 9 (MMC2).
 # The generic masher does NOT reach live gameplay on this dump (long intro +
 # ring walk), and a cold boot lands on the attract demo (inputs ignored -> the
