@@ -475,6 +475,20 @@ def build_tile_policy_from_checkpoint(
         if sd is None and all(hasattr(v, "shape") for v in checkpoint.values()):
             sd = checkpoint
 
+    # A dict-shaped checkpoint whose "net_state_dict"/"state_dict" entry is
+    # missing, None, or falsy-empty (e.g. `{}`) leaves `sd` at None here,
+    # same failure class as the str/Path case above: with no raise this
+    # silently returns a freshly-initialized RANDOM policy instead of the
+    # trained one, no exception, no log line.
+    if load_weights and sd is None:
+        raise ValueError(
+            "build_tile_policy_from_checkpoint: could not resolve a usable "
+            "state_dict from checkpoint (checked 'net_state_dict', "
+            "'state_dict', and a bare state_dict) — refusing to return a "
+            "silently random-initialized policy. Pass load_weights=False if "
+            "an unloaded net is actually wanted."
+        )
+
     def _rows(key):
         try:
             return int(sd[key].shape[0]) if sd is not None and key in sd else None
