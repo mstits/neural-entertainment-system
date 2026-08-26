@@ -27,15 +27,27 @@ description: |
   flat tail is explained, not a stall. $0048|$0020<<8 (fine in-room X)
   is flagged CAMERA-CLAMP SATURATOR by the probe itself — it caps at
   the scroll-window limit and rebases at room transitions, which is
-  exactly the shape an odometer integral hits after enough rooms. The
-  probe recommends the non-saturating room/screen counter $0020 as
-  true forward progress and doubles as the scene key (Ninja
-  Gaiden/Metroid pattern: `area:` rides the same address so the
-  archive orders cells (scene, x) instead of one over-clamped x).
-  Also discovered: y=$007D (jump/ballistic candidate, 2 candidates
-  agreed jump signature), lives=$00BE (decrements on death, 5/5 runs
-  agreed). level_key is empty — no clear byte captured yet, coverage
-  baseline only.
+  exactly the shape an odometer integral hits after enough rooms.
+
+  D4 CORRECTION (2026-08-26, docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md
+  §1c row 6 / §9.3): the paragraph above used to recommend $0020 itself
+  as a "non-saturating room/screen counter" and wire it as `area:`. Both
+  halves of that claim are wrong, and both were reproduced live this
+  pass. First, $0020 IS the high byte of the exact same $0048|$0020<<8
+  pair the probe already flagged as a camera-clamp saturator one
+  paragraph up — it is not an independent room identity, it is the
+  same saturating position reading read alone. Second, it saturates:
+  holding right from this start state runs it 32 -> 244 over ~1,480
+  steps and then flat for the remaining 500+ (reproduced directly,
+  2026-08-26), the same camera-clamp shape as its own pair, not a
+  discrete counter that keeps advancing across rooms. The
+  `observables_blaster_master.json` receipt's own room_counters entry
+  even labels it `"role": "progress_page_as_screen_counter"` — a
+  fallback synthesized FROM the saturating pair, not a second
+  discovered signal, and the profile below never should have promoted
+  it to `area:`. No independently-discovered non-saturating room
+  counter exists for this game; `area:` is removed rather than
+  replaced with another guess.
 
   SOLVER SMOKE (2026-08-25, 2 workers / 4 min / seed 0, machine under
   parallel-onboarding contention — throughput ~250-275 sps rather than
@@ -52,6 +64,21 @@ description: |
   and gx still climbing with zero flat windows at cutoff.
   Receipts: runs/onboard_wave3/smoke_blaster_master/
   (archive.stats.json, progress.jsonl).
+
+  D4 ARCHIVE-SIZE CORRECTION (2026-08-26): the removed $0020 dimension
+  inflated this archive. Loading the banked runs/onboard_wave3/
+  smoke_blaster_master/archive.pkl and collapsing its cell keys' area
+  component to the constant this profile now produces (no `area:` ->
+  `GenericGame.area()` returns 0) leaves 1,129 distinct cells from the
+  SAME rollout data that was banked as 9,287 — an 8.2x inflation, not a
+  new run. $0020 spans its full byte range (256 distinct values used as
+  a key dimension, 0..255) essentially in lockstep with gx (1,538
+  distinct (area, gx) pairs against only 89 distinct gx buckets alone),
+  which is exactly what "the same saturating position read twice"
+  produces: every fine step of travel mints a new (area, gx) pair
+  instead of folding many gx values into one real room. 9,287 was
+  never a measure of Blaster Master's explored area; ~1,129 is what
+  this rollout actually covers.
 
 frame_skip: 4
 
@@ -75,11 +102,15 @@ action_space:
 solve:
   rom: "roms/Blaster Master (USA).nes"
   progress: {source: odometer, axis: x}
-  # Scene key so the solver orders cells (scene, x) rather than one
-  # camera-clamped x integral (Ninja Gaiden/Metroid area: pattern).
-  # Discovered by discover_observables.py, not injected: room/screen
-  # counter, non-saturating over the probe window.
-  area: 0x0020
+  # D4 fix (2026-08-26): `area: 0x0020` removed. It is the high byte of
+  # the same $0048|$0020<<8 pair already flagged as a camera-clamp
+  # saturator above, not an independent room counter — reproduced
+  # live saturating 32 -> 244 then flat (see the D4 CORRECTION note
+  # above). Using it as a scene key spuriously multiplied the archive
+  # 8.2x (9,287 cells banked vs 1,129 the same rollout actually covers
+  # once collapsed — see D4 ARCHIVE-SIZE CORRECTION above). No
+  # independently-discovered non-saturating room counter exists for
+  # this game; omitted rather than replaced with another guess.
   # Jump/ballistic-signature candidate (discover_observables, 2
   # candidates agreed: 0x7d, 0x78 — took the higher-confidence one).
   y: 0x007D

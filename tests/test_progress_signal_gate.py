@@ -9,7 +9,12 @@ verdict as a healthy one — the 1942 pre-fix false PASS.
 """
 from __future__ import annotations
 
-from scripts.progress_signal_gate import assess, note_camera_static
+from scripts.progress_signal_gate import (
+    assess,
+    first_exhaustion_index,
+    note_camera_static,
+    truncate_at_exhaustion,
+)
 
 
 def _rebased_1942_shape() -> list[int]:
@@ -112,3 +117,81 @@ def test_camera_static_override_never_erases_the_coarseness_finding():
         any(f in g for g in after["instrument_findings"])
         for f in before["instrument_findings"]
     )
+
+
+# --- D5: the death-blind hold ---------------------------------------------
+#
+# scripts/progress_signal_gate.py's 1200-step forward hold never watched
+# the lives byte at all. A 1-life game (Arkanoid) that loses its only ball
+# ~halfway through the hold spent the rest of it stepping a non-interactive
+# post-game-over screen, and an incidental byte flip on that dead screen
+# got certified as a real "room transition" (reproduced live: $0010 reads
+# 0 for all 601 genuinely-live steps and 1 for every step after death,
+# corroborating the independent s6_instrument.json finding the discovery
+# receipt itself contradicted). first_exhaustion_index/truncate_at_exhaustion
+# are the fix: find where the lives trace records a death (GenericGame's
+# own modular check) AND never recovers (the trailing quarter is frozen at
+# one value — reused, not reinvented: it is the same "flat for the last
+# quarter" heuristic assess() already applies to the progress trace), and
+# drop everything from there on before assessing.
+
+def test_no_death_recorded_returns_none():
+    # Lives never drops — nothing to truncate.
+    trace = [3] * 1200
+    assert first_exhaustion_index(trace, start_lives=3) is None
+    assert truncate_at_exhaustion(1200, trace, 3) == 1200
+
+
+def test_death_that_never_recovers_is_exhaustion():
+    # Arkanoid's exact shape: alive at 1 for 601 steps, drops to 0, then
+    # (after this ROM's attract-mode placeholder kicks in) sits at a
+    # DIFFERENT nonzero constant for the rest of the hold. A naive
+    # "stuck at 0 forever" test misses this; the trailing-quarter freeze
+    # check catches it regardless of what the frozen value is.
+    trace = [1] * 601 + [0] * 100 + [14] * 499
+    idx = first_exhaustion_index(trace, start_lives=1)
+    assert idx == 601
+    assert truncate_at_exhaustion(len(trace), trace, 1) == 601
+
+
+def test_single_death_followed_by_continued_variation_is_not_exhaustion():
+    # A multi-life game where the FIRST death respawns and play keeps
+    # producing varied readings afterward — an ordinary scripted-probe
+    # event, not a game-over tail. Must not be flagged.
+    import itertools
+
+    respawned = list(itertools.islice(itertools.cycle([2, 5, 9, 3, 7]), 900))
+    trace = [3] * 300 + respawned
+    assert first_exhaustion_index(trace, start_lives=3) is None
+    assert truncate_at_exhaustion(len(trace), trace, 3) == len(trace)
+
+
+def test_death_followed_by_a_frozen_tail_shorter_than_the_quarter_window():
+    # The freeze must hold for the WHOLE trailing quarter — a value that
+    # dips to 0 and then keeps moving before the window's own tail
+    # re-stabilizes at something else again is not exhaustion either.
+    trace = [1] * 700 + [0] * 50 + [3] * 50 + [0] * 200 + [1] * 200
+    assert first_exhaustion_index(trace, start_lives=1) is None
+
+
+def test_start_lives_zero_or_none_never_truncates():
+    trace = [0] * 1200
+    assert first_exhaustion_index(trace, start_lives=0) is None
+    assert truncate_at_exhaustion(1200, trace, 0) == 1200
+    assert truncate_at_exhaustion(1200, trace, None) == 1200
+
+
+def test_no_lives_trace_never_truncates():
+    # The no-lives-byte-declared call sites in main() pass lives_trace as
+    # None outright; must be a no-op, not a crash.
+    assert truncate_at_exhaustion(1200, None, 1) == 1200
+
+
+def test_wrap_style_death_is_still_detected():
+    # GenericGame.is_dead's own modular formula catches a lives byte that
+    # displays REMAINING lives and wraps 0 -> 255 on the terminal death
+    # (the Ninja Gaiden shape) exactly as it catches a plain decrement —
+    # this helper must agree, since it reuses the same check.
+    trace = [1] * 500 + [255] * 700
+    idx = first_exhaustion_index(trace, start_lives=1)
+    assert idx == 500

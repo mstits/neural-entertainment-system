@@ -2685,12 +2685,34 @@ class GenericGame:
         return "-".join(str(x) for x in key)
 
 
+class ProfileNotConstructible(RuntimeError):
+    """Raised by make_game() for a `solve:` block that declares
+    `constructible: false` — a profile behaviourally proven to be
+    missing something GenericGame hard-requires (Tetris has no
+    jump/ballistic `y` to discover; it is a static-playfield puzzle
+    game, not a platformer), rather than one that simply has not been
+    onboarded yet. Before this existed, both cases surfaced identically
+    as a bare `KeyError('y')` deep inside `GenericGame.__init__`, and
+    nothing upstream (the roster-construction check, `clear_reachability.py`)
+    could tell them apart. `reason` carries the profile's own recorded
+    evidence forward into the exception message."""
+
+
 def make_game(profile: dict):
     """SMB-engine profiles carry no `solve:` section — they get the
     byte-exact SMB adapter (which reads an optional `rom:` override, so
     Lost Levels / any SMB1-engine game works). A profile with `solve:`
-    opts into the generic path."""
-    return GenericGame(profile) if "solve" in profile else SmbGame(profile)
+    opts into the generic path, unless it explicitly declares
+    `constructible: false` (see ProfileNotConstructible)."""
+    if "solve" not in profile:
+        return SmbGame(profile)
+    solve = profile["solve"]
+    if solve.get("constructible") is False:
+        reason = solve.get("reason", "no reason recorded")
+        raise ProfileNotConstructible(
+            f"{profile.get('name', '<unnamed>')!r} declares "
+            f"solve.constructible: false — {reason}")
+    return GenericGame(profile)
 
 
 def derive_transition_macros(action_space: list, room_advance: dict | None) -> list:

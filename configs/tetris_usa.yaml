@@ -65,3 +65,28 @@ solve:
   # dishonest eval, not done. Full summary:
   # runs/onboard_wave3/tetris_usa_onboard_summary.json.
   progress: {source: odometer, axis: x}
+  # D3 fix (2026-08-26): make_game() used to raise a bare KeyError('y')
+  # here with nothing upstream distinguishing "not onboarded yet" from
+  # "onboarded, and behaviourally proven to have no y". This profile is
+  # the latter — three independent forward directions found ZERO y
+  # candidates (see above), a genre fact (a single static playfield has
+  # no jump/ballistic axis to discover), not a gap in the search. Rather
+  # than fabricate a y from an unrelated byte, mark this profile
+  # unconstructible by name: make_game() raises ProfileNotConstructible
+  # with this reason instead of a KeyError, and the roster check
+  # (tests/test_solve_profiles_construct.py) requires exactly this pair
+  # of keys before it will let a profile skip construction.
+  constructible: false
+  reason: >
+    GenericGame hard-requires solve.y (jump/ballistic signature) and
+    solve.lives; discover_observables.py's 3-probe protocol
+    (forward=right/left/down, runs/onboard_wave3/discover_tetris_
+    {right,left,down}.json) found 0 progress candidates, no room
+    counter and NO y ballistic signature in any direction. The
+    candidate lives byte also named a different address on every
+    direction (0x06BF/0x0040/0x004E), the signature of noise rather
+    than a real global byte. Tetris's real progress (lines/score/level)
+    is a decimal HUD field; no automated HUD-tile discovery tool exists
+    in this repo, and hand-picking tile addresses from outside
+    knowledge would break the purity line. Full record:
+    runs/onboard_wave3/tetris_usa_onboard_summary.json.

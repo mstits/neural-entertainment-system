@@ -28,4 +28,38 @@ action_space:
 
 solve:
   rom: "roms/Legend of Zelda, The (USA) (Rev A).nes"
-  progress: {source: odometer, axis: x}
+  # D3 fix (2026-08-26): this block used to be rom+progress only, so
+  # make_game() raised KeyError('y') before a single search step could
+  # run (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md §1c row 20).
+  # Filled in by running discover_observables.py's own behavioural
+  # discovery against this profile's own verified-live start state — no
+  # RAM map, no walkthrough, no recalled address. Receipt:
+  # runs/onboard_wave4/discover_legend_of_zelda_right.json.
+  #
+  # PROGRESS: the odometer axis this profile declared before is dead by
+  # design here — runs/onboard_wave2/gate_legend_of_zelda.json measured
+  # distinct=1, min=0, max=0 over 1200 steps, because the overworld
+  # FLIPS between discrete screens instead of scrolling the camera.
+  # Discovery found a real RAM candidate instead: $0070 clears both
+  # gates (rises under forward, flat under noop), net_forward=79,
+  # mono_forward=1.00, does not saturate over the probe window.
+  progress: {lo: 0x0070}   # supersedes the dead odometer axis
+  # Ballistic/motion-shape candidate, top of 6 ranked by find_y
+  # (distinct=21, range=67, frac_at_mode=0.47, score=31.7). Zelda has no
+  # jump; like every other GenericGame profile onboarded this way
+  # (blaster_master, arkanoid) this is a cell-diversity axis, not a
+  # claim about a jump arc.
+  y: 0x0029
+  # Coverage baseline; no dungeon/stage-clear byte captured yet.
+  level_key: []
+  # Decrements by 1 on death from lives_at_start=1, agreed by 5 of 5
+  # independent probe runs; behaviour gate PASS (osc=pass(0),
+  # alive=inconclusive, move=pass). NOTE: this address is numerically
+  # identical to the "song" entry in configs/zelda_gui_tuned.yaml's
+  # quarantined ram_mapping — coincidence, not derivation. This value
+  # came only from driving the emulator and ranking candidates by
+  # measured behaviour (discover_observables.py's find_hp_lives), never
+  # from reading that file or any external map; independent
+  # rediscovery landing on the same byte is the quarantine mechanism
+  # working, not it being defeated.
+  lives: 0x0609

@@ -49,6 +49,50 @@ solve:
   # net_forward=256, mono_forward=1.00 over the 1200-step probe. This is the
   # PRIMARY progress signal; the odometer above is the fallback if a future
   # profile change breaks this pairing.
+  #
+  # D5 CORRECTION (2026-08-26, docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md
+  # §1c row 5 / §9.6): both halves of the paragraph above are artifacts of
+  # the same bug, reproduced directly this pass. The 1200-step certification
+  # hold never watched the lives byte (lives_at_start=1, no continue), so it
+  # ran ~600 steps past ball-loss into a non-interactive post-game-over
+  # screen. `$0010`'s "2 room/page transitions" happen entirely in that
+  # dead tail: replaying with per-step lives tracking shows area=0 for
+  # EVERY one of the 601 live steps and area=1 for every step after —
+  # exactly corroborating the independent s6_instrument.json finding
+  # (area_ever_nonzero: false across all 22 real policies) that this
+  # paragraph's own file, runs/onboard_wave3/discover_arkanoid_right.json,
+  # contradicted. It is not a second, wronger signal; it is the same one,
+  # read with the dead frames included. Checking further: $0016 (the low
+  # byte) is not merely coarser, it is IDENTICALLY ZERO for all 601 live
+  # steps too (cross-checked against RAM-diff and OAM sprite motion, which
+  # confirm the paddle/ball genuinely move during that window) and only
+  # starts climbing at step 601, in lockstep with the death. The declared
+  # pair carries no live-play information at all — 100% of net_forward=256
+  # and distinct=33 comes from after the game ended. This is the same
+  # freeze the SOLVER SMOKE and DEEPEST-CELL DIAGNOSTIC notes below already
+  # reported ("never left (0,0)"; "progress... frozen solid") without a
+  # root cause; now there is one. The odometer fallback above fares no
+  # better once the same dead tail is excluded: range collapses to x=0,
+  # y=0 over the live steps (reproduced with --odometer), which is also a
+  # genre fact independent of this bug — Arkanoid is a single fixed-screen
+  # game, so no real camera motion exists for the odometer to report
+  # regardless of when it is sampled. scripts/progress_signal_gate.py now
+  # tracks lives per-step and drops a persistent post-death tail before
+  # assessing (first_exhaustion_index/truncate_at_exhaustion), so re-running
+  # either `--profile configs/arkanoid.yaml` command above reproduces this:
+  # both come back SIGNAL UNUSABLE on the 601 genuinely-live steps, not
+  # SIGNAL SOUND on 1200. A sweep of every other profile declaring
+  # solve.lives under the same blind-hold recipe found the identical
+  # died-then-frozen-tail shape in 28 of 44 checkable profiles (receipts
+  # runs/onboard_wave6_d5_sweep*.json) — recommended, not applied here:
+  # re-run each through the fixed gate before citing its progress/area
+  # numbers again. `progress:`/`area:` are left as-is below rather than
+  # replaced with an unvalidated guess (GenericGame requires the key, and
+  # no independently re-discovered live-correlated byte exists yet for
+  # this game); treat both as NON-INFORMATIONAL, not as evidence of a
+  # working gradient. This does not change the CLASSIFICATION at the
+  # bottom of this file (SOUND_GAME_STOPS): that verdict never depended on
+  # this pair actually moving.
   progress: {lo: 0x0016, hi: 0x0010}
   # $0010 doubles as the room/screen counter (round/screen index) the
   # archive cells with — same discovery run.

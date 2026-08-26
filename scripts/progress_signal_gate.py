@@ -31,6 +31,72 @@ MIN_DISTINCT = 32          # fewer levels than this is not a gradient
 MIN_TAIL_FRACTION = 0.25   # progress must still be moving late in a roll
 
 
+#: Same fraction `assess()` already uses to call a PROGRESS trace's tail
+#: flat; reused here on the LIVES trace so "exhaustion" is judged by the
+#: one heuristic this file already trusts, not a second one invented to
+#: match a single game.
+EXHAUSTION_TAIL_FRACTION = 0.75
+
+
+def first_exhaustion_index(lives_trace: list, start_lives: int) -> int | None:
+    """First step at which the lives byte records a death (the exact
+    modular check `GenericGame.is_dead` uses: `(start - cur) % 256` in
+    1..8) that the game never comes back from — the trailing quarter of
+    `lives_trace` is frozen at a single value from then on.
+
+    D5 (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md §9.6): this gate's
+    forward hold never watched the lives byte at all, so a 1-life game
+    (Arkanoid: lives_at_start=1) that loses its only ball ~halfway
+    through the default 1200-step hold spent the remaining ~600 steps
+    stepping a non-interactive post-game-over screen, and one of those
+    steps' incidental area-byte flip got read back as a real "room
+    transition" in the discovery receipt. Reproducing it directly shows
+    WHY a naive "stuck at 0" test is not enough: Arkanoid's own byte
+    does not stay at 0 — it reads 1 -> 0 for a few hundred steps, then
+    jumps to a constant 14 (evidently this ROM's attract/demo-mode
+    placeholder) and sits there through the end of the hold. Requiring
+    only "the trailing quarter is frozen at ONE value, whatever it is"
+    after a real death catches that shape without needing to know what
+    14 means.
+
+    A single decrement with no such freeze is NOT treated as
+    exhaustion — most games in this roster start with more than one
+    life, and losing one of several while a forced, undodging forward
+    hold runs into the first hazard is ordinary scripted-probe
+    behaviour, usually followed by a real in-place or checkpoint
+    respawn (the lives byte keeps varying afterward), not a
+    non-interactive tail.
+
+    Returns None when there is nothing to exhaust (no lives byte, it
+    starts at 0, or no death is ever recorded) or the trace keeps
+    varying after the death it does record.
+    """
+    if not lives_trace or start_lives in (None, 0):
+        return None
+    death = None
+    for i, v in enumerate(lives_trace):
+        d = (int(start_lives) - int(v)) % 256
+        if 1 <= d <= 8:
+            death = i
+            break
+    if death is None:
+        return None
+    tail = lives_trace[int(len(lives_trace) * EXHAUSTION_TAIL_FRACTION):]
+    return death if tail and len(set(tail)) == 1 else None
+
+
+def truncate_at_exhaustion(n: int, lives_trace, start_lives: int | None) -> int:
+    """How many LEADING steps of an `n`-step hold to keep before
+    handing the trace to `assess()` — all of them, unless the lives
+    byte truly exhausts partway through (see `first_exhaustion_index`),
+    in which case the game-over/attract tail is dropped rather than
+    silently believed."""
+    if lives_trace is None or start_lives in (None, 0):
+        return n
+    idx = first_exhaustion_index(lives_trace, start_lives)
+    return n if idx is None else idx
+
+
 def note_camera_static(v: dict, oam_churn: int, steps: int) -> dict:
     """Annotate (never launder) a verdict whose odometer axis had zero
     range (rx == ry == 0 at the call site).
@@ -231,17 +297,31 @@ def main(argv: list[str] | None = None) -> int:
     first = pool.step_all(np.zeros(1, dtype=np.uint8))[0][2]
     lives0 = int(first[lives_addr]) if lives_addr is not None else None
     trace = []
+    dropped = 0
     if args.odometer:
         xy = []
-        oam_churn = 0
+        oam_changed = []
+        lives_trace = []
         prev_oam = None
         for _ in range(args.steps):
-            pool.step_all(a)
+            ram = pool.step_all(a)[0][2]
             xy.append(pool.get_odometer_per_worker()[0])
             oam = bytes(pool.peek_oam(0))
-            if prev_oam is not None and oam != prev_oam:
-                oam_churn += 1
+            oam_changed.append(prev_oam is not None and oam != prev_oam)
             prev_oam = oam
+            lives_trace.append(int(ram[lives_addr]) if lives_addr is not None else None)
+        # D5: drop a persistent post-exhaustion tail (game-over/attract
+        # screen) before computing ANY stat from this hold — camera
+        # panning or OAM churn on a dead screen is not evidence the game
+        # is still advancing. See truncate_at_exhaustion's docstring.
+        keep = truncate_at_exhaustion(len(xy), lives_trace, lives0)
+        dropped = len(xy) - keep
+        xy = xy[:keep]
+        oam_churn = sum(oam_changed[:keep])
+        if dropped:
+            print(f"[progress_signal_gate] lives exhausted at step {keep} "
+                  f"of {args.steps} — dropping {dropped} trailing steps "
+                  f"(game-over/attract tail) before assessing")
         rx = max(p[0] for p in xy) - min(p[0] for p in xy)
         ry = max(p[1] for p in xy) - min(p[1] for p in xy)
         axis, sign = resolve_odometer_axis(solve.get("progress") or {}, rx, ry)
@@ -249,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         base = min(signed)
         trace = [int(s - base) for s in signed]
         print(f"odometer trace: axis={'xy'[axis]} "
-              f"(range x={rx}, y={ry}) oam_churn={oam_churn}/{args.steps-1}")
+              f"(range x={rx}, y={ry}) oam_churn={oam_churn}/{max(len(xy) - 1, 0)}")
         # i64 integral: no wrap exists, so run assess as a paired signal.
         # `signed[-1] - signed[0]` is the net motion UNDER the resolved
         # sign, before the `- base` shift above folds it into a
@@ -268,9 +348,25 @@ def main(argv: list[str] | None = None) -> int:
             v = note_camera_static(v, oam_churn, args.steps)
         v["oam_churn"] = oam_churn
     else:
+        lives_trace = []
         for _ in range(args.steps):
             ram = pool.step_all(a)[0][2]
             trace.append(int(ram[lo]) + (int(ram[hi]) << 8 if hi is not None else 0))
+            lives_trace.append(int(ram[lives_addr]) if lives_addr is not None else None)
+        # D5 (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md §9.6): this
+        # loop used to run the full hold no matter what, so a 1-life
+        # game (Arkanoid) that lost its only ball ~halfway through kept
+        # stepping a frozen post-game-over screen for the rest of the
+        # window, and an incidental byte flip on that dead screen was
+        # read back as a real "room transition". Drop the exhausted tail
+        # before assessing.
+        keep = truncate_at_exhaustion(len(trace), lives_trace, lives0)
+        dropped = len(trace) - keep
+        trace = trace[:keep]
+        if dropped:
+            print(f"[progress_signal_gate] lives exhausted at step {keep} "
+                  f"of {args.steps} — dropping {dropped} trailing steps "
+                  f"(game-over/attract tail) before assessing")
         v = assess(trace, lives0, hi is not None)
     print(f"progress-signal gate: {'PASS' if v['passed'] else 'FAIL'} — "
           f"{v['verdict']}  ({args.profile})")
@@ -281,6 +377,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  [INSTRUMENT] {f}")
     for f in v["behaviour_findings"]:
         print(f"  [BEHAVIOUR]  {f}")
+    if dropped:
+        print(f"  [D5] {dropped} trailing steps of the requested "
+              f"{args.steps} were dropped — the lives byte exhausted "
+              f"and never recovered (game-over/attract tail), so "
+              f"everything above is assessed on the {v['steps']} steps "
+              f"before that, not the full hold.")
     if v["passed"] and not v["behaviour_findings"]:
         print("  signal is usable: enough resolution, no unpaired wrap, "
               "still moving late, death detectable")
@@ -289,6 +391,8 @@ def main(argv: list[str] | None = None) -> int:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps({"profile": args.profile,
                                  "odometer": bool(args.odometer),
+                                 "requested_steps": args.steps,
+                                 "dropped_tail_steps": dropped,
                                  **v}, indent=2) + "\n")
     return 0 if v["passed"] else 1
 
