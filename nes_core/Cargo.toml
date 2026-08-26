@@ -91,6 +91,18 @@ md5 = "0.7"
 
 [dev-dependencies]
 # Test ROM runners + golden-frame harness will go here as splits 02/03/04 land.
+#
+# Statistical benchmarking harness (outlier detection, confidence
+# intervals, regression-vs-last-run comparison via `cargo bench --
+# --baseline`) to replace the hand-rolled Instant::now() timing loops
+# under examples/*bench*.rs. Default features (cargo_bench_support,
+# plotters, rayon) give us `cargo bench` integration + HTML reports.
+# Dev-only: does not touch the shipped release/cdylib build.
+criterion = "0.8"
+
+[[bench]]
+name = "palette_expand"
+harness = false
 
 [features]
 default = []
