@@ -327,6 +327,360 @@ class InputLockTrack:
 
 
 # ===========================================================================
+# Signal 3b -- input-lock differential probe, K-branch, self-calibrated
+# (in-loop generalization of differential_input_lock_probe above)
+# ===========================================================================
+
+LOCK_BRANCHES_K = 4          # 1 NOOP control + (K-1) branches from the
+                              # profile's own action space
+LOCK_NULL_QUANTILE = 0.01    # low tail of the ORDINARY-play diff null
+LOCK_FRAC = 0.5              # fraction of branch PAIRS that must read
+                              # "suspiciously similar" to call it LOCKED
+LOCK_CALIB_SAMPLES = 30      # ordinary-play points sampled for the null
+LOCK_CALIB_DRIVE_FRAMES = 30 # frames of real play advanced between samples
+LOCK_PROBE_EVERY = 0         # 0 = no fixed duty cycle (see class docstring)
+
+
+def _lock_snapshot(env) -> np.ndarray:
+    """CPU RAM ($0000-$07FF, 2048 bytes) concatenated with primary OAM (256
+    bytes) as one int16 vector. This is CORRECTION 2's "(and OAM)": a branch
+    that leaves CPU RAM alone but moves sprites -- the exit-pipe /
+    scripted-object case Solver.counterfactual_probe's own docstring names
+    -- must not read as locked just because the original 2048-byte RAM-only
+    diff (clear_detect.py:266-288) never looked at OAM at all.
+
+    Purity: both surfaces are raw hardware bytes read through the emulator's
+    own accessors (get_ram_range, peek_oam); nothing here is addressed by
+    meaning."""
+    ram = np.asarray(env.get_ram_range(0, 2048), dtype=np.int16)
+    oam_bytes = env.peek_oam()
+    oam = np.frombuffer(oam_bytes, dtype=np.uint8).astype(np.int16)
+    return np.concatenate([ram, oam])
+
+
+def _run_lock_branches(env, bitmasks, base_state, probe_frames: int,
+                        branches: int, rng: np.random.Generator
+                        ) -> list[np.ndarray]:
+    """From `base_state`, replay `branches` independent futures of
+    `probe_frames` frames each: branch 0 is the NOOP control, branches
+    1..branches-1 each sample `bitmasks` (the profile's OWN action space)
+    uniformly at random, ONE draw per branch held for the whole probe (a
+    constant hold per branch, not a fresh draw per frame -- the same
+    "committed" shape counterfactual_probe's sparse-perturbation note
+    reasons about, just simpler here since this is a short in-loop probe
+    rather than a multi-second banking-gate replay).
+
+    env is restored to `base_state` between every branch and again before
+    returning, so this never advances the real trajectory."""
+    snaps: list[np.ndarray] = []
+    for b in range(max(2, int(branches))):
+        env.load_state(base_state)
+        mask = 0 if b == 0 else int(rng.choice(bitmasks))
+        for _ in range(max(1, int(probe_frames))):
+            env.step(mask)
+        env.get_audio()  # drain -- these samples never happened on the real timeline
+        snaps.append(_lock_snapshot(env))
+    env.load_state(base_state)
+    return snaps
+
+
+def _lock_pair_diffs(snaps: list[np.ndarray]) -> list[int]:
+    """Every C(len(snaps), 2) pairwise byte-diff count, RAM+OAM combined."""
+    out = []
+    for i in range(len(snaps)):
+        for j in range(i + 1, len(snaps)):
+            out.append(int(np.count_nonzero(np.abs(snaps[i] - snaps[j]))))
+    return out
+
+
+def measure_input_lock_null(env, bitmasks, probe_frames: int = LOCK_PROBE_FRAMES,
+                             branches: int = LOCK_BRANCHES_K,
+                             n_samples: int = LOCK_CALIB_SAMPLES,
+                             drive_frames: int = LOCK_CALIB_DRIVE_FRAMES,
+                             rng: np.random.Generator | None = None
+                             ) -> np.ndarray:
+    """CORRECTION 1: measure the branch-pair diff distribution this SPECIFIC
+    game produces under ORDINARY, unlocked play, so the LOCKED threshold can
+    be a per-profile quantile of that instead of the shipped global
+    LOCK_DIFF_TOL=2 -- a constant with no per-game meaning that the campaign
+    doc's own language notes "runs to hundreds of bytes" once real,
+    responsive play is diffed branch-to-branch.
+
+    From env's CURRENT state, repeats `n_samples` times: drive the REAL
+    trajectory forward `drive_frames` frames with a uniformly random action
+    (so every sample lands at a different, ordinary point rather than
+    probing the same instant `n_samples` times), then from that point run
+    the identical K-branch probe the live signal runs and record every
+    pairwise diff. Each sample resumes the real trajectory exactly where
+    the drive left it -- the same "never happened on the real timeline"
+    contract every probe in this file keeps -- so the only lasting effect
+    on env is the `n_samples * drive_frames` frames of ordinary play the
+    calibration itself drove.
+
+    Returns the flat array of all measured pairwise diffs. A profile whose
+    game logic never varies the RAM/OAM surface under different real inputs
+    (vanishingly unlikely, but not provably impossible from this file alone)
+    would return a null with no separable spread; lock_null_threshold does
+    not check for that, callers must (see InputLockSignal.calibrate)."""
+    rng = rng or np.random.default_rng()
+    diffs: list[int] = []
+    for _ in range(max(1, int(n_samples))):
+        for _ in range(max(0, int(drive_frames))):
+            env.step(int(rng.choice(bitmasks)))
+        env.get_audio()
+        sample_state = env.save_state()
+        snaps = _run_lock_branches(env, bitmasks, sample_state, probe_frames,
+                                    branches, rng)
+        diffs.extend(_lock_pair_diffs(snaps))
+        env.load_state(sample_state)  # ordinary drive continues from here
+    return np.array(diffs, dtype=np.int64)
+
+
+def lock_null_threshold(null_diffs: np.ndarray,
+                         quantile: float = LOCK_NULL_QUANTILE) -> int:
+    """The per-profile LOCKED threshold CORRECTION 1 calls for: the
+    `quantile`-th percentile of a MEASURED ordinary-play branch-diff null
+    (measure_input_lock_null's output).
+
+    Deliberately a LOW quantile by default (1%). Ordinary, unlocked play
+    diverges branch-to-branch by "hundreds of bytes" (the campaign doc's own
+    measurement) because position, animation phase and timers all depend on
+    which input each branch held; the threshold sits at the bottom sliver of
+    THAT distribution, so a diff this small or smaller is evidence the
+    branches did NOT diverge the way this game's ordinary play does -- not
+    "still within a normal range" read off some other game's constant.
+
+    A null with no separable lower tail (this game's branches diverge by
+    only a handful of bytes even under real, unlocked play) makes any
+    threshold drawn from it indistinguishable from noise; a profile in that
+    shape should decline to arm this signal rather than accept a number,
+    which is why this function does not attempt to detect or refuse that
+    case itself -- it has no opinion on what "separable" means for a game it
+    has never seen, only on the arithmetic of one quantile."""
+    if null_diffs is None or null_diffs.size == 0:
+        return 0
+    q = max(0.0, min(1.0, float(quantile)))
+    return int(np.quantile(null_diffs, q))
+
+
+def differential_input_lock_probe_k(env, bitmasks, threshold: int,
+                                     probe_frames: int = LOCK_PROBE_FRAMES,
+                                     branches: int = LOCK_BRANCHES_K,
+                                     lock_frac: float = LOCK_FRAC,
+                                     rng: np.random.Generator | None = None
+                                     ) -> tuple[bool, float, list[int]]:
+    """CORRECTION 2, in-loop form: from env's CURRENT state, replay one NOOP
+    control branch plus `branches - 1` branches each sampling `bitmasks`
+    (the profile's OWN action space) for `probe_frames` frames, diff every
+    resulting pair of RAM+OAM snapshots, and report LOCKED when the FRACTION
+    of pairs whose diff falls AT OR UNDER `threshold` exceeds `lock_frac`.
+
+    `threshold` has no default here -- unlike the 2-byte LOCK_DIFF_TOL this
+    generalizes, "how many bytes is suspiciously few" is a per-game question
+    this function refuses to answer for the caller. It must come from
+    lock_null_threshold(measure_input_lock_null(...)) (or an
+    InputLockSignal that has run calibrate()).
+
+    Two branches (a single held direction vs. NOOP) is not enough: a real
+    clear whose last second contains a REQUIRED input -- the exit-pipe case
+    Solver.counterfactual_probe's own docstring measured, where a branch
+    holding NOOP or `right` simply never enters the pipe -- can score as
+    "diverged" on that one branch while every other branch agrees, and a
+    2-branch probe has no way to average that outlier away. Voting on the
+    FRACTION of C(branches, 2) pairs is what lets this generalize past 2
+    without hand-picking which single branch is "the" comparison.
+
+    env is restored to its pre-probe state before returning: none of this
+    ever happened on the real timeline, exactly like differential_input_lock_probe."""
+    rng = rng or np.random.default_rng()
+    base_state = env.save_state()
+    snaps = _run_lock_branches(env, bitmasks, base_state, probe_frames,
+                                branches, rng)
+    env.load_state(base_state)
+    diffs = _lock_pair_diffs(snaps)
+    n_pairs = len(diffs)
+    n_under = sum(1 for d in diffs if d <= threshold)
+    frac = (n_under / n_pairs) if n_pairs else 0.0
+    locked = frac > float(lock_frac)
+    return locked, frac, diffs
+
+
+class InputLockSignal:
+    """TIER-2 signal: the differential input-lock probe promoted from
+    offline-only (differential_input_lock_probe above, still unchanged and
+    still used by run_episode's four-signal replay) to an armed, in-loop
+    form, with the two corrections the campaign doc's strategy phase named.
+
+    CORRECTION 1 -- NO GLOBAL CONSTANT. The shipped LOCK_DIFF_TOL=2 bytes
+    out of 2048 has no per-game meaning; this class instead holds a
+    `threshold` earned by calibrate() from THIS profile's own measured
+    branch-diff null (measure_input_lock_null / lock_null_threshold).
+    probe() raises rather than fall back to any default if calibrate() was
+    never run -- a profile that cannot be calibrated must not silently
+    inherit a number that was never about it.
+
+    CORRECTION 2 -- K BRANCHES, NOT 2. One NOOP control plus K-1 branches
+    sampling the profile's OWN action space, voted by the FRACTION of
+    branch pairs that read as suspiciously similar (>= lock_frac), so one
+    branch landing on a required input (the exit-pipe case) cannot by
+    itself flip a real clear to "unlocked".
+
+    FALSE POSITIVES -- every one of these is INPUT-INDEPENDENT RAM/OAM
+    evolution, which is exactly what this signal cannot tell apart from a
+    committed transition, because it never looks at WHAT changed, only
+    whether changing the input changed it:
+      * DEATH -- a death animation runs the same whether the player holds
+        A or nothing; this signal reads LOCKED on every death.
+      * PAUSE -- input is explicitly disabled; LOCKED by definition.
+      * SCRIPTED INTRO / CUTSCENE -- LOCKED for its whole duration.
+      * A LAG or DMA-STALL frame can read LOCKED at short probe_frames
+        purely because too few frames elapsed for any branch to diverge yet.
+      * ATTRACT LOOP -- the measured Galaga case ("lives, progress and PPU
+        vertical scroll are all byte-identical under hold_right vs hold_A")
+        is a non-interactive presentation loop that reads LOCKED 100% of
+        the time, forever, with no probe_frames budget large enough to
+        outlast it. This is NOT a nuisance case; it is why a caller wiring
+        this signal into a vote MUST pair it with a separate attract_loop
+        veto rather than trust `require` alone.
+      * A SAMPLING COLLISION is a real, if narrower, residual: `bitmasks`
+        is sampled WITH REPLACEMENT per branch (see _run_lock_branches), so
+        two non-control branches can legitimately draw the identical action
+        by chance, and on a small action space (or a small `branches`) that
+        pair reads as perfectly LOCKED even in fully ordinary, responsive
+        play. This is a property of "sample uniformly per branch" as
+        specified, not a bug introduced here; measure_input_lock_null's own
+        null is exposed to the exact same collisions (it runs the same
+        _run_lock_branches), so a game where this matters shows it as
+        thicker low-end mass in the null BEFORE it ever reaches probe() --
+        which is one more reason the threshold must come from that
+        game's own measured null and never from a hand-picked constant.
+      Because every listed cause but the last is a strict superset of "the
+      game stopped responding to input", this signal can assert LOCKED with
+      total confidence and STILL be wrong about whether a clear happened --
+      it must never be the sole term in a clear vote, only a corroborator
+      alongside a signal that answers "did anything actually change"
+      (entity_wipe, oam_quiesce, room_fp_transition, scene_cut) and,
+      wherever lives can drop, a `lives_drop` veto.
+
+    CALIBRATION COST, why this is TIER-2. Each probe costs
+      2 * branches * probe_frames  frames of emulation
+      + 2 * branches               save/load_state round-trips,
+    which is the same order of magnitude as the measured banking-path
+    counterfactual probe (4-40s per candidate at its much larger
+    probe_frames). It must therefore be armed by a caller ONLY once a
+    tier-0 signal (a cheap, always-on RAM/OAM/scene signal) has already
+    raised its own vote for the current window -- never run on a fixed
+    stride in the hot loop. `probe_every` exists here ONLY as a
+    fallback fixed-duty mode (probe_every=0 disables it, the default);
+    should_probe() returning True is never itself sufficient justification
+    to call probe(), it is the SIMPLEST possible arming rule and a caller
+    with a real tier-0 signal should use that instead and ignore
+    should_probe() entirely.
+
+    PREFLIGHT. input_lock_preflight() below runs this signal from a
+    profile's own start state after ordinary settle play and demands
+    UNLOCKED -- a profile that reads LOCKED there is either stuck in an
+    attract loop or wired to a broken action space/probe, and either way
+    every number this signal produces downstream is void until that is
+    fixed. This must run once per profile at construction time, the same
+    discipline ApuActivitySignal.warmup_observations() and this file's
+    other unsatisfiable-configuration checks already apply."""
+
+    def __init__(self, bitmasks, probe_frames: int = LOCK_PROBE_FRAMES,
+                 branches: int = LOCK_BRANCHES_K,
+                 quantile: float = LOCK_NULL_QUANTILE,
+                 lock_frac: float = LOCK_FRAC,
+                 probe_every: int = LOCK_PROBE_EVERY,
+                 rng: np.random.Generator | None = None):
+        self.bitmasks = [int(b) for b in bitmasks]
+        if len(self.bitmasks) < 1:
+            raise ValueError("InputLockSignal needs a non-empty action space")
+        self.probe_frames = max(1, int(probe_frames))
+        self.branches = max(2, int(branches))
+        self.quantile = float(quantile)
+        self.lock_frac = float(lock_frac)
+        self.probe_every = max(0, int(probe_every))
+        self._rng = rng if rng is not None else np.random.default_rng()
+        self.threshold: int | None = None
+        self.null_diffs: np.ndarray | None = None
+        self.n_probes = 0
+        self.last_locked: bool | None = None
+        self.last_frac = 0.0
+        self.last_diffs: list[int] = []
+        self._since_probe = 0
+
+    def calibrate(self, env, n_samples: int = LOCK_CALIB_SAMPLES,
+                  drive_frames: int = LOCK_CALIB_DRIVE_FRAMES) -> int:
+        """Earn `threshold` from THIS env's own ordinary-play null. Costs
+        `n_samples * drive_frames` frames of real advancement (env is left
+        that far forward, not restored -- calibration play is real play)
+        plus the K-branch probe cost at each of the `n_samples` points."""
+        self.null_diffs = measure_input_lock_null(
+            env, self.bitmasks, self.probe_frames, self.branches,
+            n_samples, drive_frames, self._rng)
+        self.threshold = lock_null_threshold(self.null_diffs, self.quantile)
+        return self.threshold
+
+    def ready(self) -> bool:
+        return self.threshold is not None
+
+    def should_probe(self) -> bool:
+        """Fixed-duty FALLBACK only -- see the class docstring's TIER-2
+        note. Returns False forever at the default probe_every=0."""
+        if self.probe_every <= 0:
+            return False
+        self._since_probe += 1
+        if self._since_probe >= self.probe_every:
+            self._since_probe = 0
+            return True
+        return False
+
+    def probe(self, env) -> bool:
+        if self.threshold is None:
+            raise RuntimeError(
+                "InputLockSignal.probe() called before calibrate() -- there "
+                "is no default threshold on purpose (see lock_null_threshold "
+                "and CORRECTION 1); a profile that cannot be calibrated must "
+                "not silently fall back to the retired global LOCK_DIFF_TOL=2.")
+        locked, frac, diffs = differential_input_lock_probe_k(
+            env, self.bitmasks, self.threshold, self.probe_frames,
+            self.branches, self.lock_frac, self._rng)
+        self.n_probes += 1
+        self.last_locked = locked
+        self.last_frac = frac
+        self.last_diffs = diffs
+        return locked
+
+    def stats(self) -> dict:
+        return {"n_probes": self.n_probes, "threshold": self.threshold,
+                "last_locked": self.last_locked,
+                "last_frac": round(self.last_frac, 4),
+                "branches": self.branches, "probe_frames": self.probe_frames,
+                "lock_frac": self.lock_frac,
+                "null_n": int(self.null_diffs.size)
+                          if self.null_diffs is not None else 0}
+
+
+def input_lock_preflight(signal: InputLockSignal, env,
+                          settle_steps: int = 60) -> dict:
+    """PREFLIGHT this signal's failing_test names explicitly: from the
+    profile's OWN start state, after `settle_steps` of ordinary forward
+    play, the probe MUST report UNLOCKED. Calibrates first if the signal
+    has not been calibrated yet. Returns ok=False (never raises) so a
+    caller can decide whether an unmet preflight refuses construction or
+    only disarms this one signal -- the same "reason in the message, not a
+    silent no-op" shape this file's other validators use."""
+    move = signal.bitmasks[1] if len(signal.bitmasks) > 1 else signal.bitmasks[0]
+    for _ in range(max(0, int(settle_steps))):
+        env.step(move)
+    if not signal.ready():
+        signal.calibrate(env)
+    locked = signal.probe(env)
+    return {"ok": not locked, "locked": locked, "last_frac": signal.last_frac,
+            "threshold": signal.threshold, "null_n": signal.stats()["null_n"]}
+
+
+# ===========================================================================
 # Signal 4 -- coordinate reset + entity wipe
 # ===========================================================================
 
