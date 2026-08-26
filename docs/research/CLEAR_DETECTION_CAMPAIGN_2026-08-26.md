@@ -3,6 +3,15 @@
 **Bottom line: 29 profiles adjudicated, 0 clear predicates certified, 0 configs edited,
 0 of the 38-game gap closed.**
 
+> **SUPERSEDED IN PART, 2026-08-26 — see `docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md`.**
+> Everything below stands as evidence. The headline number does not: "0 of 38" pooled three
+> different results under one zero. The closure pass separates them across the whole
+> 45-profile roster — **4 CONFIRMED, 41 VOID, 0 FAIL** — and gives every one of the 41 a
+> named cause, including the 16 profiles this census never touched. It also reports the
+> positive controls §5 correctly flags as never having run: they have now run, and the
+> confluence detector hits 1 of 3 non-SMB games, missing the other two for arithmetic
+> reasons that apply to 26 profiles on the roster.
+
 The campaign spec said plainly that "a wired clear predicate is a POSSIBLE output of this
 campaign, never a required one." That was the right framing, and it is now the result. The
 League's `witnessable` denominator is unchanged at **5 of 43**. Every game this census
