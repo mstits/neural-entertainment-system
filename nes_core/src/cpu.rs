@@ -292,6 +292,21 @@ pub struct Cpu {
     /// OAM-DMA parity and forks long tape replays. Default OFF.
     pub hw_nmi_poll_timing: bool,
 
+    /// IRQ-mask counterpart of `hw_nmi_poll_timing`, and gated for the
+    /// same reason it is: turning a hardware-accuracy timing quirk on by
+    /// default changes what EVERY banked artifact replays as. CLI/SEI/PLP
+    /// write `flags.i` on their own final cycle, so hardware sees the mask
+    /// change one instruction later than a live read of `flags.i` does
+    /// (blargg cpu_interrupts_v2 / 1-cli_latency). With this off the
+    /// legacy immediate-service behaviour is preserved byte-for-byte.
+    ///
+    /// Default OFF deliberately. The accuracy fix is real and tested, but
+    /// this project replays banked solver tapes (scripts/replay_sweep.py)
+    /// and re-scores banked training runs against them, and an IRQ-timing
+    /// change is exactly the class that silently invalidates those. Set it
+    /// via the same --hw-all path that arms `hw_nmi_poll_timing`.
+    pub hw_irq_poll_timing: bool,
+
     /// Mirror of `Nes::hw_nmi_subcycle_phase` (config, not savestate;
     /// synced every `Nes::tick`). When the φ2 latch is active, the
     /// live `nmi_pended` at an instruction boundary IS the value as of
@@ -624,7 +639,11 @@ impl Cpu {
         };
         if take_nmi {
             self.instruction = Some(NMI_INTERRUPT);
-        } else if self.irq_line_low && !self.i_poll_latch {
+        } else if self.irq_line_low && !(if self.hw_irq_poll_timing {
+            self.i_poll_latch
+        } else {
+            self.flags.i
+        }) {
             // Use `i_poll_latch` (flags.i as of the end of the
             // PREVIOUS cycle), not the live `flags.i`: CLI/SEI/PLP
             // write flags.i on their own final cycle, and the poll
@@ -6163,6 +6182,7 @@ mod cpu_coverage_tests {
         let mut cpu = Cpu::new();
         cpu.irq_line_low = true;
         cpu.flags.i = false;
+        cpu.hw_irq_poll_timing = true;  // gated like hw_nmi_poll_timing; off by default
         cpu.i_poll_latch = false;
         cpu.poll_interrupts();
         assert_eq!(pending_name(&cpu), Some("IRQ"), "unmasked IRQ serviced");
@@ -6170,6 +6190,7 @@ mod cpu_coverage_tests {
         let mut cpu = Cpu::new();
         cpu.irq_line_low = true;
         cpu.flags.i = true; // masked
+        cpu.hw_irq_poll_timing = true;  // gated like hw_nmi_poll_timing; off by default
         cpu.i_poll_latch = true;
         cpu.poll_interrupts();
         assert_eq!(pending_name(&cpu), None, "I flag masks the IRQ");
@@ -6227,6 +6248,51 @@ mod cpu_coverage_tests {
     }
 
     #[test]
+    fn irq_poll_latency_is_off_by_default_and_preserves_legacy_service() {
+        // NEGATIVE CONTROL for the gate, and the reason the gate exists.
+        //
+        // Same program and setup as irq_poll_latency_cli_defers_service_by_
+        // one_instruction, with hw_irq_poll_timing left at its default. The
+        // IRQ must be serviced AT CLI's own boundary -- one instruction
+        // earlier than hardware, i.e. the pre-2026-08-26 behaviour.
+        //
+        // That inaccuracy is kept as the default deliberately: this project
+        // replays banked solver tapes (scripts/replay_sweep.py) and re-scores
+        // banked training runs against them, and an IRQ-timing change is
+        // exactly the class that silently invalidates every one of those. The
+        // accuracy fix is opt-in via the same --hw-all path that arms
+        // hw_nmi_poll_timing.
+        //
+        // If this test starts failing, the gate was removed or inverted and
+        // every banked artifact's replay semantics just changed underneath it.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0xEA, 0x58, 0xEA, 0xEA]); // NOP ; CLI ; NOP ; NOP
+        let mut cpu = Cpu::new();
+        assert!(
+            !cpu.hw_irq_poll_timing,
+            "the IRQ-poll accuracy gate must default OFF"
+        );
+        cpu.regs.pc = 0x0200;
+        cpu.regs.sp = 0xFD;
+        cpu.flags.i = true;
+        cpu.set_irq_line_low(true);
+
+        assert_eq!(run_one(&mut cpu, &mut bus), 2, "NOP is 2 cycles");
+        assert_eq!(pending_name(&cpu), None, "a masked IRQ stays masked");
+
+        assert_eq!(run_one(&mut cpu, &mut bus), 2, "CLI is 2 cycles");
+        assert!(!cpu.flags.i, "CLI cleared I on its own final cycle");
+        assert_eq!(
+            pending_name(&cpu),
+            Some("IRQ"),
+            "with the gate OFF the IRQ is serviced at CLI's own boundary \
+             (legacy, knowingly one instruction early); a change here means \
+             banked tape replays are no longer comparable"
+        );
+    }
+
+    #[test]
     fn cli_defers_pending_irq_by_one_instruction() {
         // The classic 6502 "interrupt hijacking" / CLI-latency quirk
         // (blargg's `cpu_interrupts_v2/1-cli_latency`): CLI writes
@@ -6243,6 +6309,7 @@ mod cpu_coverage_tests {
         let mut cpu = Cpu::new();
         cpu.regs.pc = 0x0200;
         cpu.flags.i = true;
+        cpu.hw_irq_poll_timing = true;  // gated like hw_nmi_poll_timing; off by default
         cpu.i_poll_latch = true;
         cpu.irq_line_low = true;
 
@@ -6580,6 +6647,7 @@ mod cpu_coverage_tests {
         let mut bus = p.bus();
         load_prog(&mut bus, 0x0200, &[0xEA, 0x58, 0xEA, 0xEA]); // NOP ; CLI ; NOP ; NOP
         let mut cpu = Cpu::new();
+        cpu.hw_irq_poll_timing = true;  // gated like hw_nmi_poll_timing; off by default
         cpu.regs.pc = 0x0200;
         cpu.regs.sp = 0xFD;
         cpu.flags.i = true;
@@ -6628,6 +6696,7 @@ mod cpu_coverage_tests {
         let mut bus = p.bus();
         load_prog(&mut bus, 0x0200, &[0x78, 0xEA]); // SEI ; NOP
         let mut cpu = Cpu::new();
+        cpu.hw_irq_poll_timing = true;  // gated like hw_nmi_poll_timing; off by default
         cpu.regs.pc = 0x0200;
         cpu.regs.sp = 0xFD;
         cpu.flags.i = false; // interrupts enabled...
@@ -6666,6 +6735,7 @@ mod cpu_coverage_tests {
         load_prog(&mut bus, 0x0200, &[0xEA, 0x28, 0xEA, 0xEA]); // NOP ; PLP ; NOP ; NOP
         bus.write_byte(0x01FE, 0x20); // status to pull: I clear, unused set
         let mut cpu = Cpu::new();
+        cpu.hw_irq_poll_timing = true;  // gated like hw_nmi_poll_timing; off by default
         cpu.regs.pc = 0x0200;
         cpu.regs.sp = 0xFD; // PLP increments SP, then pulls from $01FE
         cpu.flags.i = true;
@@ -6788,6 +6858,7 @@ mod cpu_coverage_tests {
         let mut bus = p.bus();
         load_prog(&mut bus, 0x0200, &[0x58, 0xEA, 0xEA]); // CLI ; NOP ; NOP
         let mut cpu = Cpu::new();
+        cpu.hw_irq_poll_timing = true;  // gated like hw_nmi_poll_timing; off by default
         cpu.regs.pc = 0x0200;
         cpu.regs.sp = 0xFD;
         cpu.flags.i = true;
@@ -6797,6 +6868,7 @@ mod cpu_coverage_tests {
         let snapshot = cpu.get_state(); // mid-instruction: I still set
 
         let mut restored = Cpu::new();
+        restored.hw_irq_poll_timing = true;  // the gate is a machine setting, not saved state
         restored.apply_state(&snapshot);
         assert!(restored.flags.i, "restored mid-CLI with I still set");
 
