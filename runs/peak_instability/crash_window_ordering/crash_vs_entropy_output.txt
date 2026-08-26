@@ -1,0 +1,13 @@
+run       peak crash_start crash_end sr_start  sr_end ent_start ent_end ent_delta_%
+v27 s0      60          69       127    0.430   0.074     0.550   0.194      -64.7%
+v27 s1      50          96       146    0.640   0.114     0.416   0.355      -14.7%
+v27 s2      90         171       180    0.841   0.124     0.248   0.267       +7.9%
+v27 s3      60          96       120    0.552   0.079     0.367   0.238      -35.2%
+v28 s0      70         113       178    0.699   0.111     0.319   0.110      -65.5%
+v28 s1      60         111       143    0.824   0.130     0.298   0.173      -42.1%
+v28 s2     120         124       140    0.504   0.088     0.365   0.212      -42.0%
+v28 s3      90         120       144    0.816   0.127     0.300   0.199      -33.7%
+
+entropy change across the crash window: median -38.6%, range -65.5% to +7.9%
+runs where entropy FELL by more than 25% across the crash: 6/8
+runs where entropy was flat or rose (>= -10%): 1/8

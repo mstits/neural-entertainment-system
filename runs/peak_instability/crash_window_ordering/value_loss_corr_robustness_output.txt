@@ -1,0 +1,16 @@
+ppo_value_loss     (mean  ) rho=-0.786   LOO range -0.857..-0.679   |rho|<0.74 (n=8 p>.05) in 4/8 drops
+ppo_value_loss     (median) rho=-0.857   LOO range -0.893..-0.786   |rho|<0.74 (n=8 p>.05) in 0/8 drops
+ppo_policy_loss    (mean  ) rho=-0.381   LOO range -0.607..-0.107   |rho|<0.74 (n=8 p>.05) in 8/8 drops
+ppo_policy_loss    (median) rho=-0.524   LOO range -0.714..-0.286   |rho|<0.74 (n=8 p>.05) in 8/8 drops
+ppo_entropy        (mean  ) rho=+0.667   LOO range +0.500..+0.786   |rho|<0.74 (n=8 p>.05) in 6/8 drops
+ppo_entropy        (median) rho=+0.667   LOO range +0.500..+0.857   |rho|<0.74 (n=8 p>.05) in 4/8 drops
+
+outlier check on ppo_policy_loss (verifier flagged v27 s3):
+  v27 s0: mean=     0.113  median=0.0292  max=     17.41
+  v27 s1: mean=     0.025  median=0.0177  max=      0.41
+  v27 s2: mean=     0.018  median=0.0109  max=      0.39
+  v27 s3: mean=     7.231  median=0.0227  max=   1776.98
+  v28 s0: mean=     0.050  median=0.0259  max=      2.29
+  v28 s1: mean=     0.025  median=0.0153  max=      0.80
+  v28 s2: mean=     0.040  median=0.0221  max=      1.77
+  v28 s3: mean=     0.090  median=0.0161  max=     16.27
