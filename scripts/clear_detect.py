@@ -1117,6 +1117,238 @@ class ApuActivitySignal:
 
 
 # ===========================================================================
+# Signal 6 -- lock-release novelty (the one-way-door discriminator)
+# ===========================================================================
+
+class LockReleaseNoveltyTrack:
+    """The composite that actually carries the clear verdict, built from
+    ORDER and CONSEQUENCE rather than from any new byte -- the discriminator
+    the census named ("a stage clear is a lock window that ends with the
+    world irreversibly different; a death is a lock window that ends with
+    the world restored") but never got to run, because the census never
+    reached a working detector on 28 of its 29 profiles.
+
+    Every OTHER signal in this file answers "did something change" (a music
+    cue, a tally, a position reset, an entity wipe, a channel-activity
+    shift). None of them can tell a stage clear from a death, because a
+    death produces the exact same co-occurring changes -- which is the
+    measured story behind every false positive on record here (Gradius'
+    respawn wipe, Kirby's room transitions, the Galaga attract loop reading
+    LOCKED forever). A clear and a death share their SIGNATURE but not
+    their SHAPE:
+
+      * a DEATH is a lock window that releases back into a fingerprint the
+        episode has already produced -- the respawn/checkpoint room -- and
+        the room you were standing in before the lock is one you can walk
+        straight back into.
+      * a CLEAR is a lock window that releases into a fingerprint the
+        episode has never produced before, and the room you were standing
+        in before the lock is gone: it does not reappear no matter how long
+        you keep playing.
+
+    INPUT is two already-computed per-observation values; this class is
+    composition ONLY and consults no address and no new hardware surface of
+    its own:
+
+      locked   -- bool, this observation's input-lock verdict. In the live
+                  loop this is InputLockSignal.probe()'s return value (or
+                  InputLockTrack.vote_at's, offline); a test may synthesize
+                  it directly. Purity holds transitively -- this class does
+                  not care HOW `locked` was computed, only its rise/fall
+                  pattern.
+      room_fp  -- a hashable identity token for "which room/scene is
+                  showing right now", SETTLED (not mid-transition), or None
+                  when no settled identity exists yet for this observation
+                  (mid-churn, or a caller that has not wired a room-identity
+                  signal at all). The token's provenance does not matter --
+                  a nametable-VRAM hash (room_fp_transition), a scene
+                  ordinal (scene_cut), or a test's own synthetic int drive
+                  IDENTICAL logic here, because the discriminating power is
+                  in the token's RISE/FALL/RE-ENTRY pattern, not in what
+                  produced it.
+
+    MECHANISM. Track the current lock window's start (t0) and the last
+    settled room_fp seen before it opened (the "pre-lock" fingerprint). On
+    the falling edge of `locked` (t1), if (t1 - t0) <= lock_max:
+      1. NOVELTY -- is the settled room_fp AT t1 one this scope has not
+         produced before now? If not (a RESPAWN -- most commonly landing
+         back in the exact pre-lock room, but any previously-visited room
+         reads the same way), discard: no candidate armed, vote unchanged.
+      2. If novel, arm a PENDING candidate holding the pre-lock fingerprint
+         and start counting.
+      3. RE-ENTRY CHECK -- if the pre-lock fingerprint is read again
+         (settled) at any point during the count, the candidate was a
+         one-way door WITHIN a level that the player walked back around
+         from some other route, not a level exit: discard.
+      4. If the count reaches `m` observations without the pre-lock
+         fingerprint reappearing, the candidate survives and FIRES. The
+         vote is a LATCH (mirrors StreamingConfluenceDetector.push's "stays
+         True thereafter" contract) -- a clear is a discrete banked event,
+         not a transient blip that un-fires.
+
+    WHY THE `m`-OBSERVATION DELAY IS CORRECT, NOT A BUG. Firing needs `m`
+    observations of CONFIRMED non-re-entry before it can be declared,
+    because that confirmation is the one piece of evidence this surface can
+    gather for free that distinguishes a level exit from an ordinary
+    walk-around loop. Collapsing it to "fire the instant room_fp is novel"
+    would not create a new false positive (novelty ALONE already votes 1 on
+    an ordinary one-way door -- see the Kirby control below) but it WOULD
+    throw away the one corroborating check available, for no latency
+    benefit worth naming.
+
+    THIS SIGNAL CANNOT, BY ITSELF, TELL A CLEAR FROM AN OTHERWISE-ORDINARY
+    ONE-WAY DOOR STILL FIRMLY INSIDE THE LEVEL (Kirby's doors, Metroid's
+    rooms). That is not a defect to patch here -- it is the reason
+    `progress_advance` remains a REQUIRED corroborator wherever this signal
+    is declared on a room-based game (the generalized room_veto escape
+    clause), and it is why the false-positive control below is written as a
+    POSITIVE assertion instead of being quietly avoided.
+
+    FALSE POSITIVES:
+      * A ONE-WAY DOOR INSIDE A LEVEL is genuinely novel and genuinely
+        non-re-entrant at this surface, and this signal WILL vote 1 on it --
+        proved as a positive assertion by
+        test_kirby_room_shape_still_votes_on_lock_release_novelty, not
+        hidden as an accidental gap. `progress_advance` is what tells the
+        two apart, one layer up.
+      * A DEATH THAT RESPAWNS INTO A NEVER-VISITED ROOM defeats the
+        first-visit clause (rare, but real on a game whose respawn point is
+        not fixed) -- pinned as a positive assertion too; only the
+        `lives_drop` veto one layer up covers it.
+      * A COMBAT BLIP that locks input briefly (hit-stun) and releases back
+        into the SAME room is respawn-shaped (post-lock fp == pre-lock fp)
+        and is rejected by the novelty check exactly like a death, with no
+        special-casing needed.
+      * ATTRACT LOOP -- an unbounded lock never releases, so no falling
+        edge is ever observed and no candidate is ever armed: caught by
+        construction. A loop that DOES cycle but holds each lock far longer
+        than any real clear's window is caught by `lock_max` rejecting the
+        candidate outright.
+      * GAME OVER -- same as the unbounded attract case: a lock that never
+        releases arms nothing.
+
+    CALIBRATION:
+      lock_max     -- upper bound on a clear's lock window, in observations.
+                      REQUIRED, no default: a game-agnostic default here
+                      would repeat the exact mistake this campaign's own
+                      structural finding names (COORD_RESET_DROP_MIN,
+                      LOCK_DIFF_TOL -- SMB-shaped constants with no
+                      per-game meaning). Measure it per profile from that
+                      profile's own oracle clear trace(s) -- the lock
+                      window's measured duration across a real recorded
+                      clear (SMB's flagpole-to-next-level, Castlevania's
+                      block transition) -- and pass it in.
+      m            -- the re-entry horizon, in observations, after release.
+                      Also REQUIRED and also per-profile: too short and a
+                      slow walk back into the pre-lock room reads as a
+                      clear before the walk completes; too long and a
+                      genuine clear's vote is delayed past the point a
+                      caller needed it.
+      per_episode  -- True (default): `seen` starts empty at construction
+                      and accumulates only what THIS episode has settled
+                      on -- the honest default per the design doc (a
+                      lineage restored from an archived cell has not
+                      "visited" anything yet in the sense this signal
+                      means). For the per-archive variant, construct with
+                      `per_episode=False` and pass `seen` pre-populated
+                      with a lineage's ancestor visits; `reset()` then
+                      preserves it across episode boundaries instead of
+                      wiping it.
+      seen         -- optional pre-seeded set of already-visited
+                      fingerprints (the per-archive variant); leave None
+                      for a fresh per-episode set.
+
+    NOT MODELLED, deliberately: WHICH room the player ends up in (any novel
+    room is treated identically), and how long the pre-lock room stays
+    unvisited AFTER the `m`-observation window closes (a level that loops
+    back to an early room after `m` more observations is not re-litigated;
+    `m` is a confirmation horizon, not a permanent ban)."""
+
+    def __init__(self, lock_max: int, m: int, per_episode: bool = True,
+                 seen: set | None = None):
+        self.lock_max = max(1, int(lock_max))
+        self.m = max(1, int(m))
+        self.per_episode = bool(per_episode)
+        self._seen: set = set() if seen is None else seen
+        self.reset()
+
+    def reset(self) -> None:
+        """Un-latch AND drop the in-flight lock/pending state (same
+        reasoning as StreamingConfluenceDetector.reset(): the evidence a
+        fire used is still in the pending/seen state, so a caller that
+        vetoes a fire and does not reset would re-earn the identical fire
+        off stale evidence the instant the veto lifted).
+
+        Deliberately does NOT clear `_seen` when `per_episode` is False --
+        the whole point of the per-archive variant is that visited-room
+        history survives a reset. A fresh per-episode instance is expected
+        to be reconstructed, not reset, at episode boundaries; reset() here
+        exists for the latch/pending state regardless of scope."""
+        self._locked = False
+        self._lock_start: int | None = None
+        self._pre_fp = None
+        self._pending: dict | None = None
+        self._last_fp = None
+        self._vote = 0
+        self.n = 0
+        self.n_candidates = 0
+        self.n_respawn_shaped = 0
+        self.n_fires = 0
+        if self.per_episode:
+            self._seen = set()
+
+    def push(self, locked: bool, room_fp=None) -> int:
+        """Feed one observation's (locked, room_fp) pair. Returns vote().
+
+        Order matters and is deliberate: a pending candidate's re-entry
+        check runs BEFORE this observation's room_fp is folded into `seen`
+        or compared for THIS frame's own edge, so nothing can satisfy its
+        own novelty test and no re-entry check can be short-circuited by
+        the very frame it is checking."""
+        locked = bool(locked)
+        self.n += 1
+
+        if self._pending is not None:
+            if room_fp is not None and room_fp == self._pending["pre_fp"]:
+                self._pending = None            # walked straight back in
+            else:
+                self._pending["age"] += 1
+                if self._pending["age"] >= self.m:
+                    self.n_fires += 1
+                    self._vote = 1
+                    self._pending = None
+
+        if locked and not self._locked:
+            self._lock_start = self.n
+            self._pre_fp = self._last_fp
+        elif self._locked and not locked and self._lock_start is not None:
+            dur = self.n - self._lock_start
+            if dur <= self.lock_max:
+                self.n_candidates += 1
+                post_fp = room_fp if room_fp is not None else self._last_fp
+                if post_fp is not None and post_fp not in self._seen:
+                    self._pending = {"pre_fp": self._pre_fp, "age": 0}
+                else:
+                    self.n_respawn_shaped += 1
+            self._lock_start = None
+
+        if room_fp is not None:
+            self._last_fp = room_fp
+            self._seen.add(room_fp)
+
+        self._locked = locked
+        return self.vote()
+
+    def vote(self) -> int:
+        return self._vote
+
+    def stats(self) -> dict:
+        return {"n": self.n, "n_candidates": self.n_candidates,
+                "n_respawn_shaped": self.n_respawn_shaped,
+                "n_fires": self.n_fires, "n_seen": len(self._seen)}
+
+
+# ===========================================================================
 # Streaming confluence detector (live solver hot-loop form)
 # ===========================================================================
 
