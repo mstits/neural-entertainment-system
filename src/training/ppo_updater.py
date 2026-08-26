@@ -106,7 +106,19 @@ class PPOUpdater:
                     bonus_t = t._rnd.normalize_bonus(intrinsic_raw)
                     # Update running stats with the RAW error, not the
                     # normalized bonus (avoids the reward_rms self-loop).
-                    t._rnd.update_normalization(rnd_obs_t, intrinsic_raw)
+                    # Valid rows only -- post-done frozen padding is a
+                    # byte-identical copy of the death frame (env stops
+                    # stepping once frozen) and would otherwise skew
+                    # obs_rms/reward_rms, same as the valid-only GAE
+                    # normalization and minibatch loop below.
+                    _rnd_valid_rows = torch.from_numpy(
+                        valid_buf.reshape(-1)
+                    ).to(t.device)
+                    if _rnd_valid_rows.any():
+                        t._rnd.update_normalization(
+                            rnd_obs_t[_rnd_valid_rows],
+                            intrinsic_raw[_rnd_valid_rows],
+                        )
                     intrinsic_np = (
                         bonus_t.cpu().numpy().astype(np.float32)
                         * t.rnd_intrinsic_coef
