@@ -140,3 +140,133 @@ def test_soak_tampered_chain_fails(tmp_path):
     errors, verified, scoreable = provenance_check.check_soak_trails(repo)
     assert any("chain broken" in e for e in errors)
     assert verified == 0 and scoreable == 0
+
+
+# ---- FORGE ledger entries (CLAIMS.md "### FORGE entries") -------------
+#
+# Only two of the FORGE definition's four criteria have real, checkable
+# structure (see check_forge_entries' docstring for why detection and
+# authorship are not mechanically checkable at all): a named flag/config
+# key that actually defaults off in tracked source, a cited tests/*.py
+# file that actually exists and passes, and an explicit PASS/FAIL/VOID/
+# PENDING-VALIDATION status word somewhere in the entry. These fixtures
+# exercise all three against real source and a real pytest subprocess —
+# no mocking — so a change that silently breaks the flag/test lookups
+# cannot pass this file by accident.
+
+_FAKE_FLAG_SOURCE = '''
+import argparse
+
+def build_parser():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--frobnicate", choices=("off", "on"), default="off",
+                     help="test-only flag")
+    return ap
+'''
+
+_FAKE_TEST_OK = '''
+def test_trivial():
+    assert True
+'''
+
+
+def _write_forge_repo(tmp_path, entry_body: str, *, with_test_file=True):
+    repo = tmp_path
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    (repo / "scripts" / "fake_tool.py").write_text(_FAKE_FLAG_SOURCE)
+    (repo / "tests").mkdir(parents=True, exist_ok=True)
+    if with_test_file:
+        (repo / "tests" / "test_fake_forge_ok.py").write_text(_FAKE_TEST_OK)
+    claims = f"""# Claims Policy
+
+### FORGE entries
+
+{entry_body}
+
+## Quarantine
+
+nothing here.
+"""
+    (repo / "CLAIMS.md").write_text(claims)
+    return repo
+
+
+_WELL_FORMED_ENTRY = (
+    "**FORGE-SHIPPED — the frobnicate arm (`--frobnicate`), commit "
+    "`abc1234`, 2026-01-01.** Self-measured detection: found in the "
+    "run's own telemetry. Agentic authorship: designed and reviewed by "
+    "the pipeline with no human algorithmic contribution. Standard "
+    "gates: default off (`--frobnicate`), covered by "
+    "`tests/test_fake_forge_ok.py`. Honest status: PASS.")
+
+
+def test_forge_entry_well_formed_passes(tmp_path):
+    repo = _write_forge_repo(tmp_path, _WELL_FORMED_ENTRY)
+
+    errors, report = provenance_check.check_forge_entries(repo)
+
+    assert errors == []
+    assert report["total"] == 1
+    assert report["passed"] == 1
+    entry = report["entries"][0]
+    assert entry["overall"] == "pass"
+    assert entry["flag_default_off"][0] == "pass"
+    assert entry["cited_tests"][0] == "pass"
+    assert entry["explicit_status"][0] == "pass"
+
+
+def test_forge_entry_nonexistent_test_file_fails(tmp_path):
+    entry = (
+        "**FORGE-SHIPPED — the frobnicate arm (`--frobnicate`), commit "
+        "`abc1234`, 2026-01-01.** Standard gates: default off "
+        "(`--frobnicate`), covered by `tests/test_does_not_exist_xyzzy.py`. "
+        "Honest status: PASS.")
+    repo = _write_forge_repo(tmp_path, entry, with_test_file=False)
+
+    errors, report = provenance_check.check_forge_entries(repo)
+
+    assert report["passed"] == 0
+    assert any(
+        "test_does_not_exist_xyzzy.py" in e and "do not exist" in e
+        for e in errors), errors
+    entry_report = report["entries"][0]
+    assert entry_report["cited_tests"][0] == "fail"
+    assert "test_does_not_exist_xyzzy.py" in entry_report["cited_tests"][1]
+
+
+def test_forge_entry_no_status_word_fails(tmp_path):
+    entry = (
+        "**FORGE-SHIPPED — the frobnicate arm (`--frobnicate`), commit "
+        "`abc1234`, 2026-01-01.** Standard gates: default off "
+        "(`--frobnicate`), covered by `tests/test_fake_forge_ok.py`. "
+        "Honest status: the mechanism is confirmed working end to end.")
+    repo = _write_forge_repo(tmp_path, entry)
+
+    errors, report = provenance_check.check_forge_entries(repo)
+
+    assert report["passed"] == 0
+    entry_report = report["entries"][0]
+    assert entry_report["explicit_status"][0] == "fail"
+    assert any("no explicit PASS/FAIL/VOID/PENDING-VALIDATION word" in e
+               for e in errors), errors
+    # the other two criteria are unaffected by the missing status word
+    assert entry_report["flag_default_off"][0] == "pass"
+    assert entry_report["cited_tests"][0] == "pass"
+
+
+def test_parse_forge_entries_splits_on_bold_forge_headers_only(tmp_path):
+    entry = (
+        _WELL_FORMED_ENTRY + "\n\n"
+        "*Status, updated later — not a new entry, just an addendum "
+        "to the one above.* Nothing new to check here.\n\n"
+        "**FORGE — a second, untagged entry, commit `def5678`.** Cites "
+        "`tests/test_fake_forge_ok.py` too. Honest status: VOID.")
+    repo = _write_forge_repo(tmp_path, entry)
+
+    entries = provenance_check.parse_forge_entries(repo / "CLAIMS.md")
+
+    assert len(entries) == 2
+    assert entries[0]["tag"] == "SHIPPED"
+    assert "addendum" in entries[0]["text"]
+    assert entries[1]["tag"] is None
+    assert "second, untagged entry" in entries[1]["text"]
