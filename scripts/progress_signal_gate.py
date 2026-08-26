@@ -31,6 +31,44 @@ MIN_DISTINCT = 32          # fewer levels than this is not a gradient
 MIN_TAIL_FRACTION = 0.25   # progress must still be moving late in a roll
 
 
+def note_camera_static(v: dict, oam_churn: int, steps: int) -> dict:
+    """Annotate (never launder) a verdict whose odometer axis had zero
+    range (rx == ry == 0 at the call site).
+
+    A camera that never moved means the rebased trace is constant —
+    distinct=1, the exact degenerate case MIN_DISTINCT exists to catch.
+    An earlier version of this function deleted that "too coarse"
+    instrument finding and forced passed=True whenever OAM churn showed
+    the agent was active, on the theory that a static camera is a fact
+    about the GAME and not the instrument. That reasoning smuggled in a
+    false conclusion: whether the flatness is a game-design fact or a
+    route wall, the solver still cannot see a gradient on this axis —
+    the archive would never grow past one cell no matter how active the
+    agent was. "the agent moved" is not evidence "the odometer can ever
+    report a positive here", and this instrument has never been
+    demonstrated capable of doing so for a profile that lands here. So
+    this must stay an instrument finding and keep blocking; only the
+    OAM cross-check is new information, added as context.
+
+    Regression case this guards (the legend_of_zelda receipt): distinct=1,
+    min=0, max=0, oam_churn=967 — an agent that is visibly active on an
+    axis that never moves. The old code certified that as
+    "SIGNAL SOUND". It is not: it is the one shape of trace this gate
+    exists to reject.
+    """
+    agent = ("agent active (OAM moving)" if oam_churn > steps // 4
+             else "agent inert (OAM static too)")
+    v["instrument_findings"].append(
+        f"camera never moved over {steps} steps under the odometer "
+        f"driver ({agent}) — a zero-range axis cannot express progress "
+        f"regardless of agent activity; this profile has not been "
+        f"demonstrated capable of returning a positive on this axis and "
+        f"must not drive a search with it")
+    v["passed"] = not v["instrument_findings"]
+    v["verdict"] = "SIGNAL UNUSABLE — camera static"
+    return v
+
+
 def resolve_odometer_axis(progress_cfg: dict, rx: int,
                            ry: int) -> tuple[int, int]:
     """Axis index (0=x, 1=y) and sign to trace under --odometer.
@@ -222,23 +260,12 @@ def main(argv: list[str] | None = None) -> int:
         # as a genuinely forward-increasing one without this.
         v = assess(trace, lives0, True, signed[-1] - signed[0])
         # The odometer measures the CAMERA, and the build is certified
-        # (scripts/odometer_cert.py) before this gate runs. A flat
-        # odometer therefore reports a static camera — a fact about the
-        # game under this driver, never about the instrument. Reclassify
-        # the RAM-era coarseness fault and attach the OAM cross-check so
-        # the verdict says whether the agent was even alive.
+        # (scripts/odometer_cert.py) before this gate runs, so a flat
+        # odometer is a real reading, not noise. But real or not, zero
+        # range on this axis means the solver would see a constant —
+        # see note_camera_static() for why that still has to block.
         if rx == 0 and ry == 0:
-            v["instrument_findings"] = [
-                f for f in v["instrument_findings"] if "too coarse" not in f]
-            agent = ("agent active (OAM moving)" if oam_churn > args.steps // 4
-                     else "agent inert (OAM static too)")
-            v["behaviour_findings"].append(
-                f"camera never moved over {args.steps} steps; {agent} — "
-                f"the game does not scroll under this driver, which is a "
-                f"skill/route wall, not an instrument fault")
-            v["passed"] = not v["instrument_findings"]
-            v["verdict"] = ("SIGNAL SOUND — camera static, " + agent
-                            if v["passed"] else v["verdict"])
+            v = note_camera_static(v, oam_churn, args.steps)
         v["oam_churn"] = oam_churn
     else:
         for _ in range(args.steps):
