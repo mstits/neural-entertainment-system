@@ -671,3 +671,118 @@ def test_one_iteration_metrics_dict_and_reward_buffer(monkeypatch) -> None:
     # RND was enabled in this profile (rnd_intrinsic_coef 0.1) so the loop
     # must have built + exercised the module on the rollout path.
     assert trainer._rnd is not None, "rnd_intrinsic_coef > 0 but RND never built"
+
+
+# ---------------------------------------------------------------------------
+# `reinforce.episode_metrics` — the per-episode sidecar (episodes.jsonl via
+# MetricsSink.emit_episode()). Default-OFF because the call site sits right
+# next to the hot per-worker rollout step; these pin both halves of that
+# contract: silent when off, right-shaped rows when on.
+# ---------------------------------------------------------------------------
+def _run_one_tiny_iteration(profile: dict, tmp: str, num_envs: int = 2):
+    from src.training.trainer import Trainer
+
+    trainer = Trainer(
+        rom_path=str(_SMB_ROM),
+        game_profile=profile,
+        num_instances=num_envs,
+        population_size=num_envs,
+        checkpoint_dir=tmp,
+        start_state_path=profile.get("start_state_path"),
+        env_spec="nes_core",
+        max_episode_steps=1000,
+        metrics_queue=_queue.Queue(),
+        device_override="cpu",
+    )
+    trainer.run(num_generations=1, resume_from=None, fresh_start=True)
+
+
+@pytest.mark.skipif(
+    not _SMB_ROM.exists() or not _PROFILE.exists(),
+    reason="SMB ROM / mario_tiles_vanilla profile not present.",
+)
+def test_episode_metrics_off_by_default_writes_nothing() -> None:
+    """No `reinforce.episode_metrics` key at all — must match the codebase's
+    other opt-in reinforce.* switches (sil, plr_enabled, ...) and default OFF.
+    episodes.jsonl exists (truncate() always creates it) but stays empty."""
+    _seed_everything()
+    with open(_PROFILE) as f:
+        profile = yaml.safe_load(f)
+    profile["reinforce"]["rollout_steps"] = 400
+    profile["reinforce"]["steps"] = 1
+    profile["reinforce"]["ppo_minibatch_size"] = 16
+    profile["reinforce"]["device"] = "cpu"
+    assert "episode_metrics" not in profile["reinforce"]
+
+    with tempfile.TemporaryDirectory(prefix="vppo_epi_off_") as tmp:
+        _run_one_tiny_iteration(profile, tmp)
+        episodes_path = Path(tmp) / "episodes.jsonl"
+        assert episodes_path.exists()
+        assert episodes_path.read_text() == "", (
+            "episode_metrics defaulted OFF but episodes.jsonl got rows"
+        )
+
+
+@pytest.mark.skipif(
+    not _SMB_ROM.exists() or not _PROFILE.exists(),
+    reason="SMB ROM / mario_tiles_vanilla profile not present.",
+)
+def test_episode_metrics_on_emits_right_shaped_rows() -> None:
+    """`reinforce.episode_metrics: true` — a long-enough rollout that at
+    least one of the 2 envs completes an episode (an untrained policy dies
+    well within 400 steps at this seed) must produce one episodes.jsonl row
+    per completed episode, carrying exactly the fields the harvest site has
+    on hand: generation, worker index, that episode's own return/length,
+    plus the already-in-scope final_x and the two RAW done flags — nothing
+    invented, and specifically not folded into one `died` boolean (see the
+    call site: on SMB the env-side r.done stays False and the reward fn's
+    rew_done carries the death, so a single `died=r.done` column would be
+    False on every row this test could ever produce)."""
+    _seed_everything()
+    with open(_PROFILE) as f:
+        profile = yaml.safe_load(f)
+    num_envs = 2
+    profile["reinforce"]["rollout_steps"] = 400
+    profile["reinforce"]["steps"] = 1
+    profile["reinforce"]["ppo_minibatch_size"] = 16
+    profile["reinforce"]["device"] = "cpu"
+    profile["reinforce"]["episode_metrics"] = True
+
+    with tempfile.TemporaryDirectory(prefix="vppo_epi_on_") as tmp:
+        _run_one_tiny_iteration(profile, tmp, num_envs=num_envs)
+        episodes_path = Path(tmp) / "episodes.jsonl"
+        assert episodes_path.exists()
+        lines = episodes_path.read_text().splitlines()
+        assert lines, "episode_metrics=true but no episode completed/emitted"
+
+        import json
+
+        for line in lines:
+            row = json.loads(line)
+            assert isinstance(row["generation"], (int, np.integer))
+            assert row["generation"] == 0
+            assert row["worker_id"] in range(num_envs)
+            assert _is_number(row["episode_return"])
+            assert math.isfinite(float(row["episode_return"]))
+            assert isinstance(row["episode_length"], int) and row["episode_length"] > 0
+            assert isinstance(row["final_x"], int)
+            assert isinstance(row["env_done"], bool)
+            assert isinstance(row["reward_done"], bool)
+            assert row["schema_version"] == 1
+            assert "timestamp" in row
+
+        # Regression pin for the bug this field split fixes: an SMB
+        # rollout of an untrained policy is nothing but deaths, so the
+        # combined termination signal must be True somewhere. If this
+        # ever goes all-False again, the sidecar has silently stopped
+        # recording why episodes ended.
+        assert any(
+            json.loads(line)["env_done"] or json.loads(line)["reward_done"]
+            for line in lines
+        ), "no episode recorded a termination cause — done flags are dead"
+
+        # metrics.jsonl keeps its own (generation-aggregate) shape — the
+        # per-episode rows never leak into it.
+        metrics_lines = (Path(tmp) / "metrics.jsonl").read_text().splitlines()
+        for line in metrics_lines:
+            assert "episode_return" not in json.loads(line)

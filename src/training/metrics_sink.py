@@ -12,6 +12,18 @@ per-gen scalars:
 Extracted from Trainer so the file IO and the TB lazy-init logic
 can be exercised in isolation; the trainer no longer carries
 `_tb_writer` / `_tb_enabled` on `self`.
+
+A fourth, optional surface: `episodes.jsonl`, written by
+`emit_episode()`. `metrics.jsonl`'s unit of work is a GENERATION —
+an aggregate over every worker's episodes that completed within it
+(mean/max return, mean length, ...). That is the right shape for the
+per-gen dashboard, but it means per-episode identity (which worker,
+which episode, its own return/length) exists only for the moment the
+trainer's rollout loop holds it before folding it into the
+generation's aggregate — there is no way to later ask "which worker
+produced the outlier." `emit_episode()` is the sibling that keeps one
+row per completed episode instead of collapsing it into an average,
+in its own file so the two row shapes never mix in one reader's path.
 """
 
 from __future__ import annotations
@@ -67,7 +79,8 @@ class MetricsSink:
 
     Construct once per training run. Call `truncate()` at the top of
     a fresh run, `emit(**scalars)` each generation, and `close()` at
-    shutdown to flush the TB writer.
+    shutdown to flush the TB writer. `emit_episode(**fields)` is the
+    per-episode sibling of `emit()` — see the module docstring.
     """
 
     def __init__(
@@ -78,6 +91,11 @@ class MetricsSink:
         tb_enabled: bool = True,
     ) -> None:
         self.metrics_path = Path(metrics_path)
+        # Sidecar for emit_episode() — same checkpoint_dir as
+        # metrics.jsonl (its parent), never the same file: the two
+        # row shapes (per-generation aggregate vs. per-episode raw)
+        # would break every existing reader of either if mixed.
+        self.episodes_path = self.metrics_path.parent / "episodes.jsonl"
         self.tb_log_dir = Path(tb_log_dir)
         self._queue = queue
         self._tb_enabled = bool(tb_enabled)
@@ -90,8 +108,14 @@ class MetricsSink:
         self._warned_missing: set[str] = set()
 
     def truncate(self) -> None:
-        """Empty the metrics file (called at the start of a fresh run)."""
+        """Empty the metrics file (called at the start of a fresh run).
+
+        Also empties the episodes.jsonl sidecar so a fresh run never
+        appends onto a previous run's per-episode rows — harmless when
+        `emit_episode()` is never called (the file just stays empty).
+        """
         self.metrics_path.write_text("")
+        self.episodes_path.write_text("")
 
     def close(self) -> None:
         """Flush + close the TB writer. Idempotent.
@@ -166,3 +190,33 @@ class MetricsSink:
                     self._tb_writer.add_scalar(k, float(v), gen)
                 except Exception:
                     pass
+
+    def emit_episode(self, **fields: Any) -> None:
+        """Append one row per COMPLETED EPISODE to `episodes.jsonl`.
+
+        The per-episode sibling of `emit()` — see the module docstring
+        for why this file exists separately from `metrics.jsonl`.
+        Callers pass only fields already computed at the harvest site
+        (generation, worker index, that episode's own return/length,
+        ...); this method does not infer, aggregate, or derive
+        anything — it stamps `timestamp` / `schema_version` the same
+        way `emit()` does and appends.
+
+        Deliberately NOT fanned out to the GUI queue or the TB writer:
+        no dashboard panel reads per-episode rows, and the row shape
+        (one line per episode, arbitrarily more or fewer than one per
+        generation) doesn't match what either sink expects. Disk IO
+        is this method's only side effect. Callers gate calls to this
+        method behind their own opt-in flag — it is meant to sit right
+        next to a hot rollout loop, so it does no schema validation or
+        other work beyond the write itself.
+        """
+        fields["timestamp"] = time.time()
+        # Own schema marker (starts at 1, like `emit()`'s) — this file
+        # has a different, independent row shape from metrics.jsonl's,
+        # so the two must not be conflated by a reader keying off
+        # `schema_version` alone without also checking which file it
+        # read the line from.
+        fields["schema_version"] = 1
+        with open(self.episodes_path, "a") as f:
+            f.write(json.dumps(fields) + "\n")

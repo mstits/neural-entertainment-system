@@ -5180,6 +5180,18 @@ class Trainer:
         # DECISIONS route through the isolated, unit-tested
         # `oneshot_curriculum` module; this block is thin glue.
         _rl_cfg = self.game_profile.get("reinforce", {}) or {}
+        # Per-episode metrics sidecar (episodes.jsonl via
+        # MetricsSink.emit_episode()). OFF by default: the call site is
+        # inside the innermost per-worker step loop, right next to the
+        # hot rollout path, so an unconditional emit here would add a
+        # file write per completed episode (tens of times a second at
+        # num_envs~60-121) to every run instead of only the ones that
+        # asked for per-episode/per-worker granularity. metrics.jsonl's
+        # per-generation aggregates remain the default source of truth;
+        # opt in with `reinforce.episode_metrics: true` when you need to
+        # ask "which worker produced the outlier" instead of just
+        # "generation N looked off."
+        episode_metrics_on = bool(_rl_cfg.get("episode_metrics", False))
         _substage_cfg = dict(_rl_cfg.get("substage_ladder", {}) or {})
         # Level-scoped consolidation ("weld ONE level"), a DISTINCT mode from
         # the frontier ladder — see the setup block below. It trains 100% of the
@@ -7378,6 +7390,53 @@ class Trainer:
                         # is skipped (the seed already IS the new obs).
                         reseeded = False
                         if done:
+                            if episode_metrics_on:
+                                # Per-episode identity (worker i, this
+                                # episode's own return/length/final_x)
+                                # is only ever available HERE, for the
+                                # rest of this one iteration of the loop
+                                # — completed_returns/completed_lengths
+                                # right below fold it into an unlabeled
+                                # list, and the generation-level emit
+                                # further down folds those into a mean/
+                                # max that no longer says which worker
+                                # contributed what. Every field is read,
+                                # not derived: `x_pos` is this exact
+                                # step's position (already computed
+                                # above for max_x_reached), and the two
+                                # done flags are logged RAW and
+                                # separately rather than folded into one
+                                # `died` boolean. That split is load-
+                                # bearing, not pedantry: per the
+                                # "r.done vs rew_done" note near the
+                                # narrator call above, SMB/Contra deaths
+                                # and clears fire through the reward fn
+                                # (`rew_done`) while the env-side
+                                # `r.done` stays False, so a lone
+                                # `died=r.done` column would read False
+                                # on every SMB episode ever logged. A
+                                # consumer reconstructs what it needs:
+                                # a done with neither flag set is the
+                                # backward-curriculum budget truncation.
+                                # A level-clear flag is left out here on
+                                # purpose: the closest existing signal
+                                # (`_bwd_env_clear`) isn't reset per-
+                                # episode outside the backward-
+                                # curriculum path, so on a multi-
+                                # episode-per-slot rollout (auto-reset
+                                # on death) it can still read True from
+                                # an earlier episode in the same slot —
+                                # shipping that would misattribute a
+                                # clear to an episode that didn't clear.
+                                self._metrics_sink.emit_episode(
+                                    generation=global_it,
+                                    worker_id=i,
+                                    episode_return=float(ep_returns[i]),
+                                    episode_length=int(ep_lengths[i]),
+                                    final_x=int(x_pos),
+                                    env_done=bool(r.done),
+                                    reward_done=bool(rew_done),
+                                )
                             completed_returns.append(float(ep_returns[i]))
                             completed_lengths.append(int(ep_lengths[i]))
                             ep_returns[i] = 0.0
