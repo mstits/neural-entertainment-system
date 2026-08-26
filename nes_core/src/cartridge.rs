@@ -280,9 +280,15 @@ impl Cartridge {
             format!("{:x}", ctx.compute())
         };
 
-        // Add CHR bank if not in file (CHR-RAM carts).
+        // Add CHR bank if not in file (CHR-RAM carts). Gated on the actual
+        // decoded CHR-ROM byte size, not the truncated bank count: a NES 2.0
+        // ROM can legitimately have CHR-ROM smaller than one 8 KB bank
+        // (exponent-multiplier form), which rounds chr_num_banks down to 0
+        // even though real CHR data was just read into `chr` above.
+        // Checking chr_num_banks here would wrongly treat that payload as
+        // "no CHR-ROM in file" and discard it.
         let mut chr_num_banks = chr_num_banks;
-        if chr_num_banks == 0 {
+        if chr_rom_size == 0 {
             chr_num_banks = 1;
             chr = vec![0u8; CHR_ROM_BANK_SIZE as usize];
         }
@@ -613,6 +619,26 @@ mod cartridge_coverage_tests {
         let rom = zero_rom(fields, 0, expected);
         let cart = Cartridge::load(&mut Cursor::new(rom)).unwrap();
         assert_eq!(cart.chr.len(), expected);
+    }
+
+    // BUG: NES 2.0 CHR-ROM smaller than one 8 KB bank (exponent form) rounds
+    // chr_num_banks down to 0, which the CHR-RAM fallback used to mistake
+    // for "no CHR-ROM in file" and silently replace the just-read payload
+    // with a blank 8 KB buffer. chr_lo=0x2C, chr_hi=0xF => E=11, M=0 =>
+    // 2048-byte CHR-ROM; the real payload must survive intact.
+    #[test]
+    fn nes20_chr_smaller_than_one_bank_is_not_discarded() {
+        let fields = [0x01, 0x2C, 0x00, 0x08, 0x00, 0xF0, 0x00, 0, 0, 0, 0, 0];
+        let expected_chr_len = 2048usize;
+        let prg = vec![0u8; PRG_ROM_BANK_SIZE as usize];
+        let chr_payload: Vec<u8> = (0..expected_chr_len).map(|i| (i % 251 + 1) as u8).collect();
+        let mut rom = header(fields);
+        rom.extend_from_slice(&prg);
+        rom.extend_from_slice(&chr_payload);
+        let cart = Cartridge::load(&mut Cursor::new(rom)).unwrap();
+        assert!(cart.is_nes20);
+        assert_eq!(cart.chr.len(), expected_chr_len);
+        assert_eq!(cart.chr, chr_payload);
     }
 
     // A NES 2.0 exponent-form PRG over the 64 MB cap is rejected before the
