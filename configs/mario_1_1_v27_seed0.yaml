@@ -114,6 +114,16 @@ reinforce:
   preserve_elite_diversity: true
   freeze_pre_ppo_elite: true
   episodes_per_genome: 2
+  # INERT UNDER trainer_mode: vanilla_ppo (verified 2026-08-26). This key is
+  # read at trainer.py:1216 but consumed at exactly ONE site, trainer.py:4505,
+  # which lives inside _reinforce_update (the GA path, starts :4424).
+  # _run_vanilla_ppo starts at :4820 and neither ppo.py nor ppo_updater.py
+  # reference symlog at all -- so this run's rewards were NEVER
+  # symlog-transformed despite this line. Left set rather than deleted: the
+  # v27/v28 runs are banked and their configs must keep describing the file
+  # they actually ran with. Do NOT "fix" this by making vanilla_ppo honour
+  # the key -- that would change the reward scale and silently break
+  # comparability with every banked v21-v28 number.
   symlog_rewards: true
   value_loss: huber
   value_coef: 0.25
