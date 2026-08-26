@@ -17,6 +17,7 @@ import pytest
 
 from src.training.smb_sequential import (
     SEQ_AREAS,
+    LevelClearTracker,
     SequentialTracker,
     level_label,
     smb_sequential_cell,
@@ -150,6 +151,28 @@ def test_cell_distinguishes_levels_at_same_x_page() -> None:
 def test_cell_x_bucket_guard() -> None:
     # A zero bucket must not divide-by-zero (degenerate but valid).
     assert smb_sequential_cell(mk_ram(0, 0, 0, 42), x_bucket=0) == (1, 0, 42)
+
+
+# --- LevelClearTracker: castle start outside World 1 ----------------------
+
+def test_level_clear_tracker_detects_castle_clear_outside_world_1() -> None:
+    # A genuine 2-4 -> 3-1 castle clear: raw world=1/area=4/disp=3 (displayed
+    # 2-4) crossing into raw world=2/area=0/disp=0 (displayed 3-1). The probe
+    # warm-starts inside 2-4, so `start_level` resolves to (2, 4); only the
+    # general (world-agnostic) castle-clear count can score this level as
+    # cleared, since `SequentialTracker.seq_clear` is hard-gated to the
+    # World-1 1-4->2-1 crossing and never fires here.
+    trace = [
+        mk_ram(1, 4, 3, 200),    # 2-4 castle (raw world 1, area 4, disp 3)
+        mk_ram(1, 4, 3, 2560),   # 2-4 axe
+        mk_ram(2, 0, 0, 40),     # World 3, 3-1 (world byte 1 -> 2)
+    ]
+    t = LevelClearTracker()
+    for ram in trace:
+        t.update(ram)
+
+    assert t.start_level == (2, 4)
+    assert t.level_cleared is True
 
 
 def test_level_label() -> None:

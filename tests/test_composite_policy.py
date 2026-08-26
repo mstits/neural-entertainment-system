@@ -25,11 +25,12 @@ from src.training.composite_policy import (
     HysteresisSwitch,
     PixelObsAdapter,
     TileObsAdapter,
+    _per_level_breakdown,
     build_level_net,
     label_from_ram,
     resolve_level_key,
 )
-from src.training.smb_sequential import RAM_DISPLAY, RAM_WORLD
+from src.training.smb_sequential import RAM_AREA, RAM_DISPLAY, RAM_WORLD
 
 _ROOT = Path(__file__).resolve().parent.parent
 _MAIN_ROOT = Path("/Users/stits/Documents/macos-emulation-and-training")
@@ -188,6 +189,101 @@ def test_controller_flicker_never_switches_net() -> None:
     assert ctrl.active_net is net_a
 
 
+class _AreaKeyedExtractor:
+    """Tile extractor whose feature is the internal area byte ($0760),
+    repeated. Lets a test tell a `push` (history preserved across an
+    in-level scene cut) apart from a `reset` (history wiped) even though
+    the DISPLAYED level (world/level bytes) never changes."""
+
+    feature_dim = 8
+
+    def extract(self, ram) -> np.ndarray:
+        return np.full(self.feature_dim, int(ram[RAM_AREA]), dtype=np.int8)
+
+
+def _area_levelnet(label, action_idx):
+    from src.training.composite_policy import LevelNet
+    return LevelNet(
+        label=label, net=_StubNet(action_idx), is_recurrent=False, mode="tile",
+        bitmasks=(0, 0x80, 0x81, 0x82, 0x83, 0x01, 0x40), device=torch.device("cpu"),
+        extractor=_AreaKeyedExtractor(), stack_size=4, feature_dim=8,
+    )
+
+
+def test_begin_honors_continuous_stack_entry_opt_like_observe_does() -> None:
+    """An isolated per-link probe (begin() straight into a BC-pilot level from
+    a captured handoff state, e.g. runs/chain_handoffs/handoff_2-2.state) must
+    ride an in-level scene cut the same way a mid-chain arrival at the
+    identical manifest key does. Before the fix, begin() hardcoded
+    `_gx_continuous = False` regardless of entry_opts, so the very next
+    area-byte change rebuilt the adapter from scratch and wiped the stack
+    that had just been reset-seeded — the exact silent divergence between
+    the two entry paths into the same level (begin() vs observe()'s
+    mid-episode switch branch, which already threads entry_opts)."""
+    net = _area_levelnet("2-2", action_idx=1)
+    ctrl = CompositeController(
+        {"2-2": net}, ["2-2"], torch.device("cpu"), k=2,
+        entry_opts={"2-2": {"continuous_stack": True}},
+    )
+
+    ram_arrival = mk_ram(1, 1)          # world=2, level=2 -> label "2-2"
+    ram_arrival[RAM_AREA] = 0
+    ctrl.begin(ram_arrival, None)
+    seeded_adapter = ctrl.adapter
+    assert ctrl._gx_continuous is True   # consulted entry_opts, not hardcoded False
+    assert np.all(ctrl.obs == 0)         # reset-seeded from area 0
+
+    # In-level scene cut (e.g. the water entrance): area byte changes, the
+    # displayed level does not, so this hits observe()'s area-change branch.
+    ram_scene_cut = mk_ram(1, 1)
+    ram_scene_cut[RAM_AREA] = 1
+    assert ctrl.observe(ram_scene_cut, None, 1) is None
+
+    # Fixed: the SAME adapter rides through via push() -> 3 old (0) slots +
+    # 1 new (1) slot. Pre-fix, a fresh adapter().reset() would replace it
+    # and fill all 4 slots with 1, wiping the just-seeded history.
+    assert ctrl.adapter is seeded_adapter
+    assert np.all(ctrl.obs[:24] == 0) and np.all(ctrl.obs[24:] == 1)
+
+
+def test_warp_pipe_exit_is_not_counted_as_a_level_clear() -> None:
+    """A level exited via a warp pipe (a World rise NOT out of an x-4 castle)
+    must never inflate that level's `_per_level_breakdown["cleared"]` count —
+    the exact warp-vs-clear distinction the headline seq_clear/warp_taken
+    fields exist to guard against."""
+    net_a = _tile_levelnet("1-1", 1)
+    net_b = _tile_levelnet("1-2", 2)
+    nets = {"1-1": net_a, "1-2": net_b, "default": net_b}
+    ctrl = CompositeController(nets, nets.keys(), torch.device("cpu"), k=2)
+
+    ctrl.begin(mk_ram(0, 0), None)                    # 1-1
+    ctrl.observe(mk_ram(0, 1), None, 1)               # pending 1-2
+    ctrl.observe(mk_ram(0, 1), None, 2)               # commit: 1-1 -> 1-2
+    assert ctrl.segments[0].exit_reason == "advanced"  # a real clear
+
+    # 1-2's underground main leads to a warp pipe straight to World 4 — a
+    # World rise NOT out of the x-4 castle (display level stays 2, not 4).
+    ctrl.observe(mk_ram(3, 0), None, 3)               # pending 4-1
+    ctrl.observe(mk_ram(3, 0), None, 4)               # commit: 1-2 -> 4-1
+    assert ctrl.segments[1].level == "1-2"
+    assert ctrl.segments[1].exit_reason == "warped"    # NOT "advanced"
+    ctrl.close(5, "timeout")
+
+    record = {
+        "seq_clear": False, "warp_taken": True, "furthest_seq": (1, 2),
+        "furthest_any": (4, 1), "worlds_cleared": 0, "furthest_nowarp": (1, 2),
+        "cleared": False, "return": 0.0, "length": 5, "max_byte": 0,
+        "switches": ctrl.switches, "gx_switches": [], "level_max_gx": {},
+        "end_reason": "timeout",
+        "segments": [s.as_dict() for s in ctrl.segments],
+    }
+
+    per_level = _per_level_breakdown([record])
+    assert per_level["1-1"]["cleared"] == 1
+    assert per_level["1-2"]["cleared"] == 0            # the bug: was 1
+    assert per_level["1-2"]["warped"] == 1
+
+
 # --- build_level_net: tile + pixel, and MIXED in one controller -----------
 
 def test_build_pixel_net_from_raw_checkpoint(tmp_path: Path) -> None:
@@ -244,6 +340,75 @@ def test_mixed_encoders_compose_in_one_controller(tmp_path: Path) -> None:
     assert ctrl.active_net.mode == "pixel"
     b2 = ctrl.act()                            # pixel forward, same session
     assert b2 in pix_ln.bitmasks
+
+
+# --- provenance: per-level checkpoint content hash -------------------------
+
+def test_result_records_content_hash_of_loaded_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """checkpoints/ is gitignored and can drift in place (same path, new
+    weights) without the manifest or git_commit changing. A banked eval row
+    must carry the actually-loaded checkpoint's own content hash so two runs
+    of the identical manifest at the identical commit are distinguishable."""
+    sys.path.insert(0, str(_ROOT / "scripts"))
+    import eval_composite  # noqa: E402
+    import yaml
+
+    net = TilePolicyNetwork(num_actions=7, feature_dim=700)
+    ckpt = tmp_path / "specialist.pt"
+    torch.save({"net_state_dict": net.state_dict()}, ckpt)
+    profile_path = _ROOT / "configs" / "smb_oneshot_tiles.yaml"
+
+    manifest_path = tmp_path / "composite.yaml"
+    manifest_path.write_text(yaml.safe_dump({
+        "name": "hash_probe",
+        "game": "mario",
+        "levels": {"1-1": {"ckpt": str(ckpt), "profile": str(profile_path)}},
+    }))
+    rom_path = tmp_path / "fake.rom"
+    rom_path.write_bytes(b"stand-in bytes; the stubbed pool never reads this")
+
+    class _StubPool:
+        def __init__(self, *a, **kw) -> None: ...
+        def start(self) -> None: ...
+        def shutdown(self) -> None: ...
+
+    stub_record = {
+        "seq_clear": False, "warp_taken": False, "furthest_seq": None,
+        "furthest_any": None, "worlds_cleared": 0, "furthest_nowarp": None,
+        "cleared": False, "return": 0.0, "length": 1, "max_byte": 0,
+        "switches": 0, "gx_switches": [], "level_max_gx": {}, "segments": [],
+        "end_reason": "test_stub",
+    }
+    monkeypatch.setattr(eval_composite, "RustPool", _StubPool)
+    monkeypatch.setattr(eval_composite, "run_episode",
+                         lambda *a, **kw: dict(stub_record))
+
+    def _run():
+        return eval_composite.eval_composite(
+            manifest_path, episodes=1, max_steps=10, seed=0,
+            rom=str(rom_path),
+            start_state=str(_ROOT / "roms" / "Super Mario Bros. (World)_start.state.bin"),
+            out_dir=str(tmp_path / "out"),
+        )
+
+    result = _run()
+    assert result["status"] == "ok", result
+    import hashlib
+    expected = hashlib.md5(ckpt.read_bytes()).hexdigest()
+    assert result["level_checkpoints"]["1-1"]["ckpt"] == str(ckpt)
+    assert result["level_checkpoints"]["1-1"]["profile"] == str(profile_path)
+    assert result["level_checkpoints"]["1-1"]["ckpt_md5"] == expected
+
+    # The exact drift this campaign was already bitten by: the SAME path is
+    # overwritten in place with different weights, while the manifest (and
+    # therefore git_commit, rom_md5, levels) is untouched. The recorded hash
+    # is the only field that may change, and it MUST change.
+    torch.save({"net_state_dict": TilePolicyNetwork(
+        num_actions=7, feature_dim=700).state_dict()}, ckpt)
+    result2 = _run()
+    assert result2["level_checkpoints"]["1-1"]["ckpt_md5"] != expected
 
 
 # --- ROM-gated acceptance smoke -------------------------------------------

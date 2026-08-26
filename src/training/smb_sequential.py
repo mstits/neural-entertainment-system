@@ -238,8 +238,10 @@ class LevelClearTracker:
         level (a world-byte jump into a warp zone) never advances it; the gate
         is warp-guarded by construction.
       * **start at the x-4 castle** (displayed level 4): cleared on the
-        F52-guarded `seq_clear` (a world-byte increment out of ``$075C == 3``),
-        the same real-castle-clear signal the full chain uses.
+        F52-guarded castle-clear count (`worlds_cleared > 0`) -- a world-byte
+        increment out of ``$075C == 3`` in ANY world, not just World 1's
+        1-4->2-1 crossing (`seq_clear` stays permanently False for any x-4
+        start beyond World 1, since it is hard-gated to `prev_world == 0`).
 
     It proxies `SequentialTracker`'s read surface (`seq_clear` re-pointed at
     `level_cleared`, plus `warp_taken` / `furthest_seq` / `furthest_any`) so an
@@ -281,8 +283,12 @@ class LevelClearTracker:
             return False
         world, level = self._start
         if level >= self.CASTLE_DISPLAY_LEVEL:
-            # x-4 castle start: only a real castle clear (world increment) counts.
-            return self._seq.seq_clear
+            # x-4 castle start: only a real castle clear (world increment)
+            # counts. Use the general castle-clear counter, NOT `seq_clear` --
+            # that latch is hard-gated to `prev_world == 0` (the World-1
+            # 1-4->2-1 crossing only), so it never fires for a castle start in
+            # World 2+ (2-4, 3-4, ...) even when the crossing genuinely fires.
+            return self._seq.worlds_cleared > 0
         # A forward transition to the next displayed level in the SAME world,
         # warp-guarded. `furthest_nowarp` (frozen at the first warp) instead of
         # the World-1-only `furthest_seq`, so mid-chain starts in World 2+ can

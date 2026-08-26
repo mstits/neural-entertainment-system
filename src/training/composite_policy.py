@@ -64,6 +64,7 @@ from src.training.profile_utils import action_space_to_bitmasks, resolve_encoder
 # composite router reads the world/level exactly where the sequential predicate
 # and the trainer's curriculum do.
 from src.training.smb_sequential import (
+    DISPLAY_LEVEL_CASTLE,
     RAM_AREA,
     RAM_DISPLAY,
     RAM_WORLD,
@@ -392,7 +393,7 @@ class Segment:
     level: str
     entered_step: int
     exited_step: Optional[int] = None
-    exit_reason: Optional[str] = None  # advanced|regressed|died|timeout|seq_clear
+    exit_reason: Optional[str] = None  # advanced|warped|regressed|died|timeout|seq_clear
 
     def as_dict(self) -> dict:
         steps = (
@@ -472,17 +473,28 @@ class CompositeController:
         self.active_label = label
         self._area = int(ram[RAM_AREA])
         self.active_net = self._select(label, self._area)
-        self.adapter = self.active_net.new_adapter()
-        self.obs = self.adapter.reset(ram, pp)
-        self.hidden = self.active_net.initial_hidden()
         self.hyst.reset(label)
         self.switches = 0
         self.segments = [Segment(level=label, entered_step=0)]
         self._gx_stage = 0
         self._gx_confirm = 0
-        self._gx_pad = 0
-        self._gx_continuous = False
         self.gx_switch_events = []
+        # Consult entry_opts for the level the episode actually starts on —
+        # an isolated per-link probe (begin() straight into a BC-pilot level
+        # from a captured handoff state) lands on the same manifest key
+        # observe()'s mid-episode switch branch does (lines above), and must
+        # get the same noop_pad / continuous_stack semantics or the two
+        # entry paths into the identical level silently diverge.
+        _opts = self.entry_opts.get(self._active_key) or {}
+        self._gx_continuous = bool(_opts.get("continuous_stack", False))
+        _pad = int(_opts.get("noop_pad", 0))
+        if _pad > 0:
+            self._gx_pad = _pad
+        else:
+            self._gx_pad = 0
+            self.adapter = self.active_net.new_adapter()
+            self.obs = self.adapter.reset(ram, pp)
+            self.hidden = self.active_net.initial_hidden()
 
     def act(self) -> int:
         if self._gx_pad > 0:
@@ -503,10 +515,23 @@ class CompositeController:
         switched = self.hyst.observe(candidate)
         if switched is not None and switched != self.active_label:
             prev = self.active_label
-            reason = (
-                "advanced" if _label_rank(switched) > _label_rank(prev)
-                else "regressed"
-            )
+            prev_rank = _label_rank(prev)
+            switched_rank = _label_rank(switched)
+            if switched_rank > prev_rank:
+                # A world rise out of anything but the x-4 castle is a warp
+                # pipe, not a real level clear — the same F52 castle guard
+                # SequentialTracker.warp_taken applies (see smb_sequential.py).
+                # Tagging it "warped" (not "advanced") keeps
+                # `_per_level_breakdown` from silently counting a warped-out
+                # level as "cleared".
+                reason = (
+                    "warped"
+                    if switched_rank[0] > prev_rank[0]
+                    and prev_rank[1] != DISPLAY_LEVEL_CASTLE + 1
+                    else "advanced"
+                )
+            else:
+                reason = "regressed"
             self.segments[-1].exited_step = step
             self.segments[-1].exit_reason = reason
             self.active_label = switched
@@ -760,14 +785,20 @@ def _per_level_breakdown(records: list[dict]) -> dict:
         for seg in rec["segments"]:
             lvl = seg["level"]
             d = out.setdefault(lvl, {
-                "entered": 0, "cleared": 0, "died": 0, "timeout": 0,
-                "regressed": 0, "first_entered_step": None,
+                "entered": 0, "cleared": 0, "warped": 0, "died": 0,
+                "timeout": 0, "regressed": 0, "first_entered_step": None,
                 "_steps_sum": 0, "_steps_n": 0,
             })
             d["entered"] += 1
             reason = seg["exit_reason"]
             if reason in ("advanced", "seq_clear"):
                 d["cleared"] += 1
+            elif reason == "warped":
+                # A warp-pipe exit is real progress but NOT a clear of THIS
+                # level — conflating it with "cleared" is exactly the
+                # warp-vs-clear distinction the headline seq_clear/warp_taken
+                # fields guard against. Counted separately, never folded in.
+                d["warped"] += 1
             elif reason == "died":
                 d["died"] += 1
             elif reason == "timeout":

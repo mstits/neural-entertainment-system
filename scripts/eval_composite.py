@@ -282,6 +282,25 @@ def eval_composite(
         result["rom_md5"] = _hl.md5(Path(rom_path).read_bytes()).hexdigest()
     except Exception:
         result["rom_md5"] = None
+    try:
+        import hashlib as _hl
+        _ckpt_md5_cache: dict[str, str] = {}
+        def _ckpt_md5(path: str) -> str:
+            rp = str(Path(path).resolve())
+            if rp not in _ckpt_md5_cache:
+                _ckpt_md5_cache[rp] = _hl.md5(Path(path).read_bytes()).hexdigest()
+            return _ckpt_md5_cache[rp]
+        # Provenance for what was ACTUALLY loaded: checkpoints/ is gitignored
+        # and can drift in place (same path, different bytes) without the
+        # manifest or git_commit changing, so a banked row needs its own
+        # content hash to be trustworthy.
+        result["level_checkpoints"] = {
+            key: {"ckpt": str(entry["ckpt"]), "profile": str(entry["profile"]),
+                  "ckpt_md5": _ckpt_md5(entry["ckpt"])}
+            for key, entry in levels.items()
+        }
+    except Exception:
+        result["level_checkpoints"] = None
     result["hysteresis_k"] = k
     result["levels"] = sorted(levels.keys())
     if gx_routes:
