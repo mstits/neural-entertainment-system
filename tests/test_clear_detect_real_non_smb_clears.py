@@ -126,9 +126,12 @@ def _skip_if_missing(fx: RealClear) -> None:
 
 def _replay(fx: RealClear):
     """Replay the real action trace through the real emulator and return
-    (ram_hist[T,2048] uint8, truth_action, game). `truth_action` comes from
-    the game's OWN is_clear -- level_key for Bubble Bobble, byte_change for
-    Tetris-B -- neither of which is the confluence mechanism under test."""
+    (ram_hist[T,2048] uint8, truth_action, game, prof). `truth_action` comes
+    from the game's OWN is_clear -- level_key for Bubble Bobble, byte_change
+    for Tetris-B -- neither of which is the confluence mechanism under test.
+
+    `_replay_modalities` below is the same replay with the other hardware
+    surfaces recorded alongside, for the armed-profile test in section 4."""
     prof = yaml.safe_load(fx.profile.read_text())
     game = make_game(prof)
     space = [list(a) for a in prof["action_space"]]
@@ -159,6 +162,61 @@ def _replay(fx: RealClear):
             truth_action = i
     env.close()
     return np.stack(hist), truth_action, game, prof
+
+
+def _replay_modalities(fx: RealClear, margin: int = 90):
+    """The same replay, recording the odometer triple per observation, plus
+    `margin` NOOP actions after the trace ends.
+
+    THE MARGIN IS NOT AN EXTENSION OF THE TRAJECTORY. Both fixtures were
+    recorded to end EXACTLY on the clearing action (section 1 asserts it),
+    so without a tail there is not one observation after the transition for
+    a windowed detector to see it in -- its silence would be a structural
+    no-op, not a verdict. clear_detect.run_episode pads every episode with
+    `margin_actions` of NOOP for this exact reason, and the live solver's
+    replay_verify does the same with `clear_verify_margin()`. The hook is
+    given the observations it needs to reach the verdict, and nothing
+    else: the actions are NOOPs, so no new progress is driven.
+
+    One observation = one ACTION (fs raw frames), which is the cadence the
+    live solver's is_clear hook sees -- not the per-frame cadence the
+    offline harness uses. A signal that only works at one of those two
+    cadences would be a wiring artifact, so the live claim is made at the
+    live cadence."""
+    prof = yaml.safe_load(fx.profile.read_text())
+    game = make_game(prof)
+    space = [list(a) for a in prof["action_space"]]
+    masks = action_space_to_bitmasks(space)
+    fs = int(prof.get("frame_skip", 4))
+    actions = np.load(fx.actions).tolist()
+
+    env = nes_core.NESEnvironment(game.rom, frame_skip=1)
+    env.reset()
+    env.set_odometer_enabled(True)
+    env.load_state(fx.root_state.read_bytes())
+    for _ in range(fs):
+        env.step(0)
+    ram0 = np.array(env.get_ram_range(0, 2048), dtype=np.uint8)
+    if hasattr(game, "note_start"):
+        game.note_start(ram0)
+    start_wd = tuple(game.level_key(ram0))
+
+    ctx: dict = {}
+    truth_action = None
+    obs = []
+    for i, a in enumerate(list(actions) + [0] * margin):
+        m = int(masks[a])
+        for _ in range(fs):
+            env.step(m)
+        ram = np.array(env.get_ram_range(0, 2048), dtype=np.uint8)
+        obs.append({"ram": ram, "odo": env.get_odometer(),
+                    "scene": env.get_odometer_scene(),
+                    "blank": env.get_odometer_blank(),
+                    "oam": env.peek_oam()})
+        if truth_action is None and game.is_clear(start_wd, ram, ctx):
+            truth_action = i
+    env.close()
+    return obs, truth_action, game, prof
 
 
 # ==========================================================================
@@ -201,11 +259,16 @@ def test_the_fixture_really_is_a_witnessed_clear(fx: RealClear) -> None:
            "spans far fewer units than that across the ENTIRE trace (Bubble "
            "Bobble: 1 unit per round; Tetris-B: 0..32), so coord is "
            "arithmetically DEAD and tally alone can never reach "
-           "min_signals=2. Will pass once a position-free corroborator "
-           "(clear_detect.entity_wipe_windows, built+tested 2026-08-26 but "
-           "NOT_WIRED per docs/receipts/clear_control/cv_odometer_swap_v4_"
-           "2026-08-26.json) is wired into the live vote for profiles where "
-           "clear_reachability.clear_quorum marks coord DEAD on arithmetic.")
+           "min_signals=2. STILL XFAIL AFTER THE 2026-08-26 WIRE-UP, and "
+           "the reason moved: the six shelf signals now reach this vote, "
+           "but WIRED IS NOT ARMED and this construction "
+           "(StreamingConfluenceDetector(progress_fn), no profile) arms "
+           "none of them. The armed-profile counterpart is section 4 below, "
+           "which fires. Note also that entity_wipe -- the corroborator the "
+           "original version of this reason expected to close the gap -- "
+           "could not have: it answers 'something emptied', which is what a "
+           "DEATH looks like, so Rule 5 forbids it carrying a clear alone. "
+           "What closes it is transition evidence (scene_cut).")
 def test_the_generic_confluence_signal_misses_the_real_clear(fx: RealClear) -> None:
     _skip_if_missing(fx)
     hist, truth_action, _game, prof = _replay(fx)
@@ -253,3 +316,97 @@ def test_forcing_confluence_mode_is_refused_not_silently_built(fx: RealClear) ->
 
     with pytest.raises(UnfireableHook):
         StreamingConfluenceDetector.from_profile(forced, lambda r: 0)
+
+
+# ==========================================================================
+# 4. THE ARMED PROFILE, at the LIVE cadence -- the counterpart to section 2.
+#
+# Section 2 pins what the GENERIC construction still misses. This pins what
+# the profile's OWN armed signals do on the identical trace, because "the
+# detector was improved" is not a claim anybody should accept without both
+# halves: a wire-up that only ever moves the synthetic tests has not fixed
+# anything, and a wire-up that quietly makes every profile fire has broken
+# something else.
+#
+# Bubble Bobble arms scene_cut at a gate MEASURED from its own pre-clear
+# play (docs/receipts/clear_control/bubble_bobble_scene_cut_null_2026-08-26
+# .json: 226 checks, max d_scene 0, max d_blank 0). Tetris-B arms the same
+# signal at the same gate and is NOT expected to land inside 30 actions --
+# its screen turns over ~2.5 s after the quota byte reaches 0, which is a
+# property of the game, not of the instrument.
+# ==========================================================================
+
+def _live_detector(prof: dict):
+    return StreamingConfluenceDetector.from_profile(
+        prof, make_game(prof).progress)
+
+
+def _drive(det, obs) -> int | None:
+    for i, o in enumerate(obs):
+        if det.push(o["ram"], oam=o["oam"], odo=o["odo"], scene=o["scene"],
+                    blank=o["blank"]):
+            return i
+    return None
+
+
+def test_the_armed_bubble_bobble_profile_fires_on_the_real_clear() -> None:
+    """GATE (b) on the LIVE vote, not just the offline harness. Same
+    witnessed round-69 clear the generic detector misses in section 2,
+    same trace, same emulator -- the profile's own armed signal is the
+    only difference."""
+    fx = BUBBLE_BOBBLE
+    _skip_if_missing(fx)
+    obs, truth_action, _game, prof = _replay_modalities(fx)
+    assert truth_action is not None
+
+    q = clear_reachability.clear_quorum(prof)
+    assert q.signal_state["coord"].state == clear_reachability.DEAD
+    assert q.signal_state["scene_cut"].state == clear_reachability.ALIVE
+    assert q.verdict == clear_reachability.FIREABLE, (
+        "coord is dead, and the profile is reachable ANYWAY -- that is the "
+        "whole point of arming a second transition signal")
+
+    det = _live_detector(prof)
+    fired = _drive(det, obs)
+    assert fired is not None, (
+        f"the armed detector missed a witnessed clear at action "
+        f"{truth_action} over {len(obs)} driven observations")
+    assert 0 <= fired - truth_action <= 30, (
+        f"fired at {fired}, truth at {truth_action}")
+    assert det.shelf_stats()["scene_cut"]["n_triggers"] >= 1
+
+
+def test_the_armed_detector_is_silent_for_the_whole_run_up_to_the_clear() -> None:
+    """THE FALSE-POSITIVE HALF. A detector that fires early and often would
+    pass the test above and be worthless. Drive only the PRE-clear portion
+    -- 500+ real driven observations of ordinary play -- and require
+    silence."""
+    fx = BUBBLE_BOBBLE
+    _skip_if_missing(fx)
+    obs, truth_action, _game, prof = _replay_modalities(fx)
+    assert truth_action is not None and truth_action > 100
+    det = _live_detector(prof)
+    fired = _drive(det, obs[:truth_action])
+    assert fired is None, f"fired at action {fired}, before the clear"
+    assert det.n_checks >= 14, "and it really was evaluated, repeatedly"
+
+
+def test_arming_does_not_make_every_profile_fire() -> None:
+    """THE OVER-CORRECTION GUARD. Tetris-B arms the same signal at the same
+    measured gate and does NOT land within 30 actions of its clear: the
+    quota byte hits 0 while the board is still on screen, and the SUCCESS
+    curtain follows ~2.5 s later (blank folds measured at true_clear + 151
+    and + 152 raw frames). The instrument is now capable of a positive on
+    this profile and reports a LATE one; that is a different fact from the
+    silence it used to return, and pretending otherwise by widening a
+    tolerance is the move this campaign exists to refuse."""
+    fx = TETRIS_B
+    _skip_if_missing(fx)
+    obs, truth_action, _game, prof = _replay_modalities(fx)
+    assert truth_action is not None
+    det = _live_detector(prof)
+    fired = _drive(det, obs)
+    assert fired is None or fired - truth_action > 30, (
+        f"fired at {fired} against truth {truth_action}: if this now lands "
+        "inside 30 actions the measurement above has changed and the "
+        "profile comment in configs/tetris_b.yaml must be re-derived")

@@ -751,6 +751,27 @@ impl NESEnvironment {
         (ppu.odometer_x, ppu.odometer_y)
     }
 
+    /// Scene ordinal — bumped at every RENDERED scroll discontinuity
+    /// (stage wipe, room flip). The single-environment counterpart to
+    /// `Pool::get_odometer_scene_per_worker`, added so the offline clear
+    /// replay harness (scripts/clear_detect.py, which drives one
+    /// NESEnvironment rather than a Pool) can read the same three
+    /// odometer values the live solver already reads off the Pool.
+    /// Without it a scene-cut signal is unfeedable on the offline path
+    /// and would have to be reported as wired-to-nothing there.
+    fn get_odometer_scene(&self) -> u32 {
+        self.nes.ppu.odometer_scene
+    }
+
+    /// Dropped-fold count — bumped every frame that folds with fewer
+    /// than 120 rendered lines (a blackout: stage wipe, level-load
+    /// blank, death fade). The odometer's OTHER re-anchor branch, and
+    /// the one `get_odometer_scene` does not surface. Monotonically
+    /// non-decreasing for the life of the instance (wraps at u32::MAX).
+    fn get_odometer_blank(&self) -> u32 {
+        self.nes.ppu.odo_blank
+    }
+
     /// Raw 2KB physical nametable VRAM (mirror-agnostic). Intended for
     /// room-identity fingerprinting: hash (a static-masked slice of)
     /// these bytes to detect discrete scene changes that bypass $2005

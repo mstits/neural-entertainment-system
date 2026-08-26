@@ -1,0 +1,190 @@
+{
+  "harness": {
+    "profile": "configs/tetris_b.yaml",
+    "game_adapter": "GenericGame",
+    "rom": "/Users/stits/Documents/macos-emulation-and-training/roms/Tetris (USA).nes",
+    "frame_skip": 2,
+    "n_actions_in_space": 8,
+    "lock_probe_action": [
+      "right"
+    ]
+  },
+  "verdict": "NO_CLEAR",
+  "tolerance_frames": 120,
+  "n_runs": 1,
+  "n_valid": 1,
+  "n_unreachable": 0,
+  "n_under_warmup": 0,
+  "n_error": 0,
+  "n_hit_within_tolerance": 0,
+  "hit_rate": 0.0,
+  "hit_rate_gate": 0.8,
+  "hit_rate_pass": false,
+  "total_false_positive_crossings": 1,
+  "max_false_positives_per_level_gate": 1,
+  "false_positive_gate_pass": true,
+  "signal_fire_counts_at_detect": {
+    "audio": 0,
+    "tally": 1,
+    "lock": 1,
+    "coord": 0,
+    "oam_quiesce": 0,
+    "scene_cut": 1
+  },
+  "weights": {
+    "audio": 0.25,
+    "tally": 0.25,
+    "lock": 0.25,
+    "coord": 0.25
+  },
+  "threshold": 0.75,
+  "per_run": [
+    {
+      "run": "runs/tetris_b/clear_control_2026-08-26/win",
+      "start_wd": [],
+      "level_key_arity_drift": false,
+      "clear_wd_expected": [],
+      "n_actions": 4329,
+      "n_frames_replayed": 8838,
+      "true_clear_frame": 8657,
+      "detected_frame": 8819,
+      "delta_frames": 162,
+      "within_tolerance": false,
+      "false_positive_crossings": 1,
+      "contributions_at_detect": {
+        "audio": 0,
+        "tally": 1,
+        "lock": 1,
+        "coord": 0,
+        "oam_quiesce": 0,
+        "scene_cut": 1
+      },
+      "n_all_crossings": 1,
+      "n_required_class_vetoes": 60,
+      "armed_signals": [
+        "oam_quiesce",
+        "scene_cut"
+      ],
+      "shelf_stats": {
+        "oam_quiesce": {
+          "n": 8838,
+          "n_evals": 8749,
+          "trigger_n": 8686,
+          "n_triggers": 1,
+          "dev": 0.02542,
+          "scale": 0.03948,
+          "baseline_n": 300
+        },
+        "scene_cut": {
+          "n": 8838,
+          "n_checks": 441,
+          "n_triggers": 1,
+          "trigger_step": 8820,
+          "last_kind": "fade",
+          "last_direction": null,
+          "last_d_scene": 0,
+          "last_d_blank": 2,
+          "last_d_odo": [
+            0,
+            0
+          ]
+        }
+      },
+      "wall_s": 76.44,
+      "verdict": "NO_CLEAR"
+    }
+  ],
+  "clear_quorum": {
+    "verdict": "FIREABLE",
+    "roster": "offline",
+    "required": 0.75,
+    "ceiling": 1.25,
+    "reason": "FIREABLE: eligible signals can cast up to 1.25 against clear_detect.THRESHOLD=0.75, with transition evidence among them. Whether the vote ever DOES fire on a real clear is an empirical question this module does not touch \u2014 FIREABLE is not evidence that it works.",
+    "eligible": [
+      "tally",
+      "audio",
+      "lock",
+      "scene_cut",
+      "oam_quiesce"
+    ],
+    "eligible_slots": [
+      "S_TRANSITION",
+      "S_DESPAWN",
+      "S_CADENCE",
+      "S_ARMING"
+    ],
+    "signals": {
+      "coord": {
+        "state": "DEAD",
+        "slot": "S_TRANSITION",
+        "weight": 0.25,
+        "null_rate": null,
+        "reason": "progress is the single RAM byte 216 (max 255), which cannot drop by the >= 300 that `coord` requires"
+      },
+      "tally": {
+        "state": "ALIVE",
+        "slot": "S_CADENCE",
+        "weight": 0.25,
+        "null_rate": null,
+        "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+      },
+      "audio": {
+        "state": "ALIVE",
+        "slot": "S_CADENCE",
+        "weight": 0.25,
+        "null_rate": null,
+        "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+      },
+      "lock": {
+        "state": "ALIVE",
+        "slot": "S_ARMING",
+        "weight": 0.25,
+        "null_rate": null,
+        "reason": "differential input probe; corroborator only, never a sole term; null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+      },
+      "scene_cut": {
+        "state": "ALIVE",
+        "slot": "S_TRANSITION",
+        "weight": 0.25,
+        "null_rate": null,
+        "reason": "armed at clear.signals.scene_cut: odometer re-anchor events (rendered cut + blank fold) classified over a rolling window"
+      },
+      "room_fp_transition": {
+        "state": "DEAD",
+        "slot": "S_TRANSITION",
+        "weight": 0.25,
+        "null_rate": null,
+        "reason": "clear.signals.room_fp_transition.enabled is false \u2014 this profile declines the signal, so it is constructed by nobody and contributes 0 rather than being counted as a corroborator that happened to be quiet"
+      },
+      "input_lock": {
+        "state": "DEAD",
+        "slot": "S_ARMING",
+        "weight": 0.25,
+        "null_rate": null,
+        "reason": "clear.signals.input_lock is not declared, so no signal object is constructed and it contributes 0. Wired, unarmed: K-branch differential input probe; arming condition and corroborator only, never a sole term"
+      },
+      "oam_quiesce": {
+        "state": "ALIVE",
+        "slot": "S_DESPAWN",
+        "weight": 0.25,
+        "null_rate": null,
+        "reason": "armed at clear.signals.oam_quiesce: sustained collapse of the visible-sprite population against this run's own measured baseline"
+      },
+      "entity_wipe": {
+        "state": "DEAD",
+        "slot": "S_DESPAWN",
+        "weight": 0.25,
+        "null_rate": null,
+        "reason": "clear.signals.entity_wipe is not declared, so no signal object is constructed and it contributes 0. Wired, unarmed: a contiguous RAM block collapsing occupied->empty, with no position precondition"
+      },
+      "lock_release_novelty": {
+        "state": "DEAD",
+        "slot": "S_IRREVERSIBLE",
+        "weight": 0.25,
+        "null_rate": null,
+        "reason": "clear.signals.lock_release_novelty is not declared, so no signal object is constructed and it contributes 0. Wired, unarmed: a lock window that releases into a room this episode has never produced and never walks back into"
+      }
+    }
+  },
+  "generated_at": "2026-08-26T13:44:24"
+}

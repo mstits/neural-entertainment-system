@@ -1,0 +1,36 @@
+{
+  "profile": "configs/tetris_b.yaml",
+  "signal": "scene_cut",
+  "generated_at": "2026-08-26T13:41:13",
+  "measurements": [
+    {
+      "max_d_scene": 0,
+      "max_d_blank": 0,
+      "n_checks": 432,
+      "window": 240,
+      "stride": 20,
+      "source": "tape",
+      "tape": "/Users/stits/Documents/macos-emulation-and-training/runs/tetris_b/clear_control_2026-08-26/win",
+      "true_clear_frame": 8657,
+      "n_frames": 8838,
+      "post_clear": {
+        "max_d_scene": 0,
+        "max_d_blank": 2,
+        "n_checks": 9,
+        "window": 240,
+        "stride": 20
+      }
+    }
+  ],
+  "null_max_d_scene": 0,
+  "null_max_d_blank": 0,
+  "post_clear_max_d_scene": 0,
+  "post_clear_max_d_blank": 2,
+  "separable": true,
+  "n_checks": 432,
+  "recommendation": {
+    "scene_min": 1,
+    "blank_min": 1
+  },
+  "reason": "measured null over 432 checks of this profile's own play: max d_scene=0, max d_blank=0. The gate is the smallest integer strictly above it. Separability: the post-clear window reaches d_scene=0 / d_blank=2, which clears the gate."
+}

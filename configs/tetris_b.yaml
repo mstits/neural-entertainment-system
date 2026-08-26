@@ -322,7 +322,43 @@ solve:
   player_state: 0x0048
   death_states: [10]
   # THE WIN. Stateless, single byte, exact.
-  clear: {mode: byte_change, addr: 0x0050, direction: down, target: 0}
+  clear:
+    mode: byte_change
+    addr: 0x0050
+    direction: down
+    target: 0
+    # WHICH CLEAR SIGNALS THE INSTRUMENT MAY USE ON THIS PROFILE -- see
+    # the same block in configs/bubble_bobble.yaml for why this exists.
+    # The banked 4,329-action B-type win scored `hit_rate: 0.0` against a
+    # detector whose only transition signal (`coord`) requires a backward
+    # drop of >= 300 from a progress readout that spans 0..32 and never
+    # decreases at all.
+    signals:
+      # CALIBRATED: docs/receipts/clear_control/
+      # tetris_b_scene_cut_null_2026-08-26.json -- 432 pre-clear checks on
+      # the banked win tape, max d_scene 0, max d_blank 0; the post-clear
+      # window reaches d_blank 2.
+      #
+      # HONEST LIMIT, recorded here rather than discovered later: the
+      # blank folds land at true_clear + 151 and + 152. The clear
+      # PREDICATE fires the instant the line quota reaches 0; the screen
+      # only blanks to the SUCCESS curtain ~2.5 s later. So this signal
+      # detects the real transition and lands OUTSIDE the harness's
+      # 120-frame tolerance, which was calibrated on SMB's fast
+      # flagpole-to-next-level cut. Widening a global tolerance until this
+      # row turns green would be manufacturing the hit; the row is
+      # reported as a real NO_CLEAR with a late detection instead.
+      scene_cut: {scene_min: 1, blank_min: 1}
+      # oam_quiesce DOES fire at true_clear + 28 (the board and the piece
+      # leave the sprite table together) -- inside tolerance. It is armed,
+      # and it is a CORROBORATOR (S_DESPAWN), so under Rule 5 it cannot
+      # carry a clear on its own. That is the correct outcome and not a
+      # workaround: "the sprites went away" is not "a scene committed",
+      # and death, fade, room transition and attract loop all produce it.
+      oam_quiesce: {}
+      # Unmasked room fingerprints churn on the score/line HUD: measured
+      # 373 novel-room fires on this one tape. Declined until masked.
+      room_fp_transition: {enabled: false}
   # BOARD SIGNATURE — the cell key's board dimension.
   # Each entry is one bit: "this playfield cell is occupied", using the
   # exact set of non-empty tile values we measured (0x7B/0x7C/0x7D in

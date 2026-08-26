@@ -1,0 +1,197 @@
+{
+  "harness": {
+    "profile": null,
+    "game_adapter": "SmbGame",
+    "rom": "/Users/stits/Documents/macos-emulation-and-training/roms/Super Mario Bros. (World).nes",
+    "frame_skip": 4,
+    "n_actions_in_space": 11,
+    "lock_probe_action": [
+      "right"
+    ]
+  },
+  "verdict": "CLEAR",
+  "tolerance_frames": 120,
+  "n_runs": 5,
+  "n_valid": 5,
+  "n_unreachable": 0,
+  "n_under_warmup": 0,
+  "n_error": 0,
+  "n_hit_within_tolerance": 5,
+  "hit_rate": 1.0,
+  "hit_rate_gate": 0.8,
+  "hit_rate_pass": true,
+  "total_false_positive_crossings": 0,
+  "max_false_positives_per_level_gate": 1,
+  "false_positive_gate_pass": true,
+  "signal_fire_counts_at_detect": {
+    "audio": 0,
+    "tally": 5,
+    "lock": 5,
+    "coord": 5
+  },
+  "weights": {
+    "audio": 0.25,
+    "tally": 0.25,
+    "lock": 0.25,
+    "coord": 0.25
+  },
+  "threshold": 0.75,
+  "per_run": [
+    {
+      "run": "runs/regress_pre/solutions/sol_000",
+      "start_wd": [
+        0,
+        0
+      ],
+      "level_key_arity_drift": false,
+      "clear_wd_expected": [
+        0,
+        1
+      ],
+      "n_actions": 887,
+      "n_frames_replayed": 3908,
+      "true_clear_frame": 3547,
+      "detected_frame": 3500,
+      "delta_frames": -47,
+      "within_tolerance": true,
+      "false_positive_crossings": 0,
+      "contributions_at_detect": {
+        "audio": 0,
+        "tally": 1,
+        "lock": 1,
+        "coord": 1
+      },
+      "n_all_crossings": 1,
+      "n_required_class_vetoes": 0,
+      "armed_signals": [],
+      "shelf_stats": {},
+      "wall_s": 26.79,
+      "verdict": "CLEAR"
+    },
+    {
+      "run": "runs/ge_1_2_solve/solutions/sol_000",
+      "start_wd": [
+        0,
+        1
+      ],
+      "level_key_arity_drift": false,
+      "clear_wd_expected": [
+        0,
+        2
+      ],
+      "n_actions": 829,
+      "n_frames_replayed": 3676,
+      "true_clear_frame": 3315,
+      "detected_frame": 3270,
+      "delta_frames": -45,
+      "within_tolerance": true,
+      "false_positive_crossings": 0,
+      "contributions_at_detect": {
+        "audio": 0,
+        "tally": 1,
+        "lock": 1,
+        "coord": 1
+      },
+      "n_all_crossings": 1,
+      "n_required_class_vetoes": 0,
+      "armed_signals": [],
+      "shelf_stats": {},
+      "wall_s": 25.03,
+      "verdict": "CLEAR"
+    },
+    {
+      "run": "runs/ge_1_3_solve/solutions/sol_000",
+      "start_wd": [
+        0,
+        2
+      ],
+      "level_key_arity_drift": false,
+      "clear_wd_expected": [
+        0,
+        3
+      ],
+      "n_actions": 540,
+      "n_frames_replayed": 2520,
+      "true_clear_frame": 2159,
+      "detected_frame": 2115,
+      "delta_frames": -44,
+      "within_tolerance": true,
+      "false_positive_crossings": 0,
+      "contributions_at_detect": {
+        "audio": 0,
+        "tally": 1,
+        "lock": 1,
+        "coord": 1
+      },
+      "n_all_crossings": 1,
+      "n_required_class_vetoes": 0,
+      "armed_signals": [],
+      "shelf_stats": {},
+      "wall_s": 16.97,
+      "verdict": "CLEAR"
+    },
+    {
+      "run": "runs/ge_1_4_solve/solutions/sol_000",
+      "start_wd": [
+        0,
+        3
+      ],
+      "level_key_arity_drift": false,
+      "clear_wd_expected": [
+        1,
+        0
+      ],
+      "n_actions": 490,
+      "n_frames_replayed": 2320,
+      "true_clear_frame": 1957,
+      "detected_frame": 1905,
+      "delta_frames": -52,
+      "within_tolerance": true,
+      "false_positive_crossings": 0,
+      "contributions_at_detect": {
+        "audio": 0,
+        "tally": 1,
+        "lock": 1,
+        "coord": 1
+      },
+      "n_all_crossings": 1,
+      "n_required_class_vetoes": 0,
+      "armed_signals": [],
+      "shelf_stats": {},
+      "wall_s": 15.62,
+      "verdict": "CLEAR"
+    },
+    {
+      "run": "runs/ge_2_1_solve/solutions/sol_000",
+      "start_wd": [
+        1,
+        0
+      ],
+      "level_key_arity_drift": false,
+      "clear_wd_expected": [
+        1,
+        1
+      ],
+      "n_actions": 763,
+      "n_frames_replayed": 3412,
+      "true_clear_frame": 3051,
+      "detected_frame": 3000,
+      "delta_frames": -51,
+      "within_tolerance": true,
+      "false_positive_crossings": 0,
+      "contributions_at_detect": {
+        "audio": 0,
+        "tally": 1,
+        "lock": 1,
+        "coord": 1
+      },
+      "n_all_crossings": 1,
+      "n_required_class_vetoes": 0,
+      "armed_signals": [],
+      "shelf_stats": {},
+      "wall_s": 22.98,
+      "verdict": "CLEAR"
+    }
+  ],
+  "generated_at": "2026-08-26T13:40:59"
+}

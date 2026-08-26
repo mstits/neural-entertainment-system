@@ -293,24 +293,32 @@ def _coord_status(solve: dict) -> tuple[bool, str]:
 #     DEGENERATE and casts nothing. `tally` fired on 22/22, 28/28 and 43/43
 #     Castlevania checks and 30/30 Bubble Bobble checks, and the old ceiling
 #     still counted it as a full vote. But no profile carries a measured
-#     null today (scripts/clear_calibrate.py does not exist), and inventing
-#     one from a hunch is the COORD_RESET_DROP_MIN mistake again. So absent
-#     a measurement a signal is ALIVE-but-unseparated, and the receipt says
-#     `null_rate: null` rather than a number somebody guessed.
-#   RULE 3 SLOTS          — RECORDED, NOT ARITHMETIC. Every signal carries
-#     its slot and the table prints it, but the ceiling is still a sum over
-#     eligible signals. Reason: exactly one slot has two WIRED members today
-#     (S_CADENCE = {tally, apu}) and the shipped vote gives each a full
-#     vote, so collapsing the slot now would make this module's ceiling
-#     SMALLER than what StreamingConfluenceDetector.push can actually reach
-#     — it would refuse profiles that can fire. A ceiling that is not an
-#     upper bound is worse than no ceiling. The moment a second member of
-#     any other slot is wired, the sum stops being an upper bound in the
-#     other direction and the arithmetic MUST become a slot-min;
-#     test_a_second_wired_member_in_a_slot_forces_the_slot_arithmetic is the
-#     tripwire that fails when that day arrives.
+#     null today: scripts/clear_calibrate.py exists as of 2026-08-26 but
+#     measures the scene_cut GATE (d_scene/d_blank), not a per-signal null
+#     FIRE-RATE, and inventing one from a hunch is the COORD_RESET_DROP_MIN
+#     mistake again. So absent a measurement a signal is
+#     ALIVE-but-unseparated, and the receipt says `null_rate: null` rather
+#     than a number somebody guessed.
+#   RULE 3 SLOTS          — LIVE as of the 2026-08-26 wire-up. Every slot
+#     but S_CADENCE now COLLAPSES: its contribution to the ceiling (and to
+#     the vote, in StreamingConfluenceDetector.push and in
+#     clear_detect.run_episode alike) is the MAX over its eligible members,
+#     not the sum. It had to become arithmetic the moment a second member
+#     of a non-cadence slot was wired, and wiring the shelf wired three:
+#     S_TRANSITION gained scene_cut and room_fp_transition alongside coord,
+#     S_DESPAWN gained oam_quiesce alongside entity_wipe, S_ARMING gained
+#     input_lock alongside lock. Summing correlated members is the
+#     double-count OamQuiesceSignal's own docstring forbids in writing ("a
+#     caller wiring both into a vote MUST treat {entity_wipe, oam_quiesce}
+#     as ONE corroborating slot, never as two independent votes"), and it
+#     is the frame-320 shape with more places to happen.
+#     S_CADENCE stays exempt, deliberately and unchanged: {tally, apu} each
+#     cast a full vote in the shipped detector, and collapsing them would
+#     silently change what `min_signals: 3, apu_weight: 1.0` means with
+#     nothing measured to justify it.
 #   RULE 4 QUORUM FRACTION — NOT IMPLEMENTED. It is a function of the slot
-#     count, so it waits on Rule 3.
+#     count, so it waits on a measured argument for a fraction; the bar is
+#     still `clear.min_signals` / clear_detect.THRESHOLD as shipped.
 #   RULE 5 REQUIRED CLASS — LIVE. At least one eligible signal must be
 #     TRANSITION EVIDENCE ("a scene committed" / "the world did not come
 #     back"). Corroborators alone cannot reach quorum however many of them
@@ -318,13 +326,34 @@ def _coord_status(solve: dict) -> tuple[bool, str]:
 #     false positive: audio + tally + lock summed to exactly THRESHOLD with
 #     coord = 0, 1736 frames before the true clear.
 #
-# THE SIX SHELF SIGNALS ARE REPORTED, NOT WIRED. entity_wipe,
+# THE SIX SHELF SIGNALS ARE NOW WIRED, AND ARMED PER PROFILE. entity_wipe,
 # room_fp_transition, input_lock, lock_release_novelty, oam_quiesce and
-# scene_cut were built and tested on 2026-08-26 and reach no production
-# path. They appear in every table as NOT_WIRED with that reason attached,
-# because "six signals wired to nothing" is a fact about this instrument's
-# ceiling and belongs on the instrument's own readout rather than in a
-# document nobody opens.
+# scene_cut were built and tested on 2026-08-26 and, for one day, reached
+# no production path at all. They now reach both: the live vote
+# (StreamingConfluenceDetector.push) and the offline harness
+# (clear_detect.run_episode). NOT_WIRED survives as a state — it is the
+# honest third answer and the next signal built on a shelf will need it —
+# but no signal is in it today.
+#
+# WIRED IS NOT ARMED, and the difference is the whole point. A signal
+# reaches a production path (wired, a fact about the code); a PROFILE turns
+# it on (armed, a fact about that profile), under `solve.clear.signals.
+# <name>`, carrying the constants that signal's own docstring says must be
+# measured rather than guessed. An unarmed signal is DEAD for that profile,
+# with the reason naming the key that would arm it — exactly the shape the
+# `apu_weight is 0` rule already had. That keeps every existing profile
+# byte-identical: none of them arms anything, so none of their ceilings
+# moves.
+#
+# AND ARMED IS NOT CALIBRATED. Three of the six refuse to be armed without
+# a measured constant, because their own docstrings refuse a global default
+# in writing (SceneCutSignal: "NO DEFENSIBLE GLOBAL DEFAULT for scene_min/
+# blank_min"; entity_wipe_windows: "min_bytes and tol MUST come from a
+# measured per-profile null"; LockReleaseNoveltyTrack: "lock_max ...
+# REQUIRED, no default"). Arming one of those without its number leaves it
+# DEAD with the missing key named, rather than quietly inheriting an
+# SMB-shaped constant — which is the COORD_RESET_DROP_MIN mistake, and the
+# reason 45 games were measured against 300.
 
 FIREABLE = "FIREABLE"
 UNREACHABLE = "UNREACHABLE"
@@ -413,23 +442,103 @@ class SignalSpec:
     note: str = ""
 
 
-_SHELF_NOTE = ("built and tested 2026-08-26, reaches no production path "
-               "(the live vote is tally+coord+apu; the offline harness "
-               "weights audio+tally+lock+coord)")
+#: Where a profile arms one of the six, and where that signal's own
+#: measured constants live: `solve: clear: signals: {<name>: {...}}`.
+#: `{enabled: false}` is an explicit refusal and reads the same as absence,
+#: except that the reason says which one it was.
+SIGNALS_BLOCK = "signals"
 
-#: The six signals on the shelf. Present in every table so the ceiling
-#: reads honestly, absent from every vote.
-SHELF_SPECS = (
-    SignalSpec("scene_cut", "S_TRANSITION", 0.0, False, True, _SHELF_NOTE),
-    SignalSpec("room_fp_transition", "S_TRANSITION", 0.0, False, True,
-               _SHELF_NOTE),
-    SignalSpec("input_lock", "S_ARMING", 0.0, False, False,
-               _SHELF_NOTE + "; arming condition only, never a sole term"),
-    SignalSpec("oam_quiesce", "S_DESPAWN", 0.0, False, False, _SHELF_NOTE),
-    SignalSpec("entity_wipe", "S_DESPAWN", 0.0, False, False, _SHELF_NOTE),
-    SignalSpec("lock_release_novelty", "S_IRREVERSIBLE", 0.0, False, True,
-               _SHELF_NOTE),
-)
+#: The most one shelf signal can cast, per roster. The live vote counts
+#: whole signals against `clear.min_signals`; the offline harness fuses
+#: quarter-votes against clear_detect.THRESHOLD. A shelf signal casts
+#: exactly what a shipped signal of the same roster casts -- deliberately
+#: NOT profile-tunable, because a per-profile weight knob is a dial for
+#: manufacturing a fire, and this module exists to stop numbers being
+#: chosen to reach a conclusion.
+SHELF_WEIGHT = {"live": 1.0, "offline": 0.25}
+
+#: Constants a signal's OWN docstring refuses to default. Arming the
+#: signal without them leaves it DEAD with the missing key named. Each
+#: entry is quoted from the class/function it guards, not invented here.
+REQUIRED_KNOBS = {
+    "scene_cut": (
+        ("scene_min", "blank_min"),
+        'SceneCutSignal: "NO DEFENSIBLE GLOBAL DEFAULT for scene_min/'
+        'blank_min" -- Metroid throws spurious scene bumps in ordinary '
+        "play and Zelda fades are invisible to the scene ordinal "
+        "entirely, so the null must be measured per profile"),
+    "entity_wipe": (
+        ("min_bytes",),
+        'entity_wipe_windows: "min_bytes and tol MUST come from a '
+        'measured per-profile null" -- above the 99.9th percentile of '
+        "THAT profile's own longest-wipe-run distribution"),
+    "lock_release_novelty": (
+        ("lock_max", "m"),
+        'LockReleaseNoveltyTrack: lock_max and m are "REQUIRED, no '
+        'default" -- "a game-agnostic default here would repeat the '
+        "exact mistake this campaign's own structural finding names\""),
+    "room_fp_transition": (
+        ("mask",),
+        "RoomFpTransitionSignal: the mask is an opaque KEEP/DROP array a "
+        "caller measured from ITS OWN idle/walk frames (scripts/"
+        "room_fp_calibrate.py). Unmasked, a HUD digit churns the hash: "
+        "measured 70 novel-room fires on one 2,424-frame Bubble Bobble "
+        "replay that contains exactly one room change"),
+}
+
+#: Slots whose members are CORRELATED evidence and therefore collapse to
+#: their max in both the ceiling and the vote (Rule 3). S_CADENCE is the
+#: exemption and is not in this set -- see the Rule 3 note above.
+COLLAPSING_SLOTS = frozenset(
+    {"S_TRANSITION", "S_DESPAWN", "S_IRREVERSIBLE", "S_ARMING"})
+
+
+def shelf_specs(roster: str) -> tuple[SignalSpec, ...]:
+    """The six, at this roster's weight. Wired; armed per profile."""
+    w = SHELF_WEIGHT[roster]
+    return (
+        SignalSpec("scene_cut", "S_TRANSITION", w, True, True,
+                   "odometer re-anchor events (rendered cut + blank fold) "
+                   "classified over a rolling window"),
+        SignalSpec("room_fp_transition", "S_TRANSITION", w, True, True,
+                   "a settled, novel nametable-VRAM room identity, with "
+                   "the lives-drop death discriminant beneath it"),
+        SignalSpec("input_lock", "S_ARMING", w, True, False,
+                   "K-branch differential input probe; arming condition "
+                   "and corroborator only, never a sole term"),
+        SignalSpec("oam_quiesce", "S_DESPAWN", w, True, False,
+                   "sustained collapse of the visible-sprite population "
+                   "against this run's own measured baseline"),
+        SignalSpec("entity_wipe", "S_DESPAWN", w, True, False,
+                   "a contiguous RAM block collapsing occupied->empty, "
+                   "with no position precondition"),
+        SignalSpec("lock_release_novelty", "S_IRREVERSIBLE", w, True, True,
+                   "a lock window that releases into a room this episode "
+                   "has never produced and never walks back into"),
+    )
+
+
+#: The six, by name. Membership decides which classification branch a
+#: signal takes, so it is derived from the specs rather than retyped.
+_SHELF_NAMES = frozenset(sp.name for sp in shelf_specs(LIVE))
+
+
+def slot_ceiling(states) -> float:
+    """Rule 3, as arithmetic: sum over slots, MAX within a collapsing one.
+
+    `states` is any iterable of SignalState. Only eligible signals count.
+    This is the one place the ceiling is computed, and
+    StreamingConfluenceDetector.push / clear_detect.run_episode fold their
+    votes the same way -- a ceiling folded differently from the vote it
+    bounds is not an upper bound, it is a second opinion."""
+    by_slot: dict[str, list[float]] = {}
+    for st in states:
+        if st.eligible:
+            by_slot.setdefault(st.slot, []).append(st.weight)
+    total = 0.0
+    for slot, weights in by_slot.items():
+        total += sum(weights) if slot not in COLLAPSING_SLOTS else max(weights)
+    return total
 
 
 def _roster(roster: str, apu_weight: float) -> tuple[SignalSpec, ...]:
@@ -447,12 +556,12 @@ def _roster(roster: str, apu_weight: float) -> tuple[SignalSpec, ...]:
             SignalSpec("lock", "S_ARMING", float(w["lock"]), True, False,
                        "differential input probe; corroborator only, never "
                        "a sole term"),
-        ) + SHELF_SPECS
+        ) + shelf_specs(OFFLINE)
     return (
         SignalSpec("coord", "S_TRANSITION", 1.0, True, True),
         SignalSpec("tally", "S_CADENCE", 1.0, True, False),
         SignalSpec("apu", "S_CADENCE", float(apu_weight), True, False),
-    ) + SHELF_SPECS
+    ) + shelf_specs(LIVE)
 
 
 @dataclass(frozen=True)
@@ -568,6 +677,54 @@ def _null_rates(solve: dict, override: dict | None) -> dict:
     return clean
 
 
+def signal_config(profile_or_solve: dict, name: str) -> dict | None:
+    """This profile's arming block for one shelf signal, or None.
+
+    Accepts either a whole profile or its `solve` block, so the detector
+    and the adjudicator can call it with whatever they are holding. Returns
+    None for absent AND for `{enabled: false}` — the two differ only in the
+    reason string, never in the arithmetic."""
+    solve = profile_or_solve.get("solve")
+    if not isinstance(solve, dict):
+        solve = profile_or_solve
+    clear = solve.get("clear")
+    clear = clear if isinstance(clear, dict) else {}
+    block = clear.get(SIGNALS_BLOCK)
+    if not isinstance(block, dict):
+        return None
+    cfg = block.get(name)
+    if not isinstance(cfg, dict):
+        return None
+    if cfg.get("enabled") is False:
+        return None
+    return dict(cfg)
+
+
+def _shelf_state(spec: SignalSpec, solve: dict) -> tuple[str, str]:
+    """`(state, reason)` for one of the six, from this profile's arming."""
+    clear = solve.get("clear")
+    clear = clear if isinstance(clear, dict) else {}
+    block = clear.get(SIGNALS_BLOCK)
+    raw = block.get(spec.name) if isinstance(block, dict) else None
+    where = f"clear.{SIGNALS_BLOCK}.{spec.name}"
+    if isinstance(raw, dict) and raw.get("enabled") is False:
+        return DEAD, (f"{where}.enabled is false — this profile declines "
+                      f"the signal, so it is constructed by nobody and "
+                      f"contributes 0 rather than being counted as a "
+                      f"corroborator that happened to be quiet")
+    if not isinstance(raw, dict):
+        return DEAD, (f"{where} is not declared, so no signal object is "
+                      f"constructed and it contributes 0. Wired, unarmed: "
+                      f"{spec.note}")
+    knobs, why = REQUIRED_KNOBS.get(spec.name, ((), ""))
+    missing = [k for k in knobs if raw.get(k) is None]
+    if missing:
+        return DEAD, (f"{where} is armed but declares no "
+                      f"{', '.join(missing)} — {why}. Refusing to inherit "
+                      f"a default rather than measuring one.")
+    return ALIVE, f"armed at {where}: {spec.note}"
+
+
 def _classify(spec: SignalSpec, solve: dict, rates: dict) -> SignalState:
     """One signal's state for one profile. Rule 1, then Rule 2."""
     rate = rates.get(spec.name)
@@ -577,6 +734,19 @@ def _classify(spec: SignalSpec, solve: dict, rates: dict) -> SignalState:
     if not spec.wired:
         return SignalState(state=NOT_WIRED,
                            reason=spec.note or "not wired", **common)
+    if spec.name in _SHELF_NAMES:
+        state, why = _shelf_state(spec, solve)
+        if state == DEAD:
+            return SignalState(state=DEAD, reason=why, **common)
+        if rate is not None and rate >= MAX_NULL_RATE:
+            return SignalState(
+                state=DEGENERATE,
+                reason=(f"measured null fire-rate {rate:.2f} >= "
+                        f"{MAX_NULL_RATE:g}: it fires on ordinary play, so "
+                        "it carries no bits and cannot corroborate "
+                        "anything"),
+                **common)
+        return SignalState(state=ALIVE, reason=why, **common)
     if spec.name == "apu" and spec.weight <= 0:
         return SignalState(
             state=DEAD,
@@ -597,8 +767,9 @@ def _classify(spec: SignalSpec, solve: dict, rates: dict) -> SignalState:
                     f"{MAX_NULL_RATE:g}: it fires on ordinary play, so it "
                     "carries no bits and cannot corroborate anything"),
             **common)
-    measured = ("null fire-rate UNMEASURED (scripts/clear_calibrate.py does "
-                "not exist) — alive is not the same as separating")
+    measured = ("null fire-rate UNMEASURED (scripts/clear_calibrate.py "
+                "measures the scene_cut gate, not a per-signal fire-rate) "
+                "— alive is not the same as separating")
     return SignalState(state=ALIVE,
                        reason=f"{why}; {measured}" if why else measured,
                        **common)
@@ -649,7 +820,7 @@ def clear_quorum(profile: dict, null_rates: dict | None = None,
     for spec in _roster(roster, apu_w):
         states[spec.name] = _classify(spec, solve, rates)
 
-    ceiling = sum(s.weight for s in states.values() if s.eligible)
+    ceiling = slot_ceiling(states.values())
     dead_why = "; ".join(
         f"{n}={s.state} ({s.reason})" for n, s in states.items()
         if s.state in (DEAD, DEGENERATE))

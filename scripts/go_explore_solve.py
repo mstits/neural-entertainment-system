@@ -1668,6 +1668,49 @@ def resolve_apu_sampling(game, pool) -> bool:
     return True
 
 
+#: ctx key -> the Pool accessor that fills it. A core without the accessor
+#: cannot feed that signal, and saying so out loud beats an AttributeError
+#: per worker per step (or, worse, a silently absent modality read as a
+#: measurement of nothing).
+_MODALITY_ACCESSOR = {
+    "_odo": "get_odometer_per_worker",
+    "_oam": "peek_oam",
+    "_nt": "peek_nametables",
+}
+
+
+def resolve_clear_modalities(game, pool) -> frozenset:
+    """Which per-step hardware surfaces this run will sample for the clear
+    hook — the generalization of `resolve_apu_sampling` to the six armed
+    signals.
+
+    Empty for every profile that arms none of them, which is the whole
+    shipped corpus, so the hot loop makes exactly the calls it made before.
+    `_locked` has no accessor: an input-lock verdict costs save/restore
+    round-trips and is a TIER-2 probe a caller arms deliberately, never a
+    per-step sample (InputLockSignal's own cost note), so a profile arming
+    it gets the key only if something upstream fills it."""
+    want = set(getattr(game, "clear_modalities", lambda: frozenset())())
+    out = set()
+    for key in want:
+        accessor = _MODALITY_ACCESSOR.get(key)
+        if accessor is None:
+            out.add(key)
+            continue
+        if hasattr(pool, accessor):
+            out.add(key)
+        else:
+            print(f"[go_explore_solve] a clear signal asked for {key} but "
+                  f"this nes_core has no Pool.{accessor} — that signal will "
+                  f"receive nothing and vote 0. Rebuild the extension "
+                  f"(`make build`) or decline the signal in the profile "
+                  f"with `enabled: false`.", flush=True)
+    if want:
+        print(f"[go_explore_solve] clear modalities sampled per step: "
+              f"{sorted(out) or 'none'}", flush=True)
+    return frozenset(out)
+
+
 def warn_if_burst_starves_clear_hook(game, burst: int) -> int:
     """One loud line when a live BURST is shorter than the clear hook's own
     warm-up. Returns the budget it asked the adapter for (0 = stateless hook,
@@ -2295,6 +2338,19 @@ class GenericGame:
         # so an existing profile is byte-identical and pays nothing.
         self._conf_apu_weight = float(cl.get("apu_weight", 0.0) or 0.0)
         self._conf_apu = dict(cl.get("apu") or {})
+        # THE ARMED SHELF, resolved once at construction so `is_clear` can
+        # ask without a lazy path (a hook that behaves differently before
+        # and after its first detector is built is exactly the kind of
+        # order-dependence a receipt cannot see). Empty for every profile
+        # that declares no `clear.signals` block — the whole shipped corpus
+        # — and an empty set restores the shipped one-argument push()
+        # call literally, not by defaulting.
+        self._conf_shelf_names: frozenset = frozenset(
+            n for n in ("entity_wipe", "oam_quiesce", "scene_cut",
+                        "room_fp_transition", "input_lock",
+                        "lock_release_novelty")
+            if isinstance((cl.get("signals") or {}).get(n), dict)
+            and (cl.get("signals") or {})[n].get("enabled") is not False)
         # Cache for clear_observation_budget: the answer is a pure function
         # of the knobs above, so it is computed once from a throwaway
         # detector and reused (callers ask it once per banked candidate).
@@ -2346,6 +2402,37 @@ class GenericGame:
         nothing on the paths that do not ask for it."""
         return self._clear_mode == "confluence" and self._conf_apu_weight > 0
 
+    def clear_modalities(self) -> frozenset:
+        """Hardware surfaces this profile's clear hook needs per step.
+
+        Same shape and same reasoning as `needs_apu` above, generalized to
+        the six armed signals: a surface nobody asked for is never read, so
+        a profile that arms nothing pays for nothing and the hot loop is
+        untouched. Members are the ctx keys the caller must fill:
+        `_oam`, `_odo` (with `_scene`/`_blank`), `_nt`, `_locked`.
+
+        Empty for every profile in the shipped corpus, AND empty for any
+        profile whose WIN-CONDITION is not `confluence`: `clear.signals`
+        declares which signals the INSTRUMENT may use on this profile, and
+        the offline harness (clear_detect.run_episode) fuses them over any
+        profile's trace, but the live hook of a `byte_change` /
+        `score_jump` / level_key profile reads its own predicate and never
+        consults them. Sampling a surface that hook cannot use would be
+        per-worker per-step cost for nothing."""
+        if self._clear_mode != "confluence":
+            return frozenset()
+        armed = getattr(self, "_conf_shelf_names", frozenset())
+        want = set()
+        if "oam_quiesce" in armed:
+            want.add("_oam")
+        if armed & {"scene_cut", "room_fp_transition"}:
+            want.add("_odo")
+        if "room_fp_transition" in armed:
+            want.add("_nt")
+        if armed & {"input_lock", "lock_release_novelty"}:
+            want.add("_locked")
+        return frozenset(want)
+
     def _new_clear_detector(self):
         """Build the streaming confluence detector this profile's knobs
         describe.
@@ -2359,7 +2446,14 @@ class GenericGame:
         if _sd not in _sys.path:
             _sys.path.insert(0, _sd)
         import clear_reachability
-        from clear_detect import StreamingConfluenceDetector
+        from clear_detect import (StreamingConfluenceDetector,
+                                   build_shelf_signals)
+        q = clear_reachability.clear_quorum(self._profile)
+        # Armed once, here, so the live hook and clear_observation_budget
+        # cannot disagree about which signals exist.
+        self._conf_shelf_names = frozenset(
+            n for n in StreamingConfluenceDetector.SHELF_SIGNALS
+            if n in q.signal_state and q.signal_state[n].eligible)
         return StreamingConfluenceDetector(
             self.progress, window=self._conf_window,
             stride=self._conf_stride,
@@ -2374,7 +2468,8 @@ class GenericGame:
             # dead hook; what it does is stop a signal the quorum marked
             # DEGENERATE from being counted as a corroborator that happened
             # to be silent.
-            eligibility=clear_reachability.clear_quorum(self._profile))
+            shelf=build_shelf_signals(self._profile, q),
+            eligibility=q)
 
     def clear_observation_budget(self) -> int:
         """Observations a FRESH clear-hook ctx must be fed before this hook is
@@ -2632,8 +2727,20 @@ class GenericGame:
             # None, on the disarmed path: `det` is whatever the ctx holds,
             # and the corpus is full of duck-typed one-argument detector
             # stubs. A default-off knob must not widen the call it makes.
-            fired = (det.push(ram, ctx.get("_apu_mask"))
-                     if self._conf_apu_weight > 0 else det.push(ram))
+            if self._conf_shelf_names:
+                # An armed profile hands the detector every surface it
+                # declared. A ctx key the caller has not filled arrives as
+                # None and is IGNORED, never read as a zero.
+                fired = det.push(
+                    ram, ctx.get("_apu_mask"),
+                    oam=ctx.get("_oam"), odo=ctx.get("_odo"),
+                    scene=ctx.get("_scene"), blank=ctx.get("_blank"),
+                    nametables=ctx.get("_nt"), palette=ctx.get("_palette"),
+                    rendered_lines=ctx.get("_rendered_lines"),
+                    locked=ctx.get("_locked"), lives=self.lives(ram))
+            else:
+                fired = (det.push(ram, ctx.get("_apu_mask"))
+                         if self._conf_apu_weight > 0 else det.push(ram))
             # ROOM-TRANSITION VETO (v2, 2026-08-08). Bookkeeping runs on
             # every observation, so it is evaluated before the early
             # returns below; disarmed profiles (room_veto.steps 0, the
@@ -3489,6 +3596,12 @@ class Solver:
         # degrade to the RAM-only detector with a loud line, not AttributeError
         # every step).
         self._needs_apu = resolve_apu_sampling(self.game, self.pool)
+        # THE OTHER MODALITIES, resolved once for the same reason. Each is
+        # kept only when THIS core actually exports the accessor: an older
+        # wheel must degrade to the signals it can feed, loudly, rather
+        # than raise AttributeError once per worker per step.
+        self._clear_modalities = resolve_clear_modalities(self.game,
+                                                          self.pool)
         # Diagnostic only: a windowed clear hook whose warm-up exceeds one
         # burst can never fire live, because the ctx holding its state is
         # rebuilt at every re-root.
@@ -7265,6 +7378,16 @@ class Solver:
             # hook asked for the audio modality, so the default hot loop is
             # untouched.
             apu_all = self.pool.apu_activity_all() if self._needs_apu else None
+            # Same discipline as the APU mask above, generalized to the six
+            # armed clear signals: a surface no profile asked for is never
+            # read, so the shipped hot loop is untouched to the call.
+            _cm = getattr(self, "_clear_modalities", frozenset())
+            odo_all = (self.pool.get_odometer_per_worker()
+                       if "_odo" in _cm else None)
+            scene_all = (self.pool.get_odometer_scene_per_worker()
+                         if "_odo" in _cm else None)
+            blank_all = (self.pool.get_odometer_blank_per_worker()
+                         if "_odo" in _cm else None)
             self.steps_done += args.workers
             if self.step_hook is not None:
                 try:
@@ -7285,6 +7408,14 @@ class Solver:
                        else results[i][2])
                 if apu_all is not None:
                     c["_apu_mask"] = apu_all[i]
+                if odo_all is not None:
+                    c["_odo"] = odo_all[i]
+                    c["_scene"] = scene_all[i]
+                    c["_blank"] = blank_all[i]
+                if "_oam" in _cm:
+                    c["_oam"] = self.pool.peek_oam(i)
+                if "_nt" in _cm:
+                    c["_nt"] = self.pool.peek_nametables(i)
                 c["trace"].append(c["pending"])
                 c["steps"] += 1
                 c["left"] -= 1

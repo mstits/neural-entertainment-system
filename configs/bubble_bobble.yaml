@@ -207,7 +207,41 @@ solve:
   # solution is banked. THE MOMENT a victory is actually observed, replace
   # this with the exact-value, level-key-scoped form:
   #   finale: {addr: 0x04A1, value: <observed>, level_key: [99, 1]}
-  clear: {mode: byte_change, addr: 0x04A1, direction: up}
+  clear:
+    mode: byte_change
+    addr: 0x04A1
+    direction: up
+    # WHICH CLEAR SIGNALS THE INSTRUMENT MAY USE ON THIS PROFILE.
+    # scripts/clear_detect.py's offline harness fuses signals over ANY
+    # profile's trace regardless of `mode`, which is how two Bubble
+    # Bobble rows whose progress observable spans ONE unit (98..99, largest
+    # drop 1) were scored by a detector whose `coord` half needs a drop of
+    # >= 300, and written down as `n_valid: 2, hit_rate: 0.0`. This block
+    # says which signals CAN fire here; everything else is DEAD in the
+    # quorum table and contributes 0 rather than a silent corroborator.
+    signals:
+      # CALIBRATED, not chosen: docs/receipts/clear_control/
+      # bubble_bobble_scene_cut_null_2026-08-26.json measured this
+      # profile's own null over the PRE-CLEAR portion of two banked
+      # round-99 tapes -- 226 checks, max d_scene 0, max d_blank 0 -- and
+      # the post-clear window reaches d_blank 4. The gate is the smallest
+      # integer strictly above the measured null. Reproduce with:
+      #   .venv/bin/python scripts/clear_calibrate.py \
+      #     --profile configs/bubble_bobble.yaml \
+      #     --runs runs/bubble_bobble/r99_fixed/solutions/sol_000 \
+      #            runs/bubble_bobble/chain_day2g/lvl_00_99-0/solutions/sol_000
+      scene_cut: {scene_min: 1, blank_min: 1}
+      # room_fp_transition is DECLINED with a measurement, not omitted:
+      # unmasked, the HUD score digits churn the nametable hash and the
+      # signal fired 70 times on one 2,424-frame replay containing exactly
+      # one room change. It needs a mask from scripts/room_fp_calibrate.py
+      # before it can be armed here.
+      room_fp_transition: {enabled: false}
+      # oam_quiesce measured 0 fires across both tapes: a Bubble Bobble
+      # round clear does not collapse the sprite population (bubbles and
+      # the newly-spawned round persist). Declined with that number rather
+      # than armed and left silent.
+      oam_quiesce: {enabled: false}
   # level_key = [$0401, $0462], NOT the usual coverage-baseline empty list.
   # Unlike most bootstraps (Contra/Kirby/DuckTales all ship level_key: []
   # because no receipted stage-advance byte exists yet), Bubble Bobble's round

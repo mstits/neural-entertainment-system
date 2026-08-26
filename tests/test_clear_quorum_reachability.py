@@ -71,8 +71,9 @@ from clear_reachability import (  # noqa: E402
     NO_CLEAR,
     NOT_WIRED,
     OFFLINE,
-    SHELF_SPECS,
+    COLLAPSING_SLOTS,
     SLOTS,
+    shelf_specs,
     UNDER_WARMUP,
     UNREACHABLE,
     clear_quorum,
@@ -178,10 +179,11 @@ def test_a_signal_that_fires_on_every_null_check_is_degenerate_not_a_vote() -> N
 
 def test_an_unmeasured_null_is_reported_as_unmeasured_not_guessed() -> None:
     """The COORD_RESET_DROP_MIN lesson, applied to Rule 2. No profile
-    carries a measured null today because scripts/clear_calibrate.py does
-    not exist; inventing a plausible rate would be the same defect that
-    produced an SMB-shaped constant applied to 45 games. Absent a
-    measurement a signal is ALIVE-but-unseparated, and says so."""
+    carries a measured null FIRE-RATE today: scripts/clear_calibrate.py
+    exists as of the wire-up but measures the scene_cut gate, not a
+    per-signal fire-rate. Inventing a plausible rate would be the same
+    defect that produced an SMB-shaped constant applied to 45 games.
+    Absent a measurement a signal is ALIVE-but-unseparated, and says so."""
     q = clear_quorum(_profile())
     assert q.verdict == FIREABLE
     assert q.signal_state["tally"].state == ALIVE
@@ -339,26 +341,82 @@ def test_an_ineligible_transition_signal_cannot_unlock_the_required_class() -> N
         "number a caller could meet and then read the silence as a verdict")
 
 
-def test_the_six_shelf_signals_are_reported_as_wired_to_nothing() -> None:
-    """Defect D2, on the instrument's own readout. entity_wipe,
-    room_fp_transition, input_lock, lock_release_novelty, oam_quiesce and
-    scene_cut were built and tested on 2026-08-26 and reach neither
-    production path. A ceiling that silently omits them reads as though
-    they were never built; one that counts them reads as though they
-    worked. NOT_WIRED is the third answer."""
+def test_the_six_shelf_signals_are_wired_but_dead_until_a_profile_arms_them() -> None:
+    """Defect D2, closed. entity_wipe, room_fp_transition, input_lock,
+    lock_release_novelty, oam_quiesce and scene_cut were built and tested
+    on 2026-08-26 and, for one day, reached neither production path. They
+    now reach both, so NOT_WIRED is no longer the honest answer for them
+    — but WIRED IS NOT ARMED, and a profile that declares none of them
+    must be byte-identical to the day before the wire-up. DEAD-with-the-
+    key-named is the answer that says both things at once."""
     q = clear_quorum(_profile())
-    shelf = [s.name for s in SHELF_SPECS]
+    shelf = [s.name for s in shelf_specs(LIVE)]
     assert set(shelf) == {
         "scene_cut", "room_fp_transition", "input_lock",
         "oam_quiesce", "entity_wipe", "lock_release_novelty"}
     for name in shelf:
         st = q.signal_state[name]
-        assert st.state == NOT_WIRED, name
-        assert st.weight == 0.0
-        assert "no production path" in st.reason
+        assert st.state == DEAD, name
+        assert st.weight == 1.0, "wired signals cast a live-roster vote"
+        assert f"clear.signals.{name}" in st.reason, "the key is named"
         assert name not in q.eligible
-    # ...and they are therefore not propping up the ceiling.
+    # ...and an unarmed profile's ceiling has not moved a particle.
     assert q.ceiling == 2.0
+
+
+@pytest.mark.parametrize("name,knobs", [
+    ("scene_cut", {"scene_min": 1, "blank_min": 1}),
+    ("oam_quiesce", {}),
+    ("entity_wipe", {"min_bytes": 12}),
+    ("room_fp_transition", {"mask": [[0, 960]]}),
+    ("input_lock", {}),
+    ("lock_release_novelty", {"lock_max": 90, "m": 60}),
+])
+def test_arming_one_signal_moves_that_signal_and_nothing_else(name, knobs) -> None:
+    """The anti-vacuity leg for the arming rule: six inputs, six different
+    tables. A `signal_config` hardcoded to None fails every row; one
+    hardcoded to a dict fails the unarmed test above."""
+    prof = _profile(clear={"mode": "confluence", "signals": {name: knobs}})
+    q = clear_quorum(prof)
+    assert q.signal_state[name].state == ALIVE, q.signal_state[name].reason
+    assert name in q.eligible
+    for other in (s.name for s in shelf_specs(LIVE)):
+        if other != name:
+            assert q.signal_state[other].state == DEAD, other
+
+
+@pytest.mark.parametrize("name,partial,missing", [
+    ("scene_cut", {"blank_min": 1}, "scene_min"),
+    ("entity_wipe", {"tol": 4}, "min_bytes"),
+    ("room_fp_transition", {"settle": 3}, "mask"),
+    ("lock_release_novelty", {"m": 60}, "lock_max"),
+])
+def test_arming_without_the_measured_constant_is_dead_not_defaulted(
+        name, partial, missing) -> None:
+    """COORD_RESET_DROP_MIN, generalized. Each of these signals refuses a
+    global default IN ITS OWN DOCSTRING; a profile that arms one without
+    measuring must not quietly inherit a number that was never about it.
+    Delete the REQUIRED_KNOBS check and all four rows go ALIVE."""
+    prof = _profile(clear={"mode": "confluence", "signals": {name: partial}})
+    st = clear_quorum(prof).signal_state[name]
+    assert st.state == DEAD
+    assert missing in st.reason
+    assert f"clear.signals.{name}" in st.reason
+
+
+def test_a_signal_can_be_declined_explicitly_and_say_so() -> None:
+    """`enabled: false` and absence produce the same arithmetic and
+    different reasons — the profile that thought about it and the profile
+    that never did are not the same fact."""
+    off = clear_quorum(_profile(
+        clear={"mode": "confluence",
+               "signals": {"oam_quiesce": {"enabled": False}}}))
+    absent = clear_quorum(_profile())
+    assert off.signal_state["oam_quiesce"].state == DEAD
+    assert absent.signal_state["oam_quiesce"].state == DEAD
+    assert off.ceiling == absent.ceiling
+    assert "declines" in off.signal_state["oam_quiesce"].reason
+    assert "not declared" in absent.signal_state["oam_quiesce"].reason
 
 
 def test_a_disarmed_apu_vote_is_dead_not_silently_counted() -> None:
@@ -387,18 +445,20 @@ def test_every_signal_carries_the_question_it_answers() -> None:
 
 
 @pytest.mark.parametrize("roster", [LIVE, OFFLINE])
-def test_a_second_wired_member_in_a_slot_forces_the_slot_arithmetic(roster) -> None:
-    """TRIPWIRE, not an assertion about today's design.
+def test_the_tripwire_fired_and_every_non_cadence_slot_now_has_two_members(
+        roster) -> None:
+    """THE TRIPWIRE THAT FIRED, kept as the reason the arithmetic changed.
 
-    The ceiling below is a SUM over eligible signals, because the shipped
-    vote is a sum and a ceiling that is not an upper bound on what the vote
-    can reach would refuse profiles that can fire. That holds only while
-    each non-cadence slot has at most one WIRED member. Wire scene_cut or
-    oam_quiesce and correlated evidence starts casting two votes — the
-    double-count OamQuiesceSignal's own docstring forbids ("a caller wiring
-    both into a vote MUST treat {entity_wipe, oam_quiesce} as ONE
-    corroborating slot, never as two independent votes"). At that point the
-    ceiling has to become a slot-min, and this test is what says so.
+    Its predecessor asserted `len(members) <= 1` for every non-cadence
+    slot and said in its own docstring what to do the day that stopped
+    being true: "the ceiling has to become a slot-min, and this test is
+    what says so". Wiring the shelf put a second WIRED member in three of
+    them at once, it went red, and the arithmetic moved -- ceiling and
+    vote alike (clear_reachability.slot_ceiling,
+    StreamingConfluenceDetector._fold). This is the same fact asserted
+    from the other side: if a future change un-wires them back to one
+    member each, this goes red in turn and the collapse gets re-argued
+    rather than inherited as cargo.
 
     S_CADENCE is exempt and stays exempt deliberately: {tally, apu} each
     cast a full vote today, and collapsing them would silently change what
@@ -410,13 +470,55 @@ def test_a_second_wired_member_in_a_slot_forces_the_slot_arithmetic(roster) -> N
     for name, st in q.signal_state.items():
         if st.state != NOT_WIRED:
             wired_per_slot[st.slot].append(name)
-    for slot, members in wired_per_slot.items():
-        if slot == "S_CADENCE":
-            continue
-        assert len(members) <= 1, (
-            f"{slot} now has two wired members {members}: the ceiling in "
-            "clear_reachability.clear_quorum is a SUM and must become a "
-            "slot-min, or correlated evidence will cast two votes")
+    for slot in ("S_TRANSITION", "S_DESPAWN"):
+        assert len(wired_per_slot[slot]) >= 2, (
+            f"{slot} has {wired_per_slot[slot]}: with one member the slot "
+            "collapse is a no-op and should be re-argued, not inherited")
+        assert slot in COLLAPSING_SLOTS
+    # S_ARMING gains its second member only on the OFFLINE roster: the
+    # live detector has no env handle for a probe, so `lock` is not one of
+    # its signals (StreamingConfluenceDetector's own "Availability note").
+    if roster == OFFLINE:
+        assert sorted(wired_per_slot["S_ARMING"]) == ["input_lock", "lock"]
+    assert "S_ARMING" in COLLAPSING_SLOTS
+    assert "S_CADENCE" not in COLLAPSING_SLOTS
+
+
+def test_correlated_evidence_in_one_slot_casts_one_vote_not_two() -> None:
+    """RULE 3, as arithmetic, on the ceiling. OamQuiesceSignal's own
+    docstring: "a caller wiring both into a vote MUST treat {entity_wipe,
+    oam_quiesce} as ONE corroborating slot, never as two independent
+    votes -- counting them separately double-counts a single piece of
+    evidence." Its false-positive set is a strict SUPERSET of
+    entity_wipe's, so the two agreeing is one observation, not two.
+
+    Revert slot_ceiling to a plain sum and `both` reads 4.0."""
+    one = clear_quorum(_profile(clear={
+        "mode": "confluence",
+        "signals": {"entity_wipe": {"min_bytes": 12}}}))
+    both = clear_quorum(_profile(clear={
+        "mode": "confluence",
+        "signals": {"entity_wipe": {"min_bytes": 12}, "oam_quiesce": {}}}))
+    assert one.ceiling == 3.0            # coord + tally + S_DESPAWN
+    assert both.ceiling == 3.0           # ...and the second member adds 0
+    assert sorted(both.slots["S_DESPAWN"]) == ["entity_wipe", "oam_quiesce"]
+
+
+def test_three_views_of_one_screen_wipe_cannot_be_a_three_signal_confluence() -> None:
+    """The same rule where it bites hardest: coord, scene_cut and
+    room_fp_transition all answer "a scene committed", and a stage wipe
+    moves all three at once. Summed, that reaches min_signals: 3 on its
+    own with no corroboration of any kind."""
+    q = clear_quorum(_profile(clear={
+        "mode": "confluence", "min_signals": 3,
+        "signals": {"scene_cut": {"scene_min": 1, "blank_min": 1},
+                    "room_fp_transition": {"mask": [[0, 960]]}}}))
+    assert sorted(q.slots["S_TRANSITION"]) == [
+        "coord", "room_fp_transition", "scene_cut"]
+    assert q.ceiling == 2.0, "S_TRANSITION casts one vote, tally the other"
+    assert q.verdict == UNREACHABLE, (
+        "and a bar of 3 is therefore honestly out of reach, rather than "
+        "met by one screen wipe counted three times")
 
 
 # ==========================================================================

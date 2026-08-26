@@ -2192,6 +2192,39 @@ class RoomFpTransitionSignal:
     `kind` (default {pan, fade} -- see ROOM_FP_KINDS above for why warp is
     excluded by default).
 
+    THE DEATH DISCRIMINANT (2026-08-26, added with the wire-up). A dungeon
+    entry and a DEATH produce the same classifier signature on this
+    surface: a new fingerprint settles, and the churn window reads
+    d_scene >= 2 with the odometer flat -- classify_transition's `warp`,
+    which is exactly the measured Zelda death flash. Two guards sit under
+    that, and they are different in kind:
+
+      KIND (already shipped): `warp` is outside ROOM_FP_DEFAULT_KIND, so
+        the death-flash signature does not vote unless a profile opts it
+        back in explicitly. This is a filter on the SHAPE of the
+        transition, and it is defeated the moment a game's real room
+        changes classify as warp too -- at which point opting warp in
+        re-admits the deaths with them.
+      LIVES (new): the vote additionally requires that the lives byte did
+        not FALL between the previous settled identity and this one. A
+        death is a transition you arrive at having lost a life; a room
+        change is not.
+
+    WHY THE DISCRIMINANT IS ANCHORED AT THE PREVIOUS SETTLE, and not at a
+    window of N observations: there is no defensible global N. A death
+    fade's length is a per-game animation, and picking 60 because it
+    matches this class's `hold` would be a fresh SMB-shaped constant
+    applied to every game -- the precise defect (COORD_RESET_DROP_MIN,
+    LOCK_DIFF_TOL) this campaign exists to end. "Since the last settled
+    room" is defined by the signal's own state machine, carries no tuned
+    number at all, and is exactly the interval the vote is a claim about.
+
+    `lives=None` (a caller that has not plumbed the byte) leaves the
+    discriminant INERT and says so in `stats()['lives_seen']` rather than
+    silently passing every transition -- a guard that cannot see its input
+    reporting PASS is the vacuous-gate pattern, and four of those shipped
+    the week this was written.
+
     FALSE POSITIVES THIS SIGNAL CANNOT DISCRIMINATE ON ITS OWN. An ordinary
     ROOM TRANSITION is not a false positive of this signal, it is its
     TARGET -- the measured Kirby result (3 fires in 24 s, every one an
@@ -2242,6 +2275,10 @@ class RoomFpTransitionSignal:
         self._settled_h: int | None = None
         self._rooms = RoomIndex(cap=self.max_rooms)
         self._step = 0
+        self._lives: int | None = None
+        self._settled_lives: int | None = None
+        self.lives_seen = False
+        self.n_death_vetoes = 0
         self.trigger_step: int | None = None
         self.n_triggers = 0
         self.n_settles = 0
@@ -2249,9 +2286,11 @@ class RoomFpTransitionSignal:
         self.last_direction = None
         self.last_novel: bool | None = None
         self.last_ordinal: int | None = None
+        self.last_death_vetoed = False
 
     def push(self, nt, odo_xy=(0, 0), scene: int = 0,
-             rendered_lines: int | None = None, palette=None) -> None:
+             rendered_lines: int | None = None, palette=None,
+             lives: int | None = None) -> None:
         """Feed one observation: the nametable snapshot, the odometer's
         integrated (x, y) and the scene ordinal (both already produced by
         the certified odometer for every profile that arms room_fp), and
@@ -2265,6 +2304,9 @@ class RoomFpTransitionSignal:
         observes a blank simply never passes it, and this gate is then
         permanently open (matches every non-blank push)."""
         self._step += 1
+        if lives is not None:
+            self._lives = int(lives)
+            self.lives_seen = True
         if rendered_lines is not None and rendered_lines < self.min_lines:
             self._pend = None
             return
@@ -2280,6 +2322,7 @@ class RoomFpTransitionSignal:
         self.n_settles += 1
         ordinal = self._rooms.intern(h_settled, odo_xy)
         novel = ordinal is not None and self._rooms.meta[ordinal]["visits"] == 1
+        prev_lives, self._settled_lives = self._settled_lives, self._lives
         if was_baseline:
             # Adoption, not a transition: seed identity and stop -- the same
             # transit-free/edge-free rule the live worker-seed path enforces.
@@ -2295,6 +2338,15 @@ class RoomFpTransitionSignal:
         self.last_direction = direction
         self.last_novel = novel
         self.last_ordinal = ordinal
+        # THE DEATH DISCRIMINANT. A settle arrived at across a lives DROP
+        # is death-shaped, whatever its classified kind: the identity is
+        # still interned (discovery is not a vote) but nothing is cast.
+        died = (prev_lives is not None and self._lives is not None
+                and self._lives < prev_lives)
+        self.last_death_vetoed = died
+        if died:
+            self.n_death_vetoes += 1
+            return
         if kind in self.kind and (novel or not self.novel_only):
             self.trigger_step = self._step
             self.n_triggers += 1
@@ -2316,6 +2368,8 @@ class RoomFpTransitionSignal:
                 "n_settles": self.n_settles, "n_triggers": self.n_triggers,
                 "trigger_step": self.trigger_step,
                 "last_kind": self.last_kind, "last_novel": self.last_novel,
+                "lives_seen": self.lives_seen,
+                "n_death_vetoes": self.n_death_vetoes,
                 "cap_hits": self._rooms.cap_hits}
 
 
@@ -2504,6 +2558,168 @@ class SceneCutSignal:
 # Streaming confluence detector (live solver hot-loop form)
 # ===========================================================================
 
+#: Slot per signal for a detector built WITHOUT a quorum table (every
+#: direct constructor call in the corpus and in the tests). Kept beside the
+#: table lookup rather than instead of it, so a table always wins.
+_DEFAULT_SLOT = {
+    "coord": "S_TRANSITION", "scene_cut": "S_TRANSITION",
+    "room_fp_transition": "S_TRANSITION",
+    "tally": "S_CADENCE", "apu": "S_CADENCE",
+    "entity_wipe": "S_DESPAWN", "oam_quiesce": "S_DESPAWN",
+    "lock_release_novelty": "S_IRREVERSIBLE",
+    "input_lock": "S_ARMING",
+}
+#: Which signals answer "a scene committed" / "the world did not come
+#: back", for a detector built WITHOUT a quorum table. Same role as
+#: _DEFAULT_SLOT and the same precedence: a table always wins. Deliberately
+#: excludes input_lock, oam_quiesce and entity_wipe -- a death produces all
+#: three, and counting one of them as transition evidence re-opens the
+#: frame-320 shape.
+_DEFAULT_TRANSITION = frozenset(
+    {"coord", "scene_cut", "room_fp_transition", "lock_release_novelty"})
+
+#: Imported rather than copied: Rule 3's membership is decided in one place
+#: (clear_reachability.COLLAPSING_SLOTS) and read here, so the fold and the
+#: ceiling cannot drift apart.
+_COLLAPSING_SLOTS = clear_reachability.COLLAPSING_SLOTS
+
+
+class _InputLockHold:
+    """The streaming form of `InputLockTrack.vote_at`: hold the last
+    input-lock verdict a caller supplied until it supplies another.
+
+    A class rather than a bare int so every armed signal answers the same
+    three-method protocol (push / vote / reset / stats) and
+    StreamingConfluenceDetector never needs a special case in its fold.
+    It carries no probe of its own on purpose -- the probe costs
+    `2 * branches * probe_frames` frames of emulation plus save/restore
+    round-trips (InputLockSignal's own TIER-2 note) and must be armed by
+    the caller when a cheap signal already raised, never run from inside a
+    per-step hook."""
+
+    #: `hold: 0` (the default) means "no staleness cap": the last verdict a
+    #: caller SUPPLIED governs until it supplies another, which is exactly
+    #: what InputLockTrack.vote_at does offline. A positive `hold` caps how
+    #: many observations a stale LOCKED verdict is trusted for -- useful
+    #: when probes are sparse, and deliberately not defaulted to a number,
+    #: because the right cap is the caller's own probe stride and nobody
+    #: has measured a global one.
+    def __init__(self, hold: int = 0):
+        self.hold = max(0, int(hold))
+        self.reset()
+
+    def reset(self) -> None:
+        self.n = 0
+        self.last_n: int | None = None
+        self.locked = False
+        self.n_locked = 0
+        self.n_supplied = 0
+
+    def push(self, locked) -> None:
+        """`locked=None` -- no verdict this observation -- advances time
+        without changing the governing verdict. It is NOT read as
+        UNLOCKED: an absent probe is not evidence that the game responded
+        to input."""
+        self.n += 1
+        if locked is None:
+            return
+        self.n_supplied += 1
+        self.locked = bool(locked)
+        if self.locked:
+            self.last_n = self.n
+            self.n_locked += 1
+
+    def vote(self) -> int:
+        if not self.locked or self.last_n is None:
+            return 0
+        if self.hold and self.n - self.last_n >= self.hold:
+            return 0
+        return 1
+
+    def stats(self) -> dict:
+        return {"n": self.n, "n_supplied": self.n_supplied,
+                "n_locked": self.n_locked, "locked": self.locked,
+                "last_n": self.last_n, "hold": self.hold}
+
+
+class ShelfSignalConfigError(ValueError):
+    """A profile armed one of the six with a knob no signal has.
+
+    Raised rather than ignored. A misspelled knob that silently does
+    nothing is the vacuous-gate pattern in miniature: the profile reads as
+    though it configured something, the receipt reads as though the signal
+    was calibrated, and the number that comes out was produced by the
+    default nobody chose."""
+
+
+#: Constructor per armed signal: (callable, allowed knobs). `entity_wipe`
+#: is None because it is a WINDOW FUNCTION over the rolling RAM buffer, not
+#: an object with state -- its block is carried as kwargs and handed to
+#: entity_wipe_windows at each check.
+_SHELF_BUILDERS = {
+    "oam_quiesce": (
+        lambda **k: OamQuiesceSignal(**k),
+        ("collapse", "sustain", "short_window", "baseline_window",
+         "min_baseline", "hold")),
+    "scene_cut": (
+        lambda **k: SceneCutSignal(**k),
+        ("scene_min", "blank_min", "kind", "window", "stride", "pan_odo",
+         "warp_scene_min", "hold")),
+    "room_fp_transition": (
+        lambda mask=(), **k: RoomFpTransitionSignal(mask, **k),
+        ("mask", "settle", "min_lines", "pan_odo", "warp_scene_min",
+         "palette_cokey", "max_rooms", "kind", "novel_only", "hold")),
+    "input_lock": (
+        lambda **k: _InputLockHold(**k), ("hold",)),
+    "lock_release_novelty": (
+        lambda **k: LockReleaseNoveltyTrack(**k),
+        ("lock_max", "m", "per_episode")),
+    "entity_wipe": (
+        None,
+        ("window", "stride", "region", "exclude", "min_bytes", "tol")),
+}
+
+
+def _ranges(v):
+    """`[[lo, hi], ...]` from YAML -> the tuple pairs the scan wants."""
+    return [(int(a), int(b)) for a, b in v] if v else v
+
+
+def build_shelf_signals(profile: dict, quorum=None) -> dict:
+    """Construct the shelf signals THIS profile arms, or an empty dict.
+
+    Eligibility decides membership: a signal the quorum table marks
+    anything but ALIVE is not constructed, so an unarmed profile (every
+    one shipped today) gets `{}` and a byte-identical detector. The
+    quorum is the single adjudicator -- building a signal the table calls
+    DEAD would be the table-says-one-thing/arithmetic-does-another split
+    that the eligibility mask exists to close."""
+    q = quorum if quorum is not None else clear_reachability.clear_quorum(profile)
+    table = getattr(q, "signal_state", None) or {}
+    out: dict = {}
+    for name in StreamingConfluenceDetector.SHELF_SIGNALS:
+        st = table.get(name)
+        if st is None or not st.eligible:
+            continue
+        cfg = clear_reachability.signal_config(profile, name) or {}
+        cfg.pop("enabled", None)
+        build, allowed = _SHELF_BUILDERS[name]
+        unknown = sorted(set(cfg) - set(allowed))
+        if unknown:
+            raise ShelfSignalConfigError(
+                f"clear.signals.{name} declares {unknown}, which "
+                f"{name} has no knob for. Allowed: {sorted(allowed)}.")
+        for key in ("region", "exclude"):
+            if key in cfg:
+                cfg[key] = _ranges(cfg[key])
+        if "mask" in cfg:
+            cfg["mask"] = _ranges(cfg["mask"])
+        if "pan_odo" in cfg:
+            cfg["pan_odo"] = (int(cfg["pan_odo"][0]), int(cfg["pan_odo"][1]))
+        out[name] = dict(cfg) if build is None else build(**cfg)
+    return out
+
+
 class UnfireableHook(RuntimeError):
     """A clear detector was asked to run on a profile it cannot fire for.
 
@@ -2621,12 +2837,66 @@ class StreamingConfluenceDetector:
       control harness needed and did not have -- it constructed this class
       directly on bubble_bobble and tetris_b, whose progress readouts span
       1 and 32 units against coord's required 300, ran 30 and 220 checks,
-      and wrote `streaming_hit: false`."""
+      and wrote `streaming_hit: false`.
 
-    #: Signals this class can actually derive. Anything else in the
-    #: eligibility table is either the offline harness's (audio, lock) or
-    #: on the shelf, and is ignored here rather than silently counted.
-    VOTING_SIGNALS = ("tally", "coord", "apu")
+    v5 (2026-08-26) -- THE SIX SHELF SIGNALS, WIRED AND ARMED PER PROFILE.
+
+      entity_wipe, oam_quiesce, scene_cut, room_fp_transition, input_lock
+      and lock_release_novelty now reach this vote. A profile arms one
+      under `solve: clear: signals: {<name>: {...}}` carrying that
+      signal's own measured constants; an unarmed signal is DEAD in the
+      quorum table and is constructed by nobody, so a profile that arms
+      nothing is byte-identical to v4 -- and none of the shipped corpus
+      arms anything.
+
+      MODALITIES ARE OPTIONAL AND ABSENT MEANS SILENT. push() grew
+      keyword-only arguments for the surfaces the new signals read (OAM
+      census, the odometer triple, nametable VRAM, an input-lock verdict,
+      the lives byte). Every one defaults to None, and None is IGNORED
+      rather than read as a zero -- the same direction ApuActivitySignal.
+      push and OamQuiesceSignal.push already take, and for the same
+      reason: treating an absent measurement as "everything vanished"
+      fabricates the loudest possible evidence out of nothing. A caller
+      that has not plumbed a modality gets a stricter detector, never a
+      looser one.
+
+      RULE 3 IS NOW ARITHMETIC HERE TOO. Correlated signals share a slot
+      and a slot casts ONE vote: the vote folds as a sum over slots and a
+      MAX within every slot but S_CADENCE (clear_reachability.
+      COLLAPSING_SLOTS / slot_ceiling, which this fold mirrors exactly so
+      the quorum ceiling stays a real upper bound on what push() can
+      reach). Summing {entity_wipe, oam_quiesce} would double-count one
+      piece of evidence -- OamQuiesceSignal's own docstring forbids it in
+      writing -- and summing {coord, scene_cut, room_fp_transition} would
+      let three views of one screen wipe carry a three-signal
+      "confluence".
+
+      THE DEATH DISCRIMINANT. room_fp_transition is the signal that most
+      needs one: a dungeon-entry fade and a DEATH fade share an identical
+      classifier signature (delta-scene >= 2 with the odometer flat --
+      classify_transition's `warp`, the measured Zelda death flash). Two
+      guards, both live: `warp` is outside RoomFpTransitionSignal's
+      default kind set, and the class now takes the lives byte and
+      refuses to vote on a settle reached across a lives DROP. See its
+      own docstring for why the discriminant is anchored at the previous
+      SETTLE rather than at a window of N observations -- there is no
+      defensible global N, and this campaign is about numbers nobody
+      measured.
+    """
+
+    #: Signals this class can now derive or be fed. Anything else in the
+    #: eligibility table belongs to the offline harness (audio, lock) and
+    #: is ignored here rather than silently counted.
+    VOTING_SIGNALS = ("tally", "coord", "apu", "entity_wipe", "oam_quiesce",
+                      "scene_cut", "room_fp_transition", "input_lock",
+                      "lock_release_novelty")
+
+    #: The six, in the order their arming blocks are read. Kept separate
+    #: from VOTING_SIGNALS because these are the ones a PROFILE turns on;
+    #: tally/coord/apu are on by construction.
+    SHELF_SIGNALS = ("entity_wipe", "oam_quiesce", "scene_cut",
+                     "room_fp_transition", "input_lock",
+                     "lock_release_novelty")
 
     @classmethod
     def from_profile(cls, profile: dict, progress_fn, **overrides):
@@ -2649,6 +2919,7 @@ class StreamingConfluenceDetector:
                   progress_median=cl.get("progress_median"),
                   apu_weight=float(cl.get("apu_weight", 0.0) or 0.0),
                   apu_params=dict(cl.get("apu") or {}),
+                  shelf=build_shelf_signals(profile, q),
                   eligibility=q)
         kw.update(overrides)
         return cls(progress_fn, **kw)
@@ -2659,6 +2930,7 @@ class StreamingConfluenceDetector:
                  progress_median: int | None = None,
                  apu_weight: float | None = None,
                  apu_params: dict | None = None,
+                 shelf: dict | None = None,
                  eligibility=None):
         self._progress = progress_fn
         self.window = int(window)
@@ -2678,6 +2950,17 @@ class StreamingConfluenceDetector:
         self.apu_weight = 0.0 if apu_weight is None else float(apu_weight)
         self._apu = (ApuActivitySignal(**(apu_params or {}))
                      if self.apu_weight > 0 else None)
+        # The armed shelf: name -> constructed signal (plus, for
+        # entity_wipe, the kwargs its window scan is called with, since it
+        # is a function over the rolling RAM buffer rather than an object
+        # with state of its own). Empty for every profile that arms
+        # nothing, which is the whole shipped corpus.
+        self._shelf = dict(shelf or {})
+        self._ewipe_kw = self._shelf.pop("entity_wipe", None)
+        # `locked` is fed per observation and held until the next one that
+        # supplies it -- the streaming form of InputLockTrack.vote_at,
+        # which is what the offline harness does with the same verdict.
+        self._locked = 0
         # Rule 1 + Rule 2. None = every signal this class derives is
         # eligible, which is the shipped path exactly; a quorum table
         # narrows it to the signals that can fire for this profile.
@@ -2692,12 +2975,24 @@ class StreamingConfluenceDetector:
         # wiring a new transition signal does not need a second edit here.
         self._transition = frozenset(
             n for n in self.VOTING_SIGNALS
-            if (table[n].transition_evidence if n in table else n == "coord"))
+            if (table[n].transition_evidence if n in table
+                else n in _DEFAULT_TRANSITION))
         # A signal must be BOTH eligible and transition evidence to satisfy
         # Rule 5. An ineligible one contributing 0 to the sum while still
         # unlocking the required class would be the same double-standard
         # the eligibility mask exists to remove.
         self._required = self._transition & self._eligible
+        # Rule 3. slot and weight per signal, read off the table when there
+        # is one so a retune in clear_reachability moves the fold with it.
+        # Without a table the defaults describe the shipped three, which is
+        # what every direct constructor call in the corpus builds.
+        self._slot = {
+            n: (table[n].slot if n in table else _DEFAULT_SLOT.get(n, n))
+            for n in self.VOTING_SIGNALS}
+        self._weight = {
+            n: (table[n].weight if n in table
+                else (self.apu_weight if n == "apu" else 1.0))
+            for n in self.VOTING_SIGNALS}
         self._ram: list[np.ndarray] = []
         self._gx: list[int] = []
         self._n = 0
@@ -2708,6 +3003,9 @@ class StreamingConfluenceDetector:
         self.n_votes = 0
         self.n_apu_votes = 0
         self.n_required_class_vetoes = 0
+        self.n_shelf_votes = {n: 0 for n in self._shelf}
+        if self._ewipe_kw is not None:
+            self.n_shelf_votes["entity_wipe"] = 0
 
     def reset(self) -> None:
         """Un-latch AND discard the rolling evidence window.
@@ -2723,19 +3021,51 @@ class StreamingConfluenceDetector:
         self._ram.clear()
         self._gx.clear()
         self._n = 0
+        self._locked = 0
         if self._apu is not None:
             self._apu.reset()
+        for sig in self._shelf.values():
+            sig.reset()
 
-    def push(self, ram, apu_mask=None) -> bool:
-        """Feed one RAM snapshot (and optionally this observation's 5-bit APU
-        activity mask); returns True once the confluence has fired (and stays
+    def push(self, ram, apu_mask=None, *, oam=None, odo=None, scene=None,
+             blank=None, nametables=None, palette=None, rendered_lines=None,
+             locked=None, lives=None, room_fp=None) -> bool:
+        """Feed one RAM snapshot (and optionally this observation's other
+        modalities); returns True once the confluence has fired (and stays
         True thereafter -- the clear is a latching event, until reset()
         explicitly drops the latch).
 
         `apu_mask` is ignored entirely unless apu_weight > 0, so every
-        existing single-argument call site is unchanged."""
+        existing single-argument call site is unchanged. Every keyword-only
+        modality below is likewise ignored unless a profile ARMED the signal
+        that reads it, and a None from a caller that armed it is ignored
+        rather than read as a zero -- an absent measurement must never
+        fabricate the loudest possible evidence:
+
+          oam             one raw 256-byte primary OAM snapshot (env.peek_oam
+                          / pool.peek_oam) for oam_quiesce.
+          odo, scene,     the certified odometer triple (get_odometer[,_scene]
+          blank           [,_blank]) for scene_cut and room_fp_transition.
+          nametables,     2 KB physical nametable VRAM, the 32-byte palette
+          palette,        RAM, and this frame's rendered-scanline count, for
+          rendered_lines  room_fp_transition.
+          locked          this observation's input-lock verdict (a bool),
+                          held until the next observation that supplies one.
+          lives           the profile's lives byte -- the death discriminant
+                          under room_fp_transition.
+          room_fp         an explicit room-identity token for
+                          lock_release_novelty. Defaults to the settled
+                          ordinal room_fp_transition just interned, so a
+                          profile arming both gets the composition for free.
+        """
         if self._apu is not None:
             self._apu.push(apu_mask)
+        if locked is not None:
+            self._locked = int(bool(locked))
+        self._feed_shelf(oam=oam, odo=odo, scene=scene, blank=blank,
+                         nametables=nametables, palette=palette,
+                         rendered_lines=rendered_lines, lives=lives,
+                         room_fp=room_fp, locked=locked)
         if self._fired:
             return True
         # The solver hands raw `bytes` in the live hot loop (pool step
@@ -2767,17 +3097,24 @@ class StreamingConfluenceDetector:
         # being counted as a corroborator that happened to be quiet.
         tally = fired["tally"] if "tally" in self._eligible else 0
         coord = fired["coord"] if "coord" in self._eligible else 0
-        if self._apu is None:
-            # Byte-identical to the shipped integer path.
+        if self._ewipe_kw is not None:
+            fired["entity_wipe"] = (
+                1 if entity_wipe_windows(hist, **self._ewipe_kw) else 0)
+        for name, sig in self._shelf.items():
+            fired[name] = int(sig.vote())
+        for name in self.n_shelf_votes:
+            self.n_shelf_votes[name] += fired.get(name, 0)
+        if self._apu is None and not fired.keys() - {"tally", "coord"}:
+            # Byte-identical to the shipped integer path: no armed shelf
+            # signal, no audio vote, so there is nothing for the slot fold
+            # to fold and the comparison stays the shipped integer one.
             passed = (tally + coord) >= self.min_signals
         else:
-            apu = self._apu.vote()
-            fired["apu"] = apu
-            self.n_apu_votes += apu
-            if "apu" not in self._eligible:
-                apu = 0
-            passed = ((tally + coord + self.apu_weight * apu)
-                      >= self.min_signals - 1e-9)
+            if self._apu is not None:
+                apu = self._apu.vote()
+                fired["apu"] = apu
+                self.n_apu_votes += apu
+            passed = self._fold(fired) >= self.min_signals - 1e-9
         # RULE 5. Corroborators alone cannot carry a clear, however many of
         # them agree: at least one signal answering "a scene committed"
         # must have fired. At the shipped min_signals=2 over {tally, coord}
@@ -2794,6 +3131,76 @@ class StreamingConfluenceDetector:
         if self._streak >= self.persist_checks:
             self._fired = True
         return self._fired
+
+    def _feed_shelf(self, *, oam, odo, scene, blank, nametables, palette,
+                     rendered_lines, lives, room_fp, locked) -> None:
+        """Hand each armed shelf signal this observation's own modality.
+
+        A signal whose modality is absent is not pushed at all, so it never
+        accumulates and votes 0 -- the safe direction. A caller that armed
+        a signal and then forgot to plumb its surface gets a stricter
+        detector and a `stats()` that says `n: 0`, never a fabricated
+        collapse (OamQuiesceSignal.push documents the same rule for its own
+        census)."""
+        if not self._shelf:
+            return
+        sig = self._shelf.get("oam_quiesce")
+        if sig is not None and oam is not None:
+            sig.push(oam if isinstance(oam, tuple) else oam_census(oam))
+        sig = self._shelf.get("scene_cut")
+        if sig is not None and odo is not None:
+            sig.push(odo, 0 if scene is None else scene,
+                     0 if blank is None else blank)
+        sig = self._shelf.get("room_fp_transition")
+        if sig is not None and nametables is not None:
+            sig.push(nametables, (0, 0) if odo is None else odo,
+                     0 if scene is None else scene,
+                     rendered_lines=rendered_lines, palette=palette,
+                     lives=lives)
+        sig = self._shelf.get("input_lock")
+        if sig is not None:
+            sig.push(locked)
+        sig = self._shelf.get("lock_release_novelty")
+        if sig is not None:
+            fp = room_fp
+            if fp is None:
+                rf = self._shelf.get("room_fp_transition")
+                fp = None if rf is None else rf.last_ordinal
+            sig.push(bool(self._locked), fp)
+
+    def _fold(self, fired: dict) -> float:
+        """RULE 3, as arithmetic: sum over slots, MAX within a collapsing
+        one, over ELIGIBLE signals only.
+
+        Mirrors clear_reachability.slot_ceiling exactly. It has to: that
+        function is what decides whether this profile is allowed to run at
+        all, and a ceiling folded differently from the vote it bounds is
+        not an upper bound, it is a second opinion. The measured argument
+        for collapsing rather than summing is in OamQuiesceSignal's own
+        docstring -- its false-positive set is a strict SUPERSET of
+        entity_wipe's, so two votes from that pair are one piece of
+        evidence counted twice."""
+        by_slot: dict[str, float] = {}
+        for name, vote in fired.items():
+            if not vote or name not in self._eligible:
+                continue
+            w = self._weight.get(name, 1.0)
+            slot = self._slot.get(name, name)
+            if slot in _COLLAPSING_SLOTS:
+                by_slot[slot] = max(by_slot.get(slot, 0.0), w)
+            else:
+                by_slot[slot] = by_slot.get(slot, 0.0) + w
+        return sum(by_slot.values())
+
+    def shelf_stats(self) -> dict:
+        """Per-armed-signal telemetry, for a receipt. Empty when nothing is
+        armed, which is how it reads on every shipped profile today."""
+        out = {n: dict(sig.stats(), votes=self.n_shelf_votes.get(n, 0))
+               for n, sig in self._shelf.items()}
+        if self._ewipe_kw is not None:
+            out["entity_wipe"] = {"kwargs": dict(self._ewipe_kw),
+                                  "votes": self.n_shelf_votes["entity_wipe"]}
+        return out
 
     def warmup_observations(self) -> int:
         """Observations a FRESH detector must be fed before push() can return
@@ -2835,11 +3242,71 @@ class StreamingConfluenceDetector:
             # the resulting silence as a verdict.
             return 1 << 30
         stride = max(1, self.stride)
-        need = 16
-        if self._apu is not None and self.min_signals > 2 + 1e-9:
-            need = max(need, self._apu.warmup_observations())
+        need = self._cheapest_quorum_warmup()
+        if need is None:
+            return 1 << 30
+        need = max(16, need)
         first = ((need + stride - 1) // stride) * stride
         return first + stride * (self.persist_checks - 1)
+
+    #: Observations each signal needs before its own vote() can be 1, for
+    #: the ones whose answer is not "as soon as the detector's own 16-sample
+    #: window guard is met". Read off each signal's own knobs rather than
+    #: hardcoded, so a retune moves the budget with it.
+    def _signal_warmup(self, name: str) -> int:
+        sig = self._shelf.get(name)
+        if name == "apu":
+            return self._apu.warmup_observations() if self._apu else 1 << 30
+        if sig is None:
+            # tally / coord / entity_wipe are window scans over the rolling
+            # RAM buffer: the detector's own >= 16-sample guard is their
+            # whole warm-up.
+            return 16
+        if hasattr(sig, "warmup_observations"):
+            return int(sig.warmup_observations())
+        if isinstance(sig, SceneCutSignal):
+            # Its own check cadence: two buffered observations at a stride
+            # boundary is the earliest window it can classify.
+            return max(2, sig.stride)
+        if isinstance(sig, RoomFpTransitionSignal):
+            # The first settle is BASELINE and never votes, so a vote needs
+            # a second settle: two settle runs at minimum.
+            return 2 * sig.settle
+        if isinstance(sig, LockReleaseNoveltyTrack):
+            # A candidate needs a lock window to open and close, then `m`
+            # observations of confirmed non-re-entry.
+            return sig.m + 2
+        return 1
+
+    def _cheapest_quorum_warmup(self) -> int | None:
+        """The smallest max-warm-up over any ELIGIBLE signal subset that
+        could reach the bar, or None when no subset can.
+
+        WHY A SEARCH AND NOT A MAX. A signal that is not needed to reach
+        quorum must not hold the budget up: with `coord` and `tally` alone
+        able to carry a clear, arming `oam_quiesce` (93 observations of
+        self-calibration) must not tell a caller it needs 93 before the
+        detector can fire. Conversely a configuration whose ONLY route to
+        the bar runs through an expensive signal really does need that
+        signal's warm-up, and the old `max(16, apu)` shape got that right
+        for exactly one signal by special-casing `min_signals > 2`. This is
+        the same question asked generally."""
+        from itertools import combinations
+        names = [n for n in self.VOTING_SIGNALS if n in self._eligible
+                 and (n in ("tally", "coord")
+                      or n in self._shelf
+                      or (n == "apu" and self._apu is not None)
+                      or (n == "entity_wipe" and self._ewipe_kw is not None))]
+        best = None
+        for r in range(1, len(names) + 1):
+            for combo in combinations(names, r):
+                if not any(n in self._required for n in combo):
+                    continue
+                if self._fold({n: 1 for n in combo}) < self.min_signals - 1e-9:
+                    continue
+                cost = max(self._signal_warmup(n) for n in combo)
+                best = cost if best is None else min(best, cost)
+        return best
 
 
 # ===========================================================================
@@ -2849,19 +3316,60 @@ class StreamingConfluenceDetector:
 def run_episode(env, game, bitmasks, dir_bitmask, actions: list[int],
                  start_wd: tuple, margin_actions: int = 90,
                  probe_stride: int = 20, probe_frames: int = LOCK_PROBE_FRAMES,
-                 fs: int = FS) -> dict:
+                 fs: int = FS, profile: dict | None = None) -> dict:
     """Replays `actions` (already positioned at the root + rooting NOOP),
     then `margin_actions` more of NOOP (each action step is `fs` raw frames
     -- the PROFILE's frame_skip, the one the trace was recorded at, not a
     fixed 4 -- so this is ~margin_actions*fs/60 seconds), collecting
     everything the detector needs. Returns a report with the true clear
     frame (the game adapter's own clear check, at raw single-frame
-    resolution) and the detector's verdict."""
+    resolution) and the detector's verdict.
+
+    THE VOTE (v2, 2026-08-26). Historically this fused exactly four
+    signals -- audio, tally, lock, coord -- at WEIGHTS against THRESHOLD,
+    over ANY profile's trace, which is how two Bubble Bobble rows whose
+    progress observable spans ONE unit came to be scored by a detector
+    whose `coord` half was arithmetically dead and written down as
+    `hit_rate: 0.0`. It now folds by the same three rules the live vote
+    obeys, and `profile` is what makes them answerable:
+
+      RULE 1 ELIGIBILITY -- a signal clear_reachability.clear_quorum marks
+        DEAD or DEGENERATE for this profile contributes 0 instead of being
+        counted as a corroborator that happened to be silent.
+      RULE 3 SLOTS -- correlated signals share a slot and a slot casts one
+        vote: sum over slots, MAX within every slot but S_CADENCE.
+      RULE 5 REQUIRED CLASS -- a crossing additionally needs a firing
+        signal that answers "a scene committed". This is what forbids the
+        measured frame-320 false positive on bubble_bobble
+        (audio + tally + lock == THRESHOLD with coord == 0, 1736 frames
+        before the true clear).
+
+    ...and the six armed shelf signals join the fusion, each at the same
+    quarter-vote the original four cast. With `profile=None` the roster is
+    the historical four and nothing is armed, so every banked SMB receipt
+    reproduces to the byte."""
     sample_rate = env.sample_rate
     audio_sig = AudioCadenceSignal(sample_rate)
     lock_track = InputLockTrack(probe_stride)
     ram_hist: list[np.ndarray] = []
     gx_hist: list[int] = []
+
+    quorum = clear_reachability.clear_quorum(
+        profile if isinstance(profile, dict) else {},
+        roster=clear_reachability.OFFLINE)
+    shelf = build_shelf_signals(profile or {}, quorum)
+    ewipe_kw = shelf.pop("entity_wipe", None)
+    # Only touch a hardware surface some armed signal actually reads. A
+    # nametable snapshot per frame is 2 KB and a hash; a profile that arms
+    # nothing pays for none of it, which is what keeps the SMB path
+    # byte-identical in wall time as well as in verdict.
+    want_oam = "oam_quiesce" in shelf
+    want_odo = "scene_cut" in shelf or "room_fp_transition" in shelf
+    want_nt = "room_fp_transition" in shelf
+    want_lock_novelty = "lock_release_novelty" in shelf
+    if want_odo:
+        env.set_odometer_enabled(True)
+    shelf_votes = {n: [] for n in shelf}
 
     true_clear_frame = None
     frame_idx = -1
@@ -2884,6 +3392,34 @@ def run_episode(env, game, bitmasks, dir_bitmask, actions: list[int],
         if frame_idx % probe_stride == 0:
             locked, n_diff = differential_input_lock_probe(env, dir_bitmask, probe_frames)
             lock_track.record(frame_idx, locked, n_diff)
+        # The armed shelf, fed the surfaces it declared. Order matters for
+        # exactly one pair: room_fp_transition settles first so
+        # lock_release_novelty can compose against the identity it just
+        # interned, which is the composition its own docstring describes.
+        if shelf:
+            odo = env.get_odometer() if want_odo else None
+            scene = env.get_odometer_scene() if want_odo else 0
+            blank = env.get_odometer_blank() if want_odo else 0
+            sig = shelf.get("oam_quiesce")
+            if sig is not None:
+                sig.push(oam_census(env.peek_oam()))
+            sig = shelf.get("scene_cut")
+            if sig is not None:
+                sig.push(odo, scene, blank)
+            sig = shelf.get("room_fp_transition")
+            if sig is not None:
+                sig.push(env.peek_nametables(), odo, scene,
+                         lives=game.lives(ram) if hasattr(game, "lives") else None)
+            sig = shelf.get("input_lock")
+            if sig is not None:
+                sig.push(lock_track.vote_at(frame_idx))
+            sig = shelf.get("lock_release_novelty")
+            if sig is not None:
+                rf = shelf.get("room_fp_transition")
+                sig.push(bool(lock_track.vote_at(frame_idx)),
+                         None if rf is None else rf.last_ordinal)
+            for name, s_ in shelf.items():
+                shelf_votes[name].append(int(s_.vote()))
 
     all_actions = list(actions) + [0] * margin_actions
     for a in all_actions:
@@ -2896,6 +3432,8 @@ def run_episode(env, game, bitmasks, dir_bitmask, actions: list[int],
     gx_arr = np.array(gx_hist, dtype=np.int64)
     tally_hits = score_tally_windows(ram_hist_arr)
     coord_hits = coord_entity_windows(ram_hist_arr, gx_arr)
+    ewipe_hits = (entity_wipe_windows(ram_hist_arr, **ewipe_kw)
+                  if ewipe_kw is not None else [])
 
     def in_hits(hits, f):
         return any(s <= f < e for s, e in hits)
@@ -2908,10 +3446,14 @@ def run_episode(env, game, bitmasks, dir_bitmask, actions: list[int],
         votes["tally"][f] = int(in_hits(tally_hits, f))
         votes["lock"][f] = lock_track.vote_at(f)
         votes["coord"][f] = int(in_hits(coord_hits, f))
+    if ewipe_kw is not None:
+        votes["entity_wipe"] = np.array(
+            [int(in_hits(ewipe_hits, f)) for f in range(n)], dtype=np.int8)
+    for name, series in shelf_votes.items():
+        votes[name] = np.array(series[:n], dtype=np.int8)
 
-    weighted = (WEIGHTS["audio"] * votes["audio"] + WEIGHTS["tally"] * votes["tally"]
-                + WEIGHTS["lock"] * votes["lock"] + WEIGHTS["coord"] * votes["coord"])
-    crossed = weighted >= THRESHOLD - 1e-9
+    weighted, transition = fold_offline_votes(votes, quorum, n)
+    crossed = (weighted >= THRESHOLD - 1e-9) & transition
     rising = [f for f in range(n) if crossed[f] and (f == 0 or not crossed[f - 1])]
 
     detected_frame = rising[0] if rising else None
@@ -2925,14 +3467,55 @@ def run_episode(env, game, bitmasks, dir_bitmask, actions: list[int],
         "detected_frame": detected_frame,
         "all_crossings": rising,
         "contributions_at_detect": contributions_at_detect,
+        "n_required_class_vetoes": int(
+            np.count_nonzero((weighted >= THRESHOLD - 1e-9) & ~transition)),
+        "armed_signals": sorted(shelf_votes) + (
+            ["entity_wipe"] if ewipe_kw is not None else []),
         "signal_debug": {
             "audio_trigger_frame": audio_sig.trigger_frame(),
             "audio_deltas": audio_sig.deltas,
             "tally_windows": tally_hits,
             "coord_windows": coord_hits,
+            "entity_wipe_windows": ewipe_hits,
             "lock_probes": lock_track.probes,
+            "shelf_stats": {k: v.stats() for k, v in shelf.items()},
         },
     }
+
+
+def fold_offline_votes(votes: dict, quorum, n: int):
+    """`(weighted, transition)` for the offline harness -- Rules 1, 3 and 5.
+
+    Returns the per-frame weighted score AND the per-frame boolean saying
+    whether any ELIGIBLE transition-evidence signal fired there, so a
+    caller can report the two separately: a crossing suppressed by the
+    required class is a different event from one that never reached the
+    bar, and the frame-320 receipt is the reason the difference matters.
+
+    The fold mirrors clear_reachability.slot_ceiling exactly -- sum over
+    slots, MAX within a collapsing one -- because that function's answer
+    is what decided this profile was allowed to be measured at all."""
+    table = getattr(quorum, "signal_state", None) or {}
+    by_slot: dict[str, list] = {}
+    transition = np.zeros(n, dtype=bool)
+    for name, series in votes.items():
+        st = table.get(name)
+        if st is not None and not st.eligible:
+            continue                       # RULE 1
+        weight = (st.weight if st is not None
+                  else WEIGHTS.get(name, clear_reachability.SHELF_WEIGHT[
+                      clear_reachability.OFFLINE]))
+        slot = (st.slot if st is not None
+                else _DEFAULT_SLOT.get(name, name))
+        by_slot.setdefault(slot, []).append(weight * series.astype(np.float64))
+        if st is not None and st.transition_evidence:
+            transition |= series.astype(bool)   # RULE 5
+    weighted = np.zeros(n, dtype=np.float64)
+    for slot, arrs in by_slot.items():         # RULE 3
+        stacked = np.stack(arrs)
+        weighted += (stacked.max(axis=0) if slot in _COLLAPSING_SLOTS
+                     else stacked.sum(axis=0))
+    return weighted, transition
 
 
 # ===========================================================================
@@ -3138,7 +3721,8 @@ def run_ground_truth_test(run_bases: list[str], verbose: bool = True,
 
             t0 = time.time()
             report = run_episode(env, game, bitmasks, dir_bitmask, actions,
-                                 start_wd, fs=fs)
+                                 start_wd, fs=fs,
+                                 profile=harness.profile_dict)
             elapsed = time.time() - t0
         except Exception as e:
             per_run.append({"run": base, "error": f"replay failed: {e}"})
@@ -3175,6 +3759,9 @@ def run_ground_truth_test(run_bases: list[str], verbose: bool = True,
             "false_positive_crossings": fp,
             "contributions_at_detect": report["contributions_at_detect"],
             "n_all_crossings": len(report["all_crossings"]),
+            "n_required_class_vetoes": report["n_required_class_vetoes"],
+            "armed_signals": report["armed_signals"],
+            "shelf_stats": report["signal_debug"]["shelf_stats"],
             "wall_s": round(elapsed, 2),
         }
         per_run.append(result)

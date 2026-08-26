@@ -156,11 +156,28 @@ pub struct Ppu {
     // absence of one. Counting the absences turns that blindness into
     // transition evidence instead of silence (clear_detect.py's
     // scene_cut signal is the first consumer). Never bumped on a
-    // rendered fold (n >= 120), scene-cut or otherwise.
+    // rendered fold (n >= 120), scene-cut or otherwise, and never on
+    // the first SHORT fold after a savestate restore or an odometer
+    // enable — that frame is spliced, not blacked out (see
+    // `odo_splice_pending`).
     pub odo_blank: u32,
     odo_prev_modal_x: i32,
     odo_prev_modal_y: i32,
     odo_have_prev: bool,
+    // The next fold belongs to a SPLICED frame: a savestate restore (or
+    // an odometer enable) landed part-way through it, so the line votes
+    // it carries are whatever happened to remain after the splice. Such
+    // a frame folds with fewer than 120 lines for a reason that has
+    // nothing to do with the picture, and counting it as a blackout
+    // fabricates transition evidence out of the observer's own
+    // machinery. Measured before this flag existed: the clear detector's
+    // differential input-lock probe (two load_state round-trips every
+    // 20 frames) bumped odo_blank once per probe, so a scene-cut signal
+    // read a null of "+1 blank per probe" instead of the 0 the game
+    // actually produced. Runtime-only: it describes the act of
+    // restoring, not the restored state, so it is deliberately NOT part
+    // of OdoState.
+    odo_splice_pending: bool,
     odo_line_x: Vec<i32>,
     odo_line_y: Vec<i32>,
     odo_line_n: usize,
@@ -486,6 +503,7 @@ impl Ppu {
             odo_prev_modal_x: 0,
             odo_prev_modal_y: 0,
             odo_have_prev: false,
+            odo_splice_pending: false,
             odo_line_x: vec![0; 240],
             odo_line_y: vec![0; 240],
             odo_line_n: 0,
@@ -3030,6 +3048,7 @@ impl Ppu {
         // Those belong to a dead timeline and must not share the first
         // post-restore fold.
         self.odo_line_n = 0;
+        self.odo_splice_pending = true;
     }
 
     /// Re-anchor after restoring a blob that carries no odometer
@@ -3042,6 +3061,7 @@ impl Ppu {
     pub fn odo_reanchor(&mut self) {
         self.odo_have_prev = false;
         self.odo_line_n = 0;
+        self.odo_splice_pending = true;
     }
 
     /// Capture this visible line's scroll ORIGIN from loopy_v + fine_x.
@@ -3106,6 +3126,19 @@ impl Ppu {
         let n = self.odo_line_n;
         self.odo_line_n = 0;
         self.odo_last_n = n;
+        let spliced = self.odo_splice_pending;
+        self.odo_splice_pending = false;
+        if n < 120 && spliced {
+            // First fold after a restore/enable, and it came up SHORT:
+            // a partial frame from a spliced timeline, not a blackout.
+            // Re-anchor silently (same as the blank branch) and judge
+            // the next, whole frame. A first fold that is WHOLE takes
+            // the rendered path below untouched, so a restore still
+            // integrates its next frame seamlessly — the property
+            // odo_state_round_trips pins.
+            self.odo_have_prev = false;
+            return;
+        }
         if n < 120 {
             // Mostly-blank frame (death fade, level-load blackout,
             // console still warming up): nothing trustworthy to
@@ -4756,6 +4789,37 @@ mod odometer_tests {
         p.odo_fold_frame();
         fold_uniform_frame(&mut p, 0, 0); // respawn far away, re-anchor
         assert_eq!(p.odometer_scene, 0, "blank re-anchor is not a cut");
+    }
+
+    #[test]
+    fn a_restore_does_not_fabricate_a_blank_fold() {
+        // THE MEASURED DEFECT. clear_detect's differential input-lock
+        // probe save/load_states twice every 20 frames; before the
+        // splice flag existed odo_blank rose by exactly 1 per probe, so
+        // a Bubble Bobble replay that produced ZERO real blackouts
+        // before its clear read a null of ~100 of them. A signal cannot
+        // be calibrated against a null its own observer manufactures.
+        let mut p = odo_ppu();
+        fold_uniform_frame(&mut p, 0, 0);
+        fold_uniform_frame(&mut p, 8, 0);
+        let before = p.odo_blank;
+        let saved = p.get_odo_state();
+
+        // Restore lands mid-visible-frame, so the frame that folds next
+        // carries only the lines that happened after the splice.
+        p.apply_odo_state(&saved);
+        p.odo_line_n = 90;
+        p.odo_fold_frame();
+        assert_eq!(p.odo_blank, before,
+                   "a spliced partial frame is not a blackout");
+
+        // ...and only the FIRST fold is excused: a real blackout on the
+        // very next frame still counts, so the flag cannot be a blanket
+        // mute.
+        p.odo_line_n = 90;
+        p.odo_fold_frame();
+        assert_eq!(p.odo_blank, before + 1,
+                   "the second short fold is a real blackout");
     }
 
     #[test]
