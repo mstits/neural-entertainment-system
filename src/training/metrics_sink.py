@@ -86,9 +86,12 @@ class MetricsSink:
     """JSONL + queue + optional TensorBoard fan-out for trainer metrics.
 
     Construct once per training run. Call `truncate()` at the top of
-    a fresh run, `emit(**scalars)` each generation, and `close()` at
-    shutdown to flush the TB writer. `emit_episode(**fields)` is the
-    per-episode sibling of `emit()` — see the module docstring.
+    a fresh run (pass `resume=True` instead when continuing from a
+    checkpoint, so the canonical JSONL isn't wiped out from under a
+    continuous generation counter), `emit(**scalars)` each generation,
+    and `close()` at shutdown to flush the TB writer. `emit_episode(
+    **fields)` is the per-episode sibling of `emit()` — see the module
+    docstring.
     """
 
     def __init__(
@@ -115,13 +118,23 @@ class MetricsSink:
         # would spam the log thousands of times).
         self._warned_missing: set[str] = set()
 
-    def truncate(self) -> None:
+    def truncate(self, *, resume: bool = False) -> None:
         """Empty the metrics file (called at the start of a fresh run).
 
         Also empties the episodes.jsonl sidecar so a fresh run never
         appends onto a previous run's per-episode rows — harmless when
         `emit_episode()` is never called (the file just stays empty).
+
+        `resume=True` is a no-op: a resumed run continues the same
+        generation counter, so wiping here would silently sever the
+        canonical JSONL from every generation before the resume even
+        though training is continuous end-to-end. Callers must pass
+        `resume=True` explicitly when continuing from a checkpoint;
+        the default (`False`) preserves today's unconditional-wipe
+        behavior for fresh-start callers.
         """
+        if resume:
+            return
         self.metrics_path.write_text("")
         self.episodes_path.write_text("")
 
@@ -170,8 +183,21 @@ class MetricsSink:
         # is a per-run counter, not this: it resets every run and says
         # nothing about which fields a given run's trainer mode emitted.
         metrics["schema_version"] = 1
-        with open(self.metrics_path, "a") as f:
-            f.write(json.dumps(metrics) + "\n")
+        try:
+            line = json.dumps(metrics)
+        except Exception as exc:
+            # Mirrors the queue/TB fan-outs below: one non-serializable
+            # value in a single generation's dict must not abort the
+            # whole emit() call (the queue + TB updates still need to
+            # happen), but unlike those the JSONL file is the canonical
+            # record, so the drop is logged rather than silent.
+            log.warning(
+                "MetricsSink: dropped one generation's JSONL line — "
+                "metrics not JSON-serializable: %s", exc,
+            )
+        else:
+            with open(self.metrics_path, "a") as f:
+                f.write(line + "\n")
         if self._queue is not None:
             try:
                 self._queue.put_nowait(metrics)

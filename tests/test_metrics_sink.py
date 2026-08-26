@@ -6,6 +6,8 @@ import json
 import queue as _queue
 from pathlib import Path
 
+import numpy as np
+
 from src.training.metrics_sink import MetricsSink
 
 
@@ -63,6 +65,22 @@ def test_emit_drops_silently_when_queue_full(tmp_path: Path) -> None:
     sink.emit(generation=0)  # would raise queue.Full without the guard
     # JSONL line still landed even though queue dropped it.
     assert (tmp_path / "metrics.jsonl").read_text().strip() != ""
+
+
+def test_emit_does_not_raise_on_non_json_serializable_value(tmp_path: Path) -> None:
+    """A non-JSON-serializable metric (e.g. np.float32) must not abort
+    emit() — the queue/TB fan-outs still need to run afterward."""
+    q: _queue.Queue = _queue.Queue(maxsize=4)
+    sink = MetricsSink(
+        metrics_path=tmp_path / "metrics.jsonl",
+        tb_log_dir=tmp_path / "tb",
+        queue=q,
+        tb_enabled=False,
+    )
+    sink.emit(generation=0, best_fitness=np.float32(3.2))  # would raise TypeError without the guard
+    # Queue fan-out still happened even though the JSONL write was dropped.
+    row = q.get_nowait()
+    assert row["generation"] == 0
 
 
 def test_close_is_idempotent(tmp_path: Path) -> None:
@@ -129,6 +147,26 @@ def test_emit_episode_does_not_touch_queue_or_tb(tmp_path: Path) -> None:
     )
     sink.emit_episode(generation=0, worker_id=0, episode_return=1.0, episode_length=1)
     assert q.empty(), "emit_episode() must not fan out to the GUI queue"
+
+
+def test_truncate_resume_true_preserves_existing_file(tmp_path: Path) -> None:
+    """A resumed run must not wipe the canonical JSONL out from under a
+    continuous generation counter (see module docstring on `truncate`)."""
+    p = tmp_path / "metrics.jsonl"
+    sink = MetricsSink(metrics_path=p, tb_log_dir=tmp_path / "tb", tb_enabled=False)
+    for gen in range(10):
+        sink.emit(generation=gen)
+    assert len(p.read_text().splitlines()) == 10
+
+    sink.truncate(resume=True)  # the resume path — must be a no-op
+    assert len(p.read_text().splitlines()) == 10
+
+    for gen in range(10, 20):
+        sink.emit(generation=gen)
+    lines = p.read_text().splitlines()
+    assert len(lines) == 20
+    assert json.loads(lines[0])["generation"] == 0
+    assert json.loads(lines[-1])["generation"] == 19
 
 
 def test_truncate_also_clears_episodes_jsonl(tmp_path: Path) -> None:
