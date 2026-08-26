@@ -1,0 +1,56 @@
+{
+  "provenance": "search",
+  "solver_args": {
+    "out": "runs/bubble_bobble/chain_day2f/lvl_00_69",
+    "root_state": "runs/bubble_bobble/chain_day2f/entrances/entrance_after_68.state",
+    "profile": "configs/bubble_bobble.yaml",
+    "hw_flags": "none",
+    "workers": 10,
+    "burst": 64,
+    "sticky": 0.5,
+    "deep_bias": 0.4,
+    "minutes": 20.0,
+    "want_solutions": 1,
+    "max_steps": 4000,
+    "flush_secs": 120,
+    "seed": 0,
+    "verify_bank": true,
+    "swim_gx_ceiling": 0,
+    "sect_cap": 16,
+    "gx_bucket": 16,
+    "y_band": 32,
+    "sel_mode": "legacy",
+    "frontier_throttle": 0,
+    "door_weight": 0.0,
+    "door_interval": 45.0,
+    "time_bins": false,
+    "kill_key": false,
+    "inversion_pin_secs": 180.0,
+    "ortho": "off",
+    "ortho_pin_secs": 120.0,
+    "ortho_bias": 0.3,
+    "ortho_band": 1,
+    "ortho_weight": 4.0,
+    "ortho_macro_p": 0.0
+  },
+  "root_id": "entrance",
+  "root_state": "runs/bubble_bobble/chain_day2f/entrances/entrance_after_68.state",
+  "hw_provenance": {
+    "hw_flags": [],
+    "frame_skip": 4,
+    "nes_core": {
+      "dist_version": "0.1.0",
+      "module": "nes_core.abi3.so",
+      "sha256_16": "2e1b232b4e4a4e0f"
+    }
+  },
+  "start_wd": [
+    69
+  ],
+  "clear_wd": [
+    70
+  ],
+  "steps": 299,
+  "actions": 299,
+  "replay_verified": true
+}
