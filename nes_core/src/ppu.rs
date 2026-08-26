@@ -148,6 +148,16 @@ pub struct Ppu {
     // do NOT bump the scene: they already re-anchor without
     // integrating, and a respawn is not a new scene.
     pub odometer_scene: u32,
+    // Dropped-fold counter: bumped every time a frame folds with fewer
+    // than 120 rendered lines (the OTHER re-anchor branch odo_fold_frame
+    // has — a blackout, not a cut: stage wipe, level-load blank, death
+    // fade). The position delta is never trustworthy here either, but
+    // unlike a scene cut there is no discontinuity to measure — only an
+    // absence of one. Counting the absences turns that blindness into
+    // transition evidence instead of silence (clear_detect.py's
+    // scene_cut signal is the first consumer). Never bumped on a
+    // rendered fold (n >= 120), scene-cut or otherwise.
+    pub odo_blank: u32,
     odo_prev_modal_x: i32,
     odo_prev_modal_y: i32,
     odo_have_prev: bool,
@@ -472,6 +482,7 @@ impl Ppu {
             odometer_x: 0,
             odometer_y: 0,
             odometer_scene: 0,
+            odo_blank: 0,
             odo_prev_modal_x: 0,
             odo_prev_modal_y: 0,
             odo_have_prev: false,
@@ -2970,6 +2981,8 @@ pub struct Vram {
 pub struct OdoState {
     #[serde(default)]
     pub scene: u32,
+    #[serde(default)]
+    pub blank: u32,
     pub enabled: bool,
     pub odometer_x: i64,
     pub odometer_y: i64,
@@ -2993,6 +3006,7 @@ impl Ppu {
     pub fn get_odo_state(&self) -> OdoState {
         OdoState {
             scene: self.odometer_scene,
+            blank: self.odo_blank,
             enabled: self.odometer_enabled,
             odometer_x: self.odometer_x,
             odometer_y: self.odometer_y,
@@ -3004,6 +3018,7 @@ impl Ppu {
 
     pub fn apply_odo_state(&mut self, o: &OdoState) {
         self.odometer_scene = o.scene;
+        self.odo_blank = o.blank;
         self.odometer_enabled = o.enabled;
         self.odometer_x = o.odometer_x;
         self.odometer_y = o.odometer_y;
@@ -3100,6 +3115,11 @@ impl Ppu {
             // odometer rather than rewinding it; death is flagged by
             // the (separate) discontinuity/lives channel, not by the
             // position integral.
+            //
+            // The blackout itself is not silence: count it. This is the
+            // ONLY place odo_blank moves — a rendered fold (the branch
+            // below) never touches it, cut or no cut.
+            self.odo_blank = self.odo_blank.wrapping_add(1);
             self.odo_have_prev = false;
             return;
         }
@@ -4739,17 +4759,66 @@ mod odometer_tests {
     }
 
     #[test]
+    fn odo_blank_counts_exactly_the_dropped_folds() {
+        let mut p = odo_ppu();
+        assert_eq!(p.odo_blank, 0);
+
+        // n < 120: a dropped fold (death fade / level-load blackout).
+        p.odo_line_n = 119;
+        p.odo_fold_frame();
+        assert_eq!(p.odo_blank, 1, "a 119-line fold is the blackout branch");
+        assert!(!p.odo_have_prev, "a blank fold must not anchor");
+
+        // The boundary itself (n == 120) takes the RENDERED path, not
+        // the blank one. This is also the first-ever rendered fold, so
+        // it only establishes the anchor (nothing to diff yet) -- must
+        // not bump the blank counter either way.
+        p.odo_line_x[..120].iter_mut().for_each(|v| *v = 0);
+        p.odo_line_n = 120;
+        p.odo_fold_frame();
+        assert_eq!(p.odo_blank, 1, "n == 120 is rendered, not blank");
+        assert!(p.odo_have_prev, "the rendered fold must anchor");
+
+        // Ordinary motion well under the 64px cut threshold -- another
+        // rendered fold, still must not bump it.
+        fold_uniform_frame(&mut p, 8, 0);
+        assert_eq!(p.odo_blank, 1);
+        assert_eq!(p.odometer_scene, 0, "sanity: ordinary motion is not a cut");
+
+        // A rendered fold that DOES trigger a scene cut is independent
+        // evidence from a blank fold -- must still not bump odo_blank.
+        fold_uniform_frame(&mut p, 900, 0);
+        assert_eq!(p.odometer_scene, 1, "sanity: the teleport did cut");
+        assert_eq!(p.odo_blank, 1, "a rendered cut must not bump odo_blank");
+
+        // A second, third blackout in a row counts every one of them --
+        // this is a counter, not a flag.
+        p.odo_line_n = 0;
+        p.odo_fold_frame();
+        p.odo_line_n = 50;
+        p.odo_fold_frame();
+        assert_eq!(p.odo_blank, 3);
+    }
+
+    #[test]
     fn odo_state_round_trips() {
         let mut p = odo_ppu();
         fold_uniform_frame(&mut p, 100, 0);
         fold_uniform_frame(&mut p, 132, 0);
+        // Set directly rather than through an actual blank fold: a real
+        // fold would also drop `have_prev`, which would change what the
+        // rest of THIS test (anchor continuity) is exercising. blank is
+        // an independent counter, not entangled with the fold anchor.
+        p.odo_blank = 4;
         let snap = p.get_odo_state();
         assert_eq!(snap.odometer_x, 32);
+        assert_eq!(snap.blank, 4);
 
         let mut q = Ppu::new();
         q.apply_odo_state(&snap);
         assert!(q.odometer_enabled);
         assert_eq!(q.odometer_x, 32);
+        assert_eq!(q.odo_blank, 4, "blank count must survive a restore");
         // Restored anchor continues seamlessly: next frame at 140 adds 8.
         fold_uniform_frame(&mut q, 140, 0);
         assert_eq!(q.odometer_x, 40);

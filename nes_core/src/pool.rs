@@ -1788,6 +1788,25 @@ impl Pool {
             .collect()
     }
 
+    /// Per-worker dropped-fold count — bumped every frame that folds
+    /// with fewer than 120 rendered lines (a blackout: stage wipe,
+    /// level-load blank, death fade). The odometer's OTHER re-anchor
+    /// branch, and the one no existing reader observes: `odometer_scene`
+    /// surfaces the rendered-cut branch, this surfaces the blank one.
+    /// Monotonically non-decreasing per worker for the life of the
+    /// process (wraps at u32::MAX, same as odometer_scene).
+    fn get_odometer_blank_per_worker(&self) -> Vec<u32> {
+        self.assert_no_parallel_dispatch();
+        self.workers
+            .iter()
+            .map(|cell| {
+                // SAFETY: sequential with step_all/reset_all.
+                let w = unsafe { &*cell.0.get() };
+                w.nes.ppu.odo_blank
+            })
+            .collect()
+    }
+
     /// Per-worker accumulated global scroll position [(x, y); workers],
     /// in pixels. (0, 0) for workers with the odometer disabled.
     fn get_odometer_per_worker(&self) -> Vec<(i64, i64)> {

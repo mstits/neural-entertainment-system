@@ -51,10 +51,28 @@ pub const ENVELOPE_VERSION_3: u32 = 3;
 /// its own version; v3 blobs decode through `OdoStateV3` and get
 /// scene = 0.
 pub const ENVELOPE_VERSION_4: u32 = 4;
+/// version 5 — same triple as v4 but `ppu::OdoState` now also carries
+/// the dropped-fold (blank) counter. Same reasoning as the v3->v4
+/// bump: bincode is positional, so the field addition needs its own
+/// version; v4 blobs decode through `OdoStateV4` and get blank = 0.
+pub const ENVELOPE_VERSION_5: u32 = 5;
 
 /// The v3-era odometer payload layout, kept only to decode old blobs.
 #[derive(serde_derive::Deserialize)]
 struct OdoStateV3 {
+    enabled: bool,
+    odometer_x: i64,
+    odometer_y: i64,
+    prev_modal_x: i32,
+    prev_modal_y: i32,
+    have_prev: bool,
+}
+
+/// The v4-era odometer payload layout (adds `scene` over v3, predates
+/// `blank`), kept only to decode old blobs.
+#[derive(serde_derive::Deserialize)]
+struct OdoStateV4 {
+    scene: u32,
     enabled: bool,
     odometer_x: i64,
     odometer_y: i64,
@@ -84,7 +102,7 @@ pub fn encode_state(nes: &Nes) -> bincode::Result<Vec<u8>> {
 /// Encode with an explicit format choice. `v2 == false` is the legacy
 /// untagged writer, byte-identical to `bincode::serialize(&get_state())`.
 pub fn encode_state_with(nes: &Nes, v2: bool) -> bincode::Result<Vec<u8>> {
-    // Odometer on -> version 3 unconditionally: coherence across
+    // Odometer on -> version 5 unconditionally: coherence across
     // restores is the entire point of carrying it in the blob.
     if nes.ppu.odometer_enabled {
         let payload = bincode::serialize(&(
@@ -94,7 +112,7 @@ pub fn encode_state_with(nes: &Nes, v2: bool) -> bincode::Result<Vec<u8>> {
         ))?;
         let mut blob = Vec::with_capacity(ENVELOPE_HEADER_LEN + payload.len());
         blob.extend_from_slice(&ENVELOPE_MAGIC.to_le_bytes());
-        blob.extend_from_slice(&ENVELOPE_VERSION_4.to_le_bytes());
+        blob.extend_from_slice(&ENVELOPE_VERSION_5.to_le_bytes());
         blob.extend_from_slice(&payload);
         return Ok(blob);
     }
@@ -142,6 +160,7 @@ pub fn decode_state(
             )>(payload)?;
             Ok((s, o, crate::ppu::OdoState {
                 scene: 0,
+                blank: 0,
                 enabled: v3.enabled,
                 odometer_x: v3.odometer_x,
                 odometer_y: v3.odometer_y,
@@ -150,14 +169,31 @@ pub fn decode_state(
                 have_prev: v3.have_prev,
             }))
         }
-        ENVELOPE_VERSION_4 => bincode::deserialize::<(
+        ENVELOPE_VERSION_4 => {
+            let (s, o, v4) = bincode::deserialize::<(
+                nes::State,
+                oam_dma::State,
+                OdoStateV4,
+            )>(payload)?;
+            Ok((s, o, crate::ppu::OdoState {
+                scene: v4.scene,
+                blank: 0,
+                enabled: v4.enabled,
+                odometer_x: v4.odometer_x,
+                odometer_y: v4.odometer_y,
+                prev_modal_x: v4.prev_modal_x,
+                prev_modal_y: v4.prev_modal_y,
+                have_prev: v4.have_prev,
+            }))
+        }
+        ENVELOPE_VERSION_5 => bincode::deserialize::<(
             nes::State,
             oam_dma::State,
             crate::ppu::OdoState,
         )>(payload),
         v => Err(Box::new(bincode::ErrorKind::Custom(format!(
             "unsupported savestate envelope version {v} \
-             (this build reads versions 1..={ENVELOPE_VERSION_4})"
+             (this build reads versions 1..={ENVELOPE_VERSION_5})"
         )))),
     }
 }
@@ -501,6 +537,7 @@ mod tests {
         let mut nes = fixture_machine();
         nes.ppu.apply_odo_state(&crate::ppu::OdoState {
             scene: 0,
+            blank: 0,
             enabled: true,
             odometer_x: 777,
             odometer_y: -3,
@@ -532,13 +569,58 @@ mod tests {
         assert!(odo.enabled);
         assert_eq!(odo.odometer_x, 777);
         assert_eq!(odo.scene, 0);
+        assert_eq!(odo.blank, 0);
     }
 
     #[test]
-    fn odometer_on_writes_v3_and_round_trips() {
+    fn v4_blob_decodes_with_blank_zero() {
+        // A v4-era blob (pre-blank OdoState layout) must decode with
+        // blank = 0 rather than misparsing positionally.
+        let mut nes = fixture_machine();
+        nes.ppu.apply_odo_state(&crate::ppu::OdoState {
+            scene: 9,
+            blank: 0,
+            enabled: true,
+            odometer_x: 555,
+            odometer_y: -8,
+            prev_modal_x: 20,
+            prev_modal_y: 40,
+            have_prev: true,
+        });
+        // Hand-build the v4 payload with the old (pre-blank) layout.
+        #[derive(serde_derive::Serialize)]
+        struct OldOdo {
+            scene: u32,
+            enabled: bool,
+            odometer_x: i64,
+            odometer_y: i64,
+            prev_modal_x: i32,
+            prev_modal_y: i32,
+            have_prev: bool,
+        }
+        let payload = bincode::serialize(&(
+            nes.get_state(),
+            nes.oam_dma.get_state(),
+            OldOdo { scene: 9, enabled: true, odometer_x: 555, odometer_y: -8,
+                     prev_modal_x: 20, prev_modal_y: 40, have_prev: true },
+        )).expect("v4 payload");
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&ENVELOPE_MAGIC.to_le_bytes());
+        blob.extend_from_slice(&ENVELOPE_VERSION_4.to_le_bytes());
+        blob.extend_from_slice(&payload);
+        let (_, _, odo) = decode_state(&blob).expect("v4 decode");
+        assert!(odo.enabled);
+        assert_eq!(odo.odometer_x, 555);
+        assert_eq!(odo.scene, 9, "scene must still decode correctly through the v4 path");
+        assert_eq!(odo.blank, 0);
+    }
+
+    #[test]
+    fn odometer_on_writes_v5_and_round_trips() {
         let mut nes = fixture_machine();
         nes.ppu.apply_odo_state(&crate::ppu::OdoState {
             scene: 0,
+            blank: 0,
             enabled: true,
             odometer_x: 12345,
             odometer_y: -67,
@@ -547,14 +629,16 @@ mod tests {
             have_prev: true,
         });
         nes.ppu.odometer_scene = 5;
-        let blob = encode_state(&nes).expect("v4 encode");
+        nes.ppu.odo_blank = 7;
+        let blob = encode_state(&nes).expect("v5 encode");
         assert!(has_envelope(&blob));
         let version = u32::from_le_bytes(blob[4..8].try_into().unwrap());
-        assert_eq!(version, ENVELOPE_VERSION_4);
+        assert_eq!(version, ENVELOPE_VERSION_5);
 
-        let (state, oam_dma, odo) = decode_state(&blob).expect("v4 decode");
+        let (state, oam_dma, odo) = decode_state(&blob).expect("v5 decode");
         assert!(odo.enabled);
         assert_eq!(odo.scene, 5);
+        assert_eq!(odo.blank, 7);
         assert_eq!(odo.odometer_x, 12345);
         assert_eq!(odo.odometer_y, -67);
         assert_eq!(odo.prev_modal_x, 300);
@@ -564,6 +648,7 @@ mod tests {
         assert!(target.ppu.odometer_enabled);
         assert_eq!(target.ppu.odometer_x, 12345);
         assert_eq!(target.ppu.odometer_y, -67);
+        assert_eq!(target.ppu.odo_blank, 7);
     }
 
     #[test]
@@ -574,6 +659,7 @@ mod tests {
         let mut nes = fixture_machine();
         nes.ppu.apply_odo_state(&crate::ppu::OdoState {
             scene: 0,
+            blank: 0,
             enabled: true,
             odometer_x: 1000,
             odometer_y: 0,
@@ -597,6 +683,7 @@ mod tests {
         let legacy = encode_state(&nes).expect("legacy encode");
         nes.ppu.apply_odo_state(&crate::ppu::OdoState {
             scene: 0,
+            blank: 0,
             enabled: true,
             odometer_x: 777,
             odometer_y: 42,

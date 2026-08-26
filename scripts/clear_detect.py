@@ -1549,6 +1549,187 @@ class RoomFpTransitionSignal:
 
 
 # ===========================================================================
+# Signal -- scene-cut / blank-fold transition classifier (opt-in)
+# ===========================================================================
+#
+# Turns the PPU scroll odometer's OWN re-anchor events -- deliberately
+# blind to position on both of its branches -- into transition evidence
+# instead of reading them as no signal at all. odo_fold_frame (nes_core/
+# src/ppu.rs) has TWO re-anchor branches and, until now, only one of them
+# was ever surfaced to a caller:
+#
+#   BRANCH B -- a RENDERED scroll discontinuity (|dx| or |dy| > 64 px in
+#     one frame): bumps `odometer_scene` and re-anchors WITHOUT
+#     integrating -- a stage wipe must not read as a multi-hundred-pixel
+#     walk backwards. Already surfaced as `Pool.get_odometer_scene_per_
+#     worker` / pseudo-address 0x803 -- every odometer profile's is_clear
+#     hook already receives this byte and ignores it.
+#   BRANCH A -- a BLACKOUT (< 120 rendered lines: stage wipe, level-load
+#     blank, death fade): drops the anchor silently. Nothing read this at
+#     all before `Pool.get_odometer_blank_per_worker` / `ppu::odo_blank`
+#     (this signal's reason for existing).
+#
+# The RE-ANCHOR EVENT is the evidence; the position delta across it never
+# was -- that is the whole reason odo_fold_frame drops the anchor instead
+# of integrating across the discontinuity. This class folds a rolling
+# window of (odometer, scene, blank) observations into exactly that
+# evidence, classified by the SAME `classify_transition` every room_fp
+# consumer already trusts (imported at the top of this file) -- no new
+# hashing or classification logic is introduced here either.
+
+#: `classify_transition`'s three possible kinds -- see its own docstring
+#: for the pan/warp/fade definitions. Unlike RoomFpTransitionSignal this
+#: signal has no adjacency/novelty semantics to protect, so nothing is
+#: excluded from the default: the MAGNITUDE gate (`scene_min`/`blank_min`,
+#: which a profile MUST measure and supply -- see the class docstring) is
+#: what keeps ordinary play from voting, not the kind filter.
+SCENE_CUT_KINDS = ("pan", "warp", "fade")
+#: Reused verbatim from StreamingConfluenceDetector's own defaults so a
+#: profile that arms both mechanisms sees the same check cadence.
+SCENE_CUT_WINDOW = 240
+SCENE_CUT_STRIDE = 20
+#: Observations the vote stays raised after a qualifying window -- the
+#: same held-pulse shape ApuActivitySignal/RoomFpTransitionSignal use.
+SCENE_CUT_HOLD = 60
+
+
+class SceneCutSignal:
+    """Rolling-window transition classifier over the PPU scroll odometer's
+    own scene ordinal and dropped-fold counter (see the module banner
+    above for the two re-anchor branches this reads).
+
+    Over the current window (oldest buffered observation vs the newest),
+    computes:
+
+      d_odo   = integrated odometer delta (dx, dy) across the window
+      d_scene = change in the scene ordinal across the window
+      d_blank = number of dropped (blackout) folds across the window --
+                a plain delta of a monotonically-increasing counter, so
+                this IS the count of blank folds inside the window
+
+    classifies (d_odo, d_scene) with the existing `classify_transition`,
+    and votes when the classified kind is in `kind` AND EITHER magnitude
+    threshold is met: `d_scene >= scene_min or d_blank >= blank_min`. The
+    magnitude gate is load-bearing on its own: ordinary forward motion
+    produces d_scene == 0 and d_blank == 0 regardless of what
+    classify_transition happens to label the odometer delta (a plain
+    walk covering the pan-sized 128-384px window can and does classify as
+    "pan" -- see false positives below), so nothing votes unless a
+    re-anchor EVENT actually happened inside the window.
+
+    PURITY. The surface is PPU scroll-register state via the certified
+    odometer (`Pool.get_odometer_per_worker`, `get_odometer_scene_per_
+    worker`, `get_odometer_blank_per_worker`) -- hardware facts our own
+    core derives from $2005/$2006 and the rendered-line count, consulting
+    no game content. `classify_transition`'s pre-registered constants
+    (pan_odo, warp_scene_min) are reused, not re-derived.
+
+    NO DEFENSIBLE GLOBAL DEFAULT for `scene_min`/`blank_min` -- this is
+    why they are required keyword arguments with NO default value here.
+    Metroid was measured noisy at camera clamp/seam (ordinary play throws
+    spurious scene bumps of its own), and Zelda fades are invisible to
+    the scene ordinal entirely (kind: [fade] leaning on blank_min is the
+    only way that game votes at all). A profile must measure its own
+    null d_scene/d_blank distribution (scripts/clear_calibrate.py: a
+    NOOP + forward-hold drive over the profile's own start state) and set
+    both minimums above the observed null, or declare the signal
+    `enabled: false` with a reason -- never guess a number.
+
+    FALSE POSITIVES THIS SIGNAL CANNOT DISCRIMINATE ON ITS OWN. DEATH is
+    a measured `warp`: the ROOMGRAPH probe receipts record Zelda's death
+    flash as scene +2 with the odometer flat -- exactly classify_
+    transition's warp signature, so `kind: [warp]` with a low scene_min
+    is a death detector by itself. CAMERA CLAMP / SEAM NOISE is the
+    documented per-frame false positive at the classifier level
+    (classify_transition's own docstring: "the core's scene-cut
+    heuristic fires on ordinary camera clamp/seam noise near screen
+    edges -- exactly where real pans happen"), which is exactly why
+    scene_min cannot be 1 and cannot be a global constant. ATTRACT LOOP
+    cuts constantly. PAUSE screens that disable rendering trip the blank
+    half (< 120 rendered lines) just as a real blackout does. GAME OVER
+    trips the blank half and never releases -- a caller holding this
+    signal's vote open-ended needs its own persistence veto; this class
+    only offers the held pulse below, not that veto.
+    """
+
+    def __init__(self, *, scene_min, blank_min, kind=SCENE_CUT_KINDS,
+                 window: int = SCENE_CUT_WINDOW, stride: int = SCENE_CUT_STRIDE,
+                 pan_odo=(128, 384), warp_scene_min: int = 2,
+                 hold: int = SCENE_CUT_HOLD):
+        bad_kind = set(kind) - set(SCENE_CUT_KINDS)
+        if bad_kind:
+            raise ValueError(
+                f"scene_cut kind must be a subset of {SCENE_CUT_KINDS}, "
+                f"got {sorted(bad_kind)}")
+        self.scene_min = float(scene_min)
+        self.blank_min = float(blank_min)
+        self.kind = frozenset(kind)
+        self.window = max(2, int(window))
+        self.stride = max(1, int(stride))
+        self.pan_odo = (int(pan_odo[0]), int(pan_odo[1]))
+        self.warp_scene_min = int(warp_scene_min)
+        self.hold = max(1, int(hold))
+        self.reset()
+
+    def reset(self) -> None:
+        """Drop the latch AND the rolling window -- the samples that
+        produced a fire are still inside the window otherwise, and the
+        very next check would re-fire on the same stale evidence
+        (identical reasoning to every other reset() in this file)."""
+        self._buf: deque = deque(maxlen=self.window)
+        self._n = 0
+        self.trigger_step: int | None = None
+        self.n_triggers = 0
+        self.n_checks = 0
+        self.last_kind: str | None = None
+        self.last_direction = None
+        self.last_d_scene = 0
+        self.last_d_blank = 0
+        self.last_d_odo = (0, 0)
+
+    def push(self, odo_xy, scene: int, blank: int) -> None:
+        """Feed one observation: the odometer's integrated (x, y), the
+        scene ordinal, and the dropped-fold counter -- all three already
+        produced by the certified odometer for every profile that arms
+        it (`Pool.get_odometer_per_worker`, `get_odometer_scene_per_
+        worker`, `get_odometer_blank_per_worker`)."""
+        self._n += 1
+        self._buf.append((int(odo_xy[0]), int(odo_xy[1]), int(scene), int(blank)))
+        if self._n % self.stride != 0 or len(self._buf) < 2:
+            return
+        self.n_checks += 1
+        x0, y0, s0, b0 = self._buf[0]
+        x1, y1, s1, b1 = self._buf[-1]
+        d_odo = (x1 - x0, y1 - y0)
+        d_scene = s1 - s0
+        d_blank = b1 - b0
+        kind, direction = classify_transition(d_odo, d_scene, self.pan_odo,
+                                              self.warp_scene_min)
+        self.last_kind, self.last_direction = kind, direction
+        self.last_d_scene, self.last_d_blank, self.last_d_odo = d_scene, d_blank, d_odo
+        if (kind in self.kind
+                and (d_scene >= self.scene_min or d_blank >= self.blank_min)):
+            self.trigger_step = self._n
+            self.n_triggers += 1
+
+    def vote(self) -> int:
+        """1 while the last qualifying window is inside its hold window,
+        else 0 -- a held pulse, not a latch (ApuActivitySignal/
+        RoomFpTransitionSignal's shape): a vote that never dropped back
+        to 0 would look the same on the fiftieth cut as the first."""
+        if self.trigger_step is None:
+            return 0
+        return int(self._n - self.trigger_step < self.hold)
+
+    def stats(self) -> dict:
+        return {"n": self._n, "n_checks": self.n_checks,
+                "n_triggers": self.n_triggers, "trigger_step": self.trigger_step,
+                "last_kind": self.last_kind, "last_direction": self.last_direction,
+                "last_d_scene": self.last_d_scene, "last_d_blank": self.last_d_blank,
+                "last_d_odo": self.last_d_odo}
+
+
+# ===========================================================================
 # Streaming confluence detector (live solver hot-loop form)
 # ===========================================================================
 
