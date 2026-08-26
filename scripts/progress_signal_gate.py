@@ -31,8 +31,47 @@ MIN_DISTINCT = 32          # fewer levels than this is not a gradient
 MIN_TAIL_FRACTION = 0.25   # progress must still be moving late in a roll
 
 
+def resolve_odometer_axis(progress_cfg: dict, rx: int,
+                           ry: int) -> tuple[int, int]:
+    """Axis index (0=x, 1=y) and sign to trace under --odometer.
+
+    A profile with `progress: {source: odometer, axis: ...}` has already
+    committed to the axis go_explore_solve.py will actually search on
+    (go_explore_solve.py:1908 trusts this field verbatim, sign included) —
+    the gate must probe THAT axis, not whichever raw axis happens to show
+    more incidental pixel range in this short forward-hold probe. Range
+    auto-pick is only a fallback for the undeclared exploratory case:
+    sizing up the odometer on a profile that still reads a RAM byte.
+    """
+    if str(progress_cfg.get("source", "")).lower() == "odometer":
+        axis_raw = str(progress_cfg.get("axis", "x")).lower()
+        sign = -1 if axis_raw.startswith("-") else 1
+        axis = axis_raw[1:] if axis_raw and axis_raw[0] in "+-" else axis_raw
+        if axis in ("x", "y"):
+            return (0 if axis == "x" else 1), sign
+    return (0 if rx >= ry else 1), 1
+
+
+def resolve_forward_index(space: list, forward: str) -> int:
+    """Index into action_space whose action is the bare singleton
+    `[forward]` (e.g. `["right"]`).
+
+    Raises SystemExit on no match rather than silently falling back to
+    an unrelated action — a typo'd or unsupported --forward used to
+    resolve to a hardcoded index 1 with no warning, running the whole
+    probe under whatever action happened to sit there.
+    """
+    matches = [i for i, a in enumerate(space) if a == [forward]]
+    if not matches:
+        options = [a[0] for a in space if len(a) == 1]
+        raise SystemExit(
+            f"--forward {forward!r} matches no singleton action in "
+            f"the profile's action_space; options: {options}")
+    return matches[0]
+
+
 def assess(trace: list[int], lives_at_start: int | None,
-           has_high_byte: bool) -> dict:
+           has_high_byte: bool, raw_direction: int | None = None) -> dict:
     """PURE verdict over one long forward-hold trace."""
     # INSTRUMENT findings mean the signal itself is unusable — the profile
     # must not drive a search. BEHAVIOUR findings mean the signal is sound
@@ -46,6 +85,23 @@ def assess(trace: list[int], lives_at_start: int | None,
     findings = instrument
     n = len(trace)
     distinct = len(set(trace))
+    # raw_direction is the SIGNED net motion of the un-rebased odometer
+    # reading (last - first, under the profile's declared/default axis
+    # sign) — the ONE thing the rebase below (odometer callers pass
+    # trace shifted to its own min) throws away. Without it, a raw axis
+    # that counts DOWN going forward (1942's vertical scroll register)
+    # produces a trace indistinguishable from a healthy increasing one:
+    # distinct/max/tail-flatness are all order-blind. Solver._xram
+    # clamps negative reads to 0 under the same sign assumption, so a
+    # negative raw_direction means the solver would see a permanently
+    # flat 0 the whole run, however clean this trace looks.
+    if raw_direction is not None and raw_direction < 0:
+        findings.append(
+            "raw odometer reading net DECREASES while holding forward "
+            "under the current axis sign — Solver._xram clamps negative "
+            "reads to 0, so the solver would see a flat signal no matter "
+            "how this rebased trace looks; declare a leading '-' on "
+            "solve.progress.axis to match the hardware direction")
     if distinct < MIN_DISTINCT:
         findings.append(
             f"only {distinct} distinct values in {n} steps (< {MIN_DISTINCT}) "
@@ -113,8 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("profile has no solve.progress.lo")
 
     space = prof["action_space"]
-    idx = next((i for i, a in enumerate(space)
-                if a == [args.forward]), 1)
+    idx = resolve_forward_index(space, args.forward)
     bm = action_space_to_bitmasks(space)
     pool = nes_core.Pool(rom_path=str(REPO / rom), num_workers=1,
                          frame_skip=int(prof.get("frame_skip", 4)))
@@ -151,13 +206,21 @@ def main(argv: list[str] | None = None) -> int:
             prev_oam = oam
         rx = max(p[0] for p in xy) - min(p[0] for p in xy)
         ry = max(p[1] for p in xy) - min(p[1] for p in xy)
-        axis = 0 if rx >= ry else 1
-        base = min(p[axis] for p in xy)
-        trace = [int(p[axis] - base) for p in xy]
+        axis, sign = resolve_odometer_axis(solve.get("progress") or {}, rx, ry)
+        signed = [p[axis] * sign for p in xy]
+        base = min(signed)
+        trace = [int(s - base) for s in signed]
         print(f"odometer trace: axis={'xy'[axis]} "
               f"(range x={rx}, y={ry}) oam_churn={oam_churn}/{args.steps-1}")
         # i64 integral: no wrap exists, so run assess as a paired signal.
-        v = assess(trace, lives0, True)
+        # `signed[-1] - signed[0]` is the net motion UNDER the resolved
+        # sign, before the `- base` shift above folds it into a
+        # nonnegative trace — that shift preserves order but assess()
+        # never looks at order, only set-based distinct/tail counts, so
+        # a raw axis that runs backward under this sign (undeclared or
+        # wrong-signed `progress.axis`) renders exactly as clean a trace
+        # as a genuinely forward-increasing one without this.
+        v = assess(trace, lives0, True, signed[-1] - signed[0])
         # The odometer measures the CAMERA, and the build is certified
         # (scripts/odometer_cert.py) before this gate runs. A flat
         # odometer therefore reports a static camera — a fact about the

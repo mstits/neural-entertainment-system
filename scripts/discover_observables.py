@@ -793,6 +793,8 @@ def _saturation_from_logs(cf: np.ndarray, adv: np.ndarray,
         comb_cf = np.clip(comb_cf, 0, gcap)
 
     # --- primary: caps early with a long flat tail while active -------------
+    comb_ad = _combined(adv, lo, hi).astype(float)
+    acap = (float(np.percentile(comb_ad, 99.0)) * 1.5 + 32) if len(comb_ad) else 1e9
     within_cap = False
     cap_len = 0
     active_flag = False
@@ -806,16 +808,24 @@ def _saturation_from_logs(cf: np.ndarray, adv: np.ndarray,
         seg = cf[max(last_high, 1):, :0x100]
         active_flag = (int((np.diff(seg.astype(np.int16), axis=0) != 0).sum()) > 0
                        if len(seg) > 1 else False)
+        # Cross-check against the maneuver drive: a real camera/scroll clamp
+        # caps under ANY forward-dominant drive, not just the pure
+        # hold-forward probe. If `adv` (jump/attack/door macros) keeps
+        # climbing well past the clean_forward plateau, the plateau is a
+        # hold-forward artifact (e.g. blocked by terrain), not a hardware cap.
+        plateau = float(np.median(tail)) if len(tail) else 0.0
+        ad_clip = np.clip(comb_ad, 0, acap) if len(comb_ad) else comb_ad
+        ad_exceeds_plateau = (bool(ad_clip.max() > plateau + max(32.0, 0.25 * plateau))
+                              if len(ad_clip) else False)
         if (last_high < 0.5 * n and flat_tail >= 150 and flat_tail >= 0.30 * n
-                and float(np.std(tail)) < 8.0 and active_flag):
+                and float(np.std(tail)) < 8.0 and active_flag
+                and not ad_exceeds_plateau):
             within_cap = True
             cap_len = int(flat_tail)
 
     # --- corroborating: re-basing at room transitions (advance drive) -------
     rebases = 0
     transitions = 0
-    comb_ad = _combined(adv, lo, hi).astype(float)
-    acap = (float(np.percentile(comb_ad, 99.0)) * 1.5 + 32) if len(comb_ad) else 1e9
     if room_addr is not None:
         rc = adv[:, room_addr].astype(int)
         m = len(comb_ad)

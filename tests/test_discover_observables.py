@@ -184,6 +184,22 @@ def test_gate2_calls_a_byte_that_never_moved_inconclusive_not_capped():
     assert not _saturates_conclusively(sat)    # ...but it is not evidence
 
 
+def test_gate2_checks_the_maneuver_drive_before_calling_a_plateau_a_clamp():
+    """clean_forward is hold-forward only; it can stall on ordinary terrain
+    (a pipe, a gap) that needs a jump to clear, long before any camera
+    limit. advance() — already computed in the same call — drives
+    jump/attack/door macros and is the cross-check: if IT keeps climbing
+    well past clean_forward's plateau, the plateau is a hold-forward
+    artifact, not a hardware scroll cap, and must not be flagged."""
+    n = 900
+    cf = _drive(np.concatenate([np.linspace(0, 40, 100), np.full(800, 40.0)]))
+    adv = _drive(np.linspace(0, 240, n))
+    sat = _saturation_from_logs(cf, adv, np.zeros(n - 1, bool),
+                                CAMERA, None, None)
+    assert not sat["within_room_cap"]
+    assert not sat["saturates"]
+
+
 # ---------------------------------------------------------------------
 # The choke point: what emit_solve_yaml is allowed to see.
 # ---------------------------------------------------------------------

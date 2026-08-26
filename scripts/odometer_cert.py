@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Odometer certification: five automated checks on a real game.
+"""Odometer certification: six automated checks on a real game.
 
 The PPU scroll odometer (v3 savestate envelope) is only trusted as a
-progress observable after ALL five checks pass on a game with a known
+progress observable after ALL six checks pass on a game with a known
 ground truth (SMB: HUD split + horizontal scroll + hold-still start).
 
+  0. ROM identity                — the loaded ROM's whole-file MD5
+     matches one of the profile's declared `rom_hashes`; a byte-different
+     dump (bad ROM-library merge, translation patch, wrong revision) can
+     play identically while every check below silently applies to the
+     wrong cartridge, so this gates all of them.
   1. hold-forward monotonicity  — odometer_x rises substantially and
      never regresses by more than a jitter budget while holding right
   2. hold-still exact flatness  — zero input => odometer stays exactly 0
@@ -19,7 +24,7 @@ ground truth (SMB: HUD split + horizontal scroll + hold-still start).
 Fail any => the build is quarantined (exit 1, verdict json says which).
 """
 from __future__ import annotations
-import argparse, json, sys
+import argparse, hashlib, json, sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -38,6 +43,18 @@ def run(profile: str, steps: int, out: str | None) -> int:
     bm = action_space_to_bitmasks(space)
     right = next((i for i, a in enumerate(space) if a == ["right"]), 1)
 
+    # Check 0: ROM identity. A byte-different dump (bad ROM-library merge,
+    # translation patch, wrong revision) can play identically while every
+    # downstream measurement silently applies to the wrong cartridge —
+    # verify before any of it means anything, and record the hash so the
+    # receipt itself proves which dump was certified.
+    rom_md5 = hashlib.md5((REPO / rom).read_bytes()).hexdigest()
+    rh = prof.get("rom_hashes")
+    declared = [str(h).strip().lower() for h in
+                (rh if isinstance(rh, (list, tuple)) else [rh] if rh else [])
+                if str(h).strip()]
+    rom_hash_ok = bool(declared) and rom_md5 in declared
+
     def fresh_pool():
         pool = nes_core.Pool(rom_path=str(REPO / rom), num_workers=1,
                              frame_skip=int(prof.get("frame_skip", 4)))
@@ -47,7 +64,12 @@ def run(profile: str, steps: int, out: str | None) -> int:
         pool.load_worker_state(0, (REPO / start).read_bytes())
         return pool
 
-    checks: dict[str, dict] = {}
+    checks: dict[str, dict] = {
+        "rom_hash_verified": {
+            "passed": rom_hash_ok, "computed_md5": rom_md5,
+            "declared_hashes": declared,
+        },
+    }
     noop = np.zeros(1, dtype=np.uint8)
 
     # -- 1+3: hold forward; track per-step deltas ------------------------
@@ -106,10 +128,12 @@ def run(profile: str, steps: int, out: str | None) -> int:
     }
 
     ok = all(c["passed"] for c in checks.values())
-    verdict = {"profile": profile, "steps": steps,
-               "passed": ok, "checks": checks}
+    verdict = {"profile": profile, "steps": steps, "rom_path": rom,
+               "rom_md5": rom_md5, "passed": ok, "checks": checks}
     print(json.dumps(verdict, indent=2))
-    print(f"\nodometer certification: {'PASS (5/5)' if ok else 'FAIL — QUARANTINE'}")
+    n_ok = sum(1 for c in checks.values() if c["passed"])
+    label = f"PASS ({n_ok}/{len(checks)})" if ok else "FAIL — QUARANTINE"
+    print(f"\nodometer certification: {label}")
     for name, c in checks.items():
         print(f"  [{'ok' if c['passed'] else 'XX'}] {name}")
     if out:

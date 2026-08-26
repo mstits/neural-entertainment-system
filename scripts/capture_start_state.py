@@ -77,26 +77,35 @@ def is_controllable(env: nes_core.NESEnvironment, thresh: int) -> bool:
 
     A menu IS "controllable" (LEFT/RIGHT move a cursor), so a one-shot
     RIGHT-vs-LEFT diff false-positives on stage-select / name-entry
-    screens. Gameplay is told apart by two properties a menu lacks:
+    screens. A menu with its OWN animation (e.g. an animated world-map
+    cursor screen) also false-positives on growth measured against a
+    frozen base snapshot: the animation mutates RAM whether or not a
+    direction is held, so a RIGHT-only diff against base keeps growing
+    for reasons that have nothing to do with the held direction. Gameplay
+    is told apart by two properties a menu (animated or not) lacks:
 
-      * GROWTH — holding RIGHT keeps changing RAM (player moves, camera
-        scrolls), so the diff after 90 frames is much larger than after
-        20. A menu cursor saturates at a screen edge: 20-frame ≈ 90-frame.
-      * DIRECTIONALITY — RIGHT and LEFT lead to different RAM. A scripted
-        cutscene / autoscroll that ignores input fails this.
+      * GROWTH — measured on the RIGHT-vs-LEFT split itself, not against
+        base, so shared animation (identical on both branches) cancels
+        out of the diff. A cursor reaches its rest position within a
+        handful of frames and the split stops widening; real movement
+        keeps separating the two branches further apart the longer
+        input is held.
+      * DIRECTIONALITY — RIGHT and LEFT lead to different RAM at all. A
+        scripted cutscene / autoscroll that ignores input fails this.
     """
     snap = bytes(env.save_state())
     base = _ram(env)
     r20 = _ram_after(env, snap, RIGHT, 20)
     r90 = _ram_after(env, snap, RIGHT, 90)
+    l20 = _ram_after(env, snap, LEFT, 20)
     l90 = _ram_after(env, snap, LEFT, 90)
     env.load_state(snap)  # restore caller's position
-    d_early = _diff_bytes(r20, base)
     d_late = _diff_bytes(r90, base)
-    d_dir = _diff_bytes(r90, l90)
+    d_dir_early = _diff_bytes(r20, l20)
+    d_dir_late = _diff_bytes(r90, l90)
     return (d_late > thresh
-            and d_late > d_early + thresh // 2   # still changing => not a saturated cursor
-            and d_dir > thresh)                  # RIGHT != LEFT => input-driven, not a cutscene
+            and d_dir_late > thresh                     # RIGHT != LEFT => input-driven, not a cutscene
+            and d_dir_late > d_dir_early + thresh // 2)  # split still widening => real movement, not a settled cursor
 
 
 def main() -> int:
