@@ -1077,6 +1077,10 @@ impl Dmc {
         self.irq_flag = value & 0x80 != 0;
         self.loop_flag = value & 0x40 != 0;
         self.tick_period = DMC_TABLE[(value & 0x0F) as usize];
+        if !self.irq_flag {
+            // NESdev APU_DMC: "If clear, the interrupt flag is cleared."
+            self.irq_pending = false;
+        }
     }
 
     fn write_value(&mut self, value: u8) {
@@ -1686,6 +1690,29 @@ mod apu_coverage_tests {
         dmc.step_reader(&mut mapper, false);
         assert_eq!(dmc.current_length, 0, "sample still completes");
         assert!(!dmc.irq_pending, "IRQ must stay clear when the IRQ-enable flag is off");
+    }
+
+    // Rewriting $4010 with bit 7 (IRQ-enable) clear is a hardware-legal
+    // ack path, independent of $4015: NESdev APU_DMC says "If clear, the
+    // interrupt flag is cleared." A pending DMC IRQ must drop immediately,
+    // not linger until something touches $4015 — otherwise the level-
+    // triggered IRQ line stays asserted and every RTI re-triggers it.
+    #[test]
+    fn dmc_control_write_clearing_irq_enable_acks_pending_irq() {
+        let mut mapper = nrom_mapper();
+        let mut apu = Apu::new();
+        apu.write_byte(0x4010, 0x80); // arm: IRQ-enable=1, loop=0
+        apu.dmc.enable_flag = true;
+        apu.dmc.current_address = 0x8000;
+        apu.dmc.current_length = 1;
+        apu.dmc.bit_count = 0;
+
+        apu.dmc.step_reader(&mut mapper, false);
+        assert!(apu.dmc.irq_pending, "precondition: sample end raised the DMC IRQ");
+
+        apu.write_byte(0x4010, 0x00); // ack: IRQ-enable=0, $4015 untouched
+        assert!(!apu.dmc.irq_pending, "clearing $4010 bit 7 must ack a pending DMC IRQ");
+        assert!(!apu.irq_pending(), "combined IRQ line must drop once the DMC IRQ is acked");
     }
 
     // --- GAP 3: frame counter 4-step vs 5-step ($4017 bit 7) ---------
