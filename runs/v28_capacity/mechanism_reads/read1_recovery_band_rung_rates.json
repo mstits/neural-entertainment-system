@@ -1,0 +1,565 @@
+{
+  "definition": "trailing-window clear rate while tau's window covers >= 1 recovery entry (marker frames >= 900000) vs. adjacent windows with none, per [backward] telemetry -- docs/proposals/V28_CAPACITY_2026-08-25.md Mechanism reads #1",
+  "ladder_manifest": "checkpoints/backward_states/1-1-v27/index.json",
+  "n_entries": 785,
+  "recovery_entry_indices": [
+    48,
+    75,
+    92,
+    193,
+    201,
+    206,
+    210,
+    214,
+    247,
+    311,
+    340,
+    342,
+    345,
+    352,
+    355,
+    363,
+    388,
+    390,
+    401,
+    403,
+    428,
+    431,
+    437,
+    450,
+    454,
+    632,
+    661
+  ],
+  "window_steps": 40,
+  "tau_checkpoint_set": [
+    784,
+    744,
+    704,
+    664,
+    624,
+    584,
+    544,
+    504,
+    464,
+    424,
+    384,
+    344,
+    304,
+    264,
+    224,
+    184,
+    144,
+    104,
+    64,
+    24,
+    0
+  ],
+  "recovery_band_tau_checkpoints": [
+    64,
+    104,
+    224,
+    264,
+    344,
+    384,
+    424,
+    464,
+    664
+  ],
+  "non_recovery_tau_checkpoints": [
+    0,
+    24,
+    144,
+    184,
+    304,
+    504,
+    544,
+    584,
+    624,
+    704,
+    744,
+    784
+  ],
+  "local_adjacent_non_recovery_tau_checkpoints": [
+    704,
+    624,
+    504,
+    304,
+    184,
+    144,
+    24
+  ],
+  "per_seed": {
+    "0": {
+      "v27": {
+        "n_lines_parsed": 250,
+        "recovery": {
+          "pooled_rate": 0.028634361233480177,
+          "mean_of_line_rates": 0.027083333333333334,
+          "n_lines": 16,
+          "n_lines_with_attempts": 16,
+          "sum_successes": 13,
+          "sum_attempts": 454,
+          "distinct_tau_values_visited": [
+            64,
+            104,
+            224,
+            264,
+            344,
+            384,
+            424,
+            664
+          ]
+        },
+        "non_recovery": {
+          "pooled_rate": 0.12256864988558352,
+          "mean_of_line_rates": 0.12606837606837606,
+          "n_lines": 234,
+          "n_lines_with_attempts": 234,
+          "sum_successes": 857,
+          "sum_attempts": 6992,
+          "distinct_tau_values_visited": [
+            0,
+            24,
+            184,
+            304,
+            504,
+            584,
+            744
+          ]
+        },
+        "non_recovery_local": {
+          "pooled_rate": 0.015151515151515152,
+          "mean_of_line_rates": 0.01515151515151515,
+          "n_lines": 11,
+          "n_lines_with_attempts": 11,
+          "sum_successes": 5,
+          "sum_attempts": 330,
+          "distinct_tau_values_visited": [
+            24,
+            184,
+            304,
+            504
+          ]
+        }
+      },
+      "v28": {
+        "n_lines_parsed": 250,
+        "recovery": {
+          "pooled_rate": 0.06397306397306397,
+          "mean_of_line_rates": 0.0637037037037037,
+          "n_lines": 10,
+          "n_lines_with_attempts": 10,
+          "sum_successes": 19,
+          "sum_attempts": 297,
+          "distinct_tau_values_visited": [
+            64,
+            104,
+            224,
+            264,
+            344,
+            384,
+            424,
+            664
+          ]
+        },
+        "non_recovery": {
+          "pooled_rate": 0.3329149232914923,
+          "mean_of_line_rates": 0.3329149232914923,
+          "n_lines": 240,
+          "n_lines_with_attempts": 239,
+          "sum_successes": 2387,
+          "sum_attempts": 7170,
+          "distinct_tau_values_visited": [
+            0,
+            24,
+            144,
+            184,
+            304,
+            504,
+            584,
+            744
+          ]
+        },
+        "non_recovery_local": {
+          "pooled_rate": 0.03076923076923077,
+          "mean_of_line_rates": 0.03076923076923077,
+          "n_lines": 13,
+          "n_lines_with_attempts": 13,
+          "sum_successes": 12,
+          "sum_attempts": 390,
+          "distinct_tau_values_visited": [
+            24,
+            144,
+            184,
+            304,
+            504
+          ]
+        }
+      }
+    },
+    "1": {
+      "v27": {
+        "n_lines_parsed": 250,
+        "recovery": {
+          "pooled_rate": 0.025,
+          "mean_of_line_rates": 0.025,
+          "n_lines": 9,
+          "n_lines_with_attempts": 8,
+          "sum_successes": 6,
+          "sum_attempts": 240,
+          "distinct_tau_values_visited": [
+            64,
+            104,
+            224,
+            264,
+            344,
+            384,
+            464,
+            664
+          ]
+        },
+        "non_recovery": {
+          "pooled_rate": 0.2520914668153932,
+          "mean_of_line_rates": 0.2511111111111111,
+          "n_lines": 241,
+          "n_lines_with_attempts": 240,
+          "sum_successes": 1808,
+          "sum_attempts": 7172,
+          "distinct_tau_values_visited": [
+            0,
+            24,
+            144,
+            184,
+            304,
+            544,
+            624,
+            744
+          ]
+        },
+        "non_recovery_local": {
+          "pooled_rate": 0.02806122448979592,
+          "mean_of_line_rates": 0.026190476190476188,
+          "n_lines": 14,
+          "n_lines_with_attempts": 14,
+          "sum_successes": 11,
+          "sum_attempts": 392,
+          "distinct_tau_values_visited": [
+            24,
+            144,
+            184,
+            304,
+            624
+          ]
+        }
+      },
+      "v28": {
+        "n_lines_parsed": 250,
+        "recovery": {
+          "pooled_rate": 0.06060606060606061,
+          "mean_of_line_rates": 0.0606060606060606,
+          "n_lines": 11,
+          "n_lines_with_attempts": 11,
+          "sum_successes": 20,
+          "sum_attempts": 330,
+          "distinct_tau_values_visited": [
+            64,
+            104,
+            224,
+            264,
+            344,
+            384,
+            424,
+            664
+          ]
+        },
+        "non_recovery": {
+          "pooled_rate": 0.30315346881569727,
+          "mean_of_line_rates": 0.3029411764705882,
+          "n_lines": 239,
+          "n_lines_with_attempts": 238,
+          "sum_successes": 2163,
+          "sum_attempts": 7135,
+          "distinct_tau_values_visited": [
+            0,
+            24,
+            144,
+            184,
+            304,
+            504,
+            584,
+            744
+          ]
+        },
+        "non_recovery_local": {
+          "pooled_rate": 0.03018867924528302,
+          "mean_of_line_rates": 0.02962962962962963,
+          "n_lines": 9,
+          "n_lines_with_attempts": 9,
+          "sum_successes": 8,
+          "sum_attempts": 265,
+          "distinct_tau_values_visited": [
+            24,
+            144,
+            184,
+            304,
+            504
+          ]
+        }
+      }
+    },
+    "2": {
+      "v27": {
+        "n_lines_parsed": 250,
+        "recovery": {
+          "pooled_rate": 0.022222222222222223,
+          "mean_of_line_rates": 0.022222222222222223,
+          "n_lines": 12,
+          "n_lines_with_attempts": 12,
+          "sum_successes": 8,
+          "sum_attempts": 360,
+          "distinct_tau_values_visited": [
+            64,
+            104,
+            224,
+            264,
+            344,
+            384,
+            464
+          ]
+        },
+        "non_recovery": {
+          "pooled_rate": 0.32090602138435564,
+          "mean_of_line_rates": 0.32107695398834635,
+          "n_lines": 238,
+          "n_lines_with_attempts": 237,
+          "sum_successes": 2281,
+          "sum_attempts": 7108,
+          "distinct_tau_values_visited": [
+            0,
+            24,
+            144,
+            184,
+            304,
+            544,
+            624,
+            704,
+            744
+          ]
+        },
+        "non_recovery_local": {
+          "pooled_rate": 0.13758389261744966,
+          "mean_of_line_rates": 0.14285714285714285,
+          "n_lines": 10,
+          "n_lines_with_attempts": 10,
+          "sum_successes": 41,
+          "sum_attempts": 298,
+          "distinct_tau_values_visited": [
+            24,
+            144,
+            184,
+            304,
+            624,
+            704
+          ]
+        }
+      },
+      "v28": {
+        "n_lines_parsed": 250,
+        "recovery": {
+          "pooled_rate": 0.020370370370370372,
+          "mean_of_line_rates": 0.02037037037037037,
+          "n_lines": 18,
+          "n_lines_with_attempts": 18,
+          "sum_successes": 11,
+          "sum_attempts": 540,
+          "distinct_tau_values_visited": [
+            64,
+            104,
+            224,
+            264,
+            344,
+            384,
+            424,
+            664
+          ]
+        },
+        "non_recovery": {
+          "pooled_rate": 0.17174635273725264,
+          "mean_of_line_rates": 0.17157287157287157,
+          "n_lines": 232,
+          "n_lines_with_attempts": 231,
+          "sum_successes": 1189,
+          "sum_attempts": 6923,
+          "distinct_tau_values_visited": [
+            0,
+            24,
+            144,
+            184,
+            304,
+            504,
+            584,
+            744
+          ]
+        },
+        "non_recovery_local": {
+          "pooled_rate": 0.034220532319391636,
+          "mean_of_line_rates": 0.03333333333333333,
+          "n_lines": 9,
+          "n_lines_with_attempts": 9,
+          "sum_successes": 9,
+          "sum_attempts": 263,
+          "distinct_tau_values_visited": [
+            24,
+            144,
+            184,
+            304,
+            504
+          ]
+        }
+      }
+    },
+    "3": {
+      "v27": {
+        "n_lines_parsed": 250,
+        "recovery": {
+          "pooled_rate": 0.02711864406779661,
+          "mean_of_line_rates": 0.026666666666666665,
+          "n_lines": 10,
+          "n_lines_with_attempts": 10,
+          "sum_successes": 8,
+          "sum_attempts": 295,
+          "distinct_tau_values_visited": [
+            64,
+            104,
+            224,
+            264,
+            344,
+            384,
+            424,
+            464
+          ]
+        },
+        "non_recovery": {
+          "pooled_rate": 0.19358003924866835,
+          "mean_of_line_rates": 0.19393449687567332,
+          "n_lines": 240,
+          "n_lines_with_attempts": 238,
+          "sum_successes": 1381,
+          "sum_attempts": 7134,
+          "distinct_tau_values_visited": [
+            0,
+            24,
+            144,
+            184,
+            304,
+            544,
+            624,
+            704,
+            744
+          ]
+        },
+        "non_recovery_local": {
+          "pooled_rate": 0.11042944785276074,
+          "mean_of_line_rates": 0.12027972027972028,
+          "n_lines": 12,
+          "n_lines_with_attempts": 11,
+          "sum_successes": 36,
+          "sum_attempts": 326,
+          "distinct_tau_values_visited": [
+            24,
+            144,
+            184,
+            304,
+            624,
+            704
+          ]
+        }
+      },
+      "v28": {
+        "n_lines_parsed": 250,
+        "recovery": {
+          "pooled_rate": 0.038834951456310676,
+          "mean_of_line_rates": 0.03809523809523809,
+          "n_lines": 14,
+          "n_lines_with_attempts": 14,
+          "sum_successes": 16,
+          "sum_attempts": 412,
+          "distinct_tau_values_visited": [
+            64,
+            104,
+            224,
+            264,
+            344,
+            384,
+            424,
+            464
+          ]
+        },
+        "non_recovery": {
+          "pooled_rate": 0.2574875798438609,
+          "mean_of_line_rates": 0.2579858156028369,
+          "n_lines": 236,
+          "n_lines_with_attempts": 235,
+          "sum_successes": 1814,
+          "sum_attempts": 7045,
+          "distinct_tau_values_visited": [
+            0,
+            24,
+            144,
+            184,
+            304,
+            544,
+            624,
+            704,
+            744
+          ]
+        },
+        "non_recovery_local": {
+          "pooled_rate": 0.14634146341463414,
+          "mean_of_line_rates": 0.1657142857142857,
+          "n_lines": 7,
+          "n_lines_with_attempts": 7,
+          "sum_successes": 30,
+          "sum_attempts": 205,
+          "distinct_tau_values_visited": [
+            24,
+            144,
+            184,
+            304,
+            624,
+            704
+          ]
+        }
+      }
+    }
+  },
+  "seed_paired_contrast": {
+    "0": {
+      "v27_recovery_rate": 0.028634361233480177,
+      "v28_recovery_rate": 0.06397306397306397,
+      "v27_non_recovery_rate": 0.12256864988558352,
+      "v28_non_recovery_rate": 0.3329149232914923
+    },
+    "1": {
+      "v27_recovery_rate": 0.025,
+      "v28_recovery_rate": 0.06060606060606061,
+      "v27_non_recovery_rate": 0.2520914668153932,
+      "v28_non_recovery_rate": 0.30315346881569727
+    },
+    "2": {
+      "v27_recovery_rate": 0.022222222222222223,
+      "v28_recovery_rate": 0.020370370370370372,
+      "v27_non_recovery_rate": 0.32090602138435564,
+      "v28_non_recovery_rate": 0.17174635273725264
+    },
+    "3": {
+      "v27_recovery_rate": 0.02711864406779661,
+      "v28_recovery_rate": 0.038834951456310676,
+      "v27_non_recovery_rate": 0.19358003924866835,
+      "v28_non_recovery_rate": 0.2574875798438609
+    }
+  },
+  "recovery_band_rate_improved_v28_over_v27_count": 3,
+  "missing_logs": []
+}

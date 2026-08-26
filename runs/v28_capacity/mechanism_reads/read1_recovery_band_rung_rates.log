@@ -1,0 +1,54 @@
+==============================================================================
+READ #1 — RECOVERY-BAND RUNG RATES
+==============================================================================
+Ladder manifest: checkpoints/backward_states/1-1-v27/index.json
+n_entries=785, recovery entries (frame>=900000): 27
+recovery entry indices: [48, 75, 92, 193, 201, 206, 210, 214, 247, 311, 340, 342, 345, 352, 355, 363, 388, 390, 401, 403, 428, 431, 437, 450, 454, 632, 661]
+window_steps (160 frames // 4 frames/entry) = 40
+fixed tau checkpoint set (advance_entries=40, identical v27/v28): [784, 744, 704, 664, 624, 584, 544, 504, 464, 424, 384, 344, 304, 264, 224, 184, 144, 104, 64, 24, 0]
+  -> recovery-band tau checkpoints (9): [64, 104, 224, 264, 344, 384, 424, 464, 664]
+  -> non-recovery tau checkpoints (12): [0, 24, 144, 184, 304, 504, 544, 584, 624, 704, 744, 784]
+  -> LOCAL-adjacent non-recovery checkpoints only (7): [704, 624, 504, 304, 184, 144, 24]
+
+==============================================================================
+PER-SEED TABLE (pooled trailing clear rate = sum(A)/sum(B) across all
+[backward] telemetry lines whose tau's window falls in that bucket)
+==============================================================================
+seed  ver  lines    rec A/B  rec rate   nonrec A/B nonrec rate
+   0  v27    250     13/454    0.0286     857/6992      0.1226
+   0  v28    250     19/297    0.0640    2387/7170      0.3329
+   1  v27    250      6/240    0.0250    1808/7172      0.2521
+   1  v28    250     20/330    0.0606    2163/7135      0.3032
+   2  v27    250      8/360    0.0222    2281/7108      0.3209
+   2  v28    250     11/540    0.0204    1189/6923      0.1717
+   3  v27    250      8/295    0.0271    1381/7134      0.1936
+   3  v28    250     16/412    0.0388    1814/7045      0.2575
+
+==============================================================================
+SEED-PAIRED CONTRAST (v27 -> v28), read #1's own dose-response number:
+recovery-band pooled clear rate, the value the falsifiable prediction
+says must move in the IMPROVING (increasing) direction in >=3/4 seeds
+==============================================================================
+seed 0: recovery-band rate v27=0.0286 -> v28=0.0640 (delta +0.0353) => IMPROVED  | non_rec-minus_rec gap: v27=+0.0939 v28=+0.2689 (widened)
+seed 1: recovery-band rate v27=0.0250 -> v28=0.0606 (delta +0.0356) => IMPROVED  | non_rec-minus_rec gap: v27=+0.2271 v28=+0.2425 (widened)
+seed 2: recovery-band rate v27=0.0222 -> v28=0.0204 (delta -0.0019) => WORSE  | non_rec-minus_rec gap: v27=+0.2987 v28=+0.1514 (narrowed)
+seed 3: recovery-band rate v27=0.0271 -> v28=0.0388 (delta +0.0117) => IMPROVED  | non_rec-minus_rec gap: v27=+0.1665 v28=+0.2187 (widened)
+
+==============================================================================
+SECONDARY / robustness check — SAME contrast, but the non-recovery
+side restricted to only the tau checkpoints immediately ADJACENT to a
+recovery-band run (excludes the tau=0 AT-ENTRANCE plateau, which the
+cursor sits at for most of a run's back half and which dominates the
+global non-recovery bucket's line count above by sheer iteration
+count, unrelated to any recovery entry's proximity).
+==============================================================================
+seed 0: recovery v27=0.0286 v28=0.0640 (delta +0.0353) | local-adjacent non-recovery v27=0.0152 v28=0.0308
+seed 1: recovery v27=0.0250 v28=0.0606 (delta +0.0356) | local-adjacent non-recovery v27=0.0281 v28=0.0302
+seed 2: recovery v27=0.0222 v28=0.0204 (delta -0.0019) | local-adjacent non-recovery v27=0.1376 v28=0.0342
+seed 3: recovery v27=0.0271 v28=0.0388 (delta +0.0117) | local-adjacent non-recovery v27=0.1104 v28=0.1463
+
+(this is the SAME recovery-band numerator as the primary table above — only the non-recovery comparator changed — so the improved-count is identical: 3/4)
+
+RECOVERY-BAND RATE improved (v28 > v27) in 3/4 seeds (primary operationalization: recovery-band pooled clear rate itself moving up, per the falsifiable-prediction text's own wording 'the recovery-band trailing rung-clear rate (read #1) ... move[s] in the improving direction').
+
+JSON receipt written to runs/v28_capacity/mechanism_reads/read1_recovery_band_rung_rates.json

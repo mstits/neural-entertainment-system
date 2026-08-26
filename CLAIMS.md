@@ -966,38 +966,172 @@ above) must remain the sole scoring authority: training telemetry is
 usable for within-run seed/checkpoint selection and unusable as a
 proxy for any gate number, cold or otherwise.
 
-V28 CAPACITY RUN — LAUNCHED, IN PROGRESS, NOT A VERDICT (2026-08-25,
-prereg `docs/proposals/V28_CAPACITY_2026-08-25.md`, configs
-`configs/mario_1_1_v28_seed{0,1,2,3}.yaml`, preflight receipts
-`runs/v28_capacity/preflight/{v1_v2_verdict.json,v3_verdict.json,
-tau0.15.log,tau0.20.log,tau0.25.log,tau0.30.log}`, commit `e4e35a7`).
-Tests the capacity hypothesis the v27 FAIL left standing: single-
-variable change vs. every v27 seed config — `tile_hidden_dim` 64→96
-(`tile_trunk_dim` 32 unchanged, written explicit), 48,135→72,039
-params (+1.50×) — same 785-rung merged ladder, same ReDo-mandatory
-treatment, same seeds/iters/hyperparameters, same gate (PASS ≥0.80,
-FAIL ≤0.767, identical artifact-selection rule). Preflight V1–V4 all
-PASS before launch: V1 config-diff shows only the two intended lines
-changed, symmetric across all four seeds; V2 param-count log line
-matches exactly (`params=72039 (hidden=96, trunk/gru=32, features=712,
-actions=6)`); V3 re-ran the ReDo tau-sweep at the new width rather than
-assuming the v27 calibration transfers — tau 0.15/0.20 gave 0
-recycles, tau 0.25 gave 9 recycled (agree 0.917, max_dlogit 0.176,
-finite), tau 0.30 gave 6 then 13 recycled (agree 0.83–0.85, finite) —
-and the isolated-event recycle boundary was re-measured per-width
-(~6 units at tau 0.30 for the 96-unit net, vs. 2 units at tau 0.30 for
-v27's 64-unit net), updating the soft-VOID trigger rather than
-guessing it proportionally; V4 (mechanism armed, not inert) confirmed
-live in seed 0's own log (`[redo] ENABLED tau=0.025 every_iters=1
-scope=fc1,fc2 sample=4096 reset_moments=true`). Status updated 2026-08-25 (later the same day): seed 0 completed
-(exit 0, all 250 iters, `runs/v28_capacity/train_seed0.log`), seed 1
-completed (exit 0, all 250 iters, `train_seed1.log`), seed 2 running
-(iteration 19 of 250 as of this update, ~2,000 env-steps/s, ~130×
-realtime), seed 3 not yet started (same sequential driver). **No
-honest-protocol number and no gate verdict exist yet for v28, at any
-seed** — training-loop telemetry is explicitly not a gate proxy per
-the entry above. This machine remains dedicated to this run; the
-eventual result — PASS, FAIL, or MARGINAL against the same 0.80/0.767
-bar v27 was scored against — gets its own entry when all 4 seeds
-finish and are scored sequentially (never in parallel with other live
-compute, per this project's own CPU-contention discipline).
+V28 CAPACITY VERDICT: FAIL — BEST-OF-4 0.670 (2026-08-25, prereg
+`docs/proposals/V28_CAPACITY_2026-08-25.md` VERDICT section, configs
+`configs/mario_1_1_v28_seed{0,1,2,3}.yaml`, launch commit `e4e35a7`,
+receipts `runs/v28_capacity/gate/*.json`, 16 files — 4 seeds × 2
+checkpoint classes × 2 eval seeds × 50 episodes). Full honest-protocol
+scoring, identical to the v27 gate in every respect (cold entrance from
+`runs/live_show/smb_4_4_micro/entrance_start.state`, greedy, sticky
+0.25, jitter ±16, 50 eps × eval seeds {0,1} = 100 pooled episodes per
+checkpoint, max-steps 1500, `--eval-rng` per-episode), two checkpoints
+per seed (peak entrance-trailing-rate via `winners/best.pt`, and the
+final iter-240 checkpoint) per the registration's fixed
+artifact-selection rule: seed 0 pooled 0.450 (final 0.000), seed 1
+pooled 0.230 (final 0.050), seed 2 pooled 0.370 (final 0.000), seed 3
+pooled 0.670 (final 0.000). **Best-of-4 = 0.670** against a PASS bar of
+≥0.80 and a FAIL bar of ≤0.767 — FAIL, and not adjacent to the
+MARGINAL band at either end; no seed's better checkpoint reached the
+banked control's own 0.767. Not VOID: V1 (machine diff shows only
+`name`, `tile_hidden_dim: 96`, and the explicitly-written unchanged
+`tile_trunk_dim: 32` differ from the v27 configs, all four seeds), V2
+(`params=72039 (hidden=96, trunk/gru=32, features=712, actions=6)`
+printed verbatim), V3/V4 (per-width forced-recycle sweep ran; `[redo]
+ENABLED tau=0.025` in all four training logs, `[redo] disabled` in
+none), V5 (`[backward] ENABLED: 785 states ... from
+checkpoints/backward_states/1-1-v27`, all four), V6 (every seed walked
+the ladder to tau=0 well before iter 150), and V7 (all 16 gate receipts
+record the registered start-state and flags) were each re-verified
+against the artifacts at adjudication time, not carried over from the
+launch commit's assertion. Registered mechanism read #2 (assay re-run)
+was correctly not triggered — the registration scopes it to "if PASS or
+MARGINAL."
+
+The registered reading rule selects on the mechanism reads, not the
+gate number. The falsifiable prediction, locked before any v28 compute
+ran, requires that in ≥3 of 4 paired seeds BOTH read #1 (recovery-band
+trailing rung-clear rate) AND read #3 (ladder-walk depth /
+iters-to-entrance) move in the improving direction vs. that same seed's
+v27 run. Both halves are computable — nothing in the conjunction was
+lost to instrumentation — and both were recomputed from the raw
+`[backward]` telemetry of all eight training logs independently of the
+agents that first produced them, reproducing to the digit: seed 0
+(#1 0.0286→0.0640, #3 29→25 iters), seed 1 (#1 0.0250→0.0606, #3 25→22),
+seed 3 (#1 0.0271→0.0388, #3 24→23) all improve on both; seed 2 (#1
+0.0222→0.0204, #3 24→29) regresses on both. **3 of 4 seeds satisfy the
+conjunction**, selecting the reading rule's `FAIL/MARGINAL` ×
+`improving, ≥3/4 seeds` row, whose registered verdict text is applied as
+written: **capacity is a real, partial lever — 72k under-shot but the
+direction supports "still capacity-constrained"; a further width step
+(the pre-costed Candidate 2, `hidden_dim` 64→80 + `trunk_dim` 32→40) is
+named as the natural v29 data point, "not a foregone conclusion."**
+Stated plainly and at the strength the data supports: 50% more
+parameters did not clear the bar and did not buy nothing either. Per
+the registration's own capacity-only limitation, this FAIL is evidence
+against capacity *under this exact recipe* at 72k — lr, rollout size,
+and the 250-iter budget were held fixed to preserve the single-variable
+claim, so a 1.50× weight space may simply be under-trained relative to
+its capacity; it does not close the door on a wider net trained
+differently.
+
+Three caveats are recorded alongside that count rather than buried,
+because the first would flip the selected row: (a) read #3's
+entrance-rate-trajectory sub-metric — which the prediction does not
+name — is ceiling-saturated in all 8 runs (peak 0.867–1.000, ±0.09 SE
+off a 30-episode window) and reads flat in 3 of 4 pairs; requiring it
+to move too drops the count from 3/4 to 1/4. The adjudication follows
+the prediction's own wording (which names iters-to-entrance /
+ladder-walk depth, 3/4 either way), and the lower-variance members of
+that family agree with the named metric in every seed. (b) Reads #1 and
+#3 are not independent votes — both are downstream of how readily the
+policy clears rungs, so the conjunction is closer to one signal
+measured twice than to two confirmations. (c) Seed 2's read #1 delta
+(−0.0019 on N≈360–540 attempts) is inside the noise; "flat" is the
+honest description, though flat is not improving so the count is 3/4
+either way.
+
+Seed-paired gate comparison (48k v27 → 72k v28, same protocol, same
+selection rule, same ladder, same ReDo treatment, width the only
+variable): seed 0 0.040→0.450 (+0.410), seed 1 0.290→0.230 (−0.060),
+seed 2 0.530→0.370 (−0.160), seed 3 0.170→0.670 (+0.500); best-of-4
+0.530→0.670 (+0.140). Both halves of that are stated because neither
+is allowed to swallow the other: the headline moved a real +0.14 under
+an identical 100-episode protocol, AND the per-seed deltas are MIXED —
+two large gains, two moderate regressions. Best-of-4 takes the max over
+seeds and is therefore structurally flattered by a 2-up/2-down field
+that raises the max; it is the registered number (the same selection
+freedom the banked 0.76 had) and it stands, but the honest description
+of what 24k extra parameters bought is **higher across-seed variance
+with the upside larger than the downside, not a uniform lift.** The two
+seeds that gained at the gate are two of the three that improved on
+both mechanism reads, and the seed that lost most at the gate is the
+one that regressed on both — seed-level coherence between gate and
+reads, which supports the dose-response story even under a failed gate.
+
+SECONDARY FINDING, LEARNED ledger / architecture-training-dynamics
+class (2026-08-25, same receipts as above) — peak instability
+reproduces a THIRD time and more starkly than ever, and capacity does
+not mitigate it: every v28 seed's final iter-240 checkpoint scored at
+or near zero against a substantially non-zero peak — 0.450→0.000,
+0.230→0.050, 0.370→0.000, 0.670→0.000. Three of four collapsed to
+**exactly 0.000 over 100 pooled episodes** — an erasure, not a
+degradation. Prior reproductions: post-hoc continued PPO (−74% over 200
+iters) and v27's from-scratch 48k runs (0.04→0.02, 0.29→0.02,
+0.53→0.00, 0.17→0.01). v28 is the starkest in absolute terms because
+its peaks were the highest — the wider net fell further, not less far.
+**Preserve-on-peak (`winners/best.pt`) is again the only reason this
+experiment has a number at all**: scored on final checkpoints alone,
+v28's best-of-4 would be **0.050**, not 0.670. Demonstrated now across
+two parameter budgets, two delivery mechanisms, and three campaigns;
+preserve-on-peak stays mandatory in every arm of this line and any
+future registration scoring only a final checkpoint is mis-specified.
+
+SECONDARY FINDING, mechanism-attribution class (2026-08-25, receipts
+`runs/v28_capacity/mechanism_reads/read4_dormancy_recycle.{py,json}`,
+parsed from all 8 real training logs) — ReDo was armed, correct, and
+completely inert at BOTH widths. Across all 2,000 per-iteration checks
+(8 runs × 250 iters, `check_every_iters=1`, zero skipped iterations,
+zero `[redo] disabled` lines) the logged dormant-unit count was `0/64`
+and `0/32` on every v27 iteration and `0/96` and `0/32` on every v28
+iteration; cumulative recycles 0 for all eight runs; per-layer dormant
+fraction max and mean 0.0 everywhere. The mechanism is not broken — the
+forced-recycle sweeps fire correctly at both widths (v28: 0 recycles at
+tau 0.15/0.20, 9 at 0.25, 6 then 13 at 0.30, finite `max_dlogit`
+throughout) — the registered tau=0.025 simply sits far below anything
+real 1-1 rollouts produce on a SiLU + pre-activation-LayerNorm net at
+either width. Consequences stated at supportable strength: (i) v27's
+FAIL text quotes the DR's claim that "ReDo mathematically guarantees
+that all 48k parameters were active and non-dormant" — ReDo guaranteed
+nothing of the kind, it never fired; what holds is the weaker statement
+AMENDMENT 1's B2/B5 registered in advance for exactly this case, that
+the dormancy confound never materialized and plasticity was
+*measured-intact by the dormancy statistic*, not actively maintained.
+The capacity verdict stands and the registration earns credit for
+writing that caveat before the telemetry returned. (ii) ReDo cannot
+explain any per-seed gate delta — it was equally inert in both arms.
+(iii) The per-width isolated-event boundary (~6 units at tau 0.30 for
+the 96-unit net vs. ~2 for v27's 64-unit net) is itself a real finding:
+dormancy dynamics ARE width-sensitive, vindicating the decision to
+re-measure rather than scale v27's "15" proportionally — even though
+the soft-VOID trigger was never approached, no recycle event having
+occurred.
+
+SECONDARY FINDING, process/instrumentation class — binding, not a
+LEARNED, EXHIBITION, or FORGE result (2026-08-25, surfaced while
+adjudicating the above) — four receipt/telemetry gaps, all fixable
+before the next registration in this line. (1) The `[backward]`
+telemetry line is NOT the number the winner selector reads:
+`winners/best.json` for v27 seed 0 records
+`entrance_trailing_rate=0.8667 @ iter 60` while that iteration's
+printed line says `trailing 16/30=0.53`, because a second
+`bwd_sched.record(...)` force-completion pass in `trainer.py` runs
+after the line prints and before the winner-save block reads the
+window. The log-derived peak is a LOWER BOUND on the selection metric;
+both arms share the code path so seed-paired directions are unaffected,
+but any future read treating the printed line as the selection metric
+will be wrong. (2) No continuous dormancy-score trace exists — `redo.py`
+logs only post-threshold counts, so "ReDo never fired" is established
+but "how close did dormancy get to 0.025" is unanswerable from the
+receipts, which is exactly the quantity that would say whether tau was
+mis-calibrated slightly or by an order of magnitude. (3) The V1 receipt
+named in the registration's receipts layout,
+`runs/v28_capacity/config_diff.json`, was never written — V1 was
+genuinely checked pre-launch (asserted in commit `e4e35a7`) and its
+substance is re-verified above against configs git confirms unchanged
+since, but a registered receipt path that is never written is a gap
+even when the check itself was honest. (4) `warp_rate` has no field in
+`eval_game.py`'s JSON output, though the PASS branch requires
+`warp_rate 0.0`; it never bound here (gate FAILed; every clear shows
+`max_gx` at the 3161 flagpole with `max_byte_seen: 0`), but a future
+PASS in this family could not be scored against its own registered
+condition as written.

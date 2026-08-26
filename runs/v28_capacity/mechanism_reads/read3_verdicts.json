@@ -1,0 +1,46 @@
+{
+  "per_seed": {
+    "0": {
+      "ladder_speed_dir": "improve",
+      "entrance_quality_strict": "improve",
+      "entrance_quality_lenient": "improve",
+      "seed_verdict_strict": "IMPROVING",
+      "seed_verdict_lenient": "IMPROVING",
+      "seed_verdict": "IMPROVING"
+    },
+    "1": {
+      "ladder_speed_dir": "improve",
+      "entrance_quality_strict": "mixed",
+      "entrance_quality_lenient": "improve",
+      "seed_verdict_strict": "FLAT/AMBIGUOUS",
+      "seed_verdict_lenient": "IMPROVING",
+      "seed_verdict": "IMPROVING"
+    },
+    "2": {
+      "ladder_speed_dir": "worse",
+      "entrance_quality_strict": "mixed",
+      "entrance_quality_lenient": "worse",
+      "seed_verdict_strict": "FLAT/AMBIGUOUS",
+      "seed_verdict_lenient": "WORSE",
+      "seed_verdict": "WORSE"
+    },
+    "3": {
+      "ladder_speed_dir": "improve",
+      "entrance_quality_strict": "mixed",
+      "entrance_quality_lenient": "improve",
+      "seed_verdict_strict": "FLAT/AMBIGUOUS",
+      "seed_verdict_lenient": "IMPROVING",
+      "seed_verdict": "IMPROVING"
+    }
+  },
+  "lenient": {
+    "n_improving": 3,
+    "n_worse": 1,
+    "n_mixed_or_flat": 0
+  },
+  "strict": {
+    "n_improving": 1,
+    "n_worse": 0,
+    "n_mixed_or_flat": 3
+  }
+}
