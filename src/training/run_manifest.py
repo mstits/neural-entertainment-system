@@ -2,10 +2,12 @@
 
 Each training run writes a `run_manifest.json` into its checkpoint dir
 capturing exactly what's needed to reproduce it: ROM + its MD5, start
-state, seed, the git commit of the code, and the load-bearing
-hyperparameters. Combined with the code at that commit and the
-metrics.jsonl the run emits, a result becomes reproducible and citable
-rather than "it worked on my machine that one time."
+state, seed, the git commit of the code, the load-bearing
+hyperparameters, and the resolved dependency environment (torch/
+torchvision/numpy + the nes_core extension's own build identity).
+Combined with the code at that commit and the metrics.jsonl the run
+emits, a result becomes reproducible and citable rather than "it
+worked on my machine that one time."
 
 Kept deliberately small — provenance + config only. The achieved
 results live in metrics.jsonl / eval.jsonl (the scoreboard joins them).
@@ -13,6 +15,7 @@ results live in metrics.jsonl / eval.jsonl (the scoreboard joins them).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import time
@@ -28,6 +31,19 @@ _PINNED_HYPERPARAMS = (
     "rnd_loss_coef", "tile_frame_stack",
 )
 
+# Packages whose resolved version can move a banked run's numbers even
+# with the git commit + seed held fixed — a `pip install` months apart
+# can silently resolve a different torch build (and therefore a
+# different MPS backend/kernel set) against the same commit. A
+# targeted list, not a full `pip freeze`: this manifest is meant to
+# stay human-readable at a glance, and torch/torchvision/numpy are the
+# only third-party packages with a direct line to numeric outcomes
+# (loss values, action distributions, timing). Everything else in the
+# venv is captured by the git commit's requirements.txt/lockfile, which
+# already pins it exactly — duplicating that whole freeze here would
+# just be a second, driftable copy of the same information.
+_PINNED_PACKAGES = ("torch", "torchvision", "numpy")
+
 
 def _git_commit() -> Optional[str]:
     try:
@@ -37,6 +53,71 @@ def _git_commit() -> Optional[str]:
         ).strip() or None
     except Exception:
         return None
+
+
+def _package_version(name: str) -> str:
+    """Resolved version of an installed package, or `"unknown"`.
+
+    Never raises: a missing package, an editable/odd distribution
+    layout, or any other lookup hiccup must degrade to `"unknown"`
+    rather than take down the training run that calls this at startup.
+    """
+    try:
+        import importlib.metadata as md
+        return md.version(name)
+    except Exception:
+        return "unknown"
+
+
+def _nes_core_build_id() -> dict:
+    """Identify the nes_core extension actually loaded, or `"unknown"`
+    fields if it can't be determined.
+
+    Mirrors `scripts/go_explore_solve.py`'s `_core_build_id()` (the
+    `hw_provenance` precedent for solver runs) rather than inventing a
+    second scheme: the PyPI-style dist version is static across local
+    `maturin` rebuilds, so the compiled `.so`'s own digest is what
+    actually pins the binary a run executed against — the same
+    maturin-doesn't-update-the-venv-.so hazard that precedent guards
+    against.
+    """
+    info = {"dist_version": "unknown", "module": "unknown",
+            "sha256_16": "unknown"}
+    try:
+        import importlib.metadata as md
+        info["dist_version"] = md.version("nes_core")
+    except Exception:
+        pass
+    try:
+        import nes_core
+        so = Path(nes_core.__file__).with_name("nes_core.abi3.so")
+        if not so.exists():
+            so = Path(nes_core.nes_core.__file__)
+        info["module"] = so.name
+        info["sha256_16"] = hashlib.sha256(so.read_bytes()).hexdigest()[:16]
+    except Exception:
+        pass
+    return info
+
+
+def dependency_snapshot() -> dict:
+    """Resolved dependency environment for this process, best-effort.
+
+    The one training-run input the manifest didn't previously capture:
+    ROM/seed/commit/hyperparams pin *what* ran, but not *which*
+    torch/numpy build it ran against. Cheap (runs once at process
+    start; no subprocess calls) and never raises — each lookup below
+    is independently guarded so one missing/odd package degrades to
+    `"unknown"` in its own field instead of losing the rest of the
+    snapshot.
+    """
+    snapshot = {name: _package_version(name) for name in _PINNED_PACKAGES}
+    try:
+        snapshot["nes_core"] = _nes_core_build_id()
+    except Exception:
+        snapshot["nes_core"] = {"dist_version": "unknown", "module": "unknown",
+                                 "sha256_16": "unknown"}
+    return snapshot
 
 
 def write_run_manifest(
@@ -75,6 +156,7 @@ def write_run_manifest(
         "num_envs": int(num_envs),
         "frame_skip": int(frame_skip),
         "hyperparams": {k: rl[k] for k in _PINNED_HYPERPARAMS if k in rl},
+        "dependencies": dependency_snapshot(),
     }
     path = Path(checkpoint_dir) / "run_manifest.json"
     path.parent.mkdir(parents=True, exist_ok=True)

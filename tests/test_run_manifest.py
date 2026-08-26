@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.training.run_manifest import write_run_manifest
+from src.training.run_manifest import (
+    _PINNED_PACKAGES,
+    dependency_snapshot,
+    write_run_manifest,
+)
 
 
 def _profile() -> dict:
@@ -59,6 +63,16 @@ def test_write_run_manifest_captures_provenance(tmp_path: Path) -> None:
     assert hp["rnd_intrinsic_coef"] == 0.5
     assert "bc_replay_enabled" not in hp
 
+    # Dependency snapshot: the packages that can move a banked number
+    # even with commit+seed fixed, plus the nes_core extension's own
+    # build identity (dist version is static across local rebuilds, so
+    # the .so digest is what actually pins the binary).
+    deps = m["dependencies"]
+    assert set(_PINNED_PACKAGES) <= set(deps)
+    for name in _PINNED_PACKAGES:
+        assert isinstance(deps[name], str) and deps[name]
+    assert set(deps["nes_core"]) == {"dist_version", "module", "sha256_16"}
+
 
 def test_write_run_manifest_handles_missing_start_state(tmp_path: Path) -> None:
     m = json.loads(
@@ -83,3 +97,40 @@ def test_write_run_manifest_is_atomic_overwrite(tmp_path: Path) -> None:
     m = json.loads((tmp_path / "run_manifest.json").read_text())
     assert m["start_state_path"] == "b.state"
     assert not (tmp_path / "run_manifest.json.tmp").exists()
+
+
+def test_dependency_snapshot_records_unknown_on_lookup_failure(monkeypatch) -> None:
+    """A `pip`-metadata lookup failure must degrade to "unknown" per
+    field, not raise out of a function called at the start of every
+    training run."""
+    import importlib.metadata as md
+
+    def _boom(name):
+        raise RuntimeError("simulated metadata lookup failure")
+
+    monkeypatch.setattr(md, "version", _boom)
+    snap = dependency_snapshot()
+
+    for name in _PINNED_PACKAGES:
+        assert snap[name] == "unknown"
+    assert snap["nes_core"]["dist_version"] == "unknown"
+
+
+def test_dependency_snapshot_handles_missing_nes_core(monkeypatch) -> None:
+    """A bare checkout before `make build` (no nes_core installed yet)
+    must still produce a snapshot with "unknown" fields for nes_core,
+    not an ImportError that takes the manifest write down with it."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "nes_core":
+            raise ImportError("simulated missing nes_core")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    snap = dependency_snapshot()
+
+    assert snap["nes_core"]["module"] == "unknown"
+    assert snap["nes_core"]["sha256_16"] == "unknown"
