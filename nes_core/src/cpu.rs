@@ -313,6 +313,21 @@ pub struct Cpu {
     /// sits between instructions where the latch re-syncs within one
     /// cycle.
     nmi_poll_latch: bool,
+
+    /// `flags.i` as of the end of the previous CPU cycle — the IRQ-
+    /// mask counterpart of `nmi_poll_latch`. Real hardware polls
+    /// interrupts at an instruction's second-to-last cycle, but
+    /// CLI/SEI/PLP write `flags.i` on their own FINAL cycle, so the
+    /// mask state they set is not visible to that poll — a pending
+    /// IRQ is serviced (or withheld) one whole instruction later than
+    /// the write, not immediately after it. This is the classic 6502
+    /// "interrupt hijacking" / CLI-latency quirk (blargg's
+    /// `cpu_interrupts_v2/1-cli_latency`). Without this latch,
+    /// `poll_interrupts` reads the live post-write `flags.i` and
+    /// services a pending IRQ one instruction early. Runtime latch,
+    /// deliberately not serialized: re-synced from `flags.i` on
+    /// restore, same as `nmi_poll_latch`.
+    i_poll_latch: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -383,6 +398,8 @@ impl Cpu {
         // Not serialized: re-sync so a restored pending NMI isn't
         // spuriously deferred at the first post-load boundary.
         self.nmi_poll_latch = state.nmi_pended;
+        // Same re-sync for the IRQ-mask latch (see `i_poll_latch`).
+        self.i_poll_latch = state.flags.i;
         self.irq_line_low = state.irq_line_low;
         self.cycles_total = state.cycles_total;
         self.opcode = state.opcode;
@@ -472,6 +489,7 @@ impl Cpu {
             // The interrupt-poll pipeline keeps sampling while the CPU
             // is halted for DMA/DMC stalls.
             self.nmi_poll_latch = self.nmi_pended;
+            self.i_poll_latch = self.flags.i;
             return false;
         }
 
@@ -490,6 +508,7 @@ impl Cpu {
             }
 
             self.nmi_poll_latch = self.nmi_pended;
+            self.i_poll_latch = self.flags.i;
             return false;
         }
 
@@ -497,17 +516,28 @@ impl Cpu {
         let instr = match self.instruction {
             Some(instr) => instr,
             None => {
-                // Defensive fallback. Every one of the 256 opcodes now
-                // has a real `Instruction` entry (all 12 KIL/JAM slots
-                // and the unstable LAS/TAS/AHX/SHX/SHY stores are
-                // modeled), so this arm is unreachable in normal
-                // operation. Should it ever be hit, consume the opcode
-                // byte and — crucially — poll interrupts so a pending
-                // NMI/IRQ is serviced at this instruction boundary
-                // rather than being silently deferred by one whole
-                // instruction (the pre-fix behavior returned `true`
-                // without polling, delaying interrupt delivery).
-                self.regs.pc = self.regs.pc.wrapping_add(1);
+                // Defensive fallback for the 16 opcodes that have no
+                // `Instruction` entry in `OPCODES`: the 12 KIL/JAM
+                // slots (0x02/0x12/0x22/0x32/0x42/0x52/0x62/0x72/0x92/
+                // 0xB2/0xD2/0xF2, all 1-byte) plus the unstable TAS
+                // $9B / LAS $BB / SHA $9F (3-byte, absolute,Y) and SHA
+                // $93 (2-byte, (indirect),Y). The opcode byte itself
+                // was already consumed by `next_pc_byte` during fetch,
+                // so PC must advance by exactly the operand bytes
+                // still owed for the real instruction length, or the
+                // decode stream desyncs from the next real instruction
+                // (a previous flat `+1` assumed every one of these was
+                // 2 bytes total, which is wrong for both the 1-byte
+                // KIL/JAM slots and the 3-byte TAS/LAS/SHA $9F forms).
+                // Crucially, still poll interrupts so a pending NMI/IRQ
+                // is serviced at this instruction boundary rather than
+                // being silently deferred by one whole instruction.
+                let operand_bytes: u16 = match self.opcode {
+                    0x9B | 0xBB | 0x9F => 2,
+                    0x93 => 1,
+                    _ => 0,
+                };
+                self.regs.pc = self.regs.pc.wrapping_add(operand_bytes);
                 self.cycle = 0;
                 self.opcode = 0;
                 self.poll_interrupts();
@@ -523,13 +553,15 @@ impl Cpu {
 
         if completed || self.cycle as usize > instr.cycles.len() {
             self.cycle = 0;
-            // NOTE: poll_interrupts consumes `nmi_poll_latch` (state as
-            // of the end of the second-to-last cycle) and re-syncs it —
-            // do not update the latch before this call.
+            // NOTE: poll_interrupts consumes `nmi_poll_latch` and
+            // `i_poll_latch` (state as of the end of the second-to-
+            // last cycle) and re-syncs them — do not update either
+            // latch before this call.
             self.poll_interrupts();
             true
         } else {
             self.nmi_poll_latch = self.nmi_pended;
+            self.i_poll_latch = self.flags.i;
             false
         }
     }
@@ -592,7 +624,16 @@ impl Cpu {
         };
         if take_nmi {
             self.instruction = Some(NMI_INTERRUPT);
-        } else if self.irq_line_low && !self.flags.i {
+        } else if self.irq_line_low && !self.i_poll_latch {
+            // Use `i_poll_latch` (flags.i as of the end of the
+            // PREVIOUS cycle), not the live `flags.i`: CLI/SEI/PLP
+            // write flags.i on their own final cycle, and the poll
+            // happens at that same instruction boundary. Reading the
+            // live value would let the mask change take effect one
+            // instruction earlier than hardware — the "interrupt
+            // hijacking" / CLI-latency quirk (blargg's
+            // `cpu_interrupts_v2/1-cli_latency`). See the
+            // `i_poll_latch` field doc.
             self.instruction = Some(IRQ_INTERRUPT);
         } else {
             // No interrupt? Then we proceed to fetch a normal opcode.
@@ -603,6 +644,7 @@ impl Cpu {
         // A deferred edge (pended but not latched at the poll point)
         // becomes visible to the NEXT boundary.
         self.nmi_poll_latch = self.nmi_pended;
+        self.i_poll_latch = self.flags.i;
     }
 
     #[inline(always)]
@@ -6113,16 +6155,22 @@ mod cpu_coverage_tests {
 
     #[test]
     fn irq_is_level_gated_by_i_flag() {
-        // IRQ services only while the line is low AND I is clear.
+        // IRQ services only while the line is low AND I is clear. The
+        // gate reads `i_poll_latch` (flags.i as of the end of the
+        // previous cycle), so a direct unit test of `poll_interrupts`
+        // must set the latch alongside the live flag, same as the
+        // `nmi_poll_latch` tests below do for `nmi_pended`.
         let mut cpu = Cpu::new();
         cpu.irq_line_low = true;
         cpu.flags.i = false;
+        cpu.i_poll_latch = false;
         cpu.poll_interrupts();
         assert_eq!(pending_name(&cpu), Some("IRQ"), "unmasked IRQ serviced");
 
         let mut cpu = Cpu::new();
         cpu.irq_line_low = true;
         cpu.flags.i = true; // masked
+        cpu.i_poll_latch = true;
         cpu.poll_interrupts();
         assert_eq!(pending_name(&cpu), None, "I flag masks the IRQ");
     }
@@ -6175,6 +6223,46 @@ mod cpu_coverage_tests {
             pending_name(&cpu),
             Some("NMI"),
             "subcycle phase reads live pended, not the second-to-last latch"
+        );
+    }
+
+    #[test]
+    fn cli_defers_pending_irq_by_one_instruction() {
+        // The classic 6502 "interrupt hijacking" / CLI-latency quirk
+        // (blargg's `cpu_interrupts_v2/1-cli_latency`): CLI writes
+        // flags.i on its own final cycle, but hardware polls
+        // interrupts using the I flag as of the END of the PREVIOUS
+        // cycle. A pending IRQ must wait until the instruction AFTER
+        // CLI completes before it is serviced -- not immediately
+        // after CLI itself. Without `i_poll_latch`, `poll_interrupts`
+        // reads the live post-write `flags.i` and services the IRQ a
+        // full instruction early.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0x58, 0xEA, 0xEA]); // CLI ; NOP ; NOP
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.flags.i = true;
+        cpu.i_poll_latch = true;
+        cpu.irq_line_low = true;
+
+        let cli_cycles = run_one(&mut cpu, &mut bus);
+        assert_eq!(cli_cycles, 2, "CLI is a 2-cycle instruction");
+        assert!(!cpu.flags.i, "CLI clears I on its own final cycle");
+        assert_eq!(
+            pending_name(&cpu),
+            None,
+            "the pending IRQ must NOT be serviced immediately after CLI"
+        );
+        assert_eq!(cpu.regs.pc, 0x0201, "next fetch must be the NOP, not the IRQ vector");
+
+        // The NOP right after CLI must execute BEFORE the IRQ is taken.
+        run_one(&mut cpu, &mut bus);
+        assert_eq!(cpu.regs.pc, 0x0202, "the NOP executed first");
+        assert_eq!(
+            pending_name(&cpu),
+            Some("IRQ"),
+            "the deferred IRQ is serviced at the boundary after the NOP"
         );
     }
 
@@ -6407,5 +6495,326 @@ mod cpu_coverage_tests {
         assert_eq!(pushed & 0x10, 0x10, "BRK sets B in the pushed status");
         assert_eq!(pushed, 0x31);
         assert!(cpu.flags.i, "BRK sets I after pushing status");
+    }
+
+    // ---- Gap 7: the `None` fallback must skip the real instruction
+    // length for opcodes with no `OPCODES` entry, not a flat +1 ----
+
+    #[test]
+    fn none_fallback_opcodes_advance_pc_by_real_instruction_length() {
+        // TAS $1234,Y (0x9B) has no `Instruction` table entry, so it
+        // falls into the defensive `None` arm. It is a 3-byte
+        // instruction; before the fix, that arm always advanced PC by
+        // exactly one more byte past the opcode fetch (i.e. treated
+        // every unmodeled opcode as 2 bytes total), leaving PC
+        // pointing at TAS's own second operand byte instead of the
+        // real next instruction.
+        let mut tas = parts();
+        let mut tas_bus = tas.bus();
+        load_prog(&mut tas_bus, 0x0200, &[0x9B, 0x34, 0x12, 0xEA]);
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        run_one(&mut cpu, &mut tas_bus);
+        assert_eq!(
+            cpu.regs.pc, 0x0203,
+            "TAS is 3 bytes; PC must land on the real next instruction"
+        );
+        run_one(&mut cpu, &mut tas_bus);
+        assert_eq!(cpu.regs.pc, 0x0204, "the following NOP must decode cleanly");
+
+        // KIL/JAM ($02) is a 1-byte instruction with no operand. The
+        // same flat +1 over-consumed a byte here too, swallowing the
+        // start of the next real instruction.
+        let mut kil = parts();
+        let mut kil_bus = kil.bus();
+        load_prog(&mut kil_bus, 0x0300, &[0x02, 0xEA]);
+        let mut cpu2 = Cpu::new();
+        cpu2.regs.pc = 0x0300;
+        run_one(&mut cpu2, &mut kil_bus);
+        assert_eq!(
+            cpu2.regs.pc, 0x0301,
+            "KIL/JAM is 1 byte; must not swallow the following opcode"
+        );
+    }
+    // ---- Gap 8: CLI/SEI/PLP interrupt-poll latency (the
+    // `i_poll_latch` field) ----
+    //
+    // Real 6502 hardware decides whether to service an interrupt
+    // BEFORE an instruction's final cycle, but CLI/SEI/PLP write
+    // `flags.i` ON that final cycle. The mask they write is therefore
+    // invisible to that decision: the change takes effect one whole
+    // instruction later. blargg's `cpu_interrupts_v2/1-cli_latency`
+    // is the canonical ROM; these are the equivalent cycle-level unit
+    // assertions, which the repo can run without the ROM.
+    //
+    // Every setup below reaches its state through the real per-cycle
+    // pipeline (`Cpu::tick`) — none of these tests writes
+    // `i_poll_latch` directly — so each assertion is a claim about
+    // observable CPU behaviour, not a restatement of the
+    // implementation. Two of them (RTI, interrupt re-entry) are
+    // deliberate negative controls that must hold with OR without the
+    // latch: they fail if the deferral is ever over-applied.
+
+    /// Run the interrupt sequence the CPU has already latched and
+    /// report `(cycles, pushed_return_address, pushed_status)`. The
+    /// pushed return address is the load-bearing receipt: it names
+    /// exactly which instruction boundary the interrupt was taken at.
+    fn run_pending_interrupt(cpu: &mut Cpu, bus: &mut SystemBus) -> (u32, u16, u8) {
+        let sp = cpu.regs.sp;
+        let hi_addr = 0x0100 | (sp as u16);
+        let lo_addr = 0x0100 | (sp.wrapping_sub(1) as u16);
+        let status_addr = 0x0100 | (sp.wrapping_sub(2) as u16);
+        let cycles = run_one(cpu, bus);
+        let ret =
+            ((bus.peek_byte(hi_addr) as u16) << 8) | (bus.peek_byte(lo_addr) as u16);
+        (cycles, ret, bus.peek_byte(status_addr))
+    }
+
+    #[test]
+    fn irq_poll_latency_cli_defers_service_by_one_instruction() {
+        // A device holds the IRQ line low while I is set. CLI clears I
+        // on its own final cycle, so the poll at that same boundary
+        // still sees the OLD (masked) value and the IRQ waits for the
+        // instruction AFTER CLI to finish.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0xEA, 0x58, 0xEA, 0xEA]); // NOP ; CLI ; NOP ; NOP
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.sp = 0xFD;
+        cpu.flags.i = true;
+        cpu.set_irq_line_low(true);
+
+        // Prime the poll pipeline through the real per-cycle path.
+        assert_eq!(run_one(&mut cpu, &mut bus), 2, "NOP is 2 cycles");
+        assert_eq!(pending_name(&cpu), None, "a masked IRQ stays masked");
+
+        assert_eq!(run_one(&mut cpu, &mut bus), 2, "CLI is 2 cycles");
+        assert!(!cpu.flags.i, "CLI cleared I on its own final cycle");
+        assert_eq!(
+            pending_name(&cpu),
+            None,
+            "the IRQ must NOT be serviced at CLI's own boundary"
+        );
+        assert_eq!(cpu.regs.pc, 0x0202, "next fetch is the NOP, not the vector");
+
+        run_one(&mut cpu, &mut bus); // the NOP after CLI runs first
+        assert_eq!(cpu.regs.pc, 0x0203, "the post-CLI NOP executed");
+        assert_eq!(
+            pending_name(&cpu),
+            Some("IRQ"),
+            "the deferred IRQ is serviced one instruction later"
+        );
+
+        let (cycles, ret, status) = run_pending_interrupt(&mut cpu, &mut bus);
+        assert_eq!(cycles, 7, "IRQ entry is 7 cycles");
+        assert_eq!(
+            ret, 0x0203,
+            "pushed return address pins the boundary: after the post-CLI NOP \
+             ($0203), not after CLI itself ($0202)"
+        );
+        assert_eq!(status & 0x10, 0, "a hardware IRQ pushes B clear");
+        assert!(cpu.flags.i, "IRQ entry masks further IRQs");
+    }
+
+    #[test]
+    fn irq_poll_latency_sei_cannot_mask_an_irq_pending_at_its_final_cycle() {
+        // The other half of the quirk, and the half the deferral test
+        // above cannot reach: if the line is already low when hardware
+        // decides, SEI's own I write comes too late to stop it — the
+        // IRQ is still taken at SEI's boundary. Implementations that
+        // read the live `flags.i` swallow this interrupt entirely.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0x78, 0xEA]); // SEI ; NOP
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.sp = 0xFD;
+        cpu.flags.i = false; // interrupts enabled...
+
+        assert!(
+            !cpu.tick(&mut bus),
+            "SEI cycle 1 (opcode fetch) does not complete the instruction"
+        );
+        // ...and the device asserts IRQ during SEI, before the poll.
+        cpu.set_irq_line_low(true);
+
+        assert!(cpu.tick(&mut bus), "SEI completes on cycle 2");
+        assert!(cpu.flags.i, "SEI set I on its final cycle");
+        assert_eq!(
+            pending_name(&cpu),
+            Some("IRQ"),
+            "SEI cannot retroactively mask an IRQ already pending at its \
+             own final cycle"
+        );
+
+        let (cycles, ret, _status) = run_pending_interrupt(&mut cpu, &mut bus);
+        assert_eq!(cycles, 7, "IRQ entry is 7 cycles");
+        assert_eq!(
+            ret, 0x0201,
+            "IRQ taken at SEI's own boundary — the following NOP has not run"
+        );
+    }
+
+    #[test]
+    fn irq_poll_latency_plp_defers_service_like_cli() {
+        // PLP writes the whole status byte — I included — on its own
+        // final cycle (`plp_finish`), so it carries the same one-
+        // instruction latency as CLI.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0xEA, 0x28, 0xEA, 0xEA]); // NOP ; PLP ; NOP ; NOP
+        bus.write_byte(0x01FE, 0x20); // status to pull: I clear, unused set
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.sp = 0xFD; // PLP increments SP, then pulls from $01FE
+        cpu.flags.i = true;
+        cpu.set_irq_line_low(true);
+
+        assert_eq!(run_one(&mut cpu, &mut bus), 2, "NOP is 2 cycles");
+        assert_eq!(pending_name(&cpu), None, "a masked IRQ stays masked");
+
+        assert_eq!(run_one(&mut cpu, &mut bus), 4, "PLP is 4 cycles");
+        assert!(!cpu.flags.i, "PLP pulled a status byte with I clear");
+        assert_eq!(
+            pending_name(&cpu),
+            None,
+            "the IRQ must NOT be serviced at PLP's own boundary"
+        );
+
+        run_one(&mut cpu, &mut bus); // the NOP after PLP runs first
+        assert_eq!(
+            pending_name(&cpu),
+            Some("IRQ"),
+            "the deferred IRQ is serviced one instruction later"
+        );
+        let (_cycles, ret, _status) = run_pending_interrupt(&mut cpu, &mut bus);
+        assert_eq!(
+            ret, 0x0203,
+            "pushed return address pins the boundary: after the post-PLP NOP"
+        );
+    }
+
+    #[test]
+    fn irq_poll_latency_rti_restores_i_with_no_delay() {
+        // NEGATIVE CONTROL — must pass with OR without `i_poll_latch`.
+        // blargg: "RTI affects IRQ inhibition immediately." RTI pulls
+        // the status byte three cycles before it ends, so the restored
+        // mask IS visible to the boundary poll. A deferral that
+        // over-applied here would strand every level-held mapper IRQ
+        // for an extra instruction on every handler return.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0xEA, 0x40]); // NOP ; RTI
+        bus.write_byte(0x01FB, 0x20); // pulled status: I clear
+        bus.write_byte(0x01FC, 0x00); // return address low
+        bus.write_byte(0x01FD, 0x03); // return address high -> $0300
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.sp = 0xFA;
+        cpu.flags.i = true;
+        cpu.set_irq_line_low(true);
+
+        assert_eq!(run_one(&mut cpu, &mut bus), 2, "NOP is 2 cycles");
+        assert_eq!(pending_name(&cpu), None, "a masked IRQ stays masked");
+
+        assert_eq!(run_one(&mut cpu, &mut bus), 6, "RTI is 6 cycles");
+        assert_eq!(cpu.regs.pc, 0x0300, "RTI returned to the pulled address");
+        assert!(!cpu.flags.i, "RTI restored a status with I clear");
+        assert_eq!(
+            pending_name(&cpu),
+            Some("IRQ"),
+            "RTI's I restore takes effect IMMEDIATELY — no one-instruction \
+             deferral"
+        );
+    }
+
+    #[test]
+    fn irq_entry_masks_a_held_line_and_does_not_re_enter() {
+        // NEGATIVE CONTROL — must pass with OR without `i_poll_latch`.
+        // A mapper IRQ holds the line low until the handler acks it.
+        // Entry sets I at cycle 4 of 7, so the latch has re-synced
+        // well before the entry sequence's own boundary poll. If it
+        // had not, the CPU would re-enter the handler at every
+        // boundary and drain the stack — the Crash 'n' the Boys
+        // failure class in KNOWN_ISSUES.md.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0000, &[0xEA, 0xEA, 0xEA]); // handler at the $FFFE vector
+        load_prog(&mut bus, 0x0200, &[0xEA]); // NOP
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.sp = 0xFD;
+        cpu.flags.i = false;
+        cpu.set_irq_line_low(true);
+
+        run_one(&mut cpu, &mut bus);
+        assert_eq!(pending_name(&cpu), Some("IRQ"), "unmasked IRQ is taken");
+
+        let (cycles, ret, _status) = run_pending_interrupt(&mut cpu, &mut bus);
+        assert_eq!(cycles, 7, "IRQ entry is 7 cycles");
+        assert_eq!(ret, 0x0201, "pushed return address is the next instruction");
+        assert!(cpu.flags.i, "entry set I");
+        assert_eq!(cpu.regs.sp, 0xFA, "entry pushed exactly three bytes");
+        assert_eq!(
+            pending_name(&cpu),
+            None,
+            "no re-entry at the entry sequence's own boundary"
+        );
+
+        for _ in 0..3 {
+            run_one(&mut cpu, &mut bus);
+            assert_eq!(
+                pending_name(&cpu),
+                None,
+                "the still-low line must stay masked inside the handler"
+            );
+        }
+        assert_eq!(cpu.regs.sp, 0xFA, "stack did not drain");
+    }
+
+    #[test]
+    fn irq_poll_latency_survives_a_mid_cli_savestate_round_trip() {
+        // `i_poll_latch` is deliberately NOT serialized; `apply_state`
+        // re-derives it from `state.flags.i`. That is only sound
+        // because the latch and the live flag can never disagree in
+        // any externally observable state (CLI/SEI/PLP write I and
+        // poll in the same cycle). Pin it: snapshot mid-CLI, restore
+        // into a fresh CPU, and the deferral must still happen. This
+        // is the savestate class that silently killed Zelda (MMC1
+        // restore write-drop) — a re-derived field that gets the
+        // derivation wrong is invisible until a run is already lost.
+        let mut p = parts();
+        let mut bus = p.bus();
+        load_prog(&mut bus, 0x0200, &[0x58, 0xEA, 0xEA]); // CLI ; NOP ; NOP
+        let mut cpu = Cpu::new();
+        cpu.regs.pc = 0x0200;
+        cpu.regs.sp = 0xFD;
+        cpu.flags.i = true;
+        cpu.set_irq_line_low(true);
+
+        assert!(!cpu.tick(&mut bus), "CLI cycle 1 (opcode fetch)");
+        let snapshot = cpu.get_state(); // mid-instruction: I still set
+
+        let mut restored = Cpu::new();
+        restored.apply_state(&snapshot);
+        assert!(restored.flags.i, "restored mid-CLI with I still set");
+
+        assert!(restored.tick(&mut bus), "CLI completes on cycle 2");
+        assert!(!restored.flags.i, "CLI cleared I");
+        assert_eq!(
+            pending_name(&restored),
+            None,
+            "the restored CPU must still defer the IRQ past CLI"
+        );
+
+        run_one(&mut restored, &mut bus);
+        assert_eq!(
+            pending_name(&restored),
+            Some("IRQ"),
+            "and take it one instruction later, exactly as the un-saved CPU does"
+        );
+        let (_cycles, ret, _status) = run_pending_interrupt(&mut restored, &mut bus);
+        assert_eq!(ret, 0x0202, "pushed return address: after the post-CLI NOP");
     }
 }
