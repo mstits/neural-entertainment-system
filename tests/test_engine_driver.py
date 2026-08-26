@@ -1041,3 +1041,133 @@ def test_a_glob_argument_is_not_checked_as_a_path(tmp_path):
     a = _act(["scripts/s.py", "--glob", "runs/**/solutions/*.json"])
     ok, why = ed.validate_action(a, tmp_path)
     assert ok, why
+
+
+# ---- plan()'s decision table, pinned end to end (audit: legibility) ----
+
+def _park(tmp_path, tag):
+    """An in-progress campaign dir with no log: invisible to tiers 1, 3b
+    and 4 alike, so it cannot become anyone's candidate at any step."""
+    (tmp_path / "runs" / f"online_{tag}").mkdir(parents=True, exist_ok=True)
+
+
+def _put(tmp_path, rel, text="x"):
+    p = tmp_path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    return p
+
+
+def test_plan_priority_order_is_pinned_to_the_documented_table(tmp_path,
+                                                                monkeypatch):
+    """Walks every tier of plan()'s decision-table docstring, in order.
+
+    One synthesized state makes all nine tiers simultaneously runnable.
+    The test then crosses tiers off from the top exactly as `offer()`
+    would -- by completing an id, or by dropping the artifact a chained
+    sub-step needs -- and asserts the next winner is the next tier down.
+    If plan()'s real precedence ever stops matching the table at the top
+    of the function, THIS is the test that fails, not a human noticing
+    the docstring quietly went stale.
+    """
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    monkeypatch.setattr(ed, "load_average", lambda: 0.1)   # tier 2: quiet
+
+    rom = "roms/Super Mario Bros. (World).nes"
+    _put(tmp_path, rom)
+
+    # Every SMB level not deliberately wired into a tier below is
+    # parked, so it cannot contaminate which candidate wins at any step.
+    for level in ed.SMB_LEVELS:
+        if level not in ("1-1", "1-2", "1-4", "2-1"):
+            _park(tmp_path, ed.tag_of(level))
+
+    # eval_game.py is the script BOTH tier 1's honest-eval and tier 2c's
+    # shelf dispositions launch -- one stub, declared once, covers both.
+    _script(tmp_path, "eval_game.py",
+            ["--game", "--profile", "--rom", "--checkpoint", "--episodes",
+             "--max-steps", "--sequential", "--level-clear", "--start-state",
+             "--eval-seed", "--sticky-prob", "--start-jitter",
+             "--eval-workers", "--eval-rng"])
+
+    # --- Tier 1: 1-1's campaign ended and has never been scored. ---
+    (tmp_path / "runs" / "online_1_1").mkdir(parents=True)
+    (tmp_path / "runs" / "online_1_1" / "campaign.jsonl").write_text(
+        json.dumps({"type": "campaign_start"}) + "\n"
+        + json.dumps({"type": "campaign_complete"}) + "\n")
+    _put(tmp_path, "configs/mario_1_1_online_v1.yaml",
+         f'rom_path: "{rom}"\n'
+         'start_state_path: "checkpoints/start_states/1_1_entrance.state"\n')
+    _put(tmp_path, "checkpoints/start_states/1_1_entrance.state")
+    _put(tmp_path, "checkpoints/mario_1_1_online_v1/vanilla_ppo_iter_00000.pt")
+
+    # --- Tier 2: hazard_phase1, plus everything 2b's chain needs once
+    #     its own predecessor artifact exists. ---
+    _script(tmp_path, "hazard_collect.py",
+            ["--benchmark", "--profile", "--rom", "--states",
+             "--root-state", "--forks-per-state", "--out"])
+    _put(tmp_path, "configs/mario_1_2_online_v2.yaml", f'rom_path: "{rom}"\n')
+    (tmp_path / "checkpoints" / "online_1_2" / "restart_states").mkdir(
+        parents=True)
+    _put(tmp_path, "runs/engine/logs/hazard_phase1.log",
+         "... benchmark ...\nGATE: PASS\n")
+    _put(tmp_path, "runs/ge_1_2_div_s1/solutions/sol_000.actions.npy")
+    _put(tmp_path,
+         "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/"
+         "stage_03.state")
+    _script(tmp_path, "train_hazard.py", ["--data", "--out", "--gate"])
+
+    # --- Tier 2c: one shelf disposition (shelf_joint_1_1); the other
+    #     two self-skip on a missing profile, which is itself part of
+    #     what this tier is for and is covered by
+    #     test_shelf_dispositions_missing_files_are_journaled_not_silent. ---
+    _put(tmp_path, "configs/mario_1_1_backward.yaml", f'rom_path: "{rom}"\n')
+    _put(tmp_path, "runs/interference/joint.pt")
+    _put(tmp_path, "runs/live_show/smb_4_4_micro/entrance_start.state")
+
+    # --- Tier 3: replay_sweep_full. ---
+    _script(tmp_path, "replay_sweep.py", ["--glob", "--out"])
+
+    # --- Tier 3b: 2-1's campaign is interrupted and never scored. ---
+    _interrupted(tmp_path, "2_1")
+
+    # --- Tier 4: 1-2 has no config yet -- the first level in
+    #     SMB_LEVELS order once 1-1, 1-4 and 2-1 are excluded. ---
+    _script(tmp_path, "make_campaign_config.py", ["--level"])
+
+    # --- Tier 4b: 1-4's campaign is interrupted, but ALREADY scored. ---
+    _interrupted(tmp_path, "1_4")
+    _scored(tmp_path, "1_4")
+
+    # --- Tier 5: suite_check. ---
+    _script(tmp_path, "run_suite_check.py", ["--out", "--timeout"])
+
+    state = {"completed": {}, "attempts": {}, "last_run": {}}
+
+    def step(expect_prefix):
+        a = ed.plan(state, tmp_path)
+        assert a is not None and a.id.startswith(expect_prefix), \
+            f"expected an id starting {expect_prefix!r}, got {a}"
+        state["completed"][a.id] = {"status": "ok"}
+        return a
+
+    step("honest_eval_1_1_seed7")
+    step("honest_eval_1_1_seed101")
+    step("hazard_phase1")
+    step("hazard_collect_full")
+    _put(tmp_path, "runs/engine/hazard_labels.npz")          # 2b's output
+    step("hazard_phase2_train")
+    _put(tmp_path, "runs/engine/hazard/hazard_report.json")  # closes 2b
+    step("shelf_joint_1_1_seed7")
+    step("shelf_joint_1_1_seed101")
+    step("replay_sweep_full")
+    step("resume_2_1_phase5")
+    step("config_1_2")
+    step("resume_1_4_phase5")
+    step("suite_check")
+
+    # The fixture is exhaustive, not just the cascade: silence
+    # suite_check's own recurring cooldown and confirm nothing else was
+    # left standing underneath it.
+    state["last_run"]["suite_check"] = time.time()
+    assert ed.plan(state, tmp_path) is None

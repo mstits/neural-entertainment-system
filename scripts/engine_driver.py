@@ -707,6 +707,86 @@ def plan(state: dict, repo: Path = REPO,
     starting anything new, then the cheap gated research step, then extend
     the level pipeline. Extending last is what keeps three weeks of work
     available without ever letting half-finished work rot.
+
+    DECISION TABLE. Every tier below is one run of `candidates.append(...)`
+    further down this function, in this exact order; `offer()` then
+    returns the first candidate that is genuinely runnable (not already
+    done, not quiet-gated, not past its recurring cooldown, and cleared
+    by `validate_action`). The order is NOT a sort key over a uniform row
+    shape -- each tier's guard is its own function of on-disk state, and
+    several tiers exist ONLY because an earlier tier left an artifact
+    behind. That is why this is a comment enumerating priority rather
+    than a table literal the code consumes: flattening it into one would
+    either fake an independence these tiers do not have, or wrap each
+    guard in a closure that hides the same logic one layer deeper -- the
+    exact failure mode this table exists to prevent.
+    `test_plan_priority_order_is_pinned_to_the_documented_table` in
+    tests/test_engine_driver.py drives one synthesized state through
+    every tier boundary below, so reordering a tier here without an
+    equal change there is a test failure, not a silent drift.
+
+      1.  FINISH what already started. Any level whose campaign ended
+          (complete/abort/kill) and has no CURRENT honest eval gets
+          scored next, before anything new is considered. Judging a
+          result outranks starting another one.
+
+      2.  hazard_phase1 (benchmark, needs_quiet). The Phase-1 throughput
+          gate three converged DR rounds sit downstream of. Guarded by
+          `machine_quiet()` because this exact action once ran twelve
+          minutes after a 13-hour campaign and measured 100.1 steps/s
+          against a 1,000 kill threshold; the same command on a settled
+          machine measured 2,318.6 -- a false KILL purely from timing.
+
+      2b. hazard_collect_full, then hazard_phase2_train -- each offered
+          ONLY once the step before it left its artifact on disk (log
+          says "GATE: PASS" -> collect; hazard_labels.npz exists ->
+          train), so the gate order is enforced by construction rather
+          than by a priority number that could drift out of sync with
+          which artifact actually exists. `--out` for train_hazard must
+          be the directory, not a `.pt` path -- naming it wrong once
+          recorded a C-index-0.917 PASS as a failure and armed the
+          circuit breaker.
+
+      2c. Shelf dispositions. Signals nearly left on the table (the
+          interference joint checkpoint scored 0.52 on 1-1 vs the
+          specialist's 0.43, filed under a negative headline) get their
+          owed >=100-episode answer here. A missing profile self-reports
+          into `skipped` before ever reaching `offer()` -- unlike every
+          other tier, silence here would be indistinguishable from an
+          owed answer quietly vanishing.
+
+      3.  replay_sweep_full. Verify the banked exhibition corpus once.
+
+      3b. Resume campaigns interrupted without recording an end -- but
+          ONLY for levels not yet scored. An unscored level's
+          interrupted campaign IS the next result; a scored level's is
+          speculative re-consolidation, deferred to 4b. The split exists
+          because 1-4, already banked at 51%, once held the machine four
+          hours resuming ahead of the hazard gate and 2-2's pipeline
+          under an undifferentiated rule -- and speculative resumption
+          is not free of downside either: 2-1's own re-consolidation
+          collapsed it (median 2596 -> 1171, ending 0/100).
+
+      4.  Extend the pipeline: onboard a level that has a validated
+          config but no campaign yet, or launch a level's campaign once
+          ITS ladder, dmap and BC anchor -- not just a config -- exist on
+          disk. `config_2_2` once produced both configs for a level with
+          neither: offering that level's campaign aborted in preflight
+          and burned an attempt for nothing, so "has a config" was
+          demoted from "is ready."
+
+      4b. Deferred resumes: the scored levels' interrupted campaigns
+          from 3b, now that unscored work and fresh onboarding both had
+          first claim. Deferred, never discarded -- re-consolidation is
+          a real experiment; it is what raised 1-4 from 51% to 63.3%.
+
+      5.  suite_check (recurring maintenance). LAST, always. It used to
+          run first, which meant it outranked 2-1's honest eval the
+          instant that campaign completed -- the engine choosing
+          housekeeping over the result it exists to produce. Cheap,
+          needs no emulator, and its recurring cooldown keeps it from
+          crowding out everything above it once there is genuinely
+          nothing else to do.
     """
     done = state.get("completed", {})
     skipped: list[str] = []
