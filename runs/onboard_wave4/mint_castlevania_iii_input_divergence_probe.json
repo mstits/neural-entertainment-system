@@ -1,0 +1,41 @@
+{
+  "rom": "Castlevania III - Dracula's Curse (USA).nes",
+  "state_path": "/Users/stits/Documents/macos-emulation-and-training/roms/Castlevania III - Dracula's Curse (USA)_start.state.bin",
+  "presses_used": [
+    "START",
+    "START",
+    "A",
+    "START"
+  ],
+  "attempts": [
+    {
+      "attempt": 1,
+      "button": "START",
+      "step_after": 194
+    },
+    {
+      "attempt": 2,
+      "button": "START",
+      "step_after": 298
+    },
+    {
+      "attempt": 3,
+      "button": "A",
+      "step_after": 372
+    },
+    {
+      "attempt": 4,
+      "button": "START",
+      "step_after": 446
+    }
+  ],
+  "liveness": {
+    "probe": "save state; 120 frames RIGHT vs LEFT vs A vs NOOP; compare RAM",
+    "right_vs_left_bytes": 5,
+    "right_vs_noop_bytes": 5,
+    "left_vs_noop_bytes": 4,
+    "a_vs_noop_bytes": 4,
+    "ram_size": 2048
+  },
+  "verdict": "STATIC/DEMO \u2014 not saved, needs more presses or different sequence"
+}

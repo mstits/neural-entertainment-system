@@ -1,0 +1,23 @@
+{
+  "rom": "roms/DuckTales 2 (USA).nes",
+  "rom_md5": "ee092394b1e64b8bee7ca54c3dc7faad",
+  "state_path": "roms/DuckTales 2 (USA)_start.state.bin",
+  "status": "MINTED",
+  "method": "scripts/capture_start_state.py --rom ... --out ... (generic mash schedule: START,START,A,START pulses) FALSE-POSITIVED on the world-map LAND SELECT screen (frame 330) — that screen is directionally controllable (cursor over the globe) so the tool's own RIGHT-vs-LEFT divergence heuristic passed on a menu, not gameplay. Caught by rendering the captured frame ('WHERE TO, UNCLE SCROOGE?' land-select prompt visible) before trusting it. Re-navigated manually: continued mashing A/NOOP (6-on/14-off pulses, same cadence as the tool's own schedule) through the location banner, the scrolling flavor-text box, and the 'DO YOU WANT TO GO THERE, UNCLE SCROOGE? YES' confirm (fires ~frame 900), landing in NIAGARA level gameplay by frame ~1200; character auto-walk-in settles by frame ~1800. Final state captured at frame 1900 (extra settle margin past the walk-in).",
+  "presses_used": "A-pulse mash (6-on/14-off cadence) x1900 frames, no directional input used at any point during capture",
+  "frames_from_boot": 1900,
+  "state_bytes": 21165,
+  "liveness": {
+    "probe": "load candidate state into fresh NESEnvironment; 120f hold RIGHT vs reload+120f hold LEFT vs base (no input); diff full 2KB RAM ($0000-$07FF)",
+    "right20_vs_base_ram_bytes": 210,
+    "right120_vs_base_ram_bytes": 388,
+    "left120_vs_base_ram_bytes": 146,
+    "right120_vs_left120_ram_bytes": 405,
+    "growth_check": "right20=210 -> right120=388: still increasing, not a saturated menu cursor",
+    "directionality_check": "right120 vs left120 = 405 bytes differ: RIGHT and LEFT lead to materially different RAM, i.e. input-driven gameplay not a scripted cutscene"
+  },
+  "visual_check": "frame rendered from the final state: live gameplay screen - Niagara Falls level, Scrooge McDuck sprite standing on rocks, HUD shows $ (money) 0, HP hearts x3, TOTAL 0, P.2 (lives); this is NOT the title/land-select/dialogue screen (screenshots of the frame at capture-tool's frame 330 and this frame are visually distinct: menu shows a rotating globe map + text box, this shows in-level side-view platforming terrain)",
+  "verdict": "LIVE - inputs control the game; not a menu/demo false positive",
+  "minted_utc": "2026-08-25",
+  "note_for_pipeline": "the generic capture_start_state.py tool is not safe to trust on games with an animated, directionally-navigable land-select/world-map screen (DuckTales-family games in particular) without a visual check of the captured frame -- it will pass the divergence heuristic on the menu itself"
+}

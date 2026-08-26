@@ -1,0 +1,65 @@
+name: "Mega Man (USA)"
+
+rom_path: "roms/Mega Man (USA).nes"
+rom_hashes:
+  - "4d4ffdfe7979b5f06dec2cf3563440ad"
+start_state_path: "roms/Mega Man (USA)_start.state.bin"
+
+description: |
+  Mega Man (NES, 1987), onboarding profile (wave 4, 2026-08-25). This is
+  the ORIGINAL Mega Man 1 ROM (distinct from configs/megaman.yaml, which
+  is Mega Man 2 — DEFAULT_ROMS maps the bare "megaman"/"mega_man" game
+  key to MM2, so this profile carries its own explicit rom_path/name).
+  Structure copied from configs/paperboy.yaml; no game knowledge encoded
+  — generic controller, odometer progress source.
+
+  Start state: roms/Mega Man (USA)_start.state.bin, minted this session
+  by scripts/capture_start_state.py's generic title/menu masher (no
+  game-specific navigation script needed — MM1's title -> stage-select
+  -> A confirms a highlighted stage flow falls out of the masher's
+  START/START/A/START pulse cycle). Gameplay confirmed at frame 735
+  (+40 settle). Liveness verified by input-divergence probe from a
+  fresh pool: right_vs_left_120f=169, right_vs_noop_120f=162,
+  left_vs_noop_120f=85 RAM bytes (2KB range) — directional input moves
+  the player and RIGHT/LEFT diverge from each other, so this is live
+  gameplay, not a demo/menu. Receipt:
+  runs/onboard_wave4/mint_mega_man_usa.json.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Mega Man (USA).nes"
+  # Odometer gate (runs/onboard_wave4/gate_mega_man_usa_right.json):
+  # --forward right, 1200 steps, 51 distinct, range 0..72, oam_churn
+  # 1080/1199 -> PASS "SIGNAL SOUND — still advancing". No RAM-derived
+  # progress byte was isolated by discover_observables.py (room counter:
+  # none, progress candidates: none), so the odometer is the only
+  # forward-progress signal and drives the search.
+  progress: {source: odometer, axis: x}
+  # y / lives from scripts/discover_observables.py's 3-probe protocol
+  # against this exact start state (receipt
+  # runs/onboard_wave4/discover_mega_man_usa.json). No RAM map, no
+  # disassembly, no walkthrough.
+  #   $00F4  y candidate (jump/ballistic signature), sole candidate found.
+  #   $0410  lives candidate: decrements by 1 on death, agreed by 5 of 5
+  #          independent probe runs.
+  y: 0x00F4
+  lives: 0x0410
+  level_key: []   # coverage baseline; no stage/room-advance byte captured yet

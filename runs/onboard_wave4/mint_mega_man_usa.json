@@ -1,0 +1,12 @@
+{
+  "rom": "roms/Mega Man (USA).nes",
+  "state_path": "roms/Mega Man (USA)_start.state.bin",
+  "state_bytes": 21165,
+  "liveness": {
+    "probe": "load state; 120 frames RIGHT vs LEFT vs A vs NOOP; compare 2KB RAM",
+    "right_vs_left_120f": 169,
+    "right_vs_noop_120f": 162,
+    "a_vs_noop_120f": 2,
+    "left_vs_noop_120f": 85
+  }
+}

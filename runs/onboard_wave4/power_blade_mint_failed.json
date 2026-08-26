@@ -1,0 +1,35 @@
+{
+  "rom": "roms/Power Blade (USA).nes",
+  "status": "mint_failed",
+  "reason": "Never reached a responsive live-gameplay state within a reasonable probe budget. Boot mash (START/A/B, two passes, 13 presses total across frames 0-1076) walked: title screen (static, low OAM churn) -> a Mega-Man-style stage-select grid screen (visually confirmed, runs/onboard_wave4/pb_cp8.png) -> after further A/START presses, a screen that visually resembles level gameplay (player sprite standing on a platform with ladders + populated HUD: weapon icon, life gauge, score digits; runs/onboard_wave4/pb_sel4.png). From that checkpoint every liveness probe came back inert: RIGHT/LEFT/UP/DOWN/A/B held 120f each are byte-identical to NOOP on 2KB RAM (2 bytes changed, matching NOOP-vs-NOOP background churn) and identical on peek_oam (0 bytes); holding RIGHT for 1500 frames (~25s) leaves peek_max_x_per_worker pinned at a constant 4096 and the PPU-scroll odometer pinned at (0,0); num_dead stays 0 throughout (not a death/game-over freeze). The only thing that changes under NOOP alone is a cluster of $0200-$02FF (OAM shadow) bytes cycling every frame -- background/decorative sprite animation independent of input, not the player. This is the signature of a non-interactive scripted screen (attract/demo loop or an unskippable pre-level card) rather than a fidelity bug: identical probe method (input-divergence: right-vs-left-vs-A-vs-noop RAM+OAM diff) verified live control on Blaster Master, Paperboy, Bionic Commando, Batman, 1942 etc. in wave 2/3 with far larger divergence (46-401+ bytes). No start state was banked (no roms/Power Blade (USA)_start.state.bin file written to the tracked tree) so a bad/non-interactive state is not forced through the odometer gate or solver smoke.",
+  "probe_summary": {
+    "boot_mash_pattern": ["START","START","A","START","START","A","START","B","START","A","START","A","START","A"],
+    "frames_from_boot_to_candidate": 1076,
+    "stage_select_screen_confirmed_visually": true,
+    "post_select_screen_confirmed_visually_gameplay_like": true,
+    "liveness_probe": {
+      "method": "load candidate state; hold each of RIGHT/LEFT/UP/DOWN/A/B/NOOP for 120 frames independently from the same reload; diff full 2KB RAM + peek_oam(0) pairwise",
+      "right_vs_left_ram_diff_bytes": 2,
+      "right_vs_left_oam_diff_bytes": 0,
+      "a_vs_noop_ram_diff_bytes": 2,
+      "a_vs_noop_oam_diff_bytes": 0,
+      "right_vs_noop_ram_diff_bytes": 2,
+      "long_hold_check": {
+        "input": "RIGHT x1500 frames (~25s)",
+        "max_x_before": 4096,
+        "max_x_after": 4096,
+        "odometer_before": [0, 0],
+        "odometer_after": "pinned (0,0) throughout",
+        "num_dead_before": 0,
+        "num_dead_after": 0
+      },
+      "noop_only_churn": "79 bytes changed frame-to-frame, entirely within $0200-$02FF (OAM shadow page) -- decorative/background sprite cycling, independent of any button held"
+    }
+  },
+  "images": [
+    "runs/onboard_wave4/pb_cp8.png (stage-select grid)",
+    "runs/onboard_wave4/pb_sel4.png (candidate post-select screen, unresponsive to all inputs)"
+  ],
+  "conclusion": "mint_failed -- candidate post-menu screen never became interactive within budget (13 boot presses + 6-way 120f hold probe + a 1500-frame single-direction hold, all inert). Classifying as an unskippable scripted/demo screen rather than forcing this state into the odometer gate / solver smoke.",
+  "checked_utc": "2026-08-25"
+}

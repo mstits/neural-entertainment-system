@@ -1,0 +1,138 @@
+{
+  "rom": "roms/Mega Man (USA).nes",
+  "state": "roms/Mega Man (USA)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": null,
+    "candidates": [],
+    "recommended": null
+  },
+  "room_counters": [],
+  "y": [
+    {
+      "addr": 244,
+      "base": 2,
+      "mode": 0,
+      "max_dev": 50,
+      "range": 52,
+      "distinct": 7,
+      "frac_at_mode": 0.55,
+      "score": 28.7
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 1040,
+    "start": 0,
+    "detail": {
+      "addr": 1040,
+      "start": 0,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 0,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "moves_while_idle": false,
+      "mirrors": [
+        1668
+      ]
+    },
+    "lives_candidates": [
+      {
+        "addr": 1040,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          1668
+        ]
+      },
+      {
+        "addr": 1400,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 31,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 4,
+        "runs_watched": 5,
+        "spends": 4,
+        "refilled_runs": 4,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 1672,
+        "start": 0,
+        "drop": 2,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          1673,
+          1676
+        ]
+      },
+      {
+        "addr": 766,
+        "start": 3,
+        "drop": 3,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 4,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 166,
+        "value": 2,
+        "mirrors": 24,
+        "hud_run": 2,
+        "churn": 1.67
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 40
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  }
+}

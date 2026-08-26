@@ -1,0 +1,361 @@
+{
+  "rom": "roms/Journey to Silius (USA).nes",
+  "state": "roms/Journey to Silius (USA)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": 48,
+    "candidates": [
+      {
+        "lo": 49,
+        "hi": 48,
+        "kind": "pair",
+        "label": "$0031|$0030<<8",
+        "wrap_coupled": 37,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 12528,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": true,
+        "sat_cap_tail_len": 708,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 78,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 16348,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      },
+      {
+        "lo": 253,
+        "hi": 48,
+        "kind": "pair",
+        "label": "$00FD|$0030<<8",
+        "wrap_coupled": 6,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 783,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": true,
+        "sat_cap_tail_len": 708,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 78,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 16381,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      },
+      {
+        "lo": 60,
+        "hi": null,
+        "kind": "single",
+        "label": "$003C",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 192,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": true,
+        "sat_cap_tail_len": 710,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 78,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 208,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      },
+      {
+        "lo": 48,
+        "hi": null,
+        "kind": "single",
+        "label": "$0030",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 48,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": true,
+        "sat_cap_tail_len": 711,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 78,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 63,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      },
+      {
+        "lo": 54,
+        "hi": null,
+        "kind": "single",
+        "label": "$0036",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 48,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": true,
+        "sat_cap_tail_len": 711,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 78,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 63,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      },
+      {
+        "lo": 74,
+        "hi": null,
+        "kind": "single",
+        "label": "$004A",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 48,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": true,
+        "sat_within_room_cap": true,
+        "sat_cap_tail_len": 710,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 78,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 79,
+        "sat_never_rose": false,
+        "saturates": true,
+        "camera_clamp": true
+      }
+    ],
+    "recommended": {
+      "lo": 48,
+      "hi": null,
+      "label": "$0030",
+      "as_progress": "$0030 (room counter \u2014 spatial $0031|$0030<<8 SATURATES / camera-clamp)",
+      "spatial_saturator": "$0031|$0030<<8",
+      "spatial_cap": 16348,
+      "saturates": false,
+      "kind": "room_counter_fallback"
+    }
+  },
+  "room_counters": [
+    {
+      "addr": 48,
+      "rebase_hits": 0,
+      "steps": 78,
+      "distinct": 49,
+      "role": "progress_page_as_screen_counter",
+      "values": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ]
+    }
+  ],
+  "y": [
+    {
+      "addr": 3,
+      "base": 164,
+      "mode": 164,
+      "max_dev": 58,
+      "range": 58,
+      "distinct": 12,
+      "frac_at_mode": 0.71,
+      "score": 41.2
+    },
+    {
+      "addr": 23,
+      "base": 176,
+      "mode": 176,
+      "max_dev": 53,
+      "range": 53,
+      "distinct": 12,
+      "frac_at_mode": 0.71,
+      "score": 37.7
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 185,
+    "start": 0,
+    "detail": {
+      "addr": 185,
+      "start": 0,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "moves_while_idle": false,
+      "mirrors": [
+        240,
+        379,
+        380
+      ]
+    },
+    "lives_candidates": [
+      {
+        "addr": 185,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          240,
+          379,
+          380
+        ]
+      },
+      {
+        "addr": 309,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          1453
+        ]
+      },
+      {
+        "addr": 10,
+        "start": 2,
+        "drop": 2,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          246,
+          566,
+          570,
+          574,
+          578
+        ]
+      },
+      {
+        "addr": 1,
+        "start": 3,
+        "drop": 3,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 298,
+        "start": 8,
+        "drop": 8,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 384,
+        "value": 15,
+        "mirrors": 35,
+        "hud_run": 32,
+        "churn": 0.0
+      },
+      {
+        "addr": 388,
+        "value": 15,
+        "mirrors": 35,
+        "hud_run": 32,
+        "churn": 0.0
+      },
+      {
+        "addr": 392,
+        "value": 15,
+        "mirrors": 35,
+        "hud_run": 32,
+        "churn": 0.0
+      },
+      {
+        "addr": 396,
+        "value": 15,
+        "mirrors": 35,
+        "hud_run": 32,
+        "churn": 0.0
+      },
+      {
+        "addr": 400,
+        "value": 15,
+        "mirrors": 35,
+        "hud_run": 32,
+        "churn": 0.0
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 70
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  }
+}

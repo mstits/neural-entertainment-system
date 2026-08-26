@@ -1,0 +1,78 @@
+name: "Journey to Silius"
+
+rom_path: "roms/Journey to Silius (USA).nes"
+rom_hashes:
+  - "407b5151f2642523cba218f927926e9c"
+start_state_path: "roms/Journey to Silius (USA)_start.state.bin"
+
+description: |
+  Journey to Silius (NES), onboarding profile (wave 4, 2026-08-25).
+  Structure copied from configs/paperboy.yaml; no game knowledge
+  encoded — generic controller, odometer progress source.
+  Start state: roms/Journey to Silius (USA)_start.state.bin, minted
+  this session via scripts/capture_start_state.py (menu-mash driver,
+  gameplay confirmed at frame 315, +40 settle; receipt
+  runs/onboard_wave4/silius_mint.log).
+
+  INSTRUMENT NOTE: the default Pool (disable_asm_cpu=False) produces
+  a flat odometer for this title regardless of which button is held
+  (right/left/up/down/A all identical, range x=0) — the known ASM-CPU
+  PPU/NMI-batching bug already on record for SMB. Verified against
+  nes_core.NESEnvironment (interpreter-only) and visually against
+  rendered frames: real scroll growth exists (odo_x 0->783 by
+  frame ~800 under held RIGHT). Every receipt below (gate/discover/
+  smoke) was produced with pool.set_disable_asm_cpu(True) patched in
+  post-construction via a throwaway driver script — no repo script
+  was edited. A permanent fix belongs in go_explore_solve.py's
+  apply_hw_flags path; out of scope for this onboarding pass.
+  Odometer gate (runs/onboard_wave4/gate_journey_to_silius_right_asmfix.json):
+  axis x, range 783 over 1200 forward-held steps, distinct 137,
+  oam_churn 842/1199 (agent clearly alive), tail flat under a naive
+  constant-RIGHT hold (behaviour finding, not instrument — the richer
+  action set clears it, see smoke below). Raw buggy receipt kept for
+  contrast: runs/onboard_wave4/gate_journey_to_silius_right.json.
+  y / lives / room-counter discovered by scripts/discover_observables.py's
+  3-probe protocol (same ASM-CPU workaround), receipt
+  runs/onboard_wave4/discover_journey_to_silius.json:
+    $0030  room/screen counter — monotone, non-saturating; NOT used
+           because the odometer is preferred (same reasoning as
+           rygar/paperboy/ninja_gaiden).
+    $0031|$0030<<8, $00FD|$0030<<8  spatial pairs — both flagged
+           CAMERA-CLAMP SATURATOR by the discovery tool.
+    $0003  y candidate (jump/ballistic signature).
+    $00B9  lives candidate, decrements on death (5/5 probe agreement);
+           reads 0 at the start state, so it reads more like a
+           deaths-counter than remaining-lives — not blocking, since
+           the smoke below is the actual arbiter and it never froze.
+  SOLVER SMOKE (runs/onboard_wave4/smoke_journey_to_silius, 4 workers,
+  2 min, seed 0, same ASM-CPU workaround): cells 1->789->1481 across
+  the two 60s windows (still climbing, frontier 1217/1481 open at the
+  end, best_score/max_gx_in_max_area 1249->2030 — well past the
+  783 plateau the naive gate hit). 0 solutions (expected; level_key
+  is the empty coverage baseline). Verdict SOUND_ADVANCING.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Journey to Silius (USA).nes"
+  progress: {source: odometer, axis: x}
+  y: 0x0003
+  lives: 0x00B9
+  level_key: []

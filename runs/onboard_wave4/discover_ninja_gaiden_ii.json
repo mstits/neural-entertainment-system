@@ -1,0 +1,193 @@
+{
+  "rom": "roms/Ninja Gaiden II - The Dark Sword of Chaos (USA).nes",
+  "state": "roms/Ninja Gaiden II - The Dark Sword of Chaos (USA)_start.state.bin",
+  "forward": "right",
+  "progress": {
+    "forward": "right",
+    "room_counter": null,
+    "candidates": [
+      {
+        "lo": 35,
+        "hi": null,
+        "kind": "single",
+        "label": "$0023",
+        "wrap_coupled": 0,
+        "gate1_rises_forward": true,
+        "gate1_flat_under_noop": true,
+        "reversible_bonus": false,
+        "net_forward": 64,
+        "mono_forward": 1.0,
+        "net_noop": 0,
+        "net_reverse": 0,
+        "sat_saturates": false,
+        "sat_within_room_cap": false,
+        "sat_cap_tail_len": 0,
+        "sat_rebases_at_transitions": 0,
+        "sat_n_transitions": 0,
+        "sat_player_active_in_tail": true,
+        "sat_observed_max": 192,
+        "sat_never_rose": true,
+        "saturates": false,
+        "camera_clamp": false
+      }
+    ],
+    "recommended": {
+      "lo": 35,
+      "hi": null,
+      "label": "$0023",
+      "kind": "spatial",
+      "as_progress": "$0023",
+      "saturates": false
+    }
+  },
+  "room_counters": [],
+  "y": [
+    {
+      "addr": 14,
+      "base": 153,
+      "mode": 184,
+      "max_dev": 81,
+      "range": 112,
+      "distinct": 10,
+      "frac_at_mode": 0.63,
+      "score": 70.7
+    },
+    {
+      "addr": 75,
+      "base": 27,
+      "mode": 31,
+      "max_dev": 27,
+      "range": 31,
+      "distinct": 9,
+      "frac_at_mode": 0.66,
+      "score": 20.4
+    }
+  ],
+  "hp_lives": {
+    "kind": "lives",
+    "addr": 76,
+    "start": 1,
+    "detail": {
+      "addr": 76,
+      "start": 1,
+      "drop": 1,
+      "runs_agreeing": 5,
+      "runs_watched": 5,
+      "spends": 5,
+      "refilled_runs": 5,
+      "reaches_empty": true,
+      "spends_its_stock": true,
+      "moves_while_idle": false,
+      "mirrors": []
+    },
+    "lives_candidates": [
+      {
+        "addr": 76,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 142,
+        "start": 0,
+        "drop": 1,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 5,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          1477,
+          1478,
+          1479
+        ]
+      },
+      {
+        "addr": 169,
+        "start": 1,
+        "drop": 1,
+        "runs_agreeing": 3,
+        "runs_watched": 5,
+        "spends": 3,
+        "refilled_runs": 0,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": []
+      },
+      {
+        "addr": 768,
+        "start": 4,
+        "drop": 4,
+        "runs_agreeing": 5,
+        "runs_watched": 5,
+        "spends": 5,
+        "refilled_runs": 3,
+        "reaches_empty": true,
+        "spends_its_stock": true,
+        "moves_while_idle": false,
+        "mirrors": [
+          769,
+          770,
+          771,
+          772,
+          773,
+          774,
+          775,
+          776
+        ]
+      },
+      {
+        "addr": 1809,
+        "start": 254,
+        "drop": 1,
+        "runs_agreeing": 3,
+        "runs_watched": 5,
+        "spends": 6,
+        "refilled_runs": 0,
+        "reaches_empty": false,
+        "spends_its_stock": false,
+        "moves_while_idle": false,
+        "mirrors": []
+      }
+    ],
+    "hp_candidates": [
+      {
+        "addr": 150,
+        "value": 5,
+        "mirrors": 6,
+        "hud_run": 2,
+        "churn": 0.0
+      },
+      {
+        "addr": 192,
+        "value": 8,
+        "mirrors": 3,
+        "hud_run": 2,
+        "churn": 0.0
+      }
+    ],
+    "death_evidence": {
+      "drives": 5,
+      "usable": 5,
+      "steps": [
+        700,
+        700,
+        700,
+        700,
+        700
+      ],
+      "nominated": 97
+    },
+    "note": "is_dead on lives decrement (-1, agreed by 5 of 5 runs)"
+  }
+}

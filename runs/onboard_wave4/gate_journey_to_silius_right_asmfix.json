@@ -1,0 +1,25 @@
+{
+  "profile": "configs/journey_to_silius.yaml",
+  "odometer": true,
+  "forward": "right",
+  "steps": 1200,
+  "note": "ASM-CPU-disabled workaround applied (pool.set_disable_asm_cpu(True)). The DEFAULT Pool config (ASM CPU enabled, disable_asm_cpu=False in nes_core/src/nes.rs) produces a completely flat odometer trace (range x=0,y=4, oam_churn=1/1199) for this title regardless of which action is held (right/left/up/down/A all identical) - a known class of bug (see project memory: 'ASM CPU has PPU+NMI batching bug; interpreter is byte-exact', previously found for SMB). Verified directly against nes_core.NESEnvironment (which does not expose an ASM-CPU toggle and defaults to the working interpreter path) which shows real scroll growth to odo_x=783 by frame ~800 under the same held-RIGHT input. Un-patched receipt: runs/onboard_wave4/gate_journey_to_silius_right.json (FAIL/SIGNAL UNUSABLE, an instrument artifact, not a game finding).",
+  "distinct": 137,
+  "min": 0,
+  "max": 783,
+  "tail_distinct": 1,
+  "has_high_byte": true,
+  "lives_at_start": 0,
+  "passed": false,
+  "instrument_findings": [
+    "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+  ],
+  "behaviour_findings": [
+    "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+  ],
+  "verdict": "SIGNAL UNUSABLE",
+  "oam_churn": 842,
+  "axis": "x",
+  "range_x": 783,
+  "range_y": 0
+}

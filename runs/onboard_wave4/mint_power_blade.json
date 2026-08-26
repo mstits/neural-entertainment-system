@@ -1,0 +1,57 @@
+{
+  "rom": "roms/Power Blade (USA).nes",
+  "state_path": "roms/Power Blade (USA)_start.state.bin",
+  "state_bytes": 152399,
+  "frames_from_boot": 501,
+  "presses_used": [
+    "START",
+    "START",
+    "A",
+    "START",
+    "A"
+  ],
+  "attempts": [
+    {
+      "attempt": 1,
+      "button": "START",
+      "frame_after_probe_base": 166,
+      "divergence_ram_bytes": 45
+    },
+    {
+      "attempt": 2,
+      "button": "START",
+      "frame_after_probe_base": 242,
+      "divergence_ram_bytes": 17
+    },
+    {
+      "attempt": 3,
+      "button": "A",
+      "frame_after_probe_base": 318,
+      "divergence_ram_bytes": 11
+    },
+    {
+      "attempt": 4,
+      "button": "START",
+      "frame_after_probe_base": 394,
+      "divergence_ram_bytes": 227
+    },
+    {
+      "attempt": 5,
+      "button": "A",
+      "frame_after_probe_base": 470,
+      "divergence_ram_bytes": 45
+    }
+  ],
+  "liveness": {
+    "probe": "save state; 120 frames RIGHT vs 120 frames LEFT vs A vs NOOP; compare 2KB RAM + peek_oam",
+    "right_vs_left_ram_diff_bytes": 2,
+    "right_vs_left_oam_diff_bytes": 0,
+    "a_vs_noop_ram_diff_bytes": 2,
+    "a_vs_noop_oam_diff_bytes": 0,
+    "pause_check": {
+      "churn_unpaused_bytes": 1648,
+      "churn_after_START_press_bytes": 1646
+    }
+  },
+  "minted_utc": "2026-08-25"
+}

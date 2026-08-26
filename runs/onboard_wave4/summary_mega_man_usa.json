@@ -1,0 +1,33 @@
+{
+  "game": "Mega Man (USA)",
+  "rom": "roms/Mega Man (USA).nes",
+  "wave": "onboard_wave4",
+  "date": "2026-08-25",
+  "steps": {
+    "1_mint": {
+      "status": "MINTED",
+      "cmd": ".venv/bin/python3 scripts/capture_start_state.py --game mega_man --rom \"roms/Mega Man (USA).nes\" --out \"roms/Mega Man (USA)_start.state.bin\" --max-frames 2000",
+      "result": "gameplay confirmed at frame 735 (+40 settle); wrote 21165 bytes",
+      "liveness_probe": "runs/onboard_wave4/mint_mega_man_usa.json (right_vs_left_120f=169, right_vs_noop_120f=162, left_vs_noop_120f=85, a_vs_noop_120f=2)",
+      "note": "generic title/menu masher (no game-specific stage-select navigation needed, unlike configs/megaman.yaml's Mega Man 2 profile). Note existing configs/megaman.yaml + DEFAULT_ROMS['mega_man'/'megaman'] point at Mega Man 2's ROM, not this one -- new profile configs/mega_man_usa.yaml created with an explicit rom_path so it does not collide."
+    },
+    "2_gate": {
+      "status": "PASS",
+      "cmd": ".venv/bin/python3 scripts/progress_signal_gate.py --profile configs/mega_man_usa.yaml --odometer --forward right --steps 1200 --out runs/onboard_wave4/gate_mega_man_usa_right.json",
+      "verdict": "SIGNAL SOUND — still advancing",
+      "detail": "axis=x, range x=72 (y=0), oam_churn=1080/1199, 51 distinct values over 1200 steps -- a real scroll axis exists under a plain RIGHT hold from the minted start state."
+    },
+    "3_observables": {
+      "cmd": ".venv/bin/python3 scripts/discover_observables.py --rom \"roms/Mega Man (USA).nes\" --state \"roms/Mega Man (USA)_start.state.bin\" --forward right --emit-solve --out runs/onboard_wave4/discover_mega_man_usa.json",
+      "result": "room counter: none; progress candidates: none (odometer remains the only forward-progress signal). y=0x00F4 (jump/ballistic, sole candidate). lives=0x0410 (decrements on death, 5/5 probe agreement)."
+    },
+    "4_config": "configs/mega_man_usa.yaml (new; modeled on configs/paperboy.yaml)",
+    "5_smoke": {
+      "cmd": ".venv/bin/python3 scripts/go_explore_solve.py --profile configs/mega_man_usa.yaml --root-state \"roms/Mega Man (USA)_start.state.bin\" --out runs/onboard_wave4/smoke_mega_man_usa --workers 4 --minutes 2 --seed 0",
+      "result": "cells 1(seed) -> 10 -> 10 across the two 60s windows (flat second window, stall_flat_windows=1), frontier ended at 0 (exhausted), best_score/max_gx_in_max_area=16, max_area=0, 23435 records / 19 improvements, 0 solutions.",
+      "observation": "frontier froze at a very low cell count (10) with almost no odometer progress (max_gx 16px, vs the 72px range the plain-hold gate measured) and did not recover in the second full minute. The seed line logged lives=0 at the root state for the discovered lives byte (0x0410) -- if that byte is not literally 'remaining lives' but some other counter that reads 0 at rest, a decrement would underflow toward 255 and could be misread as an immediate death, resetting episodes before the search can explore. Flagged as visible in the run's own seed log, not independently diagnosed further per the task's scope (no deepest-cell probe run)."
+    }
+  },
+  "classification": "SOUND_GAME_STOPS",
+  "classification_rationale": "Odometer gate confirmed a real forward scroll axis (case 3 applies, not camera-static). The go_explore smoke's frontier did not accumulate -- cells were flat (10->10) through the entire second minute and ended fully exhausted (frontier=0), which is the same frozen-frontier failure the task's rule 5 names, even though the flat count (10) is not literally 1. Reported honestly without further diagnosis, per task scope."
+}

@@ -1,0 +1,59 @@
+{
+  "rom": "roms/Ninja Gaiden II - The Dark Sword of Chaos (USA).nes",
+  "found_live": true,
+  "frames_from_boot": 270,
+  "presses_used": [
+    "START",
+    "START",
+    "A",
+    "START",
+    "A",
+    "START"
+  ],
+  "attempts": [
+    {
+      "attempt": 1,
+      "button": "START",
+      "frame_after_probe_base": 120,
+      "divergence_ram_bytes": 4
+    },
+    {
+      "attempt": 2,
+      "button": "START",
+      "frame_after_probe_base": 150,
+      "divergence_ram_bytes": 4
+    },
+    {
+      "attempt": 3,
+      "button": "A",
+      "frame_after_probe_base": 180,
+      "divergence_ram_bytes": 4
+    },
+    {
+      "attempt": 4,
+      "button": "START",
+      "frame_after_probe_base": 210,
+      "divergence_ram_bytes": 4
+    },
+    {
+      "attempt": 5,
+      "button": "A",
+      "frame_after_probe_base": 240,
+      "divergence_ram_bytes": 4
+    },
+    {
+      "attempt": 6,
+      "button": "START",
+      "frame_after_probe_base": 270,
+      "divergence_ram_bytes": 492
+    }
+  ],
+  "final_divergence_ram_bytes": 492,
+  "elapsed_s": 4.43,
+  "state_path": "/Users/stits/Documents/macos-emulation-and-training/roms/Ninja Gaiden II - The Dark Sword of Chaos (USA)_start.state.bin",
+  "state_bytes": 152399,
+  "verification_fresh_pool": {
+    "ram_divergence_right_vs_left": 492,
+    "ram_divergence_right_vs_noop": 426
+  }
+}

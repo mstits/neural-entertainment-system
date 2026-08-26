@@ -1,0 +1,42 @@
+{
+  "game": "Journey to Silius (USA)",
+  "rom": "roms/Journey to Silius (USA).nes",
+  "rom_md5": "407b5151f2642523cba218f927926e9c",
+  "profile": "configs/journey_to_silius.yaml",
+  "start_state": "roms/Journey to Silius (USA)_start.state.bin",
+  "mint": {
+    "receipt": "runs/onboard_wave4/silius_mint.log",
+    "cmd": ".venv/bin/python scripts/capture_start_state.py --game journey_to_silius --rom \"roms/Journey to Silius (USA).nes\" --out runs/onboard_wave4/silius_start.state.bin --max-frames 2400",
+    "status": "MINTED",
+    "frames_from_boot": 315,
+    "settle_frames": 40,
+    "state_bytes": 144049,
+    "note": "capture_start_state.py's --game whitelist does not include this title; ran it with an arbitrary --game label plus explicit --rom/--out (the script only uses --game for the DEFAULT_ROMS lookup, which is skipped when --rom is passed). is_controllable() (growth + directionality over RIGHT/LEFT holds) fired at frame 315 on the first try, no manual menu navigation needed. Copied to the canonical roms/ sidecar path after landing."
+  },
+  "odometer_gate": {
+    "receipt_buggy": "runs/onboard_wave4/gate_journey_to_silius_right.json",
+    "receipt_fixed": "runs/onboard_wave4/gate_journey_to_silius_right_asmfix.json",
+    "cmd_buggy": ".venv/bin/python scripts/progress_signal_gate.py --profile configs/journey_to_silius.yaml --odometer --forward right --steps 1200 --out runs/onboard_wave4/gate_journey_to_silius_right.json",
+    "finding": "INSTRUMENT BUG, not a game finding. The default Pool (disable_asm_cpu=False, nes_core/src/nes.rs) produced a completely flat odometer (range x=0,y=4, oam_churn=1/1199) IDENTICALLY for right/left/up/down/A -- five different held inputs converging on the exact same trace is the signature of the ASM-CPU PPU/NMI-batching bug already on record in project memory for SMB ('ASM CPU disabled -- Mario walks'; interpreter path is byte-exact). Verified directly against nes_core.NESEnvironment (which has no ASM-CPU toggle and always runs the interpreter) holding RIGHT for 1500 frames: real scroll growth to odo_x=783 by frame ~800, screenshots showing live gameplay (health bar, player sprite, two flanking enemies, scrolling city skyline) confirmed visually. Re-ran the gate with pool.set_disable_asm_cpu(True) patched in post-construction (same slot go_explore_solve.py's apply_hw_flags uses, before reset_all): range_x=783, axis=x, distinct=137, oam_churn=842/1199 (agent clearly alive/animating), tail flat (behaviour finding: plateaus under a naive constant-RIGHT hold, expected for a run-and-gun with jump-required obstacles). No script files were edited -- the workaround was applied by monkeypatching within a throwaway driver script, not the repo's go_explore_solve.py/progress_signal_gate.py.",
+    "verdict": "REAL SCROLL AXIS CONFIRMED (once the ASM-CPU instrument bug is worked around)."
+  },
+  "discover_observables": {
+    "receipt": "runs/onboard_wave4/discover_journey_to_silius.json",
+    "cmd": ".venv/bin/python scripts/discover_observables.py --rom \"roms/Journey to Silius (USA).nes\" --state \"roms/Journey to Silius (USA)_start.state.bin\" --forward right --emit-solve --out runs/onboard_wave4/discover_journey_to_silius.json (Pool patched the same way to work around the ASM-CPU default)",
+    "progress_room_counter": "$0030 (room/screen counter, net_forward 48, monotone, non-saturating over the probe window) -- not used; odometer preferred as the hardware-surface source per the same convention as rygar/paperboy/ninja_gaiden",
+    "progress_spatial_pair_flagged": "$0031|$0030<<8 and $00FD|$0030<<8 both flagged CAMERA-CLAMP SATURATOR by the discovery tool",
+    "y": "0x0003 (jump/ballistic signature)",
+    "lives": "0x00B9 (decrements on death, 5/5 probe agreement; reads 0 at the start state -- likely a deaths-counter rather than remaining-lives semantics, flagged by progress_signal_gate's own assess() as an instrument caveat on the LIVES byte specifically, separate from the scroll-axis finding; not blocking, since the smoke itself is the arbiter and it did not freeze)",
+    "level_key": "[] (coverage baseline; no stage-clear byte captured yet)"
+  },
+  "smoke": {
+    "cmd": ".venv/bin/python scripts/go_explore_solve.py --profile configs/journey_to_silius.yaml --root-state \"roms/Journey to Silius (USA)_start.state.bin\" --out runs/onboard_wave4/smoke_journey_to_silius --workers 4 --minutes 2 --seed 0 (Pool patched to disable_asm_cpu the same way)",
+    "trend": "cells 1 (seed) -> 789 (60s) -> 1481 (120s/final)",
+    "final": {"cells": 1481, "frontier": 1217, "best_score": 2030, "records": 37843, "new_cells": 1481, "improvements": 3013, "solutions": 0},
+    "note": "Frontier is NOT stuck at 1 and never stalled -- cell count nearly doubled between the two 60s checkpoints (789 -> 1481) with frontier still wide open (1217 of 1481 cells) at the end. best_score/max_gx_in_max_area climbed 1249 -> 2030 across the same window, well past the 783 plateau the naive constant-RIGHT gate hit -- confirms the richer action set (jump/shoot combos) gets past the obstacle a hold-right driver alone cannot. 0 solutions in budget is expected (level_key is the empty coverage baseline, same as every other wave's smoke)."
+  },
+  "classification": "SOUND_ADVANCING",
+  "classification_rationale": "Real scroll axis confirmed once a default-Pool ASM-CPU instrument bug (verified against the interpreter-path NESEnvironment and visually against rendered frames) was worked around; the 2-minute/4-worker smoke run under the same workaround grew from 1 to 1481 cells with 1217 still on the open frontier and best_score still climbing at the 2-minute mark -- unambiguously not the SOUND_GAME_STOPS freeze pattern.",
+  "next_lever": "The ASM-CPU default bug is a real, generic instrument defect (not a Journey to Silius-specific hack) -- same bug class already on record for SMB. Worth checking whether other onboarded titles are silently affected the same way (a flat/near-flat odometer gate that was accepted as CAMERA_STATIC_AGENT_ACTIVE without cross-checking against the interpreter path could be misdiagnosed). A permanent fix belongs in go_explore_solve.py's Pool construction / apply_hw_flags path (exposing disable_asm_cpu as a resolvable flag) rather than a per-run monkeypatch, but that change was left out of scope for this single-game onboarding task.",
+  "wall_clock_budget": "workers capped at 4, smoke capped at 2 minutes per task instructions; total wall-clock for this game ran well over the ~8-minute target because of the ASM-CPU instrument-bug diagnosis (root-caused and workaround-verified against ground truth, not left as an unexplained freeze)."
+}

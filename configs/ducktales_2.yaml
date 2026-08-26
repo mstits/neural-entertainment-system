@@ -1,0 +1,72 @@
+name: "DuckTales 2 (USA)"
+
+rom_path: "roms/DuckTales 2 (USA).nes"
+rom_hashes:
+  - "ee092394b1e64b8bee7ca54c3dc7faad"
+start_state_path: "roms/DuckTales 2 (USA)_start.state.bin"
+
+description: |
+  DuckTales 2 (NES, 1993, Capcom), onboarding profile (wave 4,
+  2026-08-25). Structure copied from configs/paperboy.yaml; action set
+  copied from configs/ducktales.yaml (pogo-cane traversal, same engine
+  family) — no game knowledge encoded beyond the control scheme shared
+  with the already-onboarded DuckTales 1.
+
+  START STATE: roms/DuckTales 2 (USA)_start.state.bin, minted wave 4
+  (runs/onboard_wave4/mint_ducktales_2.json). CAUTION receipt: the
+  generic scripts/capture_start_state.py tool false-positived on the
+  animated world-map LAND SELECT screen ("WHERE TO, UNCLE SCROOGE?") —
+  that screen is directionally controllable (globe cursor) so it
+  passed the tool's own RIGHT-vs-LEFT divergence heuristic without
+  ever reaching gameplay. Caught by rendering the captured frame.
+  Re-navigated by hand (A-pulse mash through the location banner,
+  flavor text, and the "DO YOU WANT TO GO THERE?" confirm) into NIAGARA
+  level gameplay; final state re-verified live via the same
+  RIGHT-vs-LEFT divergence probe (405/2048 RAM bytes differ at 120f,
+  growing not saturated: 210 at 20f -> 388 at 120f for RIGHT alone).
+
+  discover_observables.py 3-probe pass (--forward right, wave 4,
+  2026-08-25; receipt runs/onboard_wave4/discover_ducktales_2.json):
+  no RAM progress byte recommended — every spatial candidate
+  ($0092|$002C<<8, $0017|$002C<<8, etc.) is flagged CAMERA-CLAMP
+  SATURATOR (same shape as Blaster Master/Paperboy), which is why
+  progress stays on the odometer (hardware surface) rather than a RAM
+  pair, same reasoning as those two profiles. y=$0008 (jump/ballistic
+  candidate). lives=$000B (decrements on death, 5/5 probe agreement).
+  level_key left empty — coverage baseline, no stage-clear byte
+  captured yet.
+
+  ODOMETER GATE (runs/onboard_wave4/gate_ducktales_2_right.json):
+  --forward right, 1200 steps, axis=x, 34 distinct, range 0..177,
+  oam_churn 1192/1199 (agent clearly active) -> PASS "SIGNAL SOUND —
+  game stops" (flat for the last quarter — naive hold-right sticks on
+  an obstacle in the Niagara level, a driver limit not an instrument
+  fault, same pattern documented on DuckTales 1 / Ice Climber-class
+  probes).
+
+frame_skip: 4
+
+# Platformer + pogo action set, ported from configs/ducktales.yaml
+# (same Capcom engine family / control scheme as DuckTales 1).
+action_space:
+  - []                      # NOOP
+  - ["right"]
+  - ["left"]
+  - ["A"]                   # jump
+  - ["B"]                   # cane swing / putt
+  - ["down"]                # duck / pogo setup
+  - ["up"]                  # climb rope/vine
+  - ["right", "A"]          # jump-right
+  - ["left", "A"]           # jump-left
+  - ["down", "B"]           # POGO bounce (airborne) — key traversal move
+  - ["right", "down", "B"]  # moving pogo
+
+solve:
+  rom: "roms/DuckTales 2 (USA).nes"
+  progress: {source: odometer, axis: x}
+  # Jump/ballistic candidate (discover_observables.py, --forward right).
+  y: 0x0008
+  # Decrements on death, agreed by 5 of 5 independent probe runs.
+  lives: 0x000B
+  # No clear byte captured yet — coverage baseline only.
+  level_key: []

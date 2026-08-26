@@ -1,0 +1,76 @@
+name: "Darkwing Duck"
+
+rom_path: "roms/Darkwing Duck (USA).nes"
+rom_hashes:
+  - "459837f4e8fcbaf29bd66ed926b6882e"
+start_state_path: "roms/Darkwing Duck (USA)_start.state.bin"
+
+description: |
+  Darkwing Duck (NES, Capcom), onboarding profile (wave 4, 2026-08-25).
+  Structure copied from configs/blaster_master.yaml / configs/paperboy.yaml;
+  no game knowledge encoded — generic controller, odometer progress source.
+
+  Start state minted this session (runs/onboard_wave4/mint_darkwing_duck.json):
+  power-on -> ~1098 frames of NOOP/START to clear the Capcom/Disney logo
+  splashes and reach the title "PRESS START" card -> START to advance into
+  a static story-briefing text screen (portrait + dialog box) -> mashing A
+  40x (generic "advance text" input, universal across NES titles, not
+  game-specific knowledge) produced 9 detected scene changes and landed on
+  live gameplay: Darkwing standing on a suspension bridge over a city
+  skyline. Liveness verified by input-divergence probe from the saved
+  state: 180f RIGHT vs 180f LEFT vs 180f NOOP diverge by 332/336 RAM bytes
+  and 49 OAM bytes; visual frames confirm the camera scrolls right under
+  RIGHT and stays pinned under LEFT (rendered frames, not RAM-only).
+
+  ODOMETER GATE (2026-08-25 wave4, runs/onboard_wave4/gate_darkwing_duck_
+  {right,left,up,down}.json): --forward left/up/down are all camera-static
+  (range 0 over 1200 steps; OAM churn shows the agent is animating under
+  left, inert under up/down) — right is the only real forward driver.
+  --forward right: range 0..140, only 25 distinct values, flat for the
+  back half even at 2400 steps (gate_darkwing_duck_right_2400.json) — a
+  pure hold-right driver hits a hard stop almost immediately (an enemy or
+  gap on the bridge, not investigated further per this task's scope). A
+  real scroll axis exists, so per this task's rule (a real axis routes to
+  a solver smoke, not an automatic wall verdict) the smoke below is the
+  actual gate.
+
+  SOLVER SMOKE (2026-08-25, 4 workers / 2 min / seed 0,
+  runs/onboard_wave4/smoke_darkwing_duck/): cells 1 -> 1965 -> 3185 across
+  the two ~60s windows, frontier 3044 (not stuck at 1), max_gx_in_max_area
+  4082 -> 5143 (still climbing at cutoff), stall_flat_windows 0,
+  improvements 3896 / 35260 records, 0 solutions (expected; level_key is
+  the empty coverage baseline). The mixed action search clears whatever
+  stopped a pure hold-right at gx 140 by minute 1. Verdict:
+  SOUND_ADVANCING. y/lives are unset placeholders (0) — this pass did not
+  run discover_observables.py, so no y/lives/level_key candidates are
+  banked yet; that is the natural next step before a real (non-smoke)
+  solve run.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Darkwing Duck (USA).nes"
+  progress: {source: odometer, axis: x}
+  # Unset placeholders -- discover_observables.py has not been run for
+  # this game yet (out of scope for this onboarding pass). Do not treat
+  # 0 as a real address.
+  y: 0
+  lives: 0
+  level_key: []

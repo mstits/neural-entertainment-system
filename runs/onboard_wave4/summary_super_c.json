@@ -1,0 +1,46 @@
+{
+  "game": "Super C (USA)",
+  "rom": "roms/Super C (USA).nes",
+  "rom_md5": "5fef80625f484fca06fdb58ebff9d8bb",
+  "profile": "configs/super_c.yaml",
+  "start_state": "roms/Super C (USA)_start.state.bin",
+  "mint": {
+    "receipt": "runs/onboard_wave4/mint_super_c.json",
+    "status": "MINTED",
+    "winning_attempt": "START, START, A (3rd attempt)",
+    "frames_from_boot": 672,
+    "liveness_probe": "save state; 120f RIGHT vs 120f LEFT; diff full 2KB RAM + peek_oam(256B)",
+    "ram_diff_bytes": 124,
+    "oam_diff_bytes": 48,
+    "note": "START x1 and START x2 (title/mode-select screens) diverged only 1-2 RAM bytes between RIGHT and LEFT holds -- not live. The 3rd attempt (A, presumably confirming 1-player select into the mission-1 intro/gameplay) diverged 124/2048 RAM bytes + 48/256 OAM bytes, reproduced identically from a fresh Pool."
+  },
+  "odometer_gate": {
+    "receipt": "runs/onboard_wave4/gate_super_c_right.json",
+    "cmd": ".venv/bin/python scripts/progress_signal_gate.py --profile configs/super_c.yaml --odometer --forward right --steps 1200 --out runs/onboard_wave4/gate_super_c_right.json",
+    "axis": "x",
+    "range_x": 262,
+    "range_y": 230,
+    "distinct": 70,
+    "oam_churn": "1163/1199",
+    "verdict": "SIGNAL SOUND -- game stops",
+    "note": "Real scroll axis confirmed (x range 262 over 1200 forward-held steps, high OAM churn = agent alive/animating). Flat tail is a behaviour finding (game stops under a constant-RIGHT driver, no jump/fire), not an instrument fault -- same shape as Contra's own gate receipt (runs/odometer/gate_contra_2026-08-23.json)."
+  },
+  "discover_observables": {
+    "receipt": "runs/onboard_wave4/discover_super_c.json",
+    "cmd": ".venv/bin/python scripts/discover_observables.py --rom \"roms/Super C (USA).nes\" --state \"roms/Super C (USA)_start.state.bin\" --forward right --emit-solve --out runs/onboard_wave4/discover_super_c.json",
+    "progress": "$00A4 (net_forward +704, mono 1.00, no rebase/cap -- both gates pass)",
+    "y": "0x0333 (jump/ballistic signature)",
+    "lives": "0x0087 (decrements on death, 5/5 probe agreement)",
+    "room_counter": "none found"
+  },
+  "smoke": {
+    "cmd": ".venv/bin/python scripts/go_explore_solve.py --profile configs/super_c.yaml --root-state \"roms/Super C (USA)_start.state.bin\" --out runs/onboard_wave4/smoke_super_c --workers 4 --minutes 2 --seed 0",
+    "trend": "cells 1 (seed) -> 15 (60s) -> 16 (120s/final)",
+    "final": {"cells": 16, "frontier": 0, "best_score": 192, "records": 34313, "improvements": 30, "solutions": 0},
+    "note": "Frontier is NOT stuck at 1 -- the archive grew immediately and kept finding new cells through minute 1, so this is not the SOUND_GAME_STOPS freeze pattern. Growth nearly halted in the second minute (+1 cell, c_local_elasticity 0.0) and the frontier fully closed (0 open cells) by the 2-minute mark, with best_score/max_gx pinned at 192 in both checkpoints -- the same value the discovery probe independently found as $00A4's own observed ceiling under sustained forward driving. Read as an early real wall (an enemy/obstacle this generic action set can't get past inside a 2-minute budget) rather than a frozen instrument, mirroring Contra's own receipted fixed-camera-wall shape on the identical engine family. Not diagnosed further per task scope (smoke did not freeze at 1 cell, so no deepest-cell dive was in scope)."
+  },
+  "classification": "SOUND_ADVANCING",
+  "classification_rationale": "Real scroll axis confirmed by both the odometer gate and a RAM progress byte that passes both discovery gates; the 2-minute/4-worker smoke accumulated cells from 1 to 16 with 30 improvements and never stuck at 1 cell. Growth was slowing and the frontier closed by the end of the short budget -- flagged honestly as a likely early wall worth a longer run, not claimed as a clean open frontier.",
+  "next_lever": "Longer unattended run (more minutes/workers) to see whether the frontier reopens past gx~192, and/or add a hold-macro (sustained B fire, matching Contra's own hold_macros) since this generic action set never fires B for long enough to clear whatever sits at that x -- same class of fix as Contra's base-wall.",
+  "wall_clock_budget": "workers capped at 4, smoke capped at 2 minutes per task instructions (shared machine, concurrent onboarding + an unrelated v28 training run)."
+}

@@ -1,0 +1,49 @@
+name: "Super C"
+
+rom_path: "roms/Super C (USA).nes"
+rom_hashes:
+  - "5fef80625f484fca06fdb58ebff9d8bb"
+start_state_path: "roms/Super C (USA)_start.state.bin"
+
+description: |
+  Super C (NES), onboarding profile (wave 4, 2026-08-25). Structure
+  copied from configs/paperboy.yaml; no game knowledge encoded — generic
+  controller, odometer progress source.
+  Start state: roms/Super C (USA)_start.state.bin, minted this wave
+  (runs/onboard_wave4/mint_super_c.json) — liveness verified by
+  input-divergence probe (RIGHT vs LEFT hold 120f from the same saved
+  point diverges 124/2048 RAM bytes + 48/256 OAM bytes; not a title/
+  demo screen). Winning input sequence: START, START, A (3rd attempt),
+  672 frames from cold boot.
+
+frame_skip: 4
+
+# A GENERIC controller. Tuned action sets encode another game's tactics.
+action_space:
+  - []
+  - ["right"]
+  - ["left"]
+  - ["up"]
+  - ["down"]
+  - ["A"]
+  - ["B"]
+  - ["right", "A"]
+  - ["right", "B"]
+  - ["left", "A"]
+  - ["left", "B"]
+  - ["right", "A", "B"]
+  - ["down", "B"]
+  - ["up", "B"]
+
+solve:
+  rom: "roms/Super C (USA).nes"
+  # discover_observables.py 3-probe protocol (runs/onboard_wave4/discover_super_c.json):
+  # $00A4 passes both gates (net +704, mono 1.00, no rebase/cap under a
+  # long forward drive); odometer gate (runs/onboard_wave4/gate_super_c_right.json)
+  # independently confirms a real x-scroll axis (range 262 over 1200 steps,
+  # oam_churn 1163/1199 -- agent alive), so either surface is usable. RAM
+  # byte kept as primary per the discovery tool's own recommendation.
+  progress: {lo: 0x00A4}
+  y: 0x0333   # jump/ballistic signature
+  lives: 0x0087   # decrements on death, 5/5 probe agreement
+  level_key: []

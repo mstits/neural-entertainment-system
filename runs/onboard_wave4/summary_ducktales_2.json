@@ -1,0 +1,56 @@
+{
+  "game": "DuckTales 2 (USA)",
+  "rom": "roms/DuckTales 2 (USA).nes",
+  "rom_verified_present": true,
+  "wave": "onboard_wave4",
+  "date": "2026-08-25",
+  "pipeline": {
+    "1_mint": {
+      "status": "MINTED",
+      "receipt": "runs/onboard_wave4/mint_ducktales_2.json",
+      "state_path": "roms/DuckTales 2 (USA)_start.state.bin",
+      "note": "generic capture_start_state.py false-positived on the animated LAND SELECT world-map screen (passes its own RIGHT/LEFT divergence heuristic because the globe cursor is directionally controllable); caught by rendering the captured frame, then manually re-navigated (A-pulse mash through location banner + flavor text + 'DO YOU WANT TO GO THERE?' confirm) into live NIAGARA level gameplay. Final state re-verified live: RIGHT vs LEFT diverge 405/2048 RAM bytes at 120f, growing not saturated (210 @20f -> 388 @120f for RIGHT alone)."
+    },
+    "2_gate": {
+      "status": "PASS",
+      "receipt": "runs/onboard_wave4/gate_ducktales_2_right.json",
+      "verdict": "SIGNAL SOUND - game stops",
+      "axis": "x",
+      "distinct": 34,
+      "range": [0, 177],
+      "oam_churn": "1192/1199",
+      "note": "flat tail = naive hold-right sticks on an obstacle in the Niagara level (driver limit, not instrument fault) -- same shape as DuckTales 1 and other odometer-certified profiles"
+    },
+    "2b_discover_observables": {
+      "receipt": "runs/onboard_wave4/discover_ducktales_2.json",
+      "y": "0x0008 (jump/ballistic candidate)",
+      "lives": "0x000B (decrements on death, 5/5 probe agreement)",
+      "progress_ram_candidates": "all flagged CAMERA-CLAMP SATURATOR (e.g. $0092|$002C<<8) -- no usable RAM progress byte, matches Blaster Master/Paperboy shape; odometer used instead"
+    },
+    "3_config": {
+      "path": "configs/ducktales_2.yaml",
+      "modeled_on": "configs/paperboy.yaml (structure) + configs/ducktales.yaml (pogo action set)",
+      "solve_block": {
+        "progress": "{source: odometer, axis: x}",
+        "y": "0x0008",
+        "lives": "0x000B",
+        "level_key": "[] (coverage baseline, no clear byte captured yet)"
+      }
+    },
+    "3b_smoke": {
+      "receipt_dir": "runs/onboard_wave4/smoke_ducktales_2/",
+      "log": "runs/onboard_wave4/smoke_ducktales_2.log",
+      "params": "--workers 4 --minutes 2 --seed 0",
+      "windows": [
+        {"elapsed_s": 0, "cells": 1, "max_gx_in_max_area": 0},
+        {"elapsed_s": 60, "cells": 619, "max_gx_in_max_area": 1719, "stall_flat_windows": 0},
+        {"elapsed_s": 120, "cells": 863, "max_gx_in_max_area": 2187, "stall_flat_windows": 0}
+      ],
+      "final": {"cells": 863, "frontier": 733, "best_score": 2187, "records": 35717, "improvements": 1581, "solutions": 0},
+      "note": "frontier grew every window (1 -> 619 -> 863 cells; max_gx 0 -> 1719 -> 2187), never stuck at 1; a duplicate final log line reports stall_flat_windows=1 but that is the shutdown-path re-emitting the same last snapshot compared to itself, not a real freeze -- the monotone cell/gx growth across both real windows contradicts a frozen frontier. 0 solutions is expected (level_key is the empty coverage baseline, same as every other wave-2/3 SOUND_ADVANCING profile at smoke stage)."
+    }
+  },
+  "classification": "SOUND_ADVANCING",
+  "classification_reasoning": "Odometer gate found a real x-axis scroll gradient (34 distinct values, range 0..177, agent OAM active) -- not camera-static. The go_explore_solve smoke then accumulated cells monotonically across both 60s windows (619, then 863) with the frontier at 733 (not stuck at 1) and max_gx still climbing (1719 -> 2187) at cutoff. Per task rubric this is SOUND_ADVANCING, not SOUND_GAME_STOPS (which is reserved for a smoke that freezes at 1 cell despite a real axis).",
+  "next_lever": "No RAM progress byte survives the camera-clamp-saturator check (same shape as Blaster Master/Paperboy) -- if a longer run is done later, a room/scene counter (Ninja Gaiden/Metroid `area:` pattern) may be worth a discovery pass once the smoke's max_gx approaches a scroll-window ceiling. level_key is empty (coverage baseline); no stage-clear byte has been captured."
+}

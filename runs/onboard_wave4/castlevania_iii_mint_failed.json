@@ -1,0 +1,28 @@
+{
+  "rom": "roms/Castlevania III - Dracula's Curse (USA).nes",
+  "status": "mint_failed",
+  "reason": "Never reached a responsive live-gameplay state within a reasonable probe budget. Two independent probes agree: (1) a short boot-mash (STARTx2, A, START; 446 sim-steps, 1784 emulated frames) followed by a 120-frame input-divergence probe (RIGHT/LEFT/A/NOOP held independently from the same reload) came back nearly input-invariant -- RIGHT-vs-LEFT diverges only 5/2048 RAM bytes, RIGHT-vs-NOOP 5 bytes, LEFT-vs-NOOP 4 bytes, A-vs-NOOP 4 bytes -- the same signature as a scripted/non-interactive screen (compare Power Blade's confirmed-inert 2/2048, and Blaster Master/Paperboy's confirmed-live 46-401+ byte divergences on the identical method). (2) A much longer probe -- periodic START presses (20 held-frames every 120) sustained across 7200 sim-steps / 28,800 emulated frames (~480s emulated at 60fps, ~72s wall) -- shows a persistent, UNCHANGING steady-state RAM churn of ~440-460 bytes per 100-frame window from step ~600 onward, with no transition to a lower-churn idle/title state and no qualitative change from additional START presses anywhere in the window. This matches an ongoing scripted intro/attract sequence (likely the game's well-known unskippable opening cinematic and/or a title-screen demo loop) that keeps animating on its own script regardless of input, not a game that is merely slow to reach its title screen. No start state was banked (no roms/Castlevania III - Dracula's Curse (USA)_start.state.bin file was written) so a non-interactive state is not forced through the odometer gate or solver smoke.",
+  "probe_summary": {
+    "probe_1_short_boot_divergence": {
+      "boot_mash_pattern": ["START", "START", "A", "START"],
+      "sim_steps_to_candidate": 446,
+      "liveness_probe": {
+        "method": "save state after boot-mash; reload into a fresh pool; hold RIGHT/LEFT/A/NOOP independently for 120 frames each; diff full 2KB RAM pairwise",
+        "right_vs_left_ram_diff_bytes": 5,
+        "right_vs_noop_ram_diff_bytes": 5,
+        "left_vs_noop_ram_diff_bytes": 4,
+        "a_vs_noop_ram_diff_bytes": 4,
+        "ram_size": 2048
+      },
+      "receipt": "runs/onboard_wave4/mint_castlevania_iii_input_divergence_probe.json"
+    },
+    "probe_2_extended_boot_trace": {
+      "method": "repeat (START held 20 frames, settle 100 frames) x60 blocks = 7200 sim-steps / 28,800 emulated frames; log RAM-diff between consecutive 100-frame checkpoints",
+      "churn_pattern": "diff stabilizes to a narrow 438-478 byte/100-frame band by step ~600 and never leaves that band through step 7200 (~480s emulated game time), regardless of the periodic START presses",
+      "wall_clock_seconds": 72,
+      "receipt": "runs/onboard_wave4/castlevania_iii_boot_trace.log"
+    }
+  },
+  "conclusion": "mint_failed -- boot-mash candidate is non-interactive (near-zero input divergence) and an 8-minutes-of-emulated-time extended probe never breaks out of the same steady-state churn pattern regardless of additional START presses. Classifying as an unskippable scripted intro/demo loop rather than forcing this state into the odometer gate / solver smoke, per the task's stop condition.",
+  "checked_utc": "2026-08-25"
+}

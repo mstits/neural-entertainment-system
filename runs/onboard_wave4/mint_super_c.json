@@ -1,0 +1,40 @@
+{
+  "rom": "roms/Super C (USA).nes",
+  "attempts": [
+    {
+      "attempt": "START x1",
+      "frames_from_boot_at_probe": 304,
+      "ram_diff_bytes": 1,
+      "oam_diff_bytes": 0
+    },
+    {
+      "attempt": "START x2",
+      "frames_from_boot_at_probe": 488,
+      "ram_diff_bytes": 2,
+      "oam_diff_bytes": 0
+    },
+    {
+      "attempt": "START x3 (A)",
+      "frames_from_boot_at_probe": 672,
+      "ram_diff_bytes": 124,
+      "oam_diff_bytes": 48
+    }
+  ],
+  "status": "MINTED",
+  "state_path": "/Users/stits/Documents/macos-emulation-and-training/roms/Super C (USA)_start.state.bin",
+  "state_bytes": 152399,
+  "frames_from_boot": 672,
+  "winning_attempt": "START x3 (A)",
+  "liveness": {
+    "probe": "save state; 120f RIGHT vs 120f LEFT; diff full 2KB RAM + peek_oam(256B)",
+    "ram_diff_bytes": 124,
+    "oam_diff_bytes": 48
+  },
+  "verification_fresh_pool": {
+    "ram_diff_bytes": 124,
+    "oam_diff_bytes": 48
+  },
+  "A_vs_noop_120f": {
+    "ram_diff_bytes": 2
+  }
+}

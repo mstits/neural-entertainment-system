@@ -1,0 +1,55 @@
+{
+  "rom": "roms/Darkwing Duck (USA).nes",
+  "navigation": [
+    {
+      "phase": "boot_noop_150f",
+      "final_churn_window": [
+        212,
+        20,
+        6,
+        6,
+        7,
+        7,
+        5,
+        7,
+        8,
+        8
+      ]
+    },
+    {
+      "phase": "START_press_0",
+      "ram_diff_pre_post": 387
+    },
+    {
+      "phase": "START_press_1",
+      "ram_diff_pre_post": 306
+    },
+    {
+      "phase": "START_press_2",
+      "ram_diff_pre_post": 362
+    },
+    {
+      "phase": "START_press_3",
+      "ram_diff_pre_post": 57
+    }
+  ],
+  "settle_churn_tail": [
+    212,
+    20,
+    6,
+    6,
+    7,
+    7,
+    5,
+    7,
+    8,
+    8
+  ],
+  "liveness": {
+    "diff_right_vs_left_120f": 1,
+    "diff_right_vs_noop_120f": 1,
+    "diff_A_vs_noop_120f": 41,
+    "oam_diff_right_vs_left_120f": 0
+  },
+  "state_bytes": 144049
+}

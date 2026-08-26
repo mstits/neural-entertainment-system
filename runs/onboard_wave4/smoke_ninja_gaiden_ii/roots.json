@@ -1,0 +1,16 @@
+{
+  "entrance": {
+    "path": "roms/Ninja Gaiden II - The Dark Sword of Chaos (USA)_start.state.bin",
+    "start_wd": [],
+    "lives": 1,
+    "hw_provenance": {
+      "hw_flags": [],
+      "frame_skip": 4,
+      "nes_core": {
+        "dist_version": "0.1.0",
+        "module": "nes_core.abi3.so",
+        "sha256_16": "b458fce9b1e6a7dd"
+      }
+    }
+  }
+}

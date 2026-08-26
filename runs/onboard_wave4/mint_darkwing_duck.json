@@ -1,0 +1,22 @@
+{
+  "rom": "roms/Darkwing Duck (USA).nes",
+  "navigation": [
+    {
+      "phase": "reach_briefing_screen_via_title_START",
+      "frames": "~1098"
+    },
+    {
+      "phase": "mash_A_x40_advance_text",
+      "frames": 1840,
+      "scene_changes_detected": 9
+    }
+  ],
+  "liveness": {
+    "probe": "save state after mashing A through briefing text; 180f RIGHT vs 180f LEFT vs 180f NOOP, each reloaded from the same saved state",
+    "diff_right_vs_left_180f": 332,
+    "diff_right_vs_noop_180f": 336,
+    "oam_diff_right_vs_left_180f": 49
+  },
+  "state_bytes": 144049,
+  "verdict": "LIVE"
+}
