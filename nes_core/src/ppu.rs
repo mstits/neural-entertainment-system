@@ -3431,7 +3431,7 @@ mod predict_nmi_tests {
         rom.extend(vec![0u8; 32 * 1024]);
         rom.extend(vec![0u8; 8 * 1024]);
         let cart = Cartridge::load(&mut std::io::Cursor::new(rom)).unwrap();
-        let mut mapper = MapperEnum::from_cartridge(cart);
+        let mut mapper = MapperEnum::from_cartridge(cart).unwrap();
 
         let mut ppu = Ppu::new();
         ppu.nmi_output = true;
@@ -3486,7 +3486,7 @@ mod sprite_and_blank_tests {
         rom.extend(vec![0u8; 32 * 1024]);
         rom.extend(vec![0u8; 8 * 1024]);
         let cart = Cartridge::load(&mut std::io::Cursor::new(rom)).unwrap();
-        MapperEnum::from_cartridge(cart)
+        MapperEnum::from_cartridge(cart).unwrap()
     }
 
     // An out-of-range sprite row (scanline < sprite.y) must not underflow
@@ -3683,7 +3683,7 @@ mod greyscale_tests {
         rom.extend(vec![0u8; 32 * 1024]);
         rom.extend(vec![0u8; 8 * 1024]);
         let cart = Cartridge::load(&mut std::io::Cursor::new(rom)).unwrap();
-        let mut mapper = MapperEnum::from_cartridge(cart);
+        let mut mapper = MapperEnum::from_cartridge(cart).unwrap();
 
         let mut ppu = Ppu::new();
         // Blue + red emphasis, rendering disabled (keeps timing plain).
@@ -3742,7 +3742,7 @@ mod advance_equivalence_tests {
         rom.extend(chr);
         let cart = crate::cartridge::Cartridge::load(&mut std::io::Cursor::new(rom))
             .expect("synth iNES");
-        MapperEnum::from_cartridge(cart)
+        MapperEnum::from_cartridge(cart).unwrap()
     }
 
     fn nrom() -> MapperEnum { synth_mapper(0x00, 1) } // mapper 0, batchable
@@ -4208,7 +4208,7 @@ mod ppu_coverage_tests {
         rom.extend(vec![0u8; 32 * 1024]);
         rom.extend(vec![0u8; 8 * 1024]);
         let cart = Cartridge::load(&mut std::io::Cursor::new(rom)).unwrap();
-        MapperEnum::from_cartridge(cart)
+        MapperEnum::from_cartridge(cart).unwrap()
     }
 
     // ---- Gap 1: VRAM read buffer semantics -------------------------------

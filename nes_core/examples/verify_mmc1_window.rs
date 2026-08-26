@@ -11,7 +11,7 @@ fn main() {
     println!("ROM: {} — mapper {}, prg_rom_num_banks {}",
              path, cart.mapper, cart.prg_rom_num_banks);
 
-    let mapper = nes_core::mapper::MapperEnum::from_cartridge(cart);
+    let mapper = nes_core::mapper::MapperEnum::from_cartridge(cart).expect("supported mapper");
 
     let window_ptr = mapper.prg_asm_ptr();
     match window_ptr {

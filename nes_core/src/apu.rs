@@ -1569,7 +1569,7 @@ mod apu_coverage_tests {
         rom.extend(vec![0u8; 32 * 1024]);
         rom.extend(vec![0u8; 8 * 1024]);
         let cart = Cartridge::load(&mut std::io::Cursor::new(rom)).unwrap();
-        MapperEnum::from_cartridge(cart)
+        MapperEnum::from_cartridge(cart).unwrap()
     }
 
     // --- GAP 1: DMC sample-address advance + wrap ---------------------

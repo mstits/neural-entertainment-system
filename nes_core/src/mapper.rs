@@ -239,8 +239,9 @@ pub enum MapperEnum {
 }
 
 impl MapperEnum {
-    pub fn from_cartridge(cartridge: Cartridge) -> Self {
-        match cartridge.mapper {
+    pub fn from_cartridge(cartridge: Cartridge) -> Result<Self, String> {
+        let mapper_num = cartridge.mapper;
+        Ok(match cartridge.mapper {
             0 => Mapper0::new(cartridge).into(),
             1 => Mapper1::new(cartridge).into(),
             2 => Mapper2::new(cartridge).into(),
@@ -278,8 +279,8 @@ impl MapperEnum {
             228 => Mapper228::new(cartridge).into(),
             232 => Mapper232::new(cartridge).into(),
             234 => Mapper234::new(cartridge).into(),
-            _ => panic!("Unsupported mapper number: {}", cartridge.mapper),
-        }
+            _ => return Err(format!("Unsupported mapper number: {}", mapper_num)),
+        })
     }
 }
 

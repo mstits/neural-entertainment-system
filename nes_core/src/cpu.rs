@@ -5811,7 +5811,7 @@ mod cpu_coverage_tests {
             .expect("synthetic NROM image parses");
         Parts {
             ram: Ram::new(),
-            mapper: MapperEnum::from_cartridge(cart),
+            mapper: MapperEnum::from_cartridge(cart).unwrap(),
             ppu: Ppu::new(),
             apu: Apu::new(),
             oam_dma: OamDma::new(),

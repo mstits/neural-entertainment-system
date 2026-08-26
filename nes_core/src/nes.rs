@@ -257,7 +257,15 @@ impl Nes {
     pub fn new(cartridge: Cartridge) -> Nes {
         let mut nes = Self {
             ram: Ram::new(),
-            mapper: MapperEnum::from_cartridge(cartridge),
+            // `from_cartridge` returns a `Result` (mirrors
+            // `cartridge::LoadError`) so the "unsupported mapper" case is
+            // an explicit, named error rather than a bare `panic!` buried
+            // in a `match`. `Nes::new` itself stays infallible: both real
+            // callers (pool.rs, python.rs) already wrap mapper
+            // construction in `catch_unwind` and turn a panic into a
+            // clean `PyRuntimeError`, so we re-panic here with the same
+            // message to keep that boundary's behavior unchanged.
+            mapper: MapperEnum::from_cartridge(cartridge).unwrap_or_else(|e| panic!("{e}")),
             cpu: Cpu::new(),
             ppu: Ppu::new(),
             apu: Apu::new(),
@@ -2902,5 +2910,85 @@ mod vblank_read_race_tests {
             nes.hw_vblank_read_race(),
             "apply_state cleared hw_vblank_read_race"
         );
+    }
+}
+
+/// Covers the audit finding that `MapperEnum::from_cartridge`'s
+/// "unsupported mapper" case reached the PyO3 boundary as a bare
+/// `panic!` rather than a `Result`. The fix keeps `Nes::new` itself
+/// infallible (it still panics — pool.rs and python.rs already wrap
+/// every real call to it in `catch_unwind` and convert the panic to a
+/// `PyRuntimeError`), but `from_cartridge` now surfaces the error as an
+/// explicit `Result<MapperEnum, String>` internally, mirroring
+/// `cartridge::LoadError`'s style instead of hiding a panic inside a
+/// `match`. These tests prove both halves: the `Result` is explicit,
+/// and the `catch_unwind`-based "unsupported mapper -> clean error, not
+/// a crash" contract the README documents still holds end to end.
+#[cfg(test)]
+mod unsupported_mapper_boundary_tests {
+    use super::*;
+    use crate::cartridge::Cartridge;
+    use crate::mapper::MapperEnum;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    /// Minimal iNES 1.0 header naming a mapper number no `MapperEnum`
+    /// variant implements (999 does not fit iNES 1.0's 8-bit mapper
+    /// field, so the loader clamps to a value guaranteed unimplemented:
+    /// see the mapper list in `mapper.rs`'s `MapperEnum` enum).
+    fn rom_with_unsupported_mapper(mapper_hi_nibble: u8, mapper_lo_nibble: u8) -> Vec<u8> {
+        let mut rom = Vec::with_capacity(16 + 16 * 1024);
+        rom.extend_from_slice(b"NES\x1a");
+        rom.push(1); // PRG = 1 x 16 KB
+        rom.push(0); // CHR = 0 (CHR-RAM)
+        rom.push(mapper_lo_nibble << 4); // flags6: mapper low nibble
+        rom.push(mapper_hi_nibble << 4); // flags7: mapper high nibble (iNES 1.0)
+        rom.extend_from_slice(&[0u8; 8]);
+        rom.extend(vec![0u8; 16 * 1024]);
+        rom
+    }
+
+    fn load_unsupported_cart() -> Cartridge {
+        // Mapper 0xFF (255): iNES 1.0's mapper byte is a full u8, no
+        // variant of `MapperEnum` claims it, and it will not gain one
+        // by accident as new mappers are added at the low end.
+        let rom = rom_with_unsupported_mapper(0x0F, 0x0F);
+        let cart =
+            Cartridge::load(&mut std::io::Cursor::new(rom)).expect("synthetic iNES parses");
+        assert_eq!(cart.mapper, 255, "test fixture must name an unsupported mapper");
+        cart
+    }
+
+    #[test]
+    fn from_cartridge_returns_err_not_panic_for_unsupported_mapper() {
+        let cart = load_unsupported_cart();
+        let result = MapperEnum::from_cartridge(cart);
+        match result {
+            Ok(_) => panic!("mapper 255 unexpectedly has a MapperEnum variant"),
+            Err(msg) => assert_eq!(msg, "Unsupported mapper number: 255"),
+        }
+    }
+
+    #[test]
+    fn nes_new_panics_and_catch_unwind_turns_it_into_a_clean_error() {
+        // Reproduces the exact wrapping pool.rs and python.rs perform
+        // around `Nes::new`/`Worker::new` in production: a panicking
+        // mapper construction must be caught here, not propagate past
+        // this boundary and crash the process.
+        let cart = load_unsupported_cart();
+        let mapper_num = cart.mapper;
+        let outcome = catch_unwind(AssertUnwindSafe(|| Nes::new(cart)));
+
+        let panic_payload = outcome.err().expect(
+            "Nes::new must panic on an unsupported mapper so the outer \
+             catch_unwind can convert it into a PyRuntimeError",
+        );
+        let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            panic!("panic payload was neither &str nor String");
+        };
+        assert_eq!(msg, format!("Unsupported mapper number: {mapper_num}"));
     }
 }

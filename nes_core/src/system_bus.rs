@@ -301,7 +301,7 @@ mod tests {
         ]);
         rom.resize(16 + 16 * 1024, 0);
         let cart = Cartridge::load(&mut Cursor::new(rom)).unwrap();
-        MapperEnum::from_cartridge(cart)
+        MapperEnum::from_cartridge(cart).unwrap()
     }
 
     struct Parts {
