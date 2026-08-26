@@ -58,8 +58,42 @@ solve:
   # runs/onboard_wave4/discover_mega_man_usa.json). No RAM map, no
   # disassembly, no walkthrough.
   #   $00F4  y candidate (jump/ballistic signature), sole candidate found.
-  #   $0410  lives candidate: decrements by 1 on death, agreed by 5 of 5
-  #          independent probe runs.
+  #
+  # SUPERSEDED (2026-08-25, same-day follow-up): $0410 was the original
+  # lives candidate (5/5 probe agreement) but read 0 at this exact root
+  # state — confirmed independently by a raw RAM peek of the minted
+  # state file, not just the tool's own recorded value. Traced live: the
+  # byte flips 0 -> 255 within the first ~15-40 steps of ANY rollout
+  # (tied to movement starting, not a death — RAM churn at the
+  # transition is far below the level-reload threshold), and
+  # GenericGame.is_dead()'s wrap-aware check reads that 0->255 flip as a
+  # death (delta=1, inside the 1..8 band). This false-death fired within
+  # the first couple dozen frames of nearly every rollout, which fully
+  # explains onboarding wave 4's frozen ~10-cell frontier
+  # (runs/onboard_wave4/summary_mega_man_usa.json) independent of any
+  # other wall. Root cause traced to discover_observables.py's
+  # lives_from_death_drives(): its reaches_empty check is trivially
+  # satisfied whenever a candidate's own start value is already 0,
+  # which let this spurious byte outrank a real candidate the SAME
+  # probe pass had already seen (buried because find_hp_lives() only
+  # falls back to hp_candidates when lives_candidates is empty, and it
+  # wasn't empty — just wrong). Re-running the same tool with a longer
+  # death-probe budget (700->2200 steps, no new mechanism, no hand-
+  # authored knowledge) correctly nominates $00A6: start=2, 5/5
+  # agreement, spends its stock 15 times over the longer window, steps
+  # 2->1->0->255 (wraps only on the actual 4th/final death) — the safe
+  # shape this class of bug is supposed to look like. A causal A/B test
+  # (identical go_explore_solve smoke, only this line changed) confirmed
+  # a real improvement: root-state lives read corrected 0->2, frontier
+  # 1->16 cells (was 1->10), max_gx_in_max_area 24px (was 16px). This
+  # does NOT fully unblock the frontier — a residual, still-unexplained
+  # stall remains past 16 cells, most likely a genuine early skill/
+  # action-space wall (same family as this wave's Super C finding) —
+  # so do not read $00A6 as "solved," only as "the false-death
+  # instrument bug is fixed." Separately flagged: lives_from_death_
+  # drives' start==0 trivial-empty-credit gap is a general tool defect,
+  # not fixed here (would need a dedicated pass across every other
+  # onboarded profile to check for the same silent failure mode).
   y: 0x00F4
-  lives: 0x0410
+  lives: 0x00A6
   level_key: []   # coverage baseline; no stage/room-advance byte captured yet
