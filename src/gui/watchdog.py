@@ -41,7 +41,10 @@ class Watchdog:
         self._sample_path: Optional[Path] = None
         self._stack_path: Optional[Path] = None
         self._last_rss_mb: int = 0
-        self._last_stack_dump_ts: float = 0.0
+        # Cooldown timestamp per trigger reason, not a single shared one —
+        # otherwise a recent "growth" dump can suppress a subsequent, more
+        # urgent "threshold" dump (or vice versa) for up to 30s.
+        self._last_stack_dump_ts: dict[str, float] = {}
         self._pid = os.getpid()
 
     def start(self) -> Optional[Path]:
@@ -135,7 +138,9 @@ class Watchdog:
                 text=True,
                 timeout=2.0,
             )
-            out["threads"] = max(0, len(proc.stdout.strip().splitlines()) - 1)
+            lines = proc.stdout.strip().splitlines()
+            if proc.returncode == 0 and len(lines) >= 2:
+                out["threads"] = len(lines) - 1
         except Exception:
             pass
         try:
@@ -160,9 +165,9 @@ class Watchdog:
 
     def _dump_stacks(self, *, reason: str, rss: int, growth: int) -> None:
         now = time.time()
-        if now - self._last_stack_dump_ts < 30.0:
+        if now - self._last_stack_dump_ts.get(reason, 0.0) < 30.0:
             return
-        self._last_stack_dump_ts = now
+        self._last_stack_dump_ts[reason] = now
         try:
             assert self._stack_path is not None
             with self._stack_path.open("a") as fh:
