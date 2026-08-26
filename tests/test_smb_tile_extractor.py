@@ -3,6 +3,9 @@ expected feature vector for known game states."""
 
 from __future__ import annotations
 
+import builtins
+import logging
+
 import numpy as np
 import pytest
 
@@ -152,6 +155,26 @@ def test_scalar_subtile_x() -> None:
     ram[0x0086] = 99  # x_low % 16 = 3
     out = ext.extract(bytes(ram))
     assert out[174] == 3
+
+
+def test_native_extension_import_failure_is_logged(monkeypatch, caplog) -> None:
+    """A broken/stale compiled `nes_core` extension (ABI mismatch, partial
+    rebuild) must not be silently indistinguishable from a dev box that
+    never built the Rust extension — the fallback has to be observable."""
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "nes_core":
+            raise ImportError("dlopen(...): slice is not valid mach-o file")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    with caplog.at_level(logging.WARNING):
+        ext = SMBTileObservation()
+
+    assert ext._extract_rust is None
+    assert any("nes_core" in rec.message for rec in caplog.records)
 
 
 def test_scalar_velocity_signed() -> None:

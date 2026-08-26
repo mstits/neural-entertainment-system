@@ -27,7 +27,11 @@ which is well below the per-step emulation time (a few ms).
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 
 # RAM addresses (NESdev wiki / SMB disassembly)
@@ -104,8 +108,14 @@ class SMBTileObservation:
                 import nes_core
                 if hasattr(nes_core, "extract_smb_tiles"):
                     self._extract_rust = nes_core.extract_smb_tiles
-            except ImportError:
-                pass
+            except ImportError as exc:
+                log.warning(
+                    "nes_core native extension unavailable (%s); falling back "
+                    "to the numpy tile-extraction path (~55x slower). If a "
+                    "build was expected, the compiled extension may be "
+                    "missing or ABI-mismatched.",
+                    exc,
+                )
 
     @property
     def feature_dim(self) -> int:
@@ -265,8 +275,14 @@ class SMBTileObservationV2(SMBTileObservation):
                 import nes_core
                 if hasattr(nes_core, "extract_smb_tiles_v2"):
                     self._extract_rust_v2 = nes_core.extract_smb_tiles_v2
-            except ImportError:
-                pass
+            except ImportError as exc:
+                log.warning(
+                    "nes_core native extension unavailable (%s); falling back "
+                    "to the numpy tile-extraction path (~55x slower). If a "
+                    "build was expected, the compiled extension may be "
+                    "missing or ABI-mismatched.",
+                    exc,
+                )
 
     @property
     def feature_dim(self) -> int:
