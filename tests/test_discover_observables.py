@@ -716,3 +716,69 @@ def test_decrement_consensus_same_start_still_rejects_genuinely_different_starts
             _rep([10, 20], hold=64)]
     result = _decrement_consensus(logs, FIGHT_HP)
     assert result["same_start"] is False
+
+
+# ---------------------------------------------------------------------------
+# Zero-start lives guard (2026-08-25).
+#
+# A mechanism-coverage sweep across 43 onboarded profiles found 11 whose
+# nominated `lives` byte read 0 at their own root state. Root cause, read
+# directly from source: at start == 0 BOTH acceptance gates in
+# `lives_from_death_drives` are structurally vacuous --
+#   * `reaches_empty` sliced `log[:end+1]`, which includes the start sample,
+#     so a byte that merely BEGAN at zero satisfied "reaches empty";
+#   * `spends_its_stock` reduces to `0 <= spent <= -first`, satisfied by any
+#     single decrement.
+# Such a byte underflows 0 -> 255 on its first change and is misread as a
+# death in every episode's first frames. Measured on Mega Man (USA): the
+# search frontier froze at 10 cells; a correctly-nominated byte moved it to
+# 16 with progress 16px -> 24px.
+# ---------------------------------------------------------------------------
+
+def _lives_log(col_by_addr, n_addr=8, n_steps=40):
+    """Build a (steps, addrs) uint8 log from {addr: [values]}."""
+    import numpy as np
+    log = np.zeros((n_steps, n_addr), dtype=np.uint8)
+    for a, vals in col_by_addr.items():
+        for t, v in enumerate(vals[:n_steps]):
+            log[t, a] = v
+    return log
+
+
+def test_zero_start_candidate_cannot_outrank_a_real_stock():
+    """A byte that starts at 0 must never be nominated over one that
+    carries an actual stock, however clean its decrement looks."""
+    import numpy as np
+    from scripts.discover_observables import lives_from_death_drives
+
+    # addr 1: a REAL stock -- starts at 3, steps down to 0 one at a time.
+    real = [3] * 10 + [2] * 10 + [1] * 10 + [0] * 10
+    # addr 5: starts at 0, ticks once. Vacuously "reaches empty" and
+    # vacuously "spends its stock" under the pre-fix gates.
+    fake = [0] * 20 + [255] * 20
+
+    logs = [_lives_log({1: real, 5: fake}) for _ in range(5)]
+    drives = [{"log": lg} for lg in logs]
+    cands, _ev = lives_from_death_drives(drives)
+
+    assert cands, "expected at least one lives candidate"
+    ranked = [c["addr"] for c in cands]
+    assert 1 in ranked, f"the real stock at addr 1 was not surfaced: {ranked}"
+    if 5 in ranked:
+        assert ranked.index(1) < ranked.index(5), (
+            f"zero-start byte (addr 5) outranked the real stock (addr 1): {ranked}"
+        )
+    # The top-ranked candidate must not be the zero-start byte.
+    assert ranked[0] != 5, "nominated a byte that reads 0 at the start state"
+
+
+def test_starts_nonzero_is_reported_per_candidate():
+    """The new discriminator is visible in the receipt, not just in the sort."""
+    from scripts.discover_observables import lives_from_death_drives
+    real = [3] * 10 + [2] * 10 + [1] * 10 + [0] * 10
+    logs = [_lives_log({1: real}) for _ in range(5)]
+    cands, _ev = lives_from_death_drives([{"log": lg} for lg in logs])
+    assert cands and "starts_nonzero" in cands[0], (
+        "candidates must record starts_nonzero so a reader can audit the rank"
+    )
+    assert cands[0]["starts_nonzero"] is True

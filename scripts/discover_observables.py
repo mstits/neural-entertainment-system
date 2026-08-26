@@ -1489,7 +1489,18 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
             # A stock is spent to nothing, exactly once: it hits empty,
             # and what came out of it accounts for what was in it. Debris
             # knocked down by a level reload satisfies neither.
-            floor = floor and bool((log[:end + 1, i] == 0).any())
+            # The zero must be ARRIVED AT, not merely present at index 0.
+            # At start == 0 the old `log[:end+1]` slice included the start
+            # sample itself, so `reaches_empty` was vacuously true for any
+            # byte that simply began at zero -- which, paired with the
+            # equally-vacuous stock check below, nominated a non-counter as
+            # the lives byte on 11 of 43 onboarded profiles (measured
+            # 2026-08-25). A byte that starts at 0 then underflows 0 -> 255
+            # on its first change reads as a death in every episode's first
+            # frames; on Mega Man (USA) that froze the search frontier at 10
+            # cells, and substituting a correctly-nominated byte moved it to
+            # 16 with progress 16px -> 24px.
+            floor = floor and bool((log[1:end + 1, i] == 0).any())
             spent = int(down.size) * -first
             stock = stock and (start <= spent <= start - first)
         if not ok or step is None or agreeing < need:
@@ -1499,6 +1510,7 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
             "runs_agreeing": agreeing, "runs_watched": len(logs),
             "spends": spends, "refilled_runs": refills,
             "reaches_empty": floor, "spends_its_stock": stock,
+            "starts_nonzero": bool(start > 0),
             "moves_while_idle": bool(idle_moved[i]),
         })
 
@@ -1515,7 +1527,15 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
     # life, while a byte the ending merely knocked down is not there for
     # all of them. Then the canonical (lowest) address, so a duplicate
     # never outranks the byte it mirrors.
+    # A stock that reads 0 at the start state is not a stock. Both
+    # `reaches_empty` and `spends_its_stock` are structurally vacuous at
+    # start == 0 (see the arrival-at-zero note above), so neither can
+    # demote such a byte on its own. Demotion rather than rejection,
+    # matching the idle-clock convention directly above: the candidate
+    # stays visible in the report, it just can never outrank a byte that
+    # actually carries a stock.
     out.sort(key=lambda c: (c["moves_while_idle"],
+                            not c["starts_nonzero"],
                             not (c["reaches_empty"] and c["spends_its_stock"]),
                             not c["reaches_empty"], abs(c["drop"] - 1),
                             -c["spends"], -c["runs_agreeing"], c["addr"]))
@@ -1525,7 +1545,8 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
     kept: list[dict] = []
     _sig = lambda c: (c["start"], c["drop"], c["runs_agreeing"], c["spends"],
                       c["refilled_runs"], c["reaches_empty"],
-                      c["spends_its_stock"], c["moves_while_idle"])
+                      c["spends_its_stock"], c["moves_while_idle"],
+                      c["starts_nonzero"])
     for c in out:
         sig = _sig(c)
         prior = next((k for k in kept if _sig(k) == sig), None)
