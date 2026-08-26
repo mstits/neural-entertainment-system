@@ -43,10 +43,24 @@ asks for it (so every existing receipt is unchanged):
                 fanfare is, only that this game's channels stopped behaving
                 the way this game's channels have been behaving.
 
-The ground-truth self-test (--test) replays real SMB Go-Explore solution
-traces from their recorded root state, finds the frame the world/level
-bytes truly advance (the same forward-clear check the solver itself uses),
-runs the detector over the replay, and reports firing accuracy.
+The ground-truth self-test (--test) replays real Go-Explore solution traces
+from their recorded root state, finds the frame the game's own clear
+predicate truly fires (the same check the solver itself uses), runs the
+detector over the replay, and reports firing accuracy.
+
+THE SELF-TEST HARNESS IS PROFILE-DRIVEN (`--profile configs/<game>.yaml`).
+It used to open with `game = SmbGame()` and replay every trace through SMB's
+action space at SMB's frame_skip, which meant no non-SMB profile could reach
+the detector AT ALL. That is why the 2026-08-26 clear-detection census
+(docs/research/CLEAR_DETECTION_CAMPAIGN_2026-08-26.md) surveyed 29 profiles
+and exercised the detector on exactly one of them: the 28 silences it
+collected were a property of this entry point, not of those games. With no
+--profile the harness is still the historical SMB one, byte-identically;
+with one, the game adapter (go_explore_solve.make_game), the action space the
+recorded action indices index into, and the frame_skip the trace was recorded
+at all come from the profile. Every receipt now carries a `harness:` block
+naming what actually replayed. Regression guard:
+tests/test_clear_detect_profile_entry.py.
 """
 from __future__ import annotations
 
@@ -57,8 +71,10 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
+import yaml
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -460,13 +476,45 @@ def trailing_median(x: np.ndarray, k: int) -> np.ndarray:
     2-sample spike parked on a sub-window boundary reads identically to a
     sustained level.
 
-    The leading k-1 positions are back-filled with x[0] so the output is the
-    same length as the input and the series' own first value, not a zero,
-    seeds the filter."""
+    THE LEADING EDGE (fixed 2026-08-26; measured, see below). The first k-1
+    positions have no k-sample history, so something has to stand in for it.
+    Back-filling with x[0] -- the shipped behavior -- replicates the OLDEST
+    SAMPLE k-1 times, which makes it the majority of every one of the first
+    ~k/2 windows. When that oldest sample is itself the impulse, the filter
+    does not merely fail to remove it, it AMPLIFIES it into a synthetic run,
+    and the run gets LONGER as k goes up: on [846, 846, 88, 88, ...] at k=15
+    the first nine outputs are all 846. Turning the suppression knob up made
+    the suppression worse.
+
+    That is not theoretical. StreamingConfluenceDetector median-filters a
+    ROLLING window, so every sample eventually becomes x[0]; a check lands on
+    a spike sitting at relative index 0 whenever the spike's absolute index is
+    a multiple of the check stride. Measured on the Double Dragon blip stream
+    (tests/test_confluence_v2.py) with progress_median=5: a spike at index 300
+    fabricates a clear at step 539, while the same spike at 301 or 305 is
+    silent. The "alignment-independent" claim in the docstrings below was
+    false at exactly one alignment -- the window head.
+
+    NOTE FOR ANYONE "FIXING" THIS BY DELETING THE PAD: that does nothing.
+    A growing trailing window (out[i] = median(x[:i+1]) for i < k-1) still
+    yields out[0] == x[0] -- one real sample decides the position no matter
+    how you dress it -- and reproduces the same fabricated clear at index 539.
+    Both were run against the detector; they are indistinguishable there. The
+    seed has to come from a FULL k-sample window, so no output position is
+    ever decided by fewer than k real samples. Cost of the fix, measured on
+    the same harness: a genuine sustained load is still detected at the same
+    step (219), so this is suppression bought with no recall.
+
+    The look-ahead this introduces (out[0] depends on x[0:k]) is safe here
+    because this is an offline filter over a buffer the caller already holds
+    in full, not a causal online filter -- push() re-filters the whole rolling
+    window at every check."""
     if k <= 1 or x.size == 0:
         return x
     k = min(int(k), int(x.size))
-    pad = np.concatenate([np.full(k - 1, x[0], dtype=x.dtype), x])
+    seed = float(np.median(x[:k]))
+    pad = np.concatenate([np.full(k - 1, seed, dtype=np.float64),
+                          np.asarray(x, dtype=np.float64)])
     win = np.lib.stride_tricks.sliding_window_view(pad, k)
     return np.median(win, axis=1)
 
@@ -942,13 +990,14 @@ class StreamingConfluenceDetector:
 
 def run_episode(env, game, bitmasks, dir_bitmask, actions: list[int],
                  start_wd: tuple, margin_actions: int = 90,
-                 probe_stride: int = 20, probe_frames: int = LOCK_PROBE_FRAMES
-                 ) -> dict:
+                 probe_stride: int = 20, probe_frames: int = LOCK_PROBE_FRAMES,
+                 fs: int = FS) -> dict:
     """Replays `actions` (already positioned at the root + rooting NOOP),
-    then `margin_actions` more of NOOP (each action step is FS=4 raw
-    frames, so this is ~margin_actions*FS/60 seconds), collecting
+    then `margin_actions` more of NOOP (each action step is `fs` raw frames
+    -- the PROFILE's frame_skip, the one the trace was recorded at, not a
+    fixed 4 -- so this is ~margin_actions*fs/60 seconds), collecting
     everything the detector needs. Returns a report with the true clear
-    frame (the solver's own forward-clear check, at raw single-frame
+    frame (the game adapter's own clear check, at raw single-frame
     resolution) and the detector's verdict."""
     sample_rate = env.sample_rate
     audio_sig = AudioCadenceSignal(sample_rate)
@@ -958,6 +1007,10 @@ def run_episode(env, game, bitmasks, dir_bitmask, actions: list[int],
 
     true_clear_frame = None
     frame_idx = -1
+    # Per-replay ctx, exactly as Solver.observe threads one per worker. SMB
+    # ignores it (byte-identical); a GenericGame `clear: {mode: ...}` WIN-
+    # CONDITION is short-circuited to False without it.
+    clear_ctx: dict = {}
 
     def observe_frame():
         nonlocal true_clear_frame, frame_idx
@@ -967,7 +1020,7 @@ def run_episode(env, game, bitmasks, dir_bitmask, actions: list[int],
         audio_sig.push_frame(audio)
         ram_hist.append(ram)
         gx_hist.append(game.progress(ram))
-        if true_clear_frame is None and (game.is_clear(start_wd, ram)
+        if true_clear_frame is None and (game.is_clear(start_wd, ram, clear_ctx)
                                           or game.is_finale(start_wd, ram)):
             true_clear_frame = frame_idx
         if frame_idx % probe_stride == 0:
@@ -977,7 +1030,7 @@ def run_episode(env, game, bitmasks, dir_bitmask, actions: list[int],
     all_actions = list(actions) + [0] * margin_actions
     for a in all_actions:
         mask = int(bitmasks[a])
-        for _ in range(FS):
+        for _ in range(fs):
             env.step(mask)
             observe_frame()
 
@@ -1068,10 +1121,112 @@ def discover_smb_solutions() -> list[str]:
     return found
 
 
-def run_ground_truth_test(run_bases: list[str], verbose: bool = True) -> dict:
-    bitmasks = action_space_to_bitmasks(ACTION_SPACE)
-    dir_bitmask = bitmasks[ACTION_SPACE.index(["right"])]
-    game = SmbGame()
+# ===========================================================================
+# The harness -- the three things that used to be hardcoded to SMB
+# ===========================================================================
+
+DIRECTIONS = ("right", "left", "up", "down")
+
+
+def _lock_probe_index(action_space: list) -> int:
+    """Index of the action `differential_input_lock_probe` holds.
+
+    The probe asks one question: does holding a direction move RAM relative
+    to holding nothing? So it needs *a* directional action, and which one
+    barely matters. Preference order is right (SMB's historical choice, which
+    keeps the SMB harness bit-for-bit what every banked receipt used), then
+    any other bare direction, then any action that merely CONTAINS one.
+
+    It raises rather than falling back to NOOP on a space with no direction
+    at all. That fallback would probe NOOP against NOOP, land a near-zero
+    diff on every frame, and hand the `lock` signal a free permanent vote --
+    a signal that is structurally always-on is worse than an absent one,
+    because it looks like evidence."""
+    for want in DIRECTIONS:
+        if [want] in action_space:
+            return action_space.index([want])
+    for i, combo in enumerate(action_space):
+        if any(b in DIRECTIONS for b in combo):
+            return i
+    raise SystemExit(
+        "[clear_detect] this profile's action_space contains no directional "
+        "action, so the differential input-LOCK probe has nothing to hold "
+        "against NOOP. Refusing rather than probing NOOP vs NOOP, which "
+        "would vote 'locked' on every frame.")
+
+
+class Harness(NamedTuple):
+    """Game adapter + action space + frame_skip for one replay.
+
+    ALL THREE USED TO BE HARDCODED TO SMB. `run_ground_truth_test` opened
+    with `game = SmbGame()` and replayed every trace through SMB's 11-action
+    space at SMB's frame_skip, so no other profile could reach the detector
+    at all -- which is why the 2026-08-26 clear-detection census exercised
+    the detector on exactly one of the 29 profiles it surveyed, and why the
+    28 silences it collected were not measurements of those games. Regression
+    guard: tests/test_clear_detect_profile_entry.py."""
+    game: object
+    action_space: list
+    frame_skip: int
+    bitmasks: object
+    dir_index: int
+    profile: str | None
+
+    def provenance(self) -> dict:
+        """Receipt block naming what actually replayed, so a reader can tell
+        an SMB run from a Castlevania run without trusting the filename."""
+        return {
+            "profile": self.profile,
+            "game_adapter": type(self.game).__name__,
+            "rom": getattr(self.game, "rom", None),
+            "frame_skip": self.frame_skip,
+            "n_actions_in_space": len(self.action_space),
+            "lock_probe_action": list(self.action_space[self.dir_index]),
+        }
+
+
+def build_harness(profile_path: str | None = None) -> Harness:
+    """Build the replay harness from a profile YAML, or the SMB one.
+
+    With no profile this is the historical SMB triple, byte-identical to what
+    every banked receipt was produced under (SmbGame, this module's
+    ACTION_SPACE, FS). With one, all three come from the profile: the game
+    adapter via `go_explore_solve.make_game` (so an SMB-engine profile still
+    gets SmbGame and a `solve:` profile gets GenericGame), the action space
+    the recorded action indices index into, and the frame_skip the trace was
+    recorded at."""
+    if not profile_path:
+        game = SmbGame()
+        return Harness(game, ACTION_SPACE, FS,
+                       action_space_to_bitmasks(ACTION_SPACE),
+                       _lock_probe_index(ACTION_SPACE), None)
+
+    from go_explore_solve import make_game
+
+    path = Path(profile_path)
+    if not path.is_absolute() and not path.exists():
+        path = REPO / profile_path
+    if not path.exists():
+        raise SystemExit(f"[clear_detect] profile not found: {profile_path}")
+    prof = yaml.safe_load(path.read_text())
+    if not isinstance(prof, dict) or "action_space" not in prof:
+        raise SystemExit(
+            f"[clear_detect] {path} has no `action_space:`. The recorded "
+            f"action indices in a solution trace are indices INTO that list; "
+            f"without it there is nothing to replay them against.")
+    space = [list(a) for a in prof["action_space"]]
+    return Harness(make_game(prof), space,
+                   int(prof.get("frame_skip", FS)),
+                   action_space_to_bitmasks(space),
+                   _lock_probe_index(space), str(profile_path))
+
+
+def run_ground_truth_test(run_bases: list[str], verbose: bool = True,
+                          profile: str | None = None) -> dict:
+    harness = build_harness(profile)
+    game, action_space, fs = harness.game, harness.action_space, harness.frame_skip
+    bitmasks = harness.bitmasks
+    dir_bitmask = bitmasks[harness.dir_index]
 
     per_run = []
     for base in run_bases:
@@ -1094,19 +1249,34 @@ def run_ground_truth_test(run_bases: list[str], verbose: bool = True) -> dict:
             env.reset()
             env.set_audio_output_enabled(True)
             env.load_state(root_bytes)
-            for _ in range(FS):   # rooting convention: one NOOP = FS raw frames
+            for _ in range(fs):   # rooting convention: one NOOP = fs raw frames
                 env.step(0)
 
             ram0 = np.array(env.get_ram_range(0, 2048), dtype=np.uint8)
+            # byte_change WIN-CONDITIONs compare against the entrance value the
+            # solver itself latches in Solver.seed; without this the hook is
+            # inert (baseline None) and cannot fire on any replay.
+            if hasattr(game, "note_start"):
+                game.note_start(ram0)
             start_wd = tuple(game.level_key(ram0))
             expected_start = tuple(meta["start_wd"])
-            if start_wd != expected_start:
+            # A profile whose `level_key` gained a byte after a trace was
+            # recorded replays to a LONGER key with the recorded one as its
+            # prefix. That is profile drift, not a bad replay: the root is the
+            # same root. Accept it, record it, and keep using the REPLAYED key
+            # as the baseline -- comparing against the shorter recorded tuple
+            # would make `is_clear` true on frame 0 by tuple-length alone.
+            key_drift = (start_wd != expected_start
+                         and (start_wd[:len(expected_start)] == expected_start
+                              or expected_start[:len(start_wd)] == start_wd))
+            if start_wd != expected_start and not key_drift:
                 per_run.append({"run": base, "error":
                                  f"root replay mismatch: got {start_wd}, expected {expected_start}"})
                 continue
 
             t0 = time.time()
-            report = run_episode(env, game, bitmasks, dir_bitmask, actions, start_wd)
+            report = run_episode(env, game, bitmasks, dir_bitmask, actions,
+                                 start_wd, fs=fs)
             elapsed = time.time() - t0
         except Exception as e:
             per_run.append({"run": base, "error": f"replay failed: {e}"})
@@ -1132,6 +1302,7 @@ def run_ground_truth_test(run_bases: list[str], verbose: bool = True) -> dict:
         result = {
             "run": base,
             "start_wd": list(start_wd),
+            "level_key_arity_drift": bool(key_drift),
             "clear_wd_expected": meta.get("clear_wd"),
             "n_actions": len(actions),
             "n_frames_replayed": report["n_frames"],
@@ -1164,6 +1335,7 @@ def run_ground_truth_test(run_bases: list[str], verbose: bool = True) -> dict:
                 signal_fire_counts[k] += int(v)
 
     summary = {
+        "harness": harness.provenance(),
         "tolerance_frames": TOLERANCE_FRAMES,
         "n_runs": len(per_run),
         "n_valid": n_valid,
@@ -1186,19 +1358,37 @@ def run_ground_truth_test(run_bases: list[str], verbose: bool = True) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--test", action="store_true",
-                     help="run the ground-truth self-test against SMB solution traces")
+                     help="run the ground-truth self-test against solution traces")
     ap.add_argument("--runs", nargs="*", default=None,
                      help="explicit solution basenames (without .json/.actions.npy); "
-                          "default = a curated 5-run SMB set")
+                          "default = a curated 5-run SMB set. REQUIRED with "
+                          "--profile.")
     ap.add_argument("--discover", action="store_true",
                      help="glob-discover all mario/smb solution traces instead of the "
-                          "curated default set")
+                          "curated default set (SMB-only)")
     ap.add_argument("--out", default=str(REPO / "runs" / "clear_detect_receipt.json"))
+    ap.add_argument("--profile", default=None,
+                     help="game profile YAML (configs/*.yaml). Without it the "
+                          "harness is the historical SMB one; with it the game "
+                          "adapter, action space and frame_skip all come from "
+                          "the profile, so a non-SMB trace can be replayed.")
     args = ap.parse_args()
 
     if not args.test:
         print(__doc__)
         return 0
+
+    if args.profile and not args.runs:
+        # Both trace sources below are SMB-only: DEFAULT_RUNS is a curated
+        # five-run SMB list and --discover filters on mario/smb path names.
+        # Replaying an SMB trace through another game's adapter would still
+        # print a hit rate, and that number would mean nothing -- exactly the
+        # kind of confidently-empty result this entry point exists to stop.
+        print("[clear_detect] --profile requires --runs: the default trace "
+              "set and --discover are both SMB-only, and replaying an SMB "
+              "trace against another game's adapter measures nothing.",
+              file=sys.stderr)
+        return 2
 
     if args.runs:
         run_bases = args.runs
@@ -1208,7 +1398,7 @@ def main() -> int:
     else:
         run_bases = DEFAULT_RUNS
 
-    summary = run_ground_truth_test(run_bases)
+    summary = run_ground_truth_test(run_bases, profile=args.profile)
     summary["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
 
     out_path = Path(args.out)

@@ -25,13 +25,20 @@ replay-verification gate on the banking path (happy + mismatch).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+import yaml
+
 from scripts.clear_detect import StreamingConfluenceDetector, trailing_median
+from scripts.clear_reachability import clear_reachability
 from scripts.go_explore_solve import GenericGame, Solver
+
+#: Top-level profile directory, for the shipped-profile assertions below.
+CONFIGS = Path(__file__).resolve().parent.parent / "configs"
 
 # --------------------------------------------------------------------------
 # A synthetic 2 KiB RAM layout. Addresses are arbitrary test fixtures — the
@@ -353,6 +360,74 @@ def test_trailing_median_preserves_a_step_and_erases_an_impulse() -> None:
 
 
 # --------------------------------------------------------------------------
+# The median filter's LEADING EDGE — fixed 2026-08-26
+#
+# The impulse tests above all park the spike in the MIDDLE of the series,
+# where every output position has a full k samples of real history behind
+# it. The leading k-1 positions do not, and what stands in for that history
+# decides whether the filter suppresses a head-of-window impulse or replays
+# it. The shipped fill was x[0], i.e. the oldest sample repeated k-1 times —
+# so whenever the oldest sample WAS the impulse, the filter made it the
+# majority of its own window.
+#
+# This matters because StreamingConfluenceDetector filters a ROLLING window:
+# every sample becomes x[0] eventually, and a check lands on a spike sitting
+# at relative index 0 whenever the spike's absolute index is a multiple of
+# the check stride.
+# --------------------------------------------------------------------------
+
+def _growing_trailing_median(x: np.ndarray, k: int) -> np.ndarray:
+    """The "just delete the pad" alternative: for the leading positions, take
+    the median of however many real samples exist so far. Written out here so
+    the tests below can show it is NOT the fix — it is measured, not assumed.
+    """
+    return np.array([np.median(x[max(0, i - k + 1):i + 1]) for i in range(x.size)])
+
+
+def test_a_head_of_series_impulse_is_not_replicated_by_the_pad() -> None:
+    # 2-sample impulse at the HEAD. With an x[0] back-fill the pad is
+    # [846]*(k-1), so 846 is the majority of every one of the first ~k/2
+    # windows: at k=15 the first NINE outputs read 846. Raising k — turning
+    # the suppression knob UP — made the surviving run LONGER.
+    x = np.array([846, 846] + [88] * 40, dtype=np.int64)
+    for k in (5, 9, 15):
+        assert trailing_median(x, k).max() == 88, f"impulse survives at k={k}"
+
+
+def test_the_leading_edge_is_decided_by_k_real_samples_not_by_one() -> None:
+    # The distinguishing case between the two candidate fixes. Dropping the
+    # pad (a growing trailing window) still leaves out[0] == x[0]: one real
+    # sample decides that position however you dress it. Only seeding from a
+    # full k-sample window removes it.
+    x = np.array([846, 846] + [88] * 40, dtype=np.int64)
+    assert _growing_trailing_median(x, 15)[0] == 846      # not a fix
+    assert trailing_median(x, 15)[0] == 88                # is a fix
+
+
+def test_a_head_of_window_spike_no_longer_fabricates_a_clear() -> None:
+    # The detector-level consequence, and the reason the pure-function tests
+    # above are not academic. window=240 / stride=20: a spike whose absolute
+    # index is a multiple of the stride sits at relative index 0 of the full
+    # rolling window at some check. Before the fix this fired at step 539
+    # while the SAME spike one sample over (301) was silent — so the
+    # "alignment-independent" claim held at every alignment except the one
+    # the filter's own edge handling created.
+    for at in (300, 320, 340):
+        assert _run(_game(progress_median=5),
+                    _double_dragon_blip_stream(n=700, at=at)) is None
+
+
+def test_the_leading_edge_fix_costs_no_recall_on_a_real_load() -> None:
+    # What the fix must NOT do: a genuine sustained load is still detected,
+    # at the same step it was before (219). Suppression bought with recall
+    # would be the wrong trade — the census already has enough silence in it.
+    stream = [_ram(gx=(600 + 2 * i if i < 200 else 20 + 2 * (i - 200)),
+                   entities=i < 200, **_tally(i))
+              for i in range(400)]
+    assert _run(_game(progress_median=5), stream) == 219
+
+
+# --------------------------------------------------------------------------
 # Failure mode 3 — Kirby: an ordinary room transition read as a win
 # --------------------------------------------------------------------------
 
@@ -572,18 +647,35 @@ def test_an_unconfigured_profile_arms_none_of_the_v2_knobs() -> None:
 
 
 def test_the_shipped_confluence_profiles_stay_on_the_default_path() -> None:
-    # contra + gradius ship `clear: {mode: confluence}` today. Their behavior
-    # must not change under a v2 binary — the knobs are opt-in per profile.
-    import yaml
-    from pathlib import Path
-
-    repo = Path(__file__).resolve().parent.parent
-    for name in ("contra.yaml", "gradius.yaml"):
-        prof = yaml.safe_load((repo / "configs" / name).read_text())
+    # Whichever profiles ship `clear: {mode: confluence}` must not change
+    # behavior under a v2 binary — the knobs are opt-in per profile.
+    #
+    # DISCOVERED, NOT HARDCODED (2026-08-26). This test named contra.yaml
+    # and gradius.yaml literally and asserted each still declared the hook.
+    # That is the census pattern in miniature: it checked that a hook was
+    # DECLARED and never that it could FIRE, so it stayed green for the
+    # eighteen days Gradius's hook was inert after its progress was swapped
+    # to the odometer (commit 09299fa), and it would have gone red for the
+    # correct withdrawal of that dead hook rather than for the defect.
+    # Globbing keeps it honest as profiles come and go; the reachability
+    # assertion is the part the old form was missing.
+    found = {}
+    for path in sorted(CONFIGS.glob("*.yaml")):
+        prof = yaml.safe_load(path.read_text())
+        if not isinstance(prof, dict):
+            continue
         cl = (prof.get("solve") or {}).get("clear") or {}
-        assert cl.get("mode") == "confluence", name
+        if cl.get("mode") == "confluence":
+            found[path.name] = (prof, cl)
+
+    assert found, ("no profile ships clear: {mode: confluence} — if the hook "
+                   "was retired, retire this test with it rather than "
+                   "leaving it to pass vacuously")
+    for name, (prof, cl) in found.items():
         for knob in ("persist_checks", "progress_median", "room_veto"):
             assert knob not in cl, f"{name} silently opted into {knob}"
+        r = clear_reachability(prof)
+        assert r.ok, f"{name} declares a hook that cannot fire: {r.reason}"
 
 
 # --------------------------------------------------------------------------
