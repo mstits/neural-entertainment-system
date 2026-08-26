@@ -33,7 +33,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-CRITIC_PREFIXES = ("critic.",)
+CRITIC_PREFIXES = ("critic.", "critic_heads.")
 # Mechanisms and the runtime evidence each must leave. `armed` is a
 # regex that must appear in the log; `activity` (optional) must match
 # with a captured number > 0 somewhere after arming.
@@ -52,7 +52,13 @@ MECHANISMS = {
     # print it — mechanism-armed-but-inert class).
     "redo": {
         "profile_path": ("reinforce", "redo_enabled"),
-        "armed": r"\[redo\] ENABLED tau=0\.025",
+        # tau varies per profile (trainer.py default 0.025 via
+        # rl_cfg.get("redo_tau", 0.025)); read it instead of hardcoding
+        # the default, or an overridden tau fails preflight on an
+        # actually-armed run.
+        "armed": lambda profile: r"\[redo\] ENABLED tau=%s" % re.escape(
+            "%g" % float((profile.get("reinforce", {}) or {})
+                        .get("redo_tau", 0.025))),
         "forbidden": r"\[redo\] disabled",
     },
 }
@@ -102,12 +108,13 @@ def assess_mechanisms(profile: dict, log_text: str) -> tuple[bool, list]:
         if not profile_flag(profile, spec["profile_path"]):
             continue
         forbidden = spec.get("forbidden")
+        armed = spec["armed"](profile) if callable(spec["armed"]) else spec["armed"]
         if forbidden and re.search(forbidden, log_text):
             ok = False
             notes.append(f"{name}: FORBIDDEN LINE {forbidden!r} PRESENT "
                          f"IN LOG — the mechanism reports itself off in "
                          f"a treatment run")
-        elif re.search(spec["armed"], log_text):
+        elif re.search(armed, log_text):
             notes.append(f"{name}: armed evidence present")
         else:
             ok = False
@@ -117,6 +124,14 @@ def assess_mechanisms(profile: dict, log_text: str) -> tuple[bool, list]:
     if not notes:
         notes.append("no optional mechanisms declared (control arm)")
     return ok, notes
+
+
+def steps_per_iter_from_profile(profile: dict) -> int:
+    """The trainer's own formula: num_envs * rollout_steps (see
+    Trainer.rollout_steps and train_game.py's num_envs resolution,
+    both `reinforce.*` with the same defaults used here). PURE."""
+    rl_cfg = (profile.get("reinforce", {}) or {})
+    return int(rl_cfg.get("num_envs", 60)) * int(rl_cfg.get("rollout_steps", 512))
 
 
 def assess_sentinels(profile: dict, planned_iters: int,
@@ -139,7 +154,10 @@ def main(argv=None) -> int:
     ap.add_argument("--profile", required=True)
     ap.add_argument("--iters", type=int, required=True,
                     help="the FULL planned budget, not the pilot's")
-    ap.add_argument("--steps-per-iter", type=int, default=92160)
+    ap.add_argument("--steps-per-iter", type=int, default=None,
+                    help="override; default is derived from the profile "
+                         "via reinforce.num_envs * reinforce.rollout_steps "
+                         "(trainer.py's own end-step formula)")
     ap.add_argument("--resume-iter", type=int, default=0)
     args = ap.parse_args(argv)
 
@@ -154,6 +172,8 @@ def main(argv=None) -> int:
                       weights_only=False)["net_state_dict"]
     profile = yaml.safe_load((REPO / args.profile).read_text())
     log_text = (REPO / args.log).read_text()
+    steps_per_iter = (args.steps_per_iter if args.steps_per_iter is not None
+                      else steps_per_iter_from_profile(profile))
 
     checks = []
     ok1, msg1 = assess_learning(param_deltas(sd_b, sd_a))
@@ -161,7 +181,7 @@ def main(argv=None) -> int:
     ok2, notes = assess_mechanisms(profile, log_text)
     checks.append(("mechanism alive", ok2, "; ".join(notes)))
     ok3, msg3 = assess_sentinels(profile, args.iters,
-                                 args.steps_per_iter, args.resume_iter)
+                                 steps_per_iter, args.resume_iter)
     checks.append(("no fatal sentinel", ok3, msg3))
 
     all_ok = all(c[1] for c in checks)

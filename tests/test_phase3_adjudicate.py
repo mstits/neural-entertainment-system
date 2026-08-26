@@ -61,10 +61,28 @@ def test_a_single_seed_is_unscorable():
     assert any("seed" in p for p in v["problems"])
 
 
+def test_mismatched_eval_seeds_are_unscorable():
+    """Control and masked must be scored on the same eval seeds; two
+    equally-sized but disjoint seed sets are not a matched-seed gate."""
+    v = adjudicate([rec(1, rate=0.40), rec(2, rate=0.40)],
+                   [rec(3, rate=0.90), rec(4, rate=0.90)])
+    assert v["verdict"] == "UNSCORABLE"
+    assert any("eval seeds differ" in p for p in v["problems"])
+
+
 def test_non_honest_records_are_not_admissible():
     """A deterministic (sticky=0) eval is not the honest protocol."""
     cl, n, seeds = pooled_rate([rec(7, sticky=0.0), rec(101, sticky=0.0)])
     assert n == 0 and cl == 0 and seeds == []
+
+
+def test_repeated_rows_for_a_seed_are_deduped_not_pooled():
+    """eval.jsonl is append-only: a seed can carry a sanity probe, a
+    retry, and a final measurement. Only the last admissible row for a
+    given seed counts — a stale re-probe must not add its own episodes
+    and clears on top of the intended final measurement."""
+    cl, n, seeds = pooled_rate([rec(7, rate=0.28), rec(7, rate=0.04)])
+    assert n == 50 and cl == 2 and seeds == [7]
 
 
 def test_failure_carries_the_synthesis_instruction():

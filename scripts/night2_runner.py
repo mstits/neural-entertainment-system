@@ -1014,6 +1014,55 @@ def _receipt(row: dict) -> None:
     _append_jsonl(REPO / CONFIG["receipt_log"], row)
 
 
+def _last_cure_receipt(receipt_log) -> Optional[dict]:
+    """Most recent step-2 bc_cure row in the night2 receipt log (or
+    None) — the recorded content binding for cured.pt, since (unlike
+    the source checkpoint's static CONFIG-pinned sha256) the cured
+    checkpoint's hash is per-run and can only be pinned dynamically, to
+    the receipt step 2 wrote it with."""
+    receipt_log = Path(receipt_log)
+    if not receipt_log.exists():
+        return None
+    last = None
+    with open(receipt_log) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("type") == "step" and row.get("step") == 2:
+                last = row
+    return last
+
+
+def verify_cured_binding(cured_path, receipt_log) -> str:
+    """Content-bind cured.pt to the step-2 receipt that wrote it before
+    step 3 probes or seeds it. Without this, step 3 trusts whatever
+    bytes currently sit at the path alone — any process with
+    filesystem access (a second cure script's --install, a bare cp, a
+    concurrent night2 invocation) can substitute a different, equally
+    well-formed payload with zero trace in the receipt log. Raises
+    RuntimeError on a missing receipt or a hash mismatch; returns the
+    verified sha256 otherwise."""
+    cured_path = Path(cured_path)
+    receipt = _last_cure_receipt(receipt_log)
+    if receipt is None or not receipt.get("cured_sha256"):
+        raise RuntimeError(
+            f"no step-2 bc_cure receipt with cured_sha256 in "
+            f"{receipt_log} — refusing to gate {cured_path} unverified")
+    got = _sha256(cured_path)
+    expected = receipt["cured_sha256"]
+    if got != expected:
+        raise RuntimeError(
+            f"{cured_path} sha256 {got} does not match the step-2 "
+            f"receipt's {expected} — the file changed after step 2 "
+            f"wrote it; refusing to gate an unverified checkpoint")
+    return got
+
+
 def step1_acquire() -> Path:
     """SIL acquisition: extract persisted trajectories if the payload
     carries any; otherwise collect fresh ones (see module docstring for
@@ -1114,8 +1163,10 @@ def step2_cure(scope: str) -> Path:
         provenance={"scope": scope, "pairs": str(pairs_path),
                     "source": str(src),
                     "source_sha256": CONFIG["source_checkpoint_sha256"]})
+    cured_sha256 = _sha256(out)
     _receipt({"type": "step", "step": 2, "name": "bc_cure",
-              "scope": scope, "stats": stats, "out": str(out)})
+              "scope": scope, "stats": stats, "out": str(out),
+              "cured_sha256": cured_sha256})
     print(f"[night2] step 2: cured (scope={scope}, "
           f"loss {stats['initial_loss']:.4f} -> {stats['final_loss']:.4f}, "
           f"acc {stats['final_acc']:.3f}) -> {out}", flush=True)
@@ -1127,6 +1178,7 @@ def step3_gate() -> dict:
     if not cured.exists():
         raise RuntimeError(
             f"{cured} missing — run step 2 first (or drop --skip-to)")
+    verify_cured_binding(cured, REPO / CONFIG["receipt_log"])
     summs: dict[str, dict] = {}
     for leg, cmd in (("honest", build_honest_probe_command(checkpoint=cured)),
                      ("det", build_det_probe_command(checkpoint=cured))):

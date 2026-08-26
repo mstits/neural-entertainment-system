@@ -40,9 +40,14 @@ REQUIRED_SEEDS = 2
 
 
 def pooled_rate(records: list[dict]) -> tuple[int, int, list]:
-    """(clears, episodes, seeds) over honest-protocol records only."""
-    clears = eps = 0
-    seeds: list = []
+    """(clears, episodes, seeds) over honest-protocol records only.
+
+    One row per eval_seed: eval.jsonl is append-only and a seed can carry
+    a sanity probe, a retry, and a final measurement, so later admissible
+    rows for the same seed replace earlier ones here rather than pooling
+    on top of them.
+    """
+    by_seed: dict = {}
     for r in records:
         n = int(r.get("n_episodes") or 0)
         if n < 50 or float(r.get("sticky_prob") or 0) <= 0:
@@ -50,10 +55,12 @@ def pooled_rate(records: list[dict]) -> tuple[int, int, list]:
         rate = r.get("clear_rate")
         if rate is None:
             continue
-        clears += int(round(float(rate) * n))
+        by_seed[r.get("eval_seed")] = (n, float(rate))
+    clears = eps = 0
+    for n, rate in by_seed.values():
+        clears += int(round(rate * n))
         eps += n
-        seeds.append(r.get("eval_seed"))
-    return clears, eps, sorted(set(seeds), key=str)
+    return clears, eps, sorted(by_seed.keys(), key=str)
 
 
 def fingerprints_identical(a: list[dict], b: list[dict]) -> bool:
@@ -87,6 +94,10 @@ def adjudicate(control: list[dict], masked: list[dict],
         if len(seeds) < REQUIRED_SEEDS:
             problems.append(f"{label} used {len(seeds)} seed(s) "
                             f"(< {REQUIRED_SEEDS})")
+    if c_seeds != m_seeds:
+        problems.append(
+            f"control and masked eval seeds differ ({c_seeds} vs "
+            f"{m_seeds}) — not the registered matched-seed gate")
     c_rate = c_cl / c_n if c_n else 0.0
     m_rate = m_cl / m_n if m_n else 0.0
 

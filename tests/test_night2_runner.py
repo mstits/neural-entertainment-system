@@ -43,11 +43,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from scripts.night2_runner import (  # noqa: E402
-    CONFIG, CURED_SEED_ITER, bc_cure, build_collection_reference_command,
-    build_det_probe_command, build_honest_probe_command, build_manifest,
-    collect_trajectories, collection_plan, extract_sil_pairs, gate_verdict,
-    keep_episode, linear_decay_factor, seed_cured_for_consol2,
-    sil_persistence_verdict, steps_from, trainable_param_names,
+    CONFIG, CURED_SEED_ITER, _sha256, bc_cure,
+    build_collection_reference_command, build_det_probe_command,
+    build_honest_probe_command, build_manifest, collect_trajectories,
+    collection_plan, extract_sil_pairs, gate_verdict, keep_episode,
+    linear_decay_factor, seed_cured_for_consol2, sil_persistence_verdict,
+    steps_from, trainable_param_names, verify_cured_binding,
     write_cured_checkpoint, write_sil_pairs,
 )
 from scripts.run_consol2 import CONFIG as CONSOL2_CONFIG  # noqa: E402
@@ -473,6 +474,33 @@ def test_gate_failed_leg_never_passes():
 def test_gate_empty_probe_never_passes():
     v = gate_verdict(_summ(n=0, median=9999.0), _summ(n=10, median=3100.0))
     assert v["passed"] is False
+
+
+# ---- step 2/3: content-binding cured.pt to the receipt that wrote it ----
+
+
+def test_gate_refuses_a_cured_checkpoint_substituted_after_step_2(tmp_path):
+    """step 3 must never trust cured.pt by path alone: a step-2 receipt
+    records the hash of the bytes it wrote, and verify_cured_binding
+    must catch ANY later substitution at that path — a different cure
+    script's --install, a bare cp, a second concurrent invocation —
+    even when the substituted payload is itself well-formed."""
+    cured = _write_cured(tmp_path)
+    receipt_log = tmp_path / "night2.jsonl"
+    receipt_log.write_text(json.dumps({
+        "type": "step", "step": 2, "name": "bc_cure",
+        "cured_sha256": _sha256(cured)}) + "\n")
+
+    # The receipt matches the bytes step 2 actually wrote.
+    assert verify_cured_binding(cured, receipt_log) == _sha256(cured)
+
+    # A different, still well-formed payload lands at the same path
+    # with no corresponding receipt row — the substitution this guards
+    # against.
+    other_sd = {k: v + 1 for k, v in _bc_fixture()[1].items()}
+    write_cured_checkpoint(cured, other_sd, stats={}, provenance={})
+    with pytest.raises(RuntimeError, match="sha256"):
+        verify_cured_binding(cured, receipt_log)
 
 
 # ---- eval command assembly ----------------------------------------------
