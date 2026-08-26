@@ -162,6 +162,59 @@ def blob_ram(blob: bytes) -> np.ndarray:
     return np.frombuffer(blob[RAM_OFF:RAM_OFF + RAM_LEN], dtype=np.uint8)
 
 
+def coordinate_and_mapping_exclusions(profile: dict) -> tuple[set, set, list]:
+    """Pre-probe exclusion inputs derived from a profile's own declared
+    bytes: the solve-block coordinate/level keys, and the (separately
+    tracked, non-excluding) `ram_mapping` annotation set.
+
+    Returns `(coord_bytes, mapped, excl_log)`:
+      * `coord_bytes` — bytes that legitimately belong in the pre-probe
+        EXCLUSION set. These are the cell-key observables (solve.progress
+        lo/hi, solve.y, solve.lives, solve.level_key) — they ARE the search
+        key the archive is bucketed on, not candidates for discovery.
+      * `mapped` — every int-parseable value in the profile's `ram_mapping`
+        block. Deliberately NOT folded into the exclusion set: a profile's
+        address table is an annotation about what this project has already
+        named, not evidence about the ROM. Excluding it is how an external
+        RAM map — quarantined or not — steers this project's own discovery
+        instrument away from precisely the bytes it exists to (re)discover.
+        Callers use `mapped` only to tag receipt rows "known": True/False.
+      * `excl_log` — receipt entries for this stage. The `ram_mapping` entry
+        carries `"excludes": False` so a reader of the receipt (or a test)
+        can tell "documented, but still probed" apart from an actual
+        exclusion.
+    """
+    solve = profile.get("solve", {}) or {}
+    coord_bytes: set = set()
+    if solve:
+        p = solve.get("progress", {}) or {}
+        for a in (p.get("lo", -1), p.get("hi", -1), solve.get("y", -1),
+                  solve.get("lives", -1)):
+            if int(a) >= 0:
+                coord_bytes.add(int(a))
+        for a in solve.get("level_key", []):
+            coord_bytes.add(int(a))
+    mapped = {int(a) for a in (profile.get("ram_mapping", {}) or {}).values()}
+
+    excl_log: list = []
+    if coord_bytes:
+        excl_log.append({"region": "profile coordinate bytes",
+                         "reason": "cell-key observables (progress/y/lives/"
+                                   "level_key); these ARE the search key, "
+                                   "not candidates for it",
+                         "bytes": sorted(f"0x{a:04X}" for a in coord_bytes)})
+    if mapped:
+        excl_log.append({"region": "profile ram_mapping bytes",
+                         "reason": "ANNOTATION ONLY — recorded for the "
+                                   "receipt's \"known\" tag, NOT excluded "
+                                   "from candidate generation or scoring. "
+                                   "A profile's address table is not "
+                                   "evidence about the ROM.",
+                         "excludes": False,
+                         "bytes": sorted(f"0x{a:04X}" for a in mapped)})
+    return coord_bytes, mapped, excl_log
+
+
 def build_probes(profile: dict) -> list[tuple[str, int]]:
     """Scripted micro-probes (label, action index) from the action space."""
     names = [tuple(a) for a in profile["action_space"]]
@@ -473,27 +526,13 @@ def main() -> int:
         full[i] = blob_ram(c.state)
     n_full = len(cells)
 
-    # ---- exclusions: coord/level + ram_mapping + stack (pre-probe) ---------
-    solve = profile.get("solve", {}) or {}
-    excluded: set = set()
-    excl_log: list = []
-    coord_bytes: set = set()
-    if solve:
-        p = solve.get("progress", {})
-        for a in (p.get("lo", -1), p.get("hi", -1), solve.get("y", -1),
-                  solve.get("lives", -1)):
-            if int(a) >= 0:
-                coord_bytes.add(int(a))
-        for a in solve.get("level_key", []):
-            coord_bytes.add(int(a))
-    mapped = {int(a) for a in (profile.get("ram_mapping", {}) or {}).values()}
+    # ---- exclusions: coord/level + stack (pre-probe) -----------------------
+    # See coordinate_and_mapping_exclusions() docstring for why
+    # `ram_mapping` is tracked in `known` for receipt tagging but never
+    # folded into `excluded`.
+    coord_bytes, mapped, excl_log = coordinate_and_mapping_exclusions(profile)
     known = coord_bytes | mapped
-    excluded |= known
-    if known:
-        excl_log.append({"region": "profile coordinate + ram_mapping bytes",
-                         "reason": "already-known observables (cell key / "
-                                   "verified map); discover NEW bytes only",
-                         "bytes": sorted(f"0x{a:04X}" for a in known)})
+    excluded: set = set(coord_bytes)
     stack = set(range(STACK_LO, STACK_HI))
     excluded |= stack
     excl_log.append({"region": f"0x{STACK_LO:04X}-0x{STACK_HI - 1:04X}",
@@ -506,8 +545,9 @@ def main() -> int:
     excluded |= mir_e
     excl_log += mir_l
     print(f"[observatory] pre-probe exclusions: {len(excluded)} bytes "
-          f"(known {len(known)}, stack {len(stack)}, OAM {len(oam_e)}, "
-          f"mirrors {len(mir_e)})")
+          f"(coord {len(coord_bytes)}, stack {len(stack)}, OAM {len(oam_e)}, "
+          f"mirrors {len(mir_e)}; ram_mapping {len(mapped)} bytes annotated, "
+          f"NOT excluded)")
 
     prober = Prober(game, profile, probes)
 
@@ -624,6 +664,13 @@ def main() -> int:
             "support_probed": int(ind.sum()),
             "best_probe": bp,
             "shortlisted": bool(sl),
+            # Tag, don't hide: True if this byte is named in the profile's
+            # coordinate set or its ram_mapping annotation. Neither excludes
+            # a byte from candidate generation any more (see H1) — this is
+            # reporting only, so a reader can tell "already documented"
+            # apart from "genuinely new" without the instrument itself
+            # ever being blind to either.
+            "known": b in known,
             "outcome_hist": hist,
         })
         print(f"  ${b:04X} == {v:3d}  MI {s:7.3f}  support {int(ind.sum()):3d}"

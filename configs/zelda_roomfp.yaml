@@ -1,4 +1,14 @@
 name: "The Legend of Zelda (room-graph gate)"
+# BREACH FIX (quarantine-hardening pass, 2026-08-26). This is a room-graph
+# gate / solver profile: it declares no reward_weights and its own header
+# below says "no fabricated clears" is a correctness requirement. It was
+# nonetheless mechanically frozen to reward_id: zelda by the display-name
+# migration (name contains "Zelda"), which silently handed it ZeldaReward
+# and its quarantined 0x0672 win predicate — reproduced live: ram[0x0672]=1
+# flips episode_success() True on this profile exactly as it did on
+# legend_of_zelda.yaml. generic is what a profile with no reward weights
+# and no win predicate of its own actually means.
+reward_id: generic
 
 # ROOM-GRAPH GATE PROFILE (ROOMGRAPH_ENGINE_2026-08-24 §4, T4).
 # This is the RG-1 profile: configs/zelda.yaml stays the untouched

@@ -1,4 +1,14 @@
 name: "Metroid (room-graph gate)"
+# BREACH FIX (quarantine-hardening pass, 2026-08-26). This is a room-graph
+# gate / solver profile: it declares no reward_weights, and its own header
+# below states "No RAM-map knowledge enters here — the quarantine in
+# configs/metroid.yaml stands." It was nonetheless mechanically frozen to
+# reward_id: metroid by the display-name migration (name contains
+# "Metroid"), silently handing it MetroidReward — a struct CLAIMS.md's
+# Learned-ledger section BLOCKS from producing any claim. generic is what
+# a profile with no reward weights and no win predicate of its own
+# actually means.
+reward_id: generic
 
 # ROOM-GRAPH GATE PROFILE (ROOMGRAPH_ENGINE_2026-08-24 §4, T4) for the
 # RG-2 secondary, report-only run. configs/metroid.yaml stays the

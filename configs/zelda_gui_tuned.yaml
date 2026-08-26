@@ -15,6 +15,7 @@
 # Full tuning rationale (reward round history, ram addresses) lives in
 # zelda.yaml; only the spectator deltas are called out here.
 name: "The Legend of Zelda (Spectator)"
+reward_id: zelda
 rom_hashes:
   - "f4095791987351be68674a9355b266bc"  # Legend of Zelda, The (USA) (Rev A).nes — canonical launcher dump
   - "614fb3085826e62f3be3a3fe0b931689"  # zelda.nes — alternate dump used by the bench harnesses
@@ -31,24 +32,52 @@ description: >
   for the live grid. Training semantics differ from zelda.yaml (frame_skip 4
   vs 16) — use zelda.yaml for headless from-scratch training.
 
-ram_mapping:
-  # Link's position
-  link_x:          0x0070
-  link_y:          0x0084
-  # Overworld / dungeon location
-  world_map_x:     0x00EB
-  world_map_y:     0x00EC
-  dungeon_level:   0x10
-  # Inventory / stats
-  current_hearts:  0x066F  # current HP (4 bits per heart)
-  max_hearts:      0x066F  # upper 4 bits
-  rupees:          0x066D
-  bombs:           0x0658
-  keys:            0x066E
-  triforce_pieces: 0x0671  # bitfield, 1 bit/fragment; 0xFF = all 8 (opens L9)
-  # Win chain (disassembly + emulator-verified): the REAL victory signals.
-  ganon_defeated:  0x0672  # 0->1 when Ganon dies — THE win flag
-  song:            0x0609  # active track: 0x10=ending (rescued), 0x02=Ganon fight
+# QUARANTINED 2026-08-26 (quarantine-hardening pass over the H-plan
+# adjudication; CLAIMS.md's Quarantine section carries the full note).
+# This block used to be a live top-level `ram_mapping:` — the SAME 13
+# addresses as configs/zelda.yaml's `quarantined_external_knowledge`
+# below, still disassembly-sourced (aldonunez/zelda1-disassembly + Data
+# Crystal), still never independently re-derived by this project's own
+# discovery tools. Being int-valued and named `ram_mapping` made it the
+# one config in the whole tree that tripped scripts/observatory.py's
+# `int(a) for a in ram_mapping.values()` fold — an external RAM map
+# steering this project's own discovery instrument away from precisely
+# the bytes under quarantine, the exact inverse of what the quarantine
+# is for. ZeldaReward (nes_core/src/rewards.rs) declares its own
+# identical hardcoded constants and never reads this block; this was
+# always a parallel, undisclosed copy, same as zelda.yaml's.
+# Values are strings, not ints, for the same reason as zelda.yaml: a
+# tool folding this block the way ram_mapping folds (int(a) over
+# .values()) raises instead of silently consuming a banned address. A
+# key here may be promoted back to a real ram_mapping entry only after
+# an independent differential re-derivation on this ROM, per the
+# rediscovery_rule below — never by deleting the q_ prefix in place.
+# test_the_two_quarantine_blocks_do_not_drift pins this set equal to
+# zelda.yaml's — do not edit one without the other.
+quarantined_external_knowledge:
+  provenance: "aldonunez/zelda1-disassembly + Data Crystal RAM map (external, undiscovered)"
+  status: UNVERIFIED_EXTERNAL
+  rediscovery_rule: >
+    A quarantined byte is dead until re-derived from scratch by this
+    project's own differential protocol on this ROM: drive input from
+    the verified start state, watch the byte move, record wrap /
+    reversibility / saturation-and-persistence evidence in a receipt.
+    A byte that passes enters a NEW ram_mapping entry with its own
+    [VERIFIED: ...] tag; the quarantined entry itself is never promoted
+    in place and never cited as the reason a byte was chosen.
+  q_link_x:          "0x0070"
+  q_link_y:          "0x0084"
+  q_world_map_x:     "0x00EB"
+  q_world_map_y:     "0x00EC"
+  q_dungeon_level:   "0x10"
+  q_current_hearts:  "0x066F"  # current HP (4 bits per heart)
+  q_max_hearts:      "0x066F"  # upper 4 bits
+  q_rupees:          "0x066D"
+  q_bombs:           "0x0658"
+  q_keys:            "0x066E"
+  q_triforce_pieces: "0x0671"  # bitfield, 1 bit/fragment; 0xFF = all 8 (opens L9)
+  q_ganon_defeated:  "0x0672"  # 0->1 when Ganon dies -- claimed win flag
+  q_song:            "0x0609"  # active track: 0x10=ending, 0x02=Ganon fight
 
 reward_weights:
   # Base zelda.yaml round-6 weights with the tuned overlay merged over
