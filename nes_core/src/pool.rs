@@ -424,10 +424,6 @@ impl Worker {
     }
 }
 
-/// Acquire a mutex, recovering the inner value even if a previous
-/// holder panicked (poisoned the lock). A poisoned worker is
-/// already marked `dead` and will short-circuit; we never want to
-/// propagate the poison panic further.
 /// Configure rayon's global thread pool for Apple Silicon M-series
 /// chips. M4 Max / Pro ship with both performance cores (P) and
 /// efficiency cores (E); rayon's default `num_cpus::get()` returns

@@ -89,13 +89,6 @@ half = "2.4"
 # ~140 LOC, no deps of its own — adds negligible build cost.
 md5 = "0.7"
 
-# pthread QOS bindings (macOS asymmetric-core scheduling). Used by
-# the rayon spawn_handler in pool.rs to pin every worker thread to
-# QOS_CLASS_USER_INTERACTIVE so the macOS scheduler keeps them on
-# P-cores instead of E-cores.
-[target.'cfg(target_os = "macos")'.dependencies]
-libc = "0.2"
-
 [dev-dependencies]
 # Test ROM runners + golden-frame harness will go here as splits 02/03/04 land.
 

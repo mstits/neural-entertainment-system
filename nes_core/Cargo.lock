@@ -578,7 +578,6 @@ dependencies = [
  "cpal",
  "enum_dispatch",
  "half",
- "libc",
  "md5",
  "num_cpus",
  "numpy",

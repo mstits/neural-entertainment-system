@@ -1,9 +1,12 @@
 # `nes_core` security / integrity notes
 
 Summary of the Batch 8 hardening pass (2026-04-20), refreshed after
-the AArch64 ASM 6502 core + Batch B (IPC removal) landed (2026-04-21).
-Every `unsafe` block + every FFI boundary audited; this file documents
-what was checked, what was changed, and what's still trusted.
+the AArch64 ASM 6502 core + Batch B (IPC removal) landed (2026-04-21),
+and refreshed again (2026-08-25) after the `unsafe` inventory below
+was found to be stale against the crate's actual `src/` tree — three
+sites had grown to eleven files. Every `unsafe` block + every FFI
+boundary audited; this file documents what was checked, what was
+changed, and what's still trusted.
 
 ## Batch B integrity change (2026-04-21)
 
@@ -29,79 +32,129 @@ The NES emulator pool is now 100% in-process via `nes_core.Pool`
 
 ## `unsafe` surface
 
-Three call sites in the entire crate (was two; ASM core added one).
+**155 lines match `unsafe` across 11 files** (`grep -rn unsafe src | wc -l`
+/ `grep -rln unsafe src | wc -l`, re-counted 2026-08-25). This section
+previously said "three call sites in the entire crate," which was
+accurate in 2026-04-21 but stopped being maintained as the NEON
+render kernels (`ppu_neon.rs`, `metal_render.rs`), the in-process
+worker pool (`pool.rs`), and four `unsafe impl Send`/`Sync` markers
+landed. None of that went unreviewed at landing time — the growth is
+real feature work, most of it already carries inline `// SAFETY:`
+comments — but this document didn't track it. Re-run the count
+yourself:
 
-### 1. `src/preprocess.rs` — NEON SIMD intrinsics (~22 blocks)
-
-The whole `rgb_to_grayscale_neon` path is `unsafe fn` because ARM
-intrinsics (`vld3q_u8`, `vmulq_u16`, etc.) have the `unsafe`
-declaration. Safety is bounded by the dispatch function:
-
-- Only called from `preprocess_rgb_to_gray_84`, guarded by
-  `#[cfg(target_arch = "aarch64")]`. Non-aarch64 takes the scalar
-  fallback, never reaches NEON code.
-- Inner loop iterates `chunks_exact(48)` over the RGB input, so every
-  `vld3q_u8` reads exactly 48 bytes (16 pixels × 3 channels) starting
-  at a guaranteed-in-bounds offset. No partial chunks.
-- The tail after the SIMD chunks runs the scalar path on the remainder
-  (always < 48 bytes).
-- Output buffer is pre-sized by the caller (`resize_area` allocates
-  the correct `h*w` u8 vector before calling).
-
-Verdict: unsafe is load-bearing (performance) and soundness is tied
-to `chunks_exact`'s contract. Not a risk.
-
-### 2. `src/pool.rs::drain_audio` — `slice::from_raw_parts` on `Vec<i16>`
-
-```rust
-let samples: Vec<i16> = std::mem::take(&mut w.audio);
-let byte_len = samples.len() * 2;
-let bytes_ptr = samples.as_ptr() as *const u8;
-let slice = unsafe { std::slice::from_raw_parts(bytes_ptr, byte_len) };
-Ok(pyo3::types::PyByteArray::new_bound(py, slice))
+```
+grep -rn unsafe nes_core/src
+grep -c unsafe nes_core/src/<file>.rs   # per-file
 ```
 
-Safety:
-- `samples` owns the allocation; pointer is valid for the scope of
-  the function (`samples` drops at end-of-fn, after `new_bound`
-  copies its bytes into a Python-owned `PyByteArray`).
-- `byte_len = samples.len() * 2` exactly matches the layout of
-  `Vec<i16>` — `i16` has size 2, alignment 2; reading as `u8` is
-  always valid per the `i16` → `u8` layout-compatibility rule.
-- `new_bound` copies into a Python buffer immediately; no dangling
-  pointer escapes.
+One structural note before the per-file list: `src/lib.rs` carries a
+crate-wide `#![allow(unsafe_op_in_unsafe_fn)]`. Rust 2024 edition
+normally requires every unsafe operation inside an `unsafe fn` body
+to *also* sit in its own nested `unsafe {}` block; PyO3 0.22's macro
+expansion trips that lint 74+ times per build, so it's silenced
+crate-wide until the 0.23 upgrade. Practical effect: `unsafe fn`
+bodies elsewhere in the crate (`preprocess.rs`, `pool.rs`'s NEON
+helpers, `ppu_neon.rs`) call raw intrinsics straight in the fn body
+without a redundant inner `unsafe {}` — a lint/readability
+difference, not a soundness one, since the fn's own `unsafe` still
+gates every call inside it.
 
-Verdict: minimal `unsafe` with explicit safety comment already
-present. Kept as-is.
+Files below are ordered by grep hit count, highest first. Per-file
+counts include comments that mention the word "unsafe" in prose (a
+few, mostly in `preprocess.rs`), not only live `unsafe` keywords —
+called out inline wherever that inflates the number.
 
-### 3. `src/cpu_asm.rs` + `src/cpu_asm.s` — AArch64 ASM 6502 core
+### 1. `src/pool.rs` — worker-pool concurrency + NEON pixel unpack (75)
+
+The in-process, rayon-parallel worker pool that replaced the old
+multiprocessing `ParallelPool`. Its unsafe surface has three shapes:
+
+- **4 `unsafe impl` markers** (`Sync for WorkerCell`, `Send`/`Sync`
+  for `Pool`). `WorkerCell` is an `UnsafeCell<Worker>` newtype;
+  sharing `&WorkerCell` across threads is sound only because the
+  *only* way to mint a `&mut Worker` from it is the private
+  `worker_mut` helper below, and every caller of that helper is
+  proven (by inline comment) to hold unique access. `Pool` is
+  `Send`/`Sync` for the same reason at the container level: rayon's
+  `par_iter().enumerate()` in `step_all`/`reset_all`/`collect_results`
+  hands each task a unique index/`&WorkerCell`, and every other `Pool`
+  method runs sequentially on the Python trainer thread (serialized
+  by the GIL, never overlapping an in-flight `step_all`). Both impls
+  carry a multi-paragraph `// SAFETY:` comment above them in the
+  source spelling this out — reused here, not re-derived.
+- **~50 call sites** dereferencing a `WorkerCell`: `unsafe fn
+  worker_mut(cell) -> &mut Worker` (the sole exclusive-access
+  chokepoint, itself carrying a `// SAFETY:` doc comment naming every
+  sequential caller) plus its ~40 call sites across `step_all`,
+  `reset_all`, and the sequential per-worker setters (`save_worker_state`,
+  `set_worker_pace`, `load_worker_state`, `set_batched_render_mode`,
+  `load_start_state`, `drain_audio`, …); and ~8 read-only
+  `unsafe { &*cell.0.get() }` peeks (`peek_max_x_per_worker`,
+  `get_odometer_scene_per_worker`, `get_odometer_per_worker`,
+  `odo_debug`, `peek_nametables`, `peek_oam`) which need no
+  exclusivity, only the same "sequential with step_all/reset_all"
+  contract, each with its own one-line `// SAFETY:` comment. It's a
+  large count but one audited contract, not 50 independent designs.
+- **`drain_audio`'s `slice::from_raw_parts` on `Vec<i16>`** — unchanged
+  from the prior audit: `samples` owns the allocation, `byte_len =
+  samples.len() * 2` matches `i16`'s layout exactly, and
+  `PyByteArray::new_bound` copies the bytes into Python-owned memory
+  before `samples` drops at end-of-fn. No dangling pointer escapes.
+- **`xrgb_to_gray_neon` / `xrgb_to_rgb_neon`** — the same NEON
+  deinterleave-and-store pattern as `preprocess.rs` below (`vld4q_u8`
+  reads exactly 64 bytes per 16-pixel iteration from a slice-derived
+  pointer, scalar tail handles the `< 16`-pixel remainder), fused
+  straight from XRGB8888 into RGB/grayscale to skip an intermediate
+  184 KB buffer per worker per step.
+
+Verdict: one audited concurrency contract (`worker_mut` + its
+callers) accounts for the bulk of the count; the NEON and
+`from_raw_parts` pieces are bounded the same way the rest of this
+document already treats NEON/FFI-copy code. Not a risk.
+
+### 2. `src/cpu_asm.rs` — AArch64 ASM 6502 core (28)
 
 Gated on `#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]`.
 Default builds (no flag) skip the entire module and use the pure-Rust
-CPU — unaffected by this surface.
+CPU — unaffected by this surface. Of the 28 lines, 6 are inside
+`#[cfg(test)]` (`mod tests`, starting line 814) — unit tests that call
+`nes_cpu_run_block` directly or dump opcode-table addresses for
+debugging; they don't ship in any built artifact. The remaining 22
+are production:
 
-- `extern "C"` handler table (one pointer per opcode, 256 × 8 bytes)
-  populated once at init. No dynamic writes thereafter. Handlers are
-  referenced by static function pointer, not by runtime-computed
-  offset.
+- Two `unsafe extern "C" { ... }` blocks importing the ASM entry point
+  (`nes_cpu_run_block`, with its own `# Safety` doc comment on pointer
+  validity/sizing) and the opcode-handler symbol table.
+- `install_opcode_table_once` populates the 256-slot dispatch table
+  from those symbols exactly once (`std::sync::Once`), then it's
+  read-only for the process lifetime — no dynamic writes thereafter.
+- `nes_asm_bus_read_byte` / `nes_asm_bus_write_byte` — the `extern
+  "C"` MMIO trap callbacks the ASM core calls into. They reconstruct
+  `&mut SystemBus` from the raw `bus_ptr` the caller (Rust's
+  `try_step_asm`) handed the ASM side one call earlier, and run the
+  same `SystemBus::read_byte`/`write_byte` the pure-Rust CPU uses —
+  no bypass. Thread-local `ASM_TICK`/`ASM_STALL_EXTRA` cells (set
+  just before entering ASM, cleared just after) let the callback tick
+  the *live* PPU/APU sinks for the in-flight `Nes::step` call without
+  trait-object dispatch.
 - PRG ROM is handed to ASM as a raw `*const u8` via
   `Mapper::prg_asm_ptr`. All 6502 PC reads stay within the mapper's
   returned slice bounds (branches into RAM / MMIO take the MMIO
-  round-trip path, which calls back into Rust). ROM is never written.
+  round-trip path above). ROM is never written.
 - RAM (`[u8; 2048]`) accessed via `*mut u8`; bounds are enforced by
   the ASM masking `address & 0x07FF` before any load/store. 6502
   can't address past 0x07FF in RAM by construction of the instruction
   set, so the mask is exhaustive.
-- MMIO addresses ($2000–$7FFF) trap through
-  `nes_asm_bus_read_byte` / `nes_asm_bus_write_byte`, which run the
-  live Rust `SystemBus` — the same code path the pure-Rust CPU uses.
-  No new bypass.
 - Opcode coverage: 151 official + ~30 stable illegal (LAX, SAX,
   DCP, ISC, SLO, RLA, SRE, RRA in zp+abs + NOP variants). 99.97%
   ASM hit rate on Mario Bros. Unknown/unported opcodes fall back to
   Rust cleanly (no UB).
 - 103 per-opcode diff tests + 16 integration/smoke tests exercise
   every addressing mode and flag update.
+
+`src/nes.rs`'s `tick_impl` (see entry 7 below) is this file's other
+half — same feature gate, same call — so read the two together.
 
 Verdict: the ASM surface is bounded by the mask-and-mapper contract
 and is behind a feature flag. Panics from the fallback-Rust path
@@ -140,6 +193,204 @@ cargo run --release --features asm_cpu --example asm_diff_fuzz \
 ```
 
 Full log of the original soak: `docs/proposals/asm_fuzz_result.md`.
+
+### 3. `src/sink/video_sink.rs` — NEON palette-lookup unpack (23)
+
+`Xrgb8888VideoSink::write_frame`'s hot path: turn the PPU's per-pixel
+6-bit palette indices into XRGB8888 u32s by table lookup, 16 pixels
+per NEON iteration (`xrgb8888_write_neon`). Almost all 23 lines are
+individual `unsafe { *palette.add(idx) }` scalar gathers inside the
+vectorized loop body (NEON has no native indexed-gather-from-memory
+op on this target, so the 16 lookups are done as 16 raw pointer
+reads) plus their scalar-tail twins — one audited pattern repeated,
+not 23 separate designs. Bounds are covered by the function's own
+doc comment: `palette` must point at a run of ≥64 valid `u32`
+entries (one 64-color emphasis slice of `XRGB8888_EMPHASIS_PALETTE`),
+and every `frame_buffer` byte is a 6-bit index (0..=63) by
+construction of the PPU's palette RAM, so every `.add(idx)` lands
+inside that run. `vld1q_u8` reads exactly 16 bytes per full iteration
+from a slice-derived pointer; the scalar tail covers the `< 16`-pixel
+remainder. Only reached via `#[cfg(target_arch = "aarch64")]`; other
+targets take the plain-Rust indexing loop right above it.
+
+Verdict: same "chunking bounds the SIMD read, scalar tail covers the
+remainder" shape this document already applies to `preprocess.rs`.
+Not a risk.
+
+### 4. `src/ppu.rs` — CHR static-pointer cache + in-register NEON (6)
+
+- `unsafe impl Send for Ppu` / `unsafe impl Sync for Ppu`, with an
+  inline `// SAFETY:` comment: `chr_cache_ptr` (see next bullet)
+  aliases memory owned by the same `Nes` that owns this `Ppu`, and
+  Pool workers each own a private `Nes` that rayon ships across
+  threads as a unit — the pointer never crosses a `Ppu` instance
+  boundary.
+- `read_chr_byte`'s `unsafe { *self.chr_cache_ptr.add(address) }` —
+  a raw-pointer fast path for mappers that guarantee no runtime CHR
+  banking (`mapper.chr_static_ptr()`), refreshed at scanline
+  boundaries and reset to null on any state load (`chr_cache_ptr =
+  null` at deserialize, forcing the safe `mapper.chr_read_byte`
+  dispatch until the next refresh). `address` is a `u16` PPU address
+  already masked to the $0000-$1FFF CHR range by the caller.
+- Three small in-register NEON helpers gated on `target_feature =
+  "neon"` (`shift_background_registers`'s `vshl_n_u16` over a 4-lane
+  `[u16; 4]`, plus two 8-lane sprite-counter/pattern-shift ops in the
+  per-cycle sprite pipeline) — no pointer arithmetic, just vector ops
+  over already-in-bounds fixed-size arrays loaded whole.
+
+Verdict: the CHR pointer is scoped and reset defensively; the NEON
+bits carry no bounds risk (fixed-size array, no indexing). Not a
+risk.
+
+### 5. `src/metal_render.rs` — Metal compute FFI, feature-gated + unused (6)
+
+Gated on `#[cfg(feature = "metal")]`, which is **not** in the crate's
+`default` feature set and is not enabled by anything else in `src/`
+(`grep -rn 'feature = "metal"'` outside this file returns nothing) —
+it only compiles when a build explicitly opts in. The file's own doc
+comment says why it isn't wired up: measured 10× *slower* than the
+CPU path per-frame (Metal dispatch overhead dominates a kernel this
+small), kept only to prove the device/pipeline/buffer plumbing ahead
+of a planned fused v2 kernel.
+
+The 6 unsafe sites are Objective-C/Metal FFI through `objc2`/
+`objc2-metal`: retaining the system default `MTLDevice`
+(`Retained::retain`), building a `NonNull` around a Rust palette
+slice to hand to `newBufferWithBytes_length_options`, and the compute
+encoder calls (`setComputePipelineState`, `setBuffer_offset_atIndex`,
+`setBytes_length_atIndex`, `waitUntilCompleted`) that `objc2-metal`'s
+safe wrapper types still require `unsafe` for per Apple's underlying
+API contract. Buffers are `MTLResourceStorageModeShared` (CPU-visible
+unified memory) sized via `ensure_buffers` before every dispatch, and
+the two `copy_nonoverlapping` calls copy exactly `n` elements where
+`n = src.len().min(dst.len())`'s caller-side `debug_assert_eq!`
+enforces `src.len() == dst.len()`.
+
+Verdict: standard FFI-into-a-vendor-framework shape, correctly scoped
+behind a non-default feature that nothing in this crate turns on.
+Not a risk in the default build; worth a second look before anyone
+flips the feature on for production.
+
+### 6. `src/preprocess.rs` — NEON SIMD intrinsics (5, 2 of them real)
+
+Carried over from the prior audit. Of the 5 grep hits, 3 are comment
+prose that happens to contain the word "unsafe" (a comment explaining
+*why* the fn body doesn't need nested `unsafe {}`, per the crate-wide
+lint allow above); the actual code is one `unsafe { rgb_to_grayscale_neon(...) }`
+call site plus the `unsafe fn rgb_to_grayscale_neon` it calls.
+
+- Only called from `preprocess_rgb_to_gray_84`, guarded by
+  `#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]`.
+  Non-aarch64 (or NEON-less) builds take the scalar fallback, never
+  reach this function.
+- Inner loop iterates in 16-pixel (48 RGB byte) chunks via
+  `vec_chunks = n_pixels / 16`, so every `vld3q_u8` reads exactly 48
+  bytes starting at a guaranteed-in-bounds offset. No partial chunks
+  enter the vector path.
+- The tail after the SIMD chunks (`scalar_start..n_pixels`) runs the
+  scalar path on the remainder (always < 16 pixels).
+- Output buffer is pre-sized by the caller (`resize_area` allocates
+  the correct `h*w` u8 vector before calling; `rgb_to_grayscale_into`
+  additionally `debug_assert_eq!`s both buffer lengths).
+
+Verdict: unsafe is load-bearing (performance) and soundness is tied
+to the chunk-count arithmetic. Not a risk.
+
+### 7. `src/nes.rs` — Send/Sync marker + ASM MMIO tick glue (5)
+
+- `unsafe impl Send for Nes` / `unsafe impl Sync for Nes`, with an
+  inline `// SAFETY:` comment: `cached_prg_asm_ptr` aliases memory
+  owned by the same `Nes` (the mapper's `prg_asm_window` `Vec`), and
+  each Pool worker owns a private `Nes` that rayon ships across
+  threads as a unit, same shape as the `Ppu` impl above.
+- The remaining 3 sites are `tick_impl`, the monomorphized `extern
+  "C"` callback installed into `cpu_asm`'s thread-local `ASM_TICK`
+  before every ASM-core call — it reconstructs `&mut SystemBus` and
+  `&mut SinkCtx<V, A>` from the raw pointers `try_step_asm` handed
+  it one frame earlier on the same call stack, so the sinks it ticks
+  are the exact ones `Nes::step`'s caller already owns mutably for
+  this call. All 3 sites live inside
+  `#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]` — the
+  same gate as `cpu_asm.rs` (entry 2) — so default builds never
+  compile them.
+
+Verdict: same aliasing shape already accepted for `Ppu`/`Pool`; the
+callback pointers are same-call-stack, same-thread by construction.
+Not a risk.
+
+### 8. `src/ppu_neon.rs` — batched scanline renderer, bench-only (3)
+
+The module's own header comment: **"Status: Bench-only. NOT wired
+into the live PPU tick yet."** It's a from-scratch NEON
+reimplementation of `ppu.rs::render_pixel`'s per-cycle compositing
+loop, built and correctness-gated (`tests::neon_matches_scalar_byte_exact`
+asserts byte-for-byte parity against the scalar reference) so a
+future per-scanline integration can drop it in without diverging —
+but nothing in `src/` calls `render_scanline_neon` outside this
+file's own tests/benches yet.
+
+- Dispatch is `#[cfg(target_arch = "aarch64")]` → NEON, else the
+  portable `render_scanline_scalar` — the one real unsafe *call site*.
+- `render_scanline_neon` itself (`unsafe fn`, `#[target_feature(enable
+  = "neon")]`) is called only from that guarded call site, with
+  asserted preconditions above it (`tiles.len() >= 33`) and a
+  `copy_nonoverlapping` sized `tile_count * 8 ≤ 272` by construction
+  (`tile_count = tiles.len().min(34)`), documented inline.
+
+Verdict: unused in production today, so its risk is "wrong bytes in
+a future integration," not a live exposure — but it's real unsafe
+code and should get the same scrutiny as the rest of this list once
+it's wired up. Flagged again under "What's NOT audited" below.
+
+### 9. `src/lib.rs` — crate-wide lint allow (2)
+
+Both hits are the `#![allow(unsafe_op_in_unsafe_fn)]` attribute and
+its explanatory comment at the top of the file — not a call site.
+Covered in the intro above; listed here only so the file-by-file
+total adds up to 155.
+
+### 10. `src/python.rs` — NEON frame repack for PyO3 (1)
+
+`frame_to_numpy`'s `#[cfg(all(target_arch = "aarch64", target_feature
+= "neon"))]` block: the same XRGB8888 → RGB8 deinterleave as
+`pool.rs`'s `xrgb_to_rgb_neon` (`vld4q_u8`/`vst3q_u8`, 16 pixels per
+64-byte stride), building the `(H, W, 3)` array PyO3 hands back to
+Python. The loop bound is `while i + 16 <= n`; the defensive scalar
+tail after it is dead in practice (`FRAME_PIXELS = 240 * 256 = 61440`
+is exactly divisible by 16) but kept for any future non-16-aligned
+buffer size, per its own comment.
+
+Verdict: same NEON-unpack shape as entries 1 and 3. Not a risk.
+
+### 11. `src/mapper/mapper1.rs` — test-only raw-slice assertion (1)
+
+The single site is inside `#[cfg(test)] mod prg_window_tests` (test
+module starts line 562, the unsafe site is line 717) — it never
+ships in a built artifact. `assert_chr_window_matches` calls
+`std::slice::from_raw_parts(p, 0x2000)` on the pointer
+`chr_static_ptr()` returns, to snapshot the CHR window for comparison
+against the per-read bank-math oracle in the same test. `p` is backed
+by the same 8 KB `chr_window` buffer the mapper allocates and keeps
+alive for the duration of the test.
+
+Verdict: test-only, not a production risk.
+
+---
+
+**Summary:** 155 `unsafe`-matching lines across 11 files, up from the
+"three call sites" this section claimed as of 2026-04-21. Of the 155,
+roughly a dozen are comments rather than code (`preprocess.rs` ×3,
+`lib.rs` ×2, plus a few explanatory lines folded into the counts
+above), 8 are test-only (`cpu_asm.rs` ×6 in `mod tests`,
+`mapper1.rs`'s single site), and one file's entire 6-site surface
+(`metal_render.rs`) sits behind a non-default feature nothing else
+enables. The rest is real, audited, mostly already commented in
+place: one worker-pool concurrency contract (`pool.rs`), one ASM FFI
+boundary split across two files (`cpu_asm.rs` + `nes.rs`), and four
+NEON pixel-unpack kernels (`pool.rs`, `sink/video_sink.rs`,
+`preprocess.rs`, `python.rs`) that share the same "chunked SIMD read,
+scalar tail, pre-sized output" shape this document has applied since
+the 2026-04-20 pass.
 
 ## FFI boundary — error handling
 
@@ -193,6 +444,10 @@ Malformed magic bytes or truncated headers fail cleanly with a
 hostile `.nes` file in the `roms/` directory can't DoS the whole
 training run.
 
+## ROM and state file trust boundary
+
+Files in `roms/`, `checkpoints/`, and `runs/` are loaded without hash verification or signature validation: the trust model assumes the user directly controls what is placed on disk. Provenance checks (e.g., `provenance_check.py`) apply only at specific gates (demo-bank allowlisting, autonomous planner ingestion), not at every file load. Parser defenses (malformed ROM rejection, save-state version/corruption detection) guard against accidental data damage and truncation DoS, but do not verify ROM identity or state integrity. For a single-user local tool, this is an acceptable posture; it would require hardening — known-good ROM library with signed digests, or key-derived state attestation — only if the project grows a second contributor or migrates to shared-machine deployment.
+
 ## Allocations and memory
 
 - `Vec::with_capacity` is used at size-known allocation sites so
@@ -215,3 +470,14 @@ training run.
 - **cpal** — trusted crate for Core Audio. Buffer management follows
   its documented contract (single thread owns the callback closure;
   rings use `Mutex` for cross-thread push from the worker pool).
+- **objc2 / objc2-metal / objc2-foundation** (`src/metal_render.rs`,
+  `metal` feature) — trusted crates wrapping Apple's Metal framework;
+  no independent audit of the wrapper's own internal `unsafe`. The
+  module they back is feature-gated off by default and not called
+  from anywhere else in the crate — see unsafe-surface entry 5.
+- **`src/ppu_neon.rs`'s batched renderer** — correctness-tested against
+  the scalar reference in isolation (unsafe-surface entry 8), but not
+  yet exercised by the mapper-class smoke suite because it isn't
+  wired into the live PPU tick. Re-audit its bounds assumptions
+  (`tiles.len() >= 33`, the 272-byte `bg_col` copy) before the
+  per-scanline integration lands, not after.
