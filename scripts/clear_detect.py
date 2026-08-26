@@ -691,6 +691,491 @@ def input_lock_preflight(signal: InputLockSignal, env,
 
 
 # ===========================================================================
+# Signal 3c -- TERMINAL STASIS: the absorbing, input-dead search dead end
+# (the D1 repair -- a death the lives byte never reports)
+# ===========================================================================
+#
+# WHAT THIS IS FOR. go_explore_solve's death predicate is a LIVES-BYTE
+# predicate: `(start_lives - lives) % 256 in 1..8`, plus an optional
+# player-state whitelist. It therefore cannot see a terminal state that
+# leaves the lives byte UNCHANGED. Measured, reproduced 2026-08-26 on
+# configs/ninja_gaiden_ii.yaml from its own start state:
+#
+#     hold RIGHT from the profile's start state
+#       step  54..652  the profile's discovered lives byte $004C ticks
+#                      1 -> 0 -> 1 on every individual death; is_dead()
+#                      fires correctly on each one (delta = 1)
+#       step ~800..    GAME OVER.  $004C reads 1 and NEVER MOVES AGAIN.
+#                      is_dead() is False on every one of those frames.
+#
+# The wave-4 smoke run banked 246,836 steps and 2,216 cells with no death
+# pruning past that point, and its deepest frontier cell logged 15,579
+# revisits: the search ground a frozen GAME OVER screen. Nothing in the
+# RAM the lives predicate reads distinguishes that screen from play.
+#
+# WHAT IS OBSERVABLE WITHOUT GAME KNOWLEDGE. Two things, and this signal
+# is their CONJUNCTION -- neither alone is safe:
+#
+#   FROZEN (tier-0, always on, ~free).  The CPU-RAM surface stops moving:
+#     it stays within `churn_tol` byte positions of a single anchor for
+#     `window` consecutive steps of REAL play, while the agent is emitting
+#     its own varied actions.  Measured separation on NG2, 2026-08-26:
+#     ordinary play moves a MEDIAN of 420 of 2,048 RAM bytes per 45-step
+#     window and 332 at its 1st percentile; the GAME OVER screen holds 8-12
+#     bytes away from any anchor, indefinitely, drawn from a fixed set of 14
+#     addresses (frame and RNG counters, their mirrors, stack churn).
+#     `churn_tol` is NOT a shipped constant -- it is derived from the null
+#     THIS profile measured from its own start state (the same discipline as
+#     lock_null_threshold / CORRECTION 1); on NG2 it lands at 21.
+#     This track only ARMS; it never convicts, because 45 steps of one
+#     agent's own action stream holding still is exactly what an idle
+#     player produces.
+#
+#   ABSORBING (tier-2, rare, one probe -- THE VERDICT).  From the armed
+#     frame, replay `probe_steps` (150, ~10 s of game time) on each of K
+#     branches -- the NOOP control plus branches each HOLDING one action
+#     sampled from the profile's own space -- and require that NO BRANCH
+#     ESCAPES: every one ends within `churn_tol` byte positions of the frame
+#     it started from, over RAM AND OAM.  This runs the SHIPPED K-branch
+#     machinery (_run_lock_branches, the same re-simulation
+#     differential_input_lock_probe_k drives, with the same held-action
+#     construction and the same restore contract), not a parallel mechanism.
+#
+# WHY BOTH, AND WHY THE PROBE CARRIES THE VERDICT.  The two false-positive
+# classes are each other's opposites, and each half kills one:
+#
+#   FROZEN alone false-positives on an IDLE PLAYER.  A character standing
+#     still on flat ground with no animation is frozen and perfectly alive;
+#     the solver reaches that state routinely (`--sticky 0.5`, hold macros,
+#     the NOOP settle before every macro).  The absorbing probe rejects it,
+#     and rejects it decisively rather than marginally, because a branch
+#     that HOLDS a direction for 150 steps is precisely what moves a live
+#     player off the spot.  This is why the arming track never convicts.
+#
+#   THE PROBE alone would false-positive on every CUTSCENE, SCRIPTED INTRO,
+#     PAUSE, DEATH ANIMATION and ATTRACT LOOP if it were scored the way
+#     InputLockSignal is (branch-to-branch agreement) -- that signal's own
+#     docstring lists exactly those classes, and they are why it is
+#     documented as never sufficient alone.  Scoring DRIFT FROM THE START
+#     FRAME instead of branch agreement is what changes the question from
+#     "did input matter?" (yes for all of them) to "is the game going
+#     anywhere?" (yes for all of them, so: rejected).  The frozen arming
+#     track then makes sure the probe is not even paid for on a busy screen.
+#
+# ONE VERDICT CLAUSE, ON PURPOSE.  An earlier draft scored the probe twice
+# -- drift from the start frame AND branch-to-branch agreement -- and called
+# them corroborating conjuncts.  Branches that all sit within `churn_tol` of
+# one frame are within 2*churn_tol of each other by construction, so the
+# second test could only restate the first; mutation-testing confirmed it by
+# deleting the drift clause and failing no test.  Two views of one
+# measurement presented as corroboration is the shape of a vacuous gate, and
+# it is now one clause with a test that fails when it is removed.
+#
+# WHY THE ARMING WINDOW IS SHORT AND THE PROBE IS LONG.  A lineage's ctx --
+# and with it the held-still counter -- is rebuilt at every re-root, and
+# scripts/onboard_game.py runs the solver at the default --burst 64.  An
+# arming window over ~60 steps therefore cannot fire in the configuration
+# D1 actually happened in.  The evidence had to move somewhere that a burst
+# boundary cannot truncate, and a probe that runs off a savestate is exactly
+# such a place.
+#
+# WHAT IT ACTUALLY CLAIMS.  Deliberately NOT "the player is dead" -- this
+# signal has no access to that and never will without game knowledge.  It
+# claims something weaker, fully observable, and sufficient for the caller:
+# THIS LINEAGE IS IN AN ABSORBING, INPUT-DEAD STATE AND WILL NOT LEAVE IT.
+# A GAME OVER screen, a soft-lock and a pause the action space cannot exit
+# are the same fact to a search: no continuation of this trajectory can
+# reach anything new.  Terminating the lineage is the correct action for
+# all three, whatever the game calls them.
+#
+# WHAT IT COSTS TO BE WRONG.  A false positive terminates one burst, and
+# after a second one from the same cell the caller may stop selecting that
+# cell; a false NEGATIVE is what D1 was.  That asymmetry is real but bounded,
+# and it is why the frozen track is a hard PRECONDITION rather than one vote
+# in a tally: a mandatory cutscene wrongly read as terminal would make the
+# level behind it unreachable forever.
+#
+# MEASURED FALSE-POSITIVE RATE, 2026-08-26.  29 solve profiles, calibrated
+# from their own start states; 25 armed and 4 declined with a measured
+# reason.  150,000 steps of ordinary play on the armed 25 (3,000 random-
+# action + 3,000 NOOP-held per profile).  142 arms, 136 fires -- every fire
+# on 1942 and Bad Dudes, and every screenshotted fire reads GAME OVER or
+# CONTINUE.  The other 6 arms (Arkanoid x2, Blaster Master, Punch-Out x3)
+# were live states and the probe rejected all 6.  ZERO false positives.
+# Two of those rejections were close -- Blaster Master drifted 9/9/11/16
+# against a tolerance of 14, Punch-Out 4/14/18/16 against 14 -- so the
+# margin on a live-but-quiet state is one branch wide, not comfortable.
+
+STASIS_WINDOW = 45         # consecutive REAL steps the surface must hold still
+                           # before the confirming probe is even considered.
+                           # BOUNDED BY THE BURST, not chosen for elegance:
+                           # scripts/onboard_game.py runs the solver without
+                           # --burst, i.e. at the default 64, and a lineage's
+                           # ctx (and with it this counter) is rebuilt at every
+                           # re-root. A window over ~60 can never arm in the
+                           # configuration D1 actually happened in -- which is
+                           # why the DISCRIMINATING work was moved into the
+                           # probe below rather than into a long arming window.
+STASIS_CHURN_FRAC = 0.05   # `churn_tol` as a fraction of THIS profile's own
+                           # median window churn under ordinary play. Not a
+                           # byte count -- a byte count has no cross-game
+                           # meaning, which is the retired LOCK_DIFF_TOL=2
+                           # lesson.
+STASIS_QUIET_MULT = 3.0    # SEPARABILITY, stated against the quantity that
+                           # actually causes false arms: the QUIET TAIL of
+                           # ordinary play, not its median. churn_tol is
+                           # CAPPED at (1st-percentile ordinary window churn)
+                           # / this, so even this game's quietest ordinary
+                           # moments are a multiple away from looking frozen
+                           # BY CONSTRUCTION rather than by a check that could
+                           # be dropped. A median-only rule cannot say that: a
+                           # game can have a fat, ordinary quiet tail under a
+                           # perfectly healthy median.
+STASIS_TOL_FLOOR = 8       # REFUSAL floor -- the point below which the
+                           # instrument has no resolution left, not a value
+                           # churn_tol is raised TO. A frozen screen is not a
+                           # still image in RAM: the NG2 GAME OVER screen
+                           # keeps 14 distinct addresses alive (frame and RNG
+                           # counters, their mirrors, and stack churn at
+                           # $01F9/$01FA) and reads 8-12 of them differing
+                           # from any given anchor at any instant. A tolerance
+                           # under 8 cannot hold still across that on any game
+                           # measured here, so a profile whose two caps drive
+                           # it below 8 is told it cannot be scored rather
+                           # than armed blind. A profile that arms with a
+                           # SMALL tolerance is armed but insensitive -- it
+                           # will only ever see a nearly perfectly still
+                           # screen -- which is why the number is printed at
+                           # launch and carried in every receipt.
+STASIS_CALIB_STEPS = 400   # steps of ordinary random play used to measure the
+                           # churn null.
+STASIS_PROBE_STEPS = 150   # branch length for the confirming absorbing probe,
+                           # in STEPS (the caller's env.step is one frame_skip
+                           # block), not raw frames. ~10 s of game time per
+                           # branch at frame_skip 4: long enough that a held
+                           # direction visibly moves a live player, and long
+                           # enough to outlast a transition. This is where the
+                           # evidence comes from, so it is deliberately much
+                           # longer than the 45-step arming window.
+STASIS_CONVICTED_MAX = 16  # frames kept in the convicted ring (see
+                           # TerminalStasisSignal.confirm). Small on purpose:
+                           # it is a cache, and a lineage that arms is
+                           # compared against every entry, so the cost of the
+                           # ring is paid per ARM (rare) and never per step.
+STASIS_BACKOFF = 4         # multiplier on the required hold after each
+                           # REJECTED probe on the same lineage. A state that
+                           # sits just inside churn_tol without being
+                           # absorbing would otherwise re-arm every `window`
+                           # steps forever, at branches * probe_steps = 600
+                           # emulated steps a time against a 45-step window.
+
+
+def ram_surface(ram) -> np.ndarray:
+    """One CPU-RAM snapshot as uint8, accepting either the raw `bytes` the
+    solver's hot loop hands out or an array. RAM ONLY, deliberately: the
+    always-on arming path already holds this buffer from the step it just
+    took, so watching it costs one comparison and no extra emulator call,
+    whereas OAM would cost a `peek_oam()` per worker per step (the batching
+    note in the OamQuiesceSignal section). The confirming probe below still
+    diffs RAM+OAM via _lock_snapshot, so sprite-only motion is covered where
+    it is affordable."""
+    return (np.frombuffer(ram, dtype=np.uint8)
+            if isinstance(ram, (bytes, bytearray)) else
+            np.asarray(ram, dtype=np.uint8))
+
+
+def measure_stasis_null(env, bitmasks, window: int = STASIS_WINDOW,
+                        steps: int = STASIS_CALIB_STEPS,
+                        rng: np.random.Generator | None = None) -> np.ndarray:
+    """From env's CURRENT state, play `steps` steps of ordinary uniformly
+    random action and return every `window`-lagged RAM churn count observed
+    (`|surf_t - surf_{t-window}|_0` for t >= window).
+
+    This ADVANCES the real trajectory by `steps` and does not restore it --
+    calibration play is real play, exactly as InputLockSignal.calibrate
+    documents for its own drive.
+
+    A start state whose ordinary play reaches a terminal screen inside
+    `steps` contaminates the LOW tail of this null, which drags the median
+    DOWN, which makes churn_tol SMALLER, which makes the live test STRICTER.
+    Contamination therefore costs detections, never false positives -- and
+    the extreme case (a null with no separable spread at all) is refused
+    outright by TerminalStasisSignal.calibrate."""
+    rng = rng or np.random.default_rng()
+    bm = [int(b) for b in bitmasks]
+    ring: list[np.ndarray] = []
+    out: list[int] = []
+    for _ in range(max(1, int(steps))):
+        env.step(int(rng.choice(bm)))
+        env.get_audio()          # drain, same contract as every probe here
+        cur = ram_surface(env.get_ram_range(0, 2048))
+        ring.append(cur)
+        if len(ring) > window:
+            out.append(int(np.count_nonzero(cur != ring.pop(0))))
+    return np.array(out, dtype=np.int64)
+
+
+class TerminalStasisSignal:
+    """FROZEN (always-on arming, per lineage) then ABSORBING (one probe) =
+    a search dead end. See the section header above for what each half is
+    for and what the claim is and is not.
+
+    ONE PIECE OF EVIDENCE, MEASURED ONCE. An earlier draft of this class
+    scored the probe twice -- "no branch drifted from the start frame" AND
+    "the branches agree with each other" -- and presented them as
+    independent conjuncts. They are not: branches that all sit within
+    `churn_tol` of the same frame are within 2*churn_tol of each other by
+    construction, so the second test could only ever restate the first.
+    Mutation-testing said so out loud (deleting the drift clause failed no
+    test at the time), and two views of one measurement dressed as
+    corroboration is the shape of a vacuous gate. There is now exactly one
+    verdict clause, and tests/test_terminal_stasis.py fails when it is
+    removed.
+
+    USE:
+        sig = TerminalStasisSignal(bitmasks)
+        sig.calibrate(env)                  # once per profile, from its start state
+        if not sig.ready(): ...             # sig.reason says why; do not arm
+        ...
+        for each step of a lineage:
+            if sig.push(state, ram) and sig.confirm(state, env):
+                # this lineage is absorbing: terminate it
+        sig.reset(state)                    # when the lineage is re-rooted
+
+    The per-lineage state is a plain dict OWNED BY THE CALLER (the solver
+    already threads one `ctx` per worker), not an attribute of this object:
+    a single calibrated signal is shared by every worker in a pool, and
+    hiding one worker's anchor inside it would let workers overwrite each
+    other's evidence -- the shared-index race that dropped
+    RoomFpTransitionSignal (commit 698f142)."""
+
+    def __init__(self, bitmasks, window: int = STASIS_WINDOW,
+                 churn_frac: float = STASIS_CHURN_FRAC,
+                 quiet_mult: float = STASIS_QUIET_MULT,
+                 tol_floor: int = STASIS_TOL_FLOOR,
+                 probe_steps: int = STASIS_PROBE_STEPS,
+                 branches: int = LOCK_BRANCHES_K,
+                 backoff: int = STASIS_BACKOFF,
+                 convicted_max: int = STASIS_CONVICTED_MAX,
+                 rng: np.random.Generator | None = None):
+        self.bitmasks = [int(b) for b in bitmasks]
+        if not self.bitmasks:
+            raise ValueError("TerminalStasisSignal needs a non-empty action space")
+        self.window = max(1, int(window))
+        self.churn_frac = float(churn_frac)
+        self.quiet_mult = max(1e-9, float(quiet_mult))
+        self.tol_floor = max(1, int(tol_floor))
+        self.probe_steps = max(1, int(probe_steps))
+        self.branches = max(2, int(branches))
+        self.backoff = max(1, int(backoff))
+        self.convicted_max = max(0, int(convicted_max))
+        self._convicted: list[np.ndarray] = []
+        self._rng = rng if rng is not None else np.random.default_rng()
+        self.churn_tol: int | None = None
+        self.churn_null: np.ndarray | None = None
+        self.reason = "not calibrated"
+        # Telemetry only; never consulted by a verdict.
+        self.n_armed = 0
+        self.n_confirmed = 0
+        self.n_rejected = 0
+        self.n_cached = 0
+        self.n_probes = 0
+        self.last_drift: list[int] = []
+
+    # ---- calibration -------------------------------------------------
+
+    def calibrate(self, env, steps: int = STASIS_CALIB_STEPS) -> dict:
+        """Earn `churn_tol` from this env's own ordinary play. Advances the
+        real trajectory by `steps` (calibration play is real play) and
+        returns the receipt block.
+
+        Never raises on an unusable null: it sets `reason` and leaves
+        ready() False, because a profile that cannot be calibrated must run
+        with this signal DISARMED rather than inherit a number that was
+        never about it."""
+        self.churn_null = measure_stasis_null(env, self.bitmasks, self.window,
+                                              steps, self._rng)
+        if self.churn_null.size == 0:
+            self.churn_tol = None
+            self.reason = (f"calibration drove {steps} steps but the window is "
+                           f"{self.window}, so no lagged pair was ever formed")
+            return self.stats()
+        # TWO CAPS, and the tighter one wins. The first says the tolerance
+        # must be a small fraction of what this game's ordinary play moves;
+        # the second says it must be several times SMALLER than what its
+        # quietest ordinary play moves, which is the one that actually
+        # bounds false arms. Taking the minimum makes the separation a
+        # property of the arithmetic rather than a separate check some later
+        # edit could delete while leaving the threshold behind.
+        med = float(np.median(self.churn_null))
+        quiet = float(np.quantile(self.churn_null, 0.01))
+        tol = min(int(round(self.churn_frac * med)),
+                  int(quiet / self.quiet_mult))
+        if tol < self.tol_floor:
+            self.churn_tol = None
+            self.reason = (
+                f"no resolution left: {self.churn_frac:g}x the median ordinary "
+                f"{self.window}-step churn ({med:.0f}) and 1/{self.quiet_mult:g} "
+                f"of its quietest 1 percent ({quiet:.0f}) cap the tolerance at "
+                f"{tol} bytes, under the {self.tol_floor}-byte floor a real "
+                f"frozen screen's own frame/RNG bookkeeping needs. Ordinary "
+                f"quiet and frozen cannot be told apart here")
+            return self.stats()
+        self.churn_tol = tol
+        self.reason = "ok"
+        return self.stats()
+
+    def ready(self) -> bool:
+        return self.churn_tol is not None
+
+    # ---- tier-0: the always-on frozen track --------------------------
+
+    def reset(self, state: dict) -> None:
+        """Drop this lineage's anchor. Call whenever the lineage is
+        re-rooted (a load_worker_state): the frames before and after a
+        rewind are not consecutive real play, and holding an anchor across
+        one would score a hold that never happened.
+
+        The solver gets this for free -- `_assign` builds a fresh ctx dict
+        per burst -- so this exists for callers that reuse one."""
+        state.pop("_stasis_anchor", None)
+        state["_stasis_held"] = 0
+        state["_stasis_rejects"] = 0
+
+    def required_hold(self, state: dict) -> int:
+        """Held-still steps this lineage must accumulate before the next
+        probe. ESCALATES with each rejected probe on the same lineage.
+
+        Without this, a state that sits just inside `churn_tol` but is not
+        absorbing re-arms every `window` steps forever, and each rearm costs
+        branches * probe_steps emulated steps -- 600 at the shipped knobs,
+        against a 45-step window. That is a 13x tax on exactly the lineages
+        the probe already declined to kill."""
+        return self.window * (self.backoff ** int(state.get("_stasis_rejects", 0)))
+
+    def push(self, state: dict, ram) -> bool:
+        """Feed one REAL-timeline RAM snapshot for one lineage. Returns True
+        when the surface has held within `churn_tol` of a single anchor for
+        `required_hold(state)` consecutive steps -- i.e. this lineage is a
+        confirm() candidate.
+
+        Returns False (and never raises) when the signal is not calibrated,
+        so a disarmed profile costs one attribute test per step."""
+        if self.churn_tol is None:
+            return False
+        cur = ram_surface(ram)
+        anchor = state.get("_stasis_anchor")
+        if anchor is None or int(np.count_nonzero(cur != anchor)) > self.churn_tol:
+            # Re-anchor on the CURRENT frame: the run of held-still steps
+            # restarts here, it does not merely pause.
+            state["_stasis_anchor"] = cur
+            state["_stasis_held"] = 0
+            return False
+        held = state["_stasis_held"] = int(state.get("_stasis_held", 0)) + 1
+        if held < self.required_hold(state):
+            return False
+        # Armed. Re-anchor so a lineage that survives confirm() must earn a
+        # fresh (and longer) hold before asking again, instead of re-arming
+        # on every subsequent step off the same stale anchor.
+        state["_stasis_anchor"] = cur
+        state["_stasis_held"] = 0
+        self.n_armed += 1
+        return True
+
+    # ---- the verdict: one long-horizon differential probe --------------
+
+    def confirm(self, state: dict, env) -> bool:
+        """THE LONG-HORIZON ABSORBING PROBE, and the only thing here that
+        convicts.
+
+        From `env`'s current state -- which must be this lineage's current
+        frame -- run the shipped K-branch machinery (`_run_lock_branches`,
+        the same re-simulation differential_input_lock_probe_k drives, with
+        the same one-held-action-per-branch construction and the same
+        restore contract): a NOOP control plus `branches - 1` branches each
+        HOLDING one action sampled from the profile's own space for
+        `probe_steps`. TERMINAL iff NO BRANCH ESCAPES -- every one of them
+        ends within `churn_tol` byte positions of the frame the probe
+        started from, over RAM AND OAM.
+
+        WHY THIS IS THE CLAUSE. 45 steps of one agent's own action stream
+        holding still is weak evidence: an idle player produces it, and the
+        solver idles constantly (`--sticky 0.5`, hold macros, the NOOP
+        settle before every macro). 150 steps of a HELD DIRECTION failing to
+        move anything is not weak. A held direction is precisely what moves
+        a live player off a spot, and running K of them from a savestate is
+        precisely what the differential probe was built to do.
+
+        WHY IT READS OAM. `_lock_snapshot` concatenates primary OAM onto CPU
+        RAM for the reason its own docstring gives: a branch can leave CPU
+        RAM alone and still move sprites. Scoring drift on the RAM prefix
+        alone would call such a state absorbing.
+
+        WHAT IT STILL CANNOT SEE, stated rather than hidden: an ABSORBING
+        SCREEN THAT ANIMATES. A GAME OVER that blinks, runs a countdown, or
+        keeps a sprite alive moves more than `churn_tol` and this returns
+        False. That is a deliberate trade: the clause is the only thing
+        standing between this repair and killing every lineage that enters a
+        mandatory cutscene, which would make the level behind it unreachable
+        forever. A missed kill costs compute; a wrong kill costs a game."""
+        if not self.ready():
+            return False
+        here = _lock_snapshot(env)
+        # ALREADY PROVEN. A game whose run ends on a CONTINUE screen sends
+        # every lineage to the SAME absorbing frame, and re-proving it costs
+        # branches * probe_steps emulated steps EVERY time. Measured on 1942,
+        # 2026-08-26, 5 minutes, 4 workers: without this ring 123 probes and
+        # 217 sps against 1,156 with the signal off; with it 567 arms cost 46
+        # probes and 521 ring hits, and throughput came back to 808 sps. A
+        # frame that is within `churn_tol` of one already
+        # proven absorbing, and that has ALSO just held still for the full
+        # arming window, is that state again. The tolerance is the same one
+        # the arming track uses and is capped at a third of this profile's
+        # quietest ordinary churn, so "within churn_tol of a proven-dead
+        # frame" is not a loose match.
+        for known in self._convicted:
+            if int(np.count_nonzero(here[:known.size] != known)) <= self.churn_tol:
+                self.n_cached += 1
+                self.n_confirmed += 1
+                self.last_drift = []
+                return True
+        base = env.save_state()
+        snaps = _run_lock_branches(env, self.bitmasks, base,
+                                   self.probe_steps, self.branches, self._rng)
+        env.load_state(base)
+        self.n_probes += 1
+        drift = [int(np.count_nonzero(s != here)) for s in snaps]
+        self.last_drift = drift
+        terminal = bool(drift) and max(drift) <= self.churn_tol
+        if terminal:
+            self.n_confirmed += 1
+            if self.convicted_max:
+                self._convicted.append(here.copy())
+                del self._convicted[:-self.convicted_max]
+        else:
+            self.n_rejected += 1
+            state["_stasis_rejects"] = int(state.get("_stasis_rejects", 0)) + 1
+        return terminal
+
+    def stats(self) -> dict:
+        null = self.churn_null
+        return {"ready": self.ready(), "reason": self.reason,
+                "window": self.window, "churn_tol": self.churn_tol,
+                "churn_null_n": int(null.size) if null is not None else 0,
+                "churn_null_median": (float(np.median(null))
+                                      if null is not None and null.size else None),
+                "churn_null_p01": (float(np.quantile(null, 0.01))
+                                   if null is not None and null.size else None),
+                "churn_null_min": (int(null.min())
+                                   if null is not None and null.size else None),
+                "probe_steps": self.probe_steps, "branches": self.branches,
+                "backoff": self.backoff, "last_drift": list(self.last_drift),
+                "n_armed": self.n_armed, "n_confirmed": self.n_confirmed,
+                "n_rejected": self.n_rejected, "n_probes": self.n_probes,
+                "n_cached": self.n_cached, "convicted": len(self._convicted)}
+
+
+# ===========================================================================
 # Signal 4 -- coordinate reset + entity wipe
 # ===========================================================================
 
@@ -1123,6 +1608,288 @@ class ApuActivitySignal:
                 "trigger_n": self.trigger_n, "n_triggers": self.n_triggers,
                 "dev": round(self.last_dev, 5),
                 "gate": round(self.last_gate, 5),
+                "baseline_n": len(self._long)}
+
+
+# ===========================================================================
+# Signal -- OAM sprite-population quiescence (opt-in)
+#
+# entity_wipe_windows (Signal 4b, above) finds its "occupied -> empty" run by
+# scanning undifferentiated CPU RAM for a byte-array convention that is a
+# per-game accident -- which addresses hold entity slots, and whether they
+# zero on death, varies game to game (entity_wipe's own docstring names the
+# stack page $0100-$01FF as one unexamined false-positive source of scanning
+# RAM blind). OAM has no such ambiguity: which 256 bytes are "the sprite
+# table" and which sprites are hidden are NES PPU HARDWARE FACTS our own
+# emulator implements (ppu.rs:990 is_sprite_at_y_on_scanline), not a
+# convention any particular game chose. A game whose entities live in an
+# unusual RAM region still shows the collapse here, because every game's
+# entities that render at all render through OAM.
+# ===========================================================================
+
+OAM_SPRITES = 64          # primary OAM: 64 sprites x 4 bytes
+OAM_ENTRY_BYTES = 4       # (y, tile, attr, x) per sprite -- pool.rs/python.rs peek_oam layout
+OAM_HIDE_Y = 240          # ppu.rs:990 is_sprite_at_y_on_scanline: y <= scanline < y+height,
+                          # scanline in 0..239 (rendered lines) => y >= 240 can NEVER match any
+                          # scanline, i.e. the sprite can never be evaluated onto the picture.
+                          # This is our own PPU's hide rule, not a game convention.
+
+OAM_SHORT_WINDOW = APU_SHORT_WINDOW        # reused verbatim: same null shape, same proof carries over
+OAM_BASELINE_WINDOW = APU_BASELINE_WINDOW
+OAM_MIN_BASELINE = APU_MIN_BASELINE
+OAM_SUSTAIN = APU_SUSTAIN
+OAM_HOLD = APU_HOLD
+OAM_COLLAPSE = 0.2        # fire once the short-window population rate falls under this FRACTION
+                          # of the game's own measured baseline rate (i.e. an 80% drop)
+
+
+def oam_census(oam) -> tuple[int, int]:
+    """(n_visible, n_distinct_tile_attr) from one raw 256-byte primary OAM
+    snapshot (`env.peek_oam()` / `pool.peek_oam(wid)`).
+
+    n_visible counts sprite slots i in 0..63 with oam[4*i] < OAM_HIDE_Y --
+    exactly the renderable predicate our own PPU evaluates, nothing a game
+    author chose. n_distinct is the number of distinct (tile, attribute)
+    byte pairs among only the VISIBLE sprites -- a hidden slot's leftover
+    tile/attr bytes (commonly a stale, never-cleared value) must not
+    contribute, or a game that parks 60 dead sprites at y=0xFF with 60
+    different stale tile bytes would read as a huge, entirely fictitious
+    population of distinct objects.
+
+    Purity: reads only the OAM byte layout and the y>=240 hide rule, both
+    NES/our-PPU hardware facts already implemented in ppu.rs -- no game is
+    consulted, no address is assumed to mean anything beyond "a sprite
+    slot"."""
+    buf = (np.frombuffer(oam, dtype=np.uint8)
+           if isinstance(oam, (bytes, bytearray)) else
+           np.asarray(oam, dtype=np.uint8))
+    if buf.size < OAM_SPRITES * OAM_ENTRY_BYTES:
+        return 0, 0
+    entries = buf[: OAM_SPRITES * OAM_ENTRY_BYTES].reshape(OAM_SPRITES, OAM_ENTRY_BYTES)
+    visible = entries[:, 0] < OAM_HIDE_Y
+    n_visible = int(visible.sum())
+    if n_visible == 0:
+        return 0, 0
+    pairs = set(zip(entries[visible, 1].tolist(), entries[visible, 2].tolist()))
+    return n_visible, len(pairs)
+
+
+class OamQuiesceSignal:
+    """Sustained collapse of the visible-sprite population, scored against a
+    null this run measured from its own history -- the OAM-hardware sibling
+    of ApuActivitySignal, whose self-calibration shape (a short window
+    against a preceding rolling baseline, a floor-style gate, a
+    hold-then-rearm latch) this class reuses verbatim rather than
+    re-deriving.
+
+    INPUT is one `(n_visible, n_distinct)` pair per observation (from
+    `oam_census()` above, or a batched Rust `oam_census_all()` accessor a
+    live caller should add rather than calling `peek_oam()` per worker per
+    step -- see the design note in
+    docs/research/CLEAR_DETECTION_CAMPAIGN_2026-08-26.md). Each of the two
+    counts is normalized to a rate in [0, 1] by dividing by OAM_SPRITES,
+    exactly as ApuActivitySignal normalizes a bit to an active/inactive
+    rate; the two rates are then tracked as a 2-wide vector in the same
+    short-window / baseline-window construction ApuActivitySignal runs over
+    its 5-wide bit vector.
+
+    CONTENT-FREE BY CONSTRUCTION, ONE-SIDED BY DESIGN. Unlike
+    ApuActivitySignal (deliberately direction-agnostic -- a fanfare starting
+    and the level music cutting are the same event to it), this signal is
+    deliberately direction-SPECIFIC: only a DROP counts. A sprite population
+    growing (more enemies on screen) is the opposite of a clear and must
+    never contribute a particle of vote. So instead of Apu's symmetric
+    `dev = sum |short - base|`, this drops the absolute value:
+
+        drop[i] = max(0, base_rate[i] - short_rate[i])   i in {visible, distinct}
+        dev     = (drop[visible] + drop[distinct]) / 2
+        scale   = (base_rate[visible] + base_rate[distinct]) / 2   ("its own
+                  baseline rate" -- the population this game's OWN recent
+                  history says is normal)
+
+    and fires once `dev > (1 - collapse) * scale`, held for `sustain`
+    consecutive evaluations before it latches (no CUSUM accumulator here --
+    "stays there" is a plain consecutive-count, simpler than the audio/APU
+    change-point machinery because this is a level test, not a slope test).
+    For a CLEAN collapse (both dims falling together, so neither `drop[i]`
+    clamps to 0) this condition is algebraically identical to
+    `short_rate_combined < collapse * scale`: the combined population rate
+    has fallen under `collapse` x its own baseline rate -- the plain-English
+    statement the `collapse` knob is calibrated against.
+
+    WHY A SHORT COLLAPSE CANNOT FIRE, AT ANY ALIGNMENT (the property the
+    tests pin, derived fresh rather than assumed). Every pushed rate lies in
+    [0, 1], so for a transient of length L observations landing anywhere
+    inside the short window, at most L of the short_window samples differ
+    from the value the window would otherwise hold, hence for EACH dimension
+
+        drop[i] <= (L / short_window) * base_rate[i]     (alignment-independent)
+
+    (the transient can pull that dimension's short-window average down by at
+    most base_rate[i] on each of its L observations, no more -- the same
+    counting argument ApuActivitySignal's docstring uses for its bits, run
+    over a continuous rate instead of a 0/1 one). Summing and halving gives
+    `dev <= (L / short_window) * scale`, so firing (dev > (1-collapse)*scale,
+    scale > 0) needs
+
+        L > short_window * (1 - collapse)
+
+    -- a bound that does not depend on the game's own baseline magnitude
+    (`scale` cancels out of both sides), exactly the way ApuActivitySignal's
+    `L > gate_floor * short_window` does not depend on which channels a
+    particular game happens to use. At the defaults (short_window=30,
+    collapse=0.2) that is L > 24: a 24-observation total sprite wipe cannot
+    fire this signal at any alignment, wherever in the window it lands; one
+    observation more, it does. A `scale` of 0 (a baseline that was ALREADY
+    fully collapsed -- the game showed no sprites for the whole baseline
+    window) makes the gate `(1-collapse)*0 = 0` unreachable by a drop from
+    nothing, which is the correct, safe direction: there is no population
+    left to collapse FROM.
+
+    FALSE POSITIVES this signal cannot tell apart from a clear (documented,
+    not discovered later): DEATH fires it hardest -- the player and the
+    enemies that killed them explode off the sprite table together, and
+    death is precisely a SUSTAINED wipe (a death/explosion animation holds
+    the table empty for well over `sustain` evaluations), so this signal
+    reads every death as a population collapse with total confidence.
+    SCREEN BLANK / FADE hides every sprite (any fade, including a death fade
+    and a pause menu's fade-to-black). ROOM TRANSITION fires it (the new
+    room's entities have not spawned in yet). BOSS INTRO fires it (the arena
+    clears before the boss appears). ATTRACT LOOP fires it at every demo
+    restart. Because this signal's false-positive set is a strict superset
+    of entity_wipe_windows' (both fire on every one of the above; OAM adds
+    nothing entity_wipe's RAM heuristic didn't already cover -- it only
+    makes the same collapse visible on a game whose entity RAM layout
+    entity_wipe cannot see), a caller wiring both into a vote MUST treat
+    {entity_wipe, oam_quiesce} as ONE corroborating slot, never as two
+    independent votes -- counting them separately double-counts a single
+    piece of evidence.
+
+    AN UNEXAMINED RESIDUAL, measured while writing this class's tests, worth
+    naming rather than leaving for someone else to rediscover: unlike
+    ApuActivitySignal's gate (`gate_k * null_sigma + gate_floor`, which
+    WIDENS proportionally to this game's own measured churn), this signal's
+    gate is a FIXED fraction of the baseline's MAGNITUDE only -- it carries
+    no term for how much that baseline naturally VARIES. A game whose sprite
+    population legitimately oscillates on its own ordinary rhythm (a
+    shmup's busy-wave / near-empty-lull cycle, measured here at a ~15:1
+    amplitude with a lull lasting a little over the blip-immunity bound)
+    crosses the collapse gate on EVERY lull, repeatedly, for as long as the
+    game runs, with no clear ever happening
+    (test_an_ordinary_oscillating_wave_rhythm_can_repeatedly_false_fire pins
+    the measured shape). This is a SHARPER case than the transient
+    death/fade/room-transition list above: those are one-off state changes;
+    this is normal, REPEATING gameplay. It is a direct consequence of
+    leaving the variance term out, not a bug in the arithmetic -- flagged
+    here rather than shipped silently, so a caller with a game in this shape
+    knows to raise `collapse` (a smaller required drop) or, better, to never
+    let this signal stand without a transition-confirming corroborator
+    (room_fp_transition, lock_release_novelty) in the same vote."""
+
+    def __init__(self, collapse: float = OAM_COLLAPSE,
+                 sustain: int = OAM_SUSTAIN,
+                 short_window: int = OAM_SHORT_WINDOW,
+                 baseline_window: int = OAM_BASELINE_WINDOW,
+                 min_baseline: int = OAM_MIN_BASELINE,
+                 hold: int = OAM_HOLD):
+        self.collapse = float(collapse)
+        self.sustain = max(1, int(sustain))
+        self.short_window = max(1, int(short_window))
+        self.baseline_window = max(1, int(baseline_window))
+        self.min_baseline = max(1, int(min_baseline))
+        self.hold = max(1, int(hold))
+        self.reset()
+
+    def reset(self) -> None:
+        """Drop the latch AND the calibration -- same reasoning as
+        ApuActivitySignal.reset(): the samples that produced a fire are
+        still inside both windows, so keeping them would let the identical
+        fire land again the moment a veto expires."""
+        self._short: deque = deque()
+        self._long: deque = deque()
+        self._short_sum = np.zeros(2, dtype=np.float64)
+        self._long_sum = np.zeros(2, dtype=np.float64)
+        self._consec = 0
+        self._rearm_ready = True
+        self.n = 0
+        self.trigger_n: int | None = None
+        self.n_triggers = 0
+        self.last_dev = 0.0
+        self.last_scale = 0.0
+        self.n_evals = 0
+
+    def push(self, census) -> None:
+        """Feed one `(n_visible, n_distinct)` pair. `census=None` -- a
+        caller that has not plumbed the OAM modality yet -- is IGNORED
+        rather than read as `(0, 0)`: treating an absent measurement as
+        "every sprite vanished" would fabricate the loudest possible
+        collapse out of nothing, exactly the failure
+        test_a_missing_census_is_ignored_rather_than_read_as_a_collapse
+        pins (the same concern ApuActivitySignal.push documents for a
+        missing mask)."""
+        if census is None:
+            return
+        n_visible, n_distinct = census
+        v = np.array([n_visible, n_distinct], dtype=np.float64) / OAM_SPRITES
+        self.n += 1
+        self._short.append(v)
+        self._short_sum += v
+        if len(self._short) > self.short_window:
+            old = self._short.popleft()
+            self._short_sum -= old
+            self._long.append(old)
+            self._long_sum += old
+            if len(self._long) > self.baseline_window:
+                self._long_sum -= self._long.popleft()
+        self._evaluate()
+
+    def _evaluate(self) -> None:
+        if (len(self._short) < self.short_window
+                or len(self._long) < self.min_baseline):
+            return
+        self.n_evals += 1
+        short_rate = self._short_sum / float(self.short_window)
+        base_rate = self._long_sum / float(len(self._long))
+        drop = np.maximum(0.0, base_rate - short_rate)
+        dev = float(drop.sum()) / 2.0
+        scale = float(base_rate.sum()) / 2.0
+        self.last_dev, self.last_scale = dev, scale
+        below = dev > (1.0 - self.collapse) * scale + 1e-12
+        self._consec = self._consec + 1 if below else 0
+        if not below:
+            self._rearm_ready = True
+        if self._consec >= self.sustain and self._may_trigger():
+            self.trigger_n = self.n
+            self.n_triggers += 1
+            self._rearm_ready = False
+            self._consec = 0
+
+    def _may_trigger(self) -> bool:
+        """Re-arm only after the hold has expired AND the population has
+        actually recovered above the gate -- identical reasoning to
+        ApuActivitySignal._may_trigger (a sustained collapse must not
+        re-declare itself every `hold` observations for as long as it
+        lasts)."""
+        return (self.trigger_n is None
+                or (self.n - self.trigger_n >= self.hold
+                    and self._rearm_ready))
+
+    def vote(self) -> int:
+        """1 while the fire is inside its hold window, else 0."""
+        if self.trigger_n is None:
+            return 0
+        return int(self.n - self.trigger_n < self.hold)
+
+    def warmup_observations(self) -> int:
+        """Observations a FRESH signal must be fed before vote() can be 1 --
+        identical derivation to ApuActivitySignal.warmup_observations()."""
+        return self.short_window + self.min_baseline + self.sustain - 1
+
+    def stats(self) -> dict:
+        return {"n": self.n, "n_evals": self.n_evals,
+                "trigger_n": self.trigger_n, "n_triggers": self.n_triggers,
+                "dev": round(self.last_dev, 5),
+                "scale": round(self.last_scale, 5),
                 "baseline_n": len(self._long)}
 
 

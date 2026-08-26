@@ -146,6 +146,15 @@ def resolve_hw_flags(profile: dict, cli: str | None = None) -> list:
     return out
 
 
+# A cell is retired from SELECTION after this many separate bursts rooted at
+# it have ended in a terminal-stasis kill. See Solver._stasis_terminal for
+# why the bar is repetition and not, as first shipped, how early in the burst
+# the freeze began: measured on 1942 and on the D1 archive itself, a kill
+# lands 128-254 steps into the burst, never at its root, so an
+# early-in-the-burst bound was a rule that could not fire.
+STASIS_RETIRE_AFTER = 2
+
+
 def apply_hw_flags(pool, flags) -> None:
     """Apply resolved hw flags to a freshly-constructed Pool.
 
@@ -3485,6 +3494,42 @@ class Solver:
         # rebuilt at every re-root.
         warn_if_burst_starves_clear_hook(self.game,
                                          int(getattr(args, "burst", 0) or 0))
+        # TERMINAL STASIS (the D1 repair). is_dead() is a LIVES-BYTE
+        # predicate and cannot see a terminal state that leaves the lives
+        # byte unchanged; Ninja Gaiden II's GAME OVER screen is exactly
+        # that, and the wave-4 smoke run banked 246,836 steps and 2,216
+        # cells grinding it. This arms the second, game-knowledge-free
+        # terminal test: a lineage whose RAM surface holds still for
+        # `window` consecutive steps, and from whose frame no branch of a
+        # long differential probe then ESCAPES, is in an absorbing state and
+        # is killed. Resolved here (cheap, no emulator work); CALIBRATED in
+        # seed(), because its tolerance comes from this profile's own start
+        # state and is not a shipped constant.
+        _scfg = (profile.get("solve", {}) or {}).get("stasis", {}) or {}
+        self._stasis_on = (str(getattr(args, "stasis", "on")).lower() != "off"
+                           and str(_scfg.get("mode", "on")).lower() != "off")
+        self._stasis_window = int(getattr(args, "stasis_window", 0)
+                                  or _scfg.get("window", 0) or 0)
+        self._stasis = None          # the calibrated signal, or None
+        self._stasis_env = None      # the probe emulator (never the search pool)
+        self._stasis_kills = 0       # lineages terminated
+        self._stasis_arms = 0        # times the frozen track asked for a verdict
+        self._stasis_errors = 0      # probes that failed open
+        # Cells whose bursts keep ending absorbing. REMOVED FROM SELECTION
+        # after STASIS_RETIRE_AFTER of them, never from the archive: the
+        # cell stays banked as the receipt for why it was retired, and only
+        # select() stops offering it.
+        #
+        # THIS IS THE HALF OF THE REPAIR THAT ADDRESSES D1'S ACTUAL COST.
+        # D1 was not one burst: it was 15,579 revisits to one cell. Killing
+        # the burst stops the frozen frames being BANKED; without
+        # retirement the deep-frontier arm keeps choosing the same doomed
+        # cell forever, because it is still the deepest thing in the
+        # archive. The existing `barren` machinery would do this, but it is
+        # opt-in behind --frontier-throttle (default 0), so on a default run
+        # nothing acts on it.
+        self._stasis_retired: set = set()
+        self._stasis_kill_counts: dict = {}
         self.rng = np.random.default_rng(args.seed)
         # Sustained-hold macros (generic mechanism, profile-selected): at a
         # small per-step probability a worker settles briefly then HOLDS one
@@ -5235,6 +5280,160 @@ class Solver:
               f"{self.game.level_key(ram)}", flush=True)
         return True
 
+    # ---- terminal stasis: the death the lives byte never reports ------
+
+    def _stasis_setup(self) -> None:
+        """Calibrate the terminal-stasis signal against THIS profile's own
+        start state, on a private emulator that is never the search pool.
+
+        The tolerance is earned here and is not a shipped constant: it is a
+        fraction of the median RAM churn this profile produces under its own
+        ordinary play, floored at a measured bookkeeping level. A profile
+        whose QUIETEST ordinary play cannot be told apart from a frozen
+        screen is DISARMED with the measured reason printed — the
+        alternative is a run whose death predicate was drawn from a null
+        that was never about it, which is the retired LOCK_DIFF_TOL=2
+        mistake.
+
+        Costs ~1-2 s of single-worker emulation once per run (400 steps of
+        ordinary play). It is spent before the search pool does anything,
+        deliberately: a threshold measured mid-run would be measured off
+        states the search chose, not off ordinary play.
+
+        FAILS OPEN, LOUDLY. Any exception here leaves the signal disarmed
+        and the run continues on the lives predicate alone — this is a
+        pruning improvement, not a correctness dependency, and a solve must
+        not die because a probe emulator would not construct."""
+        if not self._stasis_on:
+            print("[stasis] disabled (--stasis off / solve.stasis.mode: off)",
+                  flush=True)
+            return
+        try:
+            import nes_core
+
+            from clear_detect import TerminalStasisSignal
+            kw = {}
+            if self._stasis_window > 0:
+                kw["window"] = self._stasis_window
+            sig = TerminalStasisSignal(
+                self.bitmasks, rng=np.random.default_rng(self.args.seed), **kw)
+            env = nes_core.NESEnvironment(self.game.rom,
+                                          frame_skip=self.frame_skip)
+            # Same machine as the search pool, same ordering rule: hw flags
+            # before the reset (apply_hw_flags' docstring). A probe run on a
+            # different timing lineage than the search is measuring a
+            # different game.
+            apply_hw_flags(env, self.hw_flags)
+            env.reset()
+            env.load_state(Path(self.args.root_state).read_bytes())
+            env.step(0)          # rooting NOOP, the same convention as seed()
+            t0 = time.time()
+            rec = sig.calibrate(env)
+            dt = time.time() - t0
+            if not sig.ready():
+                print(f"[stasis] DISARMED for this profile after {dt:.1f}s of "
+                      f"calibration: {sig.reason}", flush=True)
+                return
+            self._stasis, self._stasis_env = sig, env
+            print(f"[stasis] armed in {dt:.1f}s: a lineage is killed after "
+                  f"{sig.window} consecutive steps within {sig.churn_tol} RAM "
+                  f"bytes of one anchor — this profile's ordinary play moves a "
+                  f"median {rec['churn_null_median']:.0f} bytes per "
+                  f"{sig.window}-step window and {rec['churn_null_p01']:.0f} at "
+                  f"its 1st percentile — IF none of {sig.branches} branches "
+                  f"holding an action for {sig.probe_steps} steps then leaves "
+                  f"that frame", flush=True)
+        except Exception as exc:                       # noqa: BLE001
+            self._stasis = self._stasis_env = None
+            print(f"[stasis] calibration FAILED — the run continues with the "
+                  f"lives predicate alone, which is blind to a terminal state "
+                  f"that leaves the lives byte unchanged (D1): "
+                  f"{type(exc).__name__}: {exc}", flush=True)
+
+    def _stasis_terminal(self, wid: int, c: dict, ram) -> bool:
+        """One step of the terminal-stasis test for one worker. Returns True
+        only when the cheap frozen track has armed AND no branch of the
+        confirming differential probe escapes that frame.
+
+        Cost with the signal armed and nothing frozen: one 2 KB numpy
+        comparison per worker per step. Cost when a lineage arms: one
+        savestate plus branches * probe_steps single-worker emulated steps,
+        which is why an arm that the probe rejects escalates that lineage's
+        next required hold (TerminalStasisSignal.required_hold).
+
+        The probe runs on the PRIVATE emulator, loaded from this worker's
+        own savestate — never on the search pool. The gate sweep is the
+        cautionary tale: rewinding live workers mid-burst is the one thing
+        in this file that can hand a trace to observe() that does not
+        describe the frames that ran. Nothing here touches the pool except
+        one save_worker_state read.
+
+        FAILS OPEN. A savestate that will not round-trip, or a probe that
+        raises, must never terminate a live lineage: the cost of a missed
+        kill is compute, the cost of a wrong kill is a level nobody can
+        reach any more."""
+        # getattr: the duck-typed Solver stand-ins in the tests carry a
+        # handful of methods and nothing else, exactly like every other arm
+        # read from this hot loop.
+        sig = getattr(self, "_stasis", None)
+        if sig is None or not sig.push(c, ram):
+            return False
+        self._stasis_arms += 1
+        try:
+            blob = self.pool.save_worker_state(wid)
+            if not blob:
+                raise RuntimeError("save_worker_state returned nothing")
+            self._stasis_env.load_state(bytes(blob))
+            if not sig.confirm(c, self._stasis_env):
+                return False
+        except Exception as exc:                       # noqa: BLE001
+            self._stasis_errors += 1
+            sys.stderr.write(f"[stasis] probe failed on worker {wid} "
+                             f"(lineage KEPT): {type(exc).__name__}: {exc}\n")
+            return False
+        self._stasis_kills += 1
+        # RETIRE THE ROOT once STASIS_RETIRE_AFTER SEPARATE bursts from it
+        # have ended absorbing.
+        #
+        # THE BAR IS REPETITION, and the first version of this rule had it
+        # wrong. That version asked whether the freeze began within a few
+        # steps of the burst's first frame -- "was this cell already inside
+        # the absorbing basin" -- which sounds right and cannot fire:
+        # measured on 1942 and on D1's own archive, a kill lands 128-254
+        # steps into the burst, because the lineage plays, dies, and only
+        # then reaches the screen. A rule that never fires is not a
+        # conservative rule, it is an absent one.
+        #
+        # Two INDEPENDENT random continuations from the same cell both
+        # ending in a state no branch can leave is the evidence that the
+        # cell is the problem rather than the action stream. One is not: a
+        # single unlucky burst must not delete a live frontier cell, and the
+        # cost of being wrong here is a cell nobody will visit again for the
+        # rest of the run.
+        key = c.get("key")
+        if key is not None and key not in self._stasis_retired:
+            n = self._stasis_kill_counts[key] = \
+                self._stasis_kill_counts.get(key, 0) + 1
+            if n >= STASIS_RETIRE_AFTER:
+                self._stasis_retired.add(key)
+                self._sel_cells = None   # force the selection cache to rebuild
+        return True
+
+    def stasis_stats(self) -> dict:
+        """Receipt block. `arms` minus `kills` is the confirming probe's own
+        work: every one of those is a lineage the frozen arming track alone
+        would have killed and the probe refused to. `n_probes` vs `n_cached`
+        is what the convicted-frame ring saved."""
+        if self._stasis is None:
+            return {"armed": False,
+                    "reason": ("off" if not self._stasis_on
+                               else "calibration declined or failed")}
+        s = self._stasis.stats()
+        s.update({"armed": True, "arms": self._stasis_arms,
+                  "kills": self._stasis_kills, "errors": self._stasis_errors,
+                  "retired_cells": len(self._stasis_retired)})
+        return s
+
     # ---- seeding: root ONLY (honest) ---------------------------------
 
     def seed(self) -> None:
@@ -5257,6 +5456,10 @@ class Solver:
                                   "lives": self.start_lives,
                                   "hw_provenance": self.provenance}
         self.observe(0, r, [], 0, "entrance")
+        # AFTER the entrance observation and BEFORE any burst: the stasis
+        # thresholds are measured from ordinary play out of this same root,
+        # on a private emulator, so the search pool is untouched.
+        self._stasis_setup()
         prev = getattr(self.args, "resume_archive", None)
         if prev:
             prev = Path(prev)
@@ -5525,8 +5728,11 @@ class Solver:
         (state filter, deep filter, weighted fallback) — starving the Rust
         pool at 1.6/16 cores with sps decayed 2378->475. Rebuild only when
         the archive grows 2% or the deepest area advances."""
+        # getattr: the duck-typed selection stand-ins in the tests predate
+        # this attribute, exactly like _gx_phantoms above it.
+        _retired = getattr(self, "_stasis_retired", ())
         self._sel_cells = [c for c in self.archive.cells.values()
-                           if c.state is not None]
+                           if c.state is not None and c.key not in _retired]
         deep_area = self._sel_cells
         if self.ortho_mode != "off":
             # Restrict the ORTHO POOL — and only it — to the DEEPEST area:
@@ -7171,10 +7377,25 @@ class Solver:
                         and _lgx > self.args.swim_gx_ceiling):
                     ctx[i] = self._assign(i, prev=c)
                     continue
-                status = self.observe(i, ram, c["trace"], c["steps"],
-                                      c["root"], c["loops"], c["sig"],
-                                      c["sect"], c["psig"], ctx=c,
-                                      kills=c.get("kills", 0))
+                # TERMINAL STASIS, resolved BEFORE observe() for the same
+                # reason death is resolved before the clear hooks inside it:
+                # a state adjudicated terminal must not first be BANKED as a
+                # cell. D1 is what banking them costs — 2,216 archived
+                # corpses on a GAME OVER screen, the deepest of them revisited
+                # 15,579 times, because the lives byte never moved and every
+                # frame of that screen read as ordinary live play.
+                #
+                # The RAW step RAM is fed, never the _xram pseudo-RAM: the
+                # odometer/fight columns are synthesized per step and are not
+                # part of the machine's own surface.
+                if self._stasis_terminal(i, c, results[i][2]):
+                    c["_dead_cause"] = "stasis"
+                    status = "dead"
+                else:
+                    status = self.observe(i, ram, c["trace"], c["steps"],
+                                          c["root"], c["loops"], c["sig"],
+                                          c["sect"], c["psig"], ctx=c,
+                                          kills=c.get("kills", 0))
                 # Finisher extension: the level-END transition (exit pipe /
                 # flag slide) can run many steps with gx frozen, so a burst
                 # from the deepest cell can end just short of the wd advance.
@@ -7332,6 +7553,26 @@ class Solver:
             if prof is not None:
                 line["boundary_state_axes"] = prof.get("live_state_axes_n")
                 line["alias_ratio"] = prof.get("alias_ratio")
+        # TERMINAL STASIS — printed whether or not it ever fired, and
+        # whether or not it armed, because "armed and never fired" and
+        # "declined to arm on this profile" are different readings and D1
+        # was invisible for a whole wave precisely because nothing in any
+        # line said which one was true. stasis_probes minus stasis_kills is
+        # the input-lock conjunct's own work: lineages the frozen track
+        # alone would have killed.
+        _st = getattr(self, "_stasis", None)
+        line["stasis_armed"] = _st is not None
+        if _st is not None:
+            # ARMS and PROBES are different numbers and the gap is the
+            # convicted-frame cache doing its job: on 1942, 567 arms cost 46
+            # actual K-branch re-simulations. Reporting one as the other
+            # would hide the whole cost story.
+            line["stasis_arms"] = self._stasis_arms
+            line["stasis_probes"] = _st.stats()["n_probes"]
+            line["stasis_cached"] = _st.stats()["n_cached"]
+            line["stasis_kills"] = self._stasis_kills
+            line["stasis_retired"] = len(self._stasis_retired)
+            line["stasis_errors"] = self._stasis_errors
         if self.door_weight > 0:
             line["doors"] = len(self._doors)
             line["edges"] = sum(len(v) for v in self._adj.values()) // 2
@@ -7426,6 +7667,14 @@ class Solver:
         with open(self.out / "traces.pkl", "wb") as f:
             pickle.dump(self.traces, f, protocol=pickle.HIGHEST_PROTOCOL)
         (self.out / "roots.json").write_text(json.dumps(self.roots, indent=2) + "\n")
+        # TERMINAL-STASIS RECEIPT, written whether the signal armed or not.
+        # A run that DECLINED to arm and a run that armed and never fired
+        # are different facts about the search, and D1 went a whole
+        # onboarding wave unnoticed because no artifact recorded either
+        # one. The block carries the calibration it earned (or the measured
+        # reason it refused) alongside the counters.
+        (self.out / "stasis.json").write_text(
+            json.dumps(self.stasis_stats(), indent=2) + "\n")
         # The intern table travels with the archive (§2 persistence):
         # ordinals embedded in the flushed keys are meaningless without
         # it, and _resume_room_index refuses a resume that lacks it.
@@ -7517,6 +7766,20 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--burst", type=int, default=64)
     ap.add_argument("--sticky", type=float, default=0.5)
+    ap.add_argument("--stasis", choices=["on", "off"], default="on",
+                    help="TERMINAL-STASIS lineage kill (the D1 repair, "
+                         "DEFAULT ON). A lineage whose RAM surface holds "
+                         "still for --stasis-window consecutive steps AND "
+                         "then fails a differential input-lock probe is in "
+                         "an absorbing, input-dead state (a GAME OVER screen "
+                         "the lives byte never reported, a soft-lock) and is "
+                         "terminated. Auto-DISARMS itself on any profile "
+                         "whose own ordinary play cannot be told apart from "
+                         "a frozen screen — see the launch line it prints.")
+    ap.add_argument("--stasis-window", type=int, default=0,
+                    help="Consecutive held-still steps before the confirming "
+                         "probe runs (0 = the profile's solve.stasis.window, "
+                         "else clear_detect.STASIS_WINDOW).")
     ap.add_argument("--deep-bias", type=float, default=0.4)
     ap.add_argument("--minutes", type=float, default=0,
                     help="Wall-clock budget (0 = until solution quota).")
