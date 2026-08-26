@@ -1,7 +1,7 @@
 .PHONY: help test parity engine show launcher control-panel bench bench-hot bench-scaling bench-phases bench-all \
         build build-pgo build-pgo-apply selftest clean clean-rust train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
-        ppu_layout_check ppu-batch-profile rust-check
+        ppu_layout_check ppu-batch-profile rust-check unsafe-inventory-check
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -96,7 +96,17 @@ scoreboard:
 rust-check:
 	cd nes_core && cargo check --lib
 
-test: rust-check
+# Mechanical gate on nes_core/SECURITY.md's per-file `unsafe` inventory:
+# fails if a file under nes_core/src has `unsafe` but no entry in the
+# doc, if a doc entry names a file no longer in the tree, or if a
+# per-file count has drifted beyond a small tolerance. This is what
+# should have caught the doc claiming "three call sites in the entire
+# crate" for ~4 months while the real count grew to 155 across 11
+# files -- see nes_core/SECURITY.md and scripts/check_unsafe_inventory.py.
+unsafe-inventory-check:
+	.venv/bin/python scripts/check_unsafe_inventory.py
+
+test: rust-check unsafe-inventory-check
 	. .venv/bin/activate && pytest tests/ -q --timeout=120
 
 test-fast:
