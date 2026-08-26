@@ -450,6 +450,66 @@ untested (Galaga was flagged in the same wave as a candidate carrying
 the identical gap, not yet hit). No clear or League-inclusion claim
 beyond SOUND_ADVANCING is made from this entry.
 
+**FORGE — item/key semantic discovery engine, commit `cc0bc9e`,
+2026-08-25.** Answers the original "a key can open a specific door"
+capability directive with a purity-clean pipeline: `RoomIndex.cap_hist`
+(an additive graft on the room-graph engine, no version bump), and
+`scripts/discover_item_bits.py` running three stages — idle-prefiltered
+candidate scanning, K-of-N cross-rollout confirmation with permanent
+reject-on-revert, and a correlational "lead" (rarity-confound exposed
+in the report) followed by behavioral verification via matched
+real acquire/skip trajectory replay from a shared `save_worker_state`
+snapshot, scored against a rejected-pool control battery. Validated
+against IS-1a, a Zelda negative control (rupees/keys never move in any
+of the 12 real archived RG-1 sequences replayed): the engine correctly
+returned **FAIL, not VOID** — 51 raw false "confirmed" flags,
+root-caused (not explained away) to Zelda's death→CONTINUE-menu RAM
+rewrite, truncating via the already-claimed `lives` byte (no new
+address, purity intact) to 13, further diagnosed as a deterministic
+engine-init artifact (identical elapsed-step offsets across 8
+independently-diverging lineages). Two named follow-ups, neither
+requiring new game knowledge or new Rust: death/lives-based rollout
+truncation ahead of `scan_rollout`; a cross-lineage step-offset
+consistency check. Honest status: the engine correctly rejects a true
+negative on its first live test; it has not yet been run against a
+true positive (IS-1b, a real Zelda pickup, needs a new minted start
+state — not run this session). No door/key semantic claim is made from
+this entry — only that the machinery distinguishes signal from noise
+on the one case tried.
+
+**FORGE — fight-gate progress mechanism, commit `07f367d` design /
+`af94b88` implementation, 2026-08-25.** A second progress source
+alongside the PPU scroll odometer, for the CAMERA_STATIC_AGENT_ACTIVE
+game class the odometer cannot serve (fixed-screen fight games — no
+scroll gradient exists by definition). Purity-clean by construction:
+`scripts/discover_observables.py --fight-gate` runs randomized
+attack-mash/approach-retreat probes and a decrement-consensus self/foe
+HP discriminator with no RAM map or game knowledge consulted, feeding
+a cumulative-damage integral into `go_explore_solve.py` via
+`progress: {source: fight_gate, foe_hp, foe_hp_start}` — the same
+pseudo-RAM-extension pattern the odometer already uses, so every
+existing consumer (cells, glitch filter, macros, progress_cap) is
+unmodified. **Validated on Punch-Out: SUCCESS.** Blind discovery
+(`runs/fight_gate/discover_punchout.json`) nominated addr 920
+(0x0398), start 96 (0x60), attack_agree 5/5, defense_agree 0/5 — the
+same byte the profile's internet-sourced `ram_mapping` label already
+used, independently re-derived from hardware observables alone. Wired
+live into `configs/punchout.yaml` (commit `2e2696a`) and re-verified
+against the committed file, not just the design-time scratch config: a
+fresh run reproduces the smoke's `max_gx_in_max_area=81` exactly.
+League classification updated CAMERA_STATIC_AGENT_ACTIVE →
+SOUND_ADVANCING-eligible. Two honest qualifications, named and not
+fixed: the ranking heuristic does not uniquely surface 0x0398 as its
+#1 pick (it is #3 of 5 candidates that pass the decrement-consensus
+gates on this probe budget — the correct one was confirmed here by
+cross-referencing the independently-verified `ram_mapping`, not by
+discovery rank alone); `find_round_gate` returned VOID
+(`insufficient_probe`, no bout boundary crossed in 24,000 probe steps)
+so `round:` is omitted from the profile rather than guessed. No
+League-inclusion claim beyond SOUND_ADVANCING-eligible is made; Kung
+Fu, Ice Climber, and Galaga — the other three games this mechanism
+targeted — are untested.
+
 ## Quarantine (Tier-3-contaminated artifacts)
 
 The following artifacts were produced with banned knowledge (a
@@ -868,12 +928,15 @@ and the isolated-event recycle boundary was re-measured per-width
 v27's 64-unit net), updating the soft-VOID trigger rather than
 guessing it proportionally; V4 (mechanism armed, not inert) confirmed
 live in seed 0's own log (`[redo] ENABLED tau=0.025 every_iters=1
-scope=fc1,fc2 sample=4096 reset_moments=true`). Status as of this
-writing: only seed 0 running (process confirmed live), at iteration 8
-of 250 (`runs/v28_capacity/train_seed0.log`), ~2,400–2,550
-env-steps/s (~162–170× realtime); seeds 1–3 have not started
-(sequential driver, `runs/v28_capacity/run_seeds.sh`). **No
+scope=fc1,fc2 sample=4096 reset_moments=true`). Status updated 2026-08-25 (later the same day): seed 0 completed
+(exit 0, all 250 iters, `runs/v28_capacity/train_seed0.log`), seed 1
+completed (exit 0, all 250 iters, `train_seed1.log`), seed 2 running
+(iteration 19 of 250 as of this update, ~2,000 env-steps/s, ~130×
+realtime), seed 3 not yet started (same sequential driver). **No
 honest-protocol number and no gate verdict exist yet for v28, at any
-seed.** This machine is dedicated to this run; the eventual result —
-PASS, FAIL, or MARGINAL against the same 0.80/0.767 bar v27 was scored
-against — gets its own entry when all 4 seeds finish.
+seed** — training-loop telemetry is explicitly not a gate proxy per
+the entry above. This machine remains dedicated to this run; the
+eventual result — PASS, FAIL, or MARGINAL against the same 0.80/0.767
+bar v27 was scored against — gets its own entry when all 4 seeds
+finish and are scored sequentially (never in parallel with other live
+compute, per this project's own CPU-contention discipline).
