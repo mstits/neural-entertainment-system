@@ -85,14 +85,24 @@ def test_child_survives_a_signal_that_kills_its_launcher_group(tmp_path):
     the campaign trainer.
     """
     child_pidfile = tmp_path / "child.pid"
+    # The helper resets SIGINT to SIG_DFL before anything else, and that line
+    # is load-bearing rather than defensive. An IGNORED signal disposition is
+    # inherited across exec (unlike a handler, which is reset), so whenever the
+    # test runner happens to be running with SIGINT set to SIG_IGN the helper
+    # inherits it and becomes permanently deaf to the signal this test is built
+    # to deliver. That was observed: inside the full suite the helper sat in
+    # STAT=S, alive and sleeping, 120s after the killpg, while the same test
+    # passed standalone. Without this reset the test does not fail honestly --
+    # it stops being able to test anything.
     helper_src = f"""
-import sys, time
+import signal, sys, time
+signal.signal(signal.SIGINT, signal.SIG_DFL)
 sys.path.insert(0, {str(ROOT)!r})
 from scripts.detach import launch
-pid = launch([sys.executable, "-c", "import time; time.sleep(30)"],
+pid = launch([sys.executable, "-c", "import time; time.sleep(600)"],
              {str(tmp_path / "child.log")!r})
 open({str(child_pidfile)!r}, "w").write(str(pid))
-time.sleep(30)
+time.sleep(600)
 """
     helper = subprocess.Popen([sys.executable, "-c", helper_src],
                               start_new_session=True)
@@ -105,7 +115,13 @@ time.sleep(30)
         assert _alive(child_pid)
 
         os.killpg(os.getpgid(helper.pid), signal.SIGINT)
-        helper.wait(timeout=10)
+        # A helper that outlives SIGINT makes the child's survival meaningless,
+        # so treat that as "test is not valid", never as a pass.
+        try:
+            helper.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            pytest.fail("helper outlived SIGINT — the signal never landed, so "
+                        "the child's survival below would prove nothing")
         time.sleep(0.5)
 
         assert not _alive(helper.pid), "helper survived; test is not valid"
