@@ -32,9 +32,57 @@ ram_mapping:
   player_health:   0x0044
   stage_number:    0x0028   # stable under random play (0.08 changes/1k)
   lives:           0x002A   # 4 decrements observed over 12k random steps
-  hearts:          0x0045   # sub-weapon ammo
-  # Boss health during boss fights
-  boss_health:     0x04A0
+  hearts:          0x0045   # CONTESTED — two in-repo measurements disagree
+                            # and neither has been re-run. This entry says
+                            # sub-weapon ammo; nes_core/src/rewards.rs says
+                            # 0x0045 "is actually Simon's real HP" and moved
+                            # its own heart term to 0x0071. But that same Rust
+                            # impl block declares RAM_PLAYER_HEALTH = 0x0044
+                            # three lines above (matching player_health here),
+                            # so both readings of 0x0045 cannot hold, and
+                            # 0x0071 has no receipt anywhere under docs/ or
+                            # runs/. What IS receipted:
+                            # docs/receipts/ram_verify/castlevania.json grades
+                            # 0x45 "churn 2.9/1k (informational)" — no
+                            # heart-pickup differential was ever run. Treat the
+                            # label as unresolved until one is.
+
+
+# --------------------------------------------------------------------------
+# Retracted 2026-08-27 — see docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md
+# String value on purpose: `int(v)` must raise, so no consumer can fold this
+# address back into a set (the exclusion-fold inversion closed for Zelda in
+# 2e6014f). tests/test_purity_quarantine_sweep.py enforces that no profile on
+# this ROM re-adopts it into a live `ram_mapping`.
+quarantined_external_knowledge:
+  applies_to_rom: "roms/Castlevania (USA).nes"
+  provenance: >-
+    Unattributed: the entry is unchanged from this repo's bulk initial
+    commit and was never receipted at introduction. It survived the
+    2026-07-27 change-rate-protocol pass that corrected player_x/player_y
+    on this same profile.
+  status: UNVERIFIED_EXTERNAL
+  rediscovery_rule: >
+    Dead until a Castlevania boss fight is actually reached here and the
+    byte is logged across it. Castlevania IS a confirmed-clear profile —
+    level_key 0x0028 advances 0->1->2->3 replay-verified across five
+    independent run trees — but no boss fight has ever been witnessed on
+    it, and this byte specifically was never observed firing:
+    docs/receipts/ram_verify/castlevania.json grades 0x4A0 "churn 0.0/1k
+    (informational)" and commit ad01b4f (2026-07-29) records "the
+    receipted 0x4A0 boss_health byte read 0 through live fights ... left
+    unconfigured until observed moving". A byte that passes enters a NEW
+    ram_mapping entry carrying its own receipt.
+  q_boss_health:  "0x04A0"  # claimed: boss health during boss fights. Flat 0
+                            # in every measurement taken; nes_core/src/rewards.rs
+                            # later calls it "emulator-verified DEAD (reads 0
+                            # constantly)". NOTE the replacement that impl block
+                            # moved to, 0x01A9, is itself sourced to "Data
+                            # Crystal + tasvideos ... not yet
+                            # Dracula-fight-verified" — an external,
+                            # still-unwitnessed claim living in the engine
+                            # rather than here. See the follow-up named in
+                            # docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md.
 
 # Solver contract (go_explore_solve) — every byte observationally verified
 # from our own rollouts; see the receipt above. `level_key` bytes identify

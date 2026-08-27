@@ -54,15 +54,27 @@ ram_mapping:
                           #   (this is a VERTICAL game), so NOT used as progress. [VERIFIED-LIVE]
   # --- Data Crystal-documented, reachable, VERIFIED STABLE but transition not
   #     reached under blind play (win predicate keys on these conservatively) ---
-  stage_index:   0x0130   # Stage index (vertical-scrolling levels). Held 0 across 300k+
-                          #   frames under every policy AND did not change on death, so a
-                          #   STRICT increase beyond the episode's start value is an
-                          #   unambiguous stage clear (never a false positive). The 0->1
-                          #   increment is cross-sourced; blind play never cleared 1-1.
-                          #   [VERIFIED-STABLE; increment cross-sourced]
-  boss_health:   0x006B   # Current fortress-boss HP (Data Crystal). Reads 0 at spawn and
-                          #   stayed 0 under every policy, so the >0->0 kill event can never
-                          #   latch from the start state. [VERIFIED zero-at-spawn/stable;
+  stage_index:   0x0130   # MEASURED NULL: held 0 across 300k+ frames under every
+                          #   policy AND did not change on death — and separately not in
+                          #   113 banked cells nor ~21,500 fresh steps. That measurement
+                          #   of absence stands. The LABEL ("stage index") and the 0->1
+                          #   increment reading are cross-sourced, not seen: no Kid
+                          #   Icarus stage clear has ever been witnessed here. This
+                          #   comment used to call a strict increase "an unambiguous
+                          #   stage clear (never a false positive)" — a false-positive
+                          #   rate cannot be known from zero observed increments, so
+                          #   that clause is retracted. A byte that reads 0 under every
+                          #   policy is consistent with being any unreached observable.
+                          #   The win predicate keys on this, so treat every clear it
+                          #   reports as UNCONFIRMED until an increment is witnessed.
+                          #   [VERIFIED-STABLE; identity and increment cross-sourced]
+  boss_health:   0x006B   # CROSS-SOURCED label (Data Crystal), NOT verified here. Reads
+                          #   0 at spawn and stayed 0 under every policy, so the >0->0
+                          #   kill event can never latch from the start state. No
+                          #   fortress boss has ever been reached here, so "fortress-boss
+                          #   HP" is an external identification with no witness; only the
+                          #   zero-at-spawn stability is ours.
+                          #   [VERIFIED zero-at-spawn/stable; identity cross-sourced;
                           #   fight not reached]
   # --- Data Crystal-documented, reachable, NOT exercised here (medium/low conf) ---
   health_containers: 0x00AA # Life-bar upgrades; Data Crystal end-game check is >= 4. [medium]

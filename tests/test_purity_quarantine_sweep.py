@@ -486,3 +486,112 @@ def test_an_unscoped_quarantine_block_would_apply_everywhere() -> None:
     # Simulate one: an unscoped address is folded into every ROM's set.
     scoped_before = quarantined_for(_load(CONFIG_DIR / "arkanoid.yaml"))
     assert 0xABCD not in scoped_before
+
+
+# =========================================================================
+# 2026-08-27 — the unwitnessed-semantics sweep
+# (docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md)
+#
+# The Zelda quarantine retracted addresses whose PROVENANCE was external.
+# This round retracted addresses whose CLAIM was external in a subtler
+# way: each annotation asserted what a byte does at a clear, a win, or a
+# boss death on a ROM where this repo has never witnessed one. An
+# annotation asserting semantics tied to an event never witnessed here
+# could not have been measured here, whatever the entry says about
+# itself — "VERIFIED WIN LATCH" on a bout that never ended is still an
+# imported claim.
+#
+# The generic sweep above derives its address set from whatever quarantine
+# blocks happen to exist, so it cannot notice a block being deleted: with
+# the blocks gone, there is nothing to compare against and every profile
+# passes vacuously. These two tests name the seven retractions explicitly
+# so that deleting a block, or promoting an address back into a live
+# `ram_mapping`, fails loudly instead of silently.
+# =========================================================================
+
+#: (config, rom basename, quarantine key, address, the event with no witness)
+UNWITNESSED_RETRACTIONS_2026_08_27 = [
+    ("contra.yaml", "Contra (USA).nes", "q_current_level", 0x0030,
+     "a Contra stage clear"),
+    ("contra.yaml", "Contra (USA).nes", "q_boss_defeated", 0x003B,
+     "a Contra stage-boss death"),
+    ("contra_blank.yaml", "Contra (USA).nes", "q_current_level", 0x0030,
+     "a Contra stage clear"),
+    ("contra_blank.yaml", "Contra (USA).nes", "q_boss_defeated", 0x003B,
+     "a Contra stage-boss death"),
+    ("punchout.yaml", "Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes",
+     "q_match_id", 0x0001, "a Punch-Out bout win"),
+    ("megaman.yaml", "Mega Man 2 (USA).nes", "q_boss_health", 0x06C1,
+     "reaching a Mega Man 2 boss room"),
+    ("castlevania.yaml", "Castlevania (USA).nes", "q_boss_health", 0x04A0,
+     "a Castlevania boss fight"),
+]
+
+
+@pytest.mark.parametrize(
+    "cfg,rom,key,addr,event", UNWITNESSED_RETRACTIONS_2026_08_27,
+    ids=lambda v: v if isinstance(v, str) else f"0x{v:04X}")
+def test_unwitnessed_semantic_stays_quarantined(
+        cfg: str, rom: str, key: str, addr: int, event: str) -> None:
+    """The named block still exists, still carries the address, and still
+    carries it as a STRING so `int(v)` raises.
+
+    The string form is the load-bearing half. `scripts/observatory.py`
+    once folded `{int(a) for a in ram_mapping.values()}` into its
+    pre-probe exclusion set, so an int-valued entry steered the discovery
+    instrument away from the very byte the quarantine exists to force a
+    rediscovery of. That fold is gone (2e6014f), but the string value
+    means re-introducing it cannot reach these addresses.
+    """
+    doc = _load(CONFIG_DIR / cfg)
+    assert doc, f"configs/{cfg} must exist"
+    block = doc.get(QUARANTINE_KEY)
+    assert block, (
+        f"{cfg}: the `{QUARANTINE_KEY}` block is gone. {key} (0x{addr:04X}) "
+        f"asserted semantics for {event}, which this repo has never "
+        f"witnessed, so it cannot be restored by deleting its retraction.")
+    assert _rom_key(block.get("applies_to_rom")) == _rom_key(rom)
+    assert block.get("status") == "UNVERIFIED_EXTERNAL"
+    assert block.get("rediscovery_rule"), f"{cfg}: quarantine needs a rule"
+    assert block.get("provenance"), f"{cfg}: quarantine needs a provenance"
+
+    raw = block.get(key)
+    assert raw is not None, f"{cfg}: quarantine entry {key} disappeared"
+    assert isinstance(raw, str), (
+        f"{cfg}: {key} must be a STRING so `int(v)` raises; got "
+        f"{type(raw).__name__} {raw!r}. An int-parseable value is exactly "
+        f"the shape that folds into an exclusion set.")
+    with pytest.raises(ValueError):
+        int(raw)
+    assert int(raw, 0) == addr, f"{cfg}: {key} no longer names 0x{addr:04X}"
+    assert addr in quarantined_for(doc)
+
+
+@pytest.mark.parametrize(
+    "cfg,rom,key,addr,event", UNWITNESSED_RETRACTIONS_2026_08_27,
+    ids=lambda v: v if isinstance(v, str) else f"0x{v:04X}")
+def test_unwitnessed_semantic_is_not_live_on_any_profile_for_that_rom(
+        cfg: str, rom: str, key: str, addr: int, event: str) -> None:
+    """No profile on the same ROM may carry the address in a live
+    `ram_mapping` — including the sibling profiles that shared the map.
+
+    `configs/contra.yaml` and `configs/contra_blank.yaml` carried
+    byte-identical `ram_mapping` blocks, so retracting a claim from one
+    and leaving it in the other would retract nothing.
+    """
+    live = []
+    for path in _top_level_profiles():
+        doc = _load(path)
+        if _rom_key(rom) not in _profile_rom_keys(doc):
+            continue
+        for k, v in (doc.get("ram_mapping") or {}).items():
+            try:
+                if int(v) == addr:
+                    live.append(f"{path.name}:{k}")
+            except (TypeError, ValueError):
+                continue
+    assert not live, (
+        f"0x{addr:04X} is live in {live} while quarantined in {cfg}. It "
+        f"asserted semantics for {event} — an event with no witness in "
+        f"this repo — so it may only return as a NEW entry after that "
+        f"event is witnessed here and the byte is logged across it.")

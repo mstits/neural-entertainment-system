@@ -53,15 +53,52 @@ ram_mapping:
   mac_down:     0x03D0   # VERIFIED Little Mac knocked-down flag; 0->1 when Mac
                          # is floored.
   stars:        0x0342   # banked star punches (clean counters). Minor shaping.
-  match_id:     0x0001   # VERIFIED WIN LATCH: 0 through the whole bout AND
-                         # during a loss (0 even on a non-final knockdown), goes
-                         # nonzero ONLY at the winning KO/TKO. THE win.
   losses:       0x000A   # VERIFIED career loss counter; 0->1 when Mac is TKO'd.
                          # THE lose terminal.
   opp_type_id:  0x0002   # VERIFIED opponent index (Glass Joe = 0). level_id only.
   round:        0x0006   # VERIFIED current round (starts 1).
   throw_ok:     0x00BC   # VERIFIED 1 = Mac can punch (live), 0 = down / between.
   punches_to_star: 0x0347 # VERIFIED 20 (0x14) == Glass Joe (opponent fingerprint).
+
+
+# --------------------------------------------------------------------------
+# Retracted 2026-08-27 — see docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md
+# String value on purpose: `int(v)` must raise, so no consumer can fold this
+# address back into a set (the exclusion-fold inversion closed for Zelda in
+# 2e6014f). tests/test_purity_quarantine_sweep.py enforces that no profile on
+# this ROM re-adopts it into a live `ram_mapping`.
+quarantined_external_knowledge:
+  applies_to_rom: "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes"
+  provenance: >-
+    The Data Crystal + TASVideos MTPO RAM maps named in this file's own
+    header. The solve: block below already states that this ram_mapping
+    block "cites internet RAM maps ... and is therefore NOT usable as a
+    solver observable under the purity line"; the entry was nonetheless
+    carrying a "VERIFIED WIN LATCH" tag for an event this repo has never
+    seen.
+  status: UNVERIFIED_EXTERNAL
+  rediscovery_rule: >
+    Dead until a bout on this ROM is actually won here and the byte is
+    logged across the win. No bout has ever ended on any surface in any
+    Punch-Out bank in this repo, win or loss:
+    runs/fight_gate/smoke/solutions/ is empty (the only go_explore archive
+    ever run on this profile) and cumulative opponent damage topped out at
+    81 against the 96 cap. runs/clear_gap/punchout/s8_remeasure_verdict.json
+    reproduced the falsifier byte-for-byte — from the archived knockdown
+    state (opp_hp=0, opp_down=1) a pure-NOOP continuation refills opp_hp
+    0->96 at step 120 while match_id stays constant 0 — and names the
+    claim "a purity leak dressed as an empirical find". A knockdown is
+    witnessed here; a bout win is not.
+  q_match_id:  "0x0001"  # claimed: 0 through the whole bout and during a loss,
+                         # nonzero ONLY at the winning KO/TKO. The winning
+                         # KO/TKO has never occurred here, so the "ONLY at"
+                         # half of the claim has no witness.
+                         # STILL LIVE IN THE ENGINE: nes_core/src/rewards.rs
+                         # hardcodes RAM_MATCH_ID = 0x0001 and drives
+                         # episode_success() from it. Quarantining this entry
+                         # retracts the documentation claim; it does NOT
+                         # disarm the Rust constant. See the follow-up named
+                         # in docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md.
 
 # Keys consumed by build_reward's `name.contains("punch-out")` arm. Opponent
 # damage is dense; the knockdown bonus and (dominant) win bonus drive the win.

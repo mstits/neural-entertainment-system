@@ -3,8 +3,11 @@ reward_id: mega_man
 # NOTE: the reward fn + RAM map are calibrated for Mega Man 2 and
 # verified against datacrystal.tcrf.net/wiki/Mega_Man_2/RAM_map:
 #   $0460 X (screen-relative, wraps per screen), $04A0 Y, $06C0 HP
-#   (full=0x1C=28), $06C1 boss HP (idles 0 until the boss room),
-#   $00A8 lives (boots to 3). DEFAULT_ROMS points at the MM2 ROM.
+#   (full=0x1C=28), $00A8 lives (boots to 3). DEFAULT_ROMS points at the
+#   MM2 ROM. The boss-HP entry that used to sit here was retracted
+#   2026-08-27 — no boss room has ever been reached on this profile, so
+#   "idles 0 until the boss room" described behaviour nobody here saw.
+#   See `quarantined_external_knowledge` below.
 # The start state below drops into Metal Man's stage (the easiest
 # first-win target). It was captured with a game-specific sequence
 # (the generic capture_start_state masher cannot navigate MM2's
@@ -32,10 +35,42 @@ ram_mapping:
   player_x_sub:    0x0480   # within-page offset
   player_y:        0x04A0
   player_health:   0x06C0   # 0x00..0x1C (28 units)
-  boss_health:     0x06C1
   # Weapon / score
   weapon_energy:   0x09C0
   lives:           0x00A8
+
+
+# --------------------------------------------------------------------------
+# Retracted 2026-08-27 — see docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md
+# String value on purpose: `int(v)` must raise, so no consumer can fold this
+# address back into a set (the exclusion-fold inversion closed for Zelda in
+# 2e6014f). tests/test_purity_quarantine_sweep.py enforces that no profile on
+# this ROM re-adopts it into a live `ram_mapping`.
+quarantined_external_knowledge:
+  applies_to_rom: "roms/Mega Man 2 (USA).nes"
+  provenance: >-
+    datacrystal.tcrf.net/wiki/Mega_Man_2/RAM_map, named by this file's own
+    header, which described the whole block as "verified against"
+    that page.
+  status: UNVERIFIED_EXTERNAL
+  rediscovery_rule: >
+    Dead until a boss room is actually reached on this profile and the
+    byte is logged across a boss fight. Nothing here has come close:
+    runs/megaman/mm2_bootstrap and mm2_bootstrap2 solutions/ are both
+    empty, runs/clear_detection/megaman/s6_instrument/solutions is empty,
+    is_clear is structurally unfireable (level_key is []), and the
+    empirical odometer plateau is gx 4864. A byte that passes enters a
+    NEW ram_mapping entry carrying its own receipt.
+  q_boss_health:  "0x06C1"  # claimed: boss HP, idling 0 until the boss room.
+                            # The idling-at-0 half is consistent with what we
+                            # see, but a byte that reads 0 under every policy
+                            # is consistent with being any unreached
+                            # observable; the boss-HP identity is the external
+                            # part and has no witness here.
+                            # STILL LIVE IN THE ENGINE: nes_core/src/rewards.rs
+                            # hardcodes RAM_BOSS_HEALTH = 0x06C1. Quarantining
+                            # this entry retracts the documentation claim; it
+                            # does NOT disarm the Rust constant.
 
 reward_weights:
   forward_progress: 0.1

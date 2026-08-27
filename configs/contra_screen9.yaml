@@ -22,18 +22,41 @@ description: >
   and episodes end fast.
 
 ram_mapping:
-  # Player 1
-  player_x:        0x0031   # horizontal position on current screen
-  player_y:        0x0021   # vertical
-  player_state:    0x002C   # 0x00 alive, 0x01 dead, 0x02 dying anim
+  # Player 1. This is a warm-start variant minted from the same June map as
+  # configs/contra.yaml; that profile has since moved off the first two
+  # addresses below, and this one was never updated. The measured truth:
+  player_x:        0x0031   # MEASURED DEAD, not a position:
+                            # docs/receipts/ram_verify/contra.json reads it 0
+                            # throughout live gameplay ("NOT usable"), and
+                            # nes_core/src/rewards.rs records it "constant 0
+                            # across 2000 frames of varied real play". The
+                            # receipted x-observable is 0x0065.
+  player_y:        0x0021   # MEASURED DEAD, same receipt: reads 0 throughout
+                            # live gameplay, does not move under a jump probe.
+                            # The receipted y-observable is 0x031A.
+  player_state:    0x002C   # CONTESTED — two in-repo measurements disagree.
+                            # docs/receipts/ram_verify/contra.json (2026-07-31)
+                            # receipts "0 alive / 1 dead / 2 dying"; a later
+                            # purpose-built test that drove a real playthrough
+                            # to two actual life losses found the byte frozen
+                            # at 4 through BOTH deaths, and configs/contra.yaml
+                            # relabels it the game-mode byte. Neither has been
+                            # re-run. The verified death signal on this ROM is
+                            # the lives decrement (0x0032) below.
   # Scroll / world position (high byte gives which screen)
   screen_number:   0x0064
   # Lives, score
   lives:           0x0032   # remaining lives (starts at 2)
   score_start:     0x07E2   # 6-digit BCD score
   score_end:       0x07E7
-  # Weapon (F/S/M/L/B + default)
-  weapon:          0x00AA   # 0=default, 1=M machine-gun, 2=F flame, ...
+  weapon:          0x00AA   # changes on weapon pickup; nonzero == holding a
+                            # non-default weapon, which is the only property
+                            # the weapon_upgrade reward uses. The specific
+                            # value-to-weapon mapping this comment used to
+                            # assert has no receipt here, and
+                            # docs/research/CONTRA_ROUTE_A_2026-08-27.md
+                            # deliberately declines to say what any value of
+                            # $00AA corresponds to. Retracted as unmeasured.
 
 reward_weights:
   # PROGRESS must dominate. The prior weights made score_delta ~71x

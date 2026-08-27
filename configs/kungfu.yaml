@@ -40,11 +40,22 @@ description: >
 #   DEBUNKED-LIVE = datacrystal label that did NOT hold on this ROM.
 # ---------------------------------------------------------------------------
 ram_mapping:
-  # VERIFIED-LIVE — current floor (0 = 1F ... 4 = 5F). Read 0 across 3000+
-  # frames of Floor-1 play INCLUDING every death/respawn (lives 3->2->1->0);
-  # it never false-increments. Increment-on-clear (0->1->2->3->4 at door
-  # entries) is CROSS-SOURCED (design brief live pass + datacrystal). This is
-  # the win substrate and it can only rise on a real floor clear.
+  # MEASURED NULL + CROSS-SOURCED LABEL — read both halves separately.
+  # MEASURED HERE: this byte has never been observed to leave 0. Not across
+  # 3000+ frames of Floor-1 play including every death/respawn
+  # (lives 3->2->1->0), and not across the ~719,500 steps of the later
+  # census over two campaign dates and 6 method families, which also
+  # re-scanned all 32 banked archive cells and found 0x0058 == 0 in 32/32
+  # (runs/clear_census/kungfu/s7_verdict.json, disposition
+  # NOT_WITNESSABLE_FROM_HERE). That is a real measurement of absence and it
+  # stands.
+  # NOT MEASURED HERE: the "current floor, 0 = 1F ... 4 = 5F" identity and
+  # the increment-on-clear reading are CROSS-SOURCED (design brief +
+  # datacrystal). No floor clear has ever been witnessed on this ROM in this
+  # repo, so this comment's former claim that the byte "can only rise on a
+  # real floor clear" asserted a false-positive rate for an event with zero
+  # observations behind it. Retracted: the claim is unfalsified, not
+  # verified. Treat the label as a hypothesis to re-derive.
   current_floor: 0x0058
   # VERIFIED-LIVE — remaining lives. Boots at 3; decrements 3->2->1->0 as the
   # energy bar empties. Death / episode-end signal.
@@ -67,9 +78,13 @@ ram_mapping:
   # score/10 (the ones digit is always 0). The "did the agent fight" signal.
   score_hi:      0x0531
   score_lo:      0x0535
-  # CROSS-SOURCED (design brief) — boss / enemy energy. Idled at 0x30 in all
-  # live probes and only hit 0 on the death reset (no boss was reached via
-  # scripted play), so it drives an OPT-IN shaping term that DEFAULTS OFF.
+  # CROSS-SOURCED (design brief) — claimed boss / enemy energy, NOT verified
+  # here. Idled at 0x30 in all live probes and only hit 0 on the death reset;
+  # no boss has ever been reached on this ROM in this repo, so the "boss"
+  # half of the label has no witness and the byte is only known to be a
+  # value that idles. It drives an OPT-IN shaping term that DEFAULTS OFF,
+  # which is the right handling for an unverified label — left in place on
+  # that basis rather than promoted.
   boss_energy:   0x04A5
   # VERIFIED-LIVE — game mode: 0 = title/pre-game, 1 = floor-intro banner
   # (Thomas frozen), 2 = active play. Not read by the reward; documents the

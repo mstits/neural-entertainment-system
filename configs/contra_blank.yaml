@@ -23,26 +23,107 @@ description: >
   and episodes end fast.
 
 ram_mapping:
-  # Player 1 (addresses emulator-verified during the win-verification pass)
-  player_x:        0x0334   # on-screen sprite X. WAS 0x0031, which is the
-                            # game-completion COUNT (constant 0 all stage-1) —
-                            # a confirmed mislabel that read dead weight.
-  player_y:        0x0021   # vertical
-  player_state:    0x0090   # 0=falling, 1=normal, 2=dead. WAS 0x002C (the
-                            # game-mode byte, not the player state).
-  # Scroll / world position. NOTE $0064 is a within-stage SCREEN counter that
-  # RESETS to 0 each stage — a progress proxy, NOT a clear signal. The real
-  # per-stage clear is a positive delta of current_level ($0030) and/or the
-  # boss-defeated flag ($003B 0->1); $0031 is the whole-game completion count.
+  # PROVENANCE. This block's former header claimed its addresses were
+  # "emulator-verified during the win-verification pass". No Contra stage
+  # transition and no Contra boss defeat has ever been witnessed in this
+  # repo, so that pass cannot have verified anything that depends on one:
+  # runs/clear_gap/contra_blank/SUMMARY.json censuses 6 chained archives
+  # (52,539-66,252 cells each) with solutions_banked_ever 0 and distinct
+  # area values [0] in every run. The two entries that asserted clear /
+  # boss-death semantics on that basis now sit in
+  # `quarantined_external_knowledge` below. What is left is what our own
+  # differential probes measured, including where they measured nothing.
+  player_x:        0x0334   # on-screen sprite X. NOT 0x0031: all this repo
+                            # knows about 0x0031 is that it reads constant 0
+                            # through live gameplay
+                            # (docs/receipts/ram_verify/contra.json). The
+                            # "whole-game completion COUNT" identification
+                            # this comment used to carry was never measured
+                            # here — a constant-0 byte is consistent with
+                            # anything — and is retracted.
+  player_y:        0x0021   # MEASURED DEAD, kept so it is not re-adopted by
+                            # accident: docs/receipts/ram_verify/contra.json
+                            # reads it 0 throughout live gameplay ("NOT
+                            # usable"), and it does not move under a jump
+                            # probe. The receipted vertical observable is
+                            # 0x031A (ballistic arc under scripted jumps),
+                            # which is what solve: uses. "vertical" was an
+                            # unverified label; it is retracted.
+  player_state:    0x0090   # CONTESTED — do not rely on this for death.
+                            # The "0=falling, 1=normal, 2=dead" encoding has
+                            # no positive receipt here, and this profile's
+                            # own solve: block refutes it: $0090 sits in
+                            # {1,2} for 89.5-99.1% of ordinary forward /
+                            # NOOP / reverse play. rewards.rs records it
+                            # free-running a 0->1->2 animation cycle even
+                            # after lives hits 0. The verified death signal
+                            # on this profile is the lives decrement
+                            # (0x0032). NOTE for scripts/hazard_collect.py:
+                            # its resolve_death_addr() reads this key
+                            # generically and then tests SMB's death codes
+                            # (6, 11), which this byte's range can never
+                            # match — do not point that tool at Contra.
+  # Scroll / world position. $0064 is a within-stage SCREEN counter and a
+  # progress proxy, NOT a clear signal — that much is receipted
+  # (docs/receipts/ram_verify/contra.json: increments 0..7 during a single
+  # hold-right rollout of stage 1). Whether it RESETS at a stage boundary
+  # is unknown here: no stage boundary has ever been crossed on this ROM in
+  # this repo, so the former "RESETS to 0 each stage" clause described
+  # something nobody measured and is retracted.
   screen_number:   0x0064
-  current_level:   0x0030   # stage index 0-7; increments on a real stage clear
-  boss_defeated:   0x003B   # 0->1 when the current stage boss dies
   # Lives, score
-  lives:           0x0032   # remaining lives (starts at 2; 0 = last life)
+  lives:           0x0032   # remaining lives (starts at 2; 0 = last life).
+                            # VERIFIED: decrements on deaths during random
+                            # rollouts (docs/receipts/ram_verify/contra.json);
+                            # independently re-derived from scratch by
+                            # scripts/discover_observables.py.
   score_start:     0x07E2   # 6-digit BCD score
   score_end:       0x07E7
-  # Weapon (F/S/M/L/B + default)
-  weapon:          0x00AA   # 0=default, 1=M machine-gun, 2=F flame, ...
+  weapon:          0x00AA   # changes on weapon pickup; nonzero == holding a
+                            # non-default weapon, which is the only property
+                            # the weapon_upgrade reward actually uses. The
+                            # specific value-to-weapon mapping this comment
+                            # used to assert (0=default, 1=M, 2=F, ...) has
+                            # no receipt in this repo, and
+                            # docs/research/CONTRA_ROUTE_A_2026-08-27.md
+                            # deliberately declines to say what any value of
+                            # $00AA corresponds to. Retracted as unmeasured.
+
+# --------------------------------------------------------------------------
+# Retracted 2026-08-27 — see docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md
+# Both entries below asserted semantics for an event that has never been
+# witnessed on this ROM in this repo, so neither could have been measured
+# here. String values on purpose: `int(v)` must raise, so no consumer can
+# fold these addresses back into a set (the exclusion-fold inversion closed
+# for Zelda in 2e6014f). tests/test_purity_quarantine_sweep.py enforces that
+# no profile on this ROM re-adopts them into a live `ram_mapping`.
+quarantined_external_knowledge:
+  applies_to_rom: "roms/Contra (USA).nes"
+  provenance: >-
+    Introduced by the 2026-07-08 "win-verification corrections" pass
+    (30551a6), which cites a witnessed result only for SMB. No
+    Contra-specific witness exists for either claim, and no source for
+    them is recorded — they are unattributed external material.
+  status: UNVERIFIED_EXTERNAL
+  rediscovery_rule: >
+    Dead until this project witnesses the event the claim is about and
+    then measures the byte across it. For q_current_level that means a
+    real Contra stage transition observed on our own rendered frames,
+    with the byte logged before and after; for q_boss_defeated it means a
+    boss kill that SUSTAINS — docs/research/CONTRA_WALL_2026-08-27.md row
+    A2 already falsified the obvious reading (81,244 alive steps, 830
+    zero-hits, 15 replay-verified, 0/15 sustaining >=20 zero steps; HP
+    refills within 1-2 steps once fire stops, so joint-zero is a
+    live-suppression multiplexing artifact, not a kill). A byte that
+    passes enters a NEW ram_mapping entry carrying its own receipt; these
+    entries are never promoted in place.
+  q_current_level:  "0x0030"  # claimed: stage index 0-7, increments on a real
+                              # stage clear. Never observed to change: churn
+                              # 0.0/1k, net 0 under hold-right, across every
+                              # probe run on it (runs/ram_verify/contra.json).
+  q_boss_defeated:  "0x003B"  # claimed: 0->1 when the current stage boss dies.
+                              # Never observed to change (churn 0.0/1k), and no
+                              # boss has ever been defeated on this ROM here.
 
 reward_weights:
   # PROGRESS must dominate. The prior weights made score_delta ~71x

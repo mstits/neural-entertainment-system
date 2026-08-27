@@ -41,8 +41,13 @@ ram_mapping:
                             #   wraps on scroll (NOT a global world-X).
   player_hp:       0x00DD   # VERIFIED-LIVE: hit points = the HUD hearts (3 at
                             #   the Amazon start; equals the on-screen count).
-  level_index:     0x00F6   # VERIFIED-LIVE: 0=Amazon 1=Transylvania 2=African
-                            #   Mines 3=Himalayas 4=Moon; persists in gameplay.
+  level_index:     0x00F6   # VERIFIED-LIVE that it holds a stable per-level
+                            #   value and persists in gameplay; 0 is the level
+                            #   this profile starts in. The names this comment
+                            #   used to attach to values 1-4 were cross-sourced,
+                            #   not seen: no level beyond the start level has
+                            #   ever been reached here, so nothing witnessed
+                            #   which value means which level. Retracted.
   money_field:     0x0324   # VERIFIED-LIVE: 7 HUD money digit tiles $0324-$032A
                             #   (MSB first, blank=0x24). $0 -> $2000 ATOMICALLY
                             #   on a gem pickup. Max display $9,999,999.
