@@ -3062,18 +3062,66 @@ def ortho_armed(mode: str, pin_time: float, now: float,
     return mode not in (None, "", "off") and now - pin_time >= pin_secs
 
 
+# ---------------------------------------------------------------------
+# LOCK OBJECTIVE (Route B, CONTRA_WALL_2026-08-27.md). Default off =>
+# byte-identical to the pre-change solver. Mirrors ortho_armed's shape
+# exactly, including reuse of the solver's own self-measured `_pin_time`
+# — no address, no game constant, anywhere in either function below.
+# ---------------------------------------------------------------------
+
+def lock_armed(mode: str, pin_time: float, now: float,
+               pin_secs: float) -> bool:
+    """Whether the lock objective is live: a mode is selected AND the
+    frontier has sat pinned at least `pin_secs`. Self-disarms the instant
+    `max_gx_in_area` advances, because THAT is what resets `pin_time` —
+    no separate disarm logic exists or is needed."""
+    return mode not in (None, "", "off") and now - pin_time >= pin_secs
+
+
+def in_lock_key(key: tuple, max_sect: int, max_area: int,
+                topgx: int, band: int) -> bool:
+    """Whether `key` sits in THIS RUN'S OWN terminal bucket: same section-
+    transit count as the deepest reached, same deepest area, and within
+    `band` gx buckets of this run's own observed top gx (`topgx` — the
+    caller passes `_sel_topgx`, itself a max over the archive's own
+    keys). No address, no bucket number, no '3072' — every term is a
+    property of this run's own search state, so the predicate means the
+    same thing on a different game, a different core build, or a
+    different session's frontier, and refuses to mean anything on a run
+    that has not reached one yet (`topgx` starts at 0, band is
+    non-negative, so `key[-1] >= topgx - band` demands actually having
+    gotten there)."""
+    return (key[0] == max_sect and key[-5] == max_area
+            and key[-1] >= topgx - band)
+
+
+def lock_survival_merit(n: int, scale: float) -> float:
+    """LEX-SURVIVAL's (B-O1) merit term: squash a consecutive
+    alive-in-lock step count `n` to [0, 1) via `m = 1 - 1/(1 + n/scale)`.
+    Monotone increasing, m(0) == 0.0, asymptotic to (never reaching) 1.0
+    as n grows — so it can only ever break a tie in the domination/
+    selection rules that read it, never invert one. `scale` (shipped
+    default 64, see --lock-survival-scale) sets where the curve is
+    still climbing: picked to sit above CONTRA_WALL_2026-08-27.md's
+    measured random-play median survival at the wall (26-51 steps), so
+    ordinary survival does not already saturate the term."""
+    n = max(0, int(n))
+    return 1.0 - 1.0 / (1.0 + n / float(scale))
+
+
 def count_wmax(door_weight: float, ortho_weight: float,
-               gate_weight: float = 1.0) -> float:
+               gate_weight: float = 1.0, lock_weight: float = 1.0) -> float:
     """Exact Wmax for the count arm's O(1) rejection sampling. The prior
     is W = 1/sqrt(times_chosen+1) * (score_norm + 0.1) <= 1.1, times any
-    armed multiplier (R4 doors, orthogonal frontier, gate-opener).
-    Under-stating it would silently truncate the prior; 1.1 is the legacy
-    value every multiplier reduces to when off.
+    armed multiplier (R4 doors, orthogonal frontier, gate-opener, the
+    lock objective). Under-stating it would silently truncate the prior;
+    1.1 is the legacy value every multiplier reduces to when off.
 
-    `gate_weight` is a DEFAULT ARG so the 2-argument call contract every
-    existing caller and test uses keeps holding exactly."""
+    `gate_weight` and `lock_weight` are DEFAULT ARGS so the 2- and
+    3-argument call contracts every existing caller and test uses keep
+    holding exactly."""
     return (1.1 * max(door_weight, 1.0) * max(ortho_weight, 1.0)
-            * max(gate_weight, 1.0))
+            * max(gate_weight, 1.0) * max(lock_weight, 1.0))
 
 
 # ---------------------------------------------------------------------
@@ -3446,6 +3494,33 @@ def _git_commit() -> str | None:
         return None
 
 
+# ---------------------------------------------------------------------
+# LOCK OBJECTIVE — LEX-NOVELTY (B-O3, Route B, CONTRA_WALL_2026-08-27.md).
+# Shares `self.lock_mode`/`in_lock_key`/`lock_armed`/`self._in_lock`/
+# `self._lock_armed` with the sibling lock objectives (B-O1 survival,
+# B-O4 yield) — this is the ONE pure helper LEX-NOVELTY needs of its
+# own, scoped to `lock_mode == "novelty"` alone, same as
+# `lock_survival_merit` above is scoped to "survival".
+# ---------------------------------------------------------------------
+
+def lock_novelty_merit(bits: float, scale: float) -> float:
+    """Squash an unbounded novelty-bits reading (`ib.novelty_score`'s
+    scale, base-2 log, can be arbitrarily large or negative-adjacent-to-
+    zero) into [0, 1), monotonically increasing in `bits` — 0 bits (the
+    most commonly-seen descriptor) maps to merit 0; merit approaches but
+    never reaches 1 as bits grows. `scale` (--lock-novelty-scale) is the
+    bits value at which merit crosses 0.5; the module default (4.0) sits
+    comfortably inside the 0-20 bit range interaction_basis.novelty_
+    score's own docstring reports for a Witten-Bell estimate over a
+    run's undirected prior. Arithmetic containment for the inertness
+    guarantee: whatever `bits` is, this can never return outside
+    [0, 1)."""
+    b = max(0.0, float(bits))
+    if b <= 0.0:
+        return 0.0
+    return b / (b + max(1e-6, float(scale)))
+
+
 class Solver:
     def __init__(self, args) -> None:
         # Cell granularity globals are consumed by cell_fn at call time.
@@ -3793,6 +3868,80 @@ class Solver:
         self._ortho_deep_yband = None     # extreme y-band AT the x frontier
         self._ortho_selections = 0
         self._ortho_cols_improved = 0
+        # --- LOCK OBJECTIVE (default off => byte-identical) -----------
+        # Contra gx-3072 wall (B-O2, LEX-LATCH). The archive already
+        # discriminates wall states on its cell key; selection cannot
+        # PREFER any of them because every one scores the same gx. This
+        # arms a lexicographic (gx, then merit) tie-break. Merit itself
+        # lives in `GoExploreArchive._merit` (never a `Cell` field, never
+        # touched by save()/load(), read here only through the public
+        # `merit_of()` accessor) — `best_score`/`_sel_maxscore` are never
+        # touched, so no non-lock cell's count-arm weight moves.
+        #
+        # The lock predicate (`in_lock_key`) and its arming clock
+        # (`lock_armed`) are pure, self-referential functions — this
+        # run's own max_sect/max_area/topgx, never an address or a game
+        # constant — and self-disarm the instant the x frontier advances
+        # (max_gx_in_area resets `_pin_time`, the same clock ortho/gate
+        # already arm off). With `lock_objective` at its shipped default
+        # "off" every new branch below is one string compare and
+        # short-circuits before any RNG draw or dict write.
+        self.lock_mode = str(getattr(args, "lock_objective", "off") or "off")
+        self.lock_pin_secs = float(getattr(args, "lock_pin_secs", 300.0)
+                                   or 300.0)
+        self.lock_band = int(getattr(args, "lock_band", 0) or 0)
+        self.lock_latch_hold = max(1, int(getattr(args, "lock_latch_hold", 8)
+                                          or 8))
+        self.lock_latch_ceiling = max(1, int(
+            getattr(args, "lock_latch_ceiling", 96) or 96))
+        self.lock_probe_steps = max(1, int(
+            getattr(args, "lock_probe_steps", 128) or 128))
+        self.lock_weight = float(getattr(args, "lock_weight", 1.0) or 1.0)
+        # LEX-SURVIVAL's own knob (B-O1, not shared with any other
+        # objective): the squash scale in lock_survival_merit(). Default
+        # 64 sits above the campaign's measured random-play median
+        # survival at the wall (26-51 steps).
+        self.lock_survival_scale = float(
+            getattr(args, "lock_survival_scale", 64.0) or 64.0)
+        # LEX-LATCH's own state (not shared with any other objective):
+        # the paired-NOOP control is cached per ROOT cell key, so it
+        # costs one probe per cell, never one per burst.
+        self._lock_probe_cache: dict = {}  # root cell key -> bool[2048] | None
+        self._lock_probe_env = None        # private probe emu, never the pool
+        # LEX-NOVELTY's own knobs (B-O3, not shared with any other
+        # objective): the descriptor-histogram bookkeeping. Shares
+        # lock_mode/lock_band/lock_pin_secs/lock_weight/_lock_armed/
+        # _in_lock with the sibling objectives above; this is only the
+        # "novelty" mode's own merit computation and its private state.
+        # A visit histogram over a DESCRIPTOR that is NOT part of the
+        # cell key — a fixed-width hash of the entry-differenced RAM
+        # vector restricted to the addresses this run's own boundary
+        # histogram (_boundary_hist) has seen move at this boundary.
+        # Needs --gate-opener armed (that histogram is what populates
+        # _boundary_hist); with it off, _lock_novelty_merit reports 0.0
+        # for every candidate rather than raise, so a mismatched flag
+        # pairing degrades to "no discrimination yet" instead of
+        # crashing a long unattended run.
+        self.lock_novelty_scale = float(
+            getattr(args, "lock_novelty_scale", 4.0) or 4.0)
+        self.lock_desc_buckets = int(
+            getattr(args, "lock_desc_buckets", 1 << 20) or (1 << 20))
+        self._lock_desc_hist: dict = {}   # descriptor bucket -> visits
+        self._lock_desc_total = 0
+        self._lock_moved_cache = None     # (boundary_hist_total, addrs)
+        # LEX-YIELD's own state (B-O4, not shared with any other
+        # objective): _assign()'s existing barren/credit bookkeeping
+        # (R2) already observes, for every finished burst, whether its
+        # root cell yielded a new cell or a dominating improvement — it
+        # just resets on the first yield instead of accumulating. These
+        # two dicts keep the WHOLE-RUN totals so `_lock_merit_for` can
+        # read a cell's lifetime generativity rate as a root,
+        # (yields+1)/(bursts+2), Laplace-smoothed. Written only when
+        # `lock_mode == "yield"` (see `_assign`); zero new emulator
+        # steps, zero new probe machinery — the raw material is already
+        # computed on the hot path and was previously discarded.
+        self._lock_bursts: dict = {}   # cell key -> bursts rooted there
+        self._lock_yields: dict = {}   # cell key -> of those, ones that yielded
         # --- ROOM-GRAPH ENGINE (default off => byte-identical) --------
         # Identity + persistence live here (T1); the settle/classify hot
         # loop, edge commits and the router arm are wired separately
@@ -4715,6 +4864,64 @@ class Solver:
         tb = int(steps + 1).bit_length() if self.time_bins else 0
         kk = min(int(kills), 15) if self.kill_key else 0
         key = (sect, tb, kk, psig, loops, route_sig) + game.cell_fn(ram)
+        # LOCK OBJECTIVE — LEX-SURVIVAL (B-O1, CONTRA_WALL_2026-08-27.md
+        # Route B). Default/other-mode off => one string compare, no dict
+        # write, no ctx write, no RNG draw. Scoped to `lock_mode ==
+        # "survival"` specifically (not `!= "off"`) so a run armed for a
+        # DIFFERENT lock objective (e.g. "latch") is not touched by this
+        # one — each objective owns only its own named mode.
+        #
+        # `in_lock_key` is evaluated exactly ONCE here (the other two call
+        # sites are the deep arm's band pick and the count arm's weight,
+        # both in select()) and its result feeds BOTH consumers below: the
+        # per-lineage step counter (reset whenever the key leaves the lock
+        # set, per this step's own boolean) and the merit handed to the
+        # domination test just below. ctx['_lock_steps'] itself is reset
+        # to 0 for free at every `_assign` re-root (`_assign` always hands
+        # the burst a brand-new ctx dict with no `_lock_steps` key), so no
+        # explicit reset is needed there.
+        # (getattr throughout this block, not a bare `self.lock_mode`: the
+        # duck-typed Solver stand-ins in tests/test_go_explore_solve.py —
+        # _ortho_solver/_burst_solver and everything built on them —
+        # predate every lock objective and must keep reaching this line
+        # without opting in to any of them.)
+        _lock_mode = getattr(self, "lock_mode", "off")
+        lock_merit = None
+        if _lock_mode == "survival" and ctx is not None:
+            in_lock = in_lock_key(key, self.max_sect, self.max_area,
+                                  getattr(self, "_sel_topgx", 0),
+                                  getattr(self, "lock_band", 0))
+            ctx["_lock_steps"] = (ctx.get("_lock_steps", 0) + 1
+                                  if in_lock else 0)
+            if in_lock and lock_armed(_lock_mode, self._pin_time,
+                                      time.time(),
+                                      getattr(self, "lock_pin_secs", 300.0)):
+                lock_merit = lock_survival_merit(
+                    ctx["_lock_steps"],
+                    getattr(self, "lock_survival_scale", 64.0))
+        # LOCK OBJECTIVE — LEX-YIELD (B-O4, CONTRA_WALL_2026-08-27.md
+        # Route B). Same one-string-compare contract as the survival
+        # branch above, scoped to its own named mode so an armed run of a
+        # DIFFERENT lock objective is untouched by this one. Merit is the
+        # cell's OWN generativity as a burst root — a property of the
+        # ARCHIVE KEY tracked by `_assign()` (see `_lock_merit_for`), not
+        # of this specific observation — so, unlike LEX-SURVIVAL, nothing
+        # here needs `ctx` or a per-step counter: the merit for `key` is
+        # simply looked up fresh every time a candidate lands on it.
+        elif _lock_mode == "yield":
+            if self._in_lock(key):
+                lock_merit = self._lock_merit_for(key)
+        # LOCK OBJECTIVE — LEX-NOVELTY (B-O3, CONTRA_WALL_2026-08-27.md
+        # Route B). Same one-string-compare contract as the branches
+        # above, scoped to its own named mode. Merit is count-based
+        # novelty of a DESCRIPTOR outside the cell key — see
+        # `_lock_novelty_merit`'s docstring — so, like LEX-SURVIVAL and
+        # unlike LEX-YIELD, it needs `ctx` (to hold the lineage's entry-
+        # RAM snapshot) and is a property of THIS OBSERVATION, not of the
+        # key alone.
+        elif _lock_mode == "novelty":
+            if self._in_lock(key):
+                lock_merit = self._lock_novelty_merit(ram, key, ctx)
         # GATE-OPENER SHADOW LEDGER + boundary histogram. Arity is FROZEN
         # — the key above is built and consumed unchanged, so cells and
         # new_cells stay A/B-comparable between the armed run and its
@@ -4746,12 +4953,29 @@ class Solver:
             ctx["cur_key"] = key
         score = sect * 10000 + gx + game.score_bonus(ram)
         cur = self.archive.cells.get(key)
-        dom = (cur is None or score > cur.best_score + 1e-9
-               or (abs(score - cur.best_score) <= 1e-9 and steps < cur.best_steps))
+        # Peek-then-record pre-check, extended with the SAME lexicographic
+        # merit comparator `GoExploreArchive.record()` applies internally
+        # (src/training/go_explore.py): score wins outright; else, at
+        # equal score, higher merit wins; else, at equal score AND equal
+        # merit, fewer steps wins. `lock_merit is None` (every non-lock
+        # observation, and every non-"survival" run) collapses this back
+        # to the textually-original two-clause rule.
+        _cur_merit = (self.archive._merit.get(key, 0.0)
+                     if lock_merit is not None else 0.0)
+        _tied = cur is not None and abs(score - cur.best_score) <= 1e-9
+        dom = (cur is None
+              or score > cur.best_score + 1e-9
+              or (_tied and lock_merit is not None
+                  and lock_merit > _cur_merit + 1e-9)
+              or (_tied
+                  and (lock_merit is None
+                       or abs(lock_merit - _cur_merit) <= 1e-9)
+                  and steps < cur.best_steps))
         if dom:
             blob = self.pool.save_worker_state(wid)
             if blob is not None and self.archive.record(ram, blob, score, steps,
-                                                        key=key):
+                                                        key=key,
+                                                        merit=lock_merit):
                 rec = (root_id, bytes(trace), loops, route_sig,
                        sect, psig, kills)
                 if self.gate_mode != "off":
@@ -4793,7 +5017,8 @@ class Solver:
                 if ctx is not None:
                     ctx["yielded"] = True
         else:
-            self.archive.record(ram, None, score, steps, key=key)
+            self.archive.record(ram, None, score, steps, key=key,
+                               merit=lock_merit)
         return "live"
 
     def replay_verify(self, root_id: str, trace) -> dict:
@@ -5992,6 +6217,50 @@ class Solver:
         return ortho_armed(self.ortho_mode, self._pin_time, time.time(),
                            self.ortho_pin_secs)
 
+    def _lock_armed(self) -> bool:
+        return lock_armed(getattr(self, "lock_mode", "off"), self._pin_time,
+                          time.time(), getattr(self, "lock_pin_secs", 300.0))
+
+    def _in_lock(self, key) -> bool:
+        """Whether `key` is a candidate the ARMED lock objective may act
+        on. Mode-agnostic and objective-agnostic on purpose: it answers
+        only "is this THIS RUN'S OWN terminal bucket, and has the
+        objective been arming long enough" — which merit function fed
+        `self._lock_merit` is a decision each objective (B-O1..B-O4)
+        makes on its own, entirely off this run's own search state
+        (`in_lock_key`'s docstring). `_sel_topgx` does not exist before
+        the first `_refresh_sel_cache()` call (the seed observation, or
+        any duck-typed Solver stand-in that predates the knob) — absent,
+        the lock cannot be armed, which is the correct disarmed answer,
+        not an AttributeError."""
+        if getattr(self, "lock_mode", "off") == "off":
+            return False
+        topgx = getattr(self, "_sel_topgx", None)
+        if topgx is None or not self._lock_armed():
+            return False
+        try:
+            return in_lock_key(key, self.max_sect, self.max_area, topgx,
+                               getattr(self, "lock_band", 0))
+        except (IndexError, TypeError):
+            return False
+
+    def _lock_merit_for(self, key, _unused_default=None) -> float:
+        """LEX-YIELD (B-O4): Laplace-smoothed generativity of `key` as a
+        burst root, `(yields + 1) / (bursts + 2)`. Both counters are
+        `_assign()`'s own bookkeeping (the same events the binary
+        `barren` retirement counter already consumes; see `_assign`),
+        kept here as a graded, two-directional preference instead of a
+        one-shot retirement threshold. Zero-burst keys return the Laplace
+        prior 0.5, never an arbitrary default — `_unused_default` exists
+        only so this method is call-compatible with `dict.get(key,
+        default)` at its one polymorphic call site (select()'s count
+        arm, which also dispatches to `archive._merit.get` for B-O1).
+        Strictly < 1.0 always (yields <= bursts), which is what makes the
+        rejection-sampling `wmax` bounds below exact without a max()."""
+        b = getattr(self, "_lock_bursts", None) or {}
+        y = getattr(self, "_lock_yields", None) or {}
+        return (y.get(key, 0) + 1.0) / (b.get(key, 0) + 2.0)
+
     def select(self):
         if (getattr(self, "_sel_cells", None) is None
                 or len(self.archive.cells) > self._sel_n * 1.02
@@ -6017,7 +6286,65 @@ class Solver:
                 floor = self._sel_topgx - int(self.rng.integers(0, 24))
                 band = [c for c in pool_band if c.key[-1] >= floor]
                 if band:
-                    cell = band[int(self.rng.integers(len(band)))]
+                    # LOCK OBJECTIVE (B-O1 LEX-SURVIVAL / B-O4 LEX-YIELD):
+                    # replaces the uniform pick with a merit-weighted
+                    # rejection sample ONLY once armed for the matching
+                    # named mode — same bounded-64 rejection-loop shape
+                    # the ortho arm already uses, so an armed run stays
+                    # reproducible from its seed. Off (or any other/
+                    # unarmed lock mode) takes the exact legacy line
+                    # unchanged, so the default RNG stream is byte-
+                    # identical. (getattr throughout: the duck-typed
+                    # Solver stand-ins in tests/test_go_explore_solve.py
+                    # predate every lock objective.)
+                    _lm = getattr(self, "lock_mode", "off")
+                    _lps = getattr(self, "lock_pin_secs", 300.0)
+                    _lb = getattr(self, "lock_band", 0)
+                    _lw = getattr(self, "lock_weight", 1.0)
+                    if (_lm in ("survival", "novelty")
+                            and lock_armed(_lm, self._pin_time,
+                                           time.time(), _lps)):
+                        # LEX-NOVELTY (B-O3) caches its merit in
+                        # self.archive._merit exactly like LEX-SURVIVAL
+                        # does (both are per-OBSERVATION merits recorded
+                        # through GoExploreArchive.record(merit=...) at
+                        # the domination test, unlike LEX-YIELD's
+                        # per-KEY _lock_merit_for lookup below) — so this
+                        # branch is the same read for either mode.
+                        wmax_lock = 1.0 + _lw
+                        merit_map = self.archive._merit
+                        pick = None
+                        for _ in range(64):
+                            cand = band[int(self.rng.integers(len(band)))]
+                            w = (1.0 + _lw * merit_map.get(cand.key, 0.0)
+                                 if in_lock_key(cand.key, self.max_sect,
+                                               self.max_area,
+                                               self._sel_topgx, _lb)
+                                 else 1.0)
+                            if self.rng.random() < w / wmax_lock:
+                                pick = cand
+                                break
+                        cell = (pick if pick is not None
+                               else band[int(self.rng.integers(len(band)))])
+                    elif (_lm == "yield"
+                            and lock_armed(_lm, self._pin_time,
+                                           time.time(), _lps)):
+                        wmax_lock = 1.0 + _lw
+                        pick = None
+                        for _ in range(64):
+                            cand = band[int(self.rng.integers(len(band)))]
+                            w = (1.0 + _lw * self._lock_merit_for(cand.key)
+                                 if in_lock_key(cand.key, self.max_sect,
+                                               self.max_area,
+                                               self._sel_topgx, _lb)
+                                 else 1.0)
+                            if self.rng.random() < w / wmax_lock:
+                                pick = cand
+                                break
+                        cell = (pick if pick is not None
+                               else band[int(self.rng.integers(len(band)))])
+                    else:
+                        cell = band[int(self.rng.integers(len(band)))]
                     cell.times_chosen += 1
                     cell.explored = True
                     return cell
@@ -6122,7 +6449,35 @@ class Solver:
             # the multiplier and its ceiling travel together by
             # construction so they can never be split later.
             gw = self.gate_weight
-            wmax = count_wmax(dw, ow, gw)
+            # LOCK OBJECTIVE (B-O1 LEX-SURVIVAL / B-O4 LEX-YIELD): a merit
+            # multiplier, up-weighting cells inside this run's own self-
+            # measured lock (in_lock_key) by the ARMED objective's own
+            # merit. `lw_max` is the multiplier's own ceiling (merit < 1
+            # always for both objectives, so 1 + lock_weight upper-bounds
+            # it) — folded into `wmax` by plain multiplication rather than
+            # a 4th positional arg to count_wmax(), so the O(1) rejection
+            # sampling stays exact while the arm-off call site keeps its
+            # receipted literal form. Off (or unarmed, or any lock mode
+            # this dispatch does not name) leaves lw_max == 1.0 and the
+            # loop below pays one extra `and` per candidate for the check
+            # that skips it. (getattr throughout: the duck-typed Solver
+            # stand-ins in tests/test_go_explore_solve.py predate every
+            # lock objective.)
+            _lm = getattr(self, "lock_mode", "off")
+            _lps = getattr(self, "lock_pin_secs", 300.0)
+            _lb = getattr(self, "lock_band", 0)
+            _lw = getattr(self, "lock_weight", 1.0)
+            lock_on = (_lm in ("survival", "yield", "novelty")
+                      and lock_armed(_lm, self._pin_time, time.time(), _lps))
+            lw_max = (1.0 + _lw) if lock_on else 1.0
+            wmax = count_wmax(dw, ow, gw) * lw_max
+            merit_fn = None
+            if lock_on:
+                if _lm == "yield":
+                    merit_fn = self._lock_merit_for
+                else:  # "survival" or "novelty" cache in archive._merit
+                    _merit_map = self.archive._merit
+                    merit_fn = _merit_map.get
             pick = None
             for _ in range(64):
                 pick = cells[int(self.rng.integers(len(cells)))]
@@ -6140,6 +6495,12 @@ class Solver:
                     w *= dw
                 if ow > 1.0 and pick.key in self._ortho_ids:
                     w *= ow
+                if merit_fn is not None and in_lock_key(
+                        pick.key, self.max_sect, self.max_area,
+                        self._sel_topgx, _lb):
+                    lw = 1.0 + _lw * merit_fn(pick.key, 0.0)
+                    if lw > 1.0:
+                        w *= lw
                 if self.rng.random() < w / wmax:
                     break
             pick.times_chosen += 1
@@ -6273,6 +6634,20 @@ class Solver:
                             and prev.get("died_at_burst_step") is not None
                             and prev["died_at_burst_step"] <= 5):
                         src.barren = max(src.barren, self.frontier_throttle)
+            # LOCK OBJECTIVE — LEX-YIELD (B-O4): the SAME two events the
+            # barren counter above already consumes (a burst rooted at
+            # this key either yielded novelty or it didn't), kept as
+            # running totals instead of a reset-on-yield ratchet, so
+            # `_lock_merit_for` can read a cell's WHOLE-RUN generativity
+            # rate rather than only "yielded last time or not". One
+            # string compare when off or on a different named mode: no
+            # dict write, matching the default-off contract every other
+            # lock branch in this file uses.
+            if getattr(self, "lock_mode", "off") == "yield":
+                k = prev["key"]
+                self._lock_bursts[k] = self._lock_bursts.get(k, 0) + 1
+                if prev.get("yielded"):
+                    self._lock_yields[k] = self._lock_yields.get(k, 0) + 1
         # T3 route handoff: cleared BEFORE every select() so a stale
         # router stash can never survive a deep/count-arm pick (those
         # arms return without touching it) and tag the wrong burst.
@@ -6548,6 +6923,88 @@ class Solver:
         seen = int(row[int(value) & 0xFF])
         return ib.novelty_score(seen, self._boundary_hist_total,
                                 support=int(np.count_nonzero(row)))
+
+    # ---- LOCK OBJECTIVE: LEX-NOVELTY (B-O3) -------------------------
+    # `self._in_lock`/`self._lock_armed` are the shared, mode-agnostic
+    # predicates every lock objective uses (defined above, near
+    # `_ortho_armed`); this section is only "novelty" mode's own merit
+    # computation and its private bookkeeping.
+
+    def _lock_moved_addrs(self):
+        """Addresses this run's OWN boundary histogram has seen take more
+        than one distinct value — i.e. addresses that MOVED at this
+        boundary, per CONTRA_WALL_2026-08-27.md's O3 spec ("restricted to
+        the addresses the run's own boundary histogram has seen move at
+        this boundary"). Needs --gate-opener armed (that's what populates
+        _boundary_hist); returns an empty array otherwise, rather than
+        raising, so an operator who forgot the flag pairing gets "no
+        discrimination" instead of a crash on a long unattended run.
+
+        Memoised on `_boundary_hist_total` (a monotone counter): the
+        underlying histogram only changes when a new undirected/in-band
+        sample folds in, so recomputing the O(RAM_SIZE) count_nonzero
+        reduction on every call inside the lock — which observe() does
+        for every dominating candidate at the wall — would be pure waste
+        between folds."""
+        if self._boundary_hist is None:
+            return np.empty(0, dtype=np.intp)
+        total = self._boundary_hist_total
+        cached = self._lock_moved_cache
+        if cached is not None and cached[0] == total:
+            return cached[1]
+        support = np.count_nonzero(self._boundary_hist, axis=1)
+        moved = np.nonzero(support > 1)[0]
+        self._lock_moved_cache = (total, moved)
+        return moved
+
+    def _lock_novelty_merit(self, ram, key, ctx) -> float:
+        """LEX-NOVELTY's merit for one in-lock observation: count-based
+        novelty of a DESCRIPTOR that is deliberately NOT part of the cell
+        key — a fixed-width hash of the entry-differenced RAM vector,
+        restricted to the addresses `_lock_moved_addrs` reports live at
+        this boundary — scored through the same `ib.novelty_score` the
+        gate arm's `_gate_novelty` already uses, then squashed to [0, 1)
+        by `lock_novelty_merit` (module-level, the squash function).
+
+        "Entry-differenced": `ctx['_lock_novelty_entry']` is the RAM
+        snapshot at this LINEAGE's first in-lock observation (set here,
+        on first use; `_assign` hands every re-rooted burst a fresh `ctx`
+        dict, so this resets to unset on every re-root with no extra code
+        — the same free reset B-O1's `_lock_steps` relies on). Two
+        lineages that reached the SAME cell by different paths can
+        therefore report different descriptors for it; the visit
+        histogram (`_lock_desc_hist`) is global across the whole run, not
+        per-cell, so what gets rarer over the run is the DIFFERENCE
+        PATTERN itself, not "this cell in particular".
+
+        Returns 0.0 (never negative, never unbounded) whenever the
+        machinery is not yet armed (no boundary histogram, no live axes,
+        no ctx to hold an entry snapshot) — a graceful floor, not an
+        error, so a run that forgot --gate-opener degrades to "always
+        indifferent" rather than crashing."""
+        moved = self._lock_moved_addrs()
+        if moved.size == 0 or ctx is None:
+            return 0.0
+        vals = np.frombuffer(bytes(ram), dtype=np.uint8)[:ib.RAM_SIZE]
+        entry = ctx.get("_lock_novelty_entry")
+        if entry is None:
+            ctx["_lock_novelty_entry"] = np.array(vals, dtype=np.uint8)
+            return 0.0  # the entry observation IS the baseline: no diff yet
+        if len(entry) != len(vals):
+            return 0.0
+        diff = ((vals[moved].astype(np.int16)
+                - entry[moved].astype(np.int16)) & 0xFF).astype(np.uint8)
+        desc = int.from_bytes(
+            hashlib.blake2b(diff.tobytes(), digest_size=8).digest(),
+            "little") % self.lock_desc_buckets
+        visits = self._lock_desc_hist.get(desc, 0)
+        total = self._lock_desc_total
+        support = len(self._lock_desc_hist)
+        bits = ib.novelty_score(visits, total, support=support,
+                                alphabet=self.lock_desc_buckets)
+        self._lock_desc_hist[desc] = visits + 1
+        self._lock_desc_total += 1
+        return lock_novelty_merit(bits, self.lock_novelty_scale)
 
     def _gate_farm_sources(self) -> list:
         """The (changes, samples, stride) triples behind every farmability
@@ -7635,6 +8092,27 @@ class Solver:
             line["c_local_elasticity"] = (None if elast is None
                                           else round(elast, 4))
             self._c_local_prev = (c_local, c_band, n_cells)
+        if getattr(self, "lock_mode", "off") != "off":
+            # Lock-objective telemetry (B-O4 LEX-YIELD, and any sibling
+            # objective sharing the same lock_mode/_lock_armed/_in_lock
+            # machinery): armed_secs distinguishes "inert, mode selected
+            # but never pinned long enough" from "armed and not working"
+            # — the same distinction ortho's pinned_secs makes. lock_cells
+            # is a count, not a list, so this stays cheap on a run with a
+            # large archive; it recomputes _in_lock for the CURRENT
+            # deep-frontier band only (the same population select()'s
+            # deep arm samples), not the whole archive.
+            line["lock_mode"] = self.lock_mode
+            line["lock_armed_secs"] = round(time.time() - self._pin_time)
+            band = getattr(self, "_sel_band24", None) or []
+            in_lock = [c for c in band if self._in_lock(c.key)]
+            line["lock_band_cells"] = len(band)
+            line["lock_cells"] = len(in_lock)
+            if self.lock_mode == "yield" and in_lock:
+                merits = [self._lock_merit_for(c.key) for c in in_lock]
+                line["lock_merit_min"] = round(min(merits), 4)
+                line["lock_merit_max"] = round(max(merits), 4)
+                line["lock_bursts_tracked"] = len(self._lock_bursts)
         if self.ortho_mode != "off":
             # ortho_deep_yband is the pre-registered gate figure: the
             # extreme y-band inside the band the PRIMARY arm samples, so
@@ -8141,6 +8619,70 @@ def main() -> int:
                          "climb needs and stochastic sampling almost never "
                          "emits; profile rates are ~0.02). DEFAULT 0 = off, "
                          "so the macro slot behaves exactly as today.")
+    # --- lock objective (Route B, CONTRA_WALL_2026-08-27.md) -------------
+    # A lexicographic (gx, then merit) tie-break for a pinned screen-lock
+    # where the archive already discriminates non-progress states but
+    # selection cannot prefer any of them (every one scores the primary
+    # objective identically). DEFAULT off => byte-identical to every
+    # prior campaign; --lock-objective names which merit function feeds
+    # the tie-break. Only "yield" (B-O4, LEX-YIELD) is implemented here.
+    ap.add_argument("--lock-objective",
+                    choices=("off", "yield", "survival", "latch", "novelty"),
+                    default="off",
+                    help="Lock-objective merit function: 'yield' (B-O4) "
+                         "= Laplace-smoothed burst-yield rate of a cell as "
+                         "a root, (yields+1)/(bursts+2), read off the same "
+                         "R2 barren/credit bookkeeping _assign() already "
+                         "computes. Other names are reserved for sibling "
+                         "objectives (survival/latch/novelty) and are not "
+                         "implemented by this flag alone. DEFAULT off = no "
+                         "RNG draw, no dict write, no selection change.")
+    ap.add_argument("--lock-pin-secs", type=float, default=300.0,
+                    metavar="SECS",
+                    help="Seconds the x frontier (_pin_time) must sit "
+                         "pinned before the lock objective arms. Mirrors "
+                         "--ortho-pin-secs/--gate-pin-secs' shape; picked "
+                         "above the campaign's own measured advance "
+                         "cadence so the arm cannot fire mid-climb.")
+    ap.add_argument("--lock-band", type=int, default=0, metavar="N",
+                    help="gx buckets below this run's own observed top-gx "
+                         "(_sel_topgx) that still count as 'in the lock'. "
+                         "0 = the terminal bucket only.")
+    ap.add_argument("--lock-weight", type=float, default=4.0, metavar="W",
+                    help="Ceiling multiplier for the lock merit's boost in "
+                         "the count arm's rejection sampling (Wmax scales "
+                         "with it, so the prior stays exact); the deep "
+                         "arm's merit-weighted pick does not use this "
+                         "value at all (merit is already in [0,1) there). "
+                         "Needs --sel-mode count to have any count-arm "
+                         "effect; the deep-frontier arm (default bias "
+                         "0.4) uses the objective regardless of --sel-mode.")
+    ap.add_argument("--lock-survival-scale", type=float, default=64.0,
+                    metavar="S",
+                    help="LEX-SURVIVAL (B-O1) only: scale of the squash "
+                         "m = 1 - 1/(1 + n/S), n = consecutive "
+                         "alive-in-lock steps a lineage has reached. "
+                         "Default 64 sits above the campaign's measured "
+                         "random-play median survival at the wall "
+                         "(26-51 steps), so the term is not saturated at "
+                         "the mode. No effect unless --lock-objective "
+                         "survival.")
+    ap.add_argument("--lock-novelty-scale", type=float, default=4.0,
+                    metavar="BITS",
+                    help="LEX-NOVELTY (B-O3) only: bits value at which "
+                         "the merit squash m = bits/(bits+SCALE) crosses "
+                         "0.5. `bits` is the Witten-Bell novelty "
+                         "(interaction_basis.novelty_score) of a fixed-"
+                         "width hash of the entry-differenced RAM vector, "
+                         "restricted to addresses this run's own boundary "
+                         "histogram has seen move at the lock. No effect "
+                         "unless --lock-objective novelty.")
+    ap.add_argument("--lock-desc-buckets", type=int, default=1 << 20,
+                    metavar="N",
+                    help="LEX-NOVELTY (B-O3) only: hash-bucket count for "
+                         "the descriptor histogram (also novelty_score's "
+                         "alphabet size for the Witten-Bell escape mass). "
+                         "No effect unless --lock-objective novelty.")
     # --- gate-opener arm --------------------------------------------------
     # The interaction enumerator. Every knob is inert while
     # --gate-opener is off (the default), so a run that omits them all

@@ -35,7 +35,9 @@ from scripts.go_explore_solve import (
     gate_run_header,
     gate_suppress_trace,
     hw_provenance,
+    in_lock_key,
     inversion_armed,
+    lock_armed,
     macro_slot_owner,
     merge_gate_axes,
     ortho_armed,
@@ -1309,8 +1311,16 @@ class _StubArchive:
         self.cells = {c.key: c for c in cells}
         self.learn_every = learn_every
         self.records = 0
+        self._merit: dict = {}
 
-    def record(self, ram, state, score, steps, key=None) -> bool:
+    def record(self, ram, state, score, steps, key=None, merit=None) -> bool:
+        # `merit` mirrors GoExploreArchive.record()'s contract just enough
+        # that observe() (which always passes the kwarg now, None off the
+        # lock arm) can call this stand-in unmodified; it is not asserted
+        # on by the pre-lock tests, which all run with lock_mode absent
+        # (=> "off" => merit=None on every call).
+        if merit is not None and key is not None:
+            self._merit[key] = merit
         self.records += 1
         return self.learn_every > 0 and self.records % self.learn_every == 0
 
@@ -3537,3 +3547,378 @@ def test_the_gate_flags_are_json_types_so_receipts_keep_recording_them():
                    "first frame; extends into that frame only when "
                    "settle alone cannot supply k+1")}
     json.dumps(hdr)          # the whole header must be serializable
+
+
+# ---------------------------------------------------------------------
+# LOCK OBJECTIVE — LEX-YIELD (B-O4, CONTRA_WALL_2026-08-27.md Route B).
+#
+# The mandatory inertness guard, in the same shape the ortho/gate/R2
+# arms above already carry: T1 proves the shipped default ("off") is
+# byte-identical to a run that never heard of the lock objective at
+# all; T2 proves an ARMED "yield" run leaves every cell outside its own
+# self-measured lock untouched; T3 is the mutation test — remove the
+# guard and watch T2's own claim break, so the guard is proven load-
+# bearing rather than merely present; T4 is the non-vacuity / abort
+# criterion, run OFFLINE against the banked wall archive: does the
+# objective actually make selection PREFER one wall state over another,
+# beyond what a shuffled (label-randomized) control would produce by
+# chance alone.
+#
+# LEX-YIELD's merit is a property of the CELL AS A ROOT (how often
+# bursts launched from it taught the archive something), not of the
+# specific RAM snapshot being recorded — so, unlike the survival/latch
+# objectives, `observe()`'s own bookkeeping never touches `_lock_bursts`
+# /`_lock_yields` (that happens in `_assign`, off the emulator's own
+# burst-accounting, see the B-O4 comment there). The helpers below drive
+# `observe()` directly and inject burst/yield counts by hand, which
+# tests exactly the half of the mechanism `observe()` owns (merit
+# lookup + the domination/record wiring) without needing a live burst
+# loop for every case.
+# ---------------------------------------------------------------------
+
+
+def _lock_game():
+    """A game whose cell_fn/area/progress are read straight off two RAM
+    bytes the test controls (gx=ram[0], area=ram[2]) so a single
+    observe() call stream can visit both in-lock and definitely-not-
+    in-lock cells inside one archive. cell_fn's shape, (area, 3, 1, 0,
+    gx), matches _ocell's convention exactly."""
+    return SimpleNamespace(
+        is_dead=lambda ram, lives: False,
+        is_finale=lambda wd, ram: False,
+        is_clear=lambda wd, ram, ctx: False,
+        level_key=lambda ram: (0,),
+        progress=lambda ram: ram[0],
+        progress_cap=10_000,
+        area=lambda ram: ram[2],
+        y=lambda ram: 0,
+        cell_fn=lambda ram: (ram[2], 3, 1, 0, ram[0]),
+        score_bonus=lambda ram: 0.0,
+    )
+
+
+def _lock_ram(gx: int, area: int) -> bytes:
+    b = bytearray(2048)
+    b[0] = gx
+    b[2] = area
+    return bytes(b)
+
+
+def _lock_key(gx: int, area: int) -> tuple:
+    """The full 11-slot key observe() builds for `_lock_ram(gx, area)`:
+    (sect, tb, kk, psig, loops, route_sig) all default + _lock_game's
+    cell_fn output. key[-5] is area, key[-1] is gx — same slots the
+    OBJECTIVE DESIGN's arity table names."""
+    return (0, 0, 0, (), 0, (), area, 3, 1, 0, gx)
+
+
+class _SpyArchive:
+    """Archive stand-in that ALWAYS reports novelty (so every observe()
+    call reaches the record path) and captures the (key, score, steps,
+    merit) of every record() call, instead of a StubArchive's periodic-
+    learn_every trick. Carries `_merit` because observe()'s domination
+    peek reads `self.archive._merit` directly whenever the lock arm
+    hands it a non-None candidate merit — the real GoExploreArchive
+    does too (src/training/go_explore.py); this stand-in mirrors that
+    exactly rather than special-casing it away."""
+
+    def __init__(self) -> None:
+        self.cells: dict = {}
+        self._merit: dict = {}
+        self.calls: list = []
+
+    def record(self, ram, state, score, steps, key=None, merit=None) -> bool:
+        self.calls.append((key, score, steps, merit))
+        existing = self.cells.get(key)
+        if existing is None:
+            self.cells[key] = SimpleNamespace(
+                key=key, state=(state or b"s"), best_score=score,
+                best_steps=steps, visits=1, times_chosen=0, explored=False,
+                barren=0)
+        else:
+            existing.best_score = score
+            existing.best_steps = steps
+            existing.state = state or existing.state
+        if merit is not None:
+            self._merit[key] = merit
+        return True
+
+
+def _lock_solver(*, lock_mode="off", lock_pin_secs=0.0, lock_band=0,
+                  lock_weight=4.0, archive=None, **over):
+    """_burst_solver, aimed at the lock objective: _lock_game() instead
+    of _BURST_GAME (so cell_fn actually varies with the ram the test
+    feeds it), ortho_mode forced off (its "up" test default would
+    otherwise fire inside select() and confound a lock-only measurement
+    — irrelevant to observe()-only tests but load-bearing for T4's
+    select() calls), and the lock objective's own state + bound
+    methods, mirroring exactly what Solver.__init__ sets up."""
+    over.setdefault("ortho_mode", "off")
+    f = _burst_solver([_ocell(0, 0)], learn_every=0, **over)
+    f.game = _lock_game()
+    if archive is not None:
+        f.archive = archive
+    f.lock_mode = lock_mode
+    f.lock_pin_secs = lock_pin_secs
+    f.lock_band = lock_band
+    f.lock_weight = lock_weight
+    f._lock_bursts = {}
+    f._lock_yields = {}
+    for name in ("_lock_armed", "_in_lock", "_lock_merit_for"):
+        setattr(f, name, MethodType(getattr(Solver, name), f))
+    return f
+
+
+def test_lock_objective_cli_default_is_off(monkeypatch):
+    args = _parse_solver_argv(monkeypatch)
+    assert args.lock_objective == "off"
+    assert args.lock_pin_secs == 300.0
+    assert args.lock_band == 0
+    assert args.lock_weight == 4.0
+
+
+def test_t1_the_default_lock_stream_is_byte_identical_with_the_arm_off():
+    # Same reproducibility contract as
+    # test_the_credit_is_inert_at_the_shipped_throttle_default: identical
+    # seed, identical archive, and the ONLY difference between the two
+    # solvers is whether `lock_mode` exists on the namespace at all.
+    # "off" (explicit, with every other lock_* knob set to armed-
+    # looking values) must be indistinguishable from "the attribute was
+    # never set" — proving the guard is the MODE STRING, not merely an
+    # absent knob.
+    def _picks(explicit_off: bool) -> list:
+        f = _burst_solver(_burst_cells(), sel_mode="count", ortho_mode="off")
+        if explicit_off:
+            f.lock_mode = "off"
+            f.lock_pin_secs = 0.0
+            f.lock_band = 0
+            f.lock_weight = 4.0
+            f._lock_bursts = {}
+            f._lock_yields = {}
+        return _run_bursts(f, 400)
+
+    assert _picks(True) == _picks(False)
+
+
+def test_t1b_off_mode_never_writes_the_yield_bookkeeping():
+    f = _lock_solver(lock_mode="off", lock_pin_secs=0.0, sel_mode="count")
+    _run_bursts(f, 200)
+    assert f._lock_bursts == {} and f._lock_yields == {}
+
+
+def _t2_scenario(*, lock_pin_secs=0.0):
+    """Seeds an archive with two area-0 (never in-lock, by area alone)
+    and three area-1 cells (deepest area; only gx>=200 is in-lock),
+    freezes the selection cache so _sel_topgx == 200, then observes
+    three FRESH keys — (area=0, gx=51): not in lock; (area=1, gx=101):
+    same area as the frontier but short of it; (area=1, gx=210): at/
+    past the frontier, with a burst/yield history banked under EXACTLY
+    that key — and returns (spy, results) where results maps each
+    fresh key to the merit `record()` was called with."""
+    spy = _SpyArchive()
+    f = _lock_solver(lock_mode="yield", lock_pin_secs=lock_pin_secs,
+                     archive=spy)
+    for gx, area in ((50, 0), (60, 0), (100, 1), (150, 1), (200, 1)):
+        f.observe(0, _lock_ram(gx, area), [], 1, "entrance", ctx={})
+    f._sel_cells = None
+    f._refresh_sel_cache()
+    assert f.max_area == 1
+    assert f._sel_topgx == 200
+    f._lock_bursts[_lock_key(210, 1)] = 10
+    f._lock_yields[_lock_key(210, 1)] = 7
+    spy.calls.clear()
+
+    fresh = ((51, 0), (101, 1), (210, 1))
+    for gx, area in fresh:
+        f.observe(0, _lock_ram(gx, area), [], 1, "entrance", ctx={})
+    by_key = {c[0]: c[3] for c in spy.calls}
+    return spy, {(gx, area): by_key[_lock_key(gx, area)] for gx, area in fresh}
+
+
+def test_t2_yield_merit_is_none_off_lock_and_a_real_float_on_it():
+    _, merits = _t2_scenario()
+    assert merits[(51, 0)] is None       # different area entirely
+    assert merits[(101, 1)] is None      # right area, short of the frontier
+    lock_merit = merits[(210, 1)]
+    assert lock_merit is not None        # AT the frontier: non-vacuous
+    assert lock_merit == pytest.approx((7.0 + 1.0) / (10.0 + 2.0))
+    assert 0.0 < lock_merit < 1.0        # Laplace-smoothed: never 0 or 1
+
+
+def test_t2b_unarmed_yield_leaves_even_the_frontier_cell_at_none():
+    # Same scenario, but the pin clock has not run long enough — the
+    # SAME cell that scored a real merit above must fall back to None
+    # the moment "armed" stops being true, proving the pin gate (not
+    # just the area/gx predicate) is load-bearing on its own.
+    _, merits = _t2_scenario(lock_pin_secs=1e9)
+    assert merits == {(51, 0): None, (101, 1): None, (210, 1): None}
+
+
+def test_t3_removing_the_in_lock_guard_breaks_t2s_own_claim(monkeypatch):
+    import scripts.go_explore_solve as ges
+
+    # Baseline (already proven above): off-lock keys get merit=None.
+    _, before = _t2_scenario()
+    assert before[(51, 0)] is None and before[(101, 1)] is None
+
+    # THE MUTATION: revert the scope predicate to "everything is in the
+    # lock". If in_lock_key were not load-bearing, this would change
+    # nothing; it must break the T2 claim for BOTH previously-excluded
+    # keys.
+    monkeypatch.setattr(ges, "in_lock_key", lambda *a, **k: True)
+    _, after = _t2_scenario()
+    assert after[(51, 0)] is not None
+    assert after[(101, 1)] is not None
+
+
+def test_t3b_removing_the_armed_guard_breaks_t2bs_own_claim(monkeypatch):
+    import scripts.go_explore_solve as ges
+
+    # Baseline: an unarmed run (pin clock nowhere near lock_pin_secs)
+    # gives merit=None even AT the frontier cell (T2b).
+    _, before = _t2_scenario(lock_pin_secs=1e9)
+    assert before[(210, 1)] is None
+
+    # THE MUTATION: the arming clock always reports armed. If
+    # lock_armed's result were not load-bearing, this would change
+    # nothing; it must turn the frontier cell's merit non-None despite
+    # the pin clock never having run.
+    monkeypatch.setattr(ges, "lock_armed", lambda *a, **k: True)
+    _, after = _t2_scenario(lock_pin_secs=1e9)
+    assert after[(210, 1)] is not None
+
+
+# ---------------------------------------------------------------------
+# T4 — the non-vacuity / abort criterion. Offline, no emulation: loads
+# the banked wall archive from the Contra Route-A/wall campaign and
+# asks the real select() code path whether a discriminating merit
+# vector actually concentrates picks, with a shuffle control so "the
+# statistic moved" cannot be explained by anything other than the real
+# key-to-merit mapping.
+# ---------------------------------------------------------------------
+
+_WALL_ARCHIVE = (Path(__file__).resolve().parent.parent
+                / "runs/play_one_well/contra/solve20/archive.pkl")
+
+
+def _load_wall_cells() -> list:
+    import pickle
+
+    with open(_WALL_ARCHIVE, "rb") as fh:
+        cells = pickle.load(fh)
+    wall = [c for c in cells.values() if c.key[-1] == 192]
+    assert len({c.key[0] for c in wall}) == 1   # single max_sect, as banked
+    assert len({c.key[-5] for c in wall}) == 1  # single max_area, as banked
+    return wall
+
+
+def _wall_solver(wall_cells, *, deep_bias: float, sel_mode: str,
+                 lock_mode: str = "yield"):
+    f = SimpleNamespace(
+        args=SimpleNamespace(deep_bias=deep_bias),
+        rng=np.random.default_rng(0),
+        archive=SimpleNamespace(cells={c.key: c for c in wall_cells}),
+        max_area=wall_cells[0].key[-5], max_sect=wall_cells[0].key[0],
+        sel_mode=sel_mode, frontier_throttle=0,
+        door_weight=0.0, _doors=frozenset(), _key_ids={},
+        ortho_mode="off", ortho_pin_secs=1e18, ortho_bias=0.0,
+        ortho_band=1, ortho_weight=4.0, _pin_time=0.0,
+        gate_mode="off", gate_weight=1.0,
+        _ortho_pool=[], _ortho_ids=set(), _ortho_ext={},
+        _ortho_deep_yband=None, _ortho_selections=0,
+        _ortho_cols_improved=0, _gx_phantoms=set(),
+        _sel_cells=None, _sel_n=0, _sel_area=None,
+        lock_mode=lock_mode, lock_pin_secs=0.0, lock_band=0,
+        lock_weight=4.0, _lock_bursts={}, _lock_yields={})
+    for name in ("_refresh_sel_cache", "_ortho_armed", "select",
+                "_lock_armed", "_in_lock", "_lock_merit_for"):
+        setattr(f, name, MethodType(getattr(Solver, name), f))
+    return f
+
+
+def _draw_picks(f, n: int) -> dict:
+    counts: dict = {}
+    for _ in range(n):
+        c = f.select()
+        counts[c.key] = counts.get(c.key, 0) + 1
+    return counts
+
+
+def _tv_distance(a: dict, b: dict, keys) -> float:
+    na, nb = sum(a.values()), sum(b.values())
+    return 0.5 * sum(abs(a.get(k, 0) / na - b.get(k, 0) / nb) for k in keys)
+
+
+def _decile_ratio(counts: dict, merit: dict, keys: list) -> float:
+    ordered = sorted(keys, key=lambda k: merit[k])
+    n = max(1, len(ordered) // 10)
+    bottom, top = ordered[:n], ordered[-n:]
+    bot = sum(counts.get(k, 0) for k in bottom) or 1
+    topc = sum(counts.get(k, 0) for k in top)
+    return topc / bot
+
+
+@pytest.mark.skipif(not _WALL_ARCHIVE.exists(),
+                    reason="banked Contra wall archive not present "
+                          "(gitignored runs/ artifact)")
+def test_t4_lex_yield_actually_discriminates_among_wall_states():
+    wall = _load_wall_cells()
+    keys = [c.key for c in wall]
+    rng = np.random.default_rng(7)
+    # A pre-registered bimodal merit: the top decile is a clear high-
+    # yield population, everything else is low-yield — exactly the
+    # shape a real "some roots are far more generative than others"
+    # regime would produce, without tuning to the specific archive.
+    order = list(keys)
+    rng.shuffle(order)
+    n_hi = max(1, len(order) // 10)
+    hi, lo = set(order[:n_hi]), set(order[n_hi:])
+    bursts, yields = {}, {}
+    for k in keys:
+        b = 20
+        y = 19 if k in hi else 0
+        bursts[k], yields[k] = b, y
+    merit = {k: (yields[k] + 1.0) / (bursts[k] + 2.0) for k in keys}
+
+    def _armed(deep_bias, sel_mode, shuffled=False):
+        f = _wall_solver(wall, deep_bias=deep_bias, sel_mode=sel_mode)
+        if shuffled:
+            shuffled_keys = list(keys)
+            rng.shuffle(shuffled_keys)
+            f._lock_bursts = dict(zip(shuffled_keys, (bursts[k] for k in keys)))
+            f._lock_yields = dict(zip(shuffled_keys, (yields[k] for k in keys)))
+        else:
+            f._lock_bursts, f._lock_yields = dict(bursts), dict(yields)
+        f._refresh_sel_cache()
+        return _draw_picks(f, 20_000)
+
+    off = _draw_picks(_wall_solver(wall, deep_bias=1.0, sel_mode="legacy",
+                                   lock_mode="off"), 20_000)
+    real = _armed(1.0, "legacy")
+    sham = _armed(1.0, "legacy", shuffled=True)
+
+    tv_real = _tv_distance(real, off, keys)
+    ratio_real = _decile_ratio(real, merit, keys)
+    ratio_sham = _decile_ratio(sham, merit, keys)
+
+    assert tv_real >= 0.20, f"deep arm TV distance too small: {tv_real}"
+    assert ratio_real >= 3.0, f"deep arm decile ratio too small: {ratio_real}"
+    # The shuffle control: TV-from-off is NOT the right statistic to
+    # compare here — a shuffled run still boosts *some* random 10% of
+    # cells, so it departs from "off" by a similar aggregate amount
+    # (tv_sham stays large; the boost happened, just not where it was
+    # supposed to). What must collapse under shuffling is the
+    # CORRESPONDENCE between the ORIGINAL merit ranking and where the
+    # picks actually landed: real merit concentrates picks on the cells
+    # that ARE the top decile; a shuffled key-to-merit mapping decouples
+    # that correspondence, so ratio computed against the pre-shuffle
+    # merit dict must collapse toward "no preference" (a ratio of 1).
+    assert ratio_real > 3 * ratio_sham, (ratio_real, ratio_sham)
+    assert ratio_sham < 2.0, f"shuffle control did not collapse: {ratio_sham}"
+
+    # Secondary check: the count arm (the OTHER wired call site) also
+    # discriminates, at a lighter bar — its multiplier composes with the
+    # pre-existing score/count terms rather than replacing them outright.
+    real_count = _armed(0.0, "count")
+    ratio_count = _decile_ratio(real_count, merit, keys)
+    assert ratio_count >= 1.5, f"count arm decile ratio too small: {ratio_count}"

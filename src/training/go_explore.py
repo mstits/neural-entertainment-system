@@ -144,6 +144,17 @@ class GoExploreArchive:
             else dict(getattr(cell_fn, "key_schema", None) or {})
         )
         self._cells: dict[CellKey, Cell] = {}
+        # Solver-side merit cache for the "lock objective" lexicographic
+        # tie-break (CONTRA_WALL_2026-08-27.md, Route B / O3). Deliberately
+        # NOT a `Cell` field and NOT touched by `save()`/`load()` (which
+        # only persist `self._cells`): a caller that never passes `merit`
+        # to `record()` never reads or writes this dict, so every existing
+        # game and every existing archive on disk is unaffected. Keyed by
+        # cell key, holding the merit of that cell's CURRENT representative
+        # (the state `record()` most recently accepted for it) — a resumed
+        # archive therefore starts every key at merit 0 (`.get(key, 0.0)`),
+        # never at a value banked under a different build's merit function.
+        self._merit: dict[CellKey, float] = {}
         self._rng = random.Random(seed)
         # Monotone counters for reporting / convergence checks.
         self.total_records = 0
@@ -166,6 +177,7 @@ class GoExploreArchive:
         score: float,
         steps: int,
         key: Optional[tuple] = None,
+        merit: Optional[float] = None,
     ) -> bool:
         """Observe a reached state. Returns True if this created a new
         cell or improved (dominated) an existing one — i.e. the archive
@@ -175,7 +187,21 @@ class GoExploreArchive:
         Domination is (higher score, then FEWER steps at equal score), so
         a task-success is never terminal for the archive: post-clear
         records keep replacing elites with shorter trajectories (see
-        EXPLORE_AFTER_FIRST_CLEAR / `keep_exploring`)."""
+        EXPLORE_AFTER_FIRST_CLEAR / `keep_exploring`).
+
+        `merit` is the lock-objective hook (CONTRA_WALL_2026-08-27.md,
+        Route B): `None` (every caller that never passes it, and every
+        non-lock key of a caller that does) leaves this a STRICT no-op —
+        the comparison below is textually the pre-`merit` rule. Supplied,
+        it inserts ONE extra comparator strictly BETWEEN the existing two:
+        `score > best` OR `(score == best AND merit > best_merit)` OR
+        `(score == best AND merit == best_merit AND steps < best_steps)`
+        — so a merit-armed caller can only break ties the un-armed rule
+        already broke by step count; it can never reorder two states of
+        different score. Deliberately NOT a `Cell` field: kept in
+        `self._merit`, which `save()`/`load()` never touch, so it cannot
+        leak into `archive.pkl` or into any score/steps a plain reader of
+        this archive sees."""
         # Caller-supplied key override: lets a harvester augment the state
         # key with trajectory features (e.g. the maze loop-count) that a
         # ram-only cell_fn cannot see. Default preserves prior behavior.
@@ -188,6 +214,8 @@ class GoExploreArchive:
                 key=key, state=state, best_score=score, best_steps=steps
             )
             self.total_new_cells += 1
+            if merit is not None:
+                self._merit[key] = merit
             return True
 
         existing.visits += 1
@@ -196,15 +224,45 @@ class GoExploreArchive:
         # Go-Explore "keep the best cell representative" rule and is what
         # lets the archive ratchet toward better play without any
         # hand-authored reward shaping.
-        if score > existing.best_score + 1e-9 or (
-            abs(score - existing.best_score) <= 1e-9 and steps < existing.best_steps
-        ):
+        if merit is None:
+            dominates = score > existing.best_score + 1e-9 or (
+                abs(score - existing.best_score) <= 1e-9
+                and steps < existing.best_steps
+            )
+        else:
+            best_merit = self._merit.get(key, 0.0)
+            dominates = (
+                score > existing.best_score + 1e-9
+                or (
+                    abs(score - existing.best_score) <= 1e-9
+                    and merit > best_merit + 1e-9
+                )
+                or (
+                    abs(score - existing.best_score) <= 1e-9
+                    and abs(merit - best_merit) <= 1e-9
+                    and steps < existing.best_steps
+                )
+            )
+        if dominates:
             existing.best_score = score
             existing.best_steps = steps
             existing.state = state
+            if merit is not None:
+                self._merit[key] = merit
             self.total_improvements += 1
             return True
         return False
+
+    def merit_of(self, key: CellKey, default: float = 0.0) -> float:
+        """The banked merit for `key` (0.0 for a key that has never been
+        recorded with one). Read-only accessor onto `self._merit` for
+        callers outside this module (a lock-objective caller must PEEK
+        the current best merit before deciding whether a new observation
+        dominates, i.e. before calling `record()` at all) — kept a method
+        rather than exposing the dict directly so `_merit`'s "never
+        persisted, never a Cell field" contract stays enforced in one
+        place."""
+        return self._merit.get(key, default)
 
     # ---- selection --------------------------------------------------
 
