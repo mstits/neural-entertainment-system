@@ -2138,11 +2138,11 @@ here under the stated definition.)
 **Contra's `gx 3072` wall is REAL as a position and BLIND as a
 verdict**, and it is a *different code path* from the gate defect —
 `go_explore_solve`'s archive-based `max_gx_in_max_area`, not `assess()`.
-Evidence it is real: the identical value appears in nine of ten
+Evidence it is real: ~~the identical value appears in nine of ten
 independently-run campaigns (2026-07-31 → 2026-08-11, materially
 different strategies, millions of steps each, 280k–357k cells), 3,030
-verbatim occurrences in `runs/`; `progress = hi<<8 | lo` verified live,
-so `3072 = 12 × 256` exactly; and undirected play tops out near
+verbatim occurrences in `runs/`~~; `progress = hi<<8 | lo` verified
+live, so `3072 = 12 × 256` exactly; and undirected play tops out near
 1,063–1,075, so reaching it is earned. Evidence it is blind: `hi` at 12
 with `lo` frozen at 0 is a **fixed-camera room**, and a scroll-derived
 progress definition cannot see inside one. "Pinned at 3072" therefore
@@ -2150,20 +2150,52 @@ progress definition cannot see inside one. "Pinned at 3072" therefore
 the room", and must never be quoted as a difficulty verdict on the
 game.
 
+> **AMENDED 2026-08-27 — the struck clause overstated the prior by
+> about 2.5×, and the wall survives the deflation.** The count is
+> exactly **2× double-counted** (3,030 = 1,508 `progress.jsonl` + 1,508
+> tee'd `.log` twins + 14 JSON), the 1,508 lines are one-minute windows
+> of a **running max** across processes rather than trials, **9 of 18
+> runs are `--resume-archive` children of just 2 parents**, 8 of the 9
+> fresh runs boot from the same single savestate, and **17 of 18 already
+> read 3072 in their first 60-second window**. Restate as: **~8
+> independent searches from 2 root states, all pinned at 3072 within 60
+> seconds.** Still a real, reproduced wall — reproduced fresh at HEAD
+> for the 2026-08-27 campaign — just far cheaper to have established
+> than "20.7 h and 162 GB" implies. And the "blind" half is now
+> **settled by measurement rather than inference**: the room is a
+> screen-locked lethal arena, the agent is alive and in control inside
+> it, and the camera does not move. See the CONTRA WALL section below.
+
 **5. Contra is the recommended next campaign target over Rygar**, and
 the reason is structural. Verified in code: Rygar's `_clear_mode` is
 `None` and its quorum is **UNREACHABLE** (ceiling 0.75, `coord` DEAD),
 so `solutions: 0` is a constant and evidence of nothing. Contra's
 `_clear_mode` is `"confluence"` and its quorum is **FIREABLE** (ceiling
-1.0, `coord` ALIVE with transition evidence, because a 16-bit `{lo,
-hi}` pair can express the backwards drop). Contra's `solutions: 0` is
-therefore weak-but-real evidence rather than a constant. Its gating
-task is a **Finding-3-class audit of the confluence detector** —
+1.0 offline / **2.0 on the live hook the solver actually runs**,
+`coord` ALIVE with transition evidence, because a 16-bit `{lo, hi}`
+pair can express the backwards drop). Contra's `solutions: 0` is
+therefore weak-but-real evidence rather than a constant. ~~Its gating
+task is a **Finding-3-class audit of the confluence detector**~~ —
 `configs/contra.yaml` documents it in-file as "UNTESTED — never
 observed to fire on a genuine clear", so nine campaigns of
 `solutions: 0` still cannot separate "never beaten" from "beaten and
 not detected". That is a well-posed question. Rygar's is not yet
 askable.
+
+> **AMENDED 2026-08-27 — the gating task is REORDERED, and the audit
+> was performed.** The audit ran (2026-08-27) and its answer is that
+> **the detector cannot be audited until a clear exists**: with the
+> measured `tally` null fire-rate of **1.00** (58/58 checks on
+> death-terminated random play) fed to `clear_quorum`, the verdict
+> flips **FIREABLE → UNREACHABLE**, ceiling 1 < required 2, `tally`
+> **DEGENERATE**. The shipped 2-of-2 is a 1-of-1 `coord` vote wearing a
+> corroborator's clothes, so **any Contra null from this hook is VOID,
+> never a miss**. The gating task is therefore **reaching a stage
+> boundary — a search problem, not a hook-tuning problem** — the same
+> reordering that was the real result on Rygar. Until one clear exists,
+> every "retune stride/window" instruction in `configs/contra.yaml` and
+> `DETECTOR_REPAIR_2026-08-26.md` is unfalsifiable. See the CONTRA WALL
+> section below.
 
 **6. Progress gate: 7 of 45 verdicts changed, 0 of 45 `passed`
 changed.** All seven `SIGNAL UNUSABLE → INCONCLUSIVE`, every one with a
@@ -2185,3 +2217,306 @@ PPU blank-fold counts, PPU scroll odometer, OAM, rendered frames,
 render-line counts — plus each profile's own declared lives byte, on
 its own start state. No disassembly, no RAM map, no walkthrough, no
 recall of any title.
+
+---
+
+## CONTRA WALL 2026-08-27 — EXHIBITION, wall HELD, characterisation BANKED
+
+Full write-up: `docs/research/CONTRA_WALL_2026-08-27.md`. **No tape is
+preserved under `docs/receipts/` because no trajectory exceeded 3072** —
+see "no tape" below.
+
+**Ledger: EXHIBITION, without exception.** Every number in this section
+is Go-Explore search output or instrument measurement. No policy was
+trained for this game and no honest-protocol evaluation was run.
+Nothing here may be described with "the AI learned", "the AI plays", or
+"the AI beat". None of the eight attacks overclaimed on this axis: all
+eight returned `beat_3072: false`.
+
+**Emulator** `nes_core` sha256_16 `54366c20d32f71cc`. **ROM**
+`roms/Contra (USA).nes` sha256 `26541a5550ee22deeb3d5484e4a96130219b58cff74d068fb1eb6567fa5e5519`.
+**Start state** `roms/Contra (USA)_start.state.bin` sha256
+`b99f9be8e0266f6dbe8ac71bc591b0deec08e66e7925707d265965a4aab922c3`.
+
+### The verdict
+
+**The wall HELD. Best verified gx 3072, against a prior of 3072.** Eight
+attacks, each varying at least one of {cell definition, restart
+distribution, action prior, maximised quantity}, ~1.3 M emulator steps
+in mixed accounting units. All eight report `max_gx: 3072`,
+`beat_3072: false`, alive at max, `tape_path: null`.
+
+**No tape.** All 18 attack receipt JSONs — raw per-step traces included
+— were scanned for any progress-keyed value above 3072: **all clean**.
+Zero `BEAT3072_*` / `BREAKOUT_*` / `breakthrough` files exist on disk.
+The extraordinary claim was never made, so no proportionate evidence is
+owed and `docs/receipts/` correctly gains no Contra tape.
+
+### What the wall physically is (the durable output)
+
+Nine campaigns hit this number without anyone establishing what was
+there. **`wall_class`: a screen-locked lethal arena behind an exact hard
+camera stop.** Not a freeze, not a scripted input-dead window, not a
+corpse, not a timer.
+
+- **The camera stops exactly.** `$0064 = 12`, `$0065 = 0`, one value —
+  in 300/300 sampled banked wall cells, all 14 held masks × 8 states,
+  524,784 alive steps of a survival-only search, A8's 265,860 steps and
+  A7's 285,672. The approach reads `$0064 = 11` with `$0065` sweeping
+  178→255, so **3072 is ordinary carry from 3071**, not a wrap artifact.
+- **The archive is an absorbing boundary.** Buckets 187–191 hold
+  37/47/49/60/115 cells; bucket 192 holds **1,331** (8.2% of the
+  archive), and nothing lies above it.
+- **The agent is ALIVE and IN CONTROL inside the lock.** 300/300 cells
+  restore with `lives ≥ 1`. On an alive-only window the wall's input
+  reach **equals or exceeds ordinary open-field play**: 93–317
+  input-dependent RAM bytes / 4–95 OAM / 4–17 sprite slots, against an
+  alive open-field positive control of 185 / 88 / 9 and a dead negative
+  control of 8 / 0 / 0. **20–74 bytes per state are agent-LATCHED** —
+  irreversible under some mask, never under NOOP (open-field 39, dead
+  control 1).
+- **The two progress bytes are the exception: not input-dependent under
+  any mask.**
+- **Not a timer:** 486 consecutive alive steps (~32 s on one life) and
+  524,784 cumulative alive steps moved nothing.
+- **Survival is the co-constraint.** Random play survives a median
+  26–51 steps. A long safe window exists **only via a searched action
+  sequence, never a fixed hold**. **2 of 8 hand-banked wall states are
+  input-DEAD** (all 14 masks die at the identical step, 10 and 12) —
+  already-committed fatal windows, reproduced independently by A6 at
+  steps 9 and 11. Screen wall states for input-liveness before rooting.
+
+**The caution that is the whole point: the dead negative control —
+`lives == 0`, game-over animation — moves 766 RAM bytes, MORE than the
+wall does.** Byte motion is not evidence of agency and must never be
+reported as such. Every liveness claim above is a differential against
+that control.
+
+**Anti-vacuity, three reverts in code.** (1) Player-control check →
+dead control drops to 2–8 / 0 / 0 / 1. (2) Camera check → alive
+open-field control: `$0065` sweeps 0..255, the pair visits ~1,000
+states. (3) Camera check under the *same* survival search, seeded 272 px
+earlier (gx 2800): identical code and budget, it reports **238 distinct
+camera states while alive**, sweeping (10,243) → (11,255) → (12,0) and
+stopping there — independently re-deriving the stop point from the
+other side. At the wall the same call returns a single state.
+
+### What was ruled out — the campaign's real contribution
+
+From banked wall roots, at ~0.5–1 core-hour per arm:
+
+- **No single held input** releases the camera (15 static masks across
+  three attacks).
+- **No rhythmic, mashed, lattice-swept, or iid-random pattern** (A3) —
+  four action-prior families beyond the static masks.
+- **No temporal action sequence found by latch-novelty search** (A8),
+  including states with **73 of 74** candidate latched bytes flipped
+  simultaneously while alive.
+- **No single RAM byte behaves like a release counter** — nothing
+  settles one-way under sustained fire against a matched fire-free
+  control (A1), nothing accumulates one-way and NOOP-flat (A4), across
+  all 2,046 non-progress bytes.
+- **Destroying the tracked hardware does not release it** (A2, A6), and
+  the "destroyed" reading is a transient multiplexing state, not a kill:
+  HP refills within 1–2 steps once fire stops and 0/15 verified
+  zero-hits sustain ≥20 zero steps under NOOP.
+- **Enriching the cell key does not release it** — not the six
+  autonomous zero-page cyclers (A5, which found 11,669 distinct
+  augmented cells, **8.8× the un-augmented key**, so the axes are live),
+  not entity-slot counters (A7), not raw boss HP (A2), not latch
+  popcount (A8).
+- **It cannot be waited out** — 524,784 cumulative alive steps.
+
+**The limit of that claim, stated as plainly as the claim.** Five
+attacks root from `solve20/archive.pkl`, three from the same session's
+`head_wall_*.state`, one from both — and `solve20` is a single run from
+the single shared savestate. **No attack ran a fresh from-power-on
+search or reached the lock by another route.** What is established is
+*"no escape from inside the lock, from banked roots of essentially one
+lineage, under input-pattern / cell-key / kill-condition variation at
+~0.5–1 core-hour each"*. That is **not** "the lock cannot be passed".
+`attackable_by_search` is falsified for the **boundary-resident family**
+only.
+
+### The clear hook cannot be validated yet, and the gating task is a stage boundary
+
+**`detector_validatable: false`.** `clear_quorum(configs/contra.yaml)`
+returns **FIREABLE, roster live, ceiling 2.0, required 2.0 — zero
+slack**: ALIVE are `coord` (S_TRANSITION) and `tally` (S_CADENCE); DEAD
+are `apu` (`clear.apu_weight = 0`) and all six shelf signals, wired but
+unarmed because the profile declares no `solve.clear.signals` block.
+`level_key(ram) == ()`, so `is_clear`'s opening test is `() > ()`,
+**False always**.
+
+**The critical amendment, measured not assumed.** `tally`'s null fire
+rate is **1.00** — 58 of 58 detector checks across five random-play
+episodes each terminated at the first `lives $0032` decrement, no
+post-death tail (`coord` 0/58, `entity_wipe` 0/58). Fed back in,
+`clear_quorum(..., null_rates={'tally': 1.0})` flips to **UNREACHABLE,
+ceiling 1.0 < required 2.0, `tally` DEGENERATE** (1.00 ≥
+`MAX_NULL_RATE` 0.05). **The shipped 2-of-2 is a 1-of-1 `coord` vote
+wearing a corroborator's clothes**, and the hook's advertised safety
+property — "only fires when BOTH agree, so an ordinary score tick or
+scroll can't fake it" — is **vacuous for this profile**. **Any Contra
+null from this hook is VOID, never a miss**: it must not enter a
+hit-rate denominator and must never be cited as "searched and found
+none".
+
+**Correction to the recorded mechanism.**
+`DETECTOR_REPAIR_2026-08-26.md` line 141 — "`tally` has no referent in
+this game, so the 2-of-2 vote is unreachable at every stride and
+window" — is **WRONG on its stated mechanism** and was itself an
+unmeasured assertion about the title, the authored-semantics class
+`MECHANISM_COVERAGE_MATRIX_2026-08-25.md` forbids in writing from the
+day before. It reached the right ceiling (1) by the opposite mechanism:
+`tally` does not fail to fire, it **fails to discriminate**.
+`score_tally_windows` is address-free and finds any periodic
+anti-correlated byte pair, so an animation counter serves; a
+"timer→score conversion" was never its precondition.
+
+**`coord` can fire, and has only ever fired falsely.** Positive control
+(deliberately not death-terminated — a false-positive characterisation,
+no progress claim): seeds 3/7/11, `coord` fires 12/80 checks in all
+three, largest single-step drop 1061/1061/1079 against
+`COORD_RESET_DROP_MIN = 300`. **Every observed joint fire is the
+game-over/reset arc**, RAM-indistinguishable on these two signals from a
+stage load; the lives-drop veto misses it because lives are flat at 0 by
+then. That trigger is nevertheless unreachable through the live
+pipeline: `Solver.start_lives` is fixed once at `seed()` (line 5561),
+so `is_dead` latches permanently at the first life loss and `observe()`
+returns "dead" before `is_clear`/`det.push` is reached.
+
+**Witnessed Contra clears: ZERO, by four independent counts.** (a) 19
+`solutions/` directories across 18 runs, all empty, 0 files, every tail
+row `solutions: 0`; (b) no `sol_*` file matching contra anywhere in the
+repo; (c) 772 rows of Contra PPO metrics — `vanilla_ppo_clears` max 0,
+`success_rate` max 0, `max_screen` topping out at 10 of the wall's 12;
+(d) `current_level $0030` and `boss_defeated $003B` read exactly 0
+across 720 restored banked cells, 2,100 live scripted steps, four full
+2-life game-over arcs and 13 screen-to-screen transitions — both
+measured **non-vacuous**, neither ever witnessed to move.
+
+> **THE GATING TASK IS REACHING A STAGE BOUNDARY, NOT TUNING A
+> DETECTOR** — the same reordering that was the real result on Rygar.
+> Produce ONE trajectory that survives past the fixed-camera section and
+> crosses a stage transition. Until a clear exists the predicate can
+> only ever be shown NOT to fire, and every "retune stride/window"
+> instruction is unfalsifiable. Conditional sub-task once a clear is
+> captured: derive `level_key` from `$0030` / `$003B`.
+
+**`solutions: 0` for Contra is weak-but-real evidence** — the hook
+*could* fire, unlike Rygar's UNREACHABLE-by-construction quorum — but
+weak-but-real still **cannot separate "never beaten" from "beaten and
+not detected"**, because the predicate has never returned a true
+positive on any game.
+
+### The wall is not an artifact of the cell definition — four ways
+
+**No collapse** (1,331 distinct cells at the wall bucket in `solve20`,
+6,190 in `r1_ortho`, 47,429 in `stage1_v4_localkk`). **Invariant to a 2×
+key-resolution change** (`gx_bucket 8 / y_band 16` vs the defaults 16 /
+32 — same 3072). **Invariant across four materially different key
+compositions.** **Internal falsifier:** the one run whose key genuinely
+did collapse — `stage1_baseline_collapsed_cells`, 13 cells over 1.3 M
+records — walled at **2816, not 3072**. When the cell definition really
+collapses in this codebase it produces a different and lower number.
+
+**The missing axis was tested and is DEAD.** `player_x $0334` spans
+25..136 with 99 distinct values across 400 banked wall cells; 40 roots ×
+11 actions × 400 held steps, death-terminated, give `px_max = 136`
+**exactly, every action, every root** (and 136 again without the
+death-tail). In the scrolling region px caps at 128 — the scroll-lock
+signature, self-validating the byte with no external map. The camera
+stops **and the player stops**; there is no hidden forward gradient the
+key was blind to.
+
+### Defects found (secondary yield, all independent of the verdict)
+
+1. **`max_gx_in_max_area` is a binary inside the lock, not a gradient.**
+   `solve.area` is unset so `area()` returns literal 0, `max_area` pins
+   at 0, and the metric degenerates to the global running max of
+   `progress` — frozen at 3072 by construction. Stop grading this wall
+   with a running max.
+2. **Five of eleven cell-key fields are structurally constant.** `area`,
+   `sect`, `psig` (`room_id` is the constant `(0,)` with `level_key: []`
+   and no `area`/`room_sig`, so `_transit` can never fire), `tb`, `kk`.
+   That also kills the score's leading term — `score = sect*10000 + gx +
+   score_bonus` — leaving gx plus the HP bonus as the only gradient.
+   Anti-vacuity: 500 random RAM snapshots give contra 1 distinct
+   `room_id`/`area`/`level_key`, against castlevania's 215 and kirby's
+   220.
+3. **A stage clear would be unrepresentable in the key and invisible in
+   the headline.** `progress` hi is `$0064`, the profile's own
+   `ram_mapping` calls it a within-stage screen counter that **resets
+   each stage**, so an advance collapses gx toward 0, trips the loop-back
+   rule, and archives at a low bucket indistinguishable from ordinary
+   early-stage cells — while the running max simply does not move.
+   **Fix before any post-wall run.**
+4. **`score_bonus`'s kill incentive is erased mid-fight.** `_typed_hp`
+   returns `sum(live) if live else self._bt_start`, so when no tracked
+   type is currently multiplexed in, the bonus reads **exactly 0 —
+   identical to "never engaged"**, which traces show happens routinely
+   mid-fight. Fix: track a monotone kill count separately from the
+   instantaneous HP sum.
+5. **A lives-equality liveness gate is measurably insufficient here.**
+   A7's first pass reported the camera apparently leaving the lock
+   (`{(12,0), (0,0)}`); it built a tripwire, replayed the exact
+   trajectory, and traced `(0,0)` to an archive-resumed cell whose
+   `entry_lives` was already 0 — a game-over artifact invisible to
+   `lives == entry_lives`, because the lives byte holds **flat** across
+   the game-over screen. Every `(0,0)` sample had gx exactly 0, so
+   `beat_3072` was never at risk, but the diversity metrics were
+   contaminated. Pass 2 required `gx == 3072` at entry and every step,
+   rejected 91 contaminated entries, and never saw `(0,0)` again. The
+   contaminated pass was kept on disk. **Adopt the pattern repo-wide.**
+
+### Corrections landed
+
+- **WITHDRAWN — "NOOP/A/B/up+B/down/down+B all survive the full 400
+  steps at the boundary" at `px == 136`.** It does not reproduce:
+  **0 of 39** px==136 roots survive 400 NOOP steps (mean 31.7, median
+  31, max 78), independently confirmed by A1 (0/183 reach even 120
+  steps, forcing a mid-run control pivot NOOP → DOWN), A4 (0/173 survive
+  300) and A7 (median 34). The long window lives at **px 55–63** —
+  4 of 22 survive the full 400, mean 103.7, and A4's 6 usable roots all
+  landed there independently. A real observation attached to the wrong
+  sub-population; same class as the `px_max 249` figure below.
+- **WITHDRAWN — `runs/play_one_well/contra/wave2_geometry.json`'s
+  unattributed `upright_fire px_max: 249`.** Not reproducible with or
+  without a post-death tail; its producing script is not in the repo.
+- **WITHDRAWN — Contra's banked "162 distinct" odometer figure**, ~94%
+  game-over animation.
+- **Corrected in place:**
+  `runs/contra_wall/A4/probe_release_report.json` carried two stale
+  summary strings ("50 diverse banked wall roots"; anti-vacuity "at
+  gx~2800") contradicting its own data block (`n_roots_usable: 6`,
+  `prewall_gx: 1297`). The submitted narrative was accurate on both; the
+  strings now match the data and the correction is recorded in the file.
+- **Compute breach, self-reported by A2**: NW=8 pool lanes for ~8 min
+  against a `--workers 3` instruction. Does not affect validity.
+- **Do not trust cross-build trace replay for this game.** The
+  2026-08-01 `traces.pkl` action traces do **not** replay on today's
+  core — 16 of 16 wall traces max out at raw progress 1807–1815. Every
+  state used in this campaign was minted fresh.
+
+### Next
+
+Do not spend another probe on input-pattern variation at this boundary.
+Ranked: (1) **reach the lock by another route** — a fresh from-power-on
+search, since the single biggest weakness in the evidence is that every
+attack rooted in one lineage from one savestate; (2) fix defects 3 and 4
+above *before* any post-wall run, so a clear would be visible if one
+happens; (3) adopt A7's liveness pattern repo-wide; (4) if revisited on
+the release hypothesis, the untested residue is narrow and has no
+candidate — a sequence-gated release outside A8's latch space, an
+address outside the 2 KB CPU RAM window, or an enemy-type-specific
+condition; (5) otherwise **re-shelve Contra with this receipt**. Saying
+the wall is not attackable by the boundary-resident family is the
+correct outcome, and it is recorded so nobody pays for it twice.
+
+**Purity (Tier 3).** No disassembly, no RAM maps, no walkthroughs, no
+recall of this title. Every byte's role — death-tail marker, animation
+counter, projectile slot, vertical-state byte, input-active flag — was
+inferred solely from its own measured time-series shape under our own
+inputs, on this profile's own declared addresses and start state. The
+screen description in the write-up is read off our own rendered frames.

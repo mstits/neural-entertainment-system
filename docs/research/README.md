@@ -51,12 +51,17 @@ UNUSABLE, and Zelda is purity-blocked besides.
 | Doc | What it is |
 |---|---|
 | `RYGAR_CAMPAIGN_2026-08-26.md` | The R1 campaign: verdict FAIL against the pre-registered bar; the wall moved 1,536 → 4,608 px of verified first-visit depth; the odometer-ratchet instrument defect; the fifth vacuous gate; the gate numbers for all four candidate games; the Kung Fu high-byte negative |
+| `CONTRA_WALL_2026-08-27.md` | The gx-3072 wall: **held** (best gx 3072 vs prior 3072, no tape). What it physically is — a screen-locked lethal arena behind an exact hard camera stop, with the agent alive and in control inside it; the boundary-resident attack family falsified across eight arms; the prior deflated from "9 campaigns / 3,030 occurrences" to ~8 searches from 2 root states; and the clear hook shown unvalidatable until a stage boundary is reached |
 
 Receipts: `../receipts/rygar/r1_tape_gx6242.json` (the replayable tape,
 tracked rather than left under gitignored `runs/`), guarded by
 `../../tests/test_rygar_r1_tape.py`, whose structural half runs with no ROM so
 the receipt cannot fall to zero coverage on a fresh checkout. Room-fingerprint
 decline: `../receipts/room_fp/rygar.md`.
+
+Contra preserves **no** tape: no trajectory in that campaign exceeded 3072, so
+there is nothing to guard. Its attack receipts live under gitignored
+`runs/contra_wall/A1..A8/` and are indexed in the write-up.
 
 **Ledger: EXHIBITION.** Search output. No policy was trained for this game and
 no honest-protocol evaluation was run.
