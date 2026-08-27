@@ -1,0 +1,64 @@
+{
+  "source": "solver clear tapes (runs/**/solutions/*.json + roots.json)",
+  "discriminant": "start_wd and clear_wd both non-empty AND different",
+  "caveat": "witnessed:false means NO WITNESS FROM THIS SOURCE. Games receipted by a rendered finale frame or a pre-registered byte_change leave no solver tape and appear false here.",
+  "unattributed_trees": 167,
+  "unattributed_witness_tapes": 206,
+  "blind_spot": "a run tree whose roots.json points at a minted state with no attributable ancestor cannot be traced back to a ROM. The SMB chain roots at runs/chain_handoffs/ and lands here \u2014 SMB's 32-level clear is real and is receipted elsewhere; it is invisible TO THIS SOURCE. The count is published so the gap is sized, not hidden.",
+  "roms": [
+    {
+      "rom": "Bubble Bobble (USA)",
+      "witnessed": true,
+      "tapes": 112,
+      "witness_tapes": 112,
+      "evidence": [
+        "runs/bubble_bobble/bubble_bobble_bootstrap/solutions/sol_000.json",
+        "runs/bubble_bobble/bubble_bobble_bootstrap/solutions/sol_001.json",
+        "runs/bubble_bobble/bubble_bobble_bootstrap/solutions/sol_002.json"
+      ]
+    },
+    {
+      "rom": "Castlevania (USA)",
+      "witnessed": true,
+      "tapes": 14,
+      "witness_tapes": 14,
+      "evidence": [
+        "runs/cv_chain_a/lvl_00_0/solutions/sol_000.json",
+        "runs/cv_chain_a/lvl_00_2/solutions/sol_000.json",
+        "runs/cv_chain_a/lvl_01_1/solutions/sol_000.json"
+      ]
+    },
+    {
+      "rom": "Double Dragon (USA)",
+      "witnessed": false,
+      "tapes": 4,
+      "witness_tapes": 0,
+      "evidence": []
+    },
+    {
+      "rom": "Excitebike (Japan, USA)",
+      "witnessed": false,
+      "tapes": 1,
+      "witness_tapes": 0,
+      "evidence": []
+    },
+    {
+      "rom": "Kirby's Adventure (USA) (Rev A)",
+      "witnessed": false,
+      "tapes": 2,
+      "witness_tapes": 0,
+      "evidence": []
+    },
+    {
+      "rom": "Super Mario Bros. 2; The Lost Levels (Japan)",
+      "witnessed": true,
+      "tapes": 14,
+      "witness_tapes": 14,
+      "evidence": [
+        "runs/lost_levels/ll_1_1_transfer/solutions/sol_000.json",
+        "runs/lost_levels/ll_1_1_transfer/solutions/sol_001.json",
+        "runs/lost_levels/ll_1_1_transfer/solutions/sol_002.json"
+      ]
+    }
+  ]
+}

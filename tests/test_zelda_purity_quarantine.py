@@ -255,6 +255,12 @@ def test_no_source_file_reads_the_quarantine_key() -> None:
         REPO / "tests" / "test_metroid_purity_quarantine.py",
         REPO / "tests" / "test_purity_quarantine_sweep.py",
         REPO / "tests" / "test_onboard_game.py",
+        # The engine sweep and its scanner. They read every quarantine
+        # block in order to ENFORCE it against Rust/Python/tests — the
+        # opposite of consuming it as an input — and live under tests/
+        # precisely so no production path reads the key.
+        REPO / "tests" / "test_purity_engine_sweep.py",
+        REPO / "tests" / "purity_engine_scan.py",
     }
     hits = []
     for path in REPO.rglob("*.py"):

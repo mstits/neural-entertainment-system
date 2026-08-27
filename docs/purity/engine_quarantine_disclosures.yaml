@@ -1,0 +1,340 @@
+# ==========================================================================
+# ENGINE QUARANTINE DISCLOSURES
+#
+# WHAT THIS FILE IS FOR
+#
+# `quarantined_external_knowledge:` blocks in `configs/` retract a
+# DOCUMENTATION claim. They do not touch the Rust constant or the Python
+# literal that actually runs. The 994-entry config sweep (0557896) named
+# that limit in its own commit message:
+#
+#     "Quarantining the YAML retracts the DOCUMENTATION claim, NOT the
+#      Rust constant."
+#
+# This file closes it. `tests/purity_engine_scan.py` cross-references
+# every quarantined address against the entire tree — configs, Rust,
+# Python, tests — and `tests/test_purity_engine_sweep.py` requires every
+# ENFORCED site (a use in the executing layer) to appear below with a
+# non-vacuous justification.
+#
+# THE RATCHET, which is the whole point:
+#
+#   * An UNDECLARED enforced site fails the suite. A newly quarantined
+#     address that is already live in code, or a new live use of an
+#     existing one, fails the moment it lands. Nobody has to decide to
+#     look.
+#   * A STALE declaration fails the suite. The record cannot rot into a
+#     blanket exemption for sites that no longer exist.
+#   * `max_enforced_sites` may be LOWERED, never raised. Removing a site
+#     and lowering the number is the only permitted direction of travel.
+#
+# THIS FILE IS A DISCLOSURE, NOT AN ABSOLUTION. Every row below is a place
+# where an address this repository formally retracted is still reachable by
+# running code. Recording that is strictly better than the silence it
+# replaces; it is not the same as having fixed it.
+#
+# WHY DISCLOSURE AND NOT DELETION. Deleting these constants is a behaviour
+# change to live reward arms. ZeldaReward's twelve are load-bearing for
+# every banked Zelda run; removing them would invalidate that history to
+# make a test go green, which is the trade the anti-vacuity rule exists to
+# forbid. The two arms the deletion WOULD be safe on (`punch_out`,
+# `mega_man` — neither has ever fired here) are called out below as such,
+# so the cheap fix stays cheap and stays visible.
+#
+# HOW TO REMOVE A ROW: witness the event. Re-derive the byte under
+# `configs/zelda.yaml`'s `rediscovery_rule` — drive input from the verified
+# start state, watch the byte move, record wrap / reversibility /
+# saturation evidence in a receipt — and the address enters a NEW
+# `ram_mapping` entry on its own measurement. Then it is no longer
+# quarantined, this row goes, and `max_enforced_sites` drops by one.
+# ==========================================================================
+
+version: 1
+generated_by: tests/purity_engine_scan.py
+checked_by: tests/test_purity_engine_sweep.py
+
+# Ratchet. LOWER this when a site is removed. Raising it is the failure
+# mode this whole file exists to prevent, and the test says so.
+max_enforced_sites: 17
+
+# --------------------------------------------------------------------------
+# Dispositions — what KIND of admission each row is making.
+#
+#   LIVE_UNRETRACTED    the address drives real arithmetic, a real episode
+#                       boundary, or a real `episode_success()`. The claim
+#                       attached to it in code is not retracted. This is the
+#                       gap, stated plainly.
+#   MEASUREMENT_INSTRUMENT
+#                       the site READS the byte in order to measure it, and
+#                       asserts nothing about what it means. An instrument
+#                       pointed at a quarantined byte is how the quarantine
+#                       gets LIFTED, not how it gets violated.
+#                       These are DECLARED rather than blanket-exempted by
+#                       directory. `docs/receipts/**` is where this repo
+#                       files measurements, so a blanket exemption there is
+#                       exactly the shape a real claim would hide behind.
+#                       The friction is one row, and the whole tree
+#                       currently produces one such row.
+#   FIDELITY_TRACE      emulator-correctness tooling that prints raw bytes
+#                       for a CPU/PPU diff. Asserts no game semantics at
+#                       all. Fidelity work is exempt from the purity line by
+#                       standing project rule; the row is here so the
+#                       exemption is visible rather than assumed.
+# --------------------------------------------------------------------------
+
+sites:
+
+  # ======================================================================
+  # ZeldaReward — twelve quarantined addresses, all live, all unretracted.
+  #
+  # This is the largest single finding of the engine sweep and it was not
+  # in the brief that started it: the Zelda quarantine landed BEFORE the
+  # config sweep, and `impl ZeldaReward` kept every one of its addresses.
+  # The in-code comment above them still reads "aldonunez disassembly +
+  # empirically verified", which is the same shape of claim
+  # `configs/zelda.yaml` retracted as `provenance: aldonunez/zelda1-
+  # disassembly + Data Crystal RAM map (external, undiscovered)`.
+  #
+  # SHARED NO-WITNESS BASIS for every row in this group: nine Zelda run
+  # trees exist under `runs/` (zelda_blocks_2026-08-10, play_one_well/zelda,
+  # clear_detection/zelda, clear_gap/legend_of_zelda,
+  # clear_census/zelda_roomfp, and four room_graph/rg1_zelda_* trees) and
+  # they hold ZERO solution tapes between them. No Zelda clear, dungeon
+  # entry, or Ganon defeat has ever been witnessed in this repository.
+  # ======================================================================
+
+  - site: "nes_core/src/rewards.rs::RAM_GANON_DEFEATED::0x0672"
+    disposition: LIVE_UNRETRACTED
+    asserts: >-
+      In-code: "$0672 LastBossDefeated — 0 while Ganon lives, set to 1 the
+      instant his death fanfare ends. Monotonic 0->1; the ONE reliable
+      'game effectively won' flag." It gates `won`, and `won` is what
+      `episode_success()` returns.
+    no_witness: >-
+      Ganon has never been defeated here. Nine Zelda run trees, zero
+      solution tapes. A monotonicity claim and a reliability claim about a
+      transition with zero observations cannot have been measured here —
+      they were read off the aldonunez disassembly, which
+      configs/zelda.yaml names as the provenance it retracted.
+    earns_it: >-
+      Defeat Ganon on this ROM with the tape kept, and log $0672 across the
+      transition. Until then any success this arm reports is UNCONFIRMED.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_SONG::0x0609"
+    disposition: LIVE_UNRETRACTED
+    asserts: >-
+      In-code: "$0609 Song — one-hot active track: 0x10=Ending theme
+      (Zelda rescued / credits), 0x02=Ganon-fight theme (reached the final
+      boss)." Both constants gate win-chain milestones.
+    no_witness: >-
+      The ending has never played here. The repo's own measurement of this
+      byte is a NULL — it held 1 across 600 NOOP and 60,000 random-action
+      steps from the training start state, with 0 frames reading 0x10 and 0
+      frames with bit 0x02 set. The null is honest and stays; what cannot
+      stand unretracted is the identification of 0x10 and 0x02 with
+      specific tracks, which no observation here supports.
+    earns_it: >-
+      Reach either track and log the byte across the entry, or re-derive
+      the one-hot structure differentially from the start state.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_TRIFORCE::0x0671"
+    disposition: LIVE_UNRETRACTED
+    asserts: >-
+      Triforce fragment bitfield; the code reads "$0671==0xFF (all 8
+      fragments) only opens Level 9" and pays `all_fragments_bonus` on it.
+    no_witness: >-
+      No fragment has ever been collected here — zero Zelda solution tapes
+      across nine run trees. The 0xFF-means-eight-fragments encoding is
+      from the retracted external map.
+    earns_it: >-
+      Collect a fragment on this ROM and log the byte across the pickup.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_DUNGEON_LEVEL::0x0010"
+    disposition: LIVE_UNRETRACTED
+    asserts: >-
+      Current dungeon number; drives `dungeons_entered`, the
+      `dungeon_enter_bonus`, and the `level9_enter_bonus` milestone.
+    no_witness: >-
+      No dungeon entry has ever been witnessed here. Note this address is
+      also the value 0x10 that Zelda's own `SONG_ENDING: u8 = 0x10`
+      carries — the scan distinguishes them by Rust type (`usize` is an
+      address, `u8` is a value), which is why `SONG_ENDING` is not a row.
+    earns_it: >-
+      Enter a dungeon on this ROM and log the byte across the threshold.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_HEARTS::0x066F"
+    disposition: LIVE_UNRETRACTED
+    asserts: >-
+      Packed hearts byte — current hearts in one nibble, maximum in the
+      other. Drives `heart_container`, `heart_recovery`, `damage_penalty`
+      and the death predicate.
+    no_witness: >-
+      The nibble PACKING is the external claim, not the byte. The repo has
+      its own live measurement adjacent to this address
+      (docs/receipts/games/zelda_hp_ladder_probe.py, which measures $0670
+      and prints $066F beside it) but that receipt establishes $0670's
+      ladder, not $066F's two-nibble layout.
+    earns_it: >-
+      Drive damage and healing from the verified start state and derive the
+      nibble split from the observed values alone.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_LINK_X::0x0070"
+    disposition: LIVE_UNRETRACTED
+    asserts: Link's screen X. Drives `motion_weight` and the wall-bump penalty.
+    no_witness: >-
+      A position byte is the most measurable thing on the ROM and this one
+      is very likely correct — but it entered from the external map, not
+      from a differential probe, and `rediscovery_rule` does not have a
+      "probably fine" branch. Listed for completeness of the retraction,
+      not because it is suspected wrong.
+    earns_it: >-
+      Drive left/right from the start state and log the byte; a receipt
+      showing it tracking input re-derives it in minutes.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_LINK_Y::0x0084"
+    disposition: LIVE_UNRETRACTED
+    asserts: Link's screen Y. Drives `motion_weight` and the wall-bump penalty.
+    no_witness: >-
+      Same standing as RAM_LINK_X — externally sourced, trivially
+      re-derivable, never actually re-derived here.
+    earns_it: Drive up/down from the start state and log the byte.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_MAP_X::0x00EB"
+    disposition: LIVE_UNRETRACTED
+    asserts: Overworld map column. Keys the `visited` set that pays `exploration_bonus`.
+    no_witness: >-
+      Externally sourced. This one is load-bearing in a way the position
+      bytes are not: it defines what "a new screen" MEANS to the
+      exploration term, so a wrong identification silently changes what
+      the agent is paid to do.
+    earns_it: >-
+      Walk off a screen edge from the start state and log the byte across
+      the transition.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_MAP_Y::0x00EC"
+    disposition: LIVE_UNRETRACTED
+    asserts: Overworld map row. Second half of the `visited` key.
+    no_witness: Externally sourced; same standing as RAM_MAP_X.
+    earns_it: Walk off a vertical screen edge and log the byte.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_RUPEES::0x066D"
+    disposition: LIVE_UNRETRACTED
+    asserts: Rupee count; drives `rupee_weight`.
+    no_witness: Externally sourced. No rupee pickup is receipted anywhere here.
+    earns_it: Collect a rupee and log the byte across the pickup.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_BOMBS::0x0658"
+    disposition: LIVE_UNRETRACTED
+    asserts: Bomb count; drives the item-consumption and pickup terms.
+    no_witness: Externally sourced. No bomb pickup or use is receipted here.
+    earns_it: Pick up or use a bomb and log the byte.
+    behaviour: UNCHANGED
+
+  - site: "nes_core/src/rewards.rs::RAM_KEYS::0x066E"
+    disposition: LIVE_UNRETRACTED
+    asserts: Key count; drives `key_collected_bonus`.
+    no_witness: >-
+      Externally sourced. No key pickup is receipted here, and no dungeon
+      has been entered, so the door-consumption half has no witness either.
+    earns_it: Collect a key and log the byte across the pickup.
+    behaviour: UNCHANGED
+
+  # ======================================================================
+  # The two the config sweep named — and the two where deletion is CHEAP.
+  # ======================================================================
+
+  - site: "nes_core/src/rewards.rs::RAM_MATCH_ID::0x0001"
+    disposition: LIVE_UNRETRACTED
+    asserts: >-
+      Punch-Out win latch. The retracted config annotation read "VERIFIED
+      WIN LATCH: 0 through the whole bout AND nonzero ONLY at the winning
+      KO/TKO"; in code it still drives `won`, `done` and
+      `episode_success()`.
+    no_witness: >-
+      NO Punch-Out bout win has ever been witnessed here.
+      runs/fight_gate/smoke/solutions/ holds 0 files and that tree's
+      archive.stats.json best_score is 81 against a 96 cap. Stronger than
+      unwitnessed, the latch is FALSIFIED at the one moment it could be
+      checked: from the archived knockdown state (opp_hp=0, opp_down=1) a
+      pure-NOOP continuation refills opp_hp 0->96 at step 120 while $0001
+      stays constant 0 (runs/clear_gap/punchout/s8_remeasure_verdict.json).
+      A false-positive RATE cannot be known from zero observations.
+    earns_it: Win a bout here, tape kept, and log $0001 across the KO/TKO.
+    behaviour: UNCHANGED
+    cheap_to_delete: >-
+      YES. This arm has never reported a success, so removing the win term
+      changes no banked run. It stays only because a behaviour change to a
+      live reward arm is not this check's call to make unilaterally.
+
+  - site: "nes_core/src/rewards.rs::RAM_BOSS_HEALTH::0x06C1"
+    disposition: LIVE_UNRETRACTED
+    asserts: >-
+      Mega Man 2 boss health. Drives the `boss_damage` shaping term and
+      latches `boss_killed` on a >0 -> 0 fall.
+    no_witness: >-
+      Mega Man has never reached a boss room here. NO BOSS DEFEAT HAS EVER
+      BEEN WITNESSED ON ANY GAME in this repository. The shaping term
+      therefore pays out on a byte whose behaviour outside a boss room has
+      never been characterised, which is the direction that matters: an
+      unverified meter that happens to pass through 0 pays a
+      `boss_killed` bonus for nothing.
+    earns_it: >-
+      Reach a Mega Man 2 boss room and log $06C1 across the fight.
+    behaviour: >-
+      UNCHANGED. Note `episode_success()` for this arm already returns a
+      hard `false` with its reasoning in code — the WIN claim is already
+      retracted. What is not retracted is the SHAPING claim.
+    cheap_to_delete: >-
+      YES, on the same grounds as RAM_MATCH_ID — no Mega Man boss room has
+      ever been reached, so no banked run depends on the term.
+
+  # ======================================================================
+  # Sites that are not breaches. Recorded so the exemption is visible
+  # rather than assumed, and so an unrelated line creeping into these
+  # files cannot inherit their standing silently.
+  # ======================================================================
+
+  - site: "docs/receipts/games/zelda_hp_ladder_probe.py::ram[0x66F]::0x066F"
+    disposition: MEASUREMENT_INSTRUMENT
+    asserts: >-
+      NOTHING. The probe prints $066F beside $0670 as a co-observable while
+      MEASURING $0670's half-heart ladder against the rendered HUD. Its own
+      docstring states the purity line it works under: "our own rendered
+      frame as the only ground truth (purity line: no RAM map, no
+      disassembly)".
+    no_witness: >-
+      Not applicable — the file makes no semantic claim to witness. An
+      instrument pointed at a quarantined byte is the mechanism that LIFTS
+      a quarantine; forbidding it would make the quarantine permanent.
+    earns_it: n/a
+    behaviour: UNCHANGED
+
+  - site: "scripts/tracing/nes_core_nmi_trace.py::ram[0x70]::0x0070"
+    disposition: FIDELITY_TRACE
+    asserts: >-
+      NOTHING. Prints `$84=%02X $70=%02X` in a per-frame NMI-entry trace
+      line alongside $06, $11 and $657, for CPU/PPU cycle-diff work against
+      a reference emulator.
+    no_witness: >-
+      Not applicable — no game semantics are asserted; the bytes are diff
+      material. Emulator fidelity and mapper work sit outside the purity
+      line by standing project rule.
+    earns_it: n/a
+    behaviour: UNCHANGED
+
+  - site: "scripts/tracing/nes_core_nmi_trace.py::ram[0x84]::0x0084"
+    disposition: FIDELITY_TRACE
+    asserts: NOTHING. Second byte of the same NMI-entry trace line.
+    no_witness: Not applicable — see the $70 row.
+    earns_it: n/a
+    behaviour: UNCHANGED

@@ -2,7 +2,7 @@
         build build-pgo build-pgo-apply selftest clean clean-rust train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
         ppu_layout_check ppu-batch-profile rust-check unsafe-inventory-check \
-        clear-lint mechanism-check
+        clear-lint mechanism-check purity-check
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -131,7 +131,24 @@ mechanism-check:
 	@.venv/bin/python scripts/check_mechanism_receipt.py $(RUN) \
 	    $(if $(REQUIRE),--require $(REQUIRE),)
 
-test: rust-check unsafe-inventory-check clear-lint
+# Refuse a RAM address this repo formally quarantined that is still live
+# in the layer that EXECUTES. A `quarantined_external_knowledge:` block in
+# configs/ retracts the documentation claim; it does not touch the Rust
+# constant or the Python literal that actually runs. This target closes
+# that gap tree-wide — configs, Rust, Python, tests — and fails on any live
+# use that is not disclosed in
+# docs/purity/engine_quarantine_disclosures.yaml. It lives under tests/
+# rather than scripts/ on purpose: `test_no_source_file_reads_the_
+# quarantine_key` forbids any PRODUCTION path from reading a quarantine
+# block, and a checker that enforces the quarantine must not become the
+# one thing that consumes it. Run it bare for the per-site listing,
+# ENFORCED and reported alike:
+#
+#   .venv/bin/python tests/purity_engine_scan.py
+purity-check:
+	@.venv/bin/python tests/purity_engine_scan.py --check
+
+test: rust-check unsafe-inventory-check clear-lint purity-check
 	. .venv/bin/activate && pytest tests/ -q --timeout=120
 
 test-fast:
