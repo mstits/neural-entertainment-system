@@ -350,3 +350,59 @@ def test_match_still_allows_a_true_retag_of_the_same_sequel(tg, tmp_path):
     canonical = "roms/Mega Man 2 (USA).nes"
     f = _touch(tmp_path / "megaman2.nes")
     assert tg.match_roms("megaman", canonical, [f]) == [f]
+
+
+# =====================================================================
+# The REVERSE direction of the franchise-collision check.
+#
+# The original fix compared `candidate_markers - canonical_markers`, a
+# one-sided set difference that is empty whenever the CANDIDATE carries no
+# marker. It blocked original <- sequel and left sequel <- original wide
+# open. Measured against the real canonical names in `configs/`, five
+# profiles bound the wrong dump, one of them (`lost_levels`) a game with a
+# witnessed clear — it silently resolved to `Super Mario Bros. (World).nes`.
+# =====================================================================
+
+def test_match_rejects_the_original_when_canonical_is_the_sequel(tg, tmp_path):
+    """The reverse of the case the first fix covered."""
+    f = _touch(tmp_path / "Super Mario Bros. (World).nes")
+    assert tg.match_roms(
+        "lost_levels", "Super Mario Bros. 2; The Lost Levels (Japan).nes",
+        [f]) == []
+
+
+def test_match_rejects_the_original_for_a_roman_numeral_sequel(tg, tmp_path):
+    f = _touch(tmp_path / "Castlevania (USA).nes")
+    assert tg.match_roms(
+        "castlevania_iii", "Castlevania III - Dracula's Curse (USA).nes",
+        [f]) == []
+
+
+def test_match_rejects_the_original_for_every_affected_profile(tg, tmp_path):
+    """All five real collisions, so fixing one does not hide the others."""
+    cases = [
+        ("ninja_gaiden_ii",
+         "Ninja Gaiden II - The Dark Sword of Chaos (USA).nes",
+         "Ninja Gaiden (USA).nes"),
+        ("double_dragon_ii", "Double Dragon II - The Revenge (USA).nes",
+         "Double Dragon (USA).nes"),
+        ("ducktales_2", "DuckTales 2 (USA).nes", "DuckTales (USA).nes"),
+    ]
+    for key, canonical, dump in cases:
+        f = _touch(tmp_path / dump)
+        assert tg.match_roms(key, canonical, [f]) == [], (
+            f"{key} bound {dump}, a different installment")
+
+
+def test_match_still_accepts_a_glued_installment_marker(tg, tmp_path):
+    """The reverse check must not overcorrect. `megaman2.nes` encodes the
+    installment glued to the name, and is a legitimate retag."""
+    f = _touch(tmp_path / "megaman2.nes")
+    assert tg.match_roms("megaman", "roms/Mega Man 2 (USA).nes", [f]) == [f]
+
+
+def test_match_still_accepts_the_right_installment(tg, tmp_path):
+    f = _touch(tmp_path / "Super Mario Bros. 2 (Japan).nes")
+    assert tg.match_roms(
+        "lost_levels", "Super Mario Bros. 2; The Lost Levels (Japan).nes",
+        [f]) == [f]

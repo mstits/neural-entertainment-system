@@ -52,6 +52,21 @@ import numpy as np
 # RAM addresses. Level is given; the board base is the widely documented
 # Nintendo-Tetris playfield origin. See module docstring for the
 # UNVERIFIED caveats on the empty-cell sentinel and the lines address.
+#
+# PROVENANCE (2026-08-27 engine purity pass). "Commonly cited
+# Nintendo-Tetris disassembly" in the docstring above is an EXTERNAL
+# source named in production code, so it is recorded here rather than
+# left implicit. What is ours: Tetris-B is on the witness ledger — a
+# pre-registered `byte_change` with a rendered LINES-000/SUCCESS frame —
+# so a line clear has actually been observed here. What is NOT ours: the
+# $0400 base and the 0xEF sentinel have never been lock-step confirmed
+# against this emulator's RAM, which the docstring already says twice and
+# which is an honest null, not a breach. The Rust twin of `_EMPTY_CELL`
+# is tagged `PURITY: UNWITNESSED-EXTERNAL` (registry row
+# `tetris_empty_cell`) where it is opt-in behind `board_shaping`; here it
+# is used unconditionally, so the caveat matters MORE in this file, not
+# less. Behaviour deliberately unchanged: re-pointing these addresses
+# would change what every Tetris tile policy observes.
 _RAM_BOARD_BASE = 0x0400  # 20×10 playfield, row-major, one byte per cell
 _RAM_LEVEL      = 0x0044  # current level number
 _RAM_LINES_LOW  = 0x0050  # lines-cleared low byte (UNVERIFIED address)

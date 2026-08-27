@@ -145,8 +145,14 @@ mechanism-check:
 # ENFORCED and reported alike:
 #
 #   .venv/bin/python tests/purity_engine_scan.py
+# The Rust half of the purity gate. `rust-check` above runs `cargo check`,
+# which compiles but runs NOTHING — so the five `win_witness_guard` tests
+# (the only ones that DRIVE each reward arm through the byte its ledger row
+# names, and prove the disarmed arms cannot report success) were not in any
+# default gate. They run in well under two seconds.
 purity-check:
 	@.venv/bin/python tests/purity_engine_scan.py --check
+	@cd nes_core && cargo test --lib win_witness_guard --quiet
 
 test: rust-check unsafe-inventory-check clear-lint purity-check
 	. .venv/bin/activate && pytest tests/ -q --timeout=120

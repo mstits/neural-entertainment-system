@@ -529,7 +529,8 @@ impl ZeldaReward {
     ///   rather than declaring a win — but it is the same class of claim.
     const RAM_DUNGEON_LEVEL: usize = 0x10;
 
-    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — the whole win chain.
+    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) [group: zelda_win_chain]
+    // — the whole win chain.
     // ASSERTS: the comment this replaces described the chain as
     //   "aldonunez disassembly + empirically verified against the captured
     //   zelda_*.state.bin on this emulator", and called $0672 "the ONE
@@ -570,7 +571,7 @@ impl ZeldaReward {
     // $0671 == 0xFF (all 8 fragments) only opens Level 9 — a MILESTONE, not
     // a win; the old episode_success() wrongly treated it as victory.
     const RAM_GANON_DEFEATED: usize = 0x0672;
-    const RAM_SONG: usize = 0x0609;
+    const RAM_SONG: usize = 0x0609; // [group: zelda_win_chain]
     const SONG_ENDING: u8 = 0x10;
     const SONG_GANON: u8 = 0x02;
     const RAM_KILL_COUNT: usize = 0x0627;
@@ -1908,7 +1909,8 @@ pub struct MegaManReward {
 }
 
 impl MegaManReward {
-    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — whole address block.
+    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) [group: megaman_block]
+    // — whole address block.
     // ASSERTS: nothing, in writing. Until this pass these four constants
     //   carried NO comment at all — the only provenance anywhere in the
     //   engine was an aside inside `episode_success()` asserting they "are
@@ -1931,9 +1933,11 @@ impl MegaManReward {
     //   names — damage taken, a screen-page change, a life lost, a boss
     //   meter draining. Forward/health/death shaping is unchanged.
 
-    /// See the block tag above. Feeds the forward-progress term only.
+    /// Covered by the block tag above [group: megaman_block].
+    /// Feeds the forward-progress term only.
     const RAM_PLAYER_X_PAGE: usize = 0x0460;
-    /// See the block tag above. Feeds health shaping AND the death
+    /// Covered by the block tag above [group: megaman_block].
+    /// Feeds health shaping AND the death
     /// branch (`health == 0` ends the episode), so a wrong identity here
     /// truncates episodes rather than being a silent no-op.
     const RAM_PLAYER_HEALTH: usize = 0x06C0;
@@ -1952,8 +1956,8 @@ impl MegaManReward {
     ///   on an unwitnessed identity. Gating it off is a behaviour change
     ///   and is deliberately NOT done here; it is named as a separate step.
     const RAM_BOSS_HEALTH: usize = 0x06C1;
-    /// See the block tag above. Feeds the death branch via
-    /// `lives < prev_lives`.
+    /// Covered by the block tag above [group: megaman_block].
+    /// Feeds the death branch via `lives < prev_lives`.
     const RAM_LIVES: usize = 0x00A8;
     pub fn new(
         forward_weight: f64,
@@ -2387,7 +2391,8 @@ impl MetroidReward {
     // is always noise). The addresses are verified REACHABLE on this
     // emulator; nothing more than that was verified.
     //
-    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — all four bytes and the
+    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) [group: metroid_win_chain]
+    // — all four bytes and the
     //   32-hit threshold.
     // ASSERTS: $0098 is Mother Brain's state machine (values 3..7 = the
     //   death chain, 8 = fight-init); $0099 is her hit counter and she dies
@@ -2412,10 +2417,10 @@ impl MetroidReward {
     //   `WIN_WITNESS_LEDGER`. Receipt for the null:
     //   `docs/receipts/purity/rust_unwitnessed_probe_2026-08-27.json`.
     const RAM_MB_STATE: usize = 0x0098; // Mother Brain state machine
-    const RAM_MB_HITS: usize = 0x0099; // MB hit counter; dies at 32 hits
-    const RAM_ENDING_MSG: usize = 0x007A; // "write ending message" flag
-    const RAM_CREDITS: usize = 0x007B; // credits-rolling flag (post-escape)
-    const MB_DEATH_HITS: u8 = 32;
+    const RAM_MB_HITS: usize = 0x0099; // [group: metroid_win_chain] hit counter
+    const RAM_ENDING_MSG: usize = 0x007A; // [group: metroid_win_chain] ending flag
+    const RAM_CREDITS: usize = 0x007B; // [group: metroid_win_chain] credits flag
+    const MB_DEATH_HITS: u8 = 32; // [group: metroid_win_chain] the asserted kill count
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -3552,7 +3557,8 @@ pub struct GradiusReward {
 impl GradiusReward {
     const RAM_LIVES: usize = 0x0020;
     const RAM_STATUS: usize = 0x0100;
-    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — the six power-up bytes.
+    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) [group: gradius_capsule_block]
+    // — the six power-up bytes.
     // ASSERTS: $0040 Speed, $0041 Missile, $0042 meter selector, $0044
     //   Weapon, $0045 Options, $0046 Shield.
     // NO WITNESS: these are the datacrystal RAM-map values, and the block's
@@ -3573,7 +3579,7 @@ impl GradiusReward {
     const RAM_SEL: usize = 0x0042;
     const RAM_WEAPON: usize = 0x0044;
     const RAM_OPTIONS: usize = 0x0045;
-    const RAM_SHIELD: usize = 0x0046;
+    const RAM_SHIELD: usize = 0x0046; // [group: gradius_capsule_block]
     /// $0100 == this value means the Vic Viper is dead/exploding.
     const DEAD_STATUS: u8 = 0x02;
 

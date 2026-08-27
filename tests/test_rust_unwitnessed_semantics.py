@@ -50,9 +50,24 @@ REPO = Path(__file__).resolve().parents[1]
 REWARDS_RS = REPO / "nes_core" / "src" / "rewards.rs"
 
 TAG = "PURITY: UNWITNESSED-EXTERNAL"
-#: How far above a declaration the tag may sit. Tags are written directly
-#: above the constant they describe; a few blocks tag a whole group.
-TAG_LOOKBACK_LINES = 60
+
+#: Pattern for a shared tag block's stable id, e.g. `[group: metroid_win_chain]`.
+#:
+#: A constant's tag is its OWN contiguous comment block — never a
+#: neighbour's. An earlier version of this module searched a fixed 60-line
+#: window above the declaration, which made the half-fix guard largely
+#: vacuous: deleting a constant's entire tag still passed, because the tag
+#: of a constant 25 lines above fell inside the window. 19 of 27 rows
+#: escaped that way, including every headline retraction (the Zelda,
+#: Metroid and Castlevania win chains).
+#:
+#: Four blocks legitimately tag a whole group of adjacent constants. Those
+#: are handled by NAMING the group rather than by proximity: the shared
+#: header carries `[group: X]` next to its tag, and every member of the
+#: group references `[group: X]` in its own comment. Deleting either half
+#: fails. That keeps group tagging expressible while leaving the scope of
+#: a tag explicit rather than positional.
+GROUP_RE = re.compile(r"\[group:\s*([a-z0-9_]+)\]")
 
 
 def _source() -> str:
@@ -170,38 +185,48 @@ UNWITNESSED_CONSTANTS = [
 ]
 
 #: Sentences retracted by the 2026-08-27 sweeps that must not reappear.
+#: Each row carries the number of times the sweep QUOTES the clause while
+#: withdrawing it; any other count is a restoration.
 #: The first two are the layer-drift cases: `configs/` retracted them and
 #: the Rust kept them verbatim until this pass.
 RETRACTED_CLAUSES = [
     ("kid_icarus_never_false_positive",
      "unambiguous stage clear (never a false positive)",
+     1,
      "configs/kid_icarus.yaml quotes and retracts this exact clause: a "
      "false-positive rate cannot be known from zero observed increments."),
     ("double_dragon_safe_under_trigger",
      "safe under-trigger",
+     2,
      "configs/double_dragon.yaml retracts the equivalent clause and notes "
      "the Rust default IS the wiring, not documentation."),
     ("double_dragon_never_false_positives",
      "never false-positives on",
+     1,
      "the same clause, in a SECOND place: Double Dragon carried it in the "
      "arm header AND again in compute()'s win branch, so retracting only "
      "the header would have been a half-fix."),
     ("kungfu_ram_verified_live",
      "RAM verified live on this ROM",
+     1,
      "$0058 measured 0 in 32/32 banked cells over ~719,500 steps; the "
      "claim and the measurement contradicted each other in one repo."),
     ("kungfu_dangling_config_path",
      "configs/kung-fu.yaml",
+     1,
      "that file does not exist — the profile is configs/kungfu.yaml."),
     ("punchout_never_false_positive_flag",
      "never-false-positive win flag",
+     2,
      "a false-positive rate asserted for an event with zero observations."),
     ("castlevania_proven_by_rom_code",
      "proven by the game's own code",
+     1,
      "the Tier-3 line: the question was resolved by reading the ROM's "
      "disassembly and quoting `cmp #$12` as proof."),
     ("megaman_map_is_correct",
      "the Mega Man 2 map, which is CORRECT",
+     1,
      "no boss room has been reached to check any of it."),
 ]
 
@@ -232,17 +257,67 @@ def _decl_line_index(decl: str) -> int:
     # one that has the tag above it; if none does, take the first so the
     # tag assertion reports a real miss rather than a lookup failure.
     for i in hits:
-        window = "\n".join(_lines()[max(0, i - TAG_LOOKBACK_LINES):i])
-        if TAG in window:
+        if TAG in _own_comment_block(i):
             return i
     return hits[0]
 
 
+def _own_comment_block(i: int, lines: list[str] | None = None) -> str:
+    """The comment block that belongs to the declaration on line `i`.
+
+    That is the unbroken run of comment lines directly above it, plus any
+    trailing comment on the declaration line itself. A blank line, a brace,
+    an attribute or another declaration ENDS the block — so a neighbouring
+    constant's tag can never stand in for a missing one.
+    """
+    lines = _lines() if lines is None else lines
+    j = i - 1
+    while j >= 0 and lines[j].strip().startswith("//"):
+        j -= 1
+    block = lines[j + 1:i]
+    _, _, trailing = lines[i].partition("//")
+    if trailing:
+        block = block + ["//" + trailing]
+    return "\n".join(block)
+
+
+def _group_blocks(lines: list[str] | None = None) -> dict[str, str]:
+    """Shared tag blocks, keyed by the id they declare.
+
+    A comment run qualifies as a group header only if it carries BOTH the
+    purity tag and a `[group: X]` id. A member's own comment mentioning the
+    id is therefore not enough to satisfy itself — the header has to exist.
+    """
+    lines = _lines() if lines is None else lines
+    out: dict[str, str] = {}
+    run: list[str] = []
+    for line in lines + [""]:
+        if line.strip().startswith("//"):
+            run.append(line)
+            continue
+        if run:
+            text = "\n".join(run)
+            if TAG in text:
+                for gid in GROUP_RE.findall(text):
+                    out[gid] = text
+            run = []
+    return out
+
+
 def _tag_block_for(decl: str) -> str | None:
+    """The text that must carry `decl`'s purity tag, and nothing else's."""
     i = _decl_line_index(decl)
     if i < 0:
         return None
-    return "\n".join(_lines()[max(0, i - TAG_LOOKBACK_LINES):i + 1])
+    own = _own_comment_block(i)
+    if TAG in own:
+        return own
+    groups = _group_blocks()
+    parts = [own]
+    for gid in GROUP_RE.findall(own):
+        if gid in groups:
+            parts.append(groups[gid])
+    return "\n".join(parts)
 
 
 # =========================================================================
@@ -317,7 +392,25 @@ def test_provenance_tag_is_complete(cid, game, decl, event):
 #: quote what it retracts is much less useful to a reader, so the lint asks
 #: where the clause sits, not merely whether the characters are present.
 RETRACTION_MARKERS = (TAG, "RETRACTED", "retracted", "RETRACTION")
-RETRACTION_LOOKBACK_LINES = 50
+
+
+def _comment_run_at(i: int, lines: list[str]) -> str | None:
+    """The contiguous comment run containing line `i`, or None if it is code."""
+    if not lines[i].strip().startswith("//"):
+        return None
+    a = i
+    while a > 0 and lines[a - 1].strip().startswith("//"):
+        a -= 1
+    b = i
+    while b + 1 < len(lines) and lines[b + 1].strip().startswith("//"):
+        b += 1
+    return "\n".join(lines[a:b + 1])
+
+
+def _clause_occurrences(clause: str, src: str | None = None) -> list[int]:
+    """1-indexed lines where `clause` appears at all."""
+    lines = (src if src is not None else _source()).splitlines()
+    return [i + 1 for i, line in enumerate(lines) if clause in line]
 
 
 def _unretracted_occurrences(clause: str, src: str | None = None) -> list[int]:
@@ -331,17 +424,16 @@ def _unretracted_occurrences(clause: str, src: str | None = None) -> list[int]:
     for i, line in enumerate(lines):
         if clause not in line:
             continue
-        start = max(0, i - RETRACTION_LOOKBACK_LINES)
-        window = "\n".join(lines[start:i + 1])
-        if not any(m in window for m in RETRACTION_MARKERS):
+        run = _comment_run_at(i, lines)
+        if run is None or not any(m in run for m in RETRACTION_MARKERS):
             bad.append(i + 1)
     return bad
 
 
 @pytest.mark.parametrize(
-    "cid,clause,why", RETRACTED_CLAUSES,
+    "cid,clause,quoted,why", RETRACTED_CLAUSES,
     ids=[c[0] for c in RETRACTED_CLAUSES])
-def test_retracted_clause_does_not_reappear(cid, clause, why):
+def test_retracted_clause_does_not_reappear(cid, clause, quoted, why):
     """A sentence withdrawn by a sweep must not survive as a LIVE claim.
 
     The structural finding of the 2026-08-27 engine pass: for Kid Icarus
@@ -358,6 +450,20 @@ def test_retracted_clause_does_not_reappear(cid, clause, why):
         f"the retracted clause {clause!r} stands as a live claim at "
         f"rewards.rs line(s) {bad}. {why}"
     )
+    # The census is the half with real teeth. Requiring only "a retraction
+    # marker somewhere nearby" was not enough: an arm header is one long
+    # comment run that CONTAINS its own retraction, so restoring the
+    # sentence a few lines below the marker read as a quotation of it and
+    # passed silently — for all eight clauses, in exactly the header each
+    # was withdrawn from. Pinning HOW MANY times the sweep quotes each
+    # clause makes any new occurrence fail wherever it lands.
+    found = _clause_occurrences(clause)
+    assert len(found) == quoted, (
+        f"the retracted clause {clause!r} now appears {len(found)} time(s) "
+        f"in rewards.rs at line(s) {found}; the 2026-08-27 sweep quotes it "
+        f"{quoted} time(s). A NEW occurrence is a restored claim even when "
+        f"it sits inside the retraction block that withdrew it. {why}"
+    )
 
 
 def test_every_retracted_clause_is_still_quoted_somewhere():
@@ -368,7 +474,7 @@ def test_every_retracted_clause_is_still_quoted_somewhere():
     diff history to find out. Each clause must survive as a quotation.
     """
     src = _source()
-    for cid, clause, _why in RETRACTED_CLAUSES:
+    for cid, clause, _quoted, _why in RETRACTED_CLAUSES:
         assert clause in src, (
             f"{cid}: {clause!r} was deleted outright rather than retracted "
             f"in place. Keep it quoted inside its provenance tag so the "
@@ -451,7 +557,7 @@ def test_retraction_lint_has_teeth():
     force silent deletions — losing the record of what was withdrawn — and
     a checker that accepted a bare restoration would guard nothing.
     """
-    for cid, clause, _why in RETRACTED_CLAUSES:
+    for cid, clause, _quoted, _why in RETRACTED_CLAUSES:
         live = "\n".join([
             "// an ordinary header with no disclosure whatsoever",
             f"//   {clause}",
@@ -505,8 +611,58 @@ nes_core = pytest.importorskip("nes_core")
 
 def _ledger() -> dict[str, dict[str, str]]:
     return {
-        rid: {"status": status, "predicate": pred, "basis": basis}
+        rid: {"status": status.lower(), "predicate": pred, "basis": basis}
         for rid, status, pred, basis in nes_core.win_witness_ledger()
+    }
+
+
+_ROW_RE = re.compile(
+    r"WinWitnessRow\s*\{\s*"
+    r'reward_id:\s*"(?P<rid>[a-z_]+)"\s*,\s*'
+    r"status:\s*WinWitness::(?P<status>\w+)\s*,\s*"
+    r'predicate:\s*(?P<pred>"(?:[^"\\]|\\.)*")\s*,\s*'
+    r'basis:\s*(?P<basis>"(?:[^"\\]|\\.)*")\s*,?\s*\}',
+    re.S,
+)
+
+
+def _rust_str(lit: str) -> str:
+    """Decode a Rust string literal, including `\\`-newline continuations.
+
+    A trailing backslash before a newline joins the lines and eats the
+    leading whitespace of the next one, which is how the ledger's prose is
+    wrapped in the source.
+    """
+    body = lit[1:-1]
+    out, i = [], 0
+    while i < len(body):
+        c = body[i]
+        if c != "\\":
+            out.append(c)
+            i += 1
+            continue
+        nxt = body[i + 1]
+        if nxt == "\n":
+            i += 2
+            while i < len(body) and body[i] in " \t":
+                i += 1
+            continue
+        out.append({"n": "\n", "t": "\t", "r": "\r"}.get(nxt, nxt))
+        i += 2
+    return "".join(out)
+
+
+def _declared_ledger() -> dict[str, dict[str, str]]:
+    """`WIN_WITNESS_LEDGER` as written in rewards.rs — the source of truth."""
+    return {
+        m.group("rid"): {
+            # the enum variant is `Witnessed`; the exported string is
+        # `witnessed` — compare on the name, not its casing.
+        "status": m.group("status").lower(),
+            "predicate": _rust_str(m.group("pred")),
+            "basis": _rust_str(m.group("basis")),
+        }
+        for m in _ROW_RE.finditer(_source())
     }
 
 
@@ -531,15 +687,32 @@ def test_compiled_ledger_matches_the_source_of_truth():
     measurement taken afterwards is void. Comparing the compiled table
     against the source turns that into a loud test failure.
     """
-    src = _source()
-    declared = set(re.findall(r'reward_id:\s*"([a-z_]+)"', src))
+    declared = _declared_ledger()
     assert declared, "could not parse WIN_WITNESS_LEDGER out of rewards.rs"
-    compiled = set(_ledger())
-    assert compiled == declared, (
+    compiled = _ledger()
+    assert set(compiled) == set(declared), (
         f"the compiled win-witness ledger disagrees with "
-        f"nes_core/src/rewards.rs (only in binary: {compiled - declared}; "
-        f"only in source: {declared - compiled}). The loaded .so is STALE: "
+        f"nes_core/src/rewards.rs (only in binary: "
+        f"{set(compiled) - set(declared)}; only in source: "
+        f"{set(declared) - set(compiled)}). The loaded .so is STALE: "
         f"run `make build` and copy the dylib into the venv .so."
+    )
+    # Comparing only the ID SET was the original form of this check, and it
+    # was much weaker than its own docstring: any edit that does not ADD or
+    # REMOVE an arm — a flipped status, a re-pointed predicate, a rewritten
+    # basis — left it green against a stale binary. Those are precisely the
+    # edits this sweep makes, so all three fields are compared.
+    drift = [
+        (rid, field, declared[rid][field], compiled[rid][field])
+        for rid in sorted(declared)
+        for field in ("status", "predicate", "basis")
+        if declared[rid][field] != compiled[rid][field]
+    ]
+    assert not drift, (
+        f"the compiled win-witness ledger has drifted from the source in "
+        f"{len(drift)} field(s): {drift[:3]}. The loaded .so is STALE: run "
+        f"`make build` and copy the dylib into the venv .so, or every "
+        f"measurement taken against it is void."
     )
 
 

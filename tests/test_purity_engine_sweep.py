@@ -363,15 +363,39 @@ def test_moving_the_constant_to_a_helper_module_does_not_evade_the_check(
     assert hits[0].enforced
 
 
-def test_the_unowned_branch_does_not_fire_on_a_non_ram_constant(
+def test_the_unowned_branch_does_not_fire_on_a_quantity_constant(
         synth: Path) -> None:
-    """Scoping in the unowned branch rests entirely on the `RAM_` prefix.
-    A size or a bank constant carrying the same value must not flag —
+    """A size or a bank constant carrying the same value must not flag —
     `nes_core/src/memory.rs` has `RAM_SIZE: usize = 0x0800` and the
     mappers are full of `PRG_BANK: usize = 0x2000`."""
     helper = synth / "nes_core" / "src" / "helper.rs"
     helper.write_text("const SCRATCH_LEN: usize = 0x0077;\n"
                       "const PRG_BANK: usize = 0x0077;\n")
+    assert scan_quarantined_uses(repo=synth) == []
+
+
+def test_the_unowned_branch_fires_on_a_renamed_semantic_constant(
+        synth: Path) -> None:
+    """Scoping used to rest on the `RAM_` PREFIX, which meant the check
+    detected this repo's naming convention rather than the address:
+    dropping the prefix walked a quarantined byte straight through the
+    gate. Scoping is now by MODULE (hardware fidelity is exempt) plus a
+    quantity/bitmask vocabulary, so a semantic alias is caught."""
+    helper = synth / "nes_core" / "src" / "helper.rs"
+    helper.write_text("pub const GANON_DEFEATED: usize = 0x0077;\n")
+    hits = scan_quarantined_uses(repo=synth)
+    assert [(h.symbol, h.kind) for h in hits] == [
+        ("GANON_DEFEATED", "rust-unowned")]
+    assert hits[0].enforced
+
+
+def test_hardware_fidelity_modules_are_exempt_from_the_unowned_branch(
+        synth: Path) -> None:
+    """Emulator fidelity sits outside the purity line by standing rule,
+    and mapper/PPU/APU code collides numerically with RAM addresses
+    constantly. Scoping by module is what allowed the prefix to go."""
+    mapper = synth / "nes_core" / "src" / "mapper004.rs"
+    mapper.write_text("const CHR_WINDOW: usize = 0x0077;\n")
     assert scan_quarantined_uses(repo=synth) == []
 
 
@@ -456,7 +480,14 @@ def real_tree(tmp_path: Path) -> Path:
     shutil.copytree(REPO / "configs", dst / "configs")
     shutil.copytree(REPO / "nes_core" / "src", dst / "nes_core" / "src")
     for rel in ("docs/receipts/games/zelda_hp_ladder_probe.py",
-                "scripts/tracing/nes_core_nmi_trace.py"):
+                "scripts/tracing/nes_core_nmi_trace.py",
+                # Revealed 2026-08-27 when the Python patterns stopped
+                # requiring a `RAM_*`-shaped identifier. They have to be in
+                # the reconstruction or their disclosure rows read STALE
+                # here while being live in the real tree.
+                "src/gui/play_window.py",
+                "runs/clear_recensus/contra/probe_stage_bytes.py",
+                "runs/clear_recensus/contra/probe_live_stage_bytes.py"):
         p = dst / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / rel, p)

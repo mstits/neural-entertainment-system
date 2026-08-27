@@ -208,7 +208,7 @@ ENFORCED_KINDS = frozenset({"rust-const", "rust-index", "python",
 #: GUARD, not a claim — it is the mechanism holding the quarantine shut.
 #: Failing on those would make the check fight its own guards, and a check
 #: that fights its own guards gets deleted.
-REPORTED_KINDS = frozenset({"rust-test", "python-test"})
+REPORTED_KINDS = frozenset({"rust-test", "python-test", "python-literal"})
 
 
 @dataclass(frozen=True)
@@ -271,6 +271,24 @@ def dedupe(uses: list[Use]) -> list[Site]:
     return sorted(by_id.values(), key=lambda s: (s.file, s.lines[0]))
 
 
+#: Emulator-hardware modules. CPU/PPU/APU/mapper/cartridge code is full of
+#: constants that collide numerically with RAM addresses (`PRG_BANK:
+#: usize = 0x2000`), and hardware fidelity sits outside the purity line by
+#: standing project rule. Restricting the unowned-Rust branch by MODULE
+#: rather than by identifier prefix is what lets the prefix requirement go:
+#: `pub const GANON_DEFEATED: usize = 0x0672;` in a helper module used to
+#: pass simply because it was not called `RAM_*`.
+_FIDELITY_MODULES = (
+    "mapper", "ppu", "apu", "cpu", "cartridge", "bus", "controller",
+    "nes.rs", "video_sink", "audio",
+)
+
+
+def _is_fidelity_module(rel: str) -> bool:
+    name = Path(rel).name
+    return any(tok in name for tok in _FIDELITY_MODULES)
+
+
 def _scan_unowned_rust(lines: list[str], rel: str,
                        qs: list[Quarantine]) -> list[Use]:
     """`RAM_*: usize = 0x..` in a file with no reward dispatch table."""
@@ -280,7 +298,11 @@ def _scan_unowned_rust(lines: list[str], rel: str,
         if line.lstrip().startswith("//"):
             continue
         m = _RUST_ADDR_CONST.match(line)
-        if not m or not m.group(1).startswith("RAM_"):
+        if not m:
+            continue
+        sym = m.group(1)
+        if (_is_fidelity_module(rel) or _BITMASK_NAME.search(sym)
+                or _QUANTITY_NAME.search(sym)):
             continue
         value = int(m.group(2), 0)
         for q in qs:
@@ -369,12 +391,56 @@ def scan_rust(qs: list[Quarantine], rust_dir: Path | None = None,
     return uses
 
 
-#: `RAM_X = 0x0672` / `ram[0x0672]` in Python. Same shape discipline: a
-#: bare hex literal anywhere is NOT a hit, or `0x0001` in an APU bitmask
-#: or a controller-bit comment would flag.
+#: `ANYTHING = 0x0672` / `anything[0x0672]` / `[0x0672, ...]` in Python.
+#:
+#: These deliberately do NOT require the identifier to be named `RAM_*` or
+#: `*_addr`. An earlier version did, which meant the check detected this
+#: repo's NAMING CONVENTION rather than the address: renaming
+#: `RAM_GANON_DEFEATED` to `GANON_DEFEATED`, or reading through a variable
+#: called `r` instead of `ram`, walked straight through `make purity-check`
+#: while still reading the quarantined byte live. Three real in-tree sites
+#: were invisible for exactly that reason, including this sweep's own
+#: measurement probe.
+#:
+#: The shape discipline that keeps false positives down is elsewhere: a
+#: bare hex literal in arithmetic is still NOT a hit (so `& 0x0001` in
+#: `apu.rs` and a controller-bit comment do not flag), and the file must
+#: OWN the ROM (see `_py_owner_tokens`). Measured over the whole tree:
+#: flagging every literal would report 354 sites across 50 files; these
+#: three shapes report 84, of which the enforced subset is small enough to
+#: disclose one row at a time.
 _PY_ADDR_ASSIGN = re.compile(
-    r"^\s*(\w*(?:RAM|ADDR|_addr|_ram)\w*)\s*(?::\s*int\s*)?=\s*(0[xX][0-9A-Fa-f]+)\s*$")
-_PY_RAM_INDEX = re.compile(r"\bram\w*\s*\[\s*(0[xX][0-9A-Fa-f]+)\s*\]")
+    r"^\s*([A-Za-z_]\w*)\s*(?::\s*[^=]+)?=\s*(0[xX][0-9A-Fa-f]+)\s*$")
+_PY_RAM_INDEX = re.compile(r"\b[A-Za-z_]\w*\s*\[\s*(0[xX][0-9A-Fa-f]+)\s*\]")
+#: Identifiers that name a BIT, not an address. Broadening the assignment
+#: pattern to any identifier reintroduced exactly one false positive:
+#: `src/diagnostics/worker_debug.py`'s `_BTN_UP = 0x10`, a controller
+#: bitmask, in a file that mentions "zelda" only in a comment explaining a
+#: past defect. A checker that reports a button bit as a purity breach
+#: trains readers to ignore it, so the bitmask vocabulary is excluded by
+#: name. This is a NEGATIVE allowlist and it is pinned by its own test:
+#: `test_bitmask_names_are_the_only_suppression` fails if it ever
+#: suppresses a site that is not a bit constant.
+_BITMASK_NAME = re.compile(
+    r"(?i)(^|_)(btn|button|mask|bit|bits|flag|flags)(_|$)")
+
+#: Names that describe a SIZE, a BANK or an OFFSET rather than a location.
+#: `nes_core/src/memory.rs` has `RAM_SIZE: usize = 0x0800` and mapper code
+#: is full of `PRG_BANK: usize = 0x2000`; those collide numerically with
+#: RAM addresses without ever reading one.
+_QUANTITY_NAME = re.compile(
+    r"(?i)(^|_)(len|size|count|bank|offset|base|stride|cap|capacity|"
+    r"width|height|stride|step)(_|$)")
+
+#: An address sitting in a list/tuple/set literal or as a dict VALUE —
+#: `WATCH = [0x11, 0x70, 0x84]`, `{"ganon": 0x0672}`. Both forms read the
+#: byte just as live as a named constant does.
+#: The `[` case requires that no identifier precedes it, or every
+#: `ram[0x0077]` subscript would be counted twice — once as a binding read
+#: and once as a literal.
+_PY_ADDR_ELEMENT = re.compile(
+    r"(?:(?<![\w\)\]])\[|[\(\{,:])\s*(0[xX][0-9A-Fa-f]+)\s*"
+    r"(?=[,\]\)\}]|$)")
 
 
 def _py_owner_tokens(q: Quarantine) -> set[str]:
@@ -407,22 +473,32 @@ def scan_python(qs: list[Quarantine], repo: Path | None = None) -> list[Use]:
         for q in qs:
             if not any(t in low for t in _py_owner_tokens(q)):
                 continue
-            for n, line in enumerate(lines):
-                if line.lstrip().startswith("#"):
+            for n, raw in enumerate(lines):
+                if raw.lstrip().startswith("#"):
                     continue
-                hits: list[tuple[str, int]] = []
+                # A trailing comment is prose, not a read.
+                line = raw.split("#")[0]
+                hits: list[tuple[str, int, bool]] = []
                 m = _PY_ADDR_ASSIGN.match(line)
-                if m:
-                    hits.append((m.group(1), int(m.group(2), 16)))
+                if m and not _BITMASK_NAME.search(m.group(1)):
+                    hits.append((m.group(1), int(m.group(2), 16), True))
                 for mi in _PY_RAM_INDEX.finditer(line):
-                    hits.append((mi.group(0), int(mi.group(1), 16)))
-                for symbol, value in hits:
+                    hits.append((mi.group(0).strip(), int(mi.group(1), 16),
+                                 True))
+                for mi in _PY_ADDR_ELEMENT.finditer(line):
+                    hits.append((f"literal {mi.group(1)}",
+                                 int(mi.group(1), 16), False))
+                is_test = (rel.startswith("tests/")
+                           or Path(rel).name.startswith("test_"))
+                for symbol, value, binds in hits:
                     if value != q.addr:
                         continue
-                    kind = ("python-test"
-                            if rel.startswith("tests/")
-                            or Path(rel).name.startswith("test_")
-                            else "python")
+                    if is_test:
+                        kind = "python-test"
+                    elif binds:
+                        kind = "python"
+                    else:
+                        kind = "python-literal"
                     uses.append(Use(rel, n + 1, symbol, value, q.reward_id,
                                     f"{q.config}:{q.key}", kind))
     return uses

@@ -1175,6 +1175,111 @@ quarantined 0x0070/0x0084 pair under `"zelda" in <name>`, and
 the eight display-name dispatch sites that remain in `src/` and `scripts/`
 — it may lose entries, never gain one, and a stale entry is a hard failure.
 
+## ENGINE PURITY 2026-08-27 — the layer the config quarantine could not reach
+
+Full write-up: `docs/research/ENGINE_PURITY_2026-08-27.md`.
+
+**The config quarantine retracted DOCUMENTATION claims; the executing layer
+kept its own copies.** The 994-entry `configs/` sweep named this limit in
+its own commit message ("Quarantining the YAML retracts the DOCUMENTATION
+claim, NOT the Rust constant"). It was not a footnote — it was the whole
+exposure. For **Kid Icarus (`$0130`)** and **Double Dragon (`$0030`)** the
+YAML retracted a specific sentence and *that exact sentence survived
+verbatim in `nes_core/src/rewards.rs`*. The documentation moved, the wiring
+did not, and the two layers then disagreed in writing with the wrong one
+running.
+
+**Counts.** 134 RAM-address constants swept across `nes_core/src/` (109
+`const RAM_*` in `rewards.rs`) plus 23 non-address constants carrying
+semantics. 21 sweep findings ruled SEMANTIC-and-UNWITNESSED, covering **27
+individual constants across 11 games — all 27 now annotated** with a
+provenance tag naming what they ASSERT, that there is NO WITNESS, and what
+would EARN IT. **Reward arithmetic changed: 0.** 12 Python sites corrected.
+24 enforced quarantined-address sites now disclosed.
+
+**NO BANKED CLAIM IS RETRACTED, and none was at risk.** Every one of the 27
+is *unfired*: not one sits under a quoted number, all belong to games with
+no witnessed clear, and no boss defeat has ever been witnessed on any game
+here. That is exactly why this was cheap now and expensive after one fired.
+The witnessed side was left alone and is unchanged: **SMB's block is
+byte-identical** (no existing executable line in `rewards.rs` was removed or
+modified anywhere in the file) and is now positively marked `PURITY:
+WITNESSED`; likewise Castlevania `$0028`, Bubble Bobble `$0401`,
+Excitebike's section chain, Tetris's line bytes and Punch-Out `$0398`.
+
+**The engine came back mostly clean, and that is a good outcome, not a
+failed sweep** — a third pass finding little unfired residue is evidence the
+first two worked. Several blocks are already the right discipline and were
+deliberately not touched: Contra's `clear_screen` 255 sentinel, Gradius's
+"NO byte is trustworthy as the stage index yet", Ghosts' disabled
+`stage_addr`, Bubble Bobble's `enemy_count_addr`, Kung Fu's opt-in `$04A5`.
+An assertion that honestly records a null is a measurement, not a breach.
+
+**Sharpest breach:** `DRACULA_STAGE = 0x12` justified itself by quoting the
+ROM's own disassembled instruction (`cmp #$12`) — a question resolved by
+knowing the game, the Tier-3 line exactly. Proof withdrawn, value kept
+(removing it is behaviour), recorded as believed-not-proven.
+
+**Measured, not argued — including against myself.** Punch-Out's null has a
+built-in control: `$0001`/`$000A` held 0 across 15,000 steps while `$0398`
+took 40 distinct values over the SAME window, so the bout was genuinely
+being fought. Zelda's feared spurious 30,000-point payout is **REFUTED**
+for this start state (`$0609` held 1 across 600 NOOP + 60,000 random steps;
+0 frames == `0x10`, 0 frames with bit `0x02`), and the refutation is
+reported rather than the suspicion. One inherited number did not survive
+re-measurement: Castlevania `$0071` was described as "5 values in 5..14,
+rising only"; it is 11 values across 0..10 — it falls too, and the
+annotation declines to assert "rising only".
+
+**Now mechanically checked**, all mutation-tested by actual revert: a
+27-row provenance registry pinning each constant *at its recorded value*;
+a retraction lint pinning the 8 withdrawn sentences dead; `WIN_WITNESS_LEDGER`
+(17 rows, one per reward arm) with five Rust tests that DRIVE each arm
+through the byte its row names; and a tree-wide scanner wired into `make
+test` that derives addresses from the quarantine blocks and ownership from
+the source's own dispatch table, so neither can drift from what it guards.
+Full revert → 63 failures; **all 27 single-tag deletions caught**; SMB
+over-withdrawal → 1 and 4.
+
+**Three guards shipped earlier the same day were themselves defective and
+were fixed before landing.** (a) The half-fix guard was largely vacuous: a
+60-line lookback let a *neighbouring* constant's tag stand in, so **19 of 24
+rows survived deletion of their own provenance block** — including the
+Zelda, Metroid and Castlevania win chains. Tag scope is now the constant's
+own comment block, with shared blocks referenced by name; **27/27 caught,
+up from 5/24.** (b) The stale-`.so` guard compared only the *set* of reward
+ids, so a flipped status or re-pointed predicate passed against a stale
+binary — precisely the edits this sweep makes; it now compares all three
+fields on all 17 rows. (The binary had not in fact drifted; the guard could
+not have told.) (c) The retraction lint's 50-line marker lookback let all
+8 clauses be restored silently *in the very header each was withdrawn
+from*; it is now an exact quotation census.
+
+**One behaviour change landed, outside the engine, and it is a correctness
+bug rather than a purity retraction.** The ROM resolver's franchise-collision
+check compared `candidate_markers - canonical_markers`, a one-sided set
+difference that is empty whenever the candidate carries no installment
+marker. Measured against the real canonical names in `configs/`, **five
+profiles bound the wrong dump** — `lost_levels` → `Super Mario Bros.
+(World).nes`, plus Castlevania III, DuckTales 2, Ninja Gaiden II and Double
+Dragon II each binding the original. **`lost_levels` is on the witness
+ledger.** The comparison is now symmetric, and does not overcorrect: a
+glued marker (`megaman2.nes`) still matches. No banked Lost Levels result
+is retracted — its receipts are replay-verified against the correct dump —
+but the resolver could have bound the wrong one on a fresh run.
+
+**The reusable finding, which generalises past this repo: a quarantine that
+covers only the declarative layer is incomplete by construction.** Wherever
+a claim is written in one place and executed in another — config vs code,
+spec vs implementation, policy vs enforcement — retracting it in the
+declarative layer feels like retracting it, produces a clean diff, and
+leaves behaviour untouched. Two corollaries: a partial retraction is *not*
+a partial fix, it is a new defect class (before the sweep both layers were
+consistently wrong and either one could be read; after it they disagreed
+and the authoritative-looking one was wrong); and the enforcement must be
+**derived** from the declaration, never listed beside it, or the list is the
+same defect one level up.
+
 ## LEDGER AUDIT 2026-08-26 — the whole file, read against one question
 
 Full write-up: `docs/research/LEDGER_AUDIT_2026-08-26.md`. Summary

@@ -55,7 +55,16 @@ checked_by: tests/test_purity_engine_sweep.py
 
 # Ratchet. LOWER this when a site is removed. Raising it is the failure
 # mode this whole file exists to prevent, and the test says so.
-max_enforced_sites: 17
+# RAISED 17 -> 24 on 2026-08-27, and the reason matters: NOT because new
+# breaches landed, but because the DETECTOR got stronger. The scanner used
+# to require an identifier named `RAM_*` / `*_addr`, or a subscript on a
+# variable literally called `ram` — so it detected this repo's NAMING
+# CONVENTION rather than the address. `GANON_DEFEATED = 0x0672`, or a read
+# through a variable called `r`, walked straight through `make
+# purity-check` while reading the quarantined byte live. Seven sites were
+# invisible for exactly that reason and are disclosed below; every one
+# pre-dates this edit. The cap moves down from 24 as they are removed.
+max_enforced_sites: 24
 
 # --------------------------------------------------------------------------
 # Dispositions — what KIND of admission each row is making.
@@ -336,5 +345,83 @@ sites:
     disposition: FIDELITY_TRACE
     asserts: NOTHING. Second byte of the same NMI-entry trace line.
     no_witness: Not applicable — see the $70 row.
+    earns_it: n/a
+    behaviour: UNCHANGED
+
+  # ---- Revealed 2026-08-27 by dropping the identifier-name requirement --
+  # These are not new code. They are sites the previous detector could not
+  # see because it keyed on how a constant was NAMED.
+
+  - site: "src/gui/play_window.py::r[0x70]::0x0070"
+    disposition: FIDELITY_TRACE
+    asserts: >-
+      NOTHING. A debug RAM trace line prints `$84=%02X $70=%02X` beside
+      $10, $11, $86 and $CE when NES_DEBUG tracing is enabled, so a human
+      can watch bytes move while driving the GUI by hand. No label, no
+      threshold, no reward reads it.
+    no_witness: >-
+      Not applicable — the line asserts no semantics. This is the site that
+      motivated the detector change: it reads through a variable called
+      `r`, and the file names no game, so BOTH halves of the old
+      `has_addr AND has_token` guard missed it. It was reachable
+      production code carrying two quarantined Zelda addresses with
+      nothing in the tree able to see it.
+    earns_it: n/a
+    behaviour: UNCHANGED
+
+  - site: "src/gui/play_window.py::r[0x84]::0x0084"
+    disposition: FIDELITY_TRACE
+    asserts: NOTHING. Second byte of the same debug trace line.
+    no_witness: Not applicable — see the $70 row.
+    earns_it: n/a
+    behaviour: UNCHANGED
+
+  - site: "src/gui/play_window.py::r[0x10]::0x0010"
+    disposition: FIDELITY_TRACE
+    asserts: >-
+      NOTHING. Third byte of the same trace line, printed as `$10=%02X`.
+    no_witness: >-
+      Not applicable. $0010 is also `q_dungeon_level`, whose asserted
+      meaning ("9 == Level 9") is unwitnessed, but nothing here reads that
+      meaning — the byte is printed as hex for a human.
+    earns_it: n/a
+    behaviour: UNCHANGED
+
+  - site: "runs/clear_recensus/contra/probe_stage_bytes.py::CURRENT_LEVEL::0x0030"
+    disposition: MEASUREMENT_INSTRUMENT
+    asserts: >-
+      NOTHING of its own. The probe names the byte after the claim it is
+      TESTING and says so in its own comment: the address comes from
+      configs/contra.yaml's ram_mapping, and the probe exists to check
+      "their actual behaviour across the banked corpus (rather than
+      trusting the comment)".
+    no_witness: >-
+      Not applicable — measuring a byte is how a quarantine is lifted or
+      confirmed. Contra has no witnessed clear and its boss is explicitly
+      falsified (81,244 alive steps, 0/15 sustain), which is the result
+      probes like this one produced.
+    earns_it: n/a
+    behaviour: UNCHANGED
+
+  - site: "runs/clear_recensus/contra/probe_stage_bytes.py::BOSS_DEFEATED::0x003B"
+    disposition: MEASUREMENT_INSTRUMENT
+    asserts: NOTHING. Sibling of the $0030 row in the same probe.
+    no_witness: Not applicable — see the $0030 row.
+    earns_it: n/a
+    behaviour: UNCHANGED
+
+  - site: "runs/clear_recensus/contra/probe_live_stage_bytes.py::CURRENT_LEVEL::0x0030"
+    disposition: MEASUREMENT_INSTRUMENT
+    asserts: >-
+      NOTHING. The live-stepping variant of the probe above, same two
+      addresses, same purpose.
+    no_witness: Not applicable — see the banked-corpus probe's rows.
+    earns_it: n/a
+    behaviour: UNCHANGED
+
+  - site: "runs/clear_recensus/contra/probe_live_stage_bytes.py::BOSS_DEFEATED::0x003B"
+    disposition: MEASUREMENT_INSTRUMENT
+    asserts: NOTHING. Sibling of the $0030 row in the same probe.
+    no_witness: Not applicable — see the $0030 row.
     earns_it: n/a
     behaviour: UNCHANGED

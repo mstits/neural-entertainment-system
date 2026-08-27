@@ -15,20 +15,41 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[inert-treatment]` armed, wired, never fired | **4** | **SHIPPED 2026-08-27** — `scripts/check_mechanism_receipt.py` returns VOID for any armed mechanism whose counter never moves |
 | `[weak-eval]` protocol too weak to detect its own failure | **6** | partly — enforce min-n at the gate |
 | `[unverified-claim]` trusted a number without re-deriving it | **9** | no — judgement |
-| `[purity-leak]` external/unwitnessed semantics in a live map | 1 | yes — `tests/test_purity_quarantine_sweep.py` names each retraction |
+| `[purity-leak]` external/unwitnessed semantics in a live map | **3** | **SHIPPED 2026-08-27** — `make purity-check` (derived scanner + 27-row provenance registry + `WIN_WITNESS_LEDGER`) |
 
 Nothing has been promoted; the enforced ruleset is untouched. `[vacuous-gate]`,
 `[stale-artifact]`, `[weak-eval]` and `[unverified-claim]` are all at or past the
 threshold as of 2026-08-27 and are awaiting a call.
 
-`[purity-leak]` is **new at 1 entry** and nowhere near graduation — recorded here
-so the count starts, not because it is close. It is worth watching for a reason
-the raw number hides: its one entry covers 19 annotations across 8 profiles, so a
-second entry would mean the *class* recurred after a tree-wide sweep had already
-been run against it. Note also that the Zelda quarantine (2026-08-25) and the
-observatory exclusion fix (2026-08-26) are logged under `[vacuous-gate]` and
-elsewhere rather than under this tag, so the true history of this root cause is
-longer than the counter shows; the counter is deliberately not backfilled.
+`[purity-leak]` stands at **3 entries** and the counter is now backfilled, which
+the 2026-08-27 note above declined to do. The three: the **Zelda quarantine**
+(2026-08-25, two independent paths — the reward struct and the name-substring
+dispatch sites), the **994-entry config sweep** (2026-08-27, 7 quarantined), and
+the **engine sweep** (2026-08-27, 27 constants annotated). Backfilling is the
+honest call because the third entry proves the class is one root cause and not
+three: the config sweep's own scope note ("quarantining the YAML retracts the
+DOCUMENTATION claim, not the Rust constant") predicted the engine entry in
+writing, and the engine entry then found the *same* retracted sentences alive one
+layer down.
+
+**Threshold NOT reached — 3 against 4–5 — and the normal reason to wait does not
+apply here, so this row is a deliberate exception worth stating.** The usual
+blocker is that no deterministic enforcement exists; for this root cause it now
+does, and it is already wired into `make test`. So the call is:
+
+> **Do not promote a written rule. The enforcement IS the mechanical check.**
+
+Seven vacuous gates have shipped in this project, which is direct evidence that a
+written invariant does not hold *here* — and this very root cause supplies the
+sharpest proof. On 2026-08-27 three guards written the same morning to enforce
+this class were themselves defective when independently reverted: a 60-line
+proximity window let **19 of 24** constants survive deletion of their own
+provenance tag; a stale-binary guard compared only reward-id *sets*, so the exact
+edits it existed to catch passed; and a 50-line lookback let all **8** retracted
+sentences be restored silently in the very headers they were withdrawn from. Each
+was written in good faith by someone who had just read the rule. A fourth entry
+would not make a written rule more likely to hold; it would only mean the class
+recurred again while an enforceable check sat available.
 
 `[inert-treatment]` is the first root cause whose enforcement actually exists.
 `check_mechanism_receipt.py` reads a run's own artifacts and returns **VOID** (not
@@ -46,6 +67,48 @@ cannot reach under `trainer_mode: vanilla_ppo` — is derived from the AST in
 returning an empty set when it cannot find the dispatch it parses.
 
 ---
+
+## 2026-08-27 — [purity-leak] The quarantine covered the declarative layer only
+- **What happened:** The 994-entry `configs/` sweep retracted 7 entries and stated
+  its own scope limit in its commit message: "Quarantining the YAML retracts the
+  DOCUMENTATION claim, NOT the Rust constant." A third sweep took that sentence as
+  the specification and swept the executing layer: **134 RAM-address constants
+  across `nes_core/src/` plus 23 non-address constants carrying semantics.** 21
+  findings were ruled SEMANTIC-and-UNWITNESSED, covering **27 constants across 11
+  games**, all now annotated. Reward arithmetic changed: **0**. For **Kid Icarus
+  (`$0130`)** and **Double Dragon (`$0030`)** the sentence the YAML had retracted
+  was found alive *verbatim* in `rewards.rs`.
+- **Root cause:** A claim written in one layer and executed in another. Retracting
+  it in the declarative layer feels like retracting it, produces a clean diff, and
+  leaves behaviour untouched — and the layer that got corrected is also the layer
+  everyone reads, so the failure is silent by construction.
+- **The retraction made it worse before it made it better,** which is the part
+  worth carrying forward. Before the config sweep both layers carried the same
+  wrong claim: consistent, and discoverable by reading either one. After it they
+  disagreed, and the authoritative-looking half was the wrong one. **A partial
+  retraction is not a partial fix; it is a new defect class.**
+- **Consequence: none banked.** All 27 are unfired — not one sits under a quoted
+  number, all belong to games with no witnessed clear, and no boss defeat has ever
+  been witnessed on any game here. SMB is byte-identical (no existing executable
+  line in `rewards.rs` was removed or modified) and is now positively marked
+  `PURITY: WITNESSED`. That the engine came back mostly clean is evidence the
+  first two sweeps worked, not a wasted pass.
+- **Second-order finding, and the reason this entry closes the class:** the guards
+  written that morning to enforce the retraction were themselves vacuous when
+  reverted — 19 of 24 constants survived deletion of their own tag because the
+  check searched a 60-line window and accepted a *neighbour's* tag. Two more had
+  the same shape (a 50-line lookback; a naming convention standing in for the
+  address). **A guard that locates its evidence by proximity can be satisfied by a
+  neighbour.** All three now scope to the artifact they guard, and all 27
+  single-tag deletions are caught.
+- **Rule — mechanical, not written:** `make purity-check` derives quarantined
+  addresses from the `quarantined_external_knowledge:` blocks themselves and
+  ownership from the source's own dispatch table, so neither can drift from what
+  it guards; `WIN_WITNESS_LEDGER` classifies all 17 reward arms and five Rust
+  tests drive each one through the byte its row names. The written form of this
+  rule ("retract in every layer, not just the declarative one") is exactly the
+  kind of instruction that has failed seven times here. Enforce it or do not
+  claim it.
 
 ## 2026-08-27 — [purity-leak] Unwitnessed events annotated as measured fact
 - **What happened:** A tree-wide sweep of all 101 configs carrying a live

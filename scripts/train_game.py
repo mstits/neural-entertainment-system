@@ -192,6 +192,24 @@ def _installment_markers(name: str) -> set[str]:
     return {w for w in words if _SEQUEL_MARKER_RE.match(w)}
 
 
+def _missing_installment(stem: str, canonical_markers: set[str]) -> bool:
+    """True if the canonical name names an installment the candidate lacks.
+
+    This is the reverse direction of the sequel check. A marker counts as
+    present if it is a standalone word (`Mega Man 2`) or glued to the end
+    of one (`megaman2.nes`, a legitimate retag), so the rule rejects a
+    dump that does not encode the installment at all without rejecting a
+    renamed dump of the right one.
+    """
+    words = re.findall(r"[a-z0-9]+", stem.lower())
+    for marker in canonical_markers:
+        if not any(w == marker or (w.endswith(marker) and w != marker
+                                   and w[:-len(marker)].isalpha())
+                   for w in words):
+            return True
+    return False
+
+
 def match_roms(
     game_key: str, canonical_name: str, available: list[Path],
 ) -> list[Path]:
@@ -201,10 +219,11 @@ def match_roms(
       1. exact basename == the canonical filename (case-insensitive), then
       2. the game key or a significant word of the canonical name appears
          as a substring of the file's stem (case-insensitive) — UNLESS the
-         candidate carries an installment marker (II, III, 2, 3, ...) the
-         canonical name doesn't share, which makes it a different game in
-         the same franchise, never a fuzzy match, no matter how much token
-         overlap its title has with the canonical one.
+         candidate's installment markers (II, III, 2, 3, ...) DIFFER from
+         the canonical name's in either direction, which makes it a
+         different game in the same franchise, never a fuzzy match, no
+         matter how much token overlap its title has with the canonical
+         one.
     An exact basename match, when present, always ranks ahead of fuzzy hits.
     """
     canonical_base = Path(canonical_name).name.lower() if canonical_name else ""
@@ -219,8 +238,19 @@ def match_roms(
         if canonical_base and p.name.lower() == canonical_base:
             exact.append(p)
             continue
-        if _installment_markers(stem) - canonical_markers:
-            continue  # a different installment; token overlap doesn't count
+        if (_installment_markers(stem) - canonical_markers
+                or _missing_installment(stem, canonical_markers)):
+            # A different installment; token overlap doesn't count. The
+            # comparison is SYMMETRIC on purpose. A one-sided
+            # `candidate - canonical` blocked only original <- sequel, and
+            # left the reverse wide open: every canonical name that CARRIES
+            # a marker matched the original's dump. Measured against the
+            # real configs, `lost_levels` bound `Super Mario Bros.
+            # (World).nes`, Castlevania III bound Castlevania, DuckTales 2
+            # bound DuckTales, Ninja Gaiden II bound Ninja Gaiden and
+            # Double Dragon II bound Double Dragon — five franchise
+            # collisions, one of them on a game with a witnessed clear.
+            continue
         if (key and key in stem) or any(t in stem for t in tokens):
             fuzzy.append(p)
     return exact + fuzzy
