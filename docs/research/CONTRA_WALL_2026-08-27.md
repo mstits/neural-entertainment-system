@@ -53,7 +53,7 @@ oscillation, or a slow crawl — it is one value.
 
 | Measurement | Camera states observed while alive |
 |---|---|
-| 300 sampled banked wall cells on restore (my own measurement, §7) | `{(12, 0)}` |
+| 300 sampled banked wall cells on restore (my own measurement, §8) | `{(12, 0)}` |
 | 14 held button masks × 8 states × 40 steps | `{(12, 0)}` |
 | 87,464 surviving 6-step bursts, 524,784 alive steps (survival-only search) | `{(12, 0)}` |
 | A8's 265,860-step latch-novelty search | `{(12, 0)}` |
