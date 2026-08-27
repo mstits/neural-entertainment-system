@@ -248,3 +248,21 @@ solve:
   # each death (then wraps to 255 at game-over). start_lives=3 => is_dead
   # fires on the first life lost. Robust across bullet/collision/terrain deaths.
   lives: 0x0020
+  clear:
+    # Odometer-cohort scene_cut wiring, 2026-08-26 (Finding 1: odo_blank is a
+    # real transition counter). Eligibility only -- no `mode` is set here, so
+    # is_clear()/solutions is byte-identical to before this block existed;
+    # this only moves scene_cut from DEAD to ALIVE in clear_reachability's
+    # quorum table. Measured, not guessed -- full survey + per-profile numbers:
+    # docs/receipts/clear_control/odometer_cohort_scene_cut_survey_2026-08-26.json
+    # odo_blank fired (33 runs) and odometer_scene stayed clean (0 runs) over
+    # the same budget -- architectural floor gate (scene_min=blank_min=1) is the
+    # smallest integer above a null that measures zero by construction (neither
+    # counter can move without an actual re-anchor event). SURVEY CAVEAT: every
+    # blank run observed for this profile in the survey's own short rollout was
+    # death-class (Gradius already fired on respawn once, historically, via a
+    # different signal) -- the debounced death veto (death_debounce=3) is what
+    # is expected to keep this armed signal from repeating that mistake, not a
+    # witnessed non-death fire on this profile.
+    signals:
+      scene_cut: {scene_min: 1, blank_min: 1, kind: [pan, warp, fade], death_debounce: 3}

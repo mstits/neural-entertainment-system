@@ -80,6 +80,21 @@ solve:
   # here: the warp veto is the design's death defense, and RG-2 runs
   # report-only. Future wiring is a T5/T6 decision.
   lives: 0x0107
+  clear:
+    # Odometer-cohort scene_cut wiring, 2026-08-26 (Finding 1: odo_blank is a
+    # real transition counter). Eligibility only -- no `mode` is set here, so
+    # is_clear()/solutions is byte-identical to before this block existed;
+    # this only moves scene_cut from DEAD to ALIVE in clear_reachability's
+    # quorum table. Measured, not guessed -- full survey + per-profile numbers:
+    # docs/receipts/clear_control/odometer_cohort_scene_cut_survey_2026-08-26.json
+    # 6 scene-ordinal bumps fired in ordinary short random play (max run 1) --
+    # the Metroid camera-clamp/seam shape. scene raised well above the observed
+    # null and `kind` restricted to `fade` so only the blank half of the signal
+    # can vote; `warp`/`pan` stay excluded rather than guessing a number that
+    # happens to clear this survey's own null.
+    signals:
+      scene_cut: {scene_min: 5, blank_min: 1, kind: [fade], death_debounce: 3}
+
   room_fp:
     # Auto volatility mask: EMPTY. 300 idle frames + 120 in-room walk
     # frames (no damage taken) = zero volatile NT bytes; both captures

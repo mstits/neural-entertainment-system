@@ -232,6 +232,23 @@ solve:
   # restarts). Primary (and sole) death signal; no player_state byte was
   # isolated cleanly enough to add (mode $0028 conflates death/title/menu).
   lives: 0x0715
+  clear:
+    # Odometer-cohort scene_cut wiring, 2026-08-26 (Finding 1: odo_blank is a
+    # real transition counter). Eligibility only -- no `mode` is set here, so
+    # is_clear()/solutions is byte-identical to before this block existed;
+    # this only moves scene_cut from DEAD to ALIVE in clear_reachability's
+    # quorum table. Measured, not guessed -- full survey + per-profile numbers:
+    # docs/receipts/clear_control/odometer_cohort_scene_cut_survey_2026-08-26.json
+    # odo_blank fired (58 runs) and odometer_scene stayed clean (0 runs) over the
+    # same budget -- architectural floor gate (scene_min=blank_min=1) is the
+    # smallest integer above a null that measures zero by construction (neither
+    # counter can move without an actual re-anchor event). SURVEY CAVEAT: every
+    # blank run observed in the survey's own short rollout was death-class; the
+    # debounced death veto (death_debounce=3) is what is expected to keep this
+    # armed signal from mistaking a respawn for a transition, not a witnessed
+    # non-death fire on this profile.
+    signals:
+      scene_cut: {scene_min: 1, blank_min: 1, kind: [pan, warp, fade], death_debounce: 3}
   # Armor mode bit: 1 (or 2, an armor/shield upgrade state observed once in
   # a long rollout) = has armor, 0 = underwear (one hit from death). Lets
   # the archive tell an armored arrival apart from an unarmored one at the

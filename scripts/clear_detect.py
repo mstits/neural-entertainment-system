@@ -2475,12 +2475,74 @@ class SceneCutSignal:
     trips the blank half and never releases -- a caller holding this
     signal's vote open-ended needs its own persistence veto; this class
     only offers the held pulse below, not that veto.
+
+    THE DEATH DISCRIMINANT (optional, `lives` in `push`). Gradius already
+    fired on respawn once and had to be vetoed by hand; an odo_blank-
+    derived signal is exactly as exposed, because a death fade IS a
+    blank-fold re-anchor by construction (nes_core/src/ppu.rs odo_fold_
+    frame does not distinguish "died" from "the stage wiped"). But a
+    NAIVE veto -- "the lives byte just dropped, discard this window" --
+    is wrong in the other direction on the very game this signal was
+    built for: the Rygar R1 tape replay (docs/receipts/rygar/
+    r1_tape_gx6242.json) shows the declared lives byte ($0303) blip
+    through 0 for exactly 2 observations on EVERY ONE of its 55 real
+    door crossings, recovering to 1 the instant the blackout ends. A
+    single-sample veto (RoomFpTransitionSignal's own shape: `lives <
+    prev_lives`) would discard every one of them -- the signal would
+    read as silent on this profile forever, for a completely different
+    reason than "never measured". The fix already exists in this
+    codebase for the identical shape: go_explore_solve.py's `_dead_mm`
+    debounce (commit 547434e) established, on this same tape, that a
+    2-observation dip is a transition blip and a 3rd consecutive
+    dead observation is a real death, with one observation of margin.
+    `death_debounce` (default 3) reuses that verified threshold rather
+    than inventing a new one. The veto compares each observed `lives`
+    against the last CONFIRMED-alive value (mirroring `is_dead`'s
+    baseline compare, debounced the same way) -- a qualifying window is
+    discarded, not merely down-weighted, whenever the debounced death
+    state is live at the moment the window closes. SCOPE LIMIT, shared
+    with RoomFpTransitionSignal's own veto: this is a point-in-time
+    compare at the check boundary, not a scan of the whole window, and a
+    lives byte that underflows through 0 at a 0-lives start state (the
+    documented Ninja Gaiden shape) defeats it the same way it defeats
+    `is_dead` -- both are named, neither is fixed here. Passing no
+    `lives` (the default) leaves this signal exactly as it shipped.
+
+    THE RE-ANCHOR-RATCHET DISCRIMINANT (`n_events` vs `n_triggers`).
+    Rygar's own tape also names the other false-positive shape: 27
+    door-shaped blank-pairs banking dx=0 alternating with dx=+53..64,
+    54 segments in total, through what the room_fp census (docs/
+    receipts/room_fp/rygar.md) shows is mostly the SAME recycled
+    background -- "45 of 54 post-door segments ending on an already-
+    seen screen". `n_triggers` counts every qualifying STRIDE check,
+    so it reads 192 window-checks fire across that stretch alone --
+    "the naive reading is 27 rooms" is, if anything, an understatement.
+    Position-based dedup cannot fix this: replaying the tape shows the
+    odometer's own x climbs strictly monotonically through the whole
+    ratchet (4608, 4672, 4736, ... 6178, never repeating), which is
+    the bug -- the surface that would need to say "already seen" is
+    exactly the one the re-anchor arithmetic is corrupting. What DOES
+    hold: `hold` (the held-pulse window every shelf signal already
+    uses) is wide enough, at any value at or above `stride`, to cover
+    the gap between consecutive ratchet segments, so the vote never
+    drops back to 0 between them. Replaying the full 6,018-action tape
+    through this class (any hold >= 20 = SCENE_CUT_STRIDE) produces
+    exactly 3 rising edges of `vote()` for the whole episode -- the
+    boot blackout, the one real door at x=1536, and the ENTIRE 4608-
+    6178 ratchet band read as one continuous held transition-regime,
+    never as 27 separate ones. `n_events` counts exactly that (a
+    rising edge of the held pulse); `n_triggers` stays the raw,
+    NOT-a-room-count stride-check tally it always was. A caller that
+    reports `n_triggers` as "rooms cleared" is the mistake this
+    docstring exists to name; tests/test_scene_cut_signal.py pins the
+    3-events-not-192 result on the real tape and fails it again at
+    hold=1 (below stride), which is exactly the naive-counting shape.
     """
 
     def __init__(self, *, scene_min, blank_min, kind=SCENE_CUT_KINDS,
                  window: int = SCENE_CUT_WINDOW, stride: int = SCENE_CUT_STRIDE,
                  pan_odo=(128, 384), warp_scene_min: int = 2,
-                 hold: int = SCENE_CUT_HOLD):
+                 hold: int = SCENE_CUT_HOLD, death_debounce: int = 3):
         bad_kind = set(kind) - set(SCENE_CUT_KINDS)
         if bad_kind:
             raise ValueError(
@@ -2494,6 +2556,7 @@ class SceneCutSignal:
         self.pan_odo = (int(pan_odo[0]), int(pan_odo[1]))
         self.warp_scene_min = int(warp_scene_min)
         self.hold = max(1, int(hold))
+        self.death_debounce = max(1, int(death_debounce))
         self.reset()
 
     def reset(self) -> None:
@@ -2506,19 +2569,46 @@ class SceneCutSignal:
         self.trigger_step: int | None = None
         self.n_triggers = 0
         self.n_checks = 0
+        self.n_events = 0
+        self._was_voting = False
         self.last_kind: str | None = None
         self.last_direction = None
         self.last_d_scene = 0
         self.last_d_blank = 0
         self.last_d_odo = (0, 0)
+        # Death-debounce state (`lives` in push()). `_confirmed_lives` is
+        # the last value seen that was NOT itself inside a debounced-dead
+        # run -- the same "compare to the last known-alive point" shape
+        # `is_dead`'s start_lives baseline uses, refreshed as the episode
+        # goes rather than fixed at seed, since this signal has no notion
+        # of an episode boundary of its own.
+        self._confirmed_lives: int | None = None
+        self._death_run = 0
+        self.dying = False
+        self.n_death_vetoes = 0
+        self.last_death_vetoed = False
 
-    def push(self, odo_xy, scene: int, blank: int) -> None:
+    def push(self, odo_xy, scene: int, blank: int, lives: int | None = None) -> None:
         """Feed one observation: the odometer's integrated (x, y), the
         scene ordinal, and the dropped-fold counter -- all three already
         produced by the certified odometer for every profile that arms
         it (`Pool.get_odometer_per_worker`, `get_odometer_scene_per_
-        worker`, `get_odometer_blank_per_worker`)."""
+        worker`, `get_odometer_blank_per_worker`). `lives`, optional and
+        None by default (byte-identical to before this signal existed
+        when omitted), arms the death discriminant described above --
+        pass the same per-frame lives reading RoomFpTransitionSignal
+        already accepts."""
         self._n += 1
+        if lives is not None:
+            lv = int(lives)
+            if self._confirmed_lives is None:
+                self._confirmed_lives = lv
+            elif lv < self._confirmed_lives:
+                self._death_run += 1
+            else:
+                self._confirmed_lives = lv
+                self._death_run = 0
+            self.dying = self._death_run >= self.death_debounce
         self._buf.append((int(odo_xy[0]), int(odo_xy[1]), int(scene), int(blank)))
         if self._n % self.stride != 0 or len(self._buf) < 2:
             return
@@ -2534,8 +2624,17 @@ class SceneCutSignal:
         self.last_d_scene, self.last_d_blank, self.last_d_odo = d_scene, d_blank, d_odo
         if (kind in self.kind
                 and (d_scene >= self.scene_min or d_blank >= self.blank_min)):
-            self.trigger_step = self._n
-            self.n_triggers += 1
+            if self.dying:
+                self.n_death_vetoes += 1
+                self.last_death_vetoed = True
+            else:
+                self.trigger_step = self._n
+                self.n_triggers += 1
+                self.last_death_vetoed = False
+        is_voting = bool(self.vote())
+        if is_voting and not self._was_voting:
+            self.n_events += 1
+        self._was_voting = is_voting
 
     def vote(self) -> int:
         """1 while the last qualifying window is inside its hold window,
@@ -2548,10 +2647,13 @@ class SceneCutSignal:
 
     def stats(self) -> dict:
         return {"n": self._n, "n_checks": self.n_checks,
-                "n_triggers": self.n_triggers, "trigger_step": self.trigger_step,
+                "n_triggers": self.n_triggers, "n_events": self.n_events,
+                "trigger_step": self.trigger_step,
                 "last_kind": self.last_kind, "last_direction": self.last_direction,
                 "last_d_scene": self.last_d_scene, "last_d_blank": self.last_d_blank,
-                "last_d_odo": self.last_d_odo}
+                "last_d_odo": self.last_d_odo,
+                "dying": self.dying, "n_death_vetoes": self.n_death_vetoes,
+                "last_death_vetoed": self.last_death_vetoed}
 
 
 # ===========================================================================
@@ -2664,7 +2766,7 @@ _SHELF_BUILDERS = {
     "scene_cut": (
         lambda **k: SceneCutSignal(**k),
         ("scene_min", "blank_min", "kind", "window", "stride", "pan_odo",
-         "warp_scene_min", "hold")),
+         "warp_scene_min", "hold", "death_debounce")),
     "room_fp_transition": (
         lambda mask=(), **k: RoomFpTransitionSignal(mask, **k),
         ("mask", "settle", "min_lines", "pan_odo", "warp_scene_min",
@@ -3150,7 +3252,7 @@ class StreamingConfluenceDetector:
         sig = self._shelf.get("scene_cut")
         if sig is not None and odo is not None:
             sig.push(odo, 0 if scene is None else scene,
-                     0 if blank is None else blank)
+                     0 if blank is None else blank, lives=lives)
         sig = self._shelf.get("room_fp_transition")
         if sig is not None and nametables is not None:
             sig.push(nametables, (0, 0) if odo is None else odo,
@@ -3405,7 +3507,8 @@ def run_episode(env, game, bitmasks, dir_bitmask, actions: list[int],
                 sig.push(oam_census(env.peek_oam()))
             sig = shelf.get("scene_cut")
             if sig is not None:
-                sig.push(odo, scene, blank)
+                sig.push(odo, scene, blank,
+                         lives=game.lives(ram) if hasattr(game, "lives") else None)
             sig = shelf.get("room_fp_transition")
             if sig is not None:
                 sig.push(env.peek_nametables(), odo, scene,

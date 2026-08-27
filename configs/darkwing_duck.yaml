@@ -73,4 +73,18 @@ solve:
   # 0 as a real address.
   y: 0
   lives: 0
+  clear:
+    # Odometer-cohort scene_cut wiring, 2026-08-26 (Finding 1: odo_blank is a
+    # real transition counter). Eligibility only -- no `mode` is set here, so
+    # is_clear()/solutions is byte-identical to before this block existed;
+    # this only moves scene_cut from DEAD to ALIVE in clear_reachability's
+    # quorum table. Measured, not guessed -- full survey + per-profile numbers:
+    # docs/receipts/clear_control/odometer_cohort_scene_cut_survey_2026-08-26.json
+    # odo_blank fired (3 runs) and odometer_scene stayed clean (0 runs) over the
+    # same budget -- architectural floor gate (scene_min=blank_min=1) is the
+    # smallest integer above a null that measures zero by construction (neither
+    # counter can move without an actual re-anchor event).
+    signals:
+      scene_cut: {scene_min: 1, blank_min: 1, kind: [pan, warp, fade], death_debounce: 3}
+
   level_key: []

@@ -84,6 +84,21 @@ solve:
   # smoke_before/archive.stats.json, smoke_after/archive.stats.json}.json
   y: 0x009F
   lives: 0x0199
+  clear:
+    # Odometer-cohort scene_cut wiring, 2026-08-26 (Finding 1: odo_blank is a
+    # real transition counter). Eligibility only -- no `mode` is set here, so
+    # is_clear()/solutions is byte-identical to before this block existed;
+    # this only moves scene_cut from DEAD to ALIVE in clear_reachability's
+    # quorum table. Measured, not guessed -- full survey + per-profile numbers:
+    # docs/receipts/clear_control/odometer_cohort_scene_cut_survey_2026-08-26.json
+    # 7 scene-ordinal bumps fired in ordinary short random play (max run 1) --
+    # the Metroid camera-clamp/seam shape. scene raised well above the observed
+    # null and `kind` restricted to `fade` so only the blank half of the signal
+    # can vote; `warp`/`pan` stay excluded rather than guessing a number that
+    # happens to clear this survey's own null.
+    signals:
+      scene_cut: {scene_min: 5, blank_min: 1, kind: [fade], death_debounce: 3}
+
   # DELIBERATELY EMPTY — no clear captured yet; guessing a stage-advance
   # byte here is the authored-semantics class the purity line forbids.
   level_key: []

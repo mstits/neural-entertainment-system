@@ -145,6 +145,20 @@ solve:
   # validated config, not before.
   # 0x00A8 = lives (3 at start, decrements 3->2->1->0 at deaths). Death signal.
   lives: 0x00A8
+  clear:
+    # Odometer-cohort scene_cut wiring, 2026-08-26 (Finding 1: odo_blank is a
+    # real transition counter). Eligibility only -- no `mode` is set here, so
+    # is_clear()/solutions is byte-identical to before this block existed;
+    # this only moves scene_cut from DEAD to ALIVE in clear_reachability's
+    # quorum table. Measured, not guessed -- full survey + per-profile numbers:
+    # docs/receipts/clear_control/odometer_cohort_scene_cut_survey_2026-08-26.json
+    # 6 scene-ordinal bumps fired in ordinary short random play (max run 1) --
+    # the Metroid camera-clamp/seam shape. scene raised well above the observed
+    # null and `kind` restricted to `fade` so only the blank half of the signal
+    # can vote; `warp`/`pan` stay excluded rather than guessing a number that
+    # happens to clear this survey's own null.
+    signals:
+      scene_cut: {scene_min: 5, blank_min: 1, kind: [fade], death_debounce: 3}
   # player_state/death_states OMITTED: no clean death byte confirmed. 0x0020
   # (alive flag) is also 0 at spawn; 0x002A (5 live / 6 death) covers only ~72%
   # of death frames -- both risk false is_dead at episode start. The lives

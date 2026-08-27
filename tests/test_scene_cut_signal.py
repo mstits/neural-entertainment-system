@@ -10,14 +10,17 @@ re-anchor EVENT is the evidence, never the (untrustworthy) delta.
 
 Test order is deliberate. The FIRST test proves the signal CAN return
 False -- the check two vacuous gates shipped this week without. The
-next several are pure/synthetic and need no ROM. The last three replay
-a real emulator session (skipped where the fixture is unavailable,
-exactly like tests/test_clear_detect_ground_truth.py's own convention)
-and are where the false-positive classes (death, room transition) and
-the true-positive case get their honest, measured proof -- including
-one deliberate, documented departure from the fixture this signal's
-design doc originally named (see
-test_fires_near_the_real_level_key_advance_in_a_banked_smb_clear).
+next several are pure/synthetic and need no ROM, including the death
+discriminant (`lives` in push()) and the `n_events` re-anchor-ratchet
+discriminant, each proved with its own mutation case. The real-emulator
+tests that follow (skipped where their fixture is unavailable, exactly
+like tests/test_clear_detect_ground_truth.py's own convention) are
+where the false-positive classes (death, room transition) and the
+true-positive case get their honest, measured proof against real
+tapes -- an SMB power-on-1-1 clear, a real SMB death, and the Rygar R1
+tape's 27-door re-anchor ratchet -- including one deliberate, documented
+departure from the fixture this signal's design doc originally named
+(see test_fires_near_the_real_level_key_advance_in_a_banked_smb_clear).
 """
 from __future__ import annotations
 
@@ -167,6 +170,82 @@ def test_fires_on_the_canonical_zelda_death_warp_shape() -> None:
     assert sig.last_kind == "warp"
 
 
+# ===========================================================================
+# The death discriminant (`lives` in push()), synthetic and debounced.
+#
+# THE RYGAR SHAPE, verified on the real R1 tape replay
+# (docs/receipts/rygar/r1_tape_gx6242.json): the declared lives byte
+# ($0303) blips through 0 for exactly 2 observations on every one of 55
+# real door crossings, recovering to 1 before the next check. A
+# single-sample veto would discard all 55. go_explore_solve.py's
+# `_dead_mm` debounce (commit 547434e) already established, on this same
+# tape, that 2 is a blip and 3 is a death -- `death_debounce` reuses that
+# threshold rather than inventing one.
+# ===========================================================================
+
+def test_death_veto_does_not_discard_a_two_observation_lives_blip() -> None:
+    """The blip a real transition itself produces (2 observations, per
+    the Rygar tape) must NOT veto the window it sits inside -- an
+    undebounced veto would read every one of Rygar's 55 real transitions
+    as a death and leave the signal permanently silent on the profile it
+    was built for."""
+    sig = SceneCutSignal(scene_min=1, blank_min=1, window=8, stride=1,
+                         hold=5, death_debounce=3)
+    for _ in range(3):
+        sig.push((100, 0), scene=0, blank=0, lives=1)
+    sig.push((100, 0), scene=0, blank=1, lives=0)     # blip obs 1
+    sig.push((100, 0), scene=0, blank=2, lives=0)     # blip obs 2 -- still < 3
+    sig.push((100, 0), scene=0, blank=3, lives=1)     # recovered
+    for _ in range(4):
+        sig.push((100, 0), scene=0, blank=3, lives=1)
+
+    assert sig.n_triggers > 0, (
+        "a 2-observation lives blip (the shape every real Rygar door "
+        "crossing produces) must not be read as a death")
+    assert sig.n_death_vetoes == 0
+
+
+def test_death_veto_discards_a_sustained_three_observation_lives_drop() -> None:
+    """A REAL death (>= death_debounce consecutive dropped-lives
+    observations, the same threshold go_explore_solve.py's `_dead_mm`
+    already pins) must be discarded: `n_triggers` stays 0 and
+    `n_death_vetoes` counts it instead. Run WITHOUT `lives` on an
+    otherwise-identical push sequence is the mutation proof: the same
+    blank/scene shape fires when the veto has nothing to compare
+    against, so the veto -- not some other gate -- is what suppresses
+    it here."""
+    def run(with_lives: bool) -> SceneCutSignal:
+        # stride=3 == death_debounce: the check cadence does not outrun
+        # the debounce, so the very first stride check after the drop
+        # already sees a confirmed (>= 3 observation) death -- a stride
+        # faster than the debounce would let a couple of checks land
+        # inside the still-ambiguous grace window, which is a real and
+        # separately-named property of any online debounce, not this
+        # test's concern.
+        sig = SceneCutSignal(scene_min=1, blank_min=1, window=8, stride=3,
+                             hold=5, death_debounce=3)
+        for _ in range(3):
+            sig.push((100, 0), scene=0, blank=0,
+                     lives=1 if with_lives else None)
+        for k in range(1, 7):
+            sig.push((100, 0), scene=0, blank=k,
+                     lives=(0 if with_lives else None))
+        return sig
+
+    vetoed = run(with_lives=True)
+    assert vetoed.n_triggers == 0, (
+        "a sustained (>= death_debounce) lives drop must be vetoed, not "
+        "counted as a transition")
+    assert vetoed.n_death_vetoes > 0
+    assert vetoed.last_death_vetoed is True
+
+    unvetoed = run(with_lives=False)
+    assert unvetoed.n_triggers > 0, (
+        "control: the identical blank/scene shape must fire when `lives` "
+        "is never supplied -- proving the veto above did the suppressing, "
+        "not some other gate")
+
+
 def test_is_structurally_blind_to_a_combat_blip_shaped_change() -> None:
     """A combat blip (a wave of enemies despawning together) is an OAM/RAM
     entity-array phenomenon with no PPU-scroll or rendered-line signature
@@ -185,6 +264,73 @@ def test_is_structurally_blind_to_a_combat_blip_shaped_change() -> None:
     for _ in range(300):
         sig.push((500, 500), scene=0, blank=0)
     assert sig.n_triggers == 0
+
+
+# ===========================================================================
+# n_events vs n_triggers -- the re-anchor-ratchet discriminant.
+#
+# THE RYGAR SHAPE, verified on the real R1 tape replay: 27 door-pairs
+# banking dx=0 alternating with dx=+53..64, back-to-back, through what
+# the room_fp census shows is mostly the same recycled background.
+# `n_triggers` counts every qualifying STRIDE check (192, on that tape,
+# for that stretch alone) and is NOT a room count. `n_events` -- a
+# rising edge of the held-pulse `vote()` -- reads the entire tightly
+# packed stretch as ONE continuous transition regime once `hold` is
+# calibrated at or above the gap between consecutive doors, which is
+# exactly what the real tape does (any hold >= SCENE_CUT_STRIDE=20
+# collapses the whole 4608-6178 band to a single event).
+# ===========================================================================
+
+def _tightly_packed_doors(sig, n_doors: int = 12, gap: int = 3) -> int:
+    """`n_doors` back-to-back re-anchor pairs (2 bumps then `gap` flat
+    pushes each -- the Rygar door-pair shape), followed by ONE clearly
+    separate event far away. Returns the final `blank` value."""
+    blank = 0
+    for _ in range(n_doors):
+        blank += 1
+        sig.push((0, 0), scene=0, blank=blank)
+        blank += 1
+        sig.push((0, 0), scene=0, blank=blank)
+        for _ in range(gap):
+            sig.push((0, 0), scene=0, blank=blank)
+    for _ in range(50):
+        sig.push((0, 0), scene=0, blank=blank)
+    blank += 1
+    sig.push((0, 0), scene=0, blank=blank)
+    blank += 1
+    sig.push((0, 0), scene=0, blank=blank)
+    for _ in range(10):
+        sig.push((0, 0), scene=0, blank=blank)
+    return blank
+
+
+def test_n_events_reads_a_tight_door_ratchet_as_one_regime_not_n_rooms() -> None:
+    """A hold calibrated above the intra-ratchet gap (here: gap=3,
+    window=4, hold=8) must read 12 tightly packed doors plus one
+    genuinely separate later event as 2 events, never 13 -- the "naive
+    reading is N rooms" failure this signal exists to not repeat."""
+    sig = SceneCutSignal(scene_min=999, blank_min=1, window=4, stride=1, hold=8)
+    _tightly_packed_doors(sig)
+    assert sig.n_triggers > 40, "sanity: the raw stride-check tally is large"
+    assert sig.n_events == 2, (
+        f"expected the 12-door ratchet to collapse into one held regime "
+        f"plus the one separate event (2 total), got {sig.n_events} -- "
+        f"n_triggers ({sig.n_triggers}) is never the room count")
+
+
+def test_n_events_inflates_when_hold_is_not_calibrated_above_the_gap() -> None:
+    """Mutation proof: the SAME door sequence with `hold` too small to
+    bridge the ratchet's own gap (hold=1, below the 3-push gap between
+    doors) reads each door as its own event again -- proving the
+    collapse above comes from `hold` being calibrated correctly, not
+    from some other property of the sequence."""
+    sig = SceneCutSignal(scene_min=999, blank_min=1, window=4, stride=1, hold=1)
+    _tightly_packed_doors(sig)
+    assert sig.n_events >= 10, (
+        f"expected an uncalibrated hold to re-inflate toward one event "
+        f"per door (12 doors + 1 separate), got only {sig.n_events} -- "
+        f"this test no longer demonstrates the failure mode it exists to "
+        f"guard against")
 
 
 # ===========================================================================
@@ -400,3 +546,102 @@ def test_fires_on_a_measured_death_mid_forward_hold() -> None:
         "once in 200 observations -- if it no longer does, this test's "
         "premise (a measured death, not a synthetic one) needs a new "
         "action budget, not a change to the assertion")
+
+
+# ===========================================================================
+# The real Rygar R1 tape -- the exact case both defenses above exist for.
+# Skipped (never failed) when the ROM/start-state are absent, exactly like
+# every other real-replay test in this file; the tape itself is tracked
+# (docs/receipts/rygar/r1_tape_gx6242.json) so this guard is the only one
+# that can skip.
+# ===========================================================================
+
+RYGAR_PROFILE = REPO / "configs/rygar.yaml"
+RYGAR_TAPE = REPO / "docs/receipts/rygar/r1_tape_gx6242.json"
+
+
+def _rygar_fixture():
+    """`(profile_dict, tape_dict)`, or None with the caller expected to
+    skip. Purity note: `profile["solve"]["lives"]` is the address this
+    profile's own docstring says was discovered by scripts/
+    discover_observables.py's 3-probe protocol, not recalled or guessed --
+    the same address the live confluence detector already threads into
+    RoomFpTransitionSignal for this and every other profile."""
+    import yaml
+    if not RYGAR_TAPE.exists() or not RYGAR_PROFILE.exists():
+        return None
+    profile = yaml.safe_load(RYGAR_PROFILE.read_text())
+    rom = REPO / profile["solve"]["rom"]
+    start = REPO / profile["start_state_path"]
+    if not rom.exists() or not start.exists():
+        return None
+    tape = json.loads(RYGAR_TAPE.read_text())
+    return profile, tape
+
+
+@pytest.mark.skipif(_rygar_fixture() is None,
+                    reason="Rygar ROM/start-state not present locally "
+                           "(roms/ is gitignored); docs/receipts/rygar/"
+                           "r1_tape_gx6242.json's own TestTapeRecord "
+                           "coverage in test_rygar_r1_tape.py still runs")
+def test_the_real_rygar_ratchet_collapses_to_a_handful_of_events_not_54() -> None:
+    """The task this whole module exists for, replayed for real: the
+    banked 6,018-action R1 tape (odometer_x terminal 6242, matching the
+    receipt exactly) crosses 27 door-pairs (54 segments) back-to-back
+    with none of them a real death (lives_at_start=1, dead_run_histogram
+    {"2": 55} -- every dip is a 2-observation blip). At the shipped
+    SCENE_CUT_WINDOW/STRIDE/HOLD (240/20/60, hold well above stride),
+    `n_events` must stay small (a handful of held regimes across the
+    WHOLE tape: the boot blackout, the one real door at x=1536, and the
+    ratchet band read as one continuous regime) while `n_triggers` -- the
+    raw stride-check tally -- is two orders of magnitude larger. Neither
+    number is vetoed to zero: none of the 55 blips reaches
+    death_debounce=3, so the death discriminant stays silent throughout,
+    exactly as it must on a tape with no real death in it."""
+    import numpy as np
+    fixture = _rygar_fixture()
+    assert fixture is not None
+    profile, tape = fixture
+    rom = REPO / profile["solve"]["rom"]
+    start = REPO / profile["start_state_path"]
+    lives_addr = profile["solve"]["lives"]
+    bitmasks = action_space_to_bitmasks(profile["action_space"])
+    fs = int(profile["frame_skip"])
+
+    import nes_core
+    env = nes_core.NESEnvironment(str(rom), frame_skip=fs)
+    env.reset()
+    env.set_odometer_enabled(True)
+    env.load_state(start.read_bytes())
+
+    sig = SceneCutSignal(scene_min=999, blank_min=5)
+    try:
+        for a in [0] + list(tape["actions"]):
+            env.step(int(bitmasks[a]))
+            odo = env.get_odometer()
+            scene = env.get_odometer_scene()
+            blank = env.get_odometer_blank()
+            ram = np.array(env.get_ram_range(0, 2048), dtype=np.uint8)
+            sig.push(odo, scene, blank, lives=int(ram[lives_addr]))
+    finally:
+        env.close()
+
+    inv = tape["invariants_for_the_guard"]
+    assert odo[0] == inv["terminal_odometer_x"], (
+        "the tape must replay to its own recorded terminal odometer_x, "
+        "or nothing below is measuring what it claims to")
+
+    assert sig.n_death_vetoes == 0, (
+        "none of this tape's 55 lives blips is a real death (all length "
+        "2, debounce is 3) -- a nonzero veto count here means the "
+        "debounce threshold stopped matching the measured Rygar shape")
+    assert sig.n_triggers > 100, (
+        "sanity: the raw stride-check tally over 27 door-pairs must be "
+        "large -- this is the number a naive caller would mistake for a "
+        "room count")
+    assert sig.n_events <= 5, (
+        f"expected the whole tape to collapse to a handful of held "
+        f"regimes (boot + the one real door + the ratchet band), got "
+        f"{sig.n_events} -- n_events inflating back toward n_triggers "
+        f"means the hold-based collapse stopped working on the exact "
+        f"tape it was calibrated against")

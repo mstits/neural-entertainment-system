@@ -59,6 +59,21 @@ solve:
   # do not read anything into it.
   y: 0x0004
   lives: 0x00C1   # decrements on death, agreed by 5 of 5 runs (discover_observables)
+  clear:
+    # Odometer-cohort scene_cut wiring, 2026-08-26 (Finding 1: odo_blank is a
+    # real transition counter). Eligibility only -- no `mode` is set here, so
+    # is_clear()/solutions is byte-identical to before this block existed;
+    # this only moves scene_cut from DEAD to ALIVE in clear_reachability's
+    # quorum table. Measured, not guessed -- full survey + per-profile numbers:
+    # docs/receipts/clear_control/odometer_cohort_scene_cut_survey_2026-08-26.json
+    # 33 scene-ordinal bumps fired in ordinary short random play (max run 2) --
+    # the Metroid camera-clamp/seam shape. scene raised well above the observed
+    # null and `kind` restricted to `fade` so only the blank half of the signal
+    # can vote; `warp`/`pan` stay excluded rather than guessing a number that
+    # happens to clear this survey's own null.
+    signals:
+      scene_cut: {scene_min: 6, blank_min: 1, kind: [fade], death_debounce: 3}
+
   level_key: []   # coverage baseline; wire a stage-advance byte once a real clear is captured
 
   # SMOKE RECEIPT (2026-08-25, 2 workers x 4 min, seed 0, shared machine

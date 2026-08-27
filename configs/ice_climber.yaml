@@ -49,6 +49,20 @@ solve:
   # runs/onboard_wave3/observe_ice_climber_up.json
   y: 0x00EA          # score=90.1, distinct=7 samples, frac_at_mode=0.76
   lives: 0x002C       # decrements on death, agreed by 3 of 5 runs
+  clear:
+    # Odometer-cohort scene_cut wiring, 2026-08-26 (Finding 1: odo_blank is a
+    # real transition counter). Eligibility only -- no `mode` is set here, so
+    # is_clear()/solutions is byte-identical to before this block existed;
+    # this only moves scene_cut from DEAD to ALIVE in clear_reachability's
+    # quorum table. Measured, not guessed -- full survey + per-profile numbers:
+    # docs/receipts/clear_control/odometer_cohort_scene_cut_survey_2026-08-26.json
+    # odo_blank fired (4 runs) and odometer_scene stayed clean (0 runs) over the
+    # same budget -- architectural floor gate (scene_min=blank_min=1) is the
+    # smallest integer above a null that measures zero by construction (neither
+    # counter can move without an actual re-anchor event).
+    signals:
+      scene_cut: {scene_min: 1, blank_min: 1, kind: [pan, warp, fade], death_debounce: 3}
+
   level_key: []       # empty until a real clear is captured
 
 # Wave-3 solver smoke (2026-08-25, --workers 2 --minutes 4 --seed 0):
