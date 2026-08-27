@@ -104,3 +104,18 @@ solve:
   # continuous scroll, and fixing that is a shared-engine change
   # (scripts/go_explore_solve.py fp_settle/replay_room_stream), not a
   # config knob -- left as a named follow-up, not attempted here.
+  #
+  # 2026-08-27 (D1, RYGAR_TRANSITIONS_2026-08-27): room_id() is the constant (0,)
+  # function on this profile (level_key: [], no room_sig, no solve.area
+  # above), so the sect/psig transit machinery has never fired here.
+  # `transit_source: blank_run` routes it through the calibrated
+  # blank-fold witness (scripts/transition_witness.py) instead --
+  # area_key and min_blank_frames are copied verbatim from that module's
+  # own RYGAR_AREA_KEY_ADDRS / RYGAR_MIN_BLANK_FRAMES (the values this
+  # profile's own rollouts derived: 78-79 frame doors, 14-frame death
+  # fades, 2.8x margin on both sides of the floor). See
+  # docs/receipts/rygar/clear_predicate_REFUTED.md and
+  # tests/test_transit_dimension.py.
+  transit_source: blank_run
+  area_key: [0x0014, 0x001C]
+  min_blank_frames: 40

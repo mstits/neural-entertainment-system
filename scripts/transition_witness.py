@@ -257,6 +257,75 @@ def rygar_witness(**kw) -> TransitionWitness:
 
 
 # ------------------------------------------------------------------------
+# THE SEARCH DIMENSION (what a solver may key and score on)
+#
+# `TransitionWitness` says what happened. This says what the SEARCH is
+# allowed to do with it, and it is deliberately a separate, tiny, pure
+# function because the two are different claims: the witness is calibrated
+# against Rygar's own fades, the dimension is calibrated against Rygar's
+# own RATCHET.
+#
+# THE DIMENSION IS `novel`, NEVER `transitions`. On the banked R1 tape the
+# raw transition count is 55 -- 27 round trips through ONE door -- while
+# the trajectory's artifact-free frontier never moved past 4,608 px. A
+# search that keys or scores on 55 mints 55 stacked copies of one corridor
+# and pays 27 times for a treadmill; the odometer ALREADY pays a
+# +53..+64 px re-anchor ratchet per crossing (1,634 px, 26% of the 6,242
+# headline), so a raw count compounds the exact artifact the score channel
+# is already contaminated by. `novel` counts DISTINCT areas occupied, is
+# monotone inside a lineage, cannot be farmed by re-crossing, and reads 2
+# on that same tape.
+# ------------------------------------------------------------------------
+
+#: Weight of one novel-area advance in a lexicographic (transitions, x)
+#: objective. Sized against Rygar's OWN numbers, not chosen for roundness:
+#: it must outrank the whole verified frontier (4,608 px) and the whole
+#: measured ratchet (1,634 px) together, so that no amount of walking or
+#: door-cycling can ever outbid arriving somewhere new. It is exactly the
+#: weight the solver's existing `sect` term already uses
+#: (scripts/go_explore_solve.py: `score = sect * 10000 + gx`), which is
+#: why this dimension can ride that slot with no new score arithmetic.
+TRANSIT_SCORE_WEIGHT = 10000
+
+
+def transit_dimension(verdicts):
+    """Per-observation value of a lineage's transition dimension.
+
+    Input is the verdict stream `run_stream` returns. Output is the running
+    count of NOVEL arrivals -- i.e. `len(seen) - 1`, the number of distinct
+    areas this trajectory has entered beyond the one it started in.
+
+    PER-TRAJECTORY, NOT GLOBAL. `odo_blank` rides inside OdoState, so a
+    restore carries the saving trajectory's count back in; this number is
+    likewise a property of ONE lineage and is meaningless compared across
+    two. A consumer carries it the way the solver already carries `sect`,
+    `loops` and `route_sig`: recorded with the cell, re-seeded at restore,
+    never re-derived from the restored machine.
+
+    Zero is ambiguous by construction -- a lineage that transited nothing
+    and a lineage whose odometer was off both read 0. A consumer MUST
+    consult `TransitionWitness.summary()["verdict"]` before believing a
+    zero; that is the whole reason the witness reports UNAVAILABLE and
+    UNINSTRUMENTED separately from a count.
+    """
+    out, n = [], 0
+    for v in verdicts:
+        if v == NOVEL:
+            n += 1
+        out.append(n)
+    return out
+
+
+def lex_score(n_transit: int, gx: int,
+              weight: int = TRANSIT_SCORE_WEIGHT) -> int:
+    """The lexicographic (transitions, x) objective, flattened the way the
+    solver's `score` already flattens (sect, gx). `weight` 0 disarms the
+    transition term entirely, which is what makes a key-only arm testable
+    against a key-and-score arm rather than confounded with it."""
+    return int(n_transit) * int(weight) + int(gx)
+
+
+# ------------------------------------------------------------------------
 # Stream banking / replay
 # ------------------------------------------------------------------------
 def rle(rows):

@@ -58,6 +58,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import clear_reachability  # noqa: E402  (profile lint; no nes_core dependency)
 from nes_core import Pool  # noqa: E402
+from transition_witness import (  # noqa: E402
+    NOVEL, TRANSIT_SCORE_WEIGHT, TransitionWitness, lex_score)
 from src.training import interaction_basis as ib  # noqa: E402
 from src.training.go_explore import GoExploreArchive, keep_exploring  # noqa: E402
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
@@ -1553,6 +1555,50 @@ def phantom_top_buckets(keys, gap: int = PHANTOM_GAP,
 LOCAL_BAND_BUCKETS = 24
 
 
+#: The trace-record arity that carries the transition axis's per-lineage
+#: occupied-area set. `rec` grows monotonically over this file's history
+#: (7 = the base tuple, 8 = + gate_marks, 9 = + `seen`), so "has the
+#: `seen` element" is exactly "len(rec) > 8".
+TRANSIT_REC_ARITY = 9
+
+
+def check_transit_resume(loaded: dict, prev) -> None:
+    """Refuse `--resume-archive` of a pre-transition-axis archive while
+    `solve.transit_source: blank_run` is armed.
+
+    A trace record written before this axis existed is a 7- or 8-tuple:
+    it carries no occupied-area set. Every lineage restored from one
+    therefore starts with an EMPTY `seen` and re-banks the first area it
+    arrives in — including one it had already occupied before the
+    restore. This is the design's own "treadmill one restore deep"
+    hazard, and it is MEASURED rather than hypothesised: the run banked
+    at `runs/rygar_transitions/D2/run1` resumed a 7-tuple archive and
+    put 9 cells at `sect >= 1` whose arriving area key is the START
+    area, i.e. the novelty gate fired on a room the lineage began in.
+
+    The error direction is FABRICATION — novel arrivals that did not
+    happen — which is the one direction a novelty gate may never fail
+    in, and `psig` cannot backfill it: a legacy Rygar record carries
+    `psig == ()` because room_id-mode transit never fired on that
+    profile at all. So this is a HARD refusal with no override, for the
+    same reason `Solver._resume_room_index`'s refusals are: the resumed
+    records are not a weaker lineage, they are a lineage whose history
+    is unknown.
+    """
+    legacy = sum(1 for rec in loaded.values()
+                 if len(rec) < TRANSIT_REC_ARITY)
+    if not legacy:
+        return
+    raise SystemExit(
+        f"[go_explore_solve] --resume-archive {prev}: {legacy} of "
+        f"{len(loaded)} trace records predate the transition axis "
+        f"(arity < {TRANSIT_REC_ARITY}: no occupied-area set) and "
+        f"solve.transit_source is 'blank_run'. Every lineage restored "
+        f"from one would start with an empty `seen` and re-bank areas "
+        f"it has already occupied, fabricating novel arrivals. Re-run "
+        f"cold, or resume with solve.transit_source: room_id.")
+
+
 def local_coverage(keys) -> set:
     """Distinct (area, y_band, gx_bucket) triples over archive keys.
 
@@ -2137,6 +2183,47 @@ class GenericGame:
         # psig transit machinery (built on SMB's $074E) counts CV room
         # progress even though gx resets in every room.
         self._room_sig = tuple(int(a) for a in s.get("room_sig", ()))
+        # THE TRANSITION AXIS (D1, RYGAR_TRANSITIONS_2026-08-27).
+        # `solve.transit_source` switches what feeds the sect/psig transit
+        # test at the site above: `room_id` (default, OMITTED => every
+        # existing profile is byte-identical) is the room_id()-inequality
+        # check this class has always used; `blank_run` routes it through
+        # the calibrated PPU-blank-fold witness instead
+        # (scripts/transition_witness.TransitionWitness), for profiles
+        # (Rygar) where room_id() is a CONSTANT function — verified by
+        # constructing the profile and evaluating room_id on two disjoint
+        # RAM images, see docs/receipts/rygar/clear_predicate_REFUTED.md —
+        # so the room_id-inequality test never fires and `sect` is stuck
+        # at 0 regardless of real progress.
+        # `solve.area_key` names the RAM bytes that identify an AREA
+        # (Rygar: [0x0014, 0x001C], blind segment-stability derived —
+        # no disassembly, no RAM map). `solve.min_blank_frames` is the
+        # per-game blank-run floor separating a door (Rygar: 78-79
+        # frames) from a death fade (Rygar: 14 frames); there is
+        # deliberately no default, exactly like TransitionWitness's own
+        # constructor — a missing floor is a missing calibration, not a
+        # value to guess.
+        self.transit_source = str(s.get("transit_source", "room_id"))
+        if self.transit_source not in ("room_id", "blank_run"):
+            raise SystemExit(
+                f"[go_explore_solve] solve.transit_source must be "
+                f"'room_id' or 'blank_run', got {self.transit_source!r}.")
+        self.area_key_addrs = tuple(int(a) for a in s.get("area_key", ()))
+        self.min_blank_frames = int(s.get("min_blank_frames", 0) or 0)
+        if self.transit_source == "blank_run":
+            if not self.area_key_addrs:
+                raise SystemExit(
+                    "[go_explore_solve] solve.transit_source: blank_run "
+                    "requires solve.area_key (the RAM bytes identifying "
+                    "an area) — without it there is nothing to compare "
+                    "arrivals against and every blank run would read as "
+                    "a revisit of area ().")
+            if self.min_blank_frames < 1:
+                raise SystemExit(
+                    "[go_explore_solve] solve.transit_source: blank_run "
+                    "requires solve.min_blank_frames >= 1, a per-game "
+                    "calibration (Rygar: 40) separating a door from a "
+                    "death fade — there is no safe default.")
         # ROOM FINGERPRINTING (optional, default OFF => byte-identical;
         # ROOMGRAPH_ENGINE_2026-08-24 §4). `solve: room_fp: {mask,
         # settle, min_lines, pan_odo, warp_scene_min, palette_cokey,
@@ -2809,6 +2896,14 @@ class GenericGame:
     def room_id(self, ram) -> tuple:
         return (self.level_key(ram) + (self.area(ram),)
                 + tuple(int(ram[a]) for a in self._room_sig))
+
+    def area_key(self, ram) -> tuple:
+        """The `solve.area_key` bytes, read as a tuple — the AREA
+        identity `blank_run` transit checks arrivals against. Only
+        meaningful when `transit_source == "blank_run"`; the caller is
+        responsible for gating on that (this stays a plain reader so it
+        composes with the witness's own `push()` contract)."""
+        return tuple(int(ram[a]) for a in self.area_key_addrs)
 
     @staticmethod
     def label(key: tuple) -> str:
@@ -3649,6 +3744,56 @@ class Solver:
                   f"min_lines={self.room_fp['min_lines']} "
                   f"max_rooms={self.room_fp['max_rooms']} "
                   f"config_sha={self.game.room_fp_sha}", flush=True)
+        # THE TRANSITION AXIS (D1). ANTI-VACUITY, not a nicety: the
+        # blank-run witness lives in OdoState (nes_core/src/ppu.rs), so
+        # arming `solve.transit_source: blank_run` on a profile whose
+        # odometer never got switched on (self._odo False) would search
+        # a dimension that reads UNAVAILABLE at every single step —
+        # `sect` stuck at 0, exactly the failure mode this axis exists
+        # to fix, just relabeled. Refuse to start rather than run silent.
+        self._transit_blank_run = (getattr(self.game, "transit_source",
+                                          "room_id") == "blank_run")
+        if self._transit_blank_run:
+            if not self._odo:
+                raise SystemExit(
+                    "[go_explore_solve] solve.transit_source: blank_run "
+                    "requires the odometer to be on (progress.source: "
+                    "odometer, or solve.room_fp) — the blank-fold "
+                    "counter lives inside OdoState and reads nothing "
+                    "when the odometer is disabled.")
+            if not hasattr(self.pool, "get_odometer_blank_per_worker"):
+                raise SystemExit(
+                    "[go_explore_solve] solve.transit_source: blank_run "
+                    "but this nes_core build has no "
+                    "get_odometer_blank_per_worker binding — rebuild "
+                    "(make build) and refresh the venv .so before "
+                    "solving with this profile.")
+            print(f"[go_explore_solve] transit source: blank-run witness "
+                  f"(area_key={list(self.game.area_key_addrs)}, "
+                  f"min_blank_frames={self.game.min_blank_frames}) — "
+                  f"sect/psig come from TransitionWitness, not room_id()",
+                  flush=True)
+        self.transit_deep_relax = int(getattr(args, "transit_deep_relax", 0))
+        # D2 (score gains the transition axis, RYGAR_TRANSITIONS_2026-08-27
+        # 2026-08-27): the literal that has always multiplied `sect` in
+        # the archive score below is now this attribute. Default
+        # TRANSIT_SCORE_WEIGHT (10000) is the EXACT prior constant, so
+        # any run that never passes --transit-weight computes the same
+        # score as every run before this attribute existed — see
+        # tests/test_transit_score_wiring.py's byte-identical regression.
+        # The sizing itself (why 10000 must dominate the whole 6,242 px
+        # headline) lives in scripts.transition_witness, next to
+        # `lex_score`, not here — this is plumbing, not policy.
+        self.transit_weight = int(getattr(args, "transit_weight",
+                                          TRANSIT_SCORE_WEIGHT))
+        self._odo_blank_now: list = []
+        #: One TransitionWitness per WORKER SLOT, indexed by wid, carried
+        #: like every other per-lineage dict in `ctx` — but kept off the
+        #: dict itself because a witness is not JSON/pickle-cheap to spot-
+        #: check in the way plain ints are; `_assign` replaces the entry
+        #: wholesale on every re-root, exactly like `_room_seed`'s state.
+        #: Empty and untouched unless transit_source == blank_run.
+        self._tw: dict = {}
         self._odo_now: list = []
         self._odo_scene: list = []
         # FIGHT-GATE cumulative-damage integral (§4.1). Unlike the
@@ -4229,6 +4374,14 @@ class Solver:
             src = pool or self.pool
             self._odo_now = src.get_odometer_per_worker()
             self._odo_scene = src.get_odometer_scene_per_worker()
+            if self._transit_blank_run:
+                # One extra Rust round-trip for ALL workers, beside the
+                # two already here — not per-worker (D1: the blank-run
+                # transit dimension). `odo_blank` is per-trajectory (it
+                # rides inside OdoState and a restore carries the SAVING
+                # lineage's count back in), which is exactly why this is
+                # read fresh every step rather than cached across one.
+                self._odo_blank_now = src.get_odometer_blank_per_worker()
 
     def _fight_step(self, base: np.ndarray, wid: int) -> int:
         """Advance the fight-gate cumulative-damage integral for one
@@ -4608,6 +4761,67 @@ class Solver:
                                         exemplar_state=exemplar_state)
             self._room_edges_committed += 1
 
+    def _blank_transit_step(self, wid: int, c: dict, ram) -> bool:
+        """D1: the `transit_source: blank_run` transit test. Occupies the
+        SAME slot the room_id()-inequality check occupies in the
+        per-worker loop (never both — it's a mode switch, not an
+        addition) and returns the same one-bool-per-step contract: True
+        iff THIS step closed a run the calibrated blank-fold witness
+        calls a genuinely new area.
+
+        The decision itself is not reimplemented here — it is
+        `TransitionWitness.push()`, the same class 34+ tests in
+        tests/test_transition_witness.py and tests/test_transit_dimension.py
+        already hold to Rygar's own numbers (78-79 frame doors, 14-frame
+        death fades, zero false positives on 40,000 random steps). This
+        method only wires the machine's live surface into it: which
+        worker, which lineage's witness, this step's blank-fold reading
+        and area key.
+
+        `game.is_dead` is called directly, not `ctx["_dead_mm"]` —
+        `observe()` has not run yet this step, so the debounce counter
+        it maintains is still last step's value. The witness keeps its
+        own consecutive-dead counter over the same is_dead() stream, so
+        the two debounces necessarily agree without sharing state."""
+        tw = c.get("_tw")
+        if tw is None:
+            return False
+        blank = (self._odo_blank_now[wid]
+                 if wid < len(self._odo_blank_now) else None)
+        dead = self.game.is_dead(ram, self.start_lives)
+        return tw.push(blank, dead, self.game.area_key(ram)) == NOVEL
+
+    def _tw_seed(self, c: dict, seen=()) -> None:
+        """Attach a fresh per-lineage TransitionWitness to `c["_tw"]`,
+        seeded with `seen` (the restored cell's carried area set, or ()
+        for a brand-new root). No-op unless transit_source == blank_run,
+        so a room_id-mode run never allocates one.
+
+        PER-TRAJECTORY, NOT GLOBAL (the whole reason this exists as a
+        per-`c` object instead of one Solver-wide witness): `odo_blank`
+        rides inside OdoState, so a restore already hands the SAVING
+        lineage's raw count back to `_prev_blank` below; without this
+        seed, a fresh `seen` set at every restore would let a child
+        re-bank its parent's rooms once per re-root, forever (measured:
+        tests/test_transit_dimension.py::TestARestoredLineageCannotRebankItsParentsRooms).
+
+        KNOWN, NAMED SCOPE LIMIT: this seeds `seen` only, not an
+        in-progress blank run split by the restore. A lineage whose
+        state was archived mid-fade resumes with the witness's internal
+        run CLOSED (fresh `_prev_blank`, no open run) — the fade's
+        pre-restore frames are simply gone. That can only make the
+        witness see a SHORTER run than actually occurred, i.e. it can
+        turn a real transition into a missed one (SHORT/no verdict); it
+        can never fabricate a NOVEL it shouldn't. Safe-direction, and
+        named rather than silently accepted."""
+        if not self._transit_blank_run:
+            return
+        c["_tw"] = TransitionWitness(
+            min_blank_frames=self.game.min_blank_frames,
+            frames_per_step=self.frame_skip,
+            death_debounce=3,
+            seen=(seen or None))
+
     def _step0(self, a: int):
         acts = np.zeros(self.args.workers, dtype=np.uint8)
         acts[0] = self.bitmasks[a]
@@ -4969,7 +5183,20 @@ class Solver:
                         self._adj.setdefault(ia, set()).add(ib)
                         self._adj.setdefault(ib, set()).add(ia)
             ctx["cur_key"] = key
-        score = sect * 10000 + gx + game.score_bonus(ram)
+        # D2: `lex_score(sect, gx+bonus, weight)` flattens to EXACTLY
+        # `sect*weight + gx + bonus` — the same textual formula this line
+        # has always computed — so this is a literal-to-parameter swap,
+        # not a new formula. `self.transit_weight` defaults to
+        # TRANSIT_SCORE_WEIGHT (10000), the constant this line used to
+        # hardcode. getattr, not a bare attribute access: the duck-typed
+        # Solver stand-ins in tests/test_go_explore_solve.py and
+        # tests/test_go_explore_solve_repairs.py predate this axis and
+        # must keep reaching this line without opting in to it (same
+        # convention as `getattr(self, "_transit_blank_run", False)`
+        # above and `getattr(self, "lock_mode", "off")` elsewhere).
+        score = lex_score(sect, gx + game.score_bonus(ram),
+                          weight=getattr(self, "transit_weight",
+                                        TRANSIT_SCORE_WEIGHT))
         cur = self.archive.cells.get(key)
         # Peek-then-record pre-check, extended with the SAME lexicographic
         # merit comparator `GoExploreArchive.record()` applies internally
@@ -5010,6 +5237,20 @@ class Solver:
                     # written; see gate_suppress_trace.)
                     rec = rec + (tuple(ctx.get("gate_marks", ()))
                                  if ctx is not None else (),)
+                if getattr(self, "_transit_blank_run", False):
+                    # D1: the 9th trace element — the lineage's occupied-
+                    # area set, capped at 64 (measured 3 on the whole R1
+                    # tape; this is a blast shield, not a real limit).
+                    # Padded to index 8 with a gate_marks placeholder
+                    # when gate_mode is off, so this element lands at
+                    # the SAME position whether or not the gate arm ran
+                    # — a reader indexing rec[8] must not have to know
+                    # which other arms were armed on this run.
+                    if len(rec) <= 7:
+                        rec = rec + ((),)
+                    tw = ctx.get("_tw") if ctx is not None else None
+                    seen = tuple(sorted(tw.seen))[:64] if tw is not None else ()
+                    rec = rec + (seen,)
                 self.traces[key] = rec
                 self._recorded_new = True
                 # c_local: the archive's SPATIAL footprint, kept
@@ -5832,7 +6073,31 @@ class Solver:
             own = set(self.archive.cells)
             self.archive.load(prev / "archive.pkl")
             with open(prev / "traces.pkl", "rb") as f:
-                self.traces.update(pickle.load(f))
+                _loaded = pickle.load(f)
+            # THE `seen` CARRY IS NOT OPTIONAL ON RESUME (defect found in
+            # adjudication of runs/rygar_transitions/D2/run1, landed with
+            # the fix in RYGAR_TRANSITIONS_2026-08-27). A trace record
+            # written before this axis existed is a 7- or 8-tuple: it
+            # carries no occupied-area set, so every lineage restored
+            # from one starts with an EMPTY `seen` and re-banks the first
+            # area it arrives in — including one it had already occupied
+            # before the restore. Measured, not hypothesised: that run
+            # resumed a 7-tuple archive and banked 9 cells at sect >= 1
+            # whose arriving area key is the START area, i.e. the
+            # novelty gate fired on a room the lineage began in.
+            #
+            # The error direction is FABRICATION (novel arrivals that did
+            # not happen), which is the one direction this axis may never
+            # fail in, and `psig` cannot backfill it — a legacy Rygar
+            # record carries psig == () because room_id-mode transit
+            # never fired on that profile at all. So this is a HARD
+            # refusal with no override, for the same reason
+            # `_resume_room_index`'s are: the resumed records are not a
+            # weaker lineage, they are a lineage whose history is
+            # unknown.
+            if getattr(self, "_transit_blank_run", False):
+                check_transit_resume(_loaded, prev)
+            self.traces.update(_loaded)
             saved_roots = json.loads((prev / "roots.json").read_text())
             for rid, info in saved_roots.items():
                 self.roots.setdefault(rid, info)
@@ -6134,8 +6399,19 @@ class Solver:
         self._sel_area = self.max_area
         self._sel_maxscore = max(
             (c.best_score for c in self._sel_cells), default=1.0) or 1.0
+        # D1 risk mitigation: `--transit-deep-relax N` widens the deep
+        # arm's leading-key filter to `key[0] >= max_sect - N` (default
+        # N=0, so this is `== max_sect` exactly like before this axis
+        # existed — key[0] can never exceed max_sect by construction,
+        # so `>=` and `==` agree at N=0). Named risk: the deep arm is a
+        # HARD filter on this leading term, so one novel-area advance
+        # evicts the entire prior-sect band from selection; a relax > 0
+        # keeps recently-superseded bands reachable if the new band
+        # turns out to be a dead end or a death trap.
         deep = [c for c in self._sel_cells
-                if c.key[0] == self.max_sect and c.key[-5] == self.max_area]
+                if c.key[0] >= self.max_sect - getattr(
+                    self, "transit_deep_relax", 0)
+                and c.key[-5] == self.max_area]
         if self._gx_phantoms:
             # THE REFROZEN FRONTIER (§12). `_sel_topgx` is a maximum, so
             # a banked torn read defines the band every selection arm
@@ -6688,6 +6964,14 @@ class Solver:
                 # Root path: ROOM_UNKNOWN — the first settle adopts
                 # transit-free and edge-free (§2 lockstep invariants).
                 self._room_seed(wid, c, ())
+            # D1: the entrance root has occupied exactly one area so far
+            # (wherever it starts) — a bare witness self-seeds from its
+            # first push, exactly like every other fresh lineage. Gated
+            # on the FEATURE flag, same convention as room_fp above —
+            # the duck-typed Solver stand-ins in the tests carry _assign
+            # and nothing else, so this must never fire for them.
+            if getattr(self, "_transit_blank_run", False):
+                self._tw_seed(c, ())
             return c
         self.pool.load_worker_state(wid, cell.state)
         if getattr(self, "_fight", False):
@@ -6696,6 +6980,10 @@ class Solver:
         root_id, tb, loops, sig = rec[0], rec[1], rec[2], rec[3]
         sect = rec[4] if len(rec) > 4 else 0
         psig = rec[5] if len(rec) > 5 else ()
+        # D1: per-trajectory `seen` carry — the 9th trace element (see
+        # observe()'s rec = rec + (seen,)). Absent on a resumed 7/8-tuple
+        # archive or a room_id-mode run, exactly like gate_marks above.
+        _tw_seen = rec[8] if len(rec) > 8 else ()
         # prev_gx -1: no loop detection on the restore step (the load frame
         # reads transitional garbage; the first real step re-arms it).
         c = {"key": cell.key, "root": root_id, "trace": list(tb),
@@ -6716,6 +7004,14 @@ class Solver:
             # threaded psig tail; per-worker fingerprint state is
             # DERIVED here, never carried across restores (§2).
             self._room_seed(wid, c, psig)
+        if getattr(self, "_transit_blank_run", False):
+            # D1: a FRESH witness every re-root (lifetime == lineage
+            # lifetime), seeded with this cell's carried `seen` — never
+            # the prior witness object, and never a bare re-seed of
+            # `psig` alone (psig is only the LAST area, not the full
+            # occupied set; using it here would let the novelty gate
+            # re-fire on an area the lineage visited two doors ago).
+            self._tw_seed(c, _tw_seen)
         # T3 route attach (§3 row 9): a router-arm pick tags its burst
         # with the target room and — when that room still has an
         # unexplored boundary side — the side to push, plus the room's
@@ -7955,8 +8251,20 @@ class Solver:
                         if _lgx <= cap and _lgx > c.get("kk_max_gx", -1):
                             c["kk_max_gx"] = _lgx
                             c["kills"] = 0
-                _rid = game.room_id(ram)
-                _transit = (c["p0750"] is not None and _rid != c["p0750"])
+                # THE TRANSITION AXIS (D1): a MODE SWITCH, never both —
+                # `solve.transit_source: blank_run` (Rygar) replaces the
+                # room_id()-inequality test with the calibrated blank-
+                # fold witness verdict, because room_id() is a CONSTANT
+                # function on this profile (verified: level_key: [],
+                # no room_sig, no solve.area) and would never fire.
+                # DEFAULT ("room_id", every other profile): byte-
+                # identical expression to before this axis existed.
+                if self._transit_blank_run:
+                    _rid = game.area_key(ram)
+                    _transit = self._blank_transit_step(i, c, ram)
+                else:
+                    _rid = game.room_id(ram)
+                    _transit = (c["p0750"] is not None and _rid != c["p0750"])
                 if _transit and c["sect"] < self.args.sect_cap:
                     c["sect"] += 1
                     c["psig"] = _rid
@@ -8495,6 +8803,37 @@ def main() -> int:
                          "saturates within the first burst and every "
                          "post-saturation state collapses onto one frozen "
                          "cell-key slot for the rest of the run.")
+    ap.add_argument("--transit-deep-relax", type=int, default=0,
+                    metavar="N",
+                    help="D1 (transit dimension): widen the deep-arm's "
+                         "leading-key filter from `key[0] == max_sect` "
+                         "to `key[0] >= max_sect - N`. Default 0 = "
+                         "byte-identical to every prior run (key[0] can "
+                         "never exceed max_sect, so == and >= agree). "
+                         "Raise this when a fresh `sect` advance risks "
+                         "evicting the entire prior band from selection "
+                         "before the new one is known to be productive "
+                         "(the deep arm is a HARD filter on key[0]).")
+    ap.add_argument("--transit-weight", type=int, default=TRANSIT_SCORE_WEIGHT,
+                    metavar="W",
+                    help="D2 (score gains the transition axis): the "
+                         "weight multiplying `sect` in the archive score "
+                         "(`sect*W + gx + score_bonus`, via "
+                         "scripts.transition_witness.lex_score). Default "
+                         "%(default)d is the literal this formula has "
+                         "always hardcoded, so an unset flag scores every "
+                         "run byte-identically to before this axis "
+                         "existed. Sized (in that module, against Rygar's "
+                         "own banked tape) so one novel-area arrival "
+                         "outranks the entire verified frontier PLUS the "
+                         "whole measured re-anchor ratchet -- no amount "
+                         "of walking or door-cycling can outbid arriving "
+                         "somewhere new. 0 disarms the score term without "
+                         "touching the key (the key-only arm the design's "
+                         "three-knob A/B calls for); needs "
+                         "solve.transit_source: blank_run to have any "
+                         "effect (sect is otherwise always 0 or a "
+                         "room_id-mode count already receipted at 10000).")
     ap.add_argument("--gx-bucket", type=int, default=16,
                     help="Cell gx granularity px (micro-search: 8).")
     ap.add_argument("--y-band", type=int, default=32,

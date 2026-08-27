@@ -3166,3 +3166,182 @@ state, no address, no bucket number, no `3072` — so it means the same
 thing on a different game, core build or session, and refuses to mean
 anything on a run that has not reached a frontier. It self-disarms the
 instant the frontier advances, because that is what resets `_pin_time`.
+
+## RYGAR TRANSITION AXIS 2026-08-27 — EXHIBITION, wall HELD, mechanism LANDED
+
+Full write-up: `docs/research/RYGAR_TRANSITIONS_2026-08-27.md`. Predecessors:
+`docs/research/RYGAR_CAMPAIGN_2026-08-26.md`,
+`docs/research/ODO_BLANK_AND_GATE_2026-08-26.md`,
+`docs/receipts/rygar/clear_predicate_REFUTED.md`. **No tape is preserved
+under `docs/receipts/` because no trajectory crossed a stage boundary.**
+
+**Ledger: EXHIBITION, without exception.** Go-Explore search output and
+instrument measurement only. No policy was trained for this game and no
+honest-protocol evaluation was run. Nothing here may be described with
+"the AI learned", "the AI plays", or "the AI beat".
+
+**Emulator** `nes_core` sha256_16 `54366c20d32f71cc`. **ROM**
+`roms/Rygar (USA).nes` sha256
+`d87a7b3250eb8d6af3b725169a02dab492a10b92dcd03eb44ddce34e1124bbbf`.
+**Start state** `roms/Rygar (USA)_start.state.bin` sha256
+`9befb1cefd597130b1b3d80fbd77e9363cf8336b53da1542c2e6846b628f0971`.
+
+### The verdict
+
+**The wall HELD. Best verified 4,608 px, against a prior of 4,608 px.** No
+stage boundary was crossed. The `($0014,$001C)` area key took **exactly
+three values** — `(0,14)`, `(3,16)`, `(0,29)` — across every cell of every
+archive this campaign produced, which are exactly the three the prior
+room-graph corpus already held. **A fourth value was never observed** in
+1,711,525 steps across seven runs and four root classes (~70 min, 2 workers
+throughout, contended by a concurrent Contra workflow; 224–458 sps).
+
+**The mechanism is the result.** Before this landing `room_id()` was the
+**constant function `(0,)`** on this profile — re-verified at HEAD on three
+disjoint RAM images — so `sect` was identically 0, and with it the leading
+cell-key slot, the leading score term and the deep-arm filter. Every one of
+the failed campaign's 14 hypotheses ranked candidates by `gx` alone. That is
+now fixed: `solve.transit_source: blank_run` routes the transit test through
+the calibrated blank-fold witness, and `sect` is a live variable.
+
+### The axis is live, and correctly signed
+
+- **It stratifies the archive.** Two independent cold runs put their
+  `sect = 1` band at **exactly 1536–4608 px** — the first door and the
+  artifact-free ceiling, reproduced to the pixel by an instrument never told
+  either number. `best_score` reads 25,002 / 25,081 = `2 × 10000 + gx`.
+- **It survives a real revert**, done in an isolated worktree at HEAD:
+  8/8 ROM-free wiring tests fail with meaningful `AttributeError` /
+  `SystemExit` / structural assertions; the score-site revert fails its 2
+  structural tests. **Named limit:** at the default weight the reverted
+  score literal computes an identical score, so the real-emulator score
+  replay does **not** catch it — only the AST checks do.
+- **Its absence is measured on the same steps.** On the banked R1 tape the
+  blank-run witness banks **2** novel arrivals where the `room_id()`
+  inequality it replaces banks **0**.
+- **The value in `key[0]` is `novel`, never a raw count.** On that tape the
+  three candidate numbers read **2 / 55 / 4,329**; only the first may enter
+  a cell key. The score weight (10,000) is sized so one novel arrival
+  outranks the verified frontier **plus** the entire measured ratchet.
+
+### 4,608 is the number — decomposed, not asserted
+
+All four deepest tapes were replayed on fresh pools with the solver's own
+replay recipe and **reproduce their filed terminals exactly**, every one
+**ALIVE** (longest debounced dead run **2** observations on all four — the
+door-blip signature, never the `≥3` debounce, nowhere near a real death's
+5,721+ pin). Cut at every area-key change, each tape is: **one** `+1,536` px
+ridge traverse, **one** `+3,063..3,072` px corridor traverse (real ground
+tops out at **4,608**), then an alternation of **zero-gain** visits to
+`(0,29)` and **+55..+64 px** re-anchor blips in `(3,16)`, forever.
+**`(0,29)` banked exactly zero pixels in 83 of 83 visits.** The ratchet
+totals 4,964 px across the four tapes.
+
+The smoking gun: `far_arrival1_obs2682.state` and `far_arrival2_obs2820.state`
+stand **in the same room** and their odometers read **4,608** and **9,280**.
+Above 4,608, raw x is not a position on this profile. **Cite 4,608. Never
+6,242, never 7,029, never 9,344.**
+
+### The wall
+
+**Routing blindness is REFUTED.** The search now has a transition
+dimension, uses it in key, score and selection, and it works — it re-derived
+both known doors from cold, to the pixel, in under two minutes, twice. The
+frontier still did not move. "The solver could not tell a door from walking"
+is no longer available as an explanation.
+
+**The room-graph work's pre-registered falsifier FIRED.** Its rule: a
+bounded, death-terminated search from inside `(0,29)` scoring on anything
+except odometer x that still finds no fourth area makes `(0,29)` a dead end.
+R1/R2/X1 are the strict form — three independently written harnesses, three
+non-x selection rules, **359,829 steps, zero fourth areas**, with 149
+debounced deaths in R1 alone proving the death path live. D3/run2 is the
+loose form (transition-led solver, `gx` still the tiebreak): 274,454 further
+steps, also zero. **By its own rule, `(0,29)` is a dead end**; the next
+target is a mid-corridor exit.
+
+**Two things are NOT excluded and may not be dropped.** (1) The area key may
+be too coarse: `$0014/$001C` take three values in 38,650 cells plus 1.7M
+fresh steps, and X1's nametable-hash probe **saturated its 64-hash cap in
+both areas within ~20 s**, so it neither confirms nor refutes the concern.
+(2) Budget: 1.71M steps is small beside the 232,548 restarts already spent
+inside `(0,29)`. Subject to those, the wall is what the campaign originally
+classed it — **skill and survival on a route the search can now see**.
+
+**The one live cost of the axis working:** `deep` is a hard `key[0] ==
+max_sect` filter, so the instant a cold run reaches `sect = 2` the whole
+deep pool becomes cells inside `(0,29)`, where `dx = 0` by construction.
+Both cold runs spent ~90% of their budget pinned there.
+`--transit-deep-relax` exists for exactly this and **was never exercised on
+a clean cold run** — D1 ran at the default 0, and D2, the only run that
+passed `--transit-deep-relax 2`, was a contaminated resume whose `max_sect`
+never left 1.
+
+### Defects found
+
+- **The `seen` carry is not optional on resume — FIXED.** D2 resumed a
+  pre-axis archive: **493 of 1,647 trace records are 7-tuples** with no
+  occupied-area set, so restored lineages started empty and re-banked rooms
+  they had already occupied — **9 cells at `sect ≥ 1` whose arriving area
+  key is the START area**. Error direction is **fabrication**, and `psig`
+  cannot backfill it (legacy Rygar records carry `psig == ()`), so
+  `check_transit_resume` now refuses such a resume outright, no override.
+  Anti-vacuity verified by revert; one test replays the real D2 archive and
+  asserts `493 of 1647`.
+- **A bare attribute broke seven pre-existing tests — FIXED.** The deep-arm
+  filter's `self.transit_deep_relax` raised `AttributeError` against the
+  duck-typed Solver stand-ins in **four** test files; only one had been
+  updated. Moved to `getattr(..., 0)`, the form the score site already uses.
+- **`_sel_lowl_band24` is dead code — RECORDED, not fixed.** `deep` is
+  filtered to `key[0] == max_sect`, so `lowl` is `deep` identically and the
+  70%-of-the-time branch in `select()` samples the same list as its
+  else-branch. **Any claim that the solver "already prefers lower-transit
+  cells" is false** and must not be relied on as a safety valve.
+
+### The predicate question is still not answerable
+
+**No predicate was minted and none should be.** `configs/rygar.yaml` still
+carries `level_key: []` with no clear and no finale, and its guarding test
+is green. Both naive candidates still fabricate wins on Rygar's own deepest
+tape — "a transition happened" fires 55 times, a level_key on the
+blind-discovered area byte fires 28 and latches TRUE on 83% of observations.
+`solutions: 0` on this profile is a compile-time constant, **evidence of
+nothing**, never a miss, never in a denominator. The gating task is
+unchanged: **one trajectory that crosses a stage boundary.**
+
+### Corrections
+
+- The failed campaign's "no instrument in the pipeline can count rooms" is
+  **scoped, not withdrawn** — one could, and the pipeline now does. Its
+  frontier conclusion (4,608 px) **stands**, and now stands against a
+  room-aware search too.
+- **D2's filed `novel_transitions: 0` understates its own instrument** — its
+  tape banks 2. The conclusion ("no corpus-novel fourth area") was right;
+  the field was wrong.
+- **X1's prose calls its 4,608 root reading "an independent reproduction of
+  the ceiling".** It is not — the sibling root in the same room reads 9,280.
+  X1's JSON records both honestly; the narrative inference does not hold.
+- **R1, R2 and X1 banked no replayable tape.** Recorded as a receipt gap.
+- `docs/research/ROOM_GRAPH_LEVERAGE_2026-08-27.md` never existed; four
+  source files referenced it and now point at this campaign's write-up.
+
+### Next
+
+1. **Run the relax arm** — one cold run at `--transit-deep-relax 1..2`,
+   pre-registered. The one knob the design specified and the campaign never
+   got a clean run of; ~15 minutes.
+2. **Adjudicate the area key** before spending more compute on the null —
+   an unsaturating masked nametable hash beside the area key. Do not gate on
+   it until calibrated.
+3. **Move the target to a mid-corridor exit**, which needs a loadable
+   mid-corridor savestate that does not exist yet.
+4. **Bank a tape from every falsifier search**, including the nulls.
+5. Otherwise **re-shelve Rygar with this receipt**. The expensive question —
+   is the solver blind to rooms? — is closed.
+
+**Purity (Tier 3).** Every observable is a hardware surface (2 KB CPU RAM as
+an opaque array, the PPU scroll odometer, the PPU blank-fold counter) or a
+byte this profile already declared by blind statistical search over its own
+rollouts. No disassembly, no RAM map, no walkthrough, no recall of this
+title. `solve.area_key` is a config field **distinct from** `solve.level_key`
+so no code path can promote a search-derived byte into a clear predicate.

@@ -811,6 +811,9 @@ def _ortho_solver(cells, **over):
         archive=SimpleNamespace(cells={c.key: c for c in cells}),
         max_area=max((c.key[-5] for c in cells), default=0), max_sect=0,
         sel_mode="legacy", frontier_throttle=0,
+        # D1: _refresh_sel_cache's deep-arm relax. 0 = the pre-D1
+        # `key[0] == max_sect` filter exactly.
+        transit_deep_relax=0,
         door_weight=0.0, _doors=frozenset(), _key_ids={},
         ortho_mode="up", ortho_pin_secs=0.0, ortho_bias=1.0,
         ortho_band=1, ortho_weight=4.0, _pin_time=0.0,
@@ -1365,6 +1368,9 @@ def _burst_solver(cells, *, learn_every: int = 25, **over):
     f.game = _BURST_GAME
     f.start_wd, f.start_lives = (0,), 5
     f.max_gx_in_area = {0: 1000}
+    # D2: observe()'s score-site literal, now an attribute. 10000 is the
+    # pre-D2 hardcoded constant (TRANSIT_SCORE_WEIGHT).
+    f.transit_weight = 10000
     f.time_bins = f.kill_key = False
     f._recorded_new = False
     f._ortho_best, f._ortho_time = None, 0.0
@@ -3820,6 +3826,8 @@ def _wall_solver(wall_cells, *, deep_bias: float, sel_mode: str,
         archive=SimpleNamespace(cells={c.key: c for c in wall_cells}),
         max_area=wall_cells[0].key[-5], max_sect=wall_cells[0].key[0],
         sel_mode=sel_mode, frontier_throttle=0,
+        # D1: see _ortho_solver's identical comment.
+        transit_deep_relax=0,
         door_weight=0.0, _doors=frozenset(), _key_ids={},
         ortho_mode="off", ortho_pin_secs=1e18, ortho_bias=0.0,
         ortho_band=1, ortho_weight=4.0, _pin_time=0.0,

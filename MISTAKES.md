@@ -11,14 +11,24 @@ one-line invariant only after recurring across 4–5 separate entries.
 | root cause | entries | deterministic enforcement available? |
 |---|---|---|
 | `[vacuous-gate]` a check that cannot fail | **5** | yes — lint for `passed = not <coll>` |
-| `[stale-artifact]` measured the old binary/profile | **4** | yes — hash the loaded artifact against the built one in CI-less `make` target |
+| `[stale-artifact]` measured the old binary/profile | **5** | yes — hash the loaded artifact against the built one in CI-less `make` target |
 | `[inert-treatment]` armed, wired, never fired | **4** | **SHIPPED 2026-08-27** — `scripts/check_mechanism_receipt.py` returns VOID for any armed mechanism whose counter never moves |
-| `[weak-eval]` protocol too weak to detect its own failure | **5** | partly — enforce min-n at the gate |
-| `[unverified-claim]` trusted a number without re-deriving it | **7** | no — judgement |
+| `[weak-eval]` protocol too weak to detect its own failure | **6** | partly — enforce min-n at the gate |
+| `[unverified-claim]` trusted a number without re-deriving it | **9** | no — judgement |
+| `[purity-leak]` external/unwitnessed semantics in a live map | 1 | yes — `tests/test_purity_quarantine_sweep.py` names each retraction |
 
 Nothing has been promoted; the enforced ruleset is untouched. `[vacuous-gate]`,
-`[weak-eval]` and `[unverified-claim]` are all at or past the threshold as of
-2026-08-27 and are awaiting a call.
+`[stale-artifact]`, `[weak-eval]` and `[unverified-claim]` are all at or past the
+threshold as of 2026-08-27 and are awaiting a call.
+
+`[purity-leak]` is **new at 1 entry** and nowhere near graduation — recorded here
+so the count starts, not because it is close. It is worth watching for a reason
+the raw number hides: its one entry covers 19 annotations across 8 profiles, so a
+second entry would mean the *class* recurred after a tree-wide sweep had already
+been run against it. Note also that the Zelda quarantine (2026-08-25) and the
+observatory exclusion fix (2026-08-26) are logged under `[vacuous-gate]` and
+elsewhere rather than under this tag, so the true history of this root cause is
+longer than the counter shows; the counter is deliberately not backfilled.
 
 `[inert-treatment]` is the first root cause whose enforcement actually exists.
 `check_mechanism_receipt.py` reads a run's own artifacts and returns **VOID** (not
@@ -36,6 +46,47 @@ cannot reach under `trainer_mode: vanilla_ppo` — is derived from the AST in
 returning an empty set when it cannot find the dispatch it parses.
 
 ---
+
+## 2026-08-27 — [purity-leak] Unwitnessed events annotated as measured fact
+- **What happened:** A tree-wide sweep of all 101 configs carrying a live
+  `ram_mapping` (994 int-parseable entries) found 17 annotations asserting what a
+  byte does at a clear, a win, or a boss death on a ROM where this repo has never
+  witnessed one — plus 2 more outside the inline-comment scan. `contra.yaml`:
+  "increments on a real stage clear" and "0->1 when the current stage boss dies",
+  on a game with zero witnessed stage transitions across 6 archives and a boss
+  reading already falsified as a multiplexing artifact. `punchout.yaml`:
+  "VERIFIED WIN LATCH ... nonzero ONLY at the winning KO/TKO. THE win" — on a
+  profile whose only go_explore archive is empty and whose own receipt calls the
+  claim "a purity leak dressed as an empirical find". 7 entries quarantined, 24
+  downgraded, 963 left alone.
+- **Root cause:** The certification tag was written from the address table rather
+  than from an observation. "VERIFIED" recorded that somebody believed the label,
+  not that anybody watched the byte move. Nothing distinguishes, at the point of
+  writing, a byte watched across an event from a byte whose event never happened —
+  so an unfalsified claim reads identically to a confirmed one.
+- **Consequence:** Documentation-only in the config layer: no `solve.level_key`
+  and no `reward_weights.*_addr` referenced a quarantined address, so no banked
+  clear, gate, or reward is retracted. But two of the seven are still live in
+  `nes_core/src/rewards.rs` as hardcoded constants (`RAM_MATCH_ID = 0x0001`
+  drives Punch-Out's `episode_success()`; `RAM_BOSS_HEALTH = 0x06C1` drives Mega
+  Man's boss term). Neither has ever fired, so nothing rests on them today — but
+  the sweep covered `configs/` and the same class of claim lives uncovered in the
+  executing layer.
+- **NOT a recurrence of the exclusion-set inversion.** Worth recording precisely,
+  because the brief that launched this work asserted it was. The
+  `excluded |= known` fold in `scripts/observatory.py` closed for Zelda in
+  `2e6014f` is **still closed**: `_mapping_bytes()` is private, reaches `main()`
+  only behind an `is_known()` predicate that cannot be unioned into anything, and
+  the receipt logs the `ram_mapping` region with `"excludes": False`. No config in
+  this tree was steering the discovery instrument. What recurred is the root cause
+  one level up — external, unwitnessed semantics living in a live `ram_mapping` —
+  not the mechanism that made it bite. Logging the mechanism as recurrent would
+  have been a fabricated recurrence.
+- **Rule (draft):** A semantic claim tied to an event names the observation that
+  witnessed it, or it is written as a hypothesis. "Could not be driven to
+  increment, so the increment is unverified" is the correct form; "it can only
+  rise on a real floor clear" is not, because a false-positive rate cannot be
+  derived from zero observations. Unfalsified is not verified.
 
 ## 2026-08-27 — [inert-treatment] Registered a treatment at an operating point its own statistic could not reach
 - **What happened:** ReDo was registered at `tau=0.025` as one of two variables in
@@ -118,6 +169,60 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** A threshold must be measured under the exact protocol it will
   gate, before it gates anything. A bar inherited from a different harness is a
   bar with an unknown value.
+
+## 2026-08-27 — [stale-artifact] Resumed an archive from before the mechanism existed
+- **What happened:** A Rygar run resumed `runs/rygar_campaign/R1-14/extend` with
+  the new blank-run transition axis armed. **493 of that archive's 1,647 trace
+  records are 7-tuples**, written before the axis added a 9th element carrying
+  each lineage's occupied-area set. Every lineage restored from one therefore
+  started with an empty `seen` and re-banked the first area it arrived in — the
+  archive shows **9 cells at `sect >= 1` whose arriving area key is the room the
+  run starts in**.
+- **Root cause:** The trace record's arity is a schema, and the resume path
+  compared everything else about the two archives — key arity, room-index
+  alphabet, axis config — but not whether the record carried the field the new
+  mechanism reads.
+- **Consequence:** The novelty gate **fabricated** arrivals, which is the one
+  direction it may never fail in. It also pinned that run's `max_sect` at 1 and
+  made its whole transition stream non-comparable to the two cold runs it was
+  meant to be read beside. Caught in adjudication by reading the banked archive,
+  not by anything the run itself reported.
+- **Rule (draft):** When a mechanism adds a field to a persisted record, the
+  resume path must refuse records that lack it — not default it. A default is a
+  guess about history, and here the guess fabricates.
+
+## 2026-08-27 — [weak-eval] Ran three falsifier searches that banked no replayable tape
+- **What happened:** Three of seven runs in the Rygar transition campaign
+  (359,829 steps between them) were standalone harnesses that wrote only a
+  summary JSON. Their conclusion — no fourth area from inside the frontier room
+  — is the one that fires the campaign's pre-registered falsifier, and it is the
+  one nobody can re-derive.
+- **Root cause:** The harnesses were written to answer a question, not to leave a
+  receipt, and a *null* felt like it had nothing to preserve.
+- **Consequence:** Four sibling tapes were replayed at landing and all four
+  reproduced their filed terminals exactly; these three could not be checked at
+  all. A null with no tape cannot be distinguished from a harness that was
+  silently not searching.
+- **Rule (draft):** A search that reports "found nothing" must bank a tape too.
+  The null is exactly the result whose harness most needs to be replayable.
+
+## 2026-08-27 — [unverified-claim] Called a subset test run "no regression" on a shared hot method
+- **What happened:** Three parallel lanes each added an attribute read to
+  `Solver._refresh_sel_cache` / `observe` and each reported a green subset (546,
+  641 and 85 passed). The full suite at landing came back with **7 new
+  `AttributeError` failures** in `test_room_router.py`, `test_terminal_stasis.py`
+  and `test_gate_k0_reforge.py` — three of the **four** test files that carry
+  duck-typed `SimpleNamespace` Solver stand-ins. Only one of the four had been
+  updated.
+- **Root cause:** Each lane ran the tests it knew about. A bare `self.<attr>` in
+  a method that four independent stand-in families call is a change whose blast
+  radius is not visible from any one lane's subset.
+- **Consequence:** The mechanism would have landed red. Fixed by moving to
+  `getattr(self, ..., default)` — the form the sibling site in the same commit
+  already used, for the same reason, one day earlier.
+- **Rule (draft):** "No regression" is a claim about the whole suite. A subset
+  pass count is not evidence for it, least of all on a method reached by
+  duck-typed stand-ins the lane never sees.
 
 ## 2026-08-27 — [vacuous-gate] Shipped a CLI mode that printed as armed and did nothing
 - **What happened:** `--lock-objective latch` landed on `main` as a declared
