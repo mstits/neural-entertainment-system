@@ -65,19 +65,37 @@ solve:
   y: 0x0006
   lives: 0x007B
   clear:
-    # Odometer-cohort scene_cut wiring, 2026-08-26 (Finding 1: odo_blank is a
-    # real transition counter). Eligibility only -- no `mode` is set here, so
-    # is_clear()/solutions is byte-identical to before this block existed;
-    # this only moves scene_cut from DEAD to ALIVE in clear_reachability's
-    # quorum table. Measured, not guessed -- full survey + per-profile numbers:
-    # docs/receipts/clear_control/odometer_cohort_scene_cut_survey_2026-08-26.json
-    # 9 scene-ordinal bumps fired in ordinary short random play (max run 2) --
-    # the Metroid camera-clamp/seam shape. scene raised well above the observed
-    # null and `kind` restricted to `fade` so only the blank half of the signal
-    # can vote; `warp`/`pan` stay excluded rather than guessing a number that
-    # happens to clear this survey's own null.
+    # scene_cut DECLINED 2026-08-27, superseding the 2026-08-26 arming
+    # (4dd15ea). Re-adjudicated by measurement, not judgement:
+    # scripts/scene_cut_arming.py.
+    # DEMONSTRATED FALSE POSITIVE: driven at its own armed gate (scene_min=6,
+    # blank_min=1, kind=['fade']) over 4x6000 steps of mixed-random play that
+    # cleared nothing, this gate fired 15 times. Every one is a false positive,
+    # and every one survived the death veto.
+    # THE GENERAL REASON, which applies to every profile in this cohort and not
+    # only this one: the audit probe CLEARS NOTHING, so its entire observed
+    # (d_scene, d_blank) distribution is null. A gate at or below that null
+    # fires on ordinary play; a gate above it has no evidence it can ever fire.
+    # An ARM needs a WITNESSED positive -- one blank run known to be a level
+    # transition -- and no profile here has one. Same refusal, same reason, as
+    # docs/receipts/rygar/clear_predicate_REFUTED.md.
+    # The instrument is NOT the problem: odo_blank moves for 20 of the 25
+    # cohort profiles and reads 55/55 transitions on Rygar's banked tape.
+    # Re-arm by witnessing one transition on this profile, registering it in
+    # scene_cut_arming.WITNESSED_TRANSITIONS, and re-running the audit.
+    # Reproduce: .venv/bin/python scripts/scene_cut_arming.py --profile configs/ninja_gaiden_iii.yaml
+    # Receipt:   docs/receipts/clear_control/scene_cut_arming_2026-08-27.json
     signals:
-      scene_cut: {scene_min: 6, blank_min: 1, kind: [fade], death_debounce: 3}
+      scene_cut:
+        enabled: false
+        reason: >-
+          DECLINED 2026-08-27 by scripts/scene_cut_arming.py. DEMONSTRATED
+          FALSE POSITIVE: driven at its own armed gate (scene_min=6,
+          blank_min=1, kind=['fade']) over 4x6000 steps of mixed-random play
+          that cleared nothing, this gate fired 15 times. Every one is a false
+          positive, and every one survived the death veto. An ARM requires a
+          witnessed level transition to place a length floor against; this
+          profile has none.
 
   # DELIBERATELY EMPTY -- no clear captured yet; guessing a stage-advance
   # byte here is the authored-semantics class the purity line forbids.

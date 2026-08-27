@@ -1893,11 +1893,16 @@ door cycles bought 1,621 px (~60 px/cycle), so reaching 9,000 from
 denominate depth in **first-visit territory**.
 
 **Rooms reached: at least 3 visually distinct areas, counted by eye
-from our own rendered frames — no instrument can count them.**
-`odometer_scene` reads 0 cuts across a tape that provably crosses 55
-blackout transitions, because `odo_fold_frame`'s blank branch returns
-before the scene-cut test. Every `rooms_reached: 1` reported during the
-campaign was an inference from an instrument that cannot fire.
+from our own rendered frames.** ~~no instrument can count them~~ —
+**that clause is WITHDRAWN 2026-08-26.** `odometer_scene` reads 0 cuts
+across a tape that provably crosses 55 blackout transitions, because
+`odo_fold_frame`'s blank branch returns before the scene-cut test — but
+the pipeline carries a *second* counter, `odo_blank`, and edge-detected
+into runs it reads **55/55 transitions and 3 areas** on the same tape,
+agreeing with the eye. The correct scope of the original finding is
+"`odometer_scene` cannot count them", not "no instrument can". Every
+`rooms_reached: 1` reported during the campaign was still an inference
+from an instrument that cannot fire.
 
 **Negative results banked (the bulk of the campaign, all replay-
 audited).** R1-01 budget sweep VOID (no arm reached its own cap, so the
@@ -1927,13 +1932,19 @@ stub has no such attribute). The diff is preserved, tracked, at
   of the gate's scripted forward hold, not of the game: the solver's
   own lineages run 3,865–6,018 actions in one continuous life with zero
   terminal deaths. Cite 138 only as the probe's survival.
-- **Contra — SIGNAL UNUSABLE, but NOT fairly excluded.** 20 distinct in
-  69 live steps, 1,131 of 1,200 dropped. **Open defect:** the gate
-  computes its resolution finding on the window *after* truncation, and
-  a 69-sample window cannot demonstrate a 32-distinct threshold. That
-  verdict measures how fast the probe died, not the signal's
-  resolution. **Contra's honest verdict is INCONCLUSIVE**, pending a
-  probe that survives long enough to assess. Rygar's PASS is unaffected.
+- **Contra — SIGNAL SOUND. The exclusion is WITHDRAWN** (corrected
+  2026-08-26; defect fixed in `5a09775`, see the ODO_BLANK section
+  below). The original "SIGNAL UNUSABLE — only 20 distinct in 69 steps"
+  rested on a broken inference: the gate computed its resolution
+  finding on the window *after* D5 truncation, and **a 69-sample window
+  cannot demonstrate a 32-distinct threshold**. That verdict measured
+  how fast the scripted hold died, not the signal's resolution. At HEAD
+  the fixed gate returns **INCONCLUSIVE** on the same hold (69 live
+  steps, 20 distinct) and **PASS — SIGNAL SOUND** under `--probe
+  random` (721 live steps, **346 distinct**, range 0..1063); composed
+  across both probes Contra is **SIGNAL SOUND with zero faults**. The
+  pair `{lo: 0x0065, hi: 0x0064}` is a sound 16-bit progress
+  observable. Rygar's PASS is unaffected.
 - **Kung Fu — SIGNAL UNUSABLE on both axes.** RAM byte `$0094`: 91
   distinct, 0..240, no paired high byte. Odometer: **1 distinct, range
   0..0 over 1,200 steps with OAM churn 628/1199** — the camera is
@@ -1994,3 +2005,183 @@ surfaces — PPU scroll odometer, nametable VRAM, rendered frames, OAM,
 render-line counts — plus each profile's own declared lives byte, on
 its own start state. No disassembly, no RAM map, no walkthrough, no
 recall of these titles.
+
+---
+
+## ODO_BLANK, THE COHORT, AND THE PROGRESS GATE 2026-08-26 — EXHIBITION
+
+Full write-up: `docs/research/ODO_BLANK_AND_GATE_2026-08-26.md`. Rygar
+refusal: `docs/receipts/rygar/clear_predicate_REFUTED.md`. Arming
+policy: `scripts/scene_cut_arming.py`. Its two receipts:
+`docs/receipts/clear_control/scene_cut_arming_2026-08-27.json` (the
+configs as shipped) and `..._asfound_2026-08-27.json` (the 2026-08-26
+arming as found — the evidence the disarm rests on).
+
+**Ledger: EXHIBITION.** Every Rygar and Contra number in this section
+is search output, scripted-hold probe output, or uniform-random rollout
+output. No policy was trained for either game; no honest-protocol
+evaluation was run for either. Nothing here may be described with "the
+AI learned", "the AI plays", or "the AI beat".
+
+**1. Rygar still has no clear predicate, and the blocker moved.** The
+instrument objection is answered — `odo_blank`, edge-detected, reads
+55/55 Rygar transitions and 3 areas on the banked R1 tape. The
+predicate is still **REFUSED**, with numbers rather than a shrug: the
+two predicates the instrument makes available fabricate **55** and
+**28** wins on that same tape, where the honest count of new ground is
+**2**. The decisive blocker is that **no Rygar clear has ever been
+witnessed** — 71 of 71 `solutions/` directories empty, every one a
+compile-time constant. A predicate with no witnessed positive can only
+be shown *not* to fire, which is the exact shape of this week's four
+vacuous gates. `configs/rygar.yaml` is unchanged (`level_key: []`, no
+`clear`, no `finale`) and a test now guards that. **R1 condition 2
+stays FAIL.** Step 1 of a real predicate is a witnessed positive,
+blocked by the 4,608 px search wall — a *search* problem, not an
+instrument problem.
+
+**2. `odo_blank` is a transition counter for 20 of the 25 odometer-
+cohort profiles.** Measured twice, independently, and **both counts are
+20**: the 2026-08-26 survey at 3 × 4,000 steps per profile, and this
+audit at 4 × 6,000. The membership differs by one swap and that is
+reported rather than smoothed: dead in **both** are
+`batman_the_video_game`, `double_dragon_ii`, `mega_man_3` and
+`tetris_usa` (so 19 of 25 move it in both runs, 21 in at least one);
+`ninja_gaiden` (0 → 3 runs) and `power_blade` (1 → 0) each moved in
+exactly one and are marginal, not established either way. In
+distinct-ROM terms, **19 of 24 games** (`metroid`/`metroid_roomfp`
+share a ROM).
+
+This matters because `clear_reachability` marks `coord` DEAD for the
+whole cohort — verified for all 25 — which is what puts every one of
+them at quorum UNREACHABLE. These games have never had a transition
+signal that could fire.
+
+Three usage constraints, all measured, none optional: **(a)**
+edge-detect into runs — the raw counter reads 4,329 on the Rygar tape,
+78× the true count of 55, because it counts blank *frames*; **(b)**
+threshold on run LENGTH, calibrated per game from that game's own
+rollouts — the raw counter takes the same branch for a death fade, a
+boot fade and a door, so a bare "it moved" predicate fires on **every
+death**. Measured over 18 rollouts, each confirmed to actually die:
+death fade **14** blank frames (36/36), boot fade **9** (18/18), door
+**78–79** (55/55), floor 40. That separation is **Rygar's**, not the
+cohort's; **(c)** treat it as
+**per-trajectory, not monotone** — `odo_blank` rides inside `OdoState`,
+so a Go-Explore restore carries the saved value back in (measured 273 →
+90). Under 12,036 restores the transition count held at 55 with zero
+fabricated events; the error is always downward.
+
+**3. The 2026-08-26 cohort arming (`4dd15ea`) is WITHDRAWN. All 23
+profiles are disarmed.** That commit armed `scene_cut` off a survey
+whose reproducer was never committed, and the arming was a judgement
+rather than a measurement. Re-run as a measurement —
+`scripts/scene_cut_arming.py`, 4 × 6,000 steps of each profile's own
+mixed-random play, through that profile's own armed signal built from
+the real YAML — **14 of the 23 armed gates fire on play that cleared
+nothing**, worst `paperboy` 207, `ducktales_2` 113, `ghosts_n_goblins`
+102, `gradius` 65. Every fire is a false positive and every one
+survived the death veto.
+
+**The general reason, which is the same one that refuses the Rygar
+predicate.** The audit probe clears nothing, so its entire observed
+`(d_scene, d_blank)` distribution is null. A gate at or below that null
+fires on ordinary play — demonstrated above. A gate above it has no
+evidence it can ever fire. An arm therefore needs a **witnessed
+positive**: one blank run known to be a level transition, so a length
+floor can be placed between it and the death population. Rygar has
+exactly one (death fade 14 blank frames, door 78–79, floor 40) and is
+served by its own instrument; **no other cohort profile has one**, which
+the 2026-08-26 survey says itself in its own `scope_limit`. The clause
+is in code (`C7_SEPARABILITY_WITNESSED`) with a register that can be
+added to.
+
+Disarming returns all 23 to quorum **UNREACHABLE / ceiling 0.75**, the
+pre-`4dd15ea` state, verified profile by profile. The specific defects
+review found are all real and are recorded per-profile in each config's
+refusal: `kind: [fade]` armed on a blank channel measured at zero runs
+(the evidence state `tetris_usa` was DECLINED for); a death veto over an
+admitted `lives: 0` placeholder and over a byte this repo documents the
+same day as a 0↔255 flicker artifact; gates at or below their own
+measured null; and no roster-level test reading the real configs at all.
+
+**A defect review did not find, measured here.** The death veto was not
+guarding the blank channel in the first place on several profiles:
+`SceneCutSignal`'s window is 240 observations while the veto's transient
+is a handful, so a fade's blank movement sits in the rolling buffer long
+after `dying` clears and lands in a non-vetoed window anyway. On
+`megaman` the vetoed-out null is (0, 0) while the veto-independent null
+is (2, 18) — its "residual 0" was a property of the veto, not the gate.
+
+**Two receipts, deliberately.** With nothing armed, every residual
+assertion iterates an empty set and passes for free — the exact vacuity
+this campaign is about. So the evidence the disarm rests on is committed
+too (`..._asfound_2026-08-27.json`), and a test fails rather than skips
+if it goes missing.
+
+**Scope correction to the `4dd15ea` claim.** "Eligibility only —
+`is_clear()`/`solutions` byte-identical" is true of the **solver** and
+false of the **offline harness**: `clear_detect.run_episode` builds the
+shelf with no `mode` check, so all 23 moved UNREACHABLE → FIREABLE
+there. That claim must be stated with its scope.
+
+**4. Contra's exclusion is WITHDRAWN, and the correction is on the
+record.** `progress_signal_gate.assess()` computed its resolution
+finding on the post-truncation window; a 69-sample window cannot
+demonstrate a 32-distinct threshold. Contra is **SIGNAL SOUND**
+composed across both probes (721 live steps, 346 distinct, range
+0..1063 under `--probe random`). Re-measured on the banked hold sweep,
+**25 of 45** profiles have their assessed window truncated because the
+probe ran off the end of live play, so this was never one game. (The
+original finding put that count at 28; 25 is the number re-measured
+here under the stated definition.)
+
+**Contra's `gx 3072` wall is REAL as a position and BLIND as a
+verdict**, and it is a *different code path* from the gate defect —
+`go_explore_solve`'s archive-based `max_gx_in_max_area`, not `assess()`.
+Evidence it is real: the identical value appears in nine of ten
+independently-run campaigns (2026-07-31 → 2026-08-11, materially
+different strategies, millions of steps each, 280k–357k cells), 3,030
+verbatim occurrences in `runs/`; `progress = hi<<8 | lo` verified live,
+so `3072 = 12 × 256` exactly; and undirected play tops out near
+1,063–1,075, so reaching it is earned. Evidence it is blind: `hi` at 12
+with `lo` frozen at 0 is a **fixed-camera room**, and a scroll-derived
+progress definition cannot see inside one. "Pinned at 3072" therefore
+**cannot distinguish** "cannot get past the room" from "cannot see into
+the room", and must never be quoted as a difficulty verdict on the
+game.
+
+**5. Contra is the recommended next campaign target over Rygar**, and
+the reason is structural. Verified in code: Rygar's `_clear_mode` is
+`None` and its quorum is **UNREACHABLE** (ceiling 0.75, `coord` DEAD),
+so `solutions: 0` is a constant and evidence of nothing. Contra's
+`_clear_mode` is `"confluence"` and its quorum is **FIREABLE** (ceiling
+1.0, `coord` ALIVE with transition evidence, because a 16-bit `{lo,
+hi}` pair can express the backwards drop). Contra's `solutions: 0` is
+therefore weak-but-real evidence rather than a constant. Its gating
+task is a **Finding-3-class audit of the confluence detector** —
+`configs/contra.yaml` documents it in-file as "UNTESTED — never
+observed to fire on a genuine clear", so nine campaigns of
+`solutions: 0` still cannot separate "never beaten" from "beaten and
+not detected". That is a well-posed question. Rygar's is not yet
+askable.
+
+**6. Progress gate: 7 of 45 verdicts changed, 0 of 45 `passed`
+changed.** All seven `SIGNAL UNUSABLE → INCONCLUSIVE`, every one with a
+live window under the 187-step floor: `batman_the_video_game` 9,
+`blaster_master` 22, `bubble_bobble` 39, `ninja_gaiden_iii` 47,
+`contra` 69, `contra_blank` 69, `megaman` 81. `MIN_ASSESSABLE_STEPS =
+187` is **calibrated, not chosen** — the largest `steps_to_min_distinct`
+over every roster profile whose signal does reach 32 distinct levels —
+and documented as a lower bound. The floor gates only the failing
+direction, so Rygar's 116-distinct-in-138-steps positive demonstration
+still PASSES. Sensitivity shipped with the number (floor → changed):
+32→2, 102→7, 187→7, 289→9, 600→12, 1200→13, with `passed` changed 0 at
+every floor. Composed over both probes: 17 SOUND, 25 UNUSABLE, 1
+INCONCLUSIVE, 2 INAPPLICABLE. Independently re-run at HEAD: all 45 rows
+reproduce the banked receipt exactly, verdict and live-step count.
+
+**Purity (Tier 3).** Every measurement above is a hardware surface —
+PPU blank-fold counts, PPU scroll odometer, OAM, rendered frames,
+render-line counts — plus each profile's own declared lives byte, on
+its own start state. No disassembly, no RAM map, no walkthrough, no
+recall of any title.

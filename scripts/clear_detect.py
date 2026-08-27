@@ -2500,12 +2500,40 @@ class SceneCutSignal:
     against the last CONFIRMED-alive value (mirroring `is_dead`'s
     baseline compare, debounced the same way) -- a qualifying window is
     discarded, not merely down-weighted, whenever the debounced death
-    state is live at the moment the window closes. SCOPE LIMIT, shared
-    with RoomFpTransitionSignal's own veto: this is a point-in-time
-    compare at the check boundary, not a scan of the whole window, and a
-    lives byte that underflows through 0 at a 0-lives start state (the
-    documented Ninja Gaiden shape) defeats it the same way it defeats
-    `is_dead` -- both are named, neither is fixed here. Passing no
+    state is live at the moment the window closes.
+
+    THE BASELINE MOVES IN BOTH DIRECTIONS, AND ONLY WHILE RENDERING
+    (2026-08-27, after review). As first shipped `_confirmed_lives` was a
+    monotone ratchet -- an increase was believed on sight and became the
+    new baseline, a decrease never re-took it -- and BOTH halves were
+    defects that made the signal quietly unable to fire:
+
+      * ONE spurious high tick pinned `dying` True forever. Driven at
+        configs/ninja_gaiden.yaml's own armed knobs, a single 255 tick in
+        an otherwise steady stream took n_triggers 3 -> 0 and left
+        dying=True for the rest of the episode. That profile declares
+        `lives: 0x001F`, which docs/research/FALSE_DEATH_FANOUT_
+        2026-08-26.md measures as "12-26 unpaired 0<->255 ticks per run".
+      * A genuinely SPENT life (3 -> 2, never recovering to 3) latched
+        the veto ON for the remainder of the episode, so a clear reached
+        after one death could not be voted for at all.
+
+    Now: a rise is not evidence of life (it does not clear `_death_run`,
+    which is what kept the veto released through the 0 -> 255 game-over
+    wrap configs/gradius.yaml documents), and a value in EITHER direction
+    re-takes the baseline only after holding for a full `window` of
+    observations WHILE the blank counter stands still -- a death fade and
+    a level load are blank runs by construction, so a re-take cannot land
+    inside one. tests/test_scene_cut_signal.py drives all four shapes and
+    each guard is mutation-proved.
+
+    SCOPE LIMIT, shared with RoomFpTransitionSignal's own veto: this is a
+    point-in-time compare at the check boundary, not a scan of the whole
+    window, and a lives byte that underflows through 0 at a 0-lives start
+    state defeats it the same way it defeats `is_dead`. That one is named,
+    not fixed -- and it is why an ARMING POLICY, not just a debounce, is
+    what keeps a profile whose lives byte was never validated from
+    arming this veto at all (scripts/scene_cut_arming.py). Passing no
     `lives` (the default) leaves this signal exactly as it shipped.
 
     THE RE-ANCHOR-RATCHET DISCRIMINANT (`n_events` vs `n_triggers`).
@@ -2584,6 +2612,18 @@ class SceneCutSignal:
         # of an episode boundary of its own.
         self._confirmed_lives: int | None = None
         self._death_run = 0
+        # A value that is NOT the baseline, and how long it has held it.
+        # Both directions, because a rise is exactly as capable of being
+        # a one-tick artifact as a fall -- see push().
+        self._off_val: int | None = None
+        self._off_run = 0
+        # How long the blank counter has stood still. The baseline may
+        # only be re-taken while the world is rendering; a death fade and
+        # a level load are both blank runs by construction, so this is
+        # what keeps a re-take from landing in the middle of one.
+        self._prev_blank: int | None = None
+        self._blank_static = 0
+        self.n_lives_rebaselines = 0
         self.dying = False
         self.n_death_vetoes = 0
         self.last_death_vetoed = False
@@ -2601,13 +2641,58 @@ class SceneCutSignal:
         self._n += 1
         if lives is not None:
             lv = int(lives)
+            bl = int(blank)
+            self._blank_static = (0 if self._prev_blank is None
+                                  or bl != self._prev_blank
+                                  else self._blank_static + 1)
+            self._prev_blank = bl
             if self._confirmed_lives is None:
                 self._confirmed_lives = lv
-            elif lv < self._confirmed_lives:
-                self._death_run += 1
-            else:
-                self._confirmed_lives = lv
+                self._off_val, self._off_run = None, 0
+            elif lv == self._confirmed_lives:
+                # Back at the last known-alive point: whatever the byte
+                # was doing is over.
                 self._death_run = 0
+                self._off_val, self._off_run = None, 0
+            else:
+                self._off_run = self._off_run + 1 if lv == self._off_val else 1
+                self._off_val = lv
+                if lv < self._confirmed_lives:
+                    self._death_run += 1
+                # A RISE DELIBERATELY DOES NOT CLEAR `_death_run`, and
+                # deliberately does not become the baseline on sight.
+                # Both halves were measured defects. (a) Taking a rise as
+                # the new baseline made `_confirmed_lives` a monotone
+                # ratchet with no way down: ONE spurious high reading
+                # pinned `dying` True for the rest of the episode and
+                # silently disabled the signal -- the Ninja Gaiden $001F
+                # shape this repo documents as "12-26 unpaired 0<->255
+                # ticks per run" (docs/research/FALSE_DEATH_FANOUT_
+                # 2026-08-26.md), driven here at n_triggers 3 -> 0.
+                # (b) Taking a rise as evidence of LIFE released the veto
+                # in the middle of a game-over blackout on every profile
+                # whose lives byte wraps 0 -> 255 there (configs/
+                # gradius.yaml documents exactly that wrap), which is the
+                # false-clear direction.
+                if (self._off_run >= self.window
+                        and self._blank_static >= self.window):
+                    # RE-BASELINE. The byte has held one value for a full
+                    # rolling window WHILE the world kept rendering, so
+                    # this is the new known-alive point -- in either
+                    # direction. Without this the veto latched ON for the
+                    # rest of any episode in which a single life was
+                    # genuinely spent (3 -> 2 never recovers to 3), i.e.
+                    # the signal could not fire on a clear reached after
+                    # one death, which is the vacuous-gate shape.
+                    # `self.window` is reused rather than a new number:
+                    # it is already this class's "how long is evidence
+                    # evidence" horizon, and it is orders of magnitude
+                    # longer than any measured fade (Rygar death fade 14
+                    # blank frames, door 78-79).
+                    self._confirmed_lives = lv
+                    self._off_val, self._off_run = None, 0
+                    self._death_run = 0
+                    self.n_lives_rebaselines += 1
             self.dying = self._death_run >= self.death_debounce
         self._buf.append((int(odo_xy[0]), int(odo_xy[1]), int(scene), int(blank)))
         if self._n % self.stride != 0 or len(self._buf) < 2:
@@ -2653,7 +2738,9 @@ class SceneCutSignal:
                 "last_d_scene": self.last_d_scene, "last_d_blank": self.last_d_blank,
                 "last_d_odo": self.last_d_odo,
                 "dying": self.dying, "n_death_vetoes": self.n_death_vetoes,
-                "last_death_vetoed": self.last_death_vetoed}
+                "last_death_vetoed": self.last_death_vetoed,
+                "confirmed_lives": self._confirmed_lives,
+                "n_lives_rebaselines": self.n_lives_rebaselines}
 
 
 # ===========================================================================

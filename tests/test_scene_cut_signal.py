@@ -645,3 +645,153 @@ def test_the_real_rygar_ratchet_collapses_to_a_handful_of_events_not_54() -> Non
         f"{sig.n_events} -- n_events inflating back toward n_triggers "
         f"means the hold-based collapse stopped working on the exact "
         f"tape it was calibrated against")
+
+
+# ===========================================================================
+# The lives BASELINE, after review (2026-08-27). Four measured defects,
+# four tests, each with the mutation that resurrects it.
+#
+# As first shipped `_confirmed_lives` only ever moved UP, so a spurious
+# high reading could never be undone and a genuinely spent life could
+# never be re-baselined. Both halves silently DISABLED the signal -- the
+# vacuous-gate shape this campaign is named after -- and one half held the
+# veto open during a game-over blackout, which is the false-clear
+# direction. `_drive_lives` below is the shared harness: a steady world
+# (blank ticking every observation, so every stride check has blank
+# evidence to gate on) driven with a scripted lives series.
+# ===========================================================================
+
+def _drive_lives(series, *, death_debounce=3, window=8, stride=3, hold=5,
+                 blank_step=1):
+    """Push one observation per entry of `series`, blank climbing by
+    `blank_step` each time. Returns the signal, so a test can read
+    n_triggers / n_death_vetoes / dying off it."""
+    sig = SceneCutSignal(scene_min=1, blank_min=1, window=window,
+                         stride=stride, hold=hold,
+                         death_debounce=death_debounce)
+    blank = 0
+    for lv in series:
+        blank += blank_step
+        sig.push((100, 0), scene=0, blank=blank, lives=lv)
+    return sig
+
+
+def test_one_spurious_high_lives_tick_does_not_disable_the_signal() -> None:
+    """THE NINJA GAIDEN $001F SHAPE, and the reason it is a defect and
+    not a curiosity.
+
+    configs/ninja_gaiden.yaml declared `lives: 0x001F`; docs/research/
+    FALSE_DEATH_FANOUT_2026-08-26.md measures that byte as a flicker
+    artifact making "12-26 unpaired 0<->255 ticks per run" and demotes it
+    to rank 15 of 22. With a baseline that believed a rise on sight, ONE
+    such tick set `_confirmed_lives = 255`, after which EVERY subsequent
+    ordinary reading compared as a drop, `_death_run` grew without bound
+    and `dying` stayed True for the rest of the episode. The signal read
+    as silent while looking perfectly healthy: armed, plumbed, green.
+
+    CONTROL (steady byte) pins what the same drive produces with no
+    flicker at all, so the assertion is a comparison and not a constant.
+    """
+    control = _drive_lives([2] * 24)
+    flick = _drive_lives([2] * 11 + [255] + [2] * 12)
+    tick_low = _drive_lives([2] * 11 + [0] + [2] * 12)
+
+    assert control.n_triggers > 0, "control drive must fire at all"
+    assert control.dying is False
+    for name, sig in (("high tick", flick), ("low tick", tick_low)):
+        assert sig.dying is False, (
+            f"a single {name} in an otherwise steady lives byte must not "
+            "leave the death veto latched for the rest of the episode")
+        assert sig.n_triggers == control.n_triggers, (
+            f"a single {name} must not change how many windows fire "
+            f"({sig.n_triggers} vs control {control.n_triggers}) -- one "
+            "unpaired tick per 24 observations is BELOW the debounce and "
+            "must be absorbed by it")
+        assert sig.n_death_vetoes == 0
+
+
+def test_a_rise_is_not_evidence_of_life_during_a_game_over_wrap() -> None:
+    """configs/gradius.yaml documents its lives byte wrapping to 255 at
+    game over. If a rise cleared `_death_run`, the veto RELEASED the
+    instant the byte wrapped -- in the middle of the game-over blackout,
+    which trips the blank half of this gate by construction. That is the
+    direction that fabricates a clear, so it gets its own test.
+
+    3 (alive) -> 0 (dead, sustained past the debounce) -> 255 (wrap).
+    """
+    sig = _drive_lives([3] * 6 + [0] * 6 + [255] * 12)
+    assert sig.dying is True, (
+        "the 0 -> 255 game-over wrap must NOT release the death veto: a "
+        "byte climbing past its own start value is an underflow, not a "
+        "respawn")
+    assert sig.n_death_vetoes > 0
+    assert sig.vote() == 0, "no vote may stand through a game-over blackout"
+
+    # Mutation proof, in the direction that matters: with `lives` never
+    # supplied the identical blank shape fires, so the veto -- not some
+    # other gate -- is what holds this window shut.
+    unvetoed = _drive_lives([None] * 24)
+    assert unvetoed.n_triggers > 0
+
+
+def test_a_genuinely_spent_life_re_baselines_once_the_world_renders() -> None:
+    """The other half. A player who spends one life (3 -> 2) never
+    recovers to 3, so a baseline that only moved up latched the veto ON
+    for the whole rest of the episode -- the signal could not vote for a
+    clear reached after a single death. It must re-take the baseline once
+    the byte has held its new value for a full `window` WHILE the world is
+    rendering again (blank standing still).
+    """
+    # 6 alive at 3; the death (blank running, as a fade does); then the
+    # world renders again with the byte parked at 2.
+    sig = SceneCutSignal(scene_min=1, blank_min=1, window=8, stride=3,
+                         hold=5, death_debounce=3)
+    blank = 0
+    for _ in range(6):
+        blank += 1
+        sig.push((100, 0), scene=0, blank=blank, lives=3)
+    for _ in range(6):                      # the fade: blank moving
+        blank += 1
+        sig.push((100, 0), scene=0, blank=blank, lives=2)
+    assert sig.dying is True, "the fade itself must still be vetoed"
+    assert sig.n_lives_rebaselines == 0, (
+        "no re-baseline may happen while the blank counter is running -- "
+        "that is precisely the death fade / level load it must not land in")
+    for _ in range(12):                     # rendering again: blank frozen
+        sig.push((100, 0), scene=0, blank=blank, lives=2)
+    assert sig.n_lives_rebaselines == 1
+    assert sig.dying is False, (
+        "after a full window of steady play at the new life count the "
+        "veto must release, or one death disables the signal for good")
+
+    # And the released signal can fire again -- a veto that releases into
+    # a signal that still cannot vote would be the same vacuity.
+    before = sig.n_triggers
+    for _ in range(12):
+        blank += 1
+        sig.push((100, 0), scene=0, blank=blank, lives=2)
+    assert sig.n_triggers > before
+
+
+def test_the_re_baseline_needs_both_a_steady_byte_and_a_still_world() -> None:
+    """Mechanism-absent answer for the re-baseline itself: it must take
+    BOTH conditions. Drop either and the guard is gone -- a byte-only
+    rule re-baselines in the middle of a blackout (re-arming the fade it
+    was vetoing), a blank-only rule re-baselines on a byte still churning.
+    """
+    # Byte steady, world blanking the whole time -> NO re-baseline.
+    blanking = _drive_lives([3] * 4 + [1] * 40, window=8, blank_step=1)
+    assert blanking.n_lives_rebaselines == 0
+    assert blanking.dying is True
+
+    # World still, byte churning below baseline -> NO re-baseline.
+    sig = SceneCutSignal(scene_min=1, blank_min=1, window=8, stride=3,
+                         hold=5, death_debounce=3)
+    for _ in range(4):
+        sig.push((100, 0), scene=0, blank=1, lives=3)
+    for k in range(40):
+        sig.push((100, 0), scene=0, blank=1, lives=1 + (k % 2))
+    assert sig.n_lives_rebaselines == 0, (
+        "a byte that never holds one value has not shown a new known-alive "
+        "point, however still the world is")
+    assert sig.dying is True

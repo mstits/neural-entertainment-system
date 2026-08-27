@@ -1,0 +1,3129 @@
+{
+ "what_this_is": "AS-FOUND measurement of the 2026-08-26 scene_cut arming (4dd15ea), taken before it was disarmed. Evidence for the disarm decision; not a description of the shipped configs -- see scene_cut_arming_2026-08-27.json for that.",
+ "policy": "C1 channel alive | C2 validated lives | C3 separability disclosed | C4 residual zero at the armed gate | C5 scene_min above the seam floor | C6 gate above the veto-independent null",
+ "static_only": false,
+ "cohort_size": 25,
+ "complete": true,
+ "generated_at": "2026-08-27",
+ "profiles": {
+  "1942": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C5_SCENE_MIN_ABOVE_SEAM",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['pan', 'warp', 'fade'] gates on blank+scene; measured n_blank_runs=110, n_scene_runs=0"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x0524, not on the measured-false list"
+     },
+     {
+      "clause": "C3_SEPARABILITY_DISCLOSED",
+      "ok": false,
+      "detail": "every one of the 110 blank runs observed for this profile was death-class, so the residual is zero only because the veto ate the whole population -- the config must carry that in a comment beside the gate",
+      "needs_config_comment": true
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": false,
+      "detail": "scene_min=1 against the seam floor warp_scene_min=2 -- a single scene bump is the documented camera-clamp artifact"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=1, blank_min=1) against the veto-independent null (max d_scene=0, max d_blank=108) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "1942",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "pan",
+      "warp",
+      "fade"
+     ],
+     "scene_min": 1
+    },
+    "lives_addr": "0x0524",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 147,
+    "blank_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     2,
+     2,
+     2,
+     2,
+     2,
+     4,
+     24,
+     24,
+     24,
+     24,
+     24,
+     24,
+     24,
+     24
+    ],
+    "n_scene_runs": 0,
+    "scene_run_lengths": [],
+    "residual_triggers": 42,
+    "residual_events": 2,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 0,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 0,
+    "null_max_d_blank": 108,
+    "null_max_d_scene_all": 0,
+    "null_max_d_blank_all": 108,
+    "null_checks_scored": 1200,
+    "null_checks_vetoed": 0,
+    "fraction_checks_vetoed": 0.0,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 109
+    },
+    "wall_s": 80.8
+   }
+  },
+  "bad_dudes": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=8, n_scene_runs=56"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x034F, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=14 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=14, blank_min=1) against the veto-independent null (max d_scene=268, max d_blank=11) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "bad_dudes",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 14
+    },
+    "lives_addr": "0x034F",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 8,
+    "blank_run_lengths": [
+     1,
+     1,
+     1,
+     3,
+     3,
+     3,
+     3,
+     4
+    ],
+    "n_scene_runs": 102,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     7,
+     7,
+     7,
+     7,
+     7,
+     7,
+     7,
+     8,
+     8,
+     8,
+     8,
+     10,
+     10,
+     11,
+     12,
+     15,
+     15
+    ],
+    "residual_triggers": 19,
+    "residual_events": 3,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 0,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 268,
+    "null_max_d_blank": 11,
+    "null_max_d_scene_all": 268,
+    "null_max_d_blank_all": 11,
+    "null_checks_scored": 1200,
+    "null_checks_vetoed": 0,
+    "fraction_checks_vetoed": 0.0,
+    "recommended_gate": {
+     "scene_min": 269,
+     "blank_min": 12
+    },
+    "wall_s": 108.5
+   }
+  },
+  "batman_the_video_game": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C1_CHANNEL_ALIVE",
+     "C7_SEPARABILITY_WITNESSED"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": false,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=0, n_scene_runs=48 -- the armed channel never moved, which is the evidence state tetris_usa was DECLINED for"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x00B7, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=6 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": true,
+      "detail": "gate (scene_min=6, blank_min=1) against the veto-independent null (max d_scene=3, max d_blank=0) over 4x6000 steps that cleared nothing"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "batman_the_video_game",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 6
+    },
+    "lives_addr": "0x00B7",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 0,
+    "blank_run_lengths": [],
+    "n_scene_runs": 70,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "residual_triggers": 0,
+    "residual_events": 0,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 2,
+    "rollouts_ending_dying": 4,
+    "null_max_d_scene": 3,
+    "null_max_d_blank": 0,
+    "null_max_d_scene_all": 3,
+    "null_max_d_blank_all": 0,
+    "null_checks_scored": 501,
+    "null_checks_vetoed": 699,
+    "fraction_checks_vetoed": 0.583,
+    "recommended_gate": {
+     "scene_min": 4,
+     "blank_min": 1
+    },
+    "wall_s": 113.6
+   }
+  },
+  "bionic_commando": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=39, n_scene_runs=33"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x00C1, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=6 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=6, blank_min=1) against the veto-independent null (max d_scene=4, max d_blank=96) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "bionic_commando",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 6
+    },
+    "lives_addr": "0x00C1",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 82,
+    "blank_run_lengths": [
+     6,
+     6,
+     6,
+     6,
+     7,
+     7,
+     7,
+     7,
+     7,
+     7,
+     7,
+     7,
+     7,
+     7,
+     7,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     8,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     10,
+     10,
+     10,
+     10,
+     10,
+     10,
+     10,
+     10,
+     10,
+     10,
+     10,
+     10,
+     10,
+     10,
+     17,
+     17,
+     17,
+     17,
+     18,
+     18,
+     18,
+     18
+    ],
+    "n_scene_runs": 71,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2
+    ],
+    "residual_triggers": 52,
+    "residual_events": 9,
+    "n_checks": 300,
+    "n_death_vetoes": 24,
+    "n_lives_rebaselines": 6,
+    "rollouts_ending_dying": 1,
+    "null_max_d_scene": 2,
+    "null_max_d_blank": 96,
+    "null_max_d_scene_all": 4,
+    "null_max_d_blank_all": 96,
+    "null_checks_scored": 684,
+    "null_checks_vetoed": 516,
+    "fraction_checks_vetoed": 0.43,
+    "recommended_gate": {
+     "scene_min": 5,
+     "blank_min": 97
+    },
+    "wall_s": 108.0
+   }
+  },
+  "blaster_master": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C5_SCENE_MIN_ABOVE_SEAM",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['pan', 'warp', 'fade'] gates on blank+scene; measured n_blank_runs=15, n_scene_runs=0"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x00BE, not on the measured-false list"
+     },
+     {
+      "clause": "C3_SEPARABILITY_DISCLOSED",
+      "ok": false,
+      "detail": "every one of the 15 blank runs observed for this profile was death-class, so the residual is zero only because the veto ate the whole population -- the config must carry that in a comment beside the gate",
+      "needs_config_comment": true
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": false,
+      "detail": "scene_min=1 against the seam floor warp_scene_min=2 -- a single scene bump is the documented camera-clamp artifact"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=1, blank_min=1) against the veto-independent null (max d_scene=4, max d_blank=29) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "blaster_master",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "pan",
+      "warp",
+      "fade"
+     ],
+     "scene_min": 1
+    },
+    "lives_addr": "0x00BE",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 20,
+    "blank_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     2,
+     2,
+     2,
+     2,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4
+    ],
+    "n_scene_runs": 12,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "residual_triggers": 14,
+    "residual_events": 3,
+    "n_checks": 300,
+    "n_death_vetoes": 34,
+    "n_lives_rebaselines": 1,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 4,
+    "null_max_d_blank": 29,
+    "null_max_d_scene_all": 4,
+    "null_max_d_blank_all": 29,
+    "null_checks_scored": 1096,
+    "null_checks_vetoed": 104,
+    "fraction_checks_vetoed": 0.087,
+    "recommended_gate": {
+     "scene_min": 5,
+     "blank_min": 30
+    },
+    "wall_s": 103.4
+   }
+  },
+  "darkwing_duck": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C2_VALIDATED_LIVES",
+     "C5_SCENE_MIN_ABOVE_SEAM",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['pan', 'warp', 'fade'] gates on blank+scene; measured n_blank_runs=3, n_scene_runs=0"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": false,
+      "detail": "declares death_debounce=3 but solve.lives is 0 -- GenericGame.lives is int(ram[addr]) with no None handling, so the veto would debounce RAM[0x0000], a zero-page scratch byte"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": false,
+      "detail": "scene_min=1 against the seam floor warp_scene_min=2 -- a single scene bump is the documented camera-clamp artifact"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=1, blank_min=1) against the veto-independent null (max d_scene=0, max d_blank=11) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "darkwing_duck",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "pan",
+      "warp",
+      "fade"
+     ],
+     "scene_min": 1
+    },
+    "lives_addr": null,
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 7,
+    "blank_run_lengths": [
+     1,
+     3,
+     3,
+     3,
+     3,
+     4,
+     4
+    ],
+    "n_scene_runs": 0,
+    "scene_run_lengths": [],
+    "residual_triggers": 0,
+    "residual_events": 0,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 0,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 0,
+    "null_max_d_blank": 11,
+    "null_max_d_scene_all": 0,
+    "null_max_d_blank_all": 11,
+    "null_checks_scored": 1200,
+    "null_checks_vetoed": 0,
+    "fraction_checks_vetoed": 0.0,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 12
+    },
+    "wall_s": 115.7
+   }
+  },
+  "double_dragon_ii": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C1_CHANNEL_ALIVE",
+     "C7_SEPARABILITY_WITNESSED"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": false,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=0, n_scene_runs=6 -- the armed channel never moved, which is the evidence state tetris_usa was DECLINED for"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x001E, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=5 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": true,
+      "detail": "gate (scene_min=5, blank_min=1) against the veto-independent null (max d_scene=1, max d_blank=0) over 4x6000 steps that cleared nothing"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "double_dragon_ii",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 5
+    },
+    "lives_addr": "0x001E",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 0,
+    "blank_run_lengths": [],
+    "n_scene_runs": 8,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "residual_triggers": 0,
+    "residual_events": 0,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 1,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 1,
+    "null_max_d_blank": 0,
+    "null_max_d_scene_all": 1,
+    "null_max_d_blank_all": 0,
+    "null_checks_scored": 1181,
+    "null_checks_vetoed": 19,
+    "fraction_checks_vetoed": 0.016,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 1
+    },
+    "wall_s": 114.2
+   }
+  },
+  "ducktales_2": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C5_SCENE_MIN_ABOVE_SEAM",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['pan', 'warp', 'fade'] gates on blank+scene; measured n_blank_runs=27, n_scene_runs=0"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x000B, not on the measured-false list"
+     },
+     {
+      "clause": "C3_SEPARABILITY_DISCLOSED",
+      "ok": false,
+      "detail": "every one of the 27 blank runs observed for this profile was death-class, so the residual is zero only because the veto ate the whole population -- the config must carry that in a comment beside the gate",
+      "needs_config_comment": true
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": false,
+      "detail": "scene_min=1 against the seam floor warp_scene_min=2 -- a single scene bump is the documented camera-clamp artifact"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=1, blank_min=1) against the veto-independent null (max d_scene=0, max d_blank=60) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "ducktales_2",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "pan",
+      "warp",
+      "fade"
+     ],
+     "scene_min": 1
+    },
+    "lives_addr": "0x000B",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 45,
+    "blank_run_lengths": [
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     6,
+     8,
+     8,
+     8,
+     8,
+     9,
+     9
+    ],
+    "n_scene_runs": 0,
+    "scene_run_lengths": [],
+    "residual_triggers": 113,
+    "residual_events": 8,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 0,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 0,
+    "null_max_d_blank": 60,
+    "null_max_d_scene_all": 0,
+    "null_max_d_blank_all": 60,
+    "null_checks_scored": 1133,
+    "null_checks_vetoed": 67,
+    "fraction_checks_vetoed": 0.056,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 61
+    },
+    "wall_s": 115.3
+   }
+  },
+  "ghosts_n_goblins": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C5_SCENE_MIN_ABOVE_SEAM",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['pan', 'warp', 'fade'] gates on blank+scene; measured n_blank_runs=58, n_scene_runs=0"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x0715, not on the measured-false list"
+     },
+     {
+      "clause": "C3_SEPARABILITY_DISCLOSED",
+      "ok": true,
+      "detail": "every one of the 58 blank runs observed for this profile was death-class, so the residual is zero only because the veto ate the whole population -- the config must carry that in a comment beside the gate",
+      "needs_config_comment": true
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": false,
+      "detail": "scene_min=1 against the seam floor warp_scene_min=2 -- a single scene bump is the documented camera-clamp artifact"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=1, blank_min=1) against the veto-independent null (max d_scene=0, max d_blank=285) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "ghosts_n_goblins",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "pan",
+      "warp",
+      "fade"
+     ],
+     "scene_min": 1
+    },
+    "lives_addr": "0x0715",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 108,
+    "blank_run_lengths": [
+     8,
+     8,
+     8,
+     9,
+     9,
+     9,
+     9,
+     9,
+     10,
+     12,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     25,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     26,
+     27,
+     27,
+     27,
+     27,
+     38,
+     38,
+     38,
+     38,
+     44,
+     44,
+     44,
+     44,
+     44,
+     44,
+     44,
+     44,
+     44,
+     44,
+     44,
+     44,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     45,
+     61
+    ],
+    "n_scene_runs": 0,
+    "scene_run_lengths": [],
+    "residual_triggers": 102,
+    "residual_events": 1,
+    "n_checks": 300,
+    "n_death_vetoes": 186,
+    "n_lives_rebaselines": 1,
+    "rollouts_ending_dying": 2,
+    "null_max_d_scene": 0,
+    "null_max_d_blank": 274,
+    "null_max_d_scene_all": 0,
+    "null_max_d_blank_all": 285,
+    "null_checks_scored": 339,
+    "null_checks_vetoed": 861,
+    "fraction_checks_vetoed": 0.718,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 286
+    },
+    "wall_s": 106.1
+   }
+  },
+  "gradius": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C5_SCENE_MIN_ABOVE_SEAM",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['pan', 'warp', 'fade'] gates on blank+scene; measured n_blank_runs=33, n_scene_runs=0"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x0020, not on the measured-false list"
+     },
+     {
+      "clause": "C3_SEPARABILITY_DISCLOSED",
+      "ok": true,
+      "detail": "every one of the 33 blank runs observed for this profile was death-class, so the residual is zero only because the veto ate the whole population -- the config must carry that in a comment beside the gate",
+      "needs_config_comment": true
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": false,
+      "detail": "scene_min=1 against the seam floor warp_scene_min=2 -- a single scene bump is the documented camera-clamp artifact"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=1, blank_min=1) against the veto-independent null (max d_scene=0, max d_blank=96) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "gradius",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "pan",
+      "warp",
+      "fade"
+     ],
+     "scene_min": 1
+    },
+    "lives_addr": "0x0020",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 68,
+    "blank_run_lengths": [
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     6,
+     8,
+     8,
+     8,
+     8,
+     8,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9,
+     9
+    ],
+    "n_scene_runs": 0,
+    "scene_run_lengths": [],
+    "residual_triggers": 65,
+    "residual_events": 6,
+    "n_checks": 300,
+    "n_death_vetoes": 62,
+    "n_lives_rebaselines": 1,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 0,
+    "null_max_d_blank": 50,
+    "null_max_d_scene_all": 0,
+    "null_max_d_blank_all": 96,
+    "null_checks_scored": 949,
+    "null_checks_vetoed": 251,
+    "fraction_checks_vetoed": 0.209,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 97
+    },
+    "wall_s": 91.7
+   }
+  },
+  "ice_climber": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C5_SCENE_MIN_ABOVE_SEAM",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['pan', 'warp', 'fade'] gates on blank+scene; measured n_blank_runs=4, n_scene_runs=0"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x002C, not on the measured-false list"
+     },
+     {
+      "clause": "C3_SEPARABILITY_DISCLOSED",
+      "ok": false,
+      "detail": "every one of the 4 blank runs observed for this profile was death-class, so the residual is zero only because the veto ate the whole population -- the config must carry that in a comment beside the gate",
+      "needs_config_comment": true
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": false,
+      "detail": "scene_min=1 against the seam floor warp_scene_min=2 -- a single scene bump is the documented camera-clamp artifact"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=1, blank_min=1) against the veto-independent null (max d_scene=0, max d_blank=9) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "ice_climber",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "pan",
+      "warp",
+      "fade"
+     ],
+     "scene_min": 1
+    },
+    "lives_addr": "0x002C",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 8,
+    "blank_run_lengths": [
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2
+    ],
+    "n_scene_runs": 0,
+    "scene_run_lengths": [],
+    "residual_triggers": 20,
+    "residual_events": 1,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 2,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 0,
+    "null_max_d_blank": 9,
+    "null_max_d_scene_all": 0,
+    "null_max_d_blank_all": 9,
+    "null_checks_scored": 1123,
+    "null_checks_vetoed": 77,
+    "fraction_checks_vetoed": 0.064,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 10
+    },
+    "wall_s": 81.6
+   }
+  },
+  "journey_to_silius": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C5_SCENE_MIN_ABOVE_SEAM",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['pan', 'warp', 'fade'] gates on blank+scene; measured n_blank_runs=18, n_scene_runs=3"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x00B9, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": false,
+      "detail": "scene_min=1 against the seam floor warp_scene_min=2 -- a single scene bump is the documented camera-clamp artifact"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=1, blank_min=1) against the veto-independent null (max d_scene=1, max d_blank=28) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "journey_to_silius",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "pan",
+      "warp",
+      "fade"
+     ],
+     "scene_min": 1
+    },
+    "lives_addr": "0x00B9",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 24,
+    "blank_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     2,
+     2,
+     2,
+     2,
+     2,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4
+    ],
+    "n_scene_runs": 4,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "residual_triggers": 39,
+    "residual_events": 1,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 0,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 1,
+    "null_max_d_blank": 28,
+    "null_max_d_scene_all": 1,
+    "null_max_d_blank_all": 28,
+    "null_checks_scored": 1200,
+    "null_checks_vetoed": 0,
+    "fraction_checks_vetoed": 0.0,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 29
+    },
+    "wall_s": 101.6
+   }
+  },
+  "mega_man_3": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C1_CHANNEL_ALIVE",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": false,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=0, n_scene_runs=24 -- the armed channel never moved, which is the evidence state tetris_usa was DECLINED for"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x0029, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=5 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=5, blank_min=1) against the veto-independent null (max d_scene=8, max d_blank=0) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "mega_man_3",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 5
+    },
+    "lives_addr": "0x0029",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 0,
+    "blank_run_lengths": [],
+    "n_scene_runs": 43,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     2,
+     2,
+     2,
+     2,
+     2
+    ],
+    "residual_triggers": 0,
+    "residual_events": 0,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 1,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 8,
+    "null_max_d_blank": 0,
+    "null_max_d_scene_all": 8,
+    "null_max_d_blank_all": 0,
+    "null_checks_scored": 1162,
+    "null_checks_vetoed": 38,
+    "fraction_checks_vetoed": 0.032,
+    "recommended_gate": {
+     "scene_min": 9,
+     "blank_min": 1
+    },
+    "wall_s": 117.1
+   }
+  },
+  "mega_man_usa": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C5_SCENE_MIN_ABOVE_SEAM",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['pan', 'warp', 'fade'] gates on blank+scene; measured n_blank_runs=9, n_scene_runs=0"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x00A6, not on the measured-false list"
+     },
+     {
+      "clause": "C3_SEPARABILITY_DISCLOSED",
+      "ok": false,
+      "detail": "every one of the 9 blank runs observed for this profile was death-class, so the residual is zero only because the veto ate the whole population -- the config must carry that in a comment beside the gate",
+      "needs_config_comment": true
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": false,
+      "detail": "scene_min=1 against the seam floor warp_scene_min=2 -- a single scene bump is the documented camera-clamp artifact"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=1, blank_min=1) against the veto-independent null (max d_scene=0, max d_blank=12) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "mega_man_usa",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "pan",
+      "warp",
+      "fade"
+     ],
+     "scene_min": 1
+    },
+    "lives_addr": "0x00A6",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 12,
+    "blank_run_lengths": [
+     2,
+     2,
+     2,
+     2,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4
+    ],
+    "n_scene_runs": 0,
+    "scene_run_lengths": [],
+    "residual_triggers": 12,
+    "residual_events": 1,
+    "n_checks": 300,
+    "n_death_vetoes": 24,
+    "n_lives_rebaselines": 3,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 0,
+    "null_max_d_blank": 5,
+    "null_max_d_scene_all": 0,
+    "null_max_d_blank_all": 12,
+    "null_checks_scored": 1103,
+    "null_checks_vetoed": 97,
+    "fraction_checks_vetoed": 0.081,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 13
+    },
+    "wall_s": 108.8
+   }
+  },
+  "megaman": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=9, n_scene_runs=6"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x00A8, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=5 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=5, blank_min=1) against the veto-independent null (max d_scene=2, max d_blank=18) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "megaman",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 5
+    },
+    "lives_addr": "0x00A8",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 12,
+    "blank_run_lengths": [
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3,
+     3
+    ],
+    "n_scene_runs": 8,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "residual_triggers": 0,
+    "residual_events": 0,
+    "n_checks": 300,
+    "n_death_vetoes": 5,
+    "n_lives_rebaselines": 1,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 0,
+    "null_max_d_blank": 0,
+    "null_max_d_scene_all": 2,
+    "null_max_d_blank_all": 18,
+    "null_checks_scored": 1086,
+    "null_checks_vetoed": 114,
+    "fraction_checks_vetoed": 0.095,
+    "recommended_gate": {
+     "scene_min": 3,
+     "blank_min": 19
+    },
+    "wall_s": 105.7
+   }
+  },
+  "metroid": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=4, n_scene_runs=6"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x0107, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=5 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=5, blank_min=1) against the veto-independent null (max d_scene=4, max d_blank=16) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "metroid",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 5
+    },
+    "lives_addr": "0x0107",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 8,
+    "blank_run_lengths": [
+     2,
+     2,
+     2,
+     2,
+     3,
+     3,
+     4,
+     4
+    ],
+    "n_scene_runs": 10,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "residual_triggers": 0,
+    "residual_events": 0,
+    "n_checks": 300,
+    "n_death_vetoes": 14,
+    "n_lives_rebaselines": 2,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 2,
+    "null_max_d_blank": 16,
+    "null_max_d_scene_all": 4,
+    "null_max_d_blank_all": 16,
+    "null_checks_scored": 1082,
+    "null_checks_vetoed": 118,
+    "fraction_checks_vetoed": 0.098,
+    "recommended_gate": {
+     "scene_min": 5,
+     "blank_min": 17
+    },
+    "wall_s": 106.4
+   }
+  },
+  "metroid_roomfp": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=4, n_scene_runs=6"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x0107, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=5 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=5, blank_min=1) against the veto-independent null (max d_scene=4, max d_blank=16) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "metroid_roomfp",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 5
+    },
+    "lives_addr": "0x0107",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 8,
+    "blank_run_lengths": [
+     2,
+     2,
+     2,
+     2,
+     3,
+     3,
+     4,
+     4
+    ],
+    "n_scene_runs": 10,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "residual_triggers": 0,
+    "residual_events": 0,
+    "n_checks": 300,
+    "n_death_vetoes": 14,
+    "n_lives_rebaselines": 2,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 2,
+    "null_max_d_blank": 16,
+    "null_max_d_scene_all": 4,
+    "null_max_d_blank_all": 16,
+    "null_checks_scored": 1082,
+    "null_checks_vetoed": 118,
+    "fraction_checks_vetoed": 0.098,
+    "recommended_gate": {
+     "scene_min": 5,
+     "blank_min": 17
+    },
+    "wall_s": 105.7
+   }
+  },
+  "ninja_gaiden": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C1_CHANNEL_ALIVE",
+     "C2_VALIDATED_LIVES",
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": false,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=0, n_scene_runs=10 -- the armed channel never moved, which is the evidence state tetris_usa was DECLINED for"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": false,
+      "detail": "declares death_debounce over lives=0x001F, a MEASURED-FALSE nomination: docs/research/FALSE_DEATH_FANOUT_2026-08-26.md: $001F is a flicker artifact making 12-26 unpaired 0<->255 ticks per run, demoted to rank 15 of 22 by the fixed ranker"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=6 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=6, blank_min=1) against the veto-independent null (max d_scene=4, max d_blank=1) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "ninja_gaiden",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 6
+    },
+    "lives_addr": "0x001F",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 3,
+    "blank_run_lengths": [
+     1,
+     1,
+     1
+    ],
+    "n_scene_runs": 17,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2
+    ],
+    "residual_triggers": 5,
+    "residual_events": 1,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 1,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 4,
+    "null_max_d_blank": 1,
+    "null_max_d_scene_all": 4,
+    "null_max_d_blank_all": 1,
+    "null_checks_scored": 1200,
+    "null_checks_vetoed": 0,
+    "fraction_checks_vetoed": 0.0,
+    "recommended_gate": {
+     "scene_min": 5,
+     "blank_min": 2
+    },
+    "wall_s": 107.0
+   }
+  },
+  "ninja_gaiden_ii": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=3, n_scene_runs=9"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x004C, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=5 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=5, blank_min=1) against the veto-independent null (max d_scene=2, max d_blank=1) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "ninja_gaiden_ii",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 5
+    },
+    "lives_addr": "0x004C",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 3,
+    "blank_run_lengths": [
+     1,
+     1,
+     1
+    ],
+    "n_scene_runs": 11,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "residual_triggers": 0,
+    "residual_events": 0,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 0,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 2,
+    "null_max_d_blank": 1,
+    "null_max_d_scene_all": 2,
+    "null_max_d_blank_all": 1,
+    "null_checks_scored": 1162,
+    "null_checks_vetoed": 38,
+    "fraction_checks_vetoed": 0.032,
+    "recommended_gate": {
+     "scene_min": 3,
+     "blank_min": 2
+    },
+    "wall_s": 109.8
+   }
+  },
+  "ninja_gaiden_iii": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=5, n_scene_runs=9"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x007B, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=6 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=6, blank_min=1) against the veto-independent null (max d_scene=4, max d_blank=1) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "ninja_gaiden_iii",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 6
+    },
+    "lives_addr": "0x007B",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 12,
+    "blank_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "n_scene_runs": 73,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     2
+    ],
+    "residual_triggers": 15,
+    "residual_events": 3,
+    "n_checks": 300,
+    "n_death_vetoes": 2,
+    "n_lives_rebaselines": 0,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 4,
+    "null_max_d_blank": 1,
+    "null_max_d_scene_all": 4,
+    "null_max_d_blank_all": 1,
+    "null_checks_scored": 1164,
+    "null_checks_vetoed": 36,
+    "fraction_checks_vetoed": 0.03,
+    "recommended_gate": {
+     "scene_min": 5,
+     "blank_min": 2
+    },
+    "wall_s": 113.2
+   }
+  },
+  "paperboy": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=44, n_scene_runs=51"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x000B, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=5 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=5, blank_min=1) against the veto-independent null (max d_scene=2, max d_blank=26) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "paperboy",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 5
+    },
+    "lives_addr": "0x000B",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 123,
+    "blank_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5,
+     5
+    ],
+    "n_scene_runs": 92,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "residual_triggers": 207,
+    "residual_events": 7,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 1,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 2,
+    "null_max_d_blank": 26,
+    "null_max_d_scene_all": 2,
+    "null_max_d_blank_all": 26,
+    "null_checks_scored": 1200,
+    "null_checks_vetoed": 0,
+    "fraction_checks_vetoed": 0.0,
+    "recommended_gate": {
+     "scene_min": 3,
+     "blank_min": 27
+    },
+    "wall_s": 93.2
+   }
+  },
+  "power_blade": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C5_SCENE_MIN_ABOVE_SEAM",
+     "C7_SEPARABILITY_WITNESSED"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['pan', 'warp', 'fade'] gates on blank+scene; measured n_blank_runs=1, n_scene_runs=0"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x07CA, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": false,
+      "detail": "scene_min=1 against the seam floor warp_scene_min=2 -- a single scene bump is the documented camera-clamp artifact"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": true,
+      "detail": "gate (scene_min=1, blank_min=1) against the veto-independent null (max d_scene=0, max d_blank=0) over 4x6000 steps that cleared nothing"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "power_blade",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "pan",
+      "warp",
+      "fade"
+     ],
+     "scene_min": 1
+    },
+    "lives_addr": "0x07CA",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 0,
+    "blank_run_lengths": [],
+    "n_scene_runs": 0,
+    "scene_run_lengths": [],
+    "residual_triggers": 0,
+    "residual_events": 0,
+    "n_checks": 300,
+    "n_death_vetoes": 0,
+    "n_lives_rebaselines": 0,
+    "rollouts_ending_dying": 4,
+    "null_max_d_scene": 0,
+    "null_max_d_blank": 0,
+    "null_max_d_scene_all": 0,
+    "null_max_d_blank_all": 0,
+    "null_checks_scored": 544,
+    "null_checks_vetoed": 656,
+    "fraction_checks_vetoed": 0.547,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 1
+    },
+    "wall_s": 114.0
+   }
+  },
+  "rygar": {
+   "verdict": {
+    "verdict": "NOT_ARMED",
+    "clauses": [
+     {
+      "clause": "ARMED",
+      "ok": true,
+      "detail": "not armed (absent or enabled: false) -- no clause applies"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "rygar",
+    "armed": false,
+    "gate": null,
+    "lives_addr": "0x0303",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 12,
+    "blank_run_lengths": [
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     5,
+     5
+    ],
+    "n_scene_runs": 0,
+    "scene_run_lengths": [],
+    "residual_triggers": null,
+    "residual_events": null,
+    "n_checks": null,
+    "n_death_vetoes": null,
+    "n_lives_rebaselines": null,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 0,
+    "null_max_d_blank": 28,
+    "null_max_d_scene_all": 0,
+    "null_max_d_blank_all": 28,
+    "null_checks_scored": 1200,
+    "null_checks_vetoed": 0,
+    "fraction_checks_vetoed": 0.0,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 29
+    },
+    "wall_s": 102.3
+   }
+  },
+  "shatterhand": {
+   "verdict": {
+    "verdict": "DECLINE",
+    "blocking": [
+     "C7_SEPARABILITY_WITNESSED",
+     "C6_GATE_ABOVE_FULL_NULL"
+    ],
+    "clauses": [
+     {
+      "clause": "C1_CHANNEL_ALIVE",
+      "ok": true,
+      "detail": "kind=['fade'] gates on blank only; measured n_blank_runs=7, n_scene_runs=7"
+     },
+     {
+      "clause": "C2_VALIDATED_LIVES",
+      "ok": true,
+      "detail": "lives=0x0199, not on the measured-false list"
+     },
+     {
+      "clause": "C5_SCENE_MIN_ABOVE_SEAM",
+      "ok": true,
+      "detail": "scene_min=5 against the seam floor warp_scene_min=2"
+     },
+     {
+      "clause": "C7_SEPARABILITY_WITNESSED",
+      "ok": false,
+      "detail": "no blank run on this profile has ever been WITNESSED to be a level transition, so there is nothing to place a length floor against. The audit probe clears nothing, so its whole observed distribution is null: a gate at or below it fires on ordinary play, and a gate above it has no evidence it can ever fire. Same refusal, and same reason, as the Rygar clear predicate"
+     },
+     {
+      "clause": "C6_GATE_ABOVE_FULL_NULL",
+      "ok": false,
+      "detail": "gate (scene_min=5, blank_min=1) against the veto-independent null (max d_scene=1, max d_blank=4) over 4x6000 steps that cleared nothing -- the gate is at or below its own null, so it fires on ordinary play and only the death veto is holding it shut"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "shatterhand",
+    "armed": true,
+    "gate": {
+     "blank_min": 1,
+     "death_debounce": 3,
+     "kind": [
+      "fade"
+     ],
+     "scene_min": 5
+    },
+    "lives_addr": "0x0199",
+    "n_rollouts": 4,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": 10,
+    "blank_run_lengths": [
+     1,
+     1,
+     1,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2,
+     2
+    ],
+    "n_scene_runs": 10,
+    "scene_run_lengths": [
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "residual_triggers": 13,
+    "residual_events": 2,
+    "n_checks": 300,
+    "n_death_vetoes": 10,
+    "n_lives_rebaselines": 6,
+    "rollouts_ending_dying": 0,
+    "null_max_d_scene": 1,
+    "null_max_d_blank": 4,
+    "null_max_d_scene_all": 1,
+    "null_max_d_blank_all": 4,
+    "null_checks_scored": 981,
+    "null_checks_vetoed": 219,
+    "fraction_checks_vetoed": 0.182,
+    "recommended_gate": {
+     "scene_min": 2,
+     "blank_min": 5
+    },
+    "wall_s": 118.7
+   }
+  },
+  "tetris_usa": {
+   "verdict": {
+    "verdict": "NOT_ARMED",
+    "clauses": [
+     {
+      "clause": "ARMED",
+      "ok": true,
+      "detail": "not armed (absent or enabled: false) -- no clause applies"
+     }
+    ]
+   },
+   "measured": {
+    "profile": "tetris_usa",
+    "armed": false,
+    "gate": null,
+    "unmeasurable": "ProfileNotConstructible: 'Tetris (USA)' declares solve.constructible: false \u2014 GenericGame hard-requires solve.y (jump/ballistic signature) and solve.lives; discover_observables.py's 3-probe protocol (forward=right/left/down, runs/onboard_wave3/discover_tetris_ {right,left,down}.json) found 0 progress candidates, no room counter and NO y ballistic signature in any direction. The candidate lives byte also named a different address on every direction (0x06BF/0x0040/0x004E), the signature of noise rather than a real global byte. Tetris's real progress (lines/score/level) is a decimal HUD field; no automated HUD-tile discovery tool exists in this repo, and hand-picking tile addresses from outside knowledge would break the purity line. Full record: runs/onboard_wave3/tetris_usa_onboard_summary.json.\n",
+    "n_rollouts": 0,
+    "steps_per_rollout": 6000,
+    "n_blank_runs": null,
+    "n_scene_runs": null,
+    "residual_triggers": null,
+    "null_max_d_scene_all": null,
+    "null_max_d_blank_all": null,
+    "recommended_gate": null
+   }
+  }
+ },
+ "measured_against": "configs/*.yaml at commit 4dd15ea (23 profiles armed)"
+}
