@@ -138,11 +138,12 @@ Verified in an isolated `git worktree` at HEAD rather than by touching the
 shared tree (a sibling workflow was committing throughout; it landed
 `7e1b7ed` mid-session).
 
-* **Solver and config at HEAD, library present** — `tests/test_transit_wiring.py`
-  fails **8 of 8** ROM-free tests with meaningful `AttributeError` /
-  `SystemExit` / structural assertions, not a bare collection error. The
-  9th (real-emulator replay) skips without the ROM, which is the split the
-  receipt pattern requires.
+* **Solver and config reverted to the pre-landing commit `7e1b7ed`, library
+  and tests present** — `tests/test_transit_wiring.py` fails **15 of 15**
+  with the ROM available, and **14 of 15 without it** (only the
+  real-emulator replay skips). Meaningful `AttributeError` / `SystemExit` /
+  structural assertions, not a bare collection error, and the ROM-free
+  majority is the split the receipt pattern requires.
 * **Score site reverted to the bare literal, everything else present** —
   `tests/test_transit_score_wiring.py` fails exactly its 2 structural
   tests; the other 28 pass. **Named honestly: at the default weight the
@@ -150,8 +151,8 @@ shared tree (a sibling workflow was committing throughout; it landed
   checks catch it. The real-emulator score replay does not.** That is a
   real, if narrow, coverage limit and it is recorded rather than papered
   over.
-* **Mechanism present** — 85/85 across the four transit suites, plus the
-  new resume guard (§6.1).
+* **Mechanism present** — **91/91** across the four transit suites, the six
+  new resume-guard tests (§6.1) included.
 
 ### 3.3 What its absence produces, on the same steps
 
