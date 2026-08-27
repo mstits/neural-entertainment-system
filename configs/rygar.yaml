@@ -60,3 +60,29 @@ solve:
   # Empty until a real clear is captured; guessing it is authored
   # semantics. The solver can search but cannot yet recognise winning.
   level_key: []
+  # solve.room_fp DECLINED (R1-05, 2026-08-26), not omitted by oversight.
+  # Hypothesis confirmed: Rygar's transitions are blank-type (odo_debug
+  # rendered lines drop < 120 for ~20 fs4-steps at each of 26 measured
+  # blackouts in a 5,336px trace), so nes_core's odo_fold_frame blank
+  # branch (ppu.rs:3142) returns before the scene-cut test and
+  # odometer_scene never moves (0 cuts across the whole trace) -- the
+  # scene counter is provably blind here, exactly as room_fp is designed
+  # to route around. But arming room_fp itself does not fix it on this
+  # profile: unmasked churn is 649 distinct nametable hashes over 3,490
+  # rendered frames (mask calibration on this profile's own idle/walk
+  # rollout found 0 volatile bytes -- there is nothing to mask), and no
+  # settle value from 3 to 60 turns that into a small, stable,
+  # transition-aligned room set. Best case (settle=14, Zelda/Metroid's
+  # own constant) mints 41 "rooms" while individually resolving only 6 of
+  # the 26 real blackout transitions -- the rest are swallowed because a
+  # dense run of back-to-back transitions (12 paired blackouts from
+  # x~4608 to x~5272, the same band the live solver's frontier stalls in)
+  # arrives faster than the settle window can survive, and ordinary
+  # mid-corridor pauses (blocked by terrain, fighting) mint just as
+  # readily as real transitions under the same test. Full numbers,
+  # settle sweep, and the blank-run census: docs/receipts/room_fp/rygar.md.
+  # room_fp's settle mechanism is the right primitive for Metroid/Zelda's
+  # static-camera rooms; it is the wrong primitive for this profile's
+  # continuous scroll, and fixing that is a shared-engine change
+  # (scripts/go_explore_solve.py fp_settle/replay_room_stream), not a
+  # config knob -- left as a named follow-up, not attempted here.

@@ -38,6 +38,29 @@ result (search, not a learned policy; see `../../CLAIMS.md`).
 | `MAZE_DOSSIER_V3_2026-07-26.md` | v3: the 8-4 campaign (eight attempts, ~110M steps); the $0750 semantics reckoning; the water-exit wall, precisely characterized |
 | `MAZE_PROMPT_V3_2026-07-26.md` | v3 driving prompt — led to the recipe that closed 8-4 and the full game |
 
+## Thread 3 — Playing one non-SMB game well
+
+The question: pick the single most tractable game outside SMB and take it as
+far as it will go, against a bar fixed before compute.
+
+Rygar was chosen on evidence, not preference: of Rygar / Contra / Kung Fu /
+Zelda it was the **only one of the four whose declared progress signal passed
+`scripts/progress_signal_gate.py` at HEAD**. The other three read SIGNAL
+UNUSABLE, and Zelda is purity-blocked besides.
+
+| Doc | What it is |
+|---|---|
+| `RYGAR_CAMPAIGN_2026-08-26.md` | The R1 campaign: verdict FAIL against the pre-registered bar; the wall moved 1,536 → 4,608 px of verified first-visit depth; the odometer-ratchet instrument defect; the fifth vacuous gate; the gate numbers for all four candidate games; the Kung Fu high-byte negative |
+
+Receipts: `../receipts/rygar/r1_tape_gx6242.json` (the replayable tape,
+tracked rather than left under gitignored `runs/`), guarded by
+`../../tests/test_rygar_r1_tape.py`, whose structural half runs with no ROM so
+the receipt cannot fall to zero coverage on a fresh checkout. Room-fingerprint
+decline: `../receipts/room_fp/rygar.md`.
+
+**Ledger: EXHIBITION.** Search output. No policy was trained for this game and
+no honest-protocol evaluation was run.
+
 ## Process rules (learned the hard way, kept on purpose)
 
 1. Consult at decision forks with data-rich dossiers, never mid-execution.

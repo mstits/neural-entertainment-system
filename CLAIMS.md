@@ -387,6 +387,39 @@ the agent is dead reports the game-over animation as progress. Checking
 a receipt against the last defect found, rather than against every
 defect known, is the same habit one level up.
 
+ADDENDUM 3 (2026-08-26, Rygar R1 campaign) — **the one surviving
+frontier number in this entry, "Rygar 5,680 px", is WEAKENED: the
+odometer over-counts on this profile, and the gate verdict is
+untouched.** ADDENDUM 1 correctly re-scoped this entry's load-bearing
+evidence down to frontier depth alone. That depth is now measured to be
+partly an instrument artifact.
+
+`nes_core/src/ppu.rs::odo_fold_frame` drops the scroll anchor
+(`odo_have_prev = false; return`) on any frame rendering fewer than 120
+lines. For a respawn that is correct and the source says so — it
+freezes rather than rewinds. But Rygar's room transitions are
+**blank-type**, so the same branch fires at every door, and the
+odometer **cannot see a camera reset across a transition**: each round
+trip banks the forward scroll and discards the return. On the deepest
+HEAD tape, 1,634 px of a 6,242 px headline is exactly this — 27 round
+trips through one door, measured as 27 segments banking `dx = 0`
+alternating with 27 banking +53..+64 px, with 45 of 54 post-door
+segments ending on a screen already seen. The positive control that
+makes this a measurement: the same test on the uninterrupted pre-door
+stretch returns 51 distinct screens out of 51 pieces.
+
+Consequences, stated narrowly. **The gate verdict in ADDENDUM 2 stands
+unchanged** — 116 distinct / 0..467 over 138 live steps is a forward
+hold that never reaches a door, so no ratchet can be in it. What is
+weakened is the *frontier* figure: 5,680 px was measured on a
+**different emulator binary** (`07f121f81fbb7d7b`; HEAD is
+`54366c20d32f71cc` and refuses to resume it) and has never been
+ratchet-audited. Cite it as a soft, non-HEAD-comparable baseline only.
+The HEAD-verified, artifact-free frontier is **4,608 px**. Full
+write-up and the replayable tape:
+`docs/research/RYGAR_CAMPAIGN_2026-08-26.md`,
+`docs/receipts/rygar/r1_tape_gx6242.json`.
+
 **FORGE-VALIDATED — generic death-detection fixes: transition-blip
 debounce and wrap-aware lives decrement, commits `1610093` and
 `084362c`, 2026-08-23.** Diagnosed from solver telemetry, not game
@@ -1790,3 +1823,172 @@ even when the check itself was honest. (4) `warp_rate` has no field in
 `max_gx` at the 3161 flagpole with `max_byte_seen: 0`), but a future
 PASS in this family could not be scored against its own registered
 condition as written.
+
+## RYGAR R1 CAMPAIGN 2026-08-26 — EXHIBITION, verdict FAIL
+
+Full write-up: `docs/research/RYGAR_CAMPAIGN_2026-08-26.md`. Tape and
+its always-on guard: `docs/receipts/rygar/r1_tape_gx6242.json`,
+`tests/test_rygar_r1_tape.py`.
+
+**Ledger: EXHIBITION, without exception.** Every number below is
+Go-Explore search output. No policy was trained for this game and no
+honest-protocol evaluation (cold entrance, greedy, sticky p=0.25,
+jitter ±16, 50 eps × 2 seeds = 100 pooled) was run. Nothing in this
+campaign may be described with "the AI learned", "the AI plays", or
+"the AI beat". Not one of the fourteen items overclaimed on this axis:
+all fourteen returned `beat_prior_best: false` or had it corrected in
+adjudication.
+
+**Verdict: R1 FAIL** against a bar fixed before compute and not moved
+afterwards. All four conditions were required.
+
+| # | Condition | Bar | Measured | Verdict |
+|---|---|---|---|---|
+| 1 | DEPTH | ≥ 9,000 odometer x from power-on | 6,242 raw; **4,608 artifact-free** | **FAIL** |
+| 2 | CLEAR PREDICATE | wired signal passing an anti-vacuity triple | none wired; R1-06 DECLINED | **FAIL** |
+| 3 | REPRODUCIBILITY | 3/3 replay, ±16 px, alive at terminal | 6,242 / 6,242 / 6,242 | PASS |
+| 4 | LIVENESS | no lives-0 run ≥ 3 observations | longest 2; histogram `{2: 55}` | PASS |
+
+FAIL, not VOID: a real, live, deterministic tape was produced and
+tested against every condition.
+
+**The wall moved, and it moved before this campaign.** Verified
+first-visit depth went **1,536 px → 4,608 px (3.0×)**, and 9.9× the
+467 px scripted forward-hold probe. The lever was the ≥3-observation
+death-blip debounce, not compute: real deaths pin the lives byte at 0
+for 5,721–5,862 observations while transition blips are exactly 2 — a
+~2,900× separation. Pre-debounce the search sat pinned at exactly
+1,536 (the first door) for 45 minutes; post-debounce it reached 5,360
+in six minutes. **This campaign itself did not move the frontier**: it
+moved the raw instrument 5,893 → 6,242 and every pixel of that +349 is
+ratchet. That is a plateau and is recorded as one.
+
+**`solutions: 0` remains a compile-time constant for this profile** and
+is evidence of nothing. `configs/rygar.yaml` ships `level_key: []` with
+no `clear:` or `finale:`, so `is_clear` is `() > ()` — re-verified
+False over 2,000 random RAM states, with every `solutions/` directory
+empty. R1-06 DECLINED to arm a predicate it could not show would fail,
+which is the correct call and the opposite of a vacuous gate.
+
+**The campaign's real finding is an instrument defect** — the odometer
+ratchet, recorded as ADDENDUM 3 on the odometer entry above.
+
+**A fifth vacuous gate, found and struck.** R1-08 discriminated
+loop-from-advance by asking whether `gx` ever *decreases* across a
+revisit to the same room ordinal. Because the odometer re-anchors
+instead of integrating at every transition, `gx` **cannot** decrease
+across a revisit: the check returns REFUTED whether or not the loop
+exists. Its own headline evidence — "room 219: 4672, 4736, 4791, 4855,
+4910, 4974, 5029, 5089, 5148" — is the ratchet ladder read as
+progress, and that conclusion propagated into R1-14's
+`beat_prior_best`. Belongs in the anti-vacuity census. The working
+non-vacuous replacement is in the receipts: cluster rendered frames at
+fixed odometer milestones, with uninterrupted-segment milestones as the
+control that proves the detector can say "different".
+
+**The bar itself was denominated in a farmable quantity** — recorded so
+it is not repeated, and NOT used to move a number retroactively. 27
+door cycles bought 1,621 px (~60 px/cycle), so reaching 9,000 from
+6,242 needs ~46 more cycles and no new ground. Any successor bar must
+denominate depth in **first-visit territory**.
+
+**Rooms reached: at least 3 visually distinct areas, counted by eye
+from our own rendered frames — no instrument can count them.**
+`odometer_scene` reads 0 cuts across a tape that provably crosses 55
+blackout transitions, because `odo_fold_frame`'s blank branch returns
+before the scene-cut test. Every `rooms_reached: 1` reported during the
+campaign was an inference from an instrument that cannot fire.
+
+**Negative results banked (the bulk of the campaign, all replay-
+audited).** R1-01 budget sweep VOID (no arm reached its own cap, so the
+variable never engaged). R1-03 cell resolution REFUTED on its
+pre-registered metric — 10× the cells, `gx` flat in 19 of 24 runs.
+R1-04 velocity-signed cells (the SMB 4-4 recipe) REFUTED on 2 seeds
+*with mechanism*: the domination score is a pure function of `gx` for
+this profile and never reads the spliced slot. R1-05 room-fingerprint
+DECLINED with numbers. R1-10 `ODO_ALT`→`y` REFUTED by construction.
+R1-11 self-refuted honestly: selection is not ignoring the frontier
+(75.6% of selections land in the frontier band), it is blind to
+remaining budget. R1-02 found the one real lever — hold-macros, +82%
+px/step on a length-matched window — and it remains untested inside the
+corridor that matters.
+
+**R1-04's `--vsign-key` patch was NOT landed.** It is refuted by its
+own A/B and it broke 72 tests in the shared checkout by reading
+`self.vsign_key` on the progress-line path. The diff is preserved at
+`runs/rygar_campaign/R1-04/vsign_key_REFUTED.patch`.
+
+**Why Rygar and not the other three**, re-measured at HEAD:
+
+- **Rygar — PASS, SIGNAL SOUND — still advancing.** 116 distinct /
+  range 0..467 over 138 live steps. The "138 live steps" is a property
+  of the gate's scripted forward hold, not of the game: the solver's
+  own lineages run 3,865–6,018 actions in one continuous life with zero
+  terminal deaths. Cite 138 only as the probe's survival.
+- **Contra — SIGNAL UNUSABLE, but NOT fairly excluded.** 20 distinct in
+  69 live steps, 1,131 of 1,200 dropped. **Open defect:** the gate
+  computes its resolution finding on the window *after* truncation, and
+  a 69-sample window cannot demonstrate a 32-distinct threshold. That
+  verdict measures how fast the probe died, not the signal's
+  resolution. **Contra's honest verdict is INCONCLUSIVE**, pending a
+  probe that survives long enough to assess. Rygar's PASS is unaffected.
+- **Kung Fu — SIGNAL UNUSABLE on both axes.** RAM byte `$0094`: 91
+  distinct, 0..240, no paired high byte. Odometer: **1 distinct, range
+  0..0 over 1,200 steps with OAM churn 628/1199** — the camera is
+  provably static while the agent is provably moving. Fixed-screen
+  fight class, same as Punch-Out; needs a fight-gate observable, not a
+  scalar position repair.
+- **Zelda — SIGNAL UNUSABLE and purity-blocked.** 25 distinct in 1,200
+  steps, unpaired wrap, flat late; and its win chain came from a
+  disassembly and is quarantined regardless of the gate.
+
+**Kung Fu high-byte side quest — NEGATIVE, and a proof rather than a
+failed search.** A paired high byte would have made Kung Fu a live
+candidate; it does not exist. (i) The instrument was validated first:
+on the Castlevania positive control it blind-nominated `$0041` at 14/16
+wrap hits — exactly the pair shipped in `configs/castlevania.yaml`.
+(ii) On Kung Fu it nominates `$006B` at 2/4; reproducing the hold, all
+four "wraps" are 236→0 or 216→0 drops sitting on lives transitions —
+**death-respawn resets, not wraps**. (iii) Zero wraps in live play at
+three scales: 6 policies × 2 seeds (`hard_drops = 0` in all 12), 64
+parallel stochastic episodes (0 crossings, max 164), and the project's
+own 514,239-step receipt reaching `max_progress` 244 against
+`random_baseline_max_progress` **244, identical** — search bought
+nothing over random, the signature of a hard clamp. (iv) Handing
+`assess()` a free *perfect* high byte still returns `passed=False`
+("only 28 distinct values in 174 steps"), so **the high byte was never
+the binding constraint** and `gate_flips = false` is a proof. (v) An
+exhaustive 2048×2048 pair scan returns nothing real.
+
+**Correction to the recorded reason for Kung Fu's failure.** The
+"single byte wraps" premise is FALSE: `$0094` never wraps in live play.
+It is a clamped screen-space coordinate that saturates at 236–244 and
+resets to 0 only on death. The true instrument fault is **coarseness**
+(28 distinct in a 174-step live window). Nobody should spend another
+probe on the "cheap fix" of hunting its high byte.
+
+**New defect — the gate is blind to auto-restarting ROMs.** Reported,
+not fixed: changing a binding gate's truncation logic moves many
+profiles' verdicts. Kung Fu's own gate run is post-death-tail
+contaminated — 1,326 of 1,500 steps follow the first death — yet the
+gate reports `dropped_tail_steps = 0`. **Reproduced at HEAD:** Contra
+emits its `[D5]` truncation line; Kung Fu emits none and reports a full
+"1200 steps". Root cause: `first_exhaustion_index` requires the
+trailing quarter of the lives trace to be frozen at one value, but this
+ROM **auto-restarts after GAME OVER** (3→2→1→0, then 0→3, then 3→0), so
+that quarter holds `{0, 3}` and the detector returns `None`. The stasis
+detector misses it independently because an auto-restarted attract game
+is **busy, not frozen** (median churn 48 bytes/step). This is a **third
+contamination class** beyond D5 (Arkanoid frozen-placeholder) and D1
+(Ninja Gaiden blind lives byte), and it plausibly inflates the "28 of
+45 profiles contaminated" count for any multi-life ROM that loops back
+to attract. Cheap targeted fix: treat the FIRST death as the truncation
+point whenever the lives byte later returns to a value ≥
+`lives_at_start` — a restart can only be a new game, never continued
+progress.
+
+**Purity (Tier 3).** Every measurement above comes from hardware
+surfaces — PPU scroll odometer, nametable VRAM, rendered frames, OAM,
+render-line counts — plus each profile's own declared lives byte, on
+its own start state. No disassembly, no RAM map, no walkthrough, no
+recall of these titles.
