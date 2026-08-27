@@ -1,0 +1,1892 @@
+{
+  "probe": "random",
+  "steps": 1200,
+  "forward_policy": "default",
+  "episodes": 5,
+  "seed": 0,
+  "min_window": 187,
+  "legacy_min_window": 0,
+  "n_profiles": 45,
+  "verdicts_changed": 0,
+  "changed_profiles": [],
+  "calibration": {
+    "profiles_reaching_min_distinct": 26,
+    "steps_to_min_distinct": {
+      "configs/1942.yaml": 47,
+      "configs/arkanoid.yaml": 507,
+      "configs/bad_dudes.yaml": 348,
+      "configs/batman_the_video_game.yaml": 173,
+      "configs/castlevania.yaml": 107,
+      "configs/contra.yaml": 105,
+      "configs/contra_blank.yaml": 105,
+      "configs/darkwing_duck.yaml": 233,
+      "configs/double_dragon.yaml": 66,
+      "configs/ducktales_2.yaml": 180,
+      "configs/ghosts_n_goblins.yaml": 81,
+      "configs/gradius.yaml": 32,
+      "configs/journey_to_silius.yaml": 194,
+      "configs/kirby.yaml": 814,
+      "configs/kungfu.yaml": 790,
+      "configs/legend_of_zelda.yaml": 172,
+      "configs/mega_man_3.yaml": 85,
+      "configs/megaman.yaml": 45,
+      "configs/ninja_gaiden.yaml": 567,
+      "configs/ninja_gaiden_ii.yaml": 563,
+      "configs/ninja_gaiden_iii.yaml": 582,
+      "configs/paperboy.yaml": 32,
+      "configs/rygar.yaml": 415,
+      "configs/shatterhand.yaml": 128,
+      "configs/zelda.yaml": 193,
+      "configs/zelda_roomfp.yaml": 193
+    },
+    "max": 814,
+    "slowest_profile": "configs/kirby.yaml"
+  },
+  "sensitivity": {
+    "32": {
+      "verdicts_changed": 0,
+      "passed_changed": 0,
+      "profiles": []
+    },
+    "102": {
+      "verdicts_changed": 0,
+      "passed_changed": 0,
+      "profiles": []
+    },
+    "187": {
+      "verdicts_changed": 0,
+      "passed_changed": 0,
+      "profiles": []
+    },
+    "289": {
+      "verdicts_changed": 0,
+      "passed_changed": 0,
+      "profiles": []
+    },
+    "600": {
+      "verdicts_changed": 1,
+      "passed_changed": 0,
+      "profiles": [
+        "configs/castlevania_iii.yaml"
+      ]
+    },
+    "1200": {
+      "verdicts_changed": 1,
+      "passed_changed": 0,
+      "profiles": [
+        "configs/castlevania_iii.yaml"
+      ]
+    }
+  },
+  "composed": null,
+  "rows": [
+    {
+      "profile": "configs/1942.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        205,
+        378,
+        1200,
+        639,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 772,
+        "steps_to_min_distinct": 47,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 772,
+        "steps_to_min_distinct": 47,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/arkanoid.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        518,
+        485,
+        1200,
+        531,
+        502
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 33,
+        "steps_to_min_distinct": 507,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 33,
+        "steps_to_min_distinct": 507,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/bad_dudes.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 121,
+        "steps_to_min_distinct": 348,
+        "instrument_findings": [
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 121,
+        "steps_to_min_distinct": 348,
+        "instrument_findings": [
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/batman_the_video_game.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        14,
+        1200,
+        1200,
+        1200,
+        89
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 241,
+        "steps_to_min_distinct": 173,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 241,
+        "steps_to_min_distinct": 173,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/bionic_commando.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        273,
+        150,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 21,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 21 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 21,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 21 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/blaster_master.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        37,
+        47,
+        102,
+        96,
+        25
+      ],
+      "live_steps": 102,
+      "before": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 102,
+        "distinct": 20,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 20 distinct values over 102 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 102,
+        "distinct": 20,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 20 distinct values over 102 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/bubble_bobble.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        136,
+        186,
+        1200,
+        140
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 1 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 1 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/castlevania.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 221,
+        "steps_to_min_distinct": 107,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 221,
+        "steps_to_min_distinct": 107,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/castlevania_iii.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        475,
+        475,
+        475,
+        475,
+        475
+      ],
+      "live_steps": 475,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 475,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 1 distinct values in 475 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 475,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 1 distinct values in 475 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/chip_n_dale_rescue_rangers.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        254,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 3,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 3 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 3,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 3 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/contra.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        102,
+        236,
+        152,
+        721,
+        156
+      ],
+      "live_steps": 721,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 721,
+        "distinct": 346,
+        "steps_to_min_distinct": 105,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 721,
+        "distinct": 346,
+        "steps_to_min_distinct": 105,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/contra_blank.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        102,
+        236,
+        152,
+        721,
+        156
+      ],
+      "live_steps": 721,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 721,
+        "distinct": 346,
+        "steps_to_min_distinct": 105,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 721,
+        "distinct": 346,
+        "steps_to_min_distinct": 105,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/darkwing_duck.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 227,
+        "steps_to_min_distinct": 233,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 227,
+        "steps_to_min_distinct": 233,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/double_dragon.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 560,
+        "steps_to_min_distinct": 66,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 560,
+        "steps_to_min_distinct": 66,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/double_dragon_ii.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        156,
+        100,
+        306,
+        1200,
+        427
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess \u2014 camera range zero under an undirected probe",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 1 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal",
+          "camera showed zero range over 1200 live steps of a 1200-step hold (agent active (OAM moving)) \u2014 under a probe that commanded no direction, so this is the probe's survival time or its aimlessness, not a demonstration that the axis cannot move"
+        ],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "after": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess \u2014 camera range zero under an undirected probe",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 1 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal",
+          "camera showed zero range over 1200 live steps of a 1200-step hold (agent active (OAM moving)) \u2014 under a probe that commanded no direction, so this is the probe's survival time or its aimlessness, not a demonstration that the axis cannot move"
+        ],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/ducktales.yaml",
+      "applicable": false,
+      "error": "no solve.progress.lo and source=unset \u2014 this profile declares no scalar progress signal, so the gate has nothing to assess (not a failure)",
+      "before": {
+        "verdict": "GATE INAPPLICABLE"
+      },
+      "after": {
+        "verdict": "GATE INAPPLICABLE"
+      },
+      "changed": false
+    },
+    {
+      "profile": "configs/ducktales_2.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 171,
+        "steps_to_min_distinct": 180,
+        "instrument_findings": [
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 171,
+        "steps_to_min_distinct": 180,
+        "instrument_findings": [
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/excitebike.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 18,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 18 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 18,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 18 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/galaga.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        290,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 31,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 31 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient",
+          "reaches >=200 with no paired high byte \u2014 a single byte wraps, and the solver reads it raw, so progress past one wrap is invisible"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 31,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 31 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient",
+          "reaches >=200 with no paired high byte \u2014 a single byte wraps, and the solver reads it raw, so progress past one wrap is invisible"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/ghosts_n_goblins.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        110,
+        198,
+        261,
+        76,
+        113
+      ],
+      "live_steps": 261,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 261,
+        "distinct": 101,
+        "steps_to_min_distinct": 81,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 261,
+        "distinct": 101,
+        "steps_to_min_distinct": 81,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/gradius.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        217,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 972,
+        "steps_to_min_distinct": 32,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 972,
+        "steps_to_min_distinct": 32,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/ice_climber.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        316,
+        1200,
+        1200,
+        1200,
+        616
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess \u2014 camera range zero under an undirected probe",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 1 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal",
+          "camera showed zero range over 1200 live steps of a 1200-step hold (agent active (OAM moving)) \u2014 under a probe that commanded no direction, so this is the probe's survival time or its aimlessness, not a demonstration that the axis cannot move"
+        ],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "after": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess \u2014 camera range zero under an undirected probe",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 1 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal",
+          "camera showed zero range over 1200 live steps of a 1200-step hold (agent active (OAM moving)) \u2014 under a probe that commanded no direction, so this is the probe's survival time or its aimlessness, not a demonstration that the axis cannot move"
+        ],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/journey_to_silius.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 206,
+        "steps_to_min_distinct": 194,
+        "instrument_findings": [
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 206,
+        "steps_to_min_distinct": 194,
+        "instrument_findings": [
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/kid_icarus.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 2,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 2 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient",
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 2,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 2 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient",
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/kirby.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 60,
+        "steps_to_min_distinct": 814,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 60,
+        "steps_to_min_distinct": 814,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/kungfu.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        350,
+        350,
+        438,
+        438
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 35,
+        "steps_to_min_distinct": 790,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 35,
+        "steps_to_min_distinct": 790,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/legend_of_zelda.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        711,
+        124,
+        1200,
+        494,
+        62
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 119,
+        "steps_to_min_distinct": 172,
+        "instrument_findings": [
+          "reaches >=200 with no paired high byte \u2014 a single byte wraps, and the solver reads it raw, so progress past one wrap is invisible"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 119,
+        "steps_to_min_distinct": 172,
+        "instrument_findings": [
+          "reaches >=200 with no paired high byte \u2014 a single byte wraps, and the solver reads it raw, so progress past one wrap is invisible"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/mega_man_3.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 224,
+        "steps_to_min_distinct": 85,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 224,
+        "steps_to_min_distinct": 85,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/mega_man_usa.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        772,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 25,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 25 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 25,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 25 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/megaman.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        117,
+        141,
+        172,
+        145,
+        129
+      ],
+      "live_steps": 172,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 game stops",
+        "passed": true,
+        "steps": 172,
+        "distinct": 77,
+        "steps_to_min_distinct": 45,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 game stops",
+        "passed": true,
+        "steps": 172,
+        "distinct": 77,
+        "steps_to_min_distinct": 45,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/metroid.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        71,
+        77,
+        59,
+        56,
+        54
+      ],
+      "live_steps": 77,
+      "before": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 77,
+        "distinct": 6,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 6 distinct values over 77 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 77,
+        "distinct": 6,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 6 distinct values over 77 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/metroid_roomfp.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        71,
+        77,
+        59,
+        56,
+        54
+      ],
+      "live_steps": 77,
+      "before": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 77,
+        "distinct": 6,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 6 distinct values over 77 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 77,
+        "distinct": 6,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 6 distinct values over 77 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/ninja_gaiden.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        276,
+        263,
+        282,
+        285
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 194,
+        "steps_to_min_distinct": 567,
+        "instrument_findings": [
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 194,
+        "steps_to_min_distinct": 567,
+        "instrument_findings": [
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/ninja_gaiden_ii.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        540
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 148,
+        "steps_to_min_distinct": 563,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 148,
+        "steps_to_min_distinct": 563,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/ninja_gaiden_iii.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        397,
+        1200,
+        450,
+        500,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 98,
+        "steps_to_min_distinct": 582,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 98,
+        "steps_to_min_distinct": 582,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/paperboy.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        809,
+        858,
+        1200,
+        760,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 683,
+        "steps_to_min_distinct": 32,
+        "instrument_findings": [
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 683,
+        "steps_to_min_distinct": 32,
+        "instrument_findings": [
+          "death byte reads 0 at the start state \u2014 a decrement underflows and no death can be detected"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/power_blade.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        322,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 15,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 15 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "after": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 15,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 15 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal"
+        ],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/punchout.yaml",
+      "applicable": false,
+      "error": "no solve.progress.lo and source=fight_gate \u2014 this profile declares no scalar progress signal, so the gate has nothing to assess (not a failure)",
+      "before": {
+        "verdict": "GATE INAPPLICABLE"
+      },
+      "after": {
+        "verdict": "GATE INAPPLICABLE"
+      },
+      "changed": false
+    },
+    {
+      "profile": "configs/rygar.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        351,
+        454,
+        441,
+        530,
+        678
+      ],
+      "live_steps": 678,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 678,
+        "distinct": 89,
+        "steps_to_min_distinct": 415,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 678,
+        "distinct": 89,
+        "steps_to_min_distinct": 415,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/shatterhand.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        579,
+        1200,
+        779,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 215,
+        "steps_to_min_distinct": 128,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL SOUND \u2014 still advancing",
+        "passed": true,
+        "steps": 1200,
+        "distinct": 215,
+        "steps_to_min_distinct": 128,
+        "instrument_findings": [],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/super_c.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        821,
+        543,
+        830,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 3,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 3 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 3,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 3 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": []
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/tetris_b.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 1 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [
+          "only 1 distinct values in 1200 steps (< 32) \u2014 too coarse to be a search gradient"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/tetris_usa.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": true,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        1200,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess \u2014 camera range zero under an undirected probe",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 1 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal",
+          "camera showed zero range over 1200 live steps of a 1200-step hold (agent active (OAM moving)) \u2014 under a probe that commanded no direction, so this is the probe's survival time or its aimlessness, not a demonstration that the axis cannot move"
+        ],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "after": {
+        "verdict": "INCONCLUSIVE \u2014 probe died too early to assess \u2014 camera range zero under an undirected probe",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 1,
+        "steps_to_min_distinct": null,
+        "instrument_findings": [],
+        "inconclusive_findings": [
+          "only 1 distinct values over 1200 live steps, but the probe commanded no direction \u2014 under undirected play a shortfall is a fact about the policy, not the instrument (bionic_commando: 122 distinct held forward, 21 under uniform-random, same 1200 steps). Re-probe with --probe hold to make this a claim about the signal",
+          "camera showed zero range over 1200 live steps of a 1200-step hold (agent active (OAM moving)) \u2014 under a probe that commanded no direction, so this is the probe's survival time or its aimlessness, not a demonstration that the axis cannot move"
+        ],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/zelda.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        506,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 99,
+        "steps_to_min_distinct": 193,
+        "instrument_findings": [
+          "reaches >=200 with no paired high byte \u2014 a single byte wraps, and the solver reads it raw, so progress past one wrap is invisible"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 99,
+        "steps_to_min_distinct": 193,
+        "instrument_findings": [
+          "reaches >=200 with no paired high byte \u2014 a single byte wraps, and the solver reads it raw, so progress past one wrap is invisible"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "changed": false,
+      "passed_changed": false
+    },
+    {
+      "profile": "configs/zelda_roomfp.yaml",
+      "applicable": true,
+      "probe": "random",
+      "odometer": false,
+      "forward": "right",
+      "requested_steps": 1200,
+      "live_steps_per_episode": [
+        1200,
+        1200,
+        1200,
+        506,
+        1200
+      ],
+      "live_steps": 1200,
+      "before": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 99,
+        "steps_to_min_distinct": 193,
+        "instrument_findings": [
+          "reaches >=200 with no paired high byte \u2014 a single byte wraps, and the solver reads it raw, so progress past one wrap is invisible"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "after": {
+        "verdict": "SIGNAL UNUSABLE",
+        "passed": false,
+        "steps": 1200,
+        "distinct": 99,
+        "steps_to_min_distinct": 193,
+        "instrument_findings": [
+          "reaches >=200 with no paired high byte \u2014 a single byte wraps, and the solver reads it raw, so progress past one wrap is invisible"
+        ],
+        "inconclusive_findings": [],
+        "behaviour_findings": [
+          "flat for the last quarter of the roll \u2014 the signal stops moving, which is either saturation or the agent no longer advancing; either way the probe's net-forward number does not describe what the solver will see"
+        ]
+      },
+      "changed": false,
+      "passed_changed": false
+    }
+  ]
+}

@@ -17,7 +17,26 @@ Both were reported as game-difficulty walls before anyone checked the
 instrument. This gate is the check, and it runs BEFORE a profile is
 allowed to drive a search.
 
+And then this gate went and made the same mistake in its own turn
+(2026-08-26). It reported "only 20 distinct values in 69 steps (< 32) —
+too coarse to be a search gradient" about Contra, where the 69 steps
+were all that survived D5 truncation of a 1200-step hold. A 69-sample
+window cannot demonstrate a 32-distinct threshold: that sentence
+measures how fast the PROBE died. Two things came out of it, and they
+are the two axes this file now separates:
+
+  * A verdict is only issued on a window that can carry it
+    (MIN_ASSESSABLE_STEPS). Below that the honest answer is
+    INCONCLUSIVE — blocked, but not condemned. VOID, not FAIL.
+  * The probe is a variable, not a constant. `--probe hold` is the
+    original undodging scripted forward hold and stays the default;
+    `--probe random` buys a live window on games where holding forward
+    walks into the first hazard (Contra: 69 live steps held forward,
+    721 under uniform-random, 20 distinct against 346). Neither is
+    strictly better and the file says which checks each one cannot make.
+
     .venv/bin/python scripts/progress_signal_gate.py --profile configs/rygar.yaml
+    .venv/bin/python scripts/progress_signal_gate.py --profile configs/contra.yaml --probe random
 """
 from __future__ import annotations
 
@@ -29,6 +48,74 @@ REPO = Path(__file__).resolve().parent.parent
 
 MIN_DISTINCT = 32          # fewer levels than this is not a gradient
 MIN_TAIL_FRACTION = 0.25   # progress must still be moving late in a roll
+
+#: Live steps required before a SHORTFALL of distinct values may be
+#: reported as an instrument fault.
+#:
+#: The defect this closes (2026-08-26). `assess()` computes its
+#: resolution finding on the window that survives D5 truncation, and
+#: then states it as a threshold claim: "only 20 distinct values in 69
+#: steps (< 32) — too coarse to be a search gradient". A 69-sample
+#: window cannot demonstrate a 32-distinct threshold. That sentence
+#: measures how fast the scripted forward hold died, not the signal's
+#: resolution — and it excluded Contra, whose progress pair
+#: {lo:0x65, hi:0x64} is one of the better ones on the roster, on an
+#: inference the evidence does not support.
+#:
+#: CALIBRATED, not chosen. Value = the largest number of live steps any
+#: profile this gate has certified SIGNAL SOUND needed in order to
+#: accumulate MIN_DISTINCT levels (`steps_to_min_distinct` on the
+#: hold-probe sweep, docs/receipts/progress_gate_window_sweep_2026-08-26.json).
+#: Below this window, a signal we have independently certified as sound
+#: would itself have been called "too coarse" — which is the definition
+#: of a window that cannot carry the claim. Raising it only converts
+#: FAILs into VOIDs; it can never turn a FAIL into a PASS, because the
+#: PASS direction is a positive demonstration and is not gated on it
+#: (see `assess`).
+MIN_ASSESSABLE_STEPS = 187
+
+#: VOID, not FAIL. A profile that lands here has NOT been shown sound —
+#: `passed` is False and it must not drive a search — but neither has it
+#: been shown broken, and the two must never be reported as the same
+#: thing. Same distinction CLAIMS.md draws between a FAILED eval and a
+#: VOIDED one.
+INCONCLUSIVE_VERDICT = "INCONCLUSIVE — probe died too early to assess"
+
+
+def steps_to_distinct(trace: list, target: int = MIN_DISTINCT) -> int | None:
+    """How many leading steps of `trace` it took to accumulate `target`
+    distinct values, or None if it never got there.
+
+    This is the measurement MIN_ASSESSABLE_STEPS is calibrated from, and
+    it is on every receipt so the calibration can be re-derived from the
+    sweep rather than taken on trust.
+    """
+    seen = set()
+    for i, v in enumerate(trace, start=1):
+        seen.add(v)
+        if len(seen) >= target:
+            return i
+    return None
+
+
+def verdict_label(instrument: list, inconclusive: list,
+                  behaviour: list) -> str:
+    """The one place the three finding lists become a verdict string.
+
+    Precedence is deliberate and is the whole point of the INCONCLUSIVE
+    band: a positively DEMONSTRATED instrument fault outranks "not
+    enough window to say" (evidence beats absence of evidence), and
+    "not enough window to say" outranks any SOUND certification (a
+    window too short to condemn a signal is equally too short to bless
+    it — the failure mode of a one-sided fix).
+    """
+    if instrument:
+        return "SIGNAL UNUSABLE"
+    if inconclusive:
+        return INCONCLUSIVE_VERDICT
+    if behaviour:
+        return "SIGNAL SOUND — game stops"
+    return "SIGNAL SOUND — still advancing"
 
 
 #: Same fraction `assess()` already uses to call a PROGRESS trace's tail
@@ -186,7 +273,10 @@ def truncate_at_exhaustion(n: int, lives_trace, start_lives: int | None,
     return min(idxs) if idxs else n
 
 
-def note_camera_static(v: dict, oam_churn: int, steps: int) -> dict:
+def note_camera_static(v: dict, oam_churn: int, steps: int,
+                       live_steps: int | None = None,
+                       min_window: int | None = None,
+                       directed: bool = True) -> dict:
     """Annotate (never launder) a verdict whose odometer axis had zero
     range (rx == ry == 0 at the call site).
 
@@ -210,22 +300,50 @@ def note_camera_static(v: dict, oam_churn: int, steps: int) -> dict:
     axis that never moves. The old code certified that as
     "SIGNAL SOUND". It is not: it is the one shape of trace this gate
     exists to reject.
+
+    `live_steps` is the window the zero range was actually observed over
+    — NOT `steps`, which is the requested hold length and stays only in
+    the human-readable text for context. The two came apart the moment
+    D5 truncation shipped: double_dragon_ii's hold was requested for
+    1200 steps and died at 257, and the old message said "camera never
+    moved over 1200 steps" about 257 steps of evidence. Below
+    MIN_ASSESSABLE_STEPS the zero range is the same unsupportable
+    shortfall claim `assess` guards — a probe that died at step 22 has
+    not shown the camera cannot move — so it is recorded as INCONCLUSIVE
+    instead. It still blocks; it just stops asserting more than it saw.
     """
-    agent = ("agent active (OAM moving)" if oam_churn > steps // 4
+    min_window = (MIN_ASSESSABLE_STEPS if min_window is None
+                  else int(min_window))
+    live = steps if live_steps is None else int(live_steps)
+    agent = ("agent active (OAM moving)" if oam_churn > live // 4
              else "agent inert (OAM static too)")
-    v["instrument_findings"].append(
-        f"camera never moved over {steps} steps under the odometer "
-        f"driver ({agent}) — a zero-range axis cannot express progress "
-        f"regardless of agent activity; this profile has not been "
-        f"demonstrated capable of returning a positive on this axis and "
-        f"must not drive a search with it")
+    if live >= min_window and directed:
+        v["instrument_findings"].append(
+            f"camera never moved over {live} live steps of a {steps}-step "
+            f"hold under the odometer driver ({agent}) — a zero-range axis "
+            f"cannot express progress regardless of agent activity; this "
+            f"profile has not been demonstrated capable of returning a "
+            f"positive on this axis and must not drive a search with it")
+        label = "SIGNAL UNUSABLE — camera static"
+    else:
+        why = (f"under the {min_window}-step floor" if live < min_window
+               else "under a probe that commanded no direction")
+        v["inconclusive_findings"].append(
+            f"camera showed zero range over {live} live steps of a "
+            f"{steps}-step hold ({agent}) — {why}, so this is the probe's "
+            f"survival time or its aimlessness, not a demonstration that "
+            f"the axis cannot move")
+        label = (f"{INCONCLUSIVE_VERDICT} — camera range zero on a short "
+                 f"window" if live < min_window else
+                 f"{INCONCLUSIVE_VERDICT} — camera range zero under an "
+                 f"undirected probe")
     # NOT `not v["instrument_findings"]`. That idiom is what D6 was: a
     # verdict computed from the ABSENCE of findings is one reordering or
     # one early return away from certifying the thing it was meant to
     # reject, and this function's whole job is to reject. A camera-static
     # axis is disqualifying on its own terms, so say so directly.
     v["passed"] = False
-    v["verdict"] = "SIGNAL UNUSABLE — camera static"
+    v["verdict"] = label
     return v
 
 
@@ -269,8 +387,26 @@ def resolve_forward_index(space: list, forward: str) -> int:
 
 
 def assess(trace: list[int], lives_at_start: int | None,
-           has_high_byte: bool, raw_direction: int | None = None) -> dict:
-    """PURE verdict over one long forward-hold trace."""
+           has_high_byte: bool, raw_direction: int | None = None,
+           min_window: int | None = None, directed: bool = True) -> dict:
+    """PURE verdict over one long forward-hold trace.
+
+    `min_window` is the live-window floor below which a SHORTFALL of
+    distinct values is not a supportable claim; defaults to
+    MIN_ASSESSABLE_STEPS, and `0` reproduces every verdict banked before
+    2026-08-26 exactly, which is how the sweep diffs old against new.
+
+    `directed` says the probe commanded forward motion. An UNDIRECTED
+    probe cannot report a shortfall as a fault at all, at any window
+    length, and the roster proves why: bionic_commando's odometer shows
+    122 distinct levels over a 1200-step forward hold and 21 over a
+    1200-step uniform-random rollout. Twenty-one levels in 1200 steps is
+    a fact about a policy that wandered, not about the instrument — the
+    same confound as the truncation-order defect, wearing the other hat.
+    So an undirected probe can only ever ADD evidence (a positive
+    >= MIN_DISTINCT demonstration, and a longer window); it can never
+    subtract a certification.
+    """
     # INSTRUMENT findings mean the signal itself is unusable — the profile
     # must not drive a search. BEHAVIOUR findings mean the signal is sound
     # and the GAME stops, which is a finding about the game and not a
@@ -278,9 +414,17 @@ def assess(trace: list[int], lives_at_start: int | None,
     # Contra, whose progress pair is the best of any game here (163
     # distinct values over 0..635) and whose flat tail is the real,
     # receipted fixed-camera wall at gx 3072.
+    #
+    # INCONCLUSIVE findings are the third class, added 2026-08-26: the
+    # measurement was attempted and the window could not carry it. They
+    # block (nothing here is certified) but they are NOT a fault report,
+    # and reporting them as one is what excluded Contra.
     instrument: list[str] = []
     behaviour: list[str] = []
+    inconclusive: list[str] = []
     findings = instrument
+    min_window = (MIN_ASSESSABLE_STEPS if min_window is None
+                  else int(min_window))
     n = len(trace)
     distinct = len(set(trace))
     # raw_direction is the SIGNED net motion of the un-rebased odometer
@@ -300,10 +444,38 @@ def assess(trace: list[int], lives_at_start: int | None,
             "reads to 0, so the solver would see a flat signal no matter "
             "how this rebased trace looks; declare a leading '-' on "
             "solve.progress.axis to match the hardware direction")
+    # THE ASYMMETRY, and it is the whole fix. Observing >= MIN_DISTINCT
+    # levels is a POSITIVE demonstration: 116 distinct in Rygar's 138
+    # live steps proves the resolution is there, and no window floor can
+    # take that back. Observing FEWER only demonstrates coarseness if the
+    # window was long enough that a resolving signal would have shown
+    # them — Contra's 20-in-69 does not, and the same 20-in-69 shape at
+    # 1200 steps does. So the floor gates one direction and not the
+    # other, and cannot convert a FAIL into a PASS.
     if distinct < MIN_DISTINCT:
-        findings.append(
-            f"only {distinct} distinct values in {n} steps (< {MIN_DISTINCT}) "
-            f"— too coarse to be a search gradient")
+        if n >= min_window and directed:
+            findings.append(
+                f"only {distinct} distinct values in {n} steps "
+                f"(< {MIN_DISTINCT}) — too coarse to be a search gradient")
+        elif not directed:
+            inconclusive.append(
+                f"only {distinct} distinct values over {n} live steps, but "
+                f"the probe commanded no direction — under undirected play "
+                f"a shortfall is a fact about the policy, not the "
+                f"instrument (bionic_commando: 122 distinct held forward, "
+                f"21 under uniform-random, same 1200 steps). Re-probe with "
+                f"--probe hold to make this a claim about the signal")
+        else:
+            inconclusive.append(
+                f"only {distinct} distinct values, but the live window is "
+                f"{n} steps — under the {min_window}-step floor "
+                f"(MIN_ASSESSABLE_STEPS: the longest any SIGNAL SOUND "
+                f"profile on this roster took to accumulate "
+                f"{MIN_DISTINCT} levels). A {n}-sample window cannot "
+                f"demonstrate a {MIN_DISTINCT}-distinct threshold, so this "
+                f"number measures how fast the probe died, not the "
+                f"signal's resolution — re-probe for a longer live window "
+                f"(--probe random) before calling this signal anything")
     if not has_high_byte and max(trace, default=0) >= 200:
         findings.append(
             "reaches >=200 with no paired high byte — a single byte wraps, "
@@ -320,6 +492,12 @@ def assess(trace: list[int], lives_at_start: int | None,
         findings.append(
             f"death byte reads {lives_at_start} at the start state — a "
             f"decrement underflows and no death can be detected")
+    # Only instrument faults and unsupportable windows block. A sound
+    # signal that flattens is reporting a wall, which is exactly what it
+    # is for. Kept as one list so the vacuous-gate scanner still sees
+    # this site (scripts/anti_vacuity_scan.py) and
+    # tests/test_anti_vacuity_gates.py keeps re-proving both polarities.
+    blocking = instrument + inconclusive
     return {
         "steps": n, "distinct": distinct,
         "min": min(trace) if trace else None,
@@ -327,14 +505,14 @@ def assess(trace: list[int], lives_at_start: int | None,
         "tail_distinct": len(set(tail)) if tail else 0,
         "has_high_byte": has_high_byte,
         "lives_at_start": lives_at_start,
-        # Only instrument faults block. A sound signal that flattens is
-        # reporting a wall, which is exactly what it is for.
-        "passed": not instrument,
+        "min_window": min_window,
+        "window_supports_shortfall": n >= min_window,
+        "steps_to_min_distinct": steps_to_distinct(trace),
+        "passed": not blocking,
         "instrument_findings": instrument,
+        "inconclusive_findings": inconclusive,
         "behaviour_findings": behaviour,
-        "verdict": ("SIGNAL UNUSABLE" if instrument
-                    else "SIGNAL SOUND — game stops" if behaviour
-                    else "SIGNAL SOUND — still advancing"),
+        "verdict": verdict_label(instrument, inconclusive, behaviour),
     }
 
 
@@ -344,7 +522,9 @@ def assess_hold(*, xy: list | None = None, ram_trace: list | None = None,
                 oam_changed: list[bool] | None = None,
                 progress_cfg: dict | None = None,
                 has_high_byte: bool = False,
-                requested_steps: int | None = None) -> dict:
+                requested_steps: int | None = None,
+                min_window: int | None = None,
+                directed: bool = True) -> dict:
     """EVERYTHING that happens between the last emulator step and the
     printed verdict, as one pure function over recorded traces.
 
@@ -358,6 +538,14 @@ def assess_hold(*, xy: list | None = None, ram_trace: list | None = None,
 
     Pass `xy` (odometer point list) or `ram_trace` (paired RAM reads),
     not both.
+
+    `directed=False` says the probe commanded no direction (the random
+    probe), so the raw-odometer-sign check is DISARMED rather than fed a
+    number that cannot answer it: under uniform-random actions the sign
+    of net motion is a property of the dice, and a 1942-class axis-sign
+    fault would be reported or missed at random. Refusing to answer is
+    the same discipline `first_stasis_index` already uses when a profile
+    is too quiet to judge.
     """
     assert (xy is None) != (ram_trace is None), \
         "assess_hold takes exactly one of xy= / ram_trace="
@@ -381,15 +569,20 @@ def assess_hold(*, xy: list | None = None, ram_trace: list | None = None,
         signed = [p[axis] * sign for p in xy]
         base = min(signed) if signed else 0
         trace = [int(s - base) for s in signed]
-        v = assess(trace, lives0, True,
-                   (signed[-1] - signed[0]) if signed else None)
+        raw_direction = ((signed[-1] - signed[0])
+                         if (signed and directed) else None)
+        v = assess(trace, lives0, True, raw_direction,
+                   min_window=min_window, directed=directed)
         if rx == 0 and ry == 0:
-            v = note_camera_static(v, oam_churn, requested)
+            v = note_camera_static(v, oam_churn, requested,
+                                   live_steps=len(xy), min_window=min_window,
+                                   directed=directed)
         v["oam_churn"] = oam_churn
         v["odometer_range"] = {"x": rx, "y": ry}
         v["axis"] = "xy"[axis]
     else:
-        v = assess(list(ram_trace[:keep]), lives0, has_high_byte)
+        v = assess(list(ram_trace[:keep]), lives0, has_high_byte,
+                   min_window=min_window, directed=directed)
 
     # THE D1 CLASS, reported rather than absorbed. A surface that froze
     # while the declared death observable said nothing means the profile
@@ -416,43 +609,106 @@ def assess_hold(*, xy: list | None = None, ram_trace: list | None = None,
     }
     return v
 
+# ==========================================================================
+# THE PROBE. What drives the emulator while the traces above are recorded.
+#
+# `hold` is the original and stays the default so every verdict banked
+# before 2026-08-26 remains reproducible byte for byte. It is also a
+# measurement of the PROBE as much as of the game: an undodging scripted
+# forward hold from a start state with `lives=1` walks into the first
+# hazard and dies, and everything after that is a game-over screen the D5
+# truncation (correctly) throws away. Rygar's "138 live steps" is that
+# artifact — uniform-random survives a median 677 steps on the same start
+# state and the solver runs 3,865-4,000 actions in ONE life.
+#
+# `random` exists because the live window is the binding constraint on
+# what this gate can conclude (see MIN_ASSESSABLE_STEPS): a verdict about
+# a signal's resolution needs a window, and the cheapest game-agnostic way
+# to buy one is to stop steering into the hazard. It is NOT strictly
+# better — it disarms the axis-sign check, which needs a commanded
+# direction — so it is an alternative, never a replacement.
+# ==========================================================================
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--profile", required=True)
-    ap.add_argument("--steps", type=int, default=1200)
-    ap.add_argument("--forward", default="right")
-    ap.add_argument("--odometer", action="store_true",
-                    help="trace the PPU scroll odometer (dominant axis) "
-                         "instead of a discovered RAM byte — the "
-                         "hardware-surface progress signal for games "
-                         "whose RAM bytes failed this gate")
-    ap.add_argument("--out", default=None)
-    args = ap.parse_args(argv)
+PROBES = ("hold", "random")
 
-    import sys
-    if str(REPO) not in sys.path:
-        sys.path.insert(0, str(REPO))
-    import numpy as np, yaml, nes_core
-    from src.training.profile_utils import action_space_to_bitmasks
+#: Checks that a given probe structurally cannot make. Reported on the
+#: verdict so a `random`-probe PASS can never be read as certifying
+#: something the random probe never looked at.
+PROBE_DISARMS = {
+    "hold": (),
+    "random": (
+        "axis-sign (raw odometer direction): a uniform-random policy "
+        "commands no direction, so net motion carries no information "
+        "about whether the declared axis sign matches the hardware — "
+        "run --probe hold for that check",
+        "resolution SHORTFALL and camera-zero-range as FAULTS: an "
+        "undirected policy that shows few levels may simply not have "
+        "gone anywhere (bionic_commando: 122 distinct held forward, 21 "
+        "under uniform-random over the same 1200 steps). This probe can "
+        "only ADD a positive demonstration or a longer window; a "
+        "shortfall it sees is reported INCONCLUSIVE, never UNUSABLE",
+    ),
+}
 
-    prof = yaml.safe_load((REPO / args.profile).read_text())
-    solve = prof.get("solve") or {}
-    lo = (solve.get("progress") or {}).get("lo")
-    hi = (solve.get("progress") or {}).get("hi")
-    lives_addr = solve.get("lives")
-    rom = solve.get("rom") or prof.get("rom_path")
-    if lo is None and not args.odometer:
-        raise SystemExit("profile has no solve.progress.lo")
 
-    space = prof["action_space"]
-    idx = resolve_forward_index(space, args.forward)
-    bm = action_space_to_bitmasks(space)
+def probe_actions(n_actions: int, steps: int, forward_index: int,
+                  probe: str = "hold", seed: int = 0) -> list[int]:
+    """The action-index sequence a probe drives, as a PURE function of
+    its arguments.
+
+    Pure and seeded on purpose: the probe is the part of this gate that
+    used to be unreachable from a test, and "the probe died at step 69"
+    is now a claim a test can construct rather than one only a ROM can
+    produce.
+    """
+    if probe == "hold":
+        return [forward_index] * steps
+    if probe == "random":
+        import random
+        rng = random.Random(seed)
+        return [rng.randrange(n_actions) for _ in range(steps)]
+    raise SystemExit(f"unknown probe {probe!r}; choose from {list(PROBES)}")
+
+
+def select_longest_live_window(keeps: list[int]) -> int:
+    """Index of the episode with the longest LIVE window; ties go to the
+    earliest seed.
+
+    Selecting on live-window length rather than on `distinct` is
+    deliberate. `distinct` is the statistic under test, and picking the
+    best-of-k on it would be winner's curse dressed up as a measurement.
+    Window length is a different statistic and is exactly the quantity
+    the probe defect is about, so selecting on it targets the defect
+    without touching the verdict's own evidence. Every episode's window
+    is recorded on the receipt either way.
+    """
+    if not keeps:
+        raise ValueError("no episodes to select from")
+    best = 0
+    for i, k in enumerate(keeps):
+        if k > keeps[best]:
+            best = i
+    return best
+
+
+def _open_pool(prof: dict, rom: str, odometer: bool):
+    """Boot a one-worker pool on the profile's ROM."""
+    import nes_core
     pool = nes_core.Pool(rom_path=str(REPO / rom), num_workers=1,
                          frame_skip=int(prof.get("frame_skip", 4)))
-    pool.set_headless(True); pool.set_skip_preprocess(True)
-    if args.odometer:
+    pool.set_headless(True)
+    pool.set_skip_preprocess(True)
+    if odometer:
         pool.set_odometer_enabled(True)
+    return pool
+
+
+def _rollout(pool, prof: dict, bitmasks, actions: list[int], *,
+             odometer: bool, lives_addr, lo, hi) -> dict:
+    """One episode: restore the start state, drive `actions`, record
+    traces. DECIDES NOTHING — every judgement lives in assess_hold().
+    """
+    import numpy as np
     # MUST precede load_worker_state, and is NOT redundant with it.
     # Restoring into a Pool that has never stepped leaves the mapper's
     # CPU-cycle counter at 0, which collides with MMC1's post-restore
@@ -465,25 +721,19 @@ def main(argv: list[str] | None = None) -> int:
     # already use. See docs/research/ASM_CPU_STATUS_2026-08-25.md.
     pool.reset_all()
     pool.load_worker_state(0, (REPO / prof["start_state_path"]).read_bytes())
-    a = np.array([bm[idx]], dtype=np.uint8)
 
     first = pool.step_all(np.zeros(1, dtype=np.uint8))[0][2]
     lives0 = int(first[lives_addr]) if lives_addr is not None else None
     prev_ram = np.frombuffer(bytes(first), dtype=np.uint8).astype(np.int16)
 
-    # ---- collect, decide nothing ------------------------------------------
-    # Every judgement below the loop lives in assess_hold(), which is a pure
-    # function over these traces and is driven directly by
-    # tests/test_progress_signal_gate.py. main() must stay dumb: an inline
-    # decision here is one no test can reach, which is how the D5 truncation
-    # and the D6 camera-static branch both shipped unguarded.
     xy: list = []
     oam_changed: list = []
     lives_trace: list = []
     churn: list = []
     trace: list = []
     prev_oam = None
-    for _ in range(args.steps):
+    for ai in actions:
+        a = np.array([bitmasks[ai]], dtype=np.uint8)
         ram = pool.step_all(a)[0][2]
         cur = np.frombuffer(bytes(ram), dtype=np.uint8).astype(np.int16)
         # Per-step RAM churn: the surface measurement the stasis test needs,
@@ -492,27 +742,151 @@ def main(argv: list[str] | None = None) -> int:
         churn.append(int(np.count_nonzero(cur != prev_ram)))
         prev_ram = cur
         lives_trace.append(int(ram[lives_addr]) if lives_addr is not None else None)
-        if args.odometer:
-            xy.append(pool.get_odometer_per_worker()[0])
+        if odometer:
+            xy.append(list(pool.get_odometer_per_worker()[0]))
             oam = bytes(pool.peek_oam(0))
             oam_changed.append(prev_oam is not None and oam != prev_oam)
             prev_oam = oam
         else:
             trace.append(int(ram[lo]) + (int(ram[hi]) << 8 if hi is not None else 0))
+    return {"xy": xy, "oam_changed": oam_changed, "lives_trace": lives_trace,
+            "churn": churn, "trace": trace, "lives0": lives0}
+
+
+def run_probe(profile: str, *, steps: int = 1200, forward: str = "right",
+              odometer: bool = False, probe: str = "hold",
+              episodes: int = 5, seed: int = 0) -> dict:
+    """Boot the ROM and record `episodes` rollouts of the chosen probe.
+
+    Returns the raw traces plus the per-episode live-window lengths and
+    the index this gate will assess. Nothing here is a verdict.
+    """
+    import sys
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    import yaml
+    from src.training.profile_utils import action_space_to_bitmasks
+
+    prof = yaml.safe_load((REPO / profile).read_text())
+    solve = prof.get("solve") or {}
+    progress_cfg = solve.get("progress") or {}
+    lo = progress_cfg.get("lo")
+    hi = progress_cfg.get("hi")
+    lives_addr = solve.get("lives")
+    rom = solve.get("rom") or prof.get("rom_path")
+    if lo is None and not odometer:
+        raise SystemExit("profile has no solve.progress.lo")
+
+    space = prof["action_space"]
+    fwd = resolve_forward_index(space, forward)
+    bm = action_space_to_bitmasks(space)
+    n_episodes = 1 if probe == "hold" else max(1, int(episodes))
+
+    pool = _open_pool(prof, rom, odometer)
+    eps = []
+    for k in range(n_episodes):
+        actions = probe_actions(len(space), steps, fwd, probe, seed + k)
+        r = _rollout(pool, prof, bm, actions, odometer=odometer,
+                     lives_addr=lives_addr, lo=lo, hi=hi)
+        r["seed"] = seed + k
+        r["live_steps"] = truncate_at_exhaustion(
+            steps, r["lives_trace"] if lives_addr is not None else None,
+            r["lives0"], r["churn"])
+        eps.append(r)
+    chosen = select_longest_live_window([e["live_steps"] for e in eps])
+    return {"profile": profile, "probe": probe, "steps": steps,
+            "forward": forward, "odometer": odometer,
+            "progress_cfg": progress_cfg, "has_high_byte": hi is not None,
+            "episodes": eps, "chosen": chosen,
+            "live_steps_per_episode": [e["live_steps"] for e in eps]}
+
+
+def assess_probe(collected: dict, *, min_window: int | None = None) -> dict:
+    """Verdict over whichever episode `run_probe` selected."""
+    e = collected["episodes"][collected["chosen"]]
+    common = dict(lives_trace=e["lives_trace"] if e["lives0"] is not None else None,
+                  lives0=e["lives0"], churn=e["churn"],
+                  requested_steps=collected["steps"], min_window=min_window)
+    if collected["odometer"]:
+        v = assess_hold(xy=[tuple(p) for p in e["xy"]],
+                        oam_changed=e["oam_changed"],
+                        progress_cfg=collected["progress_cfg"],
+                        # The axis-sign check needs a COMMANDED direction.
+                        # A random probe has none, so it is disarmed by
+                        # construction rather than answered with noise.
+                        directed=collected["probe"] == "hold",
+                        **common)
+    else:
+        v = assess_hold(ram_trace=e["trace"],
+                        has_high_byte=collected["has_high_byte"], **common)
+    v["probe"] = collected["probe"]
+    v["probe_seed"] = e["seed"]
+    v["live_steps_per_episode"] = collected["live_steps_per_episode"]
+    v["disarmed_checks"] = list(PROBE_DISARMS.get(collected["probe"], ()))
+    return v
+
+
+def exit_code(v: dict) -> int:
+    """0 PASS / 1 FAIL (SIGNAL UNUSABLE) / 2 VOID (INCONCLUSIVE).
+
+    The VOID-vs-FAIL distinction, in the one place a caller can act on
+    it. A script that reads only "nonzero" is unchanged; a script that
+    wants to tell "this instrument is broken" from "this probe never got
+    far enough to say" now can.
+    """
+    if v["passed"]:
+        return 0
+    return 2 if v["inconclusive_findings"] and not v["instrument_findings"] else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--profile", required=True)
+    ap.add_argument("--steps", type=int, default=1200)
+    ap.add_argument("--forward", default="right")
+    ap.add_argument("--odometer", action="store_true",
+                    help="trace the PPU scroll odometer (dominant axis) "
+                         "instead of a discovered RAM byte — the "
+                         "hardware-surface progress signal for games "
+                         "whose RAM bytes failed this gate")
+    ap.add_argument("--probe", default="hold", choices=list(PROBES),
+                    help="hold: the original scripted forward hold "
+                         "(default, and what every banked verdict was "
+                         "measured with). random: uniform-random actions, "
+                         "--episodes rollouts, assess the one with the "
+                         "longest live window — buys a window on games "
+                         "where the forward hold walks straight into a "
+                         "hazard, at the cost of the axis-sign check")
+    ap.add_argument("--episodes", type=int, default=5,
+                    help="rollouts for a stochastic probe (ignored by "
+                         "--probe hold, which is deterministic)")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--min-window", type=int, default=None,
+                    help=f"live steps required before a SHORTFALL of "
+                         f"distinct values may be reported as an "
+                         f"instrument fault (default "
+                         f"{MIN_ASSESSABLE_STEPS}; pass 0 to reproduce "
+                         f"pre-2026-08-26 verdicts exactly)")
+    ap.add_argument("--out", default=None)
+    args = ap.parse_args(argv)
+
+    collected = run_probe(args.profile, steps=args.steps,
+                          forward=args.forward, odometer=args.odometer,
+                          probe=args.probe, episodes=args.episodes,
+                          seed=args.seed)
+    v = assess_probe(collected, min_window=args.min_window)
 
     if args.odometer:
-        v = assess_hold(xy=xy, lives_trace=lives_trace, lives0=lives0,
-                        churn=churn, oam_changed=oam_changed,
-                        progress_cfg=solve.get("progress") or {},
-                        requested_steps=args.steps)
         print(f"odometer trace: axis={v['axis']} "
               f"(range x={v['odometer_range']['x']}, "
               f"y={v['odometer_range']['y']}) "
               f"oam_churn={v['oam_churn']}/{max(v['steps'] - 1, 0)}")
-    else:
-        v = assess_hold(ram_trace=trace, lives_trace=lives_trace, lives0=lives0,
-                        churn=churn, has_high_byte=hi is not None,
-                        requested_steps=args.steps)
+    if args.probe != "hold":
+        print(f"probe={args.probe} seed={v['probe_seed']} — live windows "
+              f"per episode: {v['live_steps_per_episode']} "
+              f"(assessing the longest)")
+        for d in v["disarmed_checks"]:
+            print(f"  [DISARMED] {d}")
     dropped = v["dropped_tail_steps"]
     if dropped:
         print(f"[progress_signal_gate] hold ran off the end of live play at "
@@ -523,15 +897,18 @@ def main(argv: list[str] | None = None) -> int:
               f"{v['exhaustion']['stasis_index']} "
               f"({v['exhaustion']['stasis_reason']})")
 
-    print(f"progress-signal gate: {'PASS' if v['passed'] else 'FAIL'} — "
+    status = "PASS" if v["passed"] else ("VOID" if exit_code(v) == 2 else "FAIL")
+    print(f"progress-signal gate: {status} — "
           f"{v['verdict']}  ({args.profile})")
     print(f"  {v['steps']} steps, {v['distinct']} distinct, "
           f"range {v['min']}..{v['max']}, high byte={v['has_high_byte']}, "
           f"lives@start={v['lives_at_start']}")
     for f in v["instrument_findings"]:
-        print(f"  [INSTRUMENT] {f}")
+        print(f"  [INSTRUMENT]   {f}")
+    for f in v["inconclusive_findings"]:
+        print(f"  [INCONCLUSIVE] {f}")
     for f in v["behaviour_findings"]:
-        print(f"  [BEHAVIOUR]  {f}")
+        print(f"  [BEHAVIOUR]    {f}")
     if dropped:
         print(f"  [D5] {dropped} trailing steps of the requested "
               f"{args.steps} were dropped — the hold ran off the end of "
@@ -547,7 +924,7 @@ def main(argv: list[str] | None = None) -> int:
         p.write_text(json.dumps({"profile": args.profile,
                                  "odometer": bool(args.odometer),
                                  **v}, indent=2) + "\n")
-    return 0 if v["passed"] else 1
+    return exit_code(v)
 
 
 if __name__ == "__main__":

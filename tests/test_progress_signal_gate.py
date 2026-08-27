@@ -386,3 +386,325 @@ def test_assess_hold_passes_a_clean_hold() -> None:
     assert v["passed"] is True, v["instrument_findings"]
     assert v["dropped_tail_steps"] == 0
     assert v["verdict"].startswith("SIGNAL SOUND")
+
+
+# ==========================================================================
+# THE TRUNCATION-ORDER DEFECT (2026-08-26). `assess()` computed its
+# RESOLUTION instrument finding on the window that survives D5
+# truncation, and stated it as a threshold claim:
+#
+#   "only 20 distinct values in 69 steps (< 32) — too coarse to be a
+#    search gradient"
+#
+# A 69-sample window cannot demonstrate a 32-distinct threshold. That
+# sentence measures how fast the scripted forward hold died, not the
+# signal's resolution, and on that inference Contra — which has a real
+# 16-bit progress pair {lo:0x65, hi:0x64} — was excluded from the
+# roster. The honest verdict on a window that short is INCONCLUSIVE:
+# blocked, but not condemned. Same VOID-vs-FAIL distinction CLAIMS.md
+# draws for evals.
+#
+# The fix is deliberately ONE-SIDED and these tests pin both sides:
+# observing >= MIN_DISTINCT levels is a positive demonstration and needs
+# no window floor (Rygar's 116-in-138 still passes); observing fewer only
+# means something if the window could have shown them.
+# ==========================================================================
+
+from scripts.progress_signal_gate import (  # noqa: E402
+    INCONCLUSIVE_VERDICT,
+    MIN_ASSESSABLE_STEPS,
+    MIN_DISTINCT,
+    exit_code,
+    probe_actions,
+    select_longest_live_window,
+    steps_to_distinct,
+)
+
+
+#: The literal 69-step live window contra.yaml produces under the hold
+#: probe, lifted from the sweep's own raw traces
+#: (docs/receipts/progress_gate_window_sweep_2026-08-26.json records the
+#: derived row: 69 live steps, 20 distinct, range 0..70, of a requested
+#: 1200 — 1131 dropped as a post-death tail). 27 steps of standing still
+#: while the level scrolls in, 18 steps of real advance at +4 a step, and
+#: then dead against the first wall. This is the trace the old gate
+#: called "too coarse to be a search gradient".
+CONTRA_LIVE_WINDOW = (
+    [0] * 27 + [1, 5, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57,
+                61, 65, 69] + [70] * 24)
+
+
+def _contra_shape() -> list[int]:
+    trace = list(CONTRA_LIVE_WINDOW)
+    assert len(trace) == 69 and len(set(trace)) == 20 and max(trace) == 70
+    return trace
+
+
+def test_contras_short_window_is_inconclusive_not_unusable():
+    v = assess(_contra_shape(), 2, True)
+    assert v["verdict"] == INCONCLUSIVE_VERDICT, v["verdict"]
+    assert v["instrument_findings"] == [], (
+        "a 69-sample window cannot support a 32-distinct threshold claim, "
+        "so nothing here is an instrument FAULT")
+    assert any("cannot demonstrate" in f for f in v["inconclusive_findings"])
+    assert v["passed"] is False, "INCONCLUSIVE is not a pass"
+
+
+def test_the_identical_shortfall_on_a_long_window_is_still_unusable():
+    """The negative control, and the reason the fix is not a blanket
+    amnesty. Same 20 distinct values, but stretched over 1200 live steps:
+    now the window CAN carry the claim, so the claim is made."""
+    trace = [v for v in _contra_shape() for _ in range(18)][:1200]
+    assert len(trace) == 1200 and len(set(trace)) == 20
+    v = assess(trace, 2, True)
+    assert v["verdict"] == "SIGNAL UNUSABLE"
+    assert any("too coarse" in f for f in v["instrument_findings"])
+    assert v["inconclusive_findings"] == []
+
+
+def test_a_short_window_that_demonstrates_resolution_still_passes():
+    """Rygar's receipt: 138 live steps, 116 distinct. The window floor
+    gates the FAILING direction only — 116 observed levels is a positive
+    demonstration and no floor can retract it. If this ever flips, the
+    fix has become a blanket 'short window => no verdict' rule, which
+    would void the profile the Rygar campaign actually ran on."""
+    trace = list(range(116)) + list(range(22))
+    assert len(trace) == 138 and len(set(trace)) == 116
+    v = assess(trace, 1, True, raw_direction=467)
+    assert v["passed"] is True, v["instrument_findings"]
+    assert v["verdict"].startswith("SIGNAL SOUND")
+    assert v["inconclusive_findings"] == []
+
+
+def test_a_demonstrated_fault_outranks_an_unsupportable_window():
+    """Precedence. A window too short to judge resolution is still long
+    enough to read the start state: a death byte at 0 underflows whatever
+    the window length is, so that profile is UNUSABLE, not INCONCLUSIVE.
+    Evidence beats absence of evidence."""
+    v = assess(_contra_shape(), 0, True)
+    assert v["verdict"] == "SIGNAL UNUSABLE"
+    assert any("underflow" in f for f in v["instrument_findings"])
+    # ...and the window finding is still recorded, not swallowed.
+    assert v["inconclusive_findings"]
+
+
+def test_min_window_zero_reproduces_every_pre_fix_verdict():
+    """Historical comparability: `min_window=0` is the old assessor,
+    exactly. scripts/progress_gate_sweep.py diffs the two columns with
+    this and nothing else, so if it ever stopped reproducing the old
+    behaviour the whole 'N verdicts changed' number would be measuring
+    two moving parts."""
+    legacy = assess(_contra_shape(), 2, True, min_window=0)
+    assert legacy["verdict"] == "SIGNAL UNUSABLE"
+    assert any("too coarse" in f for f in legacy["instrument_findings"])
+    assert legacy["inconclusive_findings"] == []
+
+
+def test_the_floor_can_never_convert_a_fail_into_a_pass():
+    """The property that makes the floor safe to raise: it only ever
+    moves a verdict from FAIL to VOID. Swept over every floor from 0 to
+    twice the calibrated value on the shape that fails for resolution."""
+    trace = _contra_shape()
+    for floor in range(0, 2 * MIN_ASSESSABLE_STEPS, 17):
+        assert assess(trace, 2, True, min_window=floor)["passed"] is False
+
+
+def test_exit_code_separates_void_from_fail():
+    """The distinction has to reach a caller or it is decoration."""
+    assert exit_code(assess(list(range(1200)), 3, True)) == 0
+    assert exit_code(assess([0] * 1200, 3, True)) == 1        # too coarse
+    assert exit_code(assess(_contra_shape(), 2, True)) == 2   # window short
+
+
+def test_steps_to_distinct_is_the_calibration_measurement():
+    assert steps_to_distinct(list(range(1000)), 32) == 32
+    assert steps_to_distinct([i // 4 for i in range(1000)], 32) == 125
+    assert steps_to_distinct([7] * 1000, 32) is None
+
+
+def test_min_assessable_steps_is_at_least_the_slowest_measured_signal():
+    """MIN_ASSESSABLE_STEPS is calibrated, not chosen: it is the largest
+    `steps_to_min_distinct` over every roster profile whose signal DOES
+    reach MIN_DISTINCT levels (Kung Fu, 187). A floor below that would
+    call a signal too coarse in a window where a measured, real signal
+    had not yet cleared the bar itself."""
+    from pathlib import Path
+    import json
+    receipt = (Path(__file__).resolve().parent.parent /
+               "docs/receipts/progress_gate_window_sweep_2026-08-26.json")
+    data = json.loads(receipt.read_text())
+    assert MIN_ASSESSABLE_STEPS >= data["calibration"]["max"], (
+        f"floor {MIN_ASSESSABLE_STEPS} is below the slowest measured "
+        f"time-to-{MIN_DISTINCT} on the roster "
+        f"({data['calibration']['max']}, "
+        f"{data['calibration']['slowest_profile']})")
+
+
+# --- the same defect on the camera-static branch --------------------------
+
+def test_camera_static_on_a_short_window_is_inconclusive():
+    """`note_camera_static` made the identical unsupportable claim, and
+    on the requested step count rather than the live one: "camera never
+    moved over 1200 steps" about a hold that died at step 22."""
+    v = note_camera_static(_flat_zero_verdict(), oam_churn=10, steps=1200,
+                           live_steps=22)
+    assert v["passed"] is False
+    assert v["verdict"].startswith(INCONCLUSIVE_VERDICT)
+    assert not any("camera never moved" in f
+                   for f in v["instrument_findings"])
+    assert any("22 live steps" in f for f in v["inconclusive_findings"])
+
+
+def test_camera_static_on_a_long_window_is_still_unusable():
+    """Negative control: the D6 regression case (legend_of_zelda,
+    oam_churn=967 over a full 1200-step live window) must be unaffected."""
+    v = note_camera_static(_flat_zero_verdict(), oam_churn=967, steps=1200,
+                           live_steps=1200)
+    assert v["passed"] is False
+    assert v["verdict"] == "SIGNAL UNUSABLE — camera static"
+    assert any("camera never moved" in f for f in v["instrument_findings"])
+
+
+def test_assess_hold_reports_inconclusive_through_the_production_path():
+    """End to end on the wiring `main()` actually uses: a hold that dies
+    at step 69 of 1200 on a coarse-looking signal."""
+    live = _contra_shape()
+    dead = 1131
+    v = assess_hold(ram_trace=live + [999] * dead,
+                    lives_trace=[2] * len(live) + [0] * dead, lives0=2,
+                    churn=_live_churn(len(live)) + [0] * dead,
+                    has_high_byte=True, requested_steps=len(live) + dead)
+    assert v["steps"] == 69
+    assert v["dropped_tail_steps"] == dead
+    assert v["verdict"] == INCONCLUSIVE_VERDICT
+    assert v["passed"] is False
+    assert exit_code(v) == 2
+
+
+def test_assess_hold_still_fails_a_long_coarse_hold():
+    """Anti-vacuity for the above: the production path must still be able
+    to return SIGNAL UNUSABLE for coarseness, or the fix has disarmed the
+    check instead of scoping it."""
+    trace = [i // 60 for i in range(1200)]
+    v = assess_hold(ram_trace=trace, lives_trace=[3] * 1200, lives0=3,
+                    churn=_live_churn(1200), has_high_byte=True,
+                    requested_steps=1200)
+    assert v["verdict"] == "SIGNAL UNUSABLE"
+    assert exit_code(v) == 1
+
+
+# ==========================================================================
+# THE PROBE. The gate's original probe holds one direction from a
+# `lives=1` start state and does not dodge, so on any game with an early
+# hazard it walks into it and the "live window" it reports is a property
+# of the probe. Rygar: 138 steps held forward, against a measured median
+# 677 for uniform-random and 3,865-6,018 solver actions in one life.
+# ==========================================================================
+
+def test_hold_probe_is_the_unchanged_default():
+    assert probe_actions(8, 5, 3) == [3, 3, 3, 3, 3]
+    assert probe_actions(8, 5, 3, "hold", seed=99) == [3, 3, 3, 3, 3]
+
+
+def test_random_probe_actually_varies():
+    """A 'random' probe that emitted one action every step would be the
+    old probe wearing a hat, and every window measurement taken with it
+    would be meaningless."""
+    a = probe_actions(8, 400, 1, "random", seed=0)
+    assert len(a) == 400
+    assert len(set(a)) == 8, "did not reach every action in 400 draws"
+    assert max(a.count(i) for i in range(8)) < 400
+
+
+def test_random_probe_is_seed_reproducible_and_seed_sensitive():
+    assert probe_actions(8, 200, 1, "random", seed=7) == \
+        probe_actions(8, 200, 1, "random", seed=7)
+    assert probe_actions(8, 200, 1, "random", seed=7) != \
+        probe_actions(8, 200, 1, "random", seed=8)
+
+
+def test_random_probe_respects_the_action_space_bounds():
+    for n in (2, 3, 11):
+        assert set(probe_actions(n, 500, 0, "random", seed=1)) <= set(range(n))
+
+
+def test_episode_selection_takes_the_longest_live_window():
+    assert select_longest_live_window([120, 900, 40]) == 1
+    # Ties go to the earliest seed, so the choice is deterministic.
+    assert select_longest_live_window([900, 900, 40]) == 0
+
+
+def test_the_axis_sign_check_is_disarmed_by_an_undirected_probe():
+    """A uniform-random policy commands no direction, so the sign of net
+    odometer motion is a property of the dice. Answering the 1942
+    axis-sign question from it would report or miss that fault at random,
+    so the check refuses instead — the same discipline
+    `first_stasis_index` uses when a profile is too quiet to judge."""
+    backward = [(0, -i * 4) for i in range(600)]
+    cfg = {"source": "odometer", "axis": "y"}
+    directed = assess_hold(xy=backward, lives_trace=[3] * 600, lives0=3,
+                           churn=_live_churn(600), oam_changed=[True] * 600,
+                           progress_cfg=cfg, requested_steps=600)
+    assert directed["passed"] is False
+    assert any("DECREASES" in f for f in directed["instrument_findings"])
+
+    undirected = assess_hold(xy=backward, lives_trace=[3] * 600, lives0=3,
+                             churn=_live_churn(600), oam_changed=[True] * 600,
+                             progress_cfg=cfg, requested_steps=600,
+                             directed=False)
+    assert not any("DECREASES" in f
+                   for f in undirected["instrument_findings"]), (
+        "an undirected probe must not answer the axis-sign question at all")
+
+
+def test_an_undirected_probe_cannot_report_a_shortfall_as_a_fault():
+    """The mirror image of the truncation-order defect, found by running
+    the new probe: bionic_commando's odometer shows 122 distinct levels
+    over a 1200-step forward hold and 21 over a 1200-step uniform-random
+    rollout (docs/receipts/progress_gate_random_probe_2026-08-26.json).
+    The window is not the problem there — 1200 steps is the full hold —
+    the POLICY is. So an undirected probe may add evidence and never
+    subtract a certification."""
+    wandering = [i % 21 for i in range(1200)]
+    directed = assess(wandering, 3, True)
+    assert directed["verdict"] == "SIGNAL UNUSABLE"
+    assert any("too coarse" in f for f in directed["instrument_findings"])
+
+    undirected = assess(wandering, 3, True, directed=False)
+    assert undirected["verdict"] == INCONCLUSIVE_VERDICT
+    assert undirected["instrument_findings"] == []
+    assert any("commanded no direction" in f
+               for f in undirected["inconclusive_findings"])
+    assert undirected["passed"] is False, "still not a pass"
+
+
+def test_an_undirected_probe_can_still_demonstrate_resolution():
+    """Anti-vacuity for the rule above. If disarming the fault direction
+    also disarmed the positive direction, the random probe could never
+    settle anything and would not be worth running — Contra's 346
+    distinct over a 721-step random window is exactly the evidence it
+    exists to produce."""
+    v = assess(list(range(346)) * 2, 2, True, directed=False)
+    assert v["passed"] is True, v["inconclusive_findings"]
+    assert v["verdict"].startswith("SIGNAL SOUND")
+
+
+def test_an_undirected_probe_cannot_report_a_static_camera_as_a_fault():
+    base = assess([0] * 1200, None, True, raw_direction=0, directed=False)
+    v = note_camera_static(base, oam_churn=967, steps=1200,
+                           live_steps=1200, directed=False)
+    assert v["passed"] is False
+    assert v["verdict"].startswith(INCONCLUSIVE_VERDICT)
+    assert v["instrument_findings"] == []
+
+
+def test_an_undirected_probe_still_reports_window_independent_faults():
+    """Scope check: directedness gates the two findings that depend on
+    the agent having gone somewhere. A death byte reading 0 at the start
+    state, and a byte that reached 200 with no pair, are facts the probe
+    cannot manufacture or hide, so they still block."""
+    v = assess([i * 3 for i in range(400)], 0, False, directed=False)
+    assert v["passed"] is False
+    assert v["verdict"] == "SIGNAL UNUSABLE"
+    assert any("underflow" in f for f in v["instrument_findings"])
+    assert any("no paired high byte" in f for f in v["instrument_findings"])

@@ -253,7 +253,7 @@ survives a median 677 steps, and the solver's own deepest lineages run
 the 138 only as "the forward-hold probe's survival", never as the profile's live
 window.
 
-### Contra — SIGNAL UNUSABLE, **but not fairly excluded**
+### Contra — was SIGNAL UNUSABLE; **the exclusion was wrong, and is withdrawn**
 
 ```
 69 live steps, 20 distinct, range 0..70, high byte=True, lives@start=2
@@ -262,13 +262,35 @@ window.
 [D5] 1131 trailing steps of the requested 1200 were dropped
 ```
 
-**Open defect, reported not fixed:** the gate computes its resolution
-INSTRUMENT finding on the window *after* D5 truncation. A 69-sample window
-cannot demonstrate a 32-distinct threshold — that verdict measures how fast the
-forward-hold probe died, not the signal's resolution. **Contra's honest verdict
-is INCONCLUSIVE**, pending a probe that survives long enough to assess. Rygar's
-PASS is unaffected (116 distinct in 138 live steps clears 32 with room), so the
-game choice stands on Rygar's own merits — but Contra deserves a re-run.
+**Defect FIXED (2026-08-26), and the re-run is banked.** The gate computed its
+resolution INSTRUMENT finding on the window *after* D5 truncation. A 69-sample
+window cannot demonstrate a 32-distinct threshold — that verdict measured how
+fast the forward-hold probe died, not the signal's resolution.
+`scripts/progress_signal_gate.py` now refuses to issue a shortfall verdict below
+`MIN_ASSESSABLE_STEPS` (187 live steps, calibrated as the longest any roster
+signal took to display 32 levels — Kung Fu) and reports **INCONCLUSIVE — probe
+died too early to assess** instead. VOID, not FAIL.
+
+Re-run across all 45 profiles (`scripts/progress_gate_sweep.py`,
+`docs/receipts/progress_gate_window_sweep_2026-08-26.json`): **7 verdicts
+change**, all UNUSABLE -> INCONCLUSIVE, and `passed` changes for none of them —
+the fix relabels, it never unblocks. The seven are batman_the_video_game (9 live
+steps), blaster_master (22), bubble_bobble (39), ninja_gaiden_iii (47), contra
+(69), contra_blank (69), megaman (81). The old column reproduces all 43 banked
+verdicts in `progress_gate_stasis_sweep_2026-08-26.json` exactly, live-step
+counts included.
+
+**Contra's real verdict is SIGNAL SOUND.** Re-probed with the new
+`--probe random` (uniform-random, 5 seeded rollouts, assess the longest live
+window), Contra survives 721 live steps instead of 69 and its pair
+{lo:0x65, hi:0x64} shows **346 distinct values**, reaching 32 of them by step
+105 (`docs/receipts/progress_gate_random_probe_2026-08-26.json`). The "20
+distinct" was the probe dying at the first wall.
+
+Rygar's PASS is unaffected (116 distinct in 138 live steps clears 32 with room):
+the window floor gates the FAILING direction only, because observing 32+ levels
+is a positive demonstration and observing fewer is only informative if the
+window could have shown them. The game choice stands on Rygar's own merits.
 
 Also withdrawn earlier this week (commit `c146769`): Contra's banked "odometer
 162 distinct, cross-validated 162 vs 163". About 94% of that 162 was game-over
