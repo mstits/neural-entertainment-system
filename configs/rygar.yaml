@@ -59,6 +59,24 @@ solve:
   lives: 0x0303
   # Empty until a real clear is captured; guessing it is authored
   # semantics. The solver can search but cannot yet recognise winning.
+  #
+  # 2026-08-26: clear predicate REFUSED, with numbers this time --
+  # docs/receipts/rygar/clear_predicate_REFUTED.md. The transition
+  # instrument the earlier decline lacked now exists
+  # (scripts/transition_witness.py: odo_blank edge-detected into runs,
+  # 55/55 doors, 3 areas, matching the campaign's hand count), and it is
+  # what refutes the predicate rather than enabling it. A blind
+  # segment-stability search over all 2,048 RAM bytes returns exactly 8
+  # that are constant inside every inter-blackout segment; the two
+  # strongest are $001C (3 values) and $0014 (2 values), and they read
+  # AREA, not stage. On the banked R1 tape that key alternates perfectly
+  # for all 55 transitions -- 27 round trips through one door -- so
+  # wiring it here as a level_key would make `is_clear` fire 28 times
+  # and latch true for 62-83% of a tape whose artifact-free frontier
+  # never moved past 4,608 px. DO NOT WIRE IT. The blocker is that no
+  # Rygar clear has ever been witnessed, so there is no positive to
+  # calibrate against; §5 of the receipt lists what would have to land
+  # first, in order.
   level_key: []
   # solve.room_fp DECLINED (R1-05, 2026-08-26), not omitted by oversight.
   # Hypothesis confirmed: Rygar's transitions are blank-type (odo_debug

@@ -193,7 +193,17 @@ uninterrupted-segment milestones as the control that proves the detector can say
 
 **At least 3 visually distinct areas from power-on**, counted by hand from our
 own rendered frames: the start ridge, an orange/grey cavern, and a green stone
-hall. **No instrument in the pipeline can count them.** `odometer_scene` reads
+hall. **No instrument in the pipeline can count them.**
+
+> **CORRECTED 2026-08-26 (same day).** That last sentence is too strong and is
+> withdrawn. It is true of `odometer_scene` and false of the pipeline: the
+> blank branch that shadows the scene-cut test increments a *second* counter,
+> `odo_blank`, and edge-detected into runs it reads **55 of 55** transitions on
+> this tape and **3 areas** — agreeing with the hand count above.
+> `scripts/transition_witness.py` is the instrument;
+> `docs/receipts/rygar/clear_predicate_REFUTED.md` is the measurement. It does
+> **not** yield a clear predicate — it is what refutes one (§4 of that receipt)
+> — but "no instrument can count them" should not be cited again. `odometer_scene` reads
 0 cuts across the entire tape because `odo_fold_frame`'s blank branch returns
 before the scene-cut test ever runs, and `room_fp`'s settle mechanism was
 declined on measurement (§7). The honest statement is "at least 3, counted by
@@ -446,6 +456,7 @@ be a new game, never continued progress.
 | Milestone clustering | `runs/rygar_campaign/_LANDING/ratchet_test.json` |
 | Gate re-runs at HEAD | `runs/rygar_campaign/_LANDING/gate_rygar_HEAD.json`, `gate_kungfu_odo_HEAD.json` |
 | Room-fingerprint decline | `docs/receipts/room_fp/rygar.md`, and the note in `configs/rygar.yaml` |
+| **Clear predicate REFUSED, and the transition instrument** | `docs/receipts/rygar/clear_predicate_REFUTED.md`, `scripts/transition_witness.py`, `docs/receipts/rygar/transition_streams.json` — **tracked** |
 | R1-04's refuted `--vsign-key` diff | `docs/receipts/rygar/vsign_key_REFUTED.patch` — **tracked** |
 | Per-item run dirs | `runs/rygar_campaign/R1-*/` (gitignored, local only) |
 | Skeptic audit + adjudication | `runs/rygar_campaign/_skeptic_audit/`, `runs/rygar_campaign/ADJUDICATION/` |
