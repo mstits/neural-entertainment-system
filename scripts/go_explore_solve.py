@@ -3078,6 +3078,24 @@ def lock_armed(mode: str, pin_time: float, now: float,
     return mode not in (None, "", "off") and now - pin_time >= pin_secs
 
 
+def lock_clocks(pin_time: float, now: float,
+                pin_secs: float) -> tuple[int, int]:
+    """The two clocks a lock-objective progress line reports, as
+    `(pinned_secs, armed_secs)`.
+
+    They are NOT the same number and reporting one under the other's
+    name is how the 2026-08-27 lock2 campaign mis-stated two runs'
+    effective duration by 2.4-2.5x. `pinned_secs` is time since the x
+    frontier last advanced (`_pin_time`); `armed_secs` is how long the
+    objective has actually been steering selection, which does not begin
+    until `pin_secs` of that has elapsed. `armed_secs > 0` exactly when
+    `lock_armed()` is True for a selected mode — see
+    tests/test_lock_objective_roster.py, which cross-checks the two
+    against each other rather than restating either."""
+    pinned = now - pin_time
+    return round(pinned), round(max(0.0, pinned - pin_secs))
+
+
 def in_lock_key(key: tuple, max_sect: int, max_area: int,
                 topgx: int, band: int) -> bool:
     """Whether `key` sits in THIS RUN'S OWN terminal bucket: same section-
@@ -8095,15 +8113,28 @@ class Solver:
         if getattr(self, "lock_mode", "off") != "off":
             # Lock-objective telemetry (B-O4 LEX-YIELD, and any sibling
             # objective sharing the same lock_mode/_lock_armed/_in_lock
-            # machinery): armed_secs distinguishes "inert, mode selected
-            # but never pinned long enough" from "armed and not working"
-            # — the same distinction ortho's pinned_secs makes. lock_cells
-            # is a count, not a list, so this stays cheap on a run with a
+            # machinery): distinguishes "inert, mode selected but never
+            # pinned long enough" from "armed and not working" — the same
+            # distinction ortho's pinned_secs makes. lock_cells is a
+            # count, not a list, so this stays cheap on a run with a
             # large archive; it recomputes _in_lock for the CURRENT
             # deep-frontier band only (the same population select()'s
             # deep arm samples), not the whole archive.
+            #
+            # TWO CLOCKS, deliberately, because conflating them cost two
+            # reports in the 2026-08-27 lock2 campaign a 2.4-2.5x
+            # overstatement of how long their objective actually ran:
+            # `lock_pinned_secs` is time since the x frontier last moved
+            # (ortho's own name for the same quantity), and
+            # `lock_armed_secs` is how long the objective has ACTUALLY
+            # been arming selection, i.e. pinned time minus the
+            # --lock-pin-secs threshold, floored at 0.
             line["lock_mode"] = self.lock_mode
-            line["lock_armed_secs"] = round(time.time() - self._pin_time)
+            _pinned, _armed = lock_clocks(
+                self._pin_time, time.time(),
+                float(getattr(self, "lock_pin_secs", 300.0)))
+            line["lock_pinned_secs"] = _pinned
+            line["lock_armed_secs"] = _armed
             band = getattr(self, "_sel_band24", None) or []
             in_lock = [c for c in band if self._in_lock(c.key)]
             line["lock_band_cells"] = len(band)
@@ -8625,18 +8656,37 @@ def main() -> int:
     # selection cannot prefer any of them (every one scores the primary
     # objective identically). DEFAULT off => byte-identical to every
     # prior campaign; --lock-objective names which merit function feeds
-    # the tie-break. Only "yield" (B-O4, LEX-YIELD) is implemented here.
+    # the tie-break.
+    #
+    # EVERY NAME IN `choices` MUST HAVE A LIVE DISPATCH BRANCH IN THIS
+    # FILE. A name that parses and then matches no branch behaves
+    # exactly like "off" while the progress line still prints it as the
+    # armed mode -- an operator would read a null result as "the
+    # objective did not help" when in fact nothing ran. That is the
+    # seventh instance of a vacuity failure this codebase has shipped
+    # (the first six are logged in MISTAKES.md), and
+    # tests/test_lock_objective_roster.py fails if a dead name is added
+    # back. "latch" (B-O2, LEX-LATCH) is deliberately ABSENT here: it
+    # exists only on the unmerged branch `contra-lock-b-o2` and has no
+    # implementation on this branch. See
+    # docs/research/CONTRA_LOCK2_2026-08-27.md.
     ap.add_argument("--lock-objective",
-                    choices=("off", "yield", "survival", "latch", "novelty"),
+                    choices=("off", "yield", "survival", "novelty"),
                     default="off",
-                    help="Lock-objective merit function: 'yield' (B-O4) "
-                         "= Laplace-smoothed burst-yield rate of a cell as "
+                    help="Lock-objective merit function. 'yield' (B-O4) = "
+                         "Laplace-smoothed burst-yield rate of a cell as "
                          "a root, (yields+1)/(bursts+2), read off the same "
                          "R2 barren/credit bookkeeping _assign() already "
-                         "computes. Other names are reserved for sibling "
-                         "objectives (survival/latch/novelty) and are not "
-                         "implemented by this flag alone. DEFAULT off = no "
-                         "RNG draw, no dict write, no selection change.")
+                         "computes; 'survival' (B-O1) = squashed "
+                         "consecutive alive-in-lock steps, see "
+                         "--lock-survival-scale; 'novelty' (B-O3) = "
+                         "count-based novelty of an entry-differenced RAM "
+                         "descriptor held OUTSIDE the cell key, see "
+                         "--lock-novelty-scale. Every listed name is "
+                         "implemented; 'latch' (B-O2) is not on this "
+                         "branch and is therefore not offered. DEFAULT "
+                         "off = no RNG draw, no dict write, no selection "
+                         "change.")
     ap.add_argument("--lock-pin-secs", type=float, default=300.0,
                     metavar="SECS",
                     help="Seconds the x frontier (_pin_time) must sit "
@@ -8651,9 +8701,11 @@ def main() -> int:
     ap.add_argument("--lock-weight", type=float, default=4.0, metavar="W",
                     help="Ceiling multiplier for the lock merit's boost in "
                          "the count arm's rejection sampling (Wmax scales "
-                         "with it, so the prior stays exact); the deep "
-                         "arm's merit-weighted pick does not use this "
-                         "value at all (merit is already in [0,1) there). "
+                         "with it, so the prior stays exact). It sets the "
+                         "deep arm's preference strength TOO: that arm "
+                         "accepts a candidate with probability "
+                         "(1 + W*merit)/(1 + W), so W -> 0 makes the deep "
+                         "arm uniform again and larger W sharpens it. "
                          "Needs --sel-mode count to have any count-arm "
                          "effect; the deep-frontier arm (default bias "
                          "0.4) uses the objective regardless of --sel-mode.")

@@ -10,15 +10,64 @@ one-line invariant only after recurring across 4–5 separate entries.
 
 | root cause | entries | deterministic enforcement available? |
 |---|---|---|
-| `[vacuous-gate]` a check that cannot fail | **4** | yes — lint for `passed = not <coll>` |
+| `[vacuous-gate]` a check that cannot fail | **5** | yes — lint for `passed = not <coll>` |
 | `[stale-artifact]` measured the old binary/profile | **4** | yes — hash the loaded artifact against the built one in CI-less `make` target |
 | `[inert-treatment]` armed, wired, never fired | **3** | yes — assert the mechanism's counter is non-zero at least once per run |
 | `[weak-eval]` protocol too weak to detect its own failure | **4** | partly — enforce min-n at the gate |
-| `[unverified-claim]` trusted a number without re-deriving it | **3** | no — judgement |
+| `[unverified-claim]` trusted a number without re-deriving it | **5** | no — judgement |
 
-Nothing has been promoted; the enforced ruleset is untouched.
+Nothing has been promoted; the enforced ruleset is untouched. `[vacuous-gate]`
+and `[unverified-claim]` both reached 5 on 2026-08-27 and are awaiting a call.
 
 ---
+
+## 2026-08-27 — [vacuous-gate] Shipped a CLI mode that printed as armed and did nothing
+- **What happened:** `--lock-objective latch` landed on `main` as a declared
+  argparse choice with no dispatch branch anywhere in the solver. It parsed, the
+  progress line printed `lock_mode: latch` with a non-zero `lock_cells`, and it
+  changed not one draw — measured at 3,000 selections byte-identical to `off`.
+- **Root cause:** Four lanes built one shared `--lock-objective` flag family in
+  the same working-tree file at the same time. Three implementations landed on
+  `main`; the fourth (LEX-LATCH) landed on an unmerged branch — but the shared
+  choices tuple that landed carried its *name*. Nobody owned the roster.
+- **Consequence:** An operator running it would have read a null as "the
+  objective did not help" when nothing ran. This is the seventh vacuity in a
+  campaign whose own brief held the previous six, and it shipped inside the work
+  that was auditing for exactly this.
+- **Rule (draft):** A flag's value list is a claim that every value does
+  something. Guard it behaviourally — each declared mode must measurably change
+  the thing it names, and the guard must be shown to fail on a fabricated name.
+
+## 2026-08-27 — [unverified-claim] Read a telemetry field by its name, not its definition
+- **What happened:** `lock_armed_secs` was `round(now - _pin_time)` — time since
+  the *frontier* last moved, which starts accruing `--lock-pin-secs` before the
+  objective steers anything. Two of four campaign reports quoted it as armed
+  time and overstated their runs by 2.4-2.5x (26.5 min claimed vs ~21.5 actual;
+  512 s claimed vs ~212).
+- **Root cause:** The field's name asserted a semantic its one-line definition
+  did not have, and four readers in a row trusted the name. The sibling arm in
+  the same file already called the same quantity `pinned_secs`, honestly.
+- **Consequence:** Two published durations wrong by a factor of 2.4-2.5 in the
+  one number that decides whether a negative means "the mechanism failed" or
+  "the mechanism barely ran". Both were caught in adjudication, not in review.
+- **Rule (draft):** Before quoting a telemetry field, read the line that
+  computes it. If a field's name implies a gate, cross-check it in test against
+  the predicate the code actually gates on.
+
+## 2026-08-27 — [unverified-claim] A falsifier generalised its own harness defect to everyone else's receipts
+- **What happened:** A commissioned falsifier found its own concatenated tapes
+  died on replay (first life lost at step 73-116, gx capped at 486-1266) and
+  published the headline that *every* reached-gx-3072 claim in the whole body of
+  work was checkpoint continuation rather than a single unbroken life.
+- **Root cause:** It verified the defect in its own tapes and then generalised
+  without replaying anybody else's — the one check that would have separated
+  "my bookkeeping is broken" from "the campaign's receipts are broken".
+- **Consequence:** A correct local finding became a false global claim that, if
+  landed, would have retroactively voided a characterisation campaign. Refuted
+  by replaying 24 solver tapes (and 12 again at landing): all reach gx exactly
+  3072 from the declared start state with zero life losses.
+- **Rule (draft):** A defect found in your own harness is a claim about your own
+  harness until you have run the same check against someone else's artifact.
 
 ## 2026-08-26 — Killed a workflow that was already self-correcting
 - **What happened:** Verifiers flagged a 23-profile arming commit as unsupportable.

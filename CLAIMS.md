@@ -2338,6 +2338,17 @@ lineage, under input-pattern / cell-key / kill-condition variation at
 `attackable_by_search` is falsified for the **boundary-resident family**
 only.
 
+> **AMENDED 2026-08-27 — the one-lineage limitation is now LIFTED, and
+> the wall survives.** Seven independent approaches (four fresh
+> from-power-on searches with their own mints/priors/selection
+> rules/seeds, two derived life variants, one independent falsifier)
+> reach the identical wall: camera `{(12,0)}` across 238 input-live
+> states × 14 masks, `px_max` 136, `beat_3072` false over 2,417,912
+> worker-steps of fresh search. Approach demonstrably changes the
+> arrival configuration (arm purity 0.920 vs chance 0.138, p = 0.0005)
+> and the configuration is inert. See *CONTRA LOCK ROUTE A+B
+> 2026-08-27* below.
+
 ### The clear hook cannot be validated yet, and the gating task is a stage boundary
 
 **`detector_validatable: false`.** `clear_quorum(configs/contra.yaml)`
@@ -2437,6 +2448,14 @@ key was blind to.
    at 0, and the metric degenerates to the global running max of
    `progress` — frozen at 3072 by construction. Stop grading this wall
    with a running max.
+   **AMENDED 2026-08-27 — right defect, wrong mechanism.** Selection
+   never reads `max_gx_in_max_area`; it is a *frontier tracker*. The
+   count arm reads `best_score` and the deep-frontier arm (40% of picks
+   at the default bias) reads only `key[-1]` and picks **uniformly**. At
+   the wall `best_score = 3072 + (16 − hp)·2000` with `hp` itself a
+   cell-key slot, so it carries zero information beyond the key and its
+   one live axis is the transient typed-HP artifact. FIXED under
+   `--lock-objective`; see *CONTRA LOCK ROUTE A+B 2026-08-27*.
 2. **Five of eleven cell-key fields are structurally constant.** `area`,
    `sect`, `psig` (`room_id` is the constant `(0,)` with `level_key: []`
    and no `area`/`room_sig`, so `_transit` can never fire), `tb`, `kk`.
@@ -2501,6 +2520,14 @@ key was blind to.
 
 ### Next
 
+> **AMENDED 2026-08-27 — items (1) and the objective defect were both
+> RUN, and both are CLOSED.** A fresh from-power-on search reaches the
+> same wall from seven independent approaches, and a non-flat objective
+> inside the lock makes selection genuinely discriminate among the wall
+> states without moving the camera. See the *CONTRA LOCK ROUTE A+B
+> 2026-08-27* section below; items (2)–(5) here are unchanged and item
+> (2) is still outstanding.
+
 Do not spend another probe on input-pattern variation at this boundary.
 Ranked: (1) **reach the lock by another route** — a fresh from-power-on
 search, since the single biggest weakness in the evidence is that every
@@ -2520,3 +2547,316 @@ counter, projectile slot, vertical-state byte, input-active flag — was
 inferred solely from its own measured time-series shape under our own
 inputs, on this profile's own declared addresses and start state. The
 screen description in the write-up is read off our own rendered frames.
+
+---
+
+## CONTRA LOCK ROUTE A+B 2026-08-27 — EXHIBITION, wall HELD, both open branches CLOSED
+
+Full write-up: `docs/research/CONTRA_LOCK2_2026-08-27.md`. Predecessor:
+`docs/research/CONTRA_WALL_2026-08-27.md` (commit `1954037`). **No tape
+is preserved under `docs/receipts/` because no trajectory exceeded
+3072.**
+
+**Ledger: EXHIBITION, without exception.** Go-Explore search output and
+instrument measurement only. No policy was trained for this game and no
+honest-protocol evaluation was run. Nothing here may be described with
+"the AI learned", "the AI plays", or "the AI beat".
+
+**Emulator** `nes_core` sha256_16 `54366c20d32f71cc`. **ROM**
+`roms/Contra (USA).nes` sha256 `26541a5550ee22deeb3d5484e4a96130219b58cff74d068fb1eb6567fa5e5519`.
+**Start state** `roms/Contra (USA)_start.state.bin` sha256
+`b99f9be8e0266f6dbe8ac71bc591b0deec08e66e7925707d265965a4aab922c3`.
+
+### The verdict
+
+**The wall HELD. Best verified gx 3072, against a prior of 3072.** Six
+archives were scanned cell by cell — the ancestor plus all five this
+campaign produced — and **none holds a cell above gx bucket 192**
+(`runs/contra_lock2/_LANDING/land_verify.py`). `max_gx_in_max_area` reads
+3072 on **all 87** progress lines the campaign emitted — counted from
+`progress.jsonl` alone, because a naive grep returns 174: every run tees
+each line to a `.log` twin, which is exactly the 2x double-count this
+campaign's own predecessor had to deflate out of the prior "3,030
+occurrences" figure. `progress_glitches: 0` everywhere, so the hampel
+torn-read screen never dropped a sample and cannot be hiding an advance.
+
+**Both branches the predecessor left explicitly open are now CLOSED.**
+
+- **ROUTE A (approach) — CLOSED, by a third outcome its own decision rule
+  did not anticipate.** Approach *does* determine the arrival
+  configuration, reproducibly and strongly; the configuration is
+  **inert**.
+- **ROUTE B (the objective) — CLOSED as a diagnosis.** The named defect
+  was real, is fixed, and **selection now demonstrably discriminates
+  among the wall states**. The camera still did not move.
+
+### Route A — the state changes, and it changes nothing
+
+Six approaches (four fresh from-power-on searches with their own mints,
+priors, selection rules and seeds; two derived life-count variants) plus
+an independently designed 7th falsifier, against two prior-lineage
+reference populations. **429 wall states collected.**
+
+**The axis is live:** `$00AA` is constant within each arm and differs
+between arms (16/19/16/0) at values present in **zero** of the 69
+reference states all eight prior attacks used; steps-to-arrive bands do
+not overlap (772–816 / 848–862 / 941–1050 / 1371–1520); latch capacity
+ranges 122–255 across arms; 8 RAM bytes are within-arm constant and
+across-arm different. NN arm purity **0.920** against chance 0.138,
+permutation +133.6, **p = 0.0005**, with a sham half/half split of one arm
+at **−3.2, p = 0.86** and an open-field-vs-wall positive control at
+**+257.3**. Mints verified independent for the landing: six distinct RAM
+images differing pairwise by **165–407 bytes**, distinct hashes, seeds,
+burst lengths, priors and selection rules.
+
+**And it buys nothing.** Camera `{(12,0)}` across all **238 input-live
+states × 14 held masks**, every arm, no exception — while the same probe
+gives 20–63 camera pairs on open-field controls. `px_max = 136` exactly
+in all 8 populations. A matched pilot varying **only** the root
+population gave the prior campaign's own single-lineage roots the
+**largest** distinct-cell count of the four (LEGACY 20,436 vs C 19,988,
+A 15,160, B 12,475) — fresh configurations open *less* search surface.
+`beat_3072` false across **2,417,912 worker-steps** of fresh
+from-power-on search and ~1.25 M alive steps at the lock. The 7th
+approach reproduces it independently: fresh mint, UCB1-flavoured
+selection, burst lengths {80,96,112}, **588,600 worker-steps, 573,950
+alive steps, `max_gx_alive` exactly 3072 on every worker.**
+
+**Route A's durable by-product: 45% of wall arrivals are input-DEAD**
+(238/429 LIVE), five times the rate the prior 2-of-8 hand sample implied.
+The screen is validated three ways on one code path — a dead control at
+2 input-dependent bytes / 0 OAM, an open-field control at 6/8 LIVE
+(median 442/120), and, strongest because the labels predate it, it flags
+exactly `head_wall_0` and `head_wall_1`, the two the characterisation
+found by hand, plus one the prior labelling did not separate. LIVE-vs-DEAD
+separation is two orders of magnitude (475–588 bytes vs 2–5).
+**Screen every root before use, and never gate liveness on
+`lives == entry_lives` here** — it failed twice in this campaign alone.
+
+**Anomaly resolved, not published as a result:** `B_coverage` roots read
+px 137–144, above the supposedly universal 136, replicating across four
+seeds and cold-restoring at progress 3072 with lives 2. **156 of 156 such
+witnesses screen input-DEAD** (140 unresponsive, 16 fatal-window;
+input-dependent RAM 0–4, OAM 0 — the dead control's own signature), with
+median-alive counting down monotonically: one already-committed
+commitment sampled a step further along each time. **Corrected statement:
+`px_max = 136` holds for every input-LIVE state in every approach.**
+
+### Route B — the defect was real, and the premise needed correcting
+
+**CORRECTION to the predecessor's own framing.** Score at the wall is
+**not flat**: it takes exactly **14 values, 3072 → 35072**. But
+`best_score = 3072 + (16 − hp)·2000` where `hp` is itself a cell-key slot
+— re-derived here and holding for **100% of wall cells in all six
+archives** — so it carries **zero information beyond the key**, and the
+one axis it expresses is the transient typed-HP multiplex artifact the
+characterisation had already ruled out (and `best_score` ratchets, so a
+cell that once caught a flicker keeps the elevated score forever).
+Worse: **the deep-frontier arm, which does 40% of the picking at the
+default `--deep-bias 0.4`, reads no score at all** and sampled the
+2,079-cell top band **uniformly**. A score-only edit would therefore have
+moved the count-arm weight by 3×10⁻⁵, been invisible to the deep arm, and
+**tripped the abort clause while the actual defect went untested.** Route
+B was implemented as two coupled edits under one flag: a merit comparator
+in the domination test and a merit read in **both** arms.
+
+**Why key enrichment had failed but objective change might not.** The key
+controls RESOLUTION (how the budget is partitioned); the score controls
+PREFERENCE (which partition gets it). Attack 6 raised resolution 8.8× and
+proved the axes live, but under an indifferent preference more resolution
+can only **dilute** — every new cell landed in the same uniform top band,
+so the per-cell budget fell ~8.8× exactly where concentration was needed.
+Key enrichment is structurally a spreading operator; the score is the only
+mechanism here that can concentrate, and it had never been changed.
+
+**Four objectives, all lexicographic `(gx, then merit)` with merit in
+[0,1) so no merit can reorder two states of different gx:** LEX-YIELD
+(B-O4, cell generativity as a burst root, free — it reads bookkeeping
+`_assign()` already computed and threw away), LEX-SURVIVAL (B-O1,
+squashed alive-in-lock steps), LEX-LATCH (B-O2, control-differenced latch
+count against a **paired NOOP continuation on a private probe emulator**,
+so a corpse cannot score), LEX-NOVELTY (B-O3, descriptor novelty held
+**outside** the cell key so wall cardinality stays A/B-comparable with all
+nine prior campaigns). All four: `max_gx` 3072 on every progress line.
+
+### Selection DID discriminate — three independent ways
+
+1. **Offline, on the real banked archive, shuffle-controlled.**
+   20,000–30,000 real `select()` calls over the real 1,331 wall cells
+   against two pre-registered thresholds (TV ≥ 0.20; top/bottom merit
+   decile ≥ 3×). Measured TV 0.15–0.25, decile ratios **2.0×–8.4×**.
+   The paired shuffle — same merit values, reassigned across the same
+   keys, judged against the **fixed real-merit ordering** — collapses the
+   decile ratio to **0.79–1.0×** every time. A TV-only check would have
+   missed this: shuffling preserves the weight multiset, so `tv_shuffled`
+   lands within a hair of `tv_real` (0.232 vs 0.245). **The decile ratio
+   against a fixed ordering is the statistic that separates preference
+   from re-weighted noise.**
+2. **Distributionally, at the live operating point** (200k real `select()`
+   calls, count arm, `--lock-weight 4.0`): inside the lock,
+   corr(picks, merit) **0.688**, decile ratio 2.65×, lock share of picks
+   0.097 → 0.181. **Outside** the lock, TV **0.0123** against a **0.0111**
+   seed-to-seed noise floor — indistinguishable from noise.
+3. **Receipt-level, the strongest, re-derived independently at landing**
+   (`runs/contra_lock2/_LANDING/dom_check.py`). B-O1 and B-O2 resumed
+   `solve20`, where the pre-change rule can only ratchet equal-score
+   cells toward FEWER steps. Over the 16,298 cells each shares with the
+   ancestor, their archives hold **1,176 and 1,118 equal-score
+   replacements carrying MORE steps** — and **100% (1,176/1,176,
+   1,118/1,118) sit at gx bucket 192, ZERO outside it.** The comparator
+   provably ran live and provably touched nothing outside the lock. The
+   statistic is **only defined for a resumed archive** — a fresh run
+   shares keys by coincidence and was never domination-compared against
+   the ancestor at all; the receipt says so in its own docstring so the
+   number is not re-derived later and misread as a leak.
+
+**The abort criterion did NOT fire.** The diagnosed defect was real and
+is fixed.
+
+**Inertness was mutated, not inspected** (six vacuous gates have shipped
+here): forcing `in_lock_key` true fails 3 tests; dropping the `_in_lock`
+check in **both** selection arms — the exact "not inert outside the lock"
+defect — fails 4 including the leak probe; removing `observe()`'s mode
+scoping fails 1; on B-O2's branch the same mutation fails 6. Forcing
+`lock_armed` true fails only its own detector, **correctly**, because
+off-safety rests on the `lock_mode == "off"` compare — disclosed by the
+work that found it, not papered over. **One exactness caveat:** an armed
+run at merit 0.0 is not byte-identical to off, because exact rejection
+sampling needs a data-independent ceiling `Wmax = 1 + lock_weight`; what
+is asserted and tested is that the **outcome distribution** stays uniform
+(TV < 0.08). With the arm off, both arms are byte-identical to the
+pre-change path over 400–500 picks including final RNG state.
+
+### Is the lock a game gate or a search artifact?
+
+**GAME GATE — strongly indicated, not proven.** A search artifact is a
+failure of the searcher, and all three of its forms have now been tested
+and failed: *cannot represent* (falsified four ways by the predecessor —
+the one run whose key genuinely collapsed walled **lower**, at 2816),
+*cannot reach* (falsified by Route A — seven approaches, provably
+different configurations, same wall), and *cannot prefer* (falsified by
+Route B — four merit axes, discrimination proved under control, camera
+unmoved). **What it does NOT establish:** the runs were short
+(~212 s / ~810 s / ~1,290 s genuinely armed), so "the right lever needing
+an order of magnitude more armed compute" is unfunded rather than
+excluded; four merits is not all merits; and "game gate" means *the
+transition is not offered to this search under these conditions* — it is
+**not** a claim about what the game contains, which would breach Tier-3
+purity.
+
+### Defects found and fixed in this landing
+
+1. **`--lock-objective latch` was a dead choice that read as armed.** It
+   parsed, printed `lock_mode: latch` with a non-zero `lock_cells`, and
+   changed **not one draw** — 3,000 selections byte-identical to `off`.
+   An operator would have read a null as "the objective did not help"
+   when nothing ran. **The seventh vacuity, shipped inside the campaign
+   whose brief holds the previous six.** Cause: B-O2's implementation is
+   on unmerged branch `contra-lock-b-o2` while the shared flag family
+   that landed on `main` carried only its *name*. Fixed: `latch` removed
+   from the choices, plus `tests/test_lock_objective_roster.py`, a
+   **behavioural** roster guard — every declared mode must change the
+   pick stream AND leave a merit footprint `off` does not — whose
+   non-vacuity direction is a test that runs both probes against a
+   deliberately fabricated name and **requires them to come back inert**.
+   Mutation-verified three ways, each run and restored: re-adding `latch`
+   fails it with the exact diagnosis; a **half-wired** mode (present in
+   `select()`, disabled in `observe()`) fails on the observation half
+   alone — the case a selection-only probe would have passed; and
+   reverting the lock guard itself fails 3 tests across the two sibling
+   inertness files, independently reproducing the adjudicated result
+   rather than citing it.
+2. **`lock_armed_secs` was not armed seconds.** It was
+   `round(now − _pin_time)` — time since the *frontier* moved, which
+   accrues `--lock-pin-secs` before the objective steers anything. Two
+   reports read it as armed time and overstated by **2.4–2.5×** (B-O3's
+   "26.5 min armed" is ~21.5; B-O4's "512 s" is ~212). Fixed with a pure
+   `lock_clocks()` returning both `lock_pinned_secs` and a true
+   `lock_armed_secs`, cross-checked in test against `lock_armed()`, the
+   predicate the arms actually gate on. Mutation-verified.
+3. **`--lock-weight`'s help text was wrong** — it claimed the deep arm
+   ignores the value. That arm accepts with probability
+   `(1 + W·merit)/(1 + W)`, so `W` sets its preference strength too.
+
+### Corrections to the four attack reports
+
+- **"Alive by construction because `observe()` resolves death first" is
+  overstated.** Contra's `is_dead` is lives-only and that byte was
+  measured holding flat through committed fatal windows. The alive claim
+  rests on **tape replay and the differential screen**, not code
+  ordering: **12 of 12** wall tapes (the three longest from each of the
+  four runs, 1,254–1,507 actions) replay from the declared start state on
+  a fresh 1-worker pool to gx **exactly 3072 with zero life losses**
+  (`runs/contra_lock2/_LANDING/replay_check.py`), and a 14-mask × 32-step
+  screen of 30 restored wall states gave 20/30 LIVE at 124–368
+  input-dependent bytes against a same-lineage dead control at 2.
+- **B-O3's "matched off control" is not matched** — the armed run also
+  carried `--gate-opener enumerate --gate-pin-secs -1`. The gate never
+  armed (`gate_armed: false` on all 28 lines, 0 injections), so the
+  confound is small, but the pair must not be cited as matched.
+- **The shipped `--lock-weight` default is 4.0**, not the 1.0 two reports
+  state.
+- **B-O2's resume failure was its own missing flag** — `solve20` *was*
+  banked with `--kill-key` (`key_config.kk = 1`); the lineage guard fired
+  correctly on the run's own omission.
+- **B-O2's disclosed calibration caveat stands:** `--lock-latch-ceiling 96`
+  saturates within 1–2 min of arming, so most of its window ran with less
+  merit headroom than its offline test showed the mechanism has.
+- **The design's trace-inflation risk materialised, mildly.** Under
+  LEX-SURVIVAL the wall's max `best_steps` rose 1,297 → **1,507** (+16%),
+  the ratchet inversion the design predicted. B-O2 1,326, B-O3 1,276,
+  B-O4 1,314.
+
+### REFUTED — the "everything is checkpoint continuation" side-finding
+
+The 7th approach reported that *"every reached-gx-3072 claim in this whole
+body of work is an archive/checkpoint-continuation result, not a single
+unbroken life."* **Tested both halves; the generalisation does not hold.**
+Its *own* concatenated tapes do die on replay (first life lost at step
+73–116, gx capped 486–1266, its own receipt recording
+`baseline_alive_at_wall: false`). The **solver's** do not: 24 of 24
+adjudicated wall tapes, and 12 of 12 re-verified independently for this
+landing, replay end to end from the declared start state to gx exactly
+3072 with **zero life losses**. And it is not a property of the sample:
+**all 7,954 wall traces across the four archives carry
+`root_id: "entrance"`** — full single-session tapes, not chained
+fragments. **The defect is in that
+approach's own tape bookkeeping, not in the campaign's receipts.** Its
+recommendation to screen roots before use is unaffected and stands.
+
+### Unchanged from the predecessor
+
+`solutions: 0` remains **VOID, never a miss**, on this profile —
+`level_key: []` makes `is_clear` reduce to `() > ()`, and the shipped
+2-of-2 clear vote is a 1-of-1 `coord` vote at a measured `tally` null fire
+rate of 1.00 (58/58). It is recorded and never interpreted, and never
+enters a denominator. The gating task is still **reaching a stage
+boundary, not tuning a detector**.
+
+### Next
+
+1. **Do not fan out on approach** (Route A is closed) and **do not enrich
+   the cell key** — it is a spreading operator and re-running it recreates
+   attack 6's 8.8× dilution confound, which would make any future negative
+   uninterpretable.
+2. **The one funded-but-untried variable is armed compute, not another
+   merit.** One long, pre-registered run of the objective with the best
+   measured live merit dispersion (LEX-YIELD held 0.125–0.857 across 1,743
+   wall cells for its whole armed window) at an order of magnitude more
+   armed time and `--lock-band > 0`, with its abort stated in advance.
+3. **Fix the metric before, not after** (still outstanding): wire
+   `current_level $0030` / `boss_defeated $003B` into `solve:` and split a
+   monotone kill count out of `score_bonus`.
+4. **Reconcile or retire branch `contra-lock-b-o2`.** The roster test now
+   prevents its *name* shipping without it.
+5. **Otherwise, re-shelve Contra with this receipt.** Two named open
+   branches closed for ~2 core-hours of search plus the landing.
+
+**Purity (Tier 3).** No disassembly, no RAM maps, no walkthroughs, no
+recall of this title. The lock predicate contains **no game constant**:
+`in_lock_key` is `key[0] == max_sect and key[-5] == max_area and
+key[-1] >= topgx − band` — every term a property of this run's own search
+state, no address, no bucket number, no `3072` — so it means the same
+thing on a different game, core build or session, and refuses to mean
+anything on a run that has not reached a frontier. It self-disarms the
+instant the frontier advances, because that is what resets `_pin_time`.

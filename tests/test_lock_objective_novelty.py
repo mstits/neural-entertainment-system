@@ -160,7 +160,7 @@ def test_argparse_lock_objective_defaults_off_and_declares_novelty():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--lock-objective",
-                     choices=("off", "yield", "survival", "latch", "novelty"),
+                     choices=("off", "yield", "survival", "novelty"),
                      default="off")
     ns = ap.parse_args([])
     assert ns.lock_objective == "off"
