@@ -98,7 +98,7 @@ class _NullArchive:
     """Records nothing; observe() only needs `.cells` and `.record`."""
     cells: dict = {}
 
-    def record(self, ram, blob, score, steps, key=None) -> bool:
+    def record(self, ram, blob, score, steps, key=None, merit=None) -> bool:
         return False
 
 

@@ -91,7 +91,8 @@ class _KeyArchive:
     def __len__(self) -> int:
         return len(self.cells)
 
-    def record(self, ram, state, score, steps, key=None) -> bool:
+    def record(self, ram, state, score, steps, key=None,
+              merit=None) -> bool:
         new = key not in self.cells
         self.cells[key] = SimpleNamespace(key=key, best_score=score,
                                           best_steps=steps, state=state)
