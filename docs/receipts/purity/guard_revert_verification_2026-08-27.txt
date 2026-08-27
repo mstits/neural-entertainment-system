@@ -1,0 +1,119 @@
+==============================================================
+BASELINE — the fixed tree must be green
+==============================================================
+failures on the fixed tree: 0
+
+==============================================================
+ARM 1 — FULL REVERT: restore the pre-annotation rewards.rs
+==============================================================
+failures on full revert: 63
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[punchout_match_id]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[punchout_losses]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[punchout_opp_id]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[megaman_boss_health]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[megaman_player_health]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[megaman_x_page]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[megaman_lives]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[kungfu_floor]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[kungfu_game_clear_floor]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[castlevania_boss_health]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[castlevania_dracula_stage]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[zelda_ganon_defeated]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[zelda_song]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[zelda_dungeon_level]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[metroid_mb_state]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[metroid_mb_hits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[metroid_ending_msg]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[metroid_credits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[metroid_death_hits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[ducktales_win_treasure]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[ducktales_treasure_cap]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[kid_icarus_stage]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[kid_icarus_boss]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[double_dragon_mission_addr]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[gradius_speed]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[gradius_shield]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[tetris_empty_cell]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[punchout_match_id]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[punchout_losses]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[punchout_opp_id]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[megaman_boss_health]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[megaman_player_health]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[megaman_x_page]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[megaman_lives]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[kungfu_floor]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[kungfu_game_clear_floor]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[castlevania_boss_health]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[castlevania_dracula_stage]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[zelda_ganon_defeated]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[zelda_song]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[zelda_dungeon_level]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[metroid_mb_state]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[metroid_mb_hits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[metroid_ending_msg]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[metroid_credits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[metroid_death_hits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[ducktales_win_treasure]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[ducktales_treasure_cap]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[kid_icarus_stage]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[kid_icarus_boss]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[double_dragon_mission_addr]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[gradius_speed]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[gradius_shield]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[tetris_empty_cell]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_retracted_clause_does_not_reappear[kid_icarus_never_false_positive]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_retracted_clause_does_not_reappear[double_dragon_safe_under_trigger]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_retracted_clause_does_not_reappear[double_dragon_never_false_positives]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_retracted_clause_does_not_reappear[kungfu_ram_verified_live]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_retracted_clause_does_not_reappear[kungfu_dangling_config_path]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_retracted_clause_does_not_reappear[punchout_never_false_positive_flag]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_retracted_clause_does_not_reappear[castlevania_proven_by_rom_code]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_retracted_clause_does_not_reappear[megaman_map_is_correct]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_smb_block_is_positively_marked_witnessed
+
+==============================================================
+ARM 2 — HALF-FIX: restore ONLY Punch-Out's $0001 sibling,
+        leaving $000A annotated. A guard that keys on the pair
+        rather than on each member would pass this.
+==============================================================
+    reverted RAM_MATCH_ID tag (source lines 3021..3050)
+failures on the half-fix: 2
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[punchout_match_id]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[punchout_match_id]
+
+==============================================================
+ARM 2b — SIBLING GROUP: delete the ONE tag block shared by
+         Metroid's four win bytes + the 32-hit threshold.
+         All five must fail; the rest of the file stays green.
+==============================================================
+    deleted Metroid's shared tag block (lines 2390..2413)
+failures on the sibling-group revert: 10
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[metroid_mb_state]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[metroid_mb_hits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[metroid_ending_msg]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[metroid_credits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_unwitnessed_constant_carries_a_provenance_tag[metroid_death_hits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[metroid_mb_state]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[metroid_mb_hits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[metroid_ending_msg]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[metroid_credits]
+    FAILED tests/test_rust_unwitnessed_semantics.py::test_provenance_tag_is_complete[metroid_death_hits]
+
+==============================================================
+ARM 3 — OVER-WITHDRAWAL: move an SMB constant.
+        SMB is earned by a completely solved game; the guard
+        must fail in this direction too, not only on omission.
+==============================================================
+    moved SMB RAM_FLOAT_STATE 0x001D -> 0x001E
+failures on the SMB mutation: 1
+
+==============================================================
+VERDICT
+==============================================================
+  baseline (fixed tree) : 0 failures
+  full revert           : 63 failures
+  half-fix (1 sibling)  : 2 failures
+  sibling group (metroid): 10 failures
+  SMB over-withdrawal   : 1 failures
+
+PASS — the guard has teeth in all three directions.

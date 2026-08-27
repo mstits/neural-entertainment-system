@@ -19,6 +19,53 @@
 //! variant. The profile's DISPLAY NAME is never consulted: it used to
 //! be, by substring, which silently handed Zelda's quarantined win
 //! predicate to every profile whose title contained "Zelda".
+//!
+//! # Provenance convention (2026-08-27)
+//!
+//! `configs/` was swept for unwitnessed semantics on 2026-08-27
+//! (`docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md`, 7 quarantined /
+//! 24 downgraded / 963 kept). That sweep named its own scope limit:
+//! quarantining a YAML entry retracts the DOCUMENTATION claim, not the
+//! Rust constant. This file is the executing layer, and it carries the
+//! same class of claim. This is the follow-up.
+//!
+//! The discriminant is unchanged and mechanical:
+//!
+//! > **An assertion of semantics tied to an event this project has never
+//! > witnessed is injected knowledge, because it could not have been
+//! > measured here.**
+//!
+//! Constants that fail it are tagged in place with a four-line block:
+//!
+//! ```text
+//! /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+//! /// ASSERTS: <the semantic claim, restated plainly>
+//! /// NO WITNESS: <the event nobody here has ever seen, + the receipt
+//! ///   that establishes the null where one exists>
+//! /// EARNS IT: <the observation that would convert the claim>
+//! ```
+//!
+//! The tag is a disclosure, not a retraction: **no reward arithmetic was
+//! changed by the annotation pass**, so no banked run moves. SMB's
+//! constants are untagged and untouched — they fired 32 times in a single
+//! cold-boot tape with `state_loads=0` and a rendered ending frame, and
+//! they are earned.
+//!
+//! Two corollaries kept the pass from eating good work, carried over
+//! verbatim from the config sweep:
+//!
+//! * **An honest null is not a breach.** "held 0 across 300k+ frames" is
+//!   a measurement of absence, correctly reported, and stays. What does
+//!   not stay is a false-positive RATE asserted on top of that null —
+//!   "never a false positive" cannot be known from zero observed events.
+//! * **Over-withdrawal is its own defect.** Contra's `clear_screen == 255`
+//!   sentinel, Gradius's "NO byte is trustworthy as the stage index yet",
+//!   Ghosts' disabled `stage_addr`, Bubble Bobble's `enemy_count_addr` and
+//!   Kung Fu's opt-in `$04A5` are already the right discipline and were
+//!   left exactly as they were.
+//!
+//! `WIN_WITNESS_LEDGER` below is the machine-readable half: it classifies
+//! every arm's `episode_success()` so a reported success is never SILENT.
 
 use std::collections::{HashMap, HashSet};
 
@@ -468,16 +515,60 @@ impl ZeldaReward {
     const RAM_PARTIAL_HEARTS: usize = 0x0670;
     const RAM_RUPEES: usize = 0x066D;
     const RAM_TRIFORCE: usize = 0x0671;
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — the VALUE 9, not the byte.
+    /// ASSERTS: `dungeon_level == 9` is the final dungeon, the one worth a
+    ///   30000-point `level9_enter` milestone.
+    /// NO WITNESS: no Zelda dungeon 9 has ever been entered here — every
+    ///   Zelda `solutions/` directory across 8 run trees holds 0 files. That
+    ///   dungeon 9 is the last one is roster knowledge, the same class as
+    ///   Punch-Out's "Glass Joe = 0". The BYTE itself is positional and is
+    ///   not in dispute: it also serves as a depth key in
+    ///   `depth_tracker.rs`, where no win or boss semantics attach to it.
+    /// EARNS IT: enter dungeon 9 here and log the byte on entry.
+    /// Lower severity than the win chain below because it pays a milestone
+    ///   rather than declaring a win — but it is the same class of claim.
     const RAM_DUNGEON_LEVEL: usize = 0x10;
-    // Win chain (aldonunez disassembly + empirically verified against the
-    // captured zelda_*.state.bin on this emulator):
-    //   $0672 LastBossDefeated — 0 while Ganon lives, set to 1 the instant
-    //     his death fanfare ends. Monotonic 0->1; the ONE reliable "game
-    //     effectively won" flag (rescuing Zelda after is a scripted walk).
-    //   $0609 Song — one-hot active track: 0x10=Ending theme (Zelda rescued
-    //     / credits), 0x02=Ganon-fight theme (reached the final boss).
-    // $0671==0xFF (all 8 fragments) only opens Level 9 — a MILESTONE, not a
-    // win; the old episode_success() wrongly treated it as victory.
+
+    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — the whole win chain.
+    // ASSERTS: the comment this replaces described the chain as
+    //   "aldonunez disassembly + empirically verified against the captured
+    //   zelda_*.state.bin on this emulator", and called $0672 "the ONE
+    //   reliable 'game effectively won' flag":
+    //     $0672 LastBossDefeated — 0 while Ganon lives, set to 1 the instant
+    //       his death fanfare ends; monotonic 0->1.
+    //     $0609 Song — one-hot active track: 0x10 = Ending theme (Zelda
+    //       rescued / credits), 0x02 = Ganon-fight theme.
+    // NO WITNESS: **Ganon has never been defeated here and the ending has
+    //   never played.** Every Zelda `solutions/` directory across 8 run
+    //   trees holds 0 files. So "empirically verified" cannot have covered
+    //   the transitions these constants are ABOUT — at most it covered that
+    //   the addresses are readable, which is not the claim. A named
+    //   third-party disassembly in live code is the provenance tell;
+    //   `configs/legend_of_zelda.yaml` already calls this "its quarantined
+    //   0x0672 predicate", and the Rust copy was not quarantined.
+    // MEASURED NULL, and it cuts against a suspicion rather than for it:
+    //   from the training start state `roms/zelda_start_ctrl.state.bin`,
+    //   $0609 held 1 across 600 NOOP steps and 60,000 random-action steps —
+    //   0 frames equal to SONG_ENDING (0x10) and 0 frames with SONG_GANON
+    //   (0x02) set. A spurious `ganon_reached` payout of 30000 from this
+    //   start state is therefore REFUTED, not merely unobserved.
+    // CONTESTED, and recorded as such: this repo holds a receipt that
+    //   assigns $0609 a DIFFERENT identity —
+    //   `docs/receipts/rediscovery/legend_of_zelda_discover_2026-08-26.json`
+    //   identifies addr 1545 (= $0609) as a LIVES-shaped byte (starts 1,
+    //   drops by 1, spends its stock, 5/5 runs agreeing, behaviour gate
+    //   PASS). Two incompatible identities and one receipt; the receipt is
+    //   the half that was measured here. Neither reading is asserted over
+    //   the other above.
+    // EARNS IT: defeat Ganon here, or reach the ending, and log $0672 and
+    //   $0609 across it.
+    // Gates `win_bonus` (100000) via `song == SONG_ENDING` and
+    //   `ganon_reached` (30000) via `song & SONG_GANON`. Behaviour
+    //   unchanged; declared `WinWitness::Unwitnessed` in
+    //   `WIN_WITNESS_LEDGER`. Receipt for the null:
+    //   `docs/receipts/purity/rust_unwitnessed_probe_2026-08-27.json`.
+    // $0671 == 0xFF (all 8 fragments) only opens Level 9 — a MILESTONE, not
+    // a win; the old episode_success() wrongly treated it as victory.
     const RAM_GANON_DEFEATED: usize = 0x0672;
     const RAM_SONG: usize = 0x0609;
     const SONG_ENDING: u8 = 0x10;
@@ -886,6 +977,11 @@ impl ZeldaReward {
         // in `won`. The old predicate (all 8 fragments collected) declared
         // victory ~3 dungeons + the final boss too early — collecting every
         // fragment only OPENS Level 9; it is not winning the game.
+        //
+        // UNCONFIRMED when true: both paths into `won` are
+        // UNWITNESSED-EXTERNAL (see the win-chain tag), and $0609 has a
+        // conflicting in-repo receipt. Declared `WinWitness::Unwitnessed`
+        // in `WIN_WITNESS_LEDGER`.
         self.won && !self.died
     }
 }
@@ -1003,6 +1099,19 @@ pub struct MarioReward {
 }
 
 impl MarioReward {
+    // PURITY: WITNESSED (2026-08-27) — the whole block, deliberately.
+    // Every constant below describes an event this project has watched, on
+    // a game it has completely solved: all 32 levels cleared on ONE
+    // cold-boot tape with `state_loads=0` and a rendered ending frame.
+    // $001D float_state == 3 (flagpole) and $075C == 3 (x-4 castle) fired
+    // 32 times in that tape; $0760's area-byte correction is itself a
+    // banked result. The 2026-08-27 provenance pass tagged 23 constants in
+    // this file UNWITNESSED-EXTERNAL and tagged NONE of these, because the
+    // discriminant does not bite where the event was witnessed.
+    // **These are maximally load-bearing and fully earned. Do not move
+    // them** — a behaviour change to SMB's reward invalidates banked runs,
+    // and stripping an earned constant to look rigorous is over-withdrawal,
+    // the same error wearing the opposite mask.
     const RAM_X_PAGE: usize = 0x006D;
     const RAM_X_LOW: usize = 0x0086;
     const RAM_LIVES: usize = 0x075A;
@@ -1799,9 +1908,52 @@ pub struct MegaManReward {
 }
 
 impl MegaManReward {
+    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — whole address block.
+    // ASSERTS: nothing, in writing. Until this pass these four constants
+    //   carried NO comment at all — the only provenance anywhere in the
+    //   engine was an aside inside `episode_success()` asserting they "are
+    //   the Mega Man 2 map, which is CORRECT". That made this the one
+    //   reward struct in the file whose address block was entirely
+    //   unannotated, so nothing named it and nothing could check it.
+    // NO WITNESS: **no Mega Man clear, and no Mega Man boss room, has ever
+    //   been reached here.** There is no in-repo measurement of any of
+    //   these four bytes across the events their names claim. An
+    //   identity taken from a ROM map is external whether or not the map
+    //   is right; "which is CORRECT" is an assertion, not a receipt.
+    // MEASURED NULL, and it covers the WHOLE block rather than just the
+    //   boss byte: driven with uniform-random actions from
+    //   `roms/Mega Man 2 (USA)_start.state.bin`, $06C1, $06C0 and $00A8
+    //   each held a SINGLE value across 15,000 steps (0, 28 and 3
+    //   respectively). Not one of the three has been observed moving here,
+    //   so none of their identities rests on an in-repo observation.
+    //   Receipt: `docs/receipts/purity/rust_unwitnessed_probe_2026-08-27.json`.
+    // EARNS IT: drive this ROM here and log each byte across the event it
+    //   names — damage taken, a screen-page change, a life lost, a boss
+    //   meter draining. Forward/health/death shaping is unchanged.
+
+    /// See the block tag above. Feeds the forward-progress term only.
     const RAM_PLAYER_X_PAGE: usize = 0x0460;
+    /// See the block tag above. Feeds health shaping AND the death
+    /// branch (`health == 0` ends the episode), so a wrong identity here
+    /// truncates episodes rather than being a silent no-op.
     const RAM_PLAYER_HEALTH: usize = 0x06C0;
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: boss health — a meter that drains as a boss is damaged and
+    ///   reaches 0 at the kill.
+    /// NO WITNESS: **Mega Man has never reached a boss room here.** The
+    ///   byte has never been observed doing anything. `configs/megaman.yaml`
+    ///   quarantined its copy as `q_boss_health` on 2026-08-27 and named
+    ///   THIS LINE as the one the config quarantine could not reach; this
+    ///   tag closes that gap.
+    /// EARNS IT: reach a boss room here and log the meter across the fight.
+    /// STILL LIVE: `episode_success()` is hard-false, so no WIN rests on
+    ///   this — but `boss_damage` 5.0 and `boss_killed` 75.0 are live
+    ///   weights in `configs/megaman.yaml`, so it is an ACTIVE SHAPING term
+    ///   on an unwitnessed identity. Gating it off is a behaviour change
+    ///   and is deliberately NOT done here; it is named as a separate step.
     const RAM_BOSS_HEALTH: usize = 0x06C1;
+    /// See the block tag above. Feeds the death branch via
+    /// `lives < prev_lives`.
     const RAM_LIVES: usize = 0x00A8;
     pub fn new(
         forward_weight: f64,
@@ -1901,11 +2053,15 @@ impl MegaManReward {
         // "beat Mega Man" (which needs all 6 Masters + Wily). Return false
         // until a verified all-Masters ($009A mask) + Wily predicate exists;
         // `boss_killed` remains a shaping signal. The addresses ($06C0 health,
-        // $06C1 boss, $00A8 lives) are the Mega Man 2 map, which is CORRECT:
-        // DEFAULT_ROMS maps `megaman` -> Mega Man 2 (USA).nes. (An empirical
-        // pass on Mega Man 1 found these dead — MM1 uses $006A/$00A6/$06C1 —
-        // but the default pipeline is MM2; supporting MM1 would need a
-        // ROM-hash-gated address map, not overwriting these.) There is no
+        // $06C1 boss, $00A8 lives) are the Mega Man 2 map — believed right for
+        // the ROM the pipeline actually loads (DEFAULT_ROMS maps `megaman` ->
+        // Mega Man 2 (USA).nes), but UNWITNESSED-EXTERNAL: see the tag on the
+        // address block. "which is CORRECT" is retracted; no boss room has
+        // been reached here to check any of it. (An empirical pass on Mega
+        // Man 1 found these dead — MM1 uses $006A/$00A6/$06C1 — which is
+        // evidence the block is ROM-specific, not evidence it is right for
+        // MM2; supporting MM1 would need a ROM-hash-gated address map, not
+        // overwriting these.) There is no
         // reliable all-Robot-Masters flag reachable in RAM, so keeping this
         // false is correct — a false "win" poisons curriculum/eval; a missing
         // one only forgoes a bonus.
@@ -1949,19 +2105,65 @@ pub struct CastlevaniaReward {
 }
 
 impl CastlevaniaReward {
+    /// MEASURED-HERE. Simon's life bar. `configs/castlevania.yaml` flagged
+    /// $0044 vs $0045 as CONTESTED, because the RAM_HEARTS comment below
+    /// used to assert that "$0045 is actually Simon's real HP" three lines
+    /// under a constant declaring $0044 to be the health address. The
+    /// contradiction is settled by measurement, not by preference: driven
+    /// with uniform-random actions from the shipped start state, $0044 takes
+    /// 65 distinct values spanning 0..64 — a smooth draining bar — while
+    /// $0045 takes 9 over the same window. **The constant is right and the
+    /// old comment was wrong.** The comment was fixed; the address was not
+    /// touched. Receipt:
+    /// `docs/receipts/purity/rust_unwitnessed_probe_2026-08-27.json`.
     const RAM_PLAYER_HEALTH: usize = 0x0044;
+
+    /// WITNESSED. The stage/level key, and the one Castlevania address on
+    /// this repo's witness ledger: the power-on chain $0028 0->1->2->3 is
+    /// replay-verified across five run trees, and it is `solve.level_key`
+    /// for this profile. Earned; do not move it. (Note the scope: the STAGE
+    /// CHAIN is witnessed, the WIN is not — see DRACULA_STAGE.)
     const RAM_STAGE: usize = 0x0028;
     const RAM_LIVES: usize = 0x002A;
-    // Sub-weapon ammo (hearts). Was 0x0045, which is actually Simon's real HP
-    // (emulator-verified: $0045 reads 64 = full health at the start, $0071
-    // reads 5 = starting hearts). The old value made the "heart" bonus fire
-    // on HP changes, not heart pickups.
+
+    /// MEASURED-HERE. Sub-weapon ammo (hearts). Was 0x0045, which made the
+    /// "heart" bonus fire on HP changes rather than heart pickups.
+    /// `configs/castlevania.yaml` objected that the replacement $0071 "has
+    /// no receipt anywhere under docs/ or runs/". **It has one now**, from
+    /// this pass: driven with uniform-random actions from the shipped start
+    /// state, $0071 starts at 5 and takes 11 distinct values across 0..10 —
+    /// a small-range counter that both rises and falls, which is what
+    /// sub-weapon ammo does (picked up, then thrown). Note what this
+    /// receipt does NOT say: a preliminary reading of it as "rising only"
+    /// is contradicted by the measurement (min 0) and is not asserted here.
+    /// What it does settle is the config's objection — the byte is no
+    /// longer unreceipted, and its 0..10 range is incompatible with the
+    /// 0..64 health bar it was confused with. The increase-only heart term
+    /// reads it correctly either way. The constant stays. Receipt:
+    /// `docs/receipts/purity/rust_unwitnessed_probe_2026-08-27.json`.
     const RAM_HEARTS: usize = 0x0071;
-    // Boss/Dracula health. Was 0x04A0, which is emulator-verified DEAD (reads
-    // 0 constantly), so the final-block win could NEVER fire. $01A9 is the
-    // boss-health slot (Data Crystal + tasvideos; reads 64 idle). Researched,
-    // not yet Dracula-fight-verified — but strictly better than a dead byte,
-    // and the stage>=18 gate below prevents any false early win.
+
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: $01A9 is the boss-health slot. The comment it replaces said
+    ///   so in its own words — "(Data Crystal + tasvideos; reads 64 idle).
+    ///   Researched, not yet Dracula-fight-verified" — an admission of
+    ///   external provenance sitting in live code.
+    /// NO WITNESS: **no Castlevania boss fight has ever been witnessed
+    ///   here**, and no boss defeat has ever been witnessed on ANY game in
+    ///   this repo. Half the old claim IS ours now: MEASURED, $01A9 held 64
+    ///   across 20,000 random-action steps from the shipped start state (1
+    ///   distinct value), so "reads 64 idle" is reproducible here. The other
+    ///   half — that 64 is a HEALTH POOL rather than any other constant —
+    ///   remains external, because nothing here has ever made it move. The
+    ///   predecessor it replaced ($04A0) is separately graded `churn 0.0/1k`
+    ///   in `docs/receipts/ram_verify/castlevania.json` and quarantined as
+    ///   `q_boss_health` in `configs/castlevania.yaml`.
+    /// EARNS IT: reach a boss fight here and log $01A9 across it.
+    /// STILL LIVE: `boss_damage` 3.0 and `boss_killed` 50.0 are live
+    ///   weights, so a wrong identity is an ACTIVE SHAPING term, not just a
+    ///   dormant win predicate. Gating it off is a behaviour change and is
+    ///   deliberately NOT done here. Receipt:
+    ///   `docs/receipts/purity/rust_unwitnessed_probe_2026-08-27.json`.
     const RAM_BOSS_HEALTH: usize = 0x01A9;
     const RAM_X_SCREEN: usize = 0x003F;
     const RAM_X: usize = 0x0040;
@@ -2078,16 +2280,32 @@ impl CastlevaniaReward {
         }
         if boss == 0 && self.prev_boss > 0 {
             acc.add("boss_killed", self.boss_killed_bonus);
-            // Dracula is the final boss, in the last block (stage 18).
-            // Killing the boss on Dracula's stage is the game-completion
-            // event; a boss-kill on any earlier stage is only progress. The
-            // stage index $0028 is an internal stage counter (0x00-0x15 = 22
-            // internal stages, NOT the 18 displayed blocks). Dracula's stage
-            // is 0x12 (18) — proven by the game's own code: LoadStage indexes a
-            // 22-entry StageDataTable and the ending is a special-case
-            // `cmp #$12`. (An earlier pass used `>= 17` from a wrong
-            // "0-indexed block 18 = 17" inference; that only caught Dracula by
-            // luck. Not yet fight-verified live — no reachable Dracula state.)
+            // Killing the boss on the final stage is TAKEN to be the
+            // game-completion event; a boss-kill on any earlier stage is only
+            // progress.
+            //
+            // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — DRACULA_STAGE.
+            // ASSERTS: the final stage's $0028 value is 0x12.
+            // NO WITNESS: no Dracula fight, and no Castlevania game
+            //   completion, has ever been witnessed here — the witnessed
+            //   chain stops at $0028 == 3. **This is the sharpest purity
+            //   breach in the file**, and it is a different kind from the
+            //   rest: the comment it replaces did not merely cite an
+            //   external RAM map, it resolved the question by reading the
+            //   ROM's disassembled code and quoted an instruction as proof
+            //   — "proven by the game's own code: LoadStage indexes a
+            //   22-entry StageDataTable and the ending is a special-case
+            //   `cmp #$12`". That is exactly the Tier-3 line: a question
+            //   answered by knowing the game rather than by measuring it.
+            //   The proof is withdrawn. The VALUE is left in place, because
+            //   removing it changes behaviour and because its predecessor
+            //   (`>= 17`, from a wrong "0-indexed block 18" inference) was
+            //   worse; but 0x12 is now recorded as believed, not proven.
+            // EARNS IT: reach the final stage here and log $0028 at the
+            //   completion. `RAM_STAGE` itself is witnessed and earned —
+            //   what is unwitnessed is this one VALUE of it.
+            // Gates `completed`, i.e. Castlevania's `episode_success()`;
+            // declared `WinWitness::Unwitnessed` in `WIN_WITNESS_LEDGER`.
             const DRACULA_STAGE: u8 = 0x12;
             if stage == DRACULA_STAGE {
                 self.completed = true;
@@ -2121,6 +2339,12 @@ impl CastlevaniaReward {
         // Beating Castlevania = defeating Dracula (final-block boss),
         // latched in compute() — not merely clearing a block or spawning
         // past block 0 under a warm-start.
+        //
+        // UNCONFIRMED when true: `completed` needs BOTH unwitnessed halves
+        // — $01A9 behaving as a boss meter and $0028 == 0x12 being the
+        // final stage. Castlevania's STAGE CHAIN is witnessed; its WIN is
+        // not, and no boss defeat has ever been witnessed here on any game.
+        // Declared `WinWitness::Unwitnessed` in `WIN_WITNESS_LEDGER`.
         self.completed && !self.died
     }
 }
@@ -2160,8 +2384,33 @@ impl MetroidReward {
     // Win chain, using only get_ram-accessible bytes (item/equipment flags
     // live in cartridge WRAM $6000-$7FFF, which the 2 KB RAM snapshot cannot
     // reach — the old predicate read $006A, an unrelated zero-page byte that
-    // is always noise). Verified reachable on this emulator; the fight/ending
-    // VALUES are from the disassembly + Data Crystal, NOT yet fight-verified.
+    // is always noise). The addresses are verified REACHABLE on this
+    // emulator; nothing more than that was verified.
+    //
+    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — all four bytes and the
+    //   32-hit threshold.
+    // ASSERTS: $0098 is Mother Brain's state machine (values 3..7 = the
+    //   death chain, 8 = fight-init); $0099 is her hit counter and she dies
+    //   at 32; $007A is the "write ending message" flag and $007B the
+    //   credits-rolling flag, either of which reading 1 IS the terminal win.
+    // NO WITNESS: **Mother Brain has never been reached here**, and no boss
+    //   defeat has ever been witnessed on any game in this repo. The block
+    //   already self-declared "the fight/ending VALUES are from the
+    //   disassembly + Data Crystal, NOT yet fight-verified" — that
+    //   admission is the right FORM, and it is kept, but the constants it
+    //   describes are live and had no tag naming them as unearned.
+    // MEASURED NULL: $0098, $0099, $007A and $007B each held 0 across
+    //   15,000 random-action steps from `roms/Metroid (USA)_start.state.bin`
+    //   — a measurement of absence, correctly reported, which is not itself
+    //   a breach. What is imported is the meaning attached to values none
+    //   of them has ever taken. The number 32 is the plainest case: a
+    //   boss-death threshold for a fight never reached.
+    // EARNS IT: reach Mother Brain here and log the four bytes across the
+    //   fight and the escape.
+    // This is Metroid's ENTIRE `episode_success()` chain; behaviour is
+    //   unchanged and it is declared `WinWitness::Unwitnessed` in
+    //   `WIN_WITNESS_LEDGER`. Receipt for the null:
+    //   `docs/receipts/purity/rust_unwitnessed_probe_2026-08-27.json`.
     const RAM_MB_STATE: usize = 0x0098; // Mother Brain state machine
     const RAM_MB_HITS: usize = 0x0099; // MB hit counter; dies at 32 hits
     const RAM_ENDING_MSG: usize = 0x007A; // "write ending message" flag
@@ -2318,8 +2567,12 @@ impl MetroidReward {
         // WIN = Mother Brain defeated AND escaped (ending fired), latched in
         // `won`. The old predicate (item_flags.count_ones() >= 8) read $006A —
         // an unrelated zero-page byte (the real item flags are in unreachable
-        // WRAM), so it fired on noise. This is the accessible, correct chain;
-        // the fight/ending values are researched but not yet fight-verified.
+        // WRAM), so it fired on noise. This is the accessible chain; the
+        // fight/ending values are researched but not yet fight-verified.
+        //
+        // UNCONFIRMED when true: every byte in the chain is
+        // UNWITNESSED-EXTERNAL and each is a measured null here. Declared
+        // `WinWitness::Unwitnessed` in `WIN_WITNESS_LEDGER`.
         self.won && !self.died
     }
 }
@@ -2364,10 +2617,21 @@ impl TetrisReward {
     const RAM_BOARD: usize = 0x0400;
     const BOARD_ROWS: usize = 20;
     const BOARD_COLS: usize = 10;
-    /// Empty-cell sentinel on the $0400 playfield. Widely cited as 0xEF;
-    /// VERIFY against a live RAM dump. Only used by the OPT-IN board
-    /// shaping (board_shaping != 0), so a wrong value cannot break the
-    /// core line/score/top-out signals.
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: 0xEF is the empty-cell sentinel on the $0400 playfield.
+    /// NO WITNESS: "widely cited as 0xEF" is an external-provenance tell
+    ///   with no source named and no in-repo reading of the playfield
+    ///   behind it — the comment already carried its own "VERIFY against a
+    ///   live RAM dump" TODO, which is an admission that nobody here has.
+    ///   Tetris IS on this repo's witness ledger, but for the LINE/LEVEL
+    ///   bytes (pre-registered byte_change, rendered LINES-000/SUCCESS);
+    ///   the board sentinel is not part of that receipt.
+    /// EARNS IT: dump $0400..$0400+200 from a live board here and read the
+    ///   value the empty cells actually hold.
+    /// Lowest priority in this file's semantic set, and correctly gated:
+    ///   only the OPT-IN board shaping reads it (`board_shaping != 0`,
+    ///   default 0.0), so a wrong value cannot touch the core
+    ///   line/score/top-out signals or `episode_success()`.
     const EMPTY_CELL: u8 = 0xEF;
 
     #[allow(clippy::too_many_arguments)]
@@ -2702,9 +2966,9 @@ impl BubbleBobbleReward {
 // Punch-Out!! (NES, Nintendo) — boxing, single-bout KO/TKO
 // ============================================================
 //
-// All addresses VERIFIED-LIVE on the Mike Tyson's Punch-Out!! (Japan, USA)
-// (Rev A) dump (md5 c119a5a9…, mapper 9 / MMC2) from the captured Glass Joe
-// opening-bell state, driving the emulator with real inputs:
+// The BOUT-DYNAMICS addresses are VERIFIED-LIVE on the Mike Tyson's Punch-Out!!
+// (Japan, USA) (Rev A) dump (md5 c119a5a9…, mapper 9 / MMC2) from the captured
+// Glass Joe opening-bell state, driving the emulator with real inputs:
 //   $0398 opponent HP  — 0..0x60; drops on every LANDED Mac punch, REFILLS
 //                        (increase) when a downed opponent gets back up.
 //                        Mirror at $0399 tracks it 1:1.
@@ -2713,10 +2977,11 @@ impl BubbleBobbleReward {
 //                        down (opp-specific: stayed 0 while Mac was down).
 //   $03D0 Mac-down flag — rises 0->1 the frame LITTLE MAC is knocked down.
 //   $0342 stars — banked star punches (earned by clean counters).
-//   $0001 win latch — 0 all through the bout AND during a loss; goes nonzero
-//                        ONLY at the winning KO/TKO (0 even on a NON-final
-//                        knockdown), so it is a never-false-positive win flag.
-//   $000A losses — career loss counter; increments the frame Mac is TKO'd.
+// The OUTCOME addresses ($0001 win latch, $000A losses, $0002 opponent index)
+// are NOT covered by that pass and are tagged UNWITNESSED-EXTERNAL on the
+// constants below: no Punch-Out bout has ever been won OR lost by TKO here, so
+// the blanket "all addresses VERIFIED-LIVE" this header used to open with could
+// not have applied to them. It has been scoped to what was actually driven.
 // Damage is counted on HP DECREASES only, so a get-up refill (an increase)
 // never scores and the between-knockdown bounce can't be farmed. The win and
 // loss are keyed off dedicated latches, never off HP==0 (which occurs on
@@ -2752,9 +3017,58 @@ impl PunchOutReward {
     const RAM_OPP_DOWN: usize = 0x03D1; // opponent knocked-down flag (0 up / !=0 down)
     const RAM_MAC_DOWN: usize = 0x03D0; // Little Mac knocked-down flag
     const RAM_STARS: usize = 0x0342; // banked star punches
-    const RAM_MATCH_ID: usize = 0x0001; // win latch: 0 during bout, !=0 at the winning KO/TKO
-    const RAM_LOSSES: usize = 0x000A; // career loss counter (increments on a Mac TKO)
-    const RAM_OPP_ID: usize = 0x0002; // opponent index (Glass Joe = 0) — for level_id only
+
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: this byte is a win latch — 0 through the whole bout and
+    ///   through a loss, nonzero ONLY at the winning KO/TKO, and therefore
+    ///   (the annotation's own words) "a never-false-positive win flag".
+    /// NO WITNESS: **no Punch-Out bout win has ever occurred in this repo.**
+    ///   `runs/fight_gate/smoke/solutions/` holds 0 files;
+    ///   `archive.stats.json` best_score is 81 against a 96 cap. The
+    ///   config annotation this mirrored cited Data Crystal and TASVideos
+    ///   and is now quarantined as `q_match_id` in `configs/punchout.yaml`.
+    ///   A false-positive RATE cannot be known from zero observations —
+    ///   that clause is retracted. Worse than unwitnessed, it is
+    ///   FALSIFIED at the one moment we could check: from the archived
+    ///   knockdown state (opp_hp=0, opp_down=1) a pure-NOOP continuation
+    ///   refills opp_hp 0->96 at step 120 while this byte stays constant 0
+    ///   (`runs/clear_gap/punchout/s8_remeasure_verdict.json`).
+    /// MEASURED NULL, with a built-in control: driven with uniform-random
+    ///   actions from the shipped opening-bell state, $0001 and $000A each
+    ///   held 0 across 15,000 steps while $0398 took 40 distinct values
+    ///   across 0..96 over the SAME window. So the bout was genuinely being
+    ///   fought — punches landed and the opponent's meter moved — and the
+    ///   outcome bytes still never moved. Receipt:
+    ///   `docs/receipts/purity/rust_unwitnessed_probe_2026-08-27.json`.
+    /// EARNS IT: win a bout here — land the KO/TKO with the tape kept —
+    ///   and log this byte across the transition. Until then a success
+    ///   reported by this arm is UNCONFIRMED, which `WIN_WITNESS_LEDGER`
+    ///   states for the record.
+    /// Behaviour is UNCHANGED: this still drives `won` / `done` /
+    ///   `episode_success()`. Disarming it is a behaviour change and was
+    ///   deliberately not made here.
+    const RAM_MATCH_ID: usize = 0x0001;
+
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: career loss counter that increments the frame Mac is TKO'd.
+    /// NO WITNESS: no Mac TKO is receipted anywhere in the run trees, so
+    ///   the increment has never been seen here either. This one carries
+    ///   an asymmetry its sibling does not: a spurious increase TRUNCATES
+    ///   the episode and pays `loss_penalty`, so a wrong identity here is
+    ///   not a silent no-op the way an unreachable win would be.
+    /// EARNS IT: take a TKO here and log $000A across it. Sibling of
+    ///   $0001 — annotating one and not the other would be a half-fix.
+    const RAM_LOSSES: usize = 0x000A;
+
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: opponent index, with Glass Joe at 0.
+    /// NO WITNESS: the roster order is external knowledge — only one
+    ///   opponent has ever been played here, so no second value of this
+    ///   byte has been observed to compare against.
+    /// EARNS IT: reach a second opponent and log the byte across the
+    ///   change. Lowest severity on this file's list: it feeds the
+    ///   `level_id` label only, never reward or termination.
+    const RAM_OPP_ID: usize = 0x0002;
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -2857,9 +3171,12 @@ impl PunchOutReward {
 
         acc.add("time_penalty", self.time_penalty);
 
-        // WIN — the match-id latch goes nonzero at the winning KO/TKO. It is 0
-        // through the whole bout (including non-final knockdowns) and 0 during a
-        // loss, so this can only mark a real match win. Latch + end the episode.
+        // WIN — an increase of $0001 is TAKEN to be the winning KO/TKO. See
+        // that constant's UNWITNESSED-EXTERNAL tag: no bout win has been
+        // witnessed here, so "this can only mark a real match win" is
+        // retracted — it is what the byte is believed to do, not what anybody
+        // here has watched it do. Behaviour is unchanged; a success reported
+        // through this branch is UNCONFIRMED per `WIN_WITNESS_LEDGER`.
         if !self.won && matchid > self.start_matchid {
             acc.add("win", self.win_bonus);
             self.won = true;
@@ -2882,16 +3199,38 @@ impl PunchOutReward {
     }
 
     pub fn episode_success(&self) -> bool {
+        // UNCONFIRMED when true: `won` can only be set by an increase of
+        // $0001, whose win-latch identity is UNWITNESSED-EXTERNAL (no bout
+        // win has ever happened here) and is falsified at the one moment we
+        // could check. Declared `WinWitness::Unwitnessed` in
+        // `WIN_WITNESS_LEDGER` so this cannot report success silently.
         self.won
     }
 }
 
 // ============================================================
 // Kung Fu (NES, 1985 — Nintendo's port of Irem's "Kung-Fu Master" /
-// Famicom "Spartan X"). Side-scrolling beat-'em-up: Thomas ascends the
-// Devil's Temple one floor at a time, defeating each floor's boss (which
-// increments the floor byte $0058 and opens the door up) to rescue Sylvia
-// on the 5th floor. RAM verified live on this ROM (see configs/kung-fu.yaml).
+// Famicom "Spartan X"). Side-scrolling beat-'em-up.
+//
+// PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — the header this replaces.
+// ASSERTS: it described the whole progression structure — Thomas ascends
+//   the Devil's Temple one floor at a time, defeating each floor's boss,
+//   which "increments the floor byte $0058 and opens the door up", to
+//   rescue Sylvia on the 5th floor — and certified the lot with the words
+//   "RAM verified live on this ROM".
+// NO WITNESS: **no Kung Fu floor clear has ever been witnessed here**, so
+//   nothing about a floor-clear increment could have been verified live.
+//   The claim and this repo's own measurement contradicted each other in
+//   the same tree: `runs/clear_census/kungfu/s7_verdict.json` records
+//   $0058 == 0 in 32 of 32 banked cells across ~719,500 steps, disposition
+//   NOT_WITNESSABLE_FROM_HERE. `configs/kungfu.yaml` had already retracted
+//   the identity as CROSS-SOURCED; this header had not. It also pointed at
+//   `configs/kung-fu.yaml`, a file that does not exist — the profile is
+//   `configs/kungfu.yaml`, whose downgraded annotation is the live record.
+// EARNS IT: clear a floor here and log $0058 across the transition.
+// The floor-count STRUCTURE (five floors, then Sylvia) is game knowledge
+// and is not re-asserted above; what remains is what the code does with
+// the byte, which is unchanged.
 // ============================================================
 
 #[derive(Clone)]
@@ -2912,6 +3251,19 @@ pub struct KungFuReward {
     time_penalty: f64,
     survival_weight: f64,
     floor_goal: u8,
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: the $0058 value that means the game is beaten / Sylvia
+    ///   rescued. Its factory default is the hardcoded magic number 5.
+    /// NO WITNESS: five-floors-then-Sylvia is pure game knowledge, and
+    ///   this repo has never seen $0058 hold ANY value but 0 (32/32 banked
+    ///   cells, ~719,500 steps). Same class as Punch-Out's $0001: a
+    ///   terminal-win threshold for an event with zero observations. It is
+    ///   a magic value in the engine, not just a config key, so
+    ///   quarantining `configs/kungfu.yaml` could not reach it.
+    /// EARNS IT: reach the final floor here and log the byte at the
+    ///   completion. Left live and unchanged — it cannot fire while
+    ///   $0058 is pinned at 0, so disarming it would buy nothing and
+    ///   would be a behaviour change.
     game_clear_floor: u8,
 
     // Dynamic state.
@@ -2929,7 +3281,17 @@ pub struct KungFuReward {
 }
 
 impl KungFuReward {
-    const RAM_FLOOR: usize = 0x0058;    // current floor: 0=1F .. 4=5F; +1 per floor clear
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: current floor, 0=1F .. 4=5F, +1 per floor clear.
+    /// NO WITNESS: no Kung Fu floor clear has happened here, so the "+1 per
+    ///   floor clear" half has never been observed. MEASURED NULL, and an
+    ///   exact one: $0058 == 0 in 32/32 banked cells over ~719,500 steps
+    ///   (`runs/clear_census/kungfu/s7_verdict.json`). The null is honest
+    ///   and stays; `configs/kungfu.yaml`'s retraction of "it can only rise
+    ///   on a real floor clear" applies equally here — unfalsified is not
+    ///   verified.
+    /// EARNS IT: clear a floor here and log $0058 across the transition.
+    const RAM_FLOOR: usize = 0x0058;
     const RAM_LIVES: usize = 0x005C;    // remaining lives (boots at 3)
     const RAM_HEALTH: usize = 0x04A6;   // player energy bar; drains + damage; underflows 0->255 at death
     const RAM_BOSS_HP: usize = 0x04A5;  // cross-sourced boss/enemy energy (opt-in shaping only)
@@ -3125,6 +3487,10 @@ impl KungFuReward {
     /// floor; raise to 4 to require reaching the 5th floor, and pair with
     /// game_clear_floor for the full Sylvia rescue.
     pub fn episode_success(&self) -> bool {
+        // UNCONFIRMED when true: `floors_cleared` only advances on an
+        // increase of $0058, which is UNWITNESSED-EXTERNAL and measured at
+        // 0 in 32/32 banked cells over ~719,500 steps. Declared
+        // `WinWitness::Unwitnessed` in `WIN_WITNESS_LEDGER`.
         self.floors_cleared >= self.floor_goal as u32
     }
 }
@@ -3186,6 +3552,22 @@ pub struct GradiusReward {
 impl GradiusReward {
     const RAM_LIVES: usize = 0x0020;
     const RAM_STATUS: usize = 0x0100;
+    // PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — the six power-up bytes.
+    // ASSERTS: $0040 Speed, $0041 Missile, $0042 meter selector, $0044
+    //   Weapon, $0045 Options, $0046 Shield.
+    // NO WITNESS: these are the datacrystal RAM-map values, and the block's
+    //   own header says why they could not be confirmed here — "scripted
+    //   play could not grab a capsule to delta-verify them live". **No
+    //   Gradius capsule pickup has ever been observed here**, so the
+    //   identities rest entirely on the external map; the cross-check that
+    //   was done (fresh-ship base == 0) is consistent with almost any byte.
+    // EARNS IT: grab a capsule here and log the six bytes across the spend.
+    // MITIGATED, NOT EARNED, and left exactly as it is: the arithmetic is
+    //   INCREASE-ONLY, so a wrong address is a no-op rather than a farmable
+    //   bonus. This block is otherwise the best-disciplined in the file —
+    //   `stage_addr` is disabled by default with an explicit "NO byte is
+    //   trustworthy as the stage index yet" — which is why the disposition
+    //   here is annotate, not disarm.
     const RAM_SPEED: usize = 0x0040;
     const RAM_MISSILE: usize = 0x0041;
     const RAM_SEL: usize = 0x0042;
@@ -3752,9 +4134,20 @@ impl GhostsReward {
     }
 
     pub fn episode_success(&self) -> bool {
-        // A real stage clear (latched in compute), and not a death. Never
+        // A stage clear (latched in compute), and not a death. Never
         // `total > 0` — a positive-reward episode that merely inched forward
         // or lost armor without clearing is NOT a win.
+        //
+        // UNCONFIRMED when true, for a reason unlike the rest of this
+        // group. The ADDRESSES here are earned (each carries a live delta,
+        // and Path A's stage byte is correctly disabled); what is
+        // unwitnessed is the Path-B INFERENCE that a deep-x run followed by
+        // a collapse below `reset_threshold` is a stage clear. No
+        // Ghosts'n Goblins stage transition has ever been seen on this ROM
+        // to calibrate those thresholds against, so the header's own
+        // "must be tuned to a real Stage-1 length once a stage transition is
+        // reachable" is still outstanding. Declared
+        // `WinWitness::Unwitnessed` in `WIN_WITNESS_LEDGER`.
         self.cleared && !self.died
     }
 }
@@ -3768,8 +4161,26 @@ pub struct DuckTalesReward {
     death_penalty: f64,
     survival_weight: f64,
     time_penalty: f64,
-    /// Single-step money jump (in dollars) that identifies a boss's main
-    /// treasure ($1,000,000) versus the largest gem (a $50,000 red diamond).
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: a single-step money jump this large can ONLY be a boss's
+    ///   main treasure ($1,000,000), because the largest gem is a $50,000
+    ///   red diamond — i.e. that the jump IS a boss defeat.
+    /// NO WITNESS: **no DuckTales level clear has ever been witnessed
+    ///   here**, no level past the start level has been reached, and no
+    ///   boss defeat has ever been witnessed on any game in this repo. The
+    ///   whole argument is a false-positive rate asserted for an event with
+    ///   zero observations, which is the same defect as Punch-Out's
+    ///   "never-false-positive win flag" wearing different clothes.
+    /// NOT AN ADDRESS: this is why the address-shaped sweeps missed it. The
+    ///   semantics live in two dollar figures — the $1,000,000 boss treasure
+    ///   and the $50,000 largest gem — so a `ram_mapping` audit could not see
+    ///   it and `configs/ducktales.yaml` never carried it. Both figures are
+    ///   game knowledge, not measurements. Paired with `TREASURE_CAP`.
+    /// EARNS IT: claim a main treasure here and log the money field across
+    ///   the pickup, together with the largest single gem observed.
+    /// Behaviour unchanged; declared `WinWitness::Unwitnessed` in
+    ///   `WIN_WITNESS_LEDGER`. The money FIELD itself ($0324..=$032A) is
+    ///   measured and earned — what is unwitnessed is the threshold.
     win_treasure_value: u64,
     level_goal: u32,
     prev_x: u8,
@@ -3797,8 +4208,20 @@ impl DuckTalesReward {
     const MONEY_LEN: usize = 7;
     // Reject screen-wrap / level-transition jumps in the X progress term.
     const MAX_FORWARD_DX: i32 = 32;
-    // Cap the money-shaping delta at the largest single gem ($50,000 red
-    // diamond) so a treasure pickup never swamps the level-clear bonus.
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — sibling of
+    ///   `win_treasure_value`; see that field's tag for the full case.
+    /// ASSERTS: $50,000 is the largest single gem (a red diamond), so
+    ///   capping the money-shaping delta there stops any pickup swamping
+    ///   the level-clear bonus.
+    /// NO WITNESS: the size of the largest gem is game knowledge; no gem
+    ///   census has been taken here. Annotating only `win_treasure_value`
+    ///   and leaving this untagged would be a half-fix — the two figures
+    ///   are one claim, and the win argument ("a jump this large can ONLY
+    ///   be a main treasure") is exactly the gap between them.
+    /// EARNS IT: observe the money field across a range of pickups here and
+    ///   record the largest single-step delta.
+    /// Shaping only, and conservative in the safe direction: too low a cap
+    ///   under-shapes, it cannot manufacture a win.
     const TREASURE_CAP: u64 = 50_000;
 
     #[allow(clippy::too_many_arguments)]
@@ -3932,6 +4355,11 @@ impl DuckTalesReward {
     }
 
     pub fn episode_success(&self) -> bool {
+        // UNCONFIRMED when true: `levels_cleared` only advances on a money
+        // jump >= `win_treasure_value`, whose "can ONLY be a main treasure"
+        // argument is UNWITNESSED-EXTERNAL — a false-positive rate asserted
+        // for a boss defeat with zero observations here. Declared
+        // `WinWitness::Unwitnessed` in `WIN_WITNESS_LEDGER`.
         self.levels_cleared >= self.level_goal
     }
 }
@@ -3982,14 +4410,46 @@ impl KidIcarusReward {
     // advanced $0131 0->100->200, then it wrapped to 44 with a carry of 1
     // into $0132 (= 300 total). Increases on enemy kills / heart pickups.
     const RAM_SCORE: [usize; 3] = [0x0131, 0x0132, 0x0133];
-    // Stage index for vertical-scrolling levels (Data Crystal). VERIFIED
-    // STABLE: held 0 across 300k+ frames of play and did NOT change on
-    // death, so a strict increase beyond the episode's start stage is an
-    // unambiguous stage clear (never a false positive). The 0->1 increment
-    // itself is cross-sourced, not reached under blind play.
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: stage index for vertical-scrolling levels, cited in-comment
+    ///   to Data Crystal, plus — the part that fails the discriminant —
+    ///   that a strict increase beyond the episode's start stage is "an
+    ///   unambiguous stage clear (never a false positive)".
+    /// NO WITNESS: no Kid Icarus stage clear has ever been witnessed here;
+    ///   the 0->1 increment has never been reached under any play.
+    /// THE POINT, and it is the structural finding of this pass:
+    ///   `configs/kid_icarus.yaml` had ALREADY retracted that exact
+    ///   sentence on 2026-08-27 — it quotes "an unambiguous stage clear
+    ///   (never a false positive)" and rules that "a false-positive rate
+    ///   cannot be known from zero observed increments, so that clause is
+    ///   retracted." The retracted clause survived VERBATIM here, in the
+    ///   layer that executes. A configs-only sweep moved the documentation
+    ///   while the wiring stayed put, so the two layers disagreed in
+    ///   writing. The clause is now retracted in both.
+    /// THE NULL STANDS AND IS NOT A BREACH: held 0 across 300k+ frames and
+    ///   did not change on death; reproduced by this pass at 0 across
+    ///   15,000 random-action steps. A measurement of absence, correctly
+    ///   reported. What is withdrawn is the false-positive RATE asserted on
+    ///   top of it — unfalsified is not verified.
+    /// EARNS IT: clear a stage here and log $0130 across the increment.
+    /// Gates `stage_cleared` (300) and half of `episode_success()`, so
+    ///   every clear this arm reports is UNCONFIRMED. Receipt:
+    ///   `docs/receipts/purity/rust_unwitnessed_probe_2026-08-27.json`.
     const RAM_STAGE: usize = 0x0130;
-    // Fortress boss health (Data Crystal). Reads 0 at Stage-1 spawn, so the
-    // >0 -> 0 kill event can never latch from the start state.
+
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27)
+    /// ASSERTS: fortress boss health, cited in-comment to Data Crystal.
+    /// NO WITNESS: **no Kid Icarus fortress has ever been reached here**,
+    ///   and no boss defeat has ever been witnessed on any game in this
+    ///   repo. MEASURED NULL: held 0 across 15,000 random-action steps
+    ///   (consistent with the existing "reads 0 at Stage-1 spawn" note,
+    ///   which stays — an honest null is not a breach).
+    /// EARNS IT: reach a fortress boss here and log $006B across the fight.
+    /// STILL LIVE: `boss_killed` is 500.0 and this is the other half of
+    ///   `episode_success()`. The >0 -> 0 gate means it cannot latch from
+    ///   the start state, which bounds the risk but does not earn the
+    ///   identity. Receipt:
+    ///   `docs/receipts/purity/rust_unwitnessed_probe_2026-08-27.json`.
     const RAM_BOSS: usize = 0x006B;
 
     #[allow(clippy::too_many_arguments)]
@@ -4145,11 +4605,16 @@ impl KidIcarusReward {
     }
 
     pub fn episode_success(&self) -> bool {
-        // A real Kid Icarus win = clearing a stage ($0130 advanced beyond the
-        // episode's start stage) OR defeating a fortress boss ($006B >0 -> 0).
-        // Both are gated so they can NEVER latch from the start state, and the
-        // stage byte is verified stable (no drift, no change on death), so
-        // neither path can false-positive.
+        // A Kid Icarus win is TAKEN to be clearing a stage ($0130 advanced
+        // beyond the episode's start stage) OR defeating a fortress boss
+        // ($006B >0 -> 0). Both are gated so they can never latch from the
+        // start state, and the stage byte is measured stable (no drift, no
+        // change on death) — but "so neither path can false-positive" is
+        // RETRACTED: a false-positive rate cannot be known from zero observed
+        // increments, and neither event has ever been witnessed here.
+        //
+        // UNCONFIRMED when true. Declared `WinWitness::Unwitnessed` in
+        // `WIN_WITNESS_LEDGER`; see the tags on RAM_STAGE and RAM_BOSS.
         self.cleared_any || self.boss_killed
     }
 }
@@ -4181,16 +4646,33 @@ impl KidIcarusReward {
 //                         Cross-sourced: GG "Start With All Hearts 0040:07".
 //   $0044-$0046 score   — little-endian; rises only when a strike lands.
 //                         Cross-sourced: retro data.json addr 68 type <d3.
-//   $0030 mission/scene  — VERIFIED constant (=1) through ALL of Mission 1 incl.
-//   [win key]             combat + two deaths; transitions 0->1 at Mission-1
-//                         start. Its INCREMENT could not be observed (clearing
-//                         Mission 1 needs real combat, out of a scripted probe's
-//                         reach), so the mission-CLEAR increment is cross-
-//                         sourced-by-structure. episode_success keys on an
-//                         INCREASE of this byte — it never false-positives on
-//                         score/motion/damage, and if $0030 is not the counter
-//                         the win simply never fires (safe under-trigger). Made
-//                         a parameter (mission_addr) so a verified address can
+//   $0030 mission/scene  — MEASURED constant (=1) through ALL of Mission 1
+//   [win key]             incl. combat + two deaths; transitions 0->1 at
+//                         Mission-1 start. That null is honest and stays.
+//                         PURITY: UNWITNESSED-EXTERNAL (2026-08-27) for the
+//                         INCREMENT. Its increment could not be observed
+//                         (clearing Mission 1 needs real combat, out of a
+//                         scripted probe's reach), so the mission-CLEAR
+//                         increment is cross-sourced-by-structure — and **no
+//                         Double Dragon mission clear has ever been witnessed
+//                         here**, so nothing about the increment could have
+//                         been measured here. RETRACTED: "it never
+//                         false-positives on score/motion/damage, and if
+//                         $0030 is not the counter the win simply never fires
+//                         (safe under-trigger)". `configs/double_dragon.yaml`
+//                         had already retracted the equivalent sentence
+//                         ("never a false positive; if wrong, it simply never
+//                         fires") and noted that this key "hard-defaults to
+//                         48 = 0x0030 in nes_core/src/rewards.rs, so this key
+//                         is documentation, not the wiring" — the wiring kept
+//                         carrying the retracted claim until now. Sharpened by
+//                         the ledger: this profile's banked `sol_000` is a
+//                         WITHDRAWN FALSE POSITIVE (`start_wd []`,
+//                         `clear_wd []`, fired by the confluence detector with
+//                         no independent witness), so it has already produced
+//                         a fake clear once. EARNS IT: clear Mission 1 here
+//                         and log $0030 across the increment. Still a
+//                         parameter (mission_addr) so a verified address can
 //                         replace it without a recompile.
 //   $03B2 coarse-scroll  — advances in steps as the world scrolls (opt-in
 //                         cross-section progress, section_scale; default off
@@ -4212,6 +4694,22 @@ pub struct DoubleDragonReward {
     mission_clear_bonus: f64,
     time_penalty: f64,
     section_scale: f64,
+    /// PURITY: UNWITNESSED-EXTERNAL (2026-08-27) — see the `$0030` entry in
+    /// this arm's header for the full case.
+    /// ASSERTS: the byte this points at is the mission/scene counter, and
+    ///   an INCREASE of it is a mission clear.
+    /// NO WITNESS: no Double Dragon mission clear has ever been witnessed
+    ///   here, and the increment could not be driven even under a
+    ///   purpose-built probe. Nominally a parameter, but it HARD-DEFAULTS
+    ///   to 48 = $0030 in `build_reward`, which is why
+    ///   `configs/double_dragon.yaml` records that its own `mission` key
+    ///   "is documentation, not the wiring" — **this field is the wiring**,
+    ///   and it kept the retracted "never a false positive" claim after the
+    ///   config gave it up. Sharpened by the ledger: this profile's banked
+    ///   `sol_000` is a withdrawn false positive.
+    /// EARNS IT: clear Mission 1 here and log the byte across the increment.
+    /// It is the sole path into `mission_cleared`, i.e. into
+    ///   `episode_success()`.
     mission_addr: usize,
     // State
     prev_hp: i32,
@@ -4405,11 +4903,14 @@ impl DoubleDragonReward {
         }
         self.prev_lives = lives;
 
-        // WIN — mission cleared. The mission/scene counter ($0030) is stable
-        // through an entire mission (verified constant across combat + deaths),
-        // so an INCREASE marks a real mission clear and never false-positives on
-        // score / motion / damage. Latch + end the episode. Guarded to lives <
-        // GAME_OVER_MIN so a game-over frame can never masquerade as a clear.
+        // WIN — mission cleared. The mission/scene counter ($0030) is MEASURED
+        // stable through an entire mission (constant across combat + deaths),
+        // and an INCREASE is TAKEN to mark a mission clear. RETRACTED: "and
+        // never false-positives on score / motion / damage" — the increment
+        // has never been observed here, so a false-positive rate cannot be
+        // known from it (see the $0030 entry in this arm's header). Latch +
+        // end the episode. Guarded to lives < GAME_OVER_MIN so a game-over
+        // frame can never masquerade as a clear.
         if !self.mission_cleared && mission > self.start_mission && lives < Self::GAME_OVER_MIN {
             acc.add("mission_clear", self.mission_clear_bonus);
             self.mission_cleared = true;
@@ -4425,6 +4926,13 @@ impl DoubleDragonReward {
     }
 
     pub fn episode_success(&self) -> bool {
+        // UNCONFIRMED when true: `mission_cleared` can only be set by an
+        // increase of the byte at `mission_addr` (default $0030), whose
+        // INCREMENT is UNWITNESSED-EXTERNAL — never observed here, and the
+        // "safe under-trigger / never false-positives" defence is retracted.
+        // This profile's banked `sol_000` is already a withdrawn false
+        // positive. Declared `WinWitness::Unwitnessed` in
+        // `WIN_WITNESS_LEDGER`.
         self.mission_cleared
     }
 }
@@ -4459,6 +4967,250 @@ pub const REWARD_IDS: &[&str] = &[
     "kid_icarus",
     "double_dragon",
 ];
+
+/// How much this repository actually knows about the event a reward arm's
+/// `episode_success()` reports.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WinWitness {
+    /// The success event has been WITNESSED here, with a receipt anybody
+    /// can open. A reported success means what it says.
+    Witnessed,
+    /// `episode_success()` can return true, but only through semantics
+    /// tied to an event NOBODY HERE HAS EVER SEEN. A reported success is
+    /// UNCONFIRMED — it may be real, and it may be the predicate misfiring
+    /// on a byte whose meaning was imported rather than measured.
+    Unwitnessed,
+    /// `episode_success()` cannot return true at all under the shipped
+    /// factory defaults — a hard `false`, or a sentinel that gates the
+    /// only path (Contra's `clear_screen == 255`, Gradius's
+    /// `stage_addr == 0`). Nothing to disclose because nothing can fire.
+    Disarmed,
+}
+
+/// One row of the win-witness ledger.
+pub struct WinWitnessRow {
+    /// The canonical `reward_id` (as it appears in [`REWARD_IDS`]).
+    pub reward_id: &'static str,
+    pub status: WinWitness,
+    /// What `episode_success()` actually keys on.
+    pub predicate: &'static str,
+    /// For `Witnessed`: the receipt. For `Unwitnessed`: the event with no
+    /// witness here, and the null that establishes it where one is
+    /// measured. For `Disarmed`: what holds it shut.
+    pub basis: &'static str,
+}
+
+/// **Every reward arm, classified by whether its success event has ever
+/// been witnessed in this repository.**
+///
+/// This table is DATA. Nothing in the reward path reads it, so a row here
+/// changes no arithmetic, no episode boundary and no banked run — that is
+/// deliberate. Its job is that a success reported by an arm resting on
+/// semantics nobody here has ever observed cannot be reported SILENTLY:
+/// `win_witness(reward_id)` answers, for any arm, whether a reported
+/// success is confirmed by a witness or is UNCONFIRMED.
+///
+/// The table is TOTAL over [`REWARD_IDS`] and `rewards_ledger_is_total`
+/// enforces it, so adding a reward arm forces a classification rather
+/// than defaulting into silence. `unwitnessed_arms_can_actually_report_
+/// success` drives each `Unwitnessed` arm to a reported success on
+/// synthetic RAM, and `disarmed_arms_cannot_report_success` proves each
+/// `Disarmed` arm cannot — so neither label can rot into a decoration
+/// that describes nothing.
+///
+/// Exported to Python as `nes_core.win_witness_ledger()`.
+///
+/// The witness ledger itself (which games have a witnessed clear) is
+/// established in `docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md`.
+/// **No boss defeat has ever been witnessed here, on any game.**
+pub const WIN_WITNESS_LEDGER: &[WinWitnessRow] = &[
+    WinWitnessRow {
+        reward_id: "mario",
+        status: WinWitness::Witnessed,
+        predicate: "cleared_any — flagpole ($001D float_state == 3) or an x-4 castle clear",
+        basis: "all 32 levels cleared on ONE cold-boot tape, state_loads=0, \
+                ending frame rendered. The most-witnessed predicate here.",
+    },
+    WinWitnessRow {
+        reward_id: "excitebike",
+        status: WinWitness::Witnessed,
+        predicate: "finished — $03A4 track section reaching FINAL_SECTION (3)",
+        basis: "1144-action power-on tape with a rendered FINISH frame; the \
+                section chain 0->1->2->3 was observed, so FINAL_SECTION fired.",
+    },
+    WinWitnessRow {
+        reward_id: "bubble_bobble",
+        status: WinWitness::Witnessed,
+        predicate: "rounds_cleared >= round_goal — increases of the $0401 round byte",
+        basis: "rounds 1->99 chained, each entrance minted from the prior \
+                clear. NOTE: the ROUND CLEAR is witnessed; Bubble Bobble's \
+                BOSS is explicitly falsified (12 banked states x 6 arms; \
+                $0496 stayed 7) and no boss term keys this predicate.",
+    },
+    WinWitnessRow {
+        reward_id: "tetris",
+        status: WinWitness::Witnessed,
+        predicate: "goal_reached — max_lines >= line_goal, or a level-up past start_level",
+        basis: "pre-registered byte_change with a rendered LINES-000/SUCCESS \
+                frame; line/level bytes are measured, not cited.",
+    },
+    WinWitnessRow {
+        reward_id: "zelda",
+        status: WinWitness::Unwitnessed,
+        predicate: "won — $0672 LastBossDefeated going nonzero, or $0609 == SONG_ENDING (0x10)",
+        basis: "Ganon has never been defeated here and the ending has never \
+                played: every Zelda solutions/ directory across 8 run trees \
+                holds 0 files. $0672 is sourced in-code to the aldonunez \
+                disassembly. MEASURED NULL on $0609 from the training start \
+                state: held 1 across 600 NOOP and 60,000 random-action steps \
+                — 0 frames == 0x10, 0 frames with bit 0x02 set.",
+    },
+    WinWitnessRow {
+        reward_id: "castlevania",
+        status: WinWitness::Unwitnessed,
+        predicate: "completed — $01A9 boss health falling >0 -> 0 WHILE $0028 == DRACULA_STAGE (0x12)",
+        basis: "no Castlevania boss fight has ever been witnessed here and no \
+                Dracula state is reachable. The STAGE CHAIN is witnessed \
+                ($0028 0->1->2->3 across five run trees) but the WIN is not: \
+                $01A9 is sourced to Data Crystal + tasvideos, and 0x12 is \
+                justified by quoting the ROM's own disassembled `cmp #$12`.",
+    },
+    WinWitnessRow {
+        reward_id: "metroid",
+        status: WinWitness::Unwitnessed,
+        predicate: "won — $007A ending-message or $007B credits flag reading 1, after \
+                    the $0098/$0099 Mother-Brain chain",
+        basis: "Mother Brain has never been reached here. MEASURED NULL: \
+                $0098, $0099, $007A and $007B each held 0 across 15,000 \
+                random-action steps from the shipped start state. The block \
+                self-declares its fight/ending values as \"from the \
+                disassembly + Data Crystal, NOT yet fight-verified\".",
+    },
+    WinWitnessRow {
+        reward_id: "punch_out",
+        status: WinWitness::Unwitnessed,
+        predicate: "won — $0001 rising above its first-step value",
+        basis: "NO Punch-Out bout win has ever been witnessed here. \
+                runs/fight_gate/smoke/solutions/ holds 0 files; \
+                archive.stats.json best_score is 81 against a 96 cap. \
+                FALSIFIER on the win latch itself: from the archived \
+                knockdown state (opp_hp=0, opp_down=1) a pure-NOOP \
+                continuation refills opp_hp 0->96 at step 120 while $0001 \
+                stays constant 0 \
+                (runs/clear_gap/punchout/s8_remeasure_verdict.json).",
+    },
+    WinWitnessRow {
+        reward_id: "kung_fu",
+        status: WinWitness::Unwitnessed,
+        predicate: "floors_cleared >= floor_goal — increases of the $0058 floor byte",
+        basis: "no Kung Fu floor clear has ever been witnessed here. \
+                MEASURED NULL, and an exact one: runs/clear_census/kungfu/\
+                s7_verdict.json records $0058 == 0 in 32 of 32 banked cells \
+                across ~719,500 steps, disposition NOT_WITNESSABLE_FROM_HERE.",
+    },
+    WinWitnessRow {
+        reward_id: "ducktales",
+        status: WinWitness::Unwitnessed,
+        predicate: "levels_cleared >= level_goal — a single-step money jump >= win_treasure_value",
+        basis: "no DuckTales level clear has ever been witnessed here and no \
+                level past the start level has been reached — DuckTales is on \
+                the NO-WITNESSED-CLEAR side of the ledger in \
+                docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md, and its \
+                solutions/ trees hold no clear tape. The predicate is not an \
+                address at all: it is the game-knowledge pair $1,000,000 boss \
+                treasure vs $50,000 largest gem, encoded as two dollar \
+                figures, which is why address-shaped sweeps missed it.",
+    },
+    WinWitnessRow {
+        reward_id: "kid_icarus",
+        status: WinWitness::Unwitnessed,
+        predicate: "cleared_any || boss_killed — $0130 rising past the start stage, \
+                    or $006B falling >0 -> 0",
+        basis: "no Kid Icarus stage clear or fortress-boss kill has ever been \
+                witnessed here. MEASURED NULL: $0130 and $006B each held 0 \
+                across 15,000 random-action steps (and $0130 across 300k+ \
+                frames in the earlier pass). Both addresses are cited to Data \
+                Crystal in code.",
+    },
+    WinWitnessRow {
+        reward_id: "double_dragon",
+        status: WinWitness::Unwitnessed,
+        predicate: "mission_cleared — an increase of the byte at mission_addr (default $0030)",
+        basis: "no Double Dragon mission clear has ever been witnessed here \
+                (see the witness ledger in \
+                docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md); the \
+                INCREMENT was never observed even under a purpose-built \
+                probe. Sharpened by the ledger: this profile's banked \
+                sol_000 is a WITHDRAWN FALSE POSITIVE (start_wd [] and \
+                clear_wd [], fired by the confluence detector with no \
+                independent witness), so it has already produced a fake clear.",
+    },
+    WinWitnessRow {
+        reward_id: "ghosts",
+        status: WinWitness::Unwitnessed,
+        predicate: "cleared — Path A (a verified stage byte, DISABLED) or Path B \
+                    (max_world_x >= clear_min_progress then a collapse below reset_threshold)",
+        basis: "no Ghosts'n Goblins stage clear has ever been witnessed here \
+                (see the witness ledger in \
+                docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md; its \
+                solutions/ trees hold no clear tape). \
+                Unlike the rest of this group the live path is POSITIONAL, \
+                not a RAM identity claim — Path A's stage byte is correctly \
+                disabled, and the address block ($0715/$0028/$0585) is \
+                earned. What is unwitnessed is the inference that a deep-x \
+                run followed by a collapse to ~0 IS a stage clear; no such \
+                transition has been seen on this ROM to calibrate it.",
+    },
+    WinWitnessRow {
+        reward_id: "generic",
+        status: WinWitness::Disarmed,
+        predicate: "hard `false` — the arm has no notion of winning at all",
+        basis: "the generic fallback has no game-specific notion of winning \
+                and must not claim one. The old `total > 0.0` was trivially \
+                true, so it reported success at step 1 for every game.",
+    },
+    WinWitnessRow {
+        reward_id: "mega_man",
+        status: WinWitness::Disarmed,
+        predicate: "hard `false` — held shut in code, not by a sentinel",
+        basis: "`boss_killed` latches on ANY $06C1 meter reaching 0, which \
+                wildly overstates \"beat Mega Man\", so episode_success is \
+                held false deliberately. NOTE: that disarms the WIN only — \
+                boss_damage 5.0 / boss_killed 75.0 remain live SHAPING on an \
+                unwitnessed identity. See RAM_BOSS_HEALTH's tag.",
+    },
+    WinWitnessRow {
+        reward_id: "contra",
+        status: WinWitness::Disarmed,
+        predicate: "completed — screen >= clear_screen, gated on `clear_screen != 255`",
+        basis: "clear_screen defaults to the 255 = DISABLED sentinel, so the \
+                win cannot fire until a real stage-end screen is measured \
+                from a telemetry run. The model the rest of this file should \
+                copy. (Contra's stage-boss kill is separately FALSIFIED: \
+                81,244 alive steps, 830 zero-hits, 0/15 sustaining >=20 zero \
+                steps — the joint-zero is a live-suppression multiplexing \
+                read, not a kill.)",
+    },
+    WinWitnessRow {
+        reward_id: "gradius",
+        status: WinWitness::Disarmed,
+        predicate: "stages_cleared >= 1 — increases of the byte at stage_addr",
+        basis: "stage_addr defaults to 0 = DISABLED. Every stable-looking \
+                zero-page candidate proved to change mid-stage under live \
+                probing, so NO byte is trustworthy as the stage index yet and \
+                the block says so.",
+    },
+];
+
+/// How much this repo knows about the success event `reward_id` reports.
+///
+/// Returns `None` for an id outside [`REWARD_IDS`] — which
+/// `build_reward` also rejects, so an unknown id never reaches a
+/// classification silently.
+pub fn win_witness(reward_id: &str) -> Option<&'static WinWitnessRow> {
+    let id = normalise_reward_id(reward_id);
+    WIN_WITNESS_LEDGER.iter().find(|r| r.reward_id == id)
+}
 
 /// Canonicalise a declared id before lookup: trim, lowercase, and fold
 /// `-` / ` ` to `_`. So `"Kung Fu"`, `"kung-fu"` and `"kung_fu"` all
@@ -4661,9 +5413,12 @@ pub fn build_reward(reward_id: &str, weights: &HashMap<String, f64>) -> Option<R
                 w(weights, "death_penalty", -25.0),
                 w(weights, "time_penalty", -0.005),
                 w(weights, "survival_weight", 0.01),
-                // floors_cleared >= floor_goal == a real stage-clear win (default
-                // 1 = clear Floor 1). game_clear_floor = the $0058 value that means
-                // the game is beaten / Sylvia rescued (terminal jackpot).
+                // floors_cleared >= floor_goal is TAKEN to be a stage-clear win
+                // (default 1 = clear Floor 1); game_clear_floor is TAKEN to be the
+                // $0058 value meaning the game is beaten. Both are
+                // UNWITNESSED-EXTERNAL — see the tags on RAM_FLOOR and
+                // game_clear_floor. $0058 has never been observed off 0 here, so
+                // neither has ever fired.
                 w(weights, "floor_goal", 1.0) as u8,
                 w(weights, "game_clear_floor", 5.0) as u8,
             )))
@@ -6499,5 +7254,313 @@ fn double_dragon_forward_is_high_water_not_farmable() {
         assert!((o2.reward - (256.0 + 5.0 - 40.0)).abs() < 1e-6,
                 "screen-boundary crossing should reward 256+5-40=221, got {}",
                 o2.reward);
+    }
+}
+
+// ==========================================================================
+// The win-witness guard (2026-08-27)
+//
+// `WIN_WITNESS_LEDGER` is data, so the danger is that it becomes a
+// decoration: a table describing nothing, kept green by a test that only
+// reads it. These four tests exist to make that impossible. They drive the
+// actual reward arms and require the ledger's labels to be TRUE OF THE CODE:
+//
+//   * totality — every id in REWARD_IDS is classified exactly once, so a new
+//     arm cannot land unclassified;
+//   * `Unwitnessed` arms must ACTUALLY be able to report success through the
+//     named byte (a ledger row pointing at a dead predicate would be a lie in
+//     the flattering direction);
+//   * `Disarmed` arms must actually be unable to, under factory defaults;
+//   * `Witnessed` arms must be exactly the four games with a receipted clear.
+//
+// A behaviour change that silently re-arms a disarmed win, or that moves a
+// win onto a different byte, fails here.
+// ==========================================================================
+#[cfg(test)]
+mod win_witness_guard {
+    use super::*;
+
+    fn zram() -> Vec<u8> {
+        vec![0u8; 2048]
+    }
+
+    /// Every reward arm is classified, exactly once.
+    ///
+    /// This is the anti-vacuity spine: a ledger that simply omitted the
+    /// awkward arms would pass every other test in this module.
+    #[test]
+    fn ledger_is_total_over_reward_ids() {
+        let mut seen: Vec<&str> = WIN_WITNESS_LEDGER.iter().map(|r| r.reward_id).collect();
+        seen.sort_unstable();
+        let dup = seen.windows(2).find(|w| w[0] == w[1]);
+        assert!(dup.is_none(), "duplicate ledger row: {dup:?}");
+
+        for id in REWARD_IDS {
+            assert!(
+                win_witness(id).is_some(),
+                "reward arm `{id}` has no WIN_WITNESS_LEDGER row. Every arm \
+                 must be classified: a success it reports is either backed by \
+                 a witnessed event here or it is UNCONFIRMED, and silence is \
+                 not a third option."
+            );
+        }
+        for row in WIN_WITNESS_LEDGER {
+            assert!(
+                REWARD_IDS.contains(&row.reward_id),
+                "ledger row `{}` is not a real reward id",
+                row.reward_id
+            );
+        }
+        assert_eq!(WIN_WITNESS_LEDGER.len(), REWARD_IDS.len());
+    }
+
+    /// Every row says something: a non-empty predicate and a basis that
+    /// names evidence, not a shrug.
+    #[test]
+    fn every_ledger_row_states_a_predicate_and_a_basis() {
+        for row in WIN_WITNESS_LEDGER {
+            assert!(
+                row.predicate.len() > 12,
+                "{}: predicate must name what episode_success() keys on",
+                row.reward_id
+            );
+            assert!(
+                row.basis.len() > 40,
+                "{}: basis must cite the receipt (witnessed), the \
+                 unwitnessed event (unwitnessed), or what holds it shut \
+                 (disarmed)",
+                row.reward_id
+            );
+        }
+    }
+
+    /// The four arms labelled `Witnessed` are exactly the games with a
+    /// receipted clear in this repo, and no others.
+    ///
+    /// Pinning the SET both ways is the over-withdrawal guard: promoting an
+    /// unwitnessed arm to `Witnessed` fails, and so does demoting SMB.
+    #[test]
+    fn witnessed_set_is_exactly_the_receipted_clears() {
+        let mut got: Vec<&str> = WIN_WITNESS_LEDGER
+            .iter()
+            .filter(|r| r.status == WinWitness::Witnessed)
+            .map(|r| r.reward_id)
+            .collect();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            vec!["bubble_bobble", "excitebike", "mario", "tetris"],
+            "the Witnessed set must match the witness ledger in \
+             docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md. Adding an arm \
+             here claims a clear this repo can show a receipt for; removing \
+             one throws away earned work."
+        );
+    }
+
+    /// Each `Unwitnessed` arm can genuinely be driven to a reported success
+    /// through the byte its ledger row names.
+    ///
+    /// Without this the label is unfalsifiable — a row could point at a dead
+    /// predicate and nothing would notice. Each case writes ONLY the bytes
+    /// the ledger row names, so if a win moves onto a different address this
+    /// fails rather than quietly passing.
+    #[test]
+    fn unwitnessed_arms_can_actually_report_success() {
+        let w = HashMap::new();
+
+        // punch_out — $0001 rising above its first-step value. THE concrete
+        // case: no bout win has ever been witnessed here, the byte is
+        // falsified from the archived knockdown state, and it still drives
+        // won/done/episode_success().
+        let mut r = build_reward("punch_out", &w).unwrap();
+        let mut ram = zram();
+        ram[0x0398] = 0x60;
+        ram[0x0392] = 0x60;
+        r.compute(&ram, 0, false);
+        assert!(!r.episode_success(), "punch_out must not start won");
+        ram[0x0001] = 1;
+        let out = r.compute(&ram, 0, false);
+        assert!(
+            r.episode_success() && out.done,
+            "punch_out's win is still keyed on $0001; if this stopped being \
+             true the ledger row is describing the wrong byte"
+        );
+
+        // kung_fu — an increase of $0058.
+        let mut r = build_reward("kung_fu", &w).unwrap();
+        let mut ram = zram();
+        ram[0x04A6] = 0x30;
+        ram[0x005C] = 3;
+        r.compute(&ram, 0, false);
+        assert!(!r.episode_success());
+        ram[0x0058] = 1;
+        r.compute(&ram, 0, false);
+        assert!(r.episode_success(), "kung_fu's win is keyed on $0058");
+
+        // kid_icarus — an increase of $0130 past the start stage.
+        let mut r = build_reward("kid_icarus", &w).unwrap();
+        let mut ram = zram();
+        ram[0x00A6] = 7;
+        r.compute(&ram, 0, false);
+        assert!(!r.episode_success());
+        ram[0x0130] = 1;
+        r.compute(&ram, 0, false);
+        assert!(r.episode_success(), "kid_icarus's win is keyed on $0130");
+
+        // double_dragon — an increase of the mission byte (default $0030).
+        let mut r = build_reward("double_dragon", &w).unwrap();
+        let mut ram = zram();
+        ram[0x03B4] = 64;
+        ram[0x0043] = 2;
+        ram[0x0030] = 1;
+        r.compute(&ram, 0, false);
+        assert!(!r.episode_success());
+        ram[0x0030] = 2;
+        r.compute(&ram, 0, false);
+        assert!(
+            r.episode_success(),
+            "double_dragon's win is keyed on the mission_addr byte, which \
+             hard-defaults to 48 = $0030"
+        );
+
+        // castlevania — boss meter >0 -> 0 WHILE $0028 == DRACULA_STAGE.
+        let mut r = build_reward("castlevania", &w).unwrap();
+        let mut ram = zram();
+        ram[0x0044] = 16;
+        ram[0x002A] = 3;
+        ram[0x0028] = 0x12;
+        ram[0x01A9] = 64;
+        r.compute(&ram, 0, false);
+        assert!(!r.episode_success());
+        ram[0x01A9] = 0;
+        r.compute(&ram, 0, false);
+        assert!(
+            r.episode_success(),
+            "castlevania's win still needs BOTH unwitnessed halves: $01A9 \
+             falling to 0 and $0028 == 0x12"
+        );
+
+        // metroid — the ending flag.
+        let mut r = build_reward("metroid", &w).unwrap();
+        let mut ram = zram();
+        ram[0x0106] = 0x99;
+        ram[0x0107] = 0x00;
+        r.compute(&ram, 0, false);
+        assert!(!r.episode_success());
+        ram[0x0099] = 32; // MB_DEATH_HITS
+        r.compute(&ram, 0, false);
+        ram[0x007A] = 1;
+        r.compute(&ram, 0, false);
+        assert!(r.episode_success(), "metroid's win is keyed on $007A/$007B");
+
+        // ducktales — a single-step money jump >= win_treasure_value.
+        let mut r = build_reward("ducktales", &w).unwrap();
+        let mut ram = zram();
+        ram[0x00DD] = 3;
+        r.compute(&ram, 0, false);
+        assert!(!r.episode_success());
+        for (i, c) in format!("{:07}", 1_000_000u64).bytes().enumerate() {
+            ram[0x0324 + i] = c - b'0';
+        }
+        r.compute(&ram, 0, false);
+        assert!(
+            r.episode_success(),
+            "ducktales' win is keyed on the money-jump threshold, not an \
+             address — which is why address-shaped sweeps missed it"
+        );
+
+        // zelda — the ending song value.
+        let mut r = build_reward("zelda", &w).unwrap();
+        let mut ram = zram();
+        ram[0x066F] = 0x22;
+        r.compute(&ram, 0, false);
+        assert!(!r.episode_success());
+        ram[0x0609] = 0x10; // SONG_ENDING
+        r.compute(&ram, 0, false);
+        assert!(r.episode_success(), "zelda's win is keyed on $0609/$0672");
+
+        // ghosts — Path B, the positional inference (Path A is disabled).
+        let mut r = build_reward("ghosts", &w).unwrap();
+        let mut ram = zram();
+        ram[0x0715] = 2;
+        ram[0x0028] = 0x08;
+        ram[0x0585] = 1;
+        ram[0x005D] = 0x00; // scroll lo
+        ram[0x005E] = 0x08; // scroll hi -> world_x 2048 >= clear_min_progress
+        r.compute(&ram, 0, false);
+        assert!(!r.episode_success());
+        ram[0x005D] = 0x08; // collapse to world_x 8 < reset_threshold
+        ram[0x005E] = 0x00;
+        r.compute(&ram, 0, false);
+        assert!(
+            r.episode_success(),
+            "ghosts' only live win path is the Path-B progress collapse, \
+             whose thresholds no witnessed stage transition has calibrated"
+        );
+    }
+
+    /// Each `Disarmed` arm really cannot report success under the shipped
+    /// factory defaults, driven hard at the bytes that would otherwise win.
+    ///
+    /// This is the half that would catch a sentinel being quietly removed —
+    /// Contra's `clear_screen == 255` or Gradius's `stage_addr == 0` going
+    /// away turns an unwitnessed claim into a live one.
+    #[test]
+    fn disarmed_arms_cannot_report_success() {
+        let w = HashMap::new();
+
+        // contra — clear_screen defaults to the 255 DISABLED sentinel.
+        let mut r = build_reward("contra", &w).unwrap();
+        let mut ram = zram();
+        ram[0x0032] = 3;
+        r.compute(&ram, 0, false);
+        for s in 1..=254u8 {
+            ram[0x0064] = s;
+            r.compute(&ram, 0, false);
+        }
+        assert!(
+            !r.episode_success(),
+            "contra's clear_screen sentinel (255 = disabled) must hold the \
+             win shut: no Contra stage clear has been witnessed here"
+        );
+
+        // gradius — stage_addr defaults to 0 = DISABLED.
+        let mut r = build_reward("gradius", &w).unwrap();
+        let mut ram = zram();
+        ram[0x0020] = 3;
+        ram[0x0100] = 1;
+        r.compute(&ram, 0, false);
+        for a in [0x0004usize, 0x000A, 0x001E, 0x002A, 0x002B, 0x0037] {
+            ram[a] = 2;
+            r.compute(&ram, 0, false);
+        }
+        assert!(
+            !r.episode_success(),
+            "gradius has no trustworthy stage byte yet; stage_addr == 0 must \
+             keep the stage-clear win unreachable"
+        );
+
+        // mega_man — episode_success is hard false even after a boss kill.
+        let mut r = build_reward("mega_man", &w).unwrap();
+        let mut ram = zram();
+        ram[0x06C0] = 28;
+        ram[0x00A8] = 3;
+        ram[0x06C1] = 28;
+        r.compute(&ram, 0, false);
+        ram[0x06C1] = 0;
+        r.compute(&ram, 0, false);
+        assert!(
+            !r.episode_success(),
+            "mega_man's episode_success is deliberately hard-false: a single \
+             $06C1 meter reaching 0 is not 'beat Mega Man'"
+        );
+
+        // generic — no game-specific notion of winning.
+        let mut r = build_reward("generic", &w).unwrap();
+        let ram = zram();
+        for _ in 0..64 {
+            r.compute(&ram, 0, false);
+        }
+        assert!(!r.episode_success(), "the generic arm must never claim a win");
     }
 }

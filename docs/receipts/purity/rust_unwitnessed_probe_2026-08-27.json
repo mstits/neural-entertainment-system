@@ -1,0 +1,307 @@
+{
+  "generated_utc": "2026-08-27T21:18:42.323081+00:00",
+  "purpose": "Reproduce the nulls the 2026-08-27 rewards.rs provenance annotations cite. Uniform-random driving from the shipped start states; no game knowledge used.",
+  "driver": "uniform random action bitmask 0..255 (plus a NOOP arm where noop_steps > 0)",
+  "results": [
+    {
+      "label": "castlevania",
+      "status": "OK",
+      "rom": "roms/Castlevania (USA).nes",
+      "start_state": "roms/Castlevania (USA)_start.state.bin",
+      "seed": 20260827,
+      "noop_steps": 0,
+      "random_steps": 20000,
+      "addresses": {
+        "0x0044_player_health": {
+          "start_value": 64,
+          "distinct_values": 65,
+          "values": [
+            0,
+            "...",
+            64
+          ],
+          "min": 0,
+          "max": 64,
+          "moved": true
+        },
+        "0x0045_contested": {
+          "start_value": 64,
+          "distinct_values": 9,
+          "values": [
+            0,
+            8,
+            16,
+            24,
+            32,
+            40,
+            48,
+            56,
+            64
+          ],
+          "min": 0,
+          "max": 64,
+          "moved": true
+        },
+        "0x0071_hearts": {
+          "start_value": 5,
+          "distinct_values": 11,
+          "values": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "min": 0,
+          "max": 10,
+          "moved": true
+        },
+        "0x01A9_boss_health": {
+          "start_value": 64,
+          "distinct_values": 1,
+          "values": [
+            64
+          ],
+          "min": 64,
+          "max": 64,
+          "moved": false
+        },
+        "0x0028_stage": {
+          "start_value": 0,
+          "distinct_values": 2,
+          "values": [
+            0,
+            1
+          ],
+          "min": 0,
+          "max": 1,
+          "moved": true
+        }
+      }
+    },
+    {
+      "label": "kid_icarus",
+      "status": "OK",
+      "rom": "roms/Kid Icarus (USA, Europe).nes",
+      "start_state": "roms/Kid Icarus (USA, Europe)_start.state.bin",
+      "seed": 20260827,
+      "noop_steps": 0,
+      "random_steps": 15000,
+      "addresses": {
+        "0x0130_stage": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        },
+        "0x006B_boss": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        }
+      }
+    },
+    {
+      "label": "metroid",
+      "status": "OK",
+      "rom": "roms/Metroid (USA).nes",
+      "start_state": "roms/Metroid (USA)_start.state.bin",
+      "seed": 20260827,
+      "noop_steps": 0,
+      "random_steps": 15000,
+      "addresses": {
+        "0x0098_mb_state": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        },
+        "0x0099_mb_hits": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        },
+        "0x007A_ending_msg": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        },
+        "0x007B_credits": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        }
+      }
+    },
+    {
+      "label": "zelda",
+      "status": "OK",
+      "rom": "roms/Legend of Zelda, The (USA) (Rev A).nes",
+      "start_state": "roms/zelda_start_ctrl.state.bin",
+      "seed": 20260827,
+      "noop_steps": 600,
+      "random_steps": 60000,
+      "addresses": {
+        "0x0609_song": {
+          "start_value": 1,
+          "distinct_values": 1,
+          "values": [
+            1
+          ],
+          "min": 1,
+          "max": 1,
+          "moved": false
+        },
+        "0x0672_ganon_defeated": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        }
+      }
+    },
+    {
+      "label": "kung_fu",
+      "status": "OK",
+      "rom": "roms/Kung Fu (Japan, USA).nes",
+      "start_state": "roms/Kung Fu (Japan, USA)_start.state.bin",
+      "seed": 20260827,
+      "noop_steps": 0,
+      "random_steps": 15000,
+      "addresses": {
+        "0x0058_floor": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        }
+      }
+    },
+    {
+      "label": "punch_out",
+      "status": "OK",
+      "rom": "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes",
+      "start_state": "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A)_start.state.bin",
+      "seed": 20260827,
+      "noop_steps": 0,
+      "random_steps": 15000,
+      "addresses": {
+        "0x0001_match_id": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        },
+        "0x000A_losses": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        },
+        "0x0398_opp_hp": {
+          "start_value": 96,
+          "distinct_values": 40,
+          "values": [
+            0,
+            "...",
+            96
+          ],
+          "min": 0,
+          "max": 96,
+          "moved": true
+        }
+      }
+    },
+    {
+      "label": "mega_man",
+      "status": "OK",
+      "rom": "roms/Mega Man 2 (USA).nes",
+      "start_state": "roms/Mega Man 2 (USA)_start.state.bin",
+      "seed": 20260827,
+      "noop_steps": 0,
+      "random_steps": 15000,
+      "addresses": {
+        "0x06C1_boss_health": {
+          "start_value": 0,
+          "distinct_values": 1,
+          "values": [
+            0
+          ],
+          "min": 0,
+          "max": 0,
+          "moved": false
+        },
+        "0x06C0_player_health": {
+          "start_value": 28,
+          "distinct_values": 1,
+          "values": [
+            28
+          ],
+          "min": 28,
+          "max": 28,
+          "moved": false
+        },
+        "0x00A8_lives": {
+          "start_value": 3,
+          "distinct_values": 1,
+          "values": [
+            3
+          ],
+          "min": 3,
+          "max": 3,
+          "moved": false
+        }
+      }
+    }
+  ]
+}

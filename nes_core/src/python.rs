@@ -1637,6 +1637,35 @@ fn reward_ids() -> Vec<&'static str> {
     crate::rewards::REWARD_IDS.to_vec()
 }
 
+/// The win-witness ledger: for every reward arm, whether the event its
+/// `episode_success()` reports has ever been WITNESSED in this repository.
+///
+/// Returns `[(reward_id, status, predicate, basis), ...]` where status is
+/// one of `"witnessed"`, `"unwitnessed"`, `"disarmed"`.
+///
+/// A success reported by an `"unwitnessed"` arm is UNCONFIRMED: the
+/// predicate rests on semantics tied to an event nobody here has ever seen,
+/// so it could not have been measured here. Exported so a reporting layer
+/// can label such a success instead of printing it as a plain win — the
+/// point of the ledger is that these cannot be reported SILENTLY.
+///
+/// This reads the COMPILED table, so a Python caller comparing it against
+/// `nes_core/src/rewards.rs` also proves the loaded binary is current.
+#[pyfunction]
+fn win_witness_ledger() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+    crate::rewards::WIN_WITNESS_LEDGER
+        .iter()
+        .map(|r| {
+            let status = match r.status {
+                crate::rewards::WinWitness::Witnessed => "witnessed",
+                crate::rewards::WinWitness::Unwitnessed => "unwitnessed",
+                crate::rewards::WinWitness::Disarmed => "disarmed",
+            };
+            (r.reward_id, status, r.predicate, r.basis)
+        })
+        .collect()
+}
+
 #[pymodule]
 fn nes_core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NESEnvironment>()?;
@@ -1652,6 +1681,7 @@ fn nes_core(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rom_info, m)?)?;
     m.add_function(wrap_pyfunction!(supported_mappers, m)?)?;
     m.add_function(wrap_pyfunction!(reward_ids, m)?)?;
+    m.add_function(wrap_pyfunction!(win_witness_ledger, m)?)?;
     m.add("BUTTON_RIGHT", BUTTON_RIGHT)?;
     m.add("BUTTON_LEFT", BUTTON_LEFT)?;
     m.add("BUTTON_DOWN", BUTTON_DOWN)?;
