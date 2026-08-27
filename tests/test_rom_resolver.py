@@ -297,3 +297,56 @@ def test_main_resume_resolves_latest_ga_checkpoint(tg, tmp_path, monkeypatch):
         "GA-mode --resume must resolve to the newest gen_*.pt checkpoint, "
         f"got {calls.get('resume_from')!r}"
     )
+
+
+# --------------------------------------------------------------------------
+# match_roms — a same-franchise sequel must never fuzzy-match a different
+# installment's canonical name. Distinct games in the same franchise
+# (Double Dragon vs Double Dragon II, Zelda vs Zelda II, Mega Man 2 vs
+# Mega Man 3) have distinct RAM maps; a token-substring match alone
+# (e.g. "dragon", "zelda", "mega") cannot tell them apart, and binding
+# the wrong dump silently trains a reward function against the wrong
+# game's memory layout.
+# --------------------------------------------------------------------------
+
+DOUBLE_DRAGON = "roms/Double Dragon (USA).nes"
+ZELDA1 = "roms/Legend of Zelda, The (USA) (Rev A).nes"
+
+
+def test_match_rejects_sequel_when_canonical_is_the_original(tg, tmp_path):
+    f = _touch(tmp_path / "Double Dragon II - The Revenge (USA) (Rev A).nes")
+    assert tg.match_roms("double_dragon", DOUBLE_DRAGON, [f]) == []
+
+
+def test_match_rejects_second_sequel_too(tg, tmp_path):
+    f = _touch(tmp_path / "Double Dragon III - The Sacred Stones (USA).nes")
+    assert tg.match_roms("double_dragon", DOUBLE_DRAGON, [f]) == []
+
+
+def test_match_rejects_zelda_ii_for_zelda_1(tg, tmp_path):
+    f = _touch(tmp_path / "Zelda II - The Adventure of Link (USA).nes")
+    assert tg.match_roms("zelda", ZELDA1, [f]) == []
+
+
+def test_resolve_single_sequel_candidate_is_no_rom_found_not_a_silent_bind(
+    tg, tmp_path, monkeypatch,
+):
+    """The single-wrong-candidate case: only a sequel dump is present, no
+    exact canonical file. Before the fix this silently resolved (with a
+    warning) to the sequel's ROM, binding the original's reward function
+    to a different game's RAM map. It must instead behave exactly like
+    'no candidate at all' — a clean SystemExit naming what's missing."""
+    monkeypatch.chdir(tmp_path)
+    _touch(tmp_path / "roms" / "Double Dragon II - The Revenge (USA) (Rev A).nes")
+    with pytest.raises(SystemExit) as ei:
+        tg.resolve_rom("double_dragon", None, {})
+    assert "No ROM found" in str(ei.value)
+
+
+def test_match_still_allows_a_true_retag_of_the_same_sequel(tg, tmp_path):
+    """The fix must not overcorrect: a retagged/renamed dump of the SAME
+    installment (canonical already names it, e.g. Mega Man 2) still
+    fuzzy-matches."""
+    canonical = "roms/Mega Man 2 (USA).nes"
+    f = _touch(tmp_path / "megaman2.nes")
+    assert tg.match_roms("megaman", canonical, [f]) == [f]

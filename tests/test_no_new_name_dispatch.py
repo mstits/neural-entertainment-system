@@ -153,26 +153,91 @@ def test_the_scanner_can_actually_find_a_site() -> None:
         "inventory below would then be vacuous")
 
 
+#: Files allowed to carry the quarantined 0x0070/0x0084 coordinate pair
+#: with NO name-token conjunction (see the test below for why the
+#: conjunction was dropped entirely). Each entry states why the file is
+#: legitimate: this is deliberately a SEPARATE list from EXEMPT_FILES
+#: above — that one exempts the SUBSTRING-DISPATCH scan (selecting
+#: behaviour by matching a name), a different defect shape than these
+#: two, which never dispatch on a name at all.
+QUARANTINED_PAIR_EXEMPT: dict[str, str] = {
+    "src/gui/play_window.py": (
+        "generic GUI<->headless RAM trace dumped for EVERY loaded ROM "
+        "regardless of game (mixes Zelda's 0x70/0x84 with SMB's "
+        "0x86/0xCE/0x1D/0x770/0x772 in one fixed dump) — fidelity/parity "
+        "debugging output, never read by a reward or win-predicate path"
+    ),
+    "scripts/tracing/nes_core_nmi_trace.py": (
+        "single-purpose NMI-timing diagnostic hardcoded to one Zelda ROM "
+        "path; a fidelity tool comparing PC/RAM traces against nes-py, "
+        "never wired into training or a win predicate"
+    ),
+    "scripts/zelda_cave_entry_repro.py": (
+        "cycle-accuracy regression guard for the cave-entry transition "
+        "timing fix (advance_one_frame cycle-lock) — compares nes_core "
+        "vs nes-py RAM at one frame to confirm emulator timing, not game "
+        "outcome; never wired into training or a win predicate"
+    ),
+}
+
+
 def test_the_quarantined_zelda_pair_is_gone_from_production_python() -> None:
     """The specific regression: 0x0070 and 0x0084 (q_link_x / q_link_y)
-    were read under a "zelda"-in-name test in two diagnostics files. No
-    production Python may pair a name token with either address again."""
+    were read under a "zelda"-in-name test in two diagnostics files.
+
+    A THIRD and FOURTH file were found 2026-08-27 carrying the exact same
+    pair while evading the original fix's guard, which required a literal
+    quoted `"zelda"` token alongside the addresses: both files identify
+    the ROM only through its `.nes` filename ("Legend of Zelda, The (USA)
+    (Rev A).nes"), never through the bare word the old regex demanded.
+    Deleting a game-name comment or writing the ROM path instead of a
+    literal string was enough to fall outside the guard's sight, even
+    though the addresses stayed exactly as quarantined.
+
+    The fix is structural, not another keyword to type correctly: the
+    ADDRESS PAIR alone is now disqualifying, with no name-token
+    conjunction to opt out of. Co-occurrence of both quarantined
+    coordinates in production Python is specific enough on its own — the
+    conjunction never bought precision, only a way to evade silently.
+    Legitimate uses are named explicitly in QUARANTINED_PAIR_EXEMPT
+    above, with a reason, so an exemption is visible and auditable
+    instead of just absent from a regex's field of view.
+    """
     offenders = []
     for d in SCANNED_DIRS:
         for path in sorted((REPO / d).rglob("*.py")):
             rel = str(path.relative_to(REPO))
-            if rel in EXEMPT_FILES:
+            if rel in EXEMPT_FILES or rel in QUARANTINED_PAIR_EXEMPT:
                 continue
-            # Code only: this file's own explanatory comments name both
-            # the token and the addresses, and a scanner that counted
-            # those would be unable to describe the defect it guards.
+            # Code only: this file's own explanatory comments name the
+            # addresses, and a scanner that counted those would be unable
+            # to describe the defect it guards.
             code = "\n".join(
                 l for l in path.read_text(errors="replace").splitlines()
                 if not l.strip().startswith("#"))
             has_addr = re.search(r"0x0*70\b", code) and re.search(r"0x0*84\b", code)
-            has_token = re.search(r"""["']zelda["']""", code, re.IGNORECASE)
-            if has_addr and has_token:
+            if has_addr:
                 offenders.append(rel)
     assert not offenders, (
-        f"{offenders} pair a 'zelda' name token with the quarantined "
-        f"0x0070/0x0084 coordinate bytes")
+        f"{offenders} carry the quarantined 0x0070/0x0084 coordinate pair "
+        f"in production Python with no exemption on record — remove the "
+        f"pair or add a reasoned QUARANTINED_PAIR_EXEMPT entry naming why "
+        f"it's legitimate")
+
+
+def test_quarantined_pair_exemptions_are_not_stale() -> None:
+    """Mirrors `test_the_inventory_only_shrinks`'s discipline for the
+    other allowlist in this file: an exemption for a file that no longer
+    exists, or no longer actually carries the pair, is dead weight that
+    would hide the exemption list quietly drifting from reality."""
+    for rel, reason in QUARANTINED_PAIR_EXEMPT.items():
+        path = REPO / rel
+        assert path.exists(), f"exempted file {rel!r} no longer exists"
+        assert reason.strip(), f"exempted file {rel!r} has no stated reason"
+        code = "\n".join(
+            l for l in path.read_text(errors="replace").splitlines()
+            if not l.strip().startswith("#"))
+        has_addr = re.search(r"0x0*70\b", code) and re.search(r"0x0*84\b", code)
+        assert has_addr, (
+            f"{rel} is exempted for carrying 0x0070/0x0084 but no longer "
+            f"does — delete the stale exemption")

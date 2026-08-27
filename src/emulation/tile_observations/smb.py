@@ -1,8 +1,14 @@
 """SMB-specific tile observation decoder.
 
 Reads CPU RAM directly to produce a tile grid centered on Mario plus
-a small set of game-state scalars. RAM addresses are from the standard
-NESdev SMB disassembly and match SethBling's MarI/O Lua script.
+a small set of game-state scalars. RAM addresses were originally cited
+to the standard NESdev SMB disassembly and SethBling's MarI/O Lua
+script, but SMB is this project's one completely solved game — all 32
+levels cleared on a single cold-boot tape with `state_loads=0` and the
+ending frame rendered — so every address below is independently earned
+by that witnessed run, not merely inherited from the external citation.
+A behaviour change here would invalidate banked SMB training runs, so
+this is a provenance note, not a semantics change.
 
 Output layout (175 int8 features, all in range [-128, 127]):
 
@@ -34,7 +40,9 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 
-# RAM addresses (NESdev wiki / SMB disassembly)
+# RAM addresses (originally cited to NESdev wiki / SMB disassembly;
+# independently earned by SMB's witnessed 32-level cold-boot clear —
+# see module docstring)
 _RAM_X_PAGE         = 0x006D  # Mario screen-page index (high byte of X)
 _RAM_X_LOW          = 0x0086  # Mario X within page (low byte)
 _RAM_Y              = 0x00CE  # Mario Y on screen

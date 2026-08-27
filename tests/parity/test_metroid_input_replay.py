@@ -20,13 +20,29 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 ROM = REPO / "roms" / "Metroid (USA).nes"
 
-# Canonical Metroid RAM (datacrystal). Samus position + game state.
+# LABELS ARE DECORATIVE, NOT A SEMANTICS CLAIM. This is a fidelity/parity
+# harness: the assertion is raw-byte agreement between nes_core and
+# nes-py, not a claim about what any byte means, and nothing here feeds
+# a reward function or a win predicate.
+#
+# PROVENANCE WARNING: these addresses were originally cited to an
+# external "canonical" (datacrystal-class) RAM map, but they do not
+# match this repo's own measured ground truth for Metroid. This
+# project's independently VERIFIED addresses (configs/metroid.yaml
+# `ram_mapping:`, each with its own differential receipt) are
+# samus_x_screen=0x0051, samus_x_map=0x0050, samus_y_screen=0x0052,
+# samus_y_map=0x004F, samus_health=0x0106, samus_health_hi=0x0107 — none
+# of which is 0x0030, 0x0032, 0x0056, or 0x0057. Metroid has no
+# witnessed clear and its profile carries its own purity quarantine
+# (its quarantine block, in that same file) for the cartridge-RAM
+# item/missile bytes; do not treat this dict as sourced from either
+# the verified block or the quarantine — it is neither.
 METROID_GAMEPLAY_BYTES = {
-    0x0030: "samus_x_position",
-    0x0032: "samus_y_position",
-    0x0056: "samus_health_lo",
-    0x0057: "samus_health_hi",
-    0x0028: "game_mode",
+    0x0030: "unverified_0x0030",
+    0x0032: "unverified_0x0032",
+    0x0056: "unverified_0x0056",
+    0x0057: "unverified_0x0057",
+    0x0028: "unverified_0x0028",
 }
 
 

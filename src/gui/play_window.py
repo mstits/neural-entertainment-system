@@ -220,6 +220,16 @@ class PlayWindow(QMainWindow):
         # parity bug. The file is overwritten per Play-window session
         # (truncated on first frame). Trace I/O is best-effort — a
         # non-writable /tmp must never take down the window.
+        #
+        # This dump is FIXED and GAME-AGNOSTIC — it always writes the same
+        # address set regardless of which ROM is loaded, purely for a
+        # byte-for-byte fidelity diff, not for any reward or win logic.
+        # $84/$70 happen to be Zelda's link_y/link_x (quarantined as
+        # TRAINING semantics in configs/zelda.yaml, see
+        # tests/test_no_new_name_dispatch.py's QUARANTINED_PAIR_EXEMPT);
+        # $86/$CE/$1D/$770/$772 are from the SMB address family. Neither
+        # game's addresses are treated specially here — this file has no
+        # per-game dispatch of any kind.
         if not hasattr(self, "_trace_fh"):
             try:
                 self._trace_fh = open("/tmp/playwindow_trace.txt", "w")

@@ -173,6 +173,25 @@ def _significant_tokens(name: str) -> set[str]:
     return {w for w in words if len(w) >= 4 and w not in _ROM_NOISE_WORDS}
 
 
+# Standalone installment markers — roman numerals II-X or arabic digits
+# 2-9 as a whole word-token, never a substring. Franchise entries share
+# every significant word of their title with the original ("double",
+# "dragon", "zelda", "mega", "man") so token overlap alone cannot tell
+# "Double Dragon" from "Double Dragon II", or "Mega Man 2" from "Mega
+# Man 3" — only the marker differs, and each installment has its own
+# RAM map. Deliberately UNFILTERED by the >=4-char rule above: the
+# differentiator here is exactly the short token that rule discards.
+_SEQUEL_MARKER_RE = re.compile(
+    r"^(?:ii|iii|iv|v|vi|vii|viii|ix|x|[2-9])$"
+)
+
+
+def _installment_markers(name: str) -> set[str]:
+    """Standalone sequel/installment tokens in a ROM name (see above)."""
+    words = re.findall(r"[a-z0-9]+", name.lower())
+    return {w for w in words if _SEQUEL_MARKER_RE.match(w)}
+
+
 def match_roms(
     game_key: str, canonical_name: str, available: list[Path],
 ) -> list[Path]:
@@ -181,11 +200,17 @@ def match_roms(
     Non-matches are excluded. Ordering:
       1. exact basename == the canonical filename (case-insensitive), then
       2. the game key or a significant word of the canonical name appears
-         as a substring of the file's stem (case-insensitive).
+         as a substring of the file's stem (case-insensitive) — UNLESS the
+         candidate carries an installment marker (II, III, 2, 3, ...) the
+         canonical name doesn't share, which makes it a different game in
+         the same franchise, never a fuzzy match, no matter how much token
+         overlap its title has with the canonical one.
     An exact basename match, when present, always ranks ahead of fuzzy hits.
     """
     canonical_base = Path(canonical_name).name.lower() if canonical_name else ""
-    tokens = _significant_tokens(Path(canonical_name).stem) if canonical_name else set()
+    canonical_stem = Path(canonical_name).stem if canonical_name else ""
+    tokens = _significant_tokens(canonical_stem)
+    canonical_markers = _installment_markers(canonical_stem)
     key = game_key.lower().strip()
     exact: list[Path] = []
     fuzzy: list[Path] = []
@@ -193,7 +218,10 @@ def match_roms(
         stem = p.stem.lower()
         if canonical_base and p.name.lower() == canonical_base:
             exact.append(p)
-        elif (key and key in stem) or any(t in stem for t in tokens):
+            continue
+        if _installment_markers(stem) - canonical_markers:
+            continue  # a different installment; token overlap doesn't count
+        if (key and key in stem) or any(t in stem for t in tokens):
             fuzzy.append(p)
     return exact + fuzzy
 

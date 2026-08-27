@@ -22,6 +22,17 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 ROM = REPO / "roms" / "Legend of Zelda, The (USA) (Rev A).nes"
 
+# LABELS ARE DECORATIVE, NOT A SEMANTICS CLAIM — sibling of
+# test_zelda_input_replay.py's ZELDA_GAMEPLAY_BYTES; keep both in sync,
+# fixing one without the other is a half-fix. This is a fidelity/parity
+# harness: the assertion is raw-byte agreement between nes_core and
+# nes-py, not a claim about what any byte means. 0x0010, 0x0070, 0x00EB,
+# and 0x066F are numerically identical to entries `configs/zelda.yaml`
+# QUARANTINES as unverified external knowledge (q_dungeon_level,
+# q_link_x, q_world_map_x, q_current_hearts/q_max_hearts — see that
+# file's quarantine block). That quarantine retracts these labels as
+# TRAINING semantics — nothing here feeds a reward function or a win
+# predicate.
 ZELDA_GAMEPLAY_BYTES = {
     0x0010: "game_mode",
     0x0011: "game_submode",

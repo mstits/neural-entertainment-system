@@ -45,7 +45,12 @@ def main():
                       f"ppu_sl={st_before[2]} ppu_slc={st_before[3]}")
                 nmi_seen_this_frame = True
 
-        # Detect frame boundary
+        # Detect frame boundary. $11/$84/$70/$657 are read only for this
+        # fidelity trace (cross-checking our CPU/PPU/NMI timing against
+        # nes-py on this specific ROM) — never for reward or win logic.
+        # $84/$70 are quarantined as TRAINING semantics in
+        # configs/zelda.yaml (see tests/test_no_new_name_dispatch.py's
+        # QUARANTINED_PAIR_EXEMPT for this file's standing exemption).
         if st_after[1] > prev_ppu_frame:
             ram = env.get_ram_range(0, 0x800)
             print(f"f{frame_index}: FRAME_END cpu={st_after[4]} "

@@ -30,14 +30,26 @@ REPO = Path(__file__).resolve().parents[2]
 ZELDA_ROM = REPO / "roms" / "Legend of Zelda, The (USA) (Rev A).nes"
 ZELDA_TAPE = REPO / "roms" / "zelda_start_419.state.bin"
 
-# Canonical Zelda RAM addresses — gameplay-critical.
-# Sources:
+# LABELS ARE DECORATIVE, NOT A SEMANTICS CLAIM. This is a fidelity/parity
+# harness: the assertion is raw-byte agreement between nes_core and
+# nes-py, not a claim about what any byte means. Several of these
+# addresses (0x0070, 0x00EB, 0x658, 0x66F, 0x10) are numerically
+# identical to entries `configs/zelda.yaml` QUARANTINES as unverified
+# external knowledge (q_link_x, q_world_map_x, q_bombs, q_current_hearts/
+# q_max_hearts, q_dungeon_level — see that file's quarantine block,
+# sourced to Data Crystal + nesworld/speedrun-community annotation, same
+# as the two sources named below). That quarantine retracts these labels
+# as TRAINING semantics — nothing here feeds a reward function or a win
+# predicate. Do not lift these names into src/ or a reward function
+# without an independent, in-repo re-derivation; see the quarantine
+# block's `rediscovery_rule`.
+#
+# External sources for the LABELS only (not re-verified in this repo):
 #   * datacrystal.tcrf.net/wiki/The_Legend_of_Zelda/RAM_map
 #   * nesworld / zelda speedrun community annotations
 ZELDA_GAMEPLAY_BYTES: dict[int, str] = {
-    0x00EB: "link_x_position_pixels",
-    0x0070: "link_y_position_pixels",
     0x00EB: "link_x_tile",
+    0x0070: "link_y_position_pixels",
     0x10:   "game_mode",
     0x11:   "game_submode",
     0x657:  "inventory_sword",       # 0=none, 1=wooden, 2=white, 3=magical
