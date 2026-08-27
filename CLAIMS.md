@@ -37,6 +37,56 @@ telemetry vs cold greedy vs sticky pair). Per-level rates are the
 scoreboard; chain rates are reported as measured, alongside the honest
 compounding math (e.g. twelve levels at 0.95 each ≈ 0.54 chain).
 
+ADDENDUM HP-1 (2026-08-27, learning-track audit
+`docs/research/LEARNING_TRACK_AUDIT_2026-08-27.md`) — **the protocol as
+IMPLEMENTED is sound and was measured rather than read; the paragraph
+above describes three things the harness does not do.**
+
+Verified by counting the events the protocol is defined by, not by
+reading the code: sticky fires at a measured 0.2504–0.2572 against a
+requested 0.25 (and at exactly 0 and exactly 1 at the endpoints); the
+`step > 0` guard holds; jitter is uniform on 0..16 inclusive and produces
+17/17 distinct RAM states from every banked start blob; per-episode
+seeding does not collude (0 collisions in 200 derived seeds); the two RNG
+modes are distributionally identical; the parallel executor agrees with
+the serial loop on real emulation; `episode_success` is the strict
+flagpole/castle predicate with a warp guard; the denominator is genuinely
+single-life. Across 224 receipts and 11,200 episodes `clear_rate × n`
+equals the independent event count EXACTLY in every receipt.
+
+Three corrections to the text, all WEAKENING, none touching a number:
+
+1. **"Cold power-on start, zero state loads at test time" is false for
+   every per-level number.** Each honest per-level episode calls
+   `pool.load_worker_state(0, blob)` on an entrance state
+   (`stage_03.state` = area byte 1, x 0, lives 1, score 001595). These
+   are legitimate level entrances and carry no physics advantage under a
+   single-life denominator — but only 1-1's `entrance_start.state` is
+   power-on equivalent (world 0, area 0, x 40, lives 2, timer 400,
+   score 000000).
+2. **"Greedy and sampled action selection both declared" was not honoured
+   by the v27/v28 gates.** Both registrations name
+   `--action-select {greedy,sample}`; `sample` is not a valid choice
+   (argparse accepts `greedy`/`sampled`), and all 32 gate receipts are
+   greedy. No sampled receipt exists for either campaign.
+3. **"Action receipts recorded and self-replay verified" is not something
+   `scripts/eval_game.py` does.** It has no `--record-actions` and no
+   replay verification; only `scripts/eval_composite.py` does, and that
+   is not the harness any banked learned number came from.
+
+Also fixed rather than merely recorded: the receipt now MEASURES its own
+protocol (`sticky_applied`, `sticky_eligible`, `sticky_measured`,
+`jitter_hist`) and records its identity (`max_steps`, `profile`, `rom`,
+`rom_sha256`, `n_episodes_delivered`). Before this, all of `sticky_prob`,
+`start_jitter` and `stochastic` were computed from **argv**, so a run with
+the mechanism physically deleted emitted a byte-identical receipt to a
+correct one — and deleting sticky, or the Machado no-op prologue, from
+both executors left 534 and 141 suite tests passing respectively.
+`max_steps` — registered at 1500 for v28 and 3000 for consol2, and able to
+move a 1-2 clear rate from 0.20 to 0.15 — appeared in **0 of 921** honest
+receipts, as did the profile. No banked number retracts; two receipts with
+identical visible fields could nonetheless have been different protocols.
+
 ## Knowledge-injection tiers
 
 - **Tier 0 — clean.** Live rollouts; generic distance-ladder reward
@@ -1206,6 +1256,51 @@ The companion literature audit found no published agent by any method
 that clears 1-2 under this protocol. Negative results carry the same
 evidentiary standard as positives and are quotable with their data.
 
+ADDENDUM N-1 (2026-08-27, learning-track audit
+`docs/research/LEARNING_TRACK_AUDIT_2026-08-27.md`) — **the negative is
+RE-SCOPED, not withdrawn: what failed was the CGSA-PPO recipe, and the
+"policy class" generalization above is refuted by this ledger's own later
+receipt sixty lines down.**
+
+The sentence held to the bar it demands of a positive:
+
+1. **"The policy class was falsified" is WITHDRAWN.** The falsification
+   checkpoint (`checkpoints/mario_1_2_cgsa_s1/vanilla_ppo_iter_05990.pt`)
+   is a 2-layer LayerNorm MLP on the 712-d stacked tile observation,
+   95,943 params. The banked 38/100 checkpoint
+   (`checkpoints/_preserved/consol2_40pct_strict_iter01120.pt`) is **the
+   same architecture family at twice the width** — 200,071 params, same
+   712-d input, same `stage_03.state` entrance, same protocol family — and
+   it clears **38/100**. Same class, same entrance, 0 → 38. What changed
+   was the training procedure, which is precisely the variable the
+   falsification sentence claimed was not responsible. Correct scope:
+   *the CGSA-PPO recipe failed its own pre-registered signposts on three
+   seeds.* That claim, and the SPRT machinery under it (correct Wald
+   thresholds, welds accruing only at p ≥ target, 96–99% welded at full
+   0.25 protocol noise, median 14–29 completed windows), **stand
+   untouched.**
+2. **The literature sentence is WEAKENED.** Its cited source ("external
+   deep research, 2026-07-23", `RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`
+   §"The claim this documents") does not exist in this repo or in
+   `research-consult/responses/`, whose earliest artifact is 2026-07-27.
+   The protocol is also bespoke, which makes the claim close to
+   true-by-construction. Quotable form: *"we are aware of no published
+   per-level 1-2 clear rate under Machado sticky-0.25, in either
+   direction."* It must never be compressed to "1-2 is unsolved by the
+   field."
+3. **What is genuinely strongest here is the offline-imitation closure
+   below, not this paragraph.** That result is PREDICATE-INDEPENDENT — A7
+   tops out at max-gx 976 of 3,266, so it reads 0.0 under the flagpole
+   predicate, the level-advance predicate, and any x-threshold — and it
+   was built to the standard of a positive: exact dataset verification,
+   a fit gate pre-registered two hours ahead, and a matched ablation pair.
+
+This entry is annotated rather than deleted: the underlying data is sound
+and the withdrawal is of a generalization, not of a measurement. The same
+correction is owed to `docs/research/README.md:21` and to the header and
+2026-08-08 correction of `RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`, both
+of which propagate "formally falsified for the policy class".
+
 `runs/smodice_1_2/` records the 2026-08-14 closure of offline imitation
 for 1-2 under a pre-registered rehabilitate-or-close protocol. The prior
 offline negative was contaminated (expert-only IQ-Learn degenerates to
@@ -1270,6 +1365,51 @@ harness two days earlier), seed 101: 14/50 — median max-gx 2095,
 Greedy now exceeds the policy's own measured sampled ceiling (31.7%).
 Receipts: runs/consol2/campaign.jsonl, peak_eval_seed{7,101}.json,
 runs/online_1_2_attempt_ledger.md.
+
+ADDENDUM C2-1 (2026-08-27, learning-track audit
+`docs/research/LEARNING_TRACK_AUDIT_2026-08-27.md`) — **the 38/100
+REPRODUCES bit-exactly and is the ledger's live 1-2 number; two sentences
+around it are WEAKENED, and this entry now supersedes the 2/100 headline
+and the policy-class falsification above (ADDENDUM N-1).**
+
+Independently reproduced eleven days later from the committed checkpoint,
+start state and harness: seed 7 → 0.48 / mean_length 676.16, seed 101 →
+0.28 / 704.26, matching `peak_eval_seed{7,101}.json` to the digit.
+`max_byte_seen` reads 2 and 3, retro-certifying `warp_rate 0.0`.
+
+1. **"Definitive eval on fresh seeds under the canonical protocol" is not
+   accurate.** Both receipts record `eval_rng: shared-stream` and
+   `eval_workers: 1`; this ledger's LEARNED definition requires
+   `--eval-rng per-episode`. The result is NOT an RNG-mode artifact — the
+   campaign's own per-episode probe at this checkpoint reads 0.40 strict
+   at n=30, and a 10-episode per-episode run on 2026-08-27 read 0.30 —
+   but the pooled 100 should be re-run per-episode before the sentence is
+   restored. **This is the single highest-value outstanding action in the
+   learning track**: two evals convert the repository's strongest positive
+   from nearly-canonical to canonical.
+2. **"38% on 1-2" is a property of ONE PRESERVED CHECKPOINT, not of the
+   recipe.** The neighbouring probes at iters 1070/1180/1230 read
+   0.067/0.033/0.0 and the run was ended by its own pre-registered
+   collapse kill. The 100-episode eval is an unbiased estimate of that
+   fixed artifact — which is exactly what makes it citable — but the
+   training recipe is not shown to reach 38% a second time. Quote it as
+   *"one preserved checkpoint clears 1-2 at 38 ± 5%"*, never as a
+   reproducible training outcome.
+3. **"Reach-without-grab eliminated" is supported at n=30 for this
+   checkpoint** (chain vs strict differ by at most 1/30 in both legs of
+   `campaign.jsonl` at the peak), and should not be generalized further:
+   the strict predicate is measurably conservative elsewhere — four of the
+   fifty banked seed-7 episodes reach x=3266/3267, hold player_state 0x05
+   for 65–95 agent-steps and advance `$075C` 1 → 2 with no life lost, a
+   displayed completion the flagpole latch never sees. The predicate can
+   only UNDER-count, so every banked positive is a floor and no FAIL
+   comparison is biased by it.
+
+Supersession, stated once so it stops propagating: **the 2/100 figure is
+no longer the banked 1-2 state.** It is correct for its own named
+predicate and reproduces exactly, and it under-counts its own artifact by
+roughly 4.5× (the same 100 episodes carry ~9–11 level completions the
+strict latch cannot see). The arc is 0.0 → 2.0% → **38.0%**.
 
 WORLD 1-4 (2026-08-17, ledger §1-4): the castle level, whose clear is a
 world increment rather than a flagpole latch — a different branch of the
@@ -1480,6 +1620,60 @@ from parameter budget. The banked scoreboard is unchanged: 1-1 43%,
 1-2 38%, 1-3 21%, 1-4 51%; the separately banked backward-1-1 control
 stands at 0.767 with a measured ceiling of ~0.83–0.85.
 
+ADDENDUM B1-1 (2026-08-27, learning-track audit
+`docs/research/LEARNING_TRACK_AUDIT_2026-08-27.md`) — **the 1-1 number
+STANDS on re-measurement; the RECIPE that produced it is misdescribed by
+twelve of its own config lines.**
+
+Re-measured under the canonical protocol on
+`checkpoints/_preserved/backward_1_1_seed3_iter140.pt`: eval seed 0 reads
+**0.76**, reproducing the banked figure. (Its second seed, never
+previously run on this checkpoint, reads 0.60 for a pooled 0.68 — see
+ADDENDUM V-4 item 2 for what that does and does not license.)
+
+What is corrected is the recipe text. `configs/mario_1_1_backward.yaml`
+carries a **"Phase-A recipe, verbatim"** header over twelve keys that the
+trainer parses, `--strict-config` accepts, the run manifest records, and
+`trainer_mode: vanilla_ppo` can never act on — because `Trainer.run()`
+dispatches to `_run_vanilla_ppo` and returns before the GA loop, and every
+one of those keys is consumed only inside `_run_one_generation`,
+`_run_bc_replay`, `_snapshot_pre_ppo_elite` or `_reinforce_update`:
+
+```
+bc_replay_enabled  bc_replay_epochs  bc_replay_every_gens
+bc_replay_max_buffer  bc_replay_train_window  episodes_per_genome
+warmup_gens_ga_only  preserve_elite_diversity  freeze_pre_ppo_elite
+symlog_rewards  enabled  async_pipeline
+```
+
+All eight `mario_1_1_v27_seed*.yaml` / `mario_1_1_v28_seed*.yaml` configs
+inherit the same twelve. **Numeric impact: none** — each key is inert
+identically in the baseline and in every comparison arm, so 1-1 0.76,
+v27 0.530 and v28 0.670 remain like-for-like against the 0.767 bar.
+
+Stated plainly, because it is stronger than "the knob was ignored":
+**the banked 1-1 runs had NO clear-anchoring mechanism active at all.**
+Those configs declare no `sil:` block either, so it is not that a
+different anchor fired instead — none did. `bc_epochs: 30` is doubly
+inert: it is read only inside `_behavior_clone_seed`, gated on
+`bc_demo_path`, which no config in `configs/` sets and which
+`scripts/train_game.py` — the launcher every banked run used — exposes no
+flag for. Setting it to 0 or 999 would produce byte-identical runs.
+
+The trainer already carries a hand-written "this knob is a no-op, warn and
+disable" guard for `preserve_elite_diversity`/`freeze_pre_ppo_elite`. It
+tests `trainer_mode == 'pure_ppo'` and therefore stays silent in the only
+mode any banked run used. Rather than fix that guard by hand again, the
+check is now DERIVED from the AST:
+`config_schema.inert_reinforce_keys_under_vanilla_ppo()` walks `run()` to
+the early return, closes over `self.foo(...)` calls, and reports every
+`reinforce` key whose consumption sites all lie outside that set —
+20 keys, with `symlog_rewards` (found by hand on 2026-08-26) reproduced as
+the calibration case and `ppo_clip_eps`/`rnd_loss_coef` correctly NOT
+flagged because `ppo_updater.py` reads them off the trainer handle. It
+raises rather than returning an empty set when it cannot find the dispatch
+it parses. `tests/test_inert_key_reachability.py` pins both directions.
+
 V27 FRESH-RECOVERY RUN — LAUNCHED, IN PROGRESS, NOT A VERDICT
 (2026-08-24/25, prereg `docs/proposals/V27_FRESH_RECOVERY_2026-08-24.md`,
 configs `configs/mario_1_1_v27_seed{0,1,2,3}.yaml`, checkpoints under
@@ -1590,6 +1784,58 @@ withdrawn.** See ADDENDUM V-1 for the underlying defect.
    should be re-stated as provisional until a registered v27 re-scoring
    grid exists.
 
+ADDENDUM V-3 (2026-08-27, learning-track audit
+`docs/research/LEARNING_TRACK_AUDIT_2026-08-27.md`, receipts
+`runs/v27_readjudication_2026-08-27/`) — **item 3 above is now MEASURED
+and its worry is REFUTED. The v27 FAIL margin clause is restored.**
+
+A registration-literal re-selection was registered in full before any new
+eval ran, using the selection statistic both registrations actually name —
+the printed `[backward]` trailing entrance rate at at-entrance iterations,
+ties → later. That statistic consumes ZERO evaluation data, so the
+estimator carries no winner's curse against the honest gate.
+
+* **v27 best-of-4 = 0.500** (per-seed 0.030 / 0.500 / 0.480 / 0.460, each
+  n=100 pooled, per-episode) against a banked 0.530 and a FAIL bar of
+  ≤0.767.
+* **Adversarial one-sided flip test**, as registered where no full ladder
+  exists: the highest pooled n=100 rate at ANY v27 checkpoint ever
+  evaluated is 0.51 (seed 2 iter 110 — the winner's-curse regression the
+  rule anticipated, visible in the data), one-sided 95% upper bound
+  **0.592**. Nothing approaches 0.767.
+* **v28 best-of-4 = 0.670**, identical to the banked headline, though 3 of
+  4 per-seed numbers differ. Split-sample cross-fitting on the full
+  192-receipt F0 ladder gives 0.670 or 0.720 depending on one unregistered
+  tie-break.
+
+Three independent selectors — `winners/best.pt`, the registration-literal
+log peak, and split-sample cross-fitting — return one verdict: **FAIL,
+both campaigns.** The "could plausibly approach 0.7" concern in item 3 is
+retired, and *"not close on either bound"* is restored for v27 at 0.500
+vs 0.767.
+
+Two things move the other way. **v27's per-seed field was mostly selector
+noise**: corrected it is 0.03 / 0.50 / 0.48 / 0.46, so three of four seeds
+are a three-way tie and only seed 0 is genuinely bad — which finishes the
+withdrawal of "telemetry ranks seeds correctly" rather than softening it.
+And **"the measured winner's curse = 0.05" is WITHDRAWN as a carry-forward
+constant**: it turns entirely on an unregistered tie-break (0.670 vs
+0.720). `F0_CORRECTED_PEAK_LADDER_2026-08-26.md`'s headline ("under-select
+on 3 of 4 seeds") also contradicts its own table three lines below (4 of 4
+improved).
+
+NEW MECHANISM, sharper than "the argmax over a saturated statistic is
+near-arbitrary": the winner selector was **ceiling-LOCKED**, not merely
+noisy. `save_winner` skipped on `prev_val >= metric_value` while
+`entrance_trailing_rate` is successes/30 with maximum exactly 1.0 — so the
+first iteration to record 1.0 made the gate mathematically unsatisfiable
+and froze the winner for the rest of the run. v27 seed 2 and v28 seed 3
+both froze at iter 90 of 250; across all 8 runs the last save lands at
+iter 50–120 (median 65) with 3–6 saves per run. That is deterministic,
+one-directional under-selection. Fixed 2026-08-27: ties now go to the
+later `source_iter`, which is the rule both registrations declared and
+neither implemented.
+
 The rule itself — **training telemetry is unusable as a gate number**
 — is untouched and, if anything, better supported: the proxy is now
 known to fail in a second, independent way.
@@ -1624,6 +1870,66 @@ against the artifacts at adjudication time, not carried over from the
 launch commit's assertion. Registered mechanism read #2 (assay re-run)
 was correctly not triggered — the registration scopes it to "if PASS or
 MARGINAL."
+
+ADDENDUM V-4 (2026-08-27, learning-track audit
+`docs/research/LEARNING_TRACK_AUDIT_2026-08-27.md`) — **the FAIL stands at
+0.670 under a third, curse-free selector (ADDENDUM V-3). Three sentences
+in the paragraph above are WITHDRAWN, and both campaigns must be restated
+as SINGLE-variable arms.**
+
+1. **"Identical to the v27 gate in every respect (… `--eval-rng`
+   per-episode)" is FALSE.** All 16 v27 gate receipts record
+   `eval_rng: shared-stream` / `eval_workers: 1`; all 16 v28 receipts
+   record `per-episode` / 8. `V28_CAPACITY`'s seed-paired "Same protocol"
+   table carries the same error. Measured, it is not a bias — 53/200 vs
+   57/200 on matched weights — and the registered reading rule reads only
+   training-log metrics, so the adjudication itself is uncontaminated. But
+   the cross-cohort GATE-DELTA table (+0.410/−0.060/−0.160/+0.500) spans a
+   harness change. `PEAK_INSTABILITY_FORENSICS_2026-08-25.md` §1.5 found
+   this on 2026-08-25 and it never propagated here.
+2. **"No seed's better checkpoint reached the banked control's own 0.767"
+   is WITHDRAWN for v28.** The 0.767 bar had never been measured under the
+   protocol it gates: it is 46/60 at eval seed 0 only, shared-stream, one
+   worker. `V29_STABILITY` made the two-seed re-measurement an F0
+   deliverable; F0 never ran it and V29 was withdrawn. Measured
+   2026-08-27 on `backward_1_1_seed3_iter140.pt` under the canonical
+   protocol: es0 **0.76** (reproducing the banked single-seed figure), es1
+   **0.60**, pooled **0.68**. v28's 0.670 is statistically
+   indistinguishable from a same-protocol control of 0.680. **The
+   registered thresholds do NOT move** — that would be the goalpost move
+   this ledger treats as a fabricated result — and the FAIL stands on the
+   registered bar. What does not survive is the story told underneath it.
+3. **V3/V4's "ReDo ENABLED in all four training logs" certified ARMING,
+   not FIRING, and ReDo never fired in either campaign.** It logged
+   `recycled 0 cum 0` on every one of ~2,000 per-iteration checks across
+   all 8 v27+v28 runs. This upgrades from "never fired" to **"could not
+   fire, knowably, before launch"**: the dormancy statistic normalizes
+   post-activation magnitudes by the layer mean while `TilePolicyNetwork`
+   LayerNorms immediately BEFORE the SiLU, holding the statistic near 1.
+   The repo's own pre-launch sweep recycles zero units at every tau ≤ 0.20
+   and first fires at tau = 0.25 — **ten times the registered 0.025** —
+   and `isolate_tau0.35.log` was written 2 min 21 s before the 8-run
+   budget started, then read as a fresh-net artifact. The pre-registered
+   V7 armed-evidence gate evaluated every one of its conditions at
+   tau = 0.5, twenty times the experimental value, and never required the
+   REGISTERED operating point to be reachable: **that is the seventh
+   vacuous gate on this ledger, same shape as the previous six.**
+
+   Honest restatement: **v27 and v28 each tested ONE variable** (merged
+   ladder / capacity), not two. The FAIL verdicts are untouched — neither
+   depended on ReDo doing anything — but AMENDMENT 1's two-variable
+   framing is withdrawn, as is v27's un-applied pre-registered FAIL caveat
+   about a ~0-recycle run.
+
+Newly shipped so this class is detectable rather than audited:
+`scripts/check_mechanism_receipt.py` returns **VOID** (not FAIL) for any
+armed mechanism whose own counter never moves for a whole run, and
+distinguishes that from `UNAUDITABLE` — armed with no counter at all,
+which is what `[hazard-mask] ARMED` runs are. Run on these receipts it
+reports `redo INERT, peak 0 over 1000 observations` for v27 and
+`backward FIRED` alongside it. `tests/test_mechanism_receipt.py` pins both
+directions, including a positive control on the 1-2 campaign so a checker
+that returned INERT unconditionally would fail.
 
 The registered reading rule selects on the mechanism reads, not the
 gate number. The falsifiable prediction, locked before any v28 compute

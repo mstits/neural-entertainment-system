@@ -43,6 +43,7 @@ own comparison.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -128,6 +129,23 @@ _ACTION_SELECT_MODES: tuple[str, ...] = ("greedy", "sampled")
 # loop with its streams re-seeded per episode, which is exactly the reference a
 # K-worker run must reproduce.
 _EVAL_RNG_MODES: tuple[str, ...] = ("shared-stream", "per-episode")
+
+
+def _file_sha256(path: str | Path) -> Optional[str]:
+    """SHA-256 of a file, or None if it cannot be read.
+
+    Used for the ROM identity in the eval receipt. Never raises: a receipt
+    that cannot hash its ROM should still be written (with the field null)
+    rather than losing the whole measurement.
+    """
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
 
 
 def run_consumes_randomness(
@@ -310,6 +328,7 @@ class _Lane:
         "episode", "worker", "pol", "reward_fn", "tracker", "rng", "gen",
         "noops_left", "obs", "hidden", "step", "prev_action", "action_idx",
         "ret", "max_byte", "max_gx", "cleared", "done",
+        "jitter", "sticky_applied", "sticky_eligible",
     )
 
     def __init__(self, episode: int, worker: int) -> None:
@@ -331,6 +350,12 @@ class _Lane:
         self.max_gx = 0
         self.cleared = False
         self.done = False
+        # MEASURED protocol counters (see the `sticky_*`/`jitter_*` block in
+        # eval_one_game's result dict). These exist so the receipt can report
+        # what the run DID rather than what argv asked for.
+        self.jitter = 0
+        self.sticky_applied = 0
+        self.sticky_eligible = 0
 
     def record(self) -> dict:
         """The finished episode's contribution to the aggregate stats.
@@ -345,6 +370,9 @@ class _Lane:
             "max_byte": self.max_byte,
             "max_gx": self.max_gx,
             "cleared": self.cleared,
+            "jitter": self.jitter,
+            "sticky_applied": self.sticky_applied,
+            "sticky_eligible": self.sticky_eligible,
             "seq_clear": bool(tr.seq_clear) if tr is not None else False,
             "warp_taken": bool(tr.warp_taken) if tr is not None else False,
             "furthest_seq": tr.furthest_seq if tr is not None else None,
@@ -429,6 +457,7 @@ def _run_episodes_parallel(
             jitter = (
                 int(lane.rng.randint(0, start_jitter + 1)) if start_jitter > 0 else 0
             )
+            lane.jitter = jitter
             lane.noops_left = 1 + jitter
             active.append(lane)
         # Trailing workers with no episode this wave (final short wave): park
@@ -448,12 +477,17 @@ def _run_episodes_parallel(
                     action_idx = select_action(
                         logits, action_select, temperature, lane.gen,
                     )
+                # Count eligibility BEFORE the short-circuit so a p=0.0 run
+                # still reports the denominator it would have stuck against.
+                if lane.step > 0:
+                    lane.sticky_eligible += 1
                 if (
                     sticky_prob > 0.0
                     and lane.step > 0
                     and lane.rng.random() < sticky_prob
                 ):
                     action_idx = lane.prev_action
+                    lane.sticky_applied += 1
                 lane.prev_action = action_idx
                 lane.action_idx = action_idx
                 actions[lane.worker] = bitmasks[action_idx]
@@ -581,8 +615,11 @@ def _run_episodes_serial(
         # Machado no-op starts: hold up to start_jitter no-op frames before
         # control begins, desynchronizing enemy/timer phase from the trained
         # trajectory (the other half of the honest stochastic-eval protocol).
+        _ep_jitter = (
+            int(_sticky_rng.randint(0, start_jitter + 1)) if start_jitter > 0 else 0
+        )
         if start_jitter > 0:
-            for _ in range(int(_sticky_rng.randint(0, start_jitter + 1))):
+            for _ in range(_ep_jitter):
                 init = pool.step_all(np.zeros(1, dtype=np.uint8))
         obs = pol.reset(init[0])
         # Fresh hidden state per episode — the GRU must not carry memory
@@ -608,6 +645,8 @@ def _run_episodes_serial(
         step = 0
         _prev_action_idx = 0
         _ep_sticks: list = []
+        _ep_sticky_applied = 0
+        _ep_sticky_eligible = 0
         for step in range(max_steps):
             # Obs -> action. The policy object supplies the (obs -> logits)
             # mapping; everything else in this loop (reward, RAM byte proxy,
@@ -625,8 +664,13 @@ def _run_episodes_serial(
             # unlike eval_composite's tile adapter) this is the honest
             # perturbation test.
             _chosen_idx = action_idx
+            # Count eligibility BEFORE the short-circuit so a p=0.0 run still
+            # reports the denominator it would have stuck against.
+            if step > 0:
+                _ep_sticky_eligible += 1
             if sticky_prob > 0.0 and step > 0 and _sticky_rng.random() < sticky_prob:
                 action_idx = _prev_action_idx
+                _ep_sticky_applied += 1
             _prev_action_idx = action_idx
             bitmask = bitmasks[action_idx]
             r = pool.step_all(np.array([bitmask], dtype=np.uint8))
@@ -676,6 +720,9 @@ def _run_episodes_serial(
             "max_byte": ep_max_byte,
             "max_gx": ep_max_gx,
             "cleared": ep_cleared,
+            "jitter": _ep_jitter,
+            "sticky_applied": _ep_sticky_applied,
+            "sticky_eligible": _ep_sticky_eligible,
             "seq_clear": bool(tracker.seq_clear) if tracker is not None else False,
             "warp_taken": bool(tracker.warp_taken) if tracker is not None else False,
             "furthest_seq": tracker.furthest_seq if tracker is not None else None,
@@ -1126,11 +1173,23 @@ def eval_one_game(
     else:
         _records = _run_episodes_serial(pool, eval_rng=eval_rng, **_executor_kwargs)
 
+    # MEASURED protocol accumulators. `sticky_prob`/`start_jitter` in the
+    # receipt are echoes of argv; these are counts of what actually happened,
+    # so a run whose sticky or jitter mechanism was removed emits a receipt
+    # that differs from a correct one.
+    sticky_applied = 0
+    sticky_eligible = 0
+    jitter_hist: dict[int, int] = {}
+
     for _rec in _records:
         returns.append(_rec["ep_return"])
         lengths.append(_rec["length"])
         max_bytes.append(_rec["max_byte"])
         max_gxs.append(_rec["max_gx"])
+        sticky_applied += int(_rec.get("sticky_applied", 0))
+        sticky_eligible += int(_rec.get("sticky_eligible", 0))
+        _j = int(_rec.get("jitter", 0))
+        jitter_hist[_j] = jitter_hist.get(_j, 0) + 1
         if _rec["cleared"]:
             clears += 1
         if sequential:
@@ -1173,7 +1232,12 @@ def eval_one_game(
         "max_byte_seen": int(max(max_bytes)) if max_bytes else 0,
         "mean_max_byte": float(np.mean(max_bytes)) if max_bytes else 0.0,
         "max_gx_per_episode": max_gxs,
-        "clear_rate": clears / max(1, n_episodes),
+        # DELIVERED, not requested. `n_episodes` above is what argv asked for;
+        # a short run would otherwise deflate the rate with nothing in the row
+        # able to show it. The two are equal on every path today — this keeps
+        # them equal by construction rather than by luck.
+        "n_episodes_delivered": len(_records),
+        "clear_rate": clears / max(1, len(_records)),
         # Provenance for the honest protocol: a clear rate is only readable
         # next to HOW the actions were drawn. Always emitted so a receipt can
         # never be mistaken for the other mode's number.
@@ -1195,6 +1259,36 @@ def eval_one_game(
         "stochastic": bool(
             run_consumes_randomness(sticky_prob, start_jitter, action_select)
         ),
+        # ...and now what the run MEASURED, next to what it requested. The
+        # three fields above are computed from argv alone: a run with the
+        # sticky repeat or the Machado no-op prologue physically deleted from
+        # both executors emitted a byte-identical receipt to a correct one,
+        # which is the compile-time-constant defect class this project has
+        # already been bitten by elsewhere. These four are functions of the
+        # episodes: `sticky_measured` estimates the realized repeat
+        # probability (SE ~ sqrt(p(1-p)/eligible)), and `jitter_hist` maps
+        # each drawn no-op count to how many episodes drew it. A stubbed
+        # mechanism now shows up as `sticky_applied: 0` against a non-zero
+        # `sticky_eligible`, or as a jitter histogram collapsed onto a single
+        # bucket where the requested range spans 17 — neither of which a
+        # correct run can produce.
+        "sticky_applied": int(sticky_applied),
+        "sticky_eligible": int(sticky_eligible),
+        "sticky_measured": (
+            sticky_applied / sticky_eligible if sticky_eligible else 0.0
+        ),
+        "jitter_hist": {str(k): int(v) for k, v in sorted(jitter_hist.items())},
+        # Protocol identity. `max_steps` is a live knob that moves clear_rate
+        # (1-2 reads 0.15 at 1000 vs 0.20 at 1500/3000) and was registered at
+        # different values by different campaigns (1500 for v28, 3000 for
+        # consol2, 2400 in the configs) while appearing in ZERO receipts — two
+        # rows with identical visible fields could be different protocols. The
+        # profile fixes the action space, the encoder and the reward id, i.e.
+        # what `clear_rate` even means; the ROM fixes the game.
+        "max_steps": int(max_steps),
+        "profile": str(profile_path),
+        "rom": str(rom_path),
+        "rom_sha256": _file_sha256(rom_path),
         # How the episodes were scheduled and where their randomness came
         # from. `eval_workers` is the EFFECTIVE lane count (after the
         # episodes/cpu clamp), not what was asked for. Both belong next to the

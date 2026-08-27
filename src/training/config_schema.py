@@ -21,6 +21,7 @@ registered, or the test fails).
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 from typing import Any
@@ -269,6 +270,189 @@ def check_profile(profile: dict[str, Any], *, strict: bool = False,
         else:
             print(f"[config] WARNING: {msg}")
     return warnings
+
+
+class ReachabilityDerivationError(RuntimeError):
+    """The inert-key derivation could not find the structures it parses.
+
+    Raised rather than returning an empty result. An analysis that silently
+    reports "nothing is inert" because a refactor moved the code it reads is
+    a vacuous check, and this project has already shipped six of those.
+    """
+
+
+# Config-block names the trainer reads `reinforce` keys out of.
+_CFG_NAMES = frozenset({"rl_cfg", "_rl_cfg", "reinforce_cfg", "reinforce"})
+
+
+def _trainer_class(tree: ast.AST) -> ast.ClassDef:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "Trainer":
+            return node
+    raise ReachabilityDerivationError("no class Trainer in the trainer source")
+
+
+def _self_calls(node: ast.AST) -> set[str]:
+    """Names of `self.foo(...)` calls anywhere under `node`."""
+    out: set[str] = set()
+    for n in ast.walk(node):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and isinstance(n.func.value, ast.Name)
+                and n.func.value.id == "self"):
+            out.add(n.func.attr)
+    return out
+
+
+def _cfg_keys_in(node: ast.AST) -> set[str]:
+    out: set[str] = set()
+    for n in ast.walk(node):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "get"
+                and isinstance(n.func.value, ast.Name)
+                and n.func.value.id in _CFG_NAMES
+                and n.args and isinstance(n.args[0], ast.Constant)
+                and isinstance(n.args[0].value, str)):
+            out.add(n.args[0].value)
+    return out
+
+
+def vanilla_reachable_methods(trainer_src: Path) -> set[str]:
+    """Trainer methods reachable from `run()` when `trainer_mode: vanilla_ppo`.
+
+    `Trainer.run()` dispatches with an early return:
+
+        if self.vanilla_ppo_mode:
+            self._run_vanilla_ppo(...)
+            return
+        for gen in range(num_generations):
+            self._run_one_generation(gen)   # <- never reached
+
+    so the whole GA loop below that branch is dead in the mode EVERY banked
+    learning-track run uses. This walks `run()`'s body up to and including
+    the early-return branch, then takes the transitive closure over
+    `self.foo(...)` calls.
+    """
+    tree = ast.parse(Path(trainer_src).read_text())
+    cls = _trainer_class(tree)
+    methods = {n.name: n for n in cls.body
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    run = methods.get("run")
+    if run is None:
+        raise ReachabilityDerivationError("Trainer has no run() method")
+
+    entry: set[str] = set()
+    found_dispatch = False
+    for stmt in run.body:
+        if (isinstance(stmt, ast.If)
+                and any(isinstance(n, ast.Attribute)
+                        and n.attr == "vanilla_ppo_mode"
+                        for n in ast.walk(stmt.test))
+                and any(isinstance(n, ast.Return) for n in ast.walk(stmt))):
+            entry |= _self_calls(stmt)
+            found_dispatch = True
+            break
+        entry |= _self_calls(stmt)
+    if not found_dispatch:
+        raise ReachabilityDerivationError(
+            "could not find the `if self.vanilla_ppo_mode: ...; return` "
+            "dispatch in Trainer.run() — the reachability derivation is "
+            "reading a structure that no longer exists")
+
+    graph = {name: _self_calls(m) for name, m in methods.items()}
+    seen: set[str] = set()
+    stack = list(entry)
+    while stack:
+        name = stack.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        stack.extend(graph.get(name, ()))
+    return seen
+
+
+def inert_reinforce_keys_under_vanilla_ppo(
+    trainer_src: Path, sibling_srcs: tuple[Path, ...] = (),
+) -> dict[str, list[str]]:
+    """`reinforce` keys the trainer parses but CANNOT act on under vanilla_ppo.
+
+    Returns `{key: [methods that consume it]}` for every key whose every
+    consumption site lies outside the vanilla-reachable call graph. These are
+    knobs a profile can set, that `--strict-config` accepts, that appear in
+    the run manifest, and that do nothing.
+
+    Why this is derived from source rather than listed: the registry check
+    the suite already runs (`consumed_reinforce_keys_from_source`) is
+    ONE-WAY. It enforces "every key the trainer consumes is registered",
+    which is why all 34 schema tests pass green while a dozen keys in the
+    flagship recipe are inert. Nothing enforced the other direction, and a
+    hand-maintained list of dead knobs would rot the first time someone
+    moved a method.
+
+    `sibling_srcs` are other modules that reach into the trainer by
+    attribute (`ppo_updater.py` does `t.ppo_clip_eps`). Any attribute they
+    touch is treated as live — the failure that matters here is a FALSE
+    "this knob is inert", so the analysis errs toward silence.
+    """
+    trainer_src = Path(trainer_src)
+    tree = ast.parse(trainer_src.read_text())
+    cls = _trainer_class(tree)
+    methods = {n.name: n for n in cls.body
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    reachable = vanilla_reachable_methods(trainer_src)
+
+    # key -> the self.<attr> names it is assigned to
+    key2attrs: dict[str, set[str]] = {}
+    for meth in methods.values():
+        for n in ast.walk(meth):
+            if not isinstance(n, (ast.Assign, ast.AnnAssign)):
+                continue
+            keys = _cfg_keys_in(n.value) if n.value is not None else set()
+            if len(keys) != 1:
+                continue  # ambiguous: two keys folded into one attribute
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            for t in targets:
+                if (isinstance(t, ast.Attribute)
+                        and isinstance(t.value, ast.Name)
+                        and t.value.id == "self"):
+                    key2attrs.setdefault(next(iter(keys)), set()).add(t.attr)
+
+    # Attributes any sibling module reads off a trainer handle are live.
+    sibling_attrs: set[str] = set()
+    for p in sibling_srcs:
+        try:
+            stree = ast.parse(Path(p).read_text())
+        except (OSError, SyntaxError):
+            continue
+        for n in ast.walk(stree):
+            if isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load):
+                sibling_attrs.add(n.attr)
+
+    # attr -> methods that READ it (the __init__ assignment is not a use)
+    def _readers(attr: str) -> set[str]:
+        out: set[str] = set()
+        for name, meth in methods.items():
+            if name == "__init__":
+                continue
+            for n in ast.walk(meth):
+                if (isinstance(n, ast.Attribute) and n.attr == attr
+                        and isinstance(n.value, ast.Name)
+                        and n.value.id == "self"
+                        and isinstance(n.ctx, ast.Load)):
+                    out.add(name)
+                    break
+        return out
+
+    inert: dict[str, list[str]] = {}
+    for key, attrs in key2attrs.items():
+        if attrs & sibling_attrs:
+            continue
+        sites: set[str] = set()
+        for a in attrs:
+            sites |= _readers(a)
+        if not sites or (sites & reachable):
+            continue
+        inert[key] = sorted(sites)
+    return inert
 
 
 def consumed_reinforce_keys_from_source(trainer_src: Path) -> set[str]:

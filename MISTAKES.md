@@ -12,14 +12,112 @@ one-line invariant only after recurring across 4–5 separate entries.
 |---|---|---|
 | `[vacuous-gate]` a check that cannot fail | **5** | yes — lint for `passed = not <coll>` |
 | `[stale-artifact]` measured the old binary/profile | **4** | yes — hash the loaded artifact against the built one in CI-less `make` target |
-| `[inert-treatment]` armed, wired, never fired | **3** | yes — assert the mechanism's counter is non-zero at least once per run |
-| `[weak-eval]` protocol too weak to detect its own failure | **4** | partly — enforce min-n at the gate |
-| `[unverified-claim]` trusted a number without re-deriving it | **5** | no — judgement |
+| `[inert-treatment]` armed, wired, never fired | **4** | **SHIPPED 2026-08-27** — `scripts/check_mechanism_receipt.py` returns VOID for any armed mechanism whose counter never moves |
+| `[weak-eval]` protocol too weak to detect its own failure | **5** | partly — enforce min-n at the gate |
+| `[unverified-claim]` trusted a number without re-deriving it | **7** | no — judgement |
 
-Nothing has been promoted; the enforced ruleset is untouched. `[vacuous-gate]`
-and `[unverified-claim]` both reached 5 on 2026-08-27 and are awaiting a call.
+Nothing has been promoted; the enforced ruleset is untouched. `[vacuous-gate]`,
+`[weak-eval]` and `[unverified-claim]` are all at or past the threshold as of
+2026-08-27 and are awaiting a call.
+
+`[inert-treatment]` is the first root cause whose enforcement actually exists.
+`check_mechanism_receipt.py` reads a run's own artifacts and returns **VOID** (not
+FAIL) for any mechanism that announced itself and whose counter never moved, and
+distinguishes that from **UNAUDITABLE** — armed with no counter at all, which is
+what `[hazard-mask] ARMED` runs are. Run against `runs/v27_fresh_recovery` it
+reports `redo INERT, peak 0 over 1000 observations`; run against
+`checkpoints/mario_1_2_online_v2` it reports every registered mechanism FIRED.
+The second is the positive control, without which a checker hard-wired to say
+INERT would pass its whole suite. Verified by deleting the check: five mutants
+kill 8 / 2 / 2 / 6 / 1 tests respectively, and the unmutated control passes 23/23
+on the identical harness. The static half — a config key the trainer parses but
+cannot reach under `trainer_mode: vanilla_ppo` — is derived from the AST in
+`config_schema.inert_reinforce_keys_under_vanilla_ppo()` and raises rather than
+returning an empty set when it cannot find the dispatch it parses.
 
 ---
+
+## 2026-08-27 — [inert-treatment] Registered a treatment at an operating point its own statistic could not reach
+- **What happened:** ReDo was registered at `tau=0.025` as one of two variables in
+  v27's AMENDMENT 1. Its dormancy statistic normalises post-activation magnitudes
+  by the layer mean, but `TilePolicyNetwork` LayerNorms immediately *before* the
+  SiLU, pinning the statistic near 1 — the mechanism is calibrated on
+  un-normalised ReLU nets. The repo's own forced-recycle sweep recycles **zero**
+  units at every tau ≤ 0.20 and first fires at 0.25, ten times the registered
+  value. `isolate_tau0.35.log` was written at 00:19:42; `train_seed0.log` opens at
+  00:22:03. **The evidence was on disk 141 seconds before the 8-run budget
+  started** and was read as a fresh-net artifact.
+- **Root cause:** The pre-registered V7 armed-evidence gate checked only safety
+  conditions, and checked all of them at `tau=0.5` — twenty times the experimental
+  value. Nothing in it required the REGISTERED operating point to be reachable, so
+  it could not have failed whatever tau the experiment actually used.
+- **Consequence:** The seventh vacuous gate on this ledger. v27 and v28 were each
+  single-variable arms and were not described as such; a registration amendment
+  and eight training runs measured one variable while claiming two. Both FAIL
+  verdicts survive — neither depended on ReDo acting — but the framing did not.
+- **Rule (draft):** A pre-registration that names a threshold must carry a
+  *reachability* condition — the registered operating point lies at or above the
+  1st percentile of its own statistic on a trained net — checked at the REGISTERED
+  value, at iteration 0 of the first run. Safety conditions checked at a different
+  operating point certify nothing.
+
+## 2026-08-27 — [unverified-claim] Adjudicated on the selection rule as remembered, not as written
+- **What happened:** Both the v27 and v28 registrations name the selection
+  statistic as "the checkpoint with the peak trailing entrance rate in the
+  `[backward]` telemetry (ties → later iter)". Both adjudications instead used
+  `checkpoints/*/winners/best.pt` and described it *as* that quantity. They are
+  different numbers: v27 seed 0's iter-60 log line prints `trailing 16/30=0.53`
+  while `winners/best.json` for the same iter records
+  `entrance_trailing_rate=0.8667`, because a force-completion pass runs after the
+  telemetry print and before the winner block reads the window.
+- **Root cause:** The registration's selection sentence was not re-read at
+  adjudication time; a familiar artifact was substituted for the named statistic.
+- **Consequence:** Both headlines happen to survive the literal rule (v28 lands on
+  0.670 exactly, v27 on 0.500 vs a banked 0.530), so nothing was retracted — but
+  that was luck. The rule changed the selected checkpoint on 3 of 4 seeds in each
+  campaign.
+- **Rule (draft):** At adjudication, quote the registration's selection sentence
+  verbatim into the verdict and compute from it. If a stored artifact is used
+  instead, prove it equals the named quantity before calling it that.
+
+## 2026-08-27 — [unverified-claim] Findings stayed in the document that found them
+- **What happened:** Three separate cases in one track. (a) Two configs annotated
+  the GA-knob inertness on 2026-08-10/11; it was never back-ported to the flagship
+  config it was copied from, to the later v27/v28 experiments, or to CLAIMS.md.
+  (b) `PEAK_INSTABILITY_FORENSICS_2026-08-25.md` §1.5 found that the v27 and v28
+  gates ran under different `--eval-rng` modes; CLAIMS.md kept asserting they were
+  "identical in every respect (… per-episode)". (c) The 1-2 "policy class
+  falsified" paragraph survived the commit that banked a 38/100 result on the same
+  policy class, and survived the 2026-08-26 ledger audit.
+- **Root cause:** A finding was treated as delivered once its own document was
+  written. Nothing required the *claim it contradicts* to be edited in the same
+  commit.
+- **Consequence:** The brief commissioning this very audit quoted the superseded
+  falsification as standing and cited the stale 2/100 rather than the banked
+  38/100 — the propagation caught in the act, one level up.
+- **Rule (draft):** A finding that contradicts a live claim is not landed until
+  that claim carries the annotation, in the same commit. Grep the ledger for the
+  sentence you just falsified before closing the task.
+
+## 2026-08-27 — [weak-eval] A gate threshold was never measured under the protocol it gates
+- **What happened:** `0.767` was the FAIL bar for two full campaigns (v27, v28,
+  eight training runs, 32 gate receipts). It is 46/60 measured at eval seed 0
+  only, shared-stream, one worker — not the canonical two-seed 100-episode
+  per-episode protocol it was gating. `V29_STABILITY` named the two-seed
+  re-measurement as an F0 deliverable; F0 never ran it and V29 was withdrawn.
+  Measured on 2026-08-27: es0 0.76, es1 0.60, pooled **0.68**.
+- **Root cause:** A number from one campaign's convenience measurement was
+  promoted to a threshold without re-measuring it under the protocol it would
+  adjudicate.
+- **Consequence:** The registered thresholds do not move — moving them now would
+  be the goalpost move this ledger treats as fabrication — but the narrative
+  clause both verdict docs attach ("no seed reached the banked control's own
+  0.767") is unsupported for v28, whose 0.670 is statistically indistinguishable
+  from a same-protocol control of 0.680. Two campaigns were described as clearly
+  below a control that had never been measured beside them.
+- **Rule (draft):** A threshold must be measured under the exact protocol it will
+  gate, before it gates anything. A bar inherited from a different harness is a
+  bar with an unknown value.
 
 ## 2026-08-27 — [vacuous-gate] Shipped a CLI mode that printed as armed and did nothing
 - **What happened:** `--lock-objective latch` landed on `main` as a declared

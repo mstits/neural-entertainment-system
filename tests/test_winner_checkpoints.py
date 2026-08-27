@@ -78,10 +78,40 @@ def test_save_winner_worse_metric_does_not_overwrite(tmp_path: Path) -> None:
     assert torch.equal(blob["net_state_dict"]["w"], _state(2.0)["w"])
 
 
-def test_save_winner_equal_metric_does_not_overwrite(tmp_path: Path) -> None:
+def test_save_winner_worse_metric_never_overwrites_even_from_a_later_iter(
+    tmp_path: Path,
+) -> None:
+    """The primary guarantee is unchanged: metric first, always."""
+    assert save_winner(_state(1.0), "mario", 0.88, tmp_path, source_iter=10) is True
+    assert save_winner(_state(2.0), "mario", 0.87, tmp_path, source_iter=999) is False
+    assert load_winner_meta(tmp_path)["source_iter"] == 10
+
+
+def test_save_winner_equal_metric_prefers_the_later_iter(tmp_path: Path) -> None:
+    """Ties go to the later iteration — the CEILING LOCK fix.
+
+    `>=` here was harmless anti-churn right up until the selection metric
+    saturated. `entrance_trailing_rate` is successes/30, max exactly 1.0: the
+    first iteration to record 1.0 made the old gate unsatisfiable and froze
+    the winner for the rest of the run (v27 seed 2 and v28 seed 3 both froze
+    at iter 90 of 250). "Ties -> later iter" is the rule both campaigns
+    registered and neither implemented.
+    """
     assert save_winner(_state(1.0), "mario", 0.5, tmp_path, source_iter=10) is True
-    # Strictly-greater only: a tie keeps the incumbent (no churn).
-    assert save_winner(_state(2.0), "mario", 0.5, tmp_path, source_iter=20) is False
+    assert save_winner(_state(2.0), "mario", 0.5, tmp_path, source_iter=20) is True
+    assert load_winner_meta(tmp_path)["source_iter"] == 20
+
+
+def test_save_winner_equal_metric_keeps_incumbent_without_a_later_iter(
+    tmp_path: Path,
+) -> None:
+    """Anti-churn still holds wherever it was actually doing work: a tie with
+    an equal iter, an earlier iter, or no iteration information at all keeps
+    the incumbent."""
+    assert save_winner(_state(1.0), "mario", 0.5, tmp_path, source_iter=10) is True
+    assert save_winner(_state(2.0), "mario", 0.5, tmp_path, source_iter=10) is False
+    assert save_winner(_state(3.0), "mario", 0.5, tmp_path, source_iter=5) is False
+    assert save_winner(_state(4.0), "mario", 0.5, tmp_path) is False
     assert load_winner_meta(tmp_path)["source_iter"] == 10
 
 
@@ -283,6 +313,81 @@ def test_find_playable_skips_missing_eval_checkpoint(tmp_path: Path) -> None:
                     "clear_rate": 0.9, "timestamp": 1.0}) + "\n"
     )
     assert find_playable_checkpoint("mario", tmp_path) == c20
+
+
+def _eval_rows(path: Path, rows: list[dict]) -> None:
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_find_playable_never_promotes_a_deterministic_replay_over_an_honest_row(
+    tmp_path: Path,
+) -> None:
+    """EXHIBITION must not outrank LEARNED inside the selector.
+
+    `eval_game.py` appends EVERY run to one `eval.jsonl`, deterministic ones
+    included, and the selector keyed on `clear_rate` alone. Measured across
+    62 checkpoint dirs, 8 were decided by a non-honest row while honest rows
+    existed — `mario_1_2_online_v2` picked a `sticky 0.0, jitter 0, n=10`
+    replay at 1.0 over its best honest `0.633, n=30`. That is this ledger's
+    own EXHIBITION/LEARNED boundary being crossed in code.
+    """
+    honest = _write_iter_ckpt(tmp_path, 10)
+    replay = _write_iter_ckpt(tmp_path, 20)
+    _write_iter_ckpt(tmp_path, 30)  # latest, never evaluated
+    _eval_rows(tmp_path / "eval.jsonl", [
+        {"checkpoint": str(replay), "clear_rate": 1.0, "timestamp": 2.0,
+         "sticky_prob": 0.0, "start_jitter": 0, "n_episodes": 10},
+        {"checkpoint": str(honest), "clear_rate": 0.633, "timestamp": 1.0,
+         "sticky_prob": 0.25, "start_jitter": 16, "n_episodes": 30},
+    ])
+    assert find_playable_checkpoint("mario", tmp_path) == honest
+
+
+def test_find_playable_still_uses_the_whole_log_when_no_row_is_honest(
+    tmp_path: Path,
+) -> None:
+    """Back-compat: a pre-protocol history keeps its old behaviour rather
+    than being filtered down to nothing."""
+    c10 = _write_iter_ckpt(tmp_path, 10)
+    _write_iter_ckpt(tmp_path, 20)
+    _eval_rows(tmp_path / "eval.jsonl", [
+        {"checkpoint": str(c10), "clear_rate": 0.9, "timestamp": 1.0},
+    ])
+    assert find_playable_checkpoint("mario", tmp_path) == c10
+
+
+def test_find_playable_prefers_the_better_sampled_of_two_equal_rates(
+    tmp_path: Path,
+) -> None:
+    """0.5 over 30 episodes is a better estimate than 0.5 over 5."""
+    small = _write_iter_ckpt(tmp_path, 10)
+    big = _write_iter_ckpt(tmp_path, 20)
+    _eval_rows(tmp_path / "eval.jsonl", [
+        {"checkpoint": str(small), "clear_rate": 0.5, "timestamp": 9.0,
+         "sticky_prob": 0.25, "start_jitter": 16, "n_episodes": 5},
+        {"checkpoint": str(big), "clear_rate": 0.5, "timestamp": 1.0,
+         "sticky_prob": 0.25, "start_jitter": 16, "n_episodes": 30},
+    ])
+    assert find_playable_checkpoint("mario", tmp_path) == big
+
+
+def test_find_playable_does_not_treat_a_sampled_unperturbed_run_as_honest(
+    tmp_path: Path,
+) -> None:
+    """`stochastic` is True for any sampled draw, including on an
+    unperturbed environment. That is not a replay, but it is not the honest
+    protocol either, and it must not be promoted as one."""
+    sampled = _write_iter_ckpt(tmp_path, 10)
+    honest = _write_iter_ckpt(tmp_path, 20)
+    _eval_rows(tmp_path / "eval.jsonl", [
+        {"checkpoint": str(sampled), "clear_rate": 1.0, "timestamp": 2.0,
+         "sticky_prob": 0.0, "start_jitter": 0, "stochastic": True,
+         "action_select": "sampled", "n_episodes": 10},
+        {"checkpoint": str(honest), "clear_rate": 0.4, "timestamp": 1.0,
+         "sticky_prob": 0.25, "start_jitter": 16, "stochastic": True,
+         "n_episodes": 50},
+    ])
+    assert find_playable_checkpoint("mario", tmp_path) == honest
 
 
 def test_find_playable_falls_to_latest(tmp_path: Path) -> None:

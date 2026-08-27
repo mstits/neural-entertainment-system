@@ -5,7 +5,40 @@ concurring** (seed 0: S3 0/30, deaths by gx 1827, 1,940 welds; seed 1:
 0/30, uniform gx 1635, 1,648 welds; seed 2: 0/30, uniform gx 1635, 1,967
 welds; every seed's curriculum mechanically healthy, every gauntlet
 residual core stuck at local sticky ceiling p≈0.01–0.03). Under the
-pre-registered criteria the policy class is **formally falsified**.
+pre-registered criteria the **CGSA-PPO recipe** is **falsified on its own
+signposts**.
+
+> **⚠ RE-SCOPED 2026-08-27** (`LEARNING_TRACK_AUDIT_2026-08-27.md` §9,
+> `CLAIMS.md` ADDENDUM N-1). This document originally read "the policy
+> class is formally falsified", and the 2026-08-08 correction below
+> reaffirmed that the falsification stands. **The policy-class
+> generalization is now WITHDRAWN.** The falsification checkpoint
+> (`checkpoints/mario_1_2_cgsa_s1/vanilla_ppo_iter_05990.pt`) is a
+> 2-layer LayerNorm MLP on the 712-d tile observation, 95,943 params. The
+> same architecture family at twice the width (200,071 params), trained
+> from the SAME `stage_03.state` entrance under the same protocol family,
+> was later banked at **38/100** honest clears
+> (`checkpoints/_preserved/consol2_40pct_strict_iter01120.pt`,
+> `runs/consol2/peak_eval_seed{7,101}.json`, reproduced bit-exactly on
+> 2026-08-27). What changed was the TRAINING PROCEDURE — precisely the
+> variable this document's falsification sentence claimed was not
+> responsible.
+>
+> What stands, and stands well: every signpost result below, the SPRT
+> machinery under it (correct Wald thresholds, welds accruing only at
+> p ≥ target, 96–99% welded at full 0.25 protocol noise), and the
+> measured robustness profile. The negative is real and correctly
+> scoped as *"this recipe failed these pre-registered signposts on three
+> concurring seeds."*
+>
+> The literature sentence below ("A literature audit … found no published
+> agent by any method that clears SMB 1-2 under this protocol") is
+> **weakened**: its cited source ("external deep research, 2026-07-23")
+> does not exist in this repo or in `research-consult/responses/`, whose
+> earliest artifact is 2026-07-27, and the protocol is bespoke enough to
+> make the claim close to true-by-construction. Quotable form: *"we are
+> aware of no published per-level 1-2 clear rate under Machado
+> sticky-0.25, in either direction."*
 **⚠ See "Correction (2026-08-08)" at the end: the p≈0.01–0.03 gauntlet
 figures quoted throughout this document are frontier-only (welded zones
 censored out). **At end of run** the uncensored gauntlet reads 0.165 /
@@ -210,6 +243,15 @@ FAIL (0.054 uncensored at seed 1, derived above; 0.020 frontier-only /
 ≈0.145 estimated at seed 2) and **Signpost 3** composition 0/30 at every
 seed with deaths clustered at gx 1635–1827. That remains the finding —
 verified local sticky-robustness does not compose into segment traversal.
+
+> **⚠ 2026-08-27:** this paragraph is correct about the SIGNPOSTS and
+> wrong about their SCOPE, and it is the sentence that carried the
+> over-broad reading forward. "The falsification stands" is true of *this
+> recipe on these signposts* and false of the policy class — see the
+> re-scoping note at the head of this document. The finding as restated:
+> **verified local sticky-robustness did not compose into segment
+> traversal UNDER CGSA-PPO.** A later training procedure on the same
+> policy class composed it at 38/100.
 
 What the correction changes is the *characterization* of the curriculum,
 and two hygiene items for the next run:

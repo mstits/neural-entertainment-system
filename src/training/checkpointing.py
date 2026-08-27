@@ -410,8 +410,31 @@ def save_winner(
         if pt_val is not None and pt_val > prev_val:
             prev_val = pt_val
 
-    if prev_val >= metric_value:
+    if prev_val > metric_value:
         return False
+    if prev_val == metric_value:
+        # THE CEILING LOCK. `>=` here reads as harmless anti-churn until the
+        # selection metric is one that SATURATES. `entrance_trailing_rate` is
+        # successes/30, maximum exactly 1.0: once a run records 1.0 the gate
+        # above became mathematically unsatisfiable and the winner froze for
+        # the rest of training. Measured on the v27/v28 cohort: the selector's
+        # last save lands at iter 50-120 of 250 (median 65), and two of eight
+        # runs froze at a recorded 1.0000 at iter 90 with 160 iterations still
+        # to come — deterministic, one-directional under-selection, not noise.
+        #
+        # The fix is the tie-break both v27 and v28 REGISTERED and neither
+        # implemented: "ties -> later iter". A tie still never dislodges a
+        # better metric, and a tie with no iteration information (or an older
+        # one) still keeps the incumbent, so the anti-churn property holds
+        # everywhere it was actually doing work.
+        prev_iter = None
+        if prev is not None:
+            try:
+                prev_iter = int(prev.get("source_iter"))
+            except (TypeError, ValueError):
+                prev_iter = None
+        if source_iter is None or prev_iter is None or int(source_iter) <= prev_iter:
+            return False
 
     import torch
 
@@ -511,21 +534,89 @@ def find_latest_trained_checkpoint(checkpoint_dir: str | Path) -> Optional[Path]
     return find_latest_checkpoint(d)
 
 
+def _row_is_honest(row: dict) -> bool:
+    """True when an `eval.jsonl` row was drawn under a perturbed protocol.
+
+    The ledger separates LEARNED (honest: sticky-actions + start-jitter) from
+    EXHIBITION (deterministic replay). `eval_game.py` appends BOTH to the same
+    `eval.jsonl`, so a selector that reads only `clear_rate` will happily rank
+    a deterministic n=10 replay at 1.0 above an honest n=30 at 0.633 — which
+    is the ledger's own EXHIBITION/LEARNED boundary being crossed in code
+    rather than in prose. Measured across the checkpoint dirs in this repo,
+    that is what the selector was doing in 8 of 62.
+
+    "Honest" here means the ENVIRONMENT was perturbed — sticky-actions or
+    start-jitter — which is what separates the two ledgers. It deliberately
+    does NOT key on `stochastic`, which `run_consumes_randomness` also sets
+    for a sampled action draw on an unperturbed environment: a sampled
+    deterministic-env run is not a replay, but it is not the honest protocol
+    either, and it must not be promoted as one. `stochastic` is consulted
+    only as a legacy fallback for rows written before the perturbation
+    fields existed.
+
+    Rows carrying none of the three are treated as NOT honest — they are
+    unlabelled, and an unlabelled number must never outrank a labelled one.
+    """
+    saw_field = False
+    for key in ("sticky_prob", "start_jitter"):
+        if key not in row:
+            continue
+        saw_field = True
+        try:
+            if float(row[key]) > 0.0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    if saw_field:
+        return False
+    stoch = row.get("stochastic")
+    return stoch if isinstance(stoch, bool) else False
+
+
 def _best_from_eval_log(checkpoint_dir: Path) -> Optional[Path]:
     """Highest-clear_rate checkpoint recorded in `eval.jsonl`, or None.
 
     Scans the per-game eval log for the row with the greatest `clear_rate`
-    whose `checkpoint` file still exists on disk (ties broken by newest
-    timestamp). Returns None when the log is missing, holds only error
-    rows, or nothing ever cleared (clear_rate 0.0) — in which case a stale
-    early iter is no more "playable" than the latest, so the caller should
-    fall through to the freshest checkpoint instead of pinning it.
+    whose `checkpoint` file still exists on disk. Returns None when the log
+    is missing, holds only error rows, or nothing ever cleared (clear_rate
+    0.0) — in which case a stale early iter is no more "playable" than the
+    latest, so the caller should fall through to the freshest checkpoint
+    instead of pinning it.
+
+    PROTOCOL-AWARE: when the log holds any honest (perturbed-protocol) row,
+    ONLY honest rows are eligible. A deterministic replay is EXHIBITION under
+    the ledger and may not be promoted over a LEARNED measurement no matter
+    how high its rate. When the log holds no honest row at all the whole log
+    is eligible, so pre-protocol histories keep their old behaviour.
+
+    Ordering within the eligible set is `(clear_rate, n_episodes, timestamp)`:
+    the rate first, then the larger sample — a rate measured over 30 episodes
+    is a better estimate than the same rate over 5 — and newest last.
     """
     log_path = Path(checkpoint_dir) / "eval.jsonl"
     if not log_path.exists():
         return None
     best_ckpt: Optional[Path] = None
-    best_key: Optional[tuple[float, float]] = None
+    best_key: Optional[tuple[float, float, float]] = None
+    honest_only = False
+    try:
+        # One cheap pre-pass to decide eligibility, so the honest/EXHIBITION
+        # split is a property of the whole log rather than of row order.
+        for line in log_path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("clear_rate") is None or row.get("checkpoint") is None:
+                continue
+            if _row_is_honest(row):
+                honest_only = True
+                break
+    except OSError:
+        return None
     try:
         for line in log_path.read_text().splitlines():
             line = line.strip()
@@ -537,6 +628,8 @@ def _best_from_eval_log(checkpoint_dir: Path) -> Optional[Path]:
                 continue
             cr, ckpt = row.get("clear_rate"), row.get("checkpoint")
             if cr is None or ckpt is None:
+                continue
+            if honest_only and not _row_is_honest(row):
                 continue
             try:
                 cr = float(cr)
@@ -556,7 +649,15 @@ def _best_from_eval_log(checkpoint_dir: Path) -> Optional[Path]:
                 ts = float(ts_raw)
             except (TypeError, ValueError):
                 ts = 0.0
-            key = (cr, ts)
+            # Prefer the better-sampled of two equal rates. `n_episodes` is
+            # the requested count; `n_episodes_delivered` (newer receipts) is
+            # what actually ran and wins when present.
+            n_raw = row.get("n_episodes_delivered", row.get("n_episodes", 0))
+            try:
+                n_eps = float(n_raw)
+            except (TypeError, ValueError):
+                n_eps = 0.0
+            key = (cr, n_eps, ts)
             if best_key is None or key > best_key:
                 best_key, best_ckpt = key, p
     except OSError:

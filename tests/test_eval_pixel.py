@@ -96,6 +96,26 @@ _SEQ_KEYS = {
     # emitted, never null, so any two rows are comparable on protocol
     # (see tests/test_b6_gate_repair.py).
     "sticky_prob", "start_jitter", "eval_seed", "stochastic",
+    # MEASURED perturbation — what the run DID, beside what argv asked for.
+    # The four fields above are all computed from the arguments, so a run
+    # with the sticky repeat or the Machado no-op prologue deleted from both
+    # executors emitted a byte-identical receipt to a correct one (and left
+    # 534 / 141 suite tests passing). These are functions of the episodes:
+    # `sticky_measured` estimates the realized repeat rate, `jitter_hist`
+    # maps each drawn no-op count to how many episodes drew it. See
+    # docs/research/LEARNING_TRACK_AUDIT_2026-08-27.md §2 and
+    # tests/test_honest_protocol_measured.py.
+    "sticky_applied", "sticky_eligible", "sticky_measured", "jitter_hist",
+    # PROTOCOL IDENTITY. `max_steps` moves the number (1-2 reads 0.15 at
+    # 1000 vs 0.20 at 1500/3000) and was registered at different values by
+    # different campaigns while appearing in 0 of 921 honest receipts; the
+    # profile fixes the action space, encoder and reward id, i.e. what
+    # `clear_rate` means; the ROM fixes the game. Without these, two rows
+    # with identical visible fields can be different protocols.
+    "max_steps", "profile", "rom", "rom_sha256",
+    # DELIVERED episode count, so a short run cannot silently deflate the
+    # rate with nothing in the row able to show it.
+    "n_episodes_delivered",
 }
 
 

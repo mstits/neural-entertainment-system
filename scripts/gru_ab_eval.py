@@ -89,7 +89,27 @@ def honest_eval(ckpt: Path, episodes: int) -> dict:
                 continue
         out[f"eval_seed_{es}"] = blob if blob else {
             "error": (r.stdout + r.stderr)[-2000:]}
+    def _delivered(v: dict) -> int:
+        """Episodes this receipt actually reports, or 0 if it does not say.
+
+        The receipt's field is `n_episodes` (and, since the protocol-receipt
+        fix, `n_episodes_delivered`) — NOT `episodes`. Reading `episodes` with
+        a fallback to the CLI constant made the weighting inert: both sums
+        always took the fallback, so the "weighted" pool was the unweighted
+        mean of the arms. Benign while the arms are equal-n, wrong the moment
+        they are not.
+        """
+        for k in ("n_episodes_delivered", "n_episodes"):
+            try:
+                n = int(v[k])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if n > 0:
+                return n
+        return 0
+
     ok = [v for v in out.values() if "clear_rate" in (v or {})]
+    short = [v for v in ok if _delivered(v) != int(episodes)]
     if len(ok) < len(out):
         # Pooling fewer than both --eval-seed runs silently halves the
         # "50 eps x 2 eval seeds = 100 episodes" protocol; refuse instead
@@ -97,10 +117,20 @@ def honest_eval(ckpt: Path, episodes: int) -> dict:
         out["pooled_clear_rate_error"] = (
             f"only {len(ok)}/{len(out)} eval-seed run(s) returned a "
             "clear_rate; refusing to pool a partial result")
+    elif short:
+        # ...and the same refusal when a run RETURNED but delivered fewer
+        # episodes than the protocol asked for. The guard above only ever
+        # checked that `clear_rate` was present, never that the promised
+        # sample size arrived — which is the other half of "a partial number
+        # reported as if it were the full pool".
+        out["pooled_clear_rate_error"] = (
+            f"{len(short)}/{len(ok)} eval-seed run(s) delivered an episode "
+            f"count other than the requested {int(episodes)} "
+            f"(saw {sorted(_delivered(v) for v in short)}); refusing to pool")
     elif ok:
-        cleared = sum(v["clear_rate"] * v.get("episodes", episodes) for v in ok)
-        total = sum(v.get("episodes", episodes) for v in ok)
-        out["pooled_clear_rate"] = round(cleared / total, 4)
+        cleared = sum(v["clear_rate"] * _delivered(v) for v in ok)
+        total = sum(_delivered(v) for v in ok)
+        out["pooled_clear_rate"] = round(cleared / total, 4) if total else None
     return out
 
 

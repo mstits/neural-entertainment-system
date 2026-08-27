@@ -2,7 +2,7 @@
         build build-pgo build-pgo-apply selftest clean clean-rust train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
         ppu_layout_check ppu-batch-profile rust-check unsafe-inventory-check \
-        clear-lint
+        clear-lint mechanism-check
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -38,6 +38,8 @@ help:
 	@echo "    make selftest-learning - real-loop guard: vanilla_ppo learns SMB (~25s)"
 	@echo "    make selftest          - GUI widget construction (headless)"
 	@echo "    make parity            - nes_core vs nes-py diff harness (under 2 min)"
+	@echo "    make mechanism-check RUN=<dir> [REQUIRE=redo,sil]"
+	@echo "                           - VOID a run whose armed mechanisms never fired"
 	@echo ""
 	@echo "  Bench (single-run; thermal-sensitive, run on a cool machine):"
 	@echo "    make bench             - preprocess + policy micro-benches"
@@ -115,6 +117,19 @@ clear-lint:
 	@.venv/bin/python scripts/clear_reachability.py --all --quiet
 	@echo "  (drop --quiet for the per-profile listing, including every"
 	@echo "   profile whose solution count is a constant)"
+
+# Refuse a RUN whose armed mechanisms never fired. Returns VOID (not FAIL)
+# for any mechanism that announced itself and whose own counter never moved
+# for the whole run, and UNAUDITABLE for one that emits no counter at all --
+# because a counter at zero is a null result while zero observations of a
+# counter is ignorance. ReDo logged `recycled 0 cum 0` on ~2,000 per-iteration
+# checks across all 8 v27+v28 runs while being registered as one of two
+# variables; see docs/research/LEARNING_TRACK_AUDIT_2026-08-27.md section 6.
+#
+#   make mechanism-check RUN=runs/v27_fresh_recovery REQUIRE=redo
+mechanism-check:
+	@.venv/bin/python scripts/check_mechanism_receipt.py $(RUN) \
+	    $(if $(REQUIRE),--require $(REQUIRE),)
 
 test: rust-check unsafe-inventory-check clear-lint
 	. .venv/bin/activate && pytest tests/ -q --timeout=120

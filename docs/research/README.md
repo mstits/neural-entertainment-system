@@ -18,7 +18,7 @@ jitter — Machado et al. 2018)?
 | `LEARNED_STICKY_DISTILLATION_BRIEF_v2_2026-07-22.md` | Brief v2: the v1 recipe's diagnostic failure (greedy vs sampled) |
 | `RESEARCH_PROMPT_2026-07-22.md`, `RESEARCH_PROMPT_V3_2026-07-23.md` | Driving prompts for the consultation rounds |
 | `DOSSIER_V3_2026-07-23.md` | Five verified reward-shaping exploits closed; the imitation solution space eliminated with data; the gate-mirage result |
-| `RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md` | **The outcome**: 1-1 learned (63–67%); 1-2 formally falsified for the policy class (three concurring seeds, pre-registered criteria); measured robustness profile; no published agent clears 1-2 under this protocol |
+| `RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md` | **The outcome, AS RE-SCOPED 2026-08-27**: 1-1 learned (63–67%); the **CGSA-PPO recipe** failed its pre-registered signposts on three concurring seeds; measured robustness profile. The original "1-2 formally falsified for the policy class" generalization is **WITHDRAWN** — the same policy class at twice the width, from the same entrance, later cleared 38/100 (`CLAIMS.md` ADDENDUM N-1). The literature sentence is weakened to "we are aware of no published per-level 1-2 clear rate under Machado sticky-0.25, in either direction" — its cited source artifact does not exist in this tree. See `LEARNING_TRACK_AUDIT_2026-08-27.md` §9 |
 
 ## Thread 2 — Search in silently-looping castle mazes
 

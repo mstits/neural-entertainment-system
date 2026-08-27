@@ -277,9 +277,14 @@ def _stats(out: dict) -> dict:
     draw regardless of temperature, so a T -> 0 sampled run correctly reports
     `stochastic: True` while reproducing the greedy trajectory exactly. The
     field under test here is the trajectory, not the label on the draw.
+
+    `profile` is dropped for the same reason `checkpoint` is: each helper call
+    mints its own tmpdir, so the recorded profile path differs between two
+    runs that are otherwise byte-identical. The ROM identity fields are NOT
+    dropped — they point at the same on-disk ROM in both runs and must agree.
     """
     return {k: v for k, v in out.items()
-            if k not in ("timestamp", "checkpoint", "action_select",
+            if k not in ("timestamp", "checkpoint", "profile", "action_select",
                          "temperature", "stochastic")}
 
 
