@@ -1419,6 +1419,98 @@ def test_observe_credits_the_burst_that_taught_the_archive_something():
     assert f.observe(0, bytes(2048), [0], 1, "entrance") == "live"
 
 
+# ---------------------------------------------------------------------
+# The death-blip debounce (Rygar, 2026-08-26)
+# ---------------------------------------------------------------------
+#
+# MEASURED, not assumed. Replaying the deepest banked Rygar trajectory
+# (runs/rygar_ceiling_2026-08-26, 3,607 actions, odometer x 0 -> 5,093,
+# reproduced to the pixel) against the profile's declared death byte
+# $0303 gives two cleanly separated shapes:
+#
+#   * 17 TRANSIENT dead reads, every one exactly 2 steps long, after
+#     which the byte returns to 1 and the camera keeps scrolling. The
+#     first lands at x = 1,536 — the exact odometer position the earlier
+#     un-debounced run walled at.
+#   * TERMINAL dead reads that never recover: a scripted forward hold
+#     dies at step 138 and the byte still reads 0 at step 6,000, with
+#     RAM churn frozen at a single value and `right` no longer scrolling
+#     the camera.
+#
+# So a 2-step dead read is a transition blip and a >= 3-step one is a
+# death, and the >= 3 threshold sits exactly on that boundary with one
+# step of margin. `_dead_mm` had no test at all before this: deleting
+# the debounce broke nothing in the suite while costing the search
+# 5,093 - 1,536 = 3,557 px of frontier, a 3.3x deeper reach, on the one
+# game that was chosen BECAUSE its progress signal is sound.
+
+_ALIVE = bytes(2048)
+_DEAD = b"\x01" + bytes(2047)
+
+
+def _blip_solver():
+    """_burst_solver whose death predicate is driven by the RAM byte the
+    caller feeds, so a dead/alive pattern can be scripted step by step.
+    The archive's cell key matches _BURST_GAME.cell_fn and outscores the
+    banked cell, so EVERY observation that reaches the recording path
+    records — `archive.records` is therefore a direct count of the steps
+    observe() actually banked."""
+    f = _burst_solver([_ocell(4, 0)], learn_every=0)
+    f.game = SimpleNamespace(**vars(_BURST_GAME))
+    f.game.is_dead = lambda ram, lives: ram[0] == 1
+    return f
+
+
+def _drive(f, pattern, ctx):
+    return [f.observe(0, _DEAD if d else _ALIVE, [], i, "entrance", ctx=ctx)
+            for i, d in enumerate(pattern)]
+
+
+def test_observe_rides_out_a_two_step_death_blip_and_banks_none_of_it():
+    # Rygar's door: 2 dead reads, then live play resumes. Both halves
+    # matter — the lineage must SURVIVE (or the search walls at the first
+    # door), and the blip steps must bank NOTHING (or the archive fills
+    # with cells minted mid-transition).
+    f = _blip_solver()
+    ctx: dict = {}
+    assert _drive(f, [0, 1, 1, 0, 0], ctx) == ["live"] * 5
+    assert f.archive.records == 3, "the two blip steps must not be banked"
+    assert "_dead_cause" not in ctx
+    # ...and the run counter is a RUN counter: live play rearms it, so a
+    # second door later in the same lineage gets the same two steps.
+    assert ctx["_dead_mm"] == 0
+    assert _drive(f, [1, 1, 0], ctx) == ["live"] * 3
+
+
+def test_observe_kills_a_lineage_on_the_third_consecutive_dead_read():
+    # The other side of the same threshold: a real death must still end
+    # the lineage, and must say WHY, because _assign() retires the source
+    # cell only for a "lives" death (a "key" death is a warp).
+    f = _blip_solver()
+    ctx: dict = {}
+    assert _drive(f, [1, 1, 1], ctx) == ["live", "live", "dead"]
+    assert ctx["_dead_cause"] == "lives"
+    assert f.archive.records == 0
+
+
+def test_the_burst_loop_actually_passes_a_ctx_to_observe():
+    # A debounce that exists but is not wired is worth nothing: the whole
+    # mechanism lives behind `if ctx is not None`, so explore()'s call is
+    # the load-bearing line. Pinned at the source because explore() needs
+    # a ROM and a Pool to run.
+    import inspect
+
+    body = inspect.getsource(Solver.explore)
+    call = body.split("status = self.observe(", 1)[1].split(")", 1)[0]
+    assert "ctx=c" in call, (
+        "explore() must hand observe() the burst ctx — without it every "
+        "transition blip reads as a death on its first frame")
+    # And the seed observation is the ONE deliberate exception: a single
+    # observation of the entrance has no run to debounce.
+    assert 'self.observe(0, r, [], 0, "entrance")' in inspect.getsource(
+        Solver.seed)
+
+
 @pytest.mark.parametrize("sel_mode", SEL_MODES)
 def test_the_throttle_does_not_permanently_retire_the_ortho_arm(sel_mode):
     # THE reproduction, end to end at the layer the receipt measured:
