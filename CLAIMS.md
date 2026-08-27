@@ -1349,6 +1349,24 @@ strict honest clears 3/190 pooled (~1.6%); flag-area-reach rate under
 honest noise ~10–20% by probe. The `clear_rate` key must never again
 be quoted without its predicate; probe tooling now reports both.
 
+ADDENDUM 2026-08-27 — THE 38/100 IS NOW CANONICAL, AND IT HOLDS.
+The consol2 receipts backing "definitive eval ... under the canonical
+protocol" were measured at `eval_rng: shared-stream`, while this
+document's own LEARNED definition requires `--eval-rng per-episode`.
+The word "canonical" was therefore doing work the receipts did not
+support. Re-run today on the same checkpoint
+(`consol2_40pct_strict_iter01120.pt`), same start state, same strict
+flagpole predicate, `--eval-rng per-episode`, 50 eps x seeds {7,101}:
+**31/100 (31.0%)** — seed 7: 14/50, seed 101: 17/50. Against the banked
+38/100 that is z = -1.04 (SE_diff 6.7 pts), NOT significant, and the
+canonical 95% Wilson interval [22.8, 40.6] contains 38. Per-seed motion
+is in OPPOSITE directions (seed 7 0.48->0.28, seed 101 0.28->0.34),
+i.e. RNG-regime noise rather than protocol bias. `max_byte_seen` 3 on
+both, so warp_rate 0 is certified post hoc. Receipts:
+`docs/receipts/consol2_canonical/perep_seed{7,101}.json`.
+**Quote 31/100 when citing this result under the canonical protocol;
+38/100 remains correct as the shared-stream measurement.**
+
 CONSOLIDATION ROUND 2 (2026-08-15/16 overnight, ledger §consol2):
 30M further entrance-pinned steps produced a transient peak the probe
 pair caught at both protocols simultaneously and the runner preserved
