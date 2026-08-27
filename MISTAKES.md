@@ -20,6 +20,34 @@ Nothing has been promoted; the enforced ruleset is untouched.
 
 ---
 
+## 2026-08-26 — Killed a workflow that was already self-correcting
+- **What happened:** Verifiers flagged a 23-profile arming commit as unsupportable.
+  I stopped the workflow and started a revert, before reading what its land phase
+  had already produced.
+- **Root cause:** Treated verifier output as a verdict I had to act on, when it was
+  input the workflow had commissioned and was mid-way through acting on. I checked
+  the committed state and not the working tree.
+- **Consequence:** Nearly reverted a commit whose fix was already 834 uncommitted
+  lines in the tree — a reproducer script and a roster test whose first case is
+  `test_the_policy_can_still_fail()`. Resumed instead; a few minutes lost.
+- **Rule (draft):** Read the working tree before reverting committed work. A
+  process that commissioned its own critique deserves the chance to answer it.
+
+## 2026-08-26 — [vacuous-gate] 23 profiles armed on death evidence
+- **What happened:** `scene_cut` armed across the odometer cohort. 7 profiles had
+  `has_non_death_candidate: false` — every blank run observed was a death — and
+  were armed anyway; 11 at `scene_min: 1`, which the signal's own docstring states
+  in writing must never be used; 3 with death vetoes reading a placeholder byte, a
+  documented 0↔255 flicker artifact, and a measured null.
+- **Root cause:** Arming was a judgement dressed as a measurement — the receipt's
+  `reason` strings read affirmatively next to fields recording the disqualifying
+  numbers, and the survey script was never committed, so nothing was reproducible.
+- **Consequence:** 23 profiles moved UNREACHABLE → FIREABLE on evidence that in
+  most cases showed only that the game can die. This is the same defect that left
+  26 games with a dead clear hook, and the brief warned against it explicitly.
+- **Rule (draft):** A profile may arm a signal only above its own measured null,
+  with the survey that measured it committed as a reproducer.
+
 ## 2026-08-26 — Built this file twice in the wrong shape
 - **What happened:** Wrote a 169-line prose `MISTAKES.md`, then rewrote it as a
   terse `mistakes.md` with a category/context/rule format, plus a pointer added
