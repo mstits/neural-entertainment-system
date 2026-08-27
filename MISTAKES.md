@@ -6,9 +6,17 @@ archive the enforced rules in the project instruction file get audited against.
 Rules below are **drafts, not enforced.** A root cause graduates to an enforced
 one-line invariant only after recurring across 4–5 separate entries.
 
-**Graduation watch:** `[vacuous-gate]` now stands at **4 entries** (2026-08-26 ×3,
-2026-08-25 ×1) — at threshold, awaiting a call. A lint for `passed = not <coll>`
-would enforce it deterministically and is preferable to a text rule.
+**Graduation watch** — root causes at or past the 4–5 entry threshold, awaiting a call:
+
+| root cause | entries | deterministic enforcement available? |
+|---|---|---|
+| `[vacuous-gate]` a check that cannot fail | **4** | yes — lint for `passed = not <coll>` |
+| `[stale-artifact]` measured the old binary/profile | **4** | yes — hash the loaded artifact against the built one in CI-less `make` target |
+| `[inert-treatment]` armed, wired, never fired | **3** | yes — assert the mechanism's counter is non-zero at least once per run |
+| `[weak-eval]` protocol too weak to detect its own failure | **4** | partly — enforce min-n at the gate |
+| `[unverified-claim]` trusted a number without re-deriving it | **3** | no — judgement |
+
+Nothing has been promoted; the enforced ruleset is untouched.
 
 ---
 
@@ -154,3 +162,101 @@ would enforce it deterministically and is preferable to a text rule.
 - **Root cause:** No minimum regime duration or refill-rate bound.
 - **Consequence:** Oscillating bytes nominated as lives counters.
 - **Rule (draft):** Bound regime duration and refill count explicitly.
+
+---
+
+# Project history (pre-2026-08-25)
+
+## 2026-08-25 — [inert-treatment] Three treatments armed, wired, and never fired
+- **What happened:** ReDo dormant-neuron recycling logged `dormant fc1 0/96 fc2
+  0/32 recycled 0 cum 0` on all ~2,000 per-iteration checks across 8 runs.
+  `symlog_rewards: true` and an entropy floor were likewise inert.
+- **Root cause:** "Armed" was verified by preflight reading config, never by
+  observing the mechanism act.
+- **Consequence:** A whole registration amendment (tau-swept, preflight-verified)
+  measured nothing; a verdict quoted ReDo as guaranteeing all 48k params active.
+  It guaranteed nothing — it never ran.
+- **Rule (draft):** Assert a mechanism's own counter is non-zero at least once per
+  run, or report it as not-exercised.
+
+## 2026-07-23 — [weak-eval] 3-episode acceptance passed welds with true rate 0/400
+- **What happened:** Weld acceptance used 3-episode sticky evaluation. Welds it
+  passed measured 0/400 when re-tested from deep inside the "welded" basin.
+- **Root cause:** n=3 cannot distinguish a real basin from noise.
+- **Consequence:** Distrust of all few-episode weld claims project-wide; a whole
+  ladder of accepted welds invalidated.
+- **Rule (draft):** Acceptance needs Wilson ≥50% at 95% on ≥20 episodes. Never
+  accept on a sample too small to reject.
+
+## 2026-07-23 — [reward-exploit] Five shaping exploits, each farmable
+- **What happened:** Farmable negative Φ; transition-frame aliasing poisoning
+  area-2 entry; x-only projection enabling a ceiling route; a Φ=0 sanctuary
+  allowing peak-charge-and-lose; a probe harness evaluating random-init nets.
+- **Root cause:** Shaping was checked for correctness on intended trajectories,
+  never for what an optimizer could extract from unintended ones.
+- **Consequence:** Months of PPO results shaped by exploitable objectives.
+- **Rule (draft):** Prove shaping non-farmable — non-completing episodes must net
+  ≤0 no matter how they end.
+
+## 2026-07-16 — [weak-eval] Die-respawn inflated clear rates
+- **What happened:** Five root bugs in the clear-evaluation path, chief among them
+  counting a die-and-respawn as a level clear.
+- **Root cause:** The success predicate did not distinguish reaching the next area
+  by winning from reaching it by dying.
+- **Consequence:** All clear claims before 2026-07-16 are untrustworthy and are
+  marked so.
+- **Rule (draft):** A success predicate must be tested against the failure that
+  most resembles success.
+
+## 2026-05-28 — [unverified-claim] Acted on an agent's impact estimate
+- **What happened:** A review pass claimed a minibatch change would save ~170ms
+  per iteration. Micro-benchmarked after landing: 29ms (1.2x), ~2% of an iteration.
+- **Root cause:** The estimate measured the operation's total cost and mislabeled
+  it as savings; it was quoted forward without re-derivation.
+- **Consequence:** A change justified on a 6x-overstated number.
+- **Rule (draft):** Re-derive any performance claim before quoting it. An
+  operation's cost is not the saving from optimising it.
+
+## 2026-05-28 — [start-state] Trained against an attract-mode demo
+- **What happened:** A profile declared no `start_state_path`, so the emulator
+  cold-booted to the title screen, where the demo auto-plays and ignores all
+  controller input.
+- **Root cause:** No validation that the environment was under agent control.
+- **Consequence:** Every "PPO won't learn / exploration wall" symptom traced here:
+  entropy pinned at 95% of ln(A), 57/80 iterations returning an identical 669,
+  12 envs byte-identical. Diagnosed as an algorithm problem for an extended period.
+- **Rule (draft):** Verify the agent controls the game before diagnosing learning
+  — force half the envs to a different action and confirm they diverge.
+
+## 2026-04-23 — [start-state] Chased a memory leak that was a corrupt input file
+- **What happened:** Reported "14 GB/gen" leak. Investigated allocators, views,
+  tensor lifecycles. Actual cause: a corrupt start-state file.
+- **Root cause:** Began at the most technically interesting hypothesis instead of
+  the cheapest one — swapping out the input.
+- **Consequence:** Extensive jemalloc/pre-allocation work on a non-existent leak.
+  Measured after: 90 MB/gen cold-boot vs 6,700 MB with the corrupt file; the pool
+  itself was leak-free at +1 MB across 8 generations.
+- **Rule (draft):** Rule out corrupt inputs before instrumenting the system. Move
+  the state file aside and re-run first.
+
+## 2026-04-22 — [stale-artifact] Measured a build that was never loaded
+- **What happened:** Ran a parity harness against what was believed to be a
+  perturbed-palette build. Tests passed because Python was loading the previous
+  binary — `maturin` does not always replace the site-packages `.so`.
+- **Root cause:** Assumed a successful build implies the new artifact is loaded.
+- **Consequence:** ~15 minutes lost to a green result that measured old code.
+  Found only by MD5-diffing the installed `.so` against the fresh dylib.
+- **Rule (draft):** After any native rebuild, hash the loaded artifact against the
+  built one before trusting any measurement.
+
+## (recurring, undated) — [stale-artifact] Stale PGO profile read as a regression
+- **What happened:** Benchmarked hot-path changes against existing `.profdata`;
+  and separately mixed PGO and plain builds without `cargo clean`.
+- **Root cause:** `pgo_build.sh apply` reuses stale profiles and a plain
+  `maturin develop --release` produces a non-PGO wheel — neither substitutes for a
+  fresh regeneration, and mixed histories corrupt the cache.
+- **Consequence:** Stale profiles masquerade as regressions; mixed builds overstate
+  ceilings. Ceilings and golden hashes generated in that window are untrustworthy.
+- **Rule (draft):** Regenerate PGO from scratch after any hot-path change, and
+  `cargo clean` between build modes before measuring.
+
