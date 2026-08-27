@@ -38,6 +38,22 @@
     "coord": 0.25
   },
   "threshold": 0.75,
+  "calibration_provenance": {
+    "calibration_receipts_consulted": [
+      "tetris_b_scene_cut_null_2026-08-26.json"
+    ],
+    "in_sample_runs": [
+      "runs/tetris_b/clear_control_2026-08-26/win"
+    ],
+    "in_sample_by_signal": {
+      "scene_cut": [
+        "runs/tetris_b/clear_control_2026-08-26/win"
+      ]
+    },
+    "n_scored": 1,
+    "n_in_sample": 1,
+    "note": "false-positive counts on in_sample_runs are bounded BY CONSTRUCTION: the signal's gate was set one unit above the null measured on these same tapes, so it cannot fire below threshold on them. Read those zeros as a consistency check, not as out-of-sample specificity."
+  },
   "per_run": [
     {
       "run": "runs/tetris_b/clear_control_2026-08-26/win",
@@ -90,7 +106,7 @@
           ]
         }
       },
-      "wall_s": 76.44,
+      "wall_s": 79.15,
       "verdict": "NO_CLEAR"
     }
   ],
@@ -126,21 +142,21 @@
         "slot": "S_CADENCE",
         "weight": 0.25,
         "null_rate": null,
-        "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py measures the scene_cut gate, not a per-signal fire-rate) \u2014 alive is not the same as separating"
       },
       "audio": {
         "state": "ALIVE",
         "slot": "S_CADENCE",
         "weight": 0.25,
         "null_rate": null,
-        "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        "reason": "null fire-rate UNMEASURED (scripts/clear_calibrate.py measures the scene_cut gate, not a per-signal fire-rate) \u2014 alive is not the same as separating"
       },
       "lock": {
         "state": "ALIVE",
         "slot": "S_ARMING",
         "weight": 0.25,
         "null_rate": null,
-        "reason": "differential input probe; corroborator only, never a sole term; null fire-rate UNMEASURED (scripts/clear_calibrate.py does not exist) \u2014 alive is not the same as separating"
+        "reason": "differential input probe; corroborator only, never a sole term; null fire-rate UNMEASURED (scripts/clear_calibrate.py measures the scene_cut gate, not a per-signal fire-rate) \u2014 alive is not the same as separating"
       },
       "scene_cut": {
         "state": "ALIVE",
@@ -186,5 +202,5 @@
       }
     }
   },
-  "generated_at": "2026-08-26T13:44:24"
+  "generated_at": "2026-08-26T17:11:32"
 }

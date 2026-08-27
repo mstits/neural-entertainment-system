@@ -284,6 +284,109 @@ clear machinery that cannot fire and makes every solve run print
 `[clear] NO REACHABLE CLEAR PREDICATE` at launch when its solution
 count is a constant.
 
+ADDENDUM 1a (2026-08-26, ledger audit) — **the enumeration in the
+paragraph above is wrong twice, in the direction that would destroy
+real negatives. The ruling on Rygar and Ninja Gaiden is untouched.**
+Two corrections, both re-derived at HEAD:
+
+*The census undercounts by ~8×.* `find runs -type d -name solutions`
+returns **507 directories, 297 of them non-empty** — not 38, the
+number the first sweep re-ran and reported, and not the 300 quoted
+here either. The 38 came from scanning `runs/*/solutions` at depth 1.
+Re-classifying all 297 finds no strays, so the family-level conclusion
+survives; it survives by luck rather than by method, and the method is
+what this ledger is for.
+
+*"The three profiles with a non-empty `level_key`" implies `level_key`
+is the only route to a bankable clear. It is not, and the count is
+not three.* `scripts/clear_reachability.py --all` reports
+**NONE=37, REACHABLE=8** across the 45 shipped solve profiles — eight
+clear-capable profiles by **four** routes: `level_key`
+(`bubble_bobble`, `castlevania`, `kid_icarus`), `finale`
+(`excitebike`), `byte_change` (`tetris_b`), `score_jump`
+(`ducktales`), and `confluence` (`contra`, `contra_blank`).
+`configs/excitebike.yaml` says so in its own body (lines 214-222): a
+finale profile "must NOT be assumed dead just because its `level_key`
+is empty", and `runs/excitebike/excitebike_bootstrap/solutions/sol_000`
+is a real banked clear on an empty-`level_key` profile. Quoting
+"three profiles" or "four clear-capable profiles" forward would write
+off `contra`, `contra_blank`, `ducktales` and `kid_icarus`'s
+`solutions: 0` as compile-time constants when the repo's own guard says
+their predicates are arithmetically fireable — the exact mirror of the
+Rygar error this ADDENDUM exists to correct. Rygar and Ninja Gaiden
+have none of the four routes, so nothing above them moves.
+
+ADDENDUM 2 (2026-08-26, ledger audit) — **two of the four per-game
+gate verdicts quoted in this entry are WITHDRAWN. The certification is
+still untouched, and Rygar still stands.** The verdict sentence reads
+"Rygar SIGNAL-SOUND (117 distinct / 470 px), Ninja Gaiden SIGNAL-SOUND
+(126 / 1,384 px), Contra cross-validated against the RAM pair (162 vs
+163 distinct), Kung Fu reclassified camera-static / agent-active (OAM
+churn 540) — a skill wall, not an instrument fault." Every clause was
+re-tested by re-running the identical gate at HEAD, same profile, same
+`--steps 1200 --odometer`, same start state.
+
+- **Rygar — STANDS.** `PASS — SIGNAL SOUND — still advancing`, 116
+  distinct / range 0..467 over 138 live steps, against the banked
+  117 / 470. The post-death tail contributed essentially nothing here,
+  which is exactly why the other two do not survive the same test.
+- **Ninja Gaiden — WITHDRAWN.** At HEAD: `FAIL — SIGNAL UNUSABLE`,
+  with `[INSTRUMENT] death byte reads 0 at the start state — a
+  decrement underflows and no death can be detected`, and **937 of the
+  requested 1,200 steps dropped as game-over tail**. The banked
+  receipt recorded `lives_at_start: 255` — an already-underflowed byte
+  — and assessed "126 distinct / 1,384 px" across those 937 dead
+  steps. Three *later* receipts already on disk at the time this
+  entry was last quoted say the same thing and were never folded in:
+  `runs/odometer/gate_ninja_gaiden_2026-08-25{,_reverify,_1200}.json`,
+  all three `"passed": false, "verdict": "SIGNAL UNUSABLE"`. What
+  survives is narrower and worth keeping: over the 263 live steps
+  before the tail the odometer reads **192 distinct / range 0..748**,
+  a live axis with *better* resolution than the banked number claimed.
+  The AXIS is real; the SIGNAL-SOUND verdict and both quoted numbers
+  are not.
+- **Contra — WITHDRAWN, both halves.** At HEAD: `FAIL — SIGNAL
+  UNUSABLE`, 19 distinct in 69 live steps, range 0..70, with
+  `[INSTRUMENT] only 19 distinct values in 69 steps (< 32) — too
+  coarse to be a search gradient` and **1,131 of 1,200 steps dropped**.
+  So ~94% of the banked "162 distinct / 635 px" was game-over
+  animation. The second half is worse: the "163" it was
+  *cross-validated against* **has no receipt anywhere in the tree**.
+  `find runs -iname "*contra*" -name "*.json"` returns exactly two
+  files — `runs/ram_verify/contra.json`, which is not a signal gate
+  and contains no 163, and the odometer receipt being corrected. A
+  cross-validation whose second number cannot be produced is not a
+  cross-validation, and it was the strongest-sounding evidence in the
+  sentence.
+- **Kung Fu — WITHDRAWN (already), with its corroboration corrected.**
+  The "not an instrument fault" clause was struck in the first sweep
+  against commit `bfb515b`, which deleted the vacuous
+  `passed = not instrument_findings` camera-static override and names
+  kungfu first among 13 profiles / 40 vacuous passes carrying the
+  `distinct=1 / min=0 / max=0` signature.
+  `runs/odometer/gate_kungfu_left_2026-08-23.json` carries that
+  signature verbatim. The OAM churn of 540 is a real positive and
+  stands. The audit adds one correction to the *supporting* clause:
+  the "~719,500 steps with `current_floor` never leaving 0" figure has
+  no receipt. What the banked telemetry actually shows is a frontier
+  pinned at `cells: 32, max_gx_in_max_area: 244` across **both**
+  Kung Fu runs — `runs/kungfu/kungfu_bootstrap` (514,239 steps) and
+  `runs/live_show/kungfu/lvl_` (1,206,456 steps), ~1.72M steps
+  together. That is a stronger corroboration than the one quoted, and
+  it is the one on disk; but on a profile shipping `level_key: []`
+  no clear could have been banked either, so "skill wall" remains an
+  inference and not a measurement.
+
+**The generalisable defect.** The first sweep validated these three
+rows against ONE vacuity signature — the camera-static override it had
+just watched get fixed — and never applied the *second* one, which its
+own companion analysis had already documented:
+`runs/onboard_wave6_d5_sweep_v3.json` finds **28 of 45 profiles
+contaminated by a post-death tail**. A gate that keeps counting after
+the agent is dead reports the game-over animation as progress. Checking
+a receipt against the last defect found, rather than against every
+defect known, is the same habit one level up.
+
 **FORGE-VALIDATED — generic death-detection fixes: transition-blip
 debounce and wrap-aware lives decrement, commits `1610093` and
 `084362c`, 2026-08-23.** Diagnosed from solver telemetry, not game
@@ -351,7 +454,23 @@ BINDING cheap-premise-first sequencing rule — is **9/9 PASS**
 design-mandated assertions: Zelda east-exit pans mint exactly one node,
 a Zelda death mints a warp with zero edges, idle Zelda hashes to one
 value post-mask, Metroid's two doors mint exactly two pan edges, and
-Metroid's scene noise mints zero extra nodes. Honest status, precise:
+Metroid's scene noise mints zero extra nodes.
+[ADDENDUM RG-0a, 2026-08-26 ledger audit: **four of the five passed as
+written; the fifth did not and the test says so.**
+`tests/test_rg0_roomgraph.py`'s own docstring records that RG-0.5's
+literal wording — "mints zero extra nodes" — is *unsatisfiable on the
+measured surface*, and `test_rg0_5` asserts a reframed and weaker
+claim instead: `index.n_rooms() < len(np.unique(scene))` plus lap-2
+dedupe. That reframing is honest and documented where it happened; the
+sentence above quotes the design wording as though it passed as
+written, which is the ledger's most common failure mode — faithfully
+copying a receipt's headline and dropping the receipt's own caveat.
+The other four are positive-form assertions over real captured streams
+(`n_rooms()==2` with one E-pan edge at d_odo 256; a warp with
+`edges == []` and `warp_count == 1`; exactly one masked hash against
+two unmasked; exactly two E-pan edges at d_odo 254) — positive-capable,
+not vacuous, and they stand. Gate RG-0 as a whole stands; the
+five-for-five phrasing does not.] Honest status, precise:
 RG-0 is an *offline* falsifier over fixtures — it proves the classifier
 and chassis behave correctly on banked probe data, nothing more. RG-1,
 the live pre-registered gate (§6 of the synthesis doc — 4 unattended
@@ -511,6 +630,55 @@ state — not run this session). No door/key semantic claim is made from
 this entry — only that the machinery distinguishes signal from noise
 on the one case tried.
 
+ADDENDUM IS-1 (2026-08-26, ledger audit) — **this entry describes a
+three-stage engine and validates a one-and-a-half-stage run. Stages 3a
+and 3b are UNEXERCISED, and 3a is unexercised for the same reason
+`is_clear` was: a compile-time constant.** Three scope corrections,
+all read off the entry's own receipt
+(`runs/item_semantics/is1a/is1a_stage12_3a_receipt.json`):
+
+1. **Stage 3a returned a structural zero, not a null result.** The
+   receipt records `total_leads: 0` with `leads_per_bit` all zero on
+   all four RG-1 sequences, *and* `cap_hist_key_present_pregraft_run:
+   false`. `discover_item_bits.py:616` reads
+   `cap_hist = e.get("cap_hist") or {}`; on archives minted before the
+   `EdgeStat.cap_hist` graft every edge yields `{}`, so
+   `exposure_bit0 == exposure_bit1 == 0` across all 2,065 / 1,160 /
+   2,086 / 1,399 edges and **no lead is generable at any budget, on any
+   seed**. Zero leads was fixed before the first edge was scored.
+2. **Stage 3b therefore never ran at all.** The module docstring calls
+   `verify_behavioral` "the ONLY thing in this engine allowed to turn a
+   Stage-3a lead into a claim", and it is the entire structural answer
+   to the rarity confound. It cannot execute on zero leads. The
+   sentence "running three stages" is true of the code and false of the
+   run.
+3. **"The engine correctly rejects a true negative" attributes the
+   rejection to the wrong agent.** The engine emitted 51 raw
+   "confirmed" flags, 13 after truncation — it did not reject. The
+   rejection was performed afterwards by human root-causing (the
+   death→CONTINUE menu rewrite; identical elapsed-step offsets 7/53/69
+   across 8 independently-diverging lineages). The VERDICT process was
+   correct and is worth keeping; the engine failed its own
+   zero-confirmed criterion, which is precisely what the receipt says
+   and precisely what this entry drops. The receipt scopes itself
+   correctly — "as currently specified (§9 Task 2 scope), Stage 1-2
+   does not yet achieve zero false confirmations" — and the ledger
+   widened "Stage 1-2" to "the engine".
+
+One disclosure this entry owes and does not make: the negative
+control's ground truth — "rupees/keys never move" — is read from
+`0x066D`/`0x066E`, **quarantined disassembly-sourced addresses**. The
+receipt handles this correctly, flagging it `doctrine_crosscheck_
+reporting_only` and never feeding it to the scanner, so purity is
+fully intact and no result here is contaminated. But a reader of this
+ledger cannot see that from the entry, and a control whose ground
+truth comes from quarantined bytes must say so.
+
+Honest form: **Stages 1-2 were exercised and FAILED their own
+criterion. Stages 3a and 3b are UNEXERCISED — 3a by a structural
+constant, 3b by consequence.** IS-1b remains unrun. No claim about
+what this engine can distinguish survives beyond Stages 1-2.
+
 **FORGE — fight-gate progress mechanism, commit `07f367d` design /
 `af94b88` implementation, 2026-08-25.** A second progress source
 alongside the PPU scroll odometer, for the CAMERA_STATIC_AGENT_ACTIVE
@@ -575,6 +743,156 @@ correctly told all three apart from Punch-Out's true positive, using
 only signal it computed itself) but has so far only produced one
 usable progress source out of four attempts — 1-for-4, not evidence of
 broad applicability to the CAMERA_STATIC_AGENT_ACTIVE class as a whole.
+
+ADDENDUM FG-1 (2026-08-26, ledger audit) — **the Punch-Out result is
+untouched. Three framing claims around it are not.**
+
+*The class name was minted by a gate that could not fail.*
+`CAMERA_STATIC_AGENT_ACTIVE` is the verdict the pre-`bfb515b`
+`progress_signal_gate.py` printed when its inline `rx==0/ry==0` branch
+deleted the "too coarse" instrument finding and forced
+`passed = not instrument_findings` because OAM churn showed the agent
+moving. Every verdict carrying that label is a vacuous pass on a
+zero-range axis; under the shipped gate those profiles read `SIGNAL
+UNUSABLE — camera static`. So "the game class the odometer cannot
+serve" and "the remaining three CAMERA_STATIC_AGENT_ACTIVE games" both
+inherit a label from an instrument demonstrated incapable of returning
+the negative. The Punch-Out finding does not depend on the label —
+blind discovery nominated addr 920 with attack_agree 5/5 /
+defense_agree 0/5, and the committed profile reproduces
+`max_gx_in_max_area=81` exactly. That stands. Delete the class, keep
+the result.
+
+*"It correctly told all three apart from Punch-Out's true positive" is
+not what happened.* The entry's own text, plus `CLEAR_GAP_CLOSURE`
+rows 13/16, records that **Ice Climber's probe never escaped a
+scripted, input-ignoring intro window** and **Galaga's root state sits
+inside a non-interactive attract loop** (`$0091` byte-identical under
+`hold_A` vs `hold_right`; "the fix is a re-mint"). On both profiles the
+instrument could not have returned a positive whether or not an HP
+signal exists. Those are **VOIDs of the start state, not
+discriminations by the mechanism**. Kung Fu is the one real
+discrimination — its #1 pick was falsified by an isolated-input NOOP
+probe, a positive counter-measurement. Corrected accounting:
+**1 true positive, 1 true rejection, 2 unmeasured** — the 1-for-4
+headline is right, the reasoning under it was not.
+
+*"No purity-clean round byte was found in any of them" over-reaches.*
+`round_gate_from_drives` is unusually well built for this question — it
+separates `insufficient_probe` (VOID) from `no_round_signal`
+(behaviour) in so many words, scans the full RAM window
+(`LIVES_SCAN_TOP = RAM_SIZE`, no address blind spot), and the
+precondition was genuinely met. But **the function has never returned
+kind `round_gate` on any real ROM.** Its only demonstrated positive is
+`tests/test_fight_gate.py::test_round_gate_nominates_the_monotone_
+round_byte`, a synthetic trace built to its own shape — the exact
+caveat this ledger raises about green detector suites. On the one game
+with true round structure (Punch-Out) it returned
+`insufficient_probe`. Its three-clause filter (`ptp<=2` within EVERY
+bout, up at EVERY boundary, never back to start) is severe enough to
+reject on any noisy real ROM. Honest form: *no byte satisfied the
+three-clause filter under this probe* — not *no purity-clean round
+byte exists in these games*.
+
+**FORGE-SHIPPED — the six clear signals reach the vote, commit
+`ee1324a`, 2026-08-26.** `entity_wipe`, `room_fp_transition`,
+`input_lock`, `lock_release_novelty`, `oam_quiesce` and `scene_cut`
+were built, tested and receipted earlier the same day and reached **no
+production path at all**: the live vote was `tally + coord >=
+min_signals` and the offline harness weighted only
+audio+tally+lock+coord. Six working signals, none able to change any
+verdict, while the roster closed 4 CONFIRMED / 41 VOID / 0 FAIL for
+want of an instrument that could return a positive. That is the
+week's pattern in its purest form — a shelf of mechanisms and a vote
+that could not see them. Now wired into both votes, eligibility-gated
+(an unarmed signal is `DEAD` in the quorum table with the key named,
+so a profile that arms nothing is byte-identical), with Rule 3 —
+one slot casts one vote — moved from documentation into the
+arithmetic of `slot_ceiling()` and `_fold()`.
+
+**Result, both halves, and the second half is not a success.**
+
+- **Bubble Bobble FIRES.** Round 99-0 → 99-1, two witnessed tapes, was
+  `n_valid: 2, hit_rate: 0.0` — its progress observable spans ONE unit
+  against the ≥300 backward drop `coord` requires, so the only
+  transition-evidence signal on the roster was arithmetically dead.
+  With `scene_cut` armed at its own measured gate: **2/2 at +4 and +18
+  frames**, independently reproduced at HEAD during this audit
+  (detected 2060 vs true 2056; 2499 vs 2481). Live per-action vote
+  fires 1 action after the clear and is silent before it.
+- **Tetris-B DOES NOT.** It moved from *blind* to *measured-and-late*:
+  `scene_cut` detects the real transition, but the screen blanks 151
+  frames after the quota byte hits 0, against a 120-frame tolerance
+  calibrated on SMB's fast flagpole cut. Reproduced at HEAD:
+  true 8657, detected 8819, delta 162. No stride or window change
+  reaches it, and widening the tolerance would manufacture the hit, so
+  the row stays a real `NO_CLEAR`. Its in-tolerance signal
+  (`oam_quiesce` at +28) was refused 60 times by Rule 5 — correctly:
+  "the sprites went away" is what a death looks like. **Gate (b) is
+  1 of 2.**
+
+**Disclosure the first version of this entry did not make, added by
+the same audit that found it (ADDENDUM CD-1).** Bubble Bobble's
+headline `total_false_positive_crossings: 0` was scored on the SAME
+two tapes the `scene_cut` gate was calibrated on
+(`bubble_bobble_scene_cut_null_2026-08-26.json`: `blank_min: 1` set as
+"the smallest integer strictly above the measured null" over those
+tapes' pre-clear play). **A gate placed one unit above the null
+measured on tape T cannot fire below threshold on T** — so that zero
+was arithmetic, and it was reported in the same field, with the same
+words, an out-of-sample zero would have used. This is the file's own
+signature defect wearing its politest face.
+
+The zero is not thrown away — an in-sample zero is a real consistency
+check, and a non-zero there would be a genuine defect — but it is not
+out-of-sample specificity, and the receipt now says which it is.
+`clear_detect.calibration_provenance()` computes the overlap
+mechanically from the banked calibration receipts and writes it beside
+the count on **every** receipt, empty or not, so its absence is
+visible rather than ambiguous. Bubble Bobble reads `n_in_sample: 2`;
+SMB's five-trace zero reads `n_in_sample: 0` — a genuinely
+out-of-sample zero, now labelled as one. Anti-vacuity:
+`test_the_disclosure_is_not_a_constant` drives three inputs to three
+different answers, and mutating the overlap test to `if True` reddens
+it by name.
+
+Worth stating because it bounds how much the disclosure is
+conceding: Tetris-B is ALSO in-sample (`n_in_sample: 1`) and still
+records **one false positive**. The calibration bound constrains the
+calibrated signal on the calibrated tape; it is not a blanket
+guarantee of zero, and the instrument demonstrably still fires. So the
+Bubble Bobble zero is a weaker result than it read as, and a real one.
+
+**The out-of-sample evidence for Bubble Bobble exists and is worth
+citing precisely because the receipt's zero does not carry it:** the
+live per-action test replays a DIFFERENT tape
+(`runs/bubble_bobble/chain_day2f`, round 69, distinct from both
+calibration tapes) and the detector is silent across all 14 evaluations
+before the clear, then fires 1 action after it. Note 14, not 298 —
+298 is the number of driven observations, the detector evaluated 14
+times in that span, and the test asserts the smaller true number.
+
+SMB control: **byte-identical, 5/5, 0 false positives**, re-run at
+HEAD with zero field differences. Two scope corrections to the
+wire-up's own commit message, recorded because a control's shape is
+part of its result: (1) "every shipped profile is byte-identical —
+none of them arms anything" is false as written; the same commit arms
+three signals each on `bubble_bobble` and `tetris_b`. Blast radius was
+re-checked and is nil — both use `clear` mode `byte_change`, and all
+nine `mode: confluence` profiles produce identical verdicts and
+ceilings either side of the commit. (2) "field-for-field identical
+either side of the change" overstates it twice: three fields differ in
+every row (`armed_signals`, `shelf_stats`,
+`n_required_class_vetoes`, all in the comparison's ignore set), and
+the BEFORE receipt already carries those keys as null — so what the
+control pins is ARMED-vs-UNARMED under one code path, not
+new-code-vs-old-code. That is still the control that matters, and the
+narrower statement is the true one. Both corrections are recorded in
+`tests/test_clear_signal_wireup.py`, where the claim is made.
+
+Suite at ship: 5349 passed, 30 skipped, 3 xfailed, 1 known-
+environmental failure; Rust 659 passed. Seven mutations were run
+against the wiring, each reddening a named test.
 
 ## Quarantine (Tier-3-contaminated artifacts)
 
@@ -699,11 +1017,45 @@ it. They split two ways:
   `ghosts_n_goblins`, `kirby`, `metroid` folded only their own
   `[VERIFIED: ...]`-receipted addresses. Narrower than intended, but no
   outside knowledge entered.
+  [ADDENDUM P-1, 2026-08-26 ledger audit: **positives stand; negatives
+  from these nine carry the same caveat the external four got, and this
+  bullet drops it.** `PURITY_BREACH_2026-08-26.md` says "These results
+  stand. They are narrower than they should have been — a handful of
+  bytes that could have been re-nominated were not." The ledger kept
+  "results stand" and lost the narrowness, and — unlike the bullet
+  directly above it — did not repeat the positives-stand /
+  negatives-void split. Those nine passes were still pre-blinded, just
+  by the project's own bytes rather than someone else's. Purity is
+  fully intact and no positive is touched. But an "the instrument
+  looked and found nothing" negative from any of the nine is narrowed
+  by construction and must be quoted with that caveat.]
 
 **No CONFIRMED clear is affected.** `bubble_bobble`, `castlevania`,
 `excitebike` and `tetris_b` — the only four profiles that can witness their
 own clear — carry no external RAM map; their sole external-provenance
-mentions are negative citations. **No Learned-ledger claim is retracted**:
+mentions are negative citations.
+[ADDENDUM P-2, 2026-08-26 ledger audit: **the purity conclusion
+stands; the parenthetical enumeration it rests on does not.** Read
+"the only four profiles that can witness their own clear" as **"the
+four profiles whose CONFIRMED clears this breach could have
+touched"** — `scripts/clear_reachability.py --all` reports **eight**
+clear-capable profiles by four routes — the four above plus
+`kid_icarus` (`level_key` 0x0130), `ducktales` (`score_jump` ≥5000),
+`contra` and `contra_blank` (`confluence`); see ADDENDUM 1a on the
+odometer entry. The purity finding is UNAFFECTED and was re-verified
+directly against the configs: `configs/kid_icarus.yaml` (lines 180-183,
+"NO external RAM maps / disassembly") and `configs/ducktales.yaml`
+(lines 124-126, "no external maps") both declare self-derivation with a
+receipt path, and `configs/contra.yaml` carries no quarantine marker.
+What had to be corrected is the enumeration, because quoting "the only four" forward
+licenses treating four other profiles' `solutions: 0` as compile-time
+constants when they are arithmetically real. One scoping note this
+sentence should also make explicit: it is an **`is_clear`-HOOK**
+statement and is entirely separate from the confluence clear detector,
+which scored 0 on the witnessed Bubble Bobble and Tetris-B clears.
+Neither profile's CONFIRMED status runs through that detector, so the
+detector's blindness never touched this row.]
+**No Learned-ledger claim is retracted**:
 the 2026-08-25 check that neither struct appears anywhere else in this file
 was re-run and still holds. `zelda_roomfp`'s 443,419-cell / zero-solution
 archive was already VOID for want of an admissible target signal; the
@@ -739,6 +1091,67 @@ quarantined 0x0070/0x0084 pair under `"zelda" in <name>`, and
 `tests/test_no_new_name_dispatch.py` holds a **shrink-only** inventory of
 the eight display-name dispatch sites that remain in `src/` and `scripts/`
 — it may lose entries, never gain one, and a stale entry is a hard failure.
+
+## LEDGER AUDIT 2026-08-26 — the whole file, read against one question
+
+Full write-up: `docs/research/LEDGER_AUDIT_2026-08-26.md`. Summary
+here so no reader of this file can miss it.
+
+**61 load-bearing claims were read and questioned. 39 warranted a
+ruling: 21 STAND, 15 WEAKENED, 3 WITHDRAWN.** The remaining 22 were
+checked and needed nothing recorded. Every withdrawal was made against
+a receipt or a re-run at HEAD, never against a judgement; **not one
+positive result in this file was withdrawn.** The four CONFIRMED
+clears, all four honest-protocol rates, and every purity finding are
+intact.
+
+The three withdrawals: Kung Fu's "not an instrument fault" (against
+commit `bfb515b`, which deleted the vacuous camera-static override);
+Ninja Gaiden's odometer SIGNAL-SOUND verdict; Contra's odometer
+SIGNAL-SOUND verdict and its unreceipted "163" cross-validation. All
+three are annotated in place — ADDENDUM 2 on the odometer entry.
+
+**The question the audit applied to every entry:** *what would this
+have reported if the mechanism were absent?* Where nothing answered
+it, the claim is UNMEASURED, not measured-and-negative.
+
+**The pattern in what was corrected is a single habit, and it is
+cheap to fix.** In every weakened case the underlying receipt was MORE
+honest than the ledger entry summarising it. The IS-1a receipt says
+"Stage 1-2"; the entry said "the engine". `test_rg0_roomgraph.py` says
+RG-0.5's literal wording is unsatisfiable and asserts something
+weaker; the entry said all five passed as written. `PURITY_BREACH`
+says the self-derived nine are "narrower than they should have been";
+the entry said "results stand". F0 says the per-seed v28 numbers are
+low; the entry quoted them as capability. The failure mode is not
+dishonesty and it is not sloppiness in the work — it is dropping the
+receipt's own scoping caveat when quoting its headline.
+
+**BINDING RULE, extended (2026-08-26).** The 2026-08-23 process audit
+named the defect class — *an assay with no positive control* — and
+built a preflight that enforces it forward on **trainer arms only**.
+Nobody ever ran the rule BACKWARD over this ledger, and every finding
+of the 2026-08-26 campaign was reachable from that sentence three days
+earlier. The rule is therefore extended, and it is the rule this
+section exists to install:
+
+> An assay with no positive control applies to **discovery
+> instruments, gates, detectors and clear predicates**, not only to
+> trainer arms. **Every entry in this file that cites an absence must
+> name the positive that same instrument returned on that same
+> profile — or say VOID.** "The instrument looked and found nothing"
+> and "nothing ever looked" are different claims and this ledger will
+> not merge them.
+
+Instruments that already meet the rule, and are the templates:
+`scripts/clear_reachability.py` (poses the question verbatim in its
+docstring; mutation-tested), `tests/test_purity_quarantine_sweep.py`
+and `tests/test_no_new_name_dispatch.py` (both refuse to certify an
+empty scan), `scripts/odometer_cert.py` (three of five checks are
+positive-form), the ReDo forced-recycle sweep (the ledger's best
+entry: a null banked *with* its positive control), and
+`scripts/anti_vacuity_scan.py` + `tests/test_anti_vacuity_gates.py`
+(commit `1580ebf`).
 
 ## Enforcement
 
@@ -1113,6 +1526,41 @@ above) must remain the sole scoring authority: training telemetry is
 usable for within-run seed/checkpoint selection and unusable as a
 proxy for any gate number, cold or otherwise.
 
+ADDENDUM V-2 (2026-08-26, ledger audit) — **the binding process rule
+STANDS and is strengthened. Both quantitative halves of this finding
+are WEAKENED, and one clause of the v27 verdict above it is
+withdrawn.** See ADDENDUM V-1 for the underlying defect.
+
+1. **"A 2-25× overestimate" is inflated.** The comparison is not
+   independent: the honest denominators were measured at checkpoints
+   chosen by the very proxy under test, and those picks are
+   systematically low by +0.08..+0.21. The gap is real and large; the
+   multiplier is not a measured quantity.
+2. **"Still ranks seeds correctly" is WITHDRAWN as stated.** On the two
+   v27 seeds later re-scored, seed 1 moves 0.290 → 0.500 against seed
+   2's uncorrected 0.530 — "seed 2 is best" is inside the noise.
+   `CHECKPOINT_SELECTION_DEFECT_2026-08-26.md` makes the general point
+   directly: *a metric that preserves rank across seeds need not
+   preserve rank across checkpoints WITHIN a seed, and this is direct
+   evidence it does not.* The sentence "usable for within-run
+   seed/checkpoint selection" in the paragraph above is exactly the
+   usage now falsified, and is withdrawn; the rest of the rule stands.
+3. **The v27 verdict's "not close on either bound" is WITHDRAWN for the
+   FAIL bound.** No corrected v27 ladder exists — F0 covered v28 only.
+   The two v27 spot-checks both moved UP (seed 0 0.040 → 0.120, seed 1
+   0.290 → 0.500). With the same systematic shortfall a corrected v27
+   best-of-4 is unknown and could plausibly approach 0.7 against a
+   0.767 FAIL bar. The **FAIL verdict most likely survives**; the
+   margin claim does not. Downstream, "the sticky-wall research line is
+   CLOSED on curriculum shape" is a strong closure resting on two FAILs
+   whose per-seed numbers are now known to be systematically low, and
+   should be re-stated as provisional until a registered v27 re-scoring
+   grid exists.
+
+The rule itself — **training telemetry is unusable as a gate number**
+— is untouched and, if anything, better supported: the proxy is now
+known to fail in a second, independent way.
+
 V28 CAPACITY VERDICT: FAIL — BEST-OF-4 0.670 (2026-08-25, prereg
 `docs/proposals/V28_CAPACITY_2026-08-25.md` VERDICT section, configs
 `configs/mario_1_1_v28_seed{0,1,2,3}.yaml`, launch commit `e4e35a7`,
@@ -1205,6 +1653,57 @@ both mechanism reads, and the seed that lost most at the gate is the
 one that regressed on both — seed-level coherence between gate and
 reads, which supports the dose-response story even under a failed gate.
 
+ADDENDUM V-1 (2026-08-26, ledger audit) — **the FAIL headline survives,
+but by a rescue this ledger never recorded, and the per-seed numbers
+above are LOWER BOUNDS rather than capability.** Two documents landed
+the same day as these entries and neither is cited anywhere in this
+file. Both apply directly to the numbers above.
+
+*The selector is a demonstrated-defective instrument.*
+`docs/research/CHECKPOINT_SELECTION_DEFECT_2026-08-26.md` shows that
+`winners/best.pt`, selected by argmax over `entrance_trailing_rate`,
+**under-selects in 4 of 4 runs tested — by 20-40 iterations and
++0.08..+0.21 at full honest protocol.** The cause is mechanical:
+`entrance_trailing_rate` saturates at 0.867-1.000, where a 30-episode
+window carries SE ≈ 0.09, so an argmax over ~25 draws is close to
+arbitrary. Every per-seed number in this entry was scored at a
+checkpoint that metric chose.
+
+*The headline was independently re-derived and survives exactly.*
+`docs/research/F0_CORRECTED_PEAK_LADDER_2026-08-26.md` re-scored **192
+evaluations across every 10-iteration checkpoint of all four v28 runs**
+and made the estimate selection-unbiased by split-sample — select on
+one eval seed, score on the held-out other. It lands on **0.670**, the
+recorded number, to the digit. **FAIL stands, and for a good reason.**
+The defect and the rescue both belong in this ledger; until now the
+headline rested on a proxy known to be broken with its defence
+undocumented.
+
+*The per-seed field is markedly tighter than recorded.* Corrected
+ladder: **0.640 / 0.590 / 0.580 / 0.720** (max-over-24) and
+**0.640 / 0.500 / 0.580 / 0.670** (split-sample, unbiased), against the
+recorded 0.450 / 0.230 / 0.370 / 0.670. Under-selection hit 3 of 4
+seeds by +0.19..+0.36 and hit the BEST seed (3) least. Consequences,
+stated at the strength the correction supports:
+
+- The phrase **"higher across-seed variance with the upside larger than
+  the downside"** is WITHDRAWN as a property of 72k weights. Most of
+  that variance is selector noise; the corrected field is tight.
+- The **seed-paired delta table** (+0.410 / −0.060 / −0.160 / +0.500)
+  and the **"seed-level coherence between gate and reads"** argument
+  both ride on seed 2 being the gate loser at 0.370. Corrected, it is
+  0.580. Both are WEAKENED; neither is re-derived here, because F0's
+  own rule applies — *a re-scoring grid must be registered before
+  re-scoring, or the correction inflates as badly as the original
+  deflated.* A corrected seed-paired table requires a registered v27
+  ladder that does not exist.
+- **Mechanism reads #1 and #3 are UNAFFECTED.** Both were recomputed
+  from raw `[backward]` telemetry and are independent of checkpoint
+  selection. The dose-response finding stands as written.
+- The direction is conservative everywhere it touches a banked
+  artifact: a rate measured on a fixed sha256-pinned checkpoint can
+  only be *understated* by a bad selector, never inflated.
+
 SECONDARY FINDING, LEARNED ledger / architecture-training-dynamics
 class (2026-08-25, same receipts as above) — peak instability
 reproduces a THIRD time and more starkly than ever, and capacity does
@@ -1218,7 +1717,16 @@ iters) and v27's from-scratch 48k runs (0.04→0.02, 0.29→0.02,
 its peaks were the highest — the wider net fell further, not less far.
 **Preserve-on-peak (`winners/best.pt`) is again the only reason this
 experiment has a number at all**: scored on final checkpoints alone,
-v28's best-of-4 would be **0.050**, not 0.670. Demonstrated now across
+v28's best-of-4 would be **0.050**, not 0.670.
+[ADDENDUM V-1b, 2026-08-26 ledger audit: this finding is **STRENGTHENED,
+not weakened, by ADDENDUM V-1.** The iter-240 checkpoints carry no
+selection at all, so the selector defect cannot reach them; and because
+the true peaks are HIGHER than recorded, the measured collapse is
+LARGER than stated, not smaller. One phrase to tighten: per
+`CHECKPOINT_SELECTION_DEFECT_2026-08-26.md`, preserve-on-peak is
+load-bearing and correct as a **FLOOR**, not as an optimum — it is why
+there is a number, but it is not the best number available.]
+Demonstrated now across
 two parameter budgets, two delivery mechanisms, and three campaigns;
 preserve-on-peak stays mandatory in every arm of this line and any
 future registration scoring only a final checkpoint is mis-specified.

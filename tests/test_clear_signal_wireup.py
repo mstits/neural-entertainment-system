@@ -533,9 +533,25 @@ def _rows(path):
 def test_smb_is_byte_identical_across_the_wireup() -> None:
     """GATE (a). SMB scores 5/5 with 0 false positives and its runs are
     banked; the wire-up had to prove that, not assume it. Both receipts are
-    real `clear_detect.py --test` runs over the same five traces, taken
-    either side of the change, and every field but wall-clock and the new
-    telemetry is compared."""
+    real `clear_detect.py --test` runs over the same five traces, and every
+    field but wall-clock and the new telemetry is compared.
+
+    SCOPE CORRECTION (2026-08-26 ledger audit). This control was described
+    in the wire-up commit as "field-for-field identical either side of the
+    change" and that overstates it in two ways worth naming, because the
+    whole point of this file is that a control's shape is part of its
+    result. (1) Three fields differ in every row -- `armed_signals`,
+    `shelf_stats` and `n_required_class_vetoes` are null in the BEFORE
+    receipt and populated in the AFTER one; they are in `ignore` below, so
+    "identical" always meant "identical modulo the new telemetry".
+    (2) The BEFORE receipt already carries those three keys as null
+    (generated_at 13:21:38, before the AFTER run at 13:42:58), which means
+    it was produced by code that already had the new columns, with the
+    signals unwired -- so what this pins is ARMED-vs-UNARMED under one code
+    path, not new-code-vs-old-code. That is still the control that matters
+    (SMB arms nothing, and the assertions below prove the identity comes
+    from that rather than from luck), but it is a narrower statement than
+    the commit message made and the narrower one is the true one."""
     before, b_rows = _rows(SMB_BEFORE)
     after, a_rows = _rows(SMB_AFTER)
     assert before["n_hit_within_tolerance"] == after["n_hit_within_tolerance"] == 5
@@ -699,3 +715,95 @@ def test_a_core_missing_an_accessor_is_reported_rather_than_crashing(capsys) -> 
     assert partial == frozenset({"_odo"})
     out = capsys.readouterr().out
     assert "peek_nametables" in out and "vote 0" in out
+
+
+# ==========================================================================
+# A ZERO THAT COULD NOT HAVE BEEN ANYTHING ELSE
+#
+# The 2026-08-26 ledger audit landed one finding against the wire-up:
+# Bubble Bobble's headline `total_false_positive_crossings: 0` was scored
+# on the SAME two tapes the scene_cut gate was calibrated on. The gate is
+# "the smallest integer strictly above the null measured on those tapes",
+# so it cannot fire below threshold there -- FP=0 was arithmetic, and the
+# receipt reported it in the same field, with the same words, that an
+# out-of-sample zero would have used.
+#
+# That is this project's signature defect wearing its politest face: a
+# number that cannot come out any other way, presented as a measurement.
+# `clear_detect.calibration_provenance` now computes the overlap from the
+# banked calibration receipts and writes it beside the count every time.
+# These tests exist so the disclosure is not itself a constant.
+# ==========================================================================
+
+
+def test_the_bubble_bobble_zero_is_disclosed_as_in_sample() -> None:
+    """The finding, pinned. Both scored tapes are calibration tapes, the
+    receipt says so by name, and the note refuses the stronger reading."""
+    d, _ = _rows(BB_AFTER)
+    prov = d["calibration_provenance"]
+    assert prov["n_scored"] == 2
+    assert prov["n_in_sample"] == 2, (
+        "both BB tapes were calibrated on AND scored -- if this ever drops "
+        "to 0 the zero became a real out-of-sample number and the entry in "
+        "CLAIMS.md should be upgraded, not left as-is")
+    assert prov["in_sample_by_signal"]["scene_cut"] == sorted(
+        r["run"] for r in d["per_run"])
+    assert "bubble_bobble_scene_cut_null_2026-08-26.json" in \
+        prov["calibration_receipts_consulted"]
+    assert "BY CONSTRUCTION" in prov["note"]
+    # ...and the number it qualifies is still there, unchanged.
+    assert d["total_false_positive_crossings"] == 0
+
+
+def test_the_disclosure_is_not_a_constant() -> None:
+    """ANTI-VACUITY. A block that said "in-sample" on every input would be
+    the same defect one level up. Three inputs, three different answers:
+    a calibrated tape, an uncalibrated tape on the same profile, and a
+    profile with no calibration receipt at all."""
+    calibrated = [{"run": "runs/bubble_bobble/r99_fixed/solutions/sol_000"}]
+    other_tape = [{"run": "runs/bubble_bobble/chain_day2f/lvl_00_69/"
+                          "solutions/sol_000"}]
+
+    hit = clear_detect.calibration_provenance(
+        calibrated, "configs/bubble_bobble.yaml")
+    assert hit["n_in_sample"] == 1 and "BY CONSTRUCTION" in hit["note"]
+
+    # Same profile, same consulted receipt -- a tape it was never measured
+    # on. This is the live test's fixture (chain_day2f), which is exactly
+    # why that one carries out-of-sample weight and this one does not.
+    miss = clear_detect.calibration_provenance(
+        other_tape, "configs/bubble_bobble.yaml")
+    assert miss["calibration_receipts_consulted"] == \
+        hit["calibration_receipts_consulted"], "the receipt WAS read"
+    assert miss["n_in_sample"] == 0
+    assert "out-of-sample" in miss["note"]
+
+    # No calibration receipt for the profile at all.
+    none = clear_detect.calibration_provenance(calibrated, "configs/nope.yaml")
+    assert none["calibration_receipts_consulted"] == []
+    assert none["n_in_sample"] == 0
+
+
+def test_smb_carries_the_disclosure_and_it_comes_out_empty() -> None:
+    """The banked negative, on a real receipt rather than a fixture. SMB
+    arms nothing and was never calibrated, so its five-trace 0 false
+    positives is an out-of-sample zero -- and the receipt now says which
+    kind of zero it is instead of leaving a reader to assume."""
+    d, _ = _rows(SMB_AFTER)
+    prov = d["calibration_provenance"]
+    assert prov["n_scored"] == 5
+    assert prov["n_in_sample"] == 0
+    assert "out-of-sample" in prov["note"]
+    assert d["total_false_positive_crossings"] == 0
+
+
+def test_every_wireup_receipt_carries_the_block() -> None:
+    """Absence must be visible. A receipt with no `calibration_provenance`
+    is one whose zero is unqualified, which is the state this fixes; the
+    BEFORE receipt predates the field and is the one documented exception."""
+    for path in (SMB_AFTER, BB_AFTER, TETRIS_AFTER):
+        d = json.loads(path.read_text())
+        assert "calibration_provenance" in d, path.name
+        assert set(d["calibration_provenance"]) >= {
+            "in_sample_runs", "n_in_sample", "note",
+            "calibration_receipts_consulted"}, path.name

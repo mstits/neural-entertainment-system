@@ -54,6 +54,44 @@ The Kung Fu row is the instrument doing its second job: a flat
 odometer measures the CAMERA; OAM churn splits agent-active from
 agent-inert. That diagnostic rule is now in memory as binding.
 
+> **CORRECTION 2026-08-26 (ledger audit) — three of the five rows above
+> are withdrawn or corrected. Read this table with the correction, not
+> without it.** Full detail in `docs/research/LEDGER_AUDIT_2026-08-26.md`
+> and `CLAIMS.md` ADDENDUM 2 on the odometer entry. Re-running the
+> identical gate at HEAD, same profiles and start states:
+>
+> - **Rygar — stands.** 116 distinct / 467 px, still PASS. The banked
+>   117 / 470 was measured over 138 live steps plus a tail that
+>   contributed nothing.
+> - **Ninja Gaiden — WITHDRAWN.** At HEAD the gate FAILs: the death byte
+>   reads 0 at the start state, and **937 of the requested 1,200 steps
+>   were game-over tail.** The banked receipt recorded
+>   `lives_at_start: 255` — an already-underflowed byte. Three later
+>   receipts on disk (`gate_ninja_gaiden_2026-08-25{,_reverify,_1200}
+>   .json`) all read `"passed": false`. The AXIS survives and is better
+>   than claimed: 192 distinct / 748 px over the 263 live steps.
+> - **Contra — WITHDRAWN, both halves.** At HEAD: FAIL, 19 distinct in
+>   69 live steps (**1,131 of 1,200 dropped**), so ~94% of "162 distinct
+>   / 635 px" was game-over animation. And **the "163 distinct" RAM-pair
+>   figure in the left-hand column has no receipt anywhere in the tree**
+>   — `runs/ram_verify/contra.json` is not a signal gate and contains no
+>   163. A cross-validation whose second number cannot be produced is
+>   not a cross-validation. This table is where that number originates,
+>   which is why the correction is recorded here as well.
+> - **Kung Fu — the exculpation is WITHDRAWN.** "Skill wall, not
+>   instrument fault" was produced by the vacuous `passed = not
+>   instrument_findings` camera-static override that commit `bfb515b`
+>   deleted; that commit names kungfu first among 13 profiles / 40
+>   vacuous passes with the `distinct=1 / min=0 / max=0` signature. The
+>   OAM churn 540 is a real positive and stands; the inference from it
+>   does not, and the row now reads `SIGNAL UNUSABLE — camera static`.
+> - **SMB — stands.** Certification 5/5, re-verified.
+>
+> The generalisable point: these rows were validated against one vacuity
+> signature (zero-range camera) and never against the second
+> (post-death tail), which `runs/onboard_wave6_d5_sweep_v3.json` finds
+> on **28 of 45 profiles**.
+
 ### 1.2 Scene detection — did not exist → shipped, envelope v4
 
 Commit 074f888 (2026-08-24): rendered-cut scene detection (bipartite:

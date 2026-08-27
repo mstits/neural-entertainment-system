@@ -3777,6 +3777,73 @@ def run_ground_truth_test(run_bases: list[str], verbose: bool = True,
 HIT_RATE_GATE = 0.80
 MAX_FALSE_POSITIVES_PER_LEVEL = 1
 
+#: Where scripts/clear_calibrate.py banks its measured-null receipts.
+CALIBRATION_RECEIPT_DIR = REPO / "docs" / "receipts" / "clear_control"
+
+
+def calibration_provenance(per_run: list[dict],
+                           profile_path: str | None,
+                           receipt_dir: Path | None = None) -> dict:
+    """Name the tapes that were BOTH calibrated on and scored.
+
+    THE SHAPE THIS EXISTS TO REFUSE. `scripts/clear_calibrate.py` sets a
+    signal's gate to "the smallest integer strictly above the null measured
+    on tape T". That gate therefore CANNOT fire below threshold anywhere on
+    T -- so replaying T and reporting `total_false_positive_crossings: 0`
+    is arithmetic, not evidence. It is the same defect as a green detector
+    suite whose every case was built to the detector's own shape: the
+    measurement cannot come out any other way.
+
+    This is not a reason to throw the number away. An in-sample zero is
+    still a real consistency check -- it proves the gate was placed where
+    the calibration said, and a non-zero here would be a genuine defect.
+    What it is not is out-of-sample specificity, and a receipt that reports
+    the two identically invites the stronger reading. So the overlap is
+    computed mechanically from the banked calibration receipts and written
+    into the receipt beside the number, every time, whether or not it is
+    empty. An empty `in_sample_runs` is itself the informative case.
+
+    Returns a block that is always present, so its ABSENCE from a receipt
+    is visible rather than ambiguous."""
+    receipt_dir = receipt_dir or CALIBRATION_RECEIPT_DIR
+    scored = [r.get("run") for r in per_run if r.get("run")]
+    calibrated: dict[str, list[str]] = {}
+    receipts: list[str] = []
+    if profile_path and receipt_dir.is_dir():
+        for path in sorted(receipt_dir.glob("*_null_*.json")):
+            try:
+                rec = json.loads(path.read_text())
+            except (ValueError, OSError):
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if str(rec.get("profile")) != str(profile_path):
+                continue
+            receipts.append(path.name)
+            tapes = [str(m.get("tape", "")) for m in rec.get("measurements", [])
+                     if isinstance(m, dict)]
+            for run in scored:
+                # tapes are absolute, run bases are repo-relative
+                if any(t.endswith(run) for t in tapes if t):
+                    calibrated.setdefault(str(rec.get("signal")), []).append(run)
+    in_sample = sorted({r for runs in calibrated.values() for r in runs})
+    return {
+        "calibration_receipts_consulted": receipts,
+        "in_sample_runs": in_sample,
+        "in_sample_by_signal": {k: sorted(set(v)) for k, v in calibrated.items()},
+        "n_scored": len(scored),
+        "n_in_sample": len(in_sample),
+        "note": (
+            "false-positive counts on in_sample_runs are bounded BY "
+            "CONSTRUCTION: the signal's gate was set one unit above the "
+            "null measured on these same tapes, so it cannot fire below "
+            "threshold on them. Read those zeros as a consistency check, "
+            "not as out-of-sample specificity."
+            if in_sample else
+            "no scored run appears in a banked calibration receipt for this "
+            "profile, so the false-positive counts here are out-of-sample."),
+    }
+
 
 def summarize_runs(per_run: list[dict], profile: dict | None = None,
                    harness: dict | None = None,
@@ -3894,6 +3961,8 @@ def summarize_runs(per_run: list[dict], profile: dict | None = None,
         "signal_fire_counts_at_detect": signal_fire_counts,
         "weights": WEIGHTS,
         "threshold": THRESHOLD,
+        "calibration_provenance": calibration_provenance(
+            rows, (harness or {}).get("profile")),
         "per_run": rows,
     }
     if quorums:
