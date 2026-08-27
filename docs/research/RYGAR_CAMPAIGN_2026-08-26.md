@@ -424,7 +424,8 @@ be a new game, never continued progress.
 | Milestone clustering | `runs/rygar_campaign/_LANDING/ratchet_test.json` |
 | Gate re-runs at HEAD | `runs/rygar_campaign/_LANDING/gate_rygar_HEAD.json`, `gate_kungfu_odo_HEAD.json` |
 | Room-fingerprint decline | `docs/receipts/room_fp/rygar.md`, and the note in `configs/rygar.yaml` |
-| Per-item run dirs | `runs/rygar_campaign/R1-*/` |
+| R1-04's refuted `--vsign-key` diff | `docs/receipts/rygar/vsign_key_REFUTED.patch` — **tracked** |
+| Per-item run dirs | `runs/rygar_campaign/R1-*/` (gitignored, local only) |
 | Skeptic audit + adjudication | `runs/rygar_campaign/_skeptic_audit/`, `runs/rygar_campaign/ADJUDICATION/` |
 
 `runs/` is gitignored. The tape and its guard are deliberately **not** — a

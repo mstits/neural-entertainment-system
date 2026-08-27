@@ -1915,8 +1915,10 @@ corridor that matters.
 
 **R1-04's `--vsign-key` patch was NOT landed.** It is refuted by its
 own A/B and it broke 72 tests in the shared checkout by reading
-`self.vsign_key` on the progress-line path. The diff is preserved at
-`runs/rygar_campaign/R1-04/vsign_key_REFUTED.patch`.
+`self.vsign_key` on the progress-line path (a `SimpleNamespace` args
+stub has no such attribute). The diff is preserved, tracked, at
+`docs/receipts/rygar/vsign_key_REFUTED.patch` — not under gitignored
+`runs/`, for the same reason the tape is not.
 
 **Why Rygar and not the other three**, re-measured at HEAD:
 

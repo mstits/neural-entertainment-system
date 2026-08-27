@@ -1,0 +1,104 @@
+diff --git a/scripts/go_explore_solve.py b/scripts/go_explore_solve.py
+index 33254b9..851b1da 100644
+--- a/scripts/go_explore_solve.py
++++ b/scripts/go_explore_solve.py
+@@ -3708,6 +3708,12 @@ class Solver:
+         self._inv_pin_secs = resolve_inversion_pin_secs(args)
+         self._loop_dest_min = None        # min gx observed right after a loop
+         self.max_sect = 0                 # deepest section-transit count seen
++        # EXPERIMENTAL (R1-04, velocity-signed cells): 3-way motion-sign
++        # axis from the per-step odometer delta, opt-in and inert unless
++        # both the flag and an odometer profile are present.
++        self.vsign_key = bool(getattr(args, "vsign_key", False))
++        self.vsign_deadband = int(getattr(args, "vsign_deadband", 1))
++        self._vsign_hist = {"back": 0, "still": 0, "forward": 0}
+         self.n_solutions = 0
+         self.sol_counter = 0
+         self.best_sol_len = 10 ** 9
+@@ -4642,6 +4648,34 @@ class Solver:
+             self._pin_time = time.time()  # frontier moved: inversion stays off
+         if area > self.max_area:
+             self.max_area = area
++        # EXPERIMENTAL (R1-04): 3-way motion-sign axis {0 back, 1 still,
++        # 2 forward} from the per-step odometer delta ONLY. `ctx` is the
++        # per-lineage dict (fresh at every re-root, same lifecycle as the
++        # `_dead_mm`/`_key_mm` debounce counters above), so history never
++        # leaks across roots. A scene re-anchor (odometer_cert:
++        # odo_fold_frame resets the integral without integrating across a
++        # cut) would otherwise read as a huge fabricated "back" for one
++        # step; the scene ordinal the extension already carries at
++        # ODO_LO+3 is used to detect that and force "still" instead,
++        # rather than trusting a delta across a cut.
++        vsign_val = None
++        if self.vsign_key and self._odo and ctx is not None:
++            scene_now = int(ram[ODO_LO + 3])
++            prev_gx = ctx.get("_vsign_prev_gx")
++            prev_scene = ctx.get("_vsign_prev_scene")
++            if prev_gx is None or scene_now != prev_scene:
++                vsign_val = 1
++            else:
++                d = gx - prev_gx
++                if d > self.vsign_deadband:
++                    vsign_val = 2
++                elif d < -self.vsign_deadband:
++                    vsign_val = 0
++                else:
++                    vsign_val = 1
++            ctx["_vsign_prev_gx"] = gx
++            ctx["_vsign_prev_scene"] = scene_now
++            self._vsign_hist[("back", "still", "forward")[vsign_val]] += 1
+         # Orthogonal frontier: a NEW best y-band forces a selection-cache
+         # rebuild immediately. The cache otherwise waits for the 2%-growth
+         # trigger (~2 min at CV's ~700 cells/min), so a freshly-climbed
+@@ -4714,7 +4748,17 @@ class Solver:
+         # each path is its own frontier (fix 2026-07-26).
+         tb = int(steps + 1).bit_length() if self.time_bins else 0
+         kk = min(int(kills), 15) if self.kill_key else 0
+-        key = (sect, tb, kk, psig, loops, route_sig) + game.cell_fn(ram)
++        cell_tail = game.cell_fn(ram)
++        # EXPERIMENTAL (R1-04): splice the motion-sign axis into
++        # GenericGame's `sig` slot (tail index 2) — ONLY when the profile
++        # leaves it unused (no solve.state_sig configured, arity 0), so a
++        # profile that actually uses that slot for real state-signature
++        # bits is never clobbered. Rygar has no state_sig: this slot is a
++        # constant 0 on every archive to date, i.e. genuinely free.
++        if (vsign_val is not None and len(cell_tail) >= 3
++                and getattr(game, "state_sig_arity", 0) == 0):
++            cell_tail = cell_tail[:2] + (vsign_val,) + cell_tail[3:]
++        key = (sect, tb, kk, psig, loops, route_sig) + cell_tail
+         # GATE-OPENER SHADOW LEDGER + boundary histogram. Arity is FROZEN
+         # — the key above is built and consumed unchanged, so cells and
+         # new_cells stay A/B-comparable between the armed run and its
+@@ -7609,6 +7653,8 @@ class Solver:
+             "sps": round(self.steps_done / max(elapsed, 1e-9)),
+             "stall_flat_windows": self._stall["flat_windows"],
+         }
++        if self.vsign_key:
++            line["vsign_hist"] = dict(self._vsign_hist)
+         # LOCAL COVERAGE (c_local) — unconditional, unlike every arm's
+         # telemetry below, and deliberately so: it is a derivative, the
+         # archive on disk holds exactly ONE reading of it (at the flush),
+@@ -8046,6 +8092,23 @@ def main() -> int:
+                          "solve.entity_slots {lo,hi} flag bytes, observed "
+                          "1->0) to the key prefix — prerequisite/kill-count "
+                          "gates become a searchable dimension (v6 mech B).")
++    ap.add_argument("--vsign-key", action="store_true",
++                    help="EXPERIMENTAL (R1-04): derive a 3-way motion-sign "
++                         "axis {back,still,forward} from the per-step "
++                         "odometer delta ONLY and splice it into "
++                         "GenericGame.cell_fn's sig slot (only when the "
++                         "profile leaves that slot unused, i.e. no "
++                         "solve.state_sig configured). A position-only key "
++                         "conflates advancing-through-x with drifting-back-"
++                         "through-x; this separates them (the SMB 4-4 "
++                         "recipe). Resets to 'still' on a re-root and on "
++                         "any step where the odometer's own scene ordinal "
++                         "just changed (a room re-anchor is not a velocity "
++                         "reading). No effect unless the profile uses "
++                         "progress.source: odometer.")
++    ap.add_argument("--vsign-deadband", type=int, default=1,
++                    help="Odometer per-step |delta| at or below this is "
++                         "'still' rather than back/forward (default 1).")
+     ap.add_argument("--resume-archive", type=str, default=None, metavar="DIR",
+                     help="Resume from a prior run's flushed out-dir: load "
+                          "archive.pkl + traces.pkl + roots.json and continue "
