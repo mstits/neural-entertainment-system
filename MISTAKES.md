@@ -6,66 +6,33 @@ archive the enforced rules in the project instruction file get audited against.
 Rules below are **drafts, not enforced.** A root cause graduates to an enforced
 one-line invariant only after recurring across 4–5 separate entries.
 
-**Graduation watch** — root causes at or past the 4–5 entry threshold, awaiting a call:
+**Graduation watch** — DERIVED, not hand-maintained. Regenerate with
+`.venv/bin/python scripts/mistakes_tally.py`; `--check` fails on drift.
 
-| root cause | entries | deterministic enforcement available? |
+| root cause | entries | deterministic enforcement |
 |---|---|---|
-| `[vacuous-gate]` a check that cannot fail | **5** | yes — lint for `passed = not <coll>` |
-| `[stale-artifact]` measured the old binary/profile | **5** | yes — hash the loaded artifact against the built one in CI-less `make` target |
-| `[inert-treatment]` armed, wired, never fired | **4** | **SHIPPED 2026-08-27** — `scripts/check_mechanism_receipt.py` returns VOID for any armed mechanism whose counter never moves |
-| `[weak-eval]` protocol too weak to detect its own failure | **6** | partly — enforce min-n at the gate |
-| `[unverified-claim]` trusted a number without re-deriving it | **9** | no — judgement |
-| `[purity-leak]` external/unwitnessed semantics in a live map | **3** | **SHIPPED 2026-08-27** — `make purity-check` (derived scanner + 27-row provenance registry + `WIN_WITNESS_LEDGER`) |
+| `[unverified-claim]` | **8** | no — judgement |
+| `[vacuous-gate]` | **7** | candidate — lint for `passed = not <coll>` |
+| `[weak-eval]` | **6** | partial — enforce min-n at the gate |
+| `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
+| `[inert-treatment]` | 3 | **SHIPPED** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves |
+| `[stale-artifact]` | 3 | candidate — hash the loaded artifact against the built one |
+| `[process]` | 3 | — |
+| `[start-state]` | 2 | — |
+| `[measurement]` | 1 | — |
+| `[git]` | 1 | — |
+| `[reward-exploit]` | 1 | — |
 
-Nothing has been promoted; the enforced ruleset is untouched. `[vacuous-gate]`,
-`[stale-artifact]`, `[weak-eval]` and `[unverified-claim]` are all at or past the
-threshold as of 2026-08-27 and are awaiting a call.
+Bold = at or past the 4-entry threshold, awaiting a call. Nothing has been
+promoted; the enforced ruleset is untouched.
 
-`[purity-leak]` stands at **3 entries** and the counter is now backfilled, which
-the 2026-08-27 note above declined to do. The three: the **Zelda quarantine**
-(2026-08-25, two independent paths — the reward struct and the name-substring
-dispatch sites), the **994-entry config sweep** (2026-08-27, 7 quarantined), and
-the **engine sweep** (2026-08-27, 27 constants annotated). Backfilling is the
-honest call because the third entry proves the class is one root cause and not
-three: the config sweep's own scope note ("quarantining the YAML retracts the
-DOCUMENTATION claim, not the Rust constant") predicted the engine entry in
-writing, and the engine entry then found the *same* retracted sentences alive one
-layer down.
-
-**Threshold NOT reached — 3 against 4–5 — and the normal reason to wait does not
-apply here, so this row is a deliberate exception worth stating.** The usual
-blocker is that no deterministic enforcement exists; for this root cause it now
-does, and it is already wired into `make test`. So the call is:
-
-> **Do not promote a written rule. The enforcement IS the mechanical check.**
-
-Seven vacuous gates have shipped in this project, which is direct evidence that a
-written invariant does not hold *here* — and this very root cause supplies the
-sharpest proof. On 2026-08-27 three guards written the same morning to enforce
-this class were themselves defective when independently reverted: a 60-line
-proximity window let **19 of 24** constants survive deletion of their own
-provenance tag; a stale-binary guard compared only reward-id *sets*, so the exact
-edits it existed to catch passed; and a 50-line lookback let all **8** retracted
-sentences be restored silently in the very headers they were withdrawn from. Each
-was written in good faith by someone who had just read the rule. A fourth entry
-would not make a written rule more likely to hold; it would only mean the class
-recurred again while an enforceable check sat available.
-
-`[inert-treatment]` is the first root cause whose enforcement actually exists.
-`check_mechanism_receipt.py` reads a run's own artifacts and returns **VOID** (not
-FAIL) for any mechanism that announced itself and whose counter never moved, and
-distinguishes that from **UNAUDITABLE** — armed with no counter at all, which is
-what `[hazard-mask] ARMED` runs are. Run against `runs/v27_fresh_recovery` it
-reports `redo INERT, peak 0 over 1000 observations`; run against
-`checkpoints/mario_1_2_online_v2` it reports every registered mechanism FIRED.
-The second is the positive control, without which a checker hard-wired to say
-INERT would pass its whole suite. Verified by deleting the check: five mutants
-kill 8 / 2 / 2 / 6 / 1 tests respectively, and the unmutated control passes 23/23
-on the identical harness. The static half — a config key the trainer parses but
-cannot reach under `trainer_mode: vanilla_ppo` — is derived from the AST in
-`config_schema.inert_reinforce_keys_under_vanilla_ppo()` and raises rather than
-returning an empty set when it cannot find the dispatch it parses.
-
+**This table was hand-maintained until 2026-08-27 and had drifted on all six
+categories it listed** (claiming 9 `[unverified-claim]` against 6 real, 5
+`[stale-artifact]` against 3), while 12 entries carried no tag and were
+invisible to it. That is the defect the engine purity sweep named the same day
+— *enforcement must be DERIVED from the declaration, never listed beside it* —
+committed inside the log that records it. It is now derived.
+---|---|---|
 ---
 
 ## 2026-08-27 — [purity-leak] The quarantine covered the declarative layer only
@@ -335,7 +302,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** A defect found in your own harness is a claim about your own
   harness until you have run the same check against someone else's artifact.
 
-## 2026-08-26 — Killed a workflow that was already self-correcting
+## 2026-08-26 — [process] Killed a workflow that was already self-correcting
 - **What happened:** Verifiers flagged a 23-profile arming commit as unsupportable.
   I stopped the workflow and started a revert, before reading what its land phase
   had already produced.
@@ -363,7 +330,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** A profile may arm a signal only above its own measured null,
   with the survey that measured it committed as a reproducer.
 
-## 2026-08-26 — Built this file twice in the wrong shape
+## 2026-08-26 — [process] Built this file twice in the wrong shape
 - **What happened:** Wrote a 169-line prose `MISTAKES.md`, then rewrote it as a
   terse `mistakes.md` with a category/context/rule format, plus a pointer added
   to the enforced ruleset.
@@ -374,7 +341,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** When asked whether an artifact exists, answer first and
   confirm shape before authoring it.
 
-## 2026-08-26 — Briefed a campaign from withdrawn numbers
+## 2026-08-26 — [unverified-claim] Briefed a campaign from withdrawn numbers
 - **What happened:** Launched a workflow citing Contra's "odometer 162 vs 163
   cross-validated" hours after an audit withdrew it. The 163 has no receipt
   anywhere in the tree.
@@ -384,7 +351,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** Re-verify any number a recent commit or audit could have moved
   before putting it in a brief.
 
-## 2026-08-26 — Overruled a skeptic I commissioned, twice
+## 2026-08-26 — [process] Overruled a skeptic I commissioned, twice
 - **What happened:** A designated-opposition agent argued breadth across games no
   policy can play was motion, not progress. Overruled both times.
 - **Root cause:** Treated a commissioned falsifier's verdict as an obstacle to
@@ -394,7 +361,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** When a commissioned skeptic says stop, stop or write down the
   specific evidence that beats it. "Proceed anyway" is not a rebuttal.
 
-## 2026-08-26 — Reported a probe artifact as a fact about the game
+## 2026-08-26 — [measurement] Reported a probe artifact as a fact about the game
 - **What happened:** Stated "Rygar dies at 138 steps" and excluded Contra as
   SIGNAL UNUSABLE on "20 distinct in 69 steps."
 - **Root cause:** 138 was an undodging scripted hold walking into a hazard (real
@@ -405,7 +372,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** Never issue a verdict on a window too small to support it;
   terminate probe holds at death before scoring.
 
-## 2026-08-26 — `git update-ref` on shared main with concurrent writers
+## 2026-08-26 — [git] `git update-ref` on shared main with concurrent writers
 - **What happened:** An automated lane forcibly repointed `refs/heads/main` twice
   in a checkout with ~15 concurrent writers.
 - **Root cause:** Raw ref plumbing bypasses the locking that normal commits rely on.
@@ -414,7 +381,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** Parallel lanes get receipts-only or a worktree. No raw ref
   plumbing and no `git stash` on shared `main`.
 
-## 2026-08-26 — Ledger entries dropped their receipts' scope
+## 2026-08-26 — [unverified-claim] Ledger entries dropped their receipts' scope
 - **What happened:** 15 of 39 adjudicated claims overstated their receipts.
 - **Root cause:** The scoping qualifier got dropped when the headline was quoted
   forward — "Stage 1-2 validated" became "the engine validated."
@@ -442,7 +409,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** Agent activity is not instrument capability. Prove the
   instrument can return a positive on that profile.
 
-## 2026-08-26 — Constants quoted as measurements
+## 2026-08-26 — [vacuous-gate] Constants quoted as measurements
 - **What happened:** `is_clear` opened with `level_key(ram) > tuple(start_key)`;
   with `level_key: []` that is `() > ()`, False always, on 152/155 profiles.
   `area()` returns literal `0` when unconfigured.
@@ -453,7 +420,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** Before quoting a zero, evaluate its expression on random input
   and confirm it can be non-zero.
 
-## 2026-08-26 — Detector suite tested only its own shape
+## 2026-08-26 — [weak-eval] Detector suite tested only its own shape
 - **What happened:** 186 tests green while the detector could not fire on two
   witnessed clears (Bubble Bobble round 69→70, a banked 4,329-action Tetris-B win).
 - **Root cause:** Every fixture was SMB or a synthetic stream built to the
@@ -464,7 +431,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** At least one fixture must be a real positive from outside the
   instrument's design centre.
 
-## 2026-08-26 — Reward dispatch on an incidental string
+## 2026-08-26 — [purity-leak] Reward dispatch on an incidental string
 - **What happened:** `build_reward` selected on `name.contains("zelda"|"mario")`.
 - **Root cause:** Dispatch keyed on a display name rather than a declared field.
 - **Consequence:** Failed both directions — a text-clean profile silently
@@ -473,7 +440,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** Route on an explicit declared key with a safe default; remove
   the incidental string from the dispatch path entirely.
 
-## 2026-08-26 — Mechanisms unguarded, signals wired to nothing
+## 2026-08-26 — [inert-treatment] Mechanisms unguarded, signals wired to nothing
 - **What happened:** `_dead_mm` (death-blip debounce): 3 occurrences in source, 0
   in tests. Separately, six detector signals were built while the live vote
   remained `tally + coord`.
@@ -484,7 +451,7 @@ returning an empty set when it cannot find the dispatch it parses.
 - **Rule (draft):** Grep the mechanism's identifier in `tests/` (zero = defect) and
   confirm the production path reaches it.
 
-## 2026-08-26 — Checkpoint selection and scoring on the same data
+## 2026-08-26 — [weak-eval] Checkpoint selection and scoring on the same data
 - **What happened:** Selector used `argmax entrance_trailing_rate`, a
   ceiling-saturated metric (0.867–1.000, SE ~0.09 on 30 episodes).
 - **Root cause:** Selecting and scoring on one sample.
