@@ -50,6 +50,17 @@ Registered conditions, all of which must hold for ARMED:
       damage; the recycled fraction is not. A gate that checks only the
       former is vacuous against exactly the "network reset" family this
       experiment must avoid.
+  F3  (V31_REDO_SURGICAL_2026-08-27.md §4.1) distinctness: at least
+      ``--min-distinct-fc2`` (default 6) distinct fc2 indices recycled
+      over the whole run, and no single index accounting for more than
+      ``--max-index-share`` (default 0.60) of all recycled-unit-events.
+      A surgical dose (2-4 units/event) that resets the SAME two or
+      three units every firing event forever is a permanent partial
+      lesion of the trunk, not a recycle — v30 observed exactly this at
+      tau=0.50 (``fc2=[1,2,4,5,7,9,13,16,...]`` identical at iters 0-3)
+      and none of V1-V6 can see it. Requires the `[redo] recycled unit
+      indices:` line at INFO level (trainer.py); a log without it reads
+      0 distinct and correctly cannot ARM.
 
 Exit codes: 0 ARMED, 2 VOID, 1 usage/parse error.
 
