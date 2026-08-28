@@ -222,3 +222,32 @@ soundness is the admissibility premise 77b8549 relies on implicitly
 ("repaired banks"); fewer than 20 sound banks means that premise fails and
 no verdict issues, whatever the MEASURABLE table says.
 
+## 8. Operative path, confirmed with the adjudicator pre-data — final
+
+The adjudicating session stated this path back and it is confirmed correct;
+a future reader needs no other summary:
+
+1. Admissibility: per-bank alias/chain gate; survivor floor 20 of 26; failure
+   is VOID-THIN-BASIS and no verdict issues, whatever the MEASURABLE table says.
+2. Measurability per 77b8549: row set not identical to PC_B5, >= 6 qualifying
+   rows in >= 2 cells; 70% floor over all 26 collected iterates.
+3. Cause-split on UNMEASURABLE (§7): sound bank = genuine control-absence;
+   void bank counts nothing toward the no-cap majority, and the verdict is
+   VOID if void banks are what carry it past 30%.
+4. Branch per 77b8549: unmeasurable majority does not cap; measurable
+   non-collapsed caps at INDETERMINATE.
+5. §3 CI tests reported as control-quality characterisation, capping nothing;
+   the six-field clause as anomaly-requiring-investigation, not a cap.
+6. If the cause-split is outcome-determinative, both readings publish side by
+   side with §7's provenance note.
+
+**Known property, recorded so it is not a discovery later:** a bank VOID for
+aliasing can still be MEASURABLE — alias identity and NC-b-vs-PC_B5 identity
+are different comparisons — so void banks may contribute to the 70% MEASURABLE
+numerator while being excluded from the no-cap majority. The asymmetry errs
+RESTRICTIVE (it can only push toward the capping branch) and is deliberately
+left in place.
+
+Chain of record: ba34605 → f89e6c9 → 59a8a38 → 94b533d → guard 6d700c5 →
+3248ca7 → 78a3250 → b55e9ac → this section. Governed first by 77b8549.
+
