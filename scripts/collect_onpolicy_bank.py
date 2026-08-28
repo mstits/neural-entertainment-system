@@ -175,7 +175,8 @@ def finalize_truncation(rows: list, terminal_hit: bool) -> list:
 
 
 def assert_bank_wellformed(state: np.ndarray, next_state: np.ndarray,
-                           episode_id: np.ndarray) -> None:
+                           episode_id: np.ndarray,
+                           row_step: Optional[np.ndarray] = None) -> None:
     """Raise unless the written arrays are actually a transition bank.
 
     Two THRESHOLD-FREE invariants, checked on the artifact that goes to disk
@@ -193,6 +194,19 @@ def assert_bank_wellformed(state: np.ndarray, next_state: np.ndarray,
        so no fraction below 1.0 is asserted -- picking one would be a
        threshold nobody checked against its acting range. 1.0 is the
        defect's own signature and is impossible for a bank containing motion.
+
+    `row_step` (per-row within-episode step index, written into the bank)
+    makes the registered cross-population DROP visible to invariant 1: a
+    dropped interior row leaves surviving neighbours whose steps are not
+    consecutive, and the chain is asserted ONLY across pairs whose steps
+    are. Without it the guard's first live run (2026-08-28) false-positived
+    on iter 30: a PC_SRC rung-1013 episode traversed the WALL band on its
+    way up, the registered drop removed those rows, and the legitimate gap
+    read as CHAIN BROKEN. The guard loses nothing against the defect class
+    it exists for -- aliasing corrupts EVERY adjacent pair, and drops are
+    a handful of rows in ~60k. `row_step` must be strictly increasing
+    within an episode; `None` keeps the gap-free contract for banks that
+    carry no step column.
     """
     if state.shape != next_state.shape:
         raise RuntimeError(
@@ -208,11 +222,28 @@ def assert_bank_wellformed(state: np.ndarray, next_state: np.ndarray,
             "collapses to (gamma-1)*V(s') -- a function of ONE state carrying "
             "zero action information by construction. This bank cannot be "
             "scored; it is VOID, not a reading.")
+    steps = None if row_step is None else np.asarray(row_step, dtype=np.int64)
+    if steps is not None and steps.shape[0] != state.shape[0]:
+        raise RuntimeError(
+            f"[bank] malformed: row_step {steps.shape} != state rows "
+            f"{state.shape[0]}")
     for ep in np.unique(episode_id):
         idx = np.flatnonzero(episode_id == ep)
         if idx.size < 2:
             continue
-        if not np.array_equal(next_state[idx[:-1]], state[idx[1:]]):
+        if steps is not None:
+            ep_steps = steps[idx]
+            if not bool((np.diff(ep_steps) > 0).all()):
+                raise RuntimeError(
+                    f"[bank] ROW ORDER BROKEN in episode {int(ep)}: row_step "
+                    "is not strictly increasing; the rows are not an ordered "
+                    "trajectory and the bank is VOID.")
+            adjacent = np.diff(ep_steps) == 1
+        else:
+            adjacent = np.ones(idx.size - 1, dtype=bool)
+        pred = idx[:-1][adjacent]
+        succ = idx[1:][adjacent]
+        if pred.size and not np.array_equal(next_state[pred], state[succ]):
             raise RuntimeError(
                 f"[bank] CHAIN BROKEN in episode {int(ep)}: the successor "
                 "recorded at one step is not the antecedent recorded at the "
@@ -444,16 +475,22 @@ def build_specs(entries: list, states_dir: Path, entrance_bytes: bytes, *,
 def lanes_to_bank(lanes: list) -> dict:
     """Assemble one iterate's npz-ready arrays from finished lanes, applying
     the cross-population drop before anything is written to disk."""
-    S, A, NS, D, T, SRC, EID = [], [], [], [], [], [], []
+    S, A, NS, D, T, SRC, EID, STEP = [], [], [], [], [], [], [], []
     for lane in lanes:
-        for s, a, ns, d, t in lane.rows:
+        for step_i, (s, a, ns, d, t) in enumerate(lane.rows):
             S.append(s); A.append(a); NS.append(ns); D.append(d); T.append(t)
             SRC.append(lane.src_rung); EID.append(lane.episode_id)
+            # Within-episode step index, RECORDED BEFORE the drop below, so
+            # a dropped row leaves a visible gap in the written artifact and
+            # `assert_bank_wellformed`'s chain invariant knows exactly which
+            # surviving pairs were adjacent when recorded.
+            STEP.append(step_i)
     if not S:
         return {"state": np.zeros((0, 0), dtype=np.int8), "action": np.zeros(0, dtype=np.int64),
                "next_state": np.zeros((0, 0), dtype=np.int8), "done": np.zeros(0, dtype=np.int64),
                "truncated": np.zeros(0, dtype=np.int64), "src_rung": np.zeros(0, dtype=np.int64),
-               "episode_id": np.zeros(0, dtype=np.int64)}
+               "episode_id": np.zeros(0, dtype=np.int64),
+               "row_step": np.zeros(0, dtype=np.int64)}
     state = np.stack(S).astype(np.int8)
     next_state = np.stack(NS).astype(np.int8)
     gx = decode_gx(state)
@@ -468,6 +505,7 @@ def lanes_to_bank(lanes: list) -> dict:
         "truncated": np.asarray(T, dtype=np.int64)[keep],
         "src_rung": np.asarray(SRC, dtype=np.int64)[keep],
         "episode_id": np.asarray(EID, dtype=np.int64)[keep],
+        "row_step": np.asarray(STEP, dtype=np.int64)[keep],
         "src": src_names[keep],
         "n_dropped_cross_population": int((~keep).sum()),
     }
@@ -549,14 +587,14 @@ def collect_one_iterate(ckpt_path: Path, *, pool, entries: list, states_dir: Pat
     # purity guard ran on the true antecedents and passed while the rows
     # written to disk held the successor twice.
     assert_bank_wellformed(bank["state"], bank["next_state"],
-                           bank["episode_id"])
+                           bank["episode_id"], bank["row_step"])
     out_dir.mkdir(parents=True, exist_ok=True)
     npz_path = out_dir / f"iter_{iter_num:05d}.npz"
     np.savez(
         npz_path, state=bank["state"], action=bank["action"],
         next_state=bank["next_state"], done=bank["done"],
         truncated=bank["truncated"], src_rung=bank["src_rung"],
-        episode_id=bank["episode_id"],
+        episode_id=bank["episode_id"], row_step=bank["row_step"],
     )
     sidecar_path = out_dir / f"iter_{iter_num:05d}_episodes.json"
     sidecar_path.write_text(json.dumps({
@@ -647,8 +685,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         except RuntimeError as exc:
             pool.shutdown()
-            print(f"PURITY GUARD RAISED on {p}: {exc}", file=sys.stderr)
-            print("registered abort (b): the whole job is VOID, no partial "
+            kind = "BANK GUARD" if "[bank]" in str(exc) else "PURITY GUARD"
+            print(f"{kind} RAISED on {p}: {exc}", file=sys.stderr)
+            print("registered abort: the whole job is VOID, no partial "
                  "bank is scored", file=sys.stderr)
             return 3
         dt = time.monotonic() - t1

@@ -407,3 +407,107 @@ def test_stacker_push_returns_a_reused_buffer_so_the_copy_is_load_bearing():
     b = stk.push(np.ones(2, dtype=np.int8))
     assert a is b, "buffer reuse is the premise of the collector's .copy()"
     assert stk.reset(np.zeros(2, dtype=np.int8)).copy() is not stk.get()
+
+
+# ==========================================================================
+# Gap-aware chain — the guard's own false positive, fixed 2026-08-28.
+# The registered cross-population DROP removes interior rows (a PC_SRC
+# rung-1013 episode traverses the WALL band on its way up), so surviving
+# neighbours are legitimately non-consecutive. `row_step` makes the gap
+# visible in the written artifact; the chain is asserted only across pairs
+# whose recorded steps are adjacent. Live receipt: the 2026-08-28 re-run
+# aborted CHAIN BROKEN at iter 30 / episode 48 on exactly this pattern.
+# ==========================================================================
+
+def _chain_with_steps(frames, ep=0):
+    s, ns, e = _chain(frames, ep=ep)
+    return s, ns, e, np.arange(len(s), dtype=np.int64)
+
+
+def test_wellformed_accepts_a_mid_episode_gap_from_the_registered_drop():
+    """The iter-30 false positive, reproduced: drop one interior row of a
+    correct chain and pass the survivors with their original steps. This
+    test FAILS on the pre-2026-08-28 guard (no row_step, gap reads as
+    CHAIN BROKEN) — it is the executed revert-verification of the fix."""
+    s, ns, e, st = _chain_with_steps([[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]])
+    keep = np.array([True, True, False, True])  # drop interior row 2
+    assert_bank_wellformed(s[keep], ns[keep], e[keep], st[keep])
+
+
+def test_wellformed_still_rejects_aliasing_when_the_bank_has_gaps():
+    """The defect class the guard exists for must not hide behind a gap:
+    aliased rows fail on every surviving ADJACENT pair."""
+    obs = [np.array([i, 0], dtype=np.int8) for i in range(6)]
+    state = np.stack(obs[1:])       # (s', a, s') on every row
+    next_state = np.stack(obs[1:])
+    ep = np.zeros(len(state), dtype=np.int64)
+    st = np.arange(len(state), dtype=np.int64)
+    keep = np.array([True, True, False, True, True])  # a gap too
+    # Make one row differ so DEGENERATE doesn't fire first; the chain
+    # violation on the remaining adjacent pairs must still raise.
+    state = state.copy()
+    state[4] = [99, 99]
+    with pytest.raises(RuntimeError, match="CHAIN BROKEN"):
+        assert_bank_wellformed(state[keep], next_state[keep], ep[keep],
+                               st[keep])
+
+
+def test_wellformed_rejects_a_broken_chain_between_adjacent_steps():
+    """With row_step present, adjacent-step pairs keep the full contract."""
+    s, ns, e, st = _chain_with_steps([[0, 0], [1, 0], [2, 0], [3, 0]])
+    ns = ns.copy()
+    ns[0] = [7, 7]
+    with pytest.raises(RuntimeError, match="CHAIN BROKEN"):
+        assert_bank_wellformed(s, ns, e, st)
+
+
+def test_wellformed_rejects_nonmonotonic_row_step():
+    s, ns, e, st = _chain_with_steps([[0, 0], [1, 0], [2, 0]])
+    st = st.copy()
+    st[1], st[0] = st[0], st[1]
+    with pytest.raises(RuntimeError, match="ROW ORDER BROKEN"):
+        assert_bank_wellformed(s, ns, e, st)
+
+
+def test_wellformed_rejects_row_step_length_mismatch():
+    s, ns, e, st = _chain_with_steps([[0, 0], [1, 0], [2, 0]])
+    with pytest.raises(RuntimeError, match="malformed"):
+        assert_bank_wellformed(s, ns, e, st[:-1])
+
+
+def test_lanes_to_bank_writes_row_step_and_the_drop_leaves_a_visible_gap():
+    """Integration on the real assembly path: a WALL_SRC lane with one row
+    landing in PC_B5 loses that row to the registered drop; the written
+    row_step skips its index and the artifact guard passes the survivors."""
+    from scripts.collect_onpolicy_bank import lanes_to_bank
+
+    frame_dim = 178
+
+    def obs_at(gx: int, tag: int) -> np.ndarray:
+        o = np.zeros(frame_dim, dtype=np.int8)
+        o[0] = tag  # make every observation distinct
+        page, fine = gx >> 8, (gx & 0xFF) >> 1
+        o[175] = page
+        o[176] = fine
+        return o
+
+    class _FakeLane:
+        pass
+
+    lane = _FakeLane()
+    lane.src = "WALL_SRC"
+    lane.src_rung = 893
+    lane.episode_id = 0
+    # gx walk: 2674 -> 2900 (in PC_B5, DROPPED for a WALL_SRC lane) -> 2674.
+    o0, o1, o2, o3 = (obs_at(2674, 1), obs_at(2900, 2),
+                      obs_at(2674, 3), obs_at(2670, 4))
+    lane.rows = [
+        [o0, 1, o1, 0, 0],
+        [o1, 2, o2, 0, 0],   # state gx 2900 => dropped by the partition
+        [o2, 3, o3, 0, 0],
+    ]
+    bank = lanes_to_bank([lane])
+    assert bank["n_dropped_cross_population"] == 1
+    assert bank["row_step"].tolist() == [0, 2]
+    assert_bank_wellformed(bank["state"], bank["next_state"],
+                           bank["episode_id"], bank["row_step"])
