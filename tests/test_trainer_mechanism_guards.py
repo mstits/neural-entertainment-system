@@ -188,6 +188,27 @@ def test_budget_cut_flags_gae_truncation_after_wave_charge() -> None:
     )
 
 
+def test_trunc_buf_reaches_gae_independent_of_wave_monotone() -> None:
+    """trunc_buf is populated by the rung-budget cut (Finding 4, above)
+    regardless of wave_monotone -- but all three batched_gae/ppo_updater
+    call sites used to pass `trunc_buf if wave_monotone else None`,
+    conflating two unrelated mechanisms and silently discarding the
+    Pardo correction on every config that runs the backward curriculum
+    WITHOUT wave shaping (configs/mario_1_2_backward.yaml has no
+    wave_monotone key at all). Every rung-budget truncation on such a
+    config was bootstrapped as a death."""
+    src = _trainer_source()
+    assert "trunc_buf if wave_monotone else None" not in src, (
+        "a batched_gae call site is still gating the truncation buffer on "
+        "wave_monotone -- an unrelated flag -- instead of passing the "
+        "rung-budget cut's own trunc_buf unconditionally"
+    )
+    assert src.count("trunc_buf=trunc_buf,") == 3, (
+        "expected all three batched_gae/ppo_updater call sites to pass "
+        "trunc_buf unconditionally"
+    )
+
+
 def test_batched_gae_bootstraps_value_on_truncation() -> None:
     """The semantic the flag buys: a done marked truncated bootstraps
     the critic's V(s) instead of 0 at the cap (Pardo time-limit

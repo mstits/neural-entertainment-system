@@ -242,6 +242,33 @@ def test_a_recurring_action_is_re_offered_after_completion(tmp_path,
         "a completed recurring action was not re-offered")
 
 
+def test_suite_check_outer_timeout_exceeds_its_own_inner_timeout(monkeypatch, tmp_path):
+    """suite_check's --timeout flag is run_suite_check.py's OWN
+    subprocess.run timeout; the outer engine_driver timeout_h reaper must
+    give that inner timeout the chance to fire and report cleanly first.
+    At timeout_h=1.0 against --timeout 5400 (1.5h), a merely-slow suite
+    was SIGKILLed 1500s before its own timeout could trigger, and the
+    kill counted as an action-level failure toward the circuit breaker
+    for a suite that was never actually stuck."""
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    sc = tmp_path / "scripts" / "run_suite_check.py"
+    sc.parent.mkdir(parents=True)
+    sc.write_text('import argparse\nap = argparse.ArgumentParser()\n'
+                  'ap.add_argument("--out")\nap.add_argument("--timeout")\n')
+
+    action = ed.plan({"completed": {}, "attempts": {}, "last_run": {}}, tmp_path)
+    assert action is not None and action.id == "suite_check"
+
+    inner_timeout_s = int(action.cmd[action.cmd.index("--timeout") + 1])
+    outer_timeout_s = action.timeout_h * 3600
+    assert outer_timeout_s > inner_timeout_s, (
+        f"outer timeout_h ({action.timeout_h}h = {outer_timeout_s}s) must "
+        f"exceed the inner --timeout ({inner_timeout_s}s) it wraps, or the "
+        "reaper kills the action before the inner script's own timeout "
+        "ever gets a chance to fire"
+    )
+
+
 def test_a_recurring_action_is_exempt_from_the_attempt_cap(monkeypatch):
     monkeypatch.setattr(ed, "emulator_busy", lambda: None)
     monkeypatch.setattr(ed, "plan", lambda s, repo=ed.REPO,
@@ -357,9 +384,10 @@ def test_reap_leaves_a_live_action_alone(tmp_path):
 
 
 def test_reap_kills_and_fails_an_action_past_its_timeout(tmp_path, monkeypatch):
-    killed = []
-    monkeypatch.setattr(ed.os, "kill",
-                        lambda pid, sig: killed.append((pid, sig)))
+    killed_groups = []
+    monkeypatch.setattr(ed.os, "killpg",
+                        lambda pgid, sig: killed_groups.append((pgid, sig)))
+    monkeypatch.setattr(ed.os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(ed, "pid_alive", lambda pid: True)
     state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
              "running": {"id": "a", "pid": 4242, "started": 0.0,
@@ -367,8 +395,88 @@ def test_reap_kills_and_fails_an_action_past_its_timeout(tmp_path, monkeypatch):
                          "recurring": False}}
     rec = ed.reap(state, tmp_path)
     assert rec["outcome"] == "timeout"
-    assert (4242, 9) in killed
+    assert (4242, 9) in killed_groups
     assert state["consecutive_failures"] == 1
+
+
+def test_reap_falls_back_to_plain_kill_if_getpgid_fails(tmp_path, monkeypatch):
+    """A pid with no resolvable process group (already reaped, foreign
+    namespace, ...) must still be reaped -- os.kill is the fallback, not
+    a second unhandled OSError."""
+    plain_killed = []
+    monkeypatch.setattr(ed.os, "getpgid",
+                        lambda pid: (_ for _ in ()).throw(OSError("no such pgid")))
+    monkeypatch.setattr(ed.os, "kill",
+                        lambda pid, sig: plain_killed.append((pid, sig)))
+    monkeypatch.setattr(ed, "pid_alive", lambda pid: True)
+    state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+             "running": {"id": "a", "pid": 4242, "started": 0.0,
+                         "timeout_h": 0.001, "done_marker": None,
+                         "recurring": False}}
+    rec = ed.reap(state, tmp_path)
+    assert rec["outcome"] == "timeout"
+    assert (4242, 9) in plain_killed
+
+
+# ---- regression: killing a session leader must kill its children too ----
+#
+# detach.py launches every engine_driver-managed process with
+# start_new_session=True (os.setsid() in the child), which makes that
+# process a session/process-group leader. A wall-clock timeout that then
+# calls plain os.kill(pid, 9) kills only the leader -- run_online_
+# campaign.py, say -- and leaves its own child (train_game.py, the actual
+# emulator lane) running as an orphan. The ps-based busy check then
+# reports that lane held externally forever: a silent stall with no
+# further diagnostic, exactly the failure a multi-day unattended run
+# exists to survive. This test forks a REAL session leader with a REAL
+# child and proves the fix kills both; reverting to plain os.kill leaves
+# the child alive and this test fails.
+
+def test_killing_a_session_leader_also_kills_its_child(tmp_path):
+    """Exercises ed.reap() itself, not a hand-rolled killpg call -- a test
+    that calls os.killpg directly proves nothing about what reap() does
+    and would pass unchanged if reap() still called plain os.kill. Caught
+    exactly that way while writing this: the first version passed with
+    the fix reverted."""
+    import subprocess
+    import time as _time
+
+    marker = tmp_path / "child_alive"
+    leader = subprocess.Popen(
+        [sys.executable, "-c",
+         "import subprocess, sys, time; "
+         "p = subprocess.Popen([sys.executable, '-c', "
+         "'import time,sys\\nwhile True:\\n open(sys.argv[1], \"w\").close()\\n time.sleep(0.05)', "
+         f"{str(marker)!r}]); "
+         "time.sleep(3600)"],
+        start_new_session=True,
+    )
+    try:
+        for _ in range(100):
+            if marker.exists():
+                break
+            _time.sleep(0.05)
+        assert marker.exists(), "child never started writing its liveness marker"
+
+        state = {"completed": {}, "attempts": {}, "consecutive_failures": 0,
+                 "running": {"id": "a", "pid": leader.pid, "started": 0.0,
+                             "timeout_h": 0.0, "done_marker": None,
+                             "recurring": False}}
+        rec = ed.reap(state, tmp_path)
+        assert rec["outcome"] == "timeout"
+        leader.wait(timeout=5)
+
+        before = marker.stat().st_mtime
+        _time.sleep(0.5)
+        after = marker.stat().st_mtime
+        assert after == before, (
+            "child kept writing after ed.reap() killed the session leader "
+            "-- reap() did not reach it (plain os.kill semantics)"
+        )
+    finally:
+        if leader.poll() is None:
+            leader.kill()
+            leader.wait(timeout=5)
 
 
 def test_a_recurring_action_is_never_recorded_as_completed(tmp_path):

@@ -1040,7 +1040,17 @@ def plan(state: dict, repo: Path = REPO,
     # to completion — the same shape as HEAD not compiling for 40 hours.
     # Cheap, needs no emulator, and runs beside a campaign.
     candidates.append(Action(
-        id="suite_check", kind="suite", needs_emulator=False, timeout_h=1.0,
+        # timeout_h must exceed the --timeout passed below (5400s = 1.5h):
+        # that flag is run_suite_check.py's OWN subprocess.run timeout, so
+        # it needs the chance to fire and report cleanly before this
+        # outer wall-clock reaper SIGKILLs the whole action. At the old
+        # timeout_h=1.0 (3600s), a merely-slow (not hung) suite run was
+        # killed 1500s before its own timeout could ever trigger, and the
+        # kill was recorded as an action-level failure, pushing
+        # consecutive_failures toward the circuit breaker for a suite
+        # that was never actually stuck. 1.75h gives the inner timeout
+        # 900s of margin to fire on its own first.
+        id="suite_check", kind="suite", needs_emulator=False, timeout_h=1.75,
         cmd=["scripts/run_suite_check.py", "--out",
              "runs/engine/suite_check.json", "--timeout", "5400"],
         recurring=True,
@@ -1163,9 +1173,18 @@ def _reap_one(state: dict, slots: dict, lane: str,
         if age_h <= float(running.get("timeout_h", DEFAULT_ACTION_TIMEOUT_H)):
             return None
         try:
-            os.kill(pid, 9)
+            # detach.py launches with start_new_session=True, so `pid` is a
+            # session/process-group leader; a plain os.kill only kills the
+            # leader and leaves its children (the actual train_game.py, in
+            # run_online_campaign.py's case) running as orphans. Kill the
+            # whole group so a wall-clock timeout can't leave an emulator
+            # lane silently held forever.
+            os.killpg(os.getpgid(pid), 9)
         except OSError:
-            pass
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
         slots[lane] = None
         state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
         # A heavy job that ran long enough to be killed loaded the machine

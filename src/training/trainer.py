@@ -7874,7 +7874,7 @@ class Trainer:
                 final_values_np=final_values_np,
                 rollout_steps=rollout_steps, num_envs=num_envs,
                 obs_shape=obs_shape, global_it=global_it, sam_rho=_sam_rho,
-                trunc_buf=(trunc_buf if wave_monotone else None),
+                trunc_buf=trunc_buf,
                 entropy_weight_buf=(_entw_buf if _commit_on else None),
             )
             reward_buf = _upd["reward_buf"]
@@ -8060,7 +8060,7 @@ class Trainer:
                     -reward_buf, adv_value_buf, done_buf,
                     adv_final_values_np,
                     self.reinforce_gamma, self.gae_lambda,
-                    trunc_buf=(trunc_buf if wave_monotone else None),
+                    trunc_buf=trunc_buf,
                 )
                 exec_flat = (exec_mask_buf & valid_buf).reshape(-1)
                 adv_valid = np.where(exec_flat)[0]
@@ -8151,7 +8151,7 @@ class Trainer:
                     reward_buf=reward_buf, done_buf=done_buf,
                     valid_buf=valid_buf, obs_all=obs_all, obs_flat=obs_flat,
                     mb_size=mb_size,
-                    trunc_buf=(trunc_buf if wave_monotone else None),
+                    trunc_buf=trunc_buf,
                 )
                 _mech_metrics.update(_kadv_stats)
                 log.info(

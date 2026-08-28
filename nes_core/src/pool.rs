@@ -2044,9 +2044,22 @@ impl Pool {
         // for the lifetime of this closure — no aliasing, so it
         // crosses the `catch_unwind` boundary soundly.
         let collected: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> = {
-            // Guard covers exactly the rayon dispatch below — dropped
-            // before `pace_pool_step`, which never touches
-            // `self.workers`. See `ParallelSectionGuard`.
+            // Guard covers exactly the rayon dispatch below, dropped
+            // before `pace_pool_step` runs. See `ParallelSectionGuard`.
+            //
+            // CORRECTED (this comment previously claimed pace_pool_step
+            // "never touches self.workers" — false): pace_pool_step calls
+            // any_worker_paced, whose body does read self.workers via
+            // `unsafe { &*cell.0.get() }` (same UnsafeCell this closure
+            // reborrows &mut through). any_worker_paced's own doc claims
+            // that read is safe because it runs "after the rayon join;
+            // never overlaps a parallel dispatch" — i.e. the actual
+            // safety argument is CALL-ORDERING (this guard's scope has
+            // already ended by the time pace_pool_step runs), not "never
+            // touches". That ordering has not been verified against every
+            // call site (no loom, no Miri, no multithreaded stress test
+            // exists in this crate), so treat it as an OPEN question, not
+            // a proven invariant, until one of those exists.
             let _guard = ParallelSectionGuard::enter(&self.in_parallel_section);
             self
             .workers
