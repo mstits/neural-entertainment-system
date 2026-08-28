@@ -1,0 +1,50 @@
+{
+  "id": "T0",
+  "arm": "treat",
+  "decision": "NO-GO",
+  "reason": "premise-falsifier pilot shows the registered tau=0.25 dose settles at 59-62% of the trunk re-initialized every iteration from iter 5 onward -- the registration's own forbidden 'network reset' regime -- and the A4 identity abort (median agree >= 0.60) cannot detect it because recycle() output-preserves by construction regardless of dose",
+  "training_run_this_task": false,
+  "primary_arm": {
+    "source_log": "runs/v30_premise_falsifier_2026-08-27/pilot_tau0.25_h64.log",
+    "config": "configs/mario_1_1_v27_seed0.yaml (verbatim) + redo_tau=0.25",
+    "iters_completed": 20,
+    "cum_recycled": 353,
+    "recycle_events": "19/20",
+    "first_recycle_iter": 1,
+    "agree_median": 0.8564,
+    "agree_min": 0.7021,
+    "max_dlogit_max": 0.8020,
+    "trunk_frac_recycled_median_iter_ge5": 0.625,
+    "fc1_recycled_ever": 0,
+    "armed": true,
+    "void": true,
+    "void_reason": "VOID-OVERDOSE under scripts/redo_arm_gate.py V6 (per-layer recycled-fraction ceiling) -- 62.5% of worst-hit layer recycled per iteration from iter 5 on; A4 (agree>=0.60) alone would have passed this arm"
+  },
+  "other_arms": [
+    {"log": "pilot_tau0.25_h96.log", "cum_recycled": 342, "trunk_frac_median": 0.594, "agree_median": 0.9011, "gate_verdict": "VOID-OVERDOSE"},
+    {"log": "pilot_tau0.15_h64.log", "cum_recycled": 176, "trunk_frac_median": 0.375, "agree_median": 0.9501, "gate_verdict": "VOID-OVERDOSE"},
+    {"log": "control_tau0.025_h64_VOIDED.log", "cum_recycled": 0, "iters_before_raise": 25, "raised_at_iter": 26, "gate_verdict": "VOID (redo never fired)"},
+    {"log": "armed_check_inert_case_VOIDED.log", "num_envs": 8, "cum_recycled": 0, "raised_at_iter": 26, "gate_verdict": "VOID (redo never fired)", "purpose": "arming-deadline re-verification on a fast config"}
+  ],
+  "honest_split_sample": null,
+  "honest_split_sample_note": "not measured -- no honest cold/greedy/sticky-0.25 eval was run under this task; this was a pre-training premise check only, per the NO-GO directive to not run training",
+  "peak_iter": 19,
+  "peak_iter_note": "last iteration reached in the primary pilot arm's fixed 20-iteration budget, NOT a performance peak -- no checkpoint-selection ladder was walked",
+  "wallclock": {
+    "span_first_start_to_last_end_h": 0.699,
+    "span_first_start_to_last_end": "17:53:19-18:35:15",
+    "serial_equivalent_sum_of_arms_h": 0.748,
+    "note": "pilot_tau0.25_h64 and control_tau0.025_h64 started at the identical second and ran concurrently; two figures given because of that overlap"
+  },
+  "throughput_env_steps_per_s_mean": {
+    "pilot_tau0.25_h64": 1712,
+    "control_tau0.025_h64": 1763,
+    "pilot_tau0.15_h64": 2365,
+    "pilot_tau0.25_h96": 2894,
+    "armed_check_inert_8env": 2110
+  },
+  "approx_total_env_steps": 5250000,
+  "device": "cpu",
+  "recommendation": "re-register with a rank-based dose (recycle bottom-k of fc2, k~2-5) instead of a fixed tau; port the V6 over-dose ceiling into the in-run A4 abort; re-sweep the dose over ~40-60 iterations instead of 2 before arming. Estimated added cost under 2h, none of it the registered 12h campaign budget.",
+  "suite_baseline_unaffected": "5829 passed, 30 skipped, 3 xfailed, 1 known-environmental failure (test_night2_runner.py::test_dry_run_passes_live) -- unchanged from the premise-falsifier pilot, not re-run under this task since no code changed here"
+}
