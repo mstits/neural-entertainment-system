@@ -12,12 +12,12 @@ one-line invariant only after recurring across 4–5 separate entries.
 | root cause | entries | deterministic enforcement |
 |---|---|---|
 | `[unverified-claim]` | **8** | no — judgement |
-| `[vacuous-gate]` | **9** | candidate — lint for `passed = not <coll>`; ask what the mechanism preserves *by construction* before registering a check on it; and emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty |
+| `[vacuous-gate]` | **11** | candidate — lint for `passed = not <coll>`; ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; and a test whose assertion is a literal string or an object identity should assert the behavior that string/identity stands in for instead |
 | `[weak-eval]` | **7** | partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **5** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant) |
-| `[process]` | **5** | candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; and a config file is code — adding or copying a profile runs the full suite, not the subset that covers it |
+| `[process]` | **6** | candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 1 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
 | `[measurement]` | 1 | — |
@@ -35,6 +35,51 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-28 — [vacuous-gate] Wrote a test that called the fix's own primitive instead of the code under test
+- **What happened:** First regression test for the orphaned-child fix called
+  `os.killpg` directly to kill a session leader, then asserted its child died.
+  It always used killpg regardless of what `engine_driver.reap()` actually did
+  -- it never exercised `reap()` at all.
+- **Root cause:** Wrote a test that demonstrates the KERNEL semantics
+  (killpg kills a process group) instead of a test that exercises the
+  function under test and checks its effect.
+- **Consequence:** Caught before commit by the standing revert-verify habit:
+  reverted the fix in `engine_driver.py`, re-ran the test, it still passed.
+  Rewritten to call `ed.reap()` itself; re-verified it then fails on revert.
+- **Rule (draft):** A regression test must call the changed function, not
+  reimplement its intended effect beside it.
+
+## 2026-08-28 — [vacuous-gate] Two tests pinned a bug as the expected contract
+- **What happened:** `test_trainer_wires_the_monotone_rule` asserted the exact
+  buggy source line (`trunc_buf=(trunc_buf if wave_monotone else None)`) as
+  required text. `test_monotone_lost_cut_truncates_in_real_loop` asserted
+  `tb is None` -- identity on an implementation detail -- when the intended,
+  behavioral contract was "no truncation was flagged" (`not tb.any()`, which
+  `None` and an all-False array satisfy identically downstream).
+- **Root cause:** Both tests encoded a specific IMPLEMENTATION (a literal
+  string; a specific object identity) as the assertion, rather than the
+  BEHAVIOR the implementation was supposed to produce.
+- **Consequence:** Both passed for as long as the bug existed, then failed the
+  moment the bug was fixed (`9bfe035`) -- a full suite run caught it,
+  targeted file runs during development would not have. Fixed in `1dc384b`,
+  re-verified the rewritten assertions still fail if the mechanism they
+  actually care about regresses.
+- **Rule (draft):** When a test's assertion is a literal string or an object
+  identity, ask what behavior it stands in for; assert the behavior.
+
+## 2026-08-28 — [process] Fixes from an external audit went uncommitted to MISTAKES.md
+- **What happened:** Three findings above, all from the same external-audit
+  response session, were fixed and committed without a MISTAKES.md entry
+  until asked directly whether they were logged.
+- **Root cause:** Treated "fix it, test it, commit it" as the complete loop
+  and stopped there; logging was a separate step that had no forcing function
+  once the audit thread itself was closed out.
+- **Consequence:** None on the fixes' correctness; the log undercounted for
+  one full exchange, and the pattern (two vacuous-gate instances in one
+  sitting) went unrecorded until a direct question surfaced it.
+- **Rule (draft):** Log to MISTAKES.md as part of the fix commit, not as a
+  followup -- a fix and its lesson are one unit of work, not two.
 
 ## 2026-08-28 — [weak-eval] A positive control that could not pass
 - **What happened:** The on-policy `V_adv` arc requires its positive control
