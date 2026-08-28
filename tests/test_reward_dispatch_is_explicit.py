@@ -340,7 +340,12 @@ def test_baseline_covers_the_whole_roster_and_is_not_empty():
     #     (V31_REDO_SURGICAL_2026-08-27.md) — explicit reward_id: mario,
     #     the v27/v27 sibling recipe's own arm, single-variable redo_tau
     #     diff from the already-baselined v27 seed configs.
-    expected = 126 + 4
+    # +1: configs/mario_1_1_v32_redo_bk_seed0.yaml
+    #     (V32_REDO_BOTTOM_K_2026-08-28.md) — explicit reward_id: mario,
+    #     the same v27 recipe with the ReDo selection rule as its single
+    #     functional diff (threshold -> rank-based bottom-k). Seeds 1-3
+    #     are owed and will be one further documented batch.
+    expected = 126 + 4 + 1
     assert len(baseline) == expected, (
         f"expected {expected} baseline rows (126 frozen at migration + "
         f"documented later appends); found {len(baseline)}. A frozen row "

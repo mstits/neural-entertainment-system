@@ -65,8 +65,11 @@ KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     # ReDo — Recycling Dormant neurons (V27_FRESH_RECOVERY_2026-08-24.md
     # AMENDMENT 1, B4). Default OFF; the v27 seed configs set
     # redo_enabled: true explicitly.
-    "redo_check_every_iters", "redo_enabled", "redo_reset_optimizer_moments",
-    "redo_sample_batch", "redo_tau",
+    # `redo_mode` / `redo_bottom_k` are V32_REDO_BOTTOM_K_2026-08-28.md
+    # §2: the rank-based selection rule. Default mode is "threshold",
+    # i.e. the pre-v32 behaviour, so no existing config changes meaning.
+    "redo_bottom_k", "redo_check_every_iters", "redo_enabled", "redo_mode",
+    "redo_reset_optimizer_moments", "redo_sample_batch", "redo_tau",
     "rnd_intrinsic_coef",
     "rnd_loss_coef", "rnd_predictor_update_fraction", "rollout_steps",
     "sam_rho", "sil", "smb_curriculum", "steps", "sticky_action_prob",

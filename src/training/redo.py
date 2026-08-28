@@ -35,6 +35,39 @@ Phenomenon in Deep Reinforcement Learning"), Definition 1, applied to
 `enabled=False` it returns before touching the network, the optimizer,
 or ANY RNG stream, so a redo-off run is byte-identical to a build
 without this module (unit-tested in tests/test_redo_mechanism.py).
+
+SELECTION RULES — two, and the second is flag-gated and default-off
+(V32_REDO_BOTTOM_K_2026-08-28.md §2, §12.1):
+
+- ``SELECT_THRESHOLD`` ("threshold", the default): Sokar's rule as
+  above, dormant iff ``s_i <= tau``, both layers in scope. Every run
+  predating v32 takes this path and is unaffected by anything below.
+- ``SELECT_BOTTOM_K`` ("bottom_k"): recycle the ``k`` lowest-scoring
+  ``fc2`` units per check, k fixed. **No threshold is consulted.** This
+  exists because v31 proved there is no fixed tau on this
+  ``Linear -> LayerNorm -> SiLU`` 32-unit trunk that is simultaneously
+  firing, surgical and sustained: tau 0.10 equilibrated at 12/32 = 37.5%
+  and tripped the dose ceiling at iter 29, while tau 0.075 recycled the
+  same two indices for the whole run (a permanent lesion). The dormant
+  tail drifts DOWN across training and swallows any fixed tau. A rank
+  rule caps the dose BY CONSTRUCTION — the drift changes WHICH units are
+  bottom-k, never HOW MANY are recycled.
+
+  Scope is ``fc2`` ONLY under this rule, and that is a registered
+  restriction backed by measurement, not a convenience: ``fc1`` is 0 of
+  64 and 0 of 96 dormant across all 86 measured iterations at every tau
+  from 0.025 to 0.25, its score minimum never below 0.3086. A rank rule
+  on fc1 would recycle its two least-active units every cadence forever
+  on a layer that has never had a dormant unit — damage with no
+  mechanism behind it.
+
+  ``RedoStats.fc2_scores`` carries the full per-unit score vector on
+  every check so a gate can recompute the selection OFFLINE from the
+  logged bytes and compare it against the logged indices. That check is
+  the Lane A lesson (a bank whose rows were not transitions passed eight
+  admissibility gates because every one of them tested the pipeline and
+  none tested the artifact): a guard on the values in hand certifies the
+  loop, only a guard on the bytes written certifies the file.
 """
 
 from __future__ import annotations
@@ -56,6 +89,13 @@ import torch.nn.functional as F
 # so a mis-dosed run is caught in ~15 min instead of burning to iter 250.
 DOSE_CEILING_WINDOW = 10
 DOSE_CEILING_FRAC = 0.25
+
+# Selection rules (V32_REDO_BOTTOM_K_2026-08-28.md §2). THRESHOLD is the
+# default everywhere; BOTTOM_K is reached only when a config declares
+# `redo_mode: bottom_k`, so every run predating v32 is byte-identical.
+SELECT_THRESHOLD = "threshold"
+SELECT_BOTTOM_K = "bottom_k"
+SELECT_MODES = (SELECT_THRESHOLD, SELECT_BOTTOM_K)
 
 
 def dose_fraction(
@@ -116,6 +156,15 @@ class RedoStats:
     # "a real dormant tail exists on this architecture".
     fc1_tail: tuple[float, float, float] = (float("nan"),) * 3
     fc2_tail: tuple[float, float, float] = (float("nan"),) * 3
+    # Which selection rule produced `fc1_indices`/`fc2_indices`.
+    mode: str = SELECT_THRESHOLD
+    # The FULL per-unit fc2 dormancy score vector for this check, in unit
+    # order, measured BEFORE the recycle. This is the artifact-match
+    # input (V32 §3 B2): a gate recomputes bottom-k offline from these
+    # numbers and requires an exact match against `fc2_indices`. It is
+    # deliberately the whole vector and not a summary — a summary would
+    # certify the loop, and only the bytes certify the file.
+    fc2_scores: list[float] = field(default_factory=list)
 
 
 def dormancy_scores(h: torch.Tensor) -> torch.Tensor:
@@ -155,6 +204,31 @@ def dormant_indices(h: torch.Tensor, tau: float) -> torch.Tensor:
     """
     score = dormancy_scores(h)
     return (score <= tau).nonzero(as_tuple=False).flatten().to(torch.int64)
+
+
+def bottom_k_indices(scores: torch.Tensor, k: int) -> torch.Tensor:
+    """The `k` lowest-scoring unit indices of one layer — the rank rule.
+
+    No threshold is consulted: this returns exactly `min(k, H)` indices
+    for ANY score distribution, which is the whole point (v31 measured a
+    fixed tau's dose drift from 1 unit to 12 on this trunk). Ties break
+    toward the LOWER unit index via a stable argsort, so the selection is
+    a deterministic function of the score vector alone and an offline
+    recomputation from the logged scores reproduces it exactly. The
+    returned indices are sorted ascending so the logged index SET is
+    canonical.
+
+    `k <= 0` selects nothing; `k >= H` selects the whole layer (the
+    caller's registration is what forbids a dose that large, not this
+    function).
+    """
+    if scores.dim() != 1:
+        raise ValueError(f"expected a (H,) score vector, got {tuple(scores.shape)}")
+    k = int(min(max(k, 0), scores.numel()))
+    if k == 0:
+        return torch.empty(0, dtype=torch.int64, device=scores.device)
+    order = torch.argsort(scores.detach().to(torch.float32), stable=True)
+    return order[:k].sort().values.to(torch.int64)
 
 
 @torch.no_grad()
@@ -278,8 +352,14 @@ def check_and_recycle(
     sample_obs: torch.Tensor,
     tau: float,
     reset_optimizer_moments: bool = True,
+    mode: str = SELECT_THRESHOLD,
+    bottom_k: int = 0,
 ) -> RedoStats:
     """One full dormancy check + recycle on a prepared sample batch.
+
+    `mode` picks the selection rule (module docstring). Under
+    SELECT_BOTTOM_K, `tau` is not read at all and `fc1` is never
+    selected — the registered scope restriction.
 
     Measures the B3.7 identity diagnostics (greedy-argmax agreement and
     max|delta logit| pre/post recycle on the SAME batch) whenever at
@@ -287,11 +367,23 @@ def check_and_recycle(
     construction (agree 1.0, max_dlogit 0.0) and skips the second
     forward pass.
     """
+    if mode not in SELECT_MODES:
+        raise ValueError(
+            f"[redo] unknown selection mode {mode!r}; expected one of "
+            f"{list(SELECT_MODES)}"
+        )
     h1, h2, logits_pre = hidden_activations(net, sample_obs)
     s1, s2 = dormancy_scores(h1), dormancy_scores(h2)
     fc1_tail, fc2_tail = score_tail(s1), score_tail(s2)
-    fc1_idx = (s1 <= tau).nonzero(as_tuple=False).flatten().to(torch.int64)
-    fc2_idx = (s2 <= tau).nonzero(as_tuple=False).flatten().to(torch.int64)
+    if mode == SELECT_BOTTOM_K:
+        # Rank rule: exactly k of fc2, whatever the distribution has
+        # drifted to. fc1 is out of scope by registration (0/64 and 0/96
+        # dormant across 86 measured iterations, min never below 0.3086).
+        fc1_idx = torch.empty(0, dtype=torch.int64, device=s1.device)
+        fc2_idx = bottom_k_indices(s2, bottom_k)
+    else:
+        fc1_idx = (s1 <= tau).nonzero(as_tuple=False).flatten().to(torch.int64)
+        fc2_idx = (s2 <= tau).nonzero(as_tuple=False).flatten().to(torch.int64)
     n_recycled = int(fc1_idx.numel() + fc2_idx.numel())
     agree, max_dlogit = 1.0, 0.0
     if n_recycled:
@@ -317,6 +409,8 @@ def check_and_recycle(
         fc2_indices=fc2_idx.tolist(),
         fc1_tail=fc1_tail,
         fc2_tail=fc2_tail,
+        mode=mode,
+        fc2_scores=[float(v) for v in s2.detach().to(torch.float32).tolist()],
     )
 
 
@@ -332,6 +426,8 @@ def maybe_check_and_recycle(
     check_every_iters: int,
     global_it: int,
     reset_optimizer_moments: bool = True,
+    mode: str = SELECT_THRESHOLD,
+    bottom_k: int = 0,
 ) -> RedoStats | None:
     """Trainer-facing gate (the end-of-iteration hook, B3.3).
 
@@ -341,7 +437,19 @@ def maybe_check_and_recycle(
     without the mechanism. The sample batch is min(sample_batch, valid)
     rollout steps drawn uniformly without replacement from the
     just-collected rollout's valid (non-padded) rows (B3.4).
+
+    `mode`/`bottom_k` select the rule (module docstring); the defaults
+    are the pre-v32 threshold behaviour.
     """
+    if enabled and mode == SELECT_BOTTOM_K and bottom_k < 1:
+        # A declared-but-unreachable knob is how this repo shipped twenty
+        # inert config keys. Fail loudly at the first check rather than
+        # run a treatment arm that silently recycles nothing.
+        raise ValueError(
+            "[redo] mode=bottom_k requires bottom_k >= 1; got "
+            f"{bottom_k}. A rank rule with k=0 recycles nothing and "
+            "would produce a VOID-NOT-REACHED arm that looks armed."
+        )
     if not enabled:
         return None
     if check_every_iters > 1 and (global_it % check_every_iters) != 0:
@@ -362,4 +470,6 @@ def maybe_check_and_recycle(
         sample_obs=sample,
         tau=tau,
         reset_optimizer_moments=reset_optimizer_moments,
+        mode=mode,
+        bottom_k=bottom_k,
     )

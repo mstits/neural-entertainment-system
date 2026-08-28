@@ -75,6 +75,9 @@ from src.training.ppo import (
 from src.training.redo import maybe_check_and_recycle as _redo_maybe_check
 from src.training.redo import dose_fraction as _redo_dose_fraction
 from src.training.redo import dose_ceiling_trips as _redo_dose_ceiling_trips
+from src.training.redo import SELECT_BOTTOM_K as _REDO_SELECT_BOTTOM_K
+from src.training.redo import SELECT_THRESHOLD as _REDO_SELECT_THRESHOLD
+from src.training.redo import SELECT_MODES as _REDO_SELECT_MODES
 from src.training.metrics_sink import MetricsSink
 from src.training.notifications import StallNotifier
 from src.utils.reward_functions import build_reward_function
@@ -973,6 +976,33 @@ class Trainer:
         self.redo_reset_optimizer_moments: bool = bool(
             rl_cfg.get("redo_reset_optimizer_moments", True)
         )
+        # V32 additions (V32_REDO_BOTTOM_K_2026-08-28.md §2, §12.1) —
+        # the selection rule. Default "threshold" is the pre-v32
+        # behaviour exactly, so every existing config is untouched and a
+        # redo-off run stays byte-identical. Under "bottom_k" the rank
+        # rule recycles the k lowest-scoring fc2 units per check and
+        # `redo_tau` is NOT READ; the v32 configs pin tau at its schema
+        # default and say so, because a live numeral on a path that
+        # never reads it is a dead knob.
+        self.redo_mode: str = str(
+            rl_cfg.get("redo_mode", _REDO_SELECT_THRESHOLD)
+        )
+        if self.redo_mode not in _REDO_SELECT_MODES:
+            raise ValueError(
+                f"[redo] redo_mode: {self.redo_mode!r} is not one of "
+                f"{list(_REDO_SELECT_MODES)}"
+            )
+        self.redo_bottom_k: int = max(0, int(rl_cfg.get("redo_bottom_k", 0)))
+        if (
+            self.redo_enabled
+            and self.redo_mode == _REDO_SELECT_BOTTOM_K
+            and self.redo_bottom_k < 1
+        ):
+            raise ValueError(
+                "[redo] redo_mode: bottom_k requires redo_bottom_k >= 1 "
+                f"(got {self.redo_bottom_k}); a rank rule with k=0 "
+                "recycles nothing and would look armed while being inert."
+            )
         self._redo_cum_recycled: int = 0
         # V31 additions — trailing-window dose ceiling input (ALL checks,
         # including zero-recycle ones, per dose_ceiling_trips' contract),
@@ -4973,10 +5003,19 @@ class Trainer:
         if redo_on:
             log.info(
                 "[redo] ENABLED tau=%g every_iters=%d scope=fc1,fc2 "
-                "sample=%d reset_moments=%s",
+                "sample=%d reset_moments=%s mode=%s k=%d recycle_scope=%s",
                 self.redo_tau, self.redo_check_every_iters,
                 self.redo_sample_batch,
                 "true" if self.redo_reset_optimizer_moments else "false",
+                # V32 §3 B1 grep target. `scope=fc1,fc2` above is the
+                # module's scope and is pinned by the B6 evidence test;
+                # `recycle_scope` is the rule's EFFECTIVE scope, which is
+                # fc2-only under the rank rule. Under mode=bottom_k the
+                # `tau=` field above is not read by the selection path —
+                # it is logged for provenance, not as an operating point.
+                self.redo_mode, self.redo_bottom_k,
+                "fc2" if self.redo_mode == _REDO_SELECT_BOTTOM_K
+                else "fc1,fc2",
             )
         else:
             log.info("[redo] disabled")
@@ -7878,6 +7917,8 @@ class Trainer:
                     reset_optimizer_moments=(
                         self.redo_reset_optimizer_moments
                     ),
+                    mode=self.redo_mode,
+                    bottom_k=self.redo_bottom_k,
                 )
                 if _rd is not None:
                     self._redo_cum_recycled += _rd.recycled
@@ -7903,6 +7944,21 @@ class Trainer:
                         log.info(
                             "[redo] recycled unit indices: fc1=%s fc2=%s",
                             _rd.fc1_indices, _rd.fc2_indices,
+                        )
+                        # V32 §3 B2 artifact-match input: the FULL fc2
+                        # score vector this check selected from, so a
+                        # gate can recompute bottom-k offline from the
+                        # logged bytes and compare against the logged
+                        # indices. Lane A's 2.13 h voided because eight
+                        # gates all tested the pipeline and none tested
+                        # the artifact; this line is what lets the v32
+                        # gate test the artifact. Pure logging — no RNG,
+                        # no behaviour change, unreachable when redo is
+                        # off, so `redo_enabled: false` byte-identity is
+                        # untouched.
+                        log.info(
+                            "[redo] fc2 scores: %s",
+                            [round(_s, 6) for _s in _rd.fc2_scores],
                         )
                         self._redo_recycle_events += 1
                         if self._redo_first_recycle_iter is None:
