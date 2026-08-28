@@ -1,0 +1,211 @@
+{
+ "what": "v32 full-campaign recovery curve, k=4, C=10 (9 free PPO updates between checks).",
+ "licence": "V32_REDO_BOTTOM_K_2026-08-28.md section 7 registers this mechanism receipt in EVERY branch, including STOP; section 10.4 licenses the mechanism finding attached to a VOID's specific void reason. Zero training compute: offline aggregation of docs/receipts/v32_redo_bottom_k/seed{0..3}_armgate.json.",
+ "source_receipts": [
+  "docs/receipts/v32_redo_bottom_k/seed0_armgate.json",
+  "docs/receipts/v32_redo_bottom_k/seed1_armgate.json",
+  "docs/receipts/v32_redo_bottom_k/seed2_armgate.json",
+  "docs/receipts/v32_redo_bottom_k/seed3_armgate.json"
+ ],
+ "per_seed": {
+  "seed0": {
+   "events": 25,
+   "distinct_fc2_indices": 16,
+   "disjoint_consecutive_pairs": 1,
+   "consecutive_pairs": 24,
+   "repeat_rate": 0.958333,
+   "longest_identical_run_events": 19,
+   "n_next_check_observations": 96,
+   "reselected_bottom4_frac": 0.864583,
+   "median_rank_next_check": 2.0
+  },
+  "seed1": {
+   "events": 25,
+   "distinct_fc2_indices": 9,
+   "disjoint_consecutive_pairs": 0,
+   "consecutive_pairs": 24,
+   "repeat_rate": 1.0,
+   "longest_identical_run_events": 21,
+   "n_next_check_observations": 96,
+   "reselected_bottom4_frac": 0.916667,
+   "median_rank_next_check": 2.0
+  },
+  "seed2": {
+   "events": 25,
+   "distinct_fc2_indices": 12,
+   "disjoint_consecutive_pairs": 0,
+   "consecutive_pairs": 24,
+   "repeat_rate": 1.0,
+   "longest_identical_run_events": 18,
+   "n_next_check_observations": 96,
+   "reselected_bottom4_frac": 0.90625,
+   "median_rank_next_check": 2.0
+  },
+  "seed3": {
+   "events": 25,
+   "distinct_fc2_indices": 7,
+   "disjoint_consecutive_pairs": 0,
+   "consecutive_pairs": 24,
+   "repeat_rate": 1.0,
+   "longest_identical_run_events": 21,
+   "n_next_check_observations": 96,
+   "reselected_bottom4_frac": 0.96875,
+   "median_rank_next_check": 2.0
+  }
+ },
+ "pooled_next_check": {
+  "n": 384,
+  "still_bottom4_frac": 0.914062,
+  "median_rank": 2.0,
+  "mean_rank": 2.1172,
+  "frac_rank_ge_8": 0.046875,
+  "frac_upper_half": 0.013021
+ },
+ "survival_conditioned_by_lag": {
+  "+1": {
+   "free_iters": 10,
+   "n": 384,
+   "median_rank": 2.0,
+   "in_bottom4_frac": 0.914062
+  },
+  "+2": {
+   "free_iters": 20,
+   "n": 28,
+   "median_rank": 12.0,
+   "in_bottom4_frac": 0.071429
+  },
+  "+3": {
+   "free_iters": 30,
+   "n": 25,
+   "median_rank": 11,
+   "in_bottom4_frac": 0.0
+  },
+  "+4": {
+   "free_iters": 40,
+   "n": 25,
+   "median_rank": 11,
+   "in_bottom4_frac": 0.08
+  },
+  "+5": {
+   "free_iters": 50,
+   "n": 23,
+   "median_rank": 11,
+   "in_bottom4_frac": 0.043478
+  },
+  "+6": {
+   "free_iters": 60,
+   "n": 22,
+   "median_rank": 13.5,
+   "in_bottom4_frac": 0.0
+  },
+  "+7": {
+   "free_iters": 70,
+   "n": 22,
+   "median_rank": 13.5,
+   "in_bottom4_frac": 0.0
+  },
+  "+8": {
+   "free_iters": 80,
+   "n": 22,
+   "median_rank": 12.5,
+   "in_bottom4_frac": 0.0
+  },
+  "+9": {
+   "free_iters": 90,
+   "n": 22,
+   "median_rank": 13.5,
+   "in_bottom4_frac": 0.0
+  },
+  "+10": {
+   "free_iters": 100,
+   "n": 22,
+   "median_rank": 15.0,
+   "in_bottom4_frac": 0.0
+  },
+  "+11": {
+   "free_iters": 110,
+   "n": 22,
+   "median_rank": 16.0,
+   "in_bottom4_frac": 0.0
+  },
+  "+12": {
+   "free_iters": 120,
+   "n": 22,
+   "median_rank": 16.5,
+   "in_bottom4_frac": 0.0
+  },
+  "+13": {
+   "free_iters": 130,
+   "n": 22,
+   "median_rank": 16.0,
+   "in_bottom4_frac": 0.0
+  },
+  "+14": {
+   "free_iters": 140,
+   "n": 22,
+   "median_rank": 16.0,
+   "in_bottom4_frac": 0.0
+  },
+  "+15": {
+   "free_iters": 150,
+   "n": 22,
+   "median_rank": 15.5,
+   "in_bottom4_frac": 0.0
+  },
+  "+16": {
+   "free_iters": 160,
+   "n": 22,
+   "median_rank": 16.0,
+   "in_bottom4_frac": 0.0
+  },
+  "+17": {
+   "free_iters": 170,
+   "n": 22,
+   "median_rank": 18.0,
+   "in_bottom4_frac": 0.0
+  },
+  "+18": {
+   "free_iters": 180,
+   "n": 22,
+   "median_rank": 17.0,
+   "in_bottom4_frac": 0.0
+  },
+  "+19": {
+   "free_iters": 190,
+   "n": 22,
+   "median_rank": 17.5,
+   "in_bottom4_frac": 0.0
+  },
+  "+20": {
+   "free_iters": 200,
+   "n": 22,
+   "median_rank": 16.5,
+   "in_bottom4_frac": 0.0
+  },
+  "+21": {
+   "free_iters": 210,
+   "n": 19,
+   "median_rank": 17,
+   "in_bottom4_frac": 0.0
+  },
+  "+22": {
+   "free_iters": 220,
+   "n": 13,
+   "median_rank": 16,
+   "in_bottom4_frac": 0.0
+  },
+  "+23": {
+   "free_iters": 230,
+   "n": 12,
+   "median_rank": 14.0,
+   "in_bottom4_frac": 0.0
+  },
+  "+24": {
+   "free_iters": 240,
+   "n": 3,
+   "median_rank": 9,
+   "in_bottom4_frac": 0.0
+  }
+ },
+ "note": "rank 0 = lowest-scoring of 32 fc2 units; k=4 means ranks 0-3 are recycled at each check."
+}

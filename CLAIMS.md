@@ -4326,3 +4326,141 @@ campaigns — still untested to a PASS/FAIL bar. What v32 adds beside that: the
 rank-rule's own turnover pathology, previously observed only in a two-rung
 pilot, reproduces in 3 of 4 seeds at full length, at the only rung the
 registered ladder permits reaching.
+
+---
+
+## V32 MECHANISM RECEIPT 2026-08-28 — the operator, not the architecture; and one v30 premise REFUTED
+
+**Status: MECHANISM FINDING, banked under the licence that exists.** No
+verdict changes class. v32 remains **VOID-UNDERPOWERED**, no Θ was computed
+and none is inferred, and the standing prohibition on citing v27/v28/v30/
+v31/v32 as evidence for or against the plasticity-loss hypothesis is
+**unchanged**. Zero training compute; every number below is offline
+aggregation over already-banked checkpoints and receipts. Decision document:
+`docs/proposals/DIRECTION_2026-08-28.md`.
+
+**The licence.** §7 of the v32 registration requires the recovery curve as
+a mechanism receipt *"in every branch, including STOP"*, and §10.4 licenses
+*"the mechanism finding attached to its specific void reason."* The
+campaign never computed one — `phase_r/` and `phase_r2/` each hold a
+`recovery_curve.json`; `seeds/` held none. It does now, at 8× the size of
+both pilots combined:
+`docs/receipts/v32_redo_bottom_k/campaign_recovery_curve.json` (working copy at `runs/v32_redo_bottom_k_2026-08-28/seeds/recovery_curve.json`; `runs/` is gitignored).
+
+**This entry does NOT claim retirement of ReDo under §10.3 item 4 or §8.**
+Both antecedents are false: §10.3 item 4 conditions retirement on a FAIL
+(Θ ≤ 0.767) that does not exist, and §8 fires only *"if the second Phase R
+also NO-GOes"* — the second Phase R GOed. What is retired below is the
+**cadence-and-threshold search**, which is what was actually measured.
+
+### 1. The dormancy score is a rank-readout of the LayerNorm gain — NEW
+
+Spearman(`norm2.weight`, fc2 dormancy score) across the four v32 seeds:
+**+0.932 / +0.943 / +0.905 / +0.773** (p ≤ 2.1 × 10⁻⁷). Trained per-unit
+gains span **0.477 – 11.454** against layer means of 3.74 – 4.25.
+
+`recycle()` in `src/training/redo.py` sets `norm2.weight[fc2_idx] = 1.0`
+and `actor.weight[:, fc2_idx] = critic.weight[:, fc2_idx] = 0.0`, and zeroes
+the Adam moments on the same slices. With both head columns at zero the unit
+receives no gradient, so the gain stays pinned at 1.0 until those columns
+regrow from zero. **The operator deposits its own recycled unit at the
+bottom of the statistic that selects it.** Across all four seeds, all
+sixteen units recycled at the final check read gain **exactly 1.000** and
+mean |actor column| **exactly 0.000**.
+
+Gain and outgoing-column magnitude by number of free cadence windows
+(seed 2, iter 240): 0 windows → gain 1.000 / cols 0.000; 1 → 1.10–1.36;
+2 → 1.78; 20–23 → 0.73–5.80; never recycled → gain mean ≈ 4.9 with mean
+|critic column| **3.35 – 7.14**. The critic column is the slowest quantity
+in the network to regrow and it is the one the operator zeroes.
+Receipt: `docs/receipts/v32_redo_bottom_k/gain_vs_dormancy_score.json`.
+
+### 2. Recovery is a threshold in cadence, not an impossibility — NEW
+
+At the campaign operating point (k = 4, C = 10; 4 seeds × 24 events × 4
+units = **384 unit-observations**): **91.41 %** of recycled units are still
+rank-bottom-4 one check later, median next-check rank **2 of 32**, mean
+2.12, only **4.69 %** reach rank ≥ 8 and **1.30 %** the upper half.
+Per seed 86.5 / 91.7 / 90.6 / 96.9 %.
+
+Following each unit forward only while it is *not* re-recycled: **+2 checks
+(19 free PPO updates) n = 28, median rank 12.0, 7.1 % still bottom-4**; and
+from +3 through +23 checks the median climbs 11 → 18 with 0–8 % ever
+falling back. A unit that survives one extra window does not return.
+
+### 3. v30's LayerNorm premise — REFUTED IN ITS STATED REASON; the VOID STANDS
+
+`V30_REDO_ARMED_2026-08-27.md:48-50` banked: *"Pre-activation LayerNorm
+re-normalizes to zero-mean / unit-variance across units, every forward
+pass, so no unit's activation magnitude can decay away relative to its
+layer."* The learned per-unit affine gain reintroduces exactly that decay —
+a 24× spread — and it is the dominant term in the score. **v30's VOID
+stands**: the DR's prescribed 0.025–0.1 τ range was genuinely unreachable,
+and the 2,000 zero-recycle checks are still the proof. The *reason* banked
+with it is wrong and is corrected here.
+
+### 4. v32 §8's stopping text — one clause CONFIRMED, two REFUTED
+
+* *"does not climb out of the rank-bottom … within 9 free PPO updates"* —
+  **CONFIRMED** (91.4 % at +1 check, n = 384).
+* *"The recycled set cannot turn over"* — **REFUTED** (median rank 12 at
+  +2 checks, stable thereafter).
+* *"on this architecture"* — **REFUTED**; the measurement attributes the
+  failure to the operator, which all five registrations held fixed.
+
+### 5. What is retired
+
+**RETIRED: the cadence-and-threshold search.** Every fixed threshold (v31:
+τ = 0.10 equilibrates at 12/32 and trips the dose ceiling; τ = 0.075 is a
+permanent two-unit lesion) and the rank rule at cadence 10. What v27→v32
+searched was the *delivery schedule* — τ → fixed τ → surgical τ → rank-based
+bottom-k — around an operator no registered rung addresses.
+
+**NOT retired: the plasticity-loss hypothesis, and ReDo as such.** The
+untested variable is the operator: do not reset `norm2.weight` to 1.0
+(reset to the layer median gain), or do not zero the head columns. Testing
+it is **not scheduled** and is not licensed by this entry.
+
+### 6. F3' (the turnover gate) is a vacuous gate — logged
+
+§6.2 defines the degenerate case as *"the recycled set never changes."*
+F3'-as-coded requires a fully **disjoint** consecutive pair, which at
+k = 4 of 32 demands all four units swap in one step. Verified: seed 0's ARM
+rests on **exactly one disjoint pair out of 24** (iters 10→20), after which
+it holds `fc2 = [8,23,26,30]` for **19 consecutive events**; seeds 1/2/3
+read 0/24. The gate separates **4.2 % of pairs from 0.0 %**. Ranked by real
+per-slot churn the order is seed 0 (0.135) > seed 2 (0.094) > seed 1
+(0.083) > seed 3 (0.031): it admitted the top of a severity gradient by one
+Bernoulli event and voided seed 2, the only seed showing late escape
+(events 22–24, iters 220–240). Logged in `MISTAKES.md`.
+
+### 7. Phase R's GO was a small-sample false positive — logged
+
+Phase R2 ran at **exactly** the campaign's operating point
+(`mode=bottom_k k=4 every_iters=10`, verified in `phase_r2_stdout.log`) and
+read **75.0 % re-selection on n = 44**. The campaign at identical settings
+reads **91.41 % on n = 384**. Fisher two-sided **p = 0.0024**. The preflight
+that licensed 5.3 h of compute was wrong at its own operating point, and the
+campaign refuted it. Logged in `MISTAKES.md`.
+
+### 8. Capacity — NO STATUS CHANGE, and the +0.14 is unmeasured on one arm
+
+v28 remains **FAIL** (best-of-4 0.670 against FAIL ≤ 0.767 / PASS ≥ 0.80).
+Nothing here moves it. Two facts are added to the record because a later
+document must not cite the +0.14 without them:
+
+* `runs/v29_stability/f0_ladder/ladder.csv` is 97 lines — 4 runs × 24
+  iters, **all v28**. **No v27 corrected ladder exists.** Both v27 points
+  ever spot-corrected moved **up** (+0.08, +0.21) and **v27 seed 2, the
+  0.530 that is the best-of-4 anchor, has never been re-scored.** The sign
+  of the v27→v28 delta is unmeasured.
+* The seed-level coherence argument in the v28 verdict does not survive the
+  F0 correction: recorded per-seed [0.45, 0.23, 0.37, 0.67] gives
+  χ²(3) = 41.45, p = 5.2 × 10⁻⁹; split-sample-corrected
+  [0.64, 0.50, 0.58, 0.67] gives χ²(3) = **7.02, p = 0.071** —
+  indistinguishable from four seeds at one value. The anchor seed (seed 2)
+  corrects to 0.58 against 0.64 and 0.50.
+
+**The 0.767 bar does not move.** It is quoted from here on with its
+provenance attached: it is 46/60 at eval seed 0, shared-stream, one worker,
+never measured under the two-seed per-episode protocol it gates.

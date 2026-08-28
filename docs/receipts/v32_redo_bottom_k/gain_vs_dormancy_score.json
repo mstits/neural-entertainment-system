@@ -1,0 +1,358 @@
+{
+ "what": "Is the ReDo dormancy score on this trunk a rank-readout of the learned LayerNorm gain that the recycle operator itself resets to 1.0?",
+ "method": "For each v32 seed, correlate norm2.weight (per-unit LayerNorm gain, final checkpoint iter 240) against the fc2 dormancy scores logged at the final ReDo check of the same run. Then read the gain and the mean |outgoing head column| for each unit as a function of how many cadence windows it went un-recycled.",
+ "compute": "zero training compute; four already-banked checkpoints + four already-banked armgate receipts.",
+ "operator": "src/training/redo.py recycle(): norm2.weight[fc2_idx]=1.0 ; actor.weight[:,fc2_idx]=0.0 ; critic.weight[:,fc2_idx]=0.0 ; Adam moments zeroed on the same slices.",
+ "per_seed": {
+  "seed0": {
+   "spearman_gain_vs_dormancy_score": 0.9323,
+   "p": 8.660374457436101e-15,
+   "gain_min": 0.54,
+   "gain_max": 8.4357,
+   "gain_mean": 3.7377,
+   "recycled_at_final_check": [
+    2,
+    7,
+    8,
+    30
+   ],
+   "their_gains": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "their_mean_abs_actor_column": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "their_mean_abs_critic_column": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  "seed1": {
+   "spearman_gain_vs_dormancy_score": 0.9429,
+   "p": 7.15694783642913e-16,
+   "gain_min": 0.477,
+   "gain_max": 11.4538,
+   "gain_mean": 4.2325,
+   "recycled_at_final_check": [
+    0,
+    7,
+    8,
+    15
+   ],
+   "their_gains": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "their_mean_abs_actor_column": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "their_mean_abs_critic_column": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  "seed2": {
+   "spearman_gain_vs_dormancy_score": 0.9052,
+   "p": 1.133017384295364e-12,
+   "gain_min": 0.727,
+   "gain_max": 8.7524,
+   "gain_mean": 3.7862,
+   "recycled_at_final_check": [
+    0,
+    10,
+    12,
+    17
+   ],
+   "their_gains": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "their_mean_abs_actor_column": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "their_mean_abs_critic_column": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  },
+  "seed3": {
+   "spearman_gain_vs_dormancy_score": 0.7734,
+   "p": 2.1024019803024036e-07,
+   "gain_min": 1.0,
+   "gain_max": 8.2616,
+   "gain_mean": 4.2477,
+   "recycled_at_final_check": [
+    7,
+    22,
+    29,
+    31
+   ],
+   "their_gains": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "their_mean_abs_actor_column": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "their_mean_abs_critic_column": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ },
+ "free_window_profile_seed2": [
+  {
+   "unit": 0,
+   "free_windows": 0,
+   "gain": 1.0,
+   "mean_abs_actor_col": 0.0,
+   "mean_abs_critic_col": 0.0
+  },
+  {
+   "unit": 10,
+   "free_windows": 0,
+   "gain": 1.0,
+   "mean_abs_actor_col": 0.0,
+   "mean_abs_critic_col": 0.0
+  },
+  {
+   "unit": 12,
+   "free_windows": 0,
+   "gain": 1.0,
+   "mean_abs_actor_col": 0.0,
+   "mean_abs_critic_col": 0.0
+  },
+  {
+   "unit": 17,
+   "free_windows": 0,
+   "gain": 1.0,
+   "mean_abs_actor_col": 0.0,
+   "mean_abs_critic_col": 0.0
+  },
+  {
+   "unit": 4,
+   "free_windows": 1,
+   "gain": 1.1031,
+   "mean_abs_actor_col": 0.0905,
+   "mean_abs_critic_col": 0.0314
+  },
+  {
+   "unit": 23,
+   "free_windows": 1,
+   "gain": 1.3438,
+   "mean_abs_actor_col": 0.1334,
+   "mean_abs_critic_col": 0.2555
+  },
+  {
+   "unit": 29,
+   "free_windows": 1,
+   "gain": 1.358,
+   "mean_abs_actor_col": 0.0977,
+   "mean_abs_critic_col": 0.3187
+  },
+  {
+   "unit": 13,
+   "free_windows": 2,
+   "gain": 1.777,
+   "mean_abs_actor_col": 0.1355,
+   "mean_abs_critic_col": 0.6919
+  },
+  {
+   "unit": 20,
+   "free_windows": 20,
+   "gain": 2.2905,
+   "mean_abs_actor_col": 0.4588,
+   "mean_abs_critic_col": 0.6802
+  },
+  {
+   "unit": 22,
+   "free_windows": 21,
+   "gain": 5.8015,
+   "mean_abs_actor_col": 1.718,
+   "mean_abs_critic_col": 0.0205
+  },
+  {
+   "unit": 21,
+   "free_windows": 23,
+   "gain": 0.727,
+   "mean_abs_actor_col": 0.3388,
+   "mean_abs_critic_col": 0.7528
+  },
+  {
+   "unit": 28,
+   "free_windows": 23,
+   "gain": 1.8731,
+   "mean_abs_actor_col": 0.6955,
+   "mean_abs_critic_col": 0.4773
+  },
+  {
+   "unit": 1,
+   "free_windows": null,
+   "gain": 8.6919,
+   "mean_abs_actor_col": 0.3375,
+   "mean_abs_critic_col": 6.307
+  },
+  {
+   "unit": 2,
+   "free_windows": null,
+   "gain": 8.2936,
+   "mean_abs_actor_col": 0.6561,
+   "mean_abs_critic_col": 6.1938
+  },
+  {
+   "unit": 3,
+   "free_windows": null,
+   "gain": 2.5266,
+   "mean_abs_actor_col": 0.5978,
+   "mean_abs_critic_col": 5.3754
+  },
+  {
+   "unit": 5,
+   "free_windows": null,
+   "gain": 8.3727,
+   "mean_abs_actor_col": 1.0284,
+   "mean_abs_critic_col": 5.4109
+  },
+  {
+   "unit": 6,
+   "free_windows": null,
+   "gain": 7.5233,
+   "mean_abs_actor_col": 0.5129,
+   "mean_abs_critic_col": 5.9361
+  },
+  {
+   "unit": 7,
+   "free_windows": null,
+   "gain": 4.1292,
+   "mean_abs_actor_col": 0.3102,
+   "mean_abs_critic_col": 6.1923
+  },
+  {
+   "unit": 8,
+   "free_windows": null,
+   "gain": 3.7773,
+   "mean_abs_actor_col": 0.8109,
+   "mean_abs_critic_col": 5.7329
+  },
+  {
+   "unit": 9,
+   "free_windows": null,
+   "gain": 1.6059,
+   "mean_abs_actor_col": 0.8992,
+   "mean_abs_critic_col": 4.2635
+  },
+  {
+   "unit": 11,
+   "free_windows": null,
+   "gain": 3.0187,
+   "mean_abs_actor_col": 0.7222,
+   "mean_abs_critic_col": 4.2041
+  },
+  {
+   "unit": 14,
+   "free_windows": null,
+   "gain": 4.3973,
+   "mean_abs_actor_col": 0.4019,
+   "mean_abs_critic_col": 5.8762
+  },
+  {
+   "unit": 15,
+   "free_windows": null,
+   "gain": 7.0845,
+   "mean_abs_actor_col": 0.3337,
+   "mean_abs_critic_col": 5.4768
+  },
+  {
+   "unit": 16,
+   "free_windows": null,
+   "gain": 1.7609,
+   "mean_abs_actor_col": 0.5733,
+   "mean_abs_critic_col": 4.2475
+  },
+  {
+   "unit": 18,
+   "free_windows": null,
+   "gain": 2.663,
+   "mean_abs_actor_col": 0.8137,
+   "mean_abs_critic_col": 5.4914
+  },
+  {
+   "unit": 19,
+   "free_windows": null,
+   "gain": 7.9242,
+   "mean_abs_actor_col": 1.0865,
+   "mean_abs_critic_col": 5.5608
+  },
+  {
+   "unit": 24,
+   "free_windows": null,
+   "gain": 3.9404,
+   "mean_abs_actor_col": 0.8698,
+   "mean_abs_critic_col": 5.3865
+  },
+  {
+   "unit": 25,
+   "free_windows": null,
+   "gain": 8.7524,
+   "mean_abs_actor_col": 0.1314,
+   "mean_abs_critic_col": 7.1358
+  },
+  {
+   "unit": 26,
+   "free_windows": null,
+   "gain": 3.6571,
+   "mean_abs_actor_col": 1.903,
+   "mean_abs_critic_col": 3.4802
+  },
+  {
+   "unit": 27,
+   "free_windows": null,
+   "gain": 2.0079,
+   "mean_abs_actor_col": 1.1917,
+   "mean_abs_critic_col": 3.346
+  },
+  {
+   "unit": 30,
+   "free_windows": null,
+   "gain": 7.3027,
+   "mean_abs_actor_col": 0.4661,
+   "mean_abs_critic_col": 5.5852
+  },
+  {
+   "unit": 31,
+   "free_windows": null,
+   "gain": 3.4553,
+   "mean_abs_actor_col": 1.1474,
+   "mean_abs_critic_col": 5.5081
+  }
+ ]
+}

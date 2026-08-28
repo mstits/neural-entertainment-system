@@ -12,12 +12,12 @@ one-line invariant only after recurring across 4–5 separate entries.
 | root cause | entries | deterministic enforcement |
 |---|---|---|
 | `[unverified-claim]` | **8** | no — judgement |
-| `[vacuous-gate]` | **12** | candidate — lint for `passed = not <coll>`; ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
-| `[weak-eval]` | **7** | partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
+| `[vacuous-gate]` | **13** | candidate — lint for `passed = not <coll>`; ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
+| `[weak-eval]` | **8** | partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **6** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
-| `[process]` | **6** | candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
+| `[process]` | **7** | candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 1 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
 | `[measurement]` | 1 | — |
@@ -35,6 +35,74 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-28 — [vacuous-gate] Five registrations moved the schedule around a selection statistic the treatment itself sets
+- **What happened:** v27, v28, v30, v31 and v32 all searched the ReDo *delivery
+  schedule* — `tau` inert, then a fixed tau, then a surgical tau, then a
+  rank-based bottom-k — against a dormancy score that is, on this trunk, a
+  rank-readout of the learned LayerNorm gain. Spearman(`norm2.weight`, fc2
+  score) = +0.932 / +0.943 / +0.905 / +0.773 across the four v32 seeds, with
+  trained gains spanning 0.477–11.454. `recycle()` sets that gain to exactly
+  1.0 and zeroes the recycled unit's actor AND critic columns plus their Adam
+  moments; with both head columns at zero the unit gets no gradient, so the
+  gain stays pinned at 1.0. The mechanism deposits its own recycled unit at the
+  bottom of the statistic that selects it, then re-selects it: 91.41% still
+  rank-bottom-4 one check later over 384 unit-observations, median rank 2 of 32.
+  All sixteen units recycled at the final check, across all four seeds, read
+  gain exactly 1.000 and mean |actor column| exactly 0.000.
+- **Root cause:** No registration ever checked that its selection statistic was
+  independent of a quantity its own treatment writes. The check is a Spearman
+  over one checkpoint and one banked receipt — minutes, zero compute — and it
+  was never run, in five registrations, because every one of them reasoned from
+  the write-ups rather than from the checkpoints.
+- **Consequence:** ~21 h of training compute (v27 7.14 h + v28 7.37 h + v30
+  ~0.70 h + v31 ~0.56 h + v32 5.33 h) across five campaigns, and a proposed
+  stopping statement that blamed the architecture for what the operator
+  explains. Found only by a commissioned adversarial review going to
+  `checkpoints/` instead of `docs/`.
+- **Rule (draft):** Before registering any experiment, demonstrate offline that
+  the SELECTION STATISTIC is not a deterministic readout of a quantity the
+  TREATMENT sets. It costs minutes. Attach the demonstration to the
+  registration or the registration is inadmissible.
+
+## 2026-08-28 — [weak-eval] The arming preflight GOed at n=44 and the campaign it licensed refuted it at n=384
+- **What happened:** v32's Phase R2 ran at exactly the campaign's operating
+  point (`mode=bottom_k k=4 every_iters=10`, in `phase_r2_stdout.log`) and read
+  75.0% re-selection on 44 observations, which was adjudicated GO and licensed
+  the full 4-seed campaign. The campaign, at identical settings, reads 91.41%
+  on 384 observations. Fisher two-sided p = 0.0024.
+- **Root cause:** A preflight sized for a go/no-go on a small pilot was read as
+  an estimate of the quantity it gates. No minimum-n was registered for the
+  Phase R statistic, and no confidence interval was reported beside the point
+  estimate, so a swing from 90.9% to 75.0% across 12 checks read as improvement
+  rather than as noise.
+- **Consequence:** 5.33 h of training compute launched on a preflight number
+  the campaign then contradicted at p = 0.0024, ending VOID-UNDERPOWERED with
+  no Theta.
+- **Rule (draft):** A preflight that gates compute must report an interval, not
+  a point, and must declare its minimum n before it runs. If the gating
+  statistic's interval spans the no-go threshold, that is a NO-GO.
+
+## 2026-08-28 — [process] A mechanism receipt registered "in every branch, including STOP" was never computed
+- **What happened:** §7 of the v32 registration requires the recovery curve as
+  a mechanism receipt in every branch, and §10.4 makes it the one thing a VOID
+  does license. Both pilots wrote one (`phase_r/recovery_curve.json`,
+  `phase_r2/recovery_curve.json`). The full campaign — 4 seeds, 8× the
+  observations of both pilots combined — wrote none, and the campaign write-up
+  proposed a stopping statement about recovery without it.
+- **Root cause:** The receipt was produced by the pilot harness as a side
+  effect, never by the campaign runner, and nothing checked for its presence at
+  adjudication. A registered deliverable with no automated existence check is a
+  deliverable only when someone remembers.
+- **Consequence:** The one measurement that could adjudicate the campaign's own
+  stopping statement sat uncomputed on disk while the statement was drafted
+  from the pilots. Computing it (offline, seconds) refuted the statement's
+  central clause.
+- **Rule (draft):** Every artifact a registration names as owed "in every
+  branch" gets an existence assertion in the adjudicator, and adjudication
+  fails on its absence. A receipt that only the happy path writes is not
+  registered, it is hoped for.
+
 
 ## 2026-08-28 — [vacuous-gate] Called an adjudicator without its mode flag, silently ran the wrong check
 - **What happened:** The v32 campaign runner called `redo_arm_gate.py` on all
