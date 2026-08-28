@@ -150,7 +150,7 @@ reinforce:
   # threshold. Every check recycles the k = 2 lowest-scoring fc2 units,
   # whatever the score distribution has drifted to.
   redo_mode: bottom_k
-  redo_bottom_k: 2
+  redo_bottom_k: 4
   # Cadence C = 5 (V32 §2.2), on the EXISTING key — no new cadence knob
   # is declared, because a new declared key is a new way to be inert.
   # C = 1 is FORBIDDEN by measurement, not preference: a re-initialized
@@ -163,7 +163,7 @@ reinforce:
   # updates to climb back, one measured relaxation timescale of the
   # dormancy statistic on this architecture. Budget: 250/5 = 50 events
   # x k = 2 = 100 units = 3.125 trunk turnovers.
-  redo_check_every_iters: 5
+  redo_check_every_iters: 10
   redo_sample_batch: 4096
   redo_reset_optimizer_moments: true
   # NOT READ on this path. The rank rule consults no threshold; this is
