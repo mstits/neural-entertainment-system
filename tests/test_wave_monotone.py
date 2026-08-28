@@ -185,10 +185,20 @@ def test_trainer_wires_the_monotone_rule() -> None:
     assert "wave_terminal_charge" in src, (
         "terminal branch does not use the helper"
     )
-    # The lost-cut marks a truncation under monotone, and the updater
-    # receives the truncation mask only when the rule is on.
+    # The lost-cut marks a truncation under monotone.
     assert "trunc_buf[t, i] = True" in src
-    assert "trunc_buf=(trunc_buf if wave_monotone else None)" in src
+    # CORRECTED 2026-08-28 (external audit): this used to assert
+    # "trunc_buf=(trunc_buf if wave_monotone else None)" -- i.e. it PINNED
+    # the bug as the expected wire-up. trunc_buf is also populated by the
+    # backward-curriculum rung-budget cut, a mechanism unrelated to
+    # wave_monotone; gating on wave_monotone silently discarded that
+    # cut's truncation flag on every config using the backward curriculum
+    # without wave shaping (configs/mario_1_2_backward.yaml). trunc_buf is
+    # now passed unconditionally -- safe because it is an all-False array
+    # when nothing truncated, which ppo.py's `is not None and .any()`
+    # check treats identically to None.
+    assert "trunc_buf=(trunc_buf if wave_monotone else None)" not in src
+    assert src.count("trunc_buf=trunc_buf,") == 3
 
 
 def test_config_schema_registers_wave_terminal_rule() -> None:
@@ -280,6 +290,19 @@ def test_monotone_lost_cut_truncates_in_real_loop(monkeypatch) -> None:
         assert tb[149].any()
 
     captured.clear()
-    _run(None)  # legacy default: no mask reaches the GAE path
+    _run(None)  # legacy default: wave-monotone's own lost-cut never fires
     assert len(captured) == 2
-    assert all(tb is None for tb, _ in captured)
+    # CORRECTED 2026-08-28 (external audit): this used to assert `tb is
+    # None`, an identity check on an implementation detail. trunc_buf is
+    # now ALWAYS the real array (populated independently by the
+    # backward-curriculum rung-budget cut, which this profile does not
+    # use), never None -- and ppo.py's `is not None and .any()` treats an
+    # all-False array identically to None, so the behavioral contract
+    # this test actually cares about is "wave-monotone's lost-cut did not
+    # mark any truncation," not "the argument is the None object."
+    for tb, _db in captured:
+        assert tb is not None, "trunc_buf must always be a real array now"
+        assert not tb.any(), (
+            "wave-monotone's off-envelope cut fired with wave_terminal_rule "
+            "unset -- the rule gate is no longer doing its job"
+        )
