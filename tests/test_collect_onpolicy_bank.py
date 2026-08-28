@@ -16,6 +16,7 @@ import pytest
 from scripts.collect_onpolicy_bank import (
     TARGET_WORLD_LEVEL,
     append_transition_row,
+    assert_bank_wellformed,
     check_purity,
     cross_population_mask,
     episode_step_cap,
@@ -293,3 +294,116 @@ def test_penetration_receipt_counts_episodes_not_rows():
 def test_penetration_receipt_handles_no_episodes():
     rec = penetration_receipt([], threshold=2676)
     assert rec["pen_rate"] is None and rec["n_episodes"] == 0
+
+
+# ==========================================================================
+# Bank well-formedness — the artifact-level guard for the aliasing defect
+# that voided the 2026-08-27 on-policy read. Both invariants are
+# threshold-free; see `assert_bank_wellformed`.
+# ==========================================================================
+
+def _chain(frames, ep=0):
+    """Build a correct one-episode bank from a list of stacked observations."""
+    frames = [np.asarray(f, dtype=np.int8) for f in frames]
+    state = np.stack(frames[:-1])
+    next_state = np.stack(frames[1:])
+    episode_id = np.full(len(state), ep, dtype=np.int64)
+    return state, next_state, episode_id
+
+
+def test_wellformed_accepts_a_correct_single_episode_bank():
+    s, ns, ep = _chain([[0, 0], [1, 0], [2, 0], [3, 0]])
+    assert_bank_wellformed(s, ns, ep)
+
+
+def test_wellformed_accepts_two_independent_episodes():
+    s0, ns0, e0 = _chain([[0, 0], [1, 0], [2, 0]], ep=0)
+    s1, ns1, e1 = _chain([[9, 0], [8, 0], [7, 0]], ep=1)
+    assert_bank_wellformed(np.concatenate([s0, s1]),
+                           np.concatenate([ns0, ns1]),
+                           np.concatenate([e0, e1]))
+
+
+def test_wellformed_accepts_an_individually_frozen_row():
+    # A genuinely static scene repeats one stacked observation. Legal.
+    s, ns, ep = _chain([[0, 0], [1, 0], [1, 0], [2, 0]])
+    assert_bank_wellformed(s, ns, ep)
+
+
+def test_wellformed_accepts_a_single_row_episode():
+    s, ns, ep = _chain([[0, 0], [1, 0]])
+    assert_bank_wellformed(s, ns, ep)
+
+
+def test_wellformed_accepts_an_empty_bank():
+    assert_bank_wellformed(np.zeros((0, 2), dtype=np.int8),
+                           np.zeros((0, 2), dtype=np.int8),
+                           np.zeros(0, dtype=np.int64))
+
+
+def test_wellformed_rejects_the_aliasing_defect_that_voided_the_read():
+    """The exact 2026-08-27 artifact: every row is (s', a, s')."""
+    obs = [np.array([i, 0], dtype=np.int8) for i in range(5)]
+    state = np.stack(obs[1:])          # successor in the antecedent slot
+    next_state = np.stack(obs[1:])     # successor again
+    ep = np.zeros(len(state), dtype=np.int64)
+    with pytest.raises(RuntimeError, match="DEGENERATE"):
+        assert_bank_wellformed(state, next_state, ep)
+
+
+def test_wellformed_rejects_a_broken_chain_even_when_rows_differ():
+    """Aliasing on a moving scene breaks the chain before it looks degenerate."""
+    s, ns, ep = _chain([[0, 0], [1, 0], [2, 0], [3, 0]])
+    ns = ns.copy()
+    ns[0] = [7, 7]  # successor at step 0 is not the antecedent at step 1
+    with pytest.raises(RuntimeError, match="CHAIN BROKEN"):
+        assert_bank_wellformed(s, ns, ep)
+
+
+def test_wellformed_does_not_require_the_chain_to_cross_episodes():
+    """Episode 1's first antecedent need not equal episode 0's last successor."""
+    s0, ns0, e0 = _chain([[0, 0], [1, 0]], ep=0)
+    s1, ns1, e1 = _chain([[5, 5], [6, 6]], ep=1)
+    assert_bank_wellformed(np.concatenate([s0, s1]),
+                           np.concatenate([ns0, ns1]),
+                           np.concatenate([e0, e1]))
+
+
+def test_wellformed_rejects_mismatched_shapes():
+    with pytest.raises(RuntimeError, match="malformed"):
+        assert_bank_wellformed(np.zeros((3, 2), dtype=np.int8),
+                               np.zeros((3, 4), dtype=np.int8),
+                               np.zeros(3, dtype=np.int64))
+
+
+def test_bank_wellformed_guard_fails_on_revert():
+    """ANTI-VACUITY, executed not asserted. Neuter the guard to a no-op and
+    the two defect cases above stop being caught."""
+    def reverted(state, next_state, episode_id):
+        return None
+
+    obs = [np.array([i, 0], dtype=np.int8) for i in range(5)]
+    aliased = np.stack(obs[1:])
+    ep = np.zeros(len(aliased), dtype=np.int64)
+    assert reverted(aliased, aliased, ep) is None
+    with pytest.raises(RuntimeError):
+        assert_bank_wellformed(aliased, aliased, ep)
+
+    s, ns, ep2 = _chain([[0, 0], [1, 0], [2, 0], [3, 0]])
+    ns = ns.copy()
+    ns[0] = [7, 7]
+    assert reverted(s, ns, ep2) is None
+    with pytest.raises(RuntimeError):
+        assert_bank_wellformed(s, ns, ep2)
+
+
+def test_stacker_push_returns_a_reused_buffer_so_the_copy_is_load_bearing():
+    """The root cause, pinned. If TileFeatureStacker ever stops reusing its
+    output buffer this test should be updated, not deleted -- the collector's
+    `.copy()` calls are what make the recorded antecedent an antecedent."""
+    from src.emulation.frame_utils import TileFeatureStacker
+    stk = TileFeatureStacker(stack_size=2, feature_dim=2)
+    a = stk.reset(np.zeros(2, dtype=np.int8))
+    b = stk.push(np.ones(2, dtype=np.int8))
+    assert a is b, "buffer reuse is the premise of the collector's .copy()"
+    assert stk.reset(np.zeros(2, dtype=np.int8)).copy() is not stk.get()

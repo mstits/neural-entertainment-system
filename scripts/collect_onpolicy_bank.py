@@ -174,6 +174,52 @@ def finalize_truncation(rows: list, terminal_hit: bool) -> list:
     return rows
 
 
+def assert_bank_wellformed(state: np.ndarray, next_state: np.ndarray,
+                           episode_id: np.ndarray) -> None:
+    """Raise unless the written arrays are actually a transition bank.
+
+    Two THRESHOLD-FREE invariants, checked on the artifact that goes to disk
+    rather than on the values the loop held in hand. Both were absent on
+    2026-08-27, when a reused stacker buffer wrote `(s', a, s')` on 100 % of
+    rows across 26 banks and every one of gates A1-A8 passed anyway:
+
+    1. **Chain.** Within one episode the successor recorded at step `i` IS the
+       antecedent recorded at step `i+1`. Exact, no tolerance, and true of any
+       correct bank whether the scene moves or is frozen. Under the aliasing
+       defect it is false at every step, because row `i` held `s'_i` in both
+       slots while row `i+1` holds `s'_{i+1}`.
+    2. **Non-degeneracy.** Not EVERY row may satisfy `s == s'`. Individual
+       frozen rows are legal (five identical frames inside a 4-frame stack),
+       so no fraction below 1.0 is asserted -- picking one would be a
+       threshold nobody checked against its acting range. 1.0 is the
+       defect's own signature and is impossible for a bank containing motion.
+    """
+    if state.shape != next_state.shape:
+        raise RuntimeError(
+            f"[bank] malformed: state {state.shape} != next_state "
+            f"{next_state.shape}")
+    if state.shape[0] == 0:
+        return
+    identical = np.asarray((state == next_state).all(axis=1))
+    if bool(identical.all()):
+        raise RuntimeError(
+            "[bank] DEGENERATE: state == next_state on 100% of "
+            f"{state.shape[0]} rows. The advantage r + gamma*V(s') - V(s) "
+            "collapses to (gamma-1)*V(s') -- a function of ONE state carrying "
+            "zero action information by construction. This bank cannot be "
+            "scored; it is VOID, not a reading.")
+    for ep in np.unique(episode_id):
+        idx = np.flatnonzero(episode_id == ep)
+        if idx.size < 2:
+            continue
+        if not np.array_equal(next_state[idx[:-1]], state[idx[1:]]):
+            raise RuntimeError(
+                f"[bank] CHAIN BROKEN in episode {int(ep)}: the successor "
+                "recorded at one step is not the antecedent recorded at the "
+                "next. The rows are not consecutive transitions of one "
+                "trajectory; the bank is VOID.")
+
+
 def cross_population_mask(gx: np.ndarray, src: np.ndarray, *,
                           wall_band: tuple = WALL_BAND,
                           pc_band: tuple = PC_B5_BAND) -> np.ndarray:
@@ -280,7 +326,11 @@ def run_lanes(pool, net, bitmasks, extractor, stacker_factory, specs: list,
         for lane, stk in zip(lanes, stackers):
             ram = r0[lane.worker][2]
             lane.prev_ram = ram
-            lane.obs = stk.reset(extractor.extract(ram))
+            # `.copy()` is LOAD-BEARING, not defensive: TileFeatureStacker
+            # returns its own reused `_out` buffer, so without the copy
+            # `lane.obs` aliases the buffer the next push() mutates in
+            # place and every recorded (s, a, s') collapses to (s', a, s').
+            lane.obs = stk.reset(extractor.extract(ram)).copy()
 
         active = list(lanes)
         while any(not lane.done for lane in active):
@@ -309,7 +359,9 @@ def run_lanes(pool, net, bitmasks, extractor, stacker_factory, specs: list,
                 terminal = dead or cleared
                 w_s, l_s = level_identity(lane.prev_ram)
                 check_purity(w_s, l_s, w_ns, l_ns, terminal)
-                s_new = stk.push(extractor.extract(ram_new))
+                # `.copy()` LOAD-BEARING — see the reset above. `lane.obs`
+                # must remain the antecedent while `s_new` is the successor.
+                s_new = stk.push(extractor.extract(ram_new)).copy()
                 # `lane.prev_action` still holds THIS timestep's executed
                 # action — it is only overwritten in the next timestep's
                 # action-selection pass above, which has not run yet.
@@ -493,6 +545,11 @@ def collect_one_iterate(ckpt_path: Path, *, pool, entries: list, states_dir: Pat
                 if any(WALL_BAND[0] <= g < WALL_BAND[1] for g in l.gx_trace))),
         }
 
+    # Guard the ARTIFACT, not the loop's local variables -- the 2026-08-27
+    # purity guard ran on the true antecedents and passed while the rows
+    # written to disk held the successor twice.
+    assert_bank_wellformed(bank["state"], bank["next_state"],
+                           bank["episode_id"])
     out_dir.mkdir(parents=True, exist_ok=True)
     npz_path = out_dir / f"iter_{iter_num:05d}.npz"
     np.savez(
