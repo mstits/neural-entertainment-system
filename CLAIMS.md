@@ -3707,6 +3707,49 @@ the repaired bank BEFORE scoring** — if `NEG_gx_frozen` is again a near-copy o
 `PC_B5` on real transitions, NC-b is unusable on on-policy data and must be
 re-specified in a written addendum rather than left to cap the verdict.
 
+ADDENDUM VADV-3 (2026-08-28) — **the re-run happened, SOUND, and `V_adv` IS
+RETIRED. B5 still does not move.** Registration: the parent prereg inherited
+verbatim plus `docs/proposals/VADV_ONPOLICY_RERUN_ADDENDUM_2026-08-28.md`
+(commit `77b8549`, written before compute). Full write-up:
+`docs/research/VADV_ONPOLICY_RERUN_2026-08-28.md`.
+
+Every §1.9 re-run condition was met: banks chain-verified on the written
+artifact (one guard false positive — the registered cross-population drop
+leaves legitimate mid-episode gaps — fixed via a `row_step` column, commit
+`6d700c5`, revert-verified 6/51, full grid recollected); **NC-b's acting range
+re-derived critic-free BEFORE scoring: MEASURABLE 26/26, identical-to-PC 0/26**
+(and on sound data it then behaved, COLLAPSED 25/26); A1 reproduced a third
+time bit-identically (0.6668875582236998); 3,224/3,224 episode outcomes
+bit-match the corrupt run's — the aliasing corrupted recording, never
+behaviour.
+
+The sound reading: **`WALL` LIVE 26/26** (eta2 0.043–0.109, 2–4× its null
+q97.5, A7 power 1.0) — and **`PC_B5`, the positive control, COLLAPSED 26/26.**
+The LIVE/COLLAPSED verdict tracks the critic's training exposure monotonically
+(rung-893 window LIVE 26/26; entrance ~2 % mass LIVE 7/26; PC rungs, zero
+mass for this arc, LIVE 0/26): **`V_adv` measures where the critic trained,
+not where the reward is flat** — structurally confounded on the exact contrast
+it was adopted to adjudicate. Under the strict registered A2 rule |A| = 0/26
+(VOID — insufficient admissible coverage); under the computed signatures,
+INDETERMINATE 26/26. Both branches meet §11's operative condition and neither
+is an operational fault, so the retirement fires on a sound run:
+
+* **`V_adv` is declared unable to adjudicate B5, and the question retires.**
+  Three computations: offline VOID at R = 0.279; on-policy corrupt VOID;
+  on-policy sound with the positive control collapsed by the exposure
+  confound. That is an answer about the instrument.
+* **B5's verdict does not move** — neither corroborated nor re-opened; this
+  entry stays flagged **under-instrumented** (the once-rule does not close it).
+* **The rung-relative wavefront amendment stays DEFERRED and its condition
+  changes "pending" → "closed by this route."** Revival requires a different
+  instrument with its own registration (named, unauthorised: a
+  counterfactual-restart assay at the entry state; an on-policy
+  reward-decomposition read).
+* Banked and replicated from sound data: the no-penetration measurement
+  (1,040 episodes, gx never past 2674 — 2,080 across both collections) and
+  the rung-933 regression (clears 8.3 % → 16.7 % → 0 % across the arc), which
+  still has no instrument pointed at it.
+
 ### 3. Contra clear-detector nulls — VOID, and the guard that should have caught it is inert
 
 Already self-caught for Contra specifically at
