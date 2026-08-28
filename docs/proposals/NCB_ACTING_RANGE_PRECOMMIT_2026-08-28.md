@@ -251,3 +251,24 @@ left in place.
 Chain of record: ba34605 → f89e6c9 → 59a8a38 → 94b533d → guard 6d700c5 →
 3248ca7 → 78a3250 → b55e9ac → this section. Governed first by 77b8549.
 
+## 9. Post-adjudication record: why alias_rate is exactly 0.0 (item 5, resolved)
+
+The adjudicator asked why a statistic predicted to have a lawful nonzero floor
+came back exactly 0.0 at 26/26. Measured answer, from the banks themselves:
+**the obs embeds a clock.** Dim 711 — the last scalar of the newest frame in
+the 4x178 stack — advances +2 per agent-step and wraps mod 128. In bank 10,
+65 rows differ from their successor at ONLY dim 711: those are precisely the
+frozen-screen rows that would have been bitwise-identical without the clock.
+Same structure in banks 130 and 260.
+
+So the earlier "lawful nonzero floor" prediction was WRONG FOR THIS ENCODING —
+it was reasoned from raw-frame intuition. Under this encoding the statistic is
+effectively BINARY: healthy collection gives exactly 0.0 (the clock always
+moves); the buffer-aliasing defect gives exactly 1.0 (both copies are the same
+buffer, clock included). The 0.50 gate is therefore generous but harmless, and
+the unanimous 0.0 is the expected-by-construction healthy reading, not an
+anomaly. The near-identity histogram (Hamming-1 rows all at dim 711) is the
+positive demonstration that frozen-frame rows exist and were separated by the
+clock — the statistic's discriminating power is intact, indeed sharper than
+registered.
+
