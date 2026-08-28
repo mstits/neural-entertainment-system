@@ -334,3 +334,315 @@ def test_cli_survives_one_unloadable_iterate_and_keeps_the_rest(tmp_path):
     assert "error" in rows[20] and rows[20]["error"]
     # --out must carry the same, not be left unwritten by the failure.
     assert json.loads(out_path.read_text()) == doc
+
+
+# ==========================================================================
+# INSTRUMENT 6 — V_adv, the B5 discriminator.
+#
+# Registration: docs/proposals/VADV_PREREG_2026-08-27.md. The whole point of
+# this instrument is that it could come back COLLAPSED or LIVE, so every test
+# below pins a DIRECTION, and the two anti-vacuity tests are paired with a
+# revert check that proves they fail when the mechanism is stubbed out.
+# ==========================================================================
+
+from scripts.score_banked_iterates import (            # noqa: E402
+    advantage_variance,
+    bootstrap_eta2,
+    classify_vadv,
+    critic_advantage,
+    decode_gx,
+    injected_power,
+    load_transition_bank,
+    normalise_vadv,
+    parse_bands,
+    permutation_null,
+    qualifying_rows,
+    score_vadv,
+    state_cell_keys,
+)
+
+_F = 178  # SMBTileObservationV2 features per frame; 4 stacked = 712
+
+
+def _obs(gx_values, *, frames=4, jitter=None):
+    """Minimal stacked v2 tile observations carrying a chosen gx."""
+    gx_values = np.asarray(gx_values, dtype=np.int64)
+    out = np.zeros((gx_values.size, frames * _F), dtype=np.int8)
+    for f in range(frames):
+        out[:, f * _F + 175] = (gx_values // 256).astype(np.int8)
+        out[:, f * _F + 176] = ((gx_values % 256) // 2).astype(np.int8)
+    if jitter is not None:
+        out[:, 0] = np.asarray(jitter, dtype=np.int8)
+    return out
+
+
+# --- the anti-vacuity pair -------------------------------------------------
+
+def _flat_batch():
+    """Every action carries the SAME advantage: no action effect at all.
+
+    Advantage varies by STATE and by within-cell noise — which is what real
+    data looks like — but not by action. Anything that reports this as LIVE
+    is measuring state heterogeneity, not action discrimination.
+    """
+    cells = np.repeat(np.arange(40), 6)
+    actions = np.tile(np.array([0, 0, 0, 1, 1, 1]), 40)
+    noise = np.random.default_rng(11).normal(0.0, 0.3, cells.size)
+    return np.repeat(np.linspace(-1.0, 1.0, 40), 6) + noise, cells, actions
+
+
+def _separated_batch():
+    """Actions are cleanly separated within every cell: a live action effect."""
+    adv, cells, actions = _flat_batch()
+    return adv + 5.0 * actions, cells, actions
+
+
+def test_vadv_reports_collapsed_when_all_actions_share_an_advantage():
+    adv, cells, actions = _flat_batch()
+    obs = advantage_variance(adv, cells, actions)
+    null = permutation_null(adv, cells, actions, n_perm=200)
+    assert obs["eta2"] < 0.25
+    assert obs["eta2"] <= null["q975"]
+    assert classify_vadv(obs, null) == "COLLAPSED"
+
+
+def test_vadv_of_an_utterly_variance_free_batch_is_zero_not_none():
+    """The identity carve-out: no variance anywhere is COLLAPSED by
+    arithmetic, and 0/0 must not leak out as a None that reads VOID."""
+    cells = np.repeat(np.arange(10), 6)
+    adv = np.repeat(np.linspace(-1.0, 1.0, 10), 6)   # constant within a cell
+    actions = np.tile(np.array([0, 0, 0, 1, 1, 1]), 10)
+    obs = advantage_variance(adv, cells, actions)
+    assert obs["raw"] == pytest.approx(0.0)
+    assert obs["eta2"] == pytest.approx(0.0)
+    assert classify_vadv(obs, permutation_null(adv, cells, actions,
+                                               n_perm=50)) == "COLLAPSED"
+
+
+def test_vadv_reports_live_when_actions_carry_different_advantages():
+    adv, cells, actions = _separated_batch()
+    obs = advantage_variance(adv, cells, actions)
+    assert obs["raw"] > 0.0
+    assert obs["eta2"] > 0.9
+    null = permutation_null(adv, cells, actions, n_perm=200)
+    assert obs["eta2"] > null["q975"]
+    assert classify_vadv(obs, null) == "LIVE"
+
+
+def test_the_anti_vacuity_pair_fails_when_the_mechanism_is_reverted():
+    """REVERT CHECK. A metric that returned the same shape everywhere would
+    'confirm' whatever it was pointed at. Stub V_adv to a constant — the
+    shape a vacuous instrument has — and BOTH assertions above must break."""
+    def reverted(_adv, _cells, _actions):
+        return {"eta2": 0.5, "raw": 1.0, "n_cells": 1,
+                "eta2_null_analytic": 0.5}
+
+    flat_in, live_in = _flat_batch(), _separated_batch()
+    flat, live = reverted(*flat_in), reverted(*live_in)
+    assert flat["eta2"] == live["eta2"]          # no discrimination survives
+
+    # The real instrument SEPARATES these two; the reverted one cannot.
+    real_flat = advantage_variance(*flat_in)
+    real_live = advantage_variance(*live_in)
+    assert real_live["eta2"] > real_flat["eta2"] + 0.5
+    assert live["eta2"] == flat["eta2"]
+
+    # The reverted stub hands back ONE verdict for both batches. The real
+    # instrument hands back two different ones. That difference is the entire
+    # claim this instrument makes, and it is what the revert removes.
+    live_null = permutation_null(*live_in, n_perm=100)
+    flat_null = permutation_null(*flat_in, n_perm=100)
+    assert classify_vadv(live, live_null) == classify_vadv(flat, flat_null)
+    assert classify_vadv(real_live, live_null) == "LIVE"
+    assert classify_vadv(real_flat, flat_null) == "COLLAPSED"
+
+
+# --- the quantity itself ---------------------------------------------------
+
+def test_advantage_variance_raw_is_the_variance_of_per_action_means():
+    # one cell, two actions, means 0 and 4 -> population variance 4.0
+    adv = np.array([0.0, 0.0, 4.0, 4.0])
+    obs = advantage_variance(adv, np.zeros(4), np.array([0, 0, 1, 1]))
+    assert obs["raw"] == pytest.approx(4.0)
+    assert obs["n_cells"] == 1
+
+
+def test_eta2_is_invariant_to_affine_rescaling_of_the_critic():
+    """An UNNORMALISED V_adv would collapse or inflate purely from critic
+    scale drift — the fifth-vacuous-instrument failure. eta2 must not."""
+    adv, cells, actions = _separated_batch()
+    base = advantage_variance(adv, cells, actions)
+    scaled = advantage_variance(37.0 * adv + 11.0, cells, actions)
+    assert scaled["eta2"] == pytest.approx(base["eta2"])
+    assert scaled["raw"] != pytest.approx(base["raw"])   # raw is NOT invariant
+
+
+def test_eta2_null_is_reported_because_it_is_not_zero():
+    """The ReDo lesson: a threshold outside its acting range never fires.
+    eta2's null expectation for a 2-action, 3-row cell is 0.5, not 0."""
+    obs = advantage_variance(np.array([1.0, 2.0, 3.0]), np.zeros(3),
+                             np.array([0, 0, 1]))
+    assert obs["eta2_null_analytic"] == pytest.approx(0.5)
+
+
+def test_critic_advantage_zeroes_the_bootstrap_on_absorbing_rows():
+    a = critic_advantage([1.0, 1.0], [10.0, 10.0], done=[0, 1], gamma=0.5)
+    assert a[0] == pytest.approx(4.0)     # 0.5*10 - 1
+    assert a[1] == pytest.approx(-1.0)    # 0.5*10*0 - 1
+
+
+def test_normalise_vadv_calls_a_constant_critic_degenerate_not_collapsed():
+    """A dead critic must read VOID. Returning 0.0 would manufacture the
+    mis-specification signature out of a broken checkpoint."""
+    out = normalise_vadv(0.0, 0.0)
+    assert out["raw_norm"] is None
+    assert out["degenerate_critic"] is True
+    assert normalise_vadv(2.0, 4.0)["raw_norm"] == pytest.approx(0.5)
+
+
+def test_classify_vadv_voids_on_a_degenerate_null_instead_of_collapsing():
+    obs = {"eta2": 0.0}
+    assert classify_vadv(obs, {"median": None, "q975": None}) == "VOID"
+    assert classify_vadv({"eta2": None},
+                         {"median": 0.1, "q975": 0.2}) == "VOID"
+
+
+# --- cells, bands, coverage ------------------------------------------------
+
+def test_qualifying_rows_drops_singleton_actions_and_thin_cells():
+    cells = np.array([0, 0, 0, 0, 1, 1, 1])
+    actions = np.array([0, 0, 1, 1, 0, 0, 1])     # cell 1 has a singleton
+    keep = qualifying_rows(cells, actions, min_rows_per_action=2,
+                           min_actions=2, min_rows=4)
+    assert keep.tolist() == [True, True, True, True, False, False, False]
+
+
+def test_decode_gx_reads_the_encoders_own_progress_scalars():
+    gx = decode_gx(_obs([0, 160, 2674, 2872, 3266]))
+    assert gx.tolist() == [0, 160, 2674, 2872, 3266]
+
+
+def test_decode_gx_refuses_a_width_that_is_not_a_stacked_v2_observation():
+    with pytest.raises(ValueError, match="not a multiple"):
+        decode_gx(np.zeros((3, 175), dtype=np.int8))
+
+
+def test_state_cell_keys_ignore_the_animation_phase_but_not_the_tiles():
+    same = _obs([100, 100])
+    same[1, 3 * _F + 177] = 42                       # phase byte only
+    assert len(set(state_cell_keys(same).tolist())) == 1
+    differ = _obs([100, 100])
+    differ[1, 3 * _F + 5] = 1                        # a tile
+    assert len(set(state_cell_keys(differ).tolist())) == 2
+
+
+def test_parse_bands_reads_the_registered_band_spec():
+    assert parse_bands("WALL=2674:2872,PC_B5=2872:3267") == {
+        "WALL": (2674, 2872), "PC_B5": (2872, 3267)}
+
+
+def test_injected_power_is_high_for_a_real_effect_and_low_for_none():
+    adv, cells, actions = _flat_batch()
+    strong = injected_power(adv, cells, actions, effect=5.0, n_trials=8,
+                            n_perm=60)
+    none = injected_power(adv, cells, actions, effect=0.0, n_trials=8,
+                          n_perm=60)
+    assert strong["power"] >= 0.95
+    assert none["power"] <= 0.25
+
+
+def test_bootstrap_ci_brackets_a_live_reading():
+    adv, cells, actions = _separated_batch()
+    ci = bootstrap_eta2(adv, cells, actions, n_boot=60)
+    assert ci["lo"] > 0.5 and ci["hi"] <= 1.0
+
+
+# --- the offline bank shell ------------------------------------------------
+
+def test_load_transition_bank_refuses_to_splice_across_unknown_episodes():
+    """obs_0 without traj_len: consecutive rows are not transitions."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "b.npz"
+        np.savez(p, obs_0=np.zeros((4, 712), dtype=np.int8),
+                 act_0=np.zeros(4, dtype=np.int64))
+        with pytest.raises(ValueError, match="traj_len"):
+            load_transition_bank([str(p)])
+
+
+def test_load_transition_bank_never_crosses_a_trajectory_boundary():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "b.npz"
+        obs = _obs([0, 1 * 2, 2 * 2, 100, 101 * 2])
+        np.savez(p, obs_0=obs, act_0=np.arange(5),
+                 traj_len=np.array([3, 2]))
+        bank = load_transition_bank([str(p)])
+        # 3-step traj -> 2 transitions, 2-step traj -> 1. Never 4.
+        assert bank["state"].shape[0] == 3
+
+
+def test_score_vadv_separates_a_live_band_from_a_flat_band():
+    """End-to-end through the band machinery with an injected critic: the
+    positive band must read LIVE and the flat band COLLAPSED, or nothing
+    downstream of this instrument is admissible."""
+    rng = np.random.default_rng(0)
+    n_cells, per = 30, 6
+    gx_live = np.repeat(np.arange(2900, 2900 + n_cells * 2, 2), per)
+    gx_flat = np.repeat(np.arange(2674, 2674 + n_cells * 2, 2), per)
+    gx = np.concatenate([gx_live, gx_flat])
+    actions = np.tile(np.array([0, 0, 0, 1, 1, 1]), 2 * n_cells)
+    # Rows inside one cell differ in the HISTORY frames (not in the cell key),
+    # so V(s) varies within a cell exactly as it does under the real loose
+    # key — that heterogeneity has to land in SS_within, not SS_between.
+    state = _obs(gx, jitter=np.arange(gx.size) % 120)
+    # The successor must actually DEPEND on the action, or the bank encodes
+    # no action axis for the critic to discriminate over.
+    nxt = state.copy()
+    nxt[:, 1] = (actions + 1).astype(np.int8)
+    nxt[:, 2] = (np.arange(gx.size) % 120).astype(np.int8)
+
+    live_mask = np.arange(gx.size) < gx_live.size
+    v_state = rng.normal(size=gx.size)
+    # Successors differ by action ONLY in the live band.
+    v_next = np.where(live_mask, 9.0 * actions, 0.0) + 0.05 * rng.normal(
+        size=gx.size)
+    values = {}
+    for i in range(gx.size):
+        values[state[i].tobytes()] = float(v_state[i])
+        values[nxt[i].tobytes()] = float(v_next[i])
+
+    def vfn(batch):
+        return np.array([values[r.tobytes()] for r in batch])
+
+    bank = {"state": state, "action": actions, "next_state": nxt,
+            "done": np.zeros(gx.size, dtype=np.int64), "sources": ["synthetic"]}
+    out = score_vadv(bank, vfn,
+                     bands={"PC": (2872, 3267), "WALL": (2674, 2872)},
+                     n_perm=120, n_boot=60)
+    assert out["regions"]["PC"]["verdict"] == "LIVE"
+    assert out["regions"]["WALL"]["verdict"] == "COLLAPSED"
+    assert out["regions"]["PC"]["observed"]["eta2"] > \
+        out["regions"]["WALL"]["observed"]["eta2"]
+    assert out["degenerate_critic"] is False
+
+
+def test_score_vadv_with_a_zeroed_critic_is_degenerate_not_collapsed():
+    """NC-a. A provably constant critic carries no gradient anywhere; the
+    instrument must say so rather than emit a comfortable 0.0."""
+    gx = np.repeat(np.arange(2900, 2960, 2), 6)
+    state = _obs(gx, jitter=np.repeat(np.arange(30), 6) % 120)
+    bank = {"state": state, "action": np.tile([0, 0, 0, 1, 1, 1], 30),
+            "next_state": state.copy(),
+            "done": np.zeros(gx.size, dtype=np.int64), "sources": ["synthetic"]}
+    out = score_vadv(bank, lambda b: np.full(len(b), 3.0),
+                     bands={"PC": (2872, 3267)}, n_perm=40, n_boot=20)
+    assert out["degenerate_critic"] is True
+    assert out["regions"]["PC"]["raw_norm"] is None
+    # Caught live by the A3 control on a real checkpoint: a zeroed critic
+    # makes every advantage exactly 0, and the arithmetic carve-out reported
+    # a confident COLLAPSED — the mis-specification signature, manufactured
+    # out of a broken checkpoint. The critic IS the instrument; a dead one
+    # reads VOID.
+    assert out["regions"]["PC"]["verdict"] == "VOID"
+    assert out["regions"]["PC"]["void_reason"] == "degenerate_critic"

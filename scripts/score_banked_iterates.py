@@ -11,7 +11,7 @@ twenty-four B4 iterates
 (`checkpoints/mario_1_1_backward/prevrun_20260808_124336/`, iters 10-240),
 are still sitting on disk unmeasured. This script is that sweep.
 
-FIVE INSTRUMENTS, four of them free (no emulator, no ROM, no training):
+SIX INSTRUMENTS, five of them free (no emulator, no ROM, no training):
 
   1. greedy/sampled paired clear-rate curve, under ONE named harness.
      THIS ONE COSTS EMULATION, so it is OPT-IN (`--eval`). By default the
@@ -28,6 +28,12 @@ FIVE INSTRUMENTS, four of them free (no emulator, no ROM, no training):
      honest discriminator for the "the instrument was the bug" hypothesis:
      if a scored network is parameter-identical to another, no eval result
      can differ between them, and drift = 0 says the weights never moved.
+  6. ``V_adv = E_s[Var_a(A-hat)]`` — the discriminator `v15_d1` ADOPTED and
+     nobody built, which is why a never-retracted "REAL CAPABILITY WALL"
+     (`docs/research/B5_PREREG_2026-08-08.md:414`) has been standing on
+     evidence that both of its rival hypotheses predict. Free: it reads the
+     CRITIC over banked offline transitions, so no emulator is involved.
+     Registration: `docs/proposals/VADV_PREREG_2026-08-27.md`.
 
 Everything that can be a pure function of arrays is one, so the arithmetic is
 unit-testable with duck-typed stubs and no checkpoints. The torch- and
@@ -230,6 +236,407 @@ def param_drift(theta_t: dict, theta_0: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# INSTRUMENT 6 — V_adv, the discriminator `v15_d1` adopted and nobody built.
+#
+# `docs/research/B5_PREREG_2026-08-08.md:414` still says "THIS IS A REAL
+# CAPABILITY WALL at gx ~2674-2872", on evidence (0/717 entrance successes)
+# that BOTH live hypotheses predict:
+#
+#   CAPABILITY        — the policy cannot execute the traversal.
+#   MIS-SPECIFICATION — the reward gives no gradient there, so nothing could
+#                       have learned it.
+#
+# `V_adv = E_s[Var_a(A-hat)]` separates them: where the reward carries no
+# signal the critic cannot tell the actions apart and V_adv collapses; where
+# the agent is merely incapable, the actions still differ in value.
+#
+# A-HAT COMES FROM THE CRITIC, over REAL banked successors:
+#
+#     A-hat(s, a) = gamma * V(s') * (1 - done) - V(s)
+#
+# and NOT from the actor's logits. Centred logits would be a monotone
+# re-reading of `top_two_margin` above — and B6 measured margins RISING 14x
+# through the entropy collapse, so an actor-sourced V_adv would report LIVE at
+# the wall for the wrong reason (confident-wrong noop sharpening). That is the
+# fifth vacuous instrument this exists to avoid.
+#
+# The full registration — bands, controls, thresholds, admissibility — is
+# `docs/proposals/VADV_PREREG_2026-08-27.md`, written before any number here
+# was computed from a checkpoint.
+# ---------------------------------------------------------------------------
+
+# v2 tile observation (`SMBTileObservationV2`): 178 features per frame, four
+# frames stacked = 712. The encoder's own progress scalars live at 175/176 of
+# each frame; nothing new is read off RAM here.
+SMB_V2_FRAME_DIM = 178
+SMB_V2_GX_PAGE = 175
+SMB_V2_GX_FINE = 176
+SMB_V2_PHASE = 177
+
+
+def decode_gx(obs: Any, *, frame_dim: int = SMB_V2_FRAME_DIM,
+              frame: int = -1) -> np.ndarray:
+    """Absolute world x, decoded from the observation's OWN progress scalars.
+
+    `SMBTileObservationV2` appends ``out[175] = global_x >> 8`` and
+    ``out[176] = (global_x & 0xFF) >> 1`` to every frame
+    (`src/emulation/tile_observations/smb.py`), so gx is recoverable from a
+    banked observation with no RAM map and no emulator — this reads the
+    encoder's existing contract, it does not add an address.
+
+    `obs` is `(N, frames*frame_dim)`; `frame` selects which stacked frame to
+    read (-1 = the current one). Returns `(N,)` int, quantised to 2 pixels by
+    the encoder's own ``>> 1``.
+    """
+    arr = np.asarray(obs)
+    if arr.ndim == 1:
+        arr = arr[None, :]
+    if arr.ndim != 2:
+        raise ValueError(f"obs must be (N, D) or (D,), got {arr.shape}")
+    width = arr.shape[1]
+    if frame_dim <= 0 or width % frame_dim != 0:
+        raise ValueError(
+            f"observation width {width} is not a multiple of frame_dim "
+            f"{frame_dim}; this is not a stacked v2 tile observation")
+    n_frames = width // frame_dim
+    idx = (frame % n_frames) * frame_dim
+    page = arr[:, idx + SMB_V2_GX_PAGE].astype(np.int64)
+    fine = arr[:, idx + SMB_V2_GX_FINE].astype(np.int64)
+    return page * 256 + fine * 2
+
+
+def state_cell_keys(obs: Any, *, frame_dim: int = SMB_V2_FRAME_DIM,
+                    frame: int = -1, exact: bool = False) -> np.ndarray:
+    """Integer cell ids grouping observations into "the same state".
+
+    Default (registered) key: the CURRENT stacked frame minus the animation-
+    phase byte — tiles, velocities, on_ground, powerup, lives, sub-x and the
+    two gx scalars. History frames are dropped from the KEY only; A-hat is
+    always computed from the full observation the network consumes.
+
+    `exact=True` keys on the whole observation instead (the registered
+    sensitivity check). Exact keys are stricter, so they yield fewer and
+    purer cells; the loose key trades purity for coverage and pays for it in
+    ``SS_within``, which is why `eta2` and not `raw` is the primary reading.
+    """
+    arr = np.asarray(obs)
+    if arr.ndim != 2:
+        raise ValueError(f"obs must be (N, D), got {arr.shape}")
+    if exact:
+        sub = arr
+    else:
+        width = arr.shape[1]
+        if frame_dim <= 0 or width % frame_dim != 0:
+            raise ValueError(
+                f"observation width {width} is not a multiple of frame_dim "
+                f"{frame_dim}; pass exact=True to key on the raw vector")
+        n_frames = width // frame_dim
+        idx = (frame % n_frames) * frame_dim
+        sub = arr[:, idx:idx + SMB_V2_PHASE]
+    contiguous = np.ascontiguousarray(sub)
+    view = contiguous.view([("", contiguous.dtype)] * contiguous.shape[1])
+    _, cells = np.unique(view.ravel(), return_inverse=True)
+    return np.asarray(cells, dtype=np.int64)
+
+
+def critic_advantage(v_state: Any, v_next: Any, *, done: Any = None,
+                     gamma: float = 0.99) -> np.ndarray:
+    """``A-hat = gamma * V(s') * (1 - done) - V(s)`` (pure).
+
+    `done` rows are absorbing: their successor bootstrap is zeroed rather
+    than carried, matching how the offline banks record a death
+    (`scripts/smodice_data.py`).
+    """
+    vs = np.asarray(v_state, dtype=np.float64).ravel()
+    vn = np.asarray(v_next, dtype=np.float64).ravel()
+    if vs.shape != vn.shape:
+        raise ValueError(f"v_state {vs.shape} != v_next {vn.shape}")
+    d = (np.zeros_like(vs) if done is None
+         else np.asarray(done, dtype=np.float64).ravel())
+    if d.shape != vs.shape:
+        raise ValueError(f"done {d.shape} != v_state {vs.shape}")
+    return float(gamma) * vn * (1.0 - d) - vs
+
+
+def qualifying_rows(cells: Any, actions: Any, *, min_rows_per_action: int = 2,
+                    min_actions: int = 2, min_rows: int = 6) -> np.ndarray:
+    """Boolean mask of rows in cells that can carry an action contrast.
+
+    A cell qualifies when at least `min_actions` distinct actions each have
+    at least `min_rows_per_action` rows and those rows total `min_rows`.
+    Rows whose action is under the per-action minimum are dropped from the
+    cell — a singleton action contributes no within-cell variance, so it
+    would inflate the between-action term with pure noise.
+    """
+    c = np.asarray(cells, dtype=np.int64).ravel()
+    a = np.asarray(actions, dtype=np.int64).ravel()
+    if c.shape != a.shape:
+        raise ValueError(f"cells {c.shape} != actions {a.shape}")
+    keep = np.zeros(c.size, dtype=bool)
+    order = np.argsort(c, kind="stable")
+    starts = np.flatnonzero(np.r_[True, np.diff(c[order]) != 0])
+    for lo, hi in zip(starts, np.r_[starts[1:], c.size] if starts.size else []):
+        idx = order[lo:hi]
+        acts, counts = np.unique(a[idx], return_counts=True)
+        good = set(acts[counts >= int(min_rows_per_action)].tolist())
+        if len(good) < int(min_actions):
+            continue
+        sel = idx[np.isin(a[idx], list(good))]
+        if sel.size >= int(min_rows):
+            keep[sel] = True
+    return keep
+
+
+def advantage_variance(advantages: Any, cells: Any, actions: Any) -> dict:
+    """**V_adv** — ``E_s[Var_a(A-hat)]`` and its pooled between-action share.
+
+    `raw` is the literal registered quantity: the mean over state cells of the
+    population variance, across actions, of the per-action MEAN advantage.
+    It carries critic units and is NEVER comparable across checkpoints —
+    ``V -> cV + b`` scales it by ``c**2``, which is exactly how an
+    unnormalised V_adv becomes a fifth vacuous instrument.
+
+    `eta2` is the primary reading: the pooled between-action share of
+    advantage variance with the state cell as a blocking factor,
+
+        eta2 = SS_between / (SS_between + SS_within)
+
+    a ratio of two variances of the SAME critic, so it is exactly invariant
+    under ``V -> cV + b``.
+
+    `eta2_null_analytic` is ``df_between / (df_between + df_within)`` — the
+    value `eta2` takes IN EXPECTATION UNDER NO ACTION EFFECT. It is emitted on
+    every reading because it is not zero and it is not small: a 2-action cell
+    with 3 rows nulls at 0.5. An absolute threshold on `eta2` would have sat
+    outside its own acting range, which is the defect that left ReDo's tau at
+    0.025 against a >=0.25 firing threshold, never firing in v27 or v28.
+    """
+    adv = np.asarray(advantages, dtype=np.float64).ravel()
+    c = np.asarray(cells, dtype=np.int64).ravel()
+    a = np.asarray(actions, dtype=np.int64).ravel()
+    if not (adv.shape == c.shape == a.shape):
+        raise ValueError(
+            f"advantages {adv.shape}, cells {c.shape}, actions {a.shape} "
+            "must be row-aligned")
+    empty = {
+        "n_rows": int(adv.size), "n_cells": 0, "n_action_cells": 0,
+        "raw": None, "eta2": None, "eta2_null_analytic": None,
+        "ss_between": 0.0, "ss_within": 0.0,
+        "df_between": 0, "df_within": 0, "per_cell_var": [],
+    }
+    if adv.size == 0:
+        return empty
+    ss_b = 0.0
+    ss_w = 0.0
+    df_b = 0
+    df_w = 0
+    per_cell: list = []
+    n_cells = 0
+    n_action_cells = 0
+    order = np.argsort(c, kind="stable")
+    cs = c[order]
+    starts = np.flatnonzero(np.r_[True, np.diff(cs) != 0])
+    for lo, hi in zip(starts, np.r_[starts[1:], cs.size]):
+        idx = order[lo:hi]
+        acts = np.unique(a[idx])
+        if acts.size < 2:
+            continue
+        n_cells += 1
+        cell_mean = float(np.mean(adv[idx]))
+        means = []
+        for act in acts:
+            rows = adv[idx[a[idx] == act]]
+            means.append(float(np.mean(rows)))
+            ss_b += rows.size * (means[-1] - cell_mean) ** 2
+            ss_w += float(np.sum((rows - means[-1]) ** 2))
+            df_w += rows.size - 1
+            n_action_cells += 1
+        df_b += acts.size - 1
+        per_cell.append(float(np.var(np.asarray(means))))
+    if not per_cell:
+        return empty
+    # A batch with NO variance at all (ss_b == ss_w == 0) has eta2 = 0/0.
+    # It is reported as 0.0, not None: ss_b is exactly 0, so there is
+    # provably no between-action variance — the clearest COLLAPSED there is.
+    # (`normalise_vadv` still refuses the raw ratio when the CRITIC is flat;
+    # that is a different failure and it reads VOID, not COLLAPSED.)
+    #
+    # The tolerance is load-bearing, not cosmetic. Summing squared deviations
+    # of a constant leaves float dust of order 1e-31, and the RATIO of two
+    # dust terms is an arbitrary number in [0, 1] — a constant-advantage batch
+    # measured eta2 = 0.889 (a confident LIVE) before this guard existed.
+    # Anything below the accumulated rounding floor of the data's own scale is
+    # not a signal.
+    total = ss_b + ss_w
+    dust = 1e-12 * max(1.0, float(np.sum(adv ** 2)))
+    if total <= dust:
+        ss_b, ss_w, total = 0.0, 0.0, 0.0
+    return {
+        "n_rows": int(adv.size),
+        "n_cells": n_cells,
+        "n_action_cells": n_action_cells,
+        "raw": float(np.mean(per_cell)),
+        "eta2": (float(ss_b / total) if total > 0 else 0.0),
+        "eta2_null_analytic": (float(df_b / (df_b + df_w))
+                               if (df_b + df_w) > 0 else None),
+        "ss_between": float(ss_b),
+        "ss_within": float(ss_w),
+        "df_between": int(df_b),
+        "df_within": int(df_w),
+        "per_cell_var": [float(v) for v in per_cell],
+    }
+
+
+def normalise_vadv(raw: Optional[float], value_variance: float) -> dict:
+    """`raw / Var_batch[V]` — the cross-checkpoint-comparable form.
+
+    A constant critic has ``Var_batch[V] == 0`` and the ratio is 0/0. That
+    returns ``None`` with ``degenerate_critic: True``, NOT 0.0: a dead critic
+    must read VOID, never COLLAPSED. Reporting 0.0 there would manufacture the
+    mis-specification signature out of a broken checkpoint.
+    """
+    var = float(value_variance)
+    if not np.isfinite(var) or var <= 0.0:
+        return {"raw_norm": None, "value_variance": var,
+                "degenerate_critic": True}
+    if raw is None:
+        return {"raw_norm": None, "value_variance": var,
+                "degenerate_critic": False}
+    return {"raw_norm": float(raw) / var, "value_variance": var,
+            "degenerate_critic": False}
+
+
+def permutation_null(advantages: Any, cells: Any, actions: Any, *,
+                     n_perm: int = 1000, seed: int = 20260827) -> dict:
+    """NC-c: the reference distribution of `eta2` under NO action effect.
+
+    Permutes the action labels WITHIN each cell. That destroys the
+    action-successor pairing while preserving every marginal the reading
+    depends on — the cell structure, the successor-value distribution, the
+    critic, and the critic's scale. It is the only null that answers "is this
+    instrument returning the same shape everywhere?" using the data itself
+    rather than an asserted constant.
+    """
+    c = np.asarray(cells, dtype=np.int64).ravel()
+    a = np.asarray(actions, dtype=np.int64).ravel()
+    rng = np.random.default_rng(int(seed))
+    order = np.argsort(c, kind="stable")
+    cs = c[order]
+    starts = np.flatnonzero(np.r_[True, np.diff(cs) != 0]) if cs.size else []
+    blocks = [order[lo:hi] for lo, hi
+              in zip(starts, np.r_[starts[1:], cs.size] if len(starts) else [])]
+    draws = []
+    for _ in range(int(n_perm)):
+        shuffled = a.copy()
+        for idx in blocks:
+            shuffled[idx] = rng.permutation(a[idx])
+        e = advantage_variance(advantages, c, shuffled)["eta2"]
+        if e is not None:
+            draws.append(e)
+    if not draws:
+        return {"n_perm": int(n_perm), "n_valid": 0, "median": None,
+                "q025": None, "q975": None, "degenerate": True,
+                "zero_spread": True}
+    arr = np.asarray(draws, dtype=np.float64)
+    q025, q975 = (float(x) for x in np.percentile(arr, [2.5, 97.5]))
+    return {
+        "n_perm": int(n_perm), "n_valid": int(arr.size),
+        "median": float(np.median(arr)), "q025": q025, "q975": q975,
+        "degenerate": False,
+        # A permutation that cannot move the statistic has no power to reject
+        # anything; `classify_vadv` turns that into VOID, never COLLAPSED.
+        "zero_spread": bool(q975 <= q025),
+    }
+
+
+def bootstrap_eta2(advantages: Any, cells: Any, actions: Any, *,
+                   n_boot: int = 2000, seed: int = 20260827) -> dict:
+    """95% CI of `eta2`, resampling CELLS (the independent unit), not rows."""
+    adv = np.asarray(advantages, dtype=np.float64).ravel()
+    c = np.asarray(cells, dtype=np.int64).ravel()
+    a = np.asarray(actions, dtype=np.int64).ravel()
+    uniq = np.unique(c)
+    if uniq.size == 0:
+        return {"lo": None, "hi": None, "n_boot": int(n_boot)}
+    by_cell = {int(u): np.flatnonzero(c == u) for u in uniq}
+    rng = np.random.default_rng(int(seed))
+    draws = []
+    for _ in range(int(n_boot)):
+        pick = rng.integers(0, uniq.size, uniq.size)
+        idx, relabel = [], []
+        for j, p in enumerate(pick):
+            rows = by_cell[int(uniq[p])]
+            idx.append(rows)
+            relabel.append(np.full(rows.size, j, dtype=np.int64))
+        idx = np.concatenate(idx)
+        e = advantage_variance(adv[idx], np.concatenate(relabel), a[idx])["eta2"]
+        if e is not None:
+            draws.append(e)
+    if not draws:
+        return {"lo": None, "hi": None, "n_boot": int(n_boot)}
+    lo, hi = (float(x) for x in np.percentile(np.asarray(draws), [2.5, 97.5]))
+    return {"lo": lo, "hi": hi, "n_boot": int(n_boot), "n_valid": len(draws)}
+
+
+def classify_vadv(observed: dict, null: dict, *, live_ratio: float = 1.5) -> str:
+    """LIVE / COLLAPSED / VOID against the registered rule (§5 of the prereg).
+
+    LIVE      : eta2 above the null's 97.5th percentile AND >= `live_ratio`x
+                its median.
+    COLLAPSED : eta2 at or below the null's 97.5th percentile.
+    VOID      : no eta2, no null draws, or a permutation that cannot move the
+                statistic at all — a test with no power must never be allowed
+                to report COLLAPSED, because COLLAPSED is the more interesting
+                conclusion and would otherwise be free.
+
+    One identity carve-out: when the batch has NO variance whatsoever
+    (`ss_between == ss_within == 0`) the absence of an action effect is an
+    arithmetic fact rather than an inference, and that reads COLLAPSED.
+    """
+    e = observed.get("eta2")
+    med, q975 = null.get("median"), null.get("q975")
+    if e is None or med is None or q975 is None or int(null.get("n_valid", 0)) == 0:
+        return "VOID"
+    if e > q975 and (med <= 0.0 or e / med >= float(live_ratio)):
+        return "LIVE"
+    no_variance = (float(observed.get("ss_between", 1.0)) == 0.0
+                   and float(observed.get("ss_within", 1.0)) == 0.0)
+    if null.get("zero_spread") and not no_variance:
+        return "VOID"
+    return "COLLAPSED"
+
+
+def injected_power(advantages: Any, cells: Any, actions: Any, *,
+                   effect: float, n_trials: int = 200, n_perm: int = 200,
+                   seed: int = 20260827, live_ratio: float = 1.5) -> dict:
+    """A7: could this region have DETECTED a positive-control-sized effect?
+
+    Adds a per-action offset of scale `effect` to the region's OWN rows and
+    asks how often the registered LIVE rule fires. A thin region that cannot
+    detect a real effect makes "collapsed here" unfalsifiable, and the honest
+    answer is then VOID rather than a verdict. Low power biases toward
+    reading COLLAPSED — the more interesting conclusion — so this gate guards
+    the direction that would flatter the finding.
+    """
+    adv = np.asarray(advantages, dtype=np.float64).ravel()
+    c = np.asarray(cells, dtype=np.int64).ravel()
+    a = np.asarray(actions, dtype=np.int64).ravel()
+    rng = np.random.default_rng(int(seed))
+    fired = 0
+    for _ in range(int(n_trials)):
+        offsets = {int(k): rng.normal(0.0, float(effect))
+                   for k in np.unique(a)}
+        boosted = adv + np.array([offsets[int(x)] for x in a])
+        obs = advantage_variance(boosted, c, a)
+        null = permutation_null(boosted, c, a, n_perm=int(n_perm),
+                                seed=int(rng.integers(1, 2 ** 31)))
+        if classify_vadv(obs, null, live_ratio=live_ratio) == "LIVE":
+            fired += 1
+    return {"effect": float(effect), "n_trials": int(n_trials),
+            "detected": int(fired), "power": fired / float(max(1, n_trials))}
+
+
 def _to_numpy(v: Any) -> np.ndarray:
     """numpy view of an array-like or a torch tensor (duck-typed)."""
     if hasattr(v, "detach"):
@@ -340,6 +747,163 @@ def tile_forward_with_trunk(net, states: Any) -> tuple:
     return _to_numpy(logits), _to_numpy(h2), _to_numpy(h1)
 
 
+def tile_critic_values(net, states: Any, *, batch: int = 8192) -> np.ndarray:
+    """`V(s)` for `(N, feature_dim)` states — the critic head, not the actor."""
+    import torch
+
+    arr = np.asarray(states, dtype=np.float32)
+    out = []
+    with torch.no_grad():
+        for i in range(0, arr.shape[0], int(batch)):
+            x = torch.as_tensor(arr[i:i + int(batch)])
+            out.append(_to_numpy(net.forward_ac(x)[1]))
+    return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
+
+
+def load_transition_bank(paths: Sequence[str]) -> dict:
+    """Pool offline `(s, a, s', done)` banks. NO emulator, NO training.
+
+    Two accepted layouts, both already on disk:
+
+    * ``state / action / next_state / done`` — a true transition bank
+      (`runs/smodice_1_2/transitions.npz`, `runs/iq_1_2/transitions.npz`).
+    * ``obs_0 / act_0 / traj_len`` — trajectory rows with explicit episode
+      boundaries (`runs/interference/success_1_1.npz`); successors are the
+      next row WITHIN a trajectory, so no transition is ever spliced across
+      an episode boundary.
+
+    A bank with `obs_0` but no `traj_len` is REFUSED rather than silently
+    spliced: consecutive rows across an unknown boundary are not transitions.
+    """
+    S, A, N, D = [], [], [], []
+    for p in paths:
+        z = np.load(str(p), allow_pickle=True)
+        keys = set(z.files)
+        if {"state", "action", "next_state"} <= keys:
+            S.append(np.asarray(z["state"]))
+            A.append(np.asarray(z["action"], dtype=np.int64))
+            N.append(np.asarray(z["next_state"]))
+            D.append(np.asarray(z["done"], dtype=np.int64) if "done" in keys
+                     else np.zeros(len(z["action"]), dtype=np.int64))
+        elif {"obs_0", "act_0"} <= keys:
+            if "traj_len" not in keys:
+                raise ValueError(
+                    f"{p}: obs_0/act_0 without traj_len — episode boundaries "
+                    "are unknown, so consecutive rows are not transitions")
+            obs = np.asarray(z["obs_0"])
+            act = np.asarray(z["act_0"], dtype=np.int64)
+            bounds = np.cumsum(np.r_[0, np.asarray(z["traj_len"], dtype=np.int64)])
+            idx = np.concatenate([np.arange(b0, b1 - 1)
+                                  for b0, b1 in zip(bounds[:-1], bounds[1:])
+                                  if b1 - b0 >= 2])
+            S.append(obs[idx])
+            A.append(act[idx])
+            N.append(obs[idx + 1])
+            D.append(np.zeros(idx.size, dtype=np.int64))
+        else:
+            raise ValueError(f"{p}: unrecognised bank schema {sorted(keys)}")
+    return {
+        "state": np.concatenate(S), "action": np.concatenate(A),
+        "next_state": np.concatenate(N), "done": np.concatenate(D),
+        "sources": [str(p) for p in paths],
+    }
+
+
+def parse_bands(spec: str) -> dict:
+    """``"WALL=2674:2872,PC=2872:3266"`` -> ``{"WALL": (2674, 2872), ...}``.
+
+    Half-open on the right, matching the registered band table.
+    """
+    bands: dict = {}
+    for part in [s for s in str(spec).split(",") if s.strip()]:
+        name, _, rng = part.partition("=")
+        lo, _, hi = rng.partition(":")
+        bands[name.strip()] = (int(lo), int(hi))
+    return bands
+
+
+def score_vadv(bank: dict, values_fn: Callable, *, bands: dict,
+               gamma: float = 0.99, exact_key: bool = False,
+               min_rows_per_action: int = 2, min_actions: int = 2,
+               min_rows: int = 6, n_perm: int = 1000, n_boot: int = 2000,
+               seed: int = 20260827, gx_frozen_band: Optional[str] = None) -> dict:
+    """V_adv per registered band for ONE checkpoint. Emulator-free.
+
+    `values_fn` is duck-typed (``states -> V(s)``) so the whole path is
+    testable without torch. ``Var_batch[V]`` for the normaliser is computed
+    ONCE over the pooled union of the scored bands, so every band shares one
+    denominator and regional readings stay comparable.
+    """
+    state = bank["state"]
+    action = np.asarray(bank["action"], dtype=np.int64)
+    gx = decode_gx(state)
+    cells = state_cell_keys(state, exact=exact_key)
+    in_any = np.zeros(gx.size, dtype=bool)
+    for lo, hi in bands.values():
+        in_any |= (gx >= lo) & (gx < hi)
+    if not in_any.any():
+        return {"error": "no rows in any registered band", "bands": bands}
+
+    v_state = np.asarray(values_fn(state[in_any]), dtype=np.float64)
+    v_next = np.asarray(values_fn(bank["next_state"][in_any]), dtype=np.float64)
+    adv_all = critic_advantage(v_state, v_next,
+                               done=np.asarray(bank["done"])[in_any],
+                               gamma=gamma)
+    gx_next_all = decode_gx(bank["next_state"][in_any])
+    sub = np.flatnonzero(in_any)
+    norm = normalise_vadv(None, float(np.var(v_state)))
+
+    def _region(mask: np.ndarray) -> dict:
+        keep = qualifying_rows(cells[sub][mask], action[sub][mask],
+                               min_rows_per_action=min_rows_per_action,
+                               min_actions=min_actions, min_rows=min_rows)
+        a_, c_, act_ = (adv_all[mask][keep], cells[sub][mask][keep],
+                        action[sub][mask][keep])
+        obs = advantage_variance(a_, c_, act_)
+        null = permutation_null(a_, c_, act_, n_perm=n_perm, seed=seed)
+        row = {
+            "n_rows_in_band": int(mask.sum()),
+            "n_qualifying_rows": int(keep.sum()),
+            "observed": obs,
+            "null": null,
+            "bootstrap": bootstrap_eta2(a_, c_, act_, n_boot=n_boot, seed=seed),
+            "verdict": classify_vadv(obs, null),
+        }
+        row.update(normalise_vadv(obs.get("raw"), norm["value_variance"]))
+        if row["degenerate_critic"]:
+            # A constant critic makes EVERY advantage exactly zero, so the
+            # arithmetic carve-out in `classify_vadv` would hand back a
+            # confident COLLAPSED — manufacturing the mis-specification
+            # signature out of a broken checkpoint. The critic is the
+            # instrument here; a dead one reads VOID.
+            row["verdict"] = "VOID"
+            row["void_reason"] = "degenerate_critic"
+        row["coverage_ok"] = bool(obs.get("n_cells", 0) >= 20
+                                  and row["n_qualifying_rows"] >= 400)
+        return row
+
+    out = {"bands": {k: list(v) for k, v in bands.items()},
+           "gamma": float(gamma), "exact_key": bool(exact_key),
+           "value_variance": norm["value_variance"],
+           "degenerate_critic": norm["degenerate_critic"],
+           "regions": {}}
+    for name, (lo, hi) in bands.items():
+        g = gx[sub]
+        out["regions"][name] = _region((g >= lo) & (g < hi))
+    if gx_frozen_band and gx_frozen_band in bands:
+        lo, hi = bands[gx_frozen_band]
+        g = gx[sub]
+        band = (g >= lo) & (g < hi)
+        # NC-b: cells where NO tried action moves gx, so a progress-based
+        # reward is provably flat across the actions actually tried.
+        frozen = band & (gx_next_all == g)
+        cid = cells[sub]
+        moving = set(cid[band & (gx_next_all != g)].tolist())
+        out["regions"]["NEG_gx_frozen"] = _region(
+            frozen & ~np.isin(cid, list(moving)))
+    return out
+
+
 def score_one_iterate(
     path: Any,
     *,
@@ -349,6 +913,9 @@ def score_one_iterate(
     dormant_tau: float,
     srank_delta: float,
     forward: Optional[Callable] = None,
+    bank: Optional[dict] = None,
+    vadv_kwargs: Optional[dict] = None,
+    values_fn: Optional[Callable] = None,
 ) -> dict:
     """Every FREE instrument for one iterate. Emulator-free by construction.
 
@@ -359,6 +926,22 @@ def score_one_iterate(
     sd = load_iterate(path) if forward is None else {}
     if theta_0 is not None and sd:
         row["drift"] = param_drift(sd, theta_0)
+    if bank is not None:
+        vfn = values_fn
+        if vfn is None:
+            net = build_tile_net(sd)
+            width = int(_to_numpy(sd["fc1.weight"]).shape[1])
+            if width != int(bank["state"].shape[1]):
+                # A8: never let load_state_dict(strict=False) hand back a
+                # half-random first layer that scores clean.
+                raise ValueError(
+                    f"checkpoint input width {width} != bank observation "
+                    f"width {bank['state'].shape[1]}")
+
+            def vfn(s, _net=net):
+                return tile_critic_values(_net, s)
+
+        row["vadv"] = score_vadv(bank, vfn, **(vadv_kwargs or {}))
     if states is None:
         return row
     fwd = forward
@@ -462,6 +1045,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--dormant-tau", type=float, default=0.0,
                     help="Sokar tau. 0.0 = the strict (exactly dead) rule.")
     ap.add_argument("--srank-delta", type=float, default=0.01)
+    # --- instrument 6: V_adv (offline; still no emulator) ----------------
+    ap.add_argument("--transitions", action="append", default=[], metavar="NPZ",
+                    help="Offline (s,a,s') bank for V_adv. Repeatable; banks "
+                         "are pooled. Omit to skip V_adv entirely.")
+    ap.add_argument("--vadv-bands", default="WALL=2674:2872,PC_B5=2872:3267",
+                    help="gx bands, NAME=lo:hi (half-open). Registered "
+                         "defaults are B5's own wall and the rungs its "
+                         "curriculum advanced through.")
+    ap.add_argument("--gamma", type=float, default=0.99,
+                    help="Discount for A-hat = gamma*V(s')*(1-done) - V(s).")
+    ap.add_argument("--vadv-exact-key", action="store_true",
+                    help="Registered sensitivity check: key cells on the "
+                         "whole observation instead of the current frame.")
+    ap.add_argument("--vadv-perm", type=int, default=1000)
+    ap.add_argument("--vadv-boot", type=int, default=2000)
+    ap.add_argument("--vadv-seed", type=int, default=20260827)
+    ap.add_argument("--vadv-frozen-band", default=None, metavar="NAME",
+                    help="Band to draw the NC-b gx-frozen negative control "
+                         "from (a region where a progress-based reward is "
+                         "provably flat across the actions tried).")
     ap.add_argument("--out", default=None, metavar="JSON",
                     help="Write the sweep here as well as to stdout.")
     # --- the paid instrument -------------------------------------------
@@ -496,6 +1099,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if base_path:
         theta_0 = load_iterate(base_path)
 
+    bank = load_transition_bank(args.transitions) if args.transitions else None
+    vadv_kwargs = None if bank is None else {
+        "bands": parse_bands(args.vadv_bands), "gamma": args.gamma,
+        "exact_key": args.vadv_exact_key, "n_perm": args.vadv_perm,
+        "n_boot": args.vadv_boot, "seed": args.vadv_seed,
+        "gx_frozen_band": args.vadv_frozen_band,
+    }
+
     rows = []
     for p in paths:
         try:
@@ -503,6 +1114,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 p, states=states, theta_0=theta_0,
                 tie_threshold=args.tie_threshold, dormant_tau=args.dormant_tau,
                 srank_delta=args.srank_delta,
+                bank=bank, vadv_kwargs=vadv_kwargs,
             )
             if args.eval:
                 if not args.profile:
@@ -534,6 +1146,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "eval_ran": bool(args.eval),
         "iterates": rows,
     }
+    if bank is not None:
+        out["vadv_bank"] = {
+            "sources": bank["sources"], "n_transitions": int(bank["state"].shape[0]),
+            "obs_width": int(bank["state"].shape[1]),
+            "prereg": "docs/proposals/VADV_PREREG_2026-08-27.md",
+        }
     if not args.eval:
         out["curve_stub_cost"] = eval_cost_estimate(
             len(rows), args.episodes,
