@@ -186,16 +186,44 @@ positive control.
 * **Collector determinism**: 3,224/3,224 episode outcomes identical
   across the pre-fix and post-fix collectors, seed-for-seed.
 
-## 7. Costs and receipts
+## 7. Costs
 
 Collection 0.864 h + scoring ~1.0 h + gates/diagnostics ~0.1 h ≈ **2.0 h
 compute**, inside the registered ≤ 3.0 h compute / 6.0 h lane ceilings.
+
+## 8. Conformance to the NC-b pre-commitment (parallel registration)
+
+A second session registered `docs/proposals/NCB_ACTING_RANGE_PRECOMMIT_2026-08-28.md`
+(ba34605 → 89af2aa) in parallel with this execution; its own §4–§6 give
+`77b8549` precedence on the verdict path and scope its machinery to
+receipts, bank soundness, and control-quality characterisation. Executed
+here (`ncb_conformance.json`), with one ordering deviation disclosed: the
+precommit wants these receipts before any tracking number, and they were
+produced after the arc verdict was drafted. Nothing in them is
+outcome-determinative — every gate passes and no cap branch changes:
+
+* **Per-bank soundness (its §2): bitwise `alias_rate` = 0.0 at all 26
+  banks** (the 2026-08-27 defect read 1.0), chain guard re-verified pass
+  offline at all 26 → **26/26 survivors**, floor ≥ 20 met.
+  VOID-THIN-BASIS and the §7 cause-split never engage (0 UNMEASURABLE).
+* **Six-field NEG/PC identity anomalies (its §3(a)): 0 of 26.**
+* **Control-quality characterisation (its §3(b), off the verdict path per
+  its own §6):** NEG-vs-PC eta2 bootstrap CIs are disjoint at **0 %** of
+  survivors (bar was ≥ 54 %), and the not-LIVE-where-PC-LIVE clause is
+  vacuous (PC_B5 LIVE at 0 banks). Read for what it is: with the positive
+  control itself collapsed everywhere, both regions sit near their nulls
+  and NC-b never demonstrated it can *separate* from PC_B5 on on-policy
+  data. That characterisation is one more reason no future rerun of this
+  design could field the control — it informs the retirement, and caps
+  nothing (there was no signature to cap).
+
+## 9. Receipts
 
 `runs/vadv_onpolicy_rerun/`: `collect_summary.json`, `collect_stdout.log`,
 `iter_{00010..00260}.npz` + `_episodes.json` (row_step-carrying, chain-
 verified), `ncb_acting_range.json`, `trajectory_identity_check.json`,
 `A1/a1_reproduction.json`, `arc_scored.json(.jsonl)`, `arc_verdict.json`,
 `a7_negative_demonstration.json`, `probe_933.json`, `extract_rows.json`,
-`score_stdout.log`. Code: `scripts/collect_onpolicy_bank.py` +
+`ncb_conformance.json`, `score_stdout.log`. Code: `scripts/collect_onpolicy_bank.py` +
 `tests/test_collect_onpolicy_bank.py` (51, commit `6d700c5`);
 `scripts/score_banked_iterates.py` unchanged (45 tests green).
