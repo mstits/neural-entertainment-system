@@ -94,3 +94,57 @@ If the Lane A precondition agent registered its own NC-b criterion **before
 scoring began**, that registration governs and this file is the fallback. Both
 must predate scoring; a criterion written after seeing the numbers governs
 nothing.
+
+## 5. Supersession, precedence, and a disclosure — written 2026-08-28 ~02:2x, before any adjudication
+
+**The full chain, in one place:**
+`ba34605` (01:18:56) → guard definition superseded by `6d700c5` (01:21:15) →
+`f89e6c9` (01:27:28) → `59a8a38` (01:29:20) → `94b533d` (01:30:39).
+
+**Guard supersession, accepted.** §1 named "the exact antecedent-chain check
+(b2e806b), no tolerance." That guard's first live run false-positived at iter
+30 on a PC_SRC rung-1013 episode: the episode traverses the WALL band, the
+**registered** cross-population drop removed those interior rows, and the
+legitimate gap read as CHAIN BROKEN. The guard as registered was inconsistent
+with the protocol as registered — a broken instrument, not an inconvenient
+bar. `6d700c5` records the within-episode step index BEFORE the drop and
+asserts the chain only across step-consecutive pairs; aliasing corrupts every
+adjacent pair, so the guard loses nothing against the defect class it exists
+for. This is the loosening direction and does not get the tightening free
+pass; it is admitted as an instrument repair on three grounds: the false
+positive was against the registration's own mandated drop, the fix is
+revert-verified, and it predates every bank in the operative grid (first bank
+01:24:04). **The operative guard is 6d700c5 wherever this file says b2e806b.**
+
+**Precedence, stated plainly per §4's own rule:** the Lane A precondition
+agent registered its own addendum at `77b8549` (01:11:07) — BEFORE ba34605 —
+including an NC-b acting-range decision rule (MEASURABLE-per-iterate with a
+>=70% floor). **77b8549 governs wherever it speaks; this file is the
+fallback**, exactly as §4 provides. An adjudicator applies 77b8549's rule
+first and this file's §2/§3 machinery where 77b8549 is silent.
+
+**Disclosure of a defect in this file's own process.** Each amendment here
+claimed "window verified open" against `runs/vadv_onpolicy_v2/` — but the
+workflow wrote to `runs/vadv_onpolicy_rerun/`. **The window check was vacuous:
+it could not fail**, because it watched a path the pipeline never used. The
+pre-data status of the amendments is instead established by artifact
+timestamps, which happen to hold:
+
+| event | time |
+|---|---|
+| ba34605 (base precommit) | 01:18:56 — pre-collection entirely |
+| first bank (iter_00010.npz) | 01:24:04 |
+| f89e6c9 / 59a8a38 / 94b533d | 01:27:28 / 01:29:20 / 01:30:39 |
+| collection complete (collect_summary) | 02:13:14 |
+| first scoring output (arc_scored.jsonl) | 02:19:17 |
+
+So the three amendments landed after 1 of 26 banks existed and before the
+other 25, before the collection summary, and ~49 minutes before any scoring
+output. Their content depends on nothing observable in one bank, and the
+author did not read it — but "did not read" is asserted, not provable, so the
+adjudicator may discount f89e6c9→94b533d as mid-collection if they judge that
+inadmissible. **ba34605 is fully pre-collection and stands regardless.**
+
+**Receipts path correction:** wherever this file says `runs/vadv_onpolicy_v2/`,
+the operative path is `runs/vadv_onpolicy_rerun/`.
+
