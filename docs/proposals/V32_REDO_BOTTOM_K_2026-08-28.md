@@ -823,3 +823,38 @@ Phase R result and does not discharge R4. §7 is still owed in full at
 | `runs/v32_redo_bottom_k_2026-08-28/delta.json` | the v27 backfill under the identical estimator, or an explicit NOT COMPUTED with the reason |
 | `checkpoints/mario_1_1_v32_redo_bk_seed{0..3}/` | run logs, 24 iterate checkpoints per seed, `run_manifest.json` |
 | `docs/research/` | the adjudication document, written after the numbers, against these numerals |
+
+## 12. ADDENDUM 2026-08-28 (post-campaign) — the B1/§11 event floor was rung-1 arithmetic, never updated for rung 2
+
+**Disclosed up front, because this addendum is written after seeing the four
+seeds' raw counts, not before:** the campaign already ran (all four seeds,
+250 iterations each) before this correction was written. The number derived
+below comes from the registered RUNG STRUCTURE (§8's own "25 events x k=4"
+arithmetic), not from reverse-engineering a floor that would pass any
+particular seed -- but the ordering is disclosed rather than hidden, per this
+project's own standing rule that a pre-registered numeral's correction is a
+dated addendum, never a silent threshold change.
+
+**The defect.** §"B1 -- REACHED" and the §11 VOID table both say
+`>= 48` recycle events and `cum_recycled == 2 x events` (`2x` = rung 1's
+`k=2`). That arithmetic is exactly rung 1's: cadence C=5 over 250 iterations
+gives 50 checks, and 48 = 50 - 2 (the "two events of slack absorb skipped
+checks" reasoning stated in §3's B1 text). **It was never updated when §8's
+own ladder escalated to rung 2 (k=4, C=10).** At C=10 over 250 iterations,
+the STRUCTURAL MAXIMUM is 25 checks -- `>= 48` is not merely wrong, it is
+arithmetically unreachable, and every rung-2 run would VOID-NOT-REACHED
+regardless of how the mechanism behaved. `scripts/redo_arm_gate.py`'s
+`--bottom-k-min-events` CLI default (48) carries the identical staleness;
+`adjudicate_bottom_k`'s own logic is correctly parameterized by whatever
+`min_events` is passed and required no code change.
+
+**The correction, same reasoning as rung 1's, applied to rung 2's own
+numerals:** floor = (max checks at this cadence) - (2 events of slack) =
+25 - 2 = **23**. `cum_recycled == k * events` (already correctly
+parameterized in code; the doc's "`2 x events`" phrasing is corrected to
+`k x events` here for the same reason).
+
+**This does not touch B2, B3, or B4.** Artifact-match, dose, and
+`repeat_rate == 1.00` are unaffected by this floor and are adjudicated
+exactly as §3/§6.2/§11 already specify -- including where B4 VOIDs a run.
+Nothing about this addendum loosens or moves the turnover criterion.
