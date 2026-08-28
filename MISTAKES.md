@@ -11,13 +11,13 @@ one-line invariant only after recurring across 4–5 separate entries.
 
 | root cause | entries | deterministic enforcement |
 |---|---|---|
-| `[unverified-claim]` | **8** | no — judgement |
+| `[unverified-claim]` | **10** | no — judgement |
 | `[vacuous-gate]` | **13** | candidate — lint for `passed = not <coll>`; ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
 | `[weak-eval]` | **8** | partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **6** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
-| `[process]` | **7** | candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
+| `[process]` | **8** | candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 1 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
 | `[measurement]` | 1 | — |
@@ -35,6 +35,53 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-28 — [process] Recommended a pre-registered consequent whose antecedent never occurred
+- **What happened:** Recommended retiring ReDo off a VOID campaign. The
+  registration grants retirement to exactly two outcomes — a FAIL (no Theta
+  exists) or a second Phase-R NO-GO (it GOed) — and states VOID takes no
+  branch. The recommendation took the most terminal branch available.
+- **Root cause:** Treated "conservative direction" as exempt from the
+  moved-goalpost rule; a null from a design pre-declared blind to the
+  plausible effect size felt conclusive.
+- **Consequence:** Caught by the commissioned direction review before any
+  compute or ledger change; the retirement was overturned.
+- **Rule (draft):** The goalpost rule is symmetric — lifting a pre-written
+  conclusion out of its registered antecedent is fabrication in the
+  conservative direction too.
+
+## 2026-08-28 — [unverified-claim] Attributed a five-campaign failure to the architecture without testing the operator
+- **What happened:** Drafted a stopping statement blaming Linear→LayerNorm→SiLU
+  for ReDo's failure. The review measured the actual cause: recycle() pins the
+  recycled unit's LayerNorm gain at 1.0 with zero gradient (both head columns
+  zeroed), and the dormancy score is a rank-readout of that gain (Spearman
+  +0.93) — the operator deposits its own output at the bottom of the statistic
+  that selects it. Verified on raw checkpoints: gain exactly 1.000, columns
+  exactly 0.000.
+- **Root cause:** Five campaigns varied dose and cadence; the reset operator
+  itself was never treated as a variable, and the stopping statement inherited
+  that blind spot.
+- **Consequence:** A wrong causal claim nearly banked as a two-registration
+  stopping statement; corrected to "the cadence-and-threshold search retires,
+  the hypothesis does not."
+- **Rule (draft):** Before blaming the substrate, enumerate the operator's own
+  fixed choices and check whether one of them produces the failure by
+  construction.
+
+## 2026-08-28 — [unverified-claim] Built a pivot on a delta with a corrected numerator and an uncorrected denominator
+- **What happened:** Cited v28's +0.14 over v27 as capacity evidence. The
+  correction (F0 ladder) was only ever run on v28; no v27 ladder exists, both
+  v27 points ever spot-corrected moved UP (+0.08, +0.21), and v27 seed 2 — the
+  0.530 anchoring the delta — was never re-scored. The sign of the effect is
+  unmeasured.
+- **Root cause:** Quoted a comparison without checking that both sides had
+  passed through the same correction, on a defect (selector under-selection)
+  already known to bias every uncorrected number low.
+- **Consequence:** The capacity pivot was suspended pending the v27 corrected
+  ladder, with the fork registered before the numbers.
+- **Rule (draft):** A delta may only be cited when both of its ends were
+  measured under the same estimator; a one-sided correction is a new number,
+  not a comparison.
 
 ## 2026-08-28 — [vacuous-gate] Five registrations moved the schedule around a selection statistic the treatment itself sets
 - **What happened:** v27, v28, v30, v31 and v32 all searched the ReDo *delivery
