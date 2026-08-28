@@ -180,3 +180,45 @@ investigation before any verdict is released — a sound bank exhibiting it
 would almost certainly also trip 77b8549's row-set rule, so the practical
 difference is the mandatory investigation, not the cap.
 
+## 7. The cause-split — closing the gap where the defect's recurrence grants permission
+
+**Provenance, disclosed before the rule:** this section postdates the existence
+of scoring artifacts (arc_scored.jsonl exists as of ~02:21) and predates any
+READING of them — at registration time neither the author nor the external
+reviewer has read collect_summary.json, arc_scored.jsonl, or any sidecar, and
+the workflow's own run/adjudication phases have not returned (verified:
+1 of 7 agents returned, a precondition agent). It is a TIGHTENING (it converts
+a permissive outcome to VOID). Because it postdates artifact existence:
+**if this section is outcome-determinative, the adjudication publishes BOTH
+readings — with and without the split — with this provenance note beside
+them.** That commitment removes any benefit post-hoc tailoring could confer.
+
+**The gap (found by the external reviewer):** MEASURABLE(a) requires NC-b's
+row set to differ from PC_B5's, identity being the 2026-08-27 defect's own
+signature. So a recurrence of that defect — in a form evading the 6d700c5
+chain guard, which aborts at collection — makes iterates UNMEASURABLE; an
+UNMEASURABLE majority takes 77b8549's no-cap branch; and the recurrence of
+the exact defect this rerun exists to eliminate would REMOVE the ceiling
+rather than voiding the run. The instrument's failure mode would produce the
+permissive outcome. Unmeasurability here is not silence; its dominant cause
+is the pipeline defect under repair, and treating defect-driven and genuine
+control-absence as one outcome is the error.
+
+**The rule (Gap 2):** the UNMEASURABLE branch splits by cause, using the bank
+soundness machinery 77b8549 predates and could not have consulted:
+- UNMEASURABLE at an iterate whose bank is SOUND (chain guard pass,
+  alias_rate under the §2 gate): genuine control-absence. 77b8549's no-cap
+  branch applies unchanged.
+- UNMEASURABLE at an iterate whose bank is VOID: instrument failure, not
+  control-absence. **Does not count toward the no-cap majority. If VOID-bank
+  iterates are what push past the 30%, the verdict is VOID, not uncapped.**
+This overrides 77b8549 nowhere it speaks: its rule assumed "repaired banks"
+as premise; the split supplies the distinction its critic-free, pre-soundness
+text could not draw.
+
+**Gap 1, pre-decided:** a §2 survivor-floor failure (< 20 sound banks)
+BLOCKS the verdict path — VOID-THIN-BASIS, not merely reported. Bank
+soundness is the admissibility premise 77b8549 relies on implicitly
+("repaired banks"); fewer than 20 sound banks means that premise fails and
+no verdict issues, whatever the MEASURABLE table says.
+
