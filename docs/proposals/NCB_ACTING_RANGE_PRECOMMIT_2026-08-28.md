@@ -148,3 +148,35 @@ inadmissible. **ba34605 is fully pre-collection and stands regardless.**
 **Receipts path correction:** wherever this file says `runs/vadv_onpolicy_v2/`,
 the operative path is `runs/vadv_onpolicy_rerun/`.
 
+## 6. Boundary map — how 77b8549 and this file compose. A record; no numeral changes
+
+Written after reading 77b8549 §2.3 in full, before any adjudication.
+
+**77b8549 governs the VERDICT PATH for NC-b, entirely.** Its rule: NC-b is
+MEASURABLE at an iterate iff (a) its row set is not identical to PC_B5's and
+(b) it has >= 6 qualifying rows in >= 2 cells. **The 70% floor is over
+COLLECTED iterates — all 26 — not survivors** (it is critic-free and predates
+this file's bank-soundness machinery). Its two branches, including the
+pre-decided re-specification for the UNMEASURABLE-majority case ("an
+UNMEASURABLE NC-b does not cap; a MEASURABLE non-collapsed NC-b caps at
+INDETERMINATE"), are the operative cap semantics. Nothing in this file may
+override them.
+
+**77b8549 is silent on, and this file therefore supplies:**
+- the receipts ORDERING (§1: chain-guard verdict and bitwise alias_rate per
+  bank, before any tracking number) and the full 26-value alias vector;
+- BANK soundness (§2: per-bank alias gate, >= 20-survivor floor) — 77b8549
+  says "repaired banks"; this file defines what sound means;
+- §3's CI-vs-CI and not-LIVE tests. **77b8549 nowhere speaks to CI separation
+  — so §3(b) is not replaced; but it is also not on the verdict path.** It is
+  published with the receipts as a control-quality characterisation, informing
+  any future re-specification, capping nothing.
+
+**Where both speak to identity:** 77b8549's per-iterate ROW-SET identity is
+upstream and governs the verdict path (identity → UNMEASURABLE at that
+iterate). This file's §3(a) six-field bit-identity on a SOUND bank demotes,
+under precedence, from outright disqualifier to REPORTED ANOMALY requiring
+investigation before any verdict is released — a sound bank exhibiting it
+would almost certainly also trip 77b8549's row-set rule, so the practical
+difference is the mandatory investigation, not the cap.
+
