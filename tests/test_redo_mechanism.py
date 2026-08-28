@@ -437,7 +437,12 @@ def test_trainer_emits_registered_armed_evidence_lines():
     assert '"[redo] ENABLED tau=%g every_iters=%d scope=fc1,fc2 "' in src
     assert '"[redo] disabled"' in src
     assert '"[redo] iter %d: dormant fc1 %d/%d fc2 %d/%d "' in src
-    assert '"recycled %d cum %d agree %.4f max_dlogit %.6f"' in src
+    # The registered grep target is the RENDERED prefix through
+    # max_dlogit; the score-tail fields (V30 Phase-M telemetry) are
+    # appended after it, so the source literal now carries a trailing
+    # space where it used to close the string.
+    assert '"recycled %d cum %d agree %.4f max_dlogit %.6f "' in src
+    assert '"tail fc1 %.4f/%.4f/%.4f fc2 %.4f/%.4f/%.4f"' in src
     assert '"[redo] iter %d: skipped (no gradient step)"' in src
 
 

@@ -2223,6 +2223,24 @@ re-measure rather than scale v27's "15" proportionally — even though
 the soft-VOID trigger was never approached, no recycle event having
 occurred.
 
+[ADDENDUM R-1, 2026-08-27, `docs/research/REDO_ACTUALLY_FIRES_2026-08-27.md`
+— **clause (i) above is STRENGTHENED and its remaining reassurance is
+WITHDRAWN.** ReDo has now been executed for the first time and the
+dormancy tail has been measured continuously (the gap the process
+finding below names as (2) is closed). The registered fallback — that
+plasticity was *measured-intact by the dormancy statistic* — survives
+only in that literal form. It carried an implicit reassurance it cannot
+support: the fc2 dormancy-score minimum settles at **0.079–0.127** once
+training passes ~iter 5 and never approaches 0.025, so a zero at
+tau=0.025 is equally consistent with a healthy trunk and a badly
+degraded one. The statistic could not distinguish them. **Neither v27
+nor v28 may be cited, in either direction, on the plasticity-loss
+hypothesis** — now enforced by `scripts/redo_arm_gate.py`, which exits 2
+with VOID on all eight banked logs. Both FAIL numerals stand;
+`docs/proposals/V27_FRESH_RECOVERY_2026-08-24.md:526`'s "ReDo
+mathematically guarantees that all 48k parameters were active" is void
+as written.]
+
 SECONDARY FINDING, process/instrumentation class — binding, not a
 LEARNED, EXHIBITION, or FORGE result (2026-08-25, surfaced while
 adjudicating the above) — four receipt/telemetry gaps, all fixable
@@ -3617,3 +3635,149 @@ everywhere — plasticity clean, ReDo not indicated"* on 2026-08-11
 (`B5_PREREG_2026-08-08.md:437`), from a different DR round that gated ReDo on
 measuring dormancy first. **That gate was honored, returned a decline, and the
 decline was not consulted two weeks later.**
+
+## REDO ACTUALLY FIRES 2026-08-27 — verdict VOID, and VOID is not FAIL
+
+Full write-up: `docs/research/REDO_ACTUALLY_FIRES_2026-08-27.md`.
+Registration adjudicated: `docs/proposals/V30_REDO_ARMED_2026-08-27.md`.
+Receipts: `runs/v30_premise_falsifier_2026-08-27/` (5 run logs, `analyze.py`,
+`analysis.txt`, 4 configs), `runs/redo_fires/T0/` (commit `439b87f`).
+
+**THE HEADLINE. The Deep Research round of 2026-08-25 mandated ReDo (Sokar
+et al. 2023) as the fix for a diagnosed plasticity loss, and in both
+campaigns that were supposed to test it — v27 and v28 — the treatment ran an
+ORDER OF MAGNITUDE below its own firing threshold and recycled zero neurons
+across all eight runs. The plasticity-loss hypothesis has therefore been
+UNTESTED, not refuted, since the day the prescription was written.** This is
+the first time the intervention was actually executed.
+
+**Correction, stated as a correction.**
+`docs/proposals/V27_FRESH_RECOVERY_2026-08-24.md:526` registered the DR's
+FAIL-branch inference verbatim: *"Because ReDo mathematically guarantees that
+all 48k parameters were active and non-dormant … the 48k capacity represents a
+hard, fundamental ceiling."* **It guaranteed nothing. ReDo did not run.** A
+guarantee resting on an intervention that never fired is not a weak guarantee.
+What survives is only the literal statement AMENDMENT 1's B2/B5 registered in
+advance — plasticity was *measured-intact by the dormancy statistic* — and
+ADDENDUM R-1 above withdraws the reassurance that statement was carrying,
+because at tau=0.025 the statistic could not have read anything but zero.
+
+**NOT RETRACTED. v27 FAIL (best-of-4 0.530, re-adjudicated 0.500) and v28 FAIL
+(0.670) STAND AS MEASURED.** Every episode was run, every receipt is real,
+both reproduce. What changes is the interpretation: each campaign registered
+two variables and delivered one. v27 tested the merged 785-rung fresh-run
+ladder. v28 tested parameter budget 48k→72k. **Neither tested plasticity, and
+neither may be cited on that hypothesis in either direction.** The prohibition
+is enforced in code, not prose: `scripts/redo_arm_gate.py` exits 2 with
+`VERDICT: VOID (redo never fired)` on all eight banked campaign logs plus the
+preflight — 9/9. The inertness that voids v27 as a ReDo test is also exactly
+what makes it a valid ReDo-off control for any future armed arm.
+
+**VERDICT: VOID.** The registered bar was **Θ ≥ 0.80 PASS / Θ ≤ 0.767 FAIL**,
+Θ = best-of-4 over seeds of the **cross-fit split-sample honest clear rate**
+(select on eval seed 0, score on eval seed 1 and the mirror; 100 scoring
+episodes per seed; every episode used once as a scoring episode and never for
+the selection that chose its own checkpoint). **Θ does not exist.** Two
+independent grounds, either sufficient:
+
+1. **No number to judge.** No campaign launched — 0 occurrences of
+   `clear_rate`, 0 of `honest`, 0 eval-seed lines across all five arm logs; no
+   v30 checkpoints; no ladder walked. **The bar did not move: 0.80 and 0.767
+   stand untouched.** The estimator was never applied — *never executed*, not
+   *executed wrongly* — so no maximum was read off any table and the registered
+   0.05 winner's-curse budget is unspent.
+2. **Every treatment arm is VOID on dose.** From iter 5 onward tau=0.25
+   re-initializes a **median 20 of 32 trunk units (62.5%) every iteration**
+   (59.4% at width 96; 37.5% at tau=0.15). That is the registration's own
+   **"RISK I REFUSE"** regime, named at tau=0.50 as *"a per-iteration partial
+   reset of two-thirds of the trunk"* and ruled the DR's INCOMPATIBLE "network
+   reset" family. **The registered operating point lands in the registered
+   forbidden regime.** The 2-iteration sweep that chose it could not see this:
+   fc2 score min 0.2848 at iter 0 (5/32 below 0.25) → 0.109 by iter 5 (20/32
+   below).
+
+**THE PREMISE THAT HOLDS.** ReDo fires and changes the network substantially:
+cum_recycled **353** over 20 iterations, 19/20 firing, first at iter 1,
+bit-exact to the banked sweep at iter 1 (`fc2 5/32 … agree 0.8142 max_dlogit
+0.288576`). The matched pair (tau 0.25 vs 0.025, identical RNG consumption) is
+**bit-identical at iters 0–1** and permanently diverges after the first
+recycle. Policy entropy holds **1.65–1.71** against a control decaying to
+**1.3463** — a sustained ~0.31 nat gap, the signature the DR predicted. This
+is not the "armed but inert" case.
+
+**THE EIGHTH VACUOUS GATE, FOUND LIVE INSIDE THE REGISTRATION THAT WAS WRITTEN
+TO PREVENT THE PREVIOUS SEVEN.** Abort A4 voids below median greedy-argmax
+agreement 0.60. Measured: **0.856** (h64), **0.901** (h96), **0.950**
+(tau=0.15) — all passing comfortably while 38–62% of the trunk is reset per
+iteration. The reason is architectural: `recycle()` zeroes the outgoing actor
+and critic columns *by construction*, so output is preserved however much of
+the network was destroyed. **A4 cannot fail on the failure mode it names.**
+Closed by V6 in `scripts/redo_arm_gate.py` — median recycled fraction *of the
+worst-hit layer* ≤ 0.25 — which VOIDs all three treatment arms. Revert-verified
+failures executed, not asserted (`tests/test_redo_armed_gate.py`, 22 tests):
+delete the `cum_recycled == 0` branch → 10/22 fail; delete V6 → 3/22 fail; pool
+fc1+fc2 instead of worst-hit-layer → 5/22 fail. That last is the vacuity V6's
+own first draft contained: pooling reported 20/96 = 21% (*passing*) for an
+event that reset 20 of 32 trunk units = 62%, because fc1 never goes dormant and
+a pooled denominator is permanent ballast.
+
+**THE ARMED CHECK WORKS — verified by running the inert case, twice.**
+`_REDO_ARM_DEADLINE_ITERS = 25` in `src/training/trainer.py`, hardcoded and
+deliberately **not** a config key, placed after the whole hook so an
+off-cadence iteration cannot buy past it. The full 60-env v27 recipe at v27's
+own tau=0.025 raised `RuntimeError: [redo] VOID … This run is VOID, not FAIL.
+Do not issue a verdict.` at iteration 26, the launcher aborted, and the log
+carries **zero** verdict/eval/`clear_rate` lines. Reproduced on an 8-env
+config. Cost of a mis-armed arm: **~10.6 minutes**, against the **7 h 10 m per
+arm** v27 and v28 each burned inert. Standing rule registered: *every preflight
+condition is evaluated at exactly the registered operating point; a preflight
+that passes at any other tau voids the arm it certified* — the structural fix
+for the V7 defect, whose pilot ran at tau 0.50, twenty times the operating
+point.
+
+**MECHANISM FINDINGS, banked at ~42 minutes of compute.** (1) **No dormancy
+substrate in fc1 at all** — 0/64 and 0/96 dormant at every tau from 0.025 to
+0.25 across all 86 measured iterations, score min never below 0.309. All ReDo
+activity is confined to the 32-unit trunk, so "recycle dormant neurons in a
+48k network" is in practice "periodically re-initialize part of a 32-unit
+bottleneck"; width does not change it. (2) **ReDo's identity-preservation
+guarantee does not hold under pre-activation LayerNorm** — the V7-era
+`agree ≥ 0.98` is unachievable at any firing tau on this stack. (3) **"tau=0.25
+is the smallest threshold that fires" is FALSE, and the DR's own range is
+partly reachable.** tau=0.15 fires from iter 4 (cum 176, 16/20 events). The
+untreated control's fc2 minimum falls below 0.15 on 22/26 iterations and below
+0.10 on 10/26 — so **tau=0.10, the TOP of the DR's prescribed 0.025–0.1 range,
+is reachable at a surgical dose (~1–3 units, 3–10% of trunk) from ~iter 16**,
+while tau=0.025 is genuinely unreachable (0/26 iterations reach even 0.05; run
+min 0.0794). The registered escalation ladder (0.25 → 0.30, ≥0.35 forbidden,
+no lower rung) points away from the only viable region. (4) **No fixed tau is
+a stable operating point** — the tail drifts monotonically (0.285 → 0.127 →
+0.101 → 0.079, still falling at iter 24); the registration budgeted 250
+iterations on a threshold measured over 2. (5) Directional, n=1, **not a
+verdict**: at iter 19 the control had advanced 14 ladder rungs (tau=224) to the
+treatment's 12 (tau=304), mean_return 692.2 vs 405.8. No hint of a large
+positive lever, and it licenses no claim.
+
+**WHAT n CANNOT CONCLUDE. n_effective = 0 scored seeds.** No ladder was walked
+and no honest episode was run, so the reported treatment and control figures of
+**0 mean NOT MEASURED**, not "measured a zero clear rate"; reading them as
+performance numbers would be a fabrication. A VOID carries strictly less
+inferential content than an underpowered FAIL, and **the DR's §6 fork is not
+entered — a VOID takes neither branch.** Had the campaign run, n=4 would have
+been powered only for a **≥ +0.25** shift; a +0.05–0.15 lever, the size the
+recovery assay's own ceiling analysis says is even available, would have been
+invisible; and with a ~25% per-seed collapse rate best-of-4 is a max statistic
+whose null already reaches ~0.50, so any 0.50–0.65 result is indistinguishable
+from seed noise.
+
+**NEXT, all cheap, none of it the 12 h budget (< 2 h total).** Replace the
+fixed tau with a **rank-based dose** (bottom-k of fc2, k ≈ 2–5), stable under
+the observed drift where no fixed threshold is; port the V6 over-dose ceiling
+into the **in-run** abort, since today only the post-hoc gate carries it;
+re-sweep the dose over **40–60** iterations, never 2; and test **tau ≈ 0.10**
+explicitly, which the registered ladder forbids reaching and which the data
+says is where the prescription as written may actually live.
+
+**STANDING PROHIBITION.** Nothing in v27, v28, or v30 may be cited as evidence
+for or against the plasticity-loss hypothesis. The hypothesis stands exactly
+where the DR left it on 2026-08-25: diagnosed, prescribed, and untested.

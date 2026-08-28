@@ -61,6 +61,39 @@ class RedoStats:
     max_dlogit: float
     fc1_indices: list[int] = field(default_factory=list)
     fc2_indices: list[int] = field(default_factory=list)
+    # Left tail of the dormancy-score distribution per layer (min, p5,
+    # p10). Telemetry only — never read by the recycle path. This is the
+    # number that says how far the population sits from any candidate
+    # tau, which is what separates "tau fires by luck near init" from
+    # "a real dormant tail exists on this architecture".
+    fc1_tail: tuple[float, float, float] = (float("nan"),) * 3
+    fc2_tail: tuple[float, float, float] = (float("nan"),) * 3
+
+
+def dormancy_scores(h: torch.Tensor) -> torch.Tensor:
+    """Per-unit dormancy scores of one layer per Sokar et al. Definition 1.
+
+    `h`: (B, H) post-activation sample batch. Returns the (H,) score
+    tensor s_i = E_x|h_i(x)| / mean_k E_x|h_k(x)|. A layer whose every
+    unit is exactly silent (mean of means == 0) scores all-zero, which
+    makes it entirely dormant at any tau >= 0.
+    """
+    if h.dim() != 2:
+        raise ValueError(f"expected (B, H) activations, got {tuple(h.shape)}")
+    per_unit = h.abs().mean(dim=0)  # E_x |h_i(x)|, shape (H,)
+    denom = float(per_unit.mean())
+    if denom == 0.0:
+        return torch.zeros_like(per_unit)
+    return per_unit / denom
+
+
+def score_tail(scores: torch.Tensor) -> tuple[float, float, float]:
+    """(min, p5, p10) of a layer's dormancy scores — telemetry only."""
+    if scores.numel() == 0:
+        return (float("nan"),) * 3
+    s = scores.detach().to(torch.float32).flatten()
+    q = torch.quantile(s, torch.tensor([0.05, 0.10], dtype=s.dtype))
+    return float(s.min()), float(q[0]), float(q[1])
 
 
 def dormant_indices(h: torch.Tensor, tau: float) -> torch.Tensor:
@@ -72,13 +105,7 @@ def dormant_indices(h: torch.Tensor, tau: float) -> torch.Tensor:
     A layer whose every unit is exactly silent (mean of means == 0)
     is entirely dormant.
     """
-    if h.dim() != 2:
-        raise ValueError(f"expected (B, H) activations, got {tuple(h.shape)}")
-    per_unit = h.abs().mean(dim=0)  # E_x |h_i(x)|, shape (H,)
-    denom = float(per_unit.mean())
-    if denom == 0.0:
-        return torch.arange(per_unit.shape[0], dtype=torch.int64)
-    score = per_unit / denom
+    score = dormancy_scores(h)
     return (score <= tau).nonzero(as_tuple=False).flatten().to(torch.int64)
 
 
@@ -213,8 +240,10 @@ def check_and_recycle(
     forward pass.
     """
     h1, h2, logits_pre = hidden_activations(net, sample_obs)
-    fc1_idx = dormant_indices(h1, tau)
-    fc2_idx = dormant_indices(h2, tau)
+    s1, s2 = dormancy_scores(h1), dormancy_scores(h2)
+    fc1_tail, fc2_tail = score_tail(s1), score_tail(s2)
+    fc1_idx = (s1 <= tau).nonzero(as_tuple=False).flatten().to(torch.int64)
+    fc2_idx = (s2 <= tau).nonzero(as_tuple=False).flatten().to(torch.int64)
     n_recycled = int(fc1_idx.numel() + fc2_idx.numel())
     agree, max_dlogit = 1.0, 0.0
     if n_recycled:
@@ -238,6 +267,8 @@ def check_and_recycle(
         max_dlogit=max_dlogit,
         fc1_indices=fc1_idx.tolist(),
         fc2_indices=fc2_idx.tolist(),
+        fc1_tail=fc1_tail,
+        fc2_tail=fc2_tail,
     )
 
 

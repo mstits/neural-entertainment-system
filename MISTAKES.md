@@ -12,10 +12,10 @@ one-line invariant only after recurring across 4–5 separate entries.
 | root cause | entries | deterministic enforcement |
 |---|---|---|
 | `[unverified-claim]` | **8** | no — judgement |
-| `[vacuous-gate]` | **7** | candidate — lint for `passed = not <coll>` |
+| `[vacuous-gate]` | **8** | candidate — lint for `passed = not <coll>`; and ask what the mechanism preserves *by construction* before registering a check on it |
 | `[weak-eval]` | **6** | partial — enforce min-n at the gate |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
-| `[inert-treatment]` | **4** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves; blind to a mechanism nothing imports |
+| `[inert-treatment]` | **5** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, and to one armed at a reachable-but-wrong dose |
 | `[stale-artifact]` | **4** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt |
 | `[process]` | 3 | — |
 | `[start-state]` | 2 | — |
@@ -34,6 +34,88 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-27 — [inert-treatment] The corrected operating point was wrong the same way, one rung down
+- **What happened:** The entry below — *"Registered a treatment at an operating
+  point its own statistic could not reach"* — diagnosed v27/v28 arming ReDo at
+  `tau=0.025` against a mechanism that first fires at 0.25. The registration
+  written to fix it (`docs/proposals/V30_REDO_ARMED_2026-08-27.md`) picked
+  `tau=0.25` and justified it as *"the SMALLEST threshold on the sweep that
+  fires at all: the minimum dose,"* explicitly accepting *"the inert-side risk,
+  deliberately."* Run for 20 iterations instead of 2
+  (`runs/v30_premise_falsifier_2026-08-27/`,
+  `docs/research/REDO_ACTUALLY_FIRES_2026-08-27.md`), tau=0.25 settles at a
+  **median 20 of 32 trunk units re-initialized every single iteration from iter
+  5 onward — 62.5%.** That is the regime the same registration named at
+  tau=0.50, called *"a per-iteration partial reset of two-thirds of the trunk …
+  the 'network reset' family the DR ruled INCOMPATIBLE,"* and wrote **"RISK I
+  REFUSE"** against. **The registered operating point landed in the registered
+  forbidden regime, and the risk actually taken was the opposite of the one
+  declared.** "0.25 is the smallest tau that fires" is also false: tau=0.15
+  fires from iter 4, and the untreated control's fc2 score minimum falls below
+  0.10 on 10 of 26 iterations.
+- **Root cause:** Not the threshold — the **measurement horizon**. Both
+  registrations set a threshold from a **2-iteration sweep taken near orthogonal
+  initialization** and then spent a 250-iteration budget against it. The
+  dormancy tail drifts monotonically downward through training (fc2 min 0.285 at
+  iter 0 → 0.127 at iter 5 → 0.101 at iter 15 → 0.079 at iter 24, **still
+  falling** where the measurement stops), so a *fixed* threshold is
+  mis-specified by construction: too high near init is inert, and the same
+  number becomes an ever-larger dose as training proceeds. The previous entry's
+  rule — check reachability *at the registered value* — was honoured here and
+  was not enough, because it was still checked **at iteration 0**.
+- **Consequence:** Every treatment arm is **VOID, not FAIL** — a FAIL at 62% of
+  the trunk reset per iteration cannot distinguish "plasticity was not the
+  barrier" from "ReDo damaged a healthy network," which is the exact disease the
+  registration existed to cure, arriving one layer deeper. Caught for ~42
+  minutes of pilot compute instead of the registered 12 h. The plasticity-loss
+  hypothesis remains **UNTESTED** — not by v27, not by v28, and not by v30.
+  Fifth entry on this tag.
+- **Rule (draft):** A reachability check at iteration 0 certifies iteration 0.
+  Any threshold on a statistic that **drifts with training** must be swept over
+  a horizon comparable to the run it governs (40–60 iterations, not 2) — or,
+  better, the registered variable should be the **dose** (recycle the bottom-k
+  units) with the threshold *derived* from it, which is stable under the drift
+  where no fixed threshold is. Enforcement shipped:
+  `_REDO_ARM_DEADLINE_ITERS = 25` raises `RuntimeError` in
+  `src/training/trainer.py` when an armed run reaches iter 25 with
+  `cum_recycled == 0` — verified by running the inert case, not by reasoning
+  about it (the full 60-env v27 recipe at tau=0.025 aborted at iter 26 with zero
+  verdict/eval/`clear_rate` lines in its log) — and `scripts/redo_arm_gate.py`
+  exits 2 with VOID on all 8 banked v27/v28 logs, structurally incapable of
+  printing PASS or FAIL for an unarmed seed.
+
+## 2026-08-27 — [vacuous-gate] An identity check the mechanism satisfies by construction
+- **What happened:** Abort A4 of the v30 registration voids the arm if the
+  median greedy-argmax agreement over the first 50 recycle events falls below
+  **0.60**, on the reasoning that a low-agreement step is *"a partial reset, not
+  a surgical intervention."* Measured over 20 iterations: **0.856** at width 64,
+  **0.901** at width 96, **0.950** at tau=0.15 — every arm passing comfortably
+  **while 38–62% of the trunk was re-initialized every iteration.**
+- **Root cause:** `recycle()` **zeroes the outgoing actor and critic weight
+  columns by construction**, so the network's output is approximately preserved
+  *however many hidden units were destroyed*. Agreement is structurally
+  insensitive to the dose. The gate measured a quantity the mechanism is
+  designed to hold constant, so it could not fail on the failure mode it names,
+  at any dose. The eighth vacuous gate on this ledger — written into a
+  registration whose entire brief was the previous seven, by work that quoted
+  them.
+- **Consequence:** Had the pilot not run, A4 would have certified a
+  62%-of-trunk-per-iteration partial network reset as a "surgical intervention"
+  and the 12 h campaign would have produced an uninterpretable FAIL that read as
+  evidence against the plasticity-loss hypothesis.
+- **Rule (draft):** Before registering a check, ask what the mechanism
+  *guarantees* about the quantity being checked. If the mechanism preserves it
+  by construction, the check is decorative — measure the thing the mechanism
+  does **not** control instead. Closed by V6 in `scripts/redo_arm_gate.py`:
+  median recycled fraction **of the worst-hit layer** ≤ 0.25, which VOIDs all
+  three treatment arms. Revert-verified, executed not asserted
+  (`tests/test_redo_armed_gate.py`, 22 tests): delete the `cum_recycled == 0`
+  branch → 10/22 fail; delete V6 → 3/22 fail; **pool fc1+fc2 instead of taking
+  the worst-hit layer → 5/22 fail** — that last being the vacuity V6's own first
+  draft contained, reporting 20/96 = 21% *passing* for an event that reset 20 of
+  32 trunk units, because fc1 never goes dormant and a pooled denominator is
+  permanent ballast that can never contribute to the numerator.
 
 ## 2026-08-27 — [inert-treatment] A mechanism can pass every arming check by never being imported
 - **What happened:** The DR never-executed audit

@@ -1,0 +1,74 @@
+
+===== pilot_tau0.25_h64  (20 checks) =====
+  cum_recycled            : 353
+  recycle events          : 19/20
+  first recycle at iter   : 1
+  units/event  min/med/max: 5/20.0/20  (trunk=32)
+  frac of trunk per event : med 0.625  max 0.625
+  units/iter at iter>=5   : med 20.0 (62% of trunk)
+  agree  min/med          : 0.7021/0.8564
+  max_dlogit max          : 0.8020
+  fc1 recycled (total)    : 0
+  fc2 score min: iter0 0.2848 -> final 0.0741 | run-min 0.0651
+  fc2 score min at iter>=5: med 0.0843  range 0.0651-0.1088
+  fc1 score min           : run-min 0.3095 (never dormant at any tau tested)
+    iters whose fc2 MIN <= 0.025 : 0/20
+    iters whose fc2 MIN <= 0.05  : 0/20
+    iters whose fc2 MIN <= 0.1   : 14/20
+    iters whose fc2 MIN <= 0.15  : 16/20
+    iters whose fc2 MIN <= 0.2   : 18/20
+    iters whose fc2 MIN <= 0.25  : 19/20
+
+===== pilot_tau0.25_h96  (20 checks) =====
+  cum_recycled            : 342
+  recycle events          : 19/20
+  first recycle at iter   : 1
+  units/event  min/med/max: 9/19.0/21  (trunk=32)
+  frac of trunk per event : med 0.594  max 0.656
+  units/iter at iter>=5   : med 19.0 (59% of trunk)
+  agree  min/med          : 0.5032/0.9011
+  max_dlogit max          : 0.7938
+  fc1 recycled (total)    : 0
+  fc2 score min: iter0 0.2578 -> final 0.0663 | run-min 0.0625
+  fc2 score min at iter>=5: med 0.0833  range 0.0625-0.1051
+  fc1 score min           : run-min 0.3153 (never dormant at any tau tested)
+    iters whose fc2 MIN <= 0.025 : 0/20
+    iters whose fc2 MIN <= 0.05  : 0/20
+    iters whose fc2 MIN <= 0.1   : 14/20
+    iters whose fc2 MIN <= 0.15  : 17/20
+    iters whose fc2 MIN <= 0.2   : 18/20
+    iters whose fc2 MIN <= 0.25  : 19/20
+
+===== pilot_tau0.15_h64  (20 checks) =====
+  cum_recycled            : 176
+  recycle events          : 16/20
+  first recycle at iter   : 4
+  units/event  min/med/max: 2/12.0/13  (trunk=32)
+  frac of trunk per event : med 0.375  max 0.406
+  units/iter at iter>=5   : med 12.0 (38% of trunk)
+  agree  min/med          : 0.8511/0.9501
+  max_dlogit max          : 0.9368
+  fc1 recycled (total)    : 0
+  fc2 score min: iter0 0.2848 -> final 0.0597 | run-min 0.0597
+  fc2 score min at iter>=5: med 0.0734  range 0.0597-0.0988
+  fc1 score min           : run-min 0.3095 (never dormant at any tau tested)
+    iters whose fc2 MIN <= 0.025 : 0/20
+    iters whose fc2 MIN <= 0.05  : 0/20
+    iters whose fc2 MIN <= 0.1   : 15/20
+    iters whose fc2 MIN <= 0.15  : 16/20
+    iters whose fc2 MIN <= 0.2   : 18/20
+    iters whose fc2 MIN <= 0.25  : 19/20
+
+===== control_tau0.025_h64_VOIDED  (26 checks) =====
+  cum_recycled            : 0
+  recycle events          : 0/26
+  first recycle at iter   : None
+  fc2 score min: iter0 0.2848 -> final 0.0811 | run-min 0.0794
+  fc2 score min at iter>=5: med 0.1014  range 0.0794-0.1272
+  fc1 score min           : run-min 0.3086 (never dormant at any tau tested)
+    iters whose fc2 MIN <= 0.025 : 0/26
+    iters whose fc2 MIN <= 0.05  : 0/26
+    iters whose fc2 MIN <= 0.1   : 10/26
+    iters whose fc2 MIN <= 0.15  : 22/26
+    iters whose fc2 MIN <= 0.2   : 24/26
+    iters whose fc2 MIN <= 0.25  : 25/26

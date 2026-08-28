@@ -89,6 +89,11 @@ log = logging.getLogger(__name__)
 # temporarily restores this value.
 _TORCH_DEFAULT_NUM_THREADS = torch.get_num_threads()
 
+# Iterations an armed ReDo run may go without a single recycle before it
+# is declared VOID (V30 registration, abort A2). Deliberately a module
+# constant and not a config key — see the raise site in the PPO loop.
+_REDO_ARM_DEADLINE_ITERS = 25
+
 
 def _safe_sample_from_logits(
     logits: torch.Tensor,
@@ -7852,16 +7857,49 @@ class Trainer:
                     self._redo_cum_recycled += _rd.recycled
                     log.info(
                         "[redo] iter %d: dormant fc1 %d/%d fc2 %d/%d "
-                        "recycled %d cum %d agree %.4f max_dlogit %.6f",
+                        "recycled %d cum %d agree %.4f max_dlogit %.6f "
+                        "tail fc1 %.4f/%.4f/%.4f fc2 %.4f/%.4f/%.4f",
                         global_it, _rd.dormant_fc1, _rd.hidden_dim,
                         _rd.dormant_fc2, _rd.trunk_dim, _rd.recycled,
                         self._redo_cum_recycled, _rd.agree, _rd.max_dlogit,
+                        _rd.fc1_tail[0], _rd.fc1_tail[1], _rd.fc1_tail[2],
+                        _rd.fc2_tail[0], _rd.fc2_tail[1], _rd.fc2_tail[2],
                     )
                     if _rd.recycled:
                         log.debug(
                             "[redo] recycled unit indices: fc1=%s fc2=%s",
                             _rd.fc1_indices, _rd.fc2_indices,
                         )
+
+            # ===== ReDo arming deadline (V30 registration, A2) =====
+            # A run in which ReDo never fires is VOID, not FAIL. v27 and
+            # v28 each burned 7h10m x 4 seeds at tau=0.025 — an order of
+            # magnitude below the firing threshold of this architecture —
+            # and then reported a FAIL that the treatment could not have
+            # produced. The deadline turns that class of run into a hard
+            # abort at ~25 iterations. The bound is a module constant, NOT
+            # a config key: 20 declared keys in the flagship recipe never
+            # executed, so a new declared key is a new way to be inert.
+            # Placed AFTER the whole hook (not inside the `_rd is not
+            # None` branch) so an off-cadence or skipped iteration cannot
+            # buy the run past the deadline.
+            if (
+                redo_on
+                and global_it >= _REDO_ARM_DEADLINE_ITERS
+                and self._redo_cum_recycled == 0
+            ):
+                raise RuntimeError(
+                    f"[redo] VOID: armed at tau={self.redo_tau:g} but "
+                    f"cum_recycled==0 after {global_it + 1} iterations. "
+                    "On this Linear->LayerNorm->SiLU trunk the fc2 "
+                    "dormancy score bottoms out near 0.08-0.13 once "
+                    "training is past ~iter 5 and never approaches 0.025; "
+                    "read the per-layer min/p5/p10 on the `[redo] iter` "
+                    "lines above to see where this run's tail actually "
+                    "sits and retarget tau by measurement. Receipts: "
+                    "runs/v30_premise_falsifier_2026-08-27/. This run is "
+                    "VOID, not FAIL. Do not issue a verdict."
+                )
 
             # ============== PR-MDP ADVERSARY UPDATE ==============
             # Plain PPO on the SAME rollout with negated rewards and its

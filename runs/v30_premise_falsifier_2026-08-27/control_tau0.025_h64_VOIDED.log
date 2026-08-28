@@ -1,0 +1,202 @@
+17:53:19 [INFO] train_game: [launcher] profile=pilot_C64.yaml game=V30 premise pilot C64 num_envs=60 iters=30 resume=False
+17:53:19 [INFO] src.training.trainer: [trainer] macOS malloc_zone_pressure_relief bound (all zones)
+17:53:19 [INFO] src.training.trainer: Deterministic seed set: 0
+17:53:19 [INFO] src.training.trainer: ROM roms/Super Mario Bros. (World).nes loaded: md5=8e3630186e35d477231bf8fd50e54cdd mapper=0 nes2.0=False. Add 'expected_md5: 8e3630186e35d477231bf8fd50e54cdd' to the profile to lock.
+17:53:19 [INFO] src.training.trainer: Tile mode active: encoder=smb_tiles_pos, base_feature_dim=178, frame_stack=4, total_feature_dim=712
+17:53:19 [INFO] src.training.trainer: Using device: cpu
+17:53:19 [INFO] src.training.trainer: CPU device: capped torch intra-op threads to 1 (default 12) — small-tensor thread sync costs more than the math
+17:53:19 [WARNING] src.training.trainer: ROM/profile mismatch: profile='v30 premise pilot c64' rom='super mario bros. (world)'. The reward function reads game-specific RAM addresses; a mismatch silently produces nonsense rewards (immediate 'death' on step 1, identical fitness across the population). Double-check the profile selection.
+17:53:19 [INFO] train_game: [launcher] checkpoint_dir = checkpoints/v30_premise_pilot_c64
+17:53:19 [INFO] train_game: [launcher] wrote run manifest: checkpoints/v30_premise_pilot_c64/run_manifest.json
+17:53:19 [INFO] src.training.trainer: [startup] metrics log reset + previous run archived: 0.00s
+17:53:19 [INFO] src.training.trainer: [startup] audio mixer built: 0.00s
+17:53:19 [INFO] src.training.trainer: [startup] pre-GA: 0.00s
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.trainer: [startup] GA init / resume: 0.08s
+[nes_core::Pool] start state runs/live_show/smb_4_4_micro/entrance_start.state: NCST binary format (21159 body bytes, 1 prefix strips)
+17:53:19 [INFO] src.training.trainer: Pool headless=ON (no frame sink) — skipping RGB frame render; policy obs (RAM / preprocessed) unaffected.
+17:53:19 [INFO] src.training.trainer: Pool skip_preprocess=ON (tile mode) — skipping the 84x84 gray+resize kernel; policy reads RAM (ram_snapshot).
+17:53:19 [INFO] src.training.trainer: Pool panic_isolation=OFF — production fast path. Worker panics may abort the process.
+17:53:19 [INFO] src.training.trainer: [startup] pool.start (workers spawned): 0.00s
+17:53:19 [INFO] src.training.trainer: [startup] reset_all (first frames published): 0.01s
+17:53:19 [INFO] src.training.trainer: [startup] ready — beginning training
+17:53:19 [INFO] src.training.trainer: [policy] class=TilePolicyNetwork params=48135 (hidden=64, trunk/gru=32, features=712, actions=6)
+17:53:19 [INFO] src.training.exploration_controller: [vanilla_ppo] RND enabled (tile_mlp): predictor=116544 params, intrinsic_coef=0.100, loss_coef=1.000
+17:53:19 [INFO] src.training.trainer: [redo] ENABLED tau=0.025 every_iters=1 scope=fc1,fc2 sample=4096 reset_moments=true
+17:53:19 [INFO] src.training.checkpoint_manager: [vanilla_ppo] wrote run manifest: checkpoints/v30_premise_pilot_c64/run_manifest.json
+17:53:19 [INFO] src.training.trainer: [vanilla_ppo] curriculum starting fresh at stage 0 (all envs train 1-1; advance when rolling-mean clear fraction over 5 iters >= 50%)
+17:53:19 [INFO] src.training.trainer: [backward] ENABLED: 785 states (15 MB) from checkpoints/backward_states/1-1-v27 | tau0=784 window=160 frames (40 entries) advance=+40 entries at >=0.20 over 30 attempts | entrance_weight=1.00
+17:53:19 [INFO] src.training.trainer: [vanilla_ppo] STICKY TRAINING on: p=0.25 (executed-action log-probs; eval protocol parity) boundary_reset=True
+17:53:52 [INFO] src.training.trainer: [redo] iter 0: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.3095/0.4783/0.5163 fc2 0.2848/0.3080/0.3224
+17:53:52 [INFO] src.training.trainer: [vanilla_ppo] iter 0: completed_eps=140  mean_return=676.5  mean_len=324.1  in_progress=60  ip_return=490.6  ip_len=267.7  clears=123  loss=4.4059  policy=0.0937  value=17.2669  entropy=1.7808
+17:53:52 [INFO] src.training.trainer: [vanilla_ppo] iter 0 throughput: 1859 env-steps/s | 7437 NES-fps | 124x realtime | 33.04 s/iter
+17:53:52 [INFO] src.training.trainer: [backward] iter 0: tau=744/784 (step 717 frame 2868 gx 2928) trailing 2/2=1.00 (advance at >=0.20 over 30) advances=1 | entrance 0/4=0.000 | truncated 0
+17:54:27 [INFO] src.training.trainer: [redo] iter 1: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4107/0.5271/0.5547 fc2 0.2248/0.2385/0.2468
+17:54:27 [INFO] src.training.trainer: [vanilla_ppo] iter 1: completed_eps=149  mean_return=660.3  mean_len=299.6  in_progress=60  ip_return=715.1  ip_len=280.0  clears=121  loss=4.5652  policy=-0.0676  value=18.5525  entropy=1.7513
+17:54:27 [INFO] src.training.trainer: [vanilla_ppo] iter 1 throughput: 1799 env-steps/s | 7196 NES-fps | 120x realtime | 34.15 s/iter
+17:54:27 [INFO] src.training.trainer: [backward] iter 1: tau=664/784 (step 637 frame 2548 gx 2602) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=3 | entrance 0/7=0.000 | truncated 13
+17:54:59 [INFO] src.training.trainer: [redo] iter 2: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4603/0.5337/0.5558 fc2 0.1773/0.1946/0.2003
+17:54:59 [INFO] src.training.trainer: [vanilla_ppo] iter 2: completed_eps=236  mean_return=508.9  mean_len=191.8  in_progress=60  ip_return=798.9  ip_len=269.6  clears=81  loss=4.4084  policy=-0.0282  value=17.7656  entropy=1.7194
+17:54:59 [INFO] src.training.trainer: [vanilla_ppo] iter 2 throughput: 1868 env-steps/s | 7472 NES-fps | 125x realtime | 32.89 s/iter
+17:54:59 [INFO] src.training.trainer: [backward] iter 2: tau=584/784 (step 559 frame 2236 gx 2357) trailing 1/30=0.03 (advance at >=0.20 over 30) advances=5 | entrance 0/10=0.000 | truncated 31
+17:55:32 [INFO] src.training.trainer: [redo] iter 3: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4824/0.5509/0.5627 fc2 0.1572/0.1603/0.1696
+17:55:32 [INFO] src.training.trainer: [vanilla_ppo] iter 3: completed_eps=189  mean_return=665.7  mean_len=257.9  in_progress=60  ip_return=577.2  ip_len=211.5  clears=52  loss=4.3886  policy=0.0202  value=17.4945  entropy=1.6905
+17:55:32 [INFO] src.training.trainer: [vanilla_ppo] iter 3 throughput: 1906 env-steps/s | 7623 NES-fps | 127x realtime | 32.24 s/iter
+17:55:32 [INFO] src.training.trainer: [backward] iter 3: tau=504/784 (step 479 frame 1916 gx 2177) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=7 | entrance 0/17=0.000 | truncated 55
+17:56:05 [INFO] src.training.trainer: [redo] iter 4: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4175/0.5344/0.5553 fc2 0.1448/0.1486/0.1545
+17:56:05 [INFO] src.training.trainer: [vanilla_ppo] iter 4: completed_eps=265  mean_return=582.4  mean_len=185.1  in_progress=60  ip_return=687.4  ip_len=206.6  clears=43  loss=5.4336  policy=0.0195  value=21.6743  entropy=1.6580
+17:56:05 [INFO] src.training.trainer: [vanilla_ppo] iter 4 throughput: 1844 env-steps/s | 7376 NES-fps | 123x realtime | 33.32 s/iter
+17:56:05 [INFO] src.training.trainer: [backward] iter 4: tau=424/784 (step 404 frame 1616 gx 1894) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=9 | entrance 0/24=0.000 | truncated 99
+17:56:39 [INFO] src.training.trainer: [redo] iter 5: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4112/0.5130/0.5927 fc2 0.1272/0.1325/0.1347
+17:56:39 [INFO] src.training.trainer: [vanilla_ppo] iter 5: completed_eps=502  mean_return=424.2  mean_len=97.9  in_progress=60  ip_return=791.5  ip_len=204.8  clears=35  loss=8.3728  policy=-0.1137  value=33.9571  entropy=1.5954
+17:56:39 [INFO] src.training.trainer: [vanilla_ppo] iter 5 throughput: 1836 env-steps/s | 7345 NES-fps | 122x realtime | 33.46 s/iter
+17:56:39 [INFO] src.training.trainer: [backward] iter 5: tau=424/784 (step 404 frame 1616 gx 1894) trailing 3/30=0.10 (advance at >=0.20 over 30) advances=9 | entrance 0/43=0.000 | truncated 147
+17:57:12 [INFO] src.training.trainer: [redo] iter 6: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4422/0.5767/0.6118 fc2 0.1200/0.1240/0.1287
+17:57:12 [INFO] src.training.trainer: [vanilla_ppo] iter 6: completed_eps=806  mean_return=357.8  mean_len=67.6  in_progress=60  ip_return=547.0  ip_len=115.9  clears=21  loss=9.5692  policy=0.0895  value=37.9274  entropy=1.5755
+17:57:12 [INFO] src.training.trainer: [vanilla_ppo] iter 6 throughput: 1823 env-steps/s | 7294 NES-fps | 122x realtime | 33.69 s/iter
+17:57:12 [INFO] src.training.trainer: [backward] iter 6: tau=384/784 (step 368 frame 1472 gx 1664) trailing 1/30=0.03 (advance at >=0.20 over 30) advances=10 | entrance 0/67=0.000 | truncated 189
+17:57:45 [INFO] src.training.trainer: [redo] iter 7: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4597/0.5761/0.6001 fc2 0.1104/0.1203/0.1256
+17:57:45 [INFO] src.training.trainer: [vanilla_ppo] iter 7: completed_eps=731  mean_return=359.9  mean_len=69.2  in_progress=60  ip_return=812.4  ip_len=181.2  clears=25  loss=12.2468  policy=0.0762  value=48.6894  entropy=1.5568
+17:57:45 [INFO] src.training.trainer: [vanilla_ppo] iter 7 throughput: 1872 env-steps/s | 7487 NES-fps | 125x realtime | 32.82 s/iter
+17:57:45 [INFO] src.training.trainer: [backward] iter 7: tau=384/784 (step 368 frame 1472 gx 1664) trailing 1/30=0.03 (advance at >=0.20 over 30) advances=10 | entrance 0/91=0.000 | truncated 244
+17:58:19 [INFO] src.training.trainer: [redo] iter 8: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4305/0.6557/0.6698 fc2 0.1066/0.1250/0.1341
+17:58:19 [INFO] src.training.trainer: [vanilla_ppo] iter 8: completed_eps=612  mean_return=420.8  mean_len=88.7  in_progress=60  ip_return=623.0  ip_len=119.1  clears=11  loss=8.6219  policy=-0.0525  value=34.7075  entropy=1.5832
+17:58:19 [INFO] src.training.trainer: [vanilla_ppo] iter 8 throughput: 1842 env-steps/s | 7367 NES-fps | 123x realtime | 33.36 s/iter
+17:58:19 [INFO] src.training.trainer: [backward] iter 8: tau=344/784 (step 332 frame 1328 gx 1338) trailing 2/30=0.07 (advance at >=0.20 over 30) advances=11 | entrance 1/102=0.010 | truncated 293
+17:58:51 [INFO] src.training.trainer: [redo] iter 9: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.5130/0.5705/0.6476 fc2 0.1267/0.1452/0.1504
+17:58:51 [INFO] src.training.trainer: [vanilla_ppo] iter 9: completed_eps=626  mean_return=345.4  mean_len=90.5  in_progress=60  ip_return=431.4  ip_len=80.1  clears=4  loss=6.7665  policy=-0.0621  value=27.3260  entropy=1.5919
+17:58:51 [INFO] src.training.trainer: [vanilla_ppo] iter 9 throughput: 1920 env-steps/s | 7678 NES-fps | 128x realtime | 32.01 s/iter
+17:58:51 [INFO] src.training.trainer: [backward] iter 9: tau=304/784 (step 295 frame 1180 gx 1101) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=12 | entrance 1/114=0.009 | truncated 347
+17:59:25 [INFO] src.training.trainer: [redo] iter 10: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.5343/0.6189/0.6327 fc2 0.1215/0.1397/0.1507
+17:59:25 [INFO] src.training.trainer: [vanilla_ppo] iter 10: completed_eps=618  mean_return=371.8  mean_len=90.8  in_progress=60  ip_return=422.1  ip_len=88.7  clears=6  loss=7.4618  policy=0.0725  value=29.5704  entropy=1.5908
+17:59:25 [INFO] src.training.trainer: [vanilla_ppo] iter 10 throughput: 1783 env-steps/s | 7134 NES-fps | 119x realtime | 34.45 s/iter
+17:59:25 [INFO] src.training.trainer: [backward] iter 10: tau=304/784 (step 295 frame 1180 gx 1101) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=12 | entrance 1/130=0.008 | truncated 405
+17:59:25 [INFO] src.training.checkpoint_manager: [vanilla_ppo] saved checkpoint: checkpoints/v30_premise_pilot_c64/vanilla_ppo_iter_00010.pt
+17:59:59 [INFO] src.training.trainer: [redo] iter 11: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4904/0.5919/0.6295 fc2 0.1170/0.1353/0.1445
+17:59:59 [INFO] src.training.trainer: [vanilla_ppo] iter 11: completed_eps=627  mean_return=376.1  mean_len=89.9  in_progress=60  ip_return=481.2  ip_len=84.8  clears=3  loss=10.0786  policy=-0.0629  value=40.5770  entropy=1.5460
+17:59:59 [INFO] src.training.trainer: [vanilla_ppo] iter 11 throughput: 1819 env-steps/s | 7276 NES-fps | 121x realtime | 33.78 s/iter
+17:59:59 [INFO] src.training.trainer: [backward] iter 11: tau=304/784 (step 295 frame 1180 gx 1101) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=12 | entrance 1/142=0.007 | truncated 462
+18:00:33 [INFO] src.training.trainer: [redo] iter 12: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.5323/0.5672/0.6208 fc2 0.1168/0.1316/0.1382
+18:00:33 [INFO] src.training.trainer: [vanilla_ppo] iter 12: completed_eps=608  mean_return=416.9  mean_len=94.0  in_progress=60  ip_return=415.1  ip_len=71.2  clears=6  loss=6.8555  policy=-0.0414  value=27.6000  entropy=1.5551
+18:00:33 [INFO] src.training.trainer: [vanilla_ppo] iter 12 throughput: 1804 env-steps/s | 7214 NES-fps | 120x realtime | 34.07 s/iter
+18:00:33 [INFO] src.training.trainer: [backward] iter 12: tau=304/784 (step 295 frame 1180 gx 1101) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=12 | entrance 1/159=0.006 | truncated 520
+18:01:06 [INFO] src.training.trainer: [redo] iter 13: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.5251/0.6300/0.6851 fc2 0.1222/0.1302/0.1452
+18:01:06 [INFO] src.training.trainer: [vanilla_ppo] iter 13: completed_eps=583  mean_return=445.9  mean_len=98.6  in_progress=60  ip_return=373.0  ip_len=66.1  clears=6  loss=10.2182  policy=0.0687  value=40.6075  entropy=1.5103
+18:01:06 [INFO] src.training.trainer: [vanilla_ppo] iter 13 throughput: 1851 env-steps/s | 7405 NES-fps | 123x realtime | 33.19 s/iter
+18:01:06 [INFO] src.training.trainer: [backward] iter 13: tau=304/784 (step 295 frame 1180 gx 1101) trailing 1/30=0.03 (advance at >=0.20 over 30) advances=12 | entrance 1/173=0.006 | truncated 579
+18:01:40 [INFO] src.training.trainer: [redo] iter 14: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.5506/0.6210/0.6434 fc2 0.1159/0.1255/0.1317
+18:01:40 [INFO] src.training.trainer: [vanilla_ppo] iter 14: completed_eps=552  mean_return=466.0  mean_len=98.7  in_progress=60  ip_return=654.4  ip_len=116.2  clears=7  loss=8.3160  policy=-0.0324  value=33.4052  entropy=1.5381
+18:01:40 [INFO] src.training.trainer: [vanilla_ppo] iter 14 throughput: 1826 env-steps/s | 7302 NES-fps | 122x realtime | 33.65 s/iter
+18:01:40 [INFO] src.training.trainer: [backward] iter 14: tau=304/784 (step 295 frame 1180 gx 1101) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=12 | entrance 1/184=0.005 | truncated 638
+18:02:26 [INFO] src.training.trainer: [redo] iter 15: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.5288/0.5713/0.6117 fc2 0.1014/0.1174/0.1252
+18:02:26 [INFO] src.training.trainer: [vanilla_ppo] iter 15: completed_eps=444  mean_return=624.0  mean_len=123.6  in_progress=60  ip_return=651.2  ip_len=109.4  clears=7  loss=9.5727  policy=0.0378  value=38.1481  entropy=1.4922
+18:02:26 [INFO] src.training.trainer: [vanilla_ppo] iter 15 throughput: 1336 env-steps/s | 5346 NES-fps | 89x realtime | 45.97 s/iter
+18:02:26 [INFO] src.training.trainer: [backward] iter 15: tau=264/784 (step 255 frame 1020 gx 1055) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=13 | entrance 1/194=0.005 | truncated 692
+18:03:12 [INFO] src.training.trainer: [redo] iter 16: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4645/0.5946/0.6387 fc2 0.0967/0.1136/0.1181
+18:03:12 [INFO] src.training.trainer: [vanilla_ppo] iter 16: completed_eps=459  mean_return=602.3  mean_len=113.6  in_progress=60  ip_return=837.5  ip_len=155.1  clears=9  loss=11.0584  policy=0.0248  value=44.1453  entropy=1.4622
+18:03:12 [INFO] src.training.trainer: [vanilla_ppo] iter 16 throughput: 1332 env-steps/s | 5326 NES-fps | 89x realtime | 46.14 s/iter
+18:03:12 [INFO] src.training.trainer: [backward] iter 16: tau=264/784 (step 255 frame 1020 gx 1055) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=13 | entrance 1/200=0.005 | truncated 749
+18:03:58 [INFO] src.training.trainer: [redo] iter 17: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.5195/0.5996/0.6426 fc2 0.0979/0.1116/0.1137
+18:03:58 [INFO] src.training.trainer: [vanilla_ppo] iter 17: completed_eps=467  mean_return=592.9  mean_len=114.1  in_progress=60  ip_return=705.2  ip_len=135.8  clears=7  loss=10.4566  policy=-0.1369  value=42.3814  entropy=1.3893
+18:03:58 [INFO] src.training.trainer: [vanilla_ppo] iter 17 throughput: 1337 env-steps/s | 5347 NES-fps | 89x realtime | 45.96 s/iter
+18:03:58 [INFO] src.training.trainer: [backward] iter 17: tau=224/784 (step 216 frame 864 gx 898) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=14 | entrance 1/215=0.005 | truncated 801
+18:04:45 [INFO] src.training.trainer: [redo] iter 18: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.5165/0.6013/0.6508 fc2 0.0944/0.1037/0.1043
+18:04:45 [INFO] src.training.trainer: [vanilla_ppo] iter 18: completed_eps=474  mean_return=628.0  mean_len=113.8  in_progress=60  ip_return=747.2  ip_len=124.7  clears=7  loss=12.5517  policy=0.0704  value=49.9340  entropy=1.3682
+18:04:45 [INFO] src.training.trainer: [vanilla_ppo] iter 18 throughput: 1319 env-steps/s | 5274 NES-fps | 88x realtime | 46.60 s/iter
+18:04:45 [INFO] src.training.trainer: [backward] iter 18: tau=224/784 (step 216 frame 864 gx 898) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=14 | entrance 1/232=0.004 | truncated 856
+18:05:33 [INFO] src.training.trainer: [redo] iter 19: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.5689/0.6401/0.6671 fc2 0.0965/0.1031/0.1050
+18:05:33 [INFO] src.training.trainer: [vanilla_ppo] iter 19: completed_eps=430  mean_return=692.2  mean_len=125.9  in_progress=60  ip_return=675.3  ip_len=121.6  clears=10  loss=9.1784  policy=-0.0203  value=36.8038  entropy=1.3463
+18:05:33 [INFO] src.training.trainer: [vanilla_ppo] iter 19 throughput: 1272 env-steps/s | 5088 NES-fps | 85x realtime | 48.30 s/iter
+18:05:33 [INFO] src.training.trainer: [backward] iter 19: tau=224/784 (step 216 frame 864 gx 898) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=14 | entrance 1/244=0.004 | truncated 913
+18:06:05 [INFO] src.training.trainer: [redo] iter 20: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4797/0.6214/0.6466 fc2 0.0999/0.1035/0.1070
+18:06:05 [INFO] src.training.trainer: [vanilla_ppo] iter 20: completed_eps=375  mean_return=747.2  mean_len=134.3  in_progress=60  ip_return=962.7  ip_len=184.6  clears=14  loss=10.4715  policy=-0.0610  value=42.1387  entropy=1.3266
+18:06:05 [INFO] src.training.trainer: [vanilla_ppo] iter 20 throughput: 1954 env-steps/s | 7816 NES-fps | 130x realtime | 31.44 s/iter
+18:06:05 [INFO] src.training.trainer: [backward] iter 20: tau=224/784 (step 216 frame 864 gx 898) trailing 2/30=0.07 (advance at >=0.20 over 30) advances=14 | entrance 1/248=0.004 | truncated 969
+18:06:05 [INFO] src.training.checkpoint_manager: [vanilla_ppo] saved checkpoint: checkpoints/v30_premise_pilot_c64/vanilla_ppo_iter_00020.pt
+18:06:36 [INFO] src.training.trainer: [redo] iter 21: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.5611/0.5959/0.6457 fc2 0.0961/0.0972/0.1043
+18:06:36 [INFO] src.training.trainer: [vanilla_ppo] iter 21: completed_eps=374  mean_return=737.3  mean_len=135.9  in_progress=60  ip_return=919.5  ip_len=177.1  clears=14  loss=12.4074  policy=-0.1390  value=50.1938  entropy=1.3004
+18:06:36 [INFO] src.training.trainer: [vanilla_ppo] iter 21 throughput: 1939 env-steps/s | 7755 NES-fps | 129x realtime | 31.69 s/iter
+18:06:36 [INFO] src.training.trainer: [backward] iter 21: tau=184/784 (step 181 frame 724 gx 747) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=15 | entrance 1/257=0.004 | truncated 1021
+18:07:07 [INFO] src.training.trainer: [redo] iter 22: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.4053/0.6095/0.6408 fc2 0.0932/0.0937/0.0956
+18:07:07 [INFO] src.training.trainer: [vanilla_ppo] iter 22: completed_eps=322  mean_return=850.0  mean_len=165.3  in_progress=60  ip_return=762.2  ip_len=136.7  clears=11  loss=11.1753  policy=-0.0398  value=44.8657  entropy=1.2503
+18:07:07 [INFO] src.training.trainer: [vanilla_ppo] iter 22 throughput: 1986 env-steps/s | 7943 NES-fps | 132x realtime | 30.94 s/iter
+18:07:07 [INFO] src.training.trainer: [backward] iter 22: tau=104/784 (step 101 frame 404 gx 649) trailing 0/4=0.00 (advance at >=0.20 over 30) advances=17 | entrance 1/267=0.004 | truncated 1073
+18:07:38 [INFO] src.training.trainer: [redo] iter 23: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.3537/0.5363/0.6822 fc2 0.0852/0.0903/0.0938
+18:07:38 [INFO] src.training.trainer: [vanilla_ppo] iter 23: completed_eps=331  mean_return=853.9  mean_len=151.3  in_progress=60  ip_return=1026.3  ip_len=189.1  clears=14  loss=12.0216  policy=0.0202  value=48.0113  entropy=1.2443
+18:07:38 [INFO] src.training.trainer: [vanilla_ppo] iter 23 throughput: 1978 env-steps/s | 7913 NES-fps | 132x realtime | 31.06 s/iter
+18:07:38 [INFO] src.training.trainer: [backward] iter 23: tau=104/784 (step 101 frame 404 gx 649) trailing 2/30=0.07 (advance at >=0.20 over 30) advances=17 | entrance 1/273=0.004 | truncated 1131
+18:08:10 [INFO] src.training.trainer: [redo] iter 24: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.3766/0.6026/0.6554 fc2 0.0794/0.0822/0.0845
+18:08:10 [INFO] src.training.trainer: [vanilla_ppo] iter 24: completed_eps=359  mean_return=868.5  mean_len=141.9  in_progress=60  ip_return=1073.4  ip_len=174.8  clears=5  loss=12.2454  policy=-0.0155  value=49.0507  entropy=1.2497
+18:08:10 [INFO] src.training.trainer: [vanilla_ppo] iter 24 throughput: 1978 env-steps/s | 7912 NES-fps | 132x realtime | 31.06 s/iter
+18:08:10 [INFO] src.training.trainer: [backward] iter 24: tau=64/784 (step 63 frame 252 gx 433) trailing 0/30=0.00 (advance at >=0.20 over 30) advances=18 | entrance 1/282=0.004 | truncated 1183
+18:08:41 [INFO] src.training.trainer: [redo] iter 25: dormant fc1 0/64 fc2 0/32 recycled 0 cum 0 agree 1.0000 max_dlogit 0.000000 tail fc1 0.3086/0.5832/0.6549 fc2 0.0811/0.0874/0.0898
+18:08:41 [ERROR] train_game: [supervisor] trainer crashed (attempt 1/0):
+Traceback (most recent call last):
+  File "/Users/stits/Documents/macos-emulation-and-training/scripts/train_game.py", line 820, in main
+    trainer.run(
+  File "/Users/stits/Documents/macos-emulation-and-training/src/training/trainer.py", line 2073, in run
+    finally:
+        ^^^^
+  File "/Users/stits/Documents/macos-emulation-and-training/src/training/trainer.py", line 7899, in _run_vanilla_ppo
+RuntimeError: [redo] VOID: armed at tau=0.025 but cum_recycled==0 after 26 iterations. ReDo does not fire below tau~0.25 on Linear->LayerNorm->SiLU; receipts: runs/v27_fresh_recovery/preflight/redo_forced/isolate_tau*.log. This run is VOID, not FAIL. Do not issue a verdict.
+
+18:08:41 [ERROR] train_game: [supervisor] restart budget exhausted — aborting
