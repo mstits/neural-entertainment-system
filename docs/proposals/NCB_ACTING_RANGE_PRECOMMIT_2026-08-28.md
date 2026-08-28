@@ -300,3 +300,30 @@ retirement is the weaker and fully verified one: the per-row delta is never
 0, so consecutive observations are never bitwise identical.** Any future
 check must build on "never 0," not on "+2 always."
 
+## 11. Final census, verified exhaustively — and two truncated-view errors, one each
+
+**The load-bearing property now holds by exhaustive enumeration, not sampling:**
+across all 26 banks, zero bitwise-identical rows and zero delta==0 rows.
+Verified independently by both parties.
+
+**Corrected census of clock anomalies (mid-episode, non-wrap):**
+- **4,680 scripted rows** — exactly 26 x 180, the +1/+3/reset triple at
+  positions 27/30/115, one per entrance episode, every bank.
+- **10 off-script rows in 6 of 26 banks** — all entrance-sourced, all in the
+  position range 461-535, deltas (mod 128) {14, 22, 60, 64, 72, 78, 86} plus
+  one +1/+3 pair recurring at positions 500/503 of one iter-150 episode. The
+  recurrence of the scripted pair at a movable location is further evidence for
+  the mechanism: a game-writable counter driven by scripted phases, which can
+  occur wherever the phase does.
+
+**Two truncated-view errors, symmetric, recorded at their authors' requests:**
+- The reviewer's "exactly 60/60/60, identical across banks" came from the top
+  entries of a delta distribution read as a census; bank 130 carries 182.
+- The author's rebuttal scan then nearly reported ~24 PC-rung anomalies the
+  reviewer had "missed" — which were episode-BOUNDARY rows (the clear
+  transition) admitted by an unfiltered scan. Under the census's own
+  mid-episode definition they vanish and the reviewer's numbers are exact.
+The same failure in mirror image, hours apart, on the same data: **a census is
+defined by its filter, and comparing censuses under different filters
+manufactures discrepancies in either direction.**
+
