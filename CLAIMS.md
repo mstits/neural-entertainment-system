@@ -3750,6 +3750,37 @@ is an operational fault, so the retirement fires on a sound run:
   the rung-933 regression (clears 8.3 % → 16.7 % → 0 % across the arc), which
   still has no instrument pointed at it.
 
+ADDENDUM VADV-4 (2026-08-28, landing —
+`docs/research/LANE_A_REPAIRED_AND_BOTTOMK_2026-08-28.md` §2) — **the
+confound named in VADV-3 is also, and more simply, a power asymmetry: the
+positive control was never powered to pass.** The verdict does not change
+(§11 fires on both the strict A2 path and the computed-signature path, and
+this touches neither), but what the retirement forecloses does.
+
+Computed over `runs/vadv_onpolicy_rerun/arc_scored.json`: `WALL` carries a
+median **41,346 rows in 197 action cells**; `PC_B5` carries **3,106 in 47** —
+a **13.3×** asymmetry nothing in the registration controls. A permutation null
+shrinks with n, so `WALL`'s LIVE bar sits at a median q97.5 of **0.026** and
+`PC_B5`'s at **0.059** — more than twice as high — on effect sizes that
+broadly overlap (η² medians 0.0689 vs 0.0420; within 0.02 of each other at 10
+of 26 iterates). **`PC_B5`'s own η² would clear the LIVE bar at 24 of 26
+iterates if it were scored against `WALL`'s null.** The asymmetry is
+structural and visible in the rollout protocol: 40 `WALL_SRC` episodes per
+iterate, every one truncated at a median 1,041 steps while pinned at gx 2674,
+against 24 `PC_SRC` episodes terminating in a median 190 steps because they
+travel and clear.
+
+**Consequence, binding on any revival.** A successor that merely gave the
+critic training exposure on the PC rungs would still score the positive
+control against a null built from a seventh of the data. Any different
+instrument must **equalize power between the regions it contrasts** — equal
+rows, equal cells, or a null pooled across both — before it may claim a live
+control. Neither named candidate (counterfactual-restart assay;
+on-policy reward-decomposition) currently meets that precondition, and it is
+registered nowhere. Scope: computed from region row counts, cell counts, η²
+and null quantiles as the scorer recorded them; the permutation nulls and η²
+were **not** recomputed from the raw `.npz`.
+
 ### 3. Contra clear-detector nulls — VOID, and the guard that should have caught it is inert
 
 Already self-caught for Contra specifically at
@@ -4078,3 +4109,160 @@ EXECUTED-AND-NEGATIVE; it was never executed.** The hypothesis stands exactly
 where the DR left it: diagnosed, prescribed, and untested — now with the
 additional, separately-earned finding that the fixed-threshold *form* of the
 prescribed intervention cannot be run surgically on this architecture at all.
+
+## RUNG-933 CLEAR-RATE REGRESSION 2026-08-28 — CLAIMED, as a measurement, no ledger status
+
+Receipt: `runs/vadv_onpolicy_rerun/probe_933.json` (and the `probe` field of
+every fifth entry in `collect_summary.json`). Write-ups:
+`docs/research/LANE_A_REPAIRED_AND_BOTTOMK_2026-08-28.md` §3,
+`docs/research/VADV_ONPOLICY_RERUN_2026-08-28.md` §6. Registered as
+diagnostic-only in `docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md`,
+carried forward unchanged by the rerun addendum (`77b8549`).
+
+**THE MEASUREMENT.** A diagnostic probe restarts 24 episodes from rung 933 —
+a rung the 1-2 backward curriculum demonstrably advanced through — at five
+sampled iterates of the same 260-iteration arc:
+
+| iter | 10 | 70 | 130 | 190 | 250 |
+|---|---|---|---|---|---|
+| clear rate | 8.3 % | 12.5 % | 16.7 % | 16.7 % | **0 %** |
+| deposits in `WALL` (of 24) | 22 | 21 | 20 | 20 | **24** |
+| `max_gx` | 3266 | 3266 | 3266 | 3266 | **2674** |
+
+It rises, plateaus, and then goes to zero; at iter 250 **every one of the 24
+episodes deposits at the gx-2674 wall.** Measured once on the 2026-08-27
+collection and again, bit-identically, on the repaired 2026-08-28 collection
+(the collector is deterministic seed-for-seed; 3,224/3,224 episode outcomes
+match across the two). **Twice measured, and unclaimed both times** — it is
+claimed here so it stops being a footnote in two VOID write-ups.
+
+**WHAT IT IS.** A behavioural measurement under the **collector's restart
+protocol** — 24 episodes per sampled iterate, restarted at rung 933, greedy
+policy, no sticky, no jitter, `max_steps` as the collector sets it. It is
+**not** an honest-protocol result and carries **no ledger status**: not
+LEARNED, not EXHIBITION, not a capability claim in either direction. The
+denominators are 24, which is below the project's own ≥ 20-episode acceptance
+floor only in the sense that it clears it barely; no Wilson interval is quoted
+because none was registered, and 4/24 → 0/24 is a difference this n cannot
+call significant on its own.
+
+**WHAT IS NOT CLAIMED, any of it in writing being a fabrication:** that the
+policy "got worse", that the curriculum caused it, that it is catastrophic
+forgetting, that it is plasticity loss, that it generalises past rung 933,
+past 1-2, or past this arc. Five points on one seed of one arc, on a rung the
+arc's own cursor had long since left behind, with no control and no instrument
+pointed at it. What is claimed is the reading itself and its reproducibility.
+
+**STATUS: STANDING UNINSTRUMENTED LEAD.** No instrument is authorised here.
+It is recorded as the most concrete unexplained behavioural signal the two
+V_adv collections produced, and it survives the retirement of the instrument
+that happened to be running when it was taken.
+
+## V32 REDO BOTTOM-K 2026-08-28 — ladder resolved, campaign not run, verdict VOID-UNDERPOWERED
+
+Full write-up: `docs/research/V32_PHASE_R_ADJUDICATION_2026-08-28.md`; landed
+in `docs/research/LANE_A_REPAIRED_AND_BOTTOMK_2026-08-28.md` §§4-5.
+Registration adjudicated: `docs/proposals/V32_REDO_BOTTOM_K_2026-08-28.md`
+(commit `e9cc5ed`), every numeral fixed before compute. Receipts:
+`runs/v32_redo_bottom_k_2026-08-28/{smoke,phase_r,phase_r2}/`. Machinery:
+commits `e9cc5ed`, `0d4835b`, `86cebb2`.
+
+**THE HEADLINE. v31 forbade fixed-tau ReDo and licensed exactly one successor
+— recycle the bottom-k units by dormancy RANK, which caps the dose by
+construction. It was registered in full before compute, implemented flag-gated
+and default-off, and both rungs of its registered ladder were run. Rung 1
+(k = 2, C = 5) NO-GOes on turnover; rung 2 (k = 4, C = 10) GOes. Zero seeds
+were launched. Total compute: 0.96 h against a 13.0 h ceiling.**
+
+**VERDICT: VOID-UNDERPOWERED.** The registered bar was **Θ ≥ 0.80 PASS /
+Θ ≤ 0.767 FAIL**, Θ = best-of-4 over seeds of the cross-fit split-sample
+honest clear rate. `armed = 0`, `scored = 0`, **Θ does not exist**; §5's
+disposition for fewer than four ARMED-and-scored seeds is VOID-UNDERPOWERED
+with per-seed numbers banked individually, of which there are none. **The bars
+did not move: 0.80 and 0.767 stand untouched, the 0.05 winner's-curse budget
+is unspent, and Δ is NOT COMPUTED.**
+
+**RUNG 1, (k = 2, C = 5) — NO-GO-R4 (`VOID-NO-TURNOVER`).** 60 iterations at
+exactly the registered operating point. R1 REACHED, R2 ARTIFACT-MATCH and R3
+DOSE all pass: 12 recycle events on 12 cadenced checks, `cum_recycled` 24 =
+2 × 12, dose exactly 2/32 = 0.0625 on every check with `fc1` 0/64 throughout,
+and an offline recomputation of bottom-k from the logged 32-value score
+vectors reproduces the logged indices on **12 of 12** events. R4 TURNOVER
+fails at `repeat_rate = 11/11 = 1.00`: `[21,26] [5,26]×3 [5,9]×8` — every
+consecutive pair shares an index and the recycled set never turns over once.
+**The dose cap worked exactly as designed and the lesion happened anyway.**
+
+**THE RECOVERY MEASUREMENT — the finding, and it belongs to no other run.**
+Every prior ReDo trace here ran at cadence 1 and never left a recycled unit
+alone for a single iteration. At cadence 5: **a re-initialized trunk unit does
+not climb out of the rank-bottom of the dormancy distribution within four free
+PPO updates — it sinks further.** 20 of 22 recycled units (90.9 %) were
+re-selected at the next cadenced check; median rank one check later is 1 of
+32; the terminal pair falls 0.086/0.094 (iter 20) → 0.050/0.037 (iter 45)
+while the layer median *rises* 0.140 → 0.155. Hand-checked at the final event:
+`[5,9]` at 0.0380/0.0406 against third-lowest unit 30 at 0.0708 — a factor-of-
+two gap, not a marginal tie broken by sort order.
+
+**RUNG 2, (k = 4, C = 10) — GO.** The registered escalation, taken once,
+holding cumulative dose exactly constant so only the recovery window moves
+(4 → 9 free PPO updates). 120 iterations = the same twelve cadenced checks,
+per a reading pre-committed before any rung-2 data existed. All four pass:
+12/12 events, artifact match 12/12, dose exactly 0.125 with `fc1` 0/64,
+`repeat_rate` **0.909**. Re-selection fell 90.9 % → 75.0 %, distinct indices
+4 → 14, top-index share 45.8 % → 20.8 % — and **the confound runs against the
+result**, since larger k makes re-selection more likely under any null
+(6.25 % → 12.5 %).
+
+**REPORTED WITH NO VERDICT ATTACHED, and R4 was NOT reinterpreted.** Rung 2's
+single clean break — the one pair sharing no index, which is the entirety of
+what carries R4 — falls at event 2 → 3; from event 6 the set locks to
+`[8,23,26,30]` for seven consecutive events. **A longer recovery window delays
+the lock-in; on this evidence it does not prevent it.** A campaign at
+(k = 4, C = 10) should expect a fixed four-unit lesion over roughly its back
+half. Picking any fraction below 1.00 for R4 after seeing this trace would be
+a threshold nobody checked against its acting range — the family of error
+behind nine vacuous gates — so the registered rule stands as written and the
+GO stands.
+
+**FLAGGED, NOT EXCUSED.** Throughput ran 18.9–19.1 s/iter against the
+registered 25.4 ± 2.5 s band. Outside it; §5 says flag, not disqualify; it
+bears on an arm-vs-control timing comparison and on no R1–R4 gate, none of
+which is a timing statistic.
+
+**WHAT THIS LICENSES, exactly and no wider.** Rung 1's VOID licenses three
+things: the recovery measurement quoted above; that the bottom-k mechanism is
+correctly implemented, reaches the trainer's production hot path, and recycles
+units certified against the logged score vectors as the rank-bottom by two
+independent implementations; and taking the §8 escalation, and nothing beyond
+taking it. Rung 2's GO licenses exactly one thing: launching the 4-seed
+campaign at (k = 4, C = 10).
+
+**NOT LICENSED — any of these in writing is a fabrication:** any statement
+about Θ, the 0.767 bar, or the fork; **any FAIL-class inference whatsoever** —
+the §10.3 FAIL licence is not triggered and cannot be, since it explicitly
+requires `repeat_rate < 1.00`, precisely what rung 1 failed; the un-confounding
+of v27/v28; closing the 2026-08-25 DR ReDo prescription; any claim that ReDo
+is or is not a lever of any size; any claim that plasticity loss was or was not
+the barrier; Hypothesis B (48k is a hard ceiling) confirmed or falsified; any
+claim about other plasticity interventions (L2-init, CReLU, weight churn,
+layer-norm resets, periodic full resets), other widths, other levels, or other
+games.
+
+**THE STANDING PROHIBITION IS EXTENDED AGAIN, NOT LIFTED.** Nothing in v27,
+v28, v30, v31 **or v32** may be cited as evidence for or against the
+plasticity-loss hypothesis. **The v27/v28 plasticity confound is NOT
+discharged.** **The 2026-08-25 DR's ReDo prescription may NOT be closed as
+EXECUTED-AND-NEGATIVE; it still has not been executed.** The hypothesis stands
+exactly where the DR left it: diagnosed, prescribed, and untested — now with
+two separately-earned findings beside it, that the fixed-threshold form cannot
+be run surgically on this architecture at all (v31), and that under a rank
+rule the recycled set locks into a fixed lesion, later at C = 10 than at C = 5
+but on this evidence in both (v32).
+
+**ONE NUMERAL OWED IN WRITING BEFORE THE CAMPAIGN LAUNCHES.** B1's floor of
+"≥ 48 recycle events of the 50 cadenced checks" was written for C = 5. At
+C = 10 a 250-iteration seed has **25** cadenced checks, so the floor must be
+restated as **≥ 24 of 25** — 25 events × k = 4 = 100 units = 3.125 trunk
+turnovers, identical cumulative dose. That is arithmetic implied by the
+registered rung, not a new choice, but it is a numeral and numerals go in
+writing before compute, not into a receipt afterwards.

@@ -13,12 +13,13 @@ one-line invariant only after recurring across 4–5 separate entries.
 |---|---|---|
 | `[unverified-claim]` | **8** | no — judgement |
 | `[vacuous-gate]` | **9** | candidate — lint for `passed = not <coll>`; ask what the mechanism preserves *by construction* before registering a check on it; and emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty |
-| `[weak-eval]` | **6** | partial — enforce min-n at the gate |
+| `[weak-eval]` | **7** | partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **5** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant) |
-| `[process]` | **4** | candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict |
+| `[process]` | **5** | candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; and a config file is code — adding or copying a profile runs the full suite, not the subset that covers it |
 | `[start-state]` | 2 | — |
+| `[false-alarm]` | 1 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
 | `[measurement]` | 1 | — |
 | `[git]` | 1 | — |
 | `[reward-exploit]` | 1 | — |
@@ -34,6 +35,107 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-28 — [weak-eval] A positive control that could not pass
+- **What happened:** The on-policy `V_adv` arc requires its positive control
+  `PC_B5` to read LIVE at an iterate before any signature is declarable
+  (gate A2). On the repaired, physically sound banks it read **COLLAPSED at
+  26 of 26 iterates**, |A| = 0, and the registration's §11 retirement fired.
+  The published reading attributes that to critic training exposure — the
+  critic trained on `WALL` and never on the PC rungs — and that reading is
+  well supported. It is not the whole mechanism. Computed over
+  `arc_scored.json`: `WALL` carries a median **41,346 rows in 197 action
+  cells**, `PC_B5` **3,106 in 47** — a **13.3×** asymmetry nothing in the
+  registration controls. A permutation null shrinks with n, so the two
+  regions were graded against different bars: median q97.5 **0.026** for
+  `WALL` against **0.059** for `PC_B5`, on effect sizes that broadly overlap
+  (η² medians 0.0689 vs 0.0420, within 0.02 at 10 of 26 iterates).
+  **`PC_B5`'s own η² would clear the LIVE bar at 24 of 26 iterates if scored
+  against `WALL`'s null.**
+- **Root cause:** **The registration checked every threshold's acting range
+  and never checked the control's power.** The asymmetry is not incidental —
+  it is baked into the rollout protocol the same registration specifies: 40
+  `WALL_SRC` episodes per iterate, all truncated at a median 1,041 steps
+  while pinned at gx 2674, against 24 `PC_SRC` episodes ending in a median
+  190 steps because they travel and clear. A region that goes nowhere
+  accumulates rows; a region that succeeds does not. That was knowable from
+  the protocol before a single checkpoint was loaded.
+- **Consequence:** The instrument retired on a run that was sound in every
+  physical respect, and the retirement is correct — but for a reason one step
+  deeper than the write-up gives. It matters because it changes what the
+  retirement forecloses: a successor that only gave the critic exposure on
+  the PC rungs would still grade the control against a null built from a
+  seventh of the data, and would fail the same way. Nine vacuous gates were
+  gates that could not fail; this is the first recorded gate that could not
+  **pass**.
+- **Rule (draft):** **Power the control, not just the treatment.** Before
+  scoring, emit rows and cells per contrasted region and refuse to grade two
+  regions against separately-estimated nulls when their n differs by more
+  than a registered factor; equalize by subsampling, by matching cells, or by
+  pooling the null across regions. A control graded on a seventh of the data
+  is not a control, in the same way that a control whose row set equals the
+  positive control's is not one.
+
+## 2026-08-28 — [false-alarm] A guard asserted a trajectory invariant on a filtered table
+- **What happened:** `assert_bank_wellformed`, shipped in `b2e806b` to catch
+  the aliasing defect that voided the previous run, asserts the chain
+  property — the successor recorded at row `i` IS the antecedent recorded at
+  row `i+1`. On its first live run it **raised `CHAIN BROKEN` at iter 30 on a
+  perfectly good bank.** A `PC_SRC` rung-1013 episode traverses the WALL
+  band, and the registration's own cross-population drop removes those
+  interior rows, leaving a legitimate mid-episode gap between two adjacent
+  *recorded* rows. Fifteen of 26 iterates carry such drops, so most of the
+  grid would have tripped.
+- **Root cause:** **The invariant was true of the trajectory and was applied
+  to the artifact, after the pipeline had filtered it.** Row adjacency in the
+  written table and step adjacency in the rollout are different relations,
+  and the guard was written as if they were the same. The acting range of the
+  check was never exercised against output the *registered* pipeline actually
+  produces — only against synthetic ideal banks in unit tests, where nothing
+  is ever dropped.
+- **Consequence:** Caught at iter 30 of 260 by the guard's own first live
+  run, so the cost was a partial collection and a recollect rather than a
+  false verdict; the grid was recollected under the fix. Fix (`6d700c5`):
+  `row_step` is recorded into the bank so the gap is visible in the artifact
+  itself, and the chain is asserted only across step-adjacent pairs — full
+  strength against the aliasing class, which corrupts every adjacent pair,
+  with zero tolerance added. Revert-verified at 6 of 51 tests failing,
+  including the exact iter-30 reproduction. Had it not tripped early it would
+  have aborted a 0.86 h collection near its end.
+- **Rule (draft):** **Run a new guard once on a known-good artifact from the
+  real pipeline before arming it on a grid.** Unit tests establish that a
+  check fires on the defect; only a live pass establishes that it does not
+  fire on legitimate output. The standing rule — every threshold checked
+  against its acting range on the data it will see — has two directions, and
+  this log had only ever recorded one of them.
+
+## 2026-08-28 — [process] Five configs shipped without running the suite that guards them
+- **What happened:** The v32 seed-1/2/3 profiles and both Phase R profiles
+  declare `reward_id: mario` and were never appended to the frozen
+  reward-dispatch roster, so each tripped
+  `test_roster_dispatch_matches_the_frozen_pre_change_baseline`'s "profile
+  gained a specialized reward it never had" assertion. They were committed
+  anyway. The full suite then returned **two** failures against a baseline
+  that permits exactly one known-environmental failure — a red suite standing
+  on `main` across two commits until the next session ran it.
+- **Root cause:** **A session shipped config files and re-ran only the tests
+  it had just written.** The roster test exists precisely to catch a new
+  profile silently acquiring a specialized reward; it is cheap, it is in the
+  default suite, and it was not run. Same shape as the 2026-08-27
+  "subset test run called no regression" entry, one artifact class over —
+  there a shared hot method, here a frozen roster.
+- **Consequence:** No result was corrupted (the roster test guards dispatch,
+  and dispatch was correct for these profiles) but the project's single
+  integrity gate was red on `main`, which is the state in which a *real*
+  regression is invisible. Fixed as the test's own documented policy
+  prescribes: five appended rows carrying a batch comment naming the
+  authorizing registration, expected count moved 126+4+1 → 126+4+1+5, and the
+  **frozen rows not regenerated** — which that test correctly treats as
+  unforgivable. Revert-verified: deleting one appended row fails two tests.
+- **Rule (draft):** **A config file is code.** Adding or copying a profile
+  runs the full suite before the commit, not the subset that covers the
+  feature the profile was written for — the tests that break on a new profile
+  are by construction the ones nobody was thinking about.
 
 ## 2026-08-28 — [stale-artifact] Every gate passed on a bank whose rows were not transitions
 - **What happened:** The on-policy `V_adv` re-score

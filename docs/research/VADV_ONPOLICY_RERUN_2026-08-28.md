@@ -227,3 +227,39 @@ verified), `ncb_acting_range.json`, `trajectory_identity_check.json`,
 `ncb_conformance.json`, `score_stdout.log`. Code: `scripts/collect_onpolicy_bank.py` +
 `tests/test_collect_onpolicy_bank.py` (51, commit `6d700c5`);
 `scripts/score_banked_iterates.py` unchanged (45 tests green).
+
+---
+
+## 10. Addendum (landing, same day) — the confound is also a power asymmetry
+
+Added when both lanes were landed
+(`docs/research/LANE_A_REPAIRED_AND_BOTTOMK_2026-08-28.md` §2). It does not
+change the verdict — §11 fires on the strict A2 path and the computed-signature
+path alike, and both are unaffected — but it changes what the retirement
+forecloses, so it belongs beside §4 rather than only in the landing page.
+
+§4 attributes the LIVE/COLLAPSED split to the critic's training exposure. That
+reading is well supported and it is not the only mechanism present. Computed
+over `arc_scored.json`: `WALL` carries a median **41,346 rows in 197 action
+cells** against `PC_B5`'s **3,106 in 47** — a **13.3×** asymmetry the
+registration does not control. A permutation null shrinks with n, so `WALL`'s
+LIVE bar sits at a median q97.5 of **0.026** and `PC_B5`'s at **0.059**, on
+effect sizes that broadly overlap (η² medians 0.0689 vs 0.0420; within 0.02 of
+each other at 10 of 26 iterates). **`PC_B5`'s own η² would clear the LIVE bar
+at 24 of 26 iterates if scored against `WALL`'s null.**
+
+The asymmetry is structural and visible in the rollout protocol: 40 `WALL_SRC`
+episodes per iterate, all truncated at a median 1,041 steps while pinned at
+gx 2674, against 24 `PC_SRC` episodes that terminate in a median 190 steps
+because they travel and clear.
+
+**Consequence for §5's "different instrument".** A successor that only gave the
+critic training exposure on the PC rungs would still score the positive control
+against a null built from a seventh of the data. Any revival must **equalize
+power between the contrasted regions** — equal rows, equal cells, or a null
+pooled across both. That is a precondition neither named candidate currently
+meets, and it is registered nowhere.
+
+Scope: computed from the region row counts, cell counts, η² and null quantiles
+as the scorer recorded them. The permutation nulls and η² were **not**
+recomputed from the raw `.npz`.
