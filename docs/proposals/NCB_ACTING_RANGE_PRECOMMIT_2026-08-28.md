@@ -41,6 +41,25 @@ evidence was degenerate. (Amendment prompted by the same external reviewer;
 - **Receipts carry the per-bank `alias_rate` vector**, all 26 values, not a
   summary — the distribution must be visible without recomputation.
 
+## 2b. Unit clarification and rounding — pre-data, prompted by review
+
+**BANK == ITERATE on this protocol, and there are exactly 26 banks.** Verified
+from the v1 structure, not asserted: 26 npz files (`iter_00010` .. `iter_00260`),
+one per checkpoint's own rollout, each containing ALL source populations
+(src_rung 893 / PC rungs / entrance) in a single file. The per-bank gate in §2
+therefore gates per-iterate-bank, and the two axes the reviewer asked to
+distinguish are structurally the same axis here. Were a future protocol to
+record multiple banks per iterate, §2 gates BANKS (recording units) and the §3
+criteria count ITERATES within surviving banks — stated now so the distinction
+survives a protocol change.
+
+**Rounding, stated before any number exists:** the §3(b) thresholds are
+`ceil((14/26) * S)` and `ceil((20/26) * S)` where S = surviving banks. This
+preserves the original ba34605 numerals exactly at full survival (S=26 gives 14
+and 20) and rounds UP — the conservative direction, since §3 certifies a
+control as usable and the burden is on the control. At the S=20 floor the
+thresholds are 11 and 16.
+
 ## 3. Usability criterion (written before the number)
 
 On sound banks (chain guard pass, information gate pass), **NC-b is USABLE on
