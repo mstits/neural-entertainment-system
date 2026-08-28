@@ -272,3 +272,31 @@ positive demonstration that frozen-frame rows exist and were separated by the
 clock — the statistic's discriminating power is intact, indeed sharper than
 registered.
 
+## 10. The 180-row regularity — explained, and §9's clock statement corrected
+
+The adjudicator's fifth finding: 180 mid-episode rows per bank violate the
+"+2 per step" clock cadence, in a deterministic 60/60/60 pattern identical
+across banks. Explained by measurement, one census per group, all three
+**one row per ENTR_SRC episode (60 per bank) at a FIXED within-episode
+position**, replicated at the same positions in banks 10, 130 and 260:
+
+- **delta +1 at position 27**: the counter misses one tick (a slip).
+- **delta +3 at position 30**: the counter regains it (catch-up). Net drift
+  over the pair: zero.
+- **raw −120 at position 115** (the group read as "+8 mod 128"): the clock
+  series reads ...118, 120 → 0. **The counter is RESET to zero, not
+  advanced** — the +8 was an arithmetic coincidence (128−120). This also
+  proves dim 711 is a game-writable counter, not a pure frame derivation.
+
+All three are action-independent (fixed positions across 60 episodes with
+per-episode seeds and sampled actions), i.e. a scripted phase of the entrance
+opening drives the counter's cadence, not agent behaviour. WALL_SRC and
+PC_SRC episodes start elsewhere and never exhibit them.
+
+**Correction to §9:** the clock statement "advances +2 per agent-step" holds
+for 99.68% of rows; the full census of exceptions is the above plus wrap
+(−126) and episode-boundary rows. **The load-bearing property for the
+retirement is the weaker and fully verified one: the per-row delta is never
+0, so consecutive observations are never bitwise identical.** Any future
+check must build on "never 0," not on "+2 always."
+
