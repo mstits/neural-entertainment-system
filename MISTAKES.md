@@ -15,7 +15,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[vacuous-gate]` | **8** | candidate — lint for `passed = not <coll>`; and ask what the mechanism preserves *by construction* before registering a check on it |
 | `[weak-eval]` | **6** | partial — enforce min-n at the gate |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
-| `[inert-treatment]` | **5** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, and to one armed at a reachable-but-wrong dose |
+| `[inert-treatment]` | **6** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **4** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt |
 | `[process]` | 3 | — |
 | `[start-state]` | 2 | — |
@@ -34,6 +34,61 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-27 — [inert-treatment] An instrument adopted in a pre-registration and never built leaves the same receipt as one that ran and found nothing
+- **What happened:** `v15_d1` diagnosed the confound behind the 1-2 backward
+  curriculum — *the advance gate is reachability-based while the reward is
+  progress-based, so a progress-flat bottleneck is a mis-specification, not a
+  capability wall* (verdicts file line 13) — and **adopted the instrument that
+  separates the two**: `V_adv = E_s[Var_a(Â)]`, the state-conditioned variance
+  of the advantage across actions (ADOPT bullet, line 382). **It was never
+  implemented.** Parameter drift was substituted in as the fifth instrument,
+  which does not answer that question. B5 then CLOSED under the once-rule on
+  `trailing 0/30, entrance 0/717` — a symptom **both** live hypotheses predict —
+  and **`THIS IS A REAL CAPABILITY WALL at gx ~2674-2872`
+  (`docs/research/B5_PREREG_2026-08-08.md:420`, section RUN 3 FINAL VERDICT —
+  `:414` before today's addendum shifted the file) **stood un-retracted for 17
+  days**,
+  with the rung-relative wavefront amendment deferred behind it since 2026-08-11
+  and explicitly gated on a written addendum re-opening B5 that never came
+  (verdicts file line 525). Built and run 2026-08-27 (`b9ed38e`, registration
+  `docs/proposals/VADV_PREREG_2026-08-27.md`, report
+  `docs/research/VADV_B5_2026-08-27.md`): admissible instrument, controls
+  separated, **verdict VOID** — `R = 0.279` inside the pre-declared indeterminate
+  band. The verdict is neither re-opened nor corroborated.
+- **Root cause:** **A registration records what an instrument is supposed to do;
+  only a receipt records what it did — and an absent receipt reads as a silent
+  pass.** Nothing in the chain distinguished "adopted and never written" from
+  "written, run, returned nothing," so the once-rule closed a question the
+  adopted discriminator had never been pointed at. This is the same defect the
+  derived graduation table fixed one level up (*enforcement must be DERIVED from
+  the declaration, never listed beside it*), here applied to instruments rather
+  than to tags. **Fourth instance today, spanning the whole spectrum from never
+  written to written-and-mute:** (1) **ReDo** — built and armed at `tau=0.025`
+  against a `>=0.25` firing threshold, never fired, so v27/v28's FAILs were never
+  tests of plasticity; (2) **v22 semi-MDP GAE** (`src/training/smdp_gae.py`) —
+  implemented, unit-tested, **imported by nothing but its own test**, while an
+  options A/B was recorded as FAIL crediting it; (3) **the confluence
+  `solve.null_rates` gate** — armed in code with **no profile supplying the
+  rates**, so `DEGENERATE` can never trigger, and a Contra VOID surfaced only
+  after 2.4M worker-steps; (4) **`V_adv`**, this entry.
+- **Consequence:** Not a wrong verdict — an **unfalsifiable** one. A never-retracted
+  capability wall taints the reading of every backward-curriculum null downstream
+  of it (v27, v28, v29 and the 1-3 campaign are all backward-curriculum runs), and
+  it froze a named follow-on mechanism behind a gate that could only be opened by
+  an instrument nobody had written. The cost of finally answering it was **hours
+  of offline scoring over checkpoints that already existed** — no emulator, no
+  training. The cheapest item in the corpus was the one blocking a standing verdict.
+  Sixth entry on this tag.
+- **Rule (draft):** A pre-registration that ADOPTS an instrument must, at
+  publication of the verdict it informs, cite **either its receipt or its
+  non-execution** — "instrument X adopted, NOT RUN" is an acceptable line and a
+  silent omission is not. Deterministic form: a verdict may not close under the
+  once-rule while any instrument its own registration adopted lacks a receipt
+  path; scan the ADOPT bullets against `runs/` and `grep -rn <symbol> src/ scripts/`
+  before publishing. **And the sharper half — an adopted instrument is not built
+  until something other than its own test imports it**, which is exactly what
+  would have caught `smdp_gae` and the mute `null_rates` gate as well as this one.
 
 ## 2026-08-27 — [inert-treatment] The corrected operating point was wrong the same way, one rung down
 - **What happened:** The entry below — *"Registered a treatment at an operating

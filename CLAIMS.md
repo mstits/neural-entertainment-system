@@ -3564,6 +3564,54 @@ enter gx 2674 without momentum, and later entrance runs pass that x with
 momentum. It is **under-instrumented by a check that costs hours and zero
 compute.** Read it as provisional until `V_adv` is logged.
 
+ADDENDUM VADV-1 (2026-08-27) — **`V_adv` is now logged. It returned VOID, so this
+entry stays provisional, but for a sharper and more specific reason than "not yet
+measured."** The instrument was implemented (`scripts/score_banked_iterates.py`,
+`b9ed38e`), pre-registered before any number was read
+(`docs/proposals/VADV_PREREG_2026-08-27.md`) and run offline over banked
+checkpoints — no emulator, no training. Report:
+`docs/research/VADV_B5_2026-08-27.md`; annotation on the verdict itself:
+`B5_PREREG_2026-08-08.md` Addendum 5. (That addendum shifts the file by six
+lines: the `:414` cited in the heading above now resolves at `:420`. The shift is
+recorded at the end of Addendum 5 rather than patched across the nine documents
+that cite it, one of which is a frozen registration.)
+
+The instrument is **ADMISSIBLE** — positive control LIVE where the agent
+demonstrably learned (1-1 arc η² 0.667 vs its own null q97.5 0.189; 35 further
+iterates across the B4 and v4 arcs all LIVE), negative control correctly VOID on
+a provably dead critic, anti-vacuity revert-verified. It could have contradicted
+what it was pointed at, and it did not return the same shape everywhere.
+
+**Neither registered signature fired.** `WALL` [2674, 2872) η² **0.133** (LIVE,
+marginal — 8 % over its own null q97.5); `PC_B5` [2872, 3267) η² **0.307** (LIVE,
+decisive); `R = 0.279`, inside the pre-declared indeterminate band (0.20, 0.50).
+MIS-SPECIFICATION needed `WALL` COLLAPSED and `R ≤ 0.20` — the bootstrap CIs
+overlap. CAPABILITY needed `R ≥ 0.50`. Independently, the reward-provably-flat
+null NC-b did not collapse, which under the registration's own pre-written
+disposition caps the reading at INDETERMINATE by itself. **The wall verdict is
+neither re-opened nor corroborated**, and the rung-relative wavefront amendment
+**stays deferred** — its gate is a written addendum *re-opening* B5, which this is
+expressly not.
+
+What can be said without moving a goalpost: the strong form of the
+mis-specification story — *the critic cannot tell the actions apart at gx 2674* —
+is **not** what the data shows (`WALL` is LIVE against its own null, and the
+binding power gate passed at 1.0, so that is not a thin-data artifact). But the
+action signal there is **27.9 % of** the excess in the band B5's own curriculum
+advanced through, a real difference in the direction mis-specification predicts,
+at a magnitude the registration declared insufficient to act on.
+
+**Two limits make this un-adjudicable on this bank, and both are actionable.**
+(a) The banks are go-explore expert-window states, not B5's own on-policy
+rollouts, so a critic that never fit the wall states — *because the policy arrived
+there 0/717 times* — reads depressed for reasons unrelated to the reward, and
+"the policy never got there" is exactly what CAPABILITY asserts. (b) All 612
+qualifying `WALL` rows decode to **gx = 2674 exactly**: the band is 198 px wide
+but only its entry pixel qualifies, so **the instrument never observed the
+traversal this verdict claims cannot be executed.** The experiment that could
+adjudicate is a transition bank from B5's own rollouts at both rungs with coverage
+reaching the band interior; it needs its own registration.
+
 ### 3. Contra clear-detector nulls — VOID, and the guard that should have caught it is inert
 
 Already self-caught for Contra specifically at
