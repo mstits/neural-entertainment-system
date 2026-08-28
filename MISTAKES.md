@@ -15,8 +15,8 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[vacuous-gate]` | **7** | candidate — lint for `passed = not <coll>` |
 | `[weak-eval]` | **6** | partial — enforce min-n at the gate |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
-| `[inert-treatment]` | 3 | **SHIPPED** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves |
-| `[stale-artifact]` | 3 | candidate — hash the loaded artifact against the built one |
+| `[inert-treatment]` | **4** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves; blind to a mechanism nothing imports |
+| `[stale-artifact]` | **4** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt |
 | `[process]` | 3 | — |
 | `[start-state]` | 2 | — |
 | `[measurement]` | 1 | — |
@@ -34,6 +34,67 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-27 — [inert-treatment] A mechanism can pass every arming check by never being imported
+- **What happened:** The DR never-executed audit
+  (`docs/research/DR_NEVER_EXECUTED_2026-08-27.md`) traced 51 prescriptions across
+  10 Deep Research rounds to code. `src/training/smdp_gae.py` implements v22's
+  semi-MDP advantage estimator exactly as prescribed, is covered by
+  `tests/test_smdp_gae.py`, and passes. **The only file in the repo that imports
+  it is that test.** `ppo_updater.py:153` calls `batched_gae` with an identical
+  argument list whether `commitment_options` is on or off.
+  `OPTIONS_PREREG_2026-08-22.md` lists the mechanic as adopted;
+  `ZELDA_VISION_AGENT_AUDIT_2026-08-25.md:166` names `smdp_gae.py` as part of what
+  "FAILED its gate." Two of the same registration's four adopted mechanics were
+  likewise absent: the dense-critic auxiliary pass, and all three forms of the
+  eval-argmax overcommitment mitigation whose stand-in the registration asserted
+  was "already standing in the campaign machinery."
+- **Root cause:** Every signal we check for aliveness is emitted *by the mechanism
+  itself*. `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose
+  counter never moves — but a module nothing imports has no counter to move, emits
+  no telemetry, and therefore cannot fail an aliveness check. A green unit test, a
+  written docstring and a name in an adopted-mechanics list are each read as
+  evidence the mechanic shipped, and none of the three touches the import graph.
+- **Consequence:** The standing OPTIONS MECHANISM FAIL (control 8/100 vs treatment
+  0/100) survives as a number but not as a scope — it tested fixed-duration,
+  open-loop, *unprotected* options under a per-step estimator and an untrained
+  held-state critic, not temporal abstraction. At λ<1 the substituted estimator
+  weights each held-state critic value into the advantage by `γ(1−λ)(γλ)^(i−1)`,
+  zero in the semi-MDP form and non-zero only for k≥2 — a duration-dependent bias
+  in the exact quantity a run that failed by duration overcommitment (k=4 in 93.6%
+  of states) adjudicated. A downstream line (v23 Castlevania options) inherits
+  that FAIL. Fourth entry on this tag.
+- **Rule (draft):** A registration that names a module as adopted must cite the
+  **production import path** that reaches it — file and line, not the module name.
+  Extend `check_mechanism_receipt.py` to VOID any named mechanism reachable only
+  from `tests/`. Aliveness proven by the mechanism's own output cannot detect a
+  mechanism that produces none.
+
+## 2026-08-27 — [stale-artifact] The test suite wrote verdicts into the production receipt log
+- **What happened:** `runs/shared_substrate/eval_shared_substrate.jsonl` — the
+  canonical receipt for the trunk-plus-heads experiment — holds 860 rows. 688 carry
+  `/fake/dir/` fixture paths. **The other 172 are repeated
+  `{"verdict": "SUPERSEDES", "aggregate": {"baseline_sum": 153, "shared_sum": 200,
+  "delta": 47, "beats_baseline": true}}` records**, written by
+  `tests/test_eval_shared_substrate.py` through the module-level default at
+  `scripts/eval_shared_substrate.py:121`, which points at the real log. The
+  experiment has never trained: `manifest.json` reads `"status": "pending"` and
+  `checkpoints/shared_substrate_v1` does not exist. The rows accumulate on every
+  `pytest` run — 11 on 08-18, 48 on 08-26, 62 on 08-27.
+- **Root cause:** Several tests correctly redirect `receipt_log` to `tmp_path`; at
+  least one path falls through to the module default. A default that points at a
+  live artifact turns an un-monkeypatched test into a writer of production
+  receipts, and the failure grows monotonically instead of announcing itself.
+- **Consequence:** Compounded with `docs/proposals/README.md` §10 — committed
+  2026-08-25, two days after `PROCESS_AUDIT_2026-08-23.md:122` recorded the
+  experiment as "distinct and unscheduled" — marking the round
+  `COMPLETED/ACTIONED` and the ranking "shipped as commit `f757506`", an auditor
+  who checks the status index and the receipts concludes the experiment ran and
+  won. Only the manifest `status` field and that one audit dissent. No claim was
+  made from it, so nothing is retracted; the near miss is the finding.
+- **Rule (draft):** A harness's default output path must never be a live receipt.
+  Default to a run-scoped temp path and require the real log to be passed
+  explicitly, so a test that forgets to redirect writes nowhere that matters.
 
 ## 2026-08-27 — [purity-leak] The quarantine covered the declarative layer only
 - **What happened:** The 994-entry `configs/` sweep retracted 7 entries and stated

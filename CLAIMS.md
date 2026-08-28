@@ -3468,3 +3468,152 @@ byte this profile already declared by blind statistical search over its own
 rollouts. No disassembly, no RAM map, no walkthrough, no recall of this
 title. `solve.area_key` is a config field **distinct from** `solve.level_key`
 so no code path can promote a search-derived byte into a clear predicate.
+
+## DR NEVER-EXECUTED AUDIT 2026-08-27 — three standing verdicts re-scoped
+
+Full write-up: `docs/research/DR_NEVER_EXECUTED_2026-08-27.md`. Ten Deep
+Research rounds mined against the repo's code (not its prose), 51 prescriptions
+extracted, 17 un-executed. **The corpus is mostly clean** — 34 of 51
+prescriptions landed or were properly declined, and two rounds
+(`audit5_v12r_online_paradigm`, `v26_gru_learning_failure`) came back with zero
+gaps. `audit5` is the positive control: all four of its prescribed mechanisms
+are certified FIRED by `scripts/check_mechanism_receipt.py`, at the DR's own
+kill thresholds.
+
+Four verdicts are affected. **No banked headline number is retracted here.**
+Every correction below is one of scope, instrumentation, or framing.
+
+### 1. OPTIONS MECHANISM FAIL — re-scoped, not retracted
+
+The number stands: control 8/100 vs treatment 0/100 (`runs/options/verdict.json`,
+`docs/research/OPTIONS_NEGATIVE_2026-08-23.md`). The treatment fired loudly and
+the write-up is honestly scoped to what ran. **What does not stand is what the
+registration says was running.** `docs/proposals/OPTIONS_PREREG_2026-08-22.md`
+lists four adopted mechanics; three were absent from the production path:
+
+- **Semi-MDP GAE.** `src/training/smdp_gae.py` implements the prescribed
+  formulas and passes `tests/test_smdp_gae.py`. **Nothing else in the repo
+  imports it.** `ppo_updater.py:153` calls `batched_gae` with an identical
+  argument list whether `commitment_options` is on or off. Integration commit
+  `cd00fdf` argues the substitution in its message; that reasoning never reached
+  the registration, and it is conditioned on a dense value stream that does not
+  exist in training (next bullet).
+- **Dense critic auxiliary.** `ppo_updater.py:374` builds one permutation over
+  `valid_indices` and drives the whole minibatch loop from it. Under
+  `commitment_options`, `valid_buf[t,i] = not _commit_held_buf[t,i]`, so held
+  rows never enter a value-loss gradient — while their rollout-time critic
+  outputs are injected into every k≥2 advantage as bootstrap targets.
+- **Eval-argmax overcommitment mitigation.** The registration's stand-in ("the
+  KL-anchor already standing in the campaign machinery") is false by the code:
+  `ppo_clip_eps` is a single global with no duration-conditional branch,
+  `CommitmentPolicy.pair_actor` is one flat 18-way `nn.Linear` rather than a
+  factorized `(a,k)` head, and no KL term on the duration marginal exists.
+
+At λ<1 the two estimators are not equivalent — each held-state critic value
+enters a decision's advantage with coefficient `γ(1−λ)(γλ)^(i−1)`, identically
+zero in the semi-MDP form and non-zero only for k≥2. That biases exactly the
+quantity the experiment adjudicated, in a run that failed **by duration
+overcommitment** (k=4 in 93.6% of states).
+
+**Corrected reading:** this was a test of *fixed-duration, open-loop,
+unprotected* commitment options under a per-step advantage estimator and an
+untrained held-state critic. It is not a test of temporal abstraction. The v23
+Castlevania options dependency inherits a FAIL from an experiment that did not
+run the prescribed mechanism. `docs/research/ZELDA_VISION_AGENT_AUDIT_2026-08-25.md:166`
+names `smdp_gae.py` as part of what "FAILED its gate" — it credits an orphaned
+module with a failure it was never present for, and should be corrected.
+
+### 2. "REAL CAPABILITY WALL at gx ~2674–2872" — under-instrumented
+
+`docs/research/B5_PREREG_2026-08-08.md:414` (RUN 3 FINAL VERDICT, 2026-08-10),
+never retracted. Its designated discriminator was never computed.
+
+`plans/v15_d1_backward_curricula_verdicts.md:381` is an explicit **ADOPT** of
+four offline instruments, naming advantage variance `V_adv = E_s[Var_a(Â)]`
+first. Three were built into `scripts/score_banked_iterates.py` (top-two margin,
+dormant fraction, effective rank) and a fifth — parameter drift — was
+substituted in, which is why the omission went unnoticed. **`V_adv` was never
+implemented** (repo-wide grep: one unrelated local in `kernel_adversary.py:209`).
+
+The 0/717 entrance-success count over 249 iterations is the symptom, and **both
+competing hypotheses predict it.** The same verdicts file (line 13) names the
+alternative: *"the advance gate is reachability-based while the reward is
+progress-based, so a progress-flat bottleneck is a mis-specification, not a
+capability wall."* `V_adv` was the adopted instrument for telling those apart.
+
+**The verdict is not refuted** — the wall is scoped to rung-893 restarts, which
+enter gx 2674 without momentum, and later entrance runs pass that x with
+momentum. It is **under-instrumented by a check that costs hours and zero
+compute.** Read it as provisional until `V_adv` is logged.
+
+### 3. Contra clear-detector nulls — VOID, and the guard that should have caught it is inert
+
+Already self-caught for Contra specifically at
+`docs/research/CONTRA_WALL_2026-08-27.md:434` ("Any Contra null from this hook is
+VOID, never a miss") — 19 empty `solutions/` directories across 18 solver runs
+(`:459`), over 2,417,912 worker-steps (`CONTRA_ROUTE_A_2026-08-27.md:363`).
+**The general case is still open.**
+
+`v15_d3` prescribed replacing the `tally` window matcher with a change-point
+detector on per-byte surprisal; never implemented (zero hits for
+OCD/e-detector/changepoint/surprisal). The interim guard that *was* built —
+`MAX_NULL_RATE = 0.05` plus `DEGENERATE` eligibility,
+`scripts/clear_reachability.py:397,741` — reads measured rates from
+`solve.null_rates`. **`grep -rln null_rates configs/` returns zero files across
+all 10 confluence profiles.** `scripts/clear_detect.py:3008` states the condition
+in writing: *"no profile carries a measured null today and a DEAD signal already
+votes 0 by never firing."*
+
+`tally`'s null fire rate is measured at **1.00** on four games (Contra 58/58;
+Castlevania 22/22, 28/28, 43/43; Bubble Bobble 30/30). The gate is implemented,
+wired, armed, emits an eligibility table into every receipt, and cannot act.
+**Every confluence profile's `clear_quorum` arming receipt ("FIREABLE, ceiling
+2.0, required 2.0, zero slack") is vacuous until a measured `null_rates` block is
+written into the profiles.**
+
+**Not affected:** banked CONFIRMED clears. ADDENDUM P-2 records the confluence
+detector scoring 0 on the witnessed Bubble Bobble and Tetris-B clears, so no
+CONFIRMED status runs through this path.
+
+### 4. Shared substrate (trunk-plus-heads) — no verdict exists, but a PASS is on disk
+
+v20's Rank-1 falsifier is class 3: built and wired on 2026-08-17 (`f757506`),
+**never run.** `runs/shared_substrate/manifest.json` reads `"status": "pending"`;
+`checkpoints/shared_substrate_v1` does not exist; CLAIMS.md has no prior mention
+of it. Honestly disclosed once, at `PROCESS_AUDIT_2026-08-23.md:122` — "the
+trunk-plus-heads experiment remains distinct and unscheduled".
+
+Two surfaces disagree with those disclosures:
+
+- **`runs/shared_substrate/eval_shared_substrate.jsonl` holds 860 rows; 688 carry
+  `/fake/dir/` fixture paths and 172 do not.** The 172 are repeated
+  `{"verdict": "SUPERSEDES", "aggregate": {"baseline_sum": 153, "shared_sum": 200,
+  "delta": 47, "beats_baseline": true}}` records written by the test suite through
+  the module-level default at `scripts/eval_shared_substrate.py:121`, which points
+  at the real receipt log. They accumulate on every `pytest` run — 11 rows on
+  08-18, 48 on 08-26, 62 on 08-27. **The canonical receipt for an experiment that
+  has never trained currently asserts a PASS.**
+- **`docs/proposals/README.md` §10, committed 2026-08-25 — two days after both
+  audits above — marks the round `COMPLETED/ACTIONED` and the ranking "shipped as
+  commit `f757506`."** A harness shipping is not a hypothesis being tested.
+
+**No claim is made from this experiment and none may be.** The receipt rows are
+fixture output and are to be purged; the README row is to be corrected. The
+question it gates — is per-level specialization the right unit for the remaining
+28 levels? — is open, and it is the top-ranked recommendation of five convergent
+rounds.
+
+### The ReDo case, restated as the calibration bar
+
+v27/v28 ran `redo_tau: 0.025` against a mechanism whose own forced sweep first
+recycles at τ = 0.25. **2,000 telemetry lines across 8 runs, every one `recycled
+0 cum 0`.** `isolate_tau0.35.log` was written at 00:19:42 and `train_seed0.log`
+opens at 00:22:02 — **140 seconds** — across **14.5 h** of wall-clock training.
+Both FAIL verdicts (v27 0.530, v28 0.670) survive; the two-variable framing does
+not. Already logged at `MISTAKES.md` 2026-08-27 `[inert-treatment]`.
+
+Separately: B6's offline instrument sweep had already recorded *"dormancy 0.000
+everywhere — plasticity clean, ReDo not indicated"* on 2026-08-11
+(`B5_PREREG_2026-08-08.md:437`), from a different DR round that gated ReDo on
+measuring dormancy first. **That gate was honored, returned a decline, and the
+decline was not consulted two weeks later.**
