@@ -191,6 +191,9 @@ def update_run_manifest_redo(
     median_agree: Optional[float],
     median_dose_frac: Optional[float],
     distinct_fc2_indices: int,
+    redo_mode: str = "threshold",
+    redo_bottom_k: int = 0,
+    redo_repeat_rate: Optional[float] = None,
 ) -> Path:
     """Patch `run_manifest.json` with ReDo's own summary telemetry
     (V31_REDO_SURGICAL_2026-08-27.md §12 item 6), best-effort, after the
@@ -216,6 +219,13 @@ def update_run_manifest_redo(
     manifest["redo_median_agree"] = median_agree
     manifest["redo_median_dose_frac"] = median_dose_frac
     manifest["redo_distinct_fc2_indices"] = int(distinct_fc2_indices)
+    # V32_REDO_BOTTOM_K_2026-08-28.md §12 item 5. `redo_repeat_rate` is
+    # None for a threshold-mode run (no F3' is defined there) and for a
+    # bottom_k run with fewer than 2 recycle events (no "preceding
+    # event" to compare against yet).
+    manifest["redo_mode"] = redo_mode
+    manifest["redo_bottom_k"] = int(redo_bottom_k)
+    manifest["redo_repeat_rate"] = redo_repeat_rate
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(manifest, indent=2))

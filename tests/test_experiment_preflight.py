@@ -69,6 +69,52 @@ def test_control_arm_with_no_mechanisms_passes():
     assert ok and any("control arm" in n for n in notes)
 
 
+def test_bottom_k_profile_requires_mode_and_k_on_the_armed_line():
+    # V32_REDO_BOTTOM_K_2026-08-28.md §12 item 4b: a bottom_k profile's
+    # armed check must not be satisfied by a threshold-mode line at the
+    # same (provenance-only) tau — the exact vacuity a tau-only regex
+    # would ship as the tenth.
+    prof = {"reinforce": {
+        "redo_enabled": True, "redo_mode": "bottom_k",
+        "redo_bottom_k": 2, "redo_check_every_iters": 5,
+        "redo_tau": 0.025,
+    }}
+    correct_line = (
+        "[redo] ENABLED tau=0.025 every_iters=5 scope=fc1,fc2 sample=4096 "
+        "reset_moments=true mode=bottom_k k=2 recycle_scope=fc2"
+    )
+    ok, notes = assess_mechanisms(prof, correct_line)
+    assert ok and any("armed evidence present" in n for n in notes)
+
+
+def test_bottom_k_profile_rejects_a_threshold_mode_log_at_the_same_tau():
+    # The executed failure this gate exists to catch: a synthetic
+    # threshold-mode log at the SAME tau=0.025 the bottom_k profile pins
+    # for provenance must NOT satisfy a bottom_k profile's armed check.
+    prof = {"reinforce": {
+        "redo_enabled": True, "redo_mode": "bottom_k",
+        "redo_bottom_k": 2, "redo_check_every_iters": 5,
+        "redo_tau": 0.025,
+    }}
+    threshold_line = (
+        "[redo] ENABLED tau=0.025 every_iters=1 scope=fc1,fc2 sample=4096 "
+        "reset_moments=true mode=threshold k=0 recycle_scope=fc1,fc2"
+    )
+    ok, notes = assess_mechanisms(prof, threshold_line)
+    assert not ok and any("NO ARMED EVIDENCE" in n for n in notes)
+
+
+def test_threshold_mode_profile_is_unaffected_by_the_bottom_k_gate():
+    # Byte-identical to the pre-v32 behaviour when redo_mode is absent
+    # (the schema default) — every existing threshold-mode config must
+    # keep passing preflight exactly as it did before this change.
+    prof = {"reinforce": {"redo_enabled": True, "redo_tau": 0.025}}
+    line = ("[redo] ENABLED tau=0.025 every_iters=1 scope=fc1,fc2 "
+            "sample=4096 reset_moments=true")
+    ok, notes = assess_mechanisms(prof, line)
+    assert ok and any("armed evidence present" in n for n in notes)
+
+
 def test_steps_per_iter_derived_from_profile_not_hardcoded_default():
     # mario_1_1_v27_seed0.yaml: rollout_steps=1024, num_envs=60 -> 61440,
     # NOT the old hardcoded 92160 default (tuned to a different config).

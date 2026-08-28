@@ -1014,6 +1014,12 @@ class Trainer:
         self._redo_first_recycle_iter: Optional[int] = None
         self._redo_agree_log: list[float] = []
         self._redo_fc2_index_counts: dict[int, int] = {}
+        # V32 §6.2 F3' TURNOVER input: the recycled fc2 index SET of
+        # every recycle event, in order, so a repeat_rate (fraction of
+        # events after the first sharing >= 1 index with the immediately
+        # preceding event) can be computed from the live run and not
+        # only re-derived offline from run.log at verdict time.
+        self._redo_fc2_index_sequence: list[list[int]] = []
         # BC pretraining epoch count, threadable from YAML so different
         # games can use different schedules. Constructor still accepts
         # bc_epochs and YAML overrides it when set. Higher values mean
@@ -7973,6 +7979,9 @@ class Trainer:
                             self._redo_fc2_index_counts[_idx] = (
                                 self._redo_fc2_index_counts.get(_idx, 0) + 1
                             )
+                        self._redo_fc2_index_sequence.append(
+                            list(_rd.fc2_indices)
+                        )
 
                     # ===== ReDo in-run dose ceiling (V31 §3, abort A4) ===
                     # Appended for EVERY executed check, including

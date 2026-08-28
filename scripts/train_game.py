@@ -826,6 +826,18 @@ def main() -> int:
             from src.training.run_manifest import update_run_manifest_redo
             agrees = getattr(trainer, "_redo_agree_log", [])
             fracs = getattr(trainer, "_redo_fracs_on_fire", [])
+            # F3' TURNOVER (V32 §6.2): fraction of recycle events after
+            # the first whose index SET shares >= 1 index with the
+            # immediately preceding event's index set. None with fewer
+            # than 2 events — there is no preceding event to compare.
+            _seq = getattr(trainer, "_redo_fc2_index_sequence", [])
+            _repeat_rate = None
+            if len(_seq) >= 2:
+                _shared = sum(
+                    1 for _prev, _cur in zip(_seq, _seq[1:])
+                    if set(_prev) & set(_cur)
+                )
+                _repeat_rate = _shared / (len(_seq) - 1)
             update_run_manifest_redo(
                 trainer.checkpoint_dir,
                 redo_tau=trainer.redo_tau,
@@ -841,6 +853,9 @@ def main() -> int:
                 distinct_fc2_indices=len(
                     getattr(trainer, "_redo_fc2_index_counts", {})
                 ),
+                redo_mode=getattr(trainer, "redo_mode", "threshold"),
+                redo_bottom_k=getattr(trainer, "redo_bottom_k", 0),
+                redo_repeat_rate=_repeat_rate,
             )
         except Exception as exc:  # noqa: BLE001 — provenance is non-fatal
             log.warning("[launcher] redo manifest patch failed: %s", exc)

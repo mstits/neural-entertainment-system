@@ -1,0 +1,212 @@
+# Mario 1-1 v32 — ReDo at a RANK-BASED BOTTOM-K dose, seed 0.
+# Pre-registered in docs/proposals/V32_REDO_BOTTOM_K_2026-08-28.md, every
+# numeral fixed before compute.
+#
+# SINGLE FUNCTIONAL VARIABLE vs configs/mario_1_1_v27_seed0.yaml (the
+# ReDo-off control, in which ReDo was provably inert: 0 recycles on every
+# check of all four seeds): the ReDo selection rule. Everything else —
+# the merged 785-rung ladder, the recipe, width 64/32, num_envs 60, 250
+# iterations — is byte-identical to v27.
+#
+# WHY A RANK RULE. v31 walked the whole admissible fixed-tau band and
+# banked its stopping statement with a live two-rung receipt
+# (docs/research/TWO_REGISTERED_TESTS_2026-08-27.md Part II): tau = 0.10
+# fired at iter 16 then climbed 1,1,1,1,5,6,6,6,8,11,12,12,12,12 to an
+# equilibrium of 12/32 = 37.5% and tripped the in-run dose ceiling at
+# iter 29; tau = 0.075 was surgical and sustained but recycled the SAME
+# two indices for the entire run (fc2=[16] x7, then fc2=[5,16] x24) — a
+# permanent two-unit lesion, not a recycle. The two admissible rungs fail
+# in opposite directions with no window between them, because the dormant
+# tail drifts DOWN across training and swallows any fixed tau.
+# FIXED-TAU ReDo IS FORBIDDEN. A rank rule caps the dose BY
+# CONSTRUCTION: the drift changes WHICH units are bottom-k, never HOW
+# MANY are recycled.
+#
+name: Mario 1-1 v32 redo bottom-k seed1
+reward_id: mario
+rom_path: "roms/Super Mario Bros. (World).nes"
+rom_hashes:
+- 811b027eaf99c2def7b933c5208636de
+frame_skip: 4
+# The tape's own root — the tape and the entrance MUST be one lineage.
+# Eval with the SAME blob.
+start_state_path: "runs/live_show/smb_4_4_micro/entrance_start.state"
+description: >
+  v27 fresh-recovery run: the banked 1-1 backward-ladder recipe, verbatim,
+  over the merged 785-rung ladder (758 tape rungs + 27 gx-mapped post-stick
+  recovery states). Tests whether recovery competence can be learned when
+  its states are in the curriculum FROM THE START of a fresh run — the
+  registered follow-up to the isolated-optimum verdict on post-hoc
+  training. Honest gate: cold greedy sticky-0.25 + jitter-16 from the
+  tape's entrance, 50 episodes, 2 eval seeds, vs banked 0.767.
+
+ram_mapping:
+  x_position_page: 109
+  x_position_low: 134
+  y_position: 206
+  lives: 1882
+  score_start: 2014
+  score_end: 2019
+  world: 1887
+  level: 1884
+  player_state: 14
+  float_state: 29
+
+# Phase-A reward weights, verbatim (generic: progress + time + death +
+# completion; no per-level checkpoint ladder, no air/jump/survival carrots).
+reward_weights:
+  forward_progress: 1.0
+  time_penalty: -0.01
+  death_penalty: -15.0
+  completion_bonus: 50.0
+  score_delta: 0.0
+  air_bonus: 0.0
+  survival_bonus: 0.0
+  jump_clear_bonus: 0.0
+  checkpoint_scale: 0.0
+
+action_space:
+- []
+- - right
+- - right
+  - A
+- - right
+  - B
+- - right
+  - A
+  - B
+- - A
+
+reinforce:
+  # ---- Phase-A recipe, verbatim (mario_1_1_tile_gate_v2/profile.yaml) ----
+  enabled: true
+  trainer_mode: vanilla_ppo
+  encoder: smb_tiles_pos
+  preserve_elite_diversity: true
+  freeze_pre_ppo_elite: true
+  episodes_per_genome: 2
+  # INERT UNDER trainer_mode: vanilla_ppo (verified 2026-08-26). This key is
+  # read at trainer.py:1216 but consumed at exactly ONE site, trainer.py:4505,
+  # which lives inside _reinforce_update (the GA path, starts :4424).
+  # _run_vanilla_ppo starts at :4820 and neither ppo.py nor ppo_updater.py
+  # reference symlog at all -- so this run's rewards were NEVER
+  # symlog-transformed despite this line. Left set rather than deleted: the
+  # v27/v28 runs are banked and their configs must keep describing the file
+  # they actually ran with. Do NOT "fix" this by making vanilla_ppo honour
+  # the key -- that would change the reward scale and silently break
+  # comparability with every banked v21-v28 number.
+  symlog_rewards: true
+  value_loss: huber
+  value_coef: 0.25
+  bc_epochs: 30
+  warmup_gens_ga_only: 10
+  steps: 10
+  # THE ONE DEVIATION FROM PHASE-A (which took the 512 default). The iter
+  # boundary calls reset_all, so every episode still running is truncated
+  # and scores nothing. An attempt from rung tau therefore only resolves
+  # if the tape's remaining tail fits inside one rollout; 1024 covers the
+  # whole tape. Costs ~2x samples/iter vs Phase-A.
+  rollout_steps: 1024
+  lr: 0.0003
+  async_pipeline: false      # 1-step obs lag destroys frame-perfect SMB
+  device: cpu
+  panic_isolation: false
+  entropy_coef: 0.005        # the consolidation fix: floor OFF, coef 0.005
+  entropy_floor: 0.0
+  entropy_coef_max: 0.05
+  rnd_intrinsic_coef: 0.1
+  rnd_loss_coef: 1.0
+  sticky_action_prob: 0.25   # train under the protocol the gate measures
+  # REQUIRED whenever sticky > 0 AND the backward block is on. Every rung
+  # restart is an episode boundary, and this curriculum manufactures
+  # hundreds of them per rollout. Without this the sticky roll on the
+  # first step of a fresh attempt replays the action the previous life
+  # died holding (~25% of restarts) — and that lands directly in the
+  # success rate the advance gate consumes. The honest eval harness gates
+  # its roll on step > 0 per episode (scripts/eval_game.py); this is the
+  # knob that makes training agree.
+  sticky_episode_boundary_reset: true
+  bc_replay_enabled: true
+  bc_replay_every_gens: 20
+  bc_replay_epochs: 5
+  bc_replay_max_buffer: 16
+  bc_replay_train_window: 1
+  preprocess_f16: false
+  smb_curriculum: false      # required: the stage-0 inline restart path
+  num_envs: 60
+
+  # ---- registered variable #2: ReDo (AMENDMENT 1, B4) ----
+  # Recycling Dormant Neurons on the tile policy's hidden units
+  # (fc1/fc2): checked at the end of every gradient iteration on a
+  # 4096-state sample from the just-collected rollout; dormant units
+  # (mean |post-SiLU| <= tau of the layer mean, Sokar et al.
+  # Definition 1) get incoming row + bias re-sampled Kaiming-uniform,
+  # LN affine reset, outgoing columns zeroed exactly (actor AND critic
+  # for fc2 units), and their Adam moment slices cleared. Written out
+  # explicitly, strict-config style — the schema default is
+  # redo_enabled: false, so every non-v27 config is untouched.
+  redo_enabled: true
+  # THE registered variable (V32 §2): the selection rule is RANK, not
+  # threshold. Every check recycles the k = 2 lowest-scoring fc2 units,
+  # whatever the score distribution has drifted to.
+  redo_mode: bottom_k
+  redo_bottom_k: 2
+  # Cadence C = 5 (V32 §2.2), on the EXISTING key — no new cadence knob
+  # is declared, because a new declared key is a new way to be inert.
+  # C = 1 is FORBIDDEN by measurement, not preference: a re-initialized
+  # unit lands at the BOTTOM of the distribution, not the middle (unit
+  # 16 read 0.0744 -> 0.0442 -> 0.0277 across its first recycles at tau
+  # 0.075, and tau 0.10's recycled index set is monotonically nested
+  # across 14 consecutive events), so at C = 1 the k fresh units are
+  # re-selected on the very next check with probability ~1 — a
+  # guaranteed k-unit lesion. C = 5 gives a recycled unit 4 free PPO
+  # updates to climb back, one measured relaxation timescale of the
+  # dormancy statistic on this architecture. Budget: 250/5 = 50 events
+  # x k = 2 = 100 units = 3.125 trunk turnovers.
+  redo_check_every_iters: 5
+  redo_sample_batch: 4096
+  redo_reset_optimizer_moments: true
+  # NOT READ on this path. The rank rule consults no threshold; this is
+  # pinned at the schema default and logged for provenance only. A live
+  # numeral on a path that never reads it is a dead knob, and this repo
+  # has shipped twenty of those.
+  redo_tau: 0.025
+
+  # ---- registered variable #1: the merged ladder ----
+  # Reverse curriculum over the MERGED ladder: 758 tape rungs + 27
+  # recovery rungs = 785 entries, sorted by tape step. tau starts at the
+  # last entry and walks back 40 tape steps whenever the trailing window
+  # at the current rung holds >= 30 attempts at >= 20% success. Each
+  # episode draws its restart uniformly from the 160-frame window ending
+  # at tau, with the true entrance carrying one entry's worth of mass.
+  # Because recovery rungs sit INSIDE the window like any other rung,
+  # their outcomes land in the trailing window under the tau-guard: the
+  # cursor cannot walk past a recovery band until the policy clears from
+  # those states too. Recovery competence is a precondition for ladder
+  # progress — that is the treatment.
+  backward_curriculum:
+    states_dir: "checkpoints/backward_states/1-1-v27"
+    tau_init: -1
+    window_frames: 160
+    advance_threshold: 0.2
+    advance_actions: 40
+    min_attempts: 30
+    entrance_weight: 1.0
+    # Truncated (boundary-cut) attempts are censored data — neither a
+    # clear nor a death. Dropped by default, which keeps the rung rate an
+    # honest "of the attempts that RESOLVED, how many cleared"; the
+    # `truncated N` column in the log says how much is being censored.
+    truncation_is_failure: false
+    # pin_entrance: true freezes every restart at start_state_path and is
+    # the zero-diff guard. Never for a real run.
+    pin_entrance: false
+
+ga_params:
+  mutation_rate: 0.8
+  mutation_std: 0.001
+  adaptive_mutation_scale: false
+  elite_fraction: 0.4
+  stale_gens_before_restart: 50
+  restart_fraction: 0.5
+
+max_episode_steps: 2400

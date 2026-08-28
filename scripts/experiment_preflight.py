@@ -33,6 +33,30 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+def _redo_armed_pattern(profile: dict) -> str:
+    """The ReDo `armed` regex, mode-gated (V32 §12 item 4b).
+
+    Threshold-mode profiles (the pre-v32 default, and the unaffected
+    common case) keep the original tau-only pattern byte-for-byte. A
+    `redo_mode: bottom_k` profile additionally requires the mode/k/
+    cadence fields on the SAME `[redo] ENABLED` line, because
+    `redo_tau` is pinned to the same provenance-only numeral in every
+    v32 config and cannot by itself distinguish the registered
+    rank-rule arm from the forbidden threshold arm at that tau.
+    """
+    rl_cfg = profile.get("reinforce", {}) or {}
+    tau = float(rl_cfg.get("redo_tau", 0.025))
+    pattern = r"\[redo\] ENABLED tau=%s" % re.escape("%g" % tau)
+    if rl_cfg.get("redo_mode", "threshold") == "bottom_k":
+        k = int(rl_cfg.get("redo_bottom_k", 0))
+        cadence = int(rl_cfg.get("redo_check_every_iters", 1))
+        pattern += (
+            r" every_iters=%d scope=\S+ sample=\d+ reset_moments=\S+ "
+            r"mode=bottom_k k=%d" % (cadence, k)
+        )
+    return pattern
+
+
 CRITIC_PREFIXES = ("critic.", "critic_heads.")
 # Mechanisms and the runtime evidence each must leave. `armed` is a
 # regex that must appear in the log; `activity` (optional) must match
@@ -56,9 +80,18 @@ MECHANISMS = {
         # rl_cfg.get("redo_tau", 0.025)); read it instead of hardcoding
         # the default, or an overridden tau fails preflight on an
         # actually-armed run.
-        "armed": lambda profile: r"\[redo\] ENABLED tau=%s" % re.escape(
-            "%g" % float((profile.get("reinforce", {}) or {})
-                        .get("redo_tau", 0.025))),
+        #
+        # V32_REDO_BOTTOM_K_2026-08-28.md §12 item 4b: a v32 (bottom_k)
+        # profile pins `redo_tau: 0.025` for provenance only — the same
+        # numeral a threshold-mode run could also be evaluated at — so
+        # matching on tau alone cannot tell the registered rank-rule arm
+        # from its FORBIDDEN threshold sibling at the same tau. When the
+        # profile declares `redo_mode: bottom_k`, the armed pattern must
+        # additionally require `mode=bottom_k k=<redo_bottom_k>
+        # every_iters=<redo_check_every_iters>` on the SAME line: a
+        # synthetic threshold-mode log at tau 0.025 then fails this
+        # preflight instead of silently passing as the treatment.
+        "armed": lambda profile: _redo_armed_pattern(profile),
         "forbidden": r"\[redo\] disabled",
     },
 }
