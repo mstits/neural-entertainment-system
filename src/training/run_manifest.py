@@ -179,3 +179,45 @@ def write_run_manifest(
     tmp.write_text(json.dumps(manifest, indent=2))
     tmp.replace(path)
     return path
+
+
+def update_run_manifest_redo(
+    checkpoint_dir,
+    *,
+    redo_tau: float,
+    cum_recycled: int,
+    recycle_events: int,
+    first_recycle_iter: Optional[int],
+    median_agree: Optional[float],
+    median_dose_frac: Optional[float],
+    distinct_fc2_indices: int,
+) -> Path:
+    """Patch `run_manifest.json` with ReDo's own summary telemetry
+    (V31_REDO_SURGICAL_2026-08-27.md §12 item 6), best-effort, after the
+    run ends (success, VOID abort, or crash — the caller decides when).
+
+    `write_run_manifest` runs BEFORE training starts and cannot know
+    these; `scripts/redo_arm_gate.py` already derives the same numbers
+    from `run.log` at verdict time — this patch is the convenience copy
+    into the manifest a reader would check first, not the source of
+    truth for the gate (the gate always re-derives from the log).
+    Never raises: provenance is best-effort and must not mask whatever
+    exception (if any) the trainer itself just raised.
+    """
+    path = Path(checkpoint_dir) / "run_manifest.json"
+    try:
+        manifest = json.loads(path.read_text()) if path.is_file() else {}
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    manifest["redo_tau"] = redo_tau
+    manifest["redo_cum_recycled"] = int(cum_recycled)
+    manifest["redo_recycle_events"] = int(recycle_events)
+    manifest["redo_first_recycle_iter"] = first_recycle_iter
+    manifest["redo_median_agree"] = median_agree
+    manifest["redo_median_dose_frac"] = median_dose_frac
+    manifest["redo_distinct_fc2_indices"] = int(distinct_fc2_indices)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(manifest, indent=2))
+    tmp.replace(path)
+    return path

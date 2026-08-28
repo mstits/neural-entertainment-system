@@ -61,6 +61,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import statistics
@@ -75,6 +76,13 @@ DISABLED_RE = re.compile(r"\[redo\] disabled\b")
 ITER_RE = re.compile(
     r"\[redo\] iter (\d+): dormant fc1 (\d+)/(\d+) fc2 (\d+)/(\d+) "
     r"recycled (\d+) cum (\d+) agree ([0-9.]+) max_dlogit ([0-9.eE+-]+)"
+)
+# `[redo] recycled unit indices: fc1=[] fc2=[3, 7, 19]` — promoted DEBUG ->
+# INFO for V31 (trainer.py) specifically so F3 below can see it; a log
+# captured at the old DEBUG level has no such lines and F3 correctly
+# cannot ARM it (distinct count reads 0).
+INDICES_RE = re.compile(
+    r"\[redo\] recycled unit indices: fc1=(\[[^\]]*\]) fc2=(\[[^\]]*\])"
 )
 
 
@@ -95,6 +103,13 @@ class ArmReport:
     median_recycled_frac: float | None = None
     max_recycled_frac: float | None = None
     trunk_dim: int | None = None
+    # F3 (V31_REDO_SURGICAL_2026-08-27.md §4.1) — distinctness of the
+    # recycled fc2 units over the whole run. A treatment that resets the
+    # SAME two or three units forever is a permanent partial lesion of a
+    # 32-unit trunk, not a recycle (v30 observed exactly this pathology
+    # at tau=0.50: fc2=[1,2,4,5,7,9,13,16,...] identical at iters 0-3).
+    distinct_fc2_indices: int = 0
+    max_index_share: float | None = None
     verdict: str = ""
     reasons: list[str] = field(default_factory=list)
 
@@ -107,6 +122,7 @@ def parse_log(path: Path) -> ArmReport:
     rep = ArmReport(log=str(path))
     agrees: list[float] = []
     fracs: list[float] = []
+    fc2_index_counts: dict[int, int] = {}
     with path.open("r", errors="replace") as fh:
         for line in fh:
             if (m := ENABLED_RE.search(line)) is not None:
@@ -114,6 +130,14 @@ def parse_log(path: Path) -> ArmReport:
                 continue
             if DISABLED_RE.search(line) is not None:
                 rep.saw_disabled = True
+                continue
+            if (m := INDICES_RE.search(line)) is not None:
+                try:
+                    fc2_list = ast.literal_eval(m.group(2))
+                except (ValueError, SyntaxError):
+                    fc2_list = []
+                for idx in fc2_list:
+                    fc2_index_counts[idx] = fc2_index_counts.get(idx, 0) + 1
                 continue
             if (m := ITER_RE.search(line)) is not None:
                 it = int(m.group(1))
@@ -143,6 +167,11 @@ def parse_log(path: Path) -> ArmReport:
                         d1 / hidden if hidden else 0.0,
                         d2 / trunk if trunk else 0.0,
                     ))
+    rep.distinct_fc2_indices = len(fc2_index_counts)
+    if fc2_index_counts:
+        rep.max_index_share = max(fc2_index_counts.values()) / sum(
+            fc2_index_counts.values()
+        )
     rep._agrees = agrees  # type: ignore[attr-defined]
     rep._fracs = fracs  # type: ignore[attr-defined]
     return rep
@@ -157,6 +186,8 @@ def adjudicate(
     min_agree: float,
     agree_window: int,
     max_frac: float = 0.25,
+    min_distinct_fc2: int = 6,
+    max_index_share: float = 0.60,
 ) -> ArmReport:
     agrees: list[float] = getattr(rep, "_agrees", [])
     window = agrees[:agree_window]
@@ -191,6 +222,37 @@ def adjudicate(
             "technically armed but effectively inert; its FAIL would be "
             "non-informative about plasticity",
         ))
+
+    # F3 (V31 §4.1) — distinctness. A treatment that resets the SAME two
+    # or three units every iteration forever is a permanent partial
+    # lesion, not a recycle, and no earlier condition catches it: V3/V4
+    # only see counts, and V5/V6 are structurally insensitive to WHICH
+    # units were touched. Requires the `[redo] recycled unit indices:`
+    # line at INFO level (trainer.py); a log without it reads 0 distinct
+    # and correctly cannot ARM, since distinctness is then unverifiable.
+    if rep.cum_recycled > 0:
+        if rep.distinct_fc2_indices < min_distinct_fc2:
+            violations.append((
+                "VOID-MINIMAL-DOSE",
+                f"only {rep.distinct_fc2_indices} distinct fc2 index/indices "
+                f"recycled across the run (need >= {min_distinct_fc2}) — "
+                "either a permanent partial lesion of a few units, or the "
+                "'[redo] recycled unit indices:' INFO line is missing from "
+                "this log and distinctness cannot be verified",
+            ))
+        elif (
+            rep.max_index_share is not None
+            and rep.max_index_share > max_index_share
+        ):
+            violations.append((
+                "VOID-MINIMAL-DOSE",
+                f"one fc2 index accounts for {rep.max_index_share:.1%} of "
+                f"all recycled-unit-events (> {max_index_share:.0%}) across "
+                f"{rep.distinct_fc2_indices} distinct indices — a "
+                "self-sustaining single-unit lesion, not a recycle "
+                "(v30 saw this pathology at tau=0.50: fc2=[1,2,4,5,7,9,13,"
+                "16,...] identical at iters 0-3)",
+            ))
 
     # V1/V2 — armed at the registered operating point, and not disabled.
     if len(rep.enabled_taus) != 1:
@@ -274,6 +336,8 @@ def _render(rep: ArmReport) -> str:
         f"  median_recycled_frac={rep.median_recycled_frac} "
         f"max_recycled_frac={rep.max_recycled_frac} "
         f"trunk_dim={rep.trunk_dim}",
+        f"  distinct_fc2_indices={rep.distinct_fc2_indices} "
+        f"max_index_share={rep.max_index_share}",
     ]
     lines += [f"  - {r}" for r in rep.reasons]
     if not rep.armed:
@@ -297,6 +361,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-frac", type=float, default=0.25,
                     help="max median fraction of recyclable hidden units "
                          "one firing event may re-initialize (default 0.25)")
+    ap.add_argument("--min-distinct-fc2", type=int, default=6,
+                    help="F3: min distinct fc2 indices recycled over the "
+                         "whole run (default 6)")
+    ap.add_argument("--max-index-share", type=float, default=0.60,
+                    help="F3: max share of recycled-unit-events one fc2 "
+                         "index may account for (default 0.60)")
     ap.add_argument("--json", type=str, default=None,
                     help="also write the per-log reports as JSON")
     args = ap.parse_args(argv)
@@ -315,6 +385,8 @@ def main(argv: list[str] | None = None) -> int:
             min_agree=args.min_agree,
             agree_window=args.agree_window,
             max_frac=args.max_frac,
+            min_distinct_fc2=args.min_distinct_fc2,
+            max_index_share=args.max_index_share,
         )
         reports.append(rep)
         print(_render(rep))

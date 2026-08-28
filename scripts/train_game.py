@@ -812,49 +812,94 @@ def main() -> int:
     # checkpoint that crashes on load needs a human, not a hot loop.
     import time as _time
     import traceback as _tb
+    def _patch_redo_manifest() -> None:
+        # Best-effort provenance patch (V31_REDO_SURGICAL_2026-08-27.md
+        # §12 item 6) — runs after EVERY attempt (success, VOID abort, or
+        # crash) via `finally` below, never masking whatever exception is
+        # in flight. `scripts/redo_arm_gate.py` remains the source of
+        # truth at verdict time; this is the convenience copy.
+        if not getattr(trainer, "redo_enabled", False):
+            return
+        try:
+            import statistics as _stats
+
+            from src.training.run_manifest import update_run_manifest_redo
+            agrees = getattr(trainer, "_redo_agree_log", [])
+            fracs = getattr(trainer, "_redo_fracs_on_fire", [])
+            update_run_manifest_redo(
+                trainer.checkpoint_dir,
+                redo_tau=trainer.redo_tau,
+                cum_recycled=trainer._redo_cum_recycled,
+                recycle_events=trainer._redo_recycle_events,
+                first_recycle_iter=trainer._redo_first_recycle_iter,
+                median_agree=(
+                    float(_stats.median(agrees)) if agrees else None
+                ),
+                median_dose_frac=(
+                    float(_stats.median(fracs)) if fracs else None
+                ),
+                distinct_fc2_indices=len(
+                    getattr(trainer, "_redo_fc2_index_counts", {})
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — provenance is non-fatal
+            log.warning("[launcher] redo manifest patch failed: %s", exc)
+
     max_restarts = 0 if args.no_supervise else 5
     attempt = 0
     while True:
         _t0 = _time.time()
         try:
-            trainer.run(
-                num_generations=args.iters, resume_from=resume_from,
-                fresh_start=(not args.resume) and attempt == 0,
-            )
-            return 0
-        except KeyboardInterrupt:
-            log.info("[supervisor] interrupted — clean stop")
-            return 0
-        # BaseException, NOT Exception: a Rust worker panic crosses the
-        # PyO3 boundary as pyo3_runtime.PanicException, which subclasses
-        # BaseException — `except Exception` would let it kill the
-        # process, defeating the supervisor for the exact failure class
-        # (worker panic) it exists to survive. SystemExit still
-        # propagates (a deliberate exit is not a crash to restart).
-        except SystemExit:
-            raise
-        except BaseException:  # noqa: BLE001 — the supervisor's entire job
-            attempt += 1
-            log.error(
-                "[supervisor] trainer crashed (attempt %d/%d):\n%s",
-                attempt, max_restarts, _tb.format_exc(),
-            )
-            if attempt > max_restarts:
-                log.error(
-                    "[supervisor] restart budget exhausted — aborting"
+            try:
+                trainer.run(
+                    num_generations=args.iters, resume_from=resume_from,
+                    fresh_start=(not args.resume) and attempt == 0,
                 )
-                return 1
-            if _time.time() - _t0 < 120:
-                # Crashed within two minutes of starting: likely a
-                # poisoned checkpoint or config, not a transient. Longer
-                # backoff, and give up sooner via the attempt budget.
-                _time.sleep(60)
-            else:
-                _time.sleep(15)
-            log.info(
-                "[supervisor] relaunching with auto-resume (attempt %d)",
-                attempt,
-            )
+                return 0
+            except KeyboardInterrupt:
+                log.info("[supervisor] interrupted — clean stop")
+                return 0
+            # BaseException, NOT Exception: a Rust worker panic crosses
+            # the PyO3 boundary as pyo3_runtime.PanicException, which
+            # subclasses BaseException — `except Exception` would let it
+            # kill the process, defeating the supervisor for the exact
+            # failure class (worker panic) it exists to survive.
+            # SystemExit still propagates (a deliberate exit is not a
+            # crash to restart). A ReDo VOID abort (arming deadline,
+            # in-run dose ceiling) is also a RuntimeError caught here —
+            # with `--no-supervise` (max_restarts=0) it aborts on the
+            # first attempt exactly as registered, never masked by a
+            # resume-and-retry loop.
+            except SystemExit:
+                raise
+            except BaseException:  # noqa: BLE001 — the supervisor's job
+                attempt += 1
+                log.error(
+                    "[supervisor] trainer crashed (attempt %d/%d):\n%s",
+                    attempt, max_restarts, _tb.format_exc(),
+                )
+                if attempt > max_restarts:
+                    log.error(
+                        "[supervisor] restart budget exhausted — aborting"
+                    )
+                    return 1
+                if _time.time() - _t0 < 120:
+                    # Crashed within two minutes of starting: likely a
+                    # poisoned checkpoint or config, not a transient.
+                    # Longer backoff, and give up sooner via the attempt
+                    # budget.
+                    _time.sleep(60)
+                else:
+                    _time.sleep(15)
+                log.info(
+                    "[supervisor] relaunching with auto-resume "
+                    "(attempt %d)", attempt,
+                )
+        finally:
+            # Runs after EVERY attempt — success, VOID abort, or crash —
+            # so the manifest reflects whatever ReDo telemetry
+            # accumulated even when the run never reaches `return 0`.
+            _patch_redo_manifest()
 
 
 if __name__ == "__main__":

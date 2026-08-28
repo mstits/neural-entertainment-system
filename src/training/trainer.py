@@ -73,6 +73,8 @@ from src.training.ppo import (
     batched_gae, demo_anchor_loss, fold_intrinsic_into_rewards, ppo_losses,
 )
 from src.training.redo import maybe_check_and_recycle as _redo_maybe_check
+from src.training.redo import dose_fraction as _redo_dose_fraction
+from src.training.redo import dose_ceiling_trips as _redo_dose_ceiling_trips
 from src.training.metrics_sink import MetricsSink
 from src.training.notifications import StallNotifier
 from src.utils.reward_functions import build_reward_function
@@ -92,7 +94,21 @@ _TORCH_DEFAULT_NUM_THREADS = torch.get_num_threads()
 # Iterations an armed ReDo run may go without a single recycle before it
 # is declared VOID (V30 registration, abort A2). Deliberately a module
 # constant and not a config key — see the raise site in the PPO loop.
-_REDO_ARM_DEADLINE_ITERS = 25
+# RAISED 25 -> 40 for V31_REDO_SURGICAL_2026-08-27.md §4.3: 25 was
+# calibrated for tau=0.25/0.50, which fire by iter 1 (24-iteration
+# margin). At the surgical operating point tau=0.10 the measured first
+# crossing is iter 16, so 25 would leave only 9 iterations of margin
+# against seed-to-seed variation in the crossing iteration. 40 restores
+# the same 24-iteration margin. Still a hardcoded module constant, not a
+# config key (see the raise site below).
+_REDO_ARM_DEADLINE_ITERS = 40
+
+# In-run dose ceiling (V31_REDO_SURGICAL_2026-08-27.md §3, abort A4). The
+# SAME numeral scripts/redo_arm_gate.py's post-hoc V6 uses, so the in-run
+# early-abort and the verdict-time gate can never disagree; V6 remains
+# authoritative at verdict time, this is an early-abort against a
+# tail that is measured to drift DOWN across training, not a substitute.
+_REDO_DOSE_CEILING = 0.25
 
 
 def _safe_sample_from_logits(
@@ -958,6 +974,16 @@ class Trainer:
             rl_cfg.get("redo_reset_optimizer_moments", True)
         )
         self._redo_cum_recycled: int = 0
+        # V31 additions — trailing-window dose ceiling input (ALL checks,
+        # including zero-recycle ones, per dose_ceiling_trips' contract),
+        # plus the arming-floor telemetry the F1/F2/F3 conditions and the
+        # run-manifest patch at end-of-run are computed from.
+        self._redo_dose_ceiling_history: list[float] = []
+        self._redo_fracs_on_fire: list[float] = []
+        self._redo_recycle_events: int = 0
+        self._redo_first_recycle_iter: Optional[int] = None
+        self._redo_agree_log: list[float] = []
+        self._redo_fc2_index_counts: dict[int, int] = {}
         # BC pretraining epoch count, threadable from YAML so different
         # games can use different schedules. Constructor still accepts
         # bc_epochs and YAML overrides it when set. Higher values mean
@@ -7866,9 +7892,66 @@ class Trainer:
                         _rd.fc2_tail[0], _rd.fc2_tail[1], _rd.fc2_tail[2],
                     )
                     if _rd.recycled:
-                        log.debug(
+                        # Promoted DEBUG -> INFO (V31 §12.3): the F3
+                        # distinctness gate (redo_arm_gate.py) parses this
+                        # line, and DEBUG-level output is dropped by the
+                        # launcher's default logging config, which would
+                        # make F3 silently unverifiable on every real run.
+                        # Pure logging — no RNG, no behavior change;
+                        # `redo_enabled: false` byte-identity is untouched
+                        # since this line is unreachable on that path.
+                        log.info(
                             "[redo] recycled unit indices: fc1=%s fc2=%s",
                             _rd.fc1_indices, _rd.fc2_indices,
+                        )
+                        self._redo_recycle_events += 1
+                        if self._redo_first_recycle_iter is None:
+                            self._redo_first_recycle_iter = global_it
+                        self._redo_agree_log.append(_rd.agree)
+                        _frac_fire = _redo_dose_fraction(
+                            _rd.dormant_fc1, _rd.hidden_dim,
+                            _rd.dormant_fc2, _rd.trunk_dim,
+                        )
+                        self._redo_fracs_on_fire.append(_frac_fire)
+                        for _idx in _rd.fc2_indices:
+                            self._redo_fc2_index_counts[_idx] = (
+                                self._redo_fc2_index_counts.get(_idx, 0) + 1
+                            )
+
+                    # ===== ReDo in-run dose ceiling (V31 §3, abort A4) ===
+                    # Appended for EVERY executed check, including
+                    # zero-recycle ones (dose_ceiling_trips' contract): a
+                    # median over firing events only is blind to how
+                    # OFTEN the treatment fires, and this ceiling exists
+                    # specifically to see that. The tail is measured to
+                    # drift DOWN across training (v30 §1.3/§5), so a tau
+                    # that is surgical at iter 30 can be a partial network
+                    # reset by iter 200 — this catches that live instead
+                    # of discovering it after burning to iter 250.
+                    self._redo_dose_ceiling_history.append(
+                        _redo_dose_fraction(
+                            _rd.dormant_fc1, _rd.hidden_dim,
+                            _rd.dormant_fc2, _rd.trunk_dim,
+                        )
+                    )
+                    if _redo_dose_ceiling_trips(
+                        self._redo_dose_ceiling_history,
+                        ceiling=_REDO_DOSE_CEILING,
+                    ):
+                        raise RuntimeError(
+                            "[redo] VOID-OVERDOSE: trailing-"
+                            f"{len(self._redo_dose_ceiling_history[-10:])}"
+                            "-check median dose of the worst-hit layer "
+                            f"exceeded {_REDO_DOSE_CEILING:.2f} at iter "
+                            f"{global_it} (tau={self.redo_tau:g}). This is "
+                            "NOT a FAIL: it is a positive mechanism "
+                            "finding — a fixed dormancy threshold that "
+                            "was surgical early became a partial network "
+                            "reset by this iteration. Receipts: "
+                            "docs/proposals/V31_REDO_SURGICAL_2026-08-27"
+                            ".md §3.2. This run is VOID-OVERDOSE; the "
+                            "whole seed sequence aborts. Do not issue a "
+                            "verdict."
                         )
 
             # ===== ReDo arming deadline (V30 registration, A2) =====

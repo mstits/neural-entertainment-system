@@ -40,12 +40,60 @@ without this module (unit-tested in tests/test_redo_mechanism.py).
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass, field
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# In-run dose ceiling (V31_REDO_SURGICAL_2026-08-27.md §3). A fixed tau's
+# dormant tail drifts DOWN across training (measured, v30 §1.3/§5), so a
+# check that is surgical at iter 30 can be a partial network reset by
+# iter 200. This is the early-abort: the SAME numeral V6 uses at
+# verdict-time, checked every dormancy check instead of only at the end,
+# so a mis-dosed run is caught in ~15 min instead of burning to iter 250.
+DOSE_CEILING_WINDOW = 10
+DOSE_CEILING_FRAC = 0.25
+
+
+def dose_fraction(
+    dormant_fc1: int, hidden_dim: int, dormant_fc2: int, trunk_dim: int,
+) -> float:
+    """Worst-hit-layer recycled fraction for one dormancy check.
+
+    Never pooled: fc1 is 0/64 dormant at every measured tau (v30 §1.1),
+    so a pooled `(dormant_fc1+dormant_fc2)/(hidden_dim+trunk_dim)` carries
+    permanent ballast that can never contribute to the numerator — it
+    would report 20/96 = 21% for an event that re-initialized 20 of 32
+    trunk units (62%). `max()` of the two per-layer fractions is the
+    statistic that tracks the actual damage.
+    """
+    f1 = (dormant_fc1 / hidden_dim) if hidden_dim else 0.0
+    f2 = (dormant_fc2 / trunk_dim) if trunk_dim else 0.0
+    return max(f1, f2)
+
+
+def dose_ceiling_trips(
+    history: list[float] | tuple[float, ...],
+    *,
+    window: int = DOSE_CEILING_WINDOW,
+    ceiling: float = DOSE_CEILING_FRAC,
+) -> bool:
+    """True iff the trailing-`window`-CHECK median dose exceeds `ceiling`.
+
+    `history` is one `dose_fraction()` value per dormancy check —
+    including zero-recycle checks, appended in order — never per firing
+    event: a median over firing events only is blind to how OFTEN the
+    treatment fires, and this ceiling exists specifically to see that.
+    Fewer than `window` checks so far always returns False (there is
+    nothing to abort on yet); strict `>` so exactly `ceiling` (e.g.
+    8/32 = 0.25) survives and only a breach (9/32 = 0.28125) trips.
+    """
+    if len(history) < window:
+        return False
+    return statistics.median(history[-window:]) > ceiling
 
 
 @dataclass

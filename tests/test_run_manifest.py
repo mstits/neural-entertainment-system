@@ -8,6 +8,7 @@ from pathlib import Path
 from src.training.run_manifest import (
     _PINNED_PACKAGES,
     dependency_snapshot,
+    update_run_manifest_redo,
     write_run_manifest,
 )
 
@@ -158,3 +159,47 @@ def test_dependency_snapshot_handles_missing_nes_core(monkeypatch) -> None:
 
     assert snap["nes_core"]["module"] == "unknown"
     assert snap["nes_core"]["sha256_16"] == "unknown"
+
+
+def test_update_run_manifest_redo_patches_an_existing_manifest(tmp_path: Path) -> None:
+    """V31_REDO_SURGICAL_2026-08-27.md §12 item 6: the pre-run manifest
+    gets ReDo's summary telemetry patched in after the run ends, without
+    disturbing the provenance fields written before training started.
+    """
+    write_run_manifest(
+        tmp_path, game="Super Mario Bros.",
+        rom_path="roms/x.nes", start_state_path=None, seed=0,
+        profile=_profile(), num_envs=60, frame_skip=4, created_at=1000.0,
+    )
+    p = update_run_manifest_redo(
+        tmp_path, redo_tau=0.10, cum_recycled=460, recycle_events=230,
+        first_recycle_iter=16, median_agree=0.93, median_dose_frac=0.09375,
+        distinct_fc2_indices=24,
+    )
+    m = json.loads(p.read_text())
+    assert m["seed"] == 0  # pre-run field untouched
+    assert m["redo_tau"] == 0.10
+    assert m["redo_cum_recycled"] == 460
+    assert m["redo_recycle_events"] == 230
+    assert m["redo_first_recycle_iter"] == 16
+    assert m["redo_median_agree"] == 0.93
+    assert m["redo_median_dose_frac"] == 0.09375
+    assert m["redo_distinct_fc2_indices"] == 24
+
+
+def test_update_run_manifest_redo_never_raises_on_a_missing_file(
+    tmp_path: Path,
+) -> None:
+    """Called on a checkpoint dir where the pre-run manifest write
+    itself failed (best-effort, never blocks training) — must still
+    produce a manifest rather than raising and masking a VOID abort's
+    real exception.
+    """
+    p = update_run_manifest_redo(
+        tmp_path, redo_tau=0.25, cum_recycled=0, recycle_events=0,
+        first_recycle_iter=None, median_agree=None, median_dose_frac=None,
+        distinct_fc2_indices=0,
+    )
+    m = json.loads(p.read_text())
+    assert m["redo_cum_recycled"] == 0
+    assert m["redo_first_recycle_iter"] is None

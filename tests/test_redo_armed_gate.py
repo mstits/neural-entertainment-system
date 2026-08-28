@@ -61,6 +61,16 @@ def _synth(
     for it in range(iters):
         cum += per_iter
         lines.append(ITER.format(it=it, n=per_iter, cum=cum, agree=agree))
+        if per_iter > 0:
+            # Rotate through the 32 fc2 slots so a real (multi-iteration)
+            # synthetic run is F3-healthy by construction — these tests
+            # predate F3 and are not about it; `_adj()` disables F3 by
+            # default anyway (min_distinct_fc2=0), but a `_gate()`
+            # subprocess call uses the CLI's real registered default
+            # (--min-distinct-fc2 6), so an index-free log would VOID
+            # under F3 for reasons unrelated to what the test checks.
+            fc2 = [(it * per_iter + k) % 32 for k in range(per_iter)]
+            lines.append(f"[redo] recycled unit indices: fc1=[] fc2={fc2}")
     return _write_log(tmp_path / name, lines)
 
 
@@ -77,6 +87,16 @@ def _adj(path: Path, **kw):
     kw.setdefault("min_units", 20)
     kw.setdefault("min_agree", 0.60)
     kw.setdefault("agree_window", 50)
+    # F3 (V31) is exercised by its own dedicated tests in
+    # tests/test_redo_arm_gate_f3.py, which construct logs carrying the
+    # `[redo] recycled unit indices:` lines it reads. These are the
+    # pre-existing V1-V6 (v30-era) tests and predate that log line, so
+    # F3 is opted OUT here (min_distinct_fc2=0 always passes) rather
+    # than spuriously voiding every one of them on "0 distinct indices
+    # found" — the CLI's own registered default (--min-distinct-fc2 6)
+    # is untouched.
+    kw.setdefault("min_distinct_fc2", 0)
+    kw.setdefault("max_index_share", 1.0)
     return adjudicate(parse_log(path), **kw)
 
 
@@ -251,10 +271,17 @@ def test_trainer_carries_the_hardcoded_arming_deadline():
     keys in the flagship recipe never executed, so a new declared key is
     a new way to be inert.
 
+    RAISED 25 -> 40 for V31_REDO_SURGICAL_2026-08-27.md §4.3: 25 was
+    calibrated for tau>=0.25, which fires by iter 1 (24-iteration
+    margin). At the surgical operating point tau=0.10 the measured first
+    crossing is iter 16, leaving only 9 under the old bound — not enough
+    margin against seed-to-seed variation. 40 restores the same
+    24-iteration margin.
+
     REVERT-VERIFIED FAILURE: move the bound into ``rl_cfg.get(...)``.
     """
     src = (REPO / "src" / "training" / "trainer.py").read_text()
-    assert "_REDO_ARM_DEADLINE_ITERS = 25" in src
+    assert "_REDO_ARM_DEADLINE_ITERS = 40" in src
     assert 'rl_cfg.get("redo_arm_deadline' not in src
     assert "[redo] VOID: armed at tau=" in src
     # The raise must sit OUTSIDE the `_rd is not None` branch, so an
@@ -274,11 +301,11 @@ def test_deadline_condition_is_exactly_the_v27_failure():
     case below stops firing.
     """
     def fires(redo_on: bool, global_it: int, cum: int) -> bool:
-        return redo_on and global_it >= 25 and cum == 0
+        return redo_on and global_it >= 40 and cum == 0
 
-    assert fires(True, 25, 0), "the v27/v28 case must fire"
+    assert fires(True, 40, 0), "the v27/v28-shaped case must fire"
     assert fires(True, 249, 0)
-    assert not fires(True, 24, 0), "must not fire before the deadline"
+    assert not fires(True, 39, 0), "must not fire before the deadline"
     assert not fires(True, 249, 1), "one recycle is enough to keep running"
     assert not fires(False, 249, 0), "redo-off runs are untouched"
 

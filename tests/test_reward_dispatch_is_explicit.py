@@ -327,10 +327,27 @@ def test_roster_dispatch_matches_the_frozen_pre_change_baseline():
 
 def test_baseline_covers_the_whole_roster_and_is_not_empty():
     baseline = json.loads(BASELINE_PATH.read_text())
-    assert len(baseline) == 126, (
-        f"the frozen baseline had 126 rows when it was computed; it now has "
-        f"{len(baseline)}. It is history — regenerate it only if you can show "
-        f"the pre-change tree really resolved differently."
+    # 126 rows were frozen at the migration commit (c89a816) — that count
+    # is history and must never be REGENERATED to paper over a real
+    # drift. It is legitimate to APPEND rows for profiles authored AFTER
+    # the freeze that deliberately declare a specialized reward_id: they
+    # have no "pre-change" resolution to preserve (they didn't exist
+    # pre-change), so test_roster_dispatch_matches_the_frozen_pre_change_
+    # baseline's "gained" check would otherwise reject every legitimate
+    # new specialized profile forever. Each append below is one
+    # documented batch, not a silent bump.
+    # +4: configs/mario_1_1_v31_redo_seed{0..3}.yaml
+    #     (V31_REDO_SURGICAL_2026-08-27.md) — explicit reward_id: mario,
+    #     the v27/v27 sibling recipe's own arm, single-variable redo_tau
+    #     diff from the already-baselined v27 seed configs.
+    expected = 126 + 4
+    assert len(baseline) == expected, (
+        f"expected {expected} baseline rows (126 frozen at migration + "
+        f"documented later appends); found {len(baseline)}. A frozen row "
+        "changing value is history and must never be regenerated; a "
+        "brand-new specialized profile is fine to append but must be "
+        "documented here, in one batch per addition, with the "
+        "registration that authorized it."
     )
     for rel, arm in baseline.items():
         assert (REPO / rel).exists(), f"baseline names a config that no longer exists: {rel}"
