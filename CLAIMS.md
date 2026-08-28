@@ -3612,6 +3612,101 @@ traversal this verdict claims cannot be executed.** The experiment that could
 adjudicate is a transition bank from B5's own rollouts at both rungs with coverage
 reaching the band interior; it needs its own registration.
 
+ADDENDUM VADV-2 (2026-08-28) — **that experiment was registered, run, and
+VOIDED on a data-integrity defect. `V_adv` is NOT retired, and B5 does not
+move.** Full write-up: `docs/research/TWO_REGISTERED_TESTS_2026-08-27.md`
+Part I. Registration: `docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md`
+(commit `9a9db2d`), written before any number was read.
+
+The on-policy repair was built and the rollouts were collected — 26 iterates,
+~1.6 M transitions, 0.86 h — but **a reused NumPy buffer meant every row
+written to disk was `(s', a, s')`.** `state` is bit-identical to `next_state`
+on **100 % of rows in all 26 banks**; the antecedent was never recorded.
+Root cause proven, not inferred: `TileFeatureStacker._flatten_oldest_to_newest`
+(`src/emulation/frame_utils.py:190-204`) returns its own reused `_out` buffer,
+which `push()` mutates in place, so the collector's `lane.obs` and its `s_new`
+were the same object and both copies captured the successor.
+
+**The estimator therefore never ran.** With `s == s'`,
+`Â = r + γV(s') − V(s)` collapses to `(γ−1)·V(s')` — a function of ONE state
+carrying zero action information **by construction**. `WALL` raw reads
+3.93 × 10⁻⁹ against `Var_batch[V] = 332.73`. Cross-check: `PC_SRC` episodes
+clear the level, spanning `gx` 0 → 3266, yet `gx(s) == gx(s')` on 100 % of
+22,845 PC rows — physically impossible for a real bank.
+
+**THE NINTH VACUOUS GATE, on the primary verdict path.** `NC-b`
+(`NEG_gx_frozen`) selects cells where no action moves `gx`; with `gx(s)` always
+equal to `gx(s')` the frozen mask was universally true and **`NEG_gx_frozen`
+came back bit-identical to `PC_B5` at 26 of 26 iterates** — every digit. A
+negative control that is a byte-copy of the positive control is not a control.
+Structurally, `NEG == PC_B5` ⟹ (`NEG` LIVE ⟺ `PC_B5` LIVE), both signatures
+require `PC_B5` LIVE, and the driver caps to INDETERMINATE whenever `NEG` is
+not COLLAPSED — so **no signature was declarable at any iterate before a single
+checkpoint was loaded.** The reported `frac_mis = frac_cap = 0.00` is an
+arithmetic identity of the pipeline. The run report read this backwards, citing
+the one capped iterate as proof the control "did real, falsifiable work."
+
+**Why A1-A8 all passed:** none inspects transition structure. A3's zeroed-critic
+stub returns 0.0 regardless of successors; A5's `Var_batch[V]` is computed on
+states, which are valid; A7 injects a synthetic effect four orders of magnitude
+above the entire real signal and detects it, testing detection rather than data
+validity; A8 compares widths. **The level-identity purity guard ran on the true
+antecedents and passed with 0 violations — it guarded transitions that were
+never the ones written to disk.** All four revert-verified anti-vacuity tests
+pass distinct arrays into `append_transition_row`, so none exercised the
+aliasing: the unit was correct and the integration was not.
+
+**DISPOSITION. The §11 retirement rule DOES NOT FIRE.** It retires `V_adv` on
+an INDETERMINATE arc or a VOID "for any reason other than a fixable operational
+fault", and its rationale is two computations *"with live controls, real power
+and a pre-committed null"* returning no signature. That rationale is false
+here: the controls were **not** live, `V_adv` was **never measured**, and the
+no-signature outcome was **guaranteed by a data-construction defect before
+compute**. Retiring an instrument on a run where it never ran would spend the
+retirement on a null a bug manufactured. This is a fixable collector fault,
+which §11 excludes by name.
+
+* **`V_adv` is NOT retired.** The question stays open and still owes one honest
+  on-policy computation.
+* **B5's verdict does not move.** `R = 0.542` at the iter-250 comparability
+  point **is not a reading**, and **must not be tabled beside the predecessor's
+  0.279.** This entry stays provisional and B5 stays flagged
+  **under-instrumented**.
+* **The rung-relative wavefront amendment stays DEFERRED and stays "pending"**
+  — **not** "closed by this route", because the route did not run.
+
+**WHAT SURVIVES, and it is banked.** `gx_trace` is read off `s_new` directly
+and the aliasing does not corrupt it, so the **no-penetration measurement is
+real**: across 26 iterates, **1,040 rung-893 episodes and ~1.04 M env-steps,
+`gx` never exceeded 2674** (`min == max == 2674` at every iterate,
+`pen_rate = 0.0`, zero exceptions). Per the registration's pre-declared §5.3
+reading, `INTERIOR` is **VOID — never COLLAPSED**, is recorded as a **positive
+measurement**, and is **evidence for neither hypothesis** (both predict it).
+Its value is localisation: the failure sits **at the gx-2674 state itself**,
+not along a 198-px traversal — strictly stronger and more specific than
+entrance 0/717. That reading was written down before the data was seen, which
+is why it can be banked instead of argued about. Also real: A1 reproduced the
+predecessor's offline η² **0.6669 to ten significant figures**
+(0.6668875582236998) on a file the collector never touched, so
+`scripts/score_banked_iterates.py` is not implicated; and the diagnostic
+rung-933 probe shows clears falling **8.3 % → 16.7 % → 0 %** across the arc
+(at iter 250 all 24 episodes deposit in `WALL`, `max_gx` 2674) on a rung the
+curriculum demonstrably advanced through — a regression signal with no
+instrument currently pointed at it.
+
+**FIXED AND SHIPPED WITH THE VERDICT:** both call sites now copy out of the
+reused buffer, and `assert_bank_wellformed` runs on the arrays immediately
+before `np.savez` with two **threshold-free** invariants — the chain property
+(the successor at step `i` IS the antecedent at step `i+1`, exact, true whether
+the scene moves or is frozen) and non-degeneracy (not *every* row may satisfy
+`s == s'`; no fraction below 1.0 is asserted, because picking one would be a
+threshold nobody checked against its acting range). Revert-verified: neutering
+the guard fails 4 of 45 tests including the exact 2026-08-27 artifact.
+**Re-run condition beyond the fix: `NC-b`'s acting range must be re-derived on
+the repaired bank BEFORE scoring** — if `NEG_gx_frozen` is again a near-copy of
+`PC_B5` on real transitions, NC-b is unusable on on-policy data and must be
+re-specified in a written addendum rather than left to cap the verdict.
+
 ### 3. Contra clear-detector nulls — VOID, and the guard that should have caught it is inert
 
 Already self-caught for Contra specifically at
@@ -3829,3 +3924,114 @@ says is where the prescription as written may actually live.
 **STANDING PROHIBITION.** Nothing in v27, v28, or v30 may be cited as evidence
 for or against the plasticity-loss hypothesis. The hypothesis stands exactly
 where the DR left it on 2026-08-25: diagnosed, prescribed, and untested.
+
+## V31 REDO AT THE SURGICAL DOSE 2026-08-28 — verdict VOID, stopped by its own preflight
+
+Full write-up: `docs/research/TWO_REGISTERED_TESTS_2026-08-27.md` Part II.
+Registration adjudicated: `docs/proposals/V31_REDO_SURGICAL_2026-08-27.md`
+(commit `1011eff`). Receipts: `runs/v31_redo_surgical_2026-08-27/`
+(`phase_g/phase_g.log`, `phase_m/PHASE_M_RESULT.json`,
+`phase_m_seed0_tau010.log`, `phase_m_seed0_tau075.log`), status markers
+`runs/redo_surgical/status/`. Machinery: commits `0906f7c`, `8606fb1`.
+
+**THE HEADLINE. v31 registered ReDo at tau = 0.10 — the TOP of the Deep
+Research prescription's own 0.025-0.1 range, and the surgical dose v30's
+telemetry said was reachable at ~1-3 units from ~iter 16. Both admissible
+rungs failed the registered preflight, in OPPOSITE directions, with no window
+between them. Zero treatment seeds were launched. Total compute: 33.5
+minutes, against the ~7.05 h of seed training and ~3 h of eval ladder it
+refused.**
+
+**VERDICT: VOID.** The registered bar was **Θ ≥ 0.80 PASS / Θ ≤ 0.767 FAIL**,
+Θ = best-of-4 over seeds of the cross-fit split-sample honest clear rate.
+`armed = 0`, `scored = 0`, **Θ does not exist**; the registered disposition for
+fewer than four armed seeds is **VOID-UNDERPOWERED**, with no Θ issued and
+per-seed numbers banked individually — of which there are none. **The bar did
+not move: 0.80 and 0.767 stand untouched and the 0.05 winner's-curse budget is
+unspent.** Launching a seed now would violate the registration's own *"NO
+TRAINING BEGINS BEFORE PHASE M RETURNS GO."*
+
+**PHASE G — the in-run ceiling is live, not vacuous.** A live run at tau = 0.25
+with the ceiling armed raised `VOID-OVERDOSE` at **iter 9**, in 3 m 46 s, as
+required before the campaign could start. Per Phase G's own terms this
+certifies a **check**, not the arm, and may not be cited about tau = 0.10 or
+about the hypothesis.
+
+**RUNG 1, tau = 0.10 — NO-GO on M2 (VOID-OVERDOSE).** First firing at **iter
+16**, exactly as registered. Then the dose **climbed**: 1, 1, 1, 1, 5, 6, 6, 6,
+8, 11, 12, 12, 12, 12 units. The in-run ceiling raised at **iter 29**
+(trailing-10-check median 0.297 > 0.25). Equilibrium **12 of 32 = 37.5 %** —
+*identical to v30's measured tau = 0.15 equilibrium*. **tau = 0.10 is not
+surgical on this architecture.** Detected in 10 m 10 s, uncontended at
+19.5-20.5 s/iter (faster than the registered 25.4 ± 2.5 s band).
+
+**RUNG 2, tau = 0.075 — NO-GO on M5 (permanent lesion).** The registered
+ladder permits exactly one de-escalation, and it was taken. tau = 0.075 ran all
+60 iterations: it **fires** (from iter 29), it is **surgical** (max 2/32 =
+6.25 %), it is **sustained** (31 firing iterations, cum 55) — and across the
+entire run it recycled **two distinct fc2 indices**: `[16]` × 7 and `[5, 16]`
+× 24. Unit 16 appears in **100 %** of firing events; top-index share 56.4 %.
+Against M5's ≥ 4 distinct indices this is a categorical failure. What that
+describes is a **permanent partial lesion of two trunk units**, re-initialised
+every iteration and immediately re-dormant — self-sustaining, not a recycle.
+**This is the pathology F3/M5 was written to catch and the first time that gate
+has bitten on live data.**
+
+**STOP, by the registration's own rule, not a judgement call.** §9: *"If Phase
+M fails M5 (fixed index set) → STOP; a lesion is not a dose problem and no rung
+fixes it"* and *"if the second Phase M also NO-GOes, the campaign STOPS."* Both
+met. tau ≥ 0.15 and tau ≤ 0.05 are forbidden by this registration including as
+escalations; tau = 0.125 is the M1/M4 branch, not the M2 branch, and taking it
+after seeing these results would be a moving goalpost.
+
+**A FABRICATED NO-GO WAS CAUGHT BEFORE IT WAS ADJUDICATED.** The first Phase M
+"result" was an orchestration bug: the launcher redirected stdout to
+`checkpoints/mario_1_1_v31_redo_seed0/run.log` without creating the directory
+first, so the redirect failed, training never started, the adjudicator crashed
+on a missing file, and the script wrote a **"Phase M NO-GO"** marker —
+timestamped in the same second as the launch. Adjudicating a ladder rung off
+that would have been a registered scientific verdict derived from a missing
+directory. Fixing it surfaced a second defect on the same path: the trainer
+attaches its own `FileHandler` to `<checkpoint_dir>/run.log` in **truncating**
+mode, so a shell redirect to that path gives two writers at independent offsets
+and corrupts the log Phase M is adjudicated from. Both real Phase M logs carry
+exactly one `[redo] ENABLED` line — no restart contamination.
+
+**WHAT THIS VOID LICENSES, exactly and no wider.**
+
+1. The registered §9 stopping statement, now with a live two-rung receipt: **on
+   a Linear → LayerNorm → SiLU 32-unit trunk there is no fixed dormancy
+   threshold that is simultaneously firing, surgical, and distributed over the
+   training budget; fixed-threshold ReDo is mis-specified for this
+   architecture.**
+2. **The registered `frac ≈ 2.5·tau` law is REFUTED** at its own point
+   prediction — it predicted 7.6-8.0 of 32 units at tau = 0.10; measured 12/32
+   and still climbing when the ceiling fired. (`PHASE_M_RESULT.json` prints
+   `eq_law_corroborated: true`; that field averages across the climb in a run
+   truncated by the abort and is not cited.)
+3. **V5/A4 argmax-agreement is confirmed structurally vacuous on live data** —
+   median `agree` **0.97** at tau = 0.10 while 37.5 % of the trunk was reset
+   every iteration. The registration's demotion of it to a reported diagnostic
+   was correct, and this is the receipt. That is the eighth vacuous gate,
+   closed and now witnessed.
+4. **Exactly one successor:** the **rank-based bottom-k dose** (v30 §10.1),
+   stable under the observed drift where no fixed threshold is — a NEW
+   experiment with its own registration, not a rung of this one.
+
+**NOT LICENSED — any of these in writing is a fabrication:** any statement
+about Θ or the 0.767 bar; any claim that ReDo is or is not a lever of any size;
+any claim that plasticity loss was or was not the barrier; Hypothesis B (48k is
+a hard ceiling) confirmed or falsified; any claim about other plasticity
+interventions (L2-init, CReLU, weight churn, layer-norm resets, periodic full
+resets); and **any FAIL-class inference whatsoever** — a VOID takes no branch of
+the fork and enters no aggregate.
+
+**THE STANDING PROHIBITION IS EXTENDED, NOT LIFTED.** Nothing in v27, v28, v30
+**or v31** may be cited as evidence for or against the plasticity-loss
+hypothesis. **The v27/v28 plasticity confound is NOT discharged** — discharging
+it required a FAIL at a firing, surgical, sustained dose, and no such run
+exists. **The 2026-08-25 DR's ReDo prescription may NOT be closed as
+EXECUTED-AND-NEGATIVE; it was never executed.** The hypothesis stands exactly
+where the DR left it: diagnosed, prescribed, and untested — now with the
+additional, separately-earned finding that the fixed-threshold *form* of the
+prescribed intervention cannot be run surgically on this architecture at all.

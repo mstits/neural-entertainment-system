@@ -12,12 +12,12 @@ one-line invariant only after recurring across 4–5 separate entries.
 | root cause | entries | deterministic enforcement |
 |---|---|---|
 | `[unverified-claim]` | **8** | no — judgement |
-| `[vacuous-gate]` | **8** | candidate — lint for `passed = not <coll>`; and ask what the mechanism preserves *by construction* before registering a check on it |
+| `[vacuous-gate]` | **9** | candidate — lint for `passed = not <coll>`; ask what the mechanism preserves *by construction* before registering a check on it; and emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty |
 | `[weak-eval]` | **6** | partial — enforce min-n at the gate |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
-| `[stale-artifact]` | **4** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt |
-| `[process]` | 3 | — |
+| `[stale-artifact]` | **5** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant) |
+| `[process]` | **4** | candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict |
 | `[start-state]` | 2 | — |
 | `[measurement]` | 1 | — |
 | `[git]` | 1 | — |
@@ -34,6 +34,119 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-28 — [stale-artifact] Every gate passed on a bank whose rows were not transitions
+- **What happened:** The on-policy `V_adv` re-score
+  (`docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md`, verdict
+  `docs/research/TWO_REGISTERED_TESTS_2026-08-27.md` Part I) collected 26
+  transition banks — ~1.6 M rows, 0.86 h — in which **`state` was bit-identical
+  to `next_state` on 100 % of rows.** The antecedent was never recorded.
+  `TileFeatureStacker._flatten_oldest_to_newest`
+  (`src/emulation/frame_utils.py:190-204`) returns its own reused `_out` buffer
+  as a BC-pretrain optimisation; the collector held `lane.obs` as an alias of it
+  and then called `push()`, which mutates that buffer in place and returns the
+  same object, so `lane.obs is s_new` and both `.copy()` calls captured the
+  **successor**. The registered estimator `Â = r + γV(s') − V(s)` therefore
+  collapsed to `(γ−1)·V(s')` — a function of ONE state carrying zero action
+  information by construction (`WALL` raw 3.93e-09 against
+  `Var_batch[V] = 332.73`). Cross-check that settles it: `PC_SRC` episodes
+  clear the level, spanning `gx` 0 → 3266, yet `gx(s) == gx(s')` on 100 % of
+  22,845 PC rows.
+- **Root cause:** **Every check ran on the values the loop held in hand; none
+  ran on the bytes written to the file.** All eight admissibility gates passed
+  and were individually correct — A3's zeroed-critic stub returns 0.0 whatever
+  the successors are, A5's `Var_batch[V]` is computed on states (which were
+  valid), A7 injects an effect four orders of magnitude above the real signal
+  and detects it, A8 compares widths. Sharpest of all, **the level-identity
+  purity guard ran on the true antecedents and passed with 0 violations across
+  ~1.6 M transitions — it certified transitions that were never the ones
+  written to disk.** Guard subject and artifact content diverged. The four
+  revert-verified anti-vacuity tests all pass *distinct* arrays into
+  `append_transition_row`, so none exercised the aliasing: the unit was correct
+  and the integration was not. Same family as the 2026-04-22 stale-`.so` entry,
+  one level up — there the loaded artifact was not the built one; here the
+  written artifact was not the collected one.
+- **Consequence:** A 2.13 h job of which ~1.27 h of scoring measured nothing,
+  and — worse — a **result that looked complete**: 26 iterates, |A| = 24
+  admissible, a published R curve, an arc verdict. Had the adjudication trusted
+  the report, `V_adv` would have been **retired** under the registration's own
+  §11 rule on a null a bug manufactured, and B5 would have been recorded as
+  un-adjudicable by an instrument that never ran. What survives is only what
+  was read off `s_new` directly and is uncorrupted: the no-penetration
+  measurement (1,040 rung-893 episodes, `gx` never above 2674) and the rung-933
+  probe.
+- **Rule (draft):** **Assert on the artifact, not on the loop.** A transition
+  bank ships a chain invariant — the successor recorded at step `i` IS the
+  antecedent recorded at step `i+1`, checked on the arrays about to be written.
+  It is exact, threshold-free, one pass, and it is now enforced in
+  `assert_bank_wellformed` (`scripts/collect_onpolicy_bank.py`), revert-verified
+  at 4 of 45 tests failing when neutered. Corollary for any buffer-reusing
+  producer: a function documented as returning a reused buffer must have every
+  consumer's copy made load-bearing in a comment, or the copy gets optimised
+  away by the next reader.
+
+## 2026-08-28 — [vacuous-gate] The negative control was a byte-copy of the positive control
+- **What happened:** `NC-b` (`NEG_gx_frozen`) selects cells within `PC_B5`
+  where no tried action moves `gx`. Because the aliasing defect above made
+  `gx(s) == gx(s')` universally, the frozen mask was always true and the
+  `moving` exclusion set was empty, so **`NEG_gx_frozen` returned
+  bit-identical to `PC_B5` at 26 of 26 iterates** — same `n_cells`, same
+  `n_rows`, same `raw`, same `η²`, same null median, same q97.5, every digit.
+  The run report cited the single iterate where the cap fired as evidence the
+  control "did real, falsifiable work here," reading the bug's own signature as
+  the safety mechanism working.
+- **Root cause:** **A control's acting range was never checked against the data
+  it would actually see.** The standing rule from the previous seven vacuous
+  gates is exactly that, and it was applied to every *threshold* in this
+  registration and to no *region definition*. Structurally the damage was total
+  and pre-compute: `NEG == PC_B5` implies (`NEG` LIVE ⟺ `PC_B5` LIVE); both
+  registered signatures require `PC_B5` LIVE; the driver caps to INDETERMINATE
+  whenever `NEG` is not COLLAPSED and a signature would otherwise be declared —
+  so **no signature was declarable at any iterate before a single checkpoint was
+  loaded**, and the reported `frac_mis = frac_cap = 0.00` was an arithmetic
+  identity of the pipeline rather than a reading.
+- **Consequence:** The ninth vacuous gate, the second in two days found inside a
+  registration whose explicit brief was preventing the previous ones — and the
+  first to sit directly on the primary verdict path rather than beside it. It
+  did not merely fail to catch something; it made the intended verdict
+  unreachable while printing a plausible one.
+- **Rule (draft):** **A negative control must be shown to differ from the
+  positive control on the actual rows, before either is scored.** Emit
+  `|rows(NEG) Δ rows(PC)|` on every reading and VOID when the symmetric
+  difference is empty — a control whose row set equals the positive control's
+  is not a control. Re-derive it on the repaired bank *before* scoring: if
+  `NEG_gx_frozen` is again a near-copy on real transitions, it is unusable on
+  on-policy data and must be re-specified in a written addendum, not left in
+  place to cap the verdict.
+
+## 2026-08-28 — [process] An automation wrote a registered NO-GO from a missing directory
+- **What happened:** The v31 campaign orchestrator redirected training stdout
+  with `> checkpoints/mario_1_1_v31_redo_seed0/run.log` but did not create that
+  directory first — its `mkdir` came *after* the training call. The shell
+  redirect failed, `train_game.py` never started, the Phase M adjudicator
+  crashed on a missing file, and the script wrote a **"Phase M NO-GO"** status
+  marker. The marker and the launch are timestamped in the **same second**
+  (22:27:49). Fixing it surfaced a second defect on the same path: the trainer
+  attaches its own `FileHandler` to `<checkpoint_dir>/run.log` in **truncating**
+  mode (`mode="w"`), so a shell redirect to that same path produces two writers
+  at independent offsets and corrupts the very log Phase M is adjudicated from —
+  observed interleaving live, killed that run, redirected to a separate path.
+- **Root cause:** **A registered decision was delegated to a script that could
+  not distinguish "the measurement returned NO-GO" from "the measurement did not
+  run."** Every non-zero exit looked the same to it. The registration was
+  careful about the opposite direction — it deliberately does *not* let the
+  script pick a ladder rung unattended — but nothing stopped it from
+  manufacturing the input to that decision.
+- **Consequence:** Caught before adjudication, so nothing was published; had it
+  not been, a ladder rung would have been taken on an infrastructure error and
+  the campaign's registered verdict would have rested on a missing directory.
+  Cost was minutes. The near-miss is the entry.
+- **Rule (draft):** **An orchestrator may only record a verdict it can prove was
+  measured.** Require the receipt (a log with the expected `[redo] ENABLED
+  tau=` line, a non-empty telemetry series) before writing any PASS/FAIL/NO-GO
+  marker; on a missing or unparseable receipt write `INFRASTRUCTURE-ERROR`,
+  which is not a verdict and takes no branch. And never point a shell redirect
+  at a path the program under test opens itself.
 
 ## 2026-08-27 — [inert-treatment] An instrument adopted in a pre-registration and never built leaves the same receipt as one that ran and found nothing
 - **What happened:** `v15_d1` diagnosed the confound behind the 1-2 backward
