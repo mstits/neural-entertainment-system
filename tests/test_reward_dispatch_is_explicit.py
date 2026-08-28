@@ -345,7 +345,16 @@ def test_baseline_covers_the_whole_roster_and_is_not_empty():
     #     the same v27 recipe with the ReDo selection rule as its single
     #     functional diff (threshold -> rank-based bottom-k). Seeds 1-3
     #     are owed and will be one further documented batch.
-    expected = 126 + 4 + 1
+    # +5: configs/mario_1_1_v32_redo_bk_seed{1,2,3}.yaml plus the two
+    #     Phase R preflight profiles configs/mario_1_1_v32_redo_bk_
+    #     phase_r.yaml (rung 1, k=2/C=5) and ..._phase_r2.yaml (rung 2,
+    #     k=4/C=10, the V32 §8 escalation). This is the "seeds 1-3 are
+    #     owed" batch promised directly above, settled together with the
+    #     two preflight profiles that were authored alongside them. All
+    #     five are byte-identical to the already-baselined seed0 profile
+    #     except `name` and the registered redo numerals, and all five
+    #     declare `reward_id: mario` explicitly.
+    expected = 126 + 4 + 1 + 5
     assert len(baseline) == expected, (
         f"expected {expected} baseline rows (126 frozen at migration + "
         f"documented later appends); found {len(baseline)}. A frozen row "
