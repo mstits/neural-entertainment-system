@@ -12,11 +12,11 @@ one-line invariant only after recurring across 4–5 separate entries.
 | root cause | entries | deterministic enforcement |
 |---|---|---|
 | `[unverified-claim]` | **8** | no — judgement |
-| `[vacuous-gate]` | **11** | candidate — lint for `passed = not <coll>`; ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; and a test whose assertion is a literal string or an object identity should assert the behavior that string/identity stands in for instead |
+| `[vacuous-gate]` | **12** | candidate — lint for `passed = not <coll>`; ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
 | `[weak-eval]` | **7** | partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
-| `[stale-artifact]` | **5** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant) |
+| `[stale-artifact]` | **6** | candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
 | `[process]` | **6** | candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 1 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
@@ -35,6 +35,48 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-28 — [vacuous-gate] Called an adjudicator without its mode flag, silently ran the wrong check
+- **What happened:** The v32 campaign runner called `redo_arm_gate.py` on all
+  four seeds with no flags. `--bottom-k` is opt-in; without it the script
+  silently falls through to the threshold-based adjudicator, which checks
+  `tau` against a default of 0.25 -- a parameter the registration explicitly
+  documents as NOT READ under bottom-k mode. All four seeds reported VOID
+  on a check that could never have been satisfied, for a reason unrelated to
+  anything the campaign actually measured.
+- **Root cause:** Wrote the invocation from memory of what the tool should do
+  rather than reading its own CLI surface; a tool built to serve two modes
+  silently defaults to the wrong one for the mode actually in use.
+- **Consequence:** A correctly-run campaign initially reported four false
+  VOIDs. Caught by reading the registration text ("not read on this path")
+  against the arm-gate's actual complaint before accepting the verdict.
+- **Rule (draft):** Before trusting an adjudicator's verdict, confirm it was
+  invoked in the mode the artifact under test actually used, not the tool's
+  default.
+
+## 2026-08-28 — [stale-artifact] An escalation ladder moved k and C but not the floor derived from them
+- **What happened:** B1's event floor (`>= 48`, `cum_recycled == 2 x events`)
+  was written for rung 1 (k=2, C=5: 50 checks over 250 iters, 48 = 50-2
+  slack). When the registered ladder escalated to rung 2 (k=4, C=10: 25
+  checks is the structural maximum), the floor was never updated --
+  `>= 48` became arithmetically unreachable, so any rung-2 run would
+  VOID-NOT-REACHED regardless of mechanism behavior.
+- **Root cause:** A derived numeral (the floor) was hand-copied at
+  registration time from the rung it was first written against, instead of
+  being expressed as a function of the numerals it derives from (checks per
+  seed, minus a fixed slack count) so an escalation propagates automatically.
+- **Consequence:** Would have VOIDed a healthy campaign on a defect in the
+  adjudicator, not the mechanism. Caught before any verdict was accepted;
+  corrected via dated addendum (23 = 25 - 2, same slack magnitude as rung 1)
+  in the registration itself, disclosed as written after seeing the raw
+  counts. A companion note already existed in CLAIMS.md proposing 24 (one
+  event of slack) for the same fix, written before the campaign ran -- the
+  two numbers disagree by one and neither changes any of the four verdicts,
+  since all four seeds hit exactly 25/25 events.
+- **Rule (draft):** A derived threshold should be computed from its inputs at
+  adjudication time, not hand-copied at registration time -- an escalation
+  ladder that moves the inputs and not the derived value is the same defect
+  as a config key nobody re-checks after the code around it changes.
 
 ## 2026-08-28 — [vacuous-gate] Wrote a test that called the fix's own primitive instead of the code under test
 - **What happened:** First regression test for the orphaned-child fix called

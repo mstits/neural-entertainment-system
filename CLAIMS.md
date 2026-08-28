@@ -4266,3 +4266,63 @@ restated as **≥ 24 of 25** — 25 events × k = 4 = 100 units = 3.125 trunk
 turnovers, identical cumulative dose. That is arithmetic implied by the
 registered rung, not a new choice, but it is a numeral and numerals go in
 writing before compute, not into a receipt afterwards.
+
+## V32 CAMPAIGN RUN 2026-08-28 — 1/4 ARMED, 3/4 VOID-NO-TURNOVER, no Theta
+
+Full write-up: `docs/research/V32_REDO_BOTTOM_K_CAMPAIGN_2026-08-28.md`.
+Addendum to the registration: `docs/proposals/V32_REDO_BOTTOM_K_2026-08-28.md`
+§12 (`1be16b2`). Receipts: `checkpoints/mario_1_1_v32_redo_bottom_k_seed{0..3}/`
+(all four, 250 iterations, 24 saved checkpoints each);
+`docs/receipts/v32_redo_bottom_k/seed{0..3}_armgate.json`.
+
+The campaign above launched and ran all four seeds. Two adjudication defects
+were found and corrected before reading a verdict, neither touching B2/B3/B4:
+the campaign runner called `redo_arm_gate.py` without `--bottom-k`, silently
+routing into the threshold-based path that checks `tau` against a parameter
+the registration itself documents as **not read** under bottom-k — corrected
+to `--bottom-k --k 4 --cadence 10`. And B1's event floor, already flagged
+above as owed in writing before launch: this document proposed **≥24 of 25**
+(one event of slack); the addendum written from the actual raw counts derived
+**23** (two events of slack, matching rung 1's own "-2" magnitude exactly, the
+same reasoning rung 1 used at its own cadence). **Neither number changes any
+verdict here** — all four seeds registered exactly 25/25 events, above both.
+The discrepancy between 23 and 24 is noted rather than silently resolved; §12
+of the registration is the operative correction going forward.
+
+**Result, B1–B4 exactly as registered, B4's `repeat_rate == 1.00` criterion
+applied with no reinterpretation:**
+
+| seed | events/dose (B1) | artifact (B2) | dose (B3) | turnover (B4) | verdict |
+|---|---|---|---|---|---|
+| 0 | 25/100, exact | 100% | 0.125 every check | 0.958 | **ARMED** |
+| 1 | 25/100, exact | 100% | 0.125 every check | 1.000 | VOID-NO-TURNOVER |
+| 2 | 25/100, exact | 100% | 0.125 every check | 1.000 | VOID-NO-TURNOVER |
+| 3 | 25/100, exact | 100% | 0.125 every check | 1.000 | VOID-NO-TURNOVER |
+
+**This is not a surprise the design failed to anticipate.** §6.3 of the
+registration, written before compute: *"The guard fires on every real ReDo
+trace this repository has ever produced... it is a gate that 100% of prior
+evidence fails."* Both banked v31 Phase M logs already VOIDed on this same
+criterion. Three of four seeds joining that base rate is consistent with what
+was registered with eyes open, not a new failure of the design.
+
+**NO THETA COMPUTED, AND NONE SHOULD BE INFERRED.** `Theta = best-of-4` has
+one surviving seed. The registration specifies no reading for n=1 — its
+ladder (§8) governs Phase-R pilot outcomes, not post-campaign per-seed B4
+attrition at this granularity. Scoring seed 0 alone and calling the result
+`Theta` would satisfy the letter of "run the honest eval" while violating the
+purpose the cross-fit best-of-4 design exists for. **No honest-eval compute
+has been spent on any of the four seeds' checkpoints.** Two next steps are
+named in the write-up (score seed 0 explicitly as an n=1 exploratory reading
+under a pre-registered statement of what it can support; or retire
+rank-based ReDo for this stack, generalizing v31's own stopping statement) —
+**neither is executed by this entry**, and the choice is not made here.
+
+**THE STANDING PROHIBITION IS EXTENDED AGAIN, UNCHANGED IN KIND.** Nothing in
+v27, v28, v30, v31, or v32 may be cited as evidence for or against the
+plasticity-loss hypothesis. The hypothesis stands exactly where the DR left
+it on 2026-08-25: diagnosed, prescribed, and — after five registered
+campaigns — still untested to a PASS/FAIL bar. What v32 adds beside that: the
+rank-rule's own turnover pathology, previously observed only in a two-rung
+pilot, reproduces in 3 of 4 seeds at full length, at the only rung the
+registered ladder permits reaching.
