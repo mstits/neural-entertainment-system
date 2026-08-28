@@ -65,8 +65,17 @@ thresholds are 11 and 16.
 On sound banks (chain guard pass, information gate pass), **NC-b is USABLE on
 on-policy data iff BOTH:**
 
-- (a) NEG_gx_frozen is not bit-identical to PC_B5 at **any** iterate
-  (n_cells, n_rows, raw, eta2, null median, q975 — all six fields); and
+- (a) NEG_gx_frozen is not bit-identical to PC_B5 at **any SURVIVING bank**
+  (n_cells, n_rows, raw, eta2, null median, q975 — all six fields).
+  **Quantified over survivors only, same scope as (b)** — resolved pre-data:
+  aliasing is the known cause of the NEG==PC collapse, so on a bank already
+  VOID for aliasing, bit-identity is the expected symptom of the
+  already-excluded cause and carries no further information; quantifying over
+  all 26 would punish one defect twice and silently reduce the §2 six-void
+  tolerance to zero. On a SOUND bank the reading is the opposite and the
+  clause stays global in force: six-field bit-identity there cannot come from
+  the known cause, so a SINGLE surviving bank exhibiting it is a pipeline
+  arithmetic identity and disqualifies NC-b outright, not just that bank; and
 - (b) NEG's and PC_B5's eta2 95% bootstrap CIs are **disjoint** (CI-vs-CI, the
   stricter of the two available tests — the original CI-vs-point-estimate
   treated PC as noiseless and was the more permissive; tightened pre-data,
