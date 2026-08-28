@@ -327,3 +327,13 @@ The same failure in mirror image, hours apart, on the same data: **a census is
 defined by its filter, and comparing censuses under different filters
 manufactures discrepancies in either direction.**
 
+**Closing verification (reviewer, no masking whatsoever):** 4,690 mid-episode
+anomalies on the whole grid, every one entrance-sourced — non-entrance
+mid-episode anomalies: ZERO. Scripted triple 1,560 per position x 3 = 4,680;
+off-script exactly 10. The boundary population at PC rungs is 505 rows
+(156/154/195 at rungs 1013/1053/1093) — precisely the population the
+unfiltered near-miss surfaced and the census filter excludes. Both censuses
+survive with no position mask: entrance-only is exact. And the movable +1/+3
+pair is the decisive mechanism evidence, stated plainly: **a frame derivation
+cannot relocate; a game-scheduled phase can.**
+
