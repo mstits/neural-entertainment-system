@@ -16,7 +16,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[weak-eval]` | **8** | **PROMOTED 2026-08-28** (project instruction file); partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **PROMOTED 2026-08-28** (project instruction file); **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
-| `[stale-artifact]` | **6** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
+| `[stale-artifact]` | **7** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
 | `[process]` | **9** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 2 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
@@ -35,6 +35,26 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-29 — [stale-artifact] `git checkout <file>` as mutation-restore wiped an unstaged fix
+- **What happened:** During revert-verification of the approx-KL clamp, the
+  mutation was applied to `src/training/ppo.py` and then "restored" with
+  `git checkout src/training/ppo.py` — which restored from the INDEX, where
+  the fix had never been staged. The entire unstaged fix was destroyed, not
+  just the mutation; the test run that followed errored on a missing symbol
+  instead of passing.
+- **Root cause:** Used a whole-file VCS restore to undo a one-line mutation
+  on a file whose current state was ahead of both index and HEAD. The
+  mutation-testing loop (patch → run → restore) needs a restore that
+  targets the mutation, not the file.
+- **Consequence:** ~2 minutes: the fix was re-applied from the still-open
+  patch script and re-verified green. Zero loss only because the exact
+  patch text existed in the session; on hand-typed edits this deletes real
+  work.
+- **Rule (draft):** During mutation-verification of uncommitted work,
+  restore by reversing the mutation string (or stage/stash the good state
+  first); never `git checkout`/`git restore` a file that carries unstaged
+  fix work.
 
 ## 2026-08-29 — [process] Two chain watchers ran the same eval pipeline concurrently
 - **What happened:** A background chain watcher believed dead (its parent
