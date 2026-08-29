@@ -19,7 +19,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[stale-artifact]` | **6** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
 | `[process]` | **8** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
-| `[false-alarm]` | 1 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
+| `[false-alarm]` | 2 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
 | `[measurement]` | 1 | — |
 | `[git]` | 1 | — |
 | `[reward-exploit]` | 1 | — |
@@ -35,6 +35,22 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-28 — [false-alarm] A preflight check failed twice on a healthy mechanism
+- **What happened:** The v33 dose-reachability smoke "failed" twice — at 5
+  and then 10 iterations — before passing at 11. Both failures were in the
+  CHECK (checkpoints save at `it % 10 == 0` with `it > 0`, and `--iters N`
+  runs iters 0..N-1, so 11 is the save minimum), not in the dose; the
+  mechanism was healthy throughout.
+- **Root cause:** Wrote the check's expectations from assumption (a save
+  will exist after a short run) instead of from the save condition in the
+  code it was checking.
+- **Consequence:** Minutes lost, both false starts recorded in the receipt
+  rather than erased — a preflight that hides its own false alarms teaches
+  the next author the same wrong assumption.
+- **Rule (draft):** Before asserting an artifact exists, read the condition
+  that produces it; a checker's expectations come from the code, not from
+  what would be convenient for the check.
 
 ## 2026-08-28 — [process] Recommended a pre-registered consequent whose antecedent never occurred
 - **What happened:** Recommended retiring ReDo off a VOID campaign. The
