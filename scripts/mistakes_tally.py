@@ -39,7 +39,15 @@ def main():
         for t in untagged[:20]:
             print(f"  - {t[:72]}")
     if "--check" in sys.argv:
-        stated = re.findall(r'\|\s+`\[([a-z-]+)\]`[^|]*\|\s+\*\*(\d+)\*\*', SRC.read_text())
+        # Match bold (**N**, at/past threshold) AND plain (N) counts — the
+        # bold-only version left every sub-threshold row invisible to the
+        # drift check, so a stale "3" could sit beside 5 real entries
+        # forever without --check ever failing (found by external audit,
+        # 2026-08-28).
+        stated = re.findall(
+            r'\|\s+`\[([a-z-]+)\]`[^|]*\|\s+(?:\*\*(\d+)\*\*|(\d+))\s+\|',
+            SRC.read_text())
+        stated = [(c, b or p) for c, b, p in stated]
         bad = [(c, int(n), counts[c]) for c, n in stated if counts[c] != int(n)]
         if bad:
             print("\nDRIFT — watch table disagrees with the entries:")
