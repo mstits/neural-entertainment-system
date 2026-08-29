@@ -334,3 +334,55 @@ def test_cli_empty_cohort_does_not_crash(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "nothing to rank" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Non-finite handling: ranked, never dropped
+# ---------------------------------------------------------------------------
+
+
+def test_infinity_rows_are_ranked_not_dropped():
+    """The v32 case: `vanilla_ppo_approx_kl = Infinity` in one cohort.
+    The old `math.isfinite` filter silently excluded those rows; they
+    must now surface as a dedicated maximal-signal row with per-cohort
+    counts, while the finite statistics stay clean."""
+    a = [{"kl": float("inf")}, {"kl": 0.1}, {"kl": 0.2}]
+    b = [{"kl": 0.1}, {"kl": 0.2}]
+    results = diverge(a, b)
+    by_field = {r.field: r for r in results}
+    nf = by_field["kl [non-finite]"]
+    assert nf.n_a == 1 and nf.n_b == 0
+    assert math.isinf(nf.effect_size)
+    # Finite stats exclude the Inf row (mean over the 2 finite values).
+    fin = by_field["kl"]
+    assert fin.n_a == 2 and fin.mean_a == pytest.approx(0.15)
+
+
+def test_nan_rows_count_as_non_finite_too():
+    a = [{"x": float("nan")}, {"x": 1.0}]
+    b = [{"x": 1.0}]
+    by_field = {r.field: r for r in diverge(a, b)}
+    assert by_field["x [non-finite]"].n_a == 1
+
+
+def test_field_nonfinite_in_every_row_still_surfaces():
+    """A field with NO finite values anywhere used to fall through the
+    'numeric nowhere' skip and vanish entirely."""
+    a = [{"blown": float("inf")}] * 3
+    b = [{"blown": float("inf")}] * 2
+    results = diverge(a, b)
+    assert any(r.field == "blown [non-finite]" and r.n_a == 3 and r.n_b == 2
+               for r in results)
+
+
+def test_nonfinite_row_ranks_first():
+    a = [{"kl": float("inf"), "loss": 5.0}, {"kl": 0.1, "loss": 5.1}]
+    b = [{"kl": 0.1, "loss": 1.0}, {"kl": 0.2, "loss": 1.2}]
+    ranked = rank(diverge(a, b), top=10)
+    assert ranked[0].field == "kl [non-finite]"
+
+
+def test_clean_data_produces_no_nonfinite_rows():
+    a = [{"x": 1.0}, {"x": 2.0}]
+    b = [{"x": 3.0}, {"x": 4.0}]
+    assert not any("[non-finite]" in r.field for r in diverge(a, b))

@@ -190,6 +190,25 @@ def _is_number(v: Any) -> bool:
     )
 
 
+def _nonfinite_count(rows: list[Row], field: str) -> int:
+    """How many rows carry a non-finite float (Inf/-Inf/NaN) in `field`.
+
+    These are excluded from the finite statistics (an infinite value
+    poisons mean and std), but they are the OPPOSITE of missing data:
+    `vanilla_ppo_approx_kl = Infinity` is the single most alarming
+    reading a PPO run can produce (trust-region blowup), and this tool
+    used to silently drop exactly those rows — 84 of them in the v32
+    seed it was pointed at. Counted here and ranked as a first-class
+    row in diverge() instead.
+    """
+    n = 0
+    for r in rows:
+        v = r.get(field)
+        if isinstance(v, float) and not math.isfinite(v):
+            n += 1
+    return n
+
+
 @dataclass
 class FieldDivergence:
     field: str
@@ -226,6 +245,33 @@ def diverge(cohort_a: list[Row], cohort_b: list[Row]) -> list[FieldDivergence]:
         vals_a = numeric_values(cohort_a, field)
         vals_b = numeric_values(cohort_b, field)
         n_a, n_b = len(vals_a), len(vals_b)
+
+        # Non-finite values are ranked, never dropped: a field that hit
+        # Infinity/NaN gets its own maximal-signal row (the counts on
+        # each side), while the finite-value statistics below stay
+        # clean. This must run BEFORE the both-empty skip — a field
+        # that is non-finite in every row has n_a == n_b == 0.
+        inf_a = _nonfinite_count(cohort_a, field)
+        inf_b = _nonfinite_count(cohort_b, field)
+        if inf_a or inf_b:
+            results.append(
+                FieldDivergence(
+                    field=field + " [non-finite]",
+                    n_a=inf_a,
+                    total_a=total_a,
+                    n_b=inf_b,
+                    total_b=total_b,
+                    mean_a=None,
+                    mean_b=None,
+                    median_a=None,
+                    median_b=None,
+                    delta_mean=None,
+                    delta_median=None,
+                    effect_size=math.inf,
+                    note=f"Inf/NaN rows: {inf_a} vs {inf_b} — counted "
+                         f"here, excluded from the finite stats",
+                )
+            )
 
         if n_a == 0 and n_b == 0:
             continue  # never a numeric field in either cohort -- not ours to rank
