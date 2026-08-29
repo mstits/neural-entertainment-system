@@ -79,6 +79,13 @@ DASHBOARD_OPTIONAL_KEYS: frozenset[str] = frozenset({
     "vanilla_ppo_clip_fraction", "vanilla_ppo_approx_kl",
     "vanilla_ppo_grad_norm", "vanilla_ppo_adv_mean", "vanilla_ppo_adv_std",
     "vanilla_ppo_explained_variance",
+    # Per-generation count of k3 approx-KL rows ppo_losses clamped
+    # (non-finite or |k3| > 1e4) before the mean above was taken —
+    # the vanilla-path sibling of `nan_rows_this_gen`. 0 when quiet;
+    # a nonzero value is the trust-region-blowup signal that used to
+    # reach this file as raw JSON `Infinity` (v32: up to 84/250
+    # generations on one seed, invisible to every consumer).
+    "vanilla_ppo_kl_clamped_this_gen",
 })
 
 

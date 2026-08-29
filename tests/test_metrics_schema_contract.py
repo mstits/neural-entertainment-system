@@ -109,6 +109,25 @@ def test_vanilla_ppo_path_emits_v29_diagnostic_scalars() -> None:
         )
 
 
+def test_kl_clamp_counter_is_registered_and_emitted() -> None:
+    """`vanilla_ppo_kl_clamped_this_gen` — the count of k3 approx-KL rows
+    clamped before the mean (the signal that used to reach metrics.jsonl
+    as raw JSON `Infinity`, v32: up to 84/250 generations on one seed) —
+    must be registered OPTIONAL and threaded to _emit_metrics."""
+    block = _extract_emit_block(
+        TRAINER_SRC, "def _run_vanilla_ppo", "def _save_checkpoint",
+    )
+    key = "vanilla_ppo_kl_clamped_this_gen"
+    assert key not in DASHBOARD_REQUIRED_KEYS
+    assert key in DASHBOARD_OPTIONAL_KEYS, (
+        f"{key!r} missing from DASHBOARD_OPTIONAL_KEYS registration."
+    )
+    assert f"{key}=" in block, (
+        f"_run_vanilla_ppo missing emit key {key!r} — the KL clamp "
+        f"counter must reach _emit_metrics or blowups go dark again."
+    )
+
+
 def test_metrics_sink_warns_on_missing_required_key(tmp_path) -> None:
     sink = MetricsSink(
         metrics_path=tmp_path / "metrics.jsonl",

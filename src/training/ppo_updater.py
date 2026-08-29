@@ -231,6 +231,13 @@ class PPOUpdater:
         _last_grad_norm_t = None
         _last_clip_frac_t = None
         _last_approx_kl_t = None
+        # Running per-generation count of KL-diagnostic rows ppo_losses
+        # had to clamp (non-finite / > ceiling). Accumulated as a tensor
+        # so no per-minibatch MPS sync happens; floated once below with
+        # the other scalars. Unlike the last-successful-minibatch
+        # convention above, EVERY minibatch's count is summed — a blowup
+        # in minibatch 3 of 40 must not be erased by 37 quiet ones.
+        _kl_clamped_accum_t = None
         mb_size = max(1, t.ppo_minibatch_size)
         # Build the full-rollout tensors ONCE per iter and index them
         # with a torch permutation inside the minibatch loop, instead
@@ -425,6 +432,12 @@ class PPOUpdater:
                 # diagnostics.
                 _mb_clip_frac_t = _diag.get("clip_fraction")
                 _mb_approx_kl_t = _diag.get("approx_kl")
+                _mb_kl_clamped_t = _diag.get("kl_clamped_rows")
+                if _mb_kl_clamped_t is not None:
+                    _kl_clamped_accum_t = (
+                        _mb_kl_clamped_t if _kl_clamped_accum_t is None
+                        else _kl_clamped_accum_t + _mb_kl_clamped_t
+                    )
                 # Demo anchor (DQfD-style): every PPO minibatch also
                 # draws a demo minibatch from the fixed bank and adds
                 # CE(+large-margin) on the demo actions, decayed by
@@ -642,6 +655,10 @@ class PPOUpdater:
             last_approx_kl = float(_last_approx_kl_t.item())
         if _last_grad_norm_t is not None:
             last_grad_norm = float(_last_grad_norm_t.item())
+        kl_clamped_this_gen = (
+            int(_kl_clamped_accum_t.item())
+            if _kl_clamped_accum_t is not None else 0
+        )
         t._gen_timer.add("update", time.perf_counter_ns() - _upd_t0)
         return {
             "reward_buf": reward_buf,
@@ -661,6 +678,7 @@ class PPOUpdater:
             # K-epoch loop over the full valid batch.
             "last_clip_fraction": last_clip_fraction,
             "last_approx_kl": last_approx_kl,
+            "kl_clamped_this_gen": kl_clamped_this_gen,
             "last_grad_norm": last_grad_norm,
             "adv_mean": adv_mean,
             "adv_std": adv_std,

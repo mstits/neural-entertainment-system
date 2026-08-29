@@ -62,9 +62,11 @@ def test_ppo_losses_zero_ratio_gives_zero_clip_fraction_and_kl() -> None:
         clip_eps=0.2, value_coef=0.5, entropy_coef=0.0,
         value_loss_kind="mse", diagnostics=diag,
     )
-    assert set(diag.keys()) == {"clip_fraction", "approx_kl"}
+    assert set(diag.keys()) == {"clip_fraction", "approx_kl",
+                                "kl_clamped_rows"}
     assert diag["clip_fraction"].item() == 0.0
     assert abs(diag["approx_kl"].item()) < 1e-6
+    assert diag["kl_clamped_rows"].item() == 0
 
 
 def test_ppo_losses_large_ratio_trips_clip_fraction_and_positive_kl() -> None:

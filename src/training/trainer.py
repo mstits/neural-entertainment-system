@@ -7889,6 +7889,7 @@ class Trainer:
             last_rnd_loss = _upd["last_rnd_loss"]
             last_clip_fraction = _upd["last_clip_fraction"]
             last_approx_kl = _upd["last_approx_kl"]
+            kl_clamped_this_gen = _upd["kl_clamped_this_gen"]
             last_grad_norm = _upd["last_grad_norm"]
             adv_mean = _upd["adv_mean"]
             adv_std = _upd["adv_std"]
@@ -9311,6 +9312,7 @@ class Trainer:
                 # of the five feed back into the update itself.
                 vanilla_ppo_clip_fraction=last_clip_fraction,
                 vanilla_ppo_approx_kl=last_approx_kl,
+                vanilla_ppo_kl_clamped_this_gen=kl_clamped_this_gen,
                 vanilla_ppo_grad_norm=last_grad_norm,
                 vanilla_ppo_adv_mean=adv_mean,
                 vanilla_ppo_adv_std=adv_std,

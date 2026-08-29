@@ -113,6 +113,14 @@ def fold_intrinsic_into_rewards(
     return reward_buf + intrinsic * mask
 
 
+# Ceiling for the per-row k3 approx-KL diagnostic. A KL of 1e4 nats is
+# already "the policy left the trust region at escape velocity" — the
+# clamp preserves that signal at a finite, JSON-representable magnitude
+# while `kl_clamped_rows` records how often it was needed. Mirrors
+# `_safe_sample_from_logits`'s posinf=1e4 on the other network path.
+_KL_DIAG_MAX = 1e4
+
+
 def ppo_losses(
     logits: torch.Tensor,
     values_pred: torch.Tensor,
@@ -180,9 +188,26 @@ def ppo_losses(
             # `(log_probs_old - log_probs_new).mean()` (k1), which is
             # zero-mean but can go negative on a single minibatch and
             # is noisier at the sample sizes here.
-            diagnostics["approx_kl"] = (
-                (ratio - 1.0) - torch.log(ratio)
-            ).mean().detach()
+            #
+            # Clamped before it can reach metrics.jsonl: a ratio row
+            # that underflows to 0 makes torch.log(ratio) = -inf and
+            # the k3 term +inf, and the mean then lands in the JSONL
+            # as literal `Infinity` — non-standard JSON that jq
+            # silently misreads as DBL_MAX and analyze.py's finite
+            # filter used to drop. Measured in v32: up to 84/250
+            # generations of one seed. Same fix shape as
+            # `_safe_sample_from_logits` on the GA/PPO-hybrid path:
+            # substitute a large finite ceiling, COUNT the rows, and
+            # surface the count (`kl_clamped_rows`, a detached tensor
+            # the caller accumulates without forcing a per-minibatch
+            # MPS sync) so the blowup stays loud instead of raw.
+            _k3 = (ratio - 1.0) - torch.log(ratio)
+            _k3_bad = (~torch.isfinite(_k3)) | (_k3.abs() > _KL_DIAG_MAX)
+            _k3 = torch.nan_to_num(
+                _k3, nan=0.0, posinf=_KL_DIAG_MAX, neginf=-_KL_DIAG_MAX
+            ).clamp(-_KL_DIAG_MAX, _KL_DIAG_MAX)
+            diagnostics["approx_kl"] = _k3.mean().detach()
+            diagnostics["kl_clamped_rows"] = _k3_bad.sum().detach()
 
     # Entropy bonus.
     probs = log_probs_all.exp()
