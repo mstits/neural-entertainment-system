@@ -69,6 +69,33 @@ from pathlib import Path
 from typing import Any, Optional
 
 REPO = Path(__file__).resolve().parent.parent
+
+# Free-disk floor, matching the engine scheduler and train_game.py.
+# Checked at campaign start AND once per poll tick: the campaign
+# controller relaunches trainer subprocesses for hours-to-days, and a
+# volume that fills mid-campaign used to surface only as swallowed
+# checkpoint-save warnings inside the child (external audit 2026-08-29,
+# volume at 91%). A statvfs per poll tick is free.
+DISK_FLOOR_GB = 40.0
+
+
+def disk_free_gb(path: Path = REPO) -> float:
+    import shutil as _shutil
+    return _shutil.disk_usage(str(path)).free / 1e9
+
+
+def disk_floor_breach() -> str | None:
+    """A reason string when free disk is below the floor, else None.
+    Fails open on a stat error — the guard must never kill a healthy
+    campaign by itself."""
+    try:
+        free = disk_free_gb()
+    except OSError:
+        return None
+    if free < DISK_FLOOR_GB:
+        return (f"disk floor: {free:.1f} GB free < {DISK_FLOOR_GB:.0f} GB "
+                f"— checkpoint durability is about to fail")
+    return None
 sys.path.insert(0, str(REPO))
 
 # ---------------------------------------------------------------------------
@@ -1334,6 +1361,10 @@ def run_campaign(start_phase: int = 0) -> int:
                     gate_passed = True
                 break
 
+            _disk_reason = disk_floor_breach()
+            if _disk_reason:
+                return _abort(_disk_reason)
+
             time.sleep(CONFIG["poll_secs"])
 
         if not gate_passed:
@@ -1394,6 +1425,9 @@ def main() -> int:
         return dry_run()
     if not 0 <= args.start_phase < len(PHASES):
         raise SystemExit(f"--start-phase must be 0..{len(PHASES) - 1}")
+    _disk_reason = disk_floor_breach()
+    if _disk_reason:
+        raise SystemExit(f"[campaign] REFUSING to start: {_disk_reason}")
     return run_campaign(start_phase=args.start_phase)
 
 

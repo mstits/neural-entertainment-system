@@ -33,11 +33,22 @@ class CheckpointManager:
     exactly the state it expects.
     """
 
+    # Consecutive failed periodic saves before the run is halted loudly.
+    # One failed save is a transient (a race, a hiccup); three in a row
+    # at a 10-iteration cadence means durability is OFF — most likely
+    # ENOSPC — and every further hour of compute produces results that
+    # will not survive a crash. The old behavior (log.warning, continue
+    # forever) burned exactly that way: an unattended multi-week run
+    # degrades into compute-without-persistence with only a log line
+    # (external audit 2026-08-29, disk at 91%).
+    SAVE_FAILURE_LIMIT = 3
+
     def __init__(self, trainer, *, checkpoint_dir, device=None, game_name=None):
         self.trainer = trainer
         self.checkpoint_dir = checkpoint_dir
         self.device = device
         self.game_name = game_name
+        self._consecutive_save_failures = 0
 
     def resume(self, net, optimizer, *, fresh_start: bool = False) -> int:
         """Load the newest vanilla_ppo_iter_*.pt on top of the freshly
@@ -362,6 +373,7 @@ class CheckpointManager:
                     pass
                 os.replace(str(_tmp_path), str(ckpt_path))
                 log.info("[vanilla_ppo] saved checkpoint: %s", ckpt_path)
+                self._consecutive_save_failures = 0
                 # Opt-in rotation for the vanilla-PPO family. Default 0 =
                 # keep ALL (`rotate_old_checkpoints` no-ops at <= 0):
                 # registered campaigns whose scoring reads the full grid
@@ -381,5 +393,29 @@ class CheckpointManager:
                         pattern="vanilla_ppo_iter_*.pt",
                     )
             except Exception as exc:
-                log.warning("[vanilla_ppo] checkpoint save failed: %s", exc)
+                self._consecutive_save_failures += 1
+                log.warning(
+                    "[vanilla_ppo] checkpoint save failed (%d consecutive):"
+                    " %s", self._consecutive_save_failures, exc,
+                )
+                if self._consecutive_save_failures >= self.SAVE_FAILURE_LIMIT:
+                    try:
+                        from src.training.notifications import notify_macos
+                        notify_macos(
+                            "Training halted: checkpoint saves failing",
+                            f"{self.checkpoint_dir}: "
+                            f"{self._consecutive_save_failures} consecutive "
+                            f"save failures (last: {exc}). Likely disk "
+                            f"full.",
+                        )
+                    except Exception:
+                        pass
+                    raise RuntimeError(
+                        f"{self._consecutive_save_failures} consecutive "
+                        f"checkpoint save failures (last: {exc}) — a run "
+                        f"that cannot persist results is burning compute "
+                        f"for output that will not survive a crash. "
+                        f"Free disk space and resume from the last good "
+                        f"checkpoint."
+                    ) from exc
         return _params_finite
