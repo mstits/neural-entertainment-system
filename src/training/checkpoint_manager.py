@@ -362,6 +362,24 @@ class CheckpointManager:
                     pass
                 os.replace(str(_tmp_path), str(ckpt_path))
                 log.info("[vanilla_ppo] saved checkpoint: %s", ckpt_path)
+                # Opt-in rotation for the vanilla-PPO family. Default 0 =
+                # keep ALL (`rotate_old_checkpoints` no-ops at <= 0):
+                # registered campaigns whose scoring reads the full grid
+                # (v32 cross-fit Theta, the corrected peak ladders) must
+                # never lose checkpoints to a rotation they did not opt
+                # into. Before this, the vanilla path NEVER rotated
+                # (external audit 2026-08-28; checkpoints/ at 98 GB
+                # against a halt-only 40 GB floor).
+                _keep = int(self.trainer.game_profile.get(
+                    "reinforce", {}).get("checkpoint_keep_last", 0) or 0)
+                if _keep > 0:
+                    from src.training.checkpointing import (
+                        rotate_old_checkpoints,
+                    )
+                    rotate_old_checkpoints(
+                        self.checkpoint_dir, keep_last=_keep,
+                        pattern="vanilla_ppo_iter_*.pt",
+                    )
             except Exception as exc:
                 log.warning("[vanilla_ppo] checkpoint save failed: %s", exc)
         return _params_finite

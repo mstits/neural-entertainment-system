@@ -134,7 +134,8 @@ def maybe_export_elite_to_coreml(
         log.debug("checkpoint CoreML export skipped: %s", exc)
 
 
-def rotate_old_checkpoints(checkpoint_dir: Path, keep_last: int) -> None:
+def rotate_old_checkpoints(checkpoint_dir: Path, keep_last: int,
+                           pattern: str = "gen_*.pt") -> None:
     """Delete oldest checkpoints + paired .mlpackages beyond `keep_last`.
 
     Sorted by **mtime, not filename**: a fresh run that restarts gen
@@ -143,7 +144,19 @@ def rotate_old_checkpoints(checkpoint_dir: Path, keep_last: int) -> None:
     that tracks "most recent" across resumes.
 
     `keep_last <= 0` is a no-op (used by tests that want to inspect
-    the full history).
+    the full history) — and it is the vanilla-PPO path's DEFAULT: a
+    registered campaign whose scoring needs its full checkpoint grid
+    (v32's cross-fit Theta reads all 24 `vanilla_ppo_iter_*.pt`, and the
+    v27/v28 corrected ladders re-score archived grids months later) must
+    never lose checkpoints to a rotation it did not opt into. External
+    audit 2026-08-28: this helper had exactly one call site (the GA
+    path); the vanilla-PPO path never rotated and `checkpoints/` reached
+    98 GB against a halt-only 40 GB disk floor.
+
+    `pattern` selects the family: `gen_*.pt` (GA) or
+    `vanilla_ppo_iter_*.pt` (vanilla-PPO). Anything not matching the
+    pattern — `winners/best.pt`, `.state` files, manifests, the other
+    family — is never a candidate.
     """
     if keep_last <= 0:
         return
@@ -153,7 +166,7 @@ def rotate_old_checkpoints(checkpoint_dir: Path, keep_last: int) -> None:
     # can't accidentally prune the one checkpoint that wins.
     ckpts = sorted(
         (
-            p for p in Path(checkpoint_dir).glob("gen_*.pt")
+            p for p in Path(checkpoint_dir).glob(pattern)
             if WINNERS_SUBDIR not in p.parts
         ),
         key=lambda p: p.stat().st_mtime,

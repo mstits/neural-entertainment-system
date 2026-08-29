@@ -43,7 +43,14 @@ KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     "backward_curriculum",
     "batched_render", "bc_demo_path", "bc_epochs", "bc_replay_enabled",
     "bc_replay_epochs", "bc_replay_every_gens", "bc_replay_max_buffer",
-    "bc_replay_train_window", "cold_eval", "consolidate",
+    "bc_replay_train_window",
+    # Vanilla-PPO checkpoint rotation (external audit 2026-08-28: the
+    # path never rotated and checkpoints/ hit 98 GB). Default 0 = keep
+    # ALL — behavior-preserving, and mandatory for any campaign whose
+    # registered scoring reads its full grid (v32 cross-fit, the
+    # corrected peak ladders). Consumed by CheckpointManager.save_iter.
+    "checkpoint_keep_last",
+    "cold_eval", "consolidate",
     "consolidate_level", "demo_anchor_coef", "demo_anchor_coef_final",
     "demo_anchor_decay_iters", "demo_anchor_decay_start",
     "demo_anchor_enabled", "demo_anchor_margin", "demo_anchor_minibatch",

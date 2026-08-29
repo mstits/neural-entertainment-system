@@ -200,3 +200,76 @@ def test_archive_previous_run_swallows_errors(tmp_path: Path) -> None:
     archive = archive_previous_run(tmp_path, metrics, game_profile=bad_profile)
     # Either succeeded with archive (most fields OK) or returned None — both fine.
     assert archive is None or archive.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# Vanilla-PPO rotation (external audit 2026-08-28): the helper had one
+# call site (the GA path, gen_*.pt) and the vanilla path never rotated —
+# checkpoints/ reached 98 GB. Rotation is now pattern-aware and OPT-IN
+# for the vanilla family, defaulting to keep-all so a registered
+# campaign's full grid (v32 cross-fit, the corrected ladders) can never
+# be pruned by a rotation it did not ask for.
+# ---------------------------------------------------------------------------
+
+def _mk(p: Path, name: str, ts: float) -> Path:
+    f = p / name
+    f.write_bytes(b"x")
+    import os
+    os.utime(f, (ts, ts))
+    return f
+
+
+def test_rotate_vanilla_pattern_prunes_only_its_own_family(tmp_path: Path) -> None:
+    t = time.time()
+    old1 = _mk(tmp_path, "vanilla_ppo_iter_00010.pt", t - 300)
+    old2 = _mk(tmp_path, "vanilla_ppo_iter_00020.pt", t - 200)
+    new1 = _mk(tmp_path, "vanilla_ppo_iter_00030.pt", t - 100)
+    new2 = _mk(tmp_path, "vanilla_ppo_iter_00040.pt", t - 10)
+    ga = _mk(tmp_path, "gen_00001.pt", t - 500)          # other family
+    state = _mk(tmp_path, "smb.state", t - 500)           # not a checkpoint
+    winners = tmp_path / "winners"
+    winners.mkdir()
+    best = _mk(winners, "best.pt", t - 500)
+
+    rotate_old_checkpoints(tmp_path, keep_last=2,
+                           pattern="vanilla_ppo_iter_*.pt")
+
+    assert not old1.exists() and not old2.exists()
+    assert new1.exists() and new2.exists()
+    # Everything outside the pattern is untouchable, including the GA
+    # family, raw states, and winners/best.pt.
+    assert ga.exists() and state.exists() and best.exists()
+
+
+def test_rotate_default_pattern_ignores_vanilla_family(tmp_path: Path) -> None:
+    t = time.time()
+    v = [_mk(tmp_path, f"vanilla_ppo_iter_{i:05d}.pt", t - i) for i in
+         (10, 20, 30, 40, 50)]
+    rotate_old_checkpoints(tmp_path, keep_last=1)  # gen_*.pt default
+    assert all(f.exists() for f in v), (
+        "the GA-pattern call must never prune the vanilla family"
+    )
+
+
+def test_vanilla_save_path_wires_the_rotation_key() -> None:
+    """Anti-dead-knob: `checkpoint_keep_last` must reach the vanilla-PPO
+    save path with the vanilla pattern, and the default must be the
+    keep-all no-op. Source-level, same style as the trainer mechanism
+    guards — a config key registered in the schema but consumed nowhere
+    is this repo's single most-shipped defect class (20 found in one
+    audit)."""
+    src = (Path(__file__).resolve().parent.parent
+           / "src" / "training" / "checkpoint_manager.py").read_text()
+    assert '"checkpoint_keep_last", 0' in src, (
+        "the key must be read with a keep-all default of 0"
+    )
+    assert 'pattern="vanilla_ppo_iter_*.pt"' in src, (
+        "the vanilla save path must rotate ONLY its own family"
+    )
+    idx_save = src.index('saved checkpoint')
+    idx_rot = src.index('rotate_old_checkpoints(', idx_save)
+    assert idx_rot > idx_save, (
+        "rotation must run after the atomic save completes, never before"
+    )
+    from src.training.config_schema import KNOWN_REINFORCE_KEYS
+    assert "checkpoint_keep_last" in KNOWN_REINFORCE_KEYS
