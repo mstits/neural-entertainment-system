@@ -1279,3 +1279,89 @@ def test_plan_priority_order_is_pinned_to_the_documented_table(tmp_path,
     # left standing underneath it.
     state["last_run"]["suite_check"] = time.time()
     assert ed.plan(state, tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# Blocked-engine push notification + the --halt kill switch (2026-08-29
+# audit: the breaker "halts silently ... in the one subsystem whose own
+# docstring says the point is surviving three weeks with nobody
+# watching"; state["halted"] was checked but never set anywhere).
+# ---------------------------------------------------------------------------
+
+
+def test_breaker_trip_notifies_once_then_latches(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(ed, "_notify", lambda t, m: calls.append((t, m)))
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    state = {"completed": {}, "attempts": {},
+             "consecutive_failures": ed.CONSECUTIVE_FAILURE_LIMIT}
+    rec1 = ed.tick(state)
+    rec2 = ed.tick(state)
+    assert rec1["decision"] == rec2["decision"] == "blocked"
+    assert len(calls) == 1, (
+        "one banner per blocked episode — a 10-minute tick loop must "
+        "not push a notification every tick")
+    assert "circuit breaker" in calls[0][1]
+
+
+def test_notification_latch_rearms_when_the_guard_clears(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(ed, "_notify", lambda t, m: calls.append(t))
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    monkeypatch.setattr(ed, "plan",
+                        lambda s, repo=ed.REPO, **kw: None)
+    state = {"completed": {}, "attempts": {},
+             "consecutive_failures": ed.CONSECUTIVE_FAILURE_LIMIT}
+    ed.tick(state)                       # trips, notifies
+    state["consecutive_failures"] = 0
+    ed.tick(state)                       # unblocked tick clears the latch
+    assert "blocked_notified" not in state
+    state["consecutive_failures"] = ed.CONSECUTIVE_FAILURE_LIMIT
+    ed.tick(state)                       # a NEW episode notifies again
+    assert len(calls) == 2
+
+
+def test_notify_failure_never_breaks_a_tick(monkeypatch):
+    """_notify's guard must swallow ANY failure in the notification
+    path — a broken notifications module can never fail a tick. The
+    module is stubbed with one whose notify_macos raises (also keeps
+    real osascript banners out of test runs)."""
+    import sys as _sys
+    import types as _types
+    broken = _types.ModuleType("src.training.notifications")
+    def _boom(*a, **kw):
+        raise RuntimeError("osascript exploded")
+    broken.notify_macos = _boom
+    monkeypatch.setitem(_sys.modules, "src.training.notifications", broken)
+    ed._notify("t", "m")   # must not raise
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    state = {"completed": {}, "attempts": {},
+             "consecutive_failures": ed.CONSECUTIVE_FAILURE_LIMIT}
+    rec = ed.tick(state)
+    assert rec["decision"] == "blocked"
+
+
+def test_halt_cli_sets_state_and_blocks_ticks(monkeypatch, capsys):
+    assert ed.main(["--halt", "operator stop: verifying disk"]) == 0
+    state = ed.load_state()
+    assert state.get("halted") == "operator stop: verifying disk"
+    monkeypatch.setattr(ed, "emulator_busy", lambda: None)
+    rec = ed.tick(state)
+    assert rec["decision"] == "blocked" and "operator stop" in rec["reason"]
+
+
+def test_clear_halt_cli_unsets_and_rearms_latch(capsys):
+    assert ed.main(["--halt", "x"]) == 0
+    assert ed.main(["--clear-halt"]) == 0
+    state = ed.load_state()
+    assert not state.get("halted")
+    assert "blocked_notified" not in state
+
+
+def test_halt_and_clear_are_journaled(capsys):
+    ed.main(["--halt", "why"])
+    ed.main(["--clear-halt"])
+    rows = [json.loads(l) for l in
+            ed.JOURNAL.read_text().splitlines()]
+    kinds = [r.get("type") for r in rows]
+    assert "halt" in kinds and "halt_cleared" in kinds

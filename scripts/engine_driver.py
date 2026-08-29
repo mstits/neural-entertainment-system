@@ -1271,6 +1271,20 @@ def machine_quiet(state: dict) -> tuple[bool, str]:
     return True, f"load {la:.2f}, settled"
 
 
+def _notify(title: str, message: str) -> None:
+    """Push a macOS notification, best-effort. The engine is the one
+    subsystem designed to run unattended for weeks; every halt it takes
+    must reach a human's screen, not just the journal. Import is lazy
+    and guarded so a broken/missing notifications module can never be
+    the reason a tick fails."""
+    try:
+        sys.path.insert(0, str(REPO))
+        from src.training.notifications import notify_macos
+        notify_macos(title, message)
+    except Exception:
+        pass
+
+
 def guard_reasons(state: dict, repo: Path = REPO) -> list[str]:
     """Everything that forbids launching anything right now."""
     out: list[str] = []
@@ -1298,9 +1312,21 @@ def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
 
     blocked = guard_reasons(state, repo)
     if blocked:
+        # The engine halting is exactly the event its unattended-weeks
+        # design brief says must not be silent (audit 2026-08-29: the
+        # breaker "halts silently with no push notification, in the one
+        # subsystem whose own docstring says the point is surviving
+        # three weeks with nobody watching"). Latched in state the same
+        # way StallNotifier latches: one banner per blocked episode,
+        # re-armed when the guard clears, so a 10-minute tick loop
+        # can't spam a notification per tick.
+        if not state.get("blocked_notified"):
+            state["blocked_notified"] = True
+            _notify("NES engine blocked", "; ".join(blocked))
         rec = {"type": "tick", "decision": "blocked", "reason": "; ".join(blocked)}
         journal(rec)
         return rec
+    state.pop("blocked_notified", None)
 
     # An action is launchable only if its lane is free AND, when it needs
     # the emulator, nothing else already holds the machine. Both
@@ -1380,9 +1406,30 @@ def main(argv: list[str] | None = None) -> int:
                     help="validate every action the planner can emit")
     ap.add_argument("--plan", action="store_true",
                     help="print the computed next action and exit")
+    ap.add_argument("--halt", metavar="REASON",
+                    help="set state['halted'] so guard_reasons refuses "
+                         "every launch until --clear-halt; the clean "
+                         "manual stop for an unattended engine "
+                         "(vs kill -9 mid-action)")
+    ap.add_argument("--clear-halt", action="store_true",
+                    help="clear a --halt and let the engine plan again")
     args = ap.parse_args(argv)
 
     state = load_state()
+    if args.halt or args.clear_halt:
+        if args.halt:
+            state["halted"] = args.halt
+            journal({"type": "halt", "reason": args.halt})
+            print(f"halted: {args.halt}")
+        else:
+            prev = state.pop("halted", None)
+            # Re-arm the blocked-notification latch: clearing the halt
+            # ends the blocked episode.
+            state.pop("blocked_notified", None)
+            journal({"type": "halt_cleared", "was": prev})
+            print(f"halt cleared (was: {prev})")
+        save_state(state)
+        return 0
     if args.preflight:
         empty = {"completed": {}, "attempts": {}}
         rows, seen = [], set()
