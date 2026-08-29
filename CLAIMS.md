@@ -4485,3 +4485,29 @@ registration, not the conclusion — n=4 best-of-4 with mixed per-seed deltas
 underneath; §4.3 item 4's power statement (Δ ≈ 0.165 detectable at 80% at the
 registered n) governs what the campaign itself could show, and the measured
 delta sits almost exactly at that detection threshold.
+
+## V33 CAPACITY 2026-08-29 — MARGINAL at Θ = 0.780; the three-point dose curve is the deliverable
+
+Full write-up: `docs/research/V33_CAPACITY_VERDICT_2026-08-29.md`.
+Registration: `docs/proposals/V33_CAPACITY_2026-08-28.md` (seven §4.3 items,
+both preflights receipted before launch). Receipts: `docs/receipts/v33_capacity/`.
+
+**Θ₃₃ = 0.780 (best-of-4, split-sample standing estimator), Θ_adj = 0.730.**
+Bar readout per the registration: **MARGINAL (0.767, 0.80) — reported as
+MARGINAL, licenses nothing.** Θ_adj sits below even the FAIL bound, so within
+the measured winner's curse this result is indistinguishable from sub-bar.
+Registered secondary: dose-response **improving** (+0.110 over v28).
+
+**The deliverable: the first same-estimator dose-response curve in this
+line — 48,135 → 0.500, 72,039 → 0.670, 95,943 → 0.780. Monotone,
+decelerating (+0.170 → +0.110).** Capacity is a real, measured lever on this
+recipe across a 2× parameter range. Per-seed dispersion stays large
+({0.78, 0.47, 0.41, 0.56}); best-of-4 is a max statistic and seed 0 carries
+the headline, exactly as the registration's power statement pre-stated.
+
+No follow-on capacity campaign is licensed without a registered design
+change (more seeds or a bar renegotiation) — the registration's own item
+4(b)/item 3, applied. Attempt-1 VOID (inert-armed ReDo refused at iter 40
+by the arming deadline — the guard's first live save) and the accidental
+concurrent eval chain (verified harmless, 192/192 clean) are receipted in
+the write-up and MISTAKES.md.

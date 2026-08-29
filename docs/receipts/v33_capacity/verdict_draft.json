@@ -1,0 +1,12 @@
+{
+ "theta_33": 0.78,
+ "theta_adj": 0.73,
+ "bar_readout": "MARGINAL (0.767,0.80) \u2014 reported as MARGINAL, licenses nothing",
+ "dose_response_secondary": "improving (theta_33 > 0.670)",
+ "dose_points": {
+  "48135": 0.5,
+  "72039": 0.67,
+  "95943": 0.78
+ },
+ "note": "DRAFT ONLY \u2014 adjudication against V33_CAPACITY_2026-08-28.md is a human/session step"
+}

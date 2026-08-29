@@ -1,0 +1,49 @@
+{
+ "estimator": "split-sample (select on one eval seed, score on the held-out other, mirrored, mean; ties -> later iter; best-of-N over seeds)",
+ "seeds": [
+  {
+   "run": "mario_1_1_v33_capacity_seed0",
+   "score": 0.78,
+   "sel_on_es0": 90,
+   "scored_on_es1": 0.72,
+   "sel_on_es1": 90,
+   "scored_on_es0": 0.84,
+   "raw_peak_es0": 0.84,
+   "raw_peak_es1": 0.72
+  },
+  {
+   "run": "mario_1_1_v33_capacity_seed1",
+   "score": 0.47000000000000003,
+   "sel_on_es0": 140,
+   "scored_on_es1": 0.56,
+   "sel_on_es1": 150,
+   "scored_on_es0": 0.38,
+   "raw_peak_es0": 0.5,
+   "raw_peak_es1": 0.6
+  },
+  {
+   "run": "mario_1_1_v33_capacity_seed2",
+   "score": 0.41000000000000003,
+   "sel_on_es0": 100,
+   "scored_on_es1": 0.4,
+   "sel_on_es1": 150,
+   "scored_on_es0": 0.42,
+   "raw_peak_es0": 0.5,
+   "raw_peak_es1": 0.56
+  },
+  {
+   "run": "mario_1_1_v33_capacity_seed3",
+   "score": 0.56,
+   "sel_on_es0": 100,
+   "scored_on_es1": 0.6,
+   "sel_on_es1": 90,
+   "scored_on_es0": 0.52,
+   "raw_peak_es0": 0.6,
+   "raw_peak_es1": 0.66
+  }
+ ],
+ "best_of_n": 0.78,
+ "best_run": "mario_1_1_v33_capacity_seed0",
+ "curse_budget": 0.05,
+ "best_adj": 0.73
+}
