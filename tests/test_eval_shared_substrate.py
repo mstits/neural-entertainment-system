@@ -50,6 +50,31 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# Guard against the pollution this module SHIPPED for 12 days: a test
+# passing the production CONFIG through run() unredirected appended 4
+# mock legs + 1 mock SUPERSEDES verdict to runs/shared_substrate/'s
+# REAL receipt log on every full-suite run — 204 fabricated verdicts
+# (checkpoints under /fake/dir/, every rate exactly 0.5) that read as a
+# completed successful experiment to anyone listing the dir. Every test
+# here must leave the production receipt paths byte-identical.
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _production_receipts_untouched():
+    prod = [Path(__file__).resolve().parent.parent / "runs" /
+            "shared_substrate" / n
+            for n in ("eval_shared_substrate.jsonl", "manifest.json")]
+    def snap():
+        return [(p.exists(), p.stat().st_mtime_ns if p.exists() else 0,
+                 p.stat().st_size if p.exists() else 0) for p in prod]
+    before = snap()
+    yield
+    assert snap() == before, (
+        "a test wrote to the PRODUCTION shared_substrate receipt paths "
+        "— redirect receipt_log/manifest_out to tmp_path")
+
+
 from scripts.eval_shared_substrate import (  # noqa: E402
     CONFIG, VERDICTS, aggregate_result, aggregate_significance,
     build_level_command, build_manifest, classify_verdict,
@@ -699,7 +724,7 @@ def test_run_returns_nonzero_on_unusable(tmp_path, monkeypatch):
     assert manifest["verdict"]["verdict"] == "UNUSABLE"
 
 
-def test_run_never_invokes_a_real_subprocess():
+def test_run_never_invokes_a_real_subprocess(tmp_path):
     """Structural guarantee that run() with an injected run_eval touches
     subprocess.run zero times -- the emulator-safety property this
     entire test module depends on."""
@@ -713,9 +738,12 @@ def test_run_never_invokes_a_real_subprocess():
         raise AssertionError("subprocess.run must not be called when "
                              "run_eval is injected")
 
+    cfg = {**CONFIG,
+          "receipt_log": str(tmp_path / "eval.jsonl"),
+          "manifest_out": str(tmp_path / "manifest.json")}
     mod.subprocess.run = poison
     try:
-        run(CONFIG, checkpoint_dir="/fake/dir",
+        run(cfg, checkpoint_dir="/fake/dir",
             run_eval=lambda cmd: _eval_json(n=50, clear_rate=0.5))
     finally:
         mod.subprocess.run = real_subprocess_run

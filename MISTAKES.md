@@ -11,12 +11,12 @@ one-line invariant only after recurring across 4–5 separate entries.
 
 | root cause | entries | deterministic enforcement |
 |---|---|---|
-| `[unverified-claim]` | **11** | **PROMOTED 2026-08-28** (project instruction file); no — judgement |
+| `[unverified-claim]` | **12** | **PROMOTED 2026-08-28** (project instruction file); no — judgement |
 | `[vacuous-gate]` | **13** | **PROMOTED 2026-08-28** (project instruction file) + **SHIPPED** — `scripts/anti_vacuity_scan.py` + registry test `tests/test_anti_vacuity_gates.py` (collected by the full suite); also: ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
 | `[weak-eval]` | **8** | **PROMOTED 2026-08-28** (project instruction file); partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **PROMOTED 2026-08-28** (project instruction file); **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
-| `[stale-artifact]` | **7** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
+| `[stale-artifact]` | **8** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
 | `[process]` | **11** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 2 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
@@ -35,6 +35,53 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-29 — [stale-artifact] A test wrote mock verdicts to a production receipt path for 12 days
+- **What happened:** `tests/test_eval_shared_substrate.py::test_run_never_
+  invokes_a_real_subprocess` passed the PRODUCTION config through `run()`
+  unredirected. Every full-suite execution — the engine's recurring
+  suite_check included — appended 4 mock legs (checkpoints under
+  `/fake/dir/`, every clear_rate exactly 0.5) plus one mock SUPERSEDES
+  verdict (delta +47) to `runs/shared_substrate/eval_shared_substrate.jsonl`
+  and overwrote `manifest.json`. 204 fabricated verdicts accumulated from
+  2026-08-17 to 2026-08-29; the directory read as a completed, successful
+  trunk-plus-heads experiment. The real eval has never run (its head
+  checkpoint dir does not exist).
+- **Root cause:** The test's two tmp-redirected siblings set
+  `receipt_log`/`manifest_out` into `tmp_path`; this one reused the module
+  CONFIG verbatim because its assertion was about subprocess calls, not
+  writes — and nothing checked that a test leaves production paths alone.
+- **Consequence:** A production receipt path held nothing but fabricated
+  measurement-shaped bytes; it burned two sessions' attention as an
+  "unidentified writer" during a disk audit, and its verdict was briefly
+  relayed as a real result (own entry). Fixed same day: test redirected,
+  autouse guard added that fails any test in the module touching the
+  production paths (revert-verified: restoring CONFIG trips the guard),
+  polluted files quarantined with a README.
+- **Rule (draft):** A test that exercises a writer takes the writer's
+  OUTPUT PATHS as part of its fixture, never from production config; and
+  a module whose subject writes to `runs/` ships an autouse guard
+  asserting the production paths are byte-identical after every test.
+
+## 2026-08-29 — [unverified-claim] Relayed a receipt-log verdict to a peer before re-deriving it
+- **What happened:** Asked to identify the writer of `runs/shared_substrate/`,
+  the directory's manifest and final verdict row (SUPERSEDES, 200 vs 153)
+  were relayed to a peer session — with a re-derive-before-quoting caveat
+  attached, but relayed nonetheless — as "at-rest receipts of a completed,
+  apparently-successful experiment." Re-derivation an hour later showed
+  the log was 100% mock test output (previous entry).
+- **Root cause:** Treated a well-formed manifest + verdict row as evidence
+  the measurement happened. The invariant already says the opposite: a
+  verdict may only be recorded from a receipt that PROVES it was measured
+  — and proving means re-deriving the aggregate from the underlying rows,
+  which took one script and immediately exposed `/fake/dir/`.
+- **Consequence:** A correction message to the peer before it reached the
+  project owner as good news; no artifact or ledger was touched with the
+  false number. Self-caught by running the standing invariant — but after
+  the relay, not before.
+- **Rule (draft):** Re-derivation happens BEFORE the first relay, not
+  before the ledger write; a caveat attached to an unverified number does
+  not license sending the number.
 
 ## 2026-08-29 — [process] The citation-grep deletion rule was almost inverted into a selector
 - **What happened:** During the approved disk sweep, the rule "grep the
