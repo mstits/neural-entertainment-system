@@ -17,7 +17,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **PROMOTED 2026-08-28** (project instruction file); **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **6** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
-| `[process]` | **8** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
+| `[process]` | **9** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 2 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
 | `[measurement]` | 1 | — |
@@ -35,6 +35,22 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-29 — [process] Two chain watchers ran the same eval pipeline concurrently
+- **What happened:** A background chain watcher believed dead (its parent
+  task had been cleaned up and an earlier pkill was assumed to have reached
+  it) had survived; when a second instance was launched directly, both ran
+  the 192-eval ladder against the same receipt paths simultaneously.
+- **Root cause:** Assumed a process was dead from the disappearance of its
+  parent task instead of verifying the process itself; then launched a
+  duplicate without a lock or a liveness check.
+- **Consequence:** None measured — verified rather than assumed: 192/192
+  receipts, zero bad, zero missing, zero extras, and the evals are
+  deterministic per (checkpoint, eval-seed) so double-writes rewrote
+  identical bytes. The waste was duplicate compute, not corruption.
+- **Rule (draft):** A pipeline that writes shared paths takes a lockfile or
+  verifies no sibling is running before starting; "its parent is gone" is
+  not evidence a process is.
 
 ## 2026-08-28 — [unverified-claim] The registration asserted the configs' state without reading the configs
 - **What happened:** V33's protocol section stated "ReDo stays at its
