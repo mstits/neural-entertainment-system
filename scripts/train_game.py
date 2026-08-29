@@ -530,48 +530,61 @@ def resolve_profile_path(game: str, explicit: Optional[str]) -> Path:
     return p
 
 
-def _pid_start_time(pid: int) -> Optional[str]:
-    """Best-effort start-time fingerprint for `pid` (via `ps -o lstart=`).
+# Run-lock helpers now live in the shared module (extracted 2026-08-29 so
+# chain watchers / eval pipelines can reuse the same fingerprinted lock
+# instead of re-inventing it; see src/utils/run_lock.py's history note).
+# Re-exported under their historical names — tests and callers import
+# them from here.
+from src.utils.run_lock import (  # noqa: E402
+    pid_start_time as _pid_start_time,
+    lock_pid_is_live as _run_lock_pid_is_live,
+)
 
-    Used to tell a still-running process apart from an unrelated one
-    that has since recycled the same PID. Returns None if `ps` is
-    unavailable or the PID can't be resolved — callers must treat that
-    as "unknown", never as "confirmed different process".
+
+# Minimum free disk to START a training run, matching the engine
+# scheduler's DISK_FLOOR_GB. Until 2026-08-29 only the scheduler was
+# guarded — a hand-launched trainer on a 91%-full volume would run for
+# weeks while its own checkpoint saves degraded into swallowed warnings
+# (the mid-run half of that fix is CheckpointManager's consecutive-
+# save-failure escalation; this is the don't-even-start half).
+DISK_FLOOR_GB = 40.0
+
+
+def _disk_free_gb(path: Path) -> float:
+    import shutil as _shutil
+    return _shutil.disk_usage(str(path)).free / 1e9
+
+
+def _check_disk_floor(path: Path, *, allow_low_disk: bool = False) -> bool:
+    """True = enough headroom (or explicitly overridden) to launch.
+
+    Fails OPEN on a guard error (a stat hiccup must never be the reason
+    a run is refused), fails CLOSED on measured low disk.
     """
+    log = logging.getLogger("train_game")
     try:
-        out = subprocess.run(
-            ["ps", "-o", "lstart=", "-p", str(pid)],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return out or None
-
-
-def _run_lock_pid_is_live(pid: int, recorded_start: str) -> bool:
-    """True iff `pid` is still the process that recorded `recorded_start`.
-
-    A bare `os.kill(pid, 0)` only proves *some* process currently holds
-    that PID (success), or that one exists but isn't ours
-    (PermissionError) — not that it's the same process that wrote the
-    run-lock. Under an unclean shutdown (OOM-kill, power loss) macOS can
-    reissue the dead trainer's PID to an unrelated process within
-    seconds of boot, which would make a stale `.run.lock` look live
-    forever and permanently block every later unattended restart against
-    that checkpoint dir. Comparing start-time fingerprints catches PID
-    reuse; when either fingerprint can't be determined this stays
-    conservative and reports live, matching the pre-fix behavior.
-    """
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        pass  # some process holds this PID, not us — check the fingerprint
-    if not recorded_start:
+        free = _disk_free_gb(path)
+    except OSError as exc:
+        log.warning("[launcher] disk-floor check errored (%s); "
+                    "proceeding", exc)
         return True
-    current_start = _pid_start_time(pid)
-    return current_start is None or current_start == recorded_start
+    if free >= DISK_FLOOR_GB:
+        return True
+    if allow_low_disk:
+        log.warning(
+            "[launcher] %.1f GB free < %.0f GB floor — proceeding under "
+            "--allow-low-disk; checkpoint saves may start failing.",
+            free, DISK_FLOOR_GB,
+        )
+        return True
+    log.error(
+        "[launcher] REFUSING to launch: %.1f GB free < %.0f GB floor. "
+        "A run whose checkpoint saves hit ENOSPC burns compute for "
+        "output that won't survive a crash. Free space or pass "
+        "--allow-low-disk to override.",
+        free, DISK_FLOOR_GB,
+    )
+    return False
 
 
 def main() -> int:
@@ -611,6 +624,13 @@ def main() -> int:
         help="Force a fresh run (ignores existing checkpoints).",
     )
     parser.add_argument(
+        "--allow-low-disk", action="store_true",
+        help="Launch even below the %.0f GB free-disk floor "
+             "(checkpoint saves may fail; the consecutive-save-failure "
+             "guard will halt the run loudly if they do)."
+             % DISK_FLOOR_GB,
+    )
+    parser.add_argument(
         "--no-supervise", action="store_true",
         help="Disable the crash supervisor (default: crashes are logged "
              "and the run relaunches with auto-resume, up to 5 times).",
@@ -645,6 +665,10 @@ def main() -> int:
 
     if not args.game and not args.profile:
         parser.error("either --game or --profile must be specified")
+
+    # Refuse to start a run the disk can't sustain (see _check_disk_floor).
+    if not _check_disk_floor(ROOT, allow_low_disk=args.allow_low_disk):
+        return 1
 
     # Seed every RNG from --seed BEFORE the trainer is built so the whole
     # run — construction included — is reproducible. Recorded in the manifest.
@@ -738,30 +762,26 @@ def main() -> int:
     # numbering clashes). A stale lock from a dead process is reclaimed;
     # a live one aborts. Cheap insurance against a double `nohup` launch
     # or a supervisor relaunch racing a not-quite-dead predecessor.
-    import os as _os
+    from src.utils.run_lock import (
+        acquire as _acquire_run_lock,
+        lock_pid_is_live as _lock_live,
+        read_lock as _read_lock,
+    )
     _lock = trainer.checkpoint_dir / ".run.lock"
     try:
         if _lock.exists():
-            try:
-                _lock_lines = _lock.read_text().splitlines()
-                _old_pid = int(_lock_lines[0].split()[0])
-                _old_start = _lock_lines[1] if len(_lock_lines) > 1 else ""
-            except (ValueError, IndexError):
+            _pre = _read_lock(_lock)
+            if _pre is None or not _lock_live(_pre.pid, _pre.start):
                 log.warning("[launcher] reclaiming stale run-lock %s", _lock)
-            else:
-                if _run_lock_pid_is_live(_old_pid, _old_start):
-                    log.error(
-                        "[launcher] checkpoint dir is locked by live PID %d "
-                        "(%s). Refusing to run two trainers on one dir. Stop "
-                        "the other run or pick a different dir.",
-                        _old_pid, _lock,
-                    )
-                    return 1
-                log.warning("[launcher] reclaiming stale run-lock %s", _lock)
-        _lock.write_text(
-            f"{_os.getpid()}\n{_pid_start_time(_os.getpid()) or ''}\n"
-            f"{rom_path}\n"
-        )
+        _holder = _acquire_run_lock(_lock, extra=str(rom_path))
+        if _holder is not None:
+            log.error(
+                "[launcher] checkpoint dir is locked by live PID %d "
+                "(%s). Refusing to run two trainers on one dir. Stop "
+                "the other run or pick a different dir.",
+                _holder.pid, _lock,
+            )
+            return 1
         import atexit as _atexit
         _atexit.register(lambda: _lock.exists() and _lock.unlink())
     except OSError as exc:
