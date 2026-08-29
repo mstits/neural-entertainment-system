@@ -354,7 +354,15 @@ def test_baseline_covers_the_whole_roster_and_is_not_empty():
     #     five are byte-identical to the already-baselined seed0 profile
     #     except `name` and the registered redo numerals, and all five
     #     declare `reward_id: mario` explicitly.
-    expected = 126 + 4 + 1 + 5
+    # +4: configs/mario_1_1_v33_capacity_seed{0..3}.yaml
+    #     (V33_CAPACITY_2026-08-28.md) — explicit reward_id: mario,
+    #     two-line diffs (name, tile_hidden_dim: 128) plus the Addendum-1
+    #     redo_enabled: false fix from the already-baselined v28 seed
+    #     configs. This batch is late: the profiles were minted
+    #     2026-08-28 without a full-suite run (MISTAKES.md [process],
+    #     "a config file is code"), and the omission surfaced on the
+    #     first full suite afterwards, 2026-08-29.
+    expected = 126 + 4 + 1 + 5 + 4
     assert len(baseline) == expected, (
         f"expected {expected} baseline rows (126 frozen at migration + "
         f"documented later appends); found {len(baseline)}. A frozen row "

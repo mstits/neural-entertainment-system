@@ -17,7 +17,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **PROMOTED 2026-08-28** (project instruction file); **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **7** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
-| `[process]` | **9** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
+| `[process]` | **10** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 2 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
 | `[measurement]` | 1 | — |
@@ -35,6 +35,33 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-29 — [process] v33 configs minted without a full-suite run; the roster gate caught it 19 hours late
+- **What happened:** The four v33 capacity configs (d7d0cf6, minted
+  2026-08-28 18:58) declare `reward_id: mario` and were never appended to
+  `tests/reward_dispatch_baseline.json` — the documented one-batch-per-
+  addition mechanism every prior post-freeze profile set (v31, v32) went
+  through. `test_roster_dispatch_matches_the_frozen_pre_change_baseline`
+  failed on the next full-suite run, 19 hours later, after the campaign
+  had already trained and been adjudicated.
+- **Root cause:** The mint ran targeted checks (construct-validity
+  preflight, smoke, redo-disabled sanity) but not the full suite. The
+  drafted rule for exactly this existed at mint time: "a config file is
+  code — adding or copying a profile runs the full suite, not the subset
+  that covers it."
+- **Consequence:** No wrong result — the arm the configs get is the one
+  they explicitly declare, and the fix is the sanctioned 4-row append —
+  but the suite carried a red test through a full campaign, its
+  adjudication, and six unrelated commits, any of which could have been
+  blamed for it. Separately measured while diagnosing: 4 OTHER tests
+  (timing, highlight ring, learning-regression, consolidate smoke) fail
+  under two concurrent full suites and pass quiet — concurrent full
+  suites on one machine produce contention artifacts that mimic real
+  regressions.
+- **Rule (draft):** Minting or editing any config runs the FULL suite
+  before the commit lands (recurrence of the standing [process] draft —
+  count it); and a suite verdict is only readable if no other full suite
+  was running concurrently on the machine.
 
 ## 2026-08-29 — [stale-artifact] `git checkout <file>` as mutation-restore wiped an unstaged fix
 - **What happened:** During revert-verification of the approx-KL clamp, the
