@@ -111,6 +111,7 @@ action_space:
   - ["down", "A"]
 
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Power Blade (USA).nes"
   progress: {source: odometer, axis: x}
   # Jump/ballistic candidate (discover_observables.py, --forward right).

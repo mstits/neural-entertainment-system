@@ -148,12 +148,18 @@ MAX_RAM_BYTE = 255
 
 REACHABLE = "REACHABLE"
 NONE = "NONE"
+NONE_SILENT = "NONE_SILENT"
 UNFIREABLE = "UNFIREABLE"
 DEGENERATE = "DEGENERATE"
 
 #: Verdicts a solve run may proceed under. NONE is here on purpose: a
 #: coverage baseline is a legitimate configuration, it just has to be
-#: announced instead of inferred.
+#: announced instead of inferred — and as of 2026-08-28 "announced" is
+#: enforced, not aspirational: a profile with no clear machinery must
+#: carry `solve.no_clear_predicate: "<reason>"` (a non-empty string) or
+#: it classifies NONE_SILENT and `make clear-lint` exits non-zero. The
+#: direction review's §5.1: a gate that reports the defect it was built
+#: to refuse (37 silent constants) and returns 0 is a vacuous gate.
 OK_VERDICTS = (REACHABLE, NONE)
 
 
@@ -978,13 +984,24 @@ def clear_reachability(profile: dict) -> Reachability:
         if r is not None:
             return r
 
+    ack = solve.get("no_clear_predicate")
+    if isinstance(ack, str) and ack.strip():
+        return Reachability(
+            NONE, None,
+            "no clear machinery, ACKNOWLEDGED by solve.no_clear_predicate: "
+            f"{ack.strip()!r}. `solutions: 0` remains a compile-time "
+            "constant here and must never be cited as a search result.")
+
     return Reachability(
-        NONE, None,
+        NONE_SILENT, None,
         "level_key is the empty coverage baseline and no clear:/finale: "
         "hook is declared, so `level_key(ram) > start_key` is `() > ()` "
-        "= False for every state. This run CANNOT bank a solution: "
-        "`solutions: 0` is a compile-time constant, not a search result, "
-        "and --want-solutions is inert.")
+        "= False for every state — and nothing in the profile acknowledges "
+        "it. This run CANNOT bank a solution: `solutions: 0` is a "
+        "compile-time constant, not a search result, and --want-solutions "
+        "is inert. Either mint a predicate or declare "
+        "`solve.no_clear_predicate: \"<reason>\"` so the constant is "
+        "announced instead of inferred.")
 
 
 def launch_banner(profile: dict, profile_path: str | None = None) -> str | None:
@@ -994,7 +1011,7 @@ def launch_banner(profile: dict, profile_path: str | None = None) -> str | None:
     tests can assert on it without capturing stdout."""
     r = clear_reachability(profile)
     where = f" [{profile_path}]" if profile_path else ""
-    if r.verdict == NONE:
+    if r.verdict in (NONE, NONE_SILENT):
         return (f"[clear]{where} NO REACHABLE CLEAR PREDICATE — {r.reason} "
                 "Frontier depth and cell counts from this run are real "
                 "measurements; the solution count is not. Cite it only as "
@@ -1063,8 +1080,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\n" + "  ".join(f"{k}={v}" for k, v in sorted(tally.items())))
     if bad:
-        print(f"\nREFUSED {bad} profile(s): they declare clear machinery "
-              f"that cannot fire.")
+        print(f"\nREFUSED {bad} profile(s): clear machinery that cannot "
+              f"fire, or a `() > ()` constant nobody acknowledged "
+              f"(NONE_SILENT — declare `solve.no_clear_predicate` or mint "
+              f"a predicate).")
     return 1 if bad else 0
 
 

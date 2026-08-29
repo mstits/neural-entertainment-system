@@ -251,6 +251,7 @@ reinforce:
 # jitter, not position. player_x alone rejected as the sole signal for the
 # saturation reason above.
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Double Dragon (USA).nes"
   progress: {lo: 0x005A, hi: 0x00B2}
   # Guards transition-frame garbage; real values top out far below this in

@@ -36,6 +36,7 @@ action_space:
   - ["up", "B"]
 
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Super C (USA).nes"
   # discover_observables.py 3-probe protocol (runs/onboard_wave4/discover_super_c.json):
   # $00A4 passes both gates (net +704, mono 1.00, no rebase/cap under a

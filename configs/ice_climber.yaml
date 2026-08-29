@@ -28,6 +28,7 @@ action_space:
   - ["up", "B"]
 
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Ice Climber.nes"
   # Gate 2026-08-24: odometer range x=0, y=0 over 1200 steps under ALL
   # five hold-drivers tried (right, left, up, A, B) while OAM churned

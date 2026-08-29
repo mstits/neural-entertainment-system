@@ -46,6 +46,7 @@ action_space:
   - ["up", "B"]
 
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Mega Man (USA).nes"
   # Odometer gate (runs/onboard_wave4/gate_mega_man_usa_right.json):
   # --forward right, 1200 steps, 51 distinct, range 0..72, oam_churn

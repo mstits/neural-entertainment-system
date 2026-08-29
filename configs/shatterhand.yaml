@@ -41,6 +41,7 @@ action_space:
   - ["down", "B"]
 
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Shatterhand (USA).nes"
   # Odometer gate (runs/onboard_wave5/gate_shatterhand_right.json):
   # --forward right, 1200 steps, axis x, range 0..245, 61 distinct,

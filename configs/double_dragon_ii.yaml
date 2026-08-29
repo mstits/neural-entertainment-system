@@ -47,6 +47,7 @@ action_space:
   - ["left", "B"]
 
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Double Dragon II - The Revenge (USA) (Rev A).nes"
   # Odometer gate (runs/onboard_wave5/gate_double_dragon_ii_{right,left,up,down}.json):
   # range x=0 y=0 under EVERY held direction (1200 steps each), oam_churn

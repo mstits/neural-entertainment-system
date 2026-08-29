@@ -166,6 +166,7 @@ reinforce:
 # reverting to 0 — harmless in isolation but would read as a huge bogus
 # progress value for that single frame if uncapped.
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Ghosts'n Goblins (USA).nes"
   # 2026-08-24 (odometer-era onboarding): progress moved to the PPU scroll
   # odometer — the hardware-surface signal (same purity class as pixels/OAM,

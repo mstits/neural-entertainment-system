@@ -32,6 +32,7 @@ action_space:
   - ["up", "B"]
 
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Batman - The Video Game (USA).nes"
   # Progress-signal gate on the PPU scroll odometer: passed, 318 distinct
   # values over 1200 steps, net max 1222 px, no high-byte saturation.

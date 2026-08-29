@@ -40,6 +40,7 @@ from clear_reachability import (  # noqa: E402
     LIVE_CONFLUENCE_SIGNALS,
     MAX_RAM_BYTE,
     NONE,
+    NONE_SILENT,
     REACHABLE,
     UNFIREABLE,
     CoordConstantMissing,
@@ -81,7 +82,9 @@ def test_the_empty_level_key_identity_is_reported_not_hidden() -> None:
     # nothing to do with the claim.
     assert (() > ()) is False
     r = clear_reachability(_profile())
-    assert r.verdict == NONE
+    # 2026-08-28 (§5.1): a bare constant now classifies as the SILENT
+    # class — announced-instead-of-inferred is enforced, not aspirational.
+    assert r.verdict == NONE_SILENT
     assert r.can_bank_a_solution is False
     assert "constant" in r.reason
 
@@ -100,7 +103,7 @@ def test_a_missing_level_key_is_treated_as_empty_not_crashed() -> None:
     that gets excluded from the sweep."""
     prof = _profile()
     del prof["solve"]["level_key"]
-    assert clear_reachability(prof).verdict == NONE
+    assert clear_reachability(prof).verdict == NONE_SILENT
 
 
 def test_a_profile_with_no_solve_block_is_not_a_solver_profile() -> None:
@@ -276,13 +279,13 @@ def test_the_guard_is_not_a_constant() -> None:
             progress={"source": "odometer", "axis": "x"},
             clear={"mode": "confluence"})).verdict,
     }
-    assert verdicts == {NONE, REACHABLE, UNFIREABLE}
+    assert verdicts == {NONE_SILENT, REACHABLE, UNFIREABLE}
 
 
 @pytest.mark.parametrize("mutation,expected", [
     # Each row: break exactly one thing about an accepted profile and
     # require the verdict to move off REACHABLE.
-    (dict(level_key=[]), NONE),
+    (dict(level_key=[]), NONE_SILENT),
     (dict(level_key=[], clear={"mode": "confluence"},
           progress={"source": "odometer", "axis": "x"}), UNFIREABLE),
     (dict(level_key=[], clear={"mode": "byte_change"}), UNFIREABLE),
@@ -336,12 +339,19 @@ def test_enforce_refuses_an_unfireable_profile() -> None:
     assert "configs/example.yaml" in str(exc.value)
 
 
-def test_enforce_allows_a_coverage_baseline_to_run() -> None:
-    """NONE is not an error. Refusing every coverage-baseline profile
-    would stop 36 legitimate searches; the requirement is that they
-    ANNOUNCE the blindness, not that they be forbidden."""
-    r = enforce(_profile())
+def test_enforce_allows_an_announced_coverage_baseline_to_run() -> None:
+    """NONE is not an error — once ANNOUNCED. The requirement was always
+    "announce the blindness, not forbid it"; as of 2026-08-28 the
+    announcement is a declared key, and a SILENT baseline refuses at
+    launch exactly like UNFIREABLE, before any emulator second is spent.
+    All 37 shipped baselines carry the acknowledgment."""
+    prof = _profile()
+    prof["solve"]["no_clear_predicate"] = "no witnessed clear; unminted"
+    r = enforce(prof)
     assert r.verdict == NONE
+
+    with pytest.raises(SystemExit):
+        enforce(_profile())  # silent -> refused at launch
 
 
 def test_the_launch_banner_names_the_constant_for_a_blind_profile() -> None:
@@ -421,3 +431,65 @@ def test_reachability_is_hashable_and_frozen() -> None:
     assert isinstance(r, Reachability)
     with pytest.raises(Exception):
         r.verdict = REACHABLE          # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# NONE_SILENT (direction review §5.1, 2026-08-28): a profile whose
+# is_clear is the `() > ()` constant must ANNOUNCE it or the lint exits
+# non-zero. "Announced instead of inferred" was the docstring's own
+# promise; this makes it enforced. 37 profiles carried the silent
+# constant for months while `solutions: 0` was read as a search result.
+# ---------------------------------------------------------------------------
+
+def test_silent_empty_coverage_baseline_is_not_ok():
+    from clear_reachability import clear_reachability, NONE_SILENT
+    r = clear_reachability({"solve": {"level_key": []}})
+    assert r.verdict == NONE_SILENT
+    assert not r.ok, "a silent constant must fail the lint"
+    assert not r.can_bank_a_solution
+
+
+def test_acknowledged_coverage_baseline_is_ok_but_still_cannot_bank():
+    from clear_reachability import clear_reachability, NONE
+    r = clear_reachability({"solve": {
+        "level_key": [],
+        "no_clear_predicate": "no witnessed clear; deliberately unminted",
+    }})
+    assert r.verdict == NONE and r.ok
+    assert not r.can_bank_a_solution, (
+        "acknowledgment changes the lint verdict, never the constant"
+    )
+
+
+def test_empty_or_blank_acknowledgment_stays_silent():
+    from clear_reachability import clear_reachability, NONE_SILENT
+    for bad in ("", "   ", None, True, 7):
+        r = clear_reachability({"solve": {
+            "level_key": [], "no_clear_predicate": bad,
+        }})
+        assert r.verdict == NONE_SILENT, (
+            f"a {bad!r} acknowledgment must not satisfy the announcement "
+            "requirement — an empty ack is the silent case wearing a key"
+        )
+
+
+def test_every_shipped_profile_is_announced_or_reachable():
+    """The roster-level enforcement: no configs/*.yaml may carry the
+    silent constant. This is the test that makes a NEW silent profile
+    impossible to add — the exact property the census lacked."""
+    import pathlib
+    import yaml
+    from clear_reachability import clear_reachability, NONE_SILENT
+    root = pathlib.Path(__file__).resolve().parent.parent
+    silent = []
+    for p in sorted((root / "configs").glob("*.yaml")):
+        prof = yaml.safe_load(open(p)) or {}
+        if "solve" not in prof:
+            continue
+        if clear_reachability(prof).verdict == NONE_SILENT:
+            silent.append(p.name)
+    assert not silent, (
+        f"{len(silent)} profile(s) carry the `() > ()` constant with no "
+        f"acknowledgment: {silent[:6]} — declare solve.no_clear_predicate "
+        "or mint a predicate"
+    )

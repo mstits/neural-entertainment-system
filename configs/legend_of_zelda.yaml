@@ -61,6 +61,7 @@ rediscovered_addresses:
     receipt: docs/receipts/rediscovery/legend_of_zelda_discover_2026-08-26.json
 
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Legend of Zelda, The (USA) (Rev A).nes"
   # D3 fix (2026-08-26): this block used to be rom+progress only, so
   # make_game() raised KeyError('y') before a single search step could

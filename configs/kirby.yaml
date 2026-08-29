@@ -68,6 +68,7 @@ action_space:
 # id (Vegetable Valley = "Level 1"); it would increment on a real clear — wire it
 # into level_key once a genuine stage clear is captured and confirmed.
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Kirby's Adventure (USA) (Rev A).nes"
   # 16-bit world-X (see the block above). progress_cap guards transition-frame
   # garbage: real world-X here spans 0..~1023 (0x0095 in 0..3); a door-load

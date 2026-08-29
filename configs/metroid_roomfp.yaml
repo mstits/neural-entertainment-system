@@ -42,6 +42,7 @@ action_space:
   - ["down"]
 
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Metroid (USA).nes"
   # progress: the odometer x integral, as onboarded 2026-08-24
   # (runs/onboard_wave1/gate_metroid.json — SIGNAL SOUND). Unchanged

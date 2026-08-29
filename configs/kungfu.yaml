@@ -195,6 +195,7 @@ reinforce:
 # an empty coverage baseline; the archive/solve run below is the actual
 # instrument that answers whether search can push the frontier past 240.
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Kung Fu (Japan, USA).nes"
   # ODOMETER-ERA progress (2026-08-03..08-06), STILL ACTIVE below despite
   # being known-bad. $0094 is this profile's own-rollout "position" byte

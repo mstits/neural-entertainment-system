@@ -136,6 +136,7 @@ reinforce:
 # receipted. y and lives happen to agree with the receipted partials; progress
 # is the newly-confirmed player-absolute-X odometer.
 solve:
+  no_clear_predicate: "no witnessed clear exists for this game, so no predicate can be validated; deliberately unminted per the 4-CONFIRMED/41-VOID roster adjudication (docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md). `solutions: 0` here is a compile-time constant, never a search result."
   rom: "roms/Mega Man 2 (USA).nes"
   # 2026-08-24 odometer-era onboarding: progress = PPU scroll odometer,
   # x axis. Both candidate signals passed scripts/progress_signal_gate.py

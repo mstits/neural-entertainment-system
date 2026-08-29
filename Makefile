@@ -154,7 +154,11 @@ purity-check:
 	@.venv/bin/python tests/purity_engine_scan.py --check
 	@cd nes_core && cargo test --lib win_witness_guard --quiet
 
-test: rust-check unsafe-inventory-check clear-lint purity-check
+mistakes-check:
+	@.venv/bin/python scripts/mistakes_tally.py --check > /dev/null || \
+	  (.venv/bin/python scripts/mistakes_tally.py --check; exit 1)
+
+test: rust-check unsafe-inventory-check clear-lint purity-check mistakes-check
 	. .venv/bin/activate && pytest tests/ -q --timeout=120
 
 test-fast:
