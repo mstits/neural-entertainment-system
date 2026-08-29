@@ -17,7 +17,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **PROMOTED 2026-08-28** (project instruction file); **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **7** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
-| `[process]` | **10** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
+| `[process]` | **11** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 2 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
 | `[measurement]` | 1 | — |
@@ -35,6 +35,28 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-29 — [process] The citation-grep deletion rule was almost inverted into a selector
+- **What happened:** During the approved disk sweep, the rule "grep the
+  candidate path against CLAIMS.md and docs/ before deleting" correctly
+  vetoed 4 of 5 approved deletions (507G worth: a glob dependency, a
+  banked receipt pointer, a 2-day-old witness ledger, a config-named
+  observables receipt). A salvage plan was then drafted to prune each
+  vetoed directory down to its CITED subdir and delete the uncited bulk.
+  Caught before execution: in each directory the uncited bulk was NEWER
+  than the cited core (stage1_v8 postdates cited stage1_v6; ll_2_2_*
+  postdates cited ll_1_1_transfer). The plan would have deleted the
+  newest work in each line and kept the oldest.
+- **Root cause:** Reading citation as a liveness marker. Citation marks
+  what got WRITTEN UP; the newest work in an active line is precisely the
+  part not yet cited anywhere.
+- **Consequence:** None — self-caught before any deletion. Recorded
+  because the inversion is the natural next step for anyone holding the
+  rule, and it fails worst on the most active directories.
+- **Rule (draft):** The citation-grep rule is a VETO on deletion, never a
+  selector for it. "Uncited" licenses nothing; recency inverts citation.
+  Positive selection for deletion needs its own evidence (age + zero
+  refs + owner sign-off), per item.
 
 ## 2026-08-29 — [process] v33 configs minted without a full-suite run; the roster gate caught it 19 hours late
 - **What happened:** The four v33 capacity configs (d7d0cf6, minted
