@@ -1,0 +1,8 @@
+{
+ "status": "ok",
+ "identical_key_surface": true,
+ "width_derived_fields": [],
+ "clear_rate_48k": 0.5,
+ "clear_rate_72k": 0.2,
+ "conclusion": "selection statistic is an emulator outcome; receipt key surface identical across widths; zero width-derived fields"
+}

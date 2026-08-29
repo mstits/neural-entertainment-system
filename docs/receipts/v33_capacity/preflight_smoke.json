@@ -1,0 +1,12 @@
+{
+ "status": "ok",
+ "train_rc": 0,
+ "fc1_shape": [
+  128,
+  712
+ ],
+ "params": 95943,
+ "checkpoint": "checkpoints/mario_1_1_v33_capacity_seed0_smoke_only/vanilla_ppo_iter_00010.pt",
+ "note": "two failed preflight ATTEMPTS before this (5 then 10 iters) were defects in the check, not the dose: saves fire at it%10==0 with it>0, and --iters N runs iters 0..N-1, so 11 is the minimum",
+ "conclusion": "width 128 instantiates, trains, and saves on the real recipe"
+}
