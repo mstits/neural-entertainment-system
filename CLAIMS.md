@@ -4464,3 +4464,24 @@ document must not cite the +0.14 without them:
 **The 0.767 bar does not move.** It is quoted from here on with its
 provenance attached: it is 46/60 at eval seed 0, shared-stream, one worker,
 never measured under the two-seed per-episode protocol it gates.
+
+## V27 CORRECTED LADDER 2026-08-28 — the capacity delta measured two-sided: +0.170, campaign registrable
+
+Full write-up: `docs/research/V27_CORRECTED_LADDER_2026-08-28.md`. Receipts:
+`runs/v27_corrected_ladder/` (192/192 ok, 0 bad, 5,257 s, protocol
+byte-identical to the receipted v28 F0 job).
+
+**v27 split-sample best-of-4 = 0.500** (seed 1; the recorded 0.530 anchor,
+seed 2, corrects to 0.460 and is displaced — the recorded per-seed ranking was
+itself a selector artifact). Against v28's banked same-estimator 0.670:
+**corrected delta +0.170**, larger than the uncorrected +0.14. Both
+spot-corrections cited in the direction review reproduce exactly (0.290→0.500;
+0.120 vs 0.110).
+
+**The §4.2 fork, read as registered:** 0.500 ≤ 0.570 → a capacity campaign is
+REGISTRABLE, subject to all seven §4.3 preregistration items and all three §5
+process repairs before any training arm launches. The delta earns the
+registration, not the conclusion — n=4 best-of-4 with mixed per-seed deltas
+underneath; §4.3 item 4's power statement (Δ ≈ 0.165 detectable at 80% at the
+registered n) governs what the campaign itself could show, and the measured
+delta sits almost exactly at that detection threshold.
