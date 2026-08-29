@@ -177,7 +177,7 @@ reinforce:
   # redo_enabled: false, so every non-v27 config is untouched.
   tile_hidden_dim: 128         # THE variable (v33: third dose point; 48k->72k->96k params, V33_CAPACITY_2026-08-28.md)
   tile_trunk_dim: 32            # unchanged, written explicitly per strict-config style
-  redo_enabled: true
+  redo_enabled: false
   redo_tau: 0.025
   redo_check_every_iters: 1
   redo_sample_batch: 4096

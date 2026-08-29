@@ -11,7 +11,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 
 | root cause | entries | deterministic enforcement |
 |---|---|---|
-| `[unverified-claim]` | **10** | **PROMOTED 2026-08-28** (project instruction file); no — judgement |
+| `[unverified-claim]` | **11** | **PROMOTED 2026-08-28** (project instruction file); no — judgement |
 | `[vacuous-gate]` | **13** | **PROMOTED 2026-08-28** (project instruction file) + **SHIPPED** — `scripts/anti_vacuity_scan.py` + registry test `tests/test_anti_vacuity_gates.py` (collected by the full suite); also: ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
 | `[weak-eval]` | **8** | **PROMOTED 2026-08-28** (project instruction file); partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
@@ -35,6 +35,25 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-28 — [unverified-claim] The registration asserted the configs' state without reading the configs
+- **What happened:** V33's protocol section stated "ReDo stays at its
+  schema-default inert setting in all four configs." The configs, minted as
+  two-line diffs from v28, inherited v28's `redo_enabled: true` at the inert
+  tau — and the v32-era arming deadline (added after v28 ran) VOIDed all
+  four seeds at iteration 40, across all six supervisor restarts. ~2.2 h.
+- **Root cause:** Wrote what the configs SHOULD contain into the
+  registration and verified the intended variable (`tile_hidden_dim`) but
+  not the asserted invariant (`redo_enabled`); a diff-based mint inherits
+  everything the diff does not name.
+- **Consequence:** One full campaign attempt VOID before any grid existed.
+  The guard chain worked exactly as designed — this is the first time an
+  inert-armed run was refused BEFORE burning its 7 h, which is what the
+  deadline was built for. Configs conformed to the registration; attempt-1
+  artifacts quarantined; partial checkpoints deleted before relaunch.
+- **Rule (draft):** Every invariant a registration asserts about its configs
+  is checked against the minted files before launch — the same preflight
+  discipline the dose gets, applied to the things held constant.
 
 ## 2026-08-28 — [false-alarm] A preflight check failed twice on a healthy mechanism
 - **What happened:** The v33 dose-reachability smoke "failed" twice — at 5
