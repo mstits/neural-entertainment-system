@@ -107,6 +107,16 @@ committed inside the log that records it. It is now derived.
 - **Rule (draft):** A hash in a receipt names its domain in the receipt.
   A hash whose domain must be recovered from the producer's source code
   attests nothing to anyone else.
+- **Amendment (2026-08-29, same day — the verifier-side twin):** During
+  independent verification of the ng_odo bank, the verifying session
+  regexed BANKING_2026-08-29.md for sha/path pairs, found none, and
+  nearly reported a gap — the shas live in rederivation_2026-08-29.json,
+  exactly where the manifest's own line 17 points. Self-caught and
+  disclosed. Same failure shape from the other side: the producer must
+  name the domain/location, and the verifier must FOLLOW the named
+  pointer to its referent before verdicting a gap. Two same-day
+  instances of "checked the wrong artifact" (tape file vs array bytes;
+  manifest prose vs pointed-to JSON).
 
 ## 2026-08-29 — [process] Three same-day catches, one shape: a claim gating an action, re-derived by a session that didn't produce it
 - **What happened:** Three times today a load-bearing claim changed on
