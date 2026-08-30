@@ -77,9 +77,9 @@ inert. A name is not a usable selector in either direction.
 
 | | from | to | duration |
 |---|---|---|---|
-| `name.contains(...)` dispatch existed | `55e5333` 2026-04-27 (initial commit) | `c89a816` 2026-08-26 | **121 days** |
-| A quarantined predicate was reachable by inheritance | quarantine established `fabeca7` 2026-08-25 | 2026-08-26 | 1 day |
-| The three silently-inheriting profiles existed | `b590866` / `3601c45` 2026-08-24 | 2026-08-26 | 2 days |
+| `name.contains(...)` dispatch existed | `55e5333` 2026-04-27 (initial commit) | `2a15dfb` 2026-08-26 | **121 days** |
+| A quarantined predicate was reachable by inheritance | quarantine established `9553682` 2026-08-25 | 2026-08-26 | 1 day |
+| The three silently-inheriting profiles existed | `794270d` / `09a1c03` 2026-08-24 | 2026-08-26 | 2 days |
 
 The honest reading of those rows: the *defect* is four months old; the *breach of the
 quarantine* is one day old, because the quarantine is one day old. The mechanism was
@@ -148,8 +148,8 @@ Those are not the same thing, and every consequence here follows from conflating
 
 | | from | to | duration |
 |---|---|---|---|
-| `zelda_gui_tuned.yaml` carried the 13 int-valued addresses | `d0f315e` 2026-07-12 | 2026-08-26 | **45 days** |
-| `observatory.py` folded `ram_mapping` into the exclusion set | `c9d3d95` 2026-07-31 | 2026-08-26 | **26 days** |
+| `zelda_gui_tuned.yaml` carried the 13 int-valued addresses | `a2a5644` 2026-07-12 | 2026-08-26 | **45 days** |
+| `observatory.py` folded `ram_mapping` into the exclusion set | `f3b97b4` 2026-07-31 | 2026-08-26 | **26 days** |
 | Both together, i.e. an external map able to steer discovery | 2026-07-31 | 2026-08-26 | **26 days** |
 | Those addresses under formal quarantine | 2026-08-25 | 2026-08-26 | 1 day |
 

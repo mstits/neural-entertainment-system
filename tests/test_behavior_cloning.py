@@ -114,7 +114,7 @@ def test_build_dataset_empty_tile_fallback_shape_unstacked(tmp_path) -> None:
 
 def test_build_dataset_empty_tile_fallback_shape_stacked(tmp_path) -> None:
     """tile_frame_stack=4 must multiply the empty-fallback feature width
-    (commit 344542c regression: pretrain was getting 175-dim states and
+    (commit d220216 regression: pretrain was getting 175-dim states and
     the runtime policy expected 700-dim — the BC fix had to thread the
     multiplier all the way to the empty shape too)."""
     empty_demo = tmp_path / "empty.state.bin"

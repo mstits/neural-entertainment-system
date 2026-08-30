@@ -95,13 +95,13 @@ ram_mapping:
 # witnessed on this ROM in this repo, so neither could have been measured
 # here. String values on purpose: `int(v)` must raise, so no consumer can
 # fold these addresses back into a set (the exclusion-fold inversion closed
-# for Zelda in 2e6014f). tests/test_purity_quarantine_sweep.py enforces that
+# for Zelda in 222ae25). tests/test_purity_quarantine_sweep.py enforces that
 # no profile on this ROM re-adopts them into a live `ram_mapping`.
 quarantined_external_knowledge:
   applies_to_rom: "roms/Contra (USA).nes"
   provenance: >-
     Introduced by the 2026-07-08 "win-verification corrections" pass
-    (30551a6), which cites a witnessed result only for SMB. No
+    (5c9f195), which cites a witnessed result only for SMB. No
     Contra-specific witness exists for either claim, and no source for
     them is recorded — they are unattributed external material.
   status: UNVERIFIED_EXTERNAL

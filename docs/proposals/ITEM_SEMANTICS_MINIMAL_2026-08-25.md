@@ -22,7 +22,7 @@ script, one additive field on `EdgeStat`, an eight-line edit to two existing hot
 zero new Rust. Everything else is `state_sig` — shipped since before Room-Graph existed — doing the one
 job it was already built to do.
 
-All line numbers below verified against HEAD `ee39fde23cf60074c38be3e2696e08d584286d2e`
+All line numbers below verified against HEAD `163ef54598bdd50db798dc4280b6e54ce93da0ee`
 (`scripts/go_explore_solve.py`, 7401 lines).
 
 ---
@@ -121,7 +121,7 @@ No `ItemLedger` runtime class, no per-worker latch register, no new pseudo-RAM b
 slot at the moment an edge stages (§2 row 2 below) — it is not a new observable, just a new place an
 existing observable gets recorded.
 
-### §2 Integration points (file:line, verified at `ee39fde`)
+### §2 Integration points (file:line, verified at `163ef54`)
 
 | # | Where | Change |
 |---|---|---|

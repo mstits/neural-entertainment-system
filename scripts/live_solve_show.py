@@ -205,7 +205,7 @@ class HeroCam(threading.Thread):
     def _reset_voice(self):
         """Clear the hero voice's mixer buffer/resampler carry right after
         an env.load_state() jump — the identical unreset-carry seam that
-        caused the worker-voice audio splice (f42b6b0), just never
+        caused the worker-voice audio splice (89a0b4c), just never
         triggered on this single persistent voice/thread before (found by
         adversarial review, 2026-08-06)."""
         mixer = self.show.mixer
@@ -395,7 +395,7 @@ class Show:
                 self.spec_renderer = SpectatorRenderer(
                     self.game.rom, n_tiles=int(args.workers), cols=4,
                     hero_scale=0, tile_fps=20.0)
-                # nes_core releases the GIL as of the 840e764 build —
+                # nes_core releases the GIL as of the b8b5c98 build —
                 # the spectator thread renders concurrently with the
                 # solver; 30 Hz composite, full mosaic per tick.
                 self.spec_thread = SpectatorThread(self.spec_renderer, fps=30.0)

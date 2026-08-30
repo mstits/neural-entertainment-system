@@ -152,7 +152,7 @@ read as evidence the mechanic shipped.
 module with a failure it was never present for.
 
 There *is* a partial defense, and it should be recorded because it means this was
-not a silent drop: integration commit `cd00fdf` argues the substitution in its
+not a silent drop: integration commit `b52b0b1` argues the substitution in its
 message — *"Per-step GAE with the dense value stream then IS the correct
 estimator read at decision rows."* But that reasoning never left the commit
 message, and it is conditioned on a dense value stream that §4.2 shows does not
@@ -306,7 +306,7 @@ surfaces disagree, and neither carries that caveat:
    today**.
 2. **`docs/proposals/README.md` §10, committed 2026-08-25 — two days *after* the
    audit above — marks the parent round `COMPLETED/ACTIONED` and states the
-   shared-substrate ranking "shipped as commit `f757506`."** A harness shipping is
+   shared-substrate ranking "shipped as commit `740cac6`."** A harness shipping is
    not a hypothesis being tested.
 
 An auditor who checks the two places one normally checks — the status index and

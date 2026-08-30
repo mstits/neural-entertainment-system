@@ -1,10 +1,10 @@
 # V_adv on-policy re-execution — the sound run, and the retirement it earns
 
 **Date:** 2026-08-28. **Registrations:**
-`docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md` (parent, commit `9a9db2d`,
+`docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md` (parent, commit `35f6d60`,
 inherited verbatim) + `docs/proposals/VADV_ONPOLICY_RERUN_ADDENDUM_2026-08-28.md`
-(commit `77b8549`, written before any collection compute). Predecessors:
-offline VOID at R = 0.279 (`789aefe`), on-policy VOID on the collector
+(commit `2e7c663`, written before any collection compute). Predecessors:
+offline VOID at R = 0.279 (`e09a220`), on-policy VOID on the collector
 aliasing defect (`TWO_REGISTERED_TESTS_2026-08-27.md` Part I).
 
 **Verdict: the arc reading is VOID under the strict registered A2 rule
@@ -35,7 +35,7 @@ Every precondition of the VOID's §1.9 was met before scoring:
   [0, 2873]) traversed the WALL band, the registered cross-population drop
   removed those interior rows, and the legitimate gap read as CHAIN BROKEN.
   Fifteen of 26 iterates carry drops, so most of the grid would have
-  tripped. Fix (commit `6d700c5`): `row_step` is written into the bank so
+  tripped. Fix (commit `5d0e016`): `row_step` is written into the bank so
   the gap is visible in the artifact itself, and the chain is asserted
   exactly across adjacent recorded steps — full strength against the
   aliasing class (which corrupts every adjacent pair), zero tolerance
@@ -60,7 +60,7 @@ Every precondition of the VOID's §1.9 was met before scoring:
 * **Disclosure:** a single-iterate mechanics smoke of the committed
   pipeline ran on iter 10's bank before the full arc (sandboxed copy).
   No code or threshold changed afterward; the git record between
-  `77b8549` and the scoring run carries only the guard fix.
+  `2e7c663` and the scoring run carries only the guard fix.
 
 ## 2. What the sound instrument read
 
@@ -194,8 +194,8 @@ compute**, inside the registered ≤ 3.0 h compute / 6.0 h lane ceilings.
 ## 8. Conformance to the NC-b pre-commitment (parallel registration)
 
 A second session registered `docs/proposals/NCB_ACTING_RANGE_PRECOMMIT_2026-08-28.md`
-(ba34605 → 89af2aa) in parallel with this execution; its own §4–§6 give
-`77b8549` precedence on the verdict path and scope its machinery to
+(dfc202e → 44eb6de) in parallel with this execution; its own §4–§6 give
+`2e7c663` precedence on the verdict path and scope its machinery to
 receipts, bank soundness, and control-quality characterisation. Executed
 here (`ncb_conformance.json`), with one ordering deviation disclosed: the
 precommit wants these receipts before any tracking number, and they were
@@ -225,7 +225,7 @@ verified), `ncb_acting_range.json`, `trajectory_identity_check.json`,
 `A1/a1_reproduction.json`, `arc_scored.json(.jsonl)`, `arc_verdict.json`,
 `a7_negative_demonstration.json`, `probe_933.json`, `extract_rows.json`,
 `ncb_conformance.json`, `score_stdout.log`. Code: `scripts/collect_onpolicy_bank.py` +
-`tests/test_collect_onpolicy_bank.py` (51, commit `6d700c5`);
+`tests/test_collect_onpolicy_bank.py` (51, commit `5d0e016`);
 `scripts/score_banked_iterates.py` unchanged (45 tests green).
 
 ---

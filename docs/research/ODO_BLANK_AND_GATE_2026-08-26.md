@@ -201,7 +201,7 @@ always downward.
 
 ### The 2026-08-26 arming is withdrawn
 
-Commit `4dd15ea` armed `solve.clear.signals.scene_cut` on 23 profiles off a
+Commit `27902e1` armed `solve.clear.signals.scene_cut` on 23 profiles off a
 survey whose reproducer was never committed. Review found four ways the arming
 could not survive contact with its own recorded evidence: profiles armed
 `kind: [fade]` on a blank channel measured at **zero** runs; a death veto armed
@@ -274,7 +274,7 @@ transition has been witnessed on tape."*
 
 So all 23 are disarmed with `enabled: false` and a per-profile reason carrying
 that profile's own numbers, and the cohort returns to quorum **UNREACHABLE /
-ceiling 0.75** — the pre-`4dd15ea` state, verified profile by profile. The rule
+ceiling 0.75** — the pre-`27902e1` state, verified profile by profile. The rule
 lives in code as `C7_SEPARABILITY_WITNESSED`, with a register
 (`WITNESSED_TRANSITIONS`) that is how a profile earns its way back.
 
@@ -530,7 +530,7 @@ Each guard in `scripts/transition_witness.py` and `SceneCutSignal` was deleted
 in turn and the suite re-run: every mutant was killed, each by a *different*
 named test, and the source was restored `diff`-verified byte-identical.
 
-The arming decision itself — the gap `4dd15ea` shipped through — now has
+The arming decision itself — the gap `27902e1` shipped through — now has
 roster-level tests that read the **real** `configs/*.yaml`, not synthetic
 profiles, and refuse on measured evidence rather than on judgement.
 

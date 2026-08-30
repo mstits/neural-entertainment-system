@@ -49,7 +49,7 @@ measurement the arm needs to self-arm and which produced every number in
 **Companion documents.** The discriminator this arm is dispatched by:
 `src/training/wall_taxonomy.py` + `docs/receipts/dispatch/gated_wall_calibration_2026-08-10.md`.
 The A/B that produced the ~~GATED~~ reading: `CLAIMS.md` FORGE entry for
-`--ortho`, commit `42af396` [struck 2026-08-11: see §12 / falsifier
+`--ortho`, commit `9cd6de5` [struck 2026-08-11: see §12 / falsifier
 receipt. The A/B itself stands; only the class it was read into is gone.
 The matching relabel in `CLAIMS.md` and the HUD is OWED and not done here
 — k_falsifier §12.4].
@@ -420,7 +420,7 @@ grid is the wait probe.
 #### (a4) Registered but out of scope: the second controller
 
 BB's untested lead — the pool drives P1 only, and controller-2 capability
-landed in `e5e0957`. Named here so it is not re-discovered as novel; it
+landed in `873776c`. Named here so it is not re-discovered as novel; it
 is **not** part of the CV validation.
 
 ### 3.2 (b) The gate TEST — does the boundary open?
@@ -532,7 +532,7 @@ geometry artifact (k_falsifier §9).
 
 ## 4. Implementation spec
 
-Against `scripts/go_explore_solve.py` as of `574a782`. Every item is
+Against `scripts/go_explore_solve.py` as of `48c645b`. Every item is
 **default-off and byte-identical when off**, matching the discipline the
 `--ortho` arm was reviewed under.
 

@@ -117,7 +117,7 @@ profiles are contaminated by a post-death tail
 game-over animation was counted as progress. **(b) 40 banked gate
 receipts carry `passed: true` on a zero-range odometer**
 (`distinct=1, min=max=0`) across 13 profiles — the figure comes from
-`bfb515b`'s own audit, and the override deleted the contradicting
+`1c153ab`'s own audit, and the override deleted the contradicting
 instrument finding *before* the receipt was written, so the receipt
 records no trace of what it suppressed.
 
@@ -126,7 +126,7 @@ records no trace of what it suppressed.
 ## The three withdrawals
 
 **1. Kung Fu — "a skill wall, not an instrument fault".**
-Withdrawn against the repo's own commit `bfb515b`, landed hours before
+Withdrawn against the repo's own commit `1c153ab`, landed hours before
 the audit and never absorbed into the ledger. That commit deleted a
 vacuous `passed = not instrument_findings` camera-static override and
 names kungfu first among **13 profiles / 40 vacuous passes** carrying
@@ -318,7 +318,7 @@ has never run, and the ledger read as end-to-end validation.
 
 ## One new instance, found and closed during this audit
 
-The clear-signal wire-up (`ee1324a`) banked Bubble Bobble at
+The clear-signal wire-up (`140218b`) banked Bubble Bobble at
 `total_false_positive_crossings: 0`. That zero was scored on **the same
 two tapes the `scene_cut` gate was calibrated on** — the gate is "the
 smallest integer strictly above the null measured on those tapes", so

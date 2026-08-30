@@ -9,7 +9,7 @@ addendum file, never an edit to the numbers below.**
 | Field | Value |
 |---|---|
 | Registered at (UTC) | `2026-08-25T08:43:50Z` |
-| Registered against repo HEAD | `9bbd65f811f6ce339c7235dd9c4b71d0a365c129` |
+| Registered against repo HEAD | `3897bfb05221fee89c491171bd033657e965d7cf` |
 | Source document | `docs/proposals/ROOMGRAPH_ENGINE_2026-08-24.md`, §6 |
 | Source document sha256 (whole file, at HEAD above) | `f8b2104a3281b747084338126ff8c457fb0457ee3f95310b4769a81d66d27883` |
 | §6 section text sha256 (lines 212-249 of the source document, the exact span transcribed verbatim below) | `41d9a3d07114fc4b1fa457079168e3cc0fd12474cf90b18b31e111abfa29b0fb` |
@@ -19,7 +19,7 @@ addendum file, never an edit to the numbers below.**
 
 Anyone auditing this file for tampering can re-run
 `sed -n '212,249p' docs/proposals/ROOMGRAPH_ENGINE_2026-08-24.md | shasum -a 256`
-against the source doc at commit `9bbd65f` and confirm it reproduces the §6
+against the source doc at commit `3897bfb` and confirm it reproduces the §6
 section checksum above, and can diff the "§6 — verbatim" block below
 byte-for-byte against that same span.
 
@@ -75,7 +75,7 @@ to this block.
 
 ## Exact invocation — the 4 RG-1 Zelda runs
 
-All four runs use `scripts/go_explore_solve.py` (repo HEAD `9bbd65f`), the
+All four runs use `scripts/go_explore_solve.py` (repo HEAD `3897bfb`), the
 `configs/zelda_roomfp.yaml` profile (the RG-1 profile per its own header
 comment: `frame_skip: 4` — this supplies "fs4"; `configs/zelda.yaml` stays
 the untouched RG-1c/RG-1d comparison baseline), and root state
@@ -125,7 +125,7 @@ not require reading the script to know.
 not exposed as `go_explore_solve.py` CLI flags as of this registration —
 grep of the script's `add_argument` calls and of `scripts/*.py` for
 `sps_floor` / `archive_size_cap` / `rss_guard` / `abort_guard` finds no
-matching flag or wrapper in the repo at HEAD `9bbd65f`. Whoever launches
+matching flag or wrapper in the repo at HEAD `3897bfb`. Whoever launches
 these 4 runs must supply the abort-guard wrapper (or monitor equivalents
 manually) separately; this registration does not invent guard thresholds
 that don't exist in the design doc or the code, and does not silently drop
@@ -162,12 +162,12 @@ harness byte-identical vs pre-branch build."*
 
 **No script or test in the repo is named or documented as "the SMB 1-1 5-min
 determinism harness."** What exists instead, checked against the T1-T4
-implementation (commit `3601c45`) and its claims/capability-report trail:
+implementation (commit `09a1c03`) and its claims/capability-report trail:
 
 - The flags-off byte-identity property that has actually been exercised so
   far is a **16,000-step SMB solve** run ad hoc against pre-branch HEAD
   (sha256-identical RAM/archive/traces across all 8 workers) — cited in the
-  `3601c45` commit message, `CLAIMS.md` (FORGE-PENDING-VALIDATION entry),
+  `09a1c03` commit message, `CLAIMS.md` (FORGE-PENDING-VALIDATION entry),
   and `docs/research/CAPABILITY_REPORT_2026-08-25.md` §1. This is a
   step-count run, not a wall-clock 5-minute run, and it was invoked
   manually — no checked-in script or Makefile target reproduces it on

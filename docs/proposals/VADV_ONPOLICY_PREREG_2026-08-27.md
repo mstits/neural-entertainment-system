@@ -9,8 +9,8 @@ the data it will see*, and that check is a coverage measurement, not an effect
 size.
 
 **Predecessor:** `docs/proposals/VADV_PREREG_2026-08-27.md` (registration,
-commit `b9ed38e`) and `docs/research/VADV_B5_2026-08-27.md` (verdict, commit
-`789aefe`). That computation returned **VOID at R = 0.279**, inside its own
+commit `f8e3536`) and `docs/research/VADV_B5_2026-08-27.md` (verdict, commit
+`e09a220`). That computation returned **VOID at R = 0.279**, inside its own
 pre-declared indeterminate band `(0.20, 0.50)`.
 
 **This is a new experiment with a new registration, not an amendment.** It

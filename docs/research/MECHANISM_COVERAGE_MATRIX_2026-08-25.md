@@ -333,7 +333,7 @@ Every other game's `solutions/` directory does not exist.
 > **UPDATE 2026-08-26 — the Gradius row was too generous.** It is
 > classed above as "a predicate is wired but has never once fired".
 > Verified since: Gradius's hook could not have fired. On 2026-08-24
-> the League onboarding wave (commit `09299fa`) swapped that profile
+> the League onboarding wave (commit `3e9a502`) swapped that profile
 > from `progress: {lo: 0x003E, hi: 0x003F}` to
 > `progress: {source: odometer, axis: x}`, and the confluence vote
 > needs `coord`, which requires the progress readout to fall by ≥300.

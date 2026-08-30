@@ -91,7 +91,7 @@ content, not a new axiom.
      its reason. All of it sits next to the rate, not in a footnote,
      because the excluded games are the part a reader most needs to
      audit. The second detector modality this leans on shipped in
-     `e5e0957`.
+     `873776c`.
 
    ### ADDENDUM B, 2026-08-26 — the T1 denominator, and a vacuous half of the fabrication clause
 
@@ -210,7 +210,7 @@ The wall library also now carries the Bubble Bobble receipts, which
 contributed two *observable*-side classes rather than search-side ones:
 the **observable-noise wall** (the y-scratch class — a byte that passes
 every naive movement test yet carries no progress; BB's `$0021` does not
-enter the learnfun ranking at all over a 30-round chain, `2adb17d`) and
+enter the learnfun ranking at all over a 30-round chain, `f244df8`) and
 **saturated-counter detector-blindness** (a screen-bound coordinate that
 rises then sits dead flat, indistinguishable from real progress until
 the saturation gate runs). Both are T1-diagnosis targets, not new arms.
@@ -255,7 +255,7 @@ gate (the same discipline every arm shipped under so far).
 Two capabilities landed this week that widen the basis without adding
 mechanism classes to it. Both are default-inert.
 
-**Controller 2** (`env.set_buttons_p2`, `pool.step_all_2p`; `e5e0957`,
+**Controller 2** (`env.set_buttons_p2`, `pool.step_all_2p`; `873776c`,
 with `step_all` left byte-identical) opens three distinct things:
 **cooperation** — the material difference that lets Contra re-enter as
 a class-5 lane under elimination-ledger rules (prior stated up front,
@@ -266,7 +266,7 @@ without a genuinely new, externally-sourced idea); and plainly
 **2P-scorable League games**, which cannot be played to completion
 one-handed and today would score UNSCORABLE for the wrong reason.
 
-**The learnfun shortlisting instrument** (`2adb17d`) is the League's
+**The learnfun shortlisting instrument** (`f244df8`) is the League's
 auto-profiling path: it ranks all 2048 RAM locations by lexicographic
 progress weight over our own banked tapes, so a new game's
 scoring-vocabulary freeze starts from a short list instead of 2048

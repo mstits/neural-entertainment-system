@@ -379,7 +379,7 @@ def probe(
                         "--temperature", str(float(temperature))]
             if eval_seed is not None:
                 cmd += ["--eval-seed", str(int(eval_seed))]
-            # Parallel eval lanes (commit 00e1eee) — what makes an N>=30 noisy
+            # Parallel eval lanes (commit fa7e03a) — what makes an N>=30 noisy
             # gate probe affordable. Both flags stay OFF the command line at
             # their defaults so a v4-era probe's argv is byte-identical.
             if int(eval_workers) > 1:

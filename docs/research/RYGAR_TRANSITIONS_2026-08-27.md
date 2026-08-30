@@ -136,9 +136,9 @@ area keys (`(3,16)`, `(0,29)`), and `best_score` reads 25,002 and 25,081
 
 Verified in an isolated `git worktree` at HEAD rather than by touching the
 shared tree (a sibling workflow was committing throughout; it landed
-`7e1b7ed` mid-session).
+`279cefc` mid-session).
 
-* **Solver and config reverted to the pre-landing commit `7e1b7ed`, library
+* **Solver and config reverted to the pre-landing commit `279cefc`, library
   and tests present** — `tests/test_transit_wiring.py` fails **15 of 15**
   with the ROM available, and **14 of 15 without it** (only the
   real-emulator replay skips). Meaningful `AttributeError` / `SystemExit` /

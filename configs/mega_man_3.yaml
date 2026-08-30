@@ -74,10 +74,10 @@ solve:
   #   $0012  y candidate (jump/ballistic signature), sole candidate found.
   #
   # LIVES RE-NOMINATED 2026-08-26 (false-death-fanout sweep, tool-level fix
-  # commit 158ec74): the original nomination, $001A, read 0 at this exact
+  # commit 94e52b0): the original nomination, $001A, read 0 at this exact
   # root state -- confirmed directly (env.get_ram(0x001A) == 0 on the start
   # state). $001A's "reaches empty" / "spends its stock" gates were
-  # structurally vacuous at start==0 (fixed by 158ec74), so a byte that
+  # structurally vacuous at start==0 (fixed by 94e52b0), so a byte that
   # never held a real count could still outrank one that did. A death
   # decrement on a 0-start byte underflows 0->255, which GenericGame's
   # wrap-aware is_dead reads as an instant death every episode -- 10 of 11
@@ -95,7 +95,7 @@ solve:
   lives: 0x0029
   clear:
     # scene_cut DECLINED 2026-08-27, superseding the 2026-08-26 arming
-    # (4dd15ea). Re-adjudicated by measurement, not judgement:
+    # (27902e1). Re-adjudicated by measurement, not judgement:
     # scripts/scene_cut_arming.py.
     # CHANNEL DEAD: the gate is kind=['fade'], which votes on the blank
     # channel, and odo_blank produced 0 runs in 4x6000 steps (odometer_scene:

@@ -178,7 +178,7 @@ def test_fires_on_the_canonical_zelda_death_warp_shape() -> None:
 # ($0303) blips through 0 for exactly 2 observations on every one of 55
 # real door crossings, recovering to 1 before the next check. A
 # single-sample veto would discard all 55. go_explore_solve.py's
-# `_dead_mm` debounce (commit 547434e) already established, on this same
+# `_dead_mm` debounce (commit 2459e5e) already established, on this same
 # tape, that 2 is a blip and 3 is a death -- `death_debounce` reuses that
 # threshold rather than inventing one.
 # ===========================================================================

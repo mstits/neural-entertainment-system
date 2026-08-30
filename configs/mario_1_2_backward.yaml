@@ -106,7 +106,7 @@
 # data — there is no B5 data yet.
 #
 # Two B4-driven changes landed with that amendment:
-#   * WINNER KEY (code-side, a580f99). In backward mode the retained winner
+#   * WINNER KEY (code-side, df1210f). In backward mode the retained winner
 #     is keyed on the TauScheduler's trailing entrance rate and only once
 #     the cursor is at the entrance. B4 v1's best.pt was keyed on the raw
 #     in-training clear_rate, which near-flag rung restarts inflate, so it

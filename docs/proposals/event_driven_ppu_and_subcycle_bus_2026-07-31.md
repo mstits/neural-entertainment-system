@@ -77,6 +77,6 @@ architecture gives:
 ## Receipts trail
 
 - `memory/project_mesen_lockstep_dawn_2026-07-31.md` — full forensic log.
-- Commits: f6bd0ca (boot/DMC/anchor), e9cd5b8 (NMI poll, MMIO write).
+- Commits: 5c6dd8e (boot/DMC/anchor), 2540d11 (NMI poll, MMIO write).
 - Traces: cycle-anchored fork scans, NMI-entry tables (d_cyc=0 × 11
   frames), frame-11 STA $2000 byte-identical sequence.

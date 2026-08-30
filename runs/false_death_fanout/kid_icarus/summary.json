@@ -1,7 +1,7 @@
 {
   "game": "Kid Icarus",
   "config": "configs/kid_icarus.yaml",
-  "tool_fix": "commit 158ec74 (discover_observables: reject zero-start lives candidates)",
+  "tool_fix": "commit 94e52b0 (discover_observables: reject zero-start lives candidates)",
   "1_confirm_defect": {
     "old_addr": "0x0130",
     "root_value": 0,

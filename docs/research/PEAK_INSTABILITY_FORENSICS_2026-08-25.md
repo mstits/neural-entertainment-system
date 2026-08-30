@@ -228,10 +228,10 @@ not.
 
 | run | sha | | run | sha |
 |---|---|---|---|---|
-| v27 s0 | `9bbd65f` | | v28 s0 | `a720d81` |
-| v27 s1–s3 | `7747da2` | | v28 s1 | `4e9432b` |
-| | | | v28 s2 | `789868c` |
-| | | | v28 s3 | `01e56f1` |
+| v27 s0 | `3897bfb` | | v28 s0 | `0909e8f` |
+| v27 s1–s3 | `4bbcada` | | v28 s1 | `d28122b` |
+| | | | v28 s2 | `c683cf1` |
+| | | | v28 s3 | `cee9f2b` |
 
 `src/training/ppo.py`, `trainer.py`, `exploration_controller.py` and
 `checkpoint_manager.py` all changed within that span. I checked the one
@@ -603,7 +603,7 @@ honest eval. Two different numbers for two different checkpoints that
 collide.
 
 Precedent exists and was not carried forward: a 2026-08-16 receipt
-(commit `32e86eb`) already retracted a circulating "0.76" for a different
+(commit `1e9923f`) already retracted a circulating "0.76" for a different
 1-1 checkpoint, finding the honest strict rate measured 43/100.
 
 **This does not mean 0.767 is fake.** It means the bar was set by a

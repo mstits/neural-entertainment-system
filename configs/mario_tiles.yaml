@@ -148,7 +148,7 @@ reward_weights:
   # death=-50 and average forward of 5 pixels per episode, dying
   # nets -45 while standing still nets -15 — so "stand still" still
   # strictly wins for the average policy, and the GA correctly
-  # selects no-op. Multi-eval (commit 1ab09ca) gave us a clean
+  # selects no-op. Multi-eval (commit a119ab1) gave us a clean
   # selection signal but couldn't change which target was higher.
   #
   # death=-15 is the Kauten canonical (gym-super-mario-bros clips

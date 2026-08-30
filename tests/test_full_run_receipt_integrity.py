@@ -1,6 +1,6 @@
 """The flagship tape's attestation, verified the way it was computed.
 
-docs/receipts/full_run/ banks the complete-game action tape (b088f16,
+docs/receipts/full_run/ banks the complete-game action tape (78261c7,
 2026-07-27). Its `tape_sha256` is computed over the RAW uint8 action
 bytes (`tape_arr.tobytes()`, assemble_full_run.py:223), NOT over the
 .npy file — the file adds a 128-byte numpy header, so a naive

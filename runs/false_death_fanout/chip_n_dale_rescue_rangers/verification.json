@@ -3,9 +3,9 @@
   "old_addr": "0x0052",
   "old_addr_root_value": 0,
   "old_addr_confirmed_not_lives": "facing-direction flag: reads 1 while RIGHT held, 2 while LEFT held, 0 otherwise (UP/DOWN/A/B/NOOP); unaffected by elapsed idle time",
-  "tool_fix_commit": "158ec74",
+  "tool_fix_commit": "94e52b0",
   "discover_observables_rerun": "runs/false_death_fanout/chip_n_dale_rescue_rangers/discover.json",
-  "note_on_residual_gap": "The fixed reaches_empty/spends_its_stock gates correctly stop demoting only at start==0 in the death-drive log. 0x0052's logged 'start' is sampled from death_drives log[0], which already has ONE forward-input step applied on top of the untouched root -- so a byte whose value is purely a function of currently-held direction (not a real stock) can read starts_nonzero=true as an artifact of that first probe input, independent of the 158ec74 fix. Confirmed by direct probe (see probe_inputs output below) and by hand-verifying the tool's own #1-ranked candidate before trusting it, per task step 3.",
+  "note_on_residual_gap": "The fixed reaches_empty/spends_its_stock gates correctly stop demoting only at start==0 in the death-drive log. 0x0052's logged 'start' is sampled from death_drives log[0], which already has ONE forward-input step applied on top of the untouched root -- so a byte whose value is purely a function of currently-held direction (not a real stock) can read starts_nonzero=true as an artifact of that first probe input, independent of the 94e52b0 fix. Confirmed by direct probe (see probe_inputs output below) and by hand-verifying the tool's own #1-ranked candidate before trusting it, per task step 3.",
   "verified_new_addr": "0x0646",
   "verified_new_addr_root_value": 2,
   "verification_method": [

@@ -3,7 +3,7 @@
   "old_addr": "0x0051",
   "old_reads_zero_confirmed": true,
   "old_root_peek": {"addr": 81, "value": 0, "consistent": true},
-  "tool_fix_commit": "158ec74",
+  "tool_fix_commit": "94e52b0",
   "rerun_receipt": "runs/false_death_fanout/shatterhand/discover_shatterhand_fixed.json",
   "new_addr": "0x0199",
   "new_addr_dec": 409,

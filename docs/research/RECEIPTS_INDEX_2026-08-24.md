@@ -1,7 +1,7 @@
 # Receipts Index — 2026-08-23/24 window
 
-Curated claim-to-receipt map for the two-day push (commits 52ce200 →
-787cf3e). Every claim below names its ledger (LEARNED / EXHIBITION /
+Curated claim-to-receipt map for the two-day push (commits 6e565e5 →
+793f640). Every claim below names its ledger (LEARNED / EXHIBITION /
 FORGE), its verdict, and its receipt paths relative to the repo root.
 VOID and retracted items are listed with their corrections — nothing is
 silently dropped. Discrepancies (orphan receipts, claims whose receipts
@@ -17,7 +17,7 @@ docs/proposals/RECOVERY_DISTILL_1_1_2026-08-24.md.
 ## 1. Odometer campaign (FORGE + EXHIBITION)
 
 **CLAIM (FORGE): PPU scroll odometer shipped in-core and certified 5/5**
-— commit c556e40; loopy_v per-line sampling, modal filter, wrap-aware
+— commit 3429d8a; loopy_v per-line sampling, modal filter, wrap-aware
 fold, v3 savestate envelope.
 - Certification: `runs/odometer/cert_smb_2026-08-23.json` (5/5 checks:
   hold-forward monotonic dx=551/0 regress, HUD-split immunity,
@@ -35,7 +35,7 @@ Kung Fu UNUSABLE-as-camera-static = skill wall, not instrument fault.
   `runs/odometer/gate_kungfu_left_2026-08-23.json` (OAM churn 540 =
   agent active, camera static).
 
-**CLAIM (FORGE): scene detection shipped** — commit 074f888, v4
+**CLAIM (FORGE): scene detection shipped** — commit 741a953, v4
 envelope; scene ordinal keys Go-Explore cells; NG boss-room aliased
 dx=−511 wall root-caused.
 - Headline receipt: `runs/ng_odo_scene/` (max_area 8, 8 scenes crossed
@@ -65,19 +65,19 @@ solution; this claim is about frontier depth only.
   (4 h each), `runs/ng_odo_throttle/`, `runs/ng_odo_doa/` (max_area 9,
   max_sect 7, 0 solutions).
 - Log tails: `runs/odometer/{ng_deep,rygar_deep,rygar_v2}.log`
-  committed (c1f9dbe); `runs/odometer/{ng_night,ng_scene_long,
+  committed (161a20b); `runs/odometer/{ng_night,ng_scene_long,
   ng_scene_long2,rygar_night}.log` exist on disk, uncommitted
   (see discrepancy #2).
 
 **CLAIM (FORGE): two generic death-detector fixes** — (a) death
 debounce ≥3 consecutive dead observations (Rygar door transition-blip),
-commit 1610093; (b) wrap-aware modular lives decrement (NG 0→255
-underflow hid every death), commit 084362c.
+commit baa3ac7; (b) wrap-aware modular lives decrement (NG 0→255
+underflow hid every death), commit 6bf0dfd.
 - Debounce falsifier: `runs/rygar_odo_debounce/` (gx 1536 → 5360 in
   6 min) — on disk, uncommitted (discrepancy #7).
 - NG underflow probe: inline in commit message only (discrepancy #10).
 
-**CLAIM (FORGE): dead-on-arrival cell retirement** — commit 6a47a71.
+**CLAIM (FORGE): dead-on-arrival cell retirement** — commit 49fe332.
 - Receipt run: `runs/ng_odo_doa/` — exists, uncited by any doc
   (discrepancy #2).
 
@@ -126,7 +126,7 @@ ANY policy class.
 - Recovery tapes: `runs/recovery_assay/solve_ep*/`
 - `runs/recovery_assay/probe_ep15_10min/` — the manual probe that
   exposed the first pass's too-short budget.
-- Doc: `docs/research/RECOVERY_ASSAY_VERDICT_2026-08-24.md` (754fc4a).
+- Doc: `docs/research/RECOVERY_ASSAY_VERDICT_2026-08-24.md` (0d114bd).
 
 **INTEGRITY RETRACTION (recorded): first pass scored 0/14 TWICE** —
 (a) 3-minute solver budget too short, (b) stdout-grep success detector
@@ -143,7 +143,7 @@ mechanical explanation** — collection run cleared 25/60 per
 death-sticks adjudicated, 3/16 recovered (19%); 11/16 sticks ≤4 steps
 pre-death → honest ceiling ~0.53; banked ~0.37–0.40 sits near it.
 - `runs/recovery_assay_1_2/verdict.json`, `manifest.json`,
-  `solve_ep*/` (commit 0227506).
+  `solve_ep*/` (commit d44bbe2).
 
 **ROUTING RULE (binding, new): run this assay before spending training
 effort on any level's sticky rate** — the recoverable share is the
@@ -156,14 +156,14 @@ Registration + all verdicts:
 
 **VOID (retracted): first distill attempt trained a random net** —
 `build_tile_policy_from_checkpoint` silently returned a RANDOM net for
-path inputs; loader fixed in commit 28dc163 (root cause of every
+path inputs; loader fixed in commit 38f2358 (root cause of every
 08-24 standalone-loop anomaly, including the retracted "0/60
 unjittered argmax-tie receipt"). Receipt = test counts + reproduction
 at pre-odometer commit; suite 3687 passed.
 
 **CLAIM: base BC distill FAIL-by-drift at epoch 0** — honest greedy
 0.767 → 0.033 after 13 Adam steps; sampled 0.17.
-- `runs/recovery_distill/train_history.json` as committed (8bded0d:
+- `runs/recovery_distill/train_history.json` as committed (6d84cdf:
   epoch-0 clear 0.033, loss 3.35) — the working-tree copy was later
   overwritten by variant A rung 2's history (uncommitted);
   `runs/recovery_distill/ckpts/` (preserve-on-peak
@@ -194,7 +194,7 @@ states in curriculum from the start (not run).
 
 ## 5. Onboarding wave 1 (EXHIBITION, IN FLIGHT)
 
-Launched 08-24 17:45 by the Wednesday Push orchestration (787cf3e,
+Launched 08-24 17:45 by the Wednesday Push orchestration (793f640,
 `docs/proposals/WEDNESDAY_PUSH_2026-08-24.md`). No verdict doc yet — by
 design, but wave-1 verdicts will need one when the lane lands
 (discrepancy #13).
@@ -213,7 +213,7 @@ design, but wave-1 verdicts will need one when the lane lands
 **CLAIM (LEARNED, negative): options treatment FAIL by overcommitment**
 — control 8/100, treatment 0/100 strict honest on 1-2; 93.6% of 4,000
 real-state decisions chose k=4. Preceded by a VOID (frozen-actor arms,
-commit e4e111c) that this rerun corrected.
+commit 28fd32c) that this rerun corrected.
 - `runs/options/rerun2_eval_control_seed{7,101}.json`,
   `runs/options/rerun2_eval_treatment_seed{7,101}.json`,
   `runs/options/verdict.json`
@@ -221,7 +221,7 @@ commit e4e111c) that this rerun corrected.
 - Side finding (measured): continued PPO collapsed the consolidated
   control 31/100 → 8/100 in 200 iters → preserve-on-peak mandated for
   all future A/Bs. Banked 38/100 preserved checkpoint untouched.
-- Options integration smoke claims in cd00fdf (iter 1121, 3,302 sps)
+- Options integration smoke claims in b52b0b1 (iter 1121, 3,302 sps)
   carry no receipt file (discrepancy #8).
 
 **CLAIM (LEARNED): shelf dispositions answered** — joint policy 32/100
@@ -255,9 +255,9 @@ CLOSED.
    cited anywhere. Uncited: `runs/ng_odo_{smoke,v2,debounce,deep,night,
    scene_long,scene_long2,throttle,doa}` and `runs/rygar_odo_{smoke,v2,
    debounce,deep,night}`. Partially mitigated by log tails
-   (`ng_deep,rygar_deep,rygar_v2` committed in c1f9dbe;
+   (`ng_deep,rygar_deep,rygar_v2` committed in 161a20b;
    `ng_night,ng_scene_long{,2},rygar_night` on disk, uncommitted),
-   but `ng_odo_doa` (DOA-retirement receipt for 6a47a71) and both
+   but `ng_odo_doa` (DOA-retirement receipt for 49fe332) and both
    4-hour scene_long runs are pathless in docs.
 3. `runs/odometer/` itself — cited only in session memory
    (project_odometer_shipped_2026-08-23.md), not in any docs/ file;
@@ -266,25 +266,25 @@ CLOSED.
 
 ### Unreceipted or uncommitted claims (headline numbers whose receipt files are absent from git or absent entirely)
 
-4. Variant A FAIL (commit ba68f93) — doc-only commit; rung-1 history
+4. Variant A FAIL (commit 6e6fd54) — doc-only commit; rung-1 history
    lives only in task logs, and rung-2's history exists solely as an
    uncommitted working-tree overwrite of
    `runs/recovery_distill/train_history.json` (banking it as-is would
-   clobber the committed base-run history, 8bded0d). **No committed
+   clobber the committed base-run history, 6d84cdf). **No committed
    receipt file exists for either rung.**
-5. Variant B FAIL (commit 380f306) — doc-only commit;
+5. Variant B FAIL (commit e5d702d) — doc-only commit;
    `runs/recovery_distill/variant_b_train.log` + ckpts exist on disk
    but were uncommitted at verdict time. Bank them.
-6. Shelf evals 32/100, 1/100, 51/100 (commit 0848ca1) —
+6. Shelf evals 32/100, 1/100, 51/100 (commit c39c9ee) —
    `runs/engine/logs/shelf_*.log` exist on disk, uncommitted.
-7. Rygar death-debounce falsifier (commit 1610093) —
+7. Rygar death-debounce falsifier (commit baa3ac7) —
    `runs/rygar_odo_debounce/` exists on disk, uncommitted.
-8. Options integration smoke (commit cd00fdf: resumes iter 1121,
+8. Options integration smoke (commit b52b0b1: resumes iter 1121,
    3,302 sps, converted seed clears) — no receipt file anywhere.
-9. Rygar odometer-consumer smoke (commit 4cc4462: 307 cells, gx 1536
+9. Rygar odometer-consumer smoke (commit 1021077: 307 cells, gx 1536
    in 2 min) — inline claim only; partially covered by later-banked
    `runs/odometer/rygar_*.log`.
-10. NG doomed-cell probe (commit 084362c: hold-right frozen, t=41) —
+10. NG doomed-cell probe (commit 6bf0dfd: hold-right frozen, t=41) —
     inline claim only, no file.
 
 ### Stale annotations (correct at write time, superseded by post-fix data, not yet marked)
@@ -292,7 +292,7 @@ CLOSED.
 11. Stick-probe AUC matrix 0.77/0.83/0.82/0.87 ("recurrence adds
     ≈+0.05") in `docs/research/V26_ADJUDICATION_2026-08-23.md` and
     memory project_v25_verdict_recurrent_bottleneck.md predates the
-    28dc163 loader fix; post-fix real-policy receipt
+    38f2358 loader fix; post-fix real-policy receipt
     (`runs/gru_ab/stick_probe_realpolicy.json`: MLP 0.76 / GRU 0.74)
     flips the GRU edge's sign. Direction of the adjudication is
     strengthened, but the figures should be marked pre-fix/superseded.

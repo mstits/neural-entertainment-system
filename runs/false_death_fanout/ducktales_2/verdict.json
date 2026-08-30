@@ -1,7 +1,7 @@
 {
   "game": "DuckTales 2 (USA)",
   "profile": "configs/ducktales_2.yaml",
-  "tool_fix_commit": "158ec74",
+  "tool_fix_commit": "94e52b0",
   "step1_root_confirmation": {
     "addr": "0x000B",
     "method": "load start state, step 150x NOOP (headless Pool, no driving), read RAM[0x000B] every step",
@@ -40,5 +40,5 @@
     "after_result": null,
     "note": "No config edit was made, so there is no 'after' to compare -- before/after is the same run. Reported for the record: unlike the Mega Man USA case this task cited (frozen at 10 cells), DuckTales 2's existing baseline with the known-bad lives=0x000B already shows HEALTHY monotonic cell growth (1 -> 564 cells in 60s at --workers 2, matching the shape of the wave4 onboarding smoke at --workers 4/--minutes 2 which reached 863 cells with frontier 733, never stuck at 1). The false-death byte is real (root reads 0, and is_dead's modular-decrement check does fire spuriously roughly half the time this byte's phase happens to sample high-then-drop -- see is_dead in scripts/go_explore_solve.py line ~2654) but its practical effect on THIS profile's go_explore search is evidently much milder than the Mega Man case, not a frontier freeze. This game may simply not be blocked the same way, or the true blocker (if any) is elsewhere (e.g. the already-documented camera-clamp progress saturation, or the naive-hold-right obstacle noted in the onboarding receipt) rather than the lives byte."
   },
-  "final_notes": "Old address 0x000B / new address: no change. This is an honest instrument gap: the tool-level fix (commit 158ec74) is confirmed working as designed (it correctly demotes the start==0 family: addr 1474/1553/1505/2021/1923/2020), but DuckTales 2's RAM layout happens to have a SECOND, unrelated false-positive family with nonzero starts that the fix was never meant to catch, and manual verification is what caught it. Commit nothing; config unedited."
+  "final_notes": "Old address 0x000B / new address: no change. This is an honest instrument gap: the tool-level fix (commit 94e52b0) is confirmed working as designed (it correctly demotes the start==0 family: addr 1474/1553/1505/2021/1923/2020), but DuckTales 2's RAM layout happens to have a SECOND, unrelated false-positive family with nonzero starts that the fix was never meant to catch, and manual verification is what caught it. Commit nothing; config unedited."
 }

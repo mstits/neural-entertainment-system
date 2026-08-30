@@ -14,7 +14,7 @@ starts voids the run; this document is the goalpost.
 tau = 0.25 with exactly one escalation step (0.25 -> 0.30) and the
 explicit clause **"tau >= 0.35 is forbidden by this registration"**, plus
 a stopping rule if 0.30 also voided. That ladder was walked and stopped:
-the T0 premise-falsifier (`439b87f`, `d02987f`, adjudicated in
+the T0 premise-falsifier (`c6c6efe`, `94fcc6f`, adjudicated in
 `docs/research/REDO_ACTUALLY_FIRES_2026-08-27.md`) found the registered
 operating point lands **inside v30's own forbidden "network reset"
 regime** — 20 of 32 trunk units re-initialized every iteration from

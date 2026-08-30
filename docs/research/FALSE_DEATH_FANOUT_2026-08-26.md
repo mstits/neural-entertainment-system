@@ -1,7 +1,7 @@
 # The False-Death Fanout
 
 *2026-08-26. `discover_observables.py`'s zero-start lives guard shipped
-as commit `158ec74`. This is what happened when it was pointed at all
+as commit `94e52b0`. This is what happened when it was pointed at all
 eleven profiles the Mechanism Coverage Matrix said it would unblock.*
 
 *Companion: `docs/research/MECHANISM_COVERAGE_MATRIX_2026-08-25.md`

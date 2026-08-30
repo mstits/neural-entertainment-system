@@ -1,14 +1,14 @@
 # Landing: the repaired V_adv collector, and rank-based bottom-k ReDo
 
 **Date:** 2026-08-28. Both lanes of the successor job licensed by
-`docs/research/TWO_REGISTERED_TESTS_2026-08-27.md` (commit `7c73a73`) are
+`docs/research/TWO_REGISTERED_TESTS_2026-08-27.md` (commit `d9f2ea8`) are
 landed here. Neither produced a number that moves a standing verdict, and
 both say so in their registration's own words.
 
 | lane | registration | verdict | compute | what it moves |
 |---|---|---|---|---|
-| **A — `V_adv` on the repaired collector** | `VADV_ONPOLICY_PREREG_2026-08-27.md` (`9a9db2d`) + `VADV_ONPOLICY_RERUN_ADDENDUM_2026-08-28.md` (`77b8549`, pre-compute) | **VOID under strict A2 (\|A\| = 0/26) · INDETERMINATE under computed signatures (26/26) → §11 RETIREMENT FIRES** | **2.0 h** (≤ 3.0 h registered) | `V_adv` retires. **B5 does not move.** |
-| **B — rank-based bottom-k ReDo (v32)** | `V32_REDO_BOTTOM_K_2026-08-28.md` (`e9cc5ed`, pre-compute) | **VOID-UNDERPOWERED** — no Θ. Ladder resolved: rung 1 `VOID-NO-TURNOVER`, rung 2 **GO**. 0 seeds, 0 ARMED, 0 scored. | **0.96 h** (13.0 h registered ceiling; 12.0 h unspent) | Nothing about plasticity. **The hypothesis remains untested.** |
+| **A — `V_adv` on the repaired collector** | `VADV_ONPOLICY_PREREG_2026-08-27.md` (`35f6d60`) + `VADV_ONPOLICY_RERUN_ADDENDUM_2026-08-28.md` (`2e7c663`, pre-compute) | **VOID under strict A2 (\|A\| = 0/26) · INDETERMINATE under computed signatures (26/26) → §11 RETIREMENT FIRES** | **2.0 h** (≤ 3.0 h registered) | `V_adv` retires. **B5 does not move.** |
+| **B — rank-based bottom-k ReDo (v32)** | `V32_REDO_BOTTOM_K_2026-08-28.md` (`2619b16`, pre-compute) | **VOID-UNDERPOWERED** — no Θ. Ladder resolved: rung 1 `VOID-NO-TURNOVER`, rung 2 **GO**. 0 seeds, 0 ARMED, 0 scored. | **0.96 h** (13.0 h registered ceiling; 12.0 h unspent) | Nothing about plasticity. **The hypothesis remains untested.** |
 
 Full write-ups, each separately citable and neither superseded by this
 page: `docs/research/VADV_ONPOLICY_RERUN_2026-08-28.md` (Lane A) and
@@ -26,7 +26,7 @@ The predecessor was VOID on a collector defect: a reused
 `TileFeatureStacker._out` buffer made `state` bit-identical to `next_state`
 on 100 % of rows in all 26 banks, so `Â = r + γV(s') − V(s)` collapsed to
 `(γ−1)·V(s')` and carried zero action information by construction. Commit
-`b2e806b` copies out of the buffer at both call sites and adds
+`e89091e` copies out of the buffer at both call sites and adds
 `assert_bank_wellformed` on the arrays handed to `np.savez`. The
 registration was re-executed, not re-designed.
 
@@ -93,7 +93,7 @@ compute and 6.0 h lane ceilings. One operational fault was fixed rather
 than absorbed mid-job: the new chain guard false-positived at iter 30 on a
 legitimate mid-episode gap left by the registered cross-population drop;
 `row_step` was written into the artifact so the chain is asserted only
-across step-adjacent pairs (commit `6d700c5`, revert-verified 6/51), and
+across step-adjacent pairs (commit `5d0e016`, revert-verified 6/51), and
 the full grid was recollected. No threshold moved.
 
 **Disclosed and not smoothed over:** the registered A7 negative
@@ -200,7 +200,7 @@ threshold that is simultaneously firing, surgical and sustained.
 Fixed-tau ReDo is forbidden. The licensed successor recycles the **bottom-k
 by dormancy rank**, which caps the dose by construction — the drifting tail
 changes *which* units are recycled, never *how many*. That successor was
-registered in full before its own compute (`e9cc5ed`): k = 2, cadence 5,
+registered in full before its own compute (`2619b16`): k = 2, cadence 5,
 `fc2` only, ARMED re-specified as B1–B4 because a rank rule fires by
 construction and inheriting v31's F1/F2 would have installed a gate that
 cannot fail; F3 distinctness retired and replaced by the threshold-free
@@ -354,7 +354,7 @@ sets a precondition neither currently meets.
 | `runs/vadv_onpolicy_rerun/{trajectory_identity_check,ncb_conformance}.json`, `A1/` | determinism, conformance, A1 |
 | `runs/v32_redo_bottom_k_2026-08-28/phase_r/` | rung 1 log, adjudication, arm gate, independent verify, recovery curve |
 | `runs/v32_redo_bottom_k_2026-08-28/phase_r2/` | rung 2, the same set |
-| `runs/v32_redo_bottom_k_2026-08-28/smoke/` | the pre-existing wiring receipt (`e9cc5ed`) |
+| `runs/v32_redo_bottom_k_2026-08-28/smoke/` | the pre-existing wiring receipt (`2619b16`) |
 
 Registrations: `docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md`,
 `docs/proposals/VADV_ONPOLICY_RERUN_ADDENDUM_2026-08-28.md`,

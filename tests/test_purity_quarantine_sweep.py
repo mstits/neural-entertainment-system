@@ -540,7 +540,7 @@ def test_unwitnessed_semantic_stays_quarantined(
     once folded `{int(a) for a in ram_mapping.values()}` into its
     pre-probe exclusion set, so an int-valued entry steered the discovery
     instrument away from the very byte the quarantine exists to force a
-    rediscovery of. That fold is gone (2e6014f), but the string value
+    rediscovery of. That fold is gone (222ae25), but the string value
     means re-introducing it cannot reach these addresses.
     """
     doc = _load(CONFIG_DIR / cfg)

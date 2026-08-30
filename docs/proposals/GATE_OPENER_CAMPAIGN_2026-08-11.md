@@ -242,7 +242,7 @@ the struck GATED vocabulary.
 
 ## §15 — K0-v3 (Kirby $004F): TUNING MISS — campaign stays DISARMED; K0 loop HALTED by decision
 
-The re-forged, six-defects-repaired instrument (commit 4efbe3e) armed
+The re-forged, six-defects-repaired instrument (commit 3c812dc) armed
 and swept cleanly on a VALID target (Kirby $004F room-id, zero
 farmability, door-contact cause): 2,316 candidates, 5 admissible, sham
 0.0. $004F ranked ABSENT (0/2,316 rows — not truncation; the full

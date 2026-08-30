@@ -273,7 +273,7 @@ def test_dispatch_raises_on_unresolvable_state_dict() -> None:
     """A checkpoint whose `net_state_dict` entry is present but empty
     resolves no usable state_dict — this must fail loud, not silently
     hand back a freshly-initialized (random) policy (the same loader
-    footgun class 28dc163 patched for the str/Path input case)."""
+    footgun class 38f2358 patched for the str/Path input case)."""
     with pytest.raises(ValueError, match="state_dict"):
         build_tile_policy_from_checkpoint(
             {"net_state_dict": {}}, num_actions=6, feature_dim=175

@@ -56,7 +56,7 @@ KNOWN_REINFORCE_KEYS: frozenset[str] = frozenset({
     "demo_anchor_enabled", "demo_anchor_margin", "demo_anchor_minibatch",
     "demo_anchor_paths", "device", "drq_aug", "drq_pad", "enabled",
     "encoder", "entropy_coef", "entropy_coef_max", "entropy_floor",
-    # Per-episode metrics sidecar (commit fe7035d, "observability:
+    # Per-episode metrics sidecar (commit a9b3355, "observability:
     # per-episode metrics sidecar"). Consumed by Trainer at
     # trainer.py:5194/7393 to gate the sidecar writer.
     "episode_metrics",

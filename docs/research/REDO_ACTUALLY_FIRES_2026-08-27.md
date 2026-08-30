@@ -454,7 +454,7 @@ diagnosed, prescribed, and untested.
 | path | what |
 |---|---|
 | `runs/v30_premise_falsifier_2026-08-27/` | 5 run logs, `analyze.py`, `analysis.txt`, 4 configs — the primary evidence |
-| `runs/redo_fires/T0/{README.txt,verdict.json}` | the T0 adjudication against the registration (commit `439b87f`) |
+| `runs/redo_fires/T0/{README.txt,verdict.json}` | the T0 adjudication against the registration (commit `c6c6efe`) |
 | `docs/proposals/V30_REDO_ARMED_2026-08-27.md` | the registration this document adjudicates |
 | `scripts/redo_arm_gate.py` | the verdict-time gate, V1–V6 |
 | `tests/test_redo_armed_gate.py` | 22 tests, three revert-verified failures |

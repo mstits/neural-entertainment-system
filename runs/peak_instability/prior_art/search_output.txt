@@ -1,118 +1,118 @@
 
 ===== 1. Commit-message search: collapse / instability / degradation / entropy / plateau =====
-fe7035d observability: per-episode metrics sidecar + a generic cohort differ
-ee39fde hardening wave 3: 7 confirmed findings — the hazard-veto root cause finally fixed
-0848ca1 shelf answered: joint signal closed, 1-4 banked rate confirmed exactly
-88d00ff options: FAIL by overcommitment — and continued training collapses peaks
-e4e111c VOID: both experiments trained only critics — actor frozen by inherited 1e12
-fdfba4f options: v22 addendum — duration-scaled entropy and semi-MDP mechanics
-9e0b742 engine: a banked level's resume ranks below unscored work
-b1402c6 CLAIMS: World 1-3 at 21% honest strict — the pipeline transfers
-bc192f1 t1 watchdog: sanitize bundle path components and assert realpath containment
-ca463ce CLAIMS: consolidation round 2 — honest 1-2 at 38% strict
-2850460 night2: one-command cure-gate-consolidate orchestrator
-1a99467 refactor(trainer): Task 1 — extract CheckpointManager (real relocation)
-5f1258c test(trainer): C1-C5 characterization goldens — complete the extraction safety net
-5a9fd68 feat(bb): possession-state bit $0030==69 — the item dimension the archive was blind to
-a02971e feat(backward): entropy guard + B5 pre-registration + consolidation config
-a580f99 fix(backward): winner snapshot keys on trailing entrance rate, at-entrance only
-5f8dcb7 feat(solver): orthogonal-frontier arm — selection pressure for vertical rooms
-68361d0 feat(tracing): jitter-proof lockstep instruments — counter slip, state-fork onset, DMA parity
-c61ccee fix(rewards): Contra's forward-progress term read a dead byte
-3265ce6 docs(contra): weak-point hunt — receipted negative, wall unhittable from all banked geometry
-31d2cba feat(solver): receipted Contra observables + event-driven-PPU design note
-0152990 feat(training): SHAPO pivot — SAM-PPO replaces the collapsed PR-MDP adversary
-39cf5db feat(show): finale lap lingers 30s so the ending plays to the princess
-558552e fix(show): hero-cam get_best froze the show at large archives — O(archive) scan
-4a47b19 fix(show): hero cam GIL stall was the real throughput killer — not the chorus
-4d59d1a feat(solver): maze-aware cell keys (loop-count, route-sig, discovered bytes) + maze dossier
-711a314 feat(training): CGSA-PPO per-zone sticky curriculum + non-farmable wavefront shaping
-14b5739 feat(training): adaptive entropy floor + profile schema validation
-14010eb fix(training): self-healing — sticky log-prob clamp, poison-save guard, crash supervisor
-204bfbf feat(training): sticky-action training in the PPO rollout
-935e609 fix(training): end the World-2 reward desert + stage-0 freeze starvation
-ceeb31a fix(training): demo collection matches the training noise model (sticky actions)
-4d79512 perf(ppu): idle-HBlank early-return under skip_render
-4cf53b0 Fix Castlevania win predicate + persist anti-collapse baseline
-15a88d7 README rewrite: accurate, honest, end-to-end usable
-0b08dbe Wave 1: onboarding, reproducible wins, winner retention, crash-safety
-1a51232 Perf: defer per-minibatch loss .item() syncs to one per update
-72dd9ac SMB 1-4: dense platform-hop + Bowser-bridge ladder (autonomous ceiling reached)
-3649df7 SMB World 1: clear 1-3, calibrate 1-3/1-4 ladders, fix max_x metric, add BC pipeline
-042376e Real-loop learning-regression guard (catches the demo-bug class)
-d11f871 Bug-hunt top tier: vanilla_ppo cleanup, RND optimizer, minibatch perf, atomic state
-1d88d8c Curriculum advance: rolling-mean gate instead of brittle consecutive-N
-1ec4798 Fix curriculum-collapse: gated advance + mixed-stage + anti-collapse + safe resume
-bf3f3f7 vanilla_ppo: fix runaway done-events bug + report in-progress eps
-12f6341 BC anchor: end-to-end overhaul + state-action alignment fix
-7020a7d Extract MetricsSink → src/training/metrics_sink.py
-0995f63 Audit pass + carrot-only reward overhaul + adaptive mutation scaling
-f82ebe8 Strip enemy_death_extra and time_penalty — both were double-counting
-cbc7857 Enable RND curiosity bonus + drop entropy_coef back to 0.001
-b58b667 Restore exploration: gentler penalties, higher entropy, fewer episodes
-a2869d1 Freeze pre-PPO elite snapshot to prevent winning-policy regression
+a9b3355 observability: per-episode metrics sidecar + a generic cohort differ
+163ef54 hardening wave 3: 7 confirmed findings — the hazard-veto root cause finally fixed
+c39c9ee shelf answered: joint signal closed, 1-4 banked rate confirmed exactly
+c130cb2 options: FAIL by overcommitment — and continued training collapses peaks
+28fd32c VOID: both experiments trained only critics — actor frozen by inherited 1e12
+a21ce55 options: v22 addendum — duration-scaled entropy and semi-MDP mechanics
+3704387 engine: a banked level's resume ranks below unscored work
+e5e5620 CLAIMS: World 1-3 at 21% honest strict — the pipeline transfers
+589786a t1 watchdog: sanitize bundle path components and assert realpath containment
+6c00551 CLAIMS: consolidation round 2 — honest 1-2 at 38% strict
+68e5b50 night2: one-command cure-gate-consolidate orchestrator
+7f365a2 refactor(trainer): Task 1 — extract CheckpointManager (real relocation)
+a2076f1 test(trainer): C1-C5 characterization goldens — complete the extraction safety net
+ca8328a feat(bb): possession-state bit $0030==69 — the item dimension the archive was blind to
+edae2aa feat(backward): entropy guard + B5 pre-registration + consolidation config
+df1210f fix(backward): winner snapshot keys on trailing entrance rate, at-entrance only
+ea1b954 feat(solver): orthogonal-frontier arm — selection pressure for vertical rooms
+faefe14 feat(tracing): jitter-proof lockstep instruments — counter slip, state-fork onset, DMA parity
+966959e fix(rewards): Contra's forward-progress term read a dead byte
+aba9586 docs(contra): weak-point hunt — receipted negative, wall unhittable from all banked geometry
+2348bbe feat(solver): receipted Contra observables + event-driven-PPU design note
+8147a9b feat(training): SHAPO pivot — SAM-PPO replaces the collapsed PR-MDP adversary
+f5b5a53 feat(show): finale lap lingers 30s so the ending plays to the princess
+c6e5cad fix(show): hero-cam get_best froze the show at large archives — O(archive) scan
+3e5c240 fix(show): hero cam GIL stall was the real throughput killer — not the chorus
+27d0986 feat(solver): maze-aware cell keys (loop-count, route-sig, discovered bytes) + maze dossier
+32d48f7 feat(training): CGSA-PPO per-zone sticky curriculum + non-farmable wavefront shaping
+ca39254 feat(training): adaptive entropy floor + profile schema validation
+abc2fe0 fix(training): self-healing — sticky log-prob clamp, poison-save guard, crash supervisor
+66d02b8 feat(training): sticky-action training in the PPO rollout
+d717db5 fix(training): end the World-2 reward desert + stage-0 freeze starvation
+14f03b1 fix(training): demo collection matches the training noise model (sticky actions)
+8eb6803 perf(ppu): idle-HBlank early-return under skip_render
+88a687d Fix Castlevania win predicate + persist anti-collapse baseline
+78c4996 README rewrite: accurate, honest, end-to-end usable
+fdf966d Wave 1: onboarding, reproducible wins, winner retention, crash-safety
+bc2c825 Perf: defer per-minibatch loss .item() syncs to one per update
+67874d7 SMB 1-4: dense platform-hop + Bowser-bridge ladder (autonomous ceiling reached)
+54b16dd SMB World 1: clear 1-3, calibrate 1-3/1-4 ladders, fix max_x metric, add BC pipeline
+4b5c7ce Real-loop learning-regression guard (catches the demo-bug class)
+948888b Bug-hunt top tier: vanilla_ppo cleanup, RND optimizer, minibatch perf, atomic state
+04878d5 Curriculum advance: rolling-mean gate instead of brittle consecutive-N
+73bd244 Fix curriculum-collapse: gated advance + mixed-stage + anti-collapse + safe resume
+8a425a3 vanilla_ppo: fix runaway done-events bug + report in-progress eps
+a78f5e0 BC anchor: end-to-end overhaul + state-action alignment fix
+55edc5b Extract MetricsSink → src/training/metrics_sink.py
+e1e976d Audit pass + carrot-only reward overhaul + adaptive mutation scaling
+5eb02d2 Strip enemy_death_extra and time_penalty — both were double-counting
+0e278cf Enable RND curiosity bonus + drop entropy_coef back to 0.001
+2e7aefc Restore exploration: gentler penalties, higher entropy, fewer episodes
+4606def Freeze pre-PPO elite snapshot to prevent winning-policy regression
 --- instability ---
-0006493 v28 capacity VERDICT: FAIL — best-of-4 0.670, but the dose-response reads came back improving 3/4
-5b3363d v27 VERDICT: FAIL — best-of-4 0.530 vs the 0.767 bar
+ec520fe v28 capacity VERDICT: FAIL — best-of-4 0.670, but the dose-response reads came back improving 3/4
+2ec0d58 v27 VERDICT: FAIL — best-of-4 0.530 vs the 0.767 bar
 --- entropy (all) ---
-fe7035d observability: per-episode metrics sidecar + a generic cohort differ
-ee39fde hardening wave 3: 7 confirmed findings — the hazard-veto root cause finally fixed
-88d00ff options: FAIL by overcommitment — and continued training collapses peaks
-cd00fdf options: full trainer + eval integration — the treatment arm is runnable
-937ee37 options: semi-MDP GAE math as pure, tested functions
-fdfba4f options: v22 addendum — duration-scaled entropy and semi-MDP mechanics
-b385eb3 phase 3 VOID: -inf logits NaN'd the actor, and eval never armed the veto
-d8e1c9e research: build the shelf — hazard engine, survival model, outcome detector, latent cells
-5fd3435 docs: research synthesis — five rounds converge on a hazard substrate
-0ecfbcc training: audit hardening + online-campaign mechanisms
-260df99 refactor(trainer): Task 0.5 — extract 5 typed config dataclasses (unwired, pure prep)
-b99f9d6 feat(config): mario_1_1_backward_v4 — real consolidate-mode weld from the backward iter-80 policy
-a02971e feat(backward): entropy guard + B5 pre-registration + consolidation config
-a580f99 fix(backward): winner snapshot keys on trailing entrance rate, at-entrance only
-41e16e5 feat(learning): reopen the learning track — sampled eval, sticky boundary fix, backward curriculum, segment probe, CGSA record correction
-71e78ed feat(show): control panel — full settings editor + profile load/save alongside the show
-0152990 feat(training): SHAPO pivot — SAM-PPO replaces the collapsed PR-MDP adversary
-bef163a feat(training): PR-MDP adversarial PPO (Tessler et al. ICML 2019) in vanilla_ppo
-8555536 test+docs: decomposition characterization tests + actor/learner spec & parity gate
-14b5739 feat(training): adaptive entropy floor + profile schema validation
-14010eb fix(training): self-healing — sticky log-prob clamp, poison-save guard, crash supervisor
-f1bd654 feat(training): honest anchor resume, gx-count frontier bonus, archive returns
-cb254ae feat(training): self-imitation robustifier + composite handoff capture
-206bd42 feat(training): level-scoped cold-gated consolidation + area-granular composite routing
-dde1d16 feat(training): bounded Go-Explore unstick burst for stalled ladder rungs
-c3fadf9 feat(training): SMB one-shot campaign stack — sequential metric, sub-stage ladder, cold probe, trainer glue
-f710bb1 docs: SMB one-shot campaign spec (1-1 through 1-4 cold-eval)
-270c263 feat: vanilla_ppo route for the SMB tile config
-4cf53b0 Fix Castlevania win predicate + persist anti-collapse baseline
-1a51232 Perf: defer per-minibatch loss .item() syncs to one per update
-af587d0 Document SMB World-1 autonomous training
-72dd9ac SMB 1-4: dense platform-hop + Bowser-bridge ladder (autonomous ceiling reached)
-3649df7 SMB World 1: clear 1-3, calibrate 1-3/1-4 ladders, fix max_x metric, add BC pipeline
-701995f SMB 1-2 underground: greedy clear via entropy-decay consolidation
-8b0db63 Contra screen-9 advancement-shaping config (banked negative)
-dedd930 contra_screen9: entropy_coef 0.02 -> 0.01 (policy wasn't committing)
-a307c39 Reproducibility manifest + mission-control scoreboard
-042376e Real-loop learning-regression guard (catches the demo-bug class)
-0cb2391 Pixel games to MPS — 4.7x faster CNN, makes Contra/Castlevania trainable
-28443c2 Phase 2: Castlevania on the unified vanilla_ppo + pixel path; Mega Man wired (MM2)
-c3bb1c4 Phase 2: convert Contra to the unified vanilla_ppo + pixel-CNN path
-8b81589 Per-step rollout perf + GA gae_lambda fix
-d11f871 Bug-hunt top tier: vanilla_ppo cleanup, RND optimizer, minibatch perf, atomic state
-1d88d8c Curriculum advance: rolling-mean gate instead of brittle consecutive-N
-3b0b5ec Fix root cause of "PPO won't learn": training ran on the title-screen demo
-6eeaa50 Wire RND intrinsic exploration into vanilla_ppo
-1ec4798 Fix curriculum-collapse: gated advance + mixed-stage + anti-collapse + safe resume
-5011678 Extract batched GAE + PPO loss from _run_vanilla_ppo into ppo.py
-7cee0d7 MetricsSink: enforce canonical dashboard schema for every trainer mode
-da4d806 vanilla_ppo: emit dashboard-compatible metric keys
-40cbf57 Vanilla PPO trainer mode — match the literature recipe
-12f6341 BC anchor: end-to-end overhaul + state-action alignment fix
-f2c561f GA hygiene: drop dead actions + tighten stale-restart trigger
-08005cd Sticky actions for jump-cutoff fix (Machado et al. 2018)
-cbc7857 Enable RND curiosity bonus + drop entropy_coef back to 0.001
-b58b667 Restore exploration: gentler penalties, higher entropy, fewer episodes
-1ab09ca Multi-episode genome eval to break the GA's single-episode noise floor
-1c7ef1f Fix structural blockers preventing PPO from learning
+a9b3355 observability: per-episode metrics sidecar + a generic cohort differ
+163ef54 hardening wave 3: 7 confirmed findings — the hazard-veto root cause finally fixed
+c130cb2 options: FAIL by overcommitment — and continued training collapses peaks
+b52b0b1 options: full trainer + eval integration — the treatment arm is runnable
+dd46568 options: semi-MDP GAE math as pure, tested functions
+a21ce55 options: v22 addendum — duration-scaled entropy and semi-MDP mechanics
+381b912 phase 3 VOID: -inf logits NaN'd the actor, and eval never armed the veto
+1f7184f research: build the shelf — hazard engine, survival model, outcome detector, latent cells
+ca35e4c docs: research synthesis — five rounds converge on a hazard substrate
+5fc467f training: audit hardening + online-campaign mechanisms
+9f30173 refactor(trainer): Task 0.5 — extract 5 typed config dataclasses (unwired, pure prep)
+74e96c2 feat(config): mario_1_1_backward_v4 — real consolidate-mode weld from the backward iter-80 policy
+edae2aa feat(backward): entropy guard + B5 pre-registration + consolidation config
+df1210f fix(backward): winner snapshot keys on trailing entrance rate, at-entrance only
+6ed119f feat(learning): reopen the learning track — sampled eval, sticky boundary fix, backward curriculum, segment probe, CGSA record correction
+b23cf2b feat(show): control panel — full settings editor + profile load/save alongside the show
+8147a9b feat(training): SHAPO pivot — SAM-PPO replaces the collapsed PR-MDP adversary
+1ff1faf feat(training): PR-MDP adversarial PPO (Tessler et al. ICML 2019) in vanilla_ppo
+2e5f8ce test+docs: decomposition characterization tests + actor/learner spec & parity gate
+ca39254 feat(training): adaptive entropy floor + profile schema validation
+abc2fe0 fix(training): self-healing — sticky log-prob clamp, poison-save guard, crash supervisor
+731ebf5 feat(training): honest anchor resume, gx-count frontier bonus, archive returns
+f0838c5 feat(training): self-imitation robustifier + composite handoff capture
+6d4ddc0 feat(training): level-scoped cold-gated consolidation + area-granular composite routing
+95df9ee feat(training): bounded Go-Explore unstick burst for stalled ladder rungs
+50e8770 feat(training): SMB one-shot campaign stack — sequential metric, sub-stage ladder, cold probe, trainer glue
+db3dd7a docs: SMB one-shot campaign spec (1-1 through 1-4 cold-eval)
+6e70faa feat: vanilla_ppo route for the SMB tile config
+88a687d Fix Castlevania win predicate + persist anti-collapse baseline
+bc2c825 Perf: defer per-minibatch loss .item() syncs to one per update
+37a5591 Document SMB World-1 autonomous training
+67874d7 SMB 1-4: dense platform-hop + Bowser-bridge ladder (autonomous ceiling reached)
+54b16dd SMB World 1: clear 1-3, calibrate 1-3/1-4 ladders, fix max_x metric, add BC pipeline
+f7db88d SMB 1-2 underground: greedy clear via entropy-decay consolidation
+1a71ce0 Contra screen-9 advancement-shaping config (banked negative)
+c4ddb95 contra_screen9: entropy_coef 0.02 -> 0.01 (policy wasn't committing)
+16c84fc Reproducibility manifest + mission-control scoreboard
+4b5c7ce Real-loop learning-regression guard (catches the demo-bug class)
+fc1970b Pixel games to MPS — 4.7x faster CNN, makes Contra/Castlevania trainable
+f43eb4e Phase 2: Castlevania on the unified vanilla_ppo + pixel path; Mega Man wired (MM2)
+47f81bd Phase 2: convert Contra to the unified vanilla_ppo + pixel-CNN path
+cb36e67 Per-step rollout perf + GA gae_lambda fix
+948888b Bug-hunt top tier: vanilla_ppo cleanup, RND optimizer, minibatch perf, atomic state
+04878d5 Curriculum advance: rolling-mean gate instead of brittle consecutive-N
+bb77a15 Fix root cause of "PPO won't learn": training ran on the title-screen demo
+c7b505f Wire RND intrinsic exploration into vanilla_ppo
+73bd244 Fix curriculum-collapse: gated advance + mixed-stage + anti-collapse + safe resume
+09fa5aa Extract batched GAE + PPO loss from _run_vanilla_ppo into ppo.py
+615da59 MetricsSink: enforce canonical dashboard schema for every trainer mode
+5b66239 vanilla_ppo: emit dashboard-compatible metric keys
+1e76f86 Vanilla PPO trainer mode — match the literature recipe
+a78f5e0 BC anchor: end-to-end overhaul + state-action alignment fix
+e6c484d GA hygiene: drop dead actions + tighten stale-restart trigger
+d48cdbe Sticky actions for jump-cutoff fix (Machado et al. 2018)
+0e278cf Enable RND curiosity bonus + drop entropy_coef back to 0.001
+2e7aefc Restore exploration: gentler penalties, higher entropy, fewer episodes
+a119ab1 Multi-episode genome eval to break the GA's single-episode noise floor
+69a6e68 Fix structural blockers preventing PPO from learning
 
 ===== 2. The -74% figure: every place it is quoted =====
 docs/research/CAPABILITY_REPORT_2026-08-24.md:208:the KL anchor active (−74% relative). Consolidated peaks are
@@ -543,7 +543,7 @@ configs/mario_1_1_backward_consol.yaml:150:  entropy_coef_max: 0.05
 configs/mario_1_3_backward.yaml
 configs/mario_1_2_backward.yaml
 --- introducing commit ---
-a02971e feat(backward): entropy guard + B5 pre-registration + consolidation config
+edae2aa feat(backward): entropy guard + B5 pre-registration + consolidation config
 
 ===== 7. trainer.py: the three distinct anti-collapse mechanisms and their scoping comments =====
 
@@ -625,19 +625,19 @@ class BackwardEntropyGuard:
                         bwd_guard.samples, bwd_guard.floor,
 
 ===== 8. The 2026-07-20 entropy-floor-tried-and-degraded episode =====
-746ba14 docs(readme): "Where it stands today" — embed the World-1 playthrough + the honest gap
-646ac0f feat(demo): record a learned-policy playthrough to video/GIF
-8555536 test+docs: decomposition characterization tests + actor/learner spec & parity gate
-47f6031 docs: authoritative honest project status snapshot (scorecard, ledgers, roadmap)
-7560a40 docs+bench: measure the unmeasured claims; reconcile README to reality
-14b5739 feat(training): adaptive entropy floor + profile schema validation
-fb525c6 fix(provenance): close three allowlist-gate bypasses (audit P0)
-a33c663 fix: emulator use-after-free + systemic NaN backstop (full audit P0)
-f8130db docs(audit): bank stability audit synthesis + run-1 findings
-7b5fcee fix(training): fresh-start fence, run-lock, audit regression tests
-42dbaaa fix(eval): three integrity defects in published-number paths (audit P1)
-0b2a1dd fix(nes_core): close the FFI panic boundary (audit P0)
-a161d04 fix(training): close three silent crash/corruption paths (audit P0)
+f61771d docs(readme): "Where it stands today" — embed the World-1 playthrough + the honest gap
+4f50608 feat(demo): record a learned-policy playthrough to video/GIF
+2e5f8ce test+docs: decomposition characterization tests + actor/learner spec & parity gate
+fbf48e5 docs: authoritative honest project status snapshot (scorecard, ledgers, roadmap)
+1cb85af docs+bench: measure the unmeasured claims; reconcile README to reality
+ca39254 feat(training): adaptive entropy floor + profile schema validation
+53486f1 fix(provenance): close three allowlist-gate bypasses (audit P0)
+737d200 fix: emulator use-after-free + systemic NaN backstop (full audit P0)
+7d78999 docs(audit): bank stability audit synthesis + run-1 findings
+9a0c6e4 fix(training): fresh-start fence, run-lock, audit regression tests
+d15d4b1 fix(eval): three integrity defects in published-number paths (audit P1)
+da0e33c fix(nes_core): close the FFI panic boundary (audit P0)
+ed0c670 fix(training): close three silent crash/corruption paths (audit P0)
 --- memory receipt (point-in-time, verify against code) ---
 ---
 name: project-capability-attempt1-failed-2026-07-20
@@ -680,7 +680,7 @@ is the real capability build — dedicated, not a knob flip.
 a sound mechanism and stays — it just isn't sufficient alone. The config
 schema, emulator benchmarks, README honesty, decomposition plan, and all
 the stability-audit fixes this session are real and committed
-(..7560a40).
+(..1cb85af).
 
 **Capability grade did NOT move.** Honest state: 1-1 still 0/50 under
 sticky; the fix is the backward-algorithm build, uncertain and multi-day.
@@ -776,7 +776,7 @@ whole reason B4 exists.
    selected on the raw in-training `clear_rate`, which near-flag rung
    restarts inflate, so it landed at **iter 80 — mid-ladder, before the
    cursor ever reached the entrance** — and cold-scored 0.02 greedy.
-   *Fixed code-side (a580f99):* in backward mode the winner is keyed on the
+   *Fixed code-side (df1210f):* in backward mode the winner is keyed on the
    `TauScheduler` trailing success window and only once the cursor is
    at-entrance (at tau 0 the trailing window **is** entrance performance).
    Pre-entrance nets are never retained as the deliverable. No config key —
@@ -898,8 +898,8 @@ scheduled.
       per_entry: 350
 
 ===== 12. CLAIMS.md ledger entries carrying the -74% figure =====
-224:certification) and `074f888` (rendered-cut scene detection, v4
-237:gate JSONs are committed in `c3d7405`, and three deep-run log tails —
+224:certification) and `741a953` (rendered-cut scene detection, v4
+237:gate JSONs are committed in `379ffad`, and three deep-run log tails —
 645:x≈2674 barrier, flag height reached on both seeds. Prior state of the
 759:31/100 → 8/100 in 200 iters (−74% relative, KL anchor active) — all
 813:reads **MLP 0.76 vs GRU 0.74** —

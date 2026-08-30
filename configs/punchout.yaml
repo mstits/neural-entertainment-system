@@ -65,7 +65,7 @@ ram_mapping:
 # Retracted 2026-08-27 — see docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md
 # String value on purpose: `int(v)` must raise, so no consumer can fold this
 # address back into a set (the exclusion-fold inversion closed for Zelda in
-# 2e6014f). tests/test_purity_quarantine_sweep.py enforces that no profile on
+# 222ae25). tests/test_purity_quarantine_sweep.py enforces that no profile on
 # this ROM re-adopts it into a live `ram_mapping`.
 quarantined_external_knowledge:
   applies_to_rom: "roms/Mike Tyson's Punch-Out!! (Japan, USA) (Rev A).nes"

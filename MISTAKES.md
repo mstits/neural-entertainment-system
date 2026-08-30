@@ -76,7 +76,7 @@ committed inside the log that records it. It is now derived.
   "Headline receipt" and `runs/ng_odo_doa/` the receipt run for a FORGE
   claim; the capability report attributes best_score 74,783 to two more
   of the dirs. The run dirs ARE the receipts. Verified conceding:
-  c556e40 banked the odometer CODE and cert script, no receipt copies.
+  3429d8a banked the odometer CODE and cert script, no receipt copies.
 - **Root cause:** A memory summary ("odometer SHIPPED, certified 5/5")
   was inflated at recall time into an artifact-location claim the memory
   never contained, and shipped as a greenlight without an `ls`. Fourth
@@ -260,7 +260,7 @@ committed inside the log that records it. It is now derived.
   had passed. The veto check must resolve globs, not just grep strings.
 
 ## 2026-08-29 — [process] v33 configs minted without a full-suite run; the roster gate caught it 19 hours late
-- **What happened:** The four v33 capacity configs (d7d0cf6, minted
+- **What happened:** The four v33 capacity configs (af054bf, minted
   2026-08-28 18:58) declare `reward_id: mario` and were never appended to
   `tests/reward_dispatch_baseline.json` — the documented one-batch-per-
   addition mechanism every prior post-freeze profile set (v31, v32) went
@@ -539,8 +539,8 @@ committed inside the log that records it. It is now derived.
   string; a specific object identity) as the assertion, rather than the
   BEHAVIOR the implementation was supposed to produce.
 - **Consequence:** Both passed for as long as the bug existed, then failed the
-  moment the bug was fixed (`9bfe035`) -- a full suite run caught it,
-  targeted file runs during development would not have. Fixed in `1dc384b`,
+  moment the bug was fixed (`e9dafa8`) -- a full suite run caught it,
+  targeted file runs during development would not have. Fixed in `5f699f4`,
   re-verified the rewritten assertions still fail if the mechanism they
   actually care about regresses.
 - **Rule (draft):** When a test's assertion is a literal string or an object
@@ -600,7 +600,7 @@ committed inside the log that records it. It is now derived.
   positive control's is not one.
 
 ## 2026-08-28 — [false-alarm] A guard asserted a trajectory invariant on a filtered table
-- **What happened:** `assert_bank_wellformed`, shipped in `b2e806b` to catch
+- **What happened:** `assert_bank_wellformed`, shipped in `e89091e` to catch
   the aliasing defect that voided the previous run, asserts the chain
   property — the successor recorded at row `i` IS the antecedent recorded at
   row `i+1`. On its first live run it **raised `CHAIN BROKEN` at iter 30 on a
@@ -618,7 +618,7 @@ committed inside the log that records it. It is now derived.
   is ever dropped.
 - **Consequence:** Caught at iter 30 of 260 by the guard's own first live
   run, so the cost was a partial collection and a recollect rather than a
-  false verdict; the grid was recollected under the fix. Fix (`6d700c5`):
+  false verdict; the grid was recollected under the fix. Fix (`5d0e016`):
   `row_step` is recorded into the bank so the gap is visible in the artifact
   itself, and the chain is asserted only across step-adjacent pairs — full
   strength against the aliasing class, which corrupts every adjacent pair,
@@ -789,7 +789,7 @@ committed inside the log that records it. It is now derived.
   days**,
   with the rung-relative wavefront amendment deferred behind it since 2026-08-11
   and explicitly gated on a written addendum re-opening B5 that never came
-  (verdicts file line 525). Built and run 2026-08-27 (`b9ed38e`, registration
+  (verdicts file line 525). Built and run 2026-08-27 (`f8e3536`, registration
   `docs/proposals/VADV_PREREG_2026-08-27.md`, report
   `docs/research/VADV_B5_2026-08-27.md`): admissible instrument, controls
   separated, **verdict VOID** — `R = 0.279` inside the pre-declared indeterminate
@@ -963,7 +963,7 @@ committed inside the log that records it. It is now derived.
 - **Consequence:** Compounded with `docs/proposals/README.md` §10 — committed
   2026-08-25, two days after `PROCESS_AUDIT_2026-08-23.md:122` recorded the
   experiment as "distinct and unscheduled" — marking the round
-  `COMPLETED/ACTIONED` and the ranking "shipped as commit `f757506`", an auditor
+  `COMPLETED/ACTIONED` and the ranking "shipped as commit `740cac6`", an auditor
   who checks the status index and the receipts concludes the experiment ran and
   won. Only the manifest `status` field and that one audit dissent. No claim was
   made from it, so nothing is retracted; the near miss is the finding.
@@ -1041,7 +1041,7 @@ committed inside the log that records it. It is now derived.
 - **NOT a recurrence of the exclusion-set inversion.** Worth recording precisely,
   because the brief that launched this work asserted it was. The
   `excluded |= known` fold in `scripts/observatory.py` closed for Zelda in
-  `2e6014f` is **still closed**: `_mapping_bytes()` is private, reaches `main()`
+  `222ae25` is **still closed**: `_mapping_bytes()` is private, reaches `main()`
   only behind an `is_known()` predicate that cannot be unioned into anything, and
   the receipt logs the `ram_mapping` region with `"excludes": False`. No config in
   this tree was steering the discovery instrument. What recurred is the root cause
@@ -1312,8 +1312,8 @@ committed inside the log that records it. It is now derived.
 - **What happened:** An automated lane forcibly repointed `refs/heads/main` twice
   in a checkout with ~15 concurrent writers.
 - **Root cause:** Raw ref plumbing bypasses the locking that normal commits rely on.
-- **Consequence:** A race dropped a sibling's class (`592ea8a`); repaired by
-  `698f142`. Nothing lost — verified by fsck/reflog — but by luck.
+- **Consequence:** A race dropped a sibling's class (`757a476`); repaired by
+  `a66cc74`. Nothing lost — verified by fsck/reflog — but by luck.
 - **Rule (draft):** Parallel lanes get receipts-only or a worktree. No raw ref
   plumbing and no `git stash` on shared `main`.
 

@@ -59,7 +59,7 @@ a precise question.
 
 ## VERDICT (2026-08-24 evening): FAIL-by-drift, at epoch 0
 
-Executed with the loader fix in place (28dc163 — the first attempt
+Executed with the loader fix in place (38f2358 — the first attempt
 trained a random net and was void). With the REAL control loaded:
 epoch 0 (13 Adam steps, lr 1e-4, 1,620 recovery + 1,620 anchor pairs)
 took honest greedy 0.767 -> 0.033; the registered drift-stop fired

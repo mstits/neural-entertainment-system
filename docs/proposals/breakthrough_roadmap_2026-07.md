@@ -49,7 +49,7 @@ Scored as (capability lift × asset fit) / effort, 1–5 each, higher is better.
 **Score: lift 3–4 × fit 3 / effort 3 → ~4, gated by a one-hour measurement.**
 - **What**: Overlap the PPO update with pool collection (train on batch N while collecting N+1 under the stale policy), V-trace/importance-corrected. Explicitly NOT the debunked per-step `async_pipeline` obs-lag knob — observations stay frame-exact; only *policy staleness* is introduced, which V-trace is designed to absorb [MODEL-BASED]. Opportunistic add-ons from the same lane: PPG aux value phase or BBF-style replay-ratio training over the deterministic banks; PQN as a cheap value-head experiment on grind levels.
 - **Papers**: Podracer/Sebulba (2104.06272); Sample Factory APPO (2006.11751); cleanba; PufferLib huge-batch PPO (2406.12905); PQN (2407.04811); PPG (2009.04416); BBF (2305.19452).
-- **Builds on**: Rust pool + pool-level pacing (d90fbc2..1078288); MPS idles during collection in tile mode; `scripts/profile_training_buckets.py` and `scripts/bench_trainer_async.py` exist for before/after; `make selftest-learning` as the correctness guard.
+- **Builds on**: Rust pool + pool-level pacing (3683fb2..e4b1210); MPS idles during collection in tile mode; `scripts/profile_training_buckets.py` and `scripts/bench_trainer_async.py` exist for before/after; `make selftest-learning` as the correctness guard.
 - **First experiment**: `python scripts/profile_training_buckets.py --profile configs/mario_tiles.yaml` — measure the collect/update duty cycle FIRST. If update ≥25% of wall clock, implement double-buffered rollouts in the trainer loop with an IS-ratio clamp; A/B on 1-1 relearn.
 - **Success metric**: ≥1.5x learner-consumed samples/s with unchanged clears-per-iter on the SMB selftest. If the duty cycle says update <15%, kill the bet without regret.
 - **Time-to-first-signal**: duty-cycle profile in one hour (this gates the bet); full A/B ~1 week. Ranked #4 because it multiplies the others but is capped by the duty cycle and touches the one subsystem with a known correctness minefield.
@@ -73,7 +73,7 @@ Scored as (capability lift × asset fit) / effort, 1–5 each, higher is better.
 4. **Keep exploring after first clear** — don't stop GX at first solve; trajectory length keeps dropping and shorter demos robustify far easier (Ecoffet Ext. Data Fig. 5). Loop-condition change in the harvest driver [EXPLORATION].
 5. **Florensa [0.1, 0.9] band** on the curriculum gate — the advance gate is currently one-sided; add the lower bound to retire mastered starts [EXPLORATION][GENERALIZATION].
 6. **Bank failure episodes** alongside clears (one flag in the banking path) — free now; feeds future IQL seam-quality probes and mixed-quality DT data [IMITATION][SEQUENCE].
-7. **NovelD term on TileRND**: r = max(RND(s_t) − 0.5·RND(s_{t−1}), 0) × exact episodic first-visit gate (RAM hash makes the indicator exact, not approximate). One subtraction + a set; RND itself is already fixed per commit 9865c4c [EXPLORATION].
+7. **NovelD term on TileRND**: r = max(RND(s_t) − 0.5·RND(s_{t−1}), 0) × exact episodic first-visit gate (RAM hash makes the indicator exact, not approximate). One subtraction + a set; RND itself is already fixed per commit c057bbd [EXPLORATION].
 
 ---
 

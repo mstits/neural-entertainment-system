@@ -11,7 +11,7 @@ configs/mario_1_1_v27_seed0.yaml: no entropy_guard
 configs/mario_1_1_v28_seed0.yaml: no entropy_guard
 
 ===== 2. Origin commit of the unconditional ANTI-COLLAPSE GUARD (trainer.py) =====
-1ec47985c7bd7d043d45c1efac86fcb3453be2f0 Fix curriculum-collapse: gated advance + mixed-stage + anti-collapse + safe resume
+73bd24476de8c529b42c5f28212cc50222f0efa1 Fix curriculum-collapse: gated advance + mixed-stage + anti-collapse + safe resume
 --- its own stated trigger direction (entropy RISING, i.e. melting) ---
 --- v27/v28's actual entropy direction (falling), from v28 seed3 best run ---
 iter 19: 1.4656 | 59: 0.7318 | 119: 0.2910 | 179: 0.0796 | 239: 0.0716

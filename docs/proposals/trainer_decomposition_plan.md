@@ -500,15 +500,15 @@ step is larger than one focused session; no step changes behavior.
 
 ## 9. Execution log
 
-- **§3 goldens (C0–C5) — DONE (b16ce2f, 5f1258c).** Determinism validated
+- **§3 goldens (C0–C5) — DONE (45a43f1, a2076f1).** Determinism validated
   3/3 back-to-back on the M4 (tile+CPU bit-reproducible). C0 master golden
   pins the exact 3-iter metric sequence + final-net sha256; C1–C5 pin
   checkpoint / ppo-update / exploration / curriculum / rollout. 54 tests,
   2.2s. Each documents its honest "not covered" gaps.
-- **Task 0.5 config dataclasses — DONE (260df99).** PPO/Exploration/
+- **Task 0.5 config dataclasses — DONE (9f30173).** PPO/Exploration/
   Curriculum/Rollout/Entropy configs + from_profile, 45 fidelity tests.
   UNWIRED (nothing imports them yet); wiring happens in Task 6.
-- **Task 1 CheckpointManager — DONE (1a99467).** Real relocation: resume +
+- **Task 1 CheckpointManager — DONE (7f365a2).** Real relocation: resume +
   save_iter + write_manifest live in `checkpoint_manager.py` (332 lines);
   trainer.py 9960→9751. C0 bit-for-bit green = the pure-move proof.
   **LESSON:** the first pass was a FACADE (delegating wrappers; trainer.py
@@ -517,15 +517,15 @@ step is larger than one focused session; no step changes behavior.
   pattern: relocate bodies into the module, thin shim for direct-call
   tests, retarget the golden's source-string anchors to the new module
   (C0 doesn't source-anchor → stays the untouched behavioral proof).
-- **Task 2 PPOUpdater — DONE (24fe36a).** Scope-corrected: net-covered core
+- **Task 2 PPOUpdater — DONE (897f504).** Scope-corrected: net-covered core
   (fold→GAE→adv-norm→K-epoch→NaN backstop) → ppo_updater.py (515 lines),
   trainer.py −385. PR-MDP/CGSA/backward left in conductor. (Net later
-  EXTENDED — 84c7162 — with PR-MDP/CGSA/backward goldens so they're covered.)
-- **Task 3 ExplorationController — DONE (9176193, partial).** RND lifecycle
+  EXTENDED — 9419547 — with PR-MDP/CGSA/backward goldens so they're covered.)
+- **Task 3 ExplorationController — DONE (d30187c, partial).** RND lifecycle
   + count_bonus + generic Go-Explore archive → exploration_controller.py
   (234 lines), trainer.py −106. The Go-Explore unstick burst hit the
   entanglement wall (mutates Curriculum state) and stayed in the conductor.
-- **Task 4 Curriculum — DONE (9b052ea, partial) + INSEPARABILITY PROVEN.**
+- **Task 4 Curriculum — DONE (cd8d9eb, partial) + INSEPARABILITY PROVEN.**
   Only the disk-load leaf moved (→ Curriculum class in curriculum.py),
   trainer.py −91. The core (capture/advance/warm-start) is INSEPARABLE from
   the un-extracted RolloutCollector: env_stage & stage_seed_results are

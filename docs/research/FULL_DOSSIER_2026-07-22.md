@@ -140,7 +140,7 @@ def cell_fn(ram):   # spatial-ish discretization
   broken credit assignment, weak PPO inner loop, elite-clone-overwrite killing
   diversity. **Fix:** RAM tile obs + a ~14k-param MLP. Additive, dispatched on
   `reinforce.encoder`.
-- **PPO structural fix (commit 1c7ef1f).** `time_penalty=0`+`death_penalty=0`
+- **PPO structural fix (commit 69a6e68).** `time_penalty=0`+`death_penalty=0`
   made **no-op a Nash equilibrium** (standing still ≡ moving+dying in return);
   unnormalized value loss (returns [0,5000+]) dominated 100% of gradient vs
   policy's −0.005; entropy pinned at ln(8). **Fix:** −15 death / −0.01 time,
@@ -148,7 +148,7 @@ def cell_fn(ram):   # spatial-ish discretization
   luck**, not learned (~1% of random policies clear 1-1 given the right-biased
   action set). *Lesson: verify a "win" with a GREEDY eval — sampled/GA wins are
   often luck.*
-- **Pre-PPO elite freeze (a2869d1).** A single regressive PPO step corrupted the
+- **Pre-PPO elite freeze (4606def).** A single regressive PPO step corrupted the
   GA elite in place → a genuine gen-151 winner destroyed in one step. Fix:
   snapshot the elite before PPO.
 
@@ -186,7 +186,7 @@ def cell_fn(ram):   # spatial-ish discretization
   for exploration past 1-2.
 
 ### Phase D — Per-level World 1, and the entropy-consolidation lever (Jun–Jul 2026)
-- **Area-byte reward bug (79a23f9).** The 1-2 dense ladder was mapped to the wrong
+- **Area-byte reward bug (319b01c).** The 1-2 dense ladder was mapped to the wrong
   area byte (entrance, not the underground main) → zero dense reward where the
   agent plays. *The "x=980 wall" was a greedy-replay artifact* — training
   warm-started in the underground blows past it.

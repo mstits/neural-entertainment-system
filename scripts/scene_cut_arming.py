@@ -9,7 +9,7 @@ exist is a WITNESSED positive on any of them to calibrate a gate
 against. That is the same refusal, for the same reason, as
 docs/receipts/rygar/clear_predicate_REFUTED.md.
 
-WHY THIS EXISTS. On 2026-08-26 commit 4dd15ea armed
+WHY THIS EXISTS. On 2026-08-26 commit 27902e1 armed
 `solve.clear.signals.scene_cut` on 23 profiles off a survey whose
 reproducer was never committed, and review found three arming decisions
 that could not survive contact with their own recorded evidence:
@@ -143,7 +143,7 @@ RECEIPT = REPO / "docs/receipts/clear_control/scene_cut_arming_2026-08-27.json"
 #: above necessarily has no armed gate left to describe -- so without this
 #: file the residual assertions would have nothing to iterate over and
 #: would pass vacuously, which is the failure mode this whole campaign is
-#: about. Regenerate only by checking out 4dd15ea's configs; it is a
+#: about. Regenerate only by checking out 27902e1's configs; it is a
 #: historical measurement, not a live one.
 ASFOUND = REPO / "docs/receipts/clear_control/scene_cut_arming_asfound_2026-08-27.json"
 

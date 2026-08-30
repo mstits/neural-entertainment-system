@@ -1,5 +1,5 @@
 {
- "what_this_is": "AS-FOUND measurement of the 2026-08-26 scene_cut arming (4dd15ea), taken before it was disarmed. Evidence for the disarm decision; not a description of the shipped configs -- see scene_cut_arming_2026-08-27.json for that.",
+ "what_this_is": "AS-FOUND measurement of the 2026-08-26 scene_cut arming (27902e1), taken before it was disarmed. Evidence for the disarm decision; not a description of the shipped configs -- see scene_cut_arming_2026-08-27.json for that.",
  "policy": "C1 channel alive | C2 validated lives | C3 separability disclosed | C4 residual zero at the armed gate | C5 scene_min above the seam floor | C6 gate above the veto-independent null",
  "static_only": false,
  "cohort_size": 25,
@@ -3125,5 +3125,5 @@
    }
   }
  },
- "measured_against": "configs/*.yaml at commit 4dd15ea (23 profiles armed)"
+ "measured_against": "configs/*.yaml at commit 27902e1 (23 profiles armed)"
 }

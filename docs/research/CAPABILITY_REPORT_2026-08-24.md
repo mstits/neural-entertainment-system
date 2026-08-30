@@ -30,7 +30,7 @@ core-resident instrument: loopy_v + fine_x sampled per scanline at
 dot 256, modal filter over 240 scanlines, wrap-aware fold
 dX=((Xc−Xp+256) mod 512)−256 with the attribute-table trap handled,
 accumulator inside the savestate blob (v3 envelope). Shipped commit
-c556e40; spec docs/proposals/ODOMETER_CORE_SPEC_2026-08-23.md; 623
+3429d8a; spec docs/proposals/ODOMETER_CORE_SPEC_2026-08-23.md; 623
 Rust tests green at ship.
 
 Certification (scripts/odometer_cert.py, receipt
@@ -40,7 +40,7 @@ restore-exact across savestate, no restore discontinuity. Fail-any →
 build quarantined.
 
 Per-game progress-signal gate, before → after (receipts:
-runs/odometer/ gate JSONs, committed c3d7405):
+runs/odometer/ gate JSONs, committed 379ffad):
 
 | Game         | 2026-08-11                      | 2026-08-24 |
 |--------------|---------------------------------|------------|
@@ -80,7 +80,7 @@ agent-inert. That diagnostic rule is now in memory as binding.
 >   which is why the correction is recorded here as well.
 > - **Kung Fu — the exculpation is WITHDRAWN.** "Skill wall, not
 >   instrument fault" was produced by the vacuous `passed = not
->   instrument_findings` camera-static override that commit `bfb515b`
+>   instrument_findings` camera-static override that commit `1c153ab`
 >   deleted; that commit names kungfu first among 13 profiles / 40
 >   vacuous passes with the `distinct=1 / min=0 / max=0` signature. The
 >   OAM churn 540 is a real positive and stands; the inference from it
@@ -94,7 +94,7 @@ agent-inert. That diagnostic rule is now in memory as binding.
 
 ### 1.2 Scene detection — did not exist → shipped, envelope v4
 
-Commit 074f888 (2026-08-24): rendered-cut scene detection (bipartite:
+Commit 741a953 (2026-08-24): rendered-cut scene detection (bipartite:
 masked FNV-1a frame hash AND scroll discontinuity together), scene
 ordinal keys Go-Explore cells, v4 savestate envelope, 626 Rust tests
 green. Measured effect: the NG boss room aliases dx=−511 and pinned
@@ -107,22 +107,22 @@ the live validation of the Zelda/Metroid room-navigation architecture
 
 Both game-agnostic (purity-clean: hardware/telemetry surface only):
 
-- Transition-blip debounce (commit 1610093): death requires ≥3
+- Transition-blip debounce (commit baa3ac7): death requires ≥3
   consecutive dead observations. Rygar's door transitions blip lives
   through 0 for 2 steps; before the fix every door was a false death.
   Falsified live: Rygar gx 1536 → 5360 in 6 minutes (3.5× depth).
   Receipt runs/rygar_odo_debounce/ (on disk, uncommitted — see §7).
-- Wrap-aware lives decrement (commit 084362c): (start−cur) mod 256 in
+- Wrap-aware lives decrement (commit 6bf0dfd): (start−cur) mod 256 in
   1..8. NG's 0→255 underflow previously hid EVERY death; probe showed
   hold-right frozen at t=41 with no death registered.
-- Dead-on-arrival cell retirement (commit 6a47a71, receipt
+- Dead-on-arrival cell retirement (commit 49fe332, receipt
   runs/ng_odo_doa/): archive cells whose restores die immediately are
   retired instead of resampled forever.
 
 ### 1.4 Gate instrumentation at scale — wave 1 (in flight)
 
 runs/onboard_wave1/ (21 gate JSONs, launched 2026-08-24 17:45,
-commit 787cf3e lane): progress_signal_gate now classifies ten games
+commit 793f640 lane): progress_signal_gate now classifies ten games
 in one pass — SOUND-still-advancing: Castlevania 905 distinct/3,055 px,
 Excitebike 1,116/11,062, Gradius 940/1,714; SOUND-then-game-stops:
 DuckTales 104/319, Ghosts 'n Goblins 117/285, Mega Man 2 91/808,
@@ -211,7 +211,7 @@ its ceiling. 1-2 stays closed, now with a reason.
   STATELESSLY. Post-loader-fix real-policy numbers: MLP AUC 0.76 vs
   GRU 0.74 — recurrence adds NOTHING (receipt
   runs/gru_ab/stick_probe_realpolicy.json). The earlier matrix
-  (0.83/0.87 etc.) predates the 28dc163 loader fix and is
+  (0.83/0.87 etc.) predates the 38f2358 loader fix and is
   superseded. v26's PASS-branch authorization of a recurrent-RL
   overhaul was overridden with this data: detection was never the
   binding constraint (feedforward had AUC-0.83-grade stick access at
@@ -225,7 +225,7 @@ docs/proposals/RECOVERY_DISTILL_1_1_2026-08-24.md, verdicts appended:
   epoch 0 — honest greedy 0.767 → 0.033 after 13 Adam steps at lr
   1e-4 (sampled 0.17: genuine degradation, not argmax-tie noise).
   Receipts runs/recovery_distill/train_history.json as committed
-  (8bded0d); the working-tree copy was later overwritten by variant
+  (6d84cdf); the working-tree copy was later overwritten by variant
   A's rung-2 history (uncommitted).
 - Variant A, KL-anchored cloning, 2-rung LR ladder: FAIL both rungs
   (lr 1e-4 drift-stop at epoch 0; lr 1e-5 best 0.70 < baseline
@@ -277,7 +277,7 @@ consolidation or of parameter budget? Fresh run with recovery states
 in the curriculum FROM THE START (configs/mario_1_1_recovery_ppo.yaml
 pattern). Ranked salvages not run: sequence-BC for the GRU line; SWA
 over 1-2 peaks; hazard→Go-Explore weighting (Castlevania module
-dependency). Wednesday Push lanes (787cf3e) in flight, no verdicts.
+dependency). Wednesday Push lanes (793f640) in flight, no verdicts.
 
 ---
 
@@ -301,7 +301,7 @@ call into a measured no.
 docs/research/PROCESS_AUDIT_2026-08-23.md named the root defect
 class behind every void this month: "configs verified, mechanism-
 aliveness never verified — an assay with no positive control."
-Shipped fixes (commit 3bb10f6 + trainer changes): mandatory positive
+Shipped fixes (commit e3066e1 + trainer changes): mandatory positive
 controls in scripts/experiment_preflight.py; trainer sentinel
 enforcement (the actor_freeze_steps 1e12 sentinel that silently
 froze actors in Phase-3 and options v1 now trips a tripwire);
@@ -312,7 +312,7 @@ banked baseline, explicit actor_freeze_steps: 0.
 
 ### 4.3 The falsifier discipline — this window's catches
 
-1. Frozen-actor VOID discovery (e4e111c): Phase-3 hazard-veto AND
+1. Frozen-actor VOID discovery (28fd32c): Phase-3 hazard-veto AND
    options v1 had trained only critics. Options FAIL correctly
    replaced by VOID; Phase-3 scope-corrected, with the surviving
    eval-time claim (veto collapse 31/100→0/100) explicitly kept.
@@ -321,7 +321,7 @@ banked baseline, explicit actor_freeze_steps: 0.
    runs/recovery_assay/probe_ep15_10min/) and a stdout-grep success
    detector that could never fire. Fixed; final verdict is
    filesystem-scored against solutions/ ground truth.
-3. Loader footgun (commit 28dc163):
+3. Loader footgun (commit 38f2358):
    build_tile_policy_from_checkpoint silently returned a RANDOM net
    for path inputs — root cause of every standalone-loop anomaly on
    08-24 (the "0/60 unjittered argmax-tie receipt" is RETRACTED; the
@@ -332,7 +332,7 @@ banked baseline, explicit actor_freeze_steps: 0.
 5. Non-replication run: joint-policy 0.52 flicker → 32/100 and
    1/100 under the full protocol.
 6. FAIL-vs-VOID defense: the GRU FAIL survived a hidden-reset audit
-   (c61b711, 1e94445) before standing.
+   (12ef141, 8a2c0ba) before standing.
 7. Registration honesty: the A/B prereg's claim that BC-through-
    stateless-fallback "cannot explain a between-arm difference" was
    retracted as wrong in the verdict doc.
@@ -348,7 +348,7 @@ banked baseline, explicit actor_freeze_steps: 0.
 Prereg/no-rescue followed on all four adjudicated experiments;
 two-ledger discipline held; "read never infer" violated once and
 caught by the fingerprint check; quiet-bench violated once and
-retracted. The 2-1 attempt-1 VOID (950e37c, trained on 1-3's restart
+retracted. The 2-1 attempt-1 VOID (872fdb6, trained on 1-3's restart
 ladder) is recorded in git but has no memory/docs coverage — carried
 here so it is not silent.
 
@@ -378,7 +378,7 @@ reproduction. Today it holds four banked levels, one measured
 ceiling per wall, and five adjudicated negatives with receipts.
 
 EXHIBITION (unchanged headline, new frontiers): SMB all 32 levels
-solver-complete (2026-07-27, db44fc7). New this window: NG frontier
+solver-complete (2026-07-27, be3db3a). New this window: NG frontier
 area 9 / score 74,783, Rygar 5,680 px — both depth-only results, with
 no win predicate wired on either profile, so neither is scorable as
 solved or unsolved; Bubble Bobble 2 and Castlevania 3 smoke solutions
@@ -405,7 +405,7 @@ self-running shelf dispositions; assay + distill tooling.
 1. Recovery assay first pass 0/14 ×2 → VOID (budget + detector
    defects); re-scored from filesystem. (§4.3.2)
 2. Recovery-distill first attempt trained a random net → VOID;
-   loader fix 28dc163. (§4.3.3)
+   loader fix 38f2358. (§4.3.3)
 3. "0/60 unjittered argmax-tie receipt" → RETRACTED (same root
    cause).
 4. A/B prereg claim "BC fallback cannot explain a between-arm
@@ -420,30 +420,30 @@ self-running shelf dispositions; assay + distill tooling.
 10. Pre-fix stick-probe AUC matrix (0.83/0.87, "+0.05 GRU") →
     superseded by real-policy re-run (0.76/0.74); the v25 memory and
     V26 doc figures predate the fix and should be read as such.
-11. 2-1 attempt 1 (950e37c) → VOID, trained on 1-3's restart ladder
+11. 2-1 attempt 1 (872fdb6) → VOID, trained on 1-3's restart ladder
     (git-only record, surfaced here).
 
 ## 7. Receipt debt (uncommitted or orphaned receipts, named)
 
 - runs/recovery_distill/variant_b_train.log + ckpts (variant B FAIL,
-  380f306): on disk, uncommitted. Variant A (ba68f93): rung-2 history
+  e5d702d): on disk, uncommitted. Variant A (6e6fd54): rung-2 history
   sits as an uncommitted working-tree overwrite of
-  train_history.json (the committed copy, 8bded0d, is the base-run
+  train_history.json (the committed copy, 6d84cdf, is the base-run
   history — don't clobber it when banking); rung-1 only in task logs.
 - runs/engine/logs/shelf_joint_*.log, shelf_1_4_endpoint_*.log
-  (0848ca1's 32/100, 1/100, 51/100): on disk, uncommitted.
-- runs/rygar_odo_debounce/ (1610093's falsifier): uncommitted.
-- cd00fdf options smoke claims (iter 1121, 3,302 sps): no receipt
+  (c39c9ee's 32/100, 1/100, 51/100): on disk, uncommitted.
+- runs/rygar_odo_debounce/ (baa3ac7's falsifier): uncommitted.
+- b52b0b1 options smoke claims (iter 1121, 3,302 sps): no receipt
   file exists.
 - runs/recovery_assay_bad/: void first-pass debris, uncited — needs
   a named retraction pointer or deletion; silent orphan is the one
   state it must not stay in.
 - runs/odometer/ receipts are cited only in session memory; no
   docs/ file names them except this report and the cert/gate JSON
-  commit (c3d7405).
+  commit (379ffad).
 - 14 of 15 ng_odo_*/rygar_odo_* dirs are uncited by path in docs;
   committed log tails runs/odometer/{ng_deep,rygar_deep,rygar_v2}.log
-  (c1f9dbe) partially cover them, while the ng_night, ng_scene_long,
+  (161a20b) partially cover them, while the ng_night, ng_scene_long,
   ng_scene_long2, and rygar_night tails exist on disk uncommitted;
   ng_odo_doa is the DOA-retirement receipt and is named here.
 

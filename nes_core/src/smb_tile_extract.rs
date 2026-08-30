@@ -3,7 +3,7 @@
 //! Companion to `src/emulation/tile_observations/smb.py`. The Python
 //! version was profiled at ~7% of trainer wall-time (815k inner-loop
 //! iterations across a 3-gen run); even after the numpy vectorization
-//! shipped in commit 6d23ea4, it's still ~25 μs/call. The Rust port
+//! shipped in commit 4ea3610, it's still ~25 μs/call. The Rust port
 //! brings that down to single-digit microseconds because compiled
 //! Rust eliminates the numpy ufunc dispatch + the Python interpreter
 //! overhead entirely.

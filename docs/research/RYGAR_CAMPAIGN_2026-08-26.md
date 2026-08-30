@@ -302,7 +302,7 @@ the window floor gates the FAILING direction only, because observing 32+ levels
 is a positive demonstration and observing fewer is only informative if the
 window could have shown them. The game choice stands on Rygar's own merits.
 
-Also withdrawn earlier this week (commit `c146769`): Contra's banked "odometer
+Also withdrawn earlier this week (commit `5b9dab6`): Contra's banked "odometer
 162 distinct, cross-validated 162 vs 163". About 94% of that 162 was game-over
 animation, and the "163" has no receipt anywhere in the tree. Contra's
 documented wall "pinned at gx 3072 across six campaigns" was measured on that
@@ -322,7 +322,7 @@ The odometer result is the decisive one: the camera is provably static while the
 agent is provably moving. Kung Fu's wall is the **fixed-screen fight class**,
 the same as Punch-Out, and it needs a fight-gate-style observable — not a scalar
 position repair. Also withdrawn this week: the "skill wall, not an instrument
-fault" verdict, which came from a vacuous gate branch (deleted in `bfb515b`)
+fault" verdict, which came from a vacuous gate branch (deleted in `1c153ab`)
 that forced `passed=true` whenever OAM churn showed the agent moving.
 
 ### Zelda — SIGNAL UNUSABLE **and** purity-blocked

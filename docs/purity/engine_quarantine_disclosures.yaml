@@ -5,7 +5,7 @@
 #
 # `quarantined_external_knowledge:` blocks in `configs/` retract a
 # DOCUMENTATION claim. They do not touch the Rust constant or the Python
-# literal that actually runs. The 994-entry config sweep (0557896) named
+# literal that actually runs. The 994-entry config sweep (82f3b4f) named
 # that limit in its own commit message:
 #
 #     "Quarantining the YAML retracts the DOCUMENTATION claim, NOT the

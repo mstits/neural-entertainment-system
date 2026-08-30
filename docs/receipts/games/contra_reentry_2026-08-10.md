@@ -142,11 +142,11 @@ claim "this is new" is checkable rather than asserted.
 
 ### (a) Trustworthy termination — replay-verified banking + the counterfactual gate
 
-- `55c1996`, **2026-08-08**: confluence detector v2 — death-first ordering,
+- `20671eb`, **2026-08-08**: confluence detector v2 — death-first ordering,
   blip persistence, transition veto, replay-verified banking.
-- `f45dda1`, **2026-08-10**: detector v3 (APU channel-activity vote) and the
+- `b8f9e4a`, **2026-08-10**: detector v3 (APU channel-activity vote) and the
   counterfactual candidate gate.
-- `ce519e6`, **2026-08-10**: the counterfactual gate refuses state artifacts.
+- `ebbd080`, **2026-08-10**: the counterfactual gate refuses state artifacts.
 
 All three postdate every Contra campaign by 7-10 days.
 
@@ -167,13 +167,13 @@ bankable; it retracts nothing.
 
 ### (b) The wall can now be named — and the named remedy is a mechanism we did not have
 
-`src/training/wall_taxonomy.py` (`f45dda1`, **2026-08-10**) classifies a
+`src/training/wall_taxonomy.py` (`b8f9e4a`, **2026-08-10**) classifies a
 stalled search. Applied to the ten campaigns it returns **GATED** on eight
 of them, with the remedy: *"switch to an orthogonal arm: a different action
 axis, or a mechanic the current cell key cannot express."*
 
 The orthogonal-frontier arm — `--ortho {up,down}` and its knobs — shipped in
-`5f8dcb7`, **2026-08-08**. It did not exist during any Contra campaign and
+`ea1b954`, **2026-08-08**. It did not exist during any Contra campaign and
 has never been pointed at this game. The v4/v5/v6 arms (local kill-key,
 typed boss HP, time bins) all added *dimensions to the cell key*; none of
 them changed *which cells selection restarts from*, which is what the ortho

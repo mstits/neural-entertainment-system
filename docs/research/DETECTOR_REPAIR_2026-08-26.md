@@ -127,7 +127,7 @@ information about whether the games clear.
 
 Not search time. **Credibility of the record.** The banked `solutions: 0` was a compile-time
 constant, and ten documents cited it as a search outcome — several multiplying it against
-compute totals so the constant read as corroboration. The corrections landed in `ef87556`,
+compute totals so the constant read as corroboration. The corrections landed in `423ef9a`,
 annotated and dated, never deleted; 23 files touched. The pattern, by severity:
 
 | Where | What it claimed | What was true |
@@ -169,7 +169,7 @@ already caught and withdrawn on 2026-08-06.
 
 ## 4. What the repaired instrument found
 
-The repair (`fa17c09`…`b8ebded`) removed the `SmbGame()` hardcode from
+The repair (`e1b9a68`…`c27a3a8`) removed the `SmbGame()` hardcode from
 `run_ground_truth_test`, threaded `ctx` into `is_clear` so stateful modes are not
 short-circuited to False by construction, called `note_start` at the root so `byte_change`
 is not inert, and added game-agnostic signal primitives (`entity_wipe`, `oam_quiesce`,
@@ -231,7 +231,7 @@ clear half behaves.
 | Games moved VOID → CONFIRMED | **1** (`excitebike`) |
 | Games moved by acquiring a predicate they did not have | **0** |
 | Games moved CONFIRMED → VOID | 0 |
-| Hooks **withdrawn** as structurally unfireable | 1 (`gradius`, in `ef87556`) |
+| Hooks **withdrawn** as structurally unfireable | 1 (`gradius`, in `423ef9a`) |
 
 Excitebike moved because it had never been adjudicated — it was not among the census's 29
 profiles at all (`grep -ci excitebike` on the census returns **0**), so `predicate: null` was
@@ -399,7 +399,7 @@ retract.
 - Per-game re-census receipts: `runs/clear_recensus/<game>/`.
 - Roster adjudication by name, with cause for all 45: `docs/research/CLEAR_GAP_CLOSURE_2026-08-26.md`.
 - Prior round and its self-reported integrity gap: `docs/research/CLEAR_DETECTION_CAMPAIGN_2026-08-26.md`.
-- Distorted-claim corrections: `ef87556` (23 files, annotated and dated, nothing deleted).
+- Distorted-claim corrections: `423ef9a` (23 files, annotated and dated, nothing deleted).
 
 **Scope of this document's own claims.** The excitebike replay, both negative controls, the
 hold-A path, the reward-divergence measurement, the `() > ()` and `() == ()` algebra, and the

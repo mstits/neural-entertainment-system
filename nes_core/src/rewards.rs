@@ -1224,7 +1224,7 @@ impl MarioReward {
         (2304, 360.0), (2560, 400.0), (2816, 440.0), (3072, 480.0),
         (3328, 520.0), (3584, 560.0), (3840, 600.0),
     ];
-    // Note: a previous revision (commit 770d258) added 5 dense
+    // Note: a previous revision (commit 7bb95b4) added 5 dense
     // intermediate checkpoints at 1850/2000/2200/2400/2600 — the
     // population stalled at depth=1275 long before the dense zone.
     // The current 2-checkpoint addition is narrower: only the

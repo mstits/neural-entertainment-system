@@ -1,7 +1,7 @@
 {
   "what": "Reward-dispatch migration equivalence receipt: display-name substring dispatch -> explicit reward_id.",
-  "method": "Real emulation, not synthetic RAM. Per profile: boot the ROM through nes_core.Pool (1 worker, the profile's own frame_skip and start_state_path), step 600 frames with a fixed seeded action sequence (random.Random(1234)), feed every RAM snapshot to the profile's reward function, and SHA-256 the (reward, done, level_id) stream. Pre-change side ran the HEAD binary (79f587c, built from a git worktree with roms/checkpoints/runs symlinked in) against the HEAD configs; post-change side ran the new binary against the migrated configs. Identical hash => identical reward trajectory.",
-  "pre_change_commit": "4eb80a62a9f38a6c85035ff1ba2b1217cb20cf0a",
+  "method": "Real emulation, not synthetic RAM. Per profile: boot the ROM through nes_core.Pool (1 worker, the profile's own frame_skip and start_state_path), step 600 frames with a fixed seeded action sequence (random.Random(1234)), feed every RAM snapshot to the profile's reward function, and SHA-256 the (reward, done, level_id) stream. Pre-change side ran the HEAD binary (cbfee90, built from a git worktree with roms/checkpoints/runs symlinked in) against the HEAD configs; post-change side ran the new binary against the migrated configs. Identical hash => identical reward trajectory.",
+  "pre_change_commit": "a5f13abe5686f5903a3b45945675208bdfb1d227",
   "steps_per_profile": 600,
   "action_seed": 1234,
   "profiles_compared": 25,

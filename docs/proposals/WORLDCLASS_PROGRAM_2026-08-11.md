@@ -46,27 +46,27 @@ this backlog directly.*
 
 ## WAVE LEDGER
 
-- **Wave 1 (a94a51d, 2026-08-12)** — 6 actionable audit bugs fixed
+- **Wave 1 (3654ee5, 2026-08-12)** — 6 actionable audit bugs fixed
   (write_word byte order, empty-cheats hot-path guard, peek_byte input
   routing, cartridge in-place restore, ram_ptr provenance, guarded
   reset). OAM-DMA (#2) reverted → DEFERRED. Test-drift it exposed fixed
-  in 61a2846.
-- **Wave 2 (3be9f4d, 2026-08-12)** — mapper test coverage: 27 untested
+  in 5476fa2.
+- **Wave 2 (9225542, 2026-08-12)** — mapper test coverage: 27 untested
   mappers now have 294 biting tests (lib suite 214 → 508 green). Surfaced
   **7 suspected implementation defects** (below) — filed, not fixed, so
   the suite stayed green.
-- **Wave 3 (1eba6e1 / 23cf9d5, 2026-08-12)** — fixed 3 of the 7 (VRC6
+- **Wave 3 (4b0a574 / 0beb228, 2026-08-12)** — fixed 3 of the 7 (VRC6
   expansion audio forwarding [HIGH, demo-audible], AxROM OOB mask, mapper34
   guard); diagnosed the other 4 as unsafe-to-fix-blind (2 DR dossiers
   submitted). Gated cargo 511 / make test 2538 / pool-test 546.
-- **Wave 4 (4abd0df / 5ab0b1b, 2026-08-12)** — PPU/APU/CPU coverage: +65
+- **Wave 4 (36c064f / 85bba2b, 2026-08-12)** — PPU/APU/CPU coverage: +65
   tests (cpu.rs 1 → 30), lib 511 → 576. Surfaced + FIXED a latent APU DMC
   bug (pointer wrap used `+= 1`, panics under overflow-checks; now
   wrapping_add — release byte-identical).
-- **Wave 4b (f6f23af, 2026-08-12)** — cartridge coverage: +14 tests
+- **Wave 4b (805b3b1, 2026-08-12)** — cartridge coverage: +14 tests
   (mirror_address all modes, trainer skip, NES2.0 CHR, size cap). Lib 576
   → 590. Closed the plain-cargo test backlog.
-- **Wave 5 (5202aa9 / 6fd83fb / 4dda276, 2026-08-12)** — pool/pyo3
+- **Wave 5 (313e199 / f3702f4 / b3e35b5, 2026-08-12)** — pool/pyo3
   coverage (+18, incl. the NEON unpack blind spot; pool-test 546 → 652)
   and the two DR-confirmed mapper fixes (mapper64 RAMBO-1 R15, mapper19
   N163 decode). DR reports round-tripped through the user. Full suite
@@ -78,7 +78,7 @@ Wave 3 split them: fix the clearly-safe ones; DIAGNOSE (don't fix) the
 behavioral ones against the compat suite first. Result — half were fixed,
 half proved unsafe to fix blind. Falsifier source: `runs/rom_compat_audit.json`.
 
-FIXED (1eba6e1), each with a test that fails on the old code:
+FIXED (4b0a574), each with a test that fails on the old code:
 1. **vrc6.rs (HIGH) — VRC6 expansion audio was silent.** forward_vrc6!
    now forwards tick_audio()/audio_mix() for Mapper24/26; also
    uses_scanline_irq()->true. (bundled the LOW #7 here.)
@@ -86,7 +86,7 @@ FIXED (1eba6e1), each with a test that fails on the old code:
    32K-bank-count (identity for full 256KB carts). No more sub-256KB OOB.
 3. **mapper34.rs (LOW) — sub-32KB PRG read** now guarded `off & (len-1)`.
 
-FIXED via Deep Research (Wave 5, 6fd83fb / 4dda276 — DR reports
+FIXED via Deep Research (Wave 5, f3702f4 / b3e35b5 — DR reports
 submitted by user, returned, both confirmed our diagnosis + gave the
 authoritative spec):
 5. **mapper19.rs (Namco163) — FIXED (register decode).** DR (NESdev +
@@ -112,14 +112,14 @@ game today):
    path unproven. Fix (override prg_read_byte to latch in the reg windows)
    needs validation against the ROM. → VERIFY-WITH-ROM.
 
-Also FIXED separately: the DMC overflow-wrap (5ab0b1b) surfaced by Wave 4.
+Also FIXED separately: the DMC overflow-wrap (85bba2b) surfaced by Wave 4.
 
 ## TEST-COVERAGE BACKLOG (largest cluster — the fidelity risk surface)
 
 Grouped by area; each is "add unit tests for X" unless noted. Ranked by
 blast radius.
 
-- **Mappers: DONE (Wave 2, 3be9f4d)** — was 27 of 33 untested; all now
+- **Mappers: DONE (Wave 2, 9225542)** — was 27 of 33 untested; all now
   covered with 294 tests. VRC6/MMC5 audio subsystems included.
 - **PPU**: sprite-evaluation state machine (`:958`), VRAM read buffer
   (`:869`), address-increment row 30/31 wrap (`:1702`), palette mirror

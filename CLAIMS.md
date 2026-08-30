@@ -197,7 +197,7 @@ party who has never seen the game?* If not, it is banned.
 ### FORGE entries
 
 **FORGE-PENDING-VALIDATION — the orthogonal-frontier arm (`--ortho`),
-commit `5f8dcb7`, 2026-08-08.** Castlevania block 3's hall had stalled
+commit `ea1b954`, 2026-08-08.** Castlevania block 3's hall had stalled
 under the five existing arms. The diagnosis came from the run's own
 selection telemetry: with the archive score `sect * 10000 + gx` and
 `sect` permanently 0, the deep arm sampled only gx buckets ≥ 71 while
@@ -270,8 +270,8 @@ WORD borrowed from the discriminator is retracted. No clear was, or is,
 attributed to this arm either way.
 
 **FORGE-CERTIFIED — the in-core PPU scroll odometer (pseudo-addresses
-`0x800–0x802`), commits `c556e40` (core, v3 savestate envelope,
-certification) and `074f888` (rendered-cut scene detection, v4
+`0x800–0x802`), commits `3429d8a` (core, v3 savestate envelope,
+certification) and `741a953` (rendered-cut scene detection, v4
 envelope), 2026-08-23/24.** The need was found in the system's own
 gate telemetry: Rygar, Kung Fu and Ninja Gaiden ran flat on every RAM
 progress scalar while their archives churned — no game-agnostic
@@ -284,8 +284,8 @@ construction. Scene detection keys cells by a rendered-cut ordinal
 (masked hash AND scroll-discontinuity together). Gate: certification
 is five automated checks, fail-any-quarantine — **passed 5/5**
 (`runs/odometer/cert_smb_2026-08-23.json`; the cert and per-game
-gate JSONs are committed in `c3d7405`, and three deep-run log tails —
-`runs/odometer/{ng_deep,rygar_deep,rygar_v2}.log` — in `c1f9dbe`; the
+gate JSONs are committed in `379ffad`, and three deep-run log tails —
+`runs/odometer/{ng_deep,rygar_deep,rygar_v2}.log` — in `161a20b`; the
 night/scene probe logs and the probe run dirs are local-only). Verdicts from its own
 gate probes: Rygar SIGNAL-SOUND (117 distinct / 470 px), Ninja Gaiden
 SIGNAL-SOUND (126 / 1,384 px), Contra cross-validated against the RAM
@@ -410,7 +410,7 @@ re-tested by re-running the identical gate at HEAD, same profile, same
   sentence.
 - **Kung Fu — WITHDRAWN (already), with its corroboration corrected.**
   The "not an instrument fault" clause was struck in the first sweep
-  against commit `bfb515b`, which deleted the vacuous
+  against commit `1c153ab`, which deleted the vacuous
   `passed = not instrument_findings` camera-static override and names
   kungfu first among 13 profiles / 40 vacuous passes carrying the
   `distinct=1 / min=0 / max=0` signature.
@@ -471,8 +471,8 @@ write-up and the replayable tape:
 `docs/receipts/rygar/r1_tape_gx6242.json`.
 
 **FORGE-VALIDATED — generic death-detection fixes: transition-blip
-debounce and wrap-aware lives decrement, commits `1610093` and
-`084362c`, 2026-08-23.** Diagnosed from solver telemetry, not game
+debounce and wrap-aware lives decrement, commits `baa3ac7` and
+`6bf0dfd`, 2026-08-23.** Diagnosed from solver telemetry, not game
 knowledge: Rygar door transitions blip the lives byte through 0 for
 two steps (the same signature as the Bubble Bobble 52→51→53 key blip,
 2026-08-06), and Ninja Gaiden's lives byte underflows 0→255 so every
@@ -485,13 +485,13 @@ Receipt caveat, stated plainly: the Rygar falsifier receipt
 (`runs/rygar_odo_debounce/`) exists on disk uncommitted, and the NG
 underflow probe was described inline in the commit with no banked
 file; the committed deep-run log tails
-(`runs/odometer/{ng_deep,rygar_deep,rygar_v2}.log`, commit `c1f9dbe`)
+(`runs/odometer/{ng_deep,rygar_deep,rygar_v2}.log`, commit `161a20b`)
 partially cover both; the night/scene log tails on disk are likewise
 uncommitted.
 
 **FORGE-SHIPPED — mechanism-liveness preflight
 (`scripts/experiment_preflight.py`), trainer sentinel enforcement, and
-adjudicator fingerprint-identity refusal, commit `3bb10f6`,
+adjudicator fingerprint-identity refusal, commit `e3066e1`,
 2026-08-23.** Forged from the week's own void ledger
 (`docs/research/PROCESS_AUDIT_2026-08-23.md`): four experiment arms —
 2-1 attempt 1, the 1-4 backward ladder, Phase-3 masked v1, and the
@@ -506,7 +506,7 @@ re-run, whose arms were verified live (pair_actor max|Δ| = 0.85,
 fingerprints differing) before adjudication.
 
 **FORGE-PENDING-VALIDATION — the room-graph engine (T1-T4), commit
-`3601c45`, 2026-08-24.** Self-measured detection: the system's own
+`09a1c03`, 2026-08-24.** Self-measured detection: the system's own
 Zelda/Metroid probe receipts (`docs/receipts/room_fp/{zelda,metroid}.md`)
 found the existing scene ordinal an unreliable room-identity signal —
 noisy in Metroid (spurious bumps at clamp/seam with no room actually
@@ -564,9 +564,9 @@ No live room-graph traversal exists yet; no RG-1 numbers exist; no
 Zelda/Metroid capability claim may be made from this entry alone.
 
 **FORGE-SHIPPED — ReDo dormant-neuron recycling
-(`src/training/redo.py`), commit `3bb93ef`, DR-mandated addendum to
+(`src/training/redo.py`), commit `546b733`, DR-mandated addendum to
 the v27 pre-registration, 2026-08-24, agreement-bound recalibration
-commit `5995272`, 2026-08-25.** Self-measured detection: DR review of
+commit `12a7e04`, 2026-08-25.** Self-measured detection: DR review of
 the v27 fresh-recovery pre-registration (Decision B) held that an
 unmodified fresh 4×250-iteration run risked conflating a real capacity
 deficit with primacy bias / dormant-unit collapse, and mandated one
@@ -585,7 +585,7 @@ tests covering dormancy detection, exact-slice resets, optimizer-moment
 handling, and OFF-arm byte-identical training; live end-to-end check
 confirmed OFF prints `[redo] disabled` and samples nothing, ON at
 tau=0.025 prints the armed line plus per-iteration
-dormant/recycled/agreement telemetry. ADDENDUM 2 (`5995272`) root-caused
+dormant/recycled/agreement telemetry. ADDENDUM 2 (`12a7e04`) root-caused
 and revised the V7 agreement-bound pilot check against LayerNorm
 receipts via a tau-sweep (0.05–0.35), PASS under the corrected
 condition, with the V2 seed-0 pilot clean. Honest status: the mechanism
@@ -600,7 +600,7 @@ not that it mattered.
 
 **FORGE-SHIPPED — engine_driver retry/abandon fix (the
 unattended-operation P0) plus six further scheduler/checkpoint
-hardening fixes, commit `5ce9304`, 2026-08-25.** Self-measured
+hardening fixes, commit `3efbf8d`, 2026-08-25.** Self-measured
 detection: a second independent audit pass over surfaces the first
 pass hadn't covered (`scripts/engine_driver.py`, the pyo3 bindings,
 `checkpoint_manager.py`, `checkpointing.py`, `go_explore.py`) found
@@ -651,7 +651,7 @@ long-duration trial, and no unattended-operation uptime claim may be
 made from this entry alone.
 
 **FORGE-VALIDATED — signed progress-axis odometer fix
-(`progress.axis` sign prefix, x/-x/y/-y), commit `9bb5122`,
+(`progress.axis` sign prefix, x/-x/y/-y), commit `d6cc715`,
 2026-08-25.** Self-measured detection: League onboarding wave 3's own
 solver-smoke telemetry, not a walkthrough — 1942's archive froze at 7
 cells, and the deepest-cell/root diagnostics
@@ -686,7 +686,7 @@ untested (Galaga was flagged in the same wave as a candidate carrying
 the identical gap, not yet hit). No clear or League-inclusion claim
 beyond SOUND_ADVANCING is made from this entry.
 
-**FORGE — item/key semantic discovery engine, commit `cc0bc9e`,
+**FORGE — item/key semantic discovery engine, commit `528c278`,
 2026-08-25.** Answers the original "a key can open a specific door"
 capability directive with a purity-clean pipeline: `RoomIndex.cap_hist`
 (an additive graft on the room-graph engine, no version bump), and
@@ -762,8 +762,8 @@ criterion. Stages 3a and 3b are UNEXERCISED — 3a by a structural
 constant, 3b by consequence.** IS-1b remains unrun. No claim about
 what this engine can distinguish survives beyond Stages 1-2.
 
-**FORGE — fight-gate progress mechanism, commit `07f367d` design /
-`af94b88` implementation, 2026-08-25.** A second progress source
+**FORGE — fight-gate progress mechanism, commit `27c81d0` design /
+`c16a162` implementation, 2026-08-25.** A second progress source
 alongside the PPU scroll odometer, for the CAMERA_STATIC_AGENT_ACTIVE
 game class the odometer cannot serve (fixed-screen fight games — no
 scroll gradient exists by definition). Purity-clean by construction:
@@ -779,7 +779,7 @@ unmodified. **Validated on Punch-Out: SUCCESS.** Blind discovery
 (0x0398), start 96 (0x60), attack_agree 5/5, defense_agree 0/5 — the
 same byte the profile's internet-sourced `ram_mapping` label already
 used, independently re-derived from hardware observables alone. Wired
-live into `configs/punchout.yaml` (commit `2e2696a`) and re-verified
+live into `configs/punchout.yaml` (commit `d939bf6`) and re-verified
 against the committed file, not just the design-time scratch config: a
 fresh run reproduces the smoke's `max_gx_in_max_area=81` exactly.
 League classification updated CAMERA_STATIC_AGENT_ACTIVE →
@@ -831,7 +831,7 @@ ADDENDUM FG-1 (2026-08-26, ledger audit) — **the Punch-Out result is
 untouched. Three framing claims around it are not.**
 
 *The class name was minted by a gate that could not fail.*
-`CAMERA_STATIC_AGENT_ACTIVE` is the verdict the pre-`bfb515b`
+`CAMERA_STATIC_AGENT_ACTIVE` is the verdict the pre-`1c153ab`
 `progress_signal_gate.py` printed when its inline `rx==0/ry==0` branch
 deleted the "too coarse" instrument finding and forced
 `passed = not instrument_findings` because OAM churn showed the agent
@@ -878,7 +878,7 @@ three-clause filter under this probe* — not *no purity-clean round
 byte exists in these games*.
 
 **FORGE-SHIPPED — the six clear signals reach the vote, commit
-`ee1324a`, 2026-08-26.** `entity_wipe`, `room_fp_transition`,
+`140218b`, 2026-08-26.** `entity_wipe`, `room_fp_transition`,
 `input_lock`, `lock_release_novelty`, `oam_quiesce` and `scene_cut`
 were built, tested and receipted earlier the same day and reached **no
 production path at all**: the live vote was `tally + coord >=
@@ -1047,7 +1047,7 @@ True. Two more profiles were inheriting the same way and were not in the
 original finding: `configs/zelda_roomfp.yaml` (same 0x0672 jackpot,
 reproduced) and `configs/metroid_roomfp.yaml` (silently acquired the
 ledger-BLOCKED `MetroidReward`). The dispatch existed from the initial
-commit `55e5333` (2026-04-27) to `c89a816` (2026-08-26) — **121 days**;
+commit `55e5333` (2026-04-27) to `2a15dfb` (2026-08-26) — **121 days**;
 it was a breach *of the quarantine* only for the 1 day the quarantine had
 existed, and the three inheriting profiles for 2 days. Closed
 structurally: `build_reward` takes `reward_id` and no longer receives the
@@ -1065,9 +1065,9 @@ deciding which bytes this project's own discovery instrument was permitted
 to nominate, and the bytes it removed were precisely the ones under
 quarantine — whose documented exit condition is rediscovery *by that
 instrument*. Not a weakened quarantine: the quarantine inverted, with the
-contamination record used as the blindfold. Live from `c9d3d95`
+contamination record used as the blindfold. Live from `f3b97b4`
 (2026-07-31, when the fold was added; the addresses had been in that config
-since `d0f315e`, 2026-07-12) to 2026-08-26 — **26 days**. Closed: only
+since `a2a5644`, 2026-07-12) to 2026-08-26 — **26 days**. Closed: only
 solve-block coordinate bytes are excluded now, `ram_mapping` is annotation
 tagged `"known": true/false`, and the caller receives a membership
 *predicate* rather than a set, so `excluded |= mapped` cannot be re-added
@@ -1294,7 +1294,7 @@ clears, all four honest-protocol rates, and every purity finding are
 intact.
 
 The three withdrawals: Kung Fu's "not an instrument fault" (against
-commit `bfb515b`, which deleted the vacuous camera-static override);
+commit `1c153ab`, which deleted the vacuous camera-static override);
 Ninja Gaiden's odometer SIGNAL-SOUND verdict; Contra's odometer
 SIGNAL-SOUND verdict and its unreceipted "163" cross-validation. All
 three are annotated in place — ADDENDUM 2 on the odometer entry.
@@ -1339,7 +1339,7 @@ empty scan), `scripts/odometer_cert.py` (three of five checks are
 positive-form), the ReDo forced-recycle sweep (the ledger's best
 entry: a null banked *with* its positive control), and
 `scripts/anti_vacuity_scan.py` + `tests/test_anti_vacuity_gates.py`
-(commit `1580ebf`).
+(commit `eb77a0a`).
 
 ## Enforcement
 
@@ -1664,7 +1664,7 @@ v26's own gate**, overridden on strategy: feedforward policies already
 carried AUC-0.83-grade stick access and still plateaued 0.21–0.51
 honest, so detection was never the binding constraint; the expensive
 recurrent-RL overhaul was declined. SUPERSEDED FIGURES, marked as
-such: those AUCs predate the `28dc163` loader fix; the corrected
+such: those AUCs predate the `38f2358` loader fix; the corrected
 real-policy probe (divergent-stick base rate 0.0575 per the receipt)
 reads **MLP 0.76 vs GRU 0.74** —
 with real weights recurrence adds nothing and the GRU edge flips sign.
@@ -1712,7 +1712,7 @@ runs/gru_ab/stick_probe_realpolicy.json): the attempt to train the
 measured 33% recoverable slice into the banked 1-1 control (gate
 ≥ 0.80 honest). VOID, retracted: the first attempt trained a random
 net — `build_tile_policy_from_checkpoint` silently returned an
-uninitialized network for path inputs; fixed in commit `28dc163`.
+uninitialized network for path inputs; fixed in commit `38f2358`.
 RETRACTED on the same root cause, marked as such: the "0/60
 unjittered argmax-tie receipt" from that day's standalone loop — every
 standalone-loop anomaly of 2026-08-24 (the 0/60 collection, the t=54
@@ -1732,7 +1732,7 @@ META-FINDING: the consolidated 48k artifact is an **isolated optimum**
 — every gradient that touched it made it worse; post-hoc improvement
 on this artifact is closed, and 1-1's honest number remains the
 untouched control's 0.767. Receipt caveat, stated plainly: the committed train_history.json
-(`8bded0d`) holds the base-method history (epoch-0 0.033, loss 3.35);
+(`6d84cdf`) holds the base-method history (epoch-0 0.033, loss 3.35);
 the working-tree copy was later overwritten by variant A's rung-2
 history (0.70/0.60, uncommitted), variant A's rung-1 history lives
 only in task logs, and variant B's train log and checkpoints were on
@@ -1821,7 +1821,7 @@ or void — gets its own entry when the run actually finishes.
 
 V27 FRESH-RECOVERY VERDICT: FAIL — BEST-OF-4 0.530 (2026-08-25, prereg
 `docs/proposals/V27_FRESH_RECOVERY_2026-08-24.md` VERDICT section,
-commit `5b3363d`, receipts `runs/v27_fresh_recovery/gate/*.json`, 16
+commit `2ec0d58`, receipts `runs/v27_fresh_recovery/gate/*.json`, 16
 files — 4 seeds × 2 checkpoint classes × 2 eval seeds × 50 episodes).
 Full honest-protocol scoring (cold entrance, greedy, sticky 0.25,
 jitter ±16, max-steps 1500), two checkpoints per seed
@@ -1965,7 +1965,7 @@ known to fail in a second, independent way.
 
 V28 CAPACITY VERDICT: FAIL — BEST-OF-4 0.670 (2026-08-25, prereg
 `docs/proposals/V28_CAPACITY_2026-08-25.md` VERDICT section, configs
-`configs/mario_1_1_v28_seed{0,1,2,3}.yaml`, launch commit `e4e35a7`,
+`configs/mario_1_1_v28_seed{0,1,2,3}.yaml`, launch commit `3fca666`,
 receipts `runs/v28_capacity/gate/*.json`, 16 files — 4 seeds × 2
 checkpoint classes × 2 eval seeds × 50 episodes). Full honest-protocol
 scoring, identical to the v27 gate in every respect (cold entrance from
@@ -2261,7 +2261,7 @@ receipts, which is exactly the quantity that would say whether tau was
 mis-calibrated slightly or by an order of magnitude. (3) The V1 receipt
 named in the registration's receipts layout,
 `runs/v28_capacity/config_diff.json`, was never written — V1 was
-genuinely checked pre-launch (asserted in commit `e4e35a7`) and its
+genuinely checked pre-launch (asserted in commit `3fca666`) and its
 substance is re-verified above against configs git confirms unchanged
 since, but a registered receipt path that is never written is a gap
 even when the check itself was honest. (4) `warp_rate` has no field in
@@ -2380,7 +2380,7 @@ stub has no such attribute). The diff is preserved, tracked, at
   own lineages run 3,865–6,018 actions in one continuous life with zero
   terminal deaths. Cite 138 only as the probe's survival.
 - **Contra — SIGNAL SOUND. The exclusion is WITHDRAWN** (corrected
-  2026-08-26; defect fixed in `5a09775`, see the ODO_BLANK section
+  2026-08-26; defect fixed in `608c974`, see the ODO_BLANK section
   below). The original "SIGNAL UNUSABLE — only 20 distinct in 69 steps"
   rested on a broken inference: the gate computed its resolution
   finding on the window *after* D5 truncation, and **a 69-sample window
@@ -2518,7 +2518,7 @@ so a Go-Explore restore carries the saved value back in (measured 273 →
 90). Under 12,036 restores the transition count held at 55 with zero
 fabricated events; the error is always downward.
 
-**3. The 2026-08-26 cohort arming (`4dd15ea`) is WITHDRAWN. All 23
+**3. The 2026-08-26 cohort arming (`27902e1`) is WITHDRAWN. All 23
 profiles are disarmed.** That commit armed `scene_cut` off a survey
 whose reproducer was never committed, and the arming was a judgement
 rather than a measurement. Re-run as a measurement —
@@ -2543,7 +2543,7 @@ is in code (`C7_SEPARABILITY_WITNESSED`) with a register that can be
 added to.
 
 Disarming returns all 23 to quorum **UNREACHABLE / ceiling 0.75**, the
-pre-`4dd15ea` state, verified profile by profile. The specific defects
+pre-`27902e1` state, verified profile by profile. The specific defects
 review found are all real and are recorded per-profile in each config's
 refusal: `kind: [fade]` armed on a blank channel measured at zero runs
 (the evidence state `tetris_usa` was DECLINED for); a death veto over an
@@ -2565,7 +2565,7 @@ this campaign is about. So the evidence the disarm rests on is committed
 too (`..._asfound_2026-08-27.json`), and a test fails rather than skips
 if it goes missing.
 
-**Scope correction to the `4dd15ea` claim.** "Eligibility only —
+**Scope correction to the `27902e1` claim.** "Eligibility only —
 `is_clear()`/`solutions` byte-identical" is true of the **solver** and
 false of the **offline harness**: `clear_detect.run_episode` builds the
 shelf with no `mode` check, so all 23 moved UNREACHABLE → FIREABLE
@@ -3000,7 +3000,7 @@ screen description in the write-up is read off our own rendered frames.
 ## CONTRA LOCK ROUTE A+B 2026-08-27 — EXHIBITION, wall HELD, both open branches CLOSED
 
 Full write-up: `docs/research/CONTRA_LOCK2_2026-08-27.md`. Predecessor:
-`docs/research/CONTRA_WALL_2026-08-27.md` (commit `1954037`). **No tape
+`docs/research/CONTRA_WALL_2026-08-27.md` (commit `7d91d72`). **No tape
 is preserved under `docs/receipts/` because no trajectory exceeded
 3072.**
 
@@ -3513,7 +3513,7 @@ lists four adopted mechanics; three were absent from the production path:
   formulas and passes `tests/test_smdp_gae.py`. **Nothing else in the repo
   imports it.** `ppo_updater.py:153` calls `batched_gae` with an identical
   argument list whether `commitment_options` is on or off. Integration commit
-  `cd00fdf` argues the substitution in its message; that reasoning never reached
+  `b52b0b1` argues the substitution in its message; that reasoning never reached
   the registration, and it is conditioned on a dense value stream that does not
   exist in training (next bullet).
 - **Dense critic auxiliary.** `ppo_updater.py:374` builds one permutation over
@@ -3567,7 +3567,7 @@ compute.** Read it as provisional until `V_adv` is logged.
 ADDENDUM VADV-1 (2026-08-27) — **`V_adv` is now logged. It returned VOID, so this
 entry stays provisional, but for a sharper and more specific reason than "not yet
 measured."** The instrument was implemented (`scripts/score_banked_iterates.py`,
-`b9ed38e`), pre-registered before any number was read
+`f8e3536`), pre-registered before any number was read
 (`docs/proposals/VADV_PREREG_2026-08-27.md`) and run offline over banked
 checkpoints — no emulator, no training. Report:
 `docs/research/VADV_B5_2026-08-27.md`; annotation on the verdict itself:
@@ -3616,7 +3616,7 @@ ADDENDUM VADV-2 (2026-08-28) — **that experiment was registered, run, and
 VOIDED on a data-integrity defect. `V_adv` is NOT retired, and B5 does not
 move.** Full write-up: `docs/research/TWO_REGISTERED_TESTS_2026-08-27.md`
 Part I. Registration: `docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md`
-(commit `9a9db2d`), written before any number was read.
+(commit `35f6d60`), written before any number was read.
 
 The on-policy repair was built and the rollouts were collected — 26 iterates,
 ~1.6 M transitions, 0.86 h — but **a reused NumPy buffer meant every row
@@ -3710,13 +3710,13 @@ re-specified in a written addendum rather than left to cap the verdict.
 ADDENDUM VADV-3 (2026-08-28) — **the re-run happened, SOUND, and `V_adv` IS
 RETIRED. B5 still does not move.** Registration: the parent prereg inherited
 verbatim plus `docs/proposals/VADV_ONPOLICY_RERUN_ADDENDUM_2026-08-28.md`
-(commit `77b8549`, written before compute). Full write-up:
+(commit `2e7c663`, written before compute). Full write-up:
 `docs/research/VADV_ONPOLICY_RERUN_2026-08-28.md`.
 
 Every §1.9 re-run condition was met: banks chain-verified on the written
 artifact (one guard false positive — the registered cross-population drop
 leaves legitimate mid-episode gaps — fixed via a `row_step` column, commit
-`6d700c5`, revert-verified 6/51, full grid recollected); **NC-b's acting range
+`5d0e016`, revert-verified 6/51, full grid recollected); **NC-b's acting range
 re-derived critic-free BEFORE scoring: MEASURABLE 26/26, identical-to-PC 0/26**
 (and on sound data it then behaved, COLLAPSED 25/26); A1 reproduced a third
 time bit-identically (0.6668875582236998); 3,224/3,224 episode outcomes
@@ -3812,7 +3812,7 @@ CONFIRMED status runs through this path.
 
 ### 4. Shared substrate (trunk-plus-heads) — no verdict exists, but a PASS is on disk
 
-v20's Rank-1 falsifier is class 3: built and wired on 2026-08-17 (`f757506`),
+v20's Rank-1 falsifier is class 3: built and wired on 2026-08-17 (`740cac6`),
 **never run.** `runs/shared_substrate/manifest.json` reads `"status": "pending"`;
 `checkpoints/shared_substrate_v1` does not exist; CLAIMS.md has no prior mention
 of it. Honestly disclosed once, at `PROCESS_AUDIT_2026-08-23.md:122` — "the
@@ -3830,7 +3830,7 @@ Two surfaces disagree with those disclosures:
   has never trained currently asserts a PASS.**
 - **`docs/proposals/README.md` §10, committed 2026-08-25 — two days after both
   audits above — marks the round `COMPLETED/ACTIONED` and the ranking "shipped as
-  commit `f757506`."** A harness shipping is not a hypothesis being tested.
+  commit `740cac6`."** A harness shipping is not a hypothesis being tested.
 
 **No claim is made from this experiment and none may be.** The receipt rows are
 fixture output and are to be purged; the README row is to be corrected. The
@@ -3858,7 +3858,7 @@ decline was not consulted two weeks later.**
 Full write-up: `docs/research/REDO_ACTUALLY_FIRES_2026-08-27.md`.
 Registration adjudicated: `docs/proposals/V30_REDO_ARMED_2026-08-27.md`.
 Receipts: `runs/v30_premise_falsifier_2026-08-27/` (5 run logs, `analyze.py`,
-`analysis.txt`, 4 configs), `runs/redo_fires/T0/` (commit `439b87f`).
+`analysis.txt`, 4 configs), `runs/redo_fires/T0/` (commit `c6c6efe`).
 
 **THE HEADLINE. The Deep Research round of 2026-08-25 mandated ReDo (Sokar
 et al. 2023) as the fix for a diagnosed plasticity loss, and in both
@@ -4003,10 +4003,10 @@ where the DR left it on 2026-08-25: diagnosed, prescribed, and untested.
 
 Full write-up: `docs/research/TWO_REGISTERED_TESTS_2026-08-27.md` Part II.
 Registration adjudicated: `docs/proposals/V31_REDO_SURGICAL_2026-08-27.md`
-(commit `1011eff`). Receipts: `runs/v31_redo_surgical_2026-08-27/`
+(commit `41a1e07`). Receipts: `runs/v31_redo_surgical_2026-08-27/`
 (`phase_g/phase_g.log`, `phase_m/PHASE_M_RESULT.json`,
 `phase_m_seed0_tau010.log`, `phase_m_seed0_tau075.log`), status markers
-`runs/redo_surgical/status/`. Machinery: commits `0906f7c`, `8606fb1`.
+`runs/redo_surgical/status/`. Machinery: commits `989ad38`, `43deae3`.
 
 **THE HEADLINE. v31 registered ReDo at tau = 0.10 — the TOP of the Deep
 Research prescription's own 0.025-0.1 range, and the surgical dose v30's
@@ -4117,7 +4117,7 @@ every fifth entry in `collect_summary.json`). Write-ups:
 `docs/research/LANE_A_REPAIRED_AND_BOTTOMK_2026-08-28.md` §3,
 `docs/research/VADV_ONPOLICY_RERUN_2026-08-28.md` §6. Registered as
 diagnostic-only in `docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md`,
-carried forward unchanged by the rerun addendum (`77b8549`).
+carried forward unchanged by the rerun addendum (`2e7c663`).
 
 **THE MEASUREMENT.** A diagnostic probe restarts 24 episodes from rung 933 —
 a rung the 1-2 backward curriculum demonstrably advanced through — at five
@@ -4163,9 +4163,9 @@ that happened to be running when it was taken.
 Full write-up: `docs/research/V32_PHASE_R_ADJUDICATION_2026-08-28.md`; landed
 in `docs/research/LANE_A_REPAIRED_AND_BOTTOMK_2026-08-28.md` §§4-5.
 Registration adjudicated: `docs/proposals/V32_REDO_BOTTOM_K_2026-08-28.md`
-(commit `e9cc5ed`), every numeral fixed before compute. Receipts:
+(commit `2619b16`), every numeral fixed before compute. Receipts:
 `runs/v32_redo_bottom_k_2026-08-28/{smoke,phase_r,phase_r2}/`. Machinery:
-commits `e9cc5ed`, `0d4835b`, `86cebb2`.
+commits `2619b16`, `166dd34`, `62dfef2`.
 
 **THE HEADLINE. v31 forbade fixed-tau ReDo and licensed exactly one successor
 — recycle the bottom-k units by dormancy RANK, which caps the dose by
@@ -4271,7 +4271,7 @@ writing before compute, not into a receipt afterwards.
 
 Full write-up: `docs/research/V32_REDO_BOTTOM_K_CAMPAIGN_2026-08-28.md`.
 Addendum to the registration: `docs/proposals/V32_REDO_BOTTOM_K_2026-08-28.md`
-§12 (`1be16b2`). Receipts: `checkpoints/mario_1_1_v32_redo_bottom_k_seed{0..3}/`
+§12 (`d6a2550`). Receipts: `checkpoints/mario_1_1_v32_redo_bottom_k_seed{0..3}/`
 (all four, 250 iterations, 24 saved checkpoints each);
 `docs/receipts/v32_redo_bottom_k/seed{0..3}_armgate.json`.
 

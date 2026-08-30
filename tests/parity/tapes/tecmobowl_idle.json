@@ -15,6 +15,6 @@
       "buttons": 0
     }
   ],
-  "notes": "Idle title-screen regression lock 2026-04-23; golden hashes re-recorded 2026-07-11 for the STY/STX $4014 late-write deferral; frame-22 hash re-recorded 2026-08-24 post-8c10ade APU-store pre-charge / DMC-stall fix \u2014 the old hash encoded the pre-fix ASM path's 1-tick-early APU abs-store (interpreter never produced it, even on recording day).",
+  "notes": "Idle title-screen regression lock 2026-04-23; golden hashes re-recorded 2026-07-11 for the STY/STX $4014 late-write deferral; frame-22 hash re-recorded 2026-08-24 post-e9f3164 APU-store pre-charge / DMC-stall fix \u2014 the old hash encoded the pre-fix ASM path's 1-tick-early APU abs-store (interpreter never produced it, even on recording day).",
   "golden_hashes": "tecmobowl_idle.golden.bin"
 }

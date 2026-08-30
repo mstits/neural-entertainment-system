@@ -1,6 +1,6 @@
 {
   "what": "Integration of four show-lane modules into scripts/live_solve_show.py, each behind an OFF-by-default flag. Default (no flags) path is byte-identical to the base show.",
-  "git_commit_at_test": "c9d3d95",
+  "git_commit_at_test": "f3b97b4",
   "integration_point": "scripts/live_solve_show.py",
   "modules_wired": {
     "heatmap": {

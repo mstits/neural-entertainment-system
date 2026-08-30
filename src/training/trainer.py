@@ -1930,7 +1930,7 @@ class Trainer:
         roll_sticky = sticky > 0 and step > 0
         # Per-genome RNG draw. Originally argued this was "unfair" (genome
         # A free while genome B forced to stick), and the fix landed in
-        # cb509b0. Reverted because the run regressed: depth pinned at
+        # 76bbd43. Reverted because the run regressed: depth pinned at
         # 1887 for 32 gens with the synced version, vs prior runs
         # reaching 2596+ by gen 5. Theory: in GA selection,
         # action-stickiness variance ACROSS genomes is exploration —
@@ -1966,7 +1966,7 @@ class Trainer:
         # Conversion lives in profile_utils so the trainer hot path and
         # the headless eval/launch scripts share exactly one mapping.
         # The string-entry / unknown-button guards (this exact bug bit
-        # the canonical profile in commit d76c4ab) moved there too.
+        # the canonical profile in commit d0fa693) moved there too.
         from src.training.profile_utils import action_space_to_bitmasks
         table = action_space_to_bitmasks(self.action_space)
         commit_cfg = ((self.game_profile.get("reinforce", {}) or {})

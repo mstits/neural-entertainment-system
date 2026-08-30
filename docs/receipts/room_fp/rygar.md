@@ -1,6 +1,6 @@
 # room_fp calibration receipt — Rygar (2026-08-26, R1-05)
 
-Profile: `configs/rygar.yaml` at HEAD `547434e` (nes_core sha256_16 `54366c20d32f71cc`)
+Profile: `configs/rygar.yaml` at HEAD `2459e5e` (nes_core sha256_16 `54366c20d32f71cc`)
 Tool: `scripts/room_fp_calibrate.py` (capture / mask / replay) +
 `/private/tmp/.../scratchpad/rygar_roomfp_capture.py` (replays a real banked
 trace through the same capture format — see "Fixture" below)

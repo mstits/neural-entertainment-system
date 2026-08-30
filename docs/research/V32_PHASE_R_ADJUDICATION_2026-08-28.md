@@ -1,7 +1,7 @@
 # v32 Lane B — the Phase R ladder, both rungs. Rung 1 NO-GO, rung 2 GO, campaign not run.
 
 Adjudicated against `docs/proposals/V32_REDO_BOTTOM_K_2026-08-28.md` (commit
-`e9cc5ed`), whose every numeral was fixed before compute. Nothing here moves a
+`2619b16`), whose every numeral was fixed before compute. Nothing here moves a
 bar, and no bar was reopened.
 
 ---
@@ -248,7 +248,7 @@ list below.)*
 | `runs/v32_redo_bottom_k_2026-08-28/phase_r/arm_gate.txt` | B1-B4, `VOID-NO-TURNOVER`, rc 2 |
 | `runs/v32_redo_bottom_k_2026-08-28/phase_r/independent_verify.json` | the second implementation's agreeing read |
 | `runs/v32_redo_bottom_k_2026-08-28/phase_r/recovery_curve.json` | per-unit score and rank at each of the next four checks |
-| `runs/v32_redo_bottom_k_2026-08-28/smoke/` | the pre-existing wiring receipt (commit `e9cc5ed`) |
+| `runs/v32_redo_bottom_k_2026-08-28/smoke/` | the pre-existing wiring receipt (commit `2619b16`) |
 
 ---
 

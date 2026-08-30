@@ -67,7 +67,7 @@ solve:
   lives: 0x007B
   clear:
     # scene_cut DECLINED 2026-08-27, superseding the 2026-08-26 arming
-    # (4dd15ea). Re-adjudicated by measurement, not judgement:
+    # (27902e1). Re-adjudicated by measurement, not judgement:
     # scripts/scene_cut_arming.py.
     # DEMONSTRATED FALSE POSITIVE: driven at its own armed gate (scene_min=6,
     # blank_min=1, kind=['fade']) over 4x6000 steps of mixed-random play that

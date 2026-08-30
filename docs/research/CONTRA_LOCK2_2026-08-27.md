@@ -5,7 +5,7 @@
 search output or instrument measurement. No policy was trained for this game
 and no honest-protocol evaluation was run. Nothing here may be described with
 "the AI learned", "the AI plays", or "the AI beat" — see `CLAIMS.md`.
-**Predecessor:** `docs/research/CONTRA_WALL_2026-08-27.md` (commit `1954037`),
+**Predecessor:** `docs/research/CONTRA_WALL_2026-08-27.md` (commit `7d91d72`),
 which characterised the lock and falsified the boundary-resident attack family
 from one shared root. This document does not re-derive any of it.
 **Emulator:** `nes_core` sha256_16 `54366c20d32f71cc`.
@@ -200,7 +200,7 @@ every non-lock cell's count-arm weight divides by — is untouched.
 |---|---|---|---|
 | **B-O4** | **LEX-YIELD** | Laplace-smoothed generativity of the cell as a burst root, `(yields+1)/(bursts+2)`, read off bookkeeping `_assign()` already computed and threw away | 3 workers, 557 s (≈212 s armed), fresh from power-on, seed 44. 11,928 cells, 1,747 at the wall. `max_gx` 3072 every line. |
 | **B-O1** | **LEX-SURVIVAL** | `1 − 1/(1 + n/64)`, n = consecutive alive-in-lock steps the lineage reached | 3 workers, 840 s (≈810 s armed at `--lock-pin-secs 30`), resumed `solve20`, seed 12345. 30,614 cells, 1,393 at the wall. `max_gx` 3072 on all 14 lines. |
-| **B-O2** | **LEX-LATCH** | Control-differenced agent-latch count, with a **paired NOOP continuation from the cell's own blob on a private probe emulator** so a corpse cannot score | Branch `contra-lock-b-o2` (`ec21587`), not merged. 28,542 cells, 1,421 at the wall. `max_gx` 3072. |
+| **B-O2** | **LEX-LATCH** | Control-differenced agent-latch count, with a **paired NOOP continuation from the cell's own blob on a private probe emulator** so a corpse cannot score | Branch `contra-lock-b-o2` (`07dd390`), not merged. 28,542 cells, 1,421 at the wall. `max_gx` 3072. |
 | **B-O3** | **LEX-NOVELTY** | Count-based novelty of an entry-differenced RAM descriptor held **outside** the cell key, so cell cardinality stays A/B-comparable with all nine prior campaigns | 3 workers, 1,629 s (≈1,290 s armed), fresh from power-on, seed 83011. 21,219 cells, **3,393 at the wall** (2.5× solve20's). `max_gx` 3072 on all 27 lines. |
 
 `solutions: 0` in every run, and it is **evidence of nothing** on this profile —
@@ -570,7 +570,7 @@ harness:
    independent of the verdict and both must precede any post-wall run.
 4. **Reconcile or retire branch `contra-lock-b-o2`.** LEX-LATCH is implemented,
    tested and unmerged, as a parallel and incompatible version of the same flag
-   family based off `9bc5485`. The roster test now prevents its *name* shipping
+   family based off `c9a3f26`. The roster test now prevents its *name* shipping
    without it.
 5. **Otherwise, re-shelve Contra with this receipt.** Two named open branches
    were closed for roughly two core-hours of search plus the landing. That is the
@@ -625,7 +625,7 @@ Under gitignored `runs/`:
 - `runs/contra_lock2/_LANDING/dom_check.py` / `dom_check.json` — the
   equal-score/more-steps domination receipt of §4(iii)
 - `runs/contra_lock2/B-O1/run1{,.log}` — LEX-SURVIVAL
-- `runs/contra_lock2/B-O2/` — LEX-LATCH (branch `contra-lock-b-o2`, `ec21587`)
+- `runs/contra_lock2/B-O2/` — LEX-LATCH (branch `contra-lock-b-o2`, `07dd390`)
 - `runs/contra_lock2/B-O3/run1{,.log}`, `.../control_off/run1`, `analyze_run1.py`,
   `compare_final.py` — LEX-NOVELTY and its (unmatched, §8) off control
 - `runs/contra_lock2/B-O4/run1`, `.../smoke` — LEX-YIELD

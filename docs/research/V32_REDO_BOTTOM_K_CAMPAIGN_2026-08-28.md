@@ -26,7 +26,7 @@ whether a seed is admitted to be scored at all.
    2's C=10, 25 checks is the *structural maximum* over 250 iterations —
    `>= 48` cannot be satisfied by any rung-2 run regardless of mechanism
    behavior. Corrected to 25 − 2 = 23 (`ADDENDUM 2026-08-28` in the
-   registration, `1be16b2`). **Disclosed:** this correction was written after
+   registration, `d6a2550`). **Disclosed:** this correction was written after
    seeing all four seeds' raw event counts, not before. The number is derived
    from the registered rung-2 structure, not reverse-engineered to pass any
    particular seed — but the ordering is stated plainly rather than hidden.

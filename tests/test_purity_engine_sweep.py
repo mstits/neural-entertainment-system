@@ -1,6 +1,6 @@
 """THE YAML QUARANTINE IS CLEAN. THE ENGINE IS NOT. This closes the gap.
 
-The 994-entry config sweep (0557896) quarantined 7 addresses and named its
+The 994-entry config sweep (82f3b4f) quarantined 7 addresses and named its
 own scope limit in the same commit message:
 
     "Quarantining the YAML retracts the DOCUMENTATION claim, NOT the

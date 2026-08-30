@@ -681,7 +681,7 @@ def test_it_fires_within_about_one_window_of_the_state_becoming_absorbing():
 # ==========================================================================
 
 def test_two_lineages_do_not_share_an_anchor():
-    """A shared-index race is what dropped RoomFpTransitionSignal (698f142).
+    """A shared-index race is what dropped RoomFpTransitionSignal (a66cc74).
     One signal instance serves every worker in the pool; interleaving two
     lineages through it must not let either see the other's evidence."""
     env = IdlePlayerEnv()

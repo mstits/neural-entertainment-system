@@ -52,7 +52,7 @@ ram_mapping:
 # Retracted 2026-08-27 — see docs/research/UNWITNESSED_SEMANTICS_2026-08-27.md
 # String value on purpose: `int(v)` must raise, so no consumer can fold this
 # address back into a set (the exclusion-fold inversion closed for Zelda in
-# 2e6014f). tests/test_purity_quarantine_sweep.py enforces that no profile on
+# 222ae25). tests/test_purity_quarantine_sweep.py enforces that no profile on
 # this ROM re-adopts it into a live `ram_mapping`.
 quarantined_external_knowledge:
   applies_to_rom: "roms/Castlevania (USA).nes"
@@ -69,7 +69,7 @@ quarantined_external_knowledge:
     independent run trees — but no boss fight has ever been witnessed on
     it, and this byte specifically was never observed firing:
     docs/receipts/ram_verify/castlevania.json grades 0x4A0 "churn 0.0/1k
-    (informational)" and commit ad01b4f (2026-07-29) records "the
+    (informational)" and commit 367676e (2026-07-29) records "the
     receipted 0x4A0 boss_health byte read 0 through live fights ... left
     unconfigured until observed moving". A byte that passes enters a NEW
     ram_mapping entry carrying its own receipt.

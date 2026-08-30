@@ -3,7 +3,7 @@
 # Confirms three things search_prior_art.sh's grep-based pass left implicit:
 #   1. entropy_guard's config coverage is EXACTLY {1-2, 1-3} backward — never
 #      any 1-1 config, including the v4/v6/consol lineage v27/v28 descend from.
-#   2. The unconditional "ANTI-COLLAPSE GUARD" in trainer.py was built (1ec4798)
+#   2. The unconditional "ANTI-COLLAPSE GUARD" in trainer.py was built (73bd244)
 #      for the MIRROR-IMAGE failure (entropy rising toward ln(A) / melting-to-
 #      random), not the sharpening/decay-to-zero direction v27/v28 exhibit.
 #   3. The 1-2 OPTIONS control run that collapsed -74%/200iters had BOTH
@@ -30,9 +30,9 @@ for f in configs/mario_1_1_backward.yaml configs/mario_1_1_backward_v4.yaml \
 done
 
 section "2. Origin commit of the unconditional ANTI-COLLAPSE GUARD (trainer.py)"
-git log -1 --format='%H %s' 1ec4798
+git log -1 --format='%H %s' 73bd244
 echo "--- its own stated trigger direction (entropy RISING, i.e. melting) ---"
-git show 1ec4798 --format='' | grep -A3 "entropy exceeds 90%" | head -6 || true
+git show 73bd244 --format='' | grep -A3 "entropy exceeds 90%" | head -6 || true
 echo "--- v27/v28's actual entropy direction (falling), from v28 seed3 best run ---"
 echo "iter 19: 1.4656 | 59: 0.7318 | 119: 0.2910 | 179: 0.0796 | 239: 0.0716"
 echo "ln(6) = $(python3 -c 'import math; print(math.log(6))')  => 90% threshold = $(python3 -c 'import math; print(0.90*math.log(6))')"

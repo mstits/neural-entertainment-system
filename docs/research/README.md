@@ -25,7 +25,7 @@ jitter — Machado et al. 2018)?
 The question: can Go-Explore search solve SMB's aliasing mazes (4-4, 7-4,
 8-4) without game internals? **Resolved 2026-07-27: 4-4, 7-4, and 8-4 all
 fell** (8-4 to the pipe-entry macro), completing the full 32-level
-power-on-to-victory chain (commit db44fc7; see
+power-on-to-victory chain (commit be3db3a; see
 `docs/receipts/full_run/receipts.json` and
 `runs/live_show/smb_4_4_micro/chain_verify.json`) — an EXHIBITION-ledger
 result (search, not a learned policy; see `../../CLAIMS.md`).

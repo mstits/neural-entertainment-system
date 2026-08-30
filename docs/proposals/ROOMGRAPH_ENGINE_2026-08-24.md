@@ -1,7 +1,7 @@
 # ROOM-GRAPH ENGINE — SYNTHESIS (2026-08-24)
 
 Synthesized from three independent designs (D0 minimal-diff, D1 graph-first, D2 discovery-first).
-All line anchors below re-verified against HEAD `09299fa` on 2026-08-24 (`scripts/go_explore_solve.py`,
+All line anchors below re-verified against HEAD `3e9a502` on 2026-08-24 (`scripts/go_explore_solve.py`,
 6099 lines): ODO_LO :646, `room_sig` parse :1448, `room_id` :1975-1977, `derive_transition_macros`
 :1992, transition-macro wiring :2560, ortho knobs :2664, `_xram` :2866 / `_xram_local` :2892,
 `observe` :2952 / key composition :3182, R4 recorder :3192-3204, `seed` :3857, `_refresh_sel_cache`
@@ -145,7 +145,7 @@ envelope; Python state does not):
   `c["fp_pend"] = None`. `c["p0750"] = None` at burst start already prevents restore-edge false
   transits; the adoption-from-unknown guard makes a root's first settle transit-free and edge-free.
 
-### §3 Integration points (all verified at 09299fa)
+### §3 Integration points (all verified at 3e9a502)
 
 | # | Where | Change |
 |---|---|---|
@@ -195,7 +195,7 @@ solve:
 | Input | Class | Verdict |
 |---|---|---|
 | 2 KB physical NT VRAM (`peek_nametables`, pool.rs:1736) | Hardware surface | LEGAL (v23 ruled explicitly) |
-| `odo_debug` lines / odometer / scene (pool.rs:1709; certified core c556e40/074f888) | Hardware surface | LEGAL |
+| `odo_debug` lines / odometer / scene (pool.rs:1709; certified core 3429d8a/741a953) | Hardware surface | LEGAL |
 | `palette_ram` optional co-key (pool.rs:1070, default off) | Hardware surface | LEGAL |
 | NT masks | Computed by `room_fp_calibrate.py` from variance over our own idle/walk frames; no human reads the screen; receipt per game | LEGAL — experiment-discovered |
 | Classifier constants (256 px pan, 10-frame settle, death = scene+2/odo-flat) | Measured in our own 2026-08-24 hardware-surface probes (receipts moved into `tests/fixtures/roomgraph/` in T4) | LEGAL — experiment-discovered |

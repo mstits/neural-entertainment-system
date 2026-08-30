@@ -343,7 +343,7 @@ solve:
   lives: 0x0107
   clear:
     # scene_cut DECLINED 2026-08-27, superseding the 2026-08-26 arming
-    # (4dd15ea). Re-adjudicated by measurement, not judgement:
+    # (27902e1). Re-adjudicated by measurement, not judgement:
     # scripts/scene_cut_arming.py.
     # No fires at the armed gate over 4x6000 steps, but the veto-independent
     # null is (max d_scene=4, max d_blank=16) and nothing establishes that a

@@ -125,7 +125,7 @@ Three of the seven are strongly falsified rather than merely unwitnessed:
   purity leak dressed as an empirical find". `runs/fight_gate/smoke/solutions/`
   is empty.
 * **`castlevania` `boss_health`** — graded `churn 0.0/1k` in
-  `docs/receipts/ram_verify/castlevania.json`; commit ad01b4f already recorded
+  `docs/receipts/ram_verify/castlevania.json`; commit 367676e already recorded
   it reading 0 through live fights and left it unconfigured.
 
 ## Downgraded (24 entries, 8 configs)
@@ -211,7 +211,7 @@ rediscovery of.
 and cannot be unioned into anything. The exclusion set is `coord_bytes | stack |
 OAM | mirrors` and nothing else; the receipt's own exclusion log records the
 `ram_mapping` region with `"excludes": False`. The fix landed 2026-08-26 in
-`eb8174b` / `2e6014f` and is guarded by `tests/test_observatory_exclusions.py`.
+`bfb51bb` / `222ae25` and is guarded by `tests/test_observatory_exclusions.py`.
 
 So **no config in this tree was steering the discovery instrument**, and none of
 the seven quarantined entries ever did. This does not change any verdict — the

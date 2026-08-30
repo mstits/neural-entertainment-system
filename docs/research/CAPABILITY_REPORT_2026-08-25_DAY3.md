@@ -5,7 +5,7 @@ Scope: this is a further addendum on top of
 the 2026-08-11 → 2026-08-24 report), not a rewrite of either — their
 numbers stand unchanged except where this document says otherwise.
 This covers exactly what landed across Wednesday Push Day 2/3
-(commits `dadd658` through `dd2b322`): the v27 verdict and v28 launch,
+(commits `9a7a4ca` through `982fe8b`): the v27 verdict and v28 launch,
 hardening wave 2, and League onboarding wave 3. Same ledger tags —
 LEARNED, EXHIBITION, FORGE — same rule: nothing claimed past what has
 a receipt. Full entries for everything below are in `CLAIMS.md`; this

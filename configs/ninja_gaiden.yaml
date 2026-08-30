@@ -59,7 +59,7 @@ solve:
   # begins, per the same gate run reporting lives correctly mid-roll).
   #
   # 2026-08-26: re-audited after discover_observables.py's zero-start
-  # nomination fix (commit 158ec74). Confirmed $001F reads 0 at this
+  # nomination fix (commit 94e52b0). Confirmed $001F reads 0 at this
   # profile's root state and the fixed tool correctly demotes it
   # (starts_nonzero=False; it's a flicker artifact, 12-26 unpaired
   # 0<->255 ticks/700-step run, that only ever cleared the OLD vacuous
@@ -89,7 +89,7 @@ solve:
   lives: 0x001F
   clear:
     # scene_cut DECLINED 2026-08-27, superseding the 2026-08-26 arming
-    # (4dd15ea). Re-adjudicated by measurement, not judgement:
+    # (27902e1). Re-adjudicated by measurement, not judgement:
     # scripts/scene_cut_arming.py.
     # DEMONSTRATED FALSE POSITIVE: driven at its own armed gate (scene_min=6,
     # blank_min=1, kind=['fade']) over 4x6000 steps of mixed-random play that

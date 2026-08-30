@@ -1,6 +1,6 @@
 {
   "what": "low-cost spectator renderer \u2014 swarm mosaic + hero rendered outside the solver pool from ~21KB save-state snapshots",
-  "git_commit": "c9d3d95",
+  "git_commit": "f3b97b4",
   "machine": {
     "platform": "macOS-26.6-arm64-arm-64bit",
     "processor": "arm",

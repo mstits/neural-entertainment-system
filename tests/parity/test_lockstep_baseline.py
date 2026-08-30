@@ -82,7 +82,7 @@ def _silence_gym():
 CASES = [
     ("roms/Super Mario Bros. (World).nes",                600,   0),
     ("roms/Legend of Zelda, The (USA) (Rev A).nes",       600,   1),
-    #   2026-08-14 DMC DMA stall propagation (8c10ade): Contra 5 → 7 —
+    #   2026-08-14 DMC DMA stall propagation (e9f3164): Contra 5 → 7 —
     #     nes-py has no APU, so hardware-accurate DMC fetch stalls
     #     necessarily diverge from it; Mesen lockstep is the accuracy
     #     oracle for this class.

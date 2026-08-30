@@ -6,9 +6,9 @@ graft item bits onto the already-shipped `state_sig`/`RoomIndex.EdgeStat` machin
 `SpliceHarness` module that touches zero existing files in v1). Both were written independently
 (INDEPENDENT explicitly did not have access to MINIMAL's text) against the same HEAD.
 
-All line anchors below re-verified against current HEAD `07f367d` (`scripts/go_explore_solve.py`,
-7401 lines — byte-identical to `ee39fde`, the commit both source designs verified against; confirmed
-via `git diff ee39fde HEAD -- scripts/go_explore_solve.py` returning empty). Every citation quoted
+All line anchors below re-verified against current HEAD `27c81d0` (`scripts/go_explore_solve.py`,
+7401 lines — byte-identical to `163ef54`, the commit both source designs verified against; confirmed
+via `git diff 163ef54 HEAD -- scripts/go_explore_solve.py` returning empty). Every citation quoted
 from either source design below was independently re-checked against the live file, not trusted:
 `RoomIndex.record_edge` :925 (dict-construction :953-956, `e["count"] += 1` :961 — exact),
 `Solver._room_step` `fp_edge` staging :3843 (exact), `Solver._room_transit` `record_edge` call :3872
@@ -184,7 +184,7 @@ it routes to the existing `discover_observables.find_progress` methodology, run 
 (Gate 1 without the flat-under-reversal requirement). One log, two event kinds, correctly discriminated
 — never conflated, per Zelda's own onboarding receipt naming this exact ambiguity without resolving it.
 
-### §3 Integration points (file:line, verified at `07f367d`)
+### §3 Integration points (file:line, verified at `27c81d0`)
 
 | # | Where | Change |
 |---|---|---|

@@ -389,7 +389,7 @@ curriculum states). Winning artifacts archived in
 
 ## 2026-07-16 — World 2 campaign + welding playbook
 
-**Beyond-World-1 tracking shipped (commit 11c0532).** `SequentialTracker` now
+**Beyond-World-1 tracking shipped (commit 7a3d3da).** `SequentialTracker` now
 counts real castle clears past the World-1 DoD: `worlds_cleared`,
 `furthest_nowarp` (deepest no-warp level reached), and
 `eval_composite --stop-after-worlds N` to run the chain past world 1 instead
@@ -487,7 +487,7 @@ and are not interchangeable for welding.
 
 **What day 2 established (in order of importance):**
 1. The adversarial audit found SEVEN verified execution defects; the two
-   largest are FIXED AND PUSHED (935e609): 2-1 trained in a reward desert
+   largest are FIXED AND PUSHED (d717db5): 2-1 trained in a reward desert
    (World-2 checkpoint fallthrough — calibrated LEVEL_2_1 ladder + generic
    every-256px ladder added to rewards.rs) and stage-0 freeze-on-done wasted
    ~95% of env slots (inline start-state restarts added). Also verified:
@@ -572,7 +572,7 @@ for a v4 bank + backplay rungs (beam v2 stays the E1/E2 fallback only).
 ## 2026-07-18 — day-3 close: 2-1 CLEARED COLD; 2-2 is the last gate level
 
 **Headline: the cold chain clears power-on -> 1-1 -> 1-2 -> 1-3 -> 1-4 ->
-2-1 flag, 3/3 episodes, zero deaths across five levels (6e2f272).** The
+2-1 flag, 3/3 episodes, zero deaths across five levels (1d8fdd7).** The
 frontier is 2-2; 2-3 is already solved and routed. One level stands
 between the chain and the Sunday-18:00 gate.
 
@@ -637,7 +637,7 @@ verifies with: eval_composite --manifest configs/composite_world1.yaml
   composite clears **1-1 through 2-3 consecutively on BOTH gate seeds**
   (2/2 episodes each; first death 2-4 gx471), with per-episode action
   receipts (runs/gate_receipts_seed{0,1}) and every seam disclosed
-  (gx_switches + level entry opts in the result JSON). git 45b0d11.
+  (gx_switches + level entry opts in the result JSON). git 5075213.
 - **(i)** World 1 replays 1.0 warpless inside those same runs, both
   seeds.
 - **(iii)** The sticky-0.25 + start-jitter-16 pair (50 episodes,
@@ -705,7 +705,7 @@ fm2/FCEUX receipt gap.
 > exploration-learning problem, by design.
 
 **Chain now clears FIFTEEN levels cold: 1-1 through 4-3, both seeds,
-zero deaths** (pushed 57daa80). 4-1 and 4-3 fell to the standard loop in
+zero deaths** (pushed 23bac12). 4-1 and 4-3 fell to the standard loop in
 minutes. 4-2 took visual diagnosis: its outdoor flag section SHARES the
 underground's area byte (blinding every area-change detector) — solved
 by gluing the archive's own exit-pipe trace to a 159-step driven flag

@@ -10,7 +10,7 @@
 The config quarantine retracted **documentation** claims. The executing
 layer kept its own copies, and **nothing in the tree could tell.**
 
-A 994-entry sweep of `configs/` (commits `0557896`, `bd5d3d6`) quarantined
+A 994-entry sweep of `configs/` (commits `82f3b4f`, `c839e62`) quarantined
 7 entries, downgraded 24 and kept 963. It named its own scope limit in its
 commit message:
 

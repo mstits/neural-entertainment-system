@@ -1,7 +1,7 @@
 {
   "game": "Galaga - Demons of Death (USA)",
   "profile": "configs/galaga.yaml",
-  "tool_fix_commit": "158ec74",
+  "tool_fix_commit": "94e52b0",
   "old_addr": "0x0073",
   "old_root_value": 0,
   "old_root_value_confirmed_independently": true,

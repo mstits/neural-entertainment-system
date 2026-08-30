@@ -63,7 +63,7 @@ solve:
   #          defect in discover_observables.py's lives_from_death_drives
   #          (both reaches_empty and spends_its_stock are structurally
   #          vacuous at start==0), fixed at the tool level in commit
-  #          158ec74. Re-running the fixed tool against this same start
+  #          94e52b0. Re-running the fixed tool against this same start
   #          state demotes $0051 out of the top-5 ranked candidates
   #          entirely and nominates $0199 instead.
   #   $0199  lives candidate (2026-08-26, post-fix) — root value 2
@@ -87,7 +87,7 @@ solve:
   lives: 0x0199
   clear:
     # scene_cut DECLINED 2026-08-27, superseding the 2026-08-26 arming
-    # (4dd15ea). Re-adjudicated by measurement, not judgement:
+    # (27902e1). Re-adjudicated by measurement, not judgement:
     # scripts/scene_cut_arming.py.
     # DEMONSTRATED FALSE POSITIVE: driven at its own armed gate (scene_min=5,
     # blank_min=1, kind=['fade']) over 4x6000 steps of mixed-random play that

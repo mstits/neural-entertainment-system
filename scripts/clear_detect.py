@@ -947,7 +947,7 @@ class TerminalStasisSignal:
     a single calibrated signal is shared by every worker in a pool, and
     hiding one worker's anchor inside it would let workers overwrite each
     other's evidence -- the shared-index race that dropped
-    RoomFpTransitionSignal (commit 698f142)."""
+    RoomFpTransitionSignal (commit a66cc74)."""
 
     def __init__(self, bitmasks, window: int = STASIS_WINDOW,
                  churn_frac: float = STASIS_CHURN_FRAC,
@@ -2492,7 +2492,7 @@ class SceneCutSignal:
     read as silent on this profile forever, for a completely different
     reason than "never measured". The fix already exists in this
     codebase for the identical shape: go_explore_solve.py's `_dead_mm`
-    debounce (commit 547434e) established, on this same tape, that a
+    debounce (commit 2459e5e) established, on this same tape, that a
     2-observation dip is a transition blip and a 3rd consecutive
     dead observation is a real death, with one observation of margin.
     `death_debounce` (default 3) reuses that verified threshold rather

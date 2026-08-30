@@ -71,7 +71,7 @@ solve:
   lives: 0x001E   # decrements on death (-3), agreed 5 of 5 probe runs
   clear:
     # scene_cut DECLINED 2026-08-27, superseding the 2026-08-26 arming
-    # (4dd15ea). Re-adjudicated by measurement, not judgement:
+    # (27902e1). Re-adjudicated by measurement, not judgement:
     # scripts/scene_cut_arming.py.
     # CHANNEL DEAD: the gate is kind=['fade'], which votes on the blank
     # channel, and odo_blank produced 0 runs in 4x6000 steps (odometer_scene: 8

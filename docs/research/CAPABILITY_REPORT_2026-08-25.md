@@ -5,7 +5,7 @@ Scope: this is a short addendum to
 that report's two-week window (2026-08-11 → 2026-08-24) is closed and
 its numbers stand unchanged. This addendum covers exactly two things
 that landed after that window closed: the room-graph engine (commit
-`3601c45`) and the launch of v27 (commits `3bb93ef`, `5995272`). Same
+`09a1c03`) and the launch of v27 (commits `546b733`, `12a7e04`). Same
 ledger tags — LEARNED, EXHIBITION, FORGE — and the same rule: nothing
 claimed past what has an actual receipt. Full entries for both are in
 `CLAIMS.md`; this is the narrative form.
@@ -120,7 +120,7 @@ uninterpretable, conflating a real capacity deficit with primacy bias
 or dormant-unit collapse — a confound the prereg's own clause required
 resolving before spending the budget. The mandated fix, ReDo (Sokar et
 al.) dormant-neuron recycling, is now implemented and shipped
-(commit `3bb93ef`): layer-mean-normalized dormancy score (correcting
+(commit `546b733`): layer-mean-normalized dormancy score (correcting
 the DR's own "layer max" phrasing), tau=0.025 checked every gradient
 iteration post-GA-warmup, `fc1`/`fc2` hidden units only, Kaiming reinit
 with zeroed outgoing columns, and exact-slice Adam-moment clears.
@@ -128,7 +128,7 @@ Single arm, ReDo-on for all 4 seeds — per the DR's own outcome mapping,
 cumulative-recycle telemetry alone is enough to tell whether the
 mechanism was live or inert, so no separate ReDo-off control was run.
 17 new tests, default off, byte-identical when off. ADDENDUM 2
-(`5995272`, same-day follow-up) root-caused the V7 agreement-bound
+(`12a7e04`, same-day follow-up) root-caused the V7 agreement-bound
 pilot check against LayerNorm effects via a tau-sweep (0.05–0.35) and
 PASSed under the corrected condition, clearing the last item that had
 blocked launch.

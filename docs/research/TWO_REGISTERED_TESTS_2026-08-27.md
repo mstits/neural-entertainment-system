@@ -2,8 +2,8 @@
 
 **Date:** registered 2026-08-27, executed 2026-08-27/28.
 **Registrations, both written and committed before any compute:**
-`docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md` (Lane A, commit `9a9db2d`)
-and `docs/proposals/V31_REDO_SURGICAL_2026-08-27.md` (Lane B, commit `1011eff`).
+`docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md` (Lane A, commit `35f6d60`)
+and `docs/proposals/V31_REDO_SURGICAL_2026-08-27.md` (Lane B, commit `41a1e07`).
 **Verdicts:** **Lane A VOID. Lane B VOID.**
 **Standing verdicts moved:** none. B5 is neither re-opened nor corroborated;
 the plasticity-loss hypothesis remains untested.
@@ -52,7 +52,7 @@ edited after compute began.
 ## 1.1 What was supposed to happen
 
 The predecessor computation (`docs/research/VADV_B5_2026-08-27.md`, commits
-`b9ed38e` + `789aefe`) returned **VOID at R = 0.279**, inside its pre-declared
+`f8e3536` + `e09a220`) returned **VOID at R = 0.279**, inside its pre-declared
 indeterminate band `(0.20, 0.50)`. It named its own binding limitation: the
 banks were go-explore expert-window states, **off-distribution** for a critic
 the policy delivered to the wall 0/717 times, and all 612 qualifying `WALL`
@@ -297,7 +297,7 @@ Only then is a second reading — and any retirement decision — meaningful.
 
 ## 2.1 What was supposed to happen
 
-v30's premise-falsifier (`439b87f`, `d02987f`,
+v30's premise-falsifier (`c6c6efe`, `94fcc6f`,
 `docs/research/REDO_ACTUALLY_FIRES_2026-08-27.md`) established that ReDo fires
 at τ = 0.25 but at **62 % of the 32-unit trunk re-initialised every iteration**
 — the registration's own forbidden network-reset regime. It also located the
@@ -573,4 +573,4 @@ Status markers: `runs/redo_surgical/status/` (`02_phase_m`, `03_seeds_NOT_RUN`,
 `99_campaign_stopped`). Machinery: `src/training/redo.py`,
 `src/training/trainer.py`, `scripts/redo_arm_gate.py`,
 `scripts/adjudicate_phase_m.py`, `scripts/score_cross_fit.py` (commits
-`0906f7c`, `8606fb1`).
+`989ad38`, `43deae3`).

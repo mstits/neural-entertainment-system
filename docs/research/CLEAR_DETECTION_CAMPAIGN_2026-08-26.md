@@ -204,7 +204,7 @@ The controls remain the correct first action for whoever picks this up.
 ### Preflight lane: 0 of 3 fixes landed
 
 The fan-out was also supposed to be gated on three preflight fixes. None of them are in the
-tree. `scripts/clear_detect.py`'s most recent commit is `735e607` (01:49, hardening wave 5 —
+tree. `scripts/clear_detect.py`'s most recent commit is `222817c` (01:49, hardening wave 5 —
 a different lane), hours before the census ran:
 
 | Preflight item | Status | Evidence |
@@ -212,7 +212,7 @@ a different lane), hours before the census ran:
 | `clear_detect.py --profile <config>` entry point | **not landed** | `run_ground_truth_test` still hardcodes `game = SmbGame()` (line 975). No non-SMB profile can reach the detector through it. |
 | Offline env-handle plumbing for signal 3 | **not landed** | No `--profile` path exists to plumb it through. |
 | `trailing_median` leading back-fill | **not landed** | Line 370 still reads `np.full(k - 1, x[0], ...)` — it preserves the impulse it exists to remove. |
-| `persist_checks` | pre-existing | Shipped earlier in `55c1996` / `f45dda1`, not by this campaign. |
+| `persist_checks` | pre-existing | Shipped earlier in `20671eb` / `b8f9e4a`, not by this campaign. |
 | `room_veto` refusing configuration without a room observable | **not landed** | No `room_veto` symbol exists in `clear_detect.py`. |
 
 The Double Dragon edge-aligned fabrication at `progress_median=5` is therefore still live,
@@ -273,7 +273,7 @@ Ordered by evidence, cheapest first. None of these is "wire more predicates."
    census found no case where the missing piece was the decision rule S4 was built to supply.
 4. **Fix the 6 broken death discriminators.** They are not merely inert — journey_to_silius
    and ninja_gaiden demonstrate they actively destroy search (774→2 cells, 1096→24 cells).
-   Tonight's oscillation-rejection work in `discover_observables.py` (`5e57392`) is aimed at
+   Tonight's oscillation-rejection work in `discover_observables.py` (`9514723`) is aimed at
    exactly this family; darkwing_duck's refill-at-respawn and ninja_gaiden_ii's flat-through-death
    are two new shapes it should be tested against.
 5. **Only then** re-run a census. The one-way-door test remains the right mechanism for the
@@ -336,7 +336,7 @@ RAM pair `{lo: 0x003E, hi: 0x003F}`, which really did reset to 0 on a death;
 that is how the false fire at 205 actions was produced, and the lives-drop
 veto really did close it.
 
-On **2026-08-24 the League onboarding wave (`09299fa`) swapped the profile to
+On **2026-08-24 the League onboarding wave (`3e9a502`) swapped the profile to
 `progress: {source: odometer, axis: x}`** for better frontier coverage. That
 swap silently disarmed the win condition, and nothing noticed, because a hook
 that *never* fires is indistinguishable from one that *has not fired yet*:

@@ -553,7 +553,7 @@ Two of eight banked solver tapes failed replay during BC-demo minting:
 - 1-4 `sol_003` (json claims clear; replay ended gx 0)
 Both quarantined; their levels' anchors trained on the verified tapes
 only. HYPOTHESIS worth testing before trusting any banked archive:
-the core changed under them. Commit 8c10ade landed the DMC-DMA stall
+the core changed under them. Commit e9f3164 landed the DMC-DMA stall
 propagation fix plus an APU abs-store tick-index correction — both
 alter intra-frame cycle interleaving, which is exactly what a
 frame-perfect tape depends on. Tapes recorded on the pre-fix core would

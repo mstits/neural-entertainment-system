@@ -4,7 +4,7 @@
 any `eta2`, null, `R` or verdict statistic exists in this job.**
 
 **Parent registration:** `docs/proposals/VADV_ONPOLICY_PREREG_2026-08-27.md`
-(commit `9a9db2d`) — **BINDING AND INHERITED VERBATIM** except for the items
+(commit `35f6d60`) — **BINDING AND INHERITED VERBATIM** except for the items
 below. **Predecessor execution:** VOID on a collector data-integrity defect
 (`docs/research/TWO_REGISTERED_TESTS_2026-08-27.md` Part I): a reused
 `TileFeatureStacker._out` buffer recorded `(s', a, s')` on 100 % of rows in
@@ -35,7 +35,7 @@ the numerals above may change.
 
 ## 2. What changed, each with its reason
 
-**2.1 The collector is repaired** (commit `b2e806b`). Both call sites copy
+**2.1 The collector is repaired** (commit `e89091e`). Both call sites copy
 out of the stacker's reused buffer, and `assert_bank_wellformed` (the
 threshold-free chain + non-degeneracy invariants) runs on the exact arrays
 handed to `np.savez`. Re-verified today, executed not asserted: 45/45

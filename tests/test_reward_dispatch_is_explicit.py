@@ -327,7 +327,7 @@ def test_roster_dispatch_matches_the_frozen_pre_change_baseline():
 
 def test_baseline_covers_the_whole_roster_and_is_not_empty():
     baseline = json.loads(BASELINE_PATH.read_text())
-    # 126 rows were frozen at the migration commit (c89a816) — that count
+    # 126 rows were frozen at the migration commit (2a15dfb) — that count
     # is history and must never be REGENERATED to paper over a real
     # drift. It is legitimate to APPEND rows for profiles authored AFTER
     # the freeze that deliberately declare a specialized reward_id: they

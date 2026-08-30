@@ -4,8 +4,8 @@ Status: REVIEW ONLY. Nothing in this document has been implemented. It
 adjudicates an externally-authored research report against `CLAIMS.md`
 and against what this repo already ships, and it ends with a roadmap that
 replaces the source report's. Every repo anchor below was re-verified
-against HEAD `01e56f1` (`scripts/go_explore_solve.py` is 7,781 lines at
-this commit; earlier proposal docs cite anchors from `07f367d`/`09299fa`
+against HEAD `cee9f2b` (`scripts/go_explore_solve.py` is 7,781 lines at
+this commit; earlier proposal docs cite anchors from `27c81d0`/`3e9a502`
 and have drifted).
 
 ---
@@ -126,7 +126,7 @@ from our own rollouts), `scripts/onboard_game.py`,
 `scripts/odometer_cert.py`, `scripts/discover_item_bits.py`. The
 fight-gate work rediscovered Punch-Out's `0x0398` blind through that
 pipeline (`docs/proposals/FIGHTGATE_MECHANISM_2026-08-25.md`, wired
-`2e2696a`) — honest scope from `1b65f63`: **1-for-4**, since Kung Fu,
+`d939bf6`) — honest scope from `fc6ed95`: **1-for-4**, since Kung Fu,
 Ice Climber and Galaga were tried and none validated.
 
 ---
@@ -208,7 +208,7 @@ recommendation redundant, partial, or new here.
 | E-4 Multi-tiered reward hierarchy (combat / traversal / milestone) | **BANNED** | Per-game reward shaping in its purest form, banned by name — and barred a second, independent way: Tier 2 freezes the five legacy `LEVEL_*` ladders and states "no new hand ladders will ever be authored." Half-hearts, shield blocks, hidden staircases, the identity of the major items, the Triforce as progression spine, the existence of bosses — none is derivable by a party with no prior. "+10.0 for uncovering a hidden staircase" pays the agent for executing a walkthrough step, making any later "the agent found the secret" claim circular. | Survives: the three-tier *shape*; a generic revisit/anti-dither penalty; a coverage bonus over self-discovered cells (the direct analogue of our every-256px ladder). **See §8 — a version of this hierarchy is already live in this repo.** |
 | E-5 Domain randomization policy ("the overworld is static, so overfitting to it is desirable") | **BANNED** | Three counts, one easy to miss: (a) "the layout is static, therefore overfit" is a decision made by reading a map; (b) it contradicts honest-eval doctrine outright — sticky 0.25 and start-jitter exist to punish memorized layouts, and deliberately maximizing memorization then reporting the number is the mechanism behind "presenting deterministic replay as learning"; (c) **randomizing enemy spawn positions cannot be done from outside the emulator** — it requires writing game memory, and "RAM edits" is banned with no disclosure tier available. | Survives and is already mandated: frame-delay/action-repeat randomization is Machado sticky-actions, run at 0.25. |
 | E-6 Does privileged critic access induce overfitting that fails under rendering artifacts? | PASS | Generic, well-posed, and the correct falsifier to attach to E-3's legal variant. | Perturbation harness exists (`scripts/eval_regime_stats.py`, `docs/receipts/eval_rng_regimes_2026-08-15.md`); no privileged critic exists to test. |
-| E-7 Weighting to prevent safe farming over risky progression | MIXED | Reward-hacking avoidance is real and generic; the question presupposes E-4's banned tiers. Re-asked over the generic distance ladder plus time/death penalties it is legal and live. | Institutional scar tissue: `GenericReward` (`nes_core/src/rewards.rs:159`) freezes its score-candidate set after a 300-step warmup — a farming guard inside the mechanism; `configs/zelda.yaml`'s own comment history documents a motion-reward exploit and an up+A sword-spam collapse; the PPO structural fix (`1c7ef1f`); die-respawn eval inflation; `OPTIONS_NEGATIVE_2026-08-23.md`. |
+| E-7 Weighting to prevent safe farming over risky progression | MIXED | Reward-hacking avoidance is real and generic; the question presupposes E-4's banned tiers. Re-asked over the generic distance ladder plus time/death penalties it is legal and live. | Institutional scar tissue: `GenericReward` (`nes_core/src/rewards.rs:159`) freezes its score-candidate set after a 300-step warmup — a farming guard inside the mechanism; `configs/zelda.yaml`'s own comment history documents a motion-reward exploit and an up+A sword-spam collapse; the PPO structural fix (`69a6e68`); die-respawn eval inflation; `OPTIONS_NEGATIVE_2026-08-23.md`. |
 | E-8 "Labeled RAM critics dominate visual reward parsers" | MIXED | As a narrow latency/variance claim, correct. As deployed — arguing labeled RAM strictly dominates self-discovered observables — **the preference runs the other way here.** A HUD region the system locates itself is the legal path; a labeled address is the banned one. "Noisier" is a cost we pay on purpose. | The legal path is proven: the PPU scroll odometer is FORGE-CERTIFIED **5/5** on `scripts/odometer_cert.py`, with Rygar/Ninja Gaiden SIGNAL-SOUND, Contra cross-validated 162 vs 163, Kung Fu reclassified as a skill wall not an instrument fault. Blind rediscovery is a shipped pattern (fight-gate `0x0398`), honest scope 1-for-4. |
 
 ### Section F — NES hardware constraints (titled "hardware," mostly game-specific)
@@ -629,7 +629,7 @@ discover the rows.**
 The honest qualification, because the parts list is more ready than the
 assembly: **the discovery half has one real gate attempt behind it and
 it failed.** IS-1a (`runs/item_semantics/is1a/IS1A_VERDICT_2026-08-25.md`,
-commit `cc0bc9e`), run over 12 replayed RG-1 Zelda traces: 607 keys →
+commit `528c278`), run over 12 replayed RG-1 Zelda traces: 607 keys →
 **51 "confirmed"** raw; after a fair death-truncation using only the
 already-claimed lives byte, 224 keys → **13 "confirmed."** Both false-
 positive classes were root-caused and neither is an item: (A) Zelda's

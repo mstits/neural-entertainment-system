@@ -214,7 +214,7 @@ solve:
   # 2026-08-06, when progress was the RAM pair {lo: 0x003E, hi: 0x003F} —
   # that pair really did reset to 0 on a death, which is exactly how the
   # false fire at 205 actions was produced and then vetoed. On 2026-08-24
-  # the League onboarding wave (commit 09299fa) swapped this profile to
+  # the League onboarding wave (commit 3e9a502) swapped this profile to
   # `progress: {source: odometer, axis: x}` for better frontier coverage.
   # That swap silently DISARMED the win condition, and nothing noticed
   # because a hook that never fires looks identical to a hook that has not
@@ -251,7 +251,7 @@ solve:
   lives: 0x0020
   clear:
     # scene_cut DECLINED 2026-08-27, superseding the 2026-08-26 arming
-    # (4dd15ea). Re-adjudicated by measurement, not judgement:
+    # (27902e1). Re-adjudicated by measurement, not judgement:
     # scripts/scene_cut_arming.py.
     # DEMONSTRATED FALSE POSITIVE: driven at its own armed gate (scene_min=1,
     # blank_min=1, kind=['pan', 'warp', 'fade']) over 4x6000 steps of

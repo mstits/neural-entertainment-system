@@ -386,7 +386,7 @@ impl NESEnvironment {
         // and any realtime pacing sleep) runs with the GIL released so
         // the ~1,000 env calls/s from a spectator/solver thread no longer
         // fight the GIL — the receipted spectator-starvation fix
-        // (commit f14d60b). The closure touches only pure-Rust `self`
+        // (commit 36a9ac9). The closure touches only pure-Rust `self`
         // fields; the numpy frame export below reacquires the GIL.
         let done = py.allow_threads(|| {
             self.apply_buttons(action_bitmask);

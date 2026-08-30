@@ -4,7 +4,7 @@
   "metric_name": "entrance_trailing_rate",
   "metric_value": 0.7666666666666667,
   "source_iter": 120,
-  "git_sha": "14889d3",
+  "git_sha": "764e2e6",
   "timestamp": "2026-08-14T17:01:43"
 }
 
@@ -15,7 +15,7 @@
   "rom_md5": null,
   "start_state_path": "runs/live_show/smb_4_4_micro/entrance_start.state",
   "seed": 3,
-  "git_commit": "14889d3",
+  "git_commit": "764e2e6",
   "created_at": 1786751014.0327659,
   "trainer_mode": "vanilla_ppo",
   "encoder": "smb_tiles_pos",

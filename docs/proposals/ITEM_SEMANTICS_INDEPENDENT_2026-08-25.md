@@ -1,6 +1,6 @@
 # ITEM SEMANTICS — INDEPENDENT SUBSYSTEM (Design Lens B, 2026-08-25)
 
-All line anchors below verified against HEAD `ee39fde` on 2026-08-25 (`scripts/go_explore_solve.py`,
+All line anchors below verified against HEAD `163ef54` on 2026-08-25 (`scripts/go_explore_solve.py`,
 7401 lines; `scripts/discover_observables.py`; `nes_core/src/python.rs`; `nes_core/src/pool.rs`).
 Source lineage: `research-consult/responses/20260817T225101Z_v16_roomgraph_premise_update.md` (v16,
 Deep Research — the original SAE+PDDL mechanism, never implemented), `docs/proposals/V23_SYNTHESIS_2026-08-23.md`

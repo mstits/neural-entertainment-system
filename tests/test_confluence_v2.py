@@ -655,7 +655,7 @@ def test_the_shipped_confluence_profiles_stay_on_the_default_path() -> None:
     # That is the census pattern in miniature: it checked that a hook was
     # DECLARED and never that it could FIRE, so it stayed green for the
     # eighteen days Gradius's hook was inert after its progress was swapped
-    # to the odometer (commit 09299fa), and it would have gone red for the
+    # to the odometer (commit 3e9a502), and it would have gone red for the
     # correct withdrawal of that dead hook rather than for the defect.
     # Globbing keeps it honest as profiles come and go; the reachability
     # assertion is the part the old form was missing.

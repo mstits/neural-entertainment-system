@@ -99,7 +99,7 @@ didn't support at all going in.
 
 The project's headline result: **the search system clears Super Mario
 Bros. power-on through 8-4** ("THANK YOU MARIO"), the full 32-level
-chain, cold-booted with zero mid-run state loads (commit `db44fc7`;
+chain, cold-booted with zero mid-run state loads (commit `be3db3a`;
 receipts in `docs/receipts/full_run/receipts.json` and independently
 reproduced in `runs/live_show/smb_4_4_micro/chain_verify.json`). This is
 an **EXHIBITION-ledger** result — Go-Explore search, not a trained
@@ -114,7 +114,7 @@ policy; see `CLAIMS.md`'s two-ledger policy below.
   with three concurring pre-registered seeds
   (`docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`) — reported
   as a negative result, not hidden.
-- **CLAIMS.md two-ledger policy** (commit `8f2248c`): every public number
+- **CLAIMS.md two-ledger policy** (commit `36e345f`): every public number
   and stream overlay is either **LEARNED** (a trained RL policy, honest
   sticky-eval protocol: cold power-on, zero state loads, sticky actions
   0.25 + start jitter, ≥50 episodes/2 seeds) or **EXHIBITION** (search

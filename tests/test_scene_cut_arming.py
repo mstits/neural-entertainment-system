@@ -1,4 +1,4 @@
-"""The ARMING DECISION gets a test, which is the gap 4dd15ea shipped through.
+"""The ARMING DECISION gets a test, which is the gap 27902e1 shipped through.
 
 On 2026-08-26, 23 profiles were armed with `solve.clear.signals.scene_cut`
 off a survey whose script was never committed. Every scene_cut test in the
@@ -46,7 +46,7 @@ than a judgement, the arming does not survive: **14 of the 23 armed gates
 fire on play that cleared nothing**, up to 207 false positives on one
 profile. All 23 are now disarmed with `enabled: false` and a per-profile
 measured reason, and the cohort is back at quorum UNREACHABLE where it was
-before 4dd15ea.
+before 27902e1.
 
 That creates a vacuity risk of its own, which is why there are two
 receipts. With nothing armed, every residual assertion below iterates an
@@ -207,7 +207,7 @@ def test_the_cohort_is_derived_and_non_empty() -> None:
 
 
 def test_every_armed_profile_passes_every_clause() -> None:
-    """The roster fact 4dd15ea had no test for."""
+    """The roster fact 27902e1 had no test for."""
     survey = _survey()
     # NOT `_audit()`: that skips when the receipt is absent, and a skip
     # here would mean an arming with no measurement behind it sails
@@ -375,7 +375,7 @@ def test_the_disarm_had_evidence_and_the_evidence_is_committed() -> None:
              if (r.get("measured") or {}).get("armed")}
     assert len(armed) == 23, (
         f"the as-found receipt describes {len(armed)} armed profiles; "
-        "4dd15ea armed 23")
+        "27902e1 armed 23")
     firing = {n: m["residual_triggers"] for n, m in armed.items()
               if m.get("residual_triggers")}
     assert len(firing) >= 10, (

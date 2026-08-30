@@ -99,7 +99,7 @@ survives the void, and the thing that would have to be fixed first.
 | 12 | `ducktales_2` | Death discriminator broken: `$000B` goes 0→1 within **one** forced forward-hold step from a fresh load (which is why the discovery tool's guard missed it — it samples its reference *after* that step), and produces 7–15 "decrements" per 700-step window containing zero deaths. | census · triage SURVIVED |
 | 13 | `galaga` | Start-state mint defect, not a detection problem: `$0091` is byte-for-byte identical under `hold_A` and `hold_right`; `$0464` free-runs under 6000 pure-NOOP steps; the scroll odometer jumps a constant +224 (one NTSC visible-frame height) 2–5 steps after every lives-byte refill. The root state sits inside a non-interactive attract loop. The fix is a re-mint. | census · triage SURVIVED |
 | 14 | `ghosts_n_goblins` | Odometer plateaus at 3326 px across four independent runs. Separately, the **only** profile in the census that reached a confluence configuration at all — under a deliberately weakened `min_signals=1` rig, where it fired **9 times out of 9** on non-clearing traces, always at the first possible check. | census |
-| 15 | `gradius` | Adjudicated in the census follow-up: the hook was wired and hardened on 2026-08-06 against a measured false fire, and then **silently disarmed on 2026-08-24** by commit `09299fa`, an unrelated League onboarding change that swapped `progress` from a RAM pair to the odometer. `coord` then became unreachable and the vote ceiling fell to 1 of 2. The declaration was withdrawn rather than left dead. | census follow-up |
+| 15 | `gradius` | Adjudicated in the census follow-up: the hook was wired and hardened on 2026-08-06 against a measured false fire, and then **silently disarmed on 2026-08-24** by commit `3e9a502`, an unrelated League onboarding change that swapped `progress` from a RAM pair to the odometer. `coord` then became unreachable and the vote ceiling fell to 1 of 2. The declaration was withdrawn rather than left dead. | census follow-up |
 | 16 | `ice_climber` | Sent back by triage, re-measured, still VOID. `odo_x` never leaves 0 under any policy across ~186k combined steps; `odo_y` moves only as a fixed −48 step that co-occurs with death/respawn. The A1/A2 control is the best anti-vacuity work in the batch: removing the restart loop collapsed the apparent `odo_y` range 0..−1248 → {0, −48, −96}, falsifying the campaign's own pre-registered candidate. Eight archived cells whose keys are identical except the animation-phase digit — one reachable state in 83,812 steps. | census · triage **VOID** · sweep re-measured → VOID |
 | 17 | `journey_to_silius` | Death discriminator broken: the declared byte reads 0 at root; the only nonzero-starting alternative `$0135` drops 1→0 within 4 steps of a bare RIGHT hold but stays flat under NOOP — keyed to movement onset, not death. Wiring it collapsed a 774-cell archive to 2 and the frontier from 1269 px to 7 px. | census · triage SURVIVED |
 | 18 | `kirby` | Never adjudicated individually. The second profile where the confluence detector fired in production — three times in a 24-second smoke, every one an ordinary door load. Withdrawn as unsafe. Declares a real `area: 0x004F` and has genuine door/room structure; per-room camera clamp (~10 px) is the search-side blocker. | not measured |
@@ -426,7 +426,7 @@ via monotonicity.
 ## 9. New defects found in this pass
 
 1. **The purity gate was red at HEAD and nobody knew.** `tests/test_zelda_purity_quarantine.py::test_no_source_file_reads_the_quarantine_key`
-   failed at `f618eef` on `runs/clear_census/zelda_roomfp/s0_peek_zelda_roomfp.py`, a census
+   failed at `b6171cd` on `runs/clear_census/zelda_roomfp/s0_peek_zelda_roomfp.py`, a census
    probe script (created 07:58 on 2026-08-26) that copied the three blocked win-signal
    addresses and the literal quarantine key name into executable code. **This is a gate
    firing on a real hit**, and it went unreported because the census ran a narrower gate set
@@ -500,16 +500,16 @@ Ordered cheapest first. None of these is "wire more predicates."
 ```
 
 Before the §9.1 redaction this set was **1 failed, 362 passed, 21 skipped** — a pre-existing
-red at `f618eef`, the HEAD this pass started from, not a regression introduced here. The
+red at `b6171cd`, the HEAD this pass started from, not a regression introduced here. The
 offending file is untracked and predates this session.
 
 ```
 .venv/bin/pytest tests/ -q --timeout=120
-1 failed, 4730 passed, 27 skipped, 1 xfailed in 374.66s   (at f618eef)
-1 failed, 4730 passed, 27 skipped, 1 xfailed in 371.78s   (re-run at b8ebded)
+1 failed, 4730 passed, 27 skipped, 1 xfailed in 374.66s   (at b6171cd)
+1 failed, 4730 passed, 27 skipped, 1 xfailed in 371.78s   (re-run at c27a3a8)
 ```
 
-The sibling lane landed three further commits mid-pass (`ef87556`, `698f142`, `b8ebded`); the
+The sibling lane landed three further commits mid-pass (`423ef9a`, `a66cc74`, `c27a3a8`); the
 suite was re-run after them and returns the identical counts, so nothing in this document's
 numbers moved under it. Every load-bearing code fact was re-derived at the later HEAD as well:
 `NONE=37 / REACHABLE=8` from the lint, `passed = (tally + coord) >= min_signals` at
@@ -535,7 +535,7 @@ enumeration. **No config was edited by this pass** — there were no CONFIRMED p
 commit, and a predicate is the only thing this pass was authorised to write into a config.
 The four already-confirmed predicates were verified where they stand and left untouched.
 (The config annotations that landed today — the struck "0 solutions" citations and the
-Gradius withdrawal — are `ef87556`, the sibling detector lane, not this pass.)
+Gradius withdrawal — are `423ef9a`, the sibling detector lane, not this pass.)
 
 Evidence: `runs/clear_control_2026-08-26/` (controls, including the Excitebike frames added
 here), `runs/clear_detection/<game>/`, `runs/clear_census/<game>/`, `runs/clear_gap/<game>/`.
