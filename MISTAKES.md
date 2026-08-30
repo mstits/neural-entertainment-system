@@ -11,7 +11,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 
 | root cause | entries | deterministic enforcement |
 |---|---|---|
-| `[unverified-claim]` | **13** | **PROMOTED 2026-08-28** (project instruction file); no — judgement |
+| `[unverified-claim]` | **13** | **PROMOTED 2026-08-28** (project instruction file) + **PROMOTED 2026-08-29** (cross-derivation: a claim gating an irreversible/expensive action is re-derived by a non-producer before the action — 4 same-day catches; operator-approved); no — judgement, working form is the two-session split |
 | `[vacuous-gate]` | **13** | **PROMOTED 2026-08-28** (project instruction file) + **SHIPPED** — `scripts/anti_vacuity_scan.py` + registry test `tests/test_anti_vacuity_gates.py` (collected by the full suite); also: ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
 | `[weak-eval]` | **8** | **PROMOTED 2026-08-28** (project instruction file); partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
