@@ -11,13 +11,13 @@ one-line invariant only after recurring across 4–5 separate entries.
 
 | root cause | entries | deterministic enforcement |
 |---|---|---|
-| `[unverified-claim]` | **12** | **PROMOTED 2026-08-28** (project instruction file); no — judgement |
+| `[unverified-claim]` | **13** | **PROMOTED 2026-08-28** (project instruction file); no — judgement |
 | `[vacuous-gate]` | **13** | **PROMOTED 2026-08-28** (project instruction file) + **SHIPPED** — `scripts/anti_vacuity_scan.py` + registry test `tests/test_anti_vacuity_gates.py` (collected by the full suite); also: ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
 | `[weak-eval]` | **8** | **PROMOTED 2026-08-28** (project instruction file); partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **PROMOTED 2026-08-28** (project instruction file); **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **8** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
-| `[process]` | **13** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
+| `[process]` | **14** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 2 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
 | `[measurement]` | 1 | — |
@@ -35,6 +35,50 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-29 — [unverified-claim] Greenlit an archival target on a from-memory claim about where its receipts live
+- **What happened:** Asked whether `runs/ng_odo_*` (188G) could enter the
+  archival sweep, this session answered "the odometer certification's
+  receipts are banked under docs/receipts, so raw ng_odo runs are exactly
+  what your battery is for." Re-derivation by the sweep's executor found
+  the opposite: docs/receipts holds only odometer swap/cohort surveys;
+  `RECEIPTS_INDEX_2026-08-24.md` names `runs/ng_odo_scene/` the
+  "Headline receipt" and `runs/ng_odo_doa/` the receipt run for a FORGE
+  claim; the capability report attributes best_score 74,783 to two more
+  of the dirs. The run dirs ARE the receipts. Verified conceding:
+  c556e40 banked the odometer CODE and cert script, no receipt copies.
+- **Root cause:** A memory summary ("odometer SHIPPED, certified 5/5")
+  was inflated at recall time into an artifact-location claim the memory
+  never contained, and shipped as a greenlight without an `ls`. Fourth
+  same-day instance of the pattern the cross-derivation entry records —
+  and the first where the flipped claim was this session's own
+  greenlight of someone else's irreversible-adjacent action.
+- **Consequence:** None on disk — the executor re-derived before acting
+  (the rule working), held 188G hot, and the veto stands.
+- **Rule (draft):** A claim that an artifact exists at a path is made by
+  listing the path, never from a remembered summary; a greenlight is a
+  claim that gates an action and gets the same re-derivation as any
+  other.
+
+## 2026-08-29 — [process] The archival sweep could not see root-level-file layouts, and said nothing
+- **What happened:** The sweep that evaluated runs/ for archival walked
+  SUBDIRECTORIES only. `ng_odo_*` keeps its ~188G in five root-level
+  files (traces.pkl, archive.pkl, progress.jsonl, roots.json,
+  archive.stats.json) with one tiny subdir — so it was never evaluated,
+  never logged as skipped, and absent from the output entirely. Caught
+  by the executing session only because it went looking for why ng_odo
+  never appeared.
+- **Root cause:** The sweep's walker assumed bulk lives in subdirs; a
+  layout class outside the assumption produced silence
+  indistinguishable from "evaluated, nothing to do."
+- **Consequence:** None this time — the gap was found before any verdict
+  relied on the silence. But every "the sweep found nothing else" claim
+  to date implicitly excluded this layout class without saying so.
+- **Rule (draft):** A sweep names what it cannot see. Any tool whose
+  verdict can be "nothing found" enumerates the classes it skipped
+  (layouts, extensions, depths) in its own output — silence licensed by
+  coverage, never by construction. (The repo's "no silent caps"
+  workflow principle, applied to local tooling.)
 
 ## 2026-08-29 — [process] A banked hash never named its domain, and read as corruption of the flagship artifact
 - **What happened:** `docs/receipts/full_run/receipts.json` attests the
