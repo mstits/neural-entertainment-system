@@ -755,10 +755,10 @@ def test_run_never_invokes_a_real_subprocess(tmp_path):
 
 @pytest.mark.slow
 @pytest.mark.timeout(180)
-def test_dry_run_passes_live():
+def test_dry_run_passes_live(tmp_path):
     proc = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "eval_shared_substrate.py"),
-         "--dry-run"],
+         "--dry-run", "--out", str(tmp_path)],
         cwd=str(ROOT), capture_output=True, text=True, timeout=150)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "ALL CHECKS PASSED" in proc.stdout
@@ -778,7 +778,7 @@ def test_dry_run_passes_live():
 
 @pytest.mark.slow
 @pytest.mark.timeout(180)
-def test_dry_run_never_calls_eval_game_subprocess(monkeypatch):
+def test_dry_run_never_calls_eval_game_subprocess(monkeypatch, tmp_path):
     """--dry-run must not itself shell out to eval_game.py (which would
     step the emulator) -- only assemble argv and check paths."""
     proc = subprocess.run(
@@ -788,7 +788,7 @@ def test_dry_run_never_calls_eval_game_subprocess(monkeypatch):
          "m.subprocess.run = lambda *a, **k: (_ for _ in ()).throw("
          "AssertionError('subprocess.run called during --dry-run')); "
          "sys.exit(m.main())",
-         "--dry-run"],
+         "--dry-run", "--out", str(tmp_path)],
         cwd=str(ROOT), capture_output=True, text=True, timeout=150)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "AssertionError" not in proc.stderr

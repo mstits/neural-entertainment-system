@@ -862,6 +862,13 @@ def main() -> int:
              "pre-registered manifest, run nothing. Safe with the "
              "emulator busy.")
     parser.add_argument(
+        "--out", type=str, default=None, metavar="DIR",
+        help="Redirect ALL writes (receipt log, manifest) into DIR "
+             "instead of the production run_dir. The test suite must "
+             "always pass this: 12 days of mock verdicts accumulated "
+             "in the production receipt log because a test invoked "
+             "this CLI without redirection (MISTAKES.md 2026-08-29).")
+    parser.add_argument(
         "--checkpoint-dir", type=str, default=None, metavar="DIR",
         help="Directory holding the exported per-level shared-substrate "
              "head checkpoints (default: "
@@ -871,9 +878,16 @@ def main() -> int:
     args = parser.parse_args()
 
     checkpoint_dir = args.checkpoint_dir or CONFIG["default_checkpoint_dir"]
+    cfg = CONFIG
+    if args.out:
+        out = Path(args.out)
+        cfg = {**CONFIG,
+               "run_dir": str(out),
+               "receipt_log": str(out / "eval_shared_substrate.jsonl"),
+               "manifest_out": str(out / "manifest.json")}
     if args.dry_run:
-        return dry_run(CONFIG, checkpoint_dir=checkpoint_dir)
-    return run(CONFIG, checkpoint_dir=checkpoint_dir)
+        return dry_run(cfg, checkpoint_dir=checkpoint_dir)
+    return run(cfg, checkpoint_dir=checkpoint_dir)
 
 
 if __name__ == "__main__":
