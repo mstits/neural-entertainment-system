@@ -94,3 +94,53 @@ else steps the pool concurrently. Roles: executing session runs S1–S3;
 reviewing session independently re-derives per-leg strict clears, the
 aggregate, the binomial, and the verdict class against §1 from the raw
 receipts before anything is banked.
+
+## ADDENDUM 2 (2026-08-29, post-result, pre-control) — the design was confounded, and the control that isolates sharing
+
+Registered AFTER the main run's verdict (FAILED, shared_sum 42 vs 158,
+all four levels collapsed, dual-derived independently by both sessions
+with exact agreement) and BEFORE any control compute. Found in the
+verifier's independent read: **the main run changed two variables at
+once** — the shared arm is offline BC on success pairs; the baseline
+arm is online-RL specialists with curricula (all four `_preserved`
+checkpoints carry optimizer + curriculum state). A FAILED is therefore
+fully explained by "offline BC at this data size does not reach
+RL-specialist performance," and licenses NO interference claim. (The
+original pooled falsifier shared this structure but was rescued by its
+within-run contrast — pooled BC took 1-1 ABOVE its specialist, 52 vs
+43, which training method cannot explain. This run produced no such
+contrast: nothing was captured.)
+
+**What the main run banks, exactly:** *a shared-trunk multi-head policy
+trained by offline BC on banked success pairs does not approach
+RL-trained specialists on any of the four levels (42 vs 158, 1-2 and
+1-3 at zero).* Interference: UNTESTED by that run.
+
+**The control, registered now:** four SEPARATE nets, one per level —
+identical trainer, identical defaults (epochs 50, lr 3e-4, batch 256,
+hidden 256, trunk 64, seed 0, val_frac 0.1), identical eval — with each
+level's training set pre-trimmed to its LEADING 37,834 pairs, the exact
+per-level exposure the shared run's pairwise balance produced (same
+leading-order trim rule; trimmed-file SHAs recorded in the trim receipt
+at write time). The single changed variable vs the main run is
+SHARING.
+
+**Decision rule, fixed now.** Let S_sep = the four separate nets'
+summed strict clears under the identical registered eval:
+- **S_sep − 42 ≤ 10** (one collapse margin): separate-trunk BC collapses
+  too → the method explains the main result; **interference untested**,
+  and the generalist question moves to on-policy/corrective designs.
+- **S_sep − 42 > 10 AND every level's separate net clears its
+  like-for-like baseline minus the collapse margin**: BC per se
+  suffices → the main run's collapse is attributable to sharing;
+  **interference demonstrated** at this recipe.
+- **Anything between**: PARTIAL — per-level pattern reported, no
+  aggregate interference claim; any further claim needs a new design.
+- Advisory exact binomial on S_sep vs 42 and vs 158, reported beside,
+  never substituting.
+- VOID licence: a VOID control licenses only "the control did not
+  measure BC-sufficiency," and the main run's banked sentence above
+  stands unaffected.
+
+Roles unchanged: executor runs, verifier re-derives blind from raw
+receipts before anything is banked.

@@ -23,6 +23,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[measurement]` | 1 | — |
 | `[git]` | 1 | — |
 | `[reward-exploit]` | 1 | — |
+| `[confound]` | 1 | — (new category 2026-08-29: the contrast itself is invalid — arms differ in a variable the registration never names) |
 
 Bold = at or past the 4-entry threshold, awaiting a call. Nothing has been
 promoted; the enforced ruleset is untouched.
@@ -35,6 +36,35 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-29 — [confound] A pre-registration was internally airtight and still did not isolate the variable it named
+- **What happened:** The substrate experiment's registration survived a
+  hostile cross-review (which caught and closed a real threshold bias),
+  ran clean, and produced a decisive FAILED (42 vs 158, dual-derived
+  with exact agreement) — and only then did the verifier notice the
+  design compared a shared-trunk net trained by OFFLINE BC against
+  baselines trained by ONLINE RL with curricula. Two variables changed
+  at once; the result cannot attribute the collapse to sharing. The
+  registered claim scope said "interference-only" while the design
+  could not deliver interference-only.
+- **Root cause:** Both reviewers audited the registration's internal
+  consistency (threshold provenance, composition, claim wording) and
+  neither asked the isolation question: what OTHER difference between
+  the arms could produce the registered outcome? The original pooled
+  falsifier had the same structure and was rescued only accidentally,
+  by a within-run contrast (pooled BC beat one specialist) this run did
+  not produce.
+- **Consequence:** No wrong claim banked — the confound was caught at
+  verdict time by the independent re-derivation, before the verdict
+  doc. Cost: the main run answers a weaker question than registered,
+  and a control run (registered as Addendum 2, single-variable:
+  sharing) is owed to disambiguate.
+- **Rule (draft):** A registration names, in its own text, every
+  variable that differs between the arms and why each cannot produce
+  the registered outcome; a reviewer's checklist includes "what else
+  differs?" — internal airtightness is not isolation. New category:
+  the failure is neither the eval's power ([weak-eval]) nor the
+  numbers' provenance ([unverified-claim]); it is the contrast itself.
 
 ## 2026-08-29 — [unverified-claim] Greenlit an archival target on a from-memory claim about where its receipts live
 - **What happened:** Asked whether `runs/ng_odo_*` (188G) could enter the
