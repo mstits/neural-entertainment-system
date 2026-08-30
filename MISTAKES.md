@@ -172,6 +172,15 @@ committed inside the log that records it. It is now derived.
   derivation path) that did not produce it, before the action. The
   producer's own receipt is an input to that check, never a substitute
   for it.
+- **Amendment (2026-08-29, same day):** Two further catches where the
+  split changed a CONCLUSION rather than confirming a number — the
+  substrate confound (both pre-run reviews passed; the blind verifier
+  caught the two-variable contrast at verdict time) and the control's
+  direction finding (+20 transfer on 1-1 hidden inside a −12 aggregate
+  net). Both times the raw per-leg data carried the finding and the
+  aggregate hid it. Corollary: derive PER-UNIT before deriving the
+  aggregate — an aggregate can be correct and still describe nothing
+  real.
 
 ## 2026-08-29 — [stale-artifact] A test wrote mock verdicts to a production receipt path for 12 days
 - **What happened:** `tests/test_eval_shared_substrate.py::test_run_never_

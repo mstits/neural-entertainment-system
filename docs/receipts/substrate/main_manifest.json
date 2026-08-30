@@ -1,0 +1,206 @@
+{
+  "experiment": "shared_substrate_trunk_plus_heads",
+  "hypothesis": "a single shared-trunk network with per-level output heads keeps the cross-level transfer a naive pooled net showed on 1-1 while removing the interference that destroyed 1-2 (interference_falsifier's partial_interference verdict, docs/receipts/one_three_coordination_2026-08-16.md)",
+  "config": {
+    "run_dir": "runs/shared_substrate",
+    "receipt_log": "runs/shared_substrate/eval_shared_substrate.jsonl",
+    "manifest_out": "runs/shared_substrate/manifest.json",
+    "levels": [
+      "1-1",
+      "1-2",
+      "1-3",
+      "1-4"
+    ],
+    "baseline": {
+      "1-1": {
+        "game": "mario_1_1_backward",
+        "profile": "configs/mario_1_1_backward.yaml",
+        "checkpoint": "checkpoints/_preserved/backward_1_1_best_honest_greedy_047.pt",
+        "strict_clears": 43
+      },
+      "1-2": {
+        "game": "mario_1_2_consol2",
+        "profile": "configs/mario_1_2_consol2.yaml",
+        "checkpoint": "checkpoints/_preserved/consol2_40pct_strict_iter01120.pt",
+        "strict_clears": 38
+      },
+      "1-3": {
+        "game": "mario_1_3_online_v1",
+        "profile": "configs/mario_1_3_online_v1.yaml",
+        "checkpoint": "checkpoints/_preserved/one_three_FINAL_consol2_iter00690.pt",
+        "strict_clears": 21
+      },
+      "1-4": {
+        "game": "mario_1_4_online_v1",
+        "profile": "configs/mario_1_4_online_v1.yaml",
+        "checkpoint": "checkpoints/_preserved/one_four_MEASURED60_iter00960.pt",
+        "strict_clears": 51
+      }
+    },
+    "baseline_sum": 153,
+    "baseline_n_episodes": 400,
+    "baseline_provenance": {
+      "1-1": {
+        "receipts": [
+          "runs/interference/interference.jsonl"
+        ],
+        "receipt_selector": {
+          "type": "probe",
+          "level": "1-1",
+          "role": "control"
+        },
+        "eval_seeds": [
+          20260816
+        ],
+        "n_episodes_total": 100,
+        "sequential": true,
+        "eval_workers": 5,
+        "eval_rng": "per-episode",
+        "matches_harness_protocol": true,
+        "matches_two_seed_fifty_split": false,
+        "note": "one 100-episode eval-seed (20260816), not the two-seed [7, 101] x 50 split this harness's own re-eval assembles -- protocol SHAPE (sequential/level-clear, eval_workers=5, per-episode RNG) matches exactly, only the seed/episode split differs. Immaterial to the 43/100 count."
+      },
+      "1-2": {
+        "receipts": [
+          "runs/consol2/peak_eval_seed7.json",
+          "runs/consol2/peak_eval_seed101.json"
+        ],
+        "eval_seeds": [
+          7,
+          101
+        ],
+        "n_episodes_total": 100,
+        "sequential": false,
+        "eval_workers": 1,
+        "eval_rng": "shared-stream",
+        "matches_harness_protocol": false,
+        "matches_two_seed_fifty_split": true,
+        "note": "measured under a DIFFERENT protocol than this harness's own re-eval shape: eval_rng shared-stream (not per-episode), eval_workers 1 (not 5), no --sequential/--level-clear (the harness always passes both) -- see runs/interference/interference.jsonl's own reference_protocol_deltas note for 1-2. Re-running this exact checkpoint under the harness's own protocol (runs/interference/interference.jsonl, probe/1-2/control, eval-seed 20260816) reads clear_rate=0.43 (43/100) against the banked 38/100 here -- a 5-point/13% swing from protocol alone, about half the width of level_collapse_margin (10). The noisiest leg of this comparison, and the one the whole experiment's narrative is about."
+      },
+      "1-3": {
+        "receipts": [
+          "runs/consol2_1_3_round2/final_eval_seed7.json",
+          "runs/consol2_1_3_round2/final_eval_seed101.json"
+        ],
+        "eval_seeds": [
+          7,
+          101
+        ],
+        "n_episodes_total": 100,
+        "sequential": true,
+        "eval_workers": 5,
+        "eval_rng": "per-episode",
+        "matches_harness_protocol": true,
+        "matches_two_seed_fifty_split": true,
+        "note": "protocol shape and seed/episode split both match this harness's own re-eval exactly."
+      },
+      "1-4": {
+        "receipts": [
+          "runs/online_1_4/final_eval_seed7.json",
+          "runs/online_1_4/final_eval_seed101.json"
+        ],
+        "eval_seeds": [
+          7,
+          101
+        ],
+        "n_episodes_total": 100,
+        "sequential": true,
+        "eval_workers": 5,
+        "eval_rng": "per-episode",
+        "matches_harness_protocol": true,
+        "matches_two_seed_fifty_split": true,
+        "note": "protocol shape and seed/episode split both match this harness's own re-eval exactly."
+      }
+    },
+    "default_checkpoint_dir": "checkpoints/shared_substrate_v1",
+    "episodes_per_seed": 50,
+    "eval_seeds": [
+      7,
+      101
+    ],
+    "max_steps": 3000,
+    "sticky_prob": 0.25,
+    "start_jitter": 16,
+    "eval_workers": 5,
+    "eval_rng": "per-episode",
+    "probe_timeout_s": 7200.0,
+    "level_collapse_margin": 10,
+    "aggregate_alpha": 0.05
+  },
+  "verdict_rules": {
+    "predicate": "clear_rate (episode_success, strict) ONLY -- chain-advance (seq_clear_rate) never substitutes",
+    "SUPERSEDES": "aggregate strict clears > baseline_sum AND no individual level falls more than 10 points below its own baseline",
+    "MIXED": "aggregate beats baseline but at least one level collapses past the margin -- the interference failure wearing a disguise",
+    "FAILED": "aggregate does not beat baseline_sum",
+    "UNUSABLE": "any eval leg errors, times out, or returns no strict predicate",
+    "precedence": "UNUSABLE > MIXED/SUPERSEDES/FAILED (computed only once no leg is broken)",
+    "aggregate_test": "one-sided exact binomial test, pooled null p0 = baseline_sum / baseline_n_episodes -- ADVISORY statistical context alongside the raw-count comparison above, never a substitute for it; assumptions documented at aggregate_significance()"
+  },
+  "status": "evaluated",
+  "level_deltas": [
+    {
+      "level": "1-1",
+      "baseline": 43,
+      "shared": 31,
+      "delta": -12,
+      "collapsed": true,
+      "status": "ok",
+      "errors": []
+    },
+    {
+      "level": "1-2",
+      "baseline": 38,
+      "shared": 0,
+      "delta": -38,
+      "collapsed": true,
+      "status": "ok",
+      "errors": []
+    },
+    {
+      "level": "1-3",
+      "baseline": 21,
+      "shared": 0,
+      "delta": -21,
+      "collapsed": true,
+      "status": "ok",
+      "errors": []
+    },
+    {
+      "level": "1-4",
+      "baseline": 51,
+      "shared": 11,
+      "delta": -40,
+      "collapsed": true,
+      "status": "ok",
+      "errors": []
+    }
+  ],
+  "verdict": {
+    "verdict": "FAILED",
+    "reasons": [
+      "aggregate does not beat baseline (42 <= 153)"
+    ],
+    "aggregate": {
+      "baseline_sum": 153,
+      "shared_sum": 42,
+      "delta": -111,
+      "beats_baseline": false,
+      "collapsed_levels": [
+        "1-1",
+        "1-2",
+        "1-3",
+        "1-4"
+      ],
+      "errored_levels": []
+    }
+  },
+  "aggregate_significance": {
+    "n": 400,
+    "p0": 0.3825,
+    "alpha": 0.05,
+    "k": 42,
+    "p_above": 0.9999999999999777,
+    "p_below": 6.0083071576245316e-36,
+    "decision": "significantly_below_baseline"
+  }
+}

@@ -1,0 +1,28 @@
+{
+ "type": "substrate_training_set_composition",
+ "addendum": "docs/proposals/SUBSTRATE_RUN_ADDENDUM_2026-08-29.md#2",
+ "hashed_at": 1788054056.600963,
+ "files": {
+  "runs/interference/success_1_1.npz": {
+   "sha256": "6476eea9b179e0fc42161159bfdbf0065727057564cfb359aa045a18713d351a",
+   "registered": "6476eea9b179e0fc42161159bfdbf0065727057564cfb359aa045a18713d351a",
+   "match": true
+  },
+  "runs/interference/success_1_2.npz": {
+   "sha256": "d1e1fb1017e59f23672249c52263b852de1a4fea89a60df7ef13e77db0888824",
+   "registered": "d1e1fb1017e59f23672249c52263b852de1a4fea89a60df7ef13e77db0888824",
+   "match": true
+  },
+  "runs/substrate_pairs/success_1_3.npz": {
+   "sha256": "5ee70e10107f735f6c402168cf2c4e463e72064d89f916475c871e1b9ca94213",
+   "collection_receipt": "5ee70e10107f735f6c402168cf2c4e463e72064d89f916475c871e1b9ca94213",
+   "match": true
+  },
+  "runs/substrate_pairs/success_1_4.npz": {
+   "sha256": "a75fa18827ace2f70dc6173c180106eb12f105e414ffea297abad7f295da44ab",
+   "collection_receipt": "a75fa18827ace2f70dc6173c180106eb12f105e414ffea297abad7f295da44ab",
+   "match": true
+  }
+ },
+ "status": "ok"
+}

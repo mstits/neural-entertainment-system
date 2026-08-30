@@ -1,0 +1,36 @@
+{
+ "type": "addendum2_control_trim",
+ "target_pairs": 37834,
+ "rule": "leading pairs in collection order (balance_fifty_fifty's rule)",
+ "written_at": 1788056273.802026,
+ "files": {
+  "1-1": {
+   "source": "runs/interference/success_1_1.npz",
+   "source_sha256": "6476eea9b179e0fc42161159bfdbf0065727057564cfb359aa045a18713d351a",
+   "trimmed": "runs/substrate_pairs/control_trim/trim_1_1.npz",
+   "trimmed_sha256": "222b7b8e037a2cbd240e930f2cc7a863d004ff3379f01a7f440df4b990f012c0",
+   "pairs": 37834
+  },
+  "1-2": {
+   "source": "runs/interference/success_1_2.npz",
+   "source_sha256": "d1e1fb1017e59f23672249c52263b852de1a4fea89a60df7ef13e77db0888824",
+   "trimmed": "runs/substrate_pairs/control_trim/trim_1_2.npz",
+   "trimmed_sha256": "7e40c7440ced237fa07767691ca26c1c0a6b7a926e5ac4ee617594424d515a5e",
+   "pairs": 37834
+  },
+  "1-3": {
+   "source": "runs/substrate_pairs/success_1_3.npz",
+   "source_sha256": "5ee70e10107f735f6c402168cf2c4e463e72064d89f916475c871e1b9ca94213",
+   "trimmed": "runs/substrate_pairs/control_trim/trim_1_3.npz",
+   "trimmed_sha256": "96bfa88dd1f785a915068491b26039fb9e9d1f96ab530ab2c39a28ff9a4fc1d3",
+   "pairs": 37834
+  },
+  "1-4": {
+   "source": "runs/substrate_pairs/success_1_4.npz",
+   "source_sha256": "a75fa18827ace2f70dc6173c180106eb12f105e414ffea297abad7f295da44ab",
+   "trimmed": "runs/substrate_pairs/control_trim/trim_1_4.npz",
+   "trimmed_sha256": "8dd5ca021432c38d231f0628770e8c87304b9718c09a33e9ac66b0056775d6c9",
+   "pairs": 37834
+  }
+ }
+}

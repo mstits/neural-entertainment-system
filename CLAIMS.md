@@ -4511,3 +4511,34 @@ change (more seeds or a bar renegotiation) — the registration's own item
 by the arming deadline — the guard's first live save) and the accidental
 concurrent eval chain (verified harmless, 192/192 clean) are receipted in
 the write-up and MISTAKES.md.
+
+## SUBSTRATE 2026-08-29 — trunk-plus-heads under offline BC: FAILED main, PARTIAL control; the 104/12 decomposition is the deliverable
+
+Full write-up: `docs/research/SUBSTRATE_VERDICT_2026-08-29.md`.
+Registration: `docs/proposals/SUBSTRATE_RUN_ADDENDUM_2026-08-29.md` (main
+§1–§5 pre-compute; control Addendum 2 post-main-verdict, pre-control-
+compute). Receipts: `docs/receipts/substrate/`. Every number dual-derived
+from raw per-seed JSONs by two sessions, verifier blind, exact agreement
+both rounds.
+
+**Main run FAILED** (shared-trunk multi-head, offline BC on banked strict-
+success pairs): 42 strict clears vs the like-for-like 158 (Addendum-1
+threshold, re-derived from named receipts at verdict time), all four
+levels collapsed, 1-2 and 1-3 at zero. **Licenses no interference claim**
+— the design compared offline BC against online-RL specialists, two
+variables at once (MISTAKES `[confound]`, new category, caught by the
+blind verifier at verdict time).
+
+**Control PARTIAL** (four separate nets, identical trainer/defaults/eval,
+per-level exposure identical at 37,834 leading pairs): S_sep = 54.
+**The decomposition: of the 116-clear gap, the training method costs 104
+(158 → 54); sharing costs a net 12 (54 → 42).** Sharing is real,
+level-specific, and bidirectional — +20 transfer INTO 1-1, −14/−18
+interference on 1-3/1-4; 1-2 is 0 in both arms and discriminates nothing
+(offline BC cannot clear it at this exposure at all — a colder-start
+replication of the banked imitation-elimination result). Neither
+"interference confirmed" nor "interference refuted" is banked.
+
+The interference question at strength needs both arms RL-trained —
+expensive, operator's call, not registered. Cost of everything above:
+~26 minutes of machine time.

@@ -1,0 +1,26 @@
+{
+ "type": "substrate_pairs_collection",
+ "plan": {
+  "level": "1-3",
+  "mode": "collection",
+  "profile": "/Users/stits/Documents/macos-emulation-and-training/configs/mario_1_3_online_v1.yaml",
+  "checkpoint": "/Users/stits/Documents/macos-emulation-and-training/checkpoints/_preserved/one_three_FINAL_consol2_iter00690.pt",
+  "start_state": "/Users/stits/Documents/macos-emulation-and-training/checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum/stage_05.state",
+  "episodes": 300,
+  "max_steps": 3000,
+  "sticky_prob": 0.25,
+  "start_jitter": 16,
+  "action_select": "sampled",
+  "temperature": 1.0,
+  "eval_rng": "per-episode",
+  "eval_seed": 20260815,
+  "lanes": 6,
+  "keep": "strict_episode_success_only",
+  "out": "/Users/stits/Documents/macos-emulation-and-training/runs/substrate_pairs/success_1_3.npz"
+ },
+ "episodes_total": 300,
+ "episodes_kept_strict": 92,
+ "pairs": 37834,
+ "npz_sha256": "5ee70e10107f735f6c402168cf2c4e463e72064d89f916475c871e1b9ca94213",
+ "timestamp": 1788053951.3477619
+}
