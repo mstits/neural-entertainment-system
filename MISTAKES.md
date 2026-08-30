@@ -104,6 +104,14 @@ committed inside the log that records it. It is now derived.
   selector for it. "Uncited" licenses nothing; recency inverts citation.
   Positive selection for deletion needs its own evidence (age + zero
   refs + owner sign-off), per item.
+- **Amendment (2026-08-29, same day):** A literal-path grep also cannot
+  see GLOB coverage — `assemble_full_run.py` reaches `lvl_*`,
+  `clear_detect.py:3733` and `engine_status.py:119` walk `runs/**`
+  recursively, none of which contain the candidate path as a literal.
+  Executing the sweep with a glob-aware battery (literal refs + glob
+  patterns + open handles + campaign/solution markers, re-asserted at
+  execution time) caught four additional directories the literal grep
+  had passed. The veto check must resolve globs, not just grep strings.
 
 ## 2026-08-29 — [process] v33 configs minted without a full-suite run; the roster gate caught it 19 hours late
 - **What happened:** The four v33 capacity configs (d7d0cf6, minted
