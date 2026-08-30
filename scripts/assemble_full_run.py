@@ -228,6 +228,15 @@ def main():
         "steps": len(tape), "frames": len(tape) * fs,
         "duration_s": len(tape) * fs / 60.0,
         "tape_sha256": sha,
+        # The domain matters: sha256 over tape_arr.tobytes() (raw uint8
+        # action bytes), NOT over the .npy file, whose ~128-byte header
+        # makes a naive file hash differ. Recorded explicitly since
+        # 2026-08-29, when the unstated domain read as an integrity
+        # failure on an intact banked tape and froze a 127G archival
+        # decision. tests/test_full_run_receipt_integrity.py is the
+        # verification recipe.
+        "tape_sha256_domain": "raw uint8 action bytes (arr.tobytes()), "
+                              "not the .npy file",
         "levels": receipts}, indent=2))
     print(f"[assemble] COMPLETE: {len(tape)} steps ({len(tape)*fs/60.0:.0f}s "
           f"of gameplay), tape sha256 {sha[:16]}…")

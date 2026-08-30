@@ -17,7 +17,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **PROMOTED 2026-08-28** (project instruction file); **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **8** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
-| `[process]` | **11** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
+| `[process]` | **13** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 2 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
 | `[measurement]` | 1 | — |
@@ -35,6 +35,59 @@ invisible to it. That is the defect the engine purity sweep named the same day
 committed inside the log that records it. It is now derived.
 ---|---|---|
 ---
+
+## 2026-08-29 — [process] A banked hash never named its domain, and read as corruption of the flagship artifact
+- **What happened:** `docs/receipts/full_run/receipts.json` attests the
+  complete-game tape with `tape_sha256 = 38ae326e…`. A file-level
+  verification (`shasum full_tape.npy`) produced `034f6eb7…` — twice, two
+  tools — and the flagship's banked deliverable was reported as failing
+  its own attestation, freezing a 127G archival decision. Re-derivation
+  against the producer (`assemble_full_run.py:223`) resolved it: the hash
+  is over `tape_arr.tobytes()` — the raw 31,202 uint8 action bytes — and
+  the `.npy` file adds a ~128-byte numpy header. The tape is intact; the
+  attestation is valid; exact match on re-derivation in the correct
+  domain.
+- **Root cause:** The receipt recorded a hash without recording what the
+  hash is OVER. Any verifier without the producer's source to hand picks
+  the obvious domain (the file) and reads integrity failure on an intact
+  artifact.
+- **Consequence:** A correct STOP on the archival (right call given the
+  information), two sessions' verification round, and a flagship
+  "corruption" scare that was a labeling gap. Fixed same day: the
+  assembler now writes `tape_sha256_domain` into every future receipt,
+  `docs/receipts/full_run/VERIFY.md` documents the recipe beside the
+  banked (unmodified) receipt, and
+  `tests/test_full_run_receipt_integrity.py` verifies the tape in the
+  receipt's own domain every suite run — real corruption now reds a test
+  instead of hiding under an ambiguous hash.
+- **Rule (draft):** A hash in a receipt names its domain in the receipt.
+  A hash whose domain must be recovered from the producer's source code
+  attests nothing to anyone else.
+
+## 2026-08-29 — [process] Three same-day catches, one shape: a claim gating an action, re-derived by a session that didn't produce it
+- **What happened:** Three times today a load-bearing claim changed on
+  independent re-derivation: (1) a 204-verdict receipt log read as a
+  completed successful experiment — 100% mock test pollution; (2) a
+  pre-registered baseline threshold (153) carried a 5-point bias in the
+  hypothesis's favour — the like-for-like figure is 158, caught in
+  cross-review before compute; (3) the flagship tape read as failing its
+  attestation — a hash-domain labeling gap, artifact intact (previous
+  entry). Different producers, different defects, one detection
+  mechanism: the session that did NOT produce the claim re-derived it
+  before anyone acted on it.
+- **Root cause:** Producer-side verification shares the producer's blind
+  spots — the assumptions baked into the artifact are baked into the
+  check. All three defects were invisible from inside and cheap to see
+  from outside.
+- **Consequence:** None of the three reached a ledger, a deletion, or a
+  campaign launch. The pattern is currently a habit two sessions happen
+  to share, not a rule anything enforces.
+- **Rule (draft):** A claim that gates an irreversible or expensive
+  action — a deletion, a campaign launch, a ledger bank — is re-derived
+  from its underlying artifacts by a session (or at minimum a fresh
+  derivation path) that did not produce it, before the action. The
+  producer's own receipt is an input to that check, never a substitute
+  for it.
 
 ## 2026-08-29 — [stale-artifact] A test wrote mock verdicts to a production receipt path for 12 days
 - **What happened:** `tests/test_eval_shared_substrate.py::test_run_never_
