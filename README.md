@@ -1,13 +1,14 @@
 # Neural Entertainment System
 
-A macOS / Apple-Silicon NES emulator built to be pointed at a game and left
-to beat it. A purpose-built Rust core (`nes_core`) — Mesen-grade fidelity,
-microsecond save-states, 37 mappers, 793 of 794 library ROMs booting — is
-driven from Python by two systems that share it: a generic Go-Explore
-**solver** that searches its way through a game live on stream, and a PPO
-**trainer** whose policies are graded by the strictest published evaluation
-protocol. The solver has beaten Super Mario Bros end to end — cold boot to
-the princess, every input receipted — and the trainer's honest number on
+A macOS / Apple-Silicon NES emulator built to be pointed at a game and left to
+beat it. A purpose-built Rust core (`nes_core`) — Mesen-checked fidelity,
+microsecond save-states, 37 mappers, 791 of 796 library ROMs booting into a
+live screen — is driven from Python by two systems that share it: a generic
+Go-Explore **solver** that searches its way through a game live on stream, and
+a PPO **trainer** whose policies are graded by the strictest published
+evaluation protocol. The solver has beaten Super Mario Bros end to end — cold
+boot to the princess, every input receipted — and the trainer's honest number
+on
 World 1-1 is 0.65. Those two sentences describe different achievements, they
 are filed in different ledgers, and every result below carries the label of
 the ledger it belongs to.
@@ -21,9 +22,10 @@ Three headline results. The first two carry ledger labels — `CLAIMS.md` is
 authoritative for what each label means and what may be said about it, and
 *The claims ledger* below is the short version. The third is the fidelity
 floor the other two stand on. Where the project is going next is in
-`docs/proposals/TOTALITY_BASIS_2026-08-08.md` (what "any game" would
-actually take) and `docs/proposals/STRATEGY_2026-08-08.md` (what is
-scheduled, with failable gates).
+`docs/proposals/TOTALITY_BASIS_2026-08-08.md` (what "any game" would actually
+take), `docs/proposals/STRATEGY_2026-08-14.md` (supersedes the day-30 framing),
+and `docs/proposals/DIRECTION_2026-08-28.md` (the current direction, with
+failable gates).
 
 ### 1. [EXHIBITION] The search system beat Super Mario Bros — the whole game
 
@@ -43,10 +45,13 @@ the whole run is one verified artifact: a single controller tape from an
 actual cold boot through every level to the ending. **31,202 inputs, ~35
 minutes of gameplay, zero state loads, every level boundary receipted, and a
 deterministic sha256 across replays** (`docs/receipts/full_run/receipts.json`
-records all of it; `state_loads: 0`, `cold_boot: true`). The 31 KB tape,
-per-level receipts, and ending frame live in `docs/receipts/full_run/`; the
-three-round research trail that cracked the looping mazes and the final
-pipe-maze is in `docs/research/`.
+records all of it; `state_loads: 0`, `cold_boot: true`). Re-verified
+2026-09-01 on the current build: the tape replays to the ending with all 32
+level boundaries matching the receipt
+(`docs/receipts/full_run/replay_2026-09-01.json`). The 31 KB tape, per-level
+receipts, and ending frame live in `docs/receipts/full_run/`; the three-round
+research trail that cracked the looping mazes and the final pipe-maze is in
+`docs/research/`.
 
 **It was finished live.** The last stretch — 5-3 through the 8-4 finale —
 fell in the streaming show (`make show`) on the night of **2026-07-28/29**,
@@ -113,12 +118,14 @@ Two more entries, both carefully qualified:
 
 - **World 1-2 is a documented negative** — and a measured one. A
   pre-registered, externally-reviewed campaign (three concurring seeds)
-  falsified the compact feedforward policy class on this level: local
-  robustness verified at 1,900+ zones by sequential statistical tests does
-  not compose into traversal, and the level's central gauntlet has a
-  measured local noise ceiling far below the protocol's 25%. The literature
-  audit found **no published agent by any method** that clears 1-2 under
-  this protocol; it is an open problem at the field's frontier. Full record:
+  showed the CGSA-PPO recipe failing its own pre-registered signposts on
+  three seeds (the policy-class generalization was later withdrawn —
+  `CLAIMS.md` §World 1-2, `runs/smodice_1_2/`): local robustness verified at
+  1,900+ zones by sequential statistical tests does not compose into
+  traversal, and the level's central gauntlet has a measured local noise
+  ceiling far below the protocol's 25%. On the literature: **we are aware of no published per-level 1-2 clear rate
+  under Machado sticky-0.25, in either direction**; the level is an open
+  problem at the field's frontier. Full record:
   `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`.
 - **The composite World-1 playthrough** remains reproducible: per-level
   learned nets behind a router, playing 1-1 through the 1-4 castle live
@@ -151,25 +158,32 @@ before and after the winner-selection fix; a consolidation pass on top of
 it scored 0/25 greedy on two checkpoints. The diagnosis on record is a
 sharpening failure rather than an exploration one (the same nets sample
 0.50–0.633, reaching within pixels of the pole), which is why the attempt
-continues at all. Note what that means procedurally: the prereg gates the
-1-2 attempt on the 1-1 control passing ≥ 0.63 pooled greedy cold, and the
-control did not pass. `docs/proposals/STRATEGY_2026-08-08.md` allows the
-attempt anyway only as a written deviation addendum published *before* the
-run, with the gap carried as a registered caveat — and that addendum is not
-written yet. It may fail again; the prereg says in advance what failing
-looks like.
+continues at all. Note what that means procedurally: the prereg gates the 1-2
+attempt on the 1-1 control passing ≥ 0.63 pooled greedy cold, and the control
+did not pass. `docs/proposals/STRATEGY_2026-08-08.md` (superseded as the plan
+of record by `STRATEGY_2026-08-14.md`; current direction in
+`DIRECTION_2026-08-28.md`) allows the attempt anyway only as a written
+deviation addendum published *before* the run, with the gap carried as a
+registered caveat — and that addendum is not written yet. It may fail again;
+the prereg says in advance what failing looks like.
 
-### 3. [FIDELITY] Mesen-grade receipts under both of them
+### 3. [FIDELITY] Mesen-checked receipts under both of them
 
-Neither ledger means anything on an emulator that drifts. The core is gated
-by **nestest byte-exact** (8,991 instructions — registers *and* cycle count,
+Neither ledger means anything on an emulator that drifts. The core is gated by
+**nestest byte-exact** (8,991 instructions — registers *and* cycle count,
 against the Nintendulator golden trace), a **33-ROM Mesen-oracle lockstep**,
-**149 differential parity tests** (`make parity`), and a differential fuzz
-of the AArch64 ASM CPU against the pure-Rust interpreter across 240M+
-instructions with zero divergence. 793 of 794 library ROMs boot across 37
-mappers. The honest gap — the full public blargg gauntlet is not yet run
-end-to-end as a gate — is stated in *Accuracy status* below rather than
-quietly omitted.
+**149 differential parity tests** (`make parity`), and a differential fuzz of
+the AArch64 ASM CPU against the pure-Rust interpreter across 240M+ instructions
+with zero divergence. 791 of 796 library ROMs boot into a live screen across
+the 28 mappers this library exercises (2026-09-01 census: 795 run 300 frames
+without a panic or timeout, one truncated dump, four static screens).
+Cross-checked against Mesen 2 on 12,000 frames of the banked Super Mario Bros
+run (2026-09-01): nes_core and Mesen agree on lives, area, mode and every
+level-transition frame; scratch bytes (stack, zero-page temps, OAM buffer)
+differ by about 10 per frame idle and 17 median under play. The core is never
+claimed byte-identical to Mesen. The honest gap — the full public blargg
+gauntlet is not yet run end-to-end as a gate — is stated in *Accuracy status*
+below rather than quietly omitted.
 
 The emulator and the honest-evaluation harness are the mature layers; the
 single generalist agent remains the expedition ahead.
@@ -314,11 +328,13 @@ stay resumable.
 **And it has not been shown to work.** No validation run has been performed;
 the hall is still unsolved; the standing prior is ~110M steps and 0 solutions
 across five arms. `CLAIMS.md` files that arm as **FORGE-PENDING-VALIDATION**
-and permits citing it only as *agent-forged, unvalidated*, with no clear of
-any kind attributed to it. The validation run is pre-registered in
-`docs/proposals/STRATEGY_2026-08-08.md` with its stopping rule declared in
-advance. That is what the FORGE ledger is for: it lets the interesting claim
-be made without letting it borrow credit it has not earned.
+and permits citing it only as *agent-forged, unvalidated*, with no clear of any
+kind attributed to it. The validation run is pre-registered in
+`docs/proposals/STRATEGY_2026-08-08.md` (superseded as the plan of record by
+`STRATEGY_2026-08-14.md`; current direction in `DIRECTION_2026-08-28.md`) with
+its stopping rule declared in advance. That is what the FORGE ledger is for: it
+lets the interesting claim be made without letting it borrow credit it has not
+earned.
 
 Two invariants keep every tier honest: agents consume only self-measured
 telemetry, never game internals; and no arm joins T0 without default-off
@@ -412,13 +428,14 @@ Learned policies are judged by the protocol of Machado et al. [1]: cold
 power-on, zero test-time state loads, greedy action selection, 25%
 sticky actions, 0–16 frame start jitter, single-life scoring, two seeds, and
 greedy and sampled both declared (`CLAIMS.md` sets the episode floor; every
-run declares the count it used). Under this
-bar, **1-1 is learned at 0.65 pooled** (0.56 / 0.74 per seed, 50 episodes
-each) by from-scratch PPO
-[12, 13] on tile observations. **1-2 is a documented negative** with the same evidentiary
-standard: a pre-registered three-seed campaign falsified the compact
-feedforward policy class. The machinery built for that campaign is
-documented because negative results deserve their math too:
+run declares the count it used). Under this bar, **1-1 is learned at 0.65
+pooled** (0.56 / 0.74 per seed, 50 episodes each) by from-scratch PPO [12, 13]
+on tile observations. **1-2 is a documented negative** with the same
+evidentiary standard: a pre-registered three-seed campaign showed the CGSA-PPO
+recipe failing its own pre-registered signposts (the policy-class claim was
+later withdrawn; see `CLAIMS.md` and `runs/smodice_1_2/`). The machinery built
+for that campaign is documented because negative results deserve their math
+too:
 
 - **Non-farmable potential shaping.** Reward shaping is potential-based
   [4], with the potential positive-shifted from a search-derived distance
@@ -443,8 +460,7 @@ $$\Lambda_m = \sum_i \left[ x_i \ln\tfrac{0.60}{0.15} + (1-x_i)\ln\tfrac{0.40}{0
   success was below 1/400; fixed-count claims use the Wilson interval [6]
   instead. The campaign's decisive result: SPRT-verified *local*
   robustness at 1,900+ cells did **not** compose into level traversal —
-  three seeds concurring — and no published agent by any method is known to
-  clear 1-2 under this protocol. The full record and robustness profile:
+  three seeds concurring — and we are aware of no published per-level 1-2 clear rate under Machado sticky-0.25, in either direction. The full record and robustness profile:
   `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`.
 
 ### Verification and receipts
@@ -512,10 +528,13 @@ deterministic core. Artifacts: `docs/receipts/full_run/`.
   divergence, and falling back to the interpreter for any unported opcode. (The
   full public blargg CPU/PPU/APU test-ROM gauntlet is **not yet run** end-to-end
   — see *Accuracy status* below.)
-- Broad compatibility: as of the latest library scan, **793 of 794 tested ROMs
-  (~99.9%)** boot cleanly across **37 mappers**. Unsupported mappers and
-  malformed headers fail cleanly at load time with a `RuntimeError` instead of
-  crashing the trainer.
+- Broad compatibility: as of the 2026-09-01 library scan, **791 of 796 ROMs
+  (99.4%)** boot into a live screen across **28 of the 37 supported mappers**
+  present in the library; 795 run 300 frames without a panic or timeout, four
+  boot to a static screen (Action 52, Jackal, Nintendo World Championships
+  1990, SMB+Tetris+NWC), and the one load failure is a truncated dump.
+  Unsupported mappers and malformed headers fail cleanly at load time with a
+  `RuntimeError` instead of crashing the trainer.
 - A reinforcement-learning trainer that runs many NES instances in parallel
   through a zero-IPC rayon worker pool, learns a policy with PPO, and lets you
   watch it live in a PyQt6 GUI or reproduce a result headless from the command
@@ -750,18 +769,19 @@ above).
   sticky-actions 0.25 + start-jitter, single-life, greedy), **1-1 is
   genuinely learned: 0.65 pooled clear rate** (0.56 / 0.74 per seed at 50
   episodes each; 0.667 sampled at 30, declared below the floor) by
-  from-scratch PPO on tile observations — the project's
-  first true clear at the research-standard
-  bar, and the only one. The reverse-curriculum attempt to extend it has so
-  far scored **0.02 greedy on 1-1 twice** (see the receipt table above).
-  **1-2 is a measured negative**: a pre-registered three-seed campaign
-  falsified the compact feedforward policy class there (SPRT-verified local
-  robustness at 1,900+ zones does not compose into traversal), and a
-  literature audit found no published agent by any method that clears 1-2
-  under this protocol. The full falsification record and the measured
-  robustness profile across noise levels live in
-  `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`. Negative
-  results carry the same evidentiary standard as positives here.
+  from-scratch PPO on tile observations — the project's first true clear at
+  the research-standard bar, and the only one. The reverse-curriculum attempt
+  to extend it has so far scored **0.02 greedy on 1-1 twice** (see the
+  receipt table above). **1-2 is a measured negative**: a pre-registered
+  three-seed campaign showed the CGSA-PPO recipe failing its own
+  pre-registered signposts there (SPRT-verified local robustness at 1,900+
+  zones does not compose into traversal; the policy-class claim was withdrawn
+  — `runs/smodice_1_2/`), and we are aware of no published per-level 1-2
+  clear rate under Machado sticky-0.25, in either direction under this
+  protocol. The full falsification record and the measured robustness
+  profile across noise levels live in
+  `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`. Negative results
+  carry the same evidentiary standard as positives here.
 - **Super Mario Bros. — EXHIBITION (search, not learning): THE COMPLETE
   GAME.** The Go-Explore solver beat all 32 levels, and the full run is a
   single verified artifact: **one controller tape from an actual cold boot
@@ -1051,8 +1071,9 @@ events), so the median/p99 above — not the mean — describe the common case.
 
 The full matrix lives in `reports/full_library.md`. A summary:
 
-- **37 mappers** implemented, covering **~99.9%** of the tested 794-ROM library.
-  Every supported mapper passes at 100% on its carts.
+- **37 mappers** implemented, covering **99.4%** of the 796-ROM library
+  (live-screen boot, 2026-09-01 census). Every supported mapper passes at
+  100% on its carts.
 - Discrete logic: NROM (0), UxROM (2), CNROM (3), AxROM (7), Colordreams (11,
   66), CPROM (13), BNROM / NINA-001 (34), Caltron 6-in-1 (41), NINA-06 / HES
   (113), Action 52 (228), Camerica Quattro (232), Maxi 15 (234), Camerica
@@ -1166,11 +1187,11 @@ numbers.
 
 What this release **does** ship:
 
-- A fast Rust NES emulator with 37 mappers (793/794 ROMs boot), byte-exact CPU
-  validation via nestest (8,991 instructions, registers + cycle count) and a
-  33-ROM Mesen-oracle lockstep, plus an AArch64 ASM 6502 core
-  (differential-fuzzed against the pure-Rust interpreter for 240M+ instructions,
-  zero divergence).
+- A fast Rust NES emulator with 37 mappers (791/796 ROMs boot to a live
+  screen), byte-exact CPU validation via nestest (8,991 instructions,
+  registers + cycle count) and a 33-ROM Mesen-oracle lockstep, plus an
+  AArch64 ASM 6502 core (differential-fuzzed against the pure-Rust
+  interpreter for 240M+ instructions, zero divergence).
 - The training stack: rayon worker pool, vanilla-PPO trainer (default) with
   save-state and backward curricula, tile and pixel-CNN encoders, RND
   exploration, a DreamerV3 scaffold, and Core ML export.
@@ -1195,8 +1216,9 @@ What this release **does not** ship:
   universal pixel-CNN path meanwhile.
 - **A converged DreamerV3 policy.** The world-model scaffold trains end-to-end
   but has not been converged to beat PPO on these games — open research.
-- **All 794 tested ROMs booting.** The single load failure (`Yoshi (USA).nes`)
-  is a truncated dump, not an emulator bug.
+- **All 796 library ROMs booting.** One load failure (`Yoshi (USA).nes`) is a
+  truncated dump, not an emulator bug; four ROMs (mappers 2, 37, 105, 228)
+  load but freeze on a static screen and are open emulator issues.
 - **A completed public accuracy gauntlet.** nestest (registers + CYC), the
   33-ROM Mesen-oracle lockstep, and the 149-test parity gate pass; the full
   public **blargg CPU/PPU/APU test-ROM suite** has not yet been run end-to-end
@@ -1217,8 +1239,10 @@ What this release **does not** ship:
   research.
 
 Near-term roadmap — the current plan of record is
-`docs/proposals/STRATEGY_2026-08-08.md`, whose gates are written to be
-failable and whose falsifiers name their instruments. The headline items:
+`docs/proposals/STRATEGY_2026-08-14.md` (superseding
+`STRATEGY_2026-08-08.md`), with current direction in
+`docs/proposals/DIRECTION_2026-08-28.md`; gates are written to be failable
+and falsifiers name their instruments. The headline items:
 
 - **Breadth, measured against a basis — not a wish list.**
   `docs/proposals/TOTALITY_BASIS_2026-08-08.md` argues that games are bundles

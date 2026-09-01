@@ -11,7 +11,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 
 | root cause | entries | deterministic enforcement |
 |---|---|---|
-| `[unverified-claim]` | **13** | **PROMOTED 2026-08-28** (project instruction file) + **PROMOTED 2026-08-29** (cross-derivation: a claim gating an irreversible/expensive action is re-derived by a non-producer before the action — 4 same-day catches; operator-approved); no — judgement, working form is the two-session split |
+| `[unverified-claim]` | **14** | **PROMOTED 2026-08-28** (project instruction file) + **PROMOTED 2026-08-29** (cross-derivation: a claim gating an irreversible/expensive action is re-derived by a non-producer before the action — 4 same-day catches; operator-approved); no — judgement, working form is the two-session split |
 | `[vacuous-gate]` | **14** | **PROMOTED 2026-08-28** (project instruction file) + **SHIPPED** — `scripts/anti_vacuity_scan.py` + registry test `tests/test_anti_vacuity_gates.py` (collected by the full suite); also: ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
 | `[weak-eval]` | **8** | **PROMOTED 2026-08-28** (project instruction file); partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
@@ -62,6 +62,56 @@ committed inside the log that records it. It is now derived.
   drifted out from under itself" the script's own docstring was written about.
 - **Rule (draft):** A fix commit re-runs every gate that guards a file it
   touches, and a moved inventory count is part of that commit's receipt.
+
+---
+
+## 2026-09-01 — [unverified-claim] README quoted a stale 794-ROM scan as "793 of 794" in six places and kept a withdrawn 1-2 claim in three, five days after CLAIMS.md corrected both
+- **What happened:** `reports/full_library.md`/`.csv` (committed 2026-04-27,
+  `55e5333`) is a 794-ROM scan whose "793 ok" only checked for a
+  crash-free 300-frame run — it never distinguished a live screen from a
+  frozen one, and its ROM count predates two ROMs later added to the
+  library. README quoted that stale number as "793 of 794 tested ROMs" /
+  "Mesen-grade fidelity" in six places (`:5`, `:169`, `:515-516`, `:1054`,
+  `:1169`, `:1198-1199`), unchanged since. The 2026-09-01 census
+  (`docs/receipts/full_run/replay_2026-09-01.json` plus a fresh library
+  scan and a 12,000-frame Mesen 2 cross-check) found 796 unique ROMs (806
+  files, 10 duplicates); 795 run 300 frames with no panic or timeout; 1
+  header failure (`Yoshi (USA).nes`, a truncated dump); and 4 that boot
+  only to a static screen (Action 52/mapper 228, Jackal/mapper 2,
+  Nintendo World Championships 1990/mapper 105, SMB+Tetris+NWC/mapper
+  37) — leaving 791 of 796 (99.4%) actually booting into a live screen,
+  and nes_core never byte-identical to Mesen (~10 scratch bytes/frame
+  idle, 17 median under play). Separately, `CLAIMS.md:1382-1394` had
+  already withdrawn the "falsified the compact feedforward policy class"
+  / "no published agent by any method clears 1-2" wording for World 1-2
+  on 2026-08-27, narrowing the claim to "the CGSA-PPO recipe failed its
+  own pre-registered signposts on three seeds" and weakening the
+  literature sentence to "we are aware of no published per-level 1-2
+  clear rate under Machado sticky-0.25, in either direction" — yet
+  README still carried the withdrawn wording verbatim in three places
+  (`:114-118`, `:419-420`, `:758-760`) for the five days until this
+  entry's fix commit.
+- **Root cause:** README's headline numbers were never re-derived from
+  the artifact that would have caught the drift — the 794-scan predates
+  the boot-vs-static-screen distinction entirely, and CLAIMS.md's
+  2026-08-27 correction to the World 1-2 wording was never propagated to
+  the README copies repeating the same claim in six and three separate
+  places respectively. A claim quoted in multiple places has multiple
+  places to go stale, and nothing re-derives README's numbers from their
+  source artifact or diffs README against `CLAIMS.md`'s ledger language.
+- **Consequence:** No wrong claim gated an irreversible action — README
+  is descriptive, not a control. Cost: the public-facing document
+  overstated fidelity ("Mesen-grade", byte-identical framing implied)
+  and undercounted static-boot failures for over four months, and kept a
+  scientifically withdrawn claim ("falsified... no published agent by
+  any method clears 1-2") live for five days after `CLAIMS.md` corrected
+  it.
+- **Rule (draft):** A number or claim quoted in more than one place in
+  README carries a single citation to its source artifact, and
+  `mistakes_tally.py`-style tooling should be able to flag a README
+  string that also appears, worded differently, in `CLAIMS.md`'s WITHDRAWN
+  or WEAKENED sections — six independently-typed copies of the same
+  number should not be the only thing keeping them in sync.
 
 ---
 
