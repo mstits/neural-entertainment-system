@@ -6,27 +6,26 @@ archive the enforced rules in the project instruction file get audited against.
 Rules below are **drafts, not enforced.** A root cause graduates to an enforced
 one-line invariant only after recurring across 4–5 separate entries.
 
-**Graduation watch** — DERIVED, not hand-maintained. Regenerate with
+**Graduation watch** — DERIVED, not hand-maintained. Verify with
 `.venv/bin/python scripts/mistakes_tally.py`; `--check` fails on drift.
 
 | root cause | entries | deterministic enforcement |
 |---|---|---|
 | `[unverified-claim]` | **13** | **PROMOTED 2026-08-28** (project instruction file) + **PROMOTED 2026-08-29** (cross-derivation: a claim gating an irreversible/expensive action is re-derived by a non-producer before the action — 4 same-day catches; operator-approved); no — judgement, working form is the two-session split |
-| `[vacuous-gate]` | **13** | **PROMOTED 2026-08-28** (project instruction file) + **SHIPPED** — `scripts/anti_vacuity_scan.py` + registry test `tests/test_anti_vacuity_gates.py` (collected by the full suite); also: ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
+| `[vacuous-gate]` | **14** | **PROMOTED 2026-08-28** (project instruction file) + **SHIPPED** — `scripts/anti_vacuity_scan.py` + registry test `tests/test_anti_vacuity_gates.py` (collected by the full suite); also: ask what the mechanism preserves *by construction* before registering a check on it; emit the symmetric difference between a negative control's rows and the positive control's, VOIDing when it is empty; a regression test must call the changed function, never reimplement its effect beside it; a test whose assertion is a literal string or an object identity should assert the behavior it stands in for; and before trusting an adjudicator's verdict, confirm it ran in the mode the artifact under test actually used |
 | `[weak-eval]` | **8** | **PROMOTED 2026-08-28** (project instruction file); partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
-| `[inert-treatment]` | **6** | **PROMOTED 2026-08-28** (project instruction file); **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
+| `[inert-treatment]` | **8** | **PROMOTED 2026-08-28** (project instruction file); **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
 | `[stale-artifact]` | **9** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
-| `[process]` | **14** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
+| `[process]` | **20** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 2 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
-| `[measurement]` | 1 | — |
+| `[measurement]` | 2 | — |
 | `[git]` | 1 | — |
 | `[reward-exploit]` | 1 | — |
 | `[confound]` | 1 | — (new category 2026-08-29: the contrast itself is invalid — arms differ in a variable the registration never names) |
 
-Bold = at or past the 4-entry threshold, awaiting a call. Nothing has been
-promoted; the enforced ruleset is untouched.
+Bold = at or past the 4-entry threshold, awaiting a call. Six categories were promoted to the enforced ruleset on 2026-08-28 and cross-derivation on 2026-08-29; see the project instruction file.
 
 **This table was hand-maintained until 2026-08-27 and had drifted on all six
 categories it listed** (claiming 9 `[unverified-claim]` against 6 real, 5
@@ -35,6 +34,14 @@ invisible to it. That is the defect the engine purity sweep named the same day
 — *enforcement must be DERIVED from the declaration, never listed beside it* —
 committed inside the log that records it. It is now derived.
 ---|---|---|
+---
+
+## 2026-09-01 — [process] The 13:52:50 backfill commit landed before its own pytest gate returned, and the failure it should have stopped for is dated after the commit
+- **What happened:** `6a77a9c` (this file's own backfill commit) was authored at 13:52:50, while the `pytest tests/ -q -m "not slow"` run it was supposed to gate on did not finish until 13:54 — `do3_pytest_receipt.log`, `do3_pytest_full.log` and `DO3_FAILURE_REPORT.txt` are all timestamped after the commit they should have preceded. The run it should have waited for returned 1 failed, 6026 passed (35 short of the 6061-pass baseline): `tests/test_anti_vacuity_gates.py::test_registered_gates_demonstrate_both_polarities` fails with `ImportError: cannot import name 'behavioural_lives_verdict'` — the same DO-2 WIP-not-on-main gap the 2026-09-01 execution pass had already found and named ("main cannot pass its own suite without this WIP"). The failure report even states the operating rule verbatim — "any other pass count is a stop, report it, do not commit" — and was written to disk two minutes too late to stop anything.
+- **Root cause:** "Receipts before committing" was followed for the cheap `make` gates (13:45) but not for pytest: the commit was made while the slow suite was still running instead of after it returned, so there was no pass count to check against the rule at commit time even though the rule required one.
+- **Consequence:** No wrong claim banked in the backfilled entries themselves — the DO-2 gap is pre-existing and independently documented in the MASTER-LIST, not something this commit caused or hid. Cost: a stop condition existed and was violated anyway, on the one file whose entire subject that day was committing without following rules that had just been promoted.
+- **Rule (draft):** A commit gated on a suite run does not exist until the suite's own exit code does — stage and hold, run the suite, then commit; a `git log` timestamp earlier than its own cited receipt file's mtime is the mechanical tell that this happened.
+
 ---
 
 ## 2026-09-01 — [stale-artifact] The unsafe-inventory gate was red on `main` for four days and nothing looked at it
@@ -55,6 +62,78 @@ committed inside the log that records it. It is now derived.
   drifted out from under itself" the script's own docstring was written about.
 - **Rule (draft):** A fix commit re-runs every gate that guards a file it
   touches, and a moved inventory count is part of that commit's receipt.
+
+---
+
+## 2026-09-01 — [process] Five audit-sourced fixes shipped in one 51-second batch with no entry here, the day after "log in the fix commit" graduated to enforced
+- **What happened:** `a0a7664`, `e4aa905`, `0d87216`, `7924352`, `6b19aa8` (2026-08-29 13:48:25–13:49:14) each fixed a defect an external audit had named, each with a regression test, and none carried the entry the rule at the top of this file requires. The five entries below are that backfill, written 2026-09-01 from the commit messages; each names its fix commit.
+- **Root cause:** The rule was promoted on 2026-08-28 and applied forward by habit, not by a check; a batch of fixes landed under time pressure the next day and the habit did not fire five times in a row.
+- **Consequence:** No wrong claim banked. Cost: the evidence log under-counted four categories for three days, and the derived watch table was accurate only because nothing had been logged to drift from.
+- **Rule (draft):** `mistakes_tally.py --check` (already in `make test`) should also fail when a commit whose subject starts with `fix:` or names an audit touches no entry here — the rule is machine-checkable at the commit boundary even if the entry's content is not.
+
+---
+
+## 2026-09-01 — [process] Two dated concurrent-writer incidents on shared paths with no mutual exclusion (backfill: fixed 2026-08-29 in `a0a7664`)
+- **What happened:** A `git update-ref` race on `refs/heads/main` between worktrees, and duplicate chain watchers running the same 192-eval ladder against shared receipt paths (2026-08-29) — harmless only because eval writes are deterministic.
+- **Root cause:** `train_game.py` had a PID + `ps -o lstart=` fingerprinted `.run.lock` since its rewrite; every other writer class re-invented it or skipped it. Ownership of `runs/` and `checkpoints/` was a directory-naming convention enforced by nobody.
+- **Consequence:** No data lost, by luck of the domain. `a0a7664` extracted the lock into `src/utils/run_lock.py` with a CLI wrapper; at ship time it guarded two writers. The remaining writers (`go_explore_chain.py`, `go_explore_solve.py`, `run_v31_eval_ladder.py`, `run_online_campaign.py`, `merge_recovery_ladder.py`, `watch_asm.py`, `discover_observables.py`) are still unguarded as of this entry, and nothing locks git refs.
+- **Rule (draft):** A script that writes under `runs/` or `checkpoints/` acquires `run_lock` on its output path before its first write; a census of writers that never import it is a test, not a grep someone remembers to run.
+
+---
+
+## 2026-09-01 — [measurement] `vanilla_ppo_approx_kl` reached literal JSON `Infinity` in `metrics.jsonl` and no consumer could see it (backfill: fixed 2026-08-29 in `e4aa905`)
+- **What happened:** The k3 estimator `((ratio-1) - log(ratio))` returns `+inf` the moment one importance ratio underflows to 0; the raw mean landed in `metrics.jsonl` as `Infinity` — up to 84 of 250 generations (33.6 %) on one v32 seed.
+- **Root cause:** No clamp on the estimator and no non-finite check on the sink. `jq` reads `Infinity` as `DBL_MAX`; `analyze.py`'s finite filter dropped the rows. The single most alarming reading a PPO run can produce was invisible to every consumer.
+- **Consequence:** The v32 campaign under study carried the signal that mattered most and no tool surfaced it. `e4aa905` clamps to ±1e4 and counts clamped rows (`kl_clamped_rows`).
+- **Rule (draft):** Every metric written to the record is finite by construction or counted when it is not; a sink that can write `Infinity` has no consumers that can read it.
+
+---
+
+## 2026-09-01 — [vacuous-gate] `analyze.py`, built to surface surprising fields, filtered out the surprise (backfill: fixed 2026-08-29 in `0d87216`)
+- **What happened:** `_is_number()`'s `math.isfinite` treated `Infinity` as "not a number", so the tool excluded exactly the rows it existed to rank. Pointed at v32 seed 1 it computed cohort stats over 66 finite rows and said nothing about the 84 `Infinity` rows beside them.
+- **Root cause:** A type filter written for robustness doubled as a silencer; nothing asked what the filter *removed*.
+- **Consequence:** A green analysis over a campaign whose defining defect was in the dropped rows. `0d87216` gives non-finite fields a dedicated top-ranked row instead.
+- **Rule (draft):** A tool that ranks anomalies reports what it filtered out, as a count, next to what it ranked — a filter's discard pile is part of its output.
+
+---
+
+## 2026-09-01 — [inert-treatment] The engine's documented kill switch was checked everywhere and set nowhere (backfill: fixed 2026-08-29 in `7924352`)
+- **What happened:** The circuit breaker only appended a string to the journal, and `state["halted"]` was read in `guard_reasons()` but assigned by no code path in the tree — a kill switch that did not exist, on the one subsystem designed to run unattended for weeks (external audit 2026-08-29).
+- **Root cause:** The guard was written against a state the design intended; the writer of that state was never built, and the guard passing was indistinguishable from the guard working.
+- **Consequence:** Silent halts with no notification. `7924352` pushes one macOS notification per blocked episode (latched, re-armed on clear) and makes `--halt "reason"` / `--clear-halt` real and journaled.
+- **Rule (draft):** A guard that reads a state field is registered together with the code that writes it; a field read by a guard and written by nothing is a VOID mechanism (the existing `check_mechanism_receipt.py` shape, applied to state, not counters).
+
+---
+
+## 2026-09-01 — [process] Only the engine scheduler checked free disk; the processes that actually write did not, and ENOSPC degraded into a warning (backfill: fixed 2026-08-29 in `6b19aa8`)
+- **What happened:** `DISK_FLOOR_GB=40` lived in `guard_reasons()` only. A hand-launched `train_game.py` or `run_online_campaign.py` on the 91 %-full volume started anyway, and an ENOSPC during a checkpoint save was caught by `except Exception: log.warning` — training continued indefinitely with durability silently off.
+- **Root cause:** The floor was placed on the scheduler, the least disk-hungry process, and the save path's catch-all treated a durability failure like a transient.
+- **Consequence:** A three-week run could have burned its compute for output that would not survive a crash. `6b19aa8` adds the floor to both launchers (fail-closed on measured low disk, `--allow-low-disk` override) and halts after 3 consecutive failed saves. `go_explore_chain.py` and `night2_runner.py` still have no floor as of this entry.
+- **Rule (draft):** Every long-running entry point checks the disk floor at launch, and a failed durability write is an escalation, never a warning.
+
+---
+
+## 2026-09-01 — [process] Orphaned child on wall-clock timeout: the reaper killed the group leader and left the trainer running (backfill: fixed 2026-08-28 in `9bfe035`)
+- **What happened:** `detach.py` launches with `start_new_session=True`, making the managed pid a session/process-group leader; `reap()`'s `os.kill(pid, 9)` killed only the leader, leaving `run_online_campaign.py`'s own `train_game.py` child running as an orphan after a timeout. `emulator_busy()` then reported that lane "held externally" forever — a silent stall with no further diagnostic.
+- **Root cause:** Process-group semantics were not part of the reaper's contract, and the journal logged legitimate holds and leaked orphans with the identical line, so nothing could flag the stall as anomalous.
+- **Consequence:** Exactly the failure a multi-day unattended run exists to survive. Fixed to `os.killpg(getpgid(pid), 9)` with a plain-kill fallback. The first regression test called `os.killpg` directly instead of through `reap()` and passed with the bug in place — a `[vacuous-gate]` in miniature, caught by revert-verify and rewritten to exercise `reap()`.
+- **Rule (draft):** A regression test calls the changed function, never re-implements its effect beside it (already drafted under `[vacuous-gate]`; this is its fourth instance).
+
+---
+
+## 2026-09-01 — [inert-treatment] `trunc_buf` was correctly populated and never reached GAE on a live config — truncation bootstrapped as death (backfill: fixed 2026-08-28 in `9bfe035`)
+- **What happened:** The rung-budget cut populated `trunc_buf` independent of `wave_monotone`, but all three `batched_gae`/`ppo_updater` call sites gated *passing* it on that unrelated flag. `configs/mario_1_2_backward.yaml` never sets `wave_monotone`, so every rung-budget truncation on that config was bootstrapped as a terminal state (the Pardo time-limit bug) instead of bootstrapping `V(s)`.
+- **Root cause:** A correctly built mechanism wired behind the wrong condition; nothing asserted the buffer's contents ever reached the consumer.
+- **Consequence:** Biased value targets on a live learning config for as long as that gate stood. Passing `trunc_buf` unconditionally is behavior-preserving wherever nothing truncated (an all-`False` array is `None` to `ppo.py`'s check) and correct everywhere else. Revert-verified. Not yet training-verified: `mario_1_2_backward` has not trained since 2026-08-14.
+- **Rule (draft):** A buffer populated for a consumer carries a test that the consumer received non-trivial contents at least once under the config that populates it.
+
+---
+
+## 2026-09-01 — [process] Timeout ordering inversion: the outer reaper fired 1,500 s before the inner timeout could report (backfill: fixed 2026-08-28 in `9bfe035`)
+- **What happened:** `suite_check`'s `timeout_h=1.0` (outer wall-clock reaper) was tighter than its own `--timeout 5400` (`run_suite_check.py`'s inner subprocess timeout), so a merely-slow suite was SIGKILLed 1,500 s before its own timeout could fire and report cleanly, and counted as an action-level failure.
+- **Root cause:** Two timeouts on the same job, owned by two layers, with no rule that the outer must exceed the inner plus reporting time.
+- **Consequence:** Slow-but-healthy suites recorded as failures with no diagnostic. Fixed by ordering the two.
+- **Rule (draft):** When a job has an inner timeout, the outer reaper is derived from it (inner + margin) at launch, never hand-set beside it.
 
 ---
 
