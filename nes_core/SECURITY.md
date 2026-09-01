@@ -32,8 +32,8 @@ The NES emulator pool is now 100% in-process via `nes_core.Pool`
 
 ## `unsafe` surface
 
-**155 lines match `unsafe` across 11 files** (`grep -rn unsafe src | wc -l`
-/ `grep -rln unsafe src | wc -l`, re-counted 2026-08-25). This section
+**157 lines match `unsafe` across 11 files** (`grep -rn unsafe src | wc -l`
+/ `grep -rln unsafe src | wc -l`, re-counted 2026-09-01). This section
 previously said "three call sites in the entire crate," which was
 accurate in 2026-04-21 but stopped being maintained as the NEON
 render kernels (`ppu_neon.rs`, `metal_render.rs`), the in-process
@@ -65,10 +65,10 @@ counts include comments that mention the word "unsafe" in prose (a
 few, mostly in `preprocess.rs`), not only live `unsafe` keywords —
 called out inline wherever that inflates the number.
 
-### 1. `src/pool.rs` — worker-pool concurrency + NEON pixel unpack (75)
+### 1. `src/pool.rs` — worker-pool concurrency + NEON pixel unpack (77)
 
 The in-process, rayon-parallel worker pool that replaced the old
-multiprocessing `ParallelPool`. Its unsafe surface has three shapes:
+multiprocessing `ParallelPool`. Two of the 77 matching lines are the corrected `step_all_native` ordering comment (`e9dafa8`, 2026-08-28), not call sites. Its unsafe surface has three shapes:
 
 - **4 `unsafe impl` markers** (`Sync for WorkerCell`, `Send`/`Sync`
   for `Pool`). `WorkerCell` is an `UnsafeCell<Worker>` newtype;
@@ -347,7 +347,7 @@ it's wired up. Flagged again under "What's NOT audited" below.
 Both hits are the `#![allow(unsafe_op_in_unsafe_fn)]` attribute and
 its explanatory comment at the top of the file — not a call site.
 Covered in the intro above; listed here only so the file-by-file
-total adds up to 155.
+total adds up to 157.
 
 ### 10. `src/python.rs` — NEON frame repack for PyO3 (1)
 
@@ -377,8 +377,8 @@ Verdict: test-only, not a production risk.
 
 ---
 
-**Summary:** 155 `unsafe`-matching lines across 11 files, up from the
-"three call sites" this section claimed as of 2026-04-21. Of the 155,
+**Summary:** 157 `unsafe`-matching lines across 11 files, up from the
+"three call sites" this section claimed as of 2026-04-21. Of the 157,
 roughly a dozen are comments rather than code (`preprocess.rs` ×3,
 `lib.rs` ×2, plus a few explanatory lines folded into the counts
 above), 8 are test-only (`cpu_asm.rs` ×6 in `mod tests`,

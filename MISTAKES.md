@@ -16,7 +16,7 @@ one-line invariant only after recurring across 4–5 separate entries.
 | `[weak-eval]` | **8** | **PROMOTED 2026-08-28** (project instruction file); partial — enforce min-n at the gate; and emit rows/cells per contrasted region, refusing to grade two regions against separately-estimated nulls when their n differs by more than a registered factor |
 | `[purity-leak]` | 3 | **SHIPPED** — `make purity-check` (derived scanner + provenance registry + `WIN_WITNESS_LEDGER`) |
 | `[inert-treatment]` | **6** | **PROMOTED 2026-08-28** (project instruction file); **partial** — `scripts/check_mechanism_receipt.py` VOIDs an armed mechanism whose counter never moves, `scripts/redo_arm_gate.py` + `_REDO_ARM_DEADLINE_ITERS` kill an armed-but-never-firing run at iter 25; blind to a mechanism nothing imports, to one armed at a reachable-but-wrong dose, and — newest — to an instrument a registration ADOPTED and never wrote at all, which leaves the same receipt as one that ran and found nothing |
-| `[stale-artifact]` | **8** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
+| `[stale-artifact]` | **9** | **PROMOTED 2026-08-28** (project instruction file); candidate — hash the loaded artifact against the built one; never default a harness output path to a live receipt; assert on the bytes written, not the values in hand (**shipped for transition banks**: `assert_bank_wellformed`'s chain invariant); and a derived threshold should be computed from its inputs at adjudication time, not hand-copied at registration time, so an escalation ladder that moves the inputs also moves the derived value |
 | `[process]` | **14** | **PROMOTED 2026-08-28** (project instruction file); candidate — an orchestrator may only record a verdict it can prove was measured; a missing or unparseable receipt writes `INFRASTRUCTURE-ERROR`, which is not a verdict; a config file is code — adding or copying a profile runs the full suite, not the subset that covers it; and log to this file as part of the fix commit, not as a followup someone has to ask about |
 | `[start-state]` | 2 | — |
 | `[false-alarm]` | 2 | — (new category: a guard that fires on legitimate data. Candidate — run any new guard once on a known-good artifact from the real pipeline before arming it on a grid) |
@@ -35,6 +35,27 @@ invisible to it. That is the defect the engine purity sweep named the same day
 — *enforcement must be DERIVED from the declaration, never listed beside it* —
 committed inside the log that records it. It is now derived.
 ---|---|---|
+---
+
+## 2026-09-01 — [stale-artifact] The unsafe-inventory gate was red on `main` for four days and nothing looked at it
+- **What happened:** `scripts/check_unsafe_inventory.py` — built 2026-08-25 so
+  `SECURITY.md`'s per-file `unsafe` counts could never drift silently again —
+  has failed on HEAD since `e9dafa8` (2026-08-28): the corrected
+  `step_all_native` ordering comment added two lines containing the word
+  `unsafe` to `pool.rs` (75 → 77; crate-wide 155 → 157). The gate is a
+  prerequisite of `make test` (`Makefile:161`), so `make test` has been red on
+  `main` for four days. The 2026-09-01 all-skills review found it by running
+  the script; nothing in the repo had run it since the drift.
+- **Root cause:** A mechanism's counter moved and nothing watched the counter —
+  the inert-treatment shape, applied to the gate itself. The commit that moved
+  the count did not run the gate that guards the file it touched.
+- **Consequence:** No wrong claim banked; the drift is two comment lines. Cost:
+  four days of a red `make test` on `main`, and a document whose purpose is to
+  be exact being off by two — the same "document that exists to track this
+  drifted out from under itself" the script's own docstring was written about.
+- **Rule (draft):** A fix commit re-runs every gate that guards a file it
+  touches, and a moved inventory count is part of that commit's receipt.
+
 ---
 
 ## 2026-08-29 — [confound] A pre-registration was internally airtight and still did not isolate the variable it named
