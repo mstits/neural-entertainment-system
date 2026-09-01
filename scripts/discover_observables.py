@@ -42,6 +42,20 @@ HEALTH / LIVES (find_hp_lives). A HUD-legible lives byte that decrements on
 death; or, when the opening is too forgiving to take damage, a stable health
 field (with HUD mirror tiles) used as a death proxy (is_dead on health drop).
 
+  BEHAVIOURAL GATE (on by default; --no-behaviour-gate turns it off).
+    The static ranking above says which byte has the SHAPE of a stock. That
+    is not sufficient evidence, and the receipt for that is
+    docs/research/FALSE_DEATH_FANOUT_2026-08-26.md: across eleven
+    re-nominated profiles THREE top picks cleared every static gate and were
+    caught only by driving the game and watching the byte move. So every
+    nomination is DRIVEN over three short arms (hold / idle / attack-mash,
+    with the PPU scroll odometer as an independent liveness witness) and
+    rejected if it oscillates down-and-back like an animation counter,
+    empties while the camera keeps rolling with no death behind it, or
+    fires on movement onset rather than on death. The pick is the
+    highest-ranked candidate that PASSES; when none do, the tool says so
+    rather than nominating a byte that would INVERT death detection.
+
 PROGRESS FROM BANKED TAPES (find_progress_from_tapes). Same output shape,
 different evidence: instead of driving the game live it replays a CHAIN of
 tapes we have already solved and learns lexicographic orderings over the RAM
@@ -127,6 +141,109 @@ FIGHT_REPS = 5        # one seed per rep, same discipline as DEATH_REPS
 #: the mask tuple built in `attack_mash`.
 FIGHT_MASH_WEIGHTS = np.array([0.25, 0.25, 0.10, 0.15, 0.15, 0.10])
 
+# --- BEHAVIOURAL GATE (FALSE_DEATH_FANOUT_2026-08-26.md §6) ---------------
+#: The fanout's structural finding: across eleven re-nominated profiles,
+#: THREE top picks passed every static gate in `lives_from_death_drives`
+#: and were caught only BEHAVIOURALLY, by driving the game and watching
+#: the byte move. Static shape is not sufficient evidence that a byte is
+#: a stock, and each of the three failed a different way:
+#:
+#:   * Bad Dudes $00CD — an attack-animation counter that cycles 2 -> 0 ->
+#:     2, five to eighteen times per 700-step drive and 100+ under a
+#:     randomized mash, first toggle at step 3. `_regime_split` judges a
+#:     stock's spend only up to the first RISE (a refill legitimately
+#:     starts a new regime), and has no minimum-duration guard, so a
+#:     3-to-9-step "first regime" containing exactly one down-tick
+#:     satisfies `reaches_empty` and `spends_its_stock` for free.
+#:   * Ninja Gaiden $0386 — empties while the PPU scroll odometer keeps
+#:     climbing 94 -> 426 px. The character is demonstrably still alive
+#:     and moving; wiring it collapsed a smoke 1096 -> 24 cells.
+#:   * Journey to Silius $0135 — drops 1 -> 0 within four steps of ANY
+#:     rightward hold in a forced scroller. It fires on movement onset,
+#:     not on death; wiring it collapsed the search 774 -> 2 cells.
+#:
+#: So a nomination is DRIVEN before it is trusted. The gate rejects, it
+#: never promotes: a byte that survives all three checks is exactly as
+#: good as the static ranking said it was, and when NO candidate survives
+#: the honest answer is "no valid lives byte discoverable from this start
+#: state" — the correct outcome for six of the fanout's eleven profiles,
+#: and strictly better than wiring a harmful one.
+BEHAVIOUR_N = 320        # steps per validation arm (hold / idle / mash)
+#: A drop that comes BACK this fast is a cycle, not a refill. A continue
+#: (or a 1-up) sits behind a game-over sequence or an item pickup and is
+#: nowhere near this tight; an animation counter recovers in a handful of
+#: frames, which is the whole Bad Dudes signature.
+OSC_RECOVER_STEPS = 45
+#: How many such cycles a SINGLE drive may show. Per drive, not summed:
+#: a stock refilled at a continue produces one cycle in every drive that
+#: reaches a continue, and summing would convict it for being consistent.
+#: Measured, worst drive of eight (three arms + five death drives) on the
+#: banked traces:
+#:
+#:   Bad Dudes     $00CD  20   <- the oscillator, caught by the mash arm
+#:   Journey/Silius $0135  3
+#:   1942          $0524   2   <- REAL stock (1 -> 0, refilled at a continue)
+#:   Shatterhand   $0199   1   <- REAL stock (2 -> 0 -> 4, once per drive)
+#:   Contra        $0032   0   <- REAL stock
+#:   Ninja Gaiden  $0386   0
+#:
+#: Three is the bar: five times below the measured oscillator and above
+#: every verified stock, including 1942's genuine refill pattern. The
+#: death drives alone would not have caught Bad Dudes (2-6 per drive) —
+#: the attack-combo mash arm is what puts it at 20.
+OSC_MAX_CYCLES = 3
+#: Steps of independent liveness watched after the byte arrives at zero.
+ALIVE_WITNESS_STEPS = 60
+#: ...and how far the camera must travel in them before "still alive" is
+#: a claim rather than noise. The odometer is certified
+#: (scripts/odometer_cert.py) and rides savestates, so this is measured
+#: on the hardware surface, not on a RAM byte that could be as wrong as
+#: the candidate under test.
+ALIVE_MIN_PX = 64
+#: ...and it must travel WITHOUT PAUSING. This is the term that keeps
+#: the check from rejecting a real stock, and it was set by measurement,
+#: not by taste: a death freezes the camera while the death animation
+#: plays, and the freeze is one contiguous block, so the longest run of
+#: zero-motion steps in the witness window separates the two readings
+#: cleanly where the moving FRACTION does not. Measured over the banked
+#: hold arms (three false positives against three verified stocks):
+#:
+#:   Ninja Gaiden $0386   stall  0   moving 1.00   <- no death behind it
+#:   Bad Dudes    $00CD   stall  2   moving 0.97   <- no death behind it
+#:   Journey/Silius $0135 stall 10   moving 0.68
+#:   Shatterhand  $0199   stall 16   moving 0.30   <- REAL stock
+#:   Contra       $0032   stall 20   moving 0.67   <- REAL stock
+#:
+#: Contra is the case that sets it. Its death is QUIET (rewrites ~150
+#: bytes against a median ~104, below every mass-reset threshold here),
+#: it does not cut the scene, and the player respawns and walks straight
+#: on under a held forward — so 67% of the window is moving and the only
+#: thing that says a death happened is the 20-step freeze in the middle.
+#: A fraction bar low enough to spare it would have spared $00CD too.
+ALIVE_MAX_STALL = 6
+#: A level restart re-anchors the camera backwards. Treat a regression
+#: this large inside the witness window as death evidence, not liveness.
+ALIVE_REGRESS_PX = 32
+#: A drop this soon after the pad goes live is a movement trigger, not a
+#: death (Journey to Silius fires within four steps; at frame_skip 4
+#: twelve steps is ~0.8 s, and no valid start state dies that fast).
+MOVEMENT_ONSET_STEPS = 12
+#: ...and it only counts as movement-triggered if the IDLE arm does not
+#: show the same drop nearby. A game that kills an idle player keeps its
+#: own counter this way.
+MOVEMENT_IDLE_MARGIN = 36
+#: `behaviour_drives`' mash vocabulary, in the same six-symbol spirit as
+#: FIGHT_MASH_WEIGHTS but carrying the forward+attack COMBOS (fwd|A,
+#: fwd|B) that Bad Dudes' animation counter actually keys off. Order
+#: matches the mask tuple built in `Discoverer.behaviour_drives`.
+BEHAVIOUR_MASH_WEIGHTS = np.array(
+    [0.14, 0.14, 0.08, 0.16, 0.16, 0.14, 0.10, 0.08])
+#: Short names for the three checks, for the report line and the emitted
+#: comment. Same labels in both, so a receipt and a profile read alike.
+BEHAVIOUR_CHECK_ABBR = {"oscillation": "osc",
+                        "empties_while_alive": "alive",
+                        "fires_on_movement": "move"}
+
 #: The lives/health scan reads all of system RAM. Persistent counters are
 #: routinely kept OUTSIDE the zero page (the zero page is scratch a game
 #: rewrites every frame), so a zero-page-only scan cannot even nominate
@@ -203,6 +320,10 @@ class Discoverer:
         # How many idle steps a probe must burn after loading the state
         # before the machine is actually playing (see settle_steps).
         self._settle: Optional[int] = None
+        # Tri-state: None = the odometer has never been asked for (the
+        # behavioural gate turns it on lazily), True = on, False = this
+        # nes_core build has no binding for it.
+        self._odo: Optional[bool] = None
 
     # ---- low-level driving ------------------------------------------------
     def settle_steps(self) -> int:
@@ -407,6 +528,102 @@ class Discoverer:
             out.append({"rep": rep, "log": log, "steps": DEATH_MAX_N})
         self._cache["deaths"] = out
         return out
+
+    def _enable_odometer(self) -> bool:
+        """Turn the PPU scroll odometer on, once, for the behavioural gate.
+
+        Enabled LAZILY rather than in `__init__` for two reasons: every
+        other probe here pays a per-visible-line capture it has no use
+        for, and enabling zeroes the accumulator (nes_core/src/python.rs
+        `set_odometer_enabled`), which is exactly the origin the
+        validation arms want. Restoring a legacy start state — every
+        state this tool is ever pointed at — does NOT disable it again:
+        a default-and-disabled odometer payload leaves the live
+        configuration alone and only re-anchors (nes_core/src/serialize
+        `apply_decoded`), so the accumulator rides across `_reload()`
+        and each arm rebases against its own first sample.
+
+        Returns False on a build without the binding, and the
+        empties-while-alive check then reports itself UNAVAILABLE rather
+        than silently passing every candidate.
+        """
+        if self._odo is None:
+            self._odo = hasattr(self.pool, "set_odometer_enabled")
+            if self._odo:
+                self.pool.set_odometer_enabled(True)
+        return bool(self._odo)
+
+    def _odo_read(self) -> tuple[int, int, int]:
+        x, y = self.pool.get_odometer_per_worker()[0]
+        scene = 0
+        if hasattr(self.pool, "get_odometer_scene_per_worker"):
+            scene = int(self.pool.get_odometer_scene_per_worker()[0])
+        return int(x), int(y), scene
+
+    def behaviour_drives(self, n: int = BEHAVIOUR_N) -> dict:
+        """The three contrast arms the behavioural gate adjudicates over.
+
+        A nominated lives byte is not trusted until it has been WATCHED,
+        and what distinguishes the three measured false positives from a
+        stock is not shape but circumstance — so each arm supplies a
+        different circumstance, and all three are short:
+
+          * `hold` — the forward direction held down, the plain
+            liveness/onset condition. A byte that fires within a few
+            steps of the pad going live is keyed to movement, not death
+            (Journey to Silius $0135).
+          * `idle` — the pad untouched, same length. It is the CONTROL
+            for `hold`: without it "dropped early" cannot be told apart
+            from "this game kills an idle player".
+          * `mash` — randomized, attack-heavy, carrying the forward+attack
+            combos. It provokes the animation counters a directional hold
+            never touches (Bad Dudes $00CD, first toggle at step 3).
+
+        Every arm also logs the PPU scroll odometer, the ONE progress
+        witness independent of the RAM byte under test — the check that
+        caught Ninja Gaiden $0386 emptying while the camera climbed
+        94 -> 426 px. Rebased per arm, since the accumulator survives a
+        state restore.
+
+        3 * BEHAVIOUR_N steps on one headless worker, cached like every
+        other probe. Measured cost of the whole gate on Contra:
+        `find_hp_lives` 23.5 s -> 27.6 s, +17%, and a smaller fraction of
+        a full `discover_all`.
+        """
+        if "behaviour" in self._cache:
+            return self._cache["behaviour"]
+        odo_on = self._enable_odometer()
+        fwd, rev = self.fwd, self.rev
+        masks = np.array([A, B, A | B, fwd | A, fwd | B, fwd, rev, NOOP],
+                         dtype=np.int64)
+        rng = np.random.default_rng(self.seed * 977 + 313)
+        draws = rng.choice(len(masks), size=n, p=BEHAVIOUR_MASH_WEIGHTS)
+        schedules = {
+            "hold": lambda t: fwd,
+            "idle": lambda t: NOOP,
+            "mash": lambda t: int(masks[draws[t]]),
+        }
+        arms: dict[str, dict] = {}
+        for name, sched in schedules.items():
+            self._reload()
+            log = np.empty((n, RAM_SIZE), dtype=np.uint8)
+            odo = np.zeros((n, 2), dtype=np.int64)
+            scene = np.zeros(n, dtype=np.int64)
+            for t in range(n):
+                log[t] = self._step(int(sched(t)))
+                if odo_on:
+                    odo[t, 0], odo[t, 1], scene[t] = self._odo_read()
+            if odo_on:
+                odo -= odo[0]
+            arms[name] = {
+                "log": log, "steps": n,
+                "odo": odo if odo_on else None,
+                "scene": scene if odo_on else None,
+                "reset_threshold": float(self.reset_threshold(log)),
+            }
+        self._cache["behaviour"] = {"arms": arms, "odometer": bool(odo_on),
+                                    "steps": n}
+        return self._cache["behaviour"]
 
     def attack_mash(self, reps: int = FIGHT_REPS, n: int = ATTACK_N) -> list[dict]:
         """Randomized attack-heavy drive for the fight-gate probe
@@ -1673,11 +1890,363 @@ def lives_from_death_drives(drives: Sequence[Mapping], *,
     return kept[:top], ev
 
 
+# --------------------------------------------------------------------------
+# BEHAVIOURAL VALIDATION — the post-nomination gate.
+#
+# Everything above adjudicates a lives candidate on the SHAPE of its trace.
+# The fanout's structural lesson is that shape is not enough: three of the
+# eleven re-nominated profiles produced a top pick that cleared every static
+# gate and was caught only by driving the game and watching the byte
+# behave. What follows automates that check. It is PURE — arms are whatever
+# `Discoverer.behaviour_drives` produced, but any mapping with a `log`
+# (and optionally an `odo`/`scene`/`reset_threshold`) does, so all three
+# failure modes are testable on synthetic traces with no ROM.
+#
+# It only ever REJECTS. Ranking stays where it was; the gate answers
+# "would wiring this byte be worse than wiring nothing?", and when every
+# candidate fails, "no valid lives byte discoverable from this start
+# state" is the honest answer and the one the fanout says is correct for
+# six of eleven profiles.
+# --------------------------------------------------------------------------
+def _wrap_delta_col(col: np.ndarray) -> np.ndarray:
+    """`_wrap_deltas` for a single column (255 -> 0 is +1, 0 -> 255 is -1)."""
+    d = np.diff(np.asarray(col).astype(np.int16))
+    return np.where(d < -128, d + 256, np.where(d > 128, d - 256, d))
+
+
+def _wrap_levels(col: np.ndarray) -> np.ndarray:
+    """The column as a wrap-unfolded LEVEL relative to its first sample.
+
+    Comparing raw bytes to decide "did it come back up?" is wrong across
+    a wrap: a counter that rolls 0 -> 255 to signal its last life reads
+    as a huge RISE, and the 255 -> 0 that follows reads as a fall. The
+    unfolded level is what the rest of this module already means by a
+    step (`_wrap_deltas`), integrated.
+    """
+    col = np.asarray(col)
+    if col.size == 0:
+        return np.zeros(0, dtype=np.int64)
+    return np.concatenate(([0], np.cumsum(_wrap_delta_col(col)))).astype(np.int64)
+
+
+def _first_drop_step(col: np.ndarray) -> Optional[int]:
+    """Step at which the column first shows a value BELOW its predecessor."""
+    nz = np.nonzero(_wrap_delta_col(col) < 0)[0]
+    return int(nz[0]) + 1 if nz.size else None
+
+
+def _arrival_at_zero(col: np.ndarray) -> Optional[int]:
+    """Step at which the column first ARRIVES at zero from nonzero.
+
+    Arrival, not presence, for the same reason the zero-start guard in
+    `lives_from_death_drives` uses it: a byte that merely begins at zero
+    has emptied nothing.
+    """
+    col = np.asarray(col)
+    if col.size < 2:
+        return None
+    hit = np.nonzero((col[1:] == 0) & (col[:-1] != 0))[0]
+    return int(hit[0]) + 1 if hit.size else None
+
+
+def _recovery_cycles(col: np.ndarray, *, window: int = OSC_RECOVER_STEPS,
+                     cap: int = 64) -> tuple[int, Optional[int]]:
+    """(count, first step) of DOWN-then-BACK-UP cycles within `window`.
+
+    A cycle is a fall followed by a return to at least the pre-fall
+    level inside `window` steps — Bad Dudes' 2 -> 0 -> 2 exactly. A
+    stock's refill is not one: it arrives at a continue, behind a
+    game-over sequence, an eternity later than this. Counting stops at
+    `cap` because the receipt only needs to say "far too many", and a
+    noisy byte would otherwise make this quadratic.
+    """
+    lv = _wrap_levels(col)
+    n = len(lv)
+    cycles, first = 0, None
+    t = 0
+    while t < n - 1 and cycles < cap:
+        if lv[t + 1] < lv[t]:
+            base = lv[t]
+            end = min(t + 1 + window, n - 1)
+            back = None
+            for j in range(t + 2, end + 1):
+                if lv[j] >= base:
+                    back = j
+                    break
+            if back is not None:
+                cycles += 1
+                if first is None:
+                    first = t + 1
+                t = back
+                continue
+        t += 1
+    return cycles, first
+
+
+def _longest_stall(deltas: np.ndarray) -> int:
+    """Longest run of consecutive zero-motion steps in a delta series.
+
+    A death FREEZES the camera in one contiguous block while the death
+    animation plays; a player who merely pauses against a wall produces
+    scattered single zeros. Only the block is death evidence, which is
+    why this counts the longest run and not the total.
+    """
+    best = cur = 0
+    for v in np.asarray(deltas):
+        cur = cur + 1 if v == 0 else 0
+        best = max(best, cur)
+    return int(best)
+
+
+def _check_oscillation(addr: int, logs: Sequence[np.ndarray]) -> dict:
+    """FAILURE MODE 1 — the byte cycles down and back, over and over.
+
+    Judged over every log available (the three validation arms plus the
+    death drives that nominated it, ~3400 steps), on the WORST single
+    drive rather than the sum: a stock refilled at a continue shows one
+    cycle in every drive that reaches a continue, and summing across
+    drives would convict it for being consistent. What separates the two
+    readings is the per-drive rate — 20 in one 320-step mash arm for Bad
+    Dudes' attack counter against 0-2 for every verified stock.
+    """
+    total = 0
+    worst = 0
+    first: Optional[int] = None
+    for log in logs:
+        log = np.asarray(log)
+        if log.ndim != 2 or addr >= log.shape[1] or len(log) < 2:
+            continue
+        c, f = _recovery_cycles(log[:, addr])
+        total += c
+        worst = max(worst, c)
+        if f is not None and (first is None or f < first):
+            first = f
+    verdict = "reject" if worst > OSC_MAX_CYCLES else "pass"
+    return {
+        "verdict": verdict, "cycles": int(total), "worst_drive": int(worst),
+        "first_cycle_step": first, "logs_watched": len(logs),
+        "tolerated": OSC_MAX_CYCLES,
+        "note": (f"falls and recovers {worst} times inside ONE drive "
+                 f"({total} across {len(logs)}, first at step {first}) — an "
+                 f"animation or attack counter, not a stock"
+                 if verdict == "reject" else
+                 f"{total} down-and-back cycles over {len(logs)} drives, "
+                 f"worst drive {worst} (<= {OSC_MAX_CYCLES})"),
+    }
+
+
+def _check_empties_while_alive(addr: int, arm: Mapping, *,
+                               steps: int = ALIVE_WITNESS_STEPS) -> dict:
+    """FAILURE MODE 2 — the byte empties while the agent keeps moving.
+
+    The PPU scroll odometer is the witness: it is a hardware surface,
+    certified separately (scripts/odometer_cert.py), and completely
+    independent of the RAM byte on trial — which a second RAM byte
+    would not be.
+
+    A real death leaves a mark in that window and each of those marks
+    VETOES the rejection, because the point is to catch a byte with no
+    death behind it, not to out-argue a death that happened:
+
+      * the camera STALLS while the death animation plays;
+      * a level reload rewrites RAM en masse (the same threshold every
+        other probe here truncates on);
+      * a restart re-anchors the camera BACKWARDS;
+      * or the odometer's scene ordinal bumps at the cut.
+
+    Ninja Gaiden $0386 has none of them: 94 px -> 426 px, uninterrupted.
+    """
+    log = np.asarray(arm["log"])
+    odo = arm.get("odo")
+    scene = arm.get("scene")
+    if odo is None:
+        return {"verdict": "unavailable",
+                "note": "no odometer on this probe — liveness unwitnessed"}
+    odo = np.asarray(odo)
+    if addr >= log.shape[1] or len(log) < 2:
+        return {"verdict": "inconclusive", "note": "byte not in this arm"}
+    t0 = _arrival_at_zero(log[:, addr])
+    if t0 is None:
+        return {"verdict": "inconclusive",
+                "note": "the byte never arrived at zero in this arm"}
+    travel = np.abs(np.diff(odo, axis=0)).sum(0)
+    if int(travel.max()) == 0:
+        return {"verdict": "inconclusive", "empty_step": t0,
+                "note": "camera never moved in this arm — no liveness "
+                        "witness available (camera-static game)"}
+    axis = int(np.argmax(travel))
+    end = min(t0 + steps, len(log) - 1)
+    if end - t0 < max(8, steps // 4):
+        return {"verdict": "inconclusive", "empty_step": t0,
+                "note": f"only {end - t0} steps left after the empty — too "
+                        f"short to witness anything"}
+    seg = odo[t0:end + 1, axis].astype(np.int64)
+    px = int(abs(int(seg[-1]) - int(seg[0])))
+    dd = np.diff(seg)
+    moving = float((dd != 0).mean()) if dd.size else 0.0
+    stall = _longest_stall(dd)
+    direction = 1 if seg[-1] >= seg[0] else -1
+    regress = int(-(((seg - seg[0]) * direction).min()))
+    thr = float(arm.get("reset_threshold") or 350.0)
+    churn = (np.diff(log[t0:end + 1].astype(np.int16), axis=0) != 0).sum(1)
+    mass = bool((churn > thr).any())
+    bump = bool(scene is not None
+                and int(np.asarray(scene)[end]) != int(np.asarray(scene)[t0]))
+    alive = (px >= ALIVE_MIN_PX and stall <= ALIVE_MAX_STALL
+             and regress <= ALIVE_REGRESS_PX and not mass and not bump)
+    return {
+        "verdict": "reject" if alive else "pass",
+        "empty_step": t0, "witness_axis": "xy"[axis], "witness_px": px,
+        "moving_fraction": round(moving, 3), "longest_stall": stall,
+        "regress_px": regress, "mass_ram_event": mass, "scene_bump": bump,
+        "witness_steps": int(end - t0),
+        "note": (f"emptied at step {t0}, then the camera travelled {px} px "
+                 f"on {'xy'[axis]} over {end - t0} steps, longest pause "
+                 f"{stall} step(s), with no reload and no scene cut — the "
+                 f"agent was still alive"
+                 if alive else
+                 f"emptied at step {t0}; witness shows {px} px, longest "
+                 f"pause {stall} step(s) ({moving:.0%} moving), "
+                 f"mass_ram_event={mass}, scene_bump={bump}, "
+                 f"regress={regress} px"),
+    }
+
+
+def _check_fires_on_movement(addr: int, hold: Optional[Mapping],
+                             idle: Optional[Mapping]) -> dict:
+    """FAILURE MODE 3 — the decrement tracks movement onset, not death.
+
+    Two arms, one contrast. Journey to Silius $0135 drops 1 -> 0 within
+    four steps of any rightward hold in a forced scroller, and does not
+    drop with the pad untouched. The idle arm is what keeps this from
+    rejecting the counter of a game that kills an idle player: there,
+    the drop shows up in BOTH arms, so it is not keyed to the input.
+    """
+    if hold is None:
+        return {"verdict": "unavailable", "note": "no held-direction arm"}
+    if idle is None:
+        # Without the control arm this is a one-armed observation, and a
+        # one-armed observation cannot tell "keyed to the input" from
+        # "this game kills a standing player". It abstains rather than
+        # convicting on half the evidence.
+        return {"verdict": "unavailable",
+                "note": "no idle control arm — the contrast is the check"}
+    log = np.asarray(hold["log"])
+    idle_log = np.asarray(idle["log"])
+    if addr >= log.shape[1] or addr >= idle_log.shape[1]:
+        return {"verdict": "inconclusive", "note": "byte not in both arms"}
+    h = _first_drop_step(log[:, addr])
+    i = _first_drop_step(idle_log[:, addr])
+    fires = (h is not None and h <= MOVEMENT_ONSET_STEPS
+             and (i is None or i > MOVEMENT_IDLE_MARGIN))
+    return {
+        "verdict": "reject" if fires else "pass",
+        "hold_first_drop": h, "idle_first_drop": i,
+        "onset_window": MOVEMENT_ONSET_STEPS,
+        "note": (f"drops at step {h} of a held-direction drive but "
+                 f"{'never' if i is None else f'not until step {i}'} while "
+                 f"idle — it fires on movement onset, not on death"
+                 if fires else
+                 f"hold first drop={h}, idle first drop={i}"),
+    }
+
+
+def behavioural_lives_verdict(cand: Mapping, probe: Mapping, *,
+                              death_logs: Sequence[np.ndarray] = ()) -> dict:
+    """PASS/REJECT for one nominated lives byte, with the reason.
+
+    `probe` is `Discoverer.behaviour_drives()` output — `{"arms":
+    {"hold": ..., "idle": ..., "mash": ...}}` — and `death_logs` are the
+    drives that nominated the candidate, reused for free as extra
+    oscillation evidence.
+
+    A check reports `unavailable` (no odometer binding, no arm) or
+    `inconclusive` (the byte never emptied here, the camera never moved)
+    rather than passing quietly, and neither blocks: the gate rejects
+    only on positive evidence of one of the three measured failure
+    modes.
+    """
+    addr = int(cand["addr"])
+    arms = dict(probe.get("arms") or {})
+    logs = [np.asarray(a["log"]) for a in arms.values() if a.get("log") is not None]
+    logs += [np.asarray(l) for l in death_logs]
+
+    alive_checks = {}
+    for name in ("hold", "mash", "idle"):
+        if name in arms:
+            alive_checks[name] = _check_empties_while_alive(addr, arms[name])
+    order = {"reject": 0, "pass": 1, "inconclusive": 2, "unavailable": 3}
+    alive = (min(alive_checks.values(), key=lambda c: order[c["verdict"]])
+             if alive_checks else
+             {"verdict": "unavailable", "note": "no arms driven"})
+    alive = dict(alive)
+    alive["per_arm"] = {k: v["verdict"] for k, v in alive_checks.items()}
+
+    checks = {
+        "oscillation": _check_oscillation(addr, logs),
+        "empties_while_alive": alive,
+        "fires_on_movement": _check_fires_on_movement(
+            addr, arms.get("hold"), arms.get("idle")),
+    }
+    rejected = [k for k, v in checks.items() if v["verdict"] == "reject"]
+    return {
+        "addr": addr, "passed": not rejected,
+        "verdict": "PASS" if not rejected else "REJECT",
+        "failed": rejected,
+        "reason": checks[rejected[0]]["note"] if rejected else None,
+        "checks": checks,
+    }
+
+
+def screen_lives_behaviourally(cands: Sequence[dict], probe: Mapping, *,
+                               death_logs: Sequence[np.ndarray] = ()) -> dict:
+    """Drive every nominated candidate and report PASS/REJECT for each.
+
+    Mutates each candidate in place with a `behaviour` key so the
+    verdict travels into the findings JSON alongside the static
+    evidence that nominated it, and returns the summary the report
+    prints. The PICK is the highest-ranked candidate that PASSES —
+    never a promotion, only a skip past the ones that failed.
+    """
+    for c in cands:
+        c["behaviour"] = behavioural_lives_verdict(c, probe,
+                                                   death_logs=death_logs)
+    passed = [c for c in cands if c["behaviour"]["passed"]]
+    pick_rank = (next(i for i, c in enumerate(cands) if c["behaviour"]["passed"])
+                 if passed else len(cands))
+    return {
+        "watched": len(cands), "passed": len(passed),
+        "rejected": len(cands) - len(passed),
+        "odometer": bool(probe.get("odometer")),
+        "steps_per_arm": int(probe.get("steps") or 0),
+        "picked": int(passed[0]["addr"]) if passed else None,
+        # How many BETTER-ranked candidates the pick had to step over —
+        # the number that says the gate changed the answer.
+        "outranked_rejects": int(pick_rank),
+        "skipped_addrs": [int(c["addr"]) for c in cands
+                          if not c["behaviour"]["passed"]][:8],
+        "rejections": [{"addr": int(c["addr"]),
+                        "failed": c["behaviour"]["failed"],
+                        "reason": c["behaviour"]["reason"]}
+                       for c in cands if not c["behaviour"]["passed"]],
+    }
+
+
 def find_hp_lives(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
-                  frame_skip: int = 4, forward: str = "right") -> dict:
+                  frame_skip: int = 4, forward: str = "right",
+                  behaviour_gate: bool = True) -> dict:
     """A lives byte that decrements on death, or — when the opening is too
     forgiving to take damage — a stable HUD health field used as a death
-    proxy (is_dead when it drops below its start value)."""
+    proxy (is_dead when it drops below its start value).
+
+    With `behaviour_gate` (the default), every lives nomination is DRIVEN
+    before it is trusted and the pick is the highest-ranked candidate
+    that survives; see `screen_lives_behaviourally`. The returned
+    `lives_candidates` keep the rejected ones, verdict attached, so the
+    receipt shows what was thrown out and why, and `behaviour_gate` in
+    the result carries the summary. When every nomination is rejected
+    the note says exactly that — this is not the same finding as a scan
+    that came back empty."""
     own = disc is None
     if own:
         disc = Discoverer(rom, state, frame_skip, forward)
@@ -1688,6 +2257,24 @@ def find_hp_lives(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
 
         lives, evidence = lives_from_death_drives(
             disc.death_drives(), idle_stats=disc.noop_stats())
+
+        # BEHAVIOURAL GATE. The static ranking above says which byte has
+        # the SHAPE of a stock; this says whether it behaves like one
+        # when the game is driven. Three of the fanout's eleven top picks
+        # cleared every static gate and were caught only here, so the
+        # nomination is the highest-ranked candidate that PASSES, not the
+        # highest-ranked one overall — and when none pass, the honest
+        # answer is that this start state yields no usable lives byte.
+        gate = None
+        passing = lives
+        if behaviour_gate and lives:
+            gate = screen_lives_behaviourally(
+                lives, disc.behaviour_drives(),
+                death_logs=[d["log"] for d in disc.death_drives()])
+            # `lives` keeps every nomination, verdict attached, so the
+            # receipt shows what was rejected and why. Only the PICK is
+            # filtered.
+            passing = [c for c in lives if c["behaviour"]["passed"]]
 
         # HP fallback: a stable low-value byte whose value is redrawn as a run
         # of consecutive HUD tiles (a health meter is N identical tiles in a
@@ -1712,25 +2299,51 @@ def find_hp_lives(rom: str, state: bytes, *, disc: Optional[Discoverer] = None,
                            "hud_run": best_run, "churn": round(float(churn[i]), 2)})
         hp.sort(key=lambda c: (c["hud_run"], c["mirrors"]), reverse=True)
 
-        if lives:
-            best = lives[0]
+        if passing:
+            best = passing[0]
+            # Only the rejects ABOVE the pick changed the answer; the ones
+            # below it were never going to be nominated anyway.
+            skipped = (f"; stepped over {gate['outranked_rejects']} "
+                       f"better-ranked candidate(s) the behaviour gate "
+                       f"rejected"
+                       if gate and gate["outranked_rejects"] else "")
             return {"kind": "lives", "addr": best["addr"], "start": best["start"],
                     "detail": best, "lives_candidates": lives[:5],
                     "hp_candidates": hp[:5], "death_evidence": evidence,
+                    "behaviour_gate": gate,
                     "note": f"is_dead on lives decrement (-{best['drop']}, "
                             f"agreed by {best['runs_agreeing']} of "
-                            f"{best['runs_watched']} runs)"}
+                            f"{best['runs_watched']} runs"
+                            f"{'; behaviour gate PASS' if gate else ''}"
+                            f"){skipped}"}
+        # Every nomination was driven, and every one failed. Say exactly
+        # that — a REJECTED candidate is a different finding from an
+        # empty scan, and wiring one would not degrade death detection
+        # but INVERT it (`GenericGame.is_dead` reads
+        # `(start - cur) % 256 in 1..8`, so a byte that ticks on attack
+        # input reports a death per attack).
+        rejected_note = ""
+        if gate and gate["rejected"]:
+            worst = gate["rejections"][0]
+            rejected_note = (
+                f"no valid lives byte discoverable from this start state: "
+                f"all {gate['rejected']} nomination(s) were driven and "
+                f"REJECTED behaviourally (top pick 0x{worst['addr']:04X} — "
+                f"{worst['reason']})")
         if hp:
             best = hp[0]
             return {"kind": "hp_death_proxy", "addr": best["addr"],
                     "value": best["value"], "detail": best,
-                    "lives_candidates": [], "hp_candidates": hp[:5],
-                    "death_evidence": evidence,
-                    "note": ("no decrementing lives byte in this forgiving "
-                             "opening; is_dead on health < start value")}
-        return {"kind": "none", "addr": None, "lives_candidates": [],
+                    "lives_candidates": lives[:5], "hp_candidates": hp[:5],
+                    "death_evidence": evidence, "behaviour_gate": gate,
+                    "note": ((rejected_note or
+                              "no decrementing lives byte in this forgiving "
+                              "opening") + "; is_dead on health < start value")}
+        return {"kind": "none", "addr": None, "lives_candidates": lives[:5],
                 "hp_candidates": [], "death_evidence": evidence,
-                "note": ("no health/lives byte isolated "
+                "behaviour_gate": gate,
+                "note": (rejected_note or
+                         "no health/lives byte isolated "
                          f"({evidence['usable']} uninterrupted runs watched)")}
     finally:
         if own:
@@ -2287,14 +2900,22 @@ def find_round_gate(rom: str, state: bytes, *, disc: Optional[Discoverer] = None
 # --------------------------------------------------------------------------
 def discover_all(rom: str, state_path: str, *, frame_skip: int = 4,
                  forward: str = "right", seed: int = 1,
-                 fight_gate: bool = False) -> dict:
+                 fight_gate: bool = False,
+                 behaviour_gate: bool = True) -> dict:
     """Run the four standard passes; with `fight_gate=True` (the CLI's
     `--fight-gate`), also run `find_fight_health` + `find_round_gate`
     (§3) and fold their output into the findings dict under
     `fight_health` / `round_gate`. Those two keys are ABSENT — not
     `None` — when `fight_gate` is left at its default, so a profile
     that never asks for `--fight-gate` gets a byte-identical findings
-    dict to before this mechanism existed (§3.5)."""
+    dict to before this mechanism existed (§3.5).
+
+    `behaviour_gate` (the CLI's `--no-behaviour-gate` turns it off)
+    DRIVES every lives nomination before trusting it — three short arms
+    on the same worker (measured +17% on `find_hp_lives`, 23.5 s ->
+    27.6 s on Contra). Default ON: the fanout's three false positives all cleared the static gates,
+    and a wrong lives byte inverts death detection rather than degrading
+    it."""
     state = Path(state_path).read_bytes()
     disc = Discoverer(rom, state, frame_skip, forward, seed)
     try:
@@ -2308,7 +2929,8 @@ def discover_all(rom: str, state_path: str, *, frame_skip: int = 4,
             excl.add(r["addr"])
         y = find_y(rom, state, disc=disc, forward=forward,
                    exclude=tuple(a for a in excl if a is not None))
-        hl = find_hp_lives(rom, state, disc=disc, forward=forward)
+        hl = find_hp_lives(rom, state, disc=disc, forward=forward,
+                           behaviour_gate=behaviour_gate)
         out = {"rom": rom, "state": state_path, "forward": forward,
               "progress": prog, "room_counters": rooms, "y": y,
               "hp_lives": hl}
@@ -2412,12 +3034,40 @@ def emit_solve_yaml(rom: str, findings: dict) -> str:
         lines.append(f"  y: 0x{y[0]['addr']:04X}   # jump/ballistic signature")
     lines.append("  level_key: []   # coverage baseline; wire a stage-advance "
                  "byte here once a real clear is captured")
+    gate = hl.get("behaviour_gate")
     if hl.get("addr") is not None:
         if hl["kind"] == "lives":
-            lines.append(f"  lives: 0x{hl['addr']:04X}   # decrements on death")
+            # The gate's verdicts are spelled out rather than summarised as
+            # a bare PASS: `inconclusive` on the liveness check (the byte
+            # never emptied inside the arm, or the camera never moved) is
+            # a real gap in the evidence and the reader should see it.
+            beh = (hl.get("detail") or {}).get("behaviour") or {}
+            detail = ", ".join(f"{BEHAVIOUR_CHECK_ABBR.get(k, k)} "
+                               f"{v['verdict']}"
+                               for k, v in (beh.get("checks") or {}).items())
+            lines.append(f"  lives: 0x{hl['addr']:04X}   # decrements on death"
+                         + (f"; behaviour gate PASS ({detail})"
+                            if gate and detail else
+                            "; behaviour gate PASS" if gate else ""))
         else:
             lines.append(f"  lives: 0x{hl['addr']:04X}   # HUD health "
                          f"(=={hl.get('value')}); death proxy: is_dead on health<start")
+    if gate and gate["rejected"]:
+        # Never silent. A rejected nomination is evidence, and the next
+        # reader needs to see that the missing `lives:` line is a MEASURED
+        # answer rather than a probe that found nothing.
+        if hl.get("addr") is None:
+            lines.append("  # lives: <none — every nomination was driven and "
+                         "REJECTED; do not wire one by hand from the "
+                         "candidate table without repeating the check>")
+        elif hl["kind"] != "lives":
+            lines.append("  # NOTE: every LIVES nomination was driven and "
+                         "REJECTED; the byte above is the HUD-health death "
+                         "proxy, which this gate does not validate — CONFIRM "
+                         "before trusting it.")
+        for r in gate["rejections"][:4]:
+            lines.append(f"  #   rejected 0x{r['addr']:04X} "
+                         f"({'+'.join(r['failed'])}): {r['reason']}")
 
     # Fight-gate discovery is reported even when it did NOT become the
     # active progress source (a spatial frontier already won above, or
@@ -2457,6 +3107,25 @@ def _print_report(findings: dict, emit: bool) -> None:
     hl = findings["hp_lives"]
     print(f"[hp/lives] kind={hl['kind']} addr="
           f"{('0x%04X' % hl['addr']) if hl.get('addr') is not None else 'none'} — {hl['note']}")
+    gate = hl.get("behaviour_gate")
+    if gate:
+        shown = len(hl.get("lives_candidates") or [])
+        print(f"[behaviour gate] {gate['passed']} PASS / {gate['rejected']} "
+              f"REJECT over {gate['watched']} nominations "
+              f"({gate['steps_per_arm']} steps x 3 arms, "
+              f"odometer={'on' if gate['odometer'] else 'UNAVAILABLE'}"
+              f"{f'; top {shown} shown' if shown < gate['watched'] else ''})")
+        for c in hl.get("lives_candidates") or []:
+            b = c.get("behaviour")
+            if not b:
+                continue
+            ch = b["checks"]
+            print(f"   0x{c['addr']:04X}  {b['verdict']:<6} "
+                  f"osc={ch['oscillation']['verdict']}"
+                  f"({ch['oscillation']['cycles']}) "
+                  f"alive={ch['empties_while_alive']['verdict']} "
+                  f"move={ch['fires_on_movement']['verdict']}"
+                  + (f" — {b['reason']}" if b["reason"] else ""))
     if "fight_health" in findings:
         fh = findings["fight_health"]
         print(f"[fight_health] kind={fh['kind']} addr="
@@ -2527,10 +3196,21 @@ def _selftest() -> int:
         want_lives = c.get("expect_lives")
         hl = findings["hp_lives"]
         lives_cands = hl.get("lives_candidates") or []
-        lives_ok = want_lives is None or any(
-            cand["addr"] == want_lives or want_lives in cand.get("mirrors", [])
-            for cand in lives_cands)
-        passed = bool(found and sat_ok and room_hit and rec_ok and lives_ok)
+        matched = next((cand for cand in lives_cands
+                        if cand["addr"] == want_lives
+                        or want_lives in cand.get("mirrors", [])), None)
+        lives_ok = want_lives is None or matched is not None
+        # POSITIVE CONTROL for the behavioural gate. Contra's $0032 is a
+        # real stock, and its death is the awkward one — quiet enough to
+        # slip under every mass-reset threshold here, with the player
+        # respawning and walking straight on under a held forward. If a
+        # re-tuning of the gate's constants ever starts rejecting it,
+        # that is a worse defect than the false positives the gate
+        # exists to catch, and this is the only live check of it.
+        beh = (matched or {}).get("behaviour")
+        beh_ok = want_lives is None or bool(beh and beh["passed"])
+        passed = bool(found and sat_ok and room_hit and rec_ok and lives_ok
+                      and beh_ok)
         ok_all = ok_all and passed
         results.append({
             "game": c["game"], "rom": Path(rom).name,
@@ -2553,6 +3233,12 @@ def _selftest() -> int:
             "expect_lives": (f"${want_lives:04X}" if want_lives is not None
                              else None),
             "lives_recalled": lives_ok,
+            "lives_behaviour_gate": (
+                {"verdict": beh["verdict"], "failed": beh["failed"],
+                 "checks": {k: v["verdict"] for k, v in beh["checks"].items()}}
+                if beh else None),
+            "lives_survives_behaviour_gate": beh_ok,
+            "behaviour_gate_summary": hl.get("behaviour_gate"),
             "lives_candidates": [f"${cand['addr']:04X}" for cand in lives_cands],
             "death_evidence": hl.get("death_evidence"),
             "passed": passed,
@@ -2566,7 +3252,8 @@ def _selftest() -> int:
         "probe_budget": {"clean_forward": CLEAN_N, "clean_reverse": CLEAN_N,
                          "noop": NOOP_N, "advance": ADVANCE_N,
                          "settle_scan": SETTLE_SCAN,
-                         "death_drives": DEATH_REPS * DEATH_MAX_N},
+                         "death_drives": DEATH_REPS * DEATH_MAX_N,
+                         "behaviour_drives": 3 * BEHAVIOUR_N},
         "all_passed": ok_all,
         "cases": results,
     }
@@ -2595,6 +3282,15 @@ def main() -> int:
     ap.add_argument("--selftest", action="store_true",
                     help="Verify against Contra + Kirby ground truth and write "
                     "runs/discover_observables_selftest.json.")
+    ap.add_argument("--no-behaviour-gate", action="store_true",
+                    help="Skip the post-nomination behavioural validation of "
+                    "the lives byte (FALSE_DEATH_FANOUT_2026-08-26.md §6). "
+                    "ON by default — it costs 3 x %d steps on the one "
+                    "worker and it is the only thing that catches an "
+                    "oscillating attack counter, a byte that empties while "
+                    "the odometer keeps climbing, or one that fires on "
+                    "movement onset. Turn it off only to reproduce a "
+                    "pre-gate nomination." % BEHAVIOUR_N)
     ap.add_argument("--fight-gate", action="store_true",
                     help="Also run find_fight_health + find_round_gate "
                     "(FIGHTGATE_MECHANISM_2026-08-25.md §3) for camera-static "
@@ -2619,7 +3315,8 @@ def main() -> int:
     forward = forward or "right"
 
     findings = discover_all(args.rom, args.state, frame_skip=fs, forward=forward,
-                            seed=args.seed, fight_gate=args.fight_gate)
+                            seed=args.seed, fight_gate=args.fight_gate,
+                            behaviour_gate=not args.no_behaviour_gate)
     _print_report(findings, emit=args.emit_solve)
     if args.out:
         Path(args.out).write_text(json.dumps(findings, indent=2, default=int) + "\n")

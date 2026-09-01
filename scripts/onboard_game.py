@@ -395,7 +395,8 @@ def _try_probe_budget() -> dict[str, int]:
     return {"clean_forward": int(d.CLEAN_N), "clean_reverse": int(d.CLEAN_N),
             "noop": int(d.NOOP_N), "advance": int(d.ADVANCE_N),
             "settle_scan": int(d.SETTLE_SCAN),
-            "death_drives": int(d.DEATH_REPS) * int(d.DEATH_MAX_N)}
+            "death_drives": int(d.DEATH_REPS) * int(d.DEATH_MAX_N),
+            "behaviour_drives": 3 * int(getattr(d, "BEHAVIOUR_N", 0))}
 
 
 # --------------------------------------------------------------------------
@@ -1446,9 +1447,22 @@ def onboard(rom: str | Path, *,
         notes.append("no vertical axis isolated — the cell key will be "
                      "horizontally blind (expect KEY_BLIND on the "
                      "calibration run)")
-    if (findings.get("hp_lives") or {}).get("addr") is None:
+    hl = findings.get("hp_lives") or {}
+    if hl.get("addr") is None:
         notes.append("no health/lives byte isolated — no death signal, so "
                      "lineages will never be terminated on a death")
+        # A REJECTED nomination is a different finding from an empty
+        # scan, and the difference decides what to do next: hand-wiring
+        # a byte off the candidate table is exactly what the behavioural
+        # gate just measured against (FALSE_DEATH_FANOUT_2026-08-26.md).
+        gate = hl.get("behaviour_gate") or {}
+        if gate.get("rejected"):
+            notes.append(
+                f"...and that is a MEASURED answer, not a blind spot: "
+                f"{gate['rejected']} nomination(s) were driven and rejected "
+                f"behaviourally — "
+                + "; ".join(f"0x{r['addr']:04X} ({'+'.join(r['failed'])})"
+                            for r in gate["rejections"][:4]))
 
     header = (header_fn or (lambda p: _gen_auto_configs().parse_header(p)))(rom)
     if header.get("error"):

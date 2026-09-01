@@ -320,6 +320,92 @@ def test_missing_observables_are_noted_even_when_they_do_not_block(rom, state, t
     assert any("death signal" in n for n in report.notes)
 
 
+def test_a_behaviourally_rejected_lives_byte_is_named_not_just_missing(
+        rom, state, tmp_path):
+    """"No lives byte" from a scan that found nothing and from one whose
+    every nomination was DRIVEN and rejected are different findings, and
+    only one of them means "do not hand-wire a byte off the candidate
+    table" (docs/research/FALSE_DEATH_FANOUT_2026-08-26.md §6)."""
+    findings = _fake_findings(hp=False)
+    findings["hp_lives"]["behaviour_gate"] = {
+        "watched": 2, "passed": 0, "rejected": 2, "picked": None,
+        "rejections": [{"addr": 0x00CD, "failed": ["oscillation"],
+                        "reason": "falls and recovers 20 times inside ONE "
+                                  "drive"},
+                       {"addr": 0x0386, "failed": ["empties_while_alive"],
+                        "reason": "the agent was still alive"}],
+    }
+    report, _ = _run(rom, tmp_path, findings=findings)
+    assert any("death signal" in n for n in report.notes)
+    named = [n for n in report.notes if "MEASURED answer" in n]
+    assert named, report.notes
+    assert "0x00CD (oscillation)" in named[0]
+    assert "0x0386 (empties_while_alive)" in named[0]
+
+
+def test_an_empty_scan_does_not_claim_a_rejection(rom, state, tmp_path):
+    """The mirror of the above: with no gate summary attached, the note
+    must not invent one."""
+    report, _ = _run(rom, tmp_path, findings=_fake_findings(hp=False))
+    assert any("death signal" in n for n in report.notes)
+    assert not any("MEASURED answer" in n for n in report.notes)
+
+
+def test_a_lives_fanout_names_the_first_four_rejections_not_all_of_them(
+        rom, state, tmp_path):
+    """The false-death fan-out re-nominated lives across ELEVEN profiles,
+    so a gate that rejects everything can hand back a double-digit list.
+    The note is a POINTER to the receipt, not the receipt: it names the
+    top four and stops, the same window `emit_solve_yaml` writes into the
+    draft, so one unlucky game cannot bury the other notes."""
+    findings = _fake_findings(hp=False)
+    findings["hp_lives"]["behaviour_gate"] = {
+        "watched": 6, "passed": 0, "rejected": 6, "picked": None,
+        "rejections": [{"addr": 0x0300 + i, "failed": ["oscillation"],
+                        "reason": f"reject {i}"} for i in range(6)],
+    }
+    report, _ = _run(rom, tmp_path, findings=findings)
+    named = [n for n in report.notes if "MEASURED answer" in n]
+    assert named, report.notes
+    assert "6 nomination(s)" in named[0]
+    assert all(f"0x{0x0300 + i:04X}" in named[0] for i in range(4)), named[0]
+    assert not any(f"0x{0x0300 + i:04X}" in named[0] for i in (4, 5)), named[0]
+
+
+def _stub_discovery(**extra) -> types.SimpleNamespace:
+    """A stand-in for `scripts.discover_observables` carrying only the
+    probe-size constants the budget reads."""
+    ns = types.SimpleNamespace(CLEAN_N=64, NOOP_N=32, ADVANCE_N=48,
+                               SETTLE_SCAN=8, DEATH_REPS=3, DEATH_MAX_N=5)
+    for k, v in extra.items():
+        setattr(ns, k, v)
+    return ns
+
+
+def test_the_probe_budget_stamps_the_behaviour_gate_drives(monkeypatch):
+    """`provenance.probe_budget` is the receipt for how much emulator time
+    a draft cost. The gate drives THREE arms per nomination (hold / idle /
+    mash) of `BEHAVIOUR_N` steps each; unstamped, that is the largest
+    unaccounted block in the probe and the budget understates the cost."""
+    monkeypatch.setattr(og, "_discover",
+                        lambda: _stub_discovery(BEHAVIOUR_N=320))
+    budget = og._try_probe_budget()
+    assert budget["behaviour_drives"] == 3 * 320
+    assert budget["death_drives"] == 3 * 5
+
+
+def test_a_pre_gate_discovery_module_still_yields_a_whole_budget(monkeypatch):
+    """`_try_probe_budget` swallows every exception into `{}`, so reading
+    a constant a not-yet-updated `discover_observables` lacks would not
+    raise here — it would silently drop the WHOLE budget out of
+    provenance. The read is defaulted for exactly that reason."""
+    monkeypatch.setattr(og, "_discover", lambda: _stub_discovery())
+    budget = og._try_probe_budget()
+    assert budget["behaviour_drives"] == 0
+    assert budget["clean_forward"] == 64
+    assert budget["settle_scan"] == 8
+
+
 # ---------------------------------------------------------------------
 # The lint. Every rule mutation-checked.
 # ---------------------------------------------------------------------
