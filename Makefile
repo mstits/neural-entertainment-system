@@ -252,3 +252,11 @@ engine-check:
 
 provenance-check:
 	.venv/bin/python scripts/provenance_check.py
+
+# Cold-boot replay of the banked flagship tape (docs/receipts/full_run/
+# full_tape.npy) against every level boundary in receipts.json, writing a
+# dated JSON receipt with full build provenance. Takes 2-4 minutes; not a
+# `test` prerequisite for that reason. Run after any nes_core change that
+# could touch emulation fidelity.
+verify-full-run:
+	.venv/bin/python scripts/verify_full_run.py

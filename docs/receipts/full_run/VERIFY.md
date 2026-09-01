@@ -19,3 +19,7 @@ Verified 2026-08-29: exact match (31,202 steps, one uint8 action per
 step, dtype/shape as attested). The banked `receipts.json` predates the
 `tape_sha256_domain` field the assembler now writes; it is history and
 stays byte-identical.
+
+Re-verified 2026-09-01: `make verify-full-run` -> replay_2026-09-01.json
+(nes_core rebuilt from HEAD at 05f18243ed74, cold boot, 32/32 level
+boundaries OK, opermode=2, 119s).

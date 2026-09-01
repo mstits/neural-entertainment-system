@@ -43,3 +43,42 @@ def test_the_naive_file_hash_is_documented_as_different():
     receipt = json.loads((BANK / "receipts.json").read_text())
     file_hash = hashlib.sha256((BANK / "full_tape.npy").read_bytes()).hexdigest()
     assert file_hash != receipt["tape_sha256"]
+
+
+def test_every_replay_receipt_matches_the_banked_receipts_json():
+    """Each docs/receipts/full_run/replay_*.json is a rerun of the same
+    tape against the same receipts.json level marks. This test refuses a
+    replay receipt that claims success (`all_ok`) while its own recorded
+    levels disagree with the banked attestation — entry for entry, by
+    end_step and wd_after/opermode — so a stale or hand-edited replay
+    receipt cannot sit next to receipts.json looking authoritative."""
+    receipt = json.loads((BANK / "receipts.json").read_text())
+    by_end_step = {lv["end_step"]: lv for lv in receipt["levels"]}
+
+    replay_paths = sorted(BANK.glob("replay_*.json"))
+    assert replay_paths, "expected at least one docs/receipts/full_run/replay_*.json"
+
+    for path in replay_paths:
+        replay = json.loads(path.read_text())
+        assert replay["all_ok"] is True, f"{path.name}: all_ok is not True"
+        assert replay["opermode"] == 2, f"{path.name}: opermode != 2"
+        assert len(replay["levels"]) == len(receipt["levels"]), (
+            f"{path.name}: level count {len(replay['levels'])} != "
+            f"receipts.json's {len(receipt['levels'])}")
+        for lv in replay["levels"]:
+            banked = by_end_step.get(lv["end_step"])
+            assert banked is not None, (
+                f"{path.name}: end_step {lv['end_step']} has no matching "
+                f"entry in receipts.json")
+            assert lv["level"] == banked["level"], (
+                f"{path.name}: level name mismatch at end_step "
+                f"{lv['end_step']}")
+            assert lv["ok"] is True, (
+                f"{path.name}: level {lv['level']} recorded ok=False")
+            expected = banked["wd_after"] if "wd_after" in banked else 2
+            assert lv["wd_after_expected"] == expected, (
+                f"{path.name}: {lv['level']} wd_after_expected "
+                f"{lv['wd_after_expected']} != receipts.json's {expected}")
+            assert lv["wd_after_observed"] == expected, (
+                f"{path.name}: {lv['level']} wd_after_observed "
+                f"{lv['wd_after_observed']} != receipts.json's {expected}")
