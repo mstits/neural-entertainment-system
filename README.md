@@ -1,13 +1,13 @@
 # Neural Entertainment System
 
 A macOS / Apple-Silicon NES emulator built to be pointed at a game and left to
-beat it. A purpose-built Rust core (`nes_core`) — Mesen-checked fidelity,
+beat it. A purpose-built Rust core (`nes_core`, Mesen-checked fidelity,
 microsecond save-states, 37 mappers, 793 of 796 library ROMs booting into a
-live screen — is driven from Python by two systems that share it: a generic
+live screen) is driven from Python by two systems that share it: a generic
 Go-Explore **solver** that searches its way through a game live on stream, and
 a PPO **trainer** whose policies are graded by the strictest published
-evaluation protocol. The solver has beaten Super Mario Bros end to end — cold
-boot to the princess, every input receipted — and the trainer's honest number
+evaluation protocol. The solver has beaten Super Mario Bros end to end (cold
+boot to the princess, every input receipted) and the trainer's honest number
 on
 World 1-1 is 0.65. Those two sentences describe different achievements, they
 are filed in different ledgers, and every result below carries the label of
@@ -18,7 +18,7 @@ original 1985 console is referred to by its full name to disambiguate.
 
 ## Where it stands today
 
-Three headline results. The first two carry ledger labels — `CLAIMS.md` is
+Three headline results. The first two carry ledger labels. `CLAIMS.md` is
 authoritative for what each label means and what may be said about it, and
 *The claims ledger* below is the short version. The third is the fidelity
 floor the other two stand on. Where the project is going next is in
@@ -27,20 +27,20 @@ take), `docs/proposals/STRATEGY_2026-08-14.md` (supersedes the day-30 framing),
 and `docs/proposals/DIRECTION_2026-08-28.md` (the current direction, with
 failable gates).
 
-### 1. [EXHIBITION] The search system beat Super Mario Bros — the whole game
+### 1. [EXHIBITION] The search system beat Super Mario Bros: the whole game
 
 From an actual cold boot (reset, title screen, START press) through all 32
 levels to the "THANK YOU MARIO — YOUR QUEST IS OVER" ending, as one verified
 controller tape with per-level receipts and a deterministic sha256
 ([release with video, tape, and receipts](https://github.com/mstits/neural-entertainment-system/releases/tag/smb-complete-v1)).
 
-![The finale — Bowser's bridge, the axe, the princess](docs/media/run_finale_princess.gif)
+![The finale: Bowser's bridge, the axe, the princess](docs/media/run_finale_princess.gif)
 
-*The final minutes of the verified run (EXHIBITION — search output, not a
+*The final minutes of the verified run (EXHIBITION, search output, not a
 learned policy): 8-4's pipe maze, Bowser's bridge, the axe, the rescue.*
 
-A Go-Explore solver — deterministic Rust emulator, microsecond save-states,
-first-return-then-explore over a cell archive — beat **all 32 levels**, and
+A Go-Explore solver (deterministic Rust emulator, microsecond save-states,
+first-return-then-explore over a cell archive) beat **all 32 levels**, and
 the whole run is one verified artifact: a single controller tape from an
 actual cold boot through every level to the ending. **31,202 inputs, ~35
 minutes of gameplay, zero state loads, every level boundary receipted, and a
@@ -53,7 +53,7 @@ receipts, and ending frame live in `docs/receipts/full_run/`; the three-round
 research trail that cracked the looping mazes and the final pipe-maze is in
 `docs/research/`.
 
-**It was finished live.** The last stretch — 5-3 through the 8-4 finale —
+**It was finished live.** The last stretch (5-3 through the 8-4 finale)
 fell in the streaming show (`make show`) on the night of **2026-07-28/29**,
 with 8-4 itself taking 56 minutes and 1.19M archive cells in that sitting
 under the coverage recipes
@@ -62,7 +62,7 @@ banked level solution was then replayed and re-verified to advance the
 world/level pair (`runs/live_show/smb_4_4_micro/chain_verify.json`).
 
 This is the machine *solving* the game, in the tradition of the ALE "Brute"
-and the TAS community — real, rigorous, always labeled as search, and never
+and the TAS community: real, rigorous, always labeled as search, and never
 presented as learning.
 
 **One game beaten so far.** Bubble Bobble is the second campaign in flight
@@ -73,14 +73,14 @@ and stands at **round 60** solved and banked
 ### 2. [LEARNED] World 1-1, cleared at 0.65 under the honest protocol
 
 The learned ledger's headline is one level, and it is measured under the
-research-standard bar — cold power-on, zero test-time state loads, greedy
+research-standard bar: cold power-on, zero test-time state loads, greedy
 action selection, 25% sticky actions, 0–16 frame start jitter, single-life
 scoring, two seeds, greedy *and* sampled both reported (Machado et al. 2018;
 `CLAIMS.md` fixes the episode-count floor at 50 per seed, and every run
 declares the count it used).
 
 The campaign's receipt table is reproduced here **in full**, failures
-included — these are the same five runs that head
+included; these are the same five runs that head
 `docs/research/B5_PREREG_2026-08-08.md` (where B4 v2 was still in flight at
 the time of writing and its verdict has since landed). Quoting only the
 rows that passed would be exactly the highlight-reel move this section
@@ -89,7 +89,7 @@ exists to refuse:
 | Run | What it measures | Episodes | Result |
 |---|---|---|---|
 | B1 | 1-1 tile policy, cold greedy, two seeds | 50 + 50 | **0.65 pooled** (0.56 / 0.74 per seed) |
-| B2 | the same checkpoint, sampled | 30, one seed | 0.667 — declared below the 50/seed floor |
+| B2 | the same checkpoint, sampled | 30, one seed | 0.667 (declared below the 50/seed floor) |
 | B3 | 1-2 probe control (the published negative) | 30 | 0/30 |
 | B4 v1 | 1-1 reverse curriculum, first attempt | 50 greedy, 30 sampled, ×2 seeds | **failed the cold gate: 0.02 greedy on both seeds** (0.50 / 0.633 sampled) |
 | B4 v2 | the same, winner re-keyed to at-entrance success | 50 greedy, 30 sampled, ×2 seeds | **failed identically: 0.02 / 0.02 greedy** (0.50 / 0.633 sampled) |
@@ -97,11 +97,11 @@ exists to refuse:
 B1 is the project's first and so far only true learned clear at this bar,
 and it is a **from-scratch PPO** policy on tile observations, not a replay.
 Its receipts are the two `action_select: greedy` records dated 2026-08-08
-in `checkpoints/mario_1_1_tile_gate_v2_consolidate/eval.jsonl` — 50
+in `checkpoints/mario_1_1_tile_gate_v2_consolidate/eval.jsonl`, 50
 episodes each, 28/50 and 37/50 clears, pooling to 65/100. An earlier pair
 on a byte-identical copy of the same checkpoint (same sha256, different
-filename) — 2026-07-21, 30 episodes per seed, 0.667 /
-0.633 — pools to the same 0.65, which is where the "63–67% per seed" band
+filename, 2026-07-21, 30 episodes per seed, 0.667 /
+0.633) pools to the same 0.65, which is where the "63–67% per seed" band
 in older write-ups comes from; at the floor-meeting 50 episodes the
 per-seed spread is wider, 56–74%, and that is the honest band. B4's two
 rows are evaluated the same way, from
@@ -116,10 +116,10 @@ receipt file; folding them into the record is an open item.
 
 Two more entries, both carefully qualified:
 
-- **World 1-2 is a documented negative** — and a measured one. A
+- **World 1-2 is a documented negative**, and a measured one. A
   pre-registered, externally-reviewed campaign (three concurring seeds)
   showed the CGSA-PPO recipe failing its own pre-registered signposts on
-  three seeds (the policy-class generalization was later withdrawn —
+  three seeds (the policy-class generalization was later withdrawn;
   `CLAIMS.md` §World 1-2, `runs/smodice_1_2/`): local robustness verified at
   1,900+ zones by sequential statistical tests does not compose into
   traversal, and the level's central gauntlet has a measured local noise
@@ -129,7 +129,7 @@ Two more entries, both carefully qualified:
   `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`.
 - **The composite World-1 playthrough** remains reproducible: per-level
   learned nets behind a router, playing 1-1 through the 1-4 castle live
-  from power-on. It is a *composite of specialists* — labeled as such —
+  from power-on. It is a *composite of specialists*, labeled as such,
   not one agent that understands the game, and its clear is a
   deterministic reproduction, not an honest-protocol number:
 
@@ -146,14 +146,14 @@ python scripts/record_learned_playthrough.py \
 highlight reel:** no single learned policy yet plays whole worlds under
 honest noise, and 1-2 is measured evidence that getting there needs a
 stronger policy class, not more training tricks. The current bet is a
-**reverse (backward) start-state curriculum** — the solver's own tape
-supplies start states only, never action labels — pre-registered in
+**reverse (backward) start-state curriculum** (the solver's own tape
+supplies start states only, never action labels), pre-registered in
 `docs/research/B5_PREREG_2026-08-08.md` with its gates, kill criteria, and
 honest-reporting clause written down *before* the first episode ran.
 
 **The prior on that bet is bad, and it is the B4 rows above.** The
-mechanism has been run twice on 1-1 — the control level this same stack
-already learned to 0.65 — and cold-scored **0.02 greedy both times**,
+mechanism has been run twice on 1-1 (the control level this same stack
+already learned to 0.65) and cold-scored **0.02 greedy both times**,
 before and after the winner-selection fix; a consolidation pass on top of
 it scored 0/25 greedy on two checkpoints. The diagnosis on record is a
 sharpening failure rather than an exploration one (the same nets sample
@@ -164,13 +164,13 @@ did not pass. `docs/proposals/STRATEGY_2026-08-08.md` (superseded as the plan
 of record by `STRATEGY_2026-08-14.md`; current direction in
 `DIRECTION_2026-08-28.md`) allows the attempt anyway only as a written
 deviation addendum published *before* the run, with the gap carried as a
-registered caveat — and that addendum is not written yet. It may fail again;
+registered caveat, and that addendum is not written yet. It may fail again;
 the prereg says in advance what failing looks like.
 
 ### 3. [FIDELITY] Mesen-checked receipts under both of them
 
 Neither ledger means anything on an emulator that drifts. The core is gated by
-**nestest byte-exact** (8,991 instructions — registers *and* cycle count,
+**nestest byte-exact** (8,991 instructions, registers *and* cycle count,
 against the Nintendulator golden trace), a **33-ROM Mesen-oracle lockstep**,
 **149 differential parity tests** (`make parity`), and a differential fuzz of
 the AArch64 ASM CPU against the pure-Rust interpreter across 240M+ instructions
@@ -181,8 +181,8 @@ Cross-checked against Mesen 2 on 12,000 frames of the banked Super Mario Bros
 run (2026-09-01): nes_core and Mesen agree on lives, area, mode and every
 level-transition frame; scratch bytes (stack, zero-page temps, OAM buffer)
 differ by about 10 per frame idle and 17 median under play. The core is never
-claimed byte-identical to Mesen. The honest gap — the full public blargg
-gauntlet is not yet run end-to-end as a gate — is stated in *Accuracy status*
+claimed byte-identical to Mesen. The honest gap (the full public blargg
+gauntlet is not yet run end-to-end as a gate) is stated in *Accuracy status*
 below rather than quietly omitted.
 
 The emulator and the honest-evaluation harness are the mature layers; the
@@ -193,7 +193,7 @@ single generalist agent remains the expedition ahead.
 The difference between a policy that learned to play and a trajectory that
 was searched for is invisible in a highlight clip. So every artifact and
 every number in this repo is filed under exactly one ledger, and the wording
-allowed for each is fixed. **`CLAIMS.md` is authoritative** — it carries the
+allowed for each is fixed. **`CLAIMS.md` is authoritative**: it carries the
 full policy, the knowledge-injection tiers, the quarantine list, and the
 documented negatives. This is the summary:
 
@@ -201,11 +201,11 @@ documented negatives. This is the summary:
 |---|---|---|
 | **EXHIBITION** | *Play.* Search output: Go-Explore and beam solutions, BC "pilot" clones of a single trajectory, routed replay chains. The completed SMB run is here. | "The *search system* solved it." Never "the AI learned it." |
 | **LEARNED** | *Play.* A policy trained by RL and evaluated under the honest protocol: cold power-on, zero test-time state loads, single-life denominators, sticky-actions 0.25 + start-jitter 16, at least 50 episodes on each of two seeds, greedy **and** sampled both declared, action receipts recorded and self-replay verified. | "The agent learned/plays/beat." Only here. |
-| **FORGE** | *Machinery, not play.* The system diagnosed its own wall from its own self-measured telemetry and forged a new mechanism — agent-authored, shipped default-off and byte-identical, carrying a stated validation gate and an honest record of whether that gate has been met. | Approved verbs: **diagnosed, forged, built, extended itself**. *learn / learned / learns / learning / self-taught* are **banned** for FORGE-class results, whatever the arm goes on to do. |
+| **FORGE** | *Machinery, not play.* The system diagnosed its own wall from its own self-measured telemetry and forged a new mechanism: agent-authored, shipped default-off and byte-identical, carrying a stated validation gate and an honest record of whether that gate has been met. | Approved verbs: **diagnosed, forged, built, extended itself**. *learn / learned / learns / learning / self-taught* are **banned** for FORGE-class results, whatever the arm goes on to do. |
 
 FORGE deliberately claims less than it looks like it does: it carries no
 clear rate, no episode count and no protocol number. If a forged arm later
-clears a level, that clear is an EXHIBITION result logged on its own terms —
+clears a level, that clear is an EXHIBITION result logged on its own terms;
 the two are never merged into one sentence.
 
 Three more rules keep the ledgers from leaking into each other:
@@ -227,18 +227,18 @@ Three more rules keep the ledgers from leaking into each other:
 
 ## The complete run
 
-![Cold boot to 1-1 — reset, title screen, START press](docs/media/run_boot_to_1-1.gif)
+![Cold boot to 1-1: reset, title screen, START press](docs/media/run_boot_to_1-1.gif)
 ![The 4-4 looping maze](docs/media/run_4-4_maze.gif)
-![The finale — Bowser's bridge, the axe, the princess](docs/media/run_finale_princess.gif)
+![The finale: Bowser's bridge, the axe, the princess](docs/media/run_finale_princess.gif)
 
-*Three moments from the single verified tape (EXHIBITION — search output,
+*Three moments from the single verified tape (EXHIBITION, search output,
 not a learned policy): the cold boot through the title screen into 1-1; the
 4-4 looping maze that defeated coordinate-keyed search until cells learned
 direction; and the ending. Full 34:40 video: `runs/full_run/
 smb_complete_run.mp4` (re-render anytime with `python scripts/
 assemble_full_run.py --video out.mp4`).*
 
-## How it gets unstuck — the three tiers
+## How it gets unstuck: the three tiers
 
 Beating one game is a result; beating *any* game is an architecture. The
 operational form of that architecture is a diagnosis-dispatch loop, and the
@@ -246,7 +246,7 @@ design decision that makes it general is **what gets classified: not the
 game, the wall.** Game-level classification is a lookup table that ends at
 793 rows. Wall-level classification generalizes to games nobody profiled.
 
-Every signal below is **self-measured** — read off the solver's own
+Every signal below is **self-measured**: read off the solver's own
 telemetry (frontier position, cell-key churn, y-band occupancy, tip
 mortality), never from a disassembly, a level map, or a walkthrough. That
 boundary is what `CLAIMS.md` Tier 3 bans, and it is why these arms are
@@ -254,13 +254,13 @@ allowed to exist at all.
 
 | Telemetry signal | Wall class | Mechanism armed | Where |
 |---|---|---|---|
-| Deep frontier pinned for N seconds | momentum wall | heuristic inversion — flip action-sampling toward left/down inside a self-measured saturation window | `--inversion-pin-secs` (default 180; `-1` disables) |
-| Cell-key churn / self-similar states | coverage wall | coverage recipes — count-based selection, finer cell keys | `--sel-mode count`, `--gx-bucket`, `--y-band` |
+| Deep frontier pinned for N seconds | momentum wall | heuristic inversion: flip action-sampling toward left/down inside a self-measured saturation window | `--inversion-pin-secs` (default 180; `-1` disables) |
+| Cell-key churn / self-similar states | coverage wall | coverage recipes: count-based selection, finer cell keys | `--sel-mode count`, `--gx-bucket`, `--y-band` |
 | gx pinned while y-bands starve | orthogonal wall | treat a vertical direction as the progress axis | `--ortho up\|down` (default off) |
-| Deep tips keep dying at a fixed +N | doomed-tip drain | barren filter — evict cells that never produce novelty | `--frontier-throttle` (default 0 = off) |
+| Deep tips keep dying at a fixed +N | doomed-tip drain | barren filter: evict cells that never produce novelty | `--frontier-throttle` (default 0 = off) |
 | Room byte changes with no progress gradient | discrete transition | sustained-hold macros, auto-derived from the action space | profile `solve.hold_macros`; `derive_transition_macros` |
 
-(Not exhaustive — the door-selection, kill-key and time-bin arms
+(Not exhaustive: the door-selection, kill-key and time-bin arms
 (`--door-weight`, `--kill-key`, `--time-bins`) exist for combat and
 room-graph walls, and compose with the above.)
 
@@ -268,8 +268,8 @@ Every arm ships **default-off or default-identical**: a run that omits the
 flags samples bit-for-bit the way the receipted 32-level campaign did, which
 is what keeps the banked receipts reproducible. Today exactly one arm
 (heuristic inversion) arms itself from telemetry; the rest are still flags a
-human sets per run. Closing that gap — self-arming, and narrating the
-arming live — is the named next step in
+human sets per run. Closing that gap (self-arming, and narrating the
+arming live) is the named next step in
 `docs/proposals/TOTALITY_BASIS_2026-08-08.md`.
 
 ```mermaid
@@ -315,14 +315,14 @@ flowchart TB
 ```
 
 **Where each tier actually is today.** T0 runs inside the solver loop and is
-shipped. T1 is what the operator plus a workflow does by hand — the
+shipped. T1 is what the operator plus a workflow does by hand: the
 productized version (stall watchdog → auto diagnosis bundle → agent
 invocation) is scheduled, not shipped. T2 has run end-to-end once: the
 `--ortho` arm was diagnosed from a stalled Castlevania run's own selection
 telemetry (the deep arm's probability of ever picking a climb cell was
 provably 0; 34 of 95 columns had never been explored above y-band 15 across
 10.6M steps), then designed, implemented, adversarially reviewed and gated
-by agents — with the cell key deliberately left alone so banked archives
+by agents, with the cell key deliberately left alone so banked archives
 stay resumable.
 
 **And it has not been shown to work.** No validation run has been performed;
@@ -340,7 +340,7 @@ Two invariants keep every tier honest: agents consume only self-measured
 telemetry, never game internals; and no arm joins T0 without default-off
 byte-identity plus its own validation gate.
 
-## How the machine beat the game — methods and math
+## How the machine beat the game: methods and math
 
 Everything below is documented with its ledger label. **EXHIBITION** =
 the search system (this is what completed the game). **LEARNED** = policies
@@ -354,14 +354,14 @@ The solver is first-return-then-explore [2]: an archive of *cells* maps a
 discretized state to the best emulator save-state that reached it, search
 repeatedly restores a frontier cell (microsecond restore in the Rust core)
 and explores onward with right-biased random bursts. A cell is replaced only
-under **domination** — a strictly better score, or an equal score in fewer
+under **domination**: a strictly better score, or an equal score in fewer
 steps:
 
 $$\text{replace}(c) \iff s > s_c \;\lor\; (s = s_c \wedge t < t_c)$$
 
 Selection favors rarely-chosen frontier cells; a *deep-frontier arm* biases
 draws toward the highest progress coordinate. Standard levels fall in
-minutes. The interesting failures — and the mechanisms they forced — were:
+minutes. The interesting failures, and the mechanisms they forced, were:
 
 - **Looping mazes (4-4, 7-4).** Castle mazes silently warp wrong routes
   backward, so coordinate cells alias first-pass and looped states and the
@@ -370,8 +370,8 @@ minutes. The interesting failures — and the mechanisms they forced — were:
   cells* append $\mathrm{sgn}(v_x)$ to the cell key so a backtracking
   maneuver re-traversing visited coordinates is a distinct, explorable cell
   rather than a pruned loop. *Saturation-gated heuristic inversion* flips
-  the action-sampling bias toward left/down — the maneuvers a forward
-  heuristic structurally prunes — but only inside a self-measured window
+  the action-sampling bias toward left/down (the maneuvers a forward
+  heuristic structurally prunes) but only inside a self-measured window
   $[g_\text{floor},\, g_\text{pin}+60]$ where $g_\text{pin}$ is the live
   frontier pin and $g_\text{floor}$ is the observed warp destination, and
   only after the frontier has been pinned for 180 s. (Always-on inversion
@@ -381,20 +381,20 @@ minutes. The interesting failures — and the mechanisms they forced — were:
 - **The pipe-maze finale (8-4).** Route progress goes through pipes that
   must be *entered*: stand on the pipe, hold Down. A measured
   enterability sweep (settle, hold Down 24 steps, at every reachable 16-px
-  bucket) fired transitions at 83 of 320 positions — a behavior stochastic
+  bucket) fired transitions at 83 of 320 positions, a behavior stochastic
   play essentially never produces. The solver therefore interleaves a
   scripted settle-and-hold-Down macro (2% of steps, recorded verbatim in
   the trace so replays stay exact). The frontier moved from its
   three-day pin to the ending in 45 minutes.
 - **The invisible ending.** SMB's victory screen advances no world/level
-  byte — there is no next level — and locks input. The winning run sat in
+  byte (there is no next level) and locks input. The winning run sat in
   the archive for 90 minutes classified as a stall until the frontier state
   was *rendered* and showed the princess. Finales are now detected by the
   operating-mode byte (`$0770`: play = 1, victory = 2, verified
   empirically). Lesson, earned twice: never declare a stall without
   rendering the frame.
 
-### Empirical state discovery — no disassembly, ever (EXHIBITION tooling)
+### Empirical state discovery: no disassembly, ever (EXHIBITION tooling)
 
 The project bans game internals (disassembly, maps, walkthroughs). When
 search needed to understand hidden state, it *measured* it, in the system-
@@ -402,9 +402,9 @@ identification tradition [8, 9, 10]:
 
 - **Predicate verification.** Any RAM byte used by search must first pass a
   change-rate measurement (e.g., the community-documented "area pointer"
-  `$0750` churns ~6/1000 steps with the scroll engine — an invalidated
+  `$0750` churns ~6/1000 steps with the scroll engine, an invalidated
   interpretation; the area-type byte `$074E` changes 0.67/1000, only at
-  screen transitions — verified and used).
+  screen transitions, verified and used).
 - **Sparse causal probes.** To find state that *decides* an outcome,
   collect same-channel snapshot/label pairs, one-hot the 2048-byte RAM and
   fit an $L_1$-regularized logistic regression [11]:
@@ -412,7 +412,7 @@ identification tradition [8, 9, 10]:
 $$\min_{w,b}\; \frac{1}{N}\sum_{j=1}^{N} \ln\!\left(1+e^{-Y_j (w^\top \Phi(R_j)+b)}\right) + \lambda \lVert w \rVert_1$$
 
   Surviving coefficients are only *candidates*: each must pass a **causal
-  mutation test** — overwrite that single byte in a failing state with the
+  mutation test**: overwrite that single byte in a failing state with the
   passing value and observe the outcome flip. The mutation filter earns its
   keep: in one probe it rejected 100%-holdout-accuracy candidates that were
   collection-channel artifacts, and in another it exposed a "route byte"
@@ -443,7 +443,7 @@ too:
   \Phi_\max]$, live transitions shaped by $F = \gamma\Phi(s') -
   \Phi(s)$, and **every non-completing terminal charged $-\Phi_\text{peak}$**
   (the episode maximum). The telescoping sum over any non-completing
-  episode is then $\le 0$ — dying, idling, retreating, or hiding in a
+  episode is then $\le 0$: dying, idling, retreating, or hiding in a
   zero-potential region cannot bank shaping; only finishing pays. Each
   clause exists because a trained policy found the exploit it closes
   (documented in `docs/research/DOSSIER_V3_2026-07-23.md`).
@@ -459,8 +459,8 @@ $$\Lambda_m = \sum_i \left[ x_i \ln\tfrac{0.60}{0.15} + (1-x_i)\ln\tfrac{0.40}{0
   Small-sample acceptance gates were measured to pass "welds" whose true
   success was below 1/400; fixed-count claims use the Wilson interval [6]
   instead. The campaign's decisive result: SPRT-verified *local*
-  robustness at 1,900+ cells did **not** compose into level traversal —
-  three seeds concurring — and we are aware of no published per-level 1-2 clear rate under Machado sticky-0.25, in either direction. The full record and robustness profile:
+  robustness at 1,900+ cells did **not** compose into level traversal
+  (three seeds concurring), and we are aware of no published per-level 1-2 clear rate under Machado sticky-0.25, in either direction. The full record and robustness profile:
   `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`.
 
 ### Verification and receipts
@@ -469,32 +469,32 @@ The completed run is reproducible from first principles: a cold boot
 (reset, 60-step title wait, START), then 31,202 controller inputs with zero
 save-state loads. The assembler verifies every world/level boundary in
 sequence and the finale by operating mode, and emits per-level receipts
-plus the tape's sha256 — byte-identical across independent replays on the
+plus the tape's sha256, byte-identical across independent replays on the
 deterministic core. Artifacts: `docs/receipts/full_run/`.
 
 ### References
 
 1. M. C. Machado et al., "Revisiting the Arcade Learning Environment,"
-   *JAIR* 61, 2018 — the sticky-actions evaluation protocol.
+   *JAIR* 61, 2018: the sticky-actions evaluation protocol.
 2. A. Ecoffet et al., "First return, then explore," *Nature* 590, 2021
-   (and arXiv:1901.10995) — Go-Explore.
+   (and arXiv:1901.10995): Go-Explore.
 3. T. Salimans & R. Chen, "Learning Montezuma's Revenge from a Single
-   Demonstration," 2018 — backward-curriculum restarts.
+   Demonstration," 2018: backward-curriculum restarts.
 4. A. Y. Ng, D. Harada, S. Russell, "Policy invariance under reward
-   transformations," *ICML* 1999 — potential-based reward shaping.
+   transformations," *ICML* 1999: potential-based reward shaping.
 5. A. Wald, "Sequential Tests of Statistical Hypotheses," *Ann. Math.
-   Stat.* 16, 1945 — the SPRT.
-6. E. B. Wilson, "Probable Inference…," *JASA* 22, 1927 — the Wilson score
+   Stat.* 16, 1945: the SPRT.
+6. E. B. Wilson, "Probable Inference…," *JASA* 22, 1927: the Wilson score
    interval.
-7. T. Hester et al., "Deep Q-learning from Demonstrations," *AAAI* 2018 —
+7. T. Hester et al., "Deep Q-learning from Demonstrations," *AAAI* 2018:
    the large-margin demonstration loss used in the 1-2 campaign.
 8. A. Anand et al., "Unsupervised State Representation Learning in Atari,"
-   *NeurIPS* 2019 (Atari-ARI) — probing RAM-state semantics.
+   *NeurIPS* 2019 (Atari-ARI): probing RAM-state semantics.
 9. A. K. McCallum, "Reinforcement Learning with Selective Perception and
-   Hidden State," PhD thesis, 1995 (U-Tree) — sufficient statistics for
+   Hidden State," PhD thesis, 1995 (U-Tree): sufficient statistics for
    POMDPs.
 10. M. Littman, R. Sutton, S. Singh, "Predictive Representations of
-    State," *NeurIPS* 2001 — PSRs.
+    State," *NeurIPS* 2001: PSRs.
 11. R. Tibshirani, "Regression Shrinkage and Selection via the Lasso,"
     *JRSS-B* 58, 1996.
 12. J. Schulman et al., "Proximal Policy Optimization Algorithms," 2017;
@@ -504,30 +504,30 @@ deterministic core. Artifacts: `docs/receipts/full_run/`.
     RAM telemetry conventions (position, world/level bytes) this project
     follows.
 14. M. Jiang, E. Grefenstette, T. Rocktäschel, "Prioritized Level
-    Replay," *ICML* 2021 — level-granular restart prioritization.
+    Replay," *ICML* 2021: level-granular restart prioritization.
 15. S. Kakade & J. Langford, "Approximately Optimal Approximate
-    Reinforcement Learning," *ICML* 2002 — restart-distribution policy
+    Reinforcement Learning," *ICML* 2002: restart-distribution policy
     improvement.
-16. The TASVideos community — the tool-assisted-superplay tradition that
+16. The TASVideos community: the tool-assisted-superplay tradition that
     the Exhibition ledger's completed run consciously parallels (and is
     labeled alongside, per `CLAIMS.md`).
 
 ## What this is
 
-- A Rust NES core — 6502 CPU, PPU, APU, and 37 mappers. The **pure-Rust
+- A Rust NES core: 6502 CPU, PPU, APU, and 37 mappers. The **pure-Rust
   interpreter is the correctness reference** and what gates fidelity:
-  **nestest** validates 8,991 CPU instructions byte-for-byte — registers *and*
-  cycle count (CYC) — against the Nintendulator golden trace, and a **33-ROM
+  **nestest** validates 8,991 CPU instructions byte-for-byte, registers *and*
+  cycle count (CYC), against the Nintendulator golden trace, and a **33-ROM
   Mesen-oracle lockstep** plus the rest of the **149-test parity gate**
   (`make parity`) diff `nes_core` against Mesen / nes-py frame-by-frame,
   including 17 recorded tapes checked for both golden-diff and determinism.
   A hand-written
   **AArch64-assembly 6502 core** (`nes_core/src/cpu_asm.s`) rides on top as an
-  Apple-Silicon *performance* path — enabled in the maturin/Makefile build,
+  Apple-Silicon *performance* path, enabled in the maturin/Makefile build,
   differential-fuzzed against the interpreter for 240M+ instructions with zero
   divergence, and falling back to the interpreter for any unported opcode. (The
-  full public blargg CPU/PPU/APU test-ROM gauntlet is **not yet run** end-to-end
-  — see *Accuracy status* below.)
+  full public blargg CPU/PPU/APU test-ROM gauntlet is **not yet run** end-to-end;
+  see *Accuracy status* below.)
 - Broad compatibility: as of the 2026-09-01 library scan, **793 of 796 ROMs
   (99.6%)** boot into a live screen across **28 of the 37 supported mappers**
   present in the library; 795 run 300 frames without a panic or timeout, two
@@ -542,21 +542,21 @@ deterministic core. Artifacts: `docs/receipts/full_run/`.
 - A generic **Go-Explore solver** (`scripts/go_explore_solve.py`) that shares
   the same pool and save-states, plus the **live show**
   (`make show` / `make launcher`) that runs it in a window with a hero cam,
-  a worker swarm grid, and the emulator's real APU audio — the search itself
+  a worker swarm grid, and the emulator's real APU audio. The search itself
   is the spectacle.
 - An **honest-evaluation harness** (`scripts/eval_game.py`,
   `scripts/segment_probe.py`) with the protocol knobs as first-class flags:
   `--sticky-prob`, `--start-jitter`, `--action-select {greedy,sampled}`,
   `--eval-seed`, `--eval-rng`, `--eval-workers`.
 
-Everything the trainer touches per step — emulation, reward, frame preprocess,
-depth tracking — lives on the Rust side behind a single PyO3 call. The Python
+Everything the trainer touches per step (emulation, reward, frame preprocess,
+depth tracking) lives on the Rust side behind a single PyO3 call. The Python
 side owns PyTorch (MPS) inference and the GUI.
 
 ## Screenshots
 
 ![Main window](docs/images/main_window.png)
-*Main control window — ROM selector, training start/stop, curriculum stage,
+*Main control window: ROM selector, training start/stop, curriculum stage,
 behavior-cloning warm-start picker.*
 
 ![16-instance training grid](docs/images/emulator_grid_16_instances.png)
@@ -573,7 +573,7 @@ timing breakdown (emulation / forward pass / inference / bookkeeping).*
 - macOS on Apple Silicon (M1/M2/M3/M4). Portable fallbacks compile but are not
   the primary target.
 - **Python 3.11** (`brew install python@3.11`).
-- Rust toolchain (`rustup`) and the Xcode Command Line Tools — the installer
+- Rust toolchain (`rustup`) and the Xcode Command Line Tools; the installer
   checks for both and tells you how to get them.
 - Your own legally-owned NES ROMs. **None are distributed with this project.**
 
@@ -606,14 +606,14 @@ make build-pgo        # + 3-stage instrument -> profile -> rebuild (~3 min)
 ```
 
 Build features worth knowing:
-- `python` — PyO3 module + cpal audio (set by maturin).
-- `asm_cpu` — AArch64-assembly 6502 core: an Apple-Silicon *performance* path
+- `python`: PyO3 module + cpal audio (set by maturin).
+- `asm_cpu`: AArch64-assembly 6502 core, an Apple-Silicon *performance* path
   (on in the maturin/Makefile build; the pure-Rust interpreter remains the
   fidelity reference and is what `cargo test` exercises).
-- `simd` — NEON palette and audio paths.
-- `metal` — experimental Metal compute shim (off by default; see docs).
+- `simd`: NEON palette and audio paths.
+- `metal`: experimental Metal compute shim (off by default; see docs).
 
-### Quickstart — the make targets
+### Quickstart: the make targets
 
 The whole dev loop is local. `make help` prints this list from the Makefile
 itself; these are the ones worth knowing:
@@ -625,7 +625,7 @@ itself; these are the ones worth knowing:
 | `make train GAME=mario` | Headless training with the game's default profile; checkpoints to `checkpoints/<game_slug>/`. |
 | `make eval GAME=mario` | Load the retained winner, run eval episodes, report clear rate + furthest stage. |
 | `make demo GAME=mario` | Play the best checkpoint and record a GIF. |
-| `make gui` | Desktop GUI — pick a ROM and profile, watch training live. |
+| `make gui` | Desktop GUI: pick a ROM and profile, watch training live. |
 | `make show` | **Beat the Game (Live):** the search system plays SMB from power-on through 8-4 in a window. `make show GAME=contra` or `make show PROFILE=configs/castlevania.yaml` for others. |
 | `make launcher` (`make control-panel`) | The show control panel: browse every game and its banked wins, edit every knob, save/load profiles, launch in Live Solve or Replay mode. |
 | `make scoreboard` | Mission control: progress across every game trained. |
@@ -642,7 +642,7 @@ itself; these are the ones worth knowing:
 
 The end-to-end loop is: **supply a ROM → capture a start state → train → eval →
 watch.** Everything below uses commands that exist in the `Makefile` and
-`scripts/`. Run `make setup-check` first — it verifies your environment (venv,
+`scripts/`. Run `make setup-check` first: it verifies your environment (venv,
 `nes_core`, torch MPS) and lists exactly which per-game ROMs are present or
 missing under their expected filenames. Once a ROM is in place,
 `make setup-game GAME=<name>` validates it by MD5 and captures its start state
@@ -651,7 +651,7 @@ in one step (combining steps 1–2 below).
 ### 1. Supply the ROM
 
 Drop your legally-owned ROM into `roms/` under the canonical filename the
-launcher expects (`roms/` is gitignored — nothing you put there is ever
+launcher expects (`roms/` is gitignored; nothing you put there is ever
 committed or shipped):
 
 | game | `--game` | expected ROM path |
@@ -668,7 +668,7 @@ committed or shipped):
 ### 2. Capture a start state
 
 Without a start state, the emulator cold-boots to the **title screen**, where
-the attract-mode demo auto-plays and ignores controller input — training there
+the attract-mode demo auto-plays and ignores controller input; training there
 gives zero learning signal. This one-time step boots the ROM, mashes through the
 menus, and snapshots the moment the player becomes controllable, writing
 `roms/<rom_stem>_start.state.bin` (the sidecar the launcher and profiles use):
@@ -683,7 +683,7 @@ python scripts/capture_start_state.py --game mario
 make train GAME=mario
 ```
 
-This runs `scripts/train_game.py` headless with the game's default profile —
+This runs `scripts/train_game.py` headless with the game's default profile:
 for Mario that is `configs/mario_vanilla_ppo.yaml`, the **vanilla PPO** recipe
 (single shared policy, N parallel environments as rollout collectors, batched
 GAE, K-epoch PPO update). It auto-resumes from the latest checkpoint by default;
@@ -705,7 +705,7 @@ The curriculum line is the one to watch on Mario: as the pool learns to clear a
 level it snapshots the worker state at the new stage boundary and warm-starts
 all envs from it, so `curriculum stage` climbs 0 → 1 → 2 as it advances through
 1-1 → 1-2 → 1-3 in training. (These are training-time clears; the honest
-cold-start sticky eval is a separate, lower number — see *What actually works
+cold-start sticky eval is a separate, lower number; see *What actually works
 today*.) Stages persist to `checkpoints/super_mario_bros/smb_curriculum/` so
 restarts resume mid-curriculum.
 
@@ -722,11 +722,11 @@ python -m src.gui.main
 make eval GAME=mario
 ```
 
-Loads the best **retained winner** (`checkpoints/<game_slug>/winners/best.pt` —
+Loads the best **retained winner** (`checkpoints/<game_slug>/winners/best.pt`,
 the highest-clear-rate policy the run ever produced, kept even if training later
 self-collapses), falling back to the best-eval-scoring checkpoint and then the
-latest. It runs greedy (argmax) episodes and prints a JSON summary — clear rate,
-furthest stage reached (`mean_max_byte`), mean return and length — appending a
+latest. It runs greedy (argmax) episodes and prints a JSON summary: clear rate,
+furthest stage reached (`mean_max_byte`), mean return and length, appending a
 row to `checkpoints/<game_slug>/eval.jsonl`. By default it boots from the
 profile start state and measures the first stage; to score a later curriculum
 stage, run the script directly:
@@ -748,7 +748,7 @@ make demo GAME=mario
 ```
 
 Plays back the retained winner as a short GIF under `checkpoints/<game_slug>/`,
-so the flagship "watch it win" moment shows a real clear — not whatever the
+so the flagship "watch it win" moment shows a real clear, not whatever the
 latest (possibly self-collapsed) checkpoint happens to be. `--latest` forces the
 freshest checkpoint and `--iter N` pins an exact one.
 
@@ -760,55 +760,55 @@ whole-file MD5 are recorded in `checkpoints/<game_slug>/run_manifest.json`.
 
 Honest, evidence-based status, split by the ledgers defined in `CLAIMS.md`
 and summarised under *The claims ledger* above. This repo ships the
-**emulator, the solver, the trainer, and the harnesses** — it does not ship
+**emulator, the solver, the trainer, and the harnesses**; it does not ship
 pre-trained checkpoints (they are gitignored; you train them with the flow
 above).
 
-- **Super Mario Bros. — LEARNED, honest cold-start numbers.** Under the
+- **Super Mario Bros.: LEARNED, honest cold-start numbers.** Under the
   only headline protocol (cold power-on, zero test-time state loads,
   sticky-actions 0.25 + start-jitter, single-life, greedy), **1-1 is
   genuinely learned: 0.65 pooled clear rate** (0.56 / 0.74 per seed at 50
   episodes each; 0.667 sampled at 30, declared below the floor) by
-  from-scratch PPO on tile observations — the project's first true clear at
+  from-scratch PPO on tile observations, the project's first true clear at
   the research-standard bar, and the only one. The reverse-curriculum attempt
   to extend it has so far scored **0.02 greedy on 1-1 twice** (see the
   receipt table above). **1-2 is a measured negative**: a pre-registered
   three-seed campaign showed the CGSA-PPO recipe failing its own
   pre-registered signposts there (SPRT-verified local robustness at 1,900+
-  zones does not compose into traversal; the policy-class claim was withdrawn
-  — `runs/smodice_1_2/`), and we are aware of no published per-level 1-2
+  zones does not compose into traversal; the policy-class claim was withdrawn:
+  `runs/smodice_1_2/`), and we are aware of no published per-level 1-2
   clear rate under Machado sticky-0.25, in either direction under this
   protocol. The full falsification record and the measured robustness
   profile across noise levels live in
   `docs/research/RESULTS_1_2_HONEST_PROTOCOL_2026-07-24.md`. Negative results
   carry the same evidentiary standard as positives here.
-- **Super Mario Bros. — EXHIBITION (search, not learning): THE COMPLETE
+- **Super Mario Bros., EXHIBITION (search, not learning): THE COMPLETE
   GAME.** The Go-Explore solver beat all 32 levels, and the full run is a
   single verified artifact: **one controller tape from an actual cold boot
   (reset, title screen, START) through every level to the "THANK YOU
-  MARIO" ending — 31,202 inputs, ~35 minutes of gameplay, zero state loads,
+  MARIO" ending: 31,202 inputs, ~35 minutes of gameplay, zero state loads,
   every level boundary receipted, deterministic sha256 across replays**
   (`docs/receipts/full_run/`: the 31 KB tape, per-level receipts, ending
   frame; assembler: `scripts/assemble_full_run.py`). Both silently-looping
   mazes fell to direction-aware cells plus saturation-triggered exploration
   inversion; the final pipe-maze fell to a measured pipe-entry macro; the
   ending itself had to be *discovered* (the victory screen is invisible to
-  next-level detectors — the campaign's last lesson). The research trail —
-  three consultation rounds, every falsified hypothesis — lives in
-  `docs/research/`. All of this is the *search system* solving the game —
+  next-level detectors, the campaign's last lesson). The research trail
+  (three consultation rounds, every falsified hypothesis) lives in
+  `docs/research/`. All of this is the *search system* solving the game:
   real and rigorous, always labeled, never presented as learning.
-- **Other games — EXHIBITION, in flight, counted honestly.** The same
+- **Other games: EXHIBITION, in flight, counted honestly.** The same
   unmodified solver drives every campaign; only the profile changes.
   **Bubble Bobble** is chained and banked through **round 60**
   (`runs/bubble_bobble/chain_day2c/chain.jsonl`). **Castlevania** stands at
-  **blocks 0-2 of ~18** — the block-3 hall is a genuine open wall, not a
+  **blocks 0-2 of ~18**, the block-3 hall is a genuine open wall, not a
   formality, and the honest statement is the block count, not a percentage.
   **Contra** has ten campaigns with empty `solutions/` directories
   (`runs/breadth_contra/`); its stage-1 base wall is characterized in
   `docs/receipts/contra_wall_dossier_2026-07-31.md` and it is a research
   lane, not a pending win. **Lost Levels** cleared World 1 and 2-1 cold with
   zero new solver code, which is the transfer result that mattered.
-- **16 games have hand-authored reward functions with real win predicates** —
+- **16 games have hand-authored reward functions with real win predicates**:
   Mario, Contra, Castlevania, Mega Man, Metroid, Zelda, Tetris, Bubble Bobble,
   Punch-Out, Kung Fu, Gradius, Excitebike, Ghosts'n Goblins, DuckTales, Kid
   Icarus, Double Dragon. Every reward's RAM addresses are validated against the
@@ -819,10 +819,10 @@ above).
   the final-boss values cross-sourced (labeled in-code) until an agent or a
   near-boss save-state reaches those endgames. **These make the games trainable
   and measurable. SMB 1-1 is the first LEARNED cold-start clear under the
-  honest protocol; no other game has one yet — winning them for real is a
+  honest protocol; no other game has one yet: winning them for real is a
   matter of training compute plus the sticky-robustness research, not
   missing code.**
-- **DreamerV3 world-model trainer — scaffolded and trains end-to-end**, but has
+- **DreamerV3 world-model trainer, scaffolded and trains end-to-end**, but has
   not been converged to outperform PPO on these games; it is a research path,
   not a shipping result.
 
@@ -841,7 +841,7 @@ including cycle count (CYC), the 33-ROM Mesen-oracle lockstep
 parity`). What is **not** yet done: the full public **blargg CPU/PPU/APU
 test-ROM gauntlet** has not been run end-to-end as a gate. Individual blargg
 ROMs have been read during fidelity work, but "passes the blargg suite" is not
-a claim this project has earned suite-wide — running that gauntlet is open work,
+a claim this project has earned suite-wide; running that gauntlet is open work,
 not a shipped result.
 
 ### Game readiness
@@ -865,8 +865,8 @@ not a shipped result.
 
 One Rust core, one PyO3 boundary, five things built on top of it: the
 solver, the trainer, the eval harness, the live show, and the desktop GUI.
-Everything below the boundary runs per step in Rust — emulation, reward,
-frame preprocess, depth tracking — behind a single call.
+Everything below the boundary runs per step in Rust (emulation, reward,
+frame preprocess, depth tracking) behind a single call.
 
 ```mermaid
 flowchart TB
@@ -929,8 +929,8 @@ flowchart TB
 
 **Trainer modes.** `vanilla_ppo` is the default and the recommended recipe: one
 shared policy, N parallel envs as rollout collectors, batched GAE, K-epoch PPO.
-The older **GA-based modes** (`ga_ppo`, `pure_ppo`) — PPO on top of a genetic
-algorithm with a population of policies — are **legacy**: a two-day
+The older **GA-based modes** (`ga_ppo`, `pure_ppo`, PPO on top of a genetic
+algorithm with a population of policies) are **legacy**: a two-day
 investigation found that folding data from many distinct policies into one PPO
 gradient violates PPO's stable-policy assumption and never produced a committed
 clear. They remain selectable via `reinforce.trainer_mode` for comparison.
@@ -941,7 +941,7 @@ One shared policy; N parallel NES envs are rollout collectors. Two optional,
 mutually-exclusive exploration aids sit on top: the **SMB save-state
 curriculum** (warm-start the pool at progressively later captured states) and
 **Go-Explore** (archive the furthest-reached cells as save-states, return to the
-frontier, then explore onward — the lever that cracked the SMB 1-4 Bowser fight).
+frontier, then explore onward, the lever that cracked the SMB 1-4 Bowser fight).
 
 ```mermaid
 flowchart LR
@@ -965,7 +965,7 @@ flowchart LR
     Winner --> Reset
 ```
 
-### The learning pipeline — solver tapes to an honest number
+### The learning pipeline: solver tapes to an honest number
 
 The solver and the trainer are not two products; the solver is the trainer's
 exploration front-end. A banked solution tape is replayed deterministically
@@ -979,10 +979,10 @@ is the policy graded, cold, from power-on.
 here because it is what is wired and running, not because it works: its
 only two verdicts to date are B4 v1 and B4 v2 above, both 0.02 greedy cold
 on 1-1. Read the diagram as the machinery under test, with the honest gate
-at the end being the part that has actually done its job — it rejected
+at the end being the part that has actually done its job: it rejected
 both.
 
-The load-bearing constraint: **the tape supplies start states only — no
+The load-bearing constraint: **the tape supplies start states only, no
 action labels leave `scripts/mint_backward_states.py`.** Nothing here feeds
 imitation, because naive BC on these same tapes was eliminated with data in
 Dossier v3 (clone accuracy 1.0 collapsing to 0.00 honest success). This is
@@ -1013,7 +1013,7 @@ flowchart LR
 ```
 
 Every gate on that last edge is written down before the run, not after:
-`docs/research/B5_PREREG_2026-08-08.md` is the live example — thresholds,
+`docs/research/B5_PREREG_2026-08-08.md` is the live example: thresholds,
 kill criteria, the greedy-and-sampled reporting clause, and an explicit
 statement that a run stopped by a kill criterion *is* a reported result.
 
@@ -1021,7 +1021,7 @@ statement that a run stopped by a kill criterion *is* a reported result.
 
 Every game's reward reads the worker's RAM snapshot and emits (a) dense shaping
 that must be dominated by (b) a **real `episode_success()` win predicate** on
-validated RAM — never a "positive cumulative reward" proxy. `episode_success`
+validated RAM, never a "positive cumulative reward" proxy. `episode_success`
 feeds curriculum promotion, winner retention, and the eval/demo "did it win?"
 verdict, so a wrong predicate silently corrupts all three (the bug class this
 project hunts).
@@ -1062,10 +1062,10 @@ actually runs. Reproduce with `make bench-scaling` / `make bench-hot`.
 `runs/emulator_bench_2026-07-20.json` via `scripts/bench_save_restore.py`):
 **median save ~1.8 µs / restore ~1.0 µs, p99 save ~4.7 µs / restore ~1.3 µs** at
 one worker, and it holds at 16-worker scale (**p99 save ~4.7 µs, restore
-~2.1 µs**) — so "microsecond save/restore at scale" is now measured, not
+~2.1 µs**), so "microsecond save/restore at scale" is now measured, not
 asserted. Honest caveat: that run was under a concurrent ~11-core training load,
 and the *mean* is inflated by rare OS-preemption outliers (a few multi-ms tail
-events), so the median/p99 above — not the mean — describe the common case.
+events), so the median/p99 above, not the mean, describe the common case.
 
 ## Compatibility
 
@@ -1104,31 +1104,31 @@ The full matrix lives in `reports/full_library.md`. A summary:
 
 **Training stack**
 - **Vanilla PPO (default).** Single shared policy, N parallel envs, batched
-  GAE, K-epoch update — the literature recipe that empirically clears SMB 1-1.
+  GAE, K-epoch update, the literature recipe that empirically clears SMB 1-1.
 - **Save-state curriculum** (SMB): auto-snapshots the pool when it reaches a new
   level and warm-starts every env from it, advancing stage by stage.
 - **Two policy architectures** dispatched by `reinforce.encoder`:
-  - **Nature-DQN CNN** or **IMPALA ResNet** on stacked pixels. Universal — works
+  - **Nature-DQN CNN** or **IMPALA ResNet** on stacked pixels. Universal: works
     on any ROM with no per-game code. ~1.7M–3.4M params.
-  - **Tile-based MLP** (SMB) — reads RAM directly into a 13×13 semantic tile
+  - **Tile-based MLP** (SMB): reads RAM directly into a 13×13 semantic tile
     grid + scalars. ~14k params. Shrinks the search space ~120× so PPO
     gradients can actually steer the policy.
-- **Dense reward shaping** for SMB — RAM-readable progress checkpoints fire
+- **Dense reward shaping** for SMB: RAM-readable progress checkpoints fire
   bonuses at each major obstacle, giving PPO intermediate signal instead of one
   sparse flag reward.
 - **Auxiliary losses & exploration helpers**: RND intrinsic motivation, DrQ
   random-shift augmentation (pixel mode), symlog reward transform, optional
   elite-diversity preservation.
-- **DreamerV3 world-model trainer** as an alternative (`training_mode: dreamer`)
-  — categorical 32×32 latent RSSM, decoder reconstruction, λ-returns on imagined
+- **DreamerV3 world-model trainer** as an alternative (`training_mode: dreamer`),
+  categorical 32×32 latent RSSM, decoder reconstruction, λ-returns on imagined
   rollouts, Polyak-EMA target critic, atomic checkpointing with auto-resume.
-- **Legacy GA modes** (`ga_ppo`, `pure_ppo`) — PPO on a genetic algorithm with
-  behavior-cloning warm start; kept for comparison, not the recommended path.
+- **Legacy GA modes** (`ga_ppo`, `pure_ppo`, PPO on a genetic algorithm with
+  behavior-cloning warm start); kept for comparison, not the recommended path.
 - **PyTorch MPS** policy training. **Core ML export** for elite genomes; ANE
   inference in replay (~8× faster than MPS at batch 1).
 
 **Observability**
-- **TrainingDashboardWindow** — single-pane observer view: best/avg fitness,
+- **TrainingDashboardWindow**, single-pane observer view: best/avg fitness,
   reward signal stack, PPO learning telemetry, world-model losses, depth +
   curriculum success, replay-buffer fill, depth records, highlight clips, and a
   live world-model reconstruction strip (original vs. decoded frames).
@@ -1162,13 +1162,13 @@ What the numbers are, as of this writing:
 | Gate | Size | What it catches |
 |---|---|---|
 | `make test` | ~1,730 pytest tests (1,700 in the fast lane) | Trainer, solver, eval-harness, reward, GUI-adjacent logic |
-| `make parity` | 149 tests — 17 recorded tapes × 2 checks (golden diff + determinism), a **33-ROM Mesen-oracle lockstep**, an 18-case byte-exact ROM fleet, plus the harness's own units | Palette, scroll, sprite, timing and mapper regressions against a ground-truth oracle |
-| nestest | **8,991 instructions byte-exact** — PC, opcode, A/X/Y/P/SP **and CYC** vs the Nintendulator golden trace | The CPU spec itself; every official and undocumented opcode |
+| `make parity` | 149 tests: 17 recorded tapes × 2 checks (golden diff + determinism), a **33-ROM Mesen-oracle lockstep**, an 18-case byte-exact ROM fleet, plus the harness's own units | Palette, scroll, sprite, timing and mapper regressions against a ground-truth oracle |
+| nestest | **8,991 instructions byte-exact**: PC, opcode, A/X/Y/P/SP **and CYC** vs the Nintendulator golden trace | The CPU spec itself; every official and undocumented opcode |
 | Rust crate | 329 in-crate `#[test]` functions + 60 integration tests | Mappers, PPU/APU state machines, save-state round-trips, pool behavior |
 | ASM differential fuzz | 240M+ randomized instructions, **0 divergences** in A/X/Y/SP/P/PC or the 2 KB RAM FNV-1a hash | The AArch64 performance path drifting from the pure-Rust reference |
 | `make provenance-check` | allowlist + quarantine + profile scan | Tier-3-contaminated artifacts leaking into a Learned-ledger run |
 
-Five validation layers, each catching a different class of bug — see
+Five validation layers, each catching a different class of bug, see
 `docs/ARCHITECTURE.md#validation-harnesses` for the pyramid. In short:
 **nestest** is the CPU spec gate; the **byte-exact ROM fleet** is the strictest
 end-to-end test; the **playability sweep** catches games that boot but don't
@@ -1206,7 +1206,7 @@ What this release **does not** ship:
   with the flow above. On SMB, the honest learned result to date is **1-1 at
   0.65 pooled** (0.56 / 0.74 per seed) under the full sticky protocol (1-2 is a
   documented, three-seed-verified negative for this policy class); the 32-level
-  traversal that exists is EXHIBITION (search output), not a learned policy —
+  traversal that exists is EXHIBITION (search output), not a learned policy,
   see *What actually works today*.
 - **A clearing Contra policy.** Contra learns under the pixel-CNN + RND recipe
   but does not yet clear stage 1; value-loss tuning is the open lever.
@@ -1215,7 +1215,7 @@ What this release **does not** ship:
   RAM decoder (~1 day of NESdev-wiki reading). The other games train on the
   universal pixel-CNN path meanwhile.
 - **A converged DreamerV3 policy.** The world-model scaffold trains end-to-end
-  but has not been converged to beat PPO on these games — open research.
+  but has not been converged to beat PPO on these games: open research.
 - **All 796 library ROMs booting.** One load failure (`Yoshi (USA).nes`) is a
   truncated dump, not an emulator bug; two ROMs (mappers 2, 37) load but
   freeze on a static screen and are open emulator issues.
@@ -1224,7 +1224,7 @@ What this release **does not** ship:
   public **blargg CPU/PPU/APU test-ROM suite** has not yet been run end-to-end
   as a gate (see *Accuracy status*).
 - **A second game beaten.** SMB is the one completed game. Bubble Bobble is
-  chained to round 60 and Castlevania to blocks 0-2 of ~18 — both in flight,
+  chained to round 60 and Castlevania to blocks 0-2 of ~18, both in flight,
   both EXHIBITION, neither finished.
 - **Unattended "point it at any game" operation.** Generic clear detection is
   not yet trustworthy enough to leave running (the confluence detector's
@@ -1238,18 +1238,18 @@ What this release **does not** ship:
   per-frame compute at this workload size. A batched-across-workers v2 is open
   research.
 
-Near-term roadmap — the current plan of record is
+Near-term roadmap: the current plan of record is
 `docs/proposals/STRATEGY_2026-08-14.md` (superseding
 `STRATEGY_2026-08-08.md`), with current direction in
 `docs/proposals/DIRECTION_2026-08-28.md`; gates are written to be failable
 and falsifiers name their instruments. The headline items:
 
-- **Breadth, measured against a basis — not a wish list.**
+- **Breadth, measured against a basis, not a wish list.**
   `docs/proposals/TOTALITY_BASIS_2026-08-08.md` argues that games are bundles
   of *mechanism classes* and that totality means covering the classes, not
   collecting titles. It names ten classes, an 8-game basis that spans them
   (SMB1, Castlevania, Contra, Mega Man, Punch-Out, Tetris-B, Metroid, Zelda),
-  and scores progress as **2 of 8 certified** today — linear momentum
+  and scores progress as **2 of 8 certified** today: linear momentum
   platforming and coverage/maze, both by receipted show-mode clears.
 - **Finish the second and third campaigns:** Bubble Bobble from round 60, and
   the Castlevania hall (the class-4 orthogonal-progress wall) under one
@@ -1263,9 +1263,9 @@ and falsifiers name their instruments. The headline items:
   documented negative bounds today's policy class; the current bet (the
   reverse start-state curriculum) is pre-registered in
   `docs/research/B5_PREREG_2026-08-08.md` with its kill criteria fixed in
-  advance. **Its standing prior is two attempts and two failures** — 0.02
+  advance. **Its standing prior is two attempts and two failures**: 0.02
   greedy cold on the 1-1 control both times, against the 0.65 the same
-  stack reaches without it — and the 1-2 attempt therefore proceeds only
+  stack reaches without it, and the 1-2 attempt therefore proceeds only
   under a written prereg deviation, not on a gate it passed.
   **One generalist policy** across levels with a generic reward
   remains the unsolved version of this benchmark and where the real learning
@@ -1317,7 +1317,7 @@ each batch lands.
 
 ## License
 
-MIT — see `LICENSE`. The Rust crate is dual-licensed under MIT or Apache-2.0
+MIT: see `LICENSE`. The Rust crate is dual-licensed under MIT or Apache-2.0
 (`nes_core/LICENSE-MIT`, `nes_core/LICENSE-APACHE`) because upstream mapper code
 was forked under that scheme.
 
@@ -1329,40 +1329,40 @@ only ROMs you legally own.
 This project builds on the work of several open-source NES emulators. None of
 their code ships in this repo, but the lineage is real and worth naming.
 
-- [**RustedNES**](https://github.com/PhilipK/RustedNES) (MIT/Apache-2.0) — the
+- [**RustedNES**](https://github.com/PhilipK/RustedNES) (MIT/Apache-2.0): the
   starting point for the pure-Rust core. Several mappers (MMC3, MMC5, MMC2) and
   the VRC6 audio channel were forked and then heavily reworked: cycle timing
   tightened to match Mesen, save-state versioning added, and the per-pixel PPU
   rewritten so the AArch64 ASM CPU and NEON batched PPU could share a hot path.
   The dual MIT-or-Apache-2.0 licensing on `nes_core/` is carried over from this
   lineage.
-- [**LaiNES**](https://github.com/AndreaOrru/LaiNES) (GPL-3.0) — the C++
+- [**LaiNES**](https://github.com/AndreaOrru/LaiNES) (GPL-3.0): the C++
   emulator that backs `nes-py`. Used strictly as a structural and behavioral
   reference: when our CPU diverged from the canonical 6502 trace, LaiNES was
   read alongside the NESdev wiki to figure out which side was wrong. The
   cycle-locked `advance_one_frame` loop and the abs-mode MMIO early-commit
   semantics were both informed by reading LaiNES. No LaiNES code is present in
   this repo.
-- [**nes-py**](https://github.com/Kautenja/nes-py) (MIT) — the Python wheel
+- [**nes-py**](https://github.com/Kautenja/nes-py) (MIT): the Python wheel
   wrapping LaiNES. Used as the throughput bake-off baseline for every perf
   commit (`scripts/bench_vs_nes_py.py`) and as the diff oracle for the parity
   tapes.
   Legacy bake-off deps live in `requirements-legacy-bakeoff.txt`; nes-py is not
   on the runtime path.
-- [**Mesen**](https://www.mesen.ca/) (GPL-3.0) — used as the ground-truth oracle
+- [**Mesen**](https://www.mesen.ca/) (GPL-3.0): used as the ground-truth oracle
   for fidelity work. The Lua test-runner mode (`Mesen --testRunner`) drives a
   33-ROM diff harness (`tests/parity/test_mesen_lockstep.py`,
   `scripts/tracing/mesen_*.lua`) that catches CPU/RAM/PPU divergence. Several
   real bugs (PPU $2002 reset value, MMC1 RMW consecutive-write filter, NES 2.0
   PRG-RAM nibble parsing) were found by diffing against Mesen traces. No Mesen
   code is present in this repo.
-- [**NESdev Wiki**](https://www.nesdev.org/wiki/) — indispensable reference for
+- [**NESdev Wiki**](https://www.nesdev.org/wiki/): indispensable reference for
   every mapper, PPU state-machine quirk, and APU oddity in this codebase.
-- **blargg's NES test ROMs** — the standard public CPU/PPU/APU accuracy
+- **blargg's NES test ROMs**: the standard public CPU/PPU/APU accuracy
   gauntlet. Individual ROMs were read during fidelity work; the full suite is
   not yet run end-to-end as a gate (see *Accuracy status*). nestest and the
   Mesen-oracle lockstep are the current CPU gates.
-- **kevtris's nestest** + the **Nintendulator golden trace** — drive the
+- **kevtris's nestest** + the **Nintendulator golden trace**: drive the
   byte-exact CPU validation harness (8,991 instructions, every official +
   undocumented opcode). These are the only third-party ROMs distributed with the
   project (`roms/.test_roms/`, public domain).
