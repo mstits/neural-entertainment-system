@@ -39,6 +39,24 @@ def _defines(sym):
         seen = seen or (str(f.relative_to(REPO)) if sym in text else None)
     return None, seen
 
+def _quoted_value(tok, cell):
+    """The single number the cell attributes to `tok`: the first integer after
+    the symbol's own mention.
+
+    Rule B used to be set membership over every integer anywhere in the cell,
+    so a cell that also recorded a superseded value ("at iter 40 (raised from
+    25 ...)") accepted both, and a regression of the constant back to 25
+    passed --check. Anchoring on the first integer after the token makes it
+    one number against one number, in the direction the cell reads. Returns an
+    empty set when no integer follows the token; the caller then falls back to
+    the whole-cell set, which is the older, looser check rather than none.
+    """
+    parts = cell.split(f"`{tok}`", 1)
+    if len(parts) != 2:
+        return set()
+    m = re.search(r'\b(\d+)\b', parts[1])
+    return {int(m.group(1))} if m else set()
+
 def _resolve(tok):
     if tok.startswith("make "):
         t = tok[5:].strip()
@@ -51,8 +69,14 @@ def _resolve(tok):
     return None, tok            # prose; not checkable, not checked
 
 def check_enforcement(text):
-    """A SHIPPED/PROMOTED cell names only things that exist, and never quotes a
-    stale value for an integer constant it names.
+    """A SHIPPED/PROMOTED cell names only things that exist (rule A), and the
+    number it attributes to an integer constant it names is that constant's
+    current value (rule B).
+
+    Rule B reads one number, not a set: the first integer after the symbol's
+    own mention (see _quoted_value). A cell is free to record superseded
+    values as history alongside it without blinding the check to a regression
+    back to one of them.
 
     The project-instruction-file rule (a cell citing "(project instruction
     file)") runs only when CLAUDE.md exists in this checkout; on a checkout
@@ -83,9 +107,10 @@ def check_enforcement(text):
                 problems.append((n, cat, f"names {what}, which does not exist"))
                 continue
             val, where = _defines(tok)
-            if val is not None and nums and val not in nums:
+            quoted = _quoted_value(tok, cell) or nums
+            if val is not None and quoted and val not in quoted:
                 problems.append((n, cat, f"`{tok}` = {val} in {where}, "
-                                         f"but the cell quotes {sorted(nums)}"))
+                                         f"but the cell quotes {sorted(quoted)}"))
     return problems
 
 def tally(text):
