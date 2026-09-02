@@ -44,6 +44,7 @@ from scripts.hardening4b_ramp import (
     step_ramp,
 )
 from src.training.config_schema import ConfigSchemaError, check_profile
+from tests.skip_gates import requires
 
 REPO = Path(__file__).resolve().parent.parent
 CATALOG_PATH = REPO / "configs" / "overrides" / "online_1_2_hardening4b.yaml"
@@ -172,6 +173,11 @@ def test_a_bad_override_is_actually_caught_by_this_harness(
 # H1 anchor block — self-referential prior + loss tether, betas off
 # ---------------------------------------------------------------------------
 
+# Gate on the DIRECTORY, not on ANCHOR_CKPT itself: gating a test on the exact
+# file it asserts about would make the assertion a tautology. checkpoints/ is
+# gitignored (.gitignore:10), so a clean clone skips; a machine that has the
+# preserved checkpoints still fails loudly if this particular anchor is gone.
+@requires("checkpoints/_preserved")
 def test_anchor_prior_checkpoint_exists_on_disk():
     assert (REPO / ANCHOR_CKPT).exists(), (
         f"anchor prior {ANCHOR_CKPT} is not on disk — the H1 block "

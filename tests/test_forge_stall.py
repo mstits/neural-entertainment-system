@@ -19,6 +19,24 @@ sys.path.insert(0, str(ROOT))
 from src.forge.stall import (  # noqa: E402
     EFFORT_MIN_STEPS, FROZEN_WINDOWS_MAX, archive_verdict, campaign_verdict,
 )
+from tests.skip_gates import requires  # noqa: E402
+
+# The two tests below read run data off the real repo root. runs/ is gitignored
+# (.gitignore:86), so a clean clone carries no member run directories. Each
+# test gates on the files it reads that a clean clone actually lacks, not on
+# the repo root, which is always present and therefore gates nothing.
+CV_HALL_TAIL = "runs/cv_hall_ortho_ctrl/progress.jsonl"
+# One member's data per wall. The two wall manifests those members belong to,
+# runs/forge/walls/{cv_hall,contra_wall}.json, are TRACKED despite the runs/
+# ignore (git ls-files runs/forge lists both), so every clone carries them and
+# gating on them would gate nothing. What a clean clone lacks is the member
+# dirs the manifests point at: campaign_verdict then measures nothing and
+# returns UNMEASURED, which is the STALLED != UNMEASURED failure this gate
+# turns into a skip.
+WALL_MEMBER_DATA = (
+    "runs/cv_hall_ortho_a/roots.json",
+    "runs/contra_wall/A1/boundary_probe.json",
+)
 
 
 def test_frozen_windows_max_and_effort_min_steps_match_wall_taxonomy():
@@ -60,6 +78,7 @@ def test_archive_verdict_stalled_at_threshold():
     assert v["evidence"]["steps"] >= 250_000
 
 
+@requires(CV_HALL_TAIL)
 def test_archive_verdict_advancing_on_real_cv_hall_tail():
     """The real last 5 rows of runs/cv_hall_ortho_ctrl/progress.jsonl --
     cells strictly increasing every row -- must replay to ADVANCING.
@@ -208,6 +227,7 @@ def test_campaign_advancing_when_one_member_beats_prior(tmp_path):
     assert v["evidence"]["advances"] == 1
 
 
+@requires(*WALL_MEMBER_DATA)
 def test_campaign_verdict_matches_real_cv_hall_and_contra_wall_manifests():
     """The two manifests the build lands (runs/forge/walls/{cv_hall,
     contra_wall}.json) against the real repo data, pinned to the exact

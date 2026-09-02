@@ -31,6 +31,7 @@ from src.training.composite_policy import (
     resolve_level_key,
 )
 from src.training.smb_sequential import RAM_AREA, RAM_DISPLAY, RAM_WORLD
+from tests.skip_gates import requires
 
 _ROOT = Path(__file__).resolve().parent.parent
 _MAIN_ROOT = Path("/Users/stits/Documents/macos-emulation-and-training")
@@ -344,6 +345,11 @@ def test_mixed_encoders_compose_in_one_controller(tmp_path: Path) -> None:
 
 # --- provenance: per-level checkpoint content hash -------------------------
 
+# roms/ is gitignored (.gitignore:65). eval_composite returns
+# status="no_start_state" rather than raising when the start state is
+# absent, so without this gate a clean clone reads the miss as an
+# assertion failure on "ok" instead of a missing input.
+@requires("roms/Super Mario Bros. (World)_start.state.bin")
 def test_result_records_content_hash_of_loaded_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
