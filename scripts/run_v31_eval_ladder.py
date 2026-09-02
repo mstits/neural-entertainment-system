@@ -20,6 +20,7 @@ eval_game.py invocation and is passed through unchanged).
 from __future__ import annotations
 
 import argparse
+import atexit
 import concurrent.futures as cf
 import json
 import subprocess
@@ -27,6 +28,9 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+
+from src.utils.run_lock import acquire as _acquire_run_lock  # noqa: E402
 
 
 def _checkpoint_path(seed_dir: Path, it: int) -> Path:
@@ -35,6 +39,11 @@ def _checkpoint_path(seed_dir: Path, it: int) -> Path:
 
 def _receipt_path(out_dir: Path, prefix: str, seed: int, it: int, es: int) -> Path:
     return out_dir / f"{prefix}_seed{seed}_it{it:03d}_es{es}.json"
+
+
+def ladder_lock_path(out_dir) -> Path:
+    """Run-lock path for a ladder --out-dir (see src/utils/run_lock.py)."""
+    return Path(out_dir) / ".run.lock"
 
 
 def _run_one(
@@ -109,6 +118,22 @@ def main(argv: list[str] | None = None) -> int:
         for j in jobs:
             print(f"  {j['receipt'].name}  <-  {j['checkpoint']}")
         return 0
+
+    # Run-lock: two ladder drivers racing the same --out-dir can both
+    # decide a receipt is missing and re-run it concurrently, and a
+    # partial-write during that race corrupts the JSON `score_cross_fit.py`
+    # reads next (the same defect class as the 2026-08-29 duplicate-
+    # chain-watcher incident). A stale lock from a dead process is
+    # reclaimed; a live one refuses. See src/utils/run_lock.py.
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    _lock = ladder_lock_path(args.out_dir)
+    _holder = _acquire_run_lock(_lock, extra=args.receipt_prefix)
+    if _holder is not None:
+        print(f"[ladder] {args.out_dir} is locked by live PID "
+              f"{_holder.pid} ({_lock}). Refusing to run two ladder "
+              "drivers on one --out-dir.", file=sys.stderr)
+        return 75
+    atexit.register(lambda: _lock.exists() and _lock.unlink())
 
     n_ok = n_fail = 0
     with cf.ThreadPoolExecutor(max_workers=max(1, args.parallel)) as ex:

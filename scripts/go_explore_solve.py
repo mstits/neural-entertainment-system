@@ -32,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import copy
 import gzip
@@ -63,6 +64,7 @@ from transition_witness import (  # noqa: E402
 from src.training import interaction_basis as ib  # noqa: E402
 from src.training.go_explore import GoExploreArchive, keep_exploring  # noqa: E402
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
+from src.utils.run_lock import acquire as _acquire_run_lock  # noqa: E402
 
 ROM = str(REPO / "roms/Super Mario Bros. (World).nes")
 DEATH_STATES = (6, 11)  # RAM $000E player-state: dying / death-pit
@@ -3634,6 +3636,11 @@ def lock_novelty_merit(bits: float, scale: float) -> float:
     return b / (b + max(1e-6, float(scale)))
 
 
+def solver_lock_path(out) -> Path:
+    """Run-lock path for a solver --out dir (see src/utils/run_lock.py)."""
+    return Path(out) / ".run.lock"
+
+
 class Solver:
     def __init__(self, args) -> None:
         # Cell granularity globals are consumed by cell_fn at call time.
@@ -3648,6 +3655,21 @@ class Solver:
         self.args = args
         self.out = Path(args.out)
         (self.out / "solutions").mkdir(parents=True, exist_ok=True)
+        # Run-lock: two solvers writing the same --out dir interleave
+        # archive.pkl / progress.jsonl / solutions saves and can corrupt
+        # or double-count each other's work (the same defect class as
+        # the 2026-08-29 duplicate-chain-watcher incident). A stale lock
+        # from a dead process is reclaimed; a live one refuses. See
+        # src/utils/run_lock.py.
+        _lock = solver_lock_path(self.out)
+        _holder = _acquire_run_lock(_lock, extra=str(args.root_state))
+        if _holder is not None:
+            raise SystemExit(
+                f"[go_explore_solve] {self.out} is locked by live PID "
+                f"{_holder.pid} ({_lock}). Refusing to run two solvers "
+                "on one --out dir. Stop the other run or pick a "
+                "different --out.")
+        atexit.register(lambda: _lock.exists() and _lock.unlink())
         profile = yaml.safe_load(Path(args.profile).read_text())
         # CLEAR-REACHABILITY PRE-FLIGHT (2026-08-26). Runs before the pool
         # exists, like every other profile check here, so a bad profile

@@ -31,6 +31,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import subprocess
 import sys
@@ -49,11 +50,17 @@ from scripts.go_explore_solve import (  # noqa: E402
     write_state_sidecar,
 )
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
+from src.utils.run_lock import acquire as _acquire_run_lock  # noqa: E402
 
 SOLVE = str(REPO / "scripts" / "go_explore_solve.py")
 
 # Campaign-scope visited-key history, banked next to chain.jsonl.
 VISITED_FILE = "visited_keys.json"
+
+
+def chain_lock_path(out) -> Path:
+    """Run-lock path for a chain campaign dir (see src/utils/run_lock.py)."""
+    return Path(out) / ".run.lock"
 
 
 def _norm_key(key) -> tuple:
@@ -491,6 +498,22 @@ def main() -> int:
     game = make_game(profile)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+
+    # Run-lock: two chain drivers writing the same campaign dir race on
+    # chain.jsonl / visited_keys.json and can double-bank a level (the
+    # 2026-08-29 duplicate-chain-watcher incident this script is named
+    # after). A stale lock from a dead process is reclaimed; a live one
+    # aborts. See src/utils/run_lock.py.
+    _lock = chain_lock_path(out)
+    _holder = _acquire_run_lock(_lock, extra=str(args.start_state))
+    if _holder is not None:
+        print(f"[chain] {out} is locked by live PID {_holder.pid} "
+              f"({_lock}). Refusing to run two chain drivers on one "
+              "campaign dir. Stop the other run or pick a different "
+              "--out.", file=sys.stderr, flush=True)
+        return 1
+    atexit.register(lambda: _lock.exists() and _lock.unlink())
+
     chain_log = out / "chain.jsonl"
 
     # Campaign-scope visited-key history, POSITIONED at the entrance this

@@ -55,6 +55,7 @@ docs/receipts/one_three_coordination_2026-08-16.md.
 from __future__ import annotations
 
 import argparse
+import atexit
 import copy
 import hashlib
 import json
@@ -69,6 +70,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+
+from src.utils.run_lock import acquire as _acquire_run_lock  # noqa: E402
 
 # Free-disk floor, matching the engine scheduler and train_game.py.
 # Checked at campaign start AND once per poll tick: the campaign
@@ -77,6 +81,11 @@ REPO = Path(__file__).resolve().parent.parent
 # checkpoint-save warnings inside the child (external audit 2026-08-29,
 # volume at 91%). A statvfs per poll tick is free.
 DISK_FLOOR_GB = 40.0
+
+
+def campaign_lock_path(run_dir) -> Path:
+    """Run-lock path for a campaign run_dir (see src/utils/run_lock.py)."""
+    return Path(run_dir) / ".run.lock"
 
 
 def disk_free_gb(path: Path = REPO) -> float:
@@ -96,7 +105,6 @@ def disk_floor_breach() -> str | None:
         return (f"disk floor: {free:.1f} GB free < {DISK_FLOOR_GB:.0f} GB "
                 f"— checkpoint durability is about to fail")
     return None
-sys.path.insert(0, str(REPO))
 
 # ---------------------------------------------------------------------------
 # CONFIG — every threshold the campaign runs on. Mirrored verbatim into
@@ -1192,6 +1200,22 @@ def run_campaign(start_phase: int = 0) -> int:
     metrics_path = ckpt_dir / "metrics.jsonl"
     spi = steps_per_iter(base)
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Run-lock: two campaign controllers racing the same run_dir both
+    # relaunch train_game.py against the same checkpoint dir and both
+    # append to campaign.jsonl, the same defect class as the 2026-08-29
+    # duplicate-chain-watcher incident. A stale lock from a dead process
+    # is reclaimed; a live one refuses. See src/utils/run_lock.py.
+    _lock = campaign_lock_path(run_dir)
+    _holder = _acquire_run_lock(_lock, extra=CONFIG["campaign_name"])
+    if _holder is not None:
+        sys.stderr.write(
+            f"[campaign] {run_dir} is locked by live PID {_holder.pid} "
+            f"({_lock}). Refusing to run two campaign controllers on "
+            "one run_dir. Stop the other run or pick a different "
+            "campaign config.\n")
+        return 2
+    atexit.register(lambda: _lock.exists() and _lock.unlink())
 
     ok_ladder, ladder_notes = preflight_restart_ladders(base, CONFIG)
     if not ok_ladder:

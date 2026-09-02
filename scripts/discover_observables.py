@@ -81,7 +81,9 @@ bootstrap can call them directly.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
@@ -101,6 +103,7 @@ from src.training.lexicographic_objectives import (  # noqa: E402
 from src.training.tape_replay import (  # noqa: E402
     machine_from_profile, replay_segments, resolve_chain,
 )
+from src.utils.run_lock import acquire as _acquire_run_lock  # noqa: E402
 
 # --- controller bit layout (matches src.emulation.frame_utils / the pool) ---
 NOOP, A, B, SELECT, START = 0x00, 0x01, 0x02, 0x04, 0x08
@@ -3144,8 +3147,39 @@ def _print_report(findings: dict, emit: bool) -> None:
 # --------------------------------------------------------------------------
 # Self-test against two already-adapted games (ground truth).
 # --------------------------------------------------------------------------
+def selftest_receipt_path(runs_dir=None) -> Path:
+    """The fixed --selftest receipt path (no per-invocation naming)."""
+    runs_dir = Path(runs_dir) if runs_dir is not None else (REPO / "runs")
+    return runs_dir / "discover_observables_selftest.json"
+
+
+def selftest_lock_path(runs_dir=None) -> Path:
+    """Run-lock path for --selftest's fixed receipt (see
+    src/utils/run_lock.py)."""
+    runs_dir = Path(runs_dir) if runs_dir is not None else (REPO / "runs")
+    return runs_dir / ".discover_observables_selftest.run.lock"
+
+
 def _selftest() -> int:
     import yaml
+    # Run-lock: this writes a FIXED shared path (runs/discover_
+    # observables_selftest.json) with no per-invocation naming, so two
+    # concurrent --selftest runs interleave their writes into the same
+    # receipt — the same defect class as the 2026-08-29 duplicate-
+    # chain-watcher incident. Acquired up front so a second invocation
+    # refuses before spending the emulator time, not just at the write.
+    # A stale lock from a dead process is reclaimed; a live one
+    # refuses. See src/utils/run_lock.py.
+    _out = selftest_receipt_path()
+    _out.parent.mkdir(parents=True, exist_ok=True)
+    _lock = selftest_lock_path(_out.parent)
+    _holder = _acquire_run_lock(_lock, extra="discover_observables --selftest")
+    if _holder is not None:
+        print(f"[selftest] {_out} is locked by live PID {_holder.pid} "
+              f"({_lock}). Refusing to run two selftests at once.",
+              file=sys.stderr)
+        return 75
+    atexit.register(lambda: _lock.exists() and _lock.unlink())
     cases = [
         # `expect_lives` is the POSITIVE control the death half of the
         # protocol had none of: without one, a scan that silently
@@ -3257,9 +3291,14 @@ def _selftest() -> int:
         "all_passed": ok_all,
         "cases": results,
     }
-    out = REPO / "runs/discover_observables_selftest.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(receipt, indent=2) + "\n")
+    out = _out
+    # tmp-file + os.replace: a reader (or a second selftest, lock
+    # notwithstanding) must never observe a partially-written receipt.
+    # os.replace is an atomic rename on the same filesystem, unlike the
+    # write_text this replaces which truncates the target in place.
+    _tmp = out.with_suffix(out.suffix + f".tmp{os.getpid()}")
+    _tmp.write_text(json.dumps(receipt, indent=2) + "\n")
+    os.replace(_tmp, out)
     print(f"\n[selftest] {'ALL PASS' if ok_all else 'FAILURES PRESENT'} "
           f"-> receipt {out}")
     return 0 if ok_all else 1

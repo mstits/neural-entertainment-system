@@ -12,6 +12,7 @@ the blob.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -622,8 +623,18 @@ def _drive_main(monkeypatch, tmp_path, *, keys, stall_at=None,
             "".join(json.dumps(r) + "\n" for r in prior_log))
 
     calls = []
+    # main() now also holds a run-lock on --out (src/utils/run_lock.py),
+    # which shells out to real `ps` to fingerprint its own PID.
+    # `chain.subprocess` IS the process-wide `subprocess` module (not a
+    # copy), so patching `.run` on it below intercepts run_lock's `ps`
+    # call too, not just the per-level SOLVE call this fake models —
+    # proxy anything that isn't the SOLVE invocation to the real,
+    # pre-patch subprocess.run.
+    _real_run = subprocess.run
 
-    def fake_run(cmd, check=False):
+    def fake_run(cmd, check=False, **kw):
+        if cmd and cmd[0] != sys.executable:
+            return _real_run(cmd, check=check, **kw)
         d = Path(cmd[cmd.index("--out") + 1])
         stage = int(d.name.split("_")[1])
         calls.append(("solve", stage, cmd[cmd.index("--root-state") + 1],

@@ -47,6 +47,7 @@ tape-as-teacher family is adjudicated dead (Dossier v3; Variant A).
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import shutil
@@ -62,11 +63,20 @@ from src.training.backward_curriculum import (  # noqa: E402
     DEFAULT_GX_RESET_MAX, DEFAULT_GX_TOLERANCE, INDEX_NAME, StateEntry,
     gx_report, load_index, write_index,
 )
+from src.utils.run_lock import acquire as _acquire_run_lock  # noqa: E402
 
 GX_SPAN = (40, 3266)     # tape gx_first .. tape gx_last (self-check b)
 VOID_MIN_KEPT = 24       # V1: < 24 kept recovery states = treatment too thin
 SHIFT_RUNGS = 2          # max insertion shift when the mapped spot dips
 AREA_ADDR = 0x0760       # SMB internal area index (segments the gx gate)
+
+
+def merge_lock_path(out_dir) -> Path:
+    """Run-lock path for a mint --out target (see src/utils/run_lock.py).
+    Lives BESIDE out_dir, not inside it, so it survives the --force
+    rmtree of out_dir."""
+    out_dir = Path(out_dir)
+    return out_dir.parent / f".{out_dir.name}.run.lock"
 
 
 def sha256_path(p: Path) -> str:
@@ -151,6 +161,23 @@ def main() -> int:
     recovery_dir = REPO / args.recovery
     out_dir = REPO / args.out
     tapes_dir = REPO / args.tapes
+
+    # Run-lock: two mints racing the same --out target can both pass the
+    # exists()/--force check, both do the (expensive) gx measurement
+    # pass, and then race the rmtree + mkdir — the same defect class as
+    # the 2026-08-29 duplicate-chain-watcher incident, just with a
+    # bigger blast radius here (a stomped or half-copied ladder dir). The
+    # lock lives beside out_dir, not inside it, so it survives the
+    # --force rmtree below. A stale lock from a dead process is
+    # reclaimed; a live one refuses. See src/utils/run_lock.py.
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    _lock = merge_lock_path(out_dir)
+    _holder = _acquire_run_lock(_lock, extra=str(out_dir))
+    if _holder is not None:
+        sys.exit(f"[merge_recovery_ladder] {out_dir} is locked by live "
+                 f"PID {_holder.pid} ({_lock}). Refusing to run two "
+                 "mints against one --out target.")
+    atexit.register(lambda: _lock.exists() and _lock.unlink())
 
     if out_dir.exists():
         if not args.force:
