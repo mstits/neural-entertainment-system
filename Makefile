@@ -167,6 +167,16 @@ mistakes-check:
 	@.venv/bin/python scripts/mistakes_tally.py --check > /dev/null || \
 	  (.venv/bin/python scripts/mistakes_tally.py --check; exit 1)
 
+# Adoption census: registry keys nobody sets, checkpoint/run writers with
+# no run_lock import, solve: key drift against KNOWN_SOLVE_KEYS, and glob
+# readers with no quarantine awareness. Exits 1 on real findings by
+# design (this repo has them today) -- not wired into `test:` as a
+# prerequisite; run by hand or from a dedicated CI-equivalent step.
+.PHONY: adoption-check
+adoption-check:
+	@.venv/bin/python scripts/check_adoption.py > /dev/null || \
+	  (.venv/bin/python scripts/check_adoption.py; exit 1)
+
 test: rust-check unsafe-inventory-check clear-lint purity-check mistakes-check
 	. .venv/bin/activate && pytest tests/ -q --timeout=120
 
