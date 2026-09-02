@@ -177,6 +177,17 @@ adoption-check:
 	@.venv/bin/python scripts/check_adoption.py > /dev/null || \
 	  (.venv/bin/python scripts/check_adoption.py; exit 1)
 
+# Coordination layer self-tests, not wired into `test:` as a prerequisite.
+.PHONY: worktree-census git-safe-selftest census-selftest
+worktree-census:
+	@.venv/bin/python scripts/worktree_census.py --repo .
+
+git-safe-selftest:
+	@bash tests/test_git_safe.sh
+
+census-selftest:
+	@.venv/bin/python tests/test_worktree_census.py
+
 test: rust-check unsafe-inventory-check clear-lint purity-check mistakes-check
 	. .venv/bin/activate && pytest tests/ -q --timeout=120
 
