@@ -7,17 +7,28 @@ use serde_derive::{Deserialize, Serialize};
 // Bank selection is encoded in the WRITE ADDRESS, value selects CHR:
 //
 //   A13:          mirroring (0 = vertical, 1 = horizontal)
-//   A12..A11:     PRG chip select (0, 2, 3 -> ROM; 1 -> open bus / mirrored)
+//   A12..A11:     PRG chip select (0, 1, 3 -> ROM; 2 -> unpopulated, open bus)
 //   A10..A6:      5-bit PRG bank within the selected chip
 //   A5:           PRG mode (0 = 32 KB, 1 = 16 KB mirrored)
 //   value[5..2]:  CHR bank high bits
 //   value[1..0]:  CHR bank low bits
 //
-// The chip table is: chip 0 = 512 KB, chip 2 = 256 KB, chip 3 = 256 KB
-// stacked into the combined ~1 MB PRG image. For a minimal boot we
-// flatten the PRG into 16 KB banks indexed linearly — most library
-// dumps are sized correctly for this, and it keeps the fast path
-// simple.
+// Action 52 carries three 512 KB chips on selects 0, 1 and 3; select 2
+// is unpopulated. The iNES dump stores them back to back (chip 0 at
+// PRG offset 0, chip 1 at 512 KB, chip 3 at 1 MB), so we flatten the
+// PRG into 16 KB banks indexed linearly and alias select 3 onto the
+// third 512 KB (select 2, open bus on the board, reads the same
+// region here). Cheetahmen II is a single 256 KB chip, so the bank
+// modulo below makes the chip bits irrelevant for it.
+//
+// The register has no reset line; the games expect the equivalent of
+// a $00 write to $8000 at power-on (chip 0, bank 0, 32 KB mode). The
+// 32 KB mode matters: bank pair 0/1 (what power-on and reset() select)
+// keeps its reset vector and boot stub in bank 1, the odd bank, so
+// 16 KB mode at power-on mirrors bank 0 into $C000-$FFFF and boots a
+// minigame's own code instead of the multicart menu. (47 of the 48 odd
+// banks read RESET=$FFD8 from their own boot stub; the fix only relies
+// on bank 1, which is confirmed.)
 pub struct Mapper228 {
     cartridge: Cartridge,
     prg_bank: u8,  // 16 KB bank select for the low window
@@ -40,7 +51,7 @@ impl Mapper228 {
         let mut m = Mapper228 {
             cartridge,
             prg_bank: 0,
-            prg_mode_32k: false,
+            prg_mode_32k: true,
             chr_bank: 0,
             prg_asm_window: vec![0u8; 32 * 1024],
         };
@@ -61,8 +72,9 @@ impl Mapper228 {
         // A12..A11 = chip select (2 bits) stacked above.
         let chip = ((address >> 11) & 0x03) as u8;
         let inner = ((address >> 6) & 0x1F) as u8;
-        // Remap chip 1 -> chip 0 (open-bus/mirror behaviour on real hw).
-        let chip = if chip == 1 { 0 } else { chip };
+        // Select 3 is the third populated chip, stored third in the
+        // dump; select 2 is unpopulated and reads that region too.
+        let chip = if chip == 3 { 2 } else { chip };
         (chip << 5) | inner
     }
 
@@ -151,7 +163,7 @@ impl Mapper for Mapper228 {
 
     fn reset(&mut self) {
         self.prg_bank = 0;
-        self.prg_mode_32k = false;
+        self.prg_mode_32k = true;
         self.chr_bank = 0;
         self.cartridge.mirroring = self.cartridge.default_mirroring;
         self.rebuild_asm_window();
@@ -267,21 +279,34 @@ mod tests {
         assert_eq!(m.prg_read_byte(0xC000), marker(5));
     }
 
-    // The 2-bit chip select stacks above the 5-bit inner bank, and chip 1
-    // is remapped onto chip 0 (open-bus mirror on real hardware).
+    // The 2-bit chip select stacks above the 5-bit inner bank: selects
+    // 0, 1 and 3 are the three chips stored in order in the dump, so
+    // select 3 aliases onto the third 512 KB, and the unpopulated
+    // select 2 reads that region as well.
     #[test]
     fn prg_chip_select_stacks_above_inner_bank() {
-        let mut cart = test_cart(128, 1); // 2 MB so chips 2/3 are in range
+        let mut cart = test_cart(128, 1); // 2 MB so every chip is in range
         stamp_prg_16k(&mut cart);
         let mut m = Mapper228::new(cart);
         m.prg_write_byte(wr_addr(0, 1, true, false), 0x00);
         assert_eq!(m.prg_read_byte(0x8000), marker(1)); // chip 0, bank 1
         m.prg_write_byte(wr_addr(1, 1, true, false), 0x00);
-        assert_eq!(m.prg_read_byte(0x8000), marker(1)); // chip 1 -> chip 0, not 33
+        assert_eq!(m.prg_read_byte(0x8000), marker(33)); // (1<<5)|1, second chip
         m.prg_write_byte(wr_addr(2, 1, true, false), 0x00);
         assert_eq!(m.prg_read_byte(0x8000), marker(65)); // (2<<5)|1
         m.prg_write_byte(wr_addr(3, 1, true, false), 0x00);
-        assert_eq!(m.prg_read_byte(0x8000), marker(97)); // (3<<5)|1
+        assert_eq!(m.prg_read_byte(0x8000), marker(65)); // select 3 -> third chip
+    }
+
+    // Power-on is 32 KB mode on bank pair 0/1: the high window shows
+    // bank 1, where Action 52 keeps every reset vector and boot stub.
+    #[test]
+    fn power_on_is_32k_mode_bank_pair_0_1() {
+        let mut cart = test_cart(8, 1);
+        stamp_prg_16k(&mut cart);
+        let mut m = Mapper228::new(cart);
+        assert_eq!(m.prg_read_byte(0x8000), marker(0));
+        assert_eq!(m.prg_read_byte(0xC000), marker(1));
     }
 
     // The CHR bank is the low six bits of the written value (bits 6-7
@@ -331,6 +356,7 @@ mod tests {
         assert_eq!(m.mirroring(), Mirroring::Vertical);
         m.reset();
         assert_eq!(m.prg_read_byte(0x8000), marker(0));
+        assert_eq!(m.prg_read_byte(0xC000), marker(1)); // 32 KB mode again
         assert_eq!(m.mirroring(), Mirroring::Horizontal); // default
     }
 

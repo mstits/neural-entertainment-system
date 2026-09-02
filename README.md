@@ -2,7 +2,7 @@
 
 A macOS / Apple-Silicon NES emulator built to be pointed at a game and left to
 beat it. A purpose-built Rust core (`nes_core`) — Mesen-checked fidelity,
-microsecond save-states, 37 mappers, 791 of 796 library ROMs booting into a
+microsecond save-states, 37 mappers, 792 of 796 library ROMs booting into a
 live screen — is driven from Python by two systems that share it: a generic
 Go-Explore **solver** that searches its way through a game live on stream, and
 a PPO **trainer** whose policies are graded by the strictest published
@@ -174,9 +174,9 @@ Neither ledger means anything on an emulator that drifts. The core is gated by
 against the Nintendulator golden trace), a **33-ROM Mesen-oracle lockstep**,
 **149 differential parity tests** (`make parity`), and a differential fuzz of
 the AArch64 ASM CPU against the pure-Rust interpreter across 240M+ instructions
-with zero divergence. 791 of 796 library ROMs boot into a live screen across
+with zero divergence. 792 of 796 library ROMs boot into a live screen across
 the 28 mappers this library exercises (2026-09-01 census: 795 run 300 frames
-without a panic or timeout, one truncated dump, four static screens).
+without a panic or timeout, one truncated dump, three static screens).
 Cross-checked against Mesen 2 on 12,000 frames of the banked Super Mario Bros
 run (2026-09-01): nes_core and Mesen agree on lives, area, mode and every
 level-transition frame; scratch bytes (stack, zero-page temps, OAM buffer)
@@ -528,10 +528,10 @@ deterministic core. Artifacts: `docs/receipts/full_run/`.
   divergence, and falling back to the interpreter for any unported opcode. (The
   full public blargg CPU/PPU/APU test-ROM gauntlet is **not yet run** end-to-end
   — see *Accuracy status* below.)
-- Broad compatibility: as of the 2026-09-01 library scan, **791 of 796 ROMs
-  (99.4%)** boot into a live screen across **28 of the 37 supported mappers**
-  present in the library; 795 run 300 frames without a panic or timeout, four
-  boot to a static screen (Action 52, Jackal, Nintendo World Championships
+- Broad compatibility: as of the 2026-09-01 library scan, **792 of 796 ROMs
+  (99.5%)** boot into a live screen across **28 of the 37 supported mappers**
+  present in the library; 795 run 300 frames without a panic or timeout, three
+  boot to a static screen (Jackal, Nintendo World Championships
   1990, SMB+Tetris+NWC), and the one load failure is a truncated dump.
   Unsupported mappers and malformed headers fail cleanly at load time with a
   `RuntimeError` instead of crashing the trainer.
@@ -1071,7 +1071,7 @@ events), so the median/p99 above — not the mean — describe the common case.
 
 The full matrix lives in `reports/full_library.md`. A summary:
 
-- **37 mappers** implemented, covering **99.4%** of the 796-ROM library
+- **37 mappers** implemented, covering **99.5%** of the 796-ROM library
   (live-screen boot, 2026-09-01 census). Every supported mapper passes at
   100% on its carts.
 - Discrete logic: NROM (0), UxROM (2), CNROM (3), AxROM (7), Colordreams (11,
@@ -1187,7 +1187,7 @@ numbers.
 
 What this release **does** ship:
 
-- A fast Rust NES emulator with 37 mappers (791/796 ROMs boot to a live
+- A fast Rust NES emulator with 37 mappers (792/796 ROMs boot to a live
   screen), byte-exact CPU validation via nestest (8,991 instructions,
   registers + cycle count) and a 33-ROM Mesen-oracle lockstep, plus an
   AArch64 ASM 6502 core (differential-fuzzed against the pure-Rust
@@ -1217,7 +1217,7 @@ What this release **does not** ship:
 - **A converged DreamerV3 policy.** The world-model scaffold trains end-to-end
   but has not been converged to beat PPO on these games — open research.
 - **All 796 library ROMs booting.** One load failure (`Yoshi (USA).nes`) is a
-  truncated dump, not an emulator bug; four ROMs (mappers 2, 37, 105, 228)
+  truncated dump, not an emulator bug; three ROMs (mappers 2, 37, 105)
   load but freeze on a static screen and are open emulator issues.
 - **A completed public accuracy gauntlet.** nestest (registers + CYC), the
   33-ROM Mesen-oracle lockstep, and the 149-test parity gate pass; the full
