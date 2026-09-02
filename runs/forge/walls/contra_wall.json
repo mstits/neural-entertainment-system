@@ -1,0 +1,16 @@
+{
+  "wall_id": "contra_wall",
+  "prior_best": 3072,
+  "prior_best_replay_verified": true,
+  "prior_best_receipt": "docs/research/CONTRA_WALL_2026-08-27.md:16-22",
+  "members": [
+    {"dir": "runs/contra_wall/A1", "shape": "receipt", "receipt": "boundary_probe.json", "terminal_field": "beat_3072", "best_field": "global_max_gx", "root_family": "solve20"},
+    {"dir": "runs/contra_wall/A2", "shape": "receipt", "receipt": "A2_RECEIPT.json", "terminal_field": "beat_3072", "best_field": "max_gx_observed", "root_family": "head_wall"},
+    {"dir": "runs/contra_wall/A3", "shape": "receipt", "receipt": "A3_report.json", "terminal_field": "beat_3072", "best_field": "max_gx_seen", "root_family": "solve20"},
+    {"dir": "runs/contra_wall/A4", "shape": "receipt", "receipt": "probe_release_report.json", "terminal_field": null, "best_field": "max_gx_observed", "root_family": "solve20"},
+    {"dir": "runs/contra_wall/A5", "shape": "receipt", "receipt": "SUMMARY.json", "terminal_field": "beat_3072", "best_field": "max_gx_seen", "root_family": "solve20"},
+    {"dir": "runs/contra_wall/A6", "shape": "receipt", "receipt": "A6_RECEIPT.json", "terminal_field": "beat_3072", "best_field": "max_gx", "root_family": "solve20"},
+    {"dir": "runs/contra_wall/A7", "shape": "receipt", "receipt": "attack_a7_results.json", "terminal_field": "global_beat_3072", "best_field": "global_max_gx_alive", "root_family": "head_wall"},
+    {"dir": "runs/contra_wall/A8", "shape": "receipt", "receipt": "A8_result.json", "terminal_field": "breakthrough_found", "best_field": "max_progress_seen", "root_family": "head_wall"}
+  ]
+}

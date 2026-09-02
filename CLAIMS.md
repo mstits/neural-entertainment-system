@@ -977,6 +977,100 @@ Suite at ship: 5349 passed, 30 skipped, 3 xfailed, 1 known-
 environmental failure; Rust 659 passed. Seven mutations were run
 against the wiring, each reddening a named test.
 
+#### FORGE-GRANT-cv_hall-2026-09-01
+
+**FORGE-GRANT, cv_hall (the Castlevania block-3 hall), granted 2026-09-01
+under Matthew's conditional ruling of 2026-09-01, recorded in the build's
+PROGRESS.md: bounded, watchdog-gated unattended blocks with hard abort may
+run only after the block runner passes its positive control, each block
+under a dated entry here, nothing banks without one.** Specification:
+`docs/proposals/FORGE_SPEC_2026-09-01.md` (draft, ratification pending),
+section 4, live-validation point 2. Wall manifest:
+`runs/forge/walls/cv_hall.json`, three progress-shaped members
+(`runs/cv_hall_ortho_a`, `runs/cv_hall_ortho_ctrl`,
+`runs/cv_hall_true_frontier_1`); campaign verdict STALLED, terminal_runs
+3, advances 0, distinct_roots 1, degraded true because prior_best 767 is
+not replay-verified. Root state:
+`runs/cv_chain_hw2/entrances/entrance_after_2.state`, the entrance every
+member's `roots.json` names, sha256
+`00a93d0aae5b27d23b8fb0ece35b3676561916a512a1d5882921bfe458437f11`; the
+runner compares the first 16 hex characters, `00a93d0aae5b27d2`, re-read
+from the child's root file on every poll. Block bounds: `max_secs` 1200
+and `max_steps` 2000000 per block; at most 5 blocks under this grant.
+Each block's plan carries `grant_entry:
+"CLAIMS.md#FORGE-GRANT-cv_hall-2026-09-01"`; a plan without it is refused
+before anything launches. Receipt fields, fixed by the ruling and written
+by `src/forge/block.py::run_block` under `runs/forge/cv_hall/<cycle_id>/`:
+`wall_id`, `cycle_id`, `grant_entry`, `started`, `ended`, `stop` (budget,
+stalled, abort, complete), `attended_hours`, `run_lock_hours`,
+`ratio_machine_per_attended`, `ratio_ok` (six machine-hours per attended
+hour, reported and never a refusal), `watchdog_trips` (must be zero to
+bank), `positive_control` (`injected`, `caught`, `banked_from_reset`),
+`fabricated_clears_unretracted`, `banked`, `aborted`, `abort_reason`.
+Wrongful reset, as the runner defines it: cells decrease between
+consecutive rows, solutions decrease, the root-state hash differs from
+the sha above, or the run lock names a holder other than the child; any
+one trips the watchdog, which SIGTERMs the process group, releases the
+lock, and banks nothing. One wrongful reset that banks an artifact ends
+the grant: the runner writes GRANT_ENDED to `runs/forge/grant_state.json`
+and refuses every later block. Status at grant: no block has run under
+it. The runner's positive control is proven on synthetic children only;
+its real-child receipt is the MISTAKES.md entry of 2026-09-02, and until
+a receipt from a live solver child under the corrected runner exists,
+nothing starts under this grant. Any clear a pilot block produces is an
+EXHIBITION result in that run's own solutions ledger, citing flag and
+commit; this entry carries no result and never will.
+
+#### FORGE-GRANT-contra_wall-2026-09-01
+
+**FORGE-GRANT, contra_wall (the Contra gx-3072 screen lock), granted
+2026-09-01 under the same conditional ruling.** Specification:
+`docs/proposals/FORGE_SPEC_2026-09-01.md`, section 4, live-validation
+point 2. Wall manifest: `runs/forge/walls/contra_wall.json`, eight
+receipt-shaped members (`runs/contra_wall/A1` through `A8`); campaign
+verdict STALLED, terminal_runs 7, advances 0, distinct_roots 2 by root
+family, A4 unmeasured because its receipt carries a prose verdict and no
+boolean terminal field. Root state: `roms/Contra (USA)_start.state.bin`,
+sha256
+`b99f9be8e0266f6dbe8ac71bc591b0deec08e66e7925707d265965a4aab922c3`, the
+start state the two Contra entries below record and the entrance
+`runs/play_one_well/contra/solve20/roots.json` names; a pilot that
+resumes the boundary-resident family passes `--resume-archive
+runs/play_one_well/contra/solve20`, whose `archive.pkl` is sha256
+`151ddbe197aa84ef3fc6d916cc7a250a822b63b08e9e866a7921663d74acb2bf`. The
+specification's `_LANDING` root does not exist as a file: both
+`runs/contra_wall/_LANDING/` and `runs/contra_lock2/_LANDING/` hold
+verification scripts and their JSON only, and the `head_wall_*.state`
+roots the A-series cites were scratchpad paths that are gone. A root
+state minted later from the archive is a new file; its sha is added here
+as a dated addendum before any block cites it. Block bounds: `max_secs`
+1200 and `max_steps` 2000000 per block; at most 5 blocks under this
+grant. Each block's plan carries `grant_entry:
+"CLAIMS.md#FORGE-GRANT-contra_wall-2026-09-01"`; a plan without it is
+refused before anything launches. Receipt fields, fixed by the ruling
+and written by `src/forge/block.py::run_block` under
+`runs/forge/contra_wall/<cycle_id>/`: `wall_id`, `cycle_id`,
+`grant_entry`, `started`, `ended`, `stop` (budget, stalled, abort,
+complete), `attended_hours`, `run_lock_hours`,
+`ratio_machine_per_attended`, `ratio_ok` (six machine-hours per attended
+hour, reported and never a refusal), `watchdog_trips` (must be zero to
+bank), `positive_control` (`injected`, `caught`, `banked_from_reset`),
+`fabricated_clears_unretracted`, `banked`, `aborted`, `abort_reason`.
+Wrongful reset is defined as in the cv_hall grant above and trips the
+same hard abort. One wrongful reset that banks an artifact ends the
+grant: the runner writes GRANT_ENDED to `runs/forge/grant_state.json` and
+refuses every later block. Status at grant: no block has run under it.
+The cycle the specification plans for this wall, a knob pilot on the lock
+objective, is expected to read VOID at stage 1 or 2: the bundle carries
+OBSERVABLE_DEFECT confirmed_by_receipt and the lock arm has no activity
+counter (UNAUDITABLE in the registry), and the entry will say so. The
+runner's real-child positive control is not yet proven, so nothing starts
+under this grant either until that receipt exists. Any clear a pilot
+block produces is an EXHIBITION result in that run's own solutions
+ledger, citing flag and commit; this entry carries no result and never
+will.
+
+
 ## Quarantine (Tier-3-contaminated artifacts)
 
 The following artifacts were produced with banned knowledge (a

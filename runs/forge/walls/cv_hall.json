@@ -1,0 +1,14 @@
+{
+  "wall_id": "cv_hall",
+  "prior_best": 767,
+  "prior_best_replay_verified": false,
+  "prior_best_receipt": "runs/cv_hall_ortho_a/archive.stats.json",
+  "missing": [
+    "replay_verified_frontier: prior_best 767 is the phantom pin; true frontier 751 (PA §3.2)"
+  ],
+  "members": [
+    {"dir": "runs/cv_hall_ortho_a", "shape": "progress"},
+    {"dir": "runs/cv_hall_ortho_ctrl", "shape": "progress"},
+    {"dir": "runs/cv_hall_true_frontier_1", "shape": "progress"}
+  ]
+}
