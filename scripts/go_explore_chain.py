@@ -51,6 +51,7 @@ from scripts.go_explore_solve import (  # noqa: E402
 )
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
 from src.utils.run_lock import acquire as _acquire_run_lock  # noqa: E402
+from src.utils.disk_floor import disk_floor_breach  # noqa: E402
 
 SOLVE = str(REPO / "scripts" / "go_explore_solve.py")
 
@@ -490,6 +491,17 @@ def main() -> int:
     if args.gate_opener != "off" and args.gate_pin_secs is None:
         ap.error("--gate-pin-secs is REQUIRED when --gate-opener is not off "
                  "(mined defaults: 600 CV / 120 BB; negative disables).")
+
+    # Free-disk floor (src/utils/disk_floor.py, shared with
+    # run_online_campaign.py and night2_runner.py): a chain campaign is
+    # machine-busy and hands-off for hours-to-days, so a volume that
+    # fills mid-run must refuse before the first level rather than
+    # degrade into swallowed checkpoint-save warnings.
+    _disk_reason = disk_floor_breach(REPO)
+    if _disk_reason:
+        print(f"[chain] REFUSING to start: {_disk_reason}",
+              file=sys.stderr, flush=True)
+        return 1
 
     profile = yaml.safe_load(Path(args.profile).read_text())
     hw_flags = resolve_hw_flags(profile, args.hw_flags)

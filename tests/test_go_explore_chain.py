@@ -857,3 +857,30 @@ def test_arming_the_chain_without_a_pin_is_a_hard_error(monkeypatch,
     with pytest.raises(SystemExit):
         _drive_main(monkeypatch, tmp_path, keys=[(1, 2)], stall_at=0,
                     argv_extra=("--gate-opener", "enumerate"))
+
+
+# ---- launch-time disk floor (src/utils/disk_floor.py) -----------------
+
+
+def test_low_disk_refuses_before_any_solve(monkeypatch, tmp_path):
+    # A chain campaign is machine-busy and hands-off for hours-to-days
+    # (module docstring) — it must refuse at launch on low disk, same as
+    # run_online_campaign.py, rather than run for hours into ENOSPC.
+    root = tmp_path / "root.state"
+    root.write_bytes(b"ROOT")
+    prof = tmp_path / "profile.yaml"
+    prof.write_text("action_space: [[], [right]]\nframe_skip: 4\n")
+    out = tmp_path / "campaign"
+
+    calls = []
+    monkeypatch.setattr(chain, "disk_floor_breach",
+                        lambda path: "disk floor: 3.0 GB free < 40 GB")
+    monkeypatch.setattr(chain.subprocess, "run",
+                        lambda *a, **kw: calls.append(a) or None)
+    monkeypatch.setattr(sys, "argv", [
+        "go_explore_chain.py", "--start-state", str(root),
+        "--start-label", "1-1", "--profile", str(prof), "--out", str(out)])
+
+    assert chain.main() == 1
+    assert not calls, "must refuse before the first solver subprocess"
+    assert not out.exists(), "must refuse before creating the campaign dir"

@@ -73,14 +73,17 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from src.utils.run_lock import acquire as _acquire_run_lock  # noqa: E402
+from src.utils.disk_floor import DISK_FLOOR_GB  # noqa: E402
+from src.utils import disk_floor as _disk_floor  # noqa: E402
 
-# Free-disk floor, matching the engine scheduler and train_game.py.
-# Checked at campaign start AND once per poll tick: the campaign
-# controller relaunches trainer subprocesses for hours-to-days, and a
-# volume that fills mid-campaign used to surface only as swallowed
-# checkpoint-save warnings inside the child (external audit 2026-08-29,
-# volume at 91%). A statvfs per poll tick is free.
-DISK_FLOOR_GB = 40.0
+# Free-disk floor, matching the engine scheduler and train_game.py (the
+# check itself lives in src/utils/disk_floor.py, shared with
+# go_explore_chain.py and night2_runner.py). Checked at campaign start
+# AND once per poll tick: the campaign controller relaunches trainer
+# subprocesses for hours-to-days, and a volume that fills mid-campaign
+# used to surface only as swallowed checkpoint-save warnings inside the
+# child (external audit 2026-08-29, volume at 91%). A statvfs per poll
+# tick is free.
 
 
 def campaign_lock_path(run_dir) -> Path:
@@ -89,22 +92,15 @@ def campaign_lock_path(run_dir) -> Path:
 
 
 def disk_free_gb(path: Path = REPO) -> float:
-    import shutil as _shutil
-    return _shutil.disk_usage(str(path)).free / 1e9
+    return _disk_floor.disk_free_gb(path)
 
 
 def disk_floor_breach() -> str | None:
     """A reason string when free disk is below the floor, else None.
     Fails open on a stat error — the guard must never kill a healthy
     campaign by itself."""
-    try:
-        free = disk_free_gb()
-    except OSError:
-        return None
-    if free < DISK_FLOOR_GB:
-        return (f"disk floor: {free:.1f} GB free < {DISK_FLOOR_GB:.0f} GB "
-                f"— checkpoint durability is about to fail")
-    return None
+    return _disk_floor.disk_floor_breach(
+        REPO, floor_gb=DISK_FLOOR_GB, free_gb_fn=disk_free_gb)
 
 # ---------------------------------------------------------------------------
 # CONFIG — every threshold the campaign runs on. Mirrored verbatim into

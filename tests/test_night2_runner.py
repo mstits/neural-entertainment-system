@@ -42,6 +42,7 @@ import torch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import scripts.night2_runner as night2  # noqa: E402
 from scripts.night2_runner import (  # noqa: E402
     CONFIG, CURED_SEED_ITER, _sha256, bc_cure,
     build_collection_reference_command, build_det_probe_command,
@@ -690,3 +691,30 @@ def test_dry_run_passes_live():
     assert "FAIL" not in proc.stdout
     # The key step-1 finding must be REPORTED, not silently branched on.
     assert "SIL" in proc.stdout
+
+
+# ---- launch-time disk floor (src/utils/disk_floor.py) -----------------
+
+
+def test_low_disk_refuses_before_run(monkeypatch):
+    # Night 2 drives SIL collection through consol2 hands-off for hours
+    # (module docstring) — it must refuse at launch on low disk, same as
+    # run_online_campaign.py, rather than run for hours into ENOSPC.
+    monkeypatch.setattr(night2, "disk_floor_breach",
+                        lambda path: "disk floor: 3.0 GB free < 40 GB")
+    monkeypatch.setattr(
+        night2, "run",
+        lambda **kw: pytest.fail("run() must not be reached below floor"))
+    monkeypatch.setattr(sys, "argv", ["night2_runner.py"])
+    with pytest.raises(SystemExit, match="REFUSING"):
+        night2.main()
+
+
+def test_dry_run_bypasses_disk_floor(monkeypatch):
+    # --dry-run does no rollouts/training, so it must reach dry_run()
+    # even below the floor — mirrors run_online_campaign.py's --dry-run.
+    monkeypatch.setattr(night2, "disk_floor_breach",
+                        lambda path: "disk floor: 3.0 GB free < 40 GB")
+    monkeypatch.setattr(night2, "dry_run", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["night2_runner.py", "--dry-run"])
+    assert night2.main() == 0

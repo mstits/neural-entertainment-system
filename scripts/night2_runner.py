@@ -108,6 +108,7 @@ from scripts.run_online_campaign import (  # noqa: E402
 from scripts.run_consol2 import (  # noqa: E402
     CONFIG as CONSOL2_CONFIG, _sha256, consol2_checkpoint_dir,
 )
+from src.utils.disk_floor import disk_floor_breach  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # CONFIG — every threshold night 2 runs on. Mirrored verbatim into
@@ -1479,6 +1480,14 @@ def main() -> int:
     args = ap.parse_args()
     if args.dry_run:
         return dry_run()
+    # Free-disk floor (src/utils/disk_floor.py, shared with
+    # run_online_campaign.py and go_explore_chain.py): night 2 runs SIL
+    # collection through consol2 hands-off for hours, so a volume that
+    # fills mid-run must refuse before step 1 rather than degrade into
+    # swallowed checkpoint-save warnings.
+    _disk_reason = disk_floor_breach(REPO)
+    if _disk_reason:
+        raise SystemExit(f"[night2] REFUSING to start: {_disk_reason}")
     return run(skip_to=args.skip_to, bc_scope=args.bc_scope)
 
 
