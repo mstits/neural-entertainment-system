@@ -58,6 +58,9 @@ ENGINE_DIR = REPO / "runs" / "engine"
 JOURNAL = ENGINE_DIR / "journal.jsonl"
 STATE_PATH = ENGINE_DIR / "state.json"
 PROPOSED = ENGINE_DIR / "proposed_claims.jsonl"
+# Sibling of PROPOSED: the Forge's STALLED-verdict stream, appended by
+# stall_check() below, default-off behind --forge.
+STALL_RECEIPTS = ENGINE_DIR / "stall_receipts.jsonl"
 
 CONSECUTIVE_FAILURE_LIMIT = 3
 MAX_ATTEMPTS_PER_ACTION = 2
@@ -1299,8 +1302,56 @@ def guard_reasons(state: dict, repo: Path = REPO) -> list[str]:
     return out
 
 
-def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
-    """One decision. Returns a record of what was decided and why."""
+def stall_check(state: dict, repo: Path = REPO) -> None:
+    """Sibling of guard_reasons(), not a member of it: a stalled wall
+    routes that wall's next Forge action, it does not halt the SMB
+    pipeline plan() already chose, so this never returns a reason and is
+    called for its side effect only.
+
+    Reads every wall manifest under runs/forge/walls/*.json, computes
+    each wall's campaign verdict (src/forge/stall.py::campaign_verdict),
+    and journals the first time a wall reads STALLED -- latched per wall
+    in state["stalled_notified"][wall_id], the same way blocked_notified
+    latches above, so a steady STALLED wall does not re-journal every
+    tick. The verdict is also appended to STALL_RECEIPTS, sibling of
+    PROPOSED. Import of src.forge.stall is local: the Forge is optional
+    machinery, off by default, and this function is only ever called
+    behind --forge.
+    """
+    from src.forge.stall import campaign_verdict
+
+    walls_dir = repo / "runs" / "forge" / "walls"
+    if not walls_dir.exists():
+        return
+    notified = state.setdefault("stalled_notified", {})
+    for manifest_path in sorted(walls_dir.glob("*.json")):
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        wall_id = manifest.get("wall_id", manifest_path.stem)
+        verdict = campaign_verdict(manifest, repo)
+        if verdict["verdict"] == "STALLED":
+            if not notified.get(wall_id):
+                notified[wall_id] = True
+                journal({"type": "stall_verdict", "wall_id": wall_id,
+                         "verdict": verdict})
+                STALL_RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
+                with open(STALL_RECEIPTS, "a") as f:
+                    f.write(json.dumps(verdict) + "\n")
+        else:
+            notified.pop(wall_id, None)
+
+
+def tick(state: dict, repo: Path = REPO, dry: bool = False,
+         forge: bool = False) -> dict:
+    """One decision. Returns a record of what was decided and why.
+
+    ``forge=False`` (the default) is byte-identical to the engine before
+    the Forge existed: stall_check() is not even called. ``forge=True``
+    calls it once plan() has chosen an action, journaling any wall that
+    newly reads STALLED without changing what gets planned or launched.
+    """
     reap(state, repo)
 
     # An action reap() left in place is still executing. Launching anyway
@@ -1341,6 +1392,8 @@ def tick(state: dict, repo: Path = REPO, dry: bool = False) -> dict:
         return not (a.needs_emulator and busy is not None)
 
     action = plan(state, repo)
+    if forge:
+        stall_check(state, repo)
     if not launchable(action):
         action = plan(state, repo, emulator_only=False)
         if not launchable(action):
@@ -1413,6 +1466,11 @@ def main(argv: list[str] | None = None) -> int:
                          "(vs kill -9 mid-action)")
     ap.add_argument("--clear-halt", action="store_true",
                     help="clear a --halt and let the engine plan again")
+    ap.add_argument("--forge", action="store_true",
+                    help="run stall_check() each tick, journaling any "
+                         "wall (runs/forge/walls/*.json) that newly "
+                         "reads STALLED. Absent: byte-identical to the "
+                         "engine before the Forge existed.")
     args = ap.parse_args(argv)
 
     state = load_state()
@@ -1453,13 +1511,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(asdict(a), indent=2) if a else "nothing planned")
         return 0
     if args.once or args.dry_run:
-        rec = tick(state, dry=args.dry_run)
+        rec = tick(state, dry=args.dry_run, forge=args.forge)
         save_state(state)
         print(json.dumps(rec))
         return 0
     while True:
         state = load_state()
-        rec = tick(state)
+        rec = tick(state, forge=args.forge)
         save_state(state)
         print(json.dumps(rec), flush=True)
         time.sleep(args.interval)
