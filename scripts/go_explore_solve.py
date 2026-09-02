@@ -3677,6 +3677,8 @@ class Solver:
                 "different --out.")
         atexit.register(lambda: _lock.exists() and _lock.unlink())
         profile = yaml.safe_load(Path(args.profile).read_text())
+        from src.training.config_schema import check_profile
+        check_profile(profile, strict=False)
         # CLEAR-REACHABILITY PRE-FLIGHT (2026-08-26). Runs before the pool
         # exists, like every other profile check here, so a bad profile
         # costs zero emulator seconds.

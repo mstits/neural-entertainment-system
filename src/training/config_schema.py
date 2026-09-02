@@ -150,10 +150,23 @@ _ADVERSARY_MODES: frozenset[str] = frozenset({"kernel_sticky"})
 KNOWN_TOP_KEYS: frozenset[str] = frozenset({
     "name", "reward_id", "game", "rom_path", "rom", "rom_hashes", "expected_md5",
     "rom_md5", "description", "frame_skip", "max_episode_steps",
-    "start_state_path", "start_state", "ram_mapping", "reinforce",
+    "start_state_path", "start_state", "ram_mapping", "reinforce", "solve",
     "reward_weights", "action_space", "curriculum", "env_spec", "seed",
     "ga_params", "dreamer", "levels", "hysteresis_k", "stop_after_worlds",
     "plr_levels", "tensorboard",
+})
+
+# Sub-keys of `solve` (go_explore_solve.py's GenericGame). Seeded
+# 2026-09-01 from the 45 solve-shaped configs/*.yaml profiles plus two
+# consumed-but-unadopted keys (hw_flags, stasis) - census in
+# reports/.../2026-09-01-outstanding/config-and-fidelity.md.
+KNOWN_SOLVE_KEYS: frozenset[str] = frozenset({
+    "rom", "progress", "y", "lives", "level_key", "no_clear_predicate",
+    "clear", "area", "state_sig", "player_state", "death_states",
+    "progress_cap", "hold_macros", "room_advance", "entity_slots",
+    "kill_key_local", "boss_typed", "room_sig", "room_fp", "boss",
+    "finale", "transit_source", "area_key", "min_blank_frames",
+    "constructible", "reason", "hw_flags", "stasis",
 })
 
 
@@ -259,6 +272,14 @@ def validate_profile(profile: dict[str, Any]) -> list[str]:
                     f"{sorted(_ADVERSARY_MODES)} — the trainer raises on an "
                     f"unknown mode rather than silently training without an "
                     f"adversary"
+                )
+    sv = profile.get("solve")
+    if isinstance(sv, dict):
+        for k in sv:
+            if k not in KNOWN_SOLVE_KEYS:
+                warnings.append(
+                    f"unknown solve key {k!r} - NOT recognized by any "
+                    f"validator (typo? renamed? it will be silently ignored)"
                 )
     return warnings
 

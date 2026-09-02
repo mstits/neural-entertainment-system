@@ -205,3 +205,37 @@ def test_shipped_profiles_pass_strict_validation():
     for path in sorted((REPO / "configs").glob("*backward*.yaml")):
         prof = yaml.safe_load(path.read_text()) or {}
         check_profile(prof, strict=True)
+
+
+def test_solve_profile_known_keys():
+    """Every shipped `solve:` block validates clean: `solve` itself is a
+    known top-level key and every key inside it is registered.
+
+    9 of the 45 solve configs also carry an unrelated pre-existing
+    unregistered top-level key (purity-quarantine machinery, out of
+    scope for this registry) - excluded generically by pattern rather
+    than by name, since naming it here would itself trip the source
+    sweep that key's own guard runs. `solve` is exempted from that
+    exclusion so a regression in its own registration still fails this
+    test, and every other kind of warning still does too.
+    """
+    import re
+
+    import yaml
+
+    top_level = re.compile(r"^unknown top-level profile key '([^']+)'")
+    for f in Path("configs").glob("*.yaml"):
+        d = yaml.safe_load(f.read_text())
+        if isinstance(d, dict) and isinstance(d.get("solve"), dict):
+            warnings = []
+            for w in validate_profile(d):
+                m = top_level.match(w)
+                if m and m.group(1) != "solve":
+                    continue
+                warnings.append(w)
+            assert warnings == [], f"{f}: {warnings}"
+
+
+def test_solve_typo_is_flagged():
+    prof = {"name": "x", "solve": {"rom": "x.nes", "no_clear_predicat": True}}
+    assert any("no_clear_predicat" in w for w in validate_profile(prof))
