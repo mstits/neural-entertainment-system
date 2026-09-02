@@ -13,8 +13,10 @@ through an argparse default or a function-parameter default rather than
 a plain `var = <literal>` assignment:
   - TestIsQuarantinedAgainstRealRepo
   - test_census_lockless_writers_finds_real_missed_writers
-Both are read-only against the real repo (skipped if it isn't present at
-the expected path, e.g. in CI or on another machine).
+Both are read-only against the real repo. Each skips on the input it
+actually needs: the class needs the gitignored
+checkpoints/bc_*/demos_quarantine directories, the function needs only
+committed files under scripts/.
 """
 from __future__ import annotations
 
@@ -320,18 +322,37 @@ def test_census_unquarantined_globs_ignores_quarantine_aware_reader(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Real-repo regression checks (read-only; skipped if the repo isn't at the
-# expected path). These run against the actual paths named in the DO-7
-# report, not synthetic fixtures, so a fix here can't silently regress
-# again while every synthetic test still passes.
+# Real-repo regression checks (read-only). These run against the actual paths
+# named in the DO-7 report, not synthetic fixtures, so a fix here can't
+# silently regress again while every synthetic test still passes.
+#
+# Two different gates, because the two blocks need two different things:
+#
+#   pytestmark_real_repo         needs only committed files (scripts/), so the
+#                                repo root existing is the right condition.
+#   pytestmark_quarantine_fixtures  needs checkpoints/bc_*/demos_quarantine,
+#                                which is gitignored (.gitignore:10) and so is
+#                                absent on a clean clone even though the repo
+#                                root is present. Gating that block on the repo
+#                                root made it fail rather than skip there.
 # ---------------------------------------------------------------------------
 
 pytestmark_real_repo = pytest.mark.skipif(
     not REAL_REPO.is_dir(), reason="real repo not present at expected path"
 )
 
+QUARANTINE_FIXTURE_DIRS = [
+    REAL_REPO / "checkpoints" / sub / "demos_quarantine"
+    for sub in ("bc_1_3", "bc_1_4", "bc_2_1")
+]
 
-@pytestmark_real_repo
+pytestmark_quarantine_fixtures = pytest.mark.skipif(
+    not all(p.is_dir() for p in QUARANTINE_FIXTURE_DIRS),
+    reason="gitignored fixtures absent: checkpoints/bc_{1_3,1_4,2_1}/demos_quarantine",
+)
+
+
+@pytestmark_quarantine_fixtures
 class TestIsQuarantinedAgainstRealRepo:
     @pytest.mark.parametrize("subdir", ["bc_1_3", "bc_1_4", "bc_2_1"])
     def test_real_demos_quarantine_dirs_are_quarantined(self, subdir):
