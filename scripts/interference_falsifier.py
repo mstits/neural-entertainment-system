@@ -128,6 +128,11 @@ from scripts.run_consol2 import _sha256  # noqa: E402
 from scripts.run_online_campaign import (  # noqa: E402
     _append_jsonl, _load_yaml, probe_summary,
 )
+from src.utils.run_lock import (  # noqa: E402
+    acquire_resource, release_resource,
+)
+
+POOL_RESOURCE = "emulator-pool"
 
 # ---------------------------------------------------------------------------
 # CONFIG — every threshold the falsifier runs on. Mirrored verbatim into
@@ -1542,7 +1547,19 @@ def run(skip_to: int = 1) -> int:
               "steps": steps, "config": CONFIG})
 
     if 1 in steps:
-        step1_collect()
+        # step1 is the only step in this module that steps the emulator
+        # (_collect_with_real_pool) — hold the shared pool resource lock
+        # for exactly that span so no other writer's pool step interleaves.
+        holder = acquire_resource(POOL_RESOURCE, extra="interference_falsifier")
+        if holder is not None:
+            print(f"[interference] {POOL_RESOURCE} lock held by live PID "
+                  f"{holder.pid} — refusing to step the pool while another "
+                  "writer holds it.", file=sys.stderr)
+            return 75
+        try:
+            step1_collect()
+        finally:
+            release_resource(POOL_RESOURCE)
     if 2 in steps:
         step2_joint_bc()
     verdict = None

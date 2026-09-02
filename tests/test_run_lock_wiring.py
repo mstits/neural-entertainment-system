@@ -230,3 +230,113 @@ def test_merge_main_holds_real_lock_and_refuses_second_run(tmp_path, monkeypatch
     assert "is locked by live PID" in str(second.value)
 
     release(lock)
+
+
+# ---------------------------------------------------------------------------
+# The shared "emulator-pool" resource lock (src/utils/run_lock.
+# acquire_resource): unlike the per-`--out` locks above, this one is keyed
+# by a NAME shared across scripts, not a path any one of them owns — it
+# guards the physical emulator pool itself, which collect_substrate_pairs.
+# py, interference_falsifier.py, eval_shared_substrate.py, and
+# go_explore_solve.py can each step from an unrelated --out. Real
+# end-to-end + revert-verify coverage for eval_shared_substrate.run()
+# lives in tests/test_eval_shared_substrate.py (cheap: no ROM needed,
+# full cfg redirection). The checks below are the remaining piece: every
+# wired script names the SAME resource string (a typo in any one of them
+# would silently defeat the cross-script guard, undetectably from any
+# single script's own tests) and actually calls acquire_resource at its
+# real call site.
+# ---------------------------------------------------------------------------
+
+import scripts.collect_substrate_pairs as collect_substrate_pairs  # noqa: E402
+import scripts.eval_shared_substrate as eval_shared_substrate  # noqa: E402
+import scripts.interference_falsifier as interference_falsifier  # noqa: E402
+import scripts.go_explore_solve as go_explore_solve  # noqa: E402
+
+POOL_RESOURCE_WRITERS = [
+    ("collect_substrate_pairs", collect_substrate_pairs, "emulator-pool"),
+    ("interference_falsifier", interference_falsifier, "emulator-pool"),
+    ("eval_shared_substrate", eval_shared_substrate, "emulator-pool"),
+]
+
+
+@pytest.mark.parametrize("label,mod,expected", POOL_RESOURCE_WRITERS,
+                        ids=[w[0] for w in POOL_RESOURCE_WRITERS])
+def test_pool_resource_writer_names_the_shared_resource(label, mod, expected):
+    """A typo'd resource name (e.g. "emulator_pool" or "emulator-poool")
+    would compile, import, and pass every OTHER test in that script's own
+    file — it only fails here, where all four names are compared."""
+    assert mod.POOL_RESOURCE == expected
+
+
+def test_go_explore_solve_names_the_shared_resource():
+    # go_explore_solve.py uses a leading-underscore module constant (it
+    # already had a public `POOL_RESOURCE`-shaped name collision risk
+    # with none of its exports, so this one is private like its other
+    # `_acquire_run_lock`-style internals).
+    assert go_explore_solve._POOL_RESOURCE == "emulator-pool"
+
+
+def test_collect_substrate_pairs_main_acquires_the_pool_resource_lock():
+    import inspect
+    src = inspect.getsource(collect_substrate_pairs.main)
+    assert "acquire_resource(POOL_RESOURCE" in src
+    assert "release_resource(POOL_RESOURCE" in src
+
+
+def test_interference_falsifier_run_acquires_the_pool_resource_lock():
+    import inspect
+    src = inspect.getsource(interference_falsifier.run)
+    assert "acquire_resource(POOL_RESOURCE" in src
+    assert "release_resource(POOL_RESOURCE" in src
+
+
+def test_go_explore_solve_init_acquires_the_pool_resource_lock():
+    import inspect
+    src = inspect.getsource(go_explore_solve.Solver.__init__)
+    assert "_acquire_pool_resource_lock(_POOL_RESOURCE" in src
+    assert "_release_pool_resource_lock(_POOL_RESOURCE" in src
+    # Acquired strictly before Pool(...) exists, same discipline as the
+    # --out lock it sits beside.
+    assert src.index("_acquire_pool_resource_lock(") < src.index("Pool(")
+
+
+def test_collect_substrate_pairs_docstring_references_the_lock_not_prose():
+    """The module docstring used to say, in prose, 'the operator gate is
+    upstream — do not run while anything else steps the pool'. That's
+    now an enforced call, not an instruction to a human; the docstring
+    should point at it instead of repeating the old prose."""
+    doc = collect_substrate_pairs.__doc__
+    assert "acquire_resource" in doc
+    assert "operator gate is upstream" not in doc
+
+
+def test_solver_init_holds_real_pool_resource_lock_and_refuses_second(
+        tmp_path, monkeypatch):
+    """Real end-to-end: pre-acquire the resource lock exactly as another
+    writer would (a different --out, same shared resource name), then
+    construct a Solver against a DIFFERENT --out with a REAL constructible
+    profile (configs/1942.yaml — make_game() never touches a ROM, per
+    tests/test_solve_profiles_construct.py, so this needs no game asset
+    and stays cheap). The path lock above can't be what refuses this —
+    --out differs — so a refusal here can only be the pool resource lock,
+    caught strictly before Pool(...) would ever open the ROM."""
+    from types import SimpleNamespace
+
+    import src.utils.run_lock as run_lock
+
+    monkeypatch.setattr(run_lock, "_RESOURCE_LOCK_DIR", tmp_path / "locks")
+    held = run_lock.acquire_resource("emulator-pool", extra="other-writer")
+    assert held is None, "precondition: this test must hold the lock first"
+
+    out_dir = tmp_path / "solve_out"
+    fake_args = SimpleNamespace(out=str(out_dir), root_state="fake.state",
+                               profile="configs/1942.yaml")
+    try:
+        with pytest.raises(SystemExit) as excinfo:
+            go_explore_solve.Solver(fake_args)
+        assert "emulator-pool is locked by live PID" in str(excinfo.value)
+        assert str(os.getpid()) in str(excinfo.value)
+    finally:
+        run_lock.release_resource("emulator-pool")
+    release(solver_lock_path(out_dir))

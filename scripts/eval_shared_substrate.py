@@ -110,6 +110,11 @@ from scripts.interference_falsifier import (  # noqa: E402
     binom_p_at_least, binom_p_at_most,
 )
 from scripts.run_online_campaign import _append_jsonl, _load_yaml  # noqa: E402
+from src.utils.run_lock import (  # noqa: E402
+    acquire_resource, release_resource,
+)
+
+POOL_RESOURCE = "emulator-pool"
 
 # ---------------------------------------------------------------------------
 # CONFIG -- every threshold this harness runs on. Mirrored verbatim into
@@ -828,26 +833,37 @@ def run(
     """The real evaluation: one eval_game.py leg per level per seed
     against the exported shared-substrate head, scored against the
     banked baseline. STEPS THE EMULATOR (via eval_game.py subprocesses)
-    -- never call this while another campaign holds the pool. `run_eval`
-    is the test injection point; production leaves it None."""
+    -- never call this while another campaign holds the pool; enforced
+    by the shared "emulator-pool" resource lock
+    (src/utils/run_lock.acquire_resource) held for the whole call.
+    `run_eval` is the test injection point; production leaves it None."""
     cfg = cfg or CONFIG
-    checkpoint_dir = Path(checkpoint_dir or cfg["default_checkpoint_dir"])
-    level_deltas = []
-    for level in cfg["levels"]:
-        head_ckpt = head_checkpoint_path(level, checkpoint_dir, cfg)
-        leg = run_level_leg(level, checkpoint=head_ckpt, cfg=cfg,
-                            run_eval=run_eval)
-        _append_jsonl(REPO / cfg["receipt_log"], {"type": "leg", **leg})
-        level_deltas.append(level_delta(level, leg, cfg))
+    holder = acquire_resource(POOL_RESOURCE, extra="eval_shared_substrate")
+    if holder is not None:
+        print(f"[eval_shared_substrate] {POOL_RESOURCE} lock held by live "
+              f"PID {holder.pid} — refusing to step the pool while "
+              "another writer holds it.", flush=True)
+        return 75
+    try:
+        checkpoint_dir = Path(checkpoint_dir or cfg["default_checkpoint_dir"])
+        level_deltas = []
+        for level in cfg["levels"]:
+            head_ckpt = head_checkpoint_path(level, checkpoint_dir, cfg)
+            leg = run_level_leg(level, checkpoint=head_ckpt, cfg=cfg,
+                                run_eval=run_eval)
+            _append_jsonl(REPO / cfg["receipt_log"], {"type": "leg", **leg})
+            level_deltas.append(level_delta(level, leg, cfg))
 
-    manifest = build_manifest(cfg, level_deltas=level_deltas)
-    write_manifest(REPO / cfg["manifest_out"], manifest)
-    _append_jsonl(REPO / cfg["receipt_log"],
-                 {"type": "verdict", **manifest["verdict"]})
+        manifest = build_manifest(cfg, level_deltas=level_deltas)
+        write_manifest(REPO / cfg["manifest_out"], manifest)
+        _append_jsonl(REPO / cfg["receipt_log"],
+                     {"type": "verdict", **manifest["verdict"]})
 
-    print(format_verdict_table(level_deltas, manifest["verdict"], cfg),
-          flush=True)
-    return 0 if manifest["verdict"]["verdict"] != "UNUSABLE" else 1
+        print(format_verdict_table(level_deltas, manifest["verdict"], cfg),
+              flush=True)
+        return 0 if manifest["verdict"]["verdict"] != "UNUSABLE" else 1
+    finally:
+        release_resource(POOL_RESOURCE)
 
 
 def main() -> int:

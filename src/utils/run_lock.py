@@ -155,6 +155,41 @@ def release(path: Path) -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# Named-resource locks: same fingerprint/stale-reclaim semantics as the
+# per-output-dir lock above, but keyed by a shared RESOURCE name rather than
+# a path any one script owns. A path-based `.run.lock` stops two instances
+# of the SAME script from colliding on the SAME --out; it says nothing about
+# a different script that touches the same physical resource through a
+# different --out. The emulator pool is exactly that resource: multiple
+# writers (collect_substrate_pairs.py, interference_falsifier.py,
+# eval_shared_substrate.py, go_explore_solve.py) step it from unrelated
+# output paths, and only one can hold it at a time.
+_RESOURCE_LOCK_DIR = Path(__file__).resolve().parents[2] / "runs" / ".locks"
+
+
+def _resource_lock_path(name: str) -> Path:
+    return _RESOURCE_LOCK_DIR / f"{name}.lock"
+
+
+def acquire_resource(name: str, extra: str = "") -> Optional[LockHolder]:
+    """Try to take the named-resource lock (e.g. "emulator-pool").
+
+    Same contract as `acquire`: None on success, or the live holder that
+    refused us. The lockfile lives under a fixed repo-relative location
+    (`runs/.locks/<name>.lock`), not under any caller's own --out, so
+    unrelated scripts stepping the same resource see each other.
+    """
+    path = _resource_lock_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return acquire(path, extra=extra)
+
+
+def release_resource(name: str) -> None:
+    """Release the named-resource lock. Never raises."""
+    release(_resource_lock_path(name))
+
+
 def main(argv: Optional[list] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) < 3 or argv[1] != "--":

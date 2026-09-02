@@ -65,6 +65,12 @@ from src.training import interaction_basis as ib  # noqa: E402
 from src.training.go_explore import GoExploreArchive, keep_exploring  # noqa: E402
 from src.training.profile_utils import action_space_to_bitmasks  # noqa: E402
 from src.utils.run_lock import acquire as _acquire_run_lock  # noqa: E402
+from src.utils.run_lock import (  # noqa: E402
+    acquire_resource as _acquire_pool_resource_lock,
+    release_resource as _release_pool_resource_lock,
+)
+
+_POOL_RESOURCE = "emulator-pool"
 
 ROM = str(REPO / "roms/Super Mario Bros. (World).nes")
 DEATH_STATES = (6, 11)  # RAM $000E player-state: dying / death-pit
@@ -3719,6 +3725,24 @@ class Solver:
         # exists so a bad name fails before any work is done.
         self.hw_flags = resolve_hw_flags(profile, getattr(args, "hw_flags", None))
         self.frame_skip = int(profile.get("frame_skip", 4))
+        # Shared "emulator-pool" resource lock: the --out lock above stops
+        # two solvers on the SAME --out from colliding; it says nothing
+        # about a different writer (collect_substrate_pairs.py,
+        # interference_falsifier.py, eval_shared_substrate.py) stepping
+        # the physical pool from an unrelated --out at the same time. See
+        # src/utils/run_lock.py. Acquired here, right before the pool
+        # actually exists (so a bad profile/ROM still fails before any
+        # pool contention check), and held for the process lifetime — no
+        # self.pool.shutdown() call exists in this script, the pool lives
+        # until process exit, so the resource lock does too.
+        _pool_holder = _acquire_pool_resource_lock(_POOL_RESOURCE,
+                                                    extra=str(self.out))
+        if _pool_holder is not None:
+            raise SystemExit(
+                f"[go_explore_solve] {_POOL_RESOURCE} is locked by live "
+                f"PID {_pool_holder.pid} — refusing to step the emulator "
+                "pool while another writer holds it.")
+        atexit.register(lambda: _release_pool_resource_lock(_POOL_RESOURCE))
         self.pool = Pool(rom_path=self.game.rom, num_workers=args.workers,
                          frame_skip=self.frame_skip)
         # MUST precede reset_all() — see apply_hw_flags' docstring.

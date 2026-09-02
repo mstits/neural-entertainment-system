@@ -21,8 +21,9 @@ JSON carrying the plan, the kept/total counts, and the npz sha256 at
 write time (the addendum's SHAs-recorded-at-write-time requirement).
 
 A `.run.lock` (src/utils/run_lock) guards against a duplicate
-collection; the operator gate is upstream — do not run while anything
-else steps the pool.
+collection; the shared "emulator-pool" resource lock
+(`src/utils/run_lock.acquire_resource`) guards against any OTHER
+writer stepping the pool at the same time — see that module.
 """
 from __future__ import annotations
 
@@ -48,10 +49,16 @@ from scripts.interference_falsifier import (  # noqa: E402
     success_pairs_from_episodes,
     write_success_pairs,
 )
-from src.utils.run_lock import acquire, release  # noqa: E402
+from src.utils.run_lock import (  # noqa: E402
+    acquire,
+    acquire_resource,
+    release,
+    release_resource,
+)
 
 LEVELS = ("1-3", "1-4")
 OUT_DIR = REPO / "runs" / "substrate_pairs"
+POOL_RESOURCE = "emulator-pool"
 
 
 def build_plan(level: str) -> dict:
@@ -155,8 +162,18 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 75
     try:
-        for p in plans:
-            collect_level(p)
+        pool_holder = acquire_resource(POOL_RESOURCE,
+                                       extra="collect_substrate_pairs")
+        if pool_holder is not None:
+            print(f"[collect_substrate_pairs] {POOL_RESOURCE} lock held "
+                  f"by live PID {pool_holder.pid} — refusing to step the "
+                  "pool while another writer holds it.", file=sys.stderr)
+            return 75
+        try:
+            for p in plans:
+                collect_level(p)
+        finally:
+            release_resource(POOL_RESOURCE)
     finally:
         release(lock)
     return 0

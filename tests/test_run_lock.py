@@ -18,13 +18,16 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+import src.utils.run_lock as run_lock  # noqa: E402
 from src.utils.run_lock import (  # noqa: E402
     EXIT_HELD,
     acquire,
+    acquire_resource,
     lock_pid_is_live,
     pid_start_time,
     read_lock,
     release,
+    release_resource,
 )
 
 
@@ -125,3 +128,51 @@ def test_cli_usage_error_without_separator():
         cwd=REPO, capture_output=True,
     )
     assert r.returncode == 2
+
+
+# ---------------------------------------------------------------------------
+# Named-resource locks (acquire_resource/release_resource): a path lock
+# stops two instances of the SAME script colliding on the SAME --out; it
+# says nothing about a DIFFERENT script stepping the same physical
+# resource (the emulator pool) from an unrelated --out. `_RESOURCE_LOCK_DIR`
+# is monkeypatched to tmp_path in every test below so these never touch
+# the real repo's runs/.locks/ directory.
+# ---------------------------------------------------------------------------
+
+def test_acquire_resource_fresh_then_release(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_lock, "_RESOURCE_LOCK_DIR", tmp_path / "locks")
+    assert acquire_resource("emulator-pool", extra="pytest") is None
+    lock = tmp_path / "locks" / "emulator-pool.lock"
+    assert lock.exists()
+    holder = read_lock(lock)
+    assert holder.pid == os.getpid()
+    assert "pytest" in holder.raw
+    release_resource("emulator-pool")
+    assert not lock.exists()
+
+
+def test_second_acquire_resource_refuses_while_holder_lives(tmp_path,
+                                                             monkeypatch):
+    monkeypatch.setattr(run_lock, "_RESOURCE_LOCK_DIR", tmp_path / "locks")
+    assert acquire_resource("emulator-pool") is None
+    # Same process is trivially alive: a second acquire on the SAME
+    # resource name — regardless of caller, --out, or script — must
+    # refuse and name the live holder.
+    holder = acquire_resource("emulator-pool")
+    assert holder is not None and holder.pid == os.getpid()
+    release_resource("emulator-pool")
+    assert acquire_resource("emulator-pool") is None, (
+        "acquire must succeed again once the first holder released"
+    )
+    release_resource("emulator-pool")
+
+
+def test_resource_lock_is_keyed_by_name_not_a_shared_singleton(tmp_path,
+                                                                monkeypatch):
+    """Two DIFFERENT resource names must not contend with each other —
+    only same-name callers do."""
+    monkeypatch.setattr(run_lock, "_RESOURCE_LOCK_DIR", tmp_path / "locks")
+    assert acquire_resource("emulator-pool") is None
+    assert acquire_resource("some-other-resource") is None
+    release_resource("emulator-pool")
+    release_resource("some-other-resource")

@@ -724,30 +724,105 @@ def test_run_returns_nonzero_on_unusable(tmp_path, monkeypatch):
     assert manifest["verdict"]["verdict"] == "UNUSABLE"
 
 
-def test_run_never_invokes_a_real_subprocess(tmp_path):
+def test_run_never_invokes_a_real_subprocess(tmp_path, monkeypatch):
     """Structural guarantee that run() with an injected run_eval touches
-    subprocess.run zero times -- the emulator-safety property this
-    entire test module depends on."""
+    subprocess.run zero times for anything but the resource lock's own
+    `ps` fingerprint check -- the emulator-safety property this entire
+    test module depends on. `subprocess.run` is a single shared module
+    object (mod.subprocess IS sys.modules['subprocess']), so patching it
+    here also intercepts src/utils/run_lock.py's `ps -o lstart=` call
+    made by acquire_resource()/release_resource() inside run() -- that
+    call is unrelated to stepping the emulator and must pass through;
+    anything else (in particular an eval_game.py invocation) must not."""
+    import src.utils.run_lock as run_lock
     import scripts.eval_shared_substrate as mod
+
+    monkeypatch.setattr(run_lock, "_RESOURCE_LOCK_DIR", tmp_path / "locks")
 
     calls = []
     real_subprocess_run = mod.subprocess.run
 
-    def poison(*a, **kw):
+    def guard(*a, **kw):
         calls.append((a, kw))
+        if a and a[0] and a[0][0] == "ps":
+            return real_subprocess_run(*a, **kw)
         raise AssertionError("subprocess.run must not be called when "
-                             "run_eval is injected")
+                             "run_eval is injected (except the lock's "
+                             "own `ps` fingerprint check)")
 
     cfg = {**CONFIG,
           "receipt_log": str(tmp_path / "eval.jsonl"),
           "manifest_out": str(tmp_path / "manifest.json")}
-    mod.subprocess.run = poison
+    mod.subprocess.run = guard
     try:
         run(cfg, checkpoint_dir="/fake/dir",
             run_eval=lambda cmd: _eval_json(n=50, clear_rate=0.5))
     finally:
         mod.subprocess.run = real_subprocess_run
-    assert calls == []
+    assert calls, "acquire_resource's ps fingerprint call must have run"
+    assert all(a[0][0] == "ps" for a, _ in calls), (
+        "every subprocess.run call inside run() must be the lock's own "
+        "`ps` check, never an eval_game.py rollout"
+    )
+
+
+# ---- shared "emulator-pool" resource lock (src/utils/run_lock) -----------
+#
+# run() steps the emulator (via eval_game.py subprocesses, or here an
+# injected run_eval standing in for that). The path-based lock elsewhere
+# in this house stops two instances of the SAME script colliding on the
+# SAME --out; it says nothing about scripts/collect_substrate_pairs.py,
+# scripts/interference_falsifier.py, or scripts/go_explore_solve.py
+# stepping the same physical pool from an unrelated --out at the same
+# time. `_RESOURCE_LOCK_DIR` is monkeypatched to tmp_path so this never
+# touches the real repo's runs/.locks/ directory or contends with a real
+# concurrent run.
+
+
+def test_run_refuses_when_the_pool_resource_lock_is_held(tmp_path,
+                                                          monkeypatch):
+    import src.utils.run_lock as run_lock
+
+    monkeypatch.setattr(run_lock, "_RESOURCE_LOCK_DIR", tmp_path / "locks")
+    monkeypatch.chdir(ROOT)
+    cfg = {**CONFIG,
+          "receipt_log": str(tmp_path / "eval.jsonl"),
+          "manifest_out": str(tmp_path / "manifest.json")}
+
+    holder = run_lock.acquire_resource("emulator-pool", extra="other-writer")
+    assert holder is None, "precondition: this test must hold the lock first"
+    try:
+        code = run(cfg, checkpoint_dir=str(tmp_path / "heads"),
+                  run_eval=lambda cmd: pytest.fail(
+                      "run() must never step the pool while the "
+                      "emulator-pool resource lock is held by another "
+                      "writer"))
+        assert code == 75
+        assert not (tmp_path / "manifest.json").exists(), (
+            "a refused run must not write a manifest"
+        )
+    finally:
+        run_lock.release_resource("emulator-pool")
+
+    # Lock released: the same call now proceeds normally.
+    code = run(cfg, checkpoint_dir=str(tmp_path / "heads"),
+              run_eval=lambda cmd: _eval_json(n=50, clear_rate=0.9))
+    assert code == 0
+
+
+def test_eval_shared_substrate_source_acquires_the_pool_resource_lock():
+    """Ties the refusal behavior above to the REAL run() body: a
+    regression that deletes the acquire_resource call would make the
+    live test above pass for the wrong reason (e.g. a stray early
+    return) without this static check catching the missing wiring."""
+    import inspect
+
+    import scripts.eval_shared_substrate as mod
+
+    src = inspect.getsource(mod.run)
+    assert "acquire_resource(POOL_RESOURCE" in src
+    assert "release_resource(POOL_RESOURCE" in src
+    assert mod.POOL_RESOURCE == "emulator-pool"
 
 
 # ---- --dry-run subprocess (live; config parse + checkpoint load only) ----
