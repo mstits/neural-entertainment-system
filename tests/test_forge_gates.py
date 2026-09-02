@@ -15,8 +15,9 @@ scanner's exact `passed = not X` / `len(X) == 0` shape cannot land
 without a registered positive/negative pair here.
 
 Grows across pieces (a)-(f); tonight it carries the two entries piece
-(a) contributes (archive_verdict, campaign_verdict) plus the one entry
-piece (f) contributes (wrongful_reset).
+(a) contributes (archive_verdict, campaign_verdict), the one entry
+piece (f) contributes (wrongful_reset), and the one entry piece (d)
+contributes (forge_gate).
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.anti_vacuity_scan import scan_repo  # noqa: E402
 from src.forge.block import wrongful_reset  # noqa: E402
+from src.forge.loop import forge_gate  # noqa: E402
 from src.forge.stall import archive_verdict, campaign_verdict  # noqa: E402
 
 #: Scratch dir for the positive/negative fixtures below. A tempdir
@@ -106,6 +108,50 @@ def _wrongful_reset_negative() -> dict:
     return wrongful_reset({"cells": 100}, {"cells": 150})
 
 
+def _forge_gate_positive() -> dict:
+    """FIRED (n_obs>0) with the pilot metric clearing the pre-
+    registered threshold over a matched control -> MECHANISM_VALIDATED.
+    Depends on the real forge_gate three-stage logic, not a hardcoded
+    answer -- see tests/test_forge_loop.py's own revert-verify of the
+    same function."""
+    proposal = {"gate": {"stage2": {"metric": "ortho_cols_improved",
+                                     "threshold": 8, "vs": "matched_control"}}}
+    pilot = {"n_obs": 5, "metric_value": 18, "stage3_true": False}
+    control = {"n_obs": 5, "metric_value": 10, "stage3_true": False}
+    return forge_gate(proposal, pilot, control)
+
+
+def _forge_gate_negative() -> dict:
+    """The null candidate: knob at the arm's off_value, so the
+    activity counter reads INERT (n_obs==0) -> VOID, stage 2 never
+    runs."""
+    proposal = {"gate": {"stage2": {"metric": "ortho_cols_improved",
+                                     "threshold": 8, "vs": "matched_control"}}}
+    pilot = {"n_obs": 0, "metric_value": 0, "stage3_true": False}
+    control = {"n_obs": 0, "metric_value": 0, "stage3_true": False}
+    return forge_gate(proposal, pilot, control)
+
+
+def _forge_gate_stage1_inert_positive() -> dict:
+    """Same INERT reading as ``_forge_gate_negative`` above, keyed on
+    ``stage1`` directly rather than ``verdict``: an INERT counter must
+    report ``stage1 == "VOID"`` specifically, not merely "some verdict
+    that happens not to equal MECHANISM_VALIDATED". A gate that skips
+    stage 1 entirely and falls through to the stage-2 comparison would
+    (with this INERT reading's metric_value=0 on both sides) report
+    ``stage2 == "MECHANISM_FAIL"`` -- a ``verdict`` that also is not
+    ``"MECHANISM_VALIDATED"``, so the ``verdict``-keyed entry above
+    cannot see that regression; this ``stage1``-keyed entry can."""
+    return _forge_gate_negative()
+
+
+def _forge_gate_stage1_armed_negative() -> dict:
+    """A FIRED reading (n_obs>0) -> ``stage1 == "ARMED"``, never
+    ``"VOID"`` -- the polarity partner ``_forge_gate_stage1_inert_
+    positive`` needs so this entry can fail as well as pass."""
+    return _forge_gate_positive()
+
+
 #: (file, func) -> (verdict key, target value, positive case, negative case).
 #: `positive()[key] == target` and `negative()[key] != target` must both
 #: hold, proven fresh on every run (test_forge_registry_entries_report_
@@ -118,6 +164,19 @@ FORGE_REGISTRY = {
         "verdict", "STALLED", _campaign_verdict_positive, _campaign_verdict_negative),
     ("src/forge/block.py", "wrongful_reset"): (
         "reason", "cells_decreased", _wrongful_reset_positive, _wrongful_reset_negative),
+    ("src/forge/loop.py", "forge_gate"): (
+        "verdict", "MECHANISM_VALIDATED", _forge_gate_positive, _forge_gate_negative),
+    # Registered separately from the entry above because a corruption
+    # that skips stage 1 (falls through straight to the stage-2
+    # comparison) still reports a `verdict` other than
+    # MECHANISM_VALIDATED on the INERT fixture (MECHANISM_FAIL, from
+    # comparing metric_value 0 to 0) -- the entry above cannot observe
+    # that regression. Keying on `stage1` directly can: stage 1 must
+    # read VOID on an INERT counter and ARMED on a FIRED one, in
+    # either order of implementation.
+    ("src/forge/loop.py", "forge_gate.stage1"): (
+        "stage1", "VOID", _forge_gate_stage1_inert_positive,
+        _forge_gate_stage1_armed_negative),
 }
 
 
