@@ -1,12 +1,12 @@
 # MISTAKES
 
-Evidence log. Newest first. Not meant to be reloaded each session — this is the
+Evidence log. Newest first. Not meant to be reloaded each session: this is the
 archive the enforced rules in the project instruction file get audited against.
 
 Rules below are **drafts, not enforced.** A root cause graduates to an enforced
 one-line invariant only after recurring across 4–5 separate entries.
 
-**Graduation watch** — DERIVED, not hand-maintained. Verify with
+**Graduation watch**: DERIVED, not hand-maintained. Verify with
 `.venv/bin/python scripts/mistakes_tally.py`; `--check` fails on drift.
 
 | root cause | entries | deterministic enforcement |
