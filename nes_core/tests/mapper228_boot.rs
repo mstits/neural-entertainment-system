@@ -13,6 +13,12 @@
 //! already used by `tests/zelda_real_rom.rs`, `tests/apu_muted_skip_parity.rs`
 //! and `tests/ppu_shadow_oracle.rs` in this crate: these tests must be able
 //! to run clean on a checkout without the (git-ignored) ROM library.
+//!
+//! Execution path: the four ROM-backed pins below run on the interpreter
+//! plus Rust bulk-step path, on every feature set, because `load()` sets
+//! `disable_asm_cpu`. See the note on `load()`. The ASM CPU core gets its
+//! own coverage in the `asm_path` module at the bottom of this file, which
+//! runs with that core live and pins what it does.
 
 use nes_core::cartridge::Cartridge;
 use nes_core::mapper::Mapper;
@@ -33,10 +39,31 @@ impl AudioSink for NullAudio {
     }
 }
 
+/// Loads a ROM onto a machine pinned to ONE execution path.
+///
+/// `disable_asm_cpu` is set for the same reason `nes.rs`'s own
+/// `routing_on_equals_off_asm_disabled` and `nmi_subcycle_inert_without_nmi_edges`
+/// unit tests set it: under `--features asm_cpu` on aarch64, `Nes::step` runs
+/// a batch of instructions through the assembly core per call, so a caller
+/// that samples `cpu.regs.pc` between `step()` calls sees a coarser sequence
+/// than the interpreter emits, and the batched cycle accounting shifts the
+/// rendered frame sequence. Neither is what these four tests are about: they
+/// pin mapper 228's power-on PRG mode and chip-select decode (the DO-38 boot
+/// fix), which is CPU-core independent. Pinning the path keeps all four tests
+/// running and asserting under both feature sets instead of skipping under one.
+///
+/// The ASM core is not left uncovered for this mapper. `asm_path` at the
+/// bottom of this file runs the same two ROMs with the core live.
+///
+/// Corruption that must fail two tests here: delete the `disable_asm_cpu`
+/// line and build with `--features asm_cpu`. That is the DO-45 defect, and
+/// it is exactly what HEAD does before this change.
 fn load(path: &str) -> Option<Nes> {
     let f = File::open(path).ok()?;
     let cart = Cartridge::load(&mut BufReader::new(f)).ok()?;
-    Some(Nes::new(cart))
+    let mut nes = Nes::new(cart);
+    nes.disable_asm_cpu = true;
+    Some(nes)
 }
 
 /// Step one frame, returning an FNV-1a hash of the XRGB8888 framebuffer.
@@ -330,4 +357,127 @@ fn action52_menu_boots_by_frame_38_with_visible_animation() {
         "menu must render more than 5 distinct frames in the first 300 (got {})",
         distinct_first_300.len()
     );
+}
+
+/// Coverage for the AArch64 assembly CPU core on the two mapper 228 ROMs.
+///
+/// The four pins above run with that core switched off so they stay stable
+/// across feature sets. These two run with it on, so a change to the ASM
+/// core that alters how Action 52 or Cheetahmen II boots is caught here and
+/// named as an ASM-path change, rather than surfacing as a mapper pin
+/// breaking under one feature flag (which is what DO-45 recorded at
+/// `df33765`: `tests/mapper228_boot.rs` failed 2 of 5 under
+/// `--features asm_cpu`).
+#[cfg(all(target_arch = "aarch64", feature = "asm_cpu"))]
+mod asm_path {
+    use super::{sha1_hex, step_frame_hash, ACTION52, CHEETAHMEN2};
+    use nes_core::cartridge::Cartridge;
+    use nes_core::nes::Nes;
+    use std::fs::File;
+    use std::io::BufReader;
+
+    /// Same as the outer `load`, minus the `disable_asm_cpu` line: the ASM
+    /// core stays live (its default is `false`).
+    fn load_asm(path: &str) -> Option<Nes> {
+        let f = File::open(path).ok()?;
+        let cart = Cartridge::load(&mut BufReader::new(f)).ok()?;
+        let nes = Nes::new(cart);
+        assert!(!nes.disable_asm_cpu, "asm_path tests require the ASM CPU core live");
+        Some(nes)
+    }
+
+    /// (5) Every mapper-level fact the DO-38 fix established for Action 52
+    /// holds with the ASM core live: the machine powers on at the reset
+    /// vector in the odd bank, the menu's ready flag at `$0390` goes
+    /// non-zero on the same frame, and the menu animates. Only the
+    /// instruction-boundary sampling granularity differs from the
+    /// interpreter, so this asserts the boot PC and the boot timing, not a
+    /// PC sequence.
+    ///
+    /// Corruption that must fail this test: `prg_mode_32k: false` in
+    /// `Mapper228::new()`, the same constructor default test (1) guards.
+    /// The boot PC becomes $8016 and `$0390` never goes non-zero.
+    #[test]
+    fn action52_boot_pc_and_menu_timing_with_asm_core_live() {
+        let Some(mut nes) = load_asm(ACTION52) else {
+            eprintln!("skipping: {} not present", ACTION52);
+            return;
+        };
+
+        assert_eq!(
+            nes.get_state().cpu.regs.pc,
+            0xFFD8,
+            "ASM-core power-on boot PC must be the reset vector $FFD8"
+        );
+
+        let mut first_390: Option<usize> = None;
+        let mut distinct_first_300: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        for f in 0..600usize {
+            let h = step_frame_hash(&mut nes);
+            if f < 300 {
+                distinct_first_300.insert(h);
+            }
+            if first_390.is_none() && nes.get_state().ram[0x0390] != 0 {
+                first_390 = Some(f);
+            }
+        }
+
+        assert_eq!(
+            first_390,
+            Some(38),
+            "$0390 must go non-zero on frame 38 with the ASM core live, as it does without it"
+        );
+        assert!(
+            distinct_first_300.len() > 5,
+            "menu must render more than 5 distinct frames in the first 300 with the ASM core live (got {})",
+            distinct_first_300.len()
+        );
+    }
+
+    /// (6) The ASM core's own Cheetahmen II 600-frame change-point digest.
+    ///
+    /// This value is NOT the one test (3) pins. The two cores render a
+    /// different frame sequence for this ROM, measured at `df33765` with the
+    /// DO-38 fix in place and no other change in the tree:
+    ///
+    /// * interpreter plus bulk-step: `7d042aa063571b2f203c10e9264bcdd6dee2bce2`
+    /// * ASM core live:              `7fd56280db2cab10c7ad5dd9796dbace1e11a83e`
+    ///
+    /// The divergence predates the DO-38 fix and is not the mapper's: it is
+    /// the batched cycle accounting in the ASM entry path, the same class of
+    /// difference the `asm_vs_slow_*` suites police for the ROMs they cover.
+    /// No `asm_vs_slow_*` suite covers mapper 228, which is why the gap was
+    /// invisible until DO-38 added pins here. This constant is a tripwire on
+    /// the ASM path, not a statement that its output is the correct one; a
+    /// change to it means the ASM core's Cheetahmen II boot moved and wants a
+    /// reason.
+    ///
+    /// Corruption that must fail this test: flip `EXPECTED_SHA1_ASM` to a
+    /// wrong value, or set `disable_asm_cpu` in `load_asm`, which makes the
+    /// run produce the interpreter digest instead.
+    #[test]
+    fn cheetahmen2_600_frame_digest_with_asm_core_live() {
+        let Some(mut nes) = load_asm(CHEETAHMEN2) else {
+            eprintln!("skipping: {} not present", CHEETAHMEN2);
+            return;
+        };
+
+        const EXPECTED_SHA1_ASM: &str = "7fd56280db2cab10c7ad5dd9796dbace1e11a83e";
+
+        let mut last: u64 = 0;
+        let mut lines = String::new();
+        for f in 0..600usize {
+            let h = step_frame_hash(&mut nes);
+            if f == 0 || h != last {
+                lines.push_str(&format!("  change@{} {:016x}\n", f, h));
+                last = h;
+            }
+        }
+
+        assert_eq!(
+            sha1_hex(lines.as_bytes()),
+            EXPECTED_SHA1_ASM,
+            "Cheetahmen II 600-frame change-point sequence on the ASM core must match its own pin"
+        );
+    }
 }
