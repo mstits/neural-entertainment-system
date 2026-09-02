@@ -1,8 +1,8 @@
-# Contributing — Neural Entertainment System (NES)
+# Contributing: Neural Entertainment System (NES)
 
 Thanks for your interest. This project is a Rust Nintendo Entertainment
-System emulator paired with a Python RL training framework — the recursion
-in the name (a NES that emulates a NES) is intentional. Contributions are welcome — bug reports, mapper
+System emulator paired with a Python RL training framework. The recursion
+in the name (a NES that emulates a NES) is intentional. Contributions are welcome: bug reports, mapper
 support, perf improvements, new reward functions, alternative trainer
 algorithms, anything.
 
@@ -63,13 +63,13 @@ ITERATIONS=10000000 INSTRS=16 ./scripts/asm_diff_fuzz_soak.sh
 ## Code style
 
 - **Rust:** rustfmt defaults (`cargo fmt`). Clippy on the hot path is a
-  guideline, not a rule — some intentional unsafety + manual SIMD lives in
+  guideline, not a rule: some intentional unsafety + manual SIMD lives in
   `cpu_asm.s`, `ppu_neon.rs`, and the rayon pool. New unsafe code should
   have a comment explaining the invariant it relies on.
 - **Python:** ruff defaults; type hints encouraged but not required.
 - **Comments:** prefer to document *why* something is the way it is, not
   *what* it does. The codebase has a lot of "this looks weird because
-  $REASON" comments — those are useful. Tutorial-grade comments aren't.
+  $REASON" comments. Those are useful. Tutorial-grade comments aren't.
 
 ## Where to file issues
 
@@ -83,7 +83,7 @@ Bug reports go in GitHub Issues. Useful context to include:
 - **Build / install:** OS version, Python version, `cargo --version`, what
   `bash scripts/install_macos.sh` printed at the failing step.
 
-Please grep `nes_core/KNOWN_ISSUES.md` before filing — known-open issues
+Please grep `nes_core/KNOWN_ISSUES.md` before filing: known-open issues
 already have diagnosis notes.
 
 ## Adding a mapper
@@ -100,7 +100,7 @@ already have diagnosis notes.
 
 ## Adding a reward function
 
-1. Implement in `nes_core/src/rewards.rs` (look at `MarioReward` —
+1. Implement in `nes_core/src/rewards.rs` (look at `MarioReward`, where
    `visited_x_max` is a useful pattern for any "reach the end" task).
 2. Add a unit test under `#[cfg(test)] mod tests`.
 3. Wire into the `Reward` enum + `build_reward` factory.
@@ -110,7 +110,7 @@ already have diagnosis notes.
 
 Small focused PRs are easier to review and bisect. If your change spans
 multiple concerns (mapper + reward + GUI), prefer to split into separate
-commits — even within one PR — so the change story reads cleanly in
+commits, even within one PR, so the change story reads cleanly in
 `git log`.
 
 The README's perf claims are measured numbers, not aspirations. If your

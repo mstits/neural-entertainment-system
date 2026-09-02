@@ -94,14 +94,14 @@ repeat:
     real_rollout(n_steps=50_000)
 
     # 2. Train world model on the replay buffer for K gradient steps.
-    #    Dense supervised learning — this is where Metal/MPS earns its
+    #    Dense supervised learning. This is where Metal/MPS earns its
     #    keep. All three heads train simultaneously.
     train_world_model(steps=200_000, batch=64, seq_len=16)
 
     # 3. Imagine trajectories FROM replay starting states using the
     #    current world model + actor, for horizon H=15. Use those
     #    imagined trajectories to train actor + critic via PPO.
-    #    This is the 1000× step — no emulation, pure GPU.
+    #    This is the 1000× step: no emulation, pure GPU.
     imagined_updates(batch=128, horizon=15, updates=100_000)
 ```
 
@@ -111,22 +111,22 @@ from drifting.
 
 ## Milestones
 
-### M0 — Baseline reproducibility (1 week)
+### M0: Baseline reproducibility (1 week)
 * Fork `dreamerv3-torch` (Jansen et al., reference PyTorch impl).
 * Run the default Atari recipe on Breakout via gym-retro. Verify we hit
   published scores on our hardware. Proves the pipeline works.
 * Output: scripts/world_model/baseline_atari.py
 
-### M1 — NES ROM adapter (1 week)
+### M1: NES ROM adapter (1 week)
 * Wire our existing `NESEnvironment` / `FrameTransport` as the rollout
   collector. Extend replay buffer to store 2 KB RAM alongside pixels.
 * Train world model on 1 hour of random-policy Zelda rollouts. Visualize
-  decoded reconstructions vs. real frames — by eye it should look like
+  decoded reconstructions vs. real frames. By eye it should look like
   Zelda's overworld after ~50k gradient steps.
 * Output: tensorboard logs showing reconstruction loss curves + side-by-
   side decoder-vs-real frame videos.
 
-### M2 — Policy training in imagination (2 weeks)
+### M2: Policy training in imagination (2 weeks)
 * Turn on actor/critic heads. Imagine trajectories, train PPO inside them.
 * Validate: every 10k imagined updates, run the actor for 1k real steps
   and log cumulative reward. The key signal is **real-env reward climbing
@@ -134,7 +134,7 @@ from drifting.
 * Output: plot of "real-env reward per hour of wall-clock training,"
   compared against our current real-only training baseline.
 
-### M3 — Ablations + paper-quality results (2 weeks)
+### M3: Ablations + paper-quality results (2 weeks)
 * Ablate RAM-aux loss (how much does it help?).
 * Ablate discrete vs. continuous latents.
 * Ablate imagination horizon (5 vs. 15 vs. 50).
@@ -149,7 +149,7 @@ from drifting.
 | Risk | Mitigation |
 |---|---|
 | World model diverges on long horizons | Use DreamerV3's two-hot symlog reward head + free-bits KL; these are the specific tricks that fixed divergence in the paper. If still unstable, shorten imagination horizon (proven fallback). |
-| NES graphics are too structured — the model memorizes rather than learns dynamics | Strong data augmentation (random cropping, color jitter) on encoder input. Force generalization. |
+| NES graphics are too structured: the model memorizes rather than learns dynamics | Strong data augmentation (random cropping, color jitter) on encoder input. Force generalization. |
 | Zelda's long-horizon rewards (dungeon completion) are harder than Atari | Start with reward shaping we already have (exploration + item pickup + enemy kill), graduate to sparse reward once dense training converges. |
 | World model reconstruction looks great but policy performs worse than our GA baseline | That's a real negative result and worth publishing too. Ablation findings alone (what helps / what doesn't on NES) are publishable. |
 | Hardware can't hold batch size 64 × seq 16 × 3×84×84 in unified memory | Tested ceiling on M3 Max 128 GB is roughly batch=128 for this shape; we're well under. M1 Pro 32 GB needs batch=32. |
@@ -157,12 +157,12 @@ from drifting.
 ## Why now
 
 * DreamerV3 (2024) proved one recipe generalizes across dozens of envs
-  without per-env tuning — removes the "RL is fragile art, not science"
+  without per-env tuning. That removes the "RL is fragile art, not science"
   objection that kept this kind of work gated at big labs.
 * MPS support in PyTorch 2.2+ is stable enough for long-running training.
   All the flaky MPS bugs of 2023 are gone.
 * Apple silicon unified memory makes the batch=128 × seq=16 replay
-  fetches trivially cheap — no PCIe bottleneck.
+  fetches trivially cheap: no PCIe bottleneck.
 * The existing NES scaffolding (transport, profiles, reward funcs,
   checkpoint management, replay viewer, metrics) drops in as-is. We are
   not starting from zero; we are swapping one optimizer (genetic
@@ -204,13 +204,13 @@ tests/world_model/
 
 ## Appendix: prior art we stand on
 
-* **Dreamer v3** — Hafner et al. 2024. The recipe we follow almost verbatim.
-* **DayDreamer** — Wu et al. 2022. World-model RL on real robots; shows
+* **Dreamer v3** (Hafner et al. 2024). The recipe we follow almost verbatim.
+* **DayDreamer** (Wu et al. 2022). World-model RL on real robots; shows
   the imagination-training paradigm scales beyond pixel games.
-* **MuZero** — Schrittwieser et al. 2020. Not exactly a world model but
+* **MuZero** (Schrittwieser et al. 2020). Not exactly a world model but
   the "learned dynamics + planning" framing is closely related.
-* **PlaNet** — Hafner et al. 2019. The direct ancestor of Dreamer.
-* **TransDreamer** — Chen et al. 2022. Transformer-based dynamics; may
+* **PlaNet** (Hafner et al. 2019). The direct ancestor of Dreamer.
+* **TransDreamer** (Chen et al. 2022). Transformer-based dynamics; may
   replace the RSSM GRU if convergence is slow.
 
 All of these shipped with open-source reference code. We are not

@@ -342,7 +342,7 @@ variants ship for empirical comparison:
 
 The two trainer classes (PPO+GA and Dreamer) coexist; profiles pick one via
 `training_mode`. The two encoder paths coexist; profiles pick one via
-`reinforce.encoder`. Both selections are independent — Dreamer can run on
+`reinforce.encoder`. Both selections are independent: Dreamer can run on
 pixels, PPO+GA can run on tiles, and the GUI dropdown can override either at
 launch time.
 
@@ -538,7 +538,7 @@ Per iteration:
    transition byte) AND `smb_pending_capture is None` (first detection
    wins per stage), snapshot that worker's state via
    `pool.save_worker_state(i)`. The first-detection-only gate is
-   critical — without it the variable gets overwritten each step and
+   critical: without it the variable gets overwritten each step, and
    the saved state ends up being Mario's mid-level death position
    instead of level-entry spawn.
 4. **Bootstrap V(s_T)** from the final observation per env.
@@ -604,7 +604,7 @@ Why each gate matters:
 The corresponding Rust dep: `pool.load_worker_state` MUST reset
 `w.frame_cycle_target = None` after `apply_state`, else the cached
 cycle target from before load is below the loaded state's `nes.cycles`
-and `advance_one_frame`'s while loops skip — NES never ticks, PPU
+and `advance_one_frame`'s while loops skip: NES never ticks, PPU
 never re-renders the loaded state, screen freezes. Fixed in
 `nes_core/src/pool.rs` 2026-05-14.
 
@@ -616,7 +616,7 @@ buffer (FIFO, capped at `bc_replay_max_buffer`). BC replay then trains
 a fresh network on the buffer's most recent `bc_replay_train_window`
 entries (default 3; canonical SMB uses 1 for single-trajectory
 coherence) and injects the trained network into the weakest population
-slot at the captured fitness — high enough that GA elitism picks it
+slot at the captured fitness, high enough that GA elitism picks it
 up as the next elite, or in pure-PPO mode that `evolve()` broadcasts
 it to every slot.
 
@@ -635,7 +635,7 @@ After injection, the persistent Adam optimizer is cleared
 zero moments, so the optimizer's stale `m`/`v` state from the pre-BC
 policy's gradients can't pull the freshly-injected BC weights back
 toward the failing policy. This matters most in pure-PPO mode where
-`evolve()` broadcasts the BC-injected slot to every slot — without
+`evolve()` broadcasts the BC-injected slot to every slot. Without
 the optimizer reset, the very next PPO update on the new universal
 elite would apply pre-BC momentum to post-BC parameters.
 
@@ -660,7 +660,7 @@ reinforcement signals stacked on top of basic forward progress:
 | `time_penalty` | Constant per-step | per-profile | Implicit timeout pressure |
 
 Mario's `LEVEL_1_1` checkpoints are calibrated to bridge known plateau
-zones — e.g. the 1640→2100 dead zone (added 1800/+175, 1980/+300) and
+zones, e.g. the 1640→2100 dead zone (added 1800/+175, 1980/+300) and
 the staircase→flag zone (boosted 2900 from 1000→2000, added 3000/+1500).
 Each addition was driven by a specific observed plateau in training.
 
@@ -693,7 +693,7 @@ and sums into the stereo output.
 - Worker ring cap: ~150 ms of samples (~6.5 KB per worker) so fast-forward
   emulation cannot grow audio buffers unboundedly.
 
-The Python side (`src/audio/ram_music.py`) is a thin façade — 147 LOC down
+The Python side (`src/audio/ram_music.py`) is a thin façade, 147 LOC down
 from 807 pre-migration. No chiptune synth or NSF playback; real APU audio
 only.
 
@@ -769,8 +769,8 @@ Layer responsibilities:
 - **playability sweep** is the loosest gate: cold-boot a ROM, idle to
   title, multi-tap Start, observe RAM change. Catches games that
   *boot* (parity_sweep tests that) but *don't progress* (this catches
-  that). The "crashed" bucket — PC ends in $FFE0-$FFFF with frozen
-  zero-page — was the specific signal that exposed the Bill & Ted's
+  that). The "crashed" bucket (PC ends in $FFE0-$FFFF with frozen
+  zero-page) was the specific signal that exposed the Bill & Ted's
   MMC1 RMW bug and the `roms/zelda.nes` PRG-RAM nibble bug.
 
 When a "ROM looks broken" report arrives, run them in order: nestest,

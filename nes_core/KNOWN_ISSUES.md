@@ -6,7 +6,7 @@ of re-discovering.
 
 **No open issues.** All 794 tested ROMs in the local library boot.
 The single ROM previously failing `Cartridge::load` (`Yoshi (USA).nes`)
-is a truncated dump, not an emulator bug — see CLOSED entry below.
+is a truncated dump, not an emulator bug. See the CLOSED entry below.
 
 ## CLOSED
 
@@ -81,7 +81,7 @@ See `memory/project_nes20_prg_ram_nibble_bug.md`.
 
 `Yoshi (USA).nes` is a truncated dump (the only ROM in the local
 library that fails `Cartridge::load` with `UnexpectedEof`). Not an
-emulator bug — the file itself is incomplete. Replace from a clean
+emulator bug. The file itself is incomplete. Replace from a clean
 source. Tracked as `ours_panic` (1) in `parity_sweep.json`.
 
 ### MMC1 CHR-RAM out-of-bounds on 256 KB PRG ROMs (CLOSED in split 03)

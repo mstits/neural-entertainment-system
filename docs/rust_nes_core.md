@@ -1,10 +1,10 @@
 # Project: Rust-Native NES Core (`nesrs-py`)
 
-> **⚠ HISTORICAL — PRE-MIGRATION COMPARISON DOCUMENT.**
+> **⚠ HISTORICAL: PRE-MIGRATION COMPARISON DOCUMENT.**
 >
 > This document compared `nes-py` vs `nesrs` (tetanes-core) during
 > the backend-evaluation phase. **Both backends are now deleted.**
-> The live core is the in-tree Rust crate at `nes_core/` — a
+> The live core is the in-tree Rust crate at `nes_core/`, a
 > purpose-built NES emulator, not a wrapper around anything external.
 >
 > **Current state (2026-04-20)**:
@@ -20,8 +20,8 @@
 
 ## The pitch
 
-Replace `nes-py` — our current Cython wrapper around an ageing C++
-emulator (SimpleNES, last substantive commit 2018, **no APU**) — with a
+Replace `nes-py`, our current Cython wrapper around an ageing C++
+emulator (SimpleNES, last substantive commit 2018, **no APU**), with a
 Rust-native NES core exposed through PyO3. The outcome is a single
 `pip`-installable wheel, `nesrs-py`, that is:
 
@@ -37,7 +37,7 @@ Rust-native NES core exposed through PyO3. The outcome is a single
 
 We keep the same `NESEnvironment` / `FrameTransport` contracts; the only
 thing that changes below the API is what produces the bytes. The GUI,
-training loop, reward functions, curriculum, BC, PPO — all of it lights
+training loop, reward functions, curriculum, BC, PPO: all of it lights
 up unchanged, except now audio also works.
 
 ## Why this is interesting
@@ -49,7 +49,7 @@ up unchanged, except now audio also works.
 * **Audio problem dissolves.** The "nes-py has no APU" dead-end is
   replaced by cycle-accurate synthesized audio samples streamed out the
   emulator alongside every frame. No NSF side-channel, no ROM-vs-audio
-  sync problems — it is literally the same PCM a real console's DAC
+  sync problems. It is literally the same PCM a real console's DAC
   would emit, because we compute it the same way.
 * **Cycle accuracy improves training signal quality.** SimpleNES gets
   roughly 85% of NesDev's accuracy tests right; tetanes-core and its
@@ -72,13 +72,13 @@ up unchanged, except now audio also works.
 
 Three serious candidates, in priority order:
 
-1. **tetanes-core** (`lu-zero/tetanes`) — modern, active, MIT-licensed,
+1. **tetanes-core** (`lu-zero/tetanes`): modern, active, MIT-licensed,
    passes 99%+ of NesDev tests, has APU, save states, 20+ mappers.
    Actively maintained by the same author as `tetanes` the standalone
    emulator. *This is the default.*
-2. **nes** (`kamiyaowl/nes`) — another pure-Rust core, smaller surface,
+2. **nes** (`kamiyaowl/nes`): another pure-Rust core, smaller surface,
    cleaner architecture. Fallback if tetanes has a blocking issue.
-3. **rusticnes-core** (`kylc/rusticnes-core`) — older but battle-tested.
+3. **rusticnes-core** (`kylc/rusticnes-core`): older but battle-tested.
 
 We wrap one of these with PyO3 and expose a minimal surface.
 
@@ -153,26 +153,26 @@ on cycle accuracy costs per-frame speed.
 
 **So why keep nesrs?** The value isn't speed:
 
-- **Real APU audio per step** — the streaming hook. `nes-py` has no
+- **Real APU audio per step**: the streaming hook. `nes-py` has no
   APU; there is no alternative Python core that does.
-- **Cycle accuracy** — passes 99 %+ of NesDev's test suite. SimpleNES
+- **Cycle accuracy**: passes 99 %+ of NesDev's test suite. SimpleNES
   passes ~85 %. Subtle mapper bugs that corrupt long training runs
   simply stop.
-- **Save-state round-trip as bytes** — useful for curriculum
+- **Save-state round-trip as bytes**: useful for curriculum
   auto-promotion (save mid-episode, restart deeper next gen).
-- **Active upstream maintenance** — `nes-py`'s last release predates
+- **Active upstream maintenance**: `nes-py`'s last release predates
   the pandemic.
 
 For the **stream**, use `--env-backend nesrs` and accept 2-3× wall-
 clock for audio + accuracy. For **overnight training where speed
 dominates**, stay on `nes-py` (default) until the Rust core gets
-further optimisation work — the path is viable (tetanes has a
+further optimisation work. The path is viable (tetanes has a
 `NoVideo` headless mode we'd need to tweak to still emit frames
 cheaply, plus SIMD RGB unpacking).
 
 ## Milestones
 
-### M0 — `nesrs-py` proof of life (3 days)
+### M0: `nesrs-py` proof of life (3 days)
 * maturin-built crate in `nesrs-py/`, `pip install -e` works.
 * Wraps tetanes-core, exposes `NESEnvironment.{reset, step, get_frame,
   get_ram_range}`.
@@ -181,30 +181,30 @@ cheaply, plus SIMD RGB unpacking).
   produces for the same input sequence.
 * Output: `nesrs-py/README.md` with usage, `tests/test_nesrs_basic.py`
 
-### M1 — Training parity (4 days)
+### M1: Training parity (4 days)
 * Add `save_state` / `load_state` so curriculum start-states work.
 * Plumb into `src/emulation/nes_environment.py` via a `--backend
   nesrs` flag. The rest of the stack stays byte-identical.
 * Run a 50-generation Zelda smoke test. Assert: convergence trajectory
   matches nes-py within noise, wall-clock is ≥3× faster.
-* Output: `tests/test_backend_parity.py` — a deterministic seeded run
+* Output: `tests/test_backend_parity.py`. A deterministic seeded run
   on both backends must produce identical trajectories.
 
-### M2 — Audio pipeline (3 days)
+### M2: Audio pipeline (3 days)
 * Expose APU samples via `get_audio()` as documented above.
-* Wire into `AudioMixer` — replace the NSF fallback path with live
+* Wire into `AudioMixer`. Replace the NSF fallback path with live
   samples from the `solo-N` worker's transport. Add `audio` bytes to
   the FramePacket dataclass.
-* Authentic sword-swing sounds, rupee jingles, dungeon music — all
+* Authentic sword-swing sounds, rupee jingles, dungeon music, all
   tied to actual gameplay, not a side channel.
 * Output: 30-second video demo showing audio keyed to Link's actions.
 
-### M3 — Distribution (2 days)
+### M3: Distribution (2 days)
 * Universal wheel build, publish to PyPI as `nesrs-py`.
 * README with badges, MIT license, a link to this repo, and a "why
   this exists" section.
 * Announce in r/EmuDev. The project is now independently useful
-  beyond our training stack — any Python NES RL researcher gains 5×.
+  beyond our training stack: any Python NES RL researcher gains 5×.
 * Output: PyPI page, first release tag.
 
 **Total: ~12 working days, one person, one M-series Mac.**
@@ -222,7 +222,7 @@ cheaply, plus SIMD RGB unpacking).
 
 ## Relationship to the world-model project
 
-These two projects compose beautifully:
+These two projects compose:
 
 ```
 nesrs-py (this doc)
@@ -261,7 +261,7 @@ but are worth tracking separately since they land on Python time only.
 
 1. **Async inference / emulation pipelining** (~25–40 % per-step throughput).
    Step `K+1`'s GPU forward pass overlaps with worker emulation of step `K`.
-   Requires action `K+1` to be computed from observation `K-1` — one
+   Requires action `K+1` to be computed from observation `K-1`, one
    observation-step of latency the agent rarely notices on NES. The
    `self.async_pipeline` flag in `Trainer.__init__` is reserved for this;
    implementation is a rewrite of the top of `_evaluate_batch`'s step
@@ -289,14 +289,14 @@ but are worth tracking separately since they land on Python time only.
 
 ## Appendix: prior art we stand on
 
-* **tetanes** (`lu-zero/tetanes`) — the Rust NES core we'll wrap.
+* **tetanes** (`lu-zero/tetanes`): the Rust NES core we'll wrap.
   MIT-licensed, actively maintained, Mesen-compatible.
-* **PyO3** — the gold standard for Rust↔Python bindings; used by
+* **PyO3**: the gold standard for Rust↔Python bindings; used by
   `cryptography`, `polars`, `ruff`.
-* **maturin** — PyO3's build tool, produces real wheels.
-* **nes-py** (Kautenja) — what we're replacing. Credit where due: it
+* **maturin**: PyO3's build tool, produces real wheels.
+* **nes-py** (Kautenja): what we're replacing. Credit where due: it
   was the right thing in 2019. It has aged out.
-* **stable-retro** — the existing libretro-based alternative; arm64
+* **stable-retro**: the existing libretro-based alternative; arm64
   wheel is broken, build-from-source works but is heavy (10–20 min
   and a pile of brew deps). We do less and do it more cleanly.
 

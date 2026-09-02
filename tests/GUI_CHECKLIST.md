@@ -1,6 +1,6 @@
 # Manual GUI Test Checklist
 
-The PyQt6 GUI can't be automated on this macOS + Qt 6.11 combination —
+The PyQt6 GUI can't be automated on this macOS + Qt 6.11 combination:
 pytest's stdio redirection triggers a Qt fatal assertion on widget
 construction. Exercise these paths by hand on a real desktop session.
 
