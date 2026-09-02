@@ -54,7 +54,8 @@ alongside the register snapshot on every step.
 
 Any bug that survives this soak is either (a) deeply address-mode-
 specific in a way only a real ROM can exercise (covered separately
-by the 22-ROM smoke test + full-library 99.9% pass on 794 carts),
+by the 22-ROM smoke test + the library census, 793 of 796 carts
+booting live),
 or (b) structurally invisible to this harness (interrupt timing —
 not in the fuzzable opcode set; covered by the nestest gold standard
 and the 130-test cargo suite).

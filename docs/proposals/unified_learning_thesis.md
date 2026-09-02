@@ -277,7 +277,7 @@ observation encoder. No trainer changes.
 ## 5. Infrastructure gap analysis
 
 ### Present and working
-- `nes_core` Rust emulator (99.9% library compat, byte-exact)
+- `nes_core` Rust emulator (793 of 796 library ROMs boot live, byte-exact CPU)
 - Per-game Rust reward functions (6 games)
 - `smb_tiles` observation encoder
 - Vanilla PPO trainer (`_run_vanilla_ppo` in `src/training/trainer.py`)

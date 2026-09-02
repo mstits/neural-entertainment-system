@@ -174,9 +174,9 @@ Neither ledger means anything on an emulator that drifts. The core is gated by
 against the Nintendulator golden trace), a **33-ROM Mesen-oracle lockstep**,
 **149 differential parity tests** (`make parity`), and a differential fuzz of
 the AArch64 ASM CPU against the pure-Rust interpreter across 240M+ instructions
-with zero divergence. 793 of 796 library ROMs boot into a live screen across
-the 28 mappers this library exercises (2026-09-01 census: 795 run 300 frames
-without a panic or timeout, one truncated dump, two static screens).
+with zero divergence. 793 of 796 library ROMs boot into a live screen
+(2026-09-02 census: two static screens, one truncated dump; receipt
+`docs/receipts/rom_census/mapper105_boot_fix_2026-09-02.md`).
 Cross-checked against Mesen 2 on 12,000 frames of the banked Super Mario Bros
 run (2026-09-01): nes_core and Mesen agree on lives, area, mode and every
 level-transition frame; scratch bytes (stack, zero-page temps, OAM buffer)
@@ -528,11 +528,11 @@ deterministic core. Artifacts: `docs/receipts/full_run/`.
   divergence, and falling back to the interpreter for any unported opcode. (The
   full public blargg CPU/PPU/APU test-ROM gauntlet is **not yet run** end-to-end;
   see *Accuracy status* below.)
-- Broad compatibility: as of the 2026-09-01 library scan, **793 of 796 ROMs
-  (99.6%)** boot into a live screen across **28 of the 37 supported mappers**
-  present in the library; 795 run 300 frames without a panic or timeout, two
-  boot to a static screen (Jackal, SMB+Tetris+NWC), and the one load failure
-  is a truncated dump.
+- Broad compatibility: as of the 2026-09-02 census, **793 of 796 ROMs
+  (99.6%)** boot into a live screen; two boot to a static screen (Jackal,
+  SMB+Tetris+NWC) and the one load failure is a truncated dump
+  (`Yoshi (USA).nes`). Receipt:
+  `docs/receipts/rom_census/mapper105_boot_fix_2026-09-02.md`.
   Unsupported mappers and malformed headers fail cleanly at load time with a
   `RuntimeError` instead of crashing the trainer.
 - A reinforcement-learning trainer that runs many NES instances in parallel
@@ -827,9 +827,10 @@ above).
   not a shipping result.
 
 The emulator itself is the mature layer: byte-exact CPU (nestest, registers +
-CYC), the 149-test parity gate green, a 33-ROM Mesen-oracle lockstep, ~99.9%
-library boot compatibility, and a differential fuzz of the ASM core against the
-pure-Rust reference with zero divergence over 240M+ instructions. Recent
+CYC), the 149-test parity gate green, a 33-ROM Mesen-oracle lockstep, 793 of
+796 library ROMs (99.6%) booting into a live screen, and a differential fuzz of
+the ASM core against the pure-Rust reference with zero divergence over 240M+
+instructions. Recent
 fidelity fixes (MMC5/MMC1-SUROM/MMC3 banking, PPU forced-blank backdrop +
 color-emphasis, OAM-DMA bus routing) were validated against Mesen as the
 ground-truth oracle, and the whole change set was put through an adversarial
@@ -1069,17 +1070,17 @@ events), so the median/p99 above, not the mean, describe the common case.
 
 ## Compatibility
 
-The full matrix lives in `reports/full_library.md`. A summary:
+The per-ROM census receipts live in `docs/receipts/rom_census/`. A summary:
 
 - **37 mappers** implemented, covering **99.6%** of the 796-ROM library
-  (live-screen boot, 2026-09-01 census: 793 of 796 = 99.623%, rounded to one
+  (live-screen boot, 2026-09-02 census: 793 of 796 = 99.623%, rounded to one
   decimal place; receipt
   `docs/receipts/rom_census/mapper105_boot_fix_2026-09-02.md`). Every
   supported mapper passes at 100% on its carts.
 - Discrete logic: NROM (0), UxROM (2), CNROM (3), AxROM (7), Colordreams (11,
-  66), CPROM (13), BNROM / NINA-001 (34), Caltron 6-in-1 (41), NINA-06 / HES
-  (113), Action 52 (228), Camerica Quattro (232), Maxi 15 (234), Camerica
-  BF9093 (71), Nina-03 / NAMCOT-00301 (79).
+  66), CPROM (13), BNROM / NINA-001 (34), NTDEC 2722 / SMB2j (40), Caltron
+  6-in-1 (41), NINA-06 / HES (113), Action 52 (228), Camerica Quattro (232),
+  Maxi 15 (234), Camerica BF9093 (71), Nina-03 / NAMCOT-00301 (79).
 - MMC family: MMC1 / SxROM (1), MMC3 / TxROM (4), MMC5 / ExROM (5), PxROM / MMC2
   (9), MMC4 / FxROM (10), TxSROM (118), TQROM (119), NWC 1990 (105), NES-ZZ
   multicart (37), NES-QJ multicart (47).

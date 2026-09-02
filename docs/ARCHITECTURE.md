@@ -188,7 +188,7 @@ only MMC1, for the RMW dummy-write filter).
 
 ```mermaid
 graph TD
-    Root[Supported mappers<br/>36 total / 99.9% of US library]
+    Root[Supported mappers<br/>37 total / 99.6% of the 796-ROM library]
     Root --> Discrete[Discrete logic]
     Root --> MMC[MMC family]
     Root --> Konami[Konami VRC]
@@ -225,6 +225,7 @@ graph TD
     Nintendo --> FME7[FME-7 69]
     Nintendo --> RAMBO[Tengen RAMBO-1 64]
 
+    Multicart --> NTDEC[NTDEC 2722 / SMB2j 40]
     Multicart --> Caltron[Caltron 6-in-1 41]
     Multicart --> Nes37[NES-ZZ 37]
     Multicart --> Nes47[NES-QJ 47]
@@ -234,7 +235,7 @@ graph TD
     Multicart --> Maxi15[Maxi 15 234]
 ```
 
-Live compatibility matrix in `reports/full_library.md`. Programmatic access:
+Current compatibility receipts in `docs/receipts/rom_census/`. Programmatic access:
 `nes_core.supported_mappers()` from Python.
 
 ## Build pipeline
@@ -787,4 +788,5 @@ first one that fires names the bug-class layer.
   public release.
 - `docs/proposals/archive/hot_path_baseline.md` — measured bottleneck percentages.
 - `docs/proposals/pgo_results.md` — PGO measurement writeup.
-- `reports/full_library.md` — ROM compatibility matrix.
+- `docs/receipts/rom_census/`: current ROM compatibility census receipts.
+  `reports/full_library.md` is the superseded 2026-04-27 scan.

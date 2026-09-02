@@ -1,4 +1,15 @@
-# ROM library compatibility scan
+# ROM library compatibility scan (SUPERSEDED, 2026-04-27)
+
+> **Superseded. Do not quote the numbers below as current compatibility.**
+> This scan ran on 2026-04-27 (commit `55e5333`) over a 794-ROM library, and
+> its `ok` status means only "loaded and ran 300 frames without a panic or a
+> timeout". It never distinguished a live screen from a frozen one, so its
+> "793 (99.9%)" is not the live-screen boot figure the README quotes. The
+> current library is 796 unique ROMs (806 files, 10 md5 duplicates) and the
+> current figure is 793 of 796 (99.6%) booting into a live screen. The
+> receipts are in `docs/receipts/rom_census/`; the scanner that produces them
+> is `scripts/rom_library_scan.py --static-check`. Kept here for history.
+
 Total ROMs: **794**  
 Pass: **793** (99.9%)  
 
