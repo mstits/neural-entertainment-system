@@ -38,22 +38,39 @@ EVERY poll, never cached from before launch -- a wrongful reset that
 swaps the root file mid-block, not only a plan whose ``root_state_sha``
 was wrong to begin with, must be reachable.
 
+Before launch, if the plan's ``cmd`` names a ``--root-state``, that file
+is copied once into ``<child_out>/sandbox/`` and the child's own command
+is rewritten to read the copy -- never the path the plan named. For a
+real block that path is a shared archive under ``runs/`` (other blocks,
+other walls, and the grant itself all read it), so nothing this runner
+does past that one read may write to it. If the plan also carries a
+``root_state_sha`` (the grant's recorded value), it is checked against
+the bytes just read from that shared file before the copy is trusted
+for anything -- a plan whose sha has drifted from what is actually on
+disk is refused (``root_state_sha_mismatch``) before launch, never
+silently accepted. ``root_state_sha`` for the mid-poll comparison below
+is then recomputed from the copy's own bytes at the moment it is taken,
+not the plan's value carried forward.
+
 ``plan["inject_wrongful_reset"]`` is not cosmetic: when set, ``run_block``
-itself corrupts the child's on-disk root-state file (``--root-state`` in
-``plan["cmd"]``) shortly after confirming the child is alive and has
-produced at least one real signal of being up, so the watchdog catches a
-reset the runner manufactured against a live child -- regardless of
-whether that particular child's own telemetry would ever have decreased
-on its own. This is what lets the positive control mean something against
-an arbitrary well-behaved child, synthetic or real, not only a fixture
-that is scripted to misbehave. ``positive_control.caught`` in the receipt
-is true only when a trip occurred AND the block was told to inject one;
-an uninjected block that trips (a genuine wrongful reset against a real
-run) reports ``injected:false, caught:false`` -- a positive control that
-was never run is never credited as caught. ``banked_from_reset`` counts
-artifacts banked as part of that reset, which is always 0 on the abort
-path (``banked`` is fixed to ``[]`` first) -- never a progress-row field
-a downstream reader could mistake for "something was banked".
+itself corrupts the child's on-disk root-state file -- the sandboxed
+copy described above, not the file the plan named -- shortly after
+confirming the child is alive and has produced at least one real signal
+of being up, so the watchdog catches a reset the runner manufactured
+against a live child -- regardless of whether that particular child's
+own telemetry would ever have decreased on its own. This is what lets
+the positive control mean something against an arbitrary well-behaved
+child, synthetic or real, not only a fixture that is scripted to
+misbehave, and it is what keeps that same injection from ever touching
+the file other blocks depend on. ``positive_control.caught`` in the
+receipt is true only when a trip occurred AND the block was told to
+inject one; an uninjected block that trips (a genuine wrongful reset
+against a real run) reports ``injected:false, caught:false`` -- a
+positive control that was never run is never credited as caught.
+``banked_from_reset`` counts artifacts banked as part of that reset,
+which is always 0 on the abort path (``banked`` is fixed to ``[]``
+first) -- never a progress-row field a downstream reader could mistake
+for "something was banked".
 
 Nothing here touches CLAIMS.md except reading it once, to confirm the
 plan's ``grant_entry`` anchor is present (LG rule 9's refusal). Nothing
@@ -135,14 +152,19 @@ def _sha_of_file(path: Path) -> Optional[str]:
 
 def _corrupt_root_state(path: Path) -> bool:
     """Best-effort mid-block wrongful-reset injection: appends
-    distinguishing bytes to the child's own root-state file so its
-    sha256 changes under it. Returns True iff the write happened. This
-    is what makes ``inject_wrongful_reset`` a real action against
-    whatever child is running -- synthetic fixture or the real solver
-    -- rather than a description the child's own script has to act out.
-    Never raises: a failed injection is reported by the trip never
-    firing, which the positive-control test reads directly (``caught``
-    stays False), not by an exception escaping the poll loop."""
+    distinguishing bytes to whatever file `path` names so its sha256
+    changes under it. Returns True iff the write happened. This is what
+    makes ``inject_wrongful_reset`` a real action against whatever child
+    is running -- synthetic fixture or the real solver -- rather than a
+    description the child's own script has to act out. `run_block` never
+    calls this with the path a plan named directly: by the time it is
+    reachable, `root_state_path` has already been reassigned to this
+    block's own sandboxed copy (row 0b correction), so a write here can
+    only ever land on that copy, never on a file other blocks or walls
+    depend on. Never raises: a failed injection is reported by the trip
+    never firing, which the positive-control test reads directly
+    (``caught`` stays False), not by an exception escaping the poll
+    loop."""
     try:
         with open(path, "ab") as f:
             f.write(b"\x00FORGE_INJECTED_WRONGFUL_RESET\x00")
@@ -156,6 +178,18 @@ def _flag_value(cmd: list, flag: str) -> Optional[str]:
         if tok == flag and i + 1 < len(cmd):
             return str(cmd[i + 1])
     return None
+
+
+def _set_flag_value(cmd: list, flag: str, new_value: str) -> list:
+    """A new cmd list with `flag`'s value replaced by `new_value`. Used
+    to point the launched child at this block's own sandboxed copy of
+    `--root-state`, never at the path the plan named directly."""
+    out = list(cmd)
+    for i, tok in enumerate(out):
+        if tok == flag and i + 1 < len(out):
+            out[i + 1] = str(new_value)
+            break
+    return out
 
 
 def _resolve(repo: Path, value: Optional[str]) -> Optional[Path]:
@@ -429,6 +463,41 @@ def run_block(
     child_out.mkdir(parents=True, exist_ok=True)
 
     root_state_path = _resolve(repo, _flag_value(cmd, "--root-state"))
+
+    # Row 0b correction: the child is never pointed at the file the plan
+    # names directly. For a real block that file is a shared archive
+    # under runs/ (e.g. the cv_hall wall's entrance state) -- other
+    # blocks, other walls, and the grant itself all read it. Copy it
+    # once, before launch, into this block's own sandbox; rewrite the
+    # child's own command to read the copy; every later reference to
+    # `root_state_path` below -- the mid-poll re-read and the injection
+    # in `_corrupt_root_state` -- then acts on that copy alone. The path
+    # the plan named is opened here only for reading, exactly once. The
+    # plan's own `root_state_sha` (the grant's recorded value) is still
+    # enforced here, against the bytes just read from the file the plan
+    # named, before the copy is trusted for anything: a shared root that
+    # has drifted from the grant's sha must refuse before launch, not
+    # go unnoticed because the runner started comparing against its own
+    # copy instead.
+    if root_state_path is not None:
+        try:
+            _original_root_bytes = Path(root_state_path).read_bytes()
+        except OSError as exc:
+            return _refuse(f"root_state_unreadable:{exc}")
+        _computed_root_sha = hashlib.sha256(_original_root_bytes).hexdigest()[:16]
+        if root_state_sha is not None and root_state_sha != _computed_root_sha:
+            return _refuse("root_state_sha_mismatch")
+        sandbox_dir = child_out / "sandbox"
+        sandbox_dir.mkdir(parents=True, exist_ok=True)
+        root_state_copy = sandbox_dir / f"root_state{Path(root_state_path).suffix}"
+        root_state_copy.write_bytes(_original_root_bytes)
+        cmd = _set_flag_value(cmd, "--root-state", str(root_state_copy))
+        root_state_path = root_state_copy
+        # Already checked equal to the plan's value above (or the plan
+        # supplied none, in which case there was nothing to enforce).
+        # Reassigned here only so the mid-poll re-read below always
+        # compares the copy against its own known-good starting sha.
+        root_state_sha = _computed_root_sha
 
     launch_fn = launch_fn or _default_launch
     t_start = wall_clock_fn()

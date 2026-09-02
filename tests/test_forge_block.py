@@ -390,6 +390,14 @@ def test_injection_trips_a_well_behaved_child_via_root_state(tmp_path):
     progress row has been observed) rather than merely echoing it into
     the receipt.
 
+    Row 0b correction: the file `_corrupt_root_state` writes to must be
+    this block's own sandboxed COPY of `root_path`, never `root_path`
+    itself -- for a real block, `root_path` stands in for the shared
+    archive under `runs/` that other blocks and other walls also read.
+    This test asserts both halves: the copy under `<out>/sandbox/` was
+    corrupted (proof the injection ran), and `root_path`'s own bytes are
+    exactly what `_write_root_state` wrote, untouched.
+
     Revert-verify (live, this session): gating the injection call on
     `False` (so `_corrupt_root_state` is never invoked) leaves this
     monotone child never tripped -- it exits cleanly, `stop` reads
@@ -398,6 +406,7 @@ def test_injection_trips_a_well_behaved_child_via_root_state(tmp_path):
     fails both assertions below by name. Restored, re-passed.
     """
     root_path, correct_sha = _write_root_state(tmp_path)
+    original_bytes = root_path.read_bytes()
     rows = [{"cells": i * 10, "steps": i} for i in range(1, 11)]
     script = _write_fixture(tmp_path, "well_behaved", rows=rows,
                             row_interval=0.03, exit_after_rows=True)
@@ -415,6 +424,115 @@ def test_injection_trips_a_well_behaved_child_via_root_state(tmp_path):
     assert receipt["positive_control"] == {
         "injected": True, "caught": True, "banked_from_reset": 0}
     assert receipt["banked"] == []
+    # The injection landed on the block's own copy, not on root_path.
+    assert root_path.read_bytes() == original_bytes, (
+        "inject_wrongful_reset must never write to the file the plan "
+        "named via --root-state")
+    copy_path = tmp_path / "out" / "sandbox" / f"root_state{root_path.suffix}"
+    assert copy_path.exists(), "run_block must sandbox a copy of root_path"
+    assert copy_path.read_bytes() != original_bytes, (
+        "the sandboxed copy should carry the injection's corruption")
+
+
+# ---------------------------------------------------------------------
+# test_injection_never_touches_the_shared_root_state
+# ---------------------------------------------------------------------
+
+def test_injection_never_touches_the_shared_root_state(tmp_path):
+    """Row 0b correction, isolated: for a real block, `--root-state`
+    names a shared archive under `runs/` that other blocks, other
+    walls, and the grant itself all read from -- one positive-control
+    injection must never be able to corrupt it. `root_path` here stands
+    in for that shared file; it is asserted byte-for-byte unchanged
+    after a block that both injects a reset AND catches it, which is
+    the strongest case for the bug this replaces (the pre-row-0b runner
+    appended bytes directly to whatever `--root-state` named).
+
+    Revert-verify (live, this session): reassigning `root_state_path`
+    to `root_state_copy` is what routes both the mid-poll re-read and
+    `_corrupt_root_state` onto the copy; commenting out that one
+    reassignment (`root_state_path = root_state_copy`) in `run_block`
+    leaves `root_state_path` bound to the ORIGINAL file from the
+    `_resolve(...)` call above it. The child itself still launches
+    pointed at the copy (the `cmd` rewrite is a separate, untouched
+    statement), so the watchdog now polls and corrupts `root_path`
+    directly while the child reads a copy it never sees change --
+    `positive_control.caught` still reads True (the corrupted original's
+    sha still mismatches the recorded `root_state_sha` and trips the
+    watchdog on schedule), but the shared file itself comes back
+    corrupted: `root_path.read_bytes() == original_bytes` fails by name,
+    ending in `b'...FUL_RESET\\x00' == b'...chain-poweron'`. Restored,
+    re-passed.
+    """
+    root_path, correct_sha = _write_root_state(
+        tmp_path, content=b"shared-archive-runs-cv-chain-poweron")
+    original_bytes = root_path.read_bytes()
+    rows = [{"cells": i * 5, "steps": i} for i in range(1, 21)]
+    script = _write_fixture(tmp_path, "shared_root", rows=rows,
+                            row_interval=0.02, exit_after_rows=True)
+    claims, grant_state = _grant_paths(tmp_path)
+    plan = _make_plan(tmp_path, script, root_state_path=root_path,
+                      root_state_sha=correct_sha, max_secs=5.0, inject=True)
+
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims, grant_state_path=grant_state,
+        poll_interval=0.01, term_grace_s=1.0, kill_grace_s=1.0)
+
+    assert receipt["stop"] == "abort"
+    assert receipt["positive_control"]["injected"] is True
+    assert receipt["positive_control"]["caught"] is True
+    assert root_path.read_bytes() == original_bytes, (
+        "inject_wrongful_reset corrupted the shared file the plan "
+        "named via --root-state instead of a private sandboxed copy")
+
+
+# ---------------------------------------------------------------------
+# test_refuses_before_launch_when_plan_root_state_sha_is_stale
+# ---------------------------------------------------------------------
+
+def test_refuses_before_launch_when_plan_root_state_sha_is_stale(tmp_path):
+    """The plan's `root_state_sha` is the grant's recorded value
+    (CLAIMS.md's FORGE-GRANT text names it, e.g.
+    `00a93d0aae5b27d2`); the file `--root-state` actually names has
+    drifted since -- the exact hazard ruling 13 names, and the one the
+    row 0b sandboxing fix must not silently drop. Before this fix,
+    `run_block` recomputed `root_state_sha` from the copy's own bytes
+    unconditionally, so a plan carrying a stale sha was never compared
+    to anything and the block ran anyway. `launch_fn` here is the
+    `_forbidden_launch` spy: any launch at all fails the test by name.
+
+    Revert-verify (live, this session): removing the
+    `if root_state_sha is not None and root_state_sha !=
+    _computed_root_sha` check (leaving only the unconditional
+    `root_state_sha = _computed_root_sha` reassignment) makes this
+    test's mismatched plan sha go uncompared -- `run_block` proceeds
+    to `launch_fn`, the `_forbidden_launch` spy raises, failing the
+    test by name (an unexpected AssertionError instead of a clean
+    refusal). Restored, re-passed.
+    """
+    root_path, actual_sha = _write_root_state(
+        tmp_path, content=b"shared-archive-runs-cv-chain-hw2")
+    original_bytes = root_path.read_bytes()
+    script = _write_fixture(tmp_path, "stale_sha", rows=[])
+    claims, grant_state = _grant_paths(tmp_path)
+    stale_sha = "0" * 16
+    assert stale_sha != actual_sha
+    plan = _make_plan(tmp_path, script, root_state_path=root_path,
+                      root_state_sha=stale_sha)
+
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims, grant_state_path=grant_state,
+        launch_fn=_forbidden_launch)
+
+    assert receipt["aborted"] is True
+    assert receipt["abort_reason"] == "root_state_sha_mismatch"
+    assert receipt["stop"] == "abort"
+    assert receipt["watchdog_trips"] == 0
+    assert receipt["banked"] == []
+    assert root_path.read_bytes() == original_bytes
+    assert not (tmp_path / "out" / "sandbox").exists(), (
+        "a refused block must not even copy the shared file into a "
+        "sandbox, let alone launch against it")
 
 
 # ---------------------------------------------------------------------
@@ -432,6 +550,14 @@ def test_root_state_mismatch_detected_mid_block_not_only_at_launch(tmp_path):
     runner's own injection, it is the condition the injection mechanism
     above is built on top of.
 
+    Row 0b correction: the child is launched pointed at `run_block`'s
+    own sandboxed COPY of `root_path` (`<out>/sandbox/root_state<ext>`),
+    never at `root_path` itself, so "the file the child's root-state
+    hash is read from" is that copy from the moment the block starts.
+    The swap below targets the copy for exactly that reason -- swapping
+    `root_path` after this correction would swap a file nothing reads
+    from anymore. `root_path` is asserted untouched at the end.
+
     Revert-verify (live, this session): moving the root-state hash
     computation back to a one-time pre-launch read (outside the poll
     loop) makes this test's mid-block swap invisible -- the block runs
@@ -439,16 +565,20 @@ def test_root_state_mismatch_detected_mid_block_not_only_at_launch(tmp_path):
     both assertions below by name. Restored, re-passed.
     """
     root_path, correct_sha = _write_root_state(tmp_path)
+    original_bytes = root_path.read_bytes()
     rows = [{"cells": i, "steps": i} for i in range(1, 11)]
     script = _write_fixture(tmp_path, "root_swap", rows=rows,
                             row_interval=0.03, exit_after_rows=True)
     claims, grant_state = _grant_paths(tmp_path)
     plan = _make_plan(tmp_path, script, root_state_path=root_path,
                       root_state_sha=correct_sha, max_secs=5.0)
+    copy_path = tmp_path / "out" / "sandbox" / f"root_state{root_path.suffix}"
 
     def _swap_after_delay():
-        time.sleep(0.06)
-        root_path.write_bytes(b"a-different-root-entirely")
+        deadline = time.time() + 1.0
+        while not copy_path.exists() and time.time() < deadline:
+            time.sleep(0.005)
+        copy_path.write_bytes(b"a-different-root-entirely")
 
     swapper = threading.Thread(target=_swap_after_delay, daemon=True)
     swapper.start()
@@ -464,6 +594,9 @@ def test_root_state_mismatch_detected_mid_block_not_only_at_launch(tmp_path):
     # Not injected -- a real trip is not a demonstrated positive control.
     assert receipt["positive_control"] == {
         "injected": False, "caught": False, "banked_from_reset": 0}
+    assert root_path.read_bytes() == original_bytes, (
+        "the external swap targeted the sandboxed copy; root_path "
+        "itself must be untouched by anything this block did")
 
 
 # ---------------------------------------------------------------------
