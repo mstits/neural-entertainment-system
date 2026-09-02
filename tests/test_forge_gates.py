@@ -15,7 +15,8 @@ scanner's exact `passed = not X` / `len(X) == 0` shape cannot land
 without a registered positive/negative pair here.
 
 Grows across pieces (a)-(f); tonight it carries the two entries piece
-(a) contributes (archive_verdict, campaign_verdict).
+(a) contributes (archive_verdict, campaign_verdict) plus the one entry
+piece (f) contributes (wrongful_reset).
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from scripts.anti_vacuity_scan import scan_repo  # noqa: E402
+from src.forge.block import wrongful_reset  # noqa: E402
 from src.forge.stall import archive_verdict, campaign_verdict  # noqa: E402
 
 #: Scratch dir for the positive/negative fixtures below. A tempdir
@@ -91,6 +93,19 @@ def _campaign_verdict_negative() -> dict:
     return campaign_verdict(manifest, repo=_GATE_TMP)
 
 
+def _wrongful_reset_positive() -> dict:
+    """A real decrease between two polls: cells 150 -> 40. Depends on
+    the real `wrongful_reset` comparison, not a hardcoded answer -- see
+    tests/test_forge_block.py's own revert-verify of the same
+    function."""
+    return wrongful_reset({"cells": 150}, {"cells": 40})
+
+
+def _wrongful_reset_negative() -> dict:
+    """Monotone: cells 100 -> 150 between polls -- never trips."""
+    return wrongful_reset({"cells": 100}, {"cells": 150})
+
+
 #: (file, func) -> (verdict key, target value, positive case, negative case).
 #: `positive()[key] == target` and `negative()[key] != target` must both
 #: hold, proven fresh on every run (test_forge_registry_entries_report_
@@ -101,6 +116,8 @@ FORGE_REGISTRY = {
         "verdict", "STALLED", _archive_verdict_positive, _archive_verdict_negative),
     ("src/forge/stall.py", "campaign_verdict"): (
         "verdict", "STALLED", _campaign_verdict_positive, _campaign_verdict_negative),
+    ("src/forge/block.py", "wrongful_reset"): (
+        "reason", "cells_decreased", _wrongful_reset_positive, _wrongful_reset_negative),
 }
 
 
