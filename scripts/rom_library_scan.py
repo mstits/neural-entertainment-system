@@ -22,9 +22,10 @@ Usage:
 Outputs:
   <out>.json   — full per-ROM records (list of dicts)
   <out>.csv    — tabular: path,bytes,md5,mapper,sub_mapper,nes20,
-                 status,frames_run,wall_ms,error
+                 status,frames_run,wall_ms,error,motion,
+                 static_distinct_hashes,static_first_change_frame
   <out>.md     — summary: per-mapper compatibility, top panic classes,
-                 failure buckets.
+                 failure buckets, static-screen check.
 
 Status values:
   ok                — loaded, reset, ran `frames` frames cleanly
@@ -34,6 +35,23 @@ Status values:
   step_panic        — step() panicked (records frame index)
   timeout           — ran past --timeout seconds without finishing
   io_err            — couldn't read file
+
+`ok` alone only means "no panic or timeout": a ROM that boots to a
+frozen screen is `ok` too. --static-check (on by default) runs a
+second pass on every `ok` ROM: reset, then `--static-frames` frames
+under a periodic Start/A-burst-plus-late-random input schedule,
+hashing the rendered framebuffer every frame. If the hash never
+changes from the first frame, the ROM is classified `static` instead
+of `live`. This mirrors the ground-truth executor's hang re-probe
+method (2026-09-01, receipts/hang_reprobe.py: 3000 frames, Start/A
+bursts + random input, 1 distinct hash over the run = static) so a
+scan run this way can't repeat the "Jackal reports as a pass" mistake.
+
+Motion values (only set on `ok` records when --static-check is on):
+  live       : framebuffer changed at least once during the check
+  static     : framebuffer hash never changed (frozen screen)
+  check_err  : the static-check pass itself panicked/errored
+  ""         : --static-check was off, or status != ok
 
 The scan is read-only on the ROM directory. No side effects outside
 the --out artifacts.
@@ -46,6 +64,7 @@ import hashlib
 import json
 import multiprocessing as mp
 import os
+import random
 import signal
 import sys
 import time
@@ -60,7 +79,7 @@ from pathlib import Path
 
 def probe_one(args: tuple) -> dict:
     """Probe a single ROM. Must be top-level for multiprocessing."""
-    rom_path, frames = args
+    rom_path, frames, static_cfg = args
     rom_path = str(rom_path)
     t0 = time.perf_counter()
 
@@ -76,6 +95,9 @@ def probe_one(args: tuple) -> dict:
         "frames_run": 0,
         "wall_ms": 0.0,
         "error": "",
+        "motion": "",
+        "static_distinct_hashes": "",
+        "static_first_change_frame": "",
     }
 
     try:
@@ -145,8 +167,110 @@ def probe_one(args: tuple) -> dict:
             return rec
 
     rec["status"] = "ok"
+
+    # Static-screen check: this ROM never panicked or timed out, but
+    # that alone can't tell a live boot from a frozen one (Jackal,
+    # among others). Re-run under a mashing input schedule and hash
+    # every frame, see classify_motion. Uses a FRESH env, not the one
+    # that just ran `frames` neutral frames above: env.reset() is a
+    # soft reset (some mappers keep bank/IRQ state across it, same as
+    # hitting the console's reset button vs power-cycling), and the
+    # executor's hang_reprobe.py template this mirrors always starts
+    # from a brand-new NESEnvironment. Reusing the stepped env here
+    # produced 3 false "static" verdicts on ROMs the census confirmed
+    # live (John Elway's Quarterback, The Punisher, Rescue - The
+    # Embassy Mission), a soft-reset artifact, not a real freeze.
+    if static_cfg:
+        try:
+            static_env = nes_core.NESEnvironment(rom_path, frame_skip=1)
+            motion = classify_motion(
+                static_env,
+                frames=static_cfg["frames"],
+                period=static_cfg["period"],
+                start_burst_len=static_cfg["start_burst_len"],
+                a_burst_start=static_cfg["a_burst_start"],
+                a_burst_len=static_cfg["a_burst_len"],
+                random_from=static_cfg["random_from"],
+                random_prob=static_cfg["random_prob"],
+                seed=static_cfg["seed"],
+                reset_first=True,
+            )
+            rec["motion"] = motion["motion"]
+            rec["static_distinct_hashes"] = motion["distinct_hashes"]
+            rec["static_first_change_frame"] = (
+                motion["first_change_frame"]
+                if motion["first_change_frame"] is not None else ""
+            )
+        except BaseException as e:
+            rec["motion"] = "check_err"
+            rec["error"] = _short(f"static-check: {type(e).__name__}: {e}")
+
     rec["wall_ms"] = (time.perf_counter() - t0) * 1000.0
     return rec
+
+
+def classify_motion(env, *, frames: int, period: int, start_burst_len: int,
+                     a_burst_start: int, a_burst_len: int, random_from: int,
+                     random_prob: float, seed: int,
+                     reset_first: bool = True) -> dict:
+    """Run `env` for `frames` frames under a periodic Start/A-burst
+    input schedule (random input mixed in from `random_from` on) and
+    hash the rendered framebuffer every frame. If the hash never
+    changes from the first frame, the screen is static, mashing
+    Start/A and eventually everything else for thousands of frames
+    produced no visible response.
+
+    Mirrors the ground-truth executor's re-probe method exactly at
+    default parameters (period=120, start_burst_len=8, a_burst_start=60,
+    a_burst_len=4, random_from=1500, random_prob=0.5): see
+    reports/macos-emulation-and-training/2026-09-01-ground-truth-execution/
+    receipts/hang_reprobe.py.
+
+    `env` needs only `.reset()` (called first when `reset_first`) and
+    `.step(action)` + `.get_frame()`, this takes a plain fake in
+    tests, a real nes_core.NESEnvironment in the scanner. No nes_core
+    or numpy import at module scope, so this stays unit-testable
+    without either installed.
+    """
+    if reset_first:
+        env.reset()
+
+    rng = random.Random(seed)
+    hashes: set[str] = set()
+    first_hash = None
+    changed_at = None
+
+    for f in range(frames):
+        m = f % period
+        if m < start_burst_len:
+            action = 0x08  # Start
+        elif a_burst_start <= m < a_burst_start + a_burst_len:
+            action = 0x01  # A
+        else:
+            action = 0
+        if f >= random_from and rng.random() < random_prob:
+            action = rng.randrange(256)
+
+        env.step(action)
+        frame = env.get_frame()
+        try:
+            frame_bytes = frame.tobytes()
+        except AttributeError:
+            # Fake envs in tests may hand back plain bytes already.
+            frame_bytes = bytes(frame)
+        h = hashlib.md5(frame_bytes).hexdigest()
+        hashes.add(h)
+        if first_hash is None:
+            first_hash = h
+        elif changed_at is None and h != first_hash:
+            changed_at = f
+
+    return {
+        "distinct_hashes": len(hashes),
+        "first_change_frame": changed_at,
+        "frames_checked": frames,
+        "motion": "static" if changed_at is None else "live",
+    }
 
 
 def _short(s: str, n: int = 240) -> str:
@@ -222,11 +346,16 @@ def _md5_file(p: Path) -> str:
 
 
 def scan(roms: list[Path], workers: int, frames: int, timeout: float,
-         progress_every: int) -> list[dict]:
+         progress_every: int, static_cfg: dict | None = None,
+         static_timeout: float = 0.0) -> list[dict]:
     if not roms:
         return []
 
-    args = [(str(p), frames) for p in roms]
+    args = [(str(p), frames, static_cfg) for p in roms]
+    # The static-check pass runs inside the same probe_one call, after
+    # the initial `frames`-frame check, so its budget has to be added
+    # to the per-probe timeout rather than replacing it.
+    probe_timeout = timeout + (static_timeout if static_cfg else 0.0)
     results: list[dict] = []
 
     # Per-task timeout via pool.apply_async + wait(). The probe_one
@@ -235,7 +364,7 @@ def scan(roms: list[Path], workers: int, frames: int, timeout: float,
     # as a timeout.
     if workers <= 1:
         for i, a in enumerate(args):
-            rec = _probe_with_timeout(a, timeout)
+            rec = _probe_with_timeout(a, probe_timeout)
             results.append(rec)
             if progress_every and (i + 1) % progress_every == 0:
                 _print_progress(i + 1, len(args), results)
@@ -249,11 +378,12 @@ def scan(roms: list[Path], workers: int, frames: int, timeout: float,
             # in a per-child guard so a stuck probe doesn't hold the
             # whole pool. Pool workers themselves handle SIGALRM.
             async_results = [
-                pool.apply_async(_probe_with_timeout, (a, timeout)) for a in args
+                pool.apply_async(_probe_with_timeout, (a, probe_timeout))
+                for a in args
             ]
             for i, ar in enumerate(async_results):
                 try:
-                    rec = ar.get(timeout=timeout * 2 + 10)
+                    rec = ar.get(timeout=probe_timeout * 2 + 10)
                 except mp.TimeoutError:
                     rec = {
                         "path": args[i][0],
@@ -262,8 +392,10 @@ def scan(roms: list[Path], workers: int, frames: int, timeout: float,
                         "nes20": False,
                         "status": "timeout",
                         "frames_run": 0,
-                        "wall_ms": timeout * 1000.0,
+                        "wall_ms": probe_timeout * 1000.0,
                         "error": "worker exceeded timeout",
+                        "motion": "", "static_distinct_hashes": "",
+                        "static_first_change_frame": "",
                     }
                 results.append(rec)
                 if progress_every and (i + 1) % progress_every == 0:
@@ -293,6 +425,8 @@ def _probe_with_timeout(a: tuple, timeout: float) -> dict:
             "frames_run": 0,
             "wall_ms": timeout * 1000.0,
             "error": str(e),
+            "motion": "", "static_distinct_hashes": "",
+            "static_first_change_frame": "",
         }
     except BaseException as e:
         return {
@@ -304,6 +438,8 @@ def _probe_with_timeout(a: tuple, timeout: float) -> dict:
             "frames_run": 0,
             "wall_ms": 0.0,
             "error": _short(f"{type(e).__name__}: {e}"),
+            "motion": "", "static_distinct_hashes": "",
+            "static_first_change_frame": "",
         }
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
@@ -331,7 +467,8 @@ def write_json(results: list[dict], path: Path) -> None:
 
 def write_csv(results: list[dict], path: Path) -> None:
     fields = ["path", "name", "bytes", "md5", "mapper", "sub_mapper",
-              "nes20", "status", "frames_run", "wall_ms", "error"]
+              "nes20", "status", "frames_run", "wall_ms", "error",
+              "motion", "static_distinct_hashes", "static_first_change_frame"]
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
@@ -376,6 +513,25 @@ def write_summary(results: list[dict], path: Path,
     lines.append("| status | count | % |\n|---|---:|---:|\n")
     for s, c in by_status.most_common():
         lines.append(f"| `{s}` | {c} | {100.0 * c / max(total, 1):.1f}% |\n")
+
+    # Static-screen check, only meaningful for `ok` records, and only
+    # populated when the scan ran with --static-check (the default).
+    motion_counts = Counter(r.get("motion", "") for r in results if r["status"] == "ok")
+    checked = sum(v for k, v in motion_counts.items() if k in ("live", "static", "check_err"))
+    if checked:
+        live = motion_counts.get("live", 0)
+        static = motion_counts.get("static", 0)
+        check_err = motion_counts.get("check_err", 0)
+        lines.append("\n## Static-screen check\n")
+        lines.append(f"Of {checked} `ok` ROMs re-probed with Start/A bursts + random "
+                     f"input: **{live} live**, **{static} static** (frozen screen, "
+                     f"`ok` but not actually booting), {check_err} check_err.  \n\n")
+        if static:
+            lines.append("| ROM | mapper | distinct hashes |\n|---|---:|---:|\n")
+            for r in sorted(results, key=lambda r: r["name"]):
+                if r["status"] == "ok" and r.get("motion") == "static":
+                    lines.append(f"| {r['name']} | {r['mapper']} | "
+                                 f"{r.get('static_distinct_hashes', '')} |\n")
 
     if unsupported_gap:
         lines.append("\n## Missing mapper support (top-leverage gaps)\n")
@@ -428,24 +584,67 @@ def main() -> int:
                    help="print progress every N probes (0=off)")
     p.add_argument("--no-dedup", action="store_true",
                    help="skip MD5-based deduplication (default: dedup on)")
+    p.add_argument("--static-check", dest="static_check", action="store_true",
+                   default=True,
+                   help="re-probe every `ok` ROM for a frozen screen (default: on)")
+    p.add_argument("--no-static-check", dest="static_check", action="store_false",
+                   help="skip the static-screen re-probe (restores old `ok`-only behavior)")
+    p.add_argument("--static-frames", type=int, default=3000,
+                   help="frames to run in the static-screen re-probe (default: 3000)")
+    p.add_argument("--static-timeout", type=float, default=20.0,
+                   help="extra seconds allowed for the static-check pass, "
+                        "added to --timeout (default: 20)")
+    p.add_argument("--static-period", type=int, default=120,
+                   help="input-schedule period in frames (default: 120)")
+    p.add_argument("--static-start-burst-len", type=int, default=8,
+                   help="Start held for this many frames at the top of each period (default: 8)")
+    p.add_argument("--static-a-burst-start", type=int, default=60,
+                   help="A burst begins this many frames into each period (default: 60)")
+    p.add_argument("--static-a-burst-len", type=int, default=4,
+                   help="A held for this many frames per period (default: 4)")
+    p.add_argument("--static-random-from", type=int, default=1500,
+                   help="frame index after which random input can fire (default: 1500)")
+    p.add_argument("--static-random-prob", type=float, default=0.5,
+                   help="per-frame probability of a random action once past "
+                        "--static-random-from (default: 0.5)")
+    p.add_argument("--static-seed", type=int, default=314159265,
+                   help="RNG seed for the random-input portion of the schedule, "
+                        "same for every ROM (default: 314159265, matches the "
+                        "ground-truth executor's hang_reprobe.py)")
     args = p.parse_args()
 
     if not args.roms_dir.is_dir():
         print(f"error: not a directory: {args.roms_dir}", file=sys.stderr)
         return 2
 
+    static_cfg = None
+    if args.static_check:
+        static_cfg = {
+            "frames": args.static_frames,
+            "period": args.static_period,
+            "start_burst_len": args.static_start_burst_len,
+            "a_burst_start": args.static_a_burst_start,
+            "a_burst_len": args.static_a_burst_len,
+            "random_from": args.static_random_from,
+            "random_prob": args.static_random_prob,
+            "seed": args.static_seed,
+        }
+
     print(f"scanning {args.roms_dir} …", flush=True)
     roms = discover(args.roms_dir, dedup=not args.no_dedup)
     if args.limit > 0:
         roms = roms[:args.limit]
+    static_msg = (f"static-check={args.static_frames}f" if static_cfg
+                  else "static-check=off")
     print(f"found {len(roms)} unique .nes files; workers={args.workers} "
-          f"frames={args.frames} timeout={args.timeout}s", flush=True)
+          f"frames={args.frames} timeout={args.timeout}s {static_msg}", flush=True)
     if not roms:
         return 0
 
     t0 = time.perf_counter()
     results = scan(roms, args.workers, args.frames, args.timeout,
-                   args.progress_every)
+                   args.progress_every, static_cfg=static_cfg,
+                   static_timeout=args.static_timeout)
     wall = time.perf_counter() - t0
 
     # Pull the supported-mapper set from nes_core so the summary can
@@ -467,6 +666,10 @@ def main() -> int:
     ok = sum(1 for r in results if r["status"] == "ok")
     print(f"\ndone in {wall:.1f}s — {ok}/{len(results)} ok "
           f"({100.0 * ok / len(results):.1f}%)", flush=True)
+    if static_cfg:
+        live = sum(1 for r in results if r.get("motion") == "live")
+        static = sum(1 for r in results if r.get("motion") == "static")
+        print(f"  static-check: {live} live, {static} static")
     print(f"  {out_base.with_suffix('.json')}")
     print(f"  {out_base.with_suffix('.csv')}")
     print(f"  {out_base.with_suffix('.md')}")

@@ -181,6 +181,17 @@ pool-test:
 	DYLD_INSERT_LIBRARIES=$$(.venv/bin/python -c "import sysconfig;print(sysconfig.get_config_var('LIBDIR'))")/libpython3.11.dylib \
 	cargo test --manifest-path nes_core/Cargo.toml --lib --features python -- --test-threads=1
 
+# ROM-library scan: probe every ROM in a directory for load/reset/step
+# panics and timeouts, then re-probe every `ok` ROM for a frozen (static)
+# screen. See scripts/rom_library_scan.py module docstring.
+.PHONY: rom-scan rom-scan-static-selftest
+rom-scan:
+	. .venv/bin/activate && python scripts/rom_library_scan.py \
+	  --roms-dir roms --out scan_results --workers 8
+
+rom-scan-static-selftest:
+	. .venv/bin/activate && pytest tests/test_rom_library_scan_static.py -v
+
 # `asm_cpu` (AArch64 6502 fast path) is ON by default here, and that is a
 # deliberate, receipted decision — not drift. Rationale, the list of which
 # ROMs/mappers are lockstep-verified clean vs unverified, and the rule for
