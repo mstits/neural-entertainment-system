@@ -627,3 +627,139 @@ def test_knob_registration_writes_receipt_file(tmp_path):
     payload = json.loads(receipt_path.read_text())
     assert payload["arm"] == "ortho"
     assert payload["history_entry"]["wall_id"] == "cv_hall"
+
+
+# ---------------------------------------------------------------------
+# The cycle receipt on disk (FORGE-FIX-1)
+# ---------------------------------------------------------------------
+
+def _receipt_writing_block_runner(tmp_path, receipt_fn=None):
+    """A stub block_runner that writes a real ``block_receipt.json``
+    under the plan's own ``--out`` directory, the way ``run_block`` now
+    does, so the cycle receipt has real paths to name. Still no
+    subprocess: this file proves orchestration, never the runner."""
+    calls = []
+
+    def run(plan: dict) -> dict:
+        calls.append(plan)
+        out_dir = Path(plan["cmd"][plan["cmd"].index("--out") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        receipt = (receipt_fn(plan) if receipt_fn else _receipt())
+        receipt = dict(receipt)
+        receipt.update({
+            "wall_id": plan["wall_id"], "cycle_id": plan["cycle_id"],
+            "grant_entry": plan.get("grant_entry"),
+            "attended_hours": 0.5, "run_lock_hours": 0.25,
+            "fabricated_clears_unretracted": 0,
+            "positive_control": {"injected": False, "caught": False,
+                                  "banked_from_reset": 0},
+        })
+        path = out_dir / "block_receipt.json"
+        path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+        receipt["receipt_path"] = str(path)
+        return receipt
+
+    run.calls = calls
+    return run
+
+
+def test_cycle_receipt_is_written_naming_every_block_receipt(tmp_path):
+    """A cycle writes ``cycle_receipt.json`` beside its proposals,
+    naming every block receipt path it ran, the cycle verdicts, and the
+    grant fields a cycle is judged on (spec Section 4, live-validation
+    point 4): the watchdog-trip sum, attended hours beside run-lock
+    hours with the ratio, the positive control and the banked list.
+    Before this, nothing anywhere wrote this file.
+
+    Attended hours are the maximum across blocks, not the sum -- every
+    block reads the same attended log, so summing would multiply one
+    operator's hours by the block count.
+
+    Revert-verify (live, this session): make ``forge_cycle``'s
+    ``_finish`` return ``result`` without calling
+    ``write_cycle_receipt`` and this fails by name on the first
+    assertion -- the file does not exist. Second corruption: sum the
+    blocks' attended hours instead of taking the max, and the
+    ``attended_hours == 0.5`` assertion fails at 1.5. Both restored,
+    re-passed.
+    """
+    runner = _receipt_writing_block_runner(tmp_path)
+
+    def inert_reading(receipt, *, arm, prop, out_dir):
+        return {"n_obs": 0, "metric_value": 0, "stage3_true": False}
+
+    result = loop_mod.forge_cycle(
+        "cv_hall", BUNDLE, [FIXTURE_ARM], 0, cycle_id="c_receipt",
+        budget=BUDGET, cmd_prefix=["python3", "fixture.py"],
+        out_base=tmp_path, block_runner=runner, reading_fn=inert_reading,
+        grant_entry="CLAIMS.md#FORGE-GRANT-cv_hall-2026-09-01",
+        root_state_sha="00a93d0aae5b27d2", k=1, commit="4174d76",
+        date="2026-09-02")
+
+    path = Path(tmp_path) / "cv_hall" / "c_receipt" / "cycle_receipt.json"
+    assert path.exists(), "the cycle ran and wrote no cycle receipt"
+    assert result["cycle_receipt_path"] == str(path)
+    receipt = json.loads(path.read_text())
+
+    # Every block that ran is named by its own receipt's path, and each
+    # of those files is really there.
+    tags = [b["tag"] for b in receipt["blocks"]]
+    assert tags == ["null", "control", "pilot_0"], tags
+    assert receipt["block_receipt_paths"] == [b["receipt_path"]
+                                              for b in receipt["blocks"]]
+    for named in receipt["block_receipt_paths"]:
+        assert named is not None and Path(named).exists(), named
+
+    assert receipt["cycle_verdict"] == "ALL_VOID_OR_FAIL"
+    assert receipt["stop_reason"] == "all_proposals_void_or_fail"
+    assert receipt["null_gate"]["verdict"] == "VOID"
+    assert receipt["grant_entry"] == "CLAIMS.md#FORGE-GRANT-cv_hall-2026-09-01"
+    assert receipt["root_state_sha"] == "00a93d0aae5b27d2"
+    assert receipt["commit"] == "4174d76"
+
+    assert receipt["watchdog_trips_sum"] == 0
+    assert receipt["fabricated_clears_unretracted"] == 0
+    assert receipt["banked"] == []
+    assert receipt["run_lock_hours"] == 0.75      # three blocks, summed
+    assert receipt["attended_hours"] == 0.5       # one log, the max
+    assert receipt["ratio_machine_per_attended"] == 1.5
+    assert receipt["ratio_ok"] is False           # reported, never a refusal
+    assert len(receipt["positive_control"]) == 3
+
+
+def test_cycle_result_keeps_every_block_receipt_field(tmp_path):
+    """The cycle result carries each block's whole receipt, not four
+    fields of it. The grant judges a cycle on attended hours beside
+    run-lock hours, the positive control and the banked list; keeping
+    only ``stop``/``aborted``/``watchdog_trips`` threw all of those
+    away before the caller ever saw them.
+
+    Revert-verify (live, this session): put back the four-key literal
+    (``{"receipt_stop": ..., "aborted": ..., "watchdog_trips": ...,
+    "frozen_sha256": ...}``) for ``result["null"]`` and this fails by
+    name on ``attended_hours``. Restored, re-passed.
+    """
+    runner = _receipt_writing_block_runner(tmp_path)
+
+    def inert_reading(receipt, *, arm, prop, out_dir):
+        return {"n_obs": 0, "metric_value": 0, "stage3_true": False}
+
+    result = loop_mod.forge_cycle(
+        "cv_hall", BUNDLE, [FIXTURE_ARM], 0, cycle_id="c_fields",
+        budget=BUDGET, cmd_prefix=["python3", "fixture.py"],
+        out_base=tmp_path, block_runner=runner, reading_fn=inert_reading,
+        k=1)
+
+    for where in (result["null"], result["control"]):
+        for field in ("attended_hours", "run_lock_hours", "banked",
+                      "positive_control", "grant_entry", "receipt_path",
+                      "fabricated_clears_unretracted"):
+            assert field in where, f"{field} dropped from the cycle result"
+        # The four keys the old shape kept are still there.
+        assert where["receipt_stop"] == "budget"
+        assert where["watchdog_trips"] == 0
+        assert where["frozen_sha256"]
+
+    pilot = result["proposals"][0]
+    assert pilot["receipt"]["attended_hours"] == 0.5
+    assert Path(pilot["receipt_path"]).exists()

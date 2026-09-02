@@ -305,3 +305,83 @@ def test_vocabulary_self_check_clean_over_own_docstrings():
             assert violations == [], (
                 f"{path}: a docstring fails check_vocabulary: {violations}\n"
                 f"docstring: {doc!r}")
+
+
+# ------------------------------------------------- header and dashes
+
+
+def test_rendered_entry_parses_as_a_forge_entry_and_carries_no_em_dash():
+    """The rendered entry opens with the bold ``**FORGE-...`` lead
+    ``scripts/provenance_check.py`` actually parses, and no rendered
+    surface emits U+2014.
+
+    Both halves are load-bearing and were both wrong. The retired
+    ``## FORGE-...`` heading parsed as nothing: ``parse_forge_entries``
+    ends its section at the first ``## ``, so an entry rendered that
+    way was invisible to the very checker meant to gate it. And the
+    entry carried two U+2014, which the wave's prose check refuses in
+    an added line. The whitespace after the status word is part of the
+    parse: ``**FORGE-VOID:`` and ``**FORGE-VOID,`` both fail that
+    regex, so a punctuation mark cannot stand in for the retired dash.
+
+    Revert-verify (live, this session): render the header as
+    ``## {status} ...`` again and the first assertion fails (the regex
+    does not match) and the section-membership assertion fails (the
+    real ``parse_forge_entries`` finds no entry). Second corruption:
+    put U+2014 back in the header and in ``TIER3_TEMPLATE`` and the
+    dash assertion fails naming both. Both restored, re-passed.
+    """
+    import re
+
+    # The regex from scripts/provenance_check.py:179, copied rather
+    # than imported: importing it would make this tautological if the
+    # checker's own parse were ever loosened to admit what we emit.
+    forge_entry_re = re.compile(r'^\*\*FORGE(?:-([A-Z][A-Z-]*))?\s')
+
+    for status in ("FORGE-PENDING-VALIDATION", "FORGE-VOID",
+                   "FORGE-VALIDATED-MECHANISM"):
+        text = render_entry(_valid_entry(status=status))
+        header = text.splitlines()[0]
+        match = forge_entry_re.match(header)
+        assert match, (
+            f"provenance_check would not parse this entry's header: "
+            f"{header!r}")
+        assert status.split("-", 1)[1] == match.group(1)
+        assert "\u2014" not in text, (
+            f"rendered {status} entry emits U+2014: "
+            f"{[l for l in text.splitlines() if chr(0x2014) in l]}")
+        # The header is not a whole-line bold span, which the entry's
+        # own check_vocabulary refuses -- the first body section rides
+        # on the header line, as it does in every entry in CLAIMS.md.
+        assert not header.endswith("**")
+        assert "**Detection.**" in header
+        assert check_vocabulary(text) == []
+
+    # An addendum, rendered inline and appended, is a FORGE surface too.
+    with_addendum = render_entry(_valid_entry(addenda=[
+        {"date": "2026-09-03", "status": "STANDS",
+         "text": "A later pilot block read the same."}]))
+    assert "\u2014" not in with_addendum
+    assert "Addendum, 2026-09-03, STANDS." in with_addendum
+
+
+def test_appended_addendum_carries_no_em_dash(tmp_path):
+    """``append_addendum`` writes to the same file the landing commit
+    lands, so its block is held to the same no-U+2014 rule as the
+    entry it follows.
+
+    Revert-verify (live, this session): put U+2014 back between the
+    date and the status in ``append_addendum``'s block and the dash
+    assertion fails. Restored, re-passed.
+    """
+    entry_path = tmp_path / "CLAIMS_ENTRY.md"
+    entry_path.write_text(render_entry(_valid_entry()))
+
+    append_addendum(entry_path, {
+        "date": "2026-09-03", "status": "WITHDRAWN",
+        "text": "The pilot block was rerun under a corrected budget."})
+
+    text = entry_path.read_text()
+    assert "\u2014" not in text
+    assert "*Addendum, 2026-09-03, WITHDRAWN.*" in text
+    assert check_vocabulary(text) == []

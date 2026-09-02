@@ -76,6 +76,19 @@ Nothing here touches CLAIMS.md except reading it once, to confirm the
 plan's ``grant_entry`` anchor is present (LG rule 9's refusal). Nothing
 here writes an EXHIBITION or FORGE ledger entry -- piece (e) does that,
 from this block's own receipt.
+
+That receipt is written to ``<child_out>/block_receipt.json`` on every
+exit path that got as far as reading the plan's ``--out`` flag, refusals
+included, and its path comes back in the returned dict as
+``receipt_path``. ``write_block_receipt`` refuses a receipt missing any
+field the two FORGE-GRANT entries fix, so a partial receipt never
+reaches disk. Alongside the grant's fields it records the SHARED root
+state's full sha256 before launch and after the block ends -- the
+reading ruling 17 judges a control on -- which is a different value from
+the 16-character fingerprint the poll loop compares. ``append_attended``
+is the hook that puts rows in the ``attended_log`` the ratio divides by:
+without it every live block divides by zero and reports ``ratio_ok:
+false`` regardless of who sat with the run.
 """
 from __future__ import annotations
 
@@ -109,6 +122,102 @@ KILL_GRACE_S = 10.0
 _KILL_POLL_S = 0.02
 
 _STOP_VALUES = ("budget", "stalled", "abort", "complete")
+
+#: The file every block writes its own receipt to, inside the block's
+#: own ``--out`` directory. The grant entries fix the receipt's FIELDS
+#: and say the runner writes it; before this, ``run_block`` returned the
+#: dict and wrote nothing, so a live block left no receipt on disk at
+#: all (the 2026-09-02 cv_hall dry run's first blocker).
+BLOCK_RECEIPT_NAME = "block_receipt.json"
+
+#: Every field the two FORGE-GRANT entries fix for a block receipt
+#: (``CLAIMS.md``'s "Receipt fields, fixed by the ruling and written by
+#: ``src/forge/block.py::run_block``", spec Section 2f). Presence is
+#: what is checked, not truthiness: ``abort_reason: null`` on a clean
+#: block is a recorded field, an ABSENT ``abort_reason`` is a receipt
+#: that cannot answer the question the grant asks of it.
+GRANT_RECEIPT_FIELDS = (
+    "wall_id", "cycle_id", "grant_entry", "started", "ended", "stop",
+    "attended_hours", "run_lock_hours", "ratio_machine_per_attended",
+    "ratio_ok", "watchdog_trips", "positive_control",
+    "fabricated_clears_unretracted", "banked", "aborted", "abort_reason",
+)
+
+#: The three sub-fields the grant fixes inside ``positive_control``.
+GRANT_POSITIVE_CONTROL_FIELDS = ("injected", "caught", "banked_from_reset")
+
+
+class ReceiptFieldError(ValueError):
+    """Raised by ``write_block_receipt`` when a receipt is missing a
+    field the grant requires. Carries the full list, not just the
+    first, and is raised BEFORE any byte is written, so a partial
+    receipt never reaches disk to be read later as if it were whole."""
+
+    def __init__(self, missing):
+        self.missing = list(missing)
+        super().__init__(
+            "block receipt missing grant-required field(s): "
+            + ", ".join(self.missing))
+
+
+def write_block_receipt(receipt: dict, out_dir: Path) -> Path:
+    """Write ``receipt`` to ``<out_dir>/block_receipt.json`` and return
+    the path, after checking it carries every field the grant fixes.
+
+    Refuses (``ReceiptFieldError``) rather than writing a receipt that
+    is missing one: a receipt is the only thing a later reader has, so
+    one that silently omits ``attended_hours`` or ``watchdog_trips``
+    would be indistinguishable from a block that recorded them as
+    absent. ``receipt["receipt_path"]`` is set to the path before the
+    write, so the file names itself and the returned dict carries the
+    same string.
+    """
+    missing = [f for f in GRANT_RECEIPT_FIELDS if f not in receipt]
+    control = receipt.get("positive_control")
+    if isinstance(control, dict):
+        missing += [f"positive_control.{f}"
+                    for f in GRANT_POSITIVE_CONTROL_FIELDS if f not in control]
+    elif "positive_control" not in missing:
+        missing.append("positive_control (not a mapping)")
+    if missing:
+        raise ReceiptFieldError(missing)
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / BLOCK_RECEIPT_NAME
+    receipt["receipt_path"] = str(path)
+    path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def append_attended(attended_log: Path, *, who: str, checked: str,
+                     start: Optional[str] = None, end: Optional[str] = None,
+                     now_fn: Optional[Callable[[], str]] = None) -> Path:
+    """Append one attended row to ``attended_log`` and return its path.
+
+    The ratio the grant reports divides run-lock hours by attended
+    hours, and ``_attended_hours`` below reads those hours from this
+    file -- so with nothing writing it, every live block divides by
+    zero and reports ``ratio_ok: false`` no matter how long a person
+    actually sat with the run. This is the hook the operator (or a
+    driver acting for one) calls at the start and end of each interval
+    they are actually at the keyboard: ``who`` names them, ``checked``
+    names what they looked at, and ``start``/``end`` are local-clock
+    ``%Y-%m-%dT%H:%M:%S`` stamps in the shape ``_attended_hours``
+    parses. Omitting ``start`` records a zero-length checkpoint (a
+    timestamped note that contributes no hours), which is the honest
+    reading of a row whose interval nobody stated.
+    """
+    now_fn = now_fn or (
+        lambda: time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()))
+    end = end or now_fn()
+    start = start or end
+    path = Path(attended_log)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = {"start": start, "end": end, "who": who, "checked": checked}
+    with open(path, "a") as fh:
+        fh.write(json.dumps(row, sort_keys=True) + "\n")
+    return path
 
 
 def _now_iso() -> str:
@@ -146,6 +255,20 @@ def _sha_of_file(path: Path) -> Optional[str]:
     a full digest anywhere a human reads it."""
     try:
         return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+    except OSError:
+        return None
+
+
+def _full_sha_of_file(path: Optional[Path]) -> Optional[str]:
+    """The file's whole sha256 as hex, or None if it can't be read. The
+    grant records the shared root state's FULL digest, and the ruling 17
+    control is judged on that digest reading the same before and after a
+    block -- ``_sha_of_file`` above returns the 16-character fingerprint
+    the poll loop compares, which is not the value the grant names."""
+    if path is None:
+        return None
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
     except OSError:
         return None
 
@@ -406,7 +529,10 @@ def run_block(
     shape FORGE_SPEC_2026-09-01.md Section 2f fixes: `wall_id`,
     `cycle_id`, `cmd`, `root_state_sha`, `max_secs`, `max_steps`,
     `grant_entry`, `attended_log`, `inject_wrongful_reset`) and returns
-    the block receipt (the JSON shape the same section fixes).
+    the block receipt (the JSON shape the same section fixes),
+    having first written that receipt to
+    ``<--out>/block_receipt.json`` and recorded its path in the
+    dict's own ``receipt_path``.
 
     `repo`, `claims_path`, `grant_state_path`, `launch_fn`,
     `attended_hours_fn`, `run_lock_hours_fn`, `sleep_fn` and
@@ -441,14 +567,36 @@ def run_block(
                              "banked_from_reset": 0},
         "fabricated_clears_unretracted": 0, "banked": [],
         "aborted": False, "abort_reason": None,
+        # Beyond the grant's fixed field list: the SHARED root state's
+        # full digest, read from the file the plan named (never the
+        # sandbox copy), before launch and again after the block ends.
+        # Ruling 17 judges a control on those two reading the same and
+        # both equalling the grant's; a receipt that omits them cannot
+        # settle that question later.
+        "root_state_path": None,
+        "root_state_sha256_before": None,
+        "root_state_sha256_after": None,
+        "receipt_path": None,
     }
+
+    #: Set as soon as the block's own --out directory is known; the
+    #: receipt is written there on EVERY exit path from here on,
+    #: refusals included. A refusal that precedes the --out flag being
+    #: read (no grant anchor, ended grant, no --out at all) has no
+    #: directory of its own to write to and is returned unwritten.
+    out_state: dict = {"dir": None}
+
+    def _finish(rcpt: dict) -> dict:
+        if out_state["dir"] is not None:
+            write_block_receipt(rcpt, out_state["dir"])
+        return rcpt
 
     def _refuse(reason: str) -> dict:
         receipt["ended"] = _now_iso()
         receipt["stop"] = "abort"
         receipt["aborted"] = True
         receipt["abort_reason"] = reason
-        return receipt
+        return _finish(receipt)
 
     # ---- grant checks, before anything launches (LG rule 9) ----------
     if not _grant_anchor_present(grant_entry, claims_path):
@@ -461,8 +609,16 @@ def run_block(
         return _refuse("cmd_missing_out_flag")
     child_out = _resolve(repo, out_value)
     child_out.mkdir(parents=True, exist_ok=True)
+    out_state["dir"] = child_out
 
     root_state_path = _resolve(repo, _flag_value(cmd, "--root-state"))
+    # Kept pointing at the file the PLAN named, across the sandbox
+    # rewrite below that moves `root_state_path` to this block's own
+    # copy: the before/after digests the receipt records are about the
+    # shared file, which nothing this runner does may change.
+    shared_root_path = root_state_path
+    receipt["root_state_path"] = (str(shared_root_path)
+                                  if shared_root_path is not None else None)
 
     # Row 0b correction: the child is never pointed at the file the plan
     # names directly. For a real block that file is a shared archive
@@ -484,7 +640,9 @@ def run_block(
             _original_root_bytes = Path(root_state_path).read_bytes()
         except OSError as exc:
             return _refuse(f"root_state_unreadable:{exc}")
-        _computed_root_sha = hashlib.sha256(_original_root_bytes).hexdigest()[:16]
+        receipt["root_state_sha256_before"] = hashlib.sha256(
+            _original_root_bytes).hexdigest()
+        _computed_root_sha = receipt["root_state_sha256_before"][:16]
         if root_state_sha is not None and root_state_sha != _computed_root_sha:
             return _refuse("root_state_sha_mismatch")
         sandbox_dir = child_out / "sandbox"
@@ -607,4 +765,9 @@ def run_block(
         receipt["ratio_machine_per_attended"] = None
         receipt["ratio_ok"] = False
 
-    return receipt
+    # Re-read from the shared file, not from the sandbox copy the poll
+    # loop watched: this is the reading that shows the file other blocks
+    # and the grant itself depend on came through untouched.
+    receipt["root_state_sha256_after"] = _full_sha_of_file(shared_root_path)
+
+    return _finish(receipt)

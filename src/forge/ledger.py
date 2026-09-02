@@ -20,6 +20,11 @@ bad render reach a file:
     and a standalone italicised kicker line. The entry states the
     gate outcome and the receipts and stops.
 
+The entry's own header is a bold ``**FORGE-...`` lead followed by the
+Detection section on the same line, the shape both
+``scripts/provenance_check.py`` parses and every entry already in
+CLAIMS.md uses. Nothing here emits U+2014 on any rendered surface.
+
 ``render_entry`` builds its own ``tier3_sentence`` and ``status_plain``
 fields from fixed templates (never accepts free text for either) so a
 caller cannot regress the corrected 2026-09-01 wording, and calls
@@ -197,14 +202,16 @@ STATUS_VALUES = frozenset((
 
 #: §1's Tier-3 sentence, instantiated per entry with the run's own named
 #: telemetry standing in for "(named in the entry)". Verbatim except for
-#: that one substitution -- do not paraphrase this template in a caller.
+#: that one substitution and the dash before "the test", which is a
+#: colon here because the wave's prose check refuses U+2014 in an added
+#: line -- do not paraphrase this template in a caller.
 TIER3_TEMPLATE = (
     "Designing this arm is LLM guidance of exploration in the plain "
     "sense; it is permitted under CLAIMS.md's purity boundary because "
     "the design is game-agnostic machinery, its knob settings are "
     "derived only from this run's own telemetry ({telemetry}), and it "
     "references no route, map, disassembly, or game-specific "
-    "instruction — the test \"could this decision have been made "
+    "instruction: the test \"could this decision have been made "
     "by a party who has never seen the game\" holds."
 )
 
@@ -261,7 +268,7 @@ def _render_addenda(addenda: Sequence[Mapping[str, str]]) -> str:
         if a["status"] not in ("WITHDRAWN", "STANDS"):
             raise ValueError(
                 f"addendum status must be WITHDRAWN or STANDS, got {a['status']!r}")
-        parts.append(f"Addendum, {a['date']} — {a['status']}. {a['text']}")
+        parts.append(f"Addendum, {a['date']}, {a['status']}. {a['text']}")
     return " ".join(parts)
 
 
@@ -304,12 +311,25 @@ def render_entry(entry: Mapping[str, object]) -> str:
         "addenda": addenda,
     }
 
+    # The bold lead is the form `scripts/provenance_check.py` actually
+    # parses (`FORGE_ENTRY_RE`, `:179`: `**FORGE` then an optional
+    # `-TAG` then WHITESPACE) and the form all eleven entries already
+    # in CLAIMS.md use. The retired `## {status}` heading parsed as
+    # nothing: `parse_forge_entries` ends its section at the first
+    # `## `, so an entry rendered that way was invisible to the checker
+    # that is supposed to gate it. Note the space after the status word
+    # is load-bearing -- `**FORGE-VOID:` and `**FORGE-VOID,` both fail
+    # that regex. The first body section rides on the header's own
+    # line, as it does in every existing entry, so the line is not a
+    # whole-line bold span (which `check_vocabulary` refuses).
+    first, rest = SECTION_ORDER[0], SECTION_ORDER[1:]
     lines = [
-        f"## {status} — the {entry['arm']} (`{entry['flag']}`), "
-        f"commit `{entry['commit']}`, {entry['date']}.",
+        f"**{status} for the {entry['arm']} (`{entry['flag']}`), "
+        f"commit `{entry['commit']}`, {entry['date']}.** "
+        f"**{SECTION_LABELS[first]}.** {body[first]}",
         "",
     ]
-    for key in SECTION_ORDER:
+    for key in rest:
         label = SECTION_LABELS[key]
         lines.append(f"**{label}.** {body[key]}")
         lines.append("")
@@ -341,7 +361,7 @@ def append_addendum(entry_path: Path, addendum: Mapping[str, str]) -> None:
         raise ValueError("addendum text must be non-empty")
 
     block = (
-        f"\n*Addendum, {addendum['date']} — {addendum['status']}.* "
+        f"\n*Addendum, {addendum['date']}, {addendum['status']}.* "
         f"{addendum['text']}\n"
     )
     violations = check_vocabulary(block)

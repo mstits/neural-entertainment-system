@@ -19,6 +19,15 @@ immediately after -- a mismatch is the Section 4 row (d) FAIL
 condition ("a proposal edited after pilot start") and raises rather
 than silently gating a proposal that was not the one piloted.
 
+``forge_cycle`` writes ``runs/forge/<wall>/<cycle>/cycle_receipt.json``
+on every path that returns a result, naming every block receipt's own
+path and the cycle's verdicts (spec Section 4, live-validation point
+4). It also carries each block's whole receipt into the returned
+result rather than four fields of it: the grant judges a cycle on
+attended hours beside run-lock hours, the watchdog-trip sum, the
+positive control and the banked list, and dropping those here left a
+cycle unable to answer for itself.
+
 Nothing here writes CLAIMS.md. Registration of a validated ``arm``
 proposal renders a FORGE ledger entry (piece (e)) to
 ``runs/forge/<wall>/<cycle>/CLAIMS_ENTRY.md``; landing that text into
@@ -36,6 +45,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from src.forge import proposal as proposal_mod
+from src.forge.block import RATIO_FLOOR as _RATIO_FLOOR
 from src.forge.block import run_block as _real_run_block
 from src.forge.ledger import render_entry as _real_render_entry
 
@@ -195,6 +205,98 @@ def _write_discard(discards_path: Path, row: dict) -> None:
         f.write(json.dumps(row, sort_keys=True) + "\n")
 
 
+CYCLE_RECEIPT_NAME = "cycle_receipt.json"
+
+
+def _block_row(tag: str, receipt: Mapping[str, Any]) -> dict:
+    """One row of the cycle receipt's ``blocks`` list: the tag, the
+    block receipt's own path on disk, and the fields the grant judges a
+    cycle on. ``receipt_path`` is None for a caller-supplied
+    ``block_runner`` that writes no receipt of its own -- reported as
+    None, never silently omitted, so a cycle receipt cannot read as if
+    every block had left one."""
+    return {
+        "tag": tag,
+        "receipt_path": receipt.get("receipt_path"),
+        "cycle_id": receipt.get("cycle_id"),
+        "stop": receipt.get("stop"),
+        "aborted": receipt.get("aborted"),
+        "watchdog_trips": receipt.get("watchdog_trips"),
+        "attended_hours": receipt.get("attended_hours"),
+        "run_lock_hours": receipt.get("run_lock_hours"),
+        "ratio_ok": receipt.get("ratio_ok"),
+        "positive_control": receipt.get("positive_control"),
+        "banked": receipt.get("banked"),
+        "fabricated_clears_unretracted": receipt.get(
+            "fabricated_clears_unretracted"),
+        "root_state_sha256_before": receipt.get("root_state_sha256_before"),
+        "root_state_sha256_after": receipt.get("root_state_sha256_after"),
+    }
+
+
+def _num(value: Any) -> float:
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def write_cycle_receipt(result: Mapping[str, Any], blocks: Sequence[tuple],
+                         cycle_dir: Path, *, grant_entry: Optional[str],
+                         root_state_sha: Optional[str], commit: str,
+                         date: str) -> Path:
+    """Write ``<cycle_dir>/cycle_receipt.json`` and return its path.
+
+    Section 4's live-validation point 4 names this file and what it must
+    carry: attended hours beside run-lock hours with the ratio check,
+    the watchdog-trip sum, the positive control, zero unretracted
+    fabricated clears, and the grant anchor. It also names every block
+    receipt's own path, so the cycle receipt is an index into the block
+    receipts rather than a summary that replaces them.
+
+    Attended hours are taken as the MAXIMUM across the blocks, not the
+    sum: every block in a cycle reads the same ``attended_log``, so
+    summing would multiply one operator's hours by the block count. The
+    maximum is that log's latest reading.
+    """
+    rows = [_block_row(tag, receipt) for tag, receipt in blocks]
+    run_lock_hours = round(sum(_num(r["run_lock_hours"]) for r in rows), 4)
+    attended_hours = max([_num(r["attended_hours"]) for r in rows] or [0.0])
+    ratio = (round(run_lock_hours / attended_hours, 4)
+             if attended_hours > 0 else None)
+    receipt = {
+        "wall_id": result.get("wall_id"),
+        "cycle_id": result.get("cycle_id"),
+        "arm": result.get("arm"),
+        "grant_entry": grant_entry,
+        "root_state_sha": root_state_sha,
+        "commit": commit,
+        "date": date,
+        "written": _now_iso(),
+        "blocks": rows,
+        "block_receipt_paths": [r["receipt_path"] for r in rows],
+        "attended_hours": attended_hours,
+        "run_lock_hours": run_lock_hours,
+        "ratio_machine_per_attended": ratio,
+        "ratio_ok": bool(ratio is not None and ratio >= _RATIO_FLOOR),
+        "watchdog_trips_sum": sum(int(_num(r["watchdog_trips"])) for r in rows),
+        "fabricated_clears_unretracted": sum(
+            int(_num(r["fabricated_clears_unretracted"])) for r in rows),
+        "banked": [b for r in rows for b in (r["banked"] or [])],
+        "positive_control": [
+            {"tag": r["tag"], "positive_control": r["positive_control"]}
+            for r in rows],
+        "cycle_verdict": result.get("cycle_verdict"),
+        "stop_reason": result.get("stop_reason"),
+        "null_gate": (result.get("null") or {}).get("gate"),
+        "control_stop": (result.get("control") or {}).get("stop"),
+        "proposals": result.get("proposals"),
+        "registration": result.get("registration"),
+    }
+    cycle_dir = Path(cycle_dir)
+    cycle_dir.mkdir(parents=True, exist_ok=True)
+    path = cycle_dir / CYCLE_RECEIPT_NAME
+    path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    return path
+
+
 def _write_proposal_file(base: Path, wall_id: str, cycle_id: str, index: int,
                           prop: dict, frozen_sha256: str) -> Path:
     base.mkdir(parents=True, exist_ok=True)
@@ -234,8 +336,9 @@ def forge_cycle(
     "MECHANISM_VALIDATED"|"ALL_VOID_OR_FAIL"|"VOID",
     "stop_reason": str, "null": {...}, "control": {...},
     "proposals": [{"index", "frozen_sha256", "repair_rounds",
-    "gate": {...}|None, "discard_stage": str|None}, ...],
-    "registration": {...}|None}``
+    "gate": {...}|None, "discard_stage": str|None, "receipt": {...},
+    "receipt_path": str|None}, ...],
+    "registration": {...}|None, "cycle_receipt_path": str}``
 
     Stop conditions (spec Section 3): (1) a proposal reads
     MECHANISM_VALIDATED -- stop, register, return. (2) every proposal
@@ -260,8 +363,21 @@ def forge_cycle(
         "wall_id": wall_id, "cycle_id": cycle_id, "arm": arm.name,
         "cycle_verdict": None, "stop_reason": None,
         "null": None, "control": None, "proposals": [],
-        "registration": None,
+        "registration": None, "cycle_receipt_path": None,
     }
+
+    #: (tag, block receipt) for every block this cycle ran, in order.
+    #: The cycle receipt is built from these, so a cycle that stops
+    #: early still names the blocks that did run.
+    blocks: list = []
+
+    def _finish() -> dict:
+        path = write_cycle_receipt(
+            result, blocks, cycle_dir, grant_entry=grant_entry,
+            root_state_sha=root_state_sha, commit=commit,
+            date=date or time.strftime("%Y-%m-%d"))
+        result["cycle_receipt_path"] = str(path)
+        return result
 
     # --- null candidate: in-situ negative control ----------------------
     # Frozen before its pilot exactly like a designed proposal (spec
@@ -278,18 +394,23 @@ def forge_cycle(
         root_state_sha=root_state_sha, out_dir=null_out,
         cmd_prefix=cmd_prefix)
     null_receipt = block_runner(null_plan)
+    blocks.append(("null", null_receipt))
     if not proposal_mod.verify_frozen(null_prop, null_frozen_sha256):
         raise proposal_mod.FrozenProposalError(
             f"null candidate proposal was mutated during its pilot "
             f"(sha256 no longer matches {null_frozen_sha256})")
-    result["null"] = {"receipt_stop": null_receipt.get("stop"),
-                       "aborted": null_receipt.get("aborted"),
-                       "watchdog_trips": null_receipt.get("watchdog_trips"),
-                       "frozen_sha256": null_frozen_sha256}
+    # The whole block receipt, not four fields of it: everything the
+    # grant fixes -- attended and run-lock hours, the ratio, the
+    # positive control, banked, the root-state digests -- was dropped
+    # here before, so a cycle result could not answer the questions the
+    # grant asks even when the block had answered them.
+    result["null"] = dict(null_receipt)
+    result["null"].update({"receipt_stop": null_receipt.get("stop"),
+                            "frozen_sha256": null_frozen_sha256})
     if null_receipt.get("aborted") or (null_receipt.get("watchdog_trips") or 0) > 0:
         result["cycle_verdict"] = CYCLE_VOID
         result["stop_reason"] = "null_block_aborted"
-        return result
+        return _finish()
 
     auditable = bool(arm.activity_counter)
     null_reading = reading_fn(null_receipt, arm=arm, prop=null_prop,
@@ -300,7 +421,7 @@ def forge_cycle(
     if null_gate["verdict"] != VERDICT_VOID:
         result["cycle_verdict"] = CYCLE_VOID
         result["stop_reason"] = "null_candidate_not_void"
-        return result
+        return _finish()
 
     # --- shared matched control (flag at off_value, same seed/budget) --
     # Pilots the same frozen proposal object as the null candidate (the
@@ -316,18 +437,18 @@ def forge_cycle(
         root_state_sha=root_state_sha, out_dir=control_out,
         cmd_prefix=cmd_prefix)
     control_receipt = block_runner(control_plan)
+    blocks.append(("control", control_receipt))
     if not proposal_mod.verify_frozen(null_prop, control_frozen_sha256):
         raise proposal_mod.FrozenProposalError(
             f"matched control proposal was mutated during its pilot "
             f"(sha256 no longer matches {control_frozen_sha256})")
-    result["control"] = {"receipt_stop": control_receipt.get("stop"),
-                          "aborted": control_receipt.get("aborted"),
-                          "watchdog_trips": control_receipt.get("watchdog_trips"),
-                          "frozen_sha256": control_frozen_sha256}
+    result["control"] = dict(control_receipt)
+    result["control"].update({"receipt_stop": control_receipt.get("stop"),
+                               "frozen_sha256": control_frozen_sha256})
     if control_receipt.get("aborted") or (control_receipt.get("watchdog_trips") or 0) > 0:
         result["cycle_verdict"] = CYCLE_VOID
         result["stop_reason"] = "control_block_aborted"
-        return result
+        return _finish()
     control_reading = reading_fn(control_receipt, arm=arm, prop=null_prop,
                                   out_dir=control_out)
 
@@ -416,6 +537,7 @@ def forge_cycle(
             root_state_sha=root_state_sha, out_dir=pilot_out,
             cmd_prefix=cmd_prefix)
         pilot_receipt = block_runner(pilot_plan)
+        blocks.append((f"pilot_{index}", pilot_receipt))
 
         # Defense-in-depth, not (yet) reachable through the default
         # block_runner/reading_fn pair (block.py's real run_block gets
@@ -441,8 +563,10 @@ def forge_cycle(
                 "index": index, "frozen_sha256": frozen_sha256,
                 "repair_rounds": rounds, "gate": None,
                 "discard_stage": "block_abort", "discard_reason": None,
+                "receipt": dict(pilot_receipt),
+                "receipt_path": pilot_receipt.get("receipt_path"),
             })
-            return result
+            return _finish()
 
         pilot_reading = reading_fn(pilot_receipt, arm=arm, prop=prop,
                                     out_dir=pilot_out)
@@ -453,6 +577,8 @@ def forge_cycle(
             "index": index, "frozen_sha256": frozen_sha256,
             "repair_rounds": rounds, "gate": gate,
             "discard_stage": None, "discard_reason": None,
+            "receipt": dict(pilot_receipt),
+            "receipt_path": pilot_receipt.get("receipt_path"),
         }
         result["proposals"].append(entry_row)
 
@@ -465,7 +591,7 @@ def forge_cycle(
             result["registration"] = registration
             result["cycle_verdict"] = CYCLE_VALIDATED
             result["stop_reason"] = f"proposal_{index}_validated"
-            return result
+            return _finish()
 
         stage = "gate"
         entry_row["discard_stage"] = stage
@@ -478,7 +604,7 @@ def forge_cycle(
 
     result["cycle_verdict"] = CYCLE_ALL_VOID_OR_FAIL
     result["stop_reason"] = "all_proposals_void_or_fail"
-    return result
+    return _finish()
 
 
 def _register(prop: dict, arm, arm_index: int, gate: dict, *,

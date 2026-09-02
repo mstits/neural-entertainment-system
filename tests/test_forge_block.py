@@ -41,7 +41,16 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.forge.block import run_block, wrongful_reset  # noqa: E402
+from src.forge.block import (  # noqa: E402
+    GRANT_POSITIVE_CONTROL_FIELDS,
+    GRANT_RECEIPT_FIELDS,
+    ReceiptFieldError,
+    _attended_hours,
+    append_attended,
+    run_block,
+    write_block_receipt,
+    wrongful_reset,
+)
 
 ANCHOR = "FORGE-GRANT-gate_fixture-2026-09-01"
 GRANT_ENTRY = f"CLAIMS.md#{ANCHOR}"
@@ -806,3 +815,143 @@ def test_wrongful_reset_catches_a_root_state_mismatch():
 def test_wrongful_reset_catches_a_lock_holder_mismatch():
     got = wrongful_reset(None, None, lock_holder_pid=999, child_pid=111)
     assert got == {"reason": "lock_holder_mismatch"}
+
+
+# ---------------------------------------------------------------------
+# The receipt on disk (FORGE-FIX-1)
+# ---------------------------------------------------------------------
+
+def test_block_receipt_is_written_to_disk_with_every_grant_field(tmp_path):
+    """A clean block leaves ``block_receipt.json`` in its own ``--out``
+    directory carrying every field the two FORGE-GRANT entries fix,
+    with attended hours beside run-lock hours, the watchdog-trip count,
+    the positive control, the banked list, and the SHARED root state's
+    full sha256 read before launch and again after the block ended.
+    The returned dict names the same path.
+
+    Before this, ``run_block`` returned the receipt and wrote nothing,
+    so a live block under the grant left no receipt on disk at all.
+
+    Revert-verify (live, this session): delete the
+    ``write_block_receipt(rcpt, out_state["dir"])`` call in
+    ``run_block``'s ``_finish`` and this fails by name on the first
+    assertion -- the file does not exist. Restored, re-passed.
+    """
+    script = _write_fixture(
+        tmp_path, "receipt_on_disk",
+        rows=[{"cells": 10, "steps": 100}, {"cells": 20, "steps": 200}],
+        row_interval=0.02, write_solution=True, exit_after_rows=True)
+    claims, grant_state = _grant_paths(tmp_path)
+    root_path, root_sha = _write_root_state(tmp_path)
+    shared_before = hashlib.sha256(root_path.read_bytes()).hexdigest()
+    plan = _make_plan(tmp_path, script, root_state_path=root_path,
+                      root_state_sha=root_sha)
+    # Two real attended rows so the ratio divides by a real number.
+    attended = tmp_path / "attended.jsonl"
+    append_attended(attended, who="operator", checked="launch preflight",
+                    start="2026-09-02T12:00:00", end="2026-09-02T12:30:00")
+    plan["attended_log"] = str(attended)
+
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims, grant_state_path=grant_state,
+        poll_interval=0.01, term_grace_s=1.0, kill_grace_s=1.0)
+
+    receipt_file = tmp_path / "out" / "block_receipt.json"
+    assert receipt_file.exists(), (
+        "run_block returned a receipt but wrote none to disk")
+    assert receipt["receipt_path"] == str(receipt_file)
+    on_disk = json.loads(receipt_file.read_text())
+
+    missing = [f for f in GRANT_RECEIPT_FIELDS if f not in on_disk]
+    assert missing == [], f"receipt on disk is missing grant fields: {missing}"
+    for sub in GRANT_POSITIVE_CONTROL_FIELDS:
+        assert sub in on_disk["positive_control"]
+
+    assert on_disk["stop"] == "complete"
+    assert on_disk["watchdog_trips"] == 0
+    assert on_disk["banked"], "a clean block with a solution must record it"
+    # Attended hours beside run-lock hours, both real numbers.
+    assert on_disk["attended_hours"] == 0.5
+    assert on_disk["run_lock_hours"] >= 0.0
+    assert on_disk["ratio_machine_per_attended"] is not None
+    # The shared root state, unchanged by the block: the reading ruling
+    # 17 judges a control on. Full digests, not the 16-char fingerprint.
+    assert on_disk["root_state_sha256_before"] == shared_before
+    assert on_disk["root_state_sha256_after"] == shared_before
+    assert len(on_disk["root_state_sha256_before"]) == 64
+
+
+def test_receipt_missing_a_grant_required_field_is_refused(tmp_path):
+    """``write_block_receipt`` refuses a receipt that omits any field
+    the grant fixes, names every one it is missing, and writes no file
+    -- a partial receipt must never reach disk to be read later as if
+    it were whole. A missing ``positive_control`` sub-field is refused
+    on the same footing as a missing top-level field.
+
+    Revert-verify (live, this session): drop the ``missing`` check (or
+    make ``write_block_receipt`` return the path unconditionally) and
+    both ``pytest.raises`` blocks fail to raise, and the
+    "no file written" assertions fail -- the partial receipt lands.
+    Restored, re-passed.
+    """
+    whole = {f: None for f in GRANT_RECEIPT_FIELDS}
+    whole["positive_control"] = {f: None for f in GRANT_POSITIVE_CONTROL_FIELDS}
+    out = tmp_path / "out"
+
+    # The whole receipt is accepted, so the refusals below are about the
+    # missing field and not about the fixture being wrong throughout.
+    assert write_block_receipt(dict(whole), out).exists()
+    (out / "block_receipt.json").unlink()
+
+    partial = dict(whole)
+    del partial["attended_hours"]
+    del partial["watchdog_trips"]
+    with pytest.raises(ReceiptFieldError) as exc_info:
+        write_block_receipt(partial, out)
+    assert "attended_hours" in exc_info.value.missing
+    assert "watchdog_trips" in exc_info.value.missing
+    assert not (out / "block_receipt.json").exists(), (
+        "a refused receipt was written to disk anyway")
+
+    no_control = dict(whole)
+    no_control["positive_control"] = {"injected": True}
+    with pytest.raises(ReceiptFieldError) as exc_info:
+        write_block_receipt(no_control, out)
+    assert "positive_control.caught" in exc_info.value.missing
+    assert "positive_control.banked_from_reset" in exc_info.value.missing
+    assert not (out / "block_receipt.json").exists()
+
+
+def test_attended_hook_records_who_and_what_was_checked(tmp_path):
+    """``append_attended`` writes rows ``_attended_hours`` can read, so
+    attended hours are recorded by the person who was there rather than
+    asserted afterwards: two half-hour intervals read as 1.0 hours, and
+    each row carries who was at the keyboard and what they checked. A
+    row with no ``start`` is a timestamped checkpoint contributing no
+    hours, never a silent interval.
+
+    Revert-verify (live, this session): change ``append_attended``'s
+    ``open(path, "a")`` to ``open(path, "w")`` and the second-row
+    assertions fail -- the file holds one row and ``_attended_hours``
+    reads 0.5, not 1.0. Restored, re-passed.
+    """
+    log = tmp_path / "cycle" / "attended.jsonl"
+
+    append_attended(log, who="matthew", checked="preflight shas and lock dir",
+                    start="2026-09-02T12:00:00", end="2026-09-02T12:30:00")
+    append_attended(log, who="matthew", checked="null block progress rows",
+                    start="2026-09-02T13:00:00", end="2026-09-02T13:30:00")
+
+    rows = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    assert len(rows) == 2, "append_attended overwrote an earlier row"
+    assert [r["who"] for r in rows] == ["matthew", "matthew"]
+    assert rows[0]["checked"] == "preflight shas and lock dir"
+    assert rows[1]["checked"] == "null block progress rows"
+    assert _attended_hours(log) == 1.0
+
+    append_attended(log, who="matthew", checked="mid-block glance",
+                    now_fn=lambda: "2026-09-02T14:00:00")
+    rows = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    assert rows[2]["start"] == rows[2]["end"] == "2026-09-02T14:00:00"
+    assert _attended_hours(log) == 1.0, (
+        "a checkpoint row with no interval must contribute no hours")
