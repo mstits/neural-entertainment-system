@@ -1,0 +1,85 @@
+"""check_enforcement (scripts/mistakes_tally.py, DO-21): a SHIPPED/PROMOTED
+watch-table cell names only Makefile targets, paths, and symbols that exist
+(rule A), and never quotes a stale value for an integer constant it names
+(rule B). Each case builds a synthetic table against a synthetic REPO in
+tmp_path -- no dependency on MISTAKES.md's real contents, so this file does
+not rot when the ledger changes.
+
+Amended by ruling 9 / review correction 3: a cell citing "(project
+instruction file)" is checked against CLAUDE.md only when that file exists
+in REPO; on a checkout without it (CLAUDE.md is gitignored here), the rule
+is skipped with a printed note rather than failing, so `make test` stays
+green on a clean clone.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+import mistakes_tally as mt  # noqa: E402
+
+
+def build_repo(tmp_path: Path) -> Path:
+    """A minimal REPO: one real Makefile target, one real module-level int
+    constant in a real .py file under scripts/ -- enough for _resolve and
+    _defines to have something true to find."""
+    (tmp_path / "Makefile").write_text("real-target:\n\techo hi\n")
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "real_thing.py").write_text("THRESHOLD = 5\n")
+    for root in ("src", "tests", "nes_core/src"):
+        (tmp_path / root).mkdir(parents=True)
+    return tmp_path
+
+
+def test_check_enforcement_fires_on_missing_path_and_stale_numeral(tmp_path, monkeypatch):
+    repo = build_repo(tmp_path)
+    monkeypatch.setattr(mt, "REPO", repo)
+    text = (
+        "| `[stale-artifact]` | **6** | **SHIPPED**: `scripts/does_not_exist.py` |\n"
+        "| `[inert-treatment]` | **7** | **PROMOTED**: `THRESHOLD` set to 999 |\n"
+    )
+    problems = mt.check_enforcement(text)
+    assert len(problems) == 2
+    n1, cat1, msg1 = problems[0]
+    assert (n1, cat1) == (1, "stale-artifact")
+    assert "scripts/does_not_exist.py" in msg1 and "does not exist" in msg1
+    n2, cat2, msg2 = problems[1]
+    assert (n2, cat2) == (2, "inert-treatment")
+    assert "THRESHOLD" in msg2 and "= 5" in msg2 and "[999]" in msg2
+
+
+def test_check_enforcement_negative_control_returns_empty(tmp_path, monkeypatch):
+    repo = build_repo(tmp_path)
+    monkeypatch.setattr(mt, "REPO", repo)
+    # Real Makefile target, real path, real symbol quoted with its actual
+    # value (5) -- nothing here is false, so this must VOID.
+    text = (
+        "| `[process]` | **5** | **SHIPPED**: `make real-target` + "
+        "`scripts/real_thing.py` + `THRESHOLD` |\n"
+    )
+    assert mt.check_enforcement(text) == []
+
+
+def test_check_enforcement_skips_absent_instruction_file(tmp_path, monkeypatch, capsys):
+    repo = build_repo(tmp_path)
+    assert not (repo / "CLAUDE.md").exists()
+    monkeypatch.setattr(mt, "REPO", repo)
+    text = "| `[unverified-claim]` | **8** | **PROMOTED 2026-08-28** (project instruction file) |\n"
+    problems = mt.check_enforcement(text)
+    assert problems == []
+    out = capsys.readouterr().out
+    assert "CLAUDE.md absent" in out and "MISTAKES.md:1" in out
+
+
+def test_check_enforcement_fires_when_instruction_file_lacks_heading(tmp_path, monkeypatch):
+    repo = build_repo(tmp_path)
+    (repo / "CLAUDE.md").write_text("# Some other project file\nNo such heading here.\n")
+    monkeypatch.setattr(mt, "REPO", repo)
+    text = "| `[unverified-claim]` | **8** | **PROMOTED 2026-08-28** (project instruction file) |\n"
+    problems = mt.check_enforcement(text)
+    assert len(problems) == 1
+    n, cat, msg = problems[0]
+    assert (n, cat) == (1, "unverified-claim")
+    assert "Enforced invariants" in msg

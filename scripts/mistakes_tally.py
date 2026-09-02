@@ -14,6 +14,80 @@ import re, sys, pathlib, collections
 SRC = pathlib.Path(__file__).resolve().parent.parent / "MISTAKES.md"
 HDR = re.compile(r'^## (\d{4}-\d{2}-\d{2}|\(recurring[^)]*\))\s+—\s+(?:\[([a-z-]+)\]\s+)?(.+)$')
 
+REPO = SRC.parent
+ROW = re.compile(r'^\|\s+`\[([a-z-]+)\]`\s+\|[^|]*\|\s+(.+?)\s+\|\s*$')
+TOKEN = re.compile(r'`([^`]+)`')
+ENFORCED = re.compile(r'\bSHIPPED\b|\bPROMOTED\b')
+ROOTS = ("scripts", "src", "tests", "nes_core/src")
+
+def _sources():
+    for root in ROOTS:
+        base = REPO / root
+        for f in (base.rglob("*") if base.is_dir() else ()):
+            if f.is_file() and f.suffix in (".py", ".rs"):
+                yield f
+
+def _defines(sym):
+    """(int, path) if sym is a module-level int constant; (None, path) if it
+    merely appears; (None, None) if nowhere in the tree."""
+    assign = re.compile(rf'^{re.escape(sym)}\s*=\s*(\d+)\s*$', re.M)
+    seen = None
+    for f in _sources():
+        text = f.read_text(errors="ignore")
+        if (m := assign.search(text)):
+            return int(m.group(1)), str(f.relative_to(REPO))
+        seen = seen or (str(f.relative_to(REPO)) if sym in text else None)
+    return None, seen
+
+def _resolve(tok):
+    if tok.startswith("make "):
+        t = tok[5:].strip()
+        mk = (REPO / "Makefile").read_text()
+        return bool(re.search(rf'^{re.escape(t)}:', mk, re.M)), f"Makefile target `{t}:`"
+    if tok.endswith((".py", ".rs", ".sh", ".md")):
+        return (REPO / tok).exists(), f"path {tok}"
+    if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', tok):
+        return _defines(tok)[1] is not None, f"symbol {tok}"
+    return None, tok            # prose; not checkable, not checked
+
+def check_enforcement(text):
+    """A SHIPPED/PROMOTED cell names only things that exist, and never quotes a
+    stale value for an integer constant it names.
+
+    The project-instruction-file rule (a cell citing "(project instruction
+    file)") runs only when CLAUDE.md exists in this checkout; on a checkout
+    without it (the file is gitignored), the rule is skipped with a printed
+    note rather than failing, so `make test` stays green on a clean clone.
+    """
+    problems = []
+    for n, line in enumerate(text.splitlines(), 1):
+        m = ROW.match(line)
+        if not m or not ENFORCED.search(m.group(2)):
+            continue
+        cat, cell = m.group(1), m.group(2)
+        if "(project instruction file)" in cell:
+            rules = REPO / "CLAUDE.md"
+            if not rules.exists():
+                print(f"note: CLAUDE.md absent, skipping project-instruction-file "
+                      f"check for MISTAKES.md:{n}")
+                continue
+            if "Enforced invariants" not in rules.read_text():
+                problems.append((n, cat, "cites the project instruction file, "
+                                        "which has no 'Enforced invariants' section"))
+        nums = {int(x) for x in re.findall(r'\b(\d+)\b', cell)}
+        for tok in TOKEN.findall(cell):
+            ok, what = _resolve(tok)
+            if ok is None:
+                continue
+            if not ok:
+                problems.append((n, cat, f"names {what}, which does not exist"))
+                continue
+            val, where = _defines(tok)
+            if val is not None and nums and val not in nums:
+                problems.append((n, cat, f"`{tok}` = {val} in {where}, "
+                                         f"but the cell quotes {sorted(nums)}"))
+    return problems
+
 def tally(text):
     counts, untagged = collections.Counter(), []
     for line in text.splitlines():
@@ -53,6 +127,12 @@ def main():
             print("\nDRIFT — watch table disagrees with the entries:")
             for c, said, real in bad:
                 print(f"  [{c}] table says {said}, entries show {real}")
+            return 1
+        problems = check_enforcement(SRC.read_text())
+        if problems:
+            print("\nDRIFT: an enforcement cell names something that is not true:")
+            for n, cat, msg in problems:
+                print(f"  MISTAKES.md:{n} [{cat}] {msg}")
             return 1
         print("\nwatch table matches the entries.")
     return 0
