@@ -658,9 +658,12 @@ impl WorkerCell {
 /// provides this for per-index access across workers. For sequential
 /// access (reset_all, save_worker_state, set_worker_pace, drain_audio,
 /// set_batched_render_mode, load_worker_state, load_start_state), the
-/// trainer is responsible for not calling these concurrently with
-/// step_all — which holds in the current architecture (all Pool methods
-/// run on the Python trainer thread, never overlapping).
+/// trainer is responsible for not calling these concurrently with an
+/// in-flight step_all/reset_all. step_all itself runs on a worker
+/// thread (see the `Pool: Send + Sync` SAFETY note), not the trainer
+/// thread: the two are expected not to overlap, and
+/// `assert_no_parallel_dispatch` catches most, not all, violations
+/// (a plain atomic check, not a lock, see its doc for the TOCTOU).
 #[inline(always)]
 unsafe fn worker_mut(cell: &WorkerCell) -> &mut Worker {
     &mut *cell.0.get()
@@ -768,12 +771,19 @@ impl AudioSink for NullAudioSink {
 // (`save_worker_state`, `set_worker_pace`, `set_worker_audio`,
 // `drain_audio`,
 // `load_worker_state`, `set_batched_render_mode`, `load_start_state`)
-// run sequentially on the Python trainer thread and never overlap
-// with an in-flight `step_all`/`reset_all` — Python holds the GIL
-// across each of our PyO3 entry points, and the async-pipeline
-// optimization releases it only inside `py.allow_threads(|| ...)`
-// for the duration of a single step. Therefore unique-owner access
-// is upheld at every point of use.
+// are expected to run sequentially on the Python trainer thread while
+// `step_all`/`reset_all` is in flight on a worker thread: Python
+// holds the GIL across each of our PyO3 entry points, and the
+// async-pipeline optimization releases it only inside
+// `py.allow_threads(|| ...)` for the duration of a single step. This
+// makes cross-thread misuse detectable in the common case, not
+// impossible: `assert_no_parallel_dispatch` is a plain atomic load
+// with no accompanying store on the caller's side, so a second thread
+// checking it in the narrow window before `ParallelSectionGuard::
+// enter`'s swap lands would pass and still alias `self.workers`. The
+// guard in `step_all_native_2p` opens as the first thing it does
+// (before any of that function's own setup) specifically to minimize,
+// not eliminate, that window.
 unsafe impl Send for Pool {}
 unsafe impl Sync for Pool {}
 
@@ -2014,23 +2024,10 @@ impl Pool {
     ) -> Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> {
         debug_assert_eq!(actions_vec.len(), self.num_workers);
         debug_assert!(actions_p2.map_or(true, |p2| p2.len() == self.num_workers));
+        // `frame_skip` is a plain field set once in `Pool::new` and never
+        // mutated after (no setter exists), safe to read before the guard
+        // opens; it is not part of the `self.workers` TOCTOU surface below.
         let frame_skip = self.frame_skip;
-        let pp_dim = crate::preprocess::PP_SIZE;
-        let headless = self.headless.load(std::sync::atomic::Ordering::Acquire);
-        let f16_mode = self.preprocess_f16.load(std::sync::atomic::Ordering::Acquire);
-        let skip_preprocess = self.skip_preprocess.load(std::sync::atomic::Ordering::Acquire);
-        let spectator_subframe_skip = self
-            .spectator_subframe_skip
-            .load(std::sync::atomic::Ordering::Acquire);
-        // Load the panic-isolation flag once outside the rayon closure.
-        // Acquire pairs with the Release store in `set_panic_isolation`.
-        let panic_isolation = self
-            .panic_isolation
-            .load(std::sync::atomic::Ordering::Acquire);
-        // When f16 mode is on, `preprocessed` holds raw IEEE 754 half-
-        // precision bytes: 2 bytes × 84×84 = 14112 bytes. The Python
-        // side reinterprets via `np.frombuffer(..., dtype=np.float16)`.
-        let pp_byte_len = if f16_mode { pp_dim * pp_dim * 2 } else { pp_dim * pp_dim };
         // Fused step + collect in one rayon pass. Previously this
         // was two separate par_iter runs — a for_each that stepped,
         // then a map in `collect_results` that unpacked frames.
@@ -2044,23 +2041,46 @@ impl Pool {
         // for the lifetime of this closure — no aliasing, so it
         // crosses the `catch_unwind` boundary soundly.
         let collected: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> = {
-            // Guard covers exactly the rayon dispatch below, dropped
-            // before `pace_pool_step` runs. See `ParallelSectionGuard`.
+            // Guard opens as the FIRST thing in this block, before the
+            // atomic config loads below, not just before the rayon
+            // dispatch. Those loads don't touch `self.workers`, but the
+            // GIL is already released by the time this function runs
+            // (`step_all`'s `py.allow_threads`), so every instruction
+            // between function entry and the old, later guard swap was a
+            // window in which a second Python thread's sequential call
+            // (e.g. `load_worker_state`) could pass its own
+            // `assert_no_parallel_dispatch()` check (a plain Acquire
+            // load, itself a TOCTOU) and start mutating a Worker that
+            // this dispatch is about to alias. Opening the guard first
+            // shrinks that window to nothing this function controls.
             //
-            // CORRECTED (this comment previously claimed pace_pool_step
-            // "never touches self.workers" — false): pace_pool_step calls
-            // any_worker_paced, whose body does read self.workers via
-            // `unsafe { &*cell.0.get() }` (same UnsafeCell this closure
-            // reborrows &mut through). any_worker_paced's own doc claims
-            // that read is safe because it runs "after the rayon join;
-            // never overlaps a parallel dispatch" — i.e. the actual
-            // safety argument is CALL-ORDERING (this guard's scope has
-            // already ended by the time pace_pool_step runs), not "never
-            // touches". That ordering has not been verified against every
-            // call site (no loom, no Miri, no multithreaded stress test
-            // exists in this crate), so treat it as an OPEN question, not
-            // a proven invariant, until one of those exists.
+            // Block ends (guard dropped) when `collected` binds below,
+            // i.e. right after `.collect()` returns and strictly BEFORE
+            // `self.pace_pool_step(frame_skip)` runs after this block:
+            // that drop-before-pace_pool_step ordering is load-bearing:
+            // `pace_pool_step` → `any_worker_paced` reads `self.workers`
+            // unguarded and now asserts the flag is clear on entry (see
+            // `pace_pool_step`). Do not lift this `let _guard` binding
+            // to function scope, that keeps it alive past the
+            // `pace_pool_step` call below and makes that assert fire on
+            // every single call, not just under a real race.
             let _guard = ParallelSectionGuard::enter(&self.in_parallel_section);
+            let pp_dim = crate::preprocess::PP_SIZE;
+            let headless = self.headless.load(std::sync::atomic::Ordering::Acquire);
+            let f16_mode = self.preprocess_f16.load(std::sync::atomic::Ordering::Acquire);
+            let skip_preprocess = self.skip_preprocess.load(std::sync::atomic::Ordering::Acquire);
+            let spectator_subframe_skip = self
+                .spectator_subframe_skip
+                .load(std::sync::atomic::Ordering::Acquire);
+            // Load the panic-isolation flag once outside the rayon closure.
+            // Acquire pairs with the Release store in `set_panic_isolation`.
+            let panic_isolation = self
+                .panic_isolation
+                .load(std::sync::atomic::Ordering::Acquire);
+            // When f16 mode is on, `preprocessed` holds raw IEEE 754 half-
+            // precision bytes: 2 bytes × 84×84 = 14112 bytes. The Python
+            // side reinterprets via `np.frombuffer(..., dtype=np.float16)`.
+            let pp_byte_len = if f16_mode { pp_dim * pp_dim * 2 } else { pp_dim * pp_dim };
             self
             .workers
             .par_iter()
@@ -2276,6 +2296,18 @@ impl Pool {
     /// past one step. No-op (and target cleared) when no live,
     /// not-done worker is paced.
     fn pace_pool_step(&self, frame_skip: u32) {
+        // `any_worker_paced` below reads `self.workers` unguarded: see
+        // its SAFETY note. Must never run while ANOTHER thread's rayon
+        // dispatch is in flight; `step_all_native_2p`'s own guard is
+        // dropped before this is called on the ordinary path (see the
+        // comment at that call site), so this should read `false` here.
+        // A single Acquire load, best-effort like every other call to
+        // this method: a check-then-act, not a lock (see
+        // `assert_no_parallel_dispatch`'s own doc for the TOCTOU), but
+        // it catches a same-thread ordering mistake (like the guard
+        // being widened to outlive this call) immediately instead of
+        // silently aliasing `self.workers`.
+        self.assert_no_parallel_dispatch();
         let mut slot = self
             .pool_pace_next_target
             .lock()
@@ -4152,5 +4184,121 @@ mod pool_coverage_tests {
                  short-circuit on its very next step",
             );
         });
+    }
+
+    /// Regression trap for a guard-scoping mistake that panics on EVERY
+    /// `step_all` call, not just under a race: if `ParallelSectionGuard`
+    /// in `step_all_native_2p` were widened to live until the function
+    /// returns (rather than being dropped when `collected` binds, strictly
+    /// BEFORE `pace_pool_step` runs after that block), then
+    /// `pace_pool_step`'s own `assert_no_parallel_dispatch()`, needed to
+    /// close the TOCTOU it has against a second thread's in-flight
+    /// dispatch, would fire deterministically here, single-threaded, no
+    /// race required. `step_all_native` exists specifically as a
+    /// Python-free entry point so this path is exercisable from
+    /// `cargo test` at all (see the module doc); this test drives it
+    /// enough times that a reintroduced version of that mistake cannot
+    /// pass silently.
+    #[test]
+    fn step_all_native_reaches_pace_pool_step_without_panicking() {
+        let pool = pool_of(4, "pace_reach");
+        let actions = vec![0u8; 4];
+        for _ in 0..200 {
+            let out = pool.step_all_native(&actions);
+            assert_eq!(out.len(), 4, "step_all_native must return one tuple per worker");
+        }
+    }
+
+    /// Two-thread stress test: `step_all_native_2p`'s rayon dispatch on
+    /// one OS thread racing `set_worker_pace`'s sequential access
+    /// (`assert_no_parallel_dispatch` + `worker_mut`) on another, both
+    /// hammering the same `self.workers`.
+    ///
+    /// Cannot PROVE the pre-guard TOCTOU window (between
+    /// `assert_no_parallel_dispatch`'s Acquire load and
+    /// `ParallelSectionGuard::enter`'s swap) is closed, that needs loom,
+    /// which this crate does not have.
+    ///
+    /// It also does NOT expect a clean, panic-free run: `in_parallel_
+    /// section` is held `true` for the full duration of each rayon
+    /// dispatch (not just the nanosecond pre-swap gap), and this loop
+    /// gives `set_worker_pace` no backoff, so under real contention most
+    /// of its 20,000 calls land while a dispatch is in flight and
+    /// `assert_no_parallel_dispatch` is EXPECTED to trip, that is the
+    /// guard doing exactly its documented job (detect concurrent misuse,
+    /// not make it safe; see the corrected SAFETY notes on `worker_mut` /
+    /// `Pool: Send + Sync`), not a test failure. The only outcome this
+    /// test treats as a failure is a panic whose message is NOT the
+    /// guard's own: that would mean the two threads aliased
+    /// `self.workers` instead of the guard catching the overlap first.
+    #[test]
+    fn concurrent_step_and_pace_toggle_does_not_alias() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        fn panic_msg(e: &(dyn std::any::Any + Send)) -> String {
+            e.downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| e.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<non-string panic payload>".to_string())
+        }
+
+        const GUARD_MSG: &str =
+            "a sequential method was called while step_all/reset_all is still dispatching";
+
+        let pool = Arc::new(pool_of(4, "concurrent_stress"));
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let stepper = {
+            let (pool, stop) = (Arc::clone(&pool), Arc::clone(&stop));
+            std::thread::spawn(move || {
+                let actions = vec![0u8; 4];
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = pool.step_all_native_2p(&actions, None);
+                }
+            })
+        };
+
+        // set_worker_pace calls assert_no_parallel_dispatch itself. Its
+        // loop stops on the FIRST panic (expected or not), an unwound
+        // thread can't keep iterating, which is fine: the point is
+        // classifying whatever DOES happen, not exhausting all 20,000
+        // calls.
+        let toggler = {
+            let pool = Arc::clone(&pool);
+            std::thread::spawn(move || {
+                for i in 0..20_000usize {
+                    pool.set_worker_pace(i % 4, i % 2 == 0);
+                }
+            })
+        };
+
+        match toggler.join() {
+            Ok(()) => {
+                // No overlap was ever observed this run, consistent
+                // with (not proof of) the pre-guard window being closed.
+            }
+            Err(e) => {
+                let msg = panic_msg(&*e);
+                assert!(
+                    msg.contains(GUARD_MSG),
+                    "set_worker_pace hit an UNEXPECTED panic under \
+                     concurrent load (not assert_no_parallel_dispatch's \
+                     known message), this is the signal a real \
+                     self.workers alias/corruption bug would give: {msg}",
+                );
+                // Expected: the guard caught real concurrent overlap
+                // between set_worker_pace and an in-flight
+                // step_all_native_2p. Working as documented.
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        if let Err(e) = stepper.join() {
+            panic!(
+                "step_all_native_2p (stepper thread) panicked unexpectedly \
+                 while racing set_worker_pace: {}",
+                panic_msg(&*e),
+            );
+        }
     }
 }
