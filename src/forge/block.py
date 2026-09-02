@@ -63,10 +63,19 @@ the positive control mean something against an arbitrary well-behaved
 child, synthetic or real, not only a fixture that is scripted to
 misbehave, and it is what keeps that same injection from ever touching
 the file other blocks depend on. ``positive_control.caught`` in the
-receipt is true only when a trip occurred AND the block was told to
-inject one; an uninjected block that trips (a genuine wrongful reset
-against a real run) reports ``injected:false, caught:false`` -- a
-positive control that was never run is never credited as caught.
+receipt is a CAUSAL verdict, never a copy of the request: it is true
+only when this runner's own injection wrote bytes (``injected_done``),
+the watchdog then tripped on ``root_state_mismatch``, and the
+root-state fingerprint the watchdog read at that trip is exactly the
+one the injection left behind (``root_sha_at_trip == injected_sha``).
+All four inputs are written to the receipt beside the verdict, so a
+reader re-derives it from the receipt alone instead of trusting the
+field. ``injected`` stays what it always was, the plan's request. An
+uninjected block that trips (a genuine wrongful reset against a real
+run) reports ``injected:false, caught:false``, and so does an injected
+block whose injection was inert or whose trip had another cause -- a
+positive control the runner cannot show it caused is never credited as
+caught.
 ``banked_from_reset`` counts artifacts banked as part of that reset,
 which is always 0 on the abort path (``banked`` is fixed to ``[]``
 first) -- never a progress-row field a downstream reader could mistake
@@ -378,6 +387,49 @@ def wrongful_reset(
     return {"reason": None}
 
 
+def positive_control_caught(
+    *,
+    injected_done: bool,
+    trip_reason: Optional[str],
+    injected_sha: Optional[str],
+    root_sha_at_trip: Optional[str],
+) -> bool:
+    """True iff this runner's OWN positive-control injection is what
+    tripped the watchdog. Public and pure so the field every
+    FORGE-GRANT block gates on can be exercised directly, one input at
+    a time, rather than only through a live block whose timing decides
+    which combinations are reachable at all.
+
+    Three separate facts have to hold, and not one of them is the
+    plan's ``inject_wrongful_reset`` request flag:
+
+    1. ``injected_done`` -- ``_corrupt_root_state`` actually wrote its
+       bytes. A plan that asks for an injection it could not perform
+       (no ``--root-state`` in the cmd, no ``root_state_sha`` to
+       compare against, an unwritable copy, or a block that tripped or
+       ended before the injection point was reached) has nothing to be
+       credited for.
+    2. ``trip_reason == "root_state_mismatch"`` -- the injection can
+       only trip condition 3 of the four. A block that aborted on
+       ``cells_decreased``, ``solutions_decreased`` or
+       ``lock_holder_mismatch`` was tripped by the child or by the
+       lock, not by this runner.
+    3. ``root_sha_at_trip == injected_sha`` -- the fingerprint the
+       watchdog read at the trip is the one the injection left behind,
+       not some third value. This separates "our injection fired and a
+       root mismatch tripped" (a coincidence an outside actor swapping
+       the same file in the same window would satisfy) from "the
+       mismatch the watchdog caught is the one we wrote".
+    """
+    if not injected_done:
+        return False
+    if trip_reason != "root_state_mismatch":
+        return False
+    if injected_sha is None or root_sha_at_trip is None:
+        return False
+    return root_sha_at_trip == injected_sha
+
+
 def _grant_anchor_present(grant_entry: Optional[str], claims_path: Path) -> bool:
     if not grant_entry:
         return False
@@ -563,8 +615,18 @@ def run_block(
         "attended_hours": 0.0, "run_lock_hours": 0.0,
         "ratio_machine_per_attended": None, "ratio_ok": False,
         "watchdog_trips": 0,
-        "positive_control": {"injected": injected, "caught": False,
-                             "banked_from_reset": 0},
+        # `injected` is the plan's REQUEST and stays that. `caught` is
+        # the causal verdict `positive_control_caught` derives; the
+        # three fields between them are its inputs, written out so a
+        # reader re-derives the verdict from the receipt alone.
+        "positive_control": {
+            "injected": injected,
+            "injected_done": False,
+            "injected_sha": None,
+            "root_sha_at_trip": None,
+            "caught": False,
+            "banked_from_reset": 0,
+        },
         "fabricated_clears_unretracted": 0, "banked": [],
         "aborted": False, "abort_reason": None,
         # Beyond the grant's fixed field list: the SHARED root state's
@@ -671,6 +733,8 @@ def run_block(
     stop: Optional[str] = None
     tripped = {"reason": None}
     injected_done = False
+    injected_sha: Optional[str] = None
+    root_sha_at_trip: Optional[str] = None
 
     while True:
         cur_row = _tail_row(progress_path)
@@ -689,6 +753,12 @@ def run_block(
         )
         if check["reason"] is not None:
             tripped = check
+            # The fingerprint THIS poll read, kept at the trip:
+            # `positive_control_caught` compares it against what the
+            # injection wrote, so the receipt can tell this runner's
+            # own injection apart from any other mid-block change to
+            # the same file.
+            root_sha_at_trip = current_root_sha
             receipt["watchdog_trips"] = 1
             stop = "abort"
             break
@@ -719,6 +789,11 @@ def run_block(
         if (injected and not injected_done and root_state_path is not None
                 and root_state_sha is not None and prev_row is not None):
             injected_done = _corrupt_root_state(root_state_path)
+            if injected_done:
+                # Read back immediately after the write: this is the
+                # value the next poll has to see for the trip to be
+                # attributable to this injection and to nothing else.
+                injected_sha = _sha_of_file(root_state_path)
 
         sleep_fn(poll_interval)
 
@@ -729,11 +804,6 @@ def run_block(
         run_lock.release(lock_path)
         receipt["aborted"] = True
         receipt["banked"] = []
-        # `caught` credits the positive control only when the block was
-        # actually told to inject one -- a genuine wrongful reset on an
-        # uninjected block is a real trip, not a demonstrated catch.
-        receipt["positive_control"]["caught"] = injected
-        receipt["positive_control"]["banked_from_reset"] = len(receipt["banked"])
         receipt["abort_reason"] = tripped["reason"]
         # Defensive backstop (module docstring on _mark_grant_ended):
         # an aborted block banks nothing above, so this branch should
@@ -747,6 +817,24 @@ def run_block(
                        kill_grace_s=kill_grace_s, sleep_fn=sleep_fn,
                        wall_clock_fn=wall_clock_fn)
         receipt["banked"] = _bank_solutions(child_out, repo)
+
+    # The positive control is settled once, on every exit path, from
+    # what the block DID -- never inside the abort branch, where the
+    # only thing in scope was `injected`, the plan's own request.
+    # `banked_from_reset` still counts artifacts banked as part of a
+    # reset, so it reads the abort path's `banked` (fixed to `[]`
+    # above) and is 0 everywhere else by definition.
+    receipt["positive_control"]["injected_done"] = injected_done
+    receipt["positive_control"]["injected_sha"] = injected_sha
+    receipt["positive_control"]["root_sha_at_trip"] = root_sha_at_trip
+    receipt["positive_control"]["caught"] = positive_control_caught(
+        injected_done=injected_done,
+        trip_reason=tripped["reason"],
+        injected_sha=injected_sha,
+        root_sha_at_trip=root_sha_at_trip,
+    )
+    receipt["positive_control"]["banked_from_reset"] = (
+        len(receipt["banked"]) if stop == "abort" else 0)
 
     receipt["ended"] = _now_iso()
     receipt["stop"] = stop

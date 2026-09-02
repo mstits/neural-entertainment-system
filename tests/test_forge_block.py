@@ -22,9 +22,22 @@ fixture script has to act out on its own: `test_injection_trips_a_
 well_behaved_child_via_root_state` runs a monotone, never-misbehaving
 child and still gets caught, because `run_block` itself corrupts the
 root-state file mid-block. `test_positive_control_injected_reset_is_
-caught` below additionally has the fixture emit a real decrease so the
-`cells_decreased` condition (not just root-state) has its own direct
-coverage against a live process.
+caught` below runs BOTH halves of the gate against live processes: an
+inert injection (no `--root-state`, so `run_block` has nothing to
+corrupt) against a child that trips on its own must report
+`caught:False`, and a live injection against a monotone child must
+report `caught:True`. The first half is the anti-vacuity case -- a
+gate that cannot say no certifies nothing -- and it is the case the
+version of this test committed before FORGE-FIX-2 asserted the other
+way round, pinning `caught:True` on a block whose injection its own
+docstring said had nothing to act on.
+
+`positive_control_caught` is unit-tested directly in
+`test_positive_control_caught_requires_the_injections_own_sha`, one
+input at a time: which combinations a block can actually reach depends
+on poll timing, so the third condition (the fingerprint at the trip is
+the one the injection wrote, not an outside actor's) is pinned there
+rather than through a raced fixture.
 """
 from __future__ import annotations
 
@@ -47,6 +60,7 @@ from src.forge.block import (  # noqa: E402
     ReceiptFieldError,
     _attended_hours,
     append_attended,
+    positive_control_caught,
     run_block,
     write_block_receipt,
     wrongful_reset,
@@ -172,39 +186,59 @@ def _make_plan(tmp_path: Path, script: Path, *, wall_id="gate_wall",
 # ---------------------------------------------------------------------
 
 def test_positive_control_injected_reset_is_caught(tmp_path):
-    """A synthetic child emits cells 100 -> 150 -> 40 (a wrongful reset),
-    on its own, regardless of the flag -- this test's job is direct
-    coverage of the `cells_decreased` condition against a real subprocess.
-    No `--root-state` is given, so `inject_wrongful_reset` has nothing to
-    act on here; `test_injection_trips_a_well_behaved_child_via_root_
-    state` below covers the flag actually DOING something against a
-    child that would otherwise behave. The watchdog must catch the true
-    decrease (150 -> 40), not a flat poll-vs-poll re-read of the same
-    row -- the fixture writes each row 50 ms apart while the runner
-    polls every 10 ms, so several flat reads occur naturally before
-    either real transition.
+    """The gate has to be able to say NO. Two live blocks, one
+    assertion each way.
 
-    Revert-verify 1 (live, this session): `cc < pc` -> `cc <= pc` in
-    `wrongful_reset` makes the FIRST flat read (100 == 100) trip instead
-    of the real decrease -- `abort_reason` still reads `cells_decreased`
-    but the trip fires one poll early; caught with a corrupted `elapsed`
-    is a false pass, so the direct unit test
-    `test_wrongful_reset_ignores_a_flat_read` is what actually pins this
-    -- restored, re-passed.
+    Half 1 (anti-vacuity, the FORGE-FIX-2 case): a synthetic child
+    emits cells 100 -> 150 -> 40 on its own, and the plan sets
+    `inject_wrongful_reset:True` with no `--root-state` for the
+    injection to act on. The watchdog must catch the true decrease
+    (150 -> 40), not a flat poll-vs-poll re-read of the same row -- the
+    fixture writes each row 50 ms apart while the runner polls every
+    10 ms, so several flat reads occur naturally before either real
+    transition -- and the receipt must report `caught:False`, because
+    the child tripped itself and this runner injected nothing. Before
+    FORGE-FIX-2 this same block reported `caught:True`: `caught` was
+    assigned from `injected`, the plan's own request flag, inside the
+    abort branch (`src/forge/block.py:577` at HEAD `df33765`).
 
-    Revert-verify 2 (live, this session): deleting the `os.killpg(pid,
+    Half 2: the same flag against a monotone child WITH a root state,
+    where the injection does fire, reports `caught:True` -- and the
+    receipt carries the inference's inputs, so `caught` is re-derivable
+    from the receipt without trusting the field: `injected_done` true,
+    `abort_reason` `root_state_mismatch`, and `root_sha_at_trip` equal
+    to `injected_sha`.
+
+    Revert-verify 1 (live, this session): restoring the old assignment
+    (`receipt["positive_control"]["caught"] = injected` in the abort
+    branch, in place of the `positive_control_caught(...)` call) makes
+    half 1's inert-injection block report `caught:True` again --
+    `assert pc["caught"] is False` fails by name. Half 2 still passes,
+    which is exactly why the old code shipped twice. Restored,
+    re-passed.
+
+    Revert-verify 2 (live, this session): `cc < pc` -> `cc <= pc` in
+    `wrongful_reset` makes the FIRST flat read (100 == 100) trip
+    instead of the real decrease -- `abort_reason` still reads
+    `cells_decreased` but the trip fires one poll early; caught with a
+    corrupted `elapsed` is a false pass, so the direct unit test
+    `test_wrongful_reset_ignores_a_flat_read` is what actually pins
+    this -- restored, re-passed.
+
+    Revert-verify 3 (live, this session): deleting the `os.killpg(pid,
     signal.SIGTERM)` line in `_hard_abort` leaves the child alive for
     the full `term_grace_s` before the SIGKILL fallback reaches it --
-    wall-clock elapsed crosses the tight bound this test asserts,
-    catching the corruption on `ended` (the abort's completion time).
-    Restored, re-passed.
+    wall-clock elapsed crosses the tight bound half 1 asserts. Restored,
+    re-passed.
     """
+    claims, grant_state = _grant_paths(tmp_path)
+
+    # --- half 1: the injection is inert, the child trips itself -------
     script = _write_fixture(
         tmp_path, "positive_control",
         rows=[{"cells": 100, "steps": 10}, {"cells": 150, "steps": 20},
               {"cells": 40, "steps": 30}],
         row_interval=0.05, exit_after_rows=False)
-    claims, grant_state = _grant_paths(tmp_path)
     plan = _make_plan(tmp_path, script, inject=True)
 
     t0 = time.perf_counter()
@@ -218,12 +252,178 @@ def test_positive_control_injected_reset_is_caught(tmp_path):
     assert receipt["abort_reason"] == "cells_decreased"
     assert receipt["banked"] == []
     assert receipt["aborted"] is True
+    pc = receipt["positive_control"]
+    assert pc["injected"] is True, "the plan's request is still recorded"
+    assert pc["injected_done"] is False, (
+        "no --root-state was given, so _corrupt_root_state can never "
+        "have run: an injection that did not fire is not a catch")
+    assert pc["caught"] is False, (
+        "the child tripped itself on cells_decreased; crediting the "
+        "positive control here is the FORGE-FIX-2 defect")
+    assert pc["injected_sha"] is None
+    assert pc["banked_from_reset"] == 0
     # `banked_from_reset` counts artifacts banked from the reset -- 0 by
     # construction, since `banked` is fixed to `[]` before it is read.
     assert receipt["positive_control"] == {
-        "injected": True, "caught": True, "banked_from_reset": 0}
+        "injected": True, "injected_done": False, "injected_sha": None,
+        "root_sha_at_trip": None, "caught": False, "banked_from_reset": 0}
     # Killed via SIGTERM, not the slow SIGKILL-only fallback.
     assert elapsed < 0.8, f"abort took {elapsed:.2f}s -- SIGTERM likely missing"
+
+    # --- half 2: the injection fires, and IS the cause ----------------
+    root_path, correct_sha = _write_root_state(
+        tmp_path, content=b"root-state-for-the-live-half")
+    live_script = _write_fixture(
+        tmp_path, "positive_control_live",
+        rows=[{"cells": i * 10, "steps": i} for i in range(1, 11)],
+        row_interval=0.03, exit_after_rows=True)
+    live_plan = _make_plan(tmp_path, live_script, root_state_path=root_path,
+                           root_state_sha=correct_sha, max_secs=5.0,
+                           inject=True)
+    live_plan["cmd"] = [str(c) for c in live_plan["cmd"]]
+    live_plan["cmd"][live_plan["cmd"].index("--out") + 1] = str(
+        tmp_path / "out_live")
+
+    live = run_block(
+        live_plan, repo=tmp_path, claims_path=claims,
+        grant_state_path=grant_state, poll_interval=0.01,
+        term_grace_s=1.0, kill_grace_s=1.0)
+
+    assert live["stop"] == "abort"
+    assert live["abort_reason"] == "root_state_mismatch"
+    live_pc = live["positive_control"]
+    assert live_pc["injected"] is True
+    assert live_pc["injected_done"] is True
+    assert live_pc["caught"] is True
+    assert live_pc["injected_sha"] is not None
+    assert live_pc["root_sha_at_trip"] == live_pc["injected_sha"], (
+        "the fingerprint the watchdog read at the trip must be the one "
+        "the injection wrote, not a third value")
+    # Re-derive the verdict from the receipt alone.
+    assert positive_control_caught(
+        injected_done=live_pc["injected_done"],
+        trip_reason=live["abort_reason"],
+        injected_sha=live_pc["injected_sha"],
+        root_sha_at_trip=live_pc["root_sha_at_trip"]) is True
+    # The persisted receipt carries the same six fields: a reader
+    # holding only the file on disk re-derives the same verdict.
+    on_disk = json.loads(Path(live["receipt_path"]).read_text())
+    assert on_disk["positive_control"] == live_pc
+
+
+# ---------------------------------------------------------------------
+# test_uninjected_trip_reports_no_positive_control
+# ---------------------------------------------------------------------
+
+def test_uninjected_trip_reports_no_positive_control(tmp_path):
+    """A block that never asked for an injection and trips for a real
+    reason reports `injected:False, caught:False`. The root state here
+    is present and correct throughout, so `root_sha_at_trip` is a real
+    fingerprint (equal to the block's own recorded `root_state_sha`)
+    rather than the `None` the no-root-state cases produce, and the
+    trip is `cells_decreased`: the one combination none of the other
+    block-level tests reach, and the one a `caught = injected` style
+    assignment gets right by accident while getting everything else
+    wrong.
+
+    Revert-verify (live, this session): dropping the
+    `trip_reason == "root_state_mismatch"` condition from
+    `positive_control_caught` does NOT redden this test (nothing was
+    injected, so condition 1 already fails) -- it reddens
+    `test_positive_control_caught_requires_the_injections_own_sha`
+    instead. What reddens this one is replacing the
+    `positive_control_caught(...)` call with `caught = True`:
+    `assert pc["caught"] is False` fails by name. Restored, re-passed.
+    """
+    root_path, correct_sha = _write_root_state(
+        tmp_path, content=b"root-state-untouched-all-block")
+    original_bytes = root_path.read_bytes()
+    script = _write_fixture(
+        tmp_path, "uninjected_trip",
+        rows=[{"cells": 100, "steps": 10}, {"cells": 150, "steps": 20},
+              {"cells": 40, "steps": 30}],
+        row_interval=0.05, exit_after_rows=False)
+    claims, grant_state = _grant_paths(tmp_path)
+    plan = _make_plan(tmp_path, script, root_state_path=root_path,
+                      root_state_sha=correct_sha, max_secs=5.0, inject=False)
+
+    receipt = run_block(
+        plan, repo=tmp_path, claims_path=claims, grant_state_path=grant_state,
+        poll_interval=0.01, term_grace_s=1.0, kill_grace_s=1.0)
+
+    assert receipt["stop"] == "abort"
+    assert receipt["watchdog_trips"] == 1
+    assert receipt["abort_reason"] == "cells_decreased"
+    assert receipt["banked"] == []
+    pc = receipt["positive_control"]
+    assert pc["injected"] is False
+    assert pc["injected_done"] is False
+    assert pc["caught"] is False, (
+        "a genuine wrongful reset on an uninjected block is a real "
+        "trip, never a demonstrated positive control")
+    assert pc["injected_sha"] is None
+    # The root state was never touched, so the watchdog's read at the
+    # trip is the block's own starting fingerprint.
+    assert pc["root_sha_at_trip"] == correct_sha
+    assert pc["banked_from_reset"] == 0
+    assert root_path.read_bytes() == original_bytes
+
+
+# ---------------------------------------------------------------------
+# test_positive_control_caught_requires_the_injections_own_sha
+# ---------------------------------------------------------------------
+
+def test_positive_control_caught_requires_the_injections_own_sha():
+    """`positive_control_caught` directly, one input at a time. Which
+    combinations a live block can reach depends on poll timing, so the
+    third condition -- the fingerprint the watchdog read at the trip is
+    the one the injection wrote -- is pinned here rather than through a
+    fixture raced against a background swapper.
+
+    The `outside actor` row is the one that matters: the injection did
+    fire, the watchdog did trip on `root_state_mismatch`, and the
+    block is still not credited, because the value that tripped it is
+    not the value the injection wrote. `injected_done and
+    reason == "root_state_mismatch"` alone would credit that block.
+
+    Revert-verify (live, this session): deleting the final
+    `return root_sha_at_trip == injected_sha` and returning True in its
+    place makes the `outside actor` and `no sha recorded` rows pass
+    when they must fail -- this test fails by name on those two rows.
+    Separately, deleting the `trip_reason != "root_state_mismatch"`
+    guard reddens the `wrong trip reason` rows. Restored, re-passed.
+    """
+    ours = "aaaaaaaaaaaaaaaa"
+    theirs = "bbbbbbbbbbbbbbbb"
+    cases = [
+        # (label, injected_done, trip_reason, injected_sha,
+        #  root_sha_at_trip, expected)
+        ("the injection caused it", True, "root_state_mismatch", ours,
+         ours, True),
+        ("never injected", False, "root_state_mismatch", None, ours, False),
+        ("injection asked for but inert", False, "cells_decreased", None,
+         None, False),
+        ("wrong trip reason: cells", True, "cells_decreased", ours, ours,
+         False),
+        ("wrong trip reason: solutions", True, "solutions_decreased", ours,
+         ours, False),
+        ("wrong trip reason: lock", True, "lock_holder_mismatch", ours,
+         ours, False),
+        ("no trip at all", True, None, ours, ours, False),
+        ("outside actor swapped it in the same window", True,
+         "root_state_mismatch", ours, theirs, False),
+        ("no sha recorded for the injection", True, "root_state_mismatch",
+         None, ours, False),
+        ("no sha read at the trip", True, "root_state_mismatch", ours,
+         None, False),
+    ]
+    for label, done, reason, inj_sha, trip_sha, expected in cases:
+        got = positive_control_caught(
+            injected_done=done, trip_reason=reason,
+            injected_sha=inj_sha, root_sha_at_trip=trip_sha)
+        assert got is expected, (
+            f"positive_control_caught({label!r}) read {got}, expected "
+            f"{expected}")
 
 
 # ---------------------------------------------------------------------
@@ -410,9 +610,9 @@ def test_injection_trips_a_well_behaved_child_via_root_state(tmp_path):
     Revert-verify (live, this session): gating the injection call on
     `False` (so `_corrupt_root_state` is never invoked) leaves this
     monotone child never tripped -- it exits cleanly, `stop` reads
-    "complete", `positive_control` reads
-    `{"injected": True, "caught": False, "banked_from_reset": 0}` --
-    fails both assertions below by name. Restored, re-passed.
+    "complete", `positive_control` reads `injected:True,
+    injected_done:False, caught:False` -- fails both assertions below
+    by name. Restored, re-passed.
     """
     root_path, correct_sha = _write_root_state(tmp_path)
     original_bytes = root_path.read_bytes()
@@ -430,8 +630,12 @@ def test_injection_trips_a_well_behaved_child_via_root_state(tmp_path):
     assert receipt["stop"] == "abort"
     assert receipt["abort_reason"] == "root_state_mismatch"
     assert receipt["aborted"] is True
-    assert receipt["positive_control"] == {
-        "injected": True, "caught": True, "banked_from_reset": 0}
+    assert receipt["positive_control"]["injected"] is True
+    assert receipt["positive_control"]["injected_done"] is True
+    assert receipt["positive_control"]["caught"] is True
+    assert receipt["positive_control"]["banked_from_reset"] == 0
+    assert (receipt["positive_control"]["root_sha_at_trip"]
+            == receipt["positive_control"]["injected_sha"])
     assert receipt["banked"] == []
     # The injection landed on the block's own copy, not on root_path.
     assert root_path.read_bytes() == original_bytes, (
@@ -600,9 +804,14 @@ def test_root_state_mismatch_detected_mid_block_not_only_at_launch(tmp_path):
     assert receipt["watchdog_trips"] == 1
     assert receipt["abort_reason"] == "root_state_mismatch"
     assert receipt["aborted"] is True
-    # Not injected -- a real trip is not a demonstrated positive control.
-    assert receipt["positive_control"] == {
-        "injected": False, "caught": False, "banked_from_reset": 0}
+    # Not injected -- a real trip is not a demonstrated positive
+    # control, even when the trip reason is the one an injection would
+    # have produced. The external swapper wrote this file, not us.
+    assert receipt["positive_control"]["injected"] is False
+    assert receipt["positive_control"]["injected_done"] is False
+    assert receipt["positive_control"]["caught"] is False
+    assert receipt["positive_control"]["injected_sha"] is None
+    assert receipt["positive_control"]["banked_from_reset"] == 0
     assert root_path.read_bytes() == original_bytes, (
         "the external swap targeted the sandboxed copy; root_path "
         "itself must be untouched by anything this block did")
@@ -642,8 +851,10 @@ def test_solutions_decrease_is_caught(tmp_path):
     assert receipt["abort_reason"] == "solutions_decreased"
     assert receipt["aborted"] is True
     assert receipt["banked"] == []
-    assert receipt["positive_control"] == {
-        "injected": False, "caught": False, "banked_from_reset": 0}
+    assert receipt["positive_control"]["injected"] is False
+    assert receipt["positive_control"]["injected_done"] is False
+    assert receipt["positive_control"]["caught"] is False
+    assert receipt["positive_control"]["banked_from_reset"] == 0
 
 
 # ---------------------------------------------------------------------

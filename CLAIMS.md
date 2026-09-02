@@ -1021,6 +1021,21 @@ nothing starts under this grant. Any clear a pilot block produces is an
 EXHIBITION result in that run's own solutions ledger, citing flag and
 commit; this entry carries no result and never will.
 
+**Addendum, 2026-09-02, receipt shape (FORGE-FIX-2).** The
+`positive_control` field fixed above grows from three keys to six:
+`injected` (the plan's request flag, meaning unchanged), `injected_done`
+(the injection actually wrote bytes), `injected_sha` (the fingerprint the
+injection left behind), `root_sha_at_trip` (the fingerprint the watchdog
+read at the trip), `caught`, and `banked_from_reset`. `caught` stops
+being a copy of `injected`. It is computed by
+`src/forge/block.py::positive_control_caught` and reads true only when
+the injection fired, the trip reason was `root_state_mismatch`, and the
+sha the watchdog read equals the sha the injection wrote. The three added
+keys exist so a reviewer can re-derive `caught` from the receipt alone,
+without the runner. Reading the field as a three-key dict is superseded;
+membership of the fields fixed above is unchanged and no number in this
+entry moves.
+
 #### FORGE-GRANT-contra_wall-2026-09-01
 
 **FORGE-GRANT, contra_wall (the Contra gx-3072 screen lock), granted
@@ -1069,6 +1084,11 @@ under this grant either until that receipt exists. Any clear a pilot
 block produces is an EXHIBITION result in that run's own solutions
 ledger, citing flag and commit; this entry carries no result and never
 will.
+
+**Addendum, 2026-09-02, receipt shape (FORGE-FIX-2).** The
+`positive_control` field fixed above carries the same six keys, with the
+same meanings, as the cv_hall addendum states. No number in this entry
+moves.
 
 
 ## Quarantine (Tier-3-contaminated artifacts)

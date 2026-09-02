@@ -317,6 +317,22 @@ ratio is reported with `ratio_ok`, not refused — the grant is judged on the cy
 not the block. No `grant_entry` anchor in `CLAIMS.md`, no start. The moment a wrongful reset
 banks an artifact, the runner writes `GRANT_ENDED` to `runs/forge/grant_state.json` and refuses every later block.
 
+**Addendum, 2026-09-02 (FORGE-FIX-2), superseding the `positive_control` literal above
+and the first test paragraph below.** `positive_control` carries six keys, not three:
+`injected` (the plan's request flag, meaning unchanged), `injected_done` (the injection
+actually wrote bytes), `injected_sha` (the fingerprint the injection left), `root_sha_at_trip`
+(the fingerprint the watchdog read at the trip), `caught`, and `banked_from_reset`. `caught`
+is no longer a copy of `injected`. `src/forge/block.py::positive_control_caught` computes it,
+and it reads true only when the injection fired, the trip reason was `root_state_mismatch`,
+and `root_sha_at_trip == injected_sha`. The three added keys let a reviewer re-derive `caught`
+from the receipt alone. `test_positive_control_injected_reset_is_caught` no longer proves what
+the paragraph below says it proves: its original half runs a child with no `--root-state`, so
+the injection cannot fire, and it now asserts `injected_done:false, caught:false`; a second
+half with a correct `--root-state` asserts the gate saying yes. Two tests are added beside it,
+`test_uninjected_trip_reports_no_positive_control` and
+`test_positive_control_caught_requires_the_injections_own_sha`, so the test count in the
+heading below is superseded too.
+
 **Files.** `src/forge/block.py` (`run_block`, `wrongful_reset`), extending
 `src/utils/run_lock.py` (`acquire :106`, `release :150`). Modeled on
 `tests/test_terminal_stasis.py` and `tests/test_stability_audit_guards.py` (LG finding 11).
