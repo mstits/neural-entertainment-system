@@ -2,7 +2,7 @@
         build build-pgo build-pgo-apply selftest clean clean-rust train eval scoreboard \
         test-fast selftest-learning demo gui setup-check setup-game \
         ppu_layout_check ppu-batch-profile rust-check unsafe-inventory-check \
-        clear-lint mechanism-check purity-check
+        clear-lint mechanism-check purity-check probe-purity
 
 help:
 	@echo "NES-Evolve Makefile targets:"
@@ -35,6 +35,7 @@ help:
 	@echo "  Test:"
 	@echo "    make test              - pytest suite (incl. slow real-emulator guards)"
 	@echo "    make test-fast         - pytest suite minus slow tests (fast inner loop)"
+	@echo "    make probe-purity      - re-measure unwitnessed reward bytes (DO-10 hash-pinned receipt)"
 	@echo "    make selftest-learning - real-loop guard: vanilla_ppo learns SMB (~25s)"
 	@echo "    make selftest          - GUI widget construction (headless)"
 	@echo "    make parity            - nes_core vs nes-py diff harness (under 2 min)"
@@ -153,6 +154,14 @@ mechanism-check:
 purity-check:
 	@.venv/bin/python tests/purity_engine_scan.py --check
 	@cd nes_core && cargo test --lib win_witness_guard --quiet
+
+# Re-measure the bytes rewards.rs asserts win/boss semantics for, on ROMs
+# this repo has never witnessed the event on (scripts/probe_unwitnessed_
+# bytes.py). DO-10 hash-pinned: every receipt records the rom_sha256 and
+# start_state_sha256 it actually read, so a swapped ROM with the same
+# filename cannot stand in for the receipt undetected.
+probe-purity:
+	@.venv/bin/python scripts/probe_unwitnessed_bytes.py
 
 mistakes-check:
 	@.venv/bin/python scripts/mistakes_tally.py --check > /dev/null || \

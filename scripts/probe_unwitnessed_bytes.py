@@ -18,6 +18,7 @@ MEANS — only whether it ever moved.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 from datetime import datetime, timezone
@@ -116,6 +117,14 @@ def probe_one(label, rom, state, addrs, noop_steps, random_steps, seed):
         return {"label": label, "status": "SKIPPED_MISSING_FILE",
                 "rom": rom, "state": state}
 
+    # Hash-pin: every receipt says exactly which ROM and start-state
+    # bytes produced it, mirroring transition_witness.py:557-560. A
+    # probe result is a claim about *these* bytes, not about "the game"
+    # by name -- a swapped ROM with the same filename must not be able
+    # to stand in for this receipt.
+    rom_sha256 = hashlib.sha256(rom_p.read_bytes()).hexdigest()
+    start_state_sha256 = hashlib.sha256(state_p.read_bytes()).hexdigest()
+
     env = NESEnvironment(str(rom_p), 1, str(state_p))
     start = {n: env.get_ram(a) for n, a in addrs.items()}
     rng = random.Random(seed)
@@ -139,6 +148,7 @@ def probe_one(label, rom, state, addrs, noop_steps, random_steps, seed):
         }
     return {
         "label": label, "status": "OK", "rom": rom, "start_state": state,
+        "rom_sha256": rom_sha256, "start_state_sha256": start_state_sha256,
         "seed": seed, "noop_steps": noop_steps, "random_steps": random_steps,
         "addresses": out,
     }

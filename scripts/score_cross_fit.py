@@ -28,7 +28,10 @@ result dict, one file per (seed, iter, eval_seed)) named
 ``<prefix>_seed<S>_it<III>_es<E>.json`` — the convention already in use
 in runs/v27_readjudication_2026-08-27/. Each file must carry
 ``clear_rate`` (the honest per-eval-seed rate) and, for provenance,
-``rom_sha256`` when the eval_game.py version that produced it wrote one.
+``rom_sha256`` when the eval_game.py version that produced it wrote one
+-- when present, every receipt pulled into one computation must agree,
+or ``load_receipts`` raises ``RomMismatchError`` (VOID, not a silent
+pass-through).
 """
 
 from __future__ import annotations
@@ -41,6 +44,18 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 RECEIPT_RE = re.compile(r"_seed(\d+)_it(\d+)_es(\d+)\.json$")
+
+
+class RomMismatchError(ValueError):
+    """Raised by load_receipts when receipts pulled into one cross-fit
+    computation disagree on rom_sha256 -- generalizes the config_sha256
+    consistency check in adjudicate_soak.py:150-154 from "one soak's
+    segments must agree" to "one Theta's receipts must agree". Scoring
+    checkpoints against inconsistent ROM bytes would silently launder a
+    substitution into a passing Theta; the docstring above has always
+    named rom_sha256 as provenance, this is what makes that checked
+    rather than merely carried.
+    """
 
 
 @dataclass
@@ -74,6 +89,7 @@ def load_receipts(
     accumulate files for several campaigns over time.
     """
     out: dict[int, dict[int, dict[int, float]]] = {s: {} for s in seeds}
+    rom_sha256, rom_sha256_from = None, None
     for path in sorted(receipts_dir.glob("*.json")):
         m = RECEIPT_RE.search(path.name)
         if m is None:
@@ -87,6 +103,17 @@ def load_receipts(
             continue
         if "clear_rate" not in data:
             continue
+        r_sha = data.get("rom_sha256")
+        if r_sha is not None:
+            if rom_sha256 is None:
+                rom_sha256, rom_sha256_from = r_sha, path.name
+            elif r_sha != rom_sha256:
+                raise RomMismatchError(
+                    f"{path.name}: rom_sha256 {r_sha!r} differs from "
+                    f"{rom_sha256_from!r}'s {rom_sha256!r} -- receipts "
+                    f"in {receipts_dir} were not all scored against the "
+                    "same ROM bytes"
+                )
         out[seed].setdefault(it, {})[es] = float(data["clear_rate"])
     return out
 
@@ -204,8 +231,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args(argv)
 
-    receipts = load_receipts(args.receipts_dir, seeds=args.seeds)
-    result = compute_theta(receipts, candidates=args.iters)
+    try:
+        receipts = load_receipts(args.receipts_dir, seeds=args.seeds)
+    except RomMismatchError as e:
+        result = CrossFitResult(verdict=f"VOID-ROM-MISMATCH: {e}")
+    else:
+        result = compute_theta(receipts, candidates=args.iters)
 
     payload = {
         "seed_scores": [asdict(s) for s in result.seed_scores],
@@ -218,10 +249,16 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     if args.control_receipts_dir is not None:
-        control_receipts = load_receipts(
-            args.control_receipts_dir, seeds=args.seeds,
-        )
-        control_result = compute_theta(control_receipts, candidates=args.iters)
+        try:
+            control_receipts = load_receipts(
+                args.control_receipts_dir, seeds=args.seeds,
+            )
+        except RomMismatchError as e:
+            control_result = CrossFitResult(
+                verdict=f"VOID-ROM-MISMATCH: {e}")
+        else:
+            control_result = compute_theta(
+                control_receipts, candidates=args.iters)
         payload["control"] = {
             "theta": control_result.theta,
             "n_armed_seeds": control_result.n_armed_seeds,
