@@ -79,7 +79,7 @@ impl Mapper105 {
             cartridge,
             shift: SHIFT_REGISTER_DEFAULT,
             regs: Regs::new(),
-            outer_bank: 0,
+            outer_bank: 1,
         }
     }
 
@@ -252,7 +252,7 @@ impl Mapper for Mapper105 {
     fn reset(&mut self) {
         self.shift = SHIFT_REGISTER_DEFAULT;
         self.regs = Regs::new();
-        self.outer_bank = 0;
+        self.outer_bank = 1;
     }
 
     fn get_state(&self) -> mapper::State {
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn default_fixes_last_bank_of_outer_half() {
         let mut m = build();
-        assert_eq!(m.prg_read_byte(0xC000), 7);
+        assert_eq!(m.prg_read_byte(0xC000), 15);
     }
 
     // In fix-last mode the $8000 window follows prg_bank; the last window
@@ -342,8 +342,8 @@ mod tests {
     fn fixlast_switches_8000_window() {
         let mut m = build();
         ser(&mut m, 0xE000, 3); // prg_bank = 3
-        assert_eq!(m.prg_read_byte(0x8000), 3);
-        assert_eq!(m.prg_read_byte(0xC000), 7);
+        assert_eq!(m.prg_read_byte(0x8000), 11);
+        assert_eq!(m.prg_read_byte(0xC000), 15);
     }
 
     // chr_bank_0 bit 0 selects the 128 KB outer PRG half; setting it moves
@@ -363,8 +363,8 @@ mod tests {
         let mut m = build();
         ser(&mut m, 0x8000, 0x08); // control bits 3..2 = 10 -> fix first
         ser(&mut m, 0xE000, 5); // prg_bank = 5
-        assert_eq!(m.prg_read_byte(0x8000), 0);
-        assert_eq!(m.prg_read_byte(0xC000), 5);
+        assert_eq!(m.prg_read_byte(0x8000), 8);
+        assert_eq!(m.prg_read_byte(0xC000), 13);
     }
 
     // 32 KB switch mode maps an aligned pair: prg_bank is forced even for the
@@ -374,11 +374,11 @@ mod tests {
         let mut m = build();
         ser(&mut m, 0x8000, 0x00); // control bits 3..2 = 00 -> switch 32K
         ser(&mut m, 0xE000, 6); // pair (6, 7)
-        assert_eq!(m.prg_read_byte(0x8000), 6);
-        assert_eq!(m.prg_read_byte(0xC000), 7);
+        assert_eq!(m.prg_read_byte(0x8000), 14);
+        assert_eq!(m.prg_read_byte(0xC000), 15);
         ser(&mut m, 0xE000, 5); // odd rounds down to pair (4, 5)
-        assert_eq!(m.prg_read_byte(0x8000), 4);
-        assert_eq!(m.prg_read_byte(0xC000), 5);
+        assert_eq!(m.prg_read_byte(0x8000), 12);
+        assert_eq!(m.prg_read_byte(0xC000), 13);
     }
 
     // Control low two bits drive mirroring.
@@ -402,9 +402,9 @@ mod tests {
         let mut m = build();
         ser(&mut m, 0x8000, 0x00); // switch 32K
         ser(&mut m, 0xE000, 2); // pair (2, 3)
-        assert_eq!(m.prg_read_byte(0xC000), 3);
+        assert_eq!(m.prg_read_byte(0xC000), 11);
         m.prg_write_byte(0x8000, 0x80); // reset bit
-        assert_eq!(m.prg_read_byte(0xC000), 7); // fix-last of outer half
+        assert_eq!(m.prg_read_byte(0xC000), 15); // fix-last of outer half
     }
 
     // A mid-sequence reset write discards partially shifted bits so the next
@@ -416,7 +416,7 @@ mod tests {
         m.prg_write_byte(0xE000, 0x01);
         m.prg_write_byte(0x8000, 0x80); // reset discards them
         ser(&mut m, 0xE000, 4); // clean program of prg_bank = 4
-        assert_eq!(m.prg_read_byte(0x8000), 4);
+        assert_eq!(m.prg_read_byte(0x8000), 12);
     }
 
     // 4 KB CHR mode routes $0000 via chr_bank_0 and $1000 via chr_bank_1.
@@ -485,7 +485,26 @@ mod tests {
         ser(&mut m, 0xE000, 5);
         ser(&mut m, 0xA000, 0x01); // outer 1
         m.reset();
-        assert_eq!(m.prg_read_byte(0xC000), 7); // fix-last, outer 0
-        assert_eq!(m.prg_read_byte(0x8000), 0); // prg_bank 0
+        assert_eq!(m.prg_read_byte(0xC000), 15); // fix-last, outer 1
+        assert_eq!(m.prg_read_byte(0x8000), 8); // prg_bank 0, outer 1
+    }
+
+    // The real cart's outer half 0 is dead padding at the FixLastBank
+    // window (all-zero NMI/RESET/IRQ vectors); only outer half 1 boots.
+    // Regression guard for the outer_bank power-on default.
+    #[test]
+    fn boots_into_outer_half_with_valid_vectors() {
+        let mut cart = test_cart(16, 4); // 256 KB PRG, matches real NWC1990
+        // outer half 0's last bank (physical bank 7) = padding, vector = 0
+        // outer half 1's last bank (physical bank 15) = real code
+        let half0_last = 7 * PRG_ROM_BANK_SIZE as usize;
+        let half1_last = 15 * PRG_ROM_BANK_SIZE as usize;
+        cart.prg_rom[half0_last + 0x3FFC] = 0x00;
+        cart.prg_rom[half0_last + 0x3FFD] = 0x00;
+        cart.prg_rom[half1_last + 0x3FFC] = 0x89;
+        cart.prg_rom[half1_last + 0x3FFD] = 0xFE;
+        let m = Mapper105::new(cart);
+        assert_eq!(m.prg_peek_byte(0xFFFC), 0x89);
+        assert_eq!(m.prg_peek_byte(0xFFFD), 0xFE);
     }
 }

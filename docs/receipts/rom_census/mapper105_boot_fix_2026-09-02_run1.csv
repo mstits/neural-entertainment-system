@@ -1,0 +1,4 @@
+path,name,bytes,md5,mapper,sub_mapper,nes20,status,frames_run,wall_ms,error,motion,static_distinct_hashes,static_first_change_frame
+roms/Jackal (USA).nes,Jackal (USA).nes,131088,c6c17bf18a51718859f9bd6aacb7ef58,2,0,False,ok,300,612.494207918644,,static,1,
+roms/Nintendo World Championships 1990 (USA).nes,Nintendo World Championships 1990 (USA).nes,262160,f36cb0729741f92698d42e19f69e690e,105,0,False,ok,300,723.1876670848578,,live,6,1
+roms/Super Mario Bros. + Tetris + Nintendo World Cup (Europe) (Rev A).nes,Super Mario Bros. + Tetris + Nintendo World Cup (Europe) (Rev A).nes,524304,690ef25921a067c03218e473c3ba05f6,37,0,False,ok,300,505.12700015679,,static,1,
