@@ -1071,9 +1071,11 @@ events), so the median/p99 above, not the mean, describe the common case.
 
 The full matrix lives in `reports/full_library.md`. A summary:
 
-- **37 mappers** implemented, covering **99.5%** of the 796-ROM library
-  (live-screen boot, 2026-09-01 census). Every supported mapper passes at
-  100% on its carts.
+- **37 mappers** implemented, covering **99.6%** of the 796-ROM library
+  (live-screen boot, 2026-09-01 census: 793 of 796 = 99.623%, rounded to one
+  decimal place; receipt
+  `docs/receipts/rom_census/mapper105_boot_fix_2026-09-02.md`). Every
+  supported mapper passes at 100% on its carts.
 - Discrete logic: NROM (0), UxROM (2), CNROM (3), AxROM (7), Colordreams (11,
   66), CPROM (13), BNROM / NINA-001 (34), Caltron 6-in-1 (41), NINA-06 / HES
   (113), Action 52 (228), Camerica Quattro (232), Maxi 15 (234), Camerica

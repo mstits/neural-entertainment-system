@@ -83,6 +83,10 @@ now Jackal and SMB+Tetris+NWC); `:1190` (Limitations header count, `792/796` bec
 `793/796`); `:1220-1221` ("does not ship" bullet, drops mapper "105" from the named
 mapper list, now mappers 2 and 37).
 
+One further site was missed in that pass and corrected later on 2026-09-02:
+`README.md:1074` (mapper-summary bullet, `99.5%` becomes `99.6%`), which carries the
+same 793 of 796 = 99.623% derived above and now cites this receipt inline.
+
 ## Fix round (2026-09-02, folded into `4204ca0` via amend)
 
 This receipt file is itself the fix for review finding 3 (the DO-33 commit originally
