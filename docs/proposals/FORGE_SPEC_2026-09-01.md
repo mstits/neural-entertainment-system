@@ -13,8 +13,8 @@ its corrected real-child receipt is not in the tree, and row (d) is unrun. The p
 is NO-GO on that condition. Current status is recorded in this repository's
 `MISTAKES.md`, entries dated 2026-09-02, and in the two grant entries in `CLAIMS.md`,
 each of which states that nothing starts under it until the real-child receipt exists.
-This document is still a DRAFT. This note is an addition to the copy the paragraph above
-describes: it records where the protocol stands and ratifies nothing.
+This note is an addition to the copy the paragraph above describes, and it ratifies
+nothing.
 
 Pre-registered before the build; revised once, pre-ratification, against the five review
 findings (§0). After ratification, corrections are dated addenda, never edits (LG design
@@ -36,8 +36,9 @@ PA (`research/repo-prior-art.md`), MAP (`00-MAP.md`). Copied verbatim into
    the ortho FORGE entry starts at `CLAIMS.md:199`. `--ortho :8954` and `stall_flat_windows
    :8393` were right for `e9fcf13` and wrong for the working tree (below).
 3. **§4 counts match the bullets:** (a) 7 tests + 2 registry entries (a seventh test
-   added); (f) 6 tests + 1 registry entry. **4.** §2c no longer claims field identity with
-   `Mechanism`. **5.** §3's repair-round count is marked as ours.
+   added); (f) 6 tests + 1 registry entry.
+4. **§2c no longer claims field identity with `Mechanism`.**
+5. **§3's repair-round count is marked as ours.**
 
 **New fact.** The working tree is dirty: 178 insertions in 8 files, +22 lines in
 `scripts/go_explore_solve.py` (numbers shift +2 from `:3117`, +22 from `:8057`); the 16:53
@@ -66,11 +67,11 @@ from this run's own telemetry (named in the entry), and it references no route, 
 disassembly, or game-specific instruction — the test "could this decision have been made by
 a party who has never seen the game" holds.* (`CLAIMS.md:168-195`.)
 
-**What it is NOT.** Not learned — *learn, learned, learns, learning, self-taught* are
+**What it is NOT.** Not learned: *learn, learned, learns, learning, self-taught* are
 banned on every surface it writes (`CLAIMS.md:160-166`). Not a guarantee of clears: tonight
 passes if every piece produced its receipt and every gate was shown able to fail, not if a
 wall fell. Not a cause claim: STALLED is a rate claim only (SD design rules 1, 3). Not a
-resurrection of `WallClass.GATED` — falsified vocabulary; citing it in a Forge artifact is a
+resurrection of `WallClass.GATED`, falsified vocabulary; citing it in a Forge artifact is a
 defect (`src/training/wall_taxonomy.py:8-34,444-453`).
 
 ## 2. Architecture — the six pieces
@@ -92,11 +93,11 @@ drift test fails by name (`tests/test_anti_vacuity_gates.py:247-263`; LG open qu
 **Purpose.** Turn the existing, unacted stall counter into a verdict the engine journals.
 Two independent kinds, because one clock cannot see both walls (SD finding 8, design rule
 2): `kind:"archive"` is in-run and clock-driven and applies only to a *live* child (a
-piece-(f) block); `kind:"campaign"` is cross-run and receipt-driven — **both walls are
-campaign-kind tonight** (all three cv_hall runs ended at `stall_flat_windows=0`).
+piece-(f) block); `kind:"campaign"` is cross-run and receipt-driven. Both walls are
+campaign-kind tonight (all three cv_hall runs ended at `stall_flat_windows=0`).
 
 **Wall = family, by manifest** `runs/forge/walls/<wall_id>.json`, written by the build.
-Membership is scope, like a config; detection stays self-measured — the verdict reads only
+Membership is scope, like a config; detection stays self-measured: the verdict reads only
 what members recorded. No glob heuristics (SD open question 1, decided). cv_hall's manifest:
 `prior_best:767`, `prior_best_replay_verified:false` (receipt
 `runs/cv_hall_ortho_a/archive.stats.json`), three `shape:"progress"` members
@@ -123,7 +124,7 @@ of `roots.json` bytes (PA §3.3: root states, not directories); `terminal_no_adv
 `solutions == 0 and best_seen <= prior_best`. No `breakthrough_found` exists here and none
 is invented. `shape:"receipt"`: the named file; `terminal_no_advance` iff the named
 `terminal_field` exists and is boolean `False`; `terminal_field: null` (A4 carries only a
-prose `verdict: "FALSIFIED…"`) makes the member **UNMEASURED, listed in `missing`** — prose
+prose `verdict: "FALSIFIED…"`) makes the member UNMEASURED, listed in `missing`; prose
 is not a receipt field (PA §4); `best_seen` = `best_field`; root id = `root_family`. Any
 member: `advance` iff `solutions > 0` or `best_seen > prior_best`.
 
@@ -160,8 +161,8 @@ ADVANCING otherwise; UNMEASURED on an empty tail. `evidence` holds raw numbers, 
 **Files.** New `src/forge/stall.py` (`archive_verdict`, `campaign_verdict`, pure;
 `archive_verdict` replays the real `update_stall()`, `scripts/go_explore_solve.py:3115`).
 Wiring in `scripts/engine_driver.py`: a sibling check `stall_check(state, repo)` called once
-`plan()` (`:702`) has chosen a wall-bound action — not a `guard_reasons` member (`:1288`),
-because a stalled wall routes that wall's next action, it does not halt the engine (SD rule
+`plan()` (`:702`) has chosen a wall-bound action, not a `guard_reasons` member (`:1288`),
+because a stalled wall routes that wall's next action and does not halt the engine (SD rule
 5). Latched per wall in `state["stalled_notified"][wall_id]` as `state["blocked_notified"]`
 latches (`:1323-1329`); journaled via `journal()` (`:130`) before anything acts on it;
 appended to `runs/engine/stall_receipts.jsonl`. Default-off behind `--forge`: flag absent, journal byte-identical to today.
@@ -213,7 +214,7 @@ a receipt-only wall, stated in `missing`, which copies `MISSING_TELEMETRY`'s sty
 **Files.** New `src/forge/bundle.py::build_bundle(wall_id, verdict)`. Reads
 `boundary_axis_profile()` (`src/training/wall_taxonomy.py:962`) against the newest member's
 `archive.pkl` when present, the manifest's receipts when not (SD design rule 8).
-`discover_observables.py` (`:812,841,940,1094,1556`) is referenced as `ram_observables`, not run tonight — `not_probed`, stated.
+`discover_observables.py` (`:812,841,940,1094,1556`) is referenced as `ram_observables`, not run tonight: `not_probed`, stated.
 
 **Tests** (`tests/test_forge_bundle.py`, 4):
 `test_bundle_cv_hall_reports_key_blind_from_receipt` — fixture archive with six constant
@@ -232,7 +233,7 @@ enum member, a repo path, or a `path:line` receipt; corrupt: add a free-text `no
 (LE rules 1-3: an index cannot name an arm that does not exist). **Registry entry**
 (`src/forge/registry.py::ARMS`, a tuple of a new `Arm` dataclass modeled on the
 armed-signal + activity-counter pattern of `Mechanism`,
-`scripts/check_mechanism_receipt.py:95-118` — same `activity_kind` vocabulary, new field
+`scripts/check_mechanism_receipt.py:95-118`: same `activity_kind` vocabulary, new field
 names, not the same class):
 ```json
 {"name": "ortho", "kind": "arm", "flag": "--ortho", "off_value": "off",
@@ -247,8 +248,8 @@ Seeded with `ortho` (flag `scripts/go_explore_solve.py:8954`; `ortho_pool :3141`
 `runs/cv_hall_ortho_a/progress.jsonl`), `lock` (flag `:9012`; `lock_armed :3167`,
 `lock_clocks :3176`, `in_lock_key :3194`; inertness guard
 `tests/test_go_explore_solve.py:3561`; counter name read from `progress_line()` at build
-time — none found means UNAUDITABLE and unarmable, logged, not patched), and `gate_opener`
-(flag `:9084`, shipped choices `{off, enumerate}` — PA §1.3's `{probe,search,off}` is the
+time; none found means UNAUDITABLE and unarmable, logged, not patched), and `gate_opener`
+(flag `:9084`, shipped choices `{off, enumerate}`; PA §1.3's `{probe,search,off}` is the
 proposal's CLI, not what shipped; section `:3241`, `gate_armed :3269`; counters
 `gate_armed`/`gate_armed_secs`; status `K0-HALTED`, pickable per PA open question 1: option
 B, sound-but-uncertified). No `activity_counter`, no arming (PA §4; `check_mechanism_receipt.py:26-40`).
@@ -304,7 +305,7 @@ corrupt: rewrite in place.
 
 ### (f) Block runner
 
-**Purpose.** The only way a Forge pilot touches the emulator: a bounded, watchdog-gated
+**Purpose.** A Forge pilot touches the emulator only through a bounded, watchdog-gated
 unattended block with hard abort, per the phase-3 ruling (`PROGRESS.md`). Piece (d) calls
 (f); (f) never calls (d). **Input, a block plan:** `{wall_id, cycle_id, cmd,
 root_state_sha, max_secs (1200), max_steps (2_000_000), grant_entry
@@ -327,7 +328,7 @@ decreases. Any one trips the watchdog: SIGTERM the child, `release()` the lock (
 ```
 LG open questions 1-2 decided: `watchdog_trips` must be 0 to bank (an archive-kind STALLED
 stop from piece (a) is `stop:"stalled"`, clean, not a trip); the ≥6 machine-h per attended-h
-ratio is reported with `ratio_ok`, not refused — the grant is judged on the cycle receipt,
+ratio is reported with `ratio_ok`, not refused; the grant is judged on the cycle receipt,
 not the block. No `grant_entry` anchor in `CLAIMS.md`, no start. The moment a wrongful reset
 banks an artifact, the runner writes `GRANT_ENDED` to `runs/forge/grant_state.json` and refuses every later block.
 
@@ -368,7 +369,7 @@ decreasing cells; negative: monotone).
 
 **Roles.** A **designer** agent produces proposals from the bundle, the registry entry it
 was pointed at, and an abstracted arm interface (signatures of `ortho_pool`/`ortho_armed`,
-not solver source — LE open question 1 decided, so `classify_transition`'s game branches at
+not solver source; LE open question 1 decided, so `classify_transition`'s game branches at
 `scripts/go_explore_solve.py:878` never enter context). A **refuter** agent, a separate
 call, tries to break each proposal on four counts: purity (any route, map, address, or
 game-name-specific instruction), redundancy (knob-space distance to `arms_tried`), vacuity
@@ -420,7 +421,7 @@ entry says PENDING-VALIDATION until that block's stage-2 receipt exists.
 
 **Stop conditions.** (1) any proposal reaches MECHANISM_VALIDATED; (2) all proposals
 VOID/FAIL after their repair rounds; (3) any block reports `watchdog_trips>0` or
-`aborted:true` — the cycle is VOID, nothing registers; (4) cycle budget exhausted: `3 pilots
+`aborted:true`, the cycle is VOID, nothing registers; (4) cycle budget exhausted: `3 pilots
 + 1 control + 1 null` blocks, ≈100 min machine time; (5) `grant_state.json` reads
 `GRANT_ENDED`.
 
@@ -442,7 +443,7 @@ corrupt: drop the regex); `test_arm_proposal_requires_inertness_mirror_before_pi
 | (c) | 3 seeded arms, each auditable or marked UNAUDITABLE; selection on both bundles returns an index with `redundant_with` populated for cv_hall (`ortho up` tried); 4 tests green | Selector returns a spatial-only arm for `KEY_BLIND`, or a name | — |
 | (d) | One full cycle per wall inside grant blocks; null candidate reads VOID; every proposal frozen before its pilot; 7 tests green | Null candidate reads anything but VOID; a proposal edited after pilot start (hash mismatch) | Cycle aborted by (f); or budget exhausted before the null control ran |
 | (e) | Two FORGE-GRANT entries landed; vocabulary check refuses the two fixture violations; 5 tests green | Any Forge-written text contains a banned verb or a clear rate | — |
-| (f) | Positive control caught on the synthetic child AND once on a real solver child (`inject_wrongful_reset:true` on a 3-min block, `banked:[]`); 6 tests + 1 registry entry green | Injected reset not caught, or anything banked from it — the grant ends before it starts | Real solver child fails to launch (environment), synthetic control still passes: (f) PASS-SYNTHETIC only, live blocks do not run |
+| (f) | Positive control caught on the synthetic child AND once on a real solver child (`inject_wrongful_reset:true` on a 3-min block, `banked:[]`); 6 tests + 1 registry entry green | Injected reset not caught, or anything banked from it; the grant ends before it starts | Real solver child fails to launch (environment), synthetic control still passes: (f) PASS-SYNTHETIC only, live blocks do not run |
 
 **Live-validation protocol (two walls under the ruling).**
 1. No block runs before (f) PASS on the real child. Test gate (§5) green first.
@@ -453,11 +454,11 @@ corrupt: drop the regex); `test_arm_proposal_requires_inertness_mirror_before_pi
 3. Per wall, in order: (a) verdict → (b) bundle → (c) selection → (d) cycle, each block
    through (f). cv_hall pilots `kind:"knob"` on `ortho` (pin-secs/bias/band from
    `cell_rate_history`) from the shared root `entrance_after_2.state`; contra pilots
-   `kind:"knob"` on `lock` from a `_LANDING` root — if its bundle carries `OBSERVABLE_DEFECT
+   `kind:"knob"` on `lock` from a `_LANDING` root; if its bundle carries `OBSERVABLE_DEFECT
    confirmed`, the cycle is expected to read VOID at stage 1 or 2 and says so (PA §2).
 4. Receipts as ruled, per cycle: attended hours beside run-lock hours with the ≥6:1 check,
    `watchdog_trips` sum 0, the positive control, zero unretracted fabricated clears, the
-   grant anchor — `runs/forge/<wall>/<cycle>/cycle_receipt.json`, copied to `receipts/`.
+   grant anchor, `runs/forge/<wall>/<cycle>/cycle_receipt.json`, copied to `receipts/`.
 5. Any clear during a pilot → EXHIBITION entry in the run's solutions ledger citing the
    flag and commit; the FORGE entry says only whether its gate was met.
 
@@ -478,7 +479,7 @@ corrupt: drop the regex); `test_arm_proposal_requires_inertness_mirror_before_pi
 Total ≈15.1 h against the window ending 08:27; steps 0-5 must be green by 02:00 or step 6
 ships fixture-tested only and the live protocol runs (a)-(c) plus one (f) positive-control
 block per wall. (f) precedes (d) because (d)'s pilots are (f) blocks. Step 0 is Matthew's
-call at ratification (committing the WIP is allowed) — but the ten
+call at ratification (committing the WIP is allowed), but the ten
 `tests/test_go_explore_chain.py` failures must then be fixed before step 1; they are code,
 not environment state, and are not excluded by name.
 
@@ -493,11 +494,11 @@ the attribution patterns the build rules name (this copy does not repeat them; t
 
 ## 6. One-way doors vs two-way doors
 
-**One-way.** (1) The FORGE status vocabulary — `FORGE-PENDING-VALIDATION`,
-`FORGE-VALIDATED-MECHANISM`, `FORGE-VOID`, `FORGE-GRANT` — and the verdict words
+**One-way.** (1) The FORGE status vocabulary (`FORGE-PENDING-VALIDATION`,
+`FORGE-VALIDATED-MECHANISM`, `FORGE-VOID`, `FORGE-GRANT`) and the verdict words
 `STALLED/WATCHING/ADVANCING/UNMEASURED`, `MECHANISM_VALIDATED/FAIL`, `PREMISE_CROSSED/STALE`:
 once cited elsewhere they cannot be renamed, only addended. (2) The registry entry schema
-(§2c) once a second arm is registered — every later gate and receipt keys on those fields.
+(§2c) once a second arm is registered: every later gate and receipt keys on those fields.
 (3) The FORGE-GRANT entry: its bounds and receipt fields are the ruling's terms; loosening
 them is a new ruling, not an edit. (4) The wrongful-reset definition: an artifact banked
 under a weaker definition is fabricated under a stronger one. (5) The wall-manifest schema (§2a) once a verdict citing it lands in `CLAIMS.md`.
@@ -512,19 +513,19 @@ selector's agentic form, `src/forge/` and `runs/forge/` layout, `ratio_ok` repor
 `A6_RECEIPT.json`) is a Forge mechanism or out of scope (PA open question 3); whether piece
 (b) gets a reusable RAM-probe library or each wall keeps needing an A-series script (SD open
 question 3); whether the agentic selector replaces the table lookup; the K0 fork (PA open
-question 1 — parked as pickable, uncertified); whether cv_hall's manifest grows to the runs
+question 1, parked as pickable, uncertified); whether cv_hall's manifest grows to the runs
 behind CLAIMS.md's "five arms" once they are located.
 
 **Most likely wrong, with the receipt that settles each.**
 1. *"`MIN_TERMINAL=3` with `best_seen <= prior_best` is a stall, not three runs that each
    ran out of clock."* All three cv_hall members hit their deadline still finding cells
    (`stall_flat_windows=0`, SD finding 8); "no run beat 767" is what a longer run could
-   falsify. Receipt: the first cv_hall pilot block's tail — `max_gx_in_max_area > 767`
+   falsify. Receipt: the first cv_hall pilot block's tail, where `max_gx_in_max_area > 767`
    inside 1200 s means the rule confused budget exhaustion with a wall, and `MIN_TERMINAL`
    must also require a per-member `elapsed_s` floor (two-way door).
 2. *"A 1200 s / 2.0M-step pilot can produce a non-VOID stage-1 reading on the Castlevania
    hall."* Ortho took 120 s to pin and 5401 s to bank 37,345 selections (`CLAIMS.md:226`;
-   PS open question 4). Receipt: the first cv_hall block's counter reading — FIRED with
+   PS open question 4). Receipt: the first cv_hall block's counter reading, FIRED with
    `n_obs>0`, or INERT, in which case the budget doubles once.
 3. *"On-disk receipts alone let a bundle assign `mechanism_class` without a fresh probe."*
    Both walls' classes came from bespoke A-series scripts (SD findings 13, 15). Receipt:
