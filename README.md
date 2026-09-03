@@ -322,12 +322,19 @@ provably 0; 34 of 95 columns had never been explored above y-band 15 across
 by agents, with the cell key deliberately left alone so banked archives
 stay resumable.
 
-**And it has not been shown to work.** No validation run has been performed;
-the hall is still unsolved; the standing prior is ~110M steps and 0 solutions
-across five arms. `CLAIMS.md` files that arm as **FORGE-PENDING-VALIDATION**
-and permits citing it only as *agent-forged, unvalidated*, with no clear of any
-kind attributed to it. The validation run is pre-registered in
-`docs/proposals/STRATEGY_2026-08-08.md` (superseded as the plan of record by
+**And it has not cracked the wall.** The pre-registered A/B ran on 2026-08-10
+(seed 303, 90 min per arm, both resuming the 92,785-cell stairkey archive) and
+returned a split verdict: **validated as a selection-pressure mechanism** —
+37,345 selections, 2,514 new cells above the old y-band-9 frontier against the
+control's 1,471 (1.7x), at a 31% cost in total new cells — and **not validated
+as a wall-cracking mechanism**: both arms pinned at gx 767 with 0 solutions, and
+the pre-registered partial gate (ortho_cols_improved >= 8) failed in both at 3.
+The hall is still unsolved. `CLAIMS.md` files that arm as
+**FORGE-PENDING-VALIDATION** and permits citing it only as *agent-forged;
+validated as a selection-pressure mechanism; not validated as a wall-cracking
+mechanism* — with no clear of any kind attributed to it. The validation run is
+pre-registered in `docs/proposals/STRATEGY_2026-08-08.md` (superseded as the
+plan of record by
 `STRATEGY_2026-08-14.md`; current direction in `DIRECTION_2026-08-28.md`) with
 its stopping rule declared in advance. That is what the FORGE ledger is for: it
 lets the interesting claim be made without letting it borrow credit it has not
@@ -770,7 +777,14 @@ above).
   to extend it has so far scored **0.02 greedy on 1-1 twice** (see the
   receipt table above). **1-2 is a measured negative**: a pre-registered
   three-seed campaign showed the CGSA-PPO recipe failing its own
-  pre-registered signposts there (SPRT-verified local robustness at 1,900+
+  pre-registered signposts there. That result has since been superseded as the
+  ledger's live 1-2 number (`CLAIMS.md` ADDENDUM C2-1, 2026-08-27): the
+  consolidation-round-2 checkpoint clears 1-2 at **31/100 under the canonical
+  protocol** (`--eval-rng per-episode`, 50 eps x seeds {7,101}; 38/100 is the
+  shared-stream measurement of the same checkpoint), reproduced bit-exactly
+  eleven days after banking. It is measured **from the 1-2 entrance state, not
+  from power-on**, which is why 1-1 at 0.65 remains the only power-on-equivalent
+  learned clear. (SPRT-verified local robustness at 1,900+
   zones does not compose into traversal; the policy-class claim was withdrawn:
   `runs/smodice_1_2/`), and we are aware of no published per-level 1-2
   clear rate under Machado sticky-0.25, in either direction under this
@@ -1204,9 +1218,10 @@ What this release **does not** ship:
 
 - **Pre-trained checkpoints.** Checkpoints are gitignored; train them yourself
   with the flow above. On SMB, the honest learned result to date is **1-1 at
-  0.65 pooled** (0.56 / 0.74 per seed) under the full sticky protocol (1-2 is a
-  documented, three-seed-verified negative for this policy class); the 32-level
-  traversal that exists is EXHIBITION (search output), not a learned policy,
+  0.65 pooled** (0.56 / 0.74 per seed) under the full sticky protocol (1-2 is
+  31/100 at-entrance under the canonical protocol, and a documented negative
+  from power-on); the 32-level traversal that exists is EXHIBITION (search
+  output), not a learned policy,
   see *What actually works today*.
 - **A clearing Contra policy.** Contra learns under the pixel-CNN + RND recipe
   but does not yet clear stage 1; value-loss tuning is the open lever.

@@ -13,7 +13,9 @@ Checks, failing loud on any violation:
      the git-ignored runs/ tree, which the SEEDS sweep above never sees.
   6. Every entry in CLAIMS.md's FORGE ledger (### FORGE entries) is
      checked against the two of its four defining criteria that are
-     actually mechanical — see check_forge_entries.
+     actually mechanical, plus one currency check: an entry whose
+     validation has since run must not still be summarised in README as
+     never validated — see check_forge_entries.
 
 The allowlist is authoritative; provenance sidecars are advisory (a
 sidecar mislabel has already happened once).
@@ -186,6 +188,13 @@ _FILELIKE_EXTS = (".py", ".md", ".json", ".yaml", ".yml", ".rs", ".txt",
                    ".npz", ".npy", ".pt", ".state", ".log", ".toml")
 _DEFAULT_OFF_RE = re.compile(r'default[\s_-]+off', re.IGNORECASE)
 _STATUS_WORD_RE = re.compile(r'\bPASS\b|\bFAIL\b|\bVOID\b|PENDING-VALIDATION')
+# A "*Status, updated ...*" sub-block is how a FORGE entry records that
+# its pre-registered validation has since RUN. README's summary of the
+# same arm must not still say the run never happened — that sentence is
+# true only until the block exists, and nothing else notices when it
+# stops being true.
+_STATUS_UPDATED_RE = re.compile(r'^\*Status,\s+updated\b', re.MULTILINE)
+README_NEVER_VALIDATED = "No validation run has been performed"
 
 # Criteria 1 and 2 of the FORGE definition (CLAIMS.md, "The FORGE
 # ledger" -> "Definition") are judgments about how a mechanism was
@@ -269,6 +278,46 @@ def _forge_entry_tokens(entry_text: str) -> tuple[str | None, list[str]]:
         if _TESTFILE_TOKEN_RE.fullmatch(token):
             test_files.append(token)
     return flag_token, test_files
+
+
+def _forge_entry_arm_flags(entry: dict) -> list[str]:
+    """The flag names an entry advertises for the arm it is about.
+
+    The bold header line names the arm ("the orthogonal-frontier arm
+    (`--ortho`)"), so it is the precise pairing key between a CLAIMS
+    entry and the README prose about the same mechanism. Entries whose
+    header names no flag fall back to the body, which is looser but
+    still scoped to that one entry.
+    """
+    flags = _FLAG_TOKEN_RE.findall(entry["header"])
+    if not flags:
+        flags = _FLAG_TOKEN_RE.findall(re.sub(r'\s+', ' ', entry["text"]))
+    return sorted(set(flags), key=len)
+
+
+def _readme_lines_claiming_never_validated(
+        readme_path: Path, flags: list[str], window: int = 25) -> list[int]:
+    """1-based README lines that still say an arm has never been
+    validated, within `window` lines of a mention of that arm's flag.
+
+    The window (rather than the whole file) is what makes this a
+    per-entry check: README carries several PENDING-VALIDATION arms and
+    a stale sentence about one of them must not be excused by another
+    arm's status block, nor blamed on it.
+    """
+    if not readme_path.exists() or not flags:
+        return []
+    lines = readme_path.read_text().split("\n")
+    word = [re.compile(re.escape(f) + r'(?![\w-])') for f in flags]
+    hits = []
+    for i, line in enumerate(lines):
+        if README_NEVER_VALIDATED not in line:
+            continue
+        lo, hi = max(0, i - window), min(len(lines), i + window + 1)
+        near = "\n".join(lines[lo:hi])
+        if any(w.search(near) for w in word):
+            hits.append(i + 1)
+    return hits
 
 
 def _source_py_files(repo: Path):
@@ -380,6 +429,14 @@ def check_forge_entries(repo: Path, run_tests: bool = True) -> tuple[list[str], 
           read as an honest status paragraph to a human but will not
           satisfy this specific check, and are reported as failing it,
           not quietly credited.
+    Beyond the definition's four criteria, one currency check: an entry
+    whose validation has since RUN (it carries a "*Status, updated"
+    sub-block) must not be summarised in README by a sentence still
+    saying the run never happened. The entry is paired to README through
+    the flag its own header names — see
+    _readme_lines_claiming_never_validated. The ledger updating and the
+    README not is exactly the drift the FORGE ledger exists to prevent,
+    and nothing else in the repo notices it.
 
     Returns (errors, report). `errors` follows this module's existing
     convention — one string per concrete, checkable violation, meant to
@@ -460,6 +517,33 @@ def check_forge_entries(repo: Path, run_tests: bool = True) -> tuple[list[str], 
             status_detail = "no explicit PASS/FAIL/VOID/PENDING-VALIDATION word anywhere in the entry"
             entry_errors.append(f"{label}: {status_detail}")
 
+        # Currency: README must not still say this arm's validation run
+        # has never happened once the entry itself carries a
+        # "*Status, updated" block saying it has. See
+        # _readme_lines_claiming_never_validated.
+        if _STATUS_UPDATED_RE.search(entry["text"]):
+            arm_flags = _forge_entry_arm_flags(entry)
+            stale = _readme_lines_claiming_never_validated(
+                repo / "README.md", arm_flags)
+            if stale:
+                readme_result = "fail"
+                readme_detail = (
+                    f"entry carries a '*Status, updated' block, but README.md "
+                    f"line(s) {', '.join(str(x) for x in stale)} still read "
+                    f"{README_NEVER_VALIDATED!r} beside "
+                    f"{', '.join(arm_flags)}")
+                entry_errors.append(f"{label}: {readme_detail}")
+            else:
+                readme_result = "pass"
+                readme_detail = (
+                    "entry's validation has run and README does not still say "
+                    "otherwise")
+        else:
+            readme_result = "n/a"
+            readme_detail = (
+                "entry carries no '*Status, updated' block; nothing in README "
+                "to contradict yet")
+
         overall = "pass" if not entry_errors else "fail"
         entry_reports.append({
             "n": n, "line": entry["line"], "tag": entry["tag"],
@@ -467,6 +551,7 @@ def check_forge_entries(repo: Path, run_tests: bool = True) -> tuple[list[str], 
             "flag_default_off": (flag_result, flag_detail),
             "cited_tests": (tests_result, tests_detail),
             "explicit_status": (status_result, status_detail),
+            "readme_current": (readme_result, readme_detail),
         })
         errors.extend(entry_errors)
 

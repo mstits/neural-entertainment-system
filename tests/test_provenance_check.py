@@ -170,13 +170,16 @@ def test_trivial():
 '''
 
 
-def _write_forge_repo(tmp_path, entry_body: str, *, with_test_file=True):
+def _write_forge_repo(tmp_path, entry_body: str, *, with_test_file=True,
+                       readme: str | None = None):
     repo = tmp_path
     (repo / "scripts").mkdir(parents=True, exist_ok=True)
     (repo / "scripts" / "fake_tool.py").write_text(_FAKE_FLAG_SOURCE)
     (repo / "tests").mkdir(parents=True, exist_ok=True)
     if with_test_file:
         (repo / "tests" / "test_fake_forge_ok.py").write_text(_FAKE_TEST_OK)
+    if readme is not None:
+        (repo / "README.md").write_text(readme)
     claims = f"""# Claims Policy
 
 ### FORGE entries
@@ -270,3 +273,96 @@ def test_parse_forge_entries_splits_on_bold_forge_headers_only(tmp_path):
     assert "addendum" in entries[0]["text"]
     assert entries[1]["tag"] is None
     assert "second, untagged entry" in entries[1]["text"]
+
+
+# --- currency check: a validated arm's README summary must not still say
+# --- the validation never ran (DECIDE-10, README's ortho paragraph).
+
+_VALIDATED_ENTRY = (
+    _WELL_FORMED_ENTRY + "\n\n"
+    "*Status, updated 2026-01-08 — the pre-registered A/B validation "
+    "ran (seed 303, 90 min each).* **Split verdict.** MECHANISM "
+    "VALIDATED; PREMISE STALE. No clear may be attributed to it.")
+
+_STALE_README = """# Fake project
+
+The `--frobnicate` arm was diagnosed from the run's own telemetry, then
+designed, implemented and gated by agents.
+
+**And it has not been shown to work.** No validation run has been performed;
+the hall is still unsolved. `CLAIMS.md` files that arm as
+**FORGE-PENDING-VALIDATION**.
+"""
+
+_CURRENT_README = """# Fake project
+
+The `--frobnicate` arm was diagnosed from the run's own telemetry, then
+designed, implemented and gated by agents.
+
+**And it has not cracked the wall.** The pre-registered A/B ran on
+2026-01-08 and returned a split verdict: validated as a selection-pressure
+mechanism, not validated as a wall-cracking mechanism.
+"""
+
+
+def test_forge_status_updated_with_stale_readme_fails(tmp_path):
+    repo = _write_forge_repo(tmp_path, _VALIDATED_ENTRY,
+                             readme=_STALE_README)
+
+    errors, report = provenance_check.check_forge_entries(repo)
+
+    entry = report["entries"][0]
+    assert entry["readme_current"][0] == "fail", entry["readme_current"]
+    assert entry["overall"] == "fail"
+    assert report["passed"] == 0
+    assert any("No validation run has been performed" in e
+               and "*Status, updated" in e for e in errors), errors
+    # the drift is reported with a line number a human can go fix.
+    assert any("README.md line(s) 6" in e for e in errors), errors
+
+
+def test_forge_status_updated_with_current_readme_passes(tmp_path):
+    repo = _write_forge_repo(tmp_path, _VALIDATED_ENTRY,
+                             readme=_CURRENT_README)
+
+    errors, report = provenance_check.check_forge_entries(repo)
+
+    entry = report["entries"][0]
+    assert entry["readme_current"][0] == "pass", entry["readme_current"]
+    assert entry["overall"] == "pass"
+    assert errors == []
+
+
+def test_forge_without_status_update_tolerates_pending_readme(tmp_path):
+    """An arm whose validation genuinely has NOT run keeps the sentence.
+    The check fires on the ledger updating, not on the sentence existing."""
+    repo = _write_forge_repo(tmp_path, _WELL_FORMED_ENTRY,
+                             readme=_STALE_README)
+
+    errors, report = provenance_check.check_forge_entries(repo)
+
+    entry = report["entries"][0]
+    assert entry["readme_current"][0] == "n/a", entry["readme_current"]
+    assert entry["overall"] == "pass"
+    assert errors == []
+
+
+def test_forge_stale_sentence_about_a_different_arm_is_not_blamed(tmp_path):
+    """Two arms, one validated: the stale sentence sits beside the OTHER
+    arm's flag, so the validated entry must not be charged with it."""
+    readme = """# Fake project
+
+The `--other-arm` was forged last week and is still pending.
+
+**And it has not been shown to work.** No validation run has been performed;
+the hall is still unsolved.
+""" + "filler\n" * 40 + (
+        "Far below, in a different section entirely, the `--frobnicate`\n"
+        "arm's A/B ran and returned a split verdict.\n")
+    repo = _write_forge_repo(tmp_path, _VALIDATED_ENTRY, readme=readme)
+
+    errors, report = provenance_check.check_forge_entries(repo)
+
+    entry = report["entries"][0]
+    assert entry["readme_current"][0] == "pass", entry["readme_current"]
+    assert errors == []
