@@ -1,0 +1,6 @@
+path,name,bytes,md5,mapper,sub_mapper,nes20,status,frames_run,wall_ms,error,motion,static_distinct_hashes,static_first_change_frame
+/Volumes/backup 2026/agent-scratch/prep/DO-42/roms_subset/Jackal (USA).nes,Jackal (USA).nes,131088,c6c17bf18a51718859f9bd6aacb7ef58,2,0,False,ok,300,672.5478749722242,,static,1,
+/Volumes/backup 2026/agent-scratch/prep/DO-42/roms_subset/Kirby's Adventure (USA) (Rev A).nes,Kirby's Adventure (USA) (Rev A).nes,786448,758744ec2d2fa3d1f2020586401f97e8,4,0,False,ok,300,848.6835840158165,,live,118,5
+/Volumes/backup 2026/agent-scratch/prep/DO-42/roms_subset/Super Mario Bros. + Tetris + Nintendo World Cup (Europe) (Rev A).nes,Super Mario Bros. + Tetris + Nintendo World Cup (Europe) (Rev A).nes,524304,690ef25921a067c03218e473c3ba05f6,37,0,False,ok,300,809.0145001187921,,live,13,7
+/Volumes/backup 2026/agent-scratch/prep/DO-42/roms_subset/Super Mario Bros. 3 (USA) (Rev A).nes,Super Mario Bros. 3 (USA) (Rev A).nes,393232,55b7111567c1709e849c574078699577,4,0,False,ok,300,822.0365841407329,,live,143,9
+/Volumes/backup 2026/agent-scratch/prep/DO-42/roms_subset/Super Spike V'Ball + Nintendo World Cup (USA).nes,Super Spike V'Ball + Nintendo World Cup (USA).nes,524304,54beb328858b944d2c52463c0d820386,47,0,False,ok,300,826.9834169186652,,live,152,16

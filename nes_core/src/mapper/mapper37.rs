@@ -7,14 +7,30 @@ use crate::ppu::Ppu;
 use serde_derive::{Deserialize, Serialize};
 
 // Mapper 37 — NES-ZZ multicart (Super Mario Bros. + Tetris + Nintendo
-// World Cup, Europe). Standard MMC3 inside, with an outer-bank register
-// mapped to $6000-$7FFF that selects one of three "chips":
-//   Chip 0: 128 KB PRG + 128 KB CHR (SMB)
-//   Chip 1: 128 KB PRG + 128 KB CHR (Tetris)
-//   Chip 2: 256 KB PRG + 128 KB CHR (NWC)
+// World Cup, Europe). 256 KB PRG + 256 KB CHR, standard MMC3 inside,
+// with a 3-bit outer register mapped to $6000-$7FFF.
 //
-// The outer register uses bits 2-0 of the written value. Chip = val >> 1
-// clamped to 0..=2.
+// The outer value's bit 2 drives A17 on both PRG and CHR. Its low two
+// bits gate PRG A16: the value 3 forces A16 high, any other value ANDs
+// the MMC3's own A16 with bit 2. So the windows the MMC3 sees are, per
+// the NESdev wiki's iNES Mapper 037 table:
+//
+//   outer | PRG window             | CHR window (always 128 KB)
+//   ------+------------------------+---------------------------
+//   0,1,2 | $00000-$0FFFF  (64 KB) | $00000-$1FFFF
+//   3     | $10000-$1FFFF  (64 KB) | $00000-$1FFFF
+//   4,5,6 | $20000-$3FFFF (128 KB) | $20000-$3FFFF
+//   7     | $30000-$3FFFF  (64 KB) | $20000-$3FFFF
+//
+// The window size matters at power-on, not just for bank arithmetic:
+// the MMC3's fixed last bank at $E000-$FFFF is the last 8 KB of the
+// window, so it is where the 6502 fetches its reset vector. Outer 0
+// with a 64 KB window lands on $0FFFC ($FF00, the menu); the same
+// register value with a 128 KB window lands on $1FFFC ($8000), which
+// is Tetris's vector table, and the cart never reaches its menu.
+//
+// The outer register is cleared by the CIC reset line, so power-on and
+// reset() are outer = 0.
 pub struct Mapper37 {
     inner: Mapper4,
     outer: u8,
@@ -36,25 +52,24 @@ impl Mapper37 {
         m
     }
 
-    /// Compute PRG and CHR region (base, size) in bytes for the currently
-    /// selected outer value. Layout in the ROM image: SMB (128K PRG,
-    /// 128K CHR), Tetris (128K PRG, 128K CHR), NWC (256K PRG, 128K CHR).
+    /// PRG and CHR window (base, size) in bytes for the currently
+    /// selected outer value, per the table in this file's header.
     fn region(&self) -> (usize, usize, usize, usize) {
         let val = self.outer & 0x07;
-        let chip = (val >> 1).min(2);
-        let inner_bank = val & 0x01;
-        let (prg_base, prg_size) = match chip {
-            0 => (0, 128 * 1024),
-            1 => (128 * 1024, 128 * 1024),
-            _ => (256 * 1024, 256 * 1024),
+        // Bit 2 is wired to A17 on both PRG and CHR.
+        let a17 = ((val >> 2) & 0x01) as usize;
+        // The low pair forces PRG A16 high when it reads 3; otherwise
+        // the MMC3's A16 is ANDed with bit 2, so A16 is only free when
+        // bit 2 is set.
+        let force_a16 = (val & 0x03) == 0x03;
+        let prg_base = (a17 << 17) | if force_a16 { 1 << 16 } else { 0 };
+        let prg_size = if force_a16 || a17 == 0 {
+            64 * 1024
+        } else {
+            128 * 1024
         };
-        let chr_base = chip as usize * 128 * 1024;
+        let chr_base = a17 << 17;
         let chr_size = 128 * 1024;
-        // Inner sub-bank selection: for chips 0/1 (128 KB each), the
-        // outer value's low bit could gate sub-regions; we keep the
-        // full 128 KB visible to the inner MMC3 and let its bank regs
-        // pick. For chip 2 (NWC, 256 KB), low bit is ignored.
-        let _ = inner_bank;
         (prg_base, prg_size, chr_base, chr_size)
     }
 
@@ -162,18 +177,17 @@ mod tests {
     const IRQ_ENABLE: u16 = 0xE001;
     const IRQ_DISABLE_ACK: u16 = 0xE000;
 
-    // NES-ZZ needs 512 KB PRG (SMB 128K + Tetris 128K + NWC 256K) and
-    // 384 KB CHR (three 128 KB chips).
+    // NES-ZZ is 256 KB PRG + 256 KB CHR, matching the real dump.
     fn cart() -> Cartridge {
         Cartridge {
             mapper: 37,
             sub_mapper: 0,
             mirroring: Mirroring::Vertical,
             default_mirroring: Mirroring::Vertical,
-            prg_rom_num_banks: 32,
-            prg_rom: vec![0u8; 512 * 1024],
-            chr_num_banks: 48,
-            chr: vec![0u8; 384 * 1024],
+            prg_rom_num_banks: 16,
+            prg_rom: vec![0u8; 256 * 1024],
+            chr_num_banks: 32,
+            chr: vec![0u8; 256 * 1024],
             prg_ram: vec![0u8; 8 * 1024],
             is_battery_backed: false,
             is_nes20: false,
@@ -183,7 +197,7 @@ mod tests {
 
     // Stamp byte 0 of every 8 KB PRG bank with its global index so a read
     // reveals which physical 8 KB bank is mapped ($E000 = the fixed last
-    // bank of the active outer region).
+    // bank of the active outer window).
     fn stamp_prg_8k(c: &mut Cartridge) {
         let banks = c.prg_rom.len() / 0x2000;
         for b in 0..banks {
@@ -191,25 +205,64 @@ mod tests {
         }
     }
 
-    // The outer register at $6000-$7FFF selects one of three chips; $E000
-    // reads the fixed last 8 KB bank of that chip's region.
-    //   chip 0 = [0,128K)   -> last bank global 15
-    //   chip 1 = [128K,256K)-> last bank global 31
-    //   chip 2 = [256K,512K)-> last bank global 63
+    // The outer register picks the PRG window from this file's header
+    // table; $E000 reads the fixed last 8 KB bank of that window.
+    //   0,1,2 -> $00000-$0FFFF (64 KB)  -> last 8 KB bank global 7
+    //   3     -> $10000-$1FFFF (64 KB)  -> global 15
+    //   4,5,6 -> $20000-$3FFFF (128 KB) -> global 31
+    //   7     -> $30000-$3FFFF (64 KB)  -> global 31
     #[test]
-    fn outer_selects_prg_chip() {
+    fn outer_selects_prg_window() {
         let mut c = cart();
         stamp_prg_8k(&mut c);
         let mut m = Mapper37::new(c);
-        m.prg_write_byte(0x6000, 0);
+        for v in [0u8, 1, 2] {
+            m.prg_write_byte(0x6000, v);
+            assert_eq!(m.prg_peek_byte(0xE000), 7, "outer {v}");
+        }
+        m.prg_write_byte(0x6000, 3);
         assert_eq!(m.prg_peek_byte(0xE000), 15);
-        m.prg_write_byte(0x6000, 2);
+        for v in [4u8, 5, 6] {
+            m.prg_write_byte(0x6000, v);
+            assert_eq!(m.prg_peek_byte(0xE000), 31, "outer {v}");
+        }
+        m.prg_write_byte(0x6000, 7);
         assert_eq!(m.prg_peek_byte(0xE000), 31);
-        m.prg_write_byte(0x6000, 4);
-        assert_eq!(m.prg_peek_byte(0xE000), 63);
     }
 
-    // The outer latch keeps only bits 2-0; chip = (val >> 1).min(2).
+    // The low pair of the outer value gates PRG A16 rather than selecting
+    // a chip: only the value 3 forces A16 high while bit 2 is clear, so
+    // outer 2 and outer 3 land on different 64 KB halves even though both
+    // have bit 2 clear. Guards against a `chip = val >> 1` style decode,
+    // which would put 2 and 3 in the same window.
+    #[test]
+    fn low_pair_gates_a16_not_a_chip_index() {
+        let mut c = cart();
+        stamp_prg_8k(&mut c);
+        let mut m = Mapper37::new(c);
+        m.prg_write_byte(0x6000, 2);
+        assert_eq!(m.prg_peek_byte(0xE000), 7); // A16 = MMC3 A16 AND bit2 = 0
+        m.prg_write_byte(0x6000, 3);
+        assert_eq!(m.prg_peek_byte(0xE000), 15); // A16 forced high
+    }
+
+    // Bit 2 is A17 on PRG, and with the low pair clear it also frees the
+    // MMC3's own A16: the window doubles to 128 KB, so an inner bank
+    // register above 7 is reachable there and nowhere else.
+    #[test]
+    fn bit2_frees_a16_and_doubles_the_window() {
+        let mut c = cart();
+        stamp_prg_8k(&mut c);
+        let mut m = Mapper37::new(c);
+        m.prg_write_byte(0x8000, 6); // select bank register 6 -> $8000-$9FFF
+        m.prg_write_byte(0x8001, 9); // R6 = 9, above the 8-bank 64 KB window
+        m.prg_write_byte(0x6000, 0);
+        assert_eq!(m.prg_peek_byte(0x8000), 1); // 9 % 8 = 1, A16 held low
+        m.prg_write_byte(0x6000, 4);
+        assert_eq!(m.prg_peek_byte(0x8000), 16 + 9); // 9 % 16 = 9 inside $20000
+    }
+
+    // The outer latch keeps only bits 2-0.
     #[test]
     fn outer_masks_low_three_bits() {
         let mut c = cart();
@@ -217,34 +270,55 @@ mod tests {
         let mut m = Mapper37::new(c);
         m.prg_write_byte(0x6000, 0xFF);
         assert_eq!(m.outer, 0x07);
-        assert_eq!(m.prg_peek_byte(0xE000), 63); // clamped to chip 2
+        assert_eq!(m.prg_peek_byte(0xE000), 31);
     }
 
-    // The outer register selects the CHR chip; a $0000 fetch hits the base
-    // 1 KB bank of that chip's 128 KB CHR region.
+    // Bit 2 is wired to CHR A17 as well: the CHR window is always 128 KB,
+    // at $00000 with bit 2 clear and $20000 with it set. The low pair does
+    // not move CHR at all.
     #[test]
-    fn outer_selects_chr_chip() {
+    fn outer_bit2_selects_chr_half() {
         let mut c = cart();
         c.chr[0] = 0xB0;
         c.chr[128 * 1024] = 0xB1;
-        c.chr[256 * 1024] = 0xB2;
         let mut m = Mapper37::new(c);
-        m.prg_write_byte(0x6000, 0);
-        assert_eq!(m.chr_read_byte(0x0000), 0xB0);
-        m.prg_write_byte(0x6000, 2);
-        assert_eq!(m.chr_read_byte(0x0000), 0xB1);
-        m.prg_write_byte(0x6000, 4);
-        assert_eq!(m.chr_read_byte(0x0000), 0xB2);
+        for v in [0u8, 1, 2, 3] {
+            m.prg_write_byte(0x6000, v);
+            assert_eq!(m.chr_read_byte(0x0000), 0xB0, "outer {v}");
+        }
+        for v in [4u8, 5, 6, 7] {
+            m.prg_write_byte(0x6000, v);
+            assert_eq!(m.chr_read_byte(0x0000), 0xB1, "outer {v}");
+        }
+    }
+
+    // Every outer value addresses PRG and CHR that actually exist in a
+    // 256 KB / 256 KB dump. HEAD mapped outer >= 4 to a 256 KB window
+    // based at 256 KB, which is entirely past the end of PRG.
+    #[test]
+    fn every_outer_value_stays_inside_the_dump() {
+        let m = Mapper37::new(cart());
+        let prg_len = 256 * 1024;
+        let chr_len = 256 * 1024;
+        for v in 0u8..8 {
+            let mut m2 = Mapper37 { inner: Mapper4::new(cart()), outer: v };
+            m2.apply_outer();
+            let (pb, ps, cb, cs) = m2.region();
+            assert!(pb + ps <= prg_len, "outer {v}: PRG window {pb}+{ps} past {prg_len}");
+            assert!(cb + cs <= chr_len, "outer {v}: CHR window {cb}+{cs} past {chr_len}");
+            assert!(ps == 64 * 1024 || ps == 128 * 1024, "outer {v}: PRG window size {ps}");
+        }
+        let _ = m;
     }
 
     // The inner MMC3 PRG bank register still works through the wrapper:
-    // within chip 0, R6=3 maps $8000-$9FFF to global 8 KB bank 3.
+    // in the power-on window, R6=3 maps $8000-$9FFF to global 8 KB bank 3.
     #[test]
     fn inner_mmc3_prg_bank_through_wrapper() {
         let mut c = cart();
         stamp_prg_8k(&mut c);
         let mut m = Mapper37::new(c);
-        m.prg_write_byte(0x6000, 0); // chip 0
+        m.prg_write_byte(0x6000, 0);
         m.prg_write_byte(0x8000, 6); // select bank register 6
         m.prg_write_byte(0x8001, 3); // R6 = 3
         assert_eq!(m.prg_peek_byte(0x8000), 3);
@@ -267,17 +341,19 @@ mod tests {
         assert!(!m.irq_pending());
     }
 
-    // reset() clears the outer latch back to chip 0.
+    // The outer register has no reset line of its own on the board, it is
+    // cleared by the CIC reset line, so reset() puts it back to 0. That
+    // also puts the reset vector back in the menu's 64 KB window.
     #[test]
     fn reset_clears_outer() {
         let mut c = cart();
         stamp_prg_8k(&mut c);
         let mut m = Mapper37::new(c);
-        m.prg_write_byte(0x6000, 4); // chip 2
-        assert_eq!(m.prg_peek_byte(0xE000), 63);
+        m.prg_write_byte(0x6000, 4);
+        assert_eq!(m.prg_peek_byte(0xE000), 31);
         m.reset();
         assert_eq!(m.outer, 0);
-        assert_eq!(m.prg_peek_byte(0xE000), 15);
+        assert_eq!(m.prg_peek_byte(0xE000), 7);
     }
 
     // get_state/apply_state round-trips both the outer latch and the inner
@@ -287,14 +363,14 @@ mod tests {
         let mut c = cart();
         stamp_prg_8k(&mut c);
         let mut m = Mapper37::new(c);
-        m.prg_write_byte(0x6000, 4); // chip 2
+        m.prg_write_byte(0x6000, 4); // $20000-$3FFFF, 16 banks
         m.prg_write_byte(0x8000, 6);
-        m.prg_write_byte(0x8001, 3); // R6=3 in chip 2 -> global bank 35
+        m.prg_write_byte(0x8001, 3); // R6=3 in that window -> global bank 19
         let snap = m.get_state();
-        m.prg_write_byte(0x6000, 0); // chip 0
+        m.prg_write_byte(0x6000, 0);
         m.apply_state(&snap);
         assert_eq!(m.outer, 4);
-        assert_eq!(m.prg_peek_byte(0xE000), 63);
-        assert_eq!(m.prg_peek_byte(0x8000), 35);
+        assert_eq!(m.prg_peek_byte(0xE000), 31);
+        assert_eq!(m.prg_peek_byte(0x8000), 19);
     }
 }
