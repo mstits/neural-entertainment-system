@@ -1036,6 +1036,16 @@ without the runner. Reading the field as a three-key dict is superseded;
 membership of the fields fixed above is unchanged and no number in this
 entry moves.
 
+**Status note, 2026-09-02.** Nothing has run under this grant. The tree
+carries no `runs/forge/cv_hall/<cycle_id>/` receipt directory and no
+`runs/forge/grant_state.json`; `runs/forge/` holds the two wall manifests
+and nothing else. The start condition fixed above, a receipt from a live
+solver child under the corrected runner, is still unmet, and the live
+protocol is NO-GO on it. Current status is recorded in this repository's
+`MISTAKES.md`, entries dated 2026-09-02, and in the status note at the top
+of the specification, which is a draft and is not ratified. This note
+states where the grant stands and changes nothing the grant fixes.
+
 #### FORGE-GRANT-contra_wall-2026-09-01
 
 **FORGE-GRANT, contra_wall (the Contra gx-3072 screen lock), granted
@@ -1089,6 +1099,17 @@ will.
 `positive_control` field fixed above carries the same six keys, with the
 same meanings, as the cv_hall addendum states. No number in this entry
 moves.
+
+**Status note, 2026-09-02.** Nothing has run under this grant either. The
+tree carries no `runs/forge/contra_wall/<cycle_id>/` receipt directory and
+no `runs/forge/grant_state.json`; `runs/forge/` holds the two wall
+manifests and nothing else. The start condition fixed above, a receipt
+from a live solver child under the corrected runner, is still unmet, and
+the live protocol is NO-GO on it. Current status is recorded in this
+repository's `MISTAKES.md`, entries dated 2026-09-02, and in the status
+note at the top of the specification, which is a draft and is not
+ratified. This note states where the grant stands and changes nothing the
+grant fixes.
 
 
 ## Quarantine (Tier-3-contaminated artifacts)

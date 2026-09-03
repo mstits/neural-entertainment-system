@@ -2,6 +2,20 @@
 
 Status: DRAFT, ratification by Matthew pending; built 2026-09-01/02, commits 0a1b2f5 (a), 661a4e3 (b), 9881f86 (c), 8c0e16a (e), e80c123 (f), 02ddd13 (d), plus the landing commit that carries this file, the two wall manifests and the two FORGE-GRANT entries. This copy is the reports-directory original verbatim except for this status paragraph and one substitution in section 5, where the attribution grep's literal pattern is replaced by a reference so the committed tree never carries the pattern itself.
 
+**Status note added 2026-09-02: the protocol described here has not been exercised.**
+No live block has run, on either wall, under either grant. `runs/forge/` holds the two
+wall manifests and nothing else: there is no `runs/forge/<wall_id>/<cycle_id>/` receipt
+directory and no `runs/forge/grant_state.json`. Section 4's live-validation protocol has
+not run past step 2 (the two FORGE-GRANT entries landing in `CLAIMS.md`); step 1's
+precondition, row (f) PASS on a real solver child, is unmet, so no wall reached step 3
+and no cycle receipt exists. Row (f) stands at PASS-SYNTHETIC plus a launch smoke test,
+its corrected real-child receipt is not in the tree, and row (d) is unrun. The protocol
+is NO-GO on that condition. Current status is recorded in this repository's
+`MISTAKES.md`, entries dated 2026-09-02, and in the two grant entries in `CLAIMS.md`,
+each of which states that nothing starts under it until the real-child receipt exists.
+This document is still a DRAFT. This note is an addition to the copy the paragraph above
+describes: it records where the protocol stands and ratifies nothing.
+
 Pre-registered before the build; revised once, pre-ratification, against the five review
 findings (§0). After ratification, corrections are dated addenda, never edits (LG design
 rule 6). Every `path:line` is against the committed tree `git show e9fcf13:<path>` in
