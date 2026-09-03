@@ -82,9 +82,7 @@ declares the count it used).
 The campaign's receipt table is reproduced here **in full**, failures
 included; these are the same five runs that head
 `docs/research/B5_PREREG_2026-08-08.md` (where B4 v2 was still in flight at
-the time of writing and its verdict has since landed). Quoting only the
-rows that passed would be exactly the highlight-reel move this section
-exists to refuse:
+the time of writing and its verdict has since landed).
 
 | Run | What it measures | Episodes | Result |
 |---|---|---|---|
@@ -107,7 +105,7 @@ per-seed spread is wider, 56–74%, and that is the honest band. B4's two
 rows are evaluated the same way, from
 `checkpoints/mario_1_1_backward/eval.jsonl`.
 
-One gap in the receipts themselves, stated rather than left to be found:
+One gap in the receipts themselves:
 `eval.jsonl` records the checkpoint, episode count, clear rate, action
 selection, worker count and RNG mode, but **not** `sticky_prob`,
 `start_jitter` or `eval_seed`. The noise settings behind these rows come
@@ -142,8 +140,7 @@ python scripts/record_learned_playthrough.py \
 # -> World 1 cleared, no warps, end_reason: seq_clear
 ```
 
-**The gap, stated plainly, because an honest miss beats a dishonest
-highlight reel:** no single learned policy yet plays whole worlds under
+**The gap:** no single learned policy yet plays whole worlds under
 honest noise, and 1-2 is measured evidence that getting there needs a
 stronger policy class, not more training tricks. The current bet is a
 **reverse (backward) start-state curriculum** (the solver's own tape
@@ -183,10 +180,10 @@ level-transition frame; scratch bytes (stack, zero-page temps, OAM buffer)
 differ by about 10 per frame idle and 17 median under play. The core is never
 claimed byte-identical to Mesen. The honest gap (the full public blargg
 gauntlet is not yet run end-to-end as a gate) is stated in *Accuracy status*
-below rather than quietly omitted.
+below.
 
-The emulator and the honest-evaluation harness are the mature layers; the
-single generalist agent remains the expedition ahead.
+The emulator and the honest-evaluation harness are the mature layers; a
+single generalist agent does not exist yet.
 
 ## The claims ledger
 
@@ -233,18 +230,18 @@ Three more rules keep the ledgers from leaking into each other:
 
 *Three moments from the single verified tape (EXHIBITION, search output,
 not a learned policy): the cold boot through the title screen into 1-1; the
-4-4 looping maze that defeated coordinate-keyed search until cells learned
-direction; and the ending. Full 34:40 video: `runs/full_run/
+4-4 looping maze that defeated coordinate-keyed search until the cell key
+included direction; and the ending. Full 34:40 video: `runs/full_run/
 smb_complete_run.mp4` (re-render anytime with `python scripts/
 assemble_full_run.py --video out.mp4`).*
 
 ## How it gets unstuck: the three tiers
 
 Beating one game is a result; beating *any* game is an architecture. The
-operational form of that architecture is a diagnosis-dispatch loop, and the
-design decision that makes it general is **what gets classified: not the
-game, the wall.** Game-level classification is a lookup table that ends at
-793 rows. Wall-level classification generalizes to games nobody profiled.
+operational form of that architecture is a diagnosis-dispatch loop, and what
+makes it general is that it classifies the wall, not the game. Game-level
+classification is a lookup table that ends at 793 rows. Wall-level
+classification generalizes to games nobody profiled.
 
 Every signal below is **self-measured**: read off the solver's own
 telemetry (frontier position, cell-key churn, y-band occupancy, tip
@@ -433,9 +430,8 @@ pooled** (0.56 / 0.74 per seed, 50 episodes each) by from-scratch PPO [12, 13]
 on tile observations. **1-2 is a documented negative** with the same
 evidentiary standard: a pre-registered three-seed campaign showed the CGSA-PPO
 recipe failing its own pre-registered signposts (the policy-class claim was
-later withdrawn; see `CLAIMS.md` and `runs/smodice_1_2/`). The machinery built
-for that campaign is documented because negative results deserve their math
-too:
+later withdrawn; see `CLAIMS.md` and `runs/smodice_1_2/`). The machinery is
+documented here:
 
 - **Non-farmable potential shaping.** Reward shaping is potential-based
   [4], with the potential positive-shifted from a search-derived distance
@@ -796,7 +792,7 @@ above).
   next-level detectors, the campaign's last lesson). The research trail
   (three consultation rounds, every falsified hypothesis) lives in
   `docs/research/`. All of this is the *search system* solving the game:
-  real and rigorous, always labeled, never presented as learning.
+  always labeled, never presented as learning.
 - **Other games: EXHIBITION, in flight, counted honestly.** The same
   unmodified solver drives every campaign; only the profile changes.
   **Bubble Bobble** is chained and banked through **round 60**
@@ -807,7 +803,7 @@ above).
   (`runs/breadth_contra/`); its stage-1 base wall is characterized in
   `docs/receipts/contra_wall_dossier_2026-07-31.md` and it is a research
   lane, not a pending win. **Lost Levels** cleared World 1 and 2-1 cold with
-  zero new solver code, which is the transfer result that mattered.
+  zero new solver code.
 - **16 games have hand-authored reward functions with real win predicates**:
   Mario, Contra, Castlevania, Mega Man, Metroid, Zelda, Tetris, Bubble Bobble,
   Punch-Out, Kung Fu, Gradius, Excitebike, Ghosts'n Goblins, DuckTales, Kid
@@ -968,19 +964,17 @@ flowchart LR
 
 ### The learning pipeline: solver tapes to an honest number
 
-The solver and the trainer are not two products; the solver is the trainer's
-exploration front-end. A banked solution tape is replayed deterministically
-and snapshotted every N frames into a **state ladder**; a reverse curriculum
-(Salimans & Chen, arXiv:1812.03381) starts training a few frames from the
-goal and walks the restart cursor `tau` **backward** along that ladder as
-each rung is earned, until it is starting from the true entrance. Only then
-is the policy graded, cold, from power-on.
+The solver is the trainer's exploration front-end. A banked solution tape is
+replayed deterministically and snapshotted every N frames into a **state
+ladder**; a reverse curriculum (Salimans & Chen, arXiv:1812.03381) starts
+training a few frames from the goal and walks the restart cursor `tau`
+**backward** along that ladder as each rung is earned, until it is starting
+from the true entrance. Only then is the policy graded, cold, from power-on.
 
 **This pipeline has not yet produced a passing number.** It is described
 here because it is what is wired and running, not because it works: its
 only two verdicts to date are B4 v1 and B4 v2 above, both 0.02 greedy cold
-on 1-1. Read the diagram as the machinery under test, with the honest gate
-at the end being the part that has actually done its job: it rejected
+on 1-1. The honest gate is the only part that has done its job: it rejected
 both.
 
 The load-bearing constraint: **the tape supplies start states only, no
