@@ -45,12 +45,17 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from src.forge import proposal as proposal_mod
+from src.forge import registry as registry_mod
 from src.forge.block import RATIO_FLOOR as _RATIO_FLOOR
 from src.forge.block import run_block as _real_run_block
 from src.forge.ledger import render_entry as _real_render_entry
 
 REPO = Path(__file__).resolve().parent.parent.parent
 DEFAULT_FORGE_RUNS_DIR = REPO / "runs" / "forge"
+#: Spec Section 2e "Output paths": every FORGE ledger entry lands here
+#: too, alongside its CLAIMS_ENTRY.md, as the queue registration feeds
+#: (scripts/engine_driver.py's own ``PROPOSED`` constant, same path).
+DEFAULT_PROPOSED_CLAIMS_PATH = REPO / "runs" / "engine" / "proposed_claims.jsonl"
 
 #: Stage-3 clause presence does not change registration -- a candidate
 #: that crosses stage 3 while its matched control ALSO crosses it is
@@ -323,6 +328,7 @@ def forge_cycle(
     max_repair_rounds: int = 2,
     out_base: Optional[Path] = None,
     claims_path: Optional[Path] = None,
+    proposed_claims_path: Optional[Path] = None,
     grant_state_path: Optional[Path] = None,
     block_runner: Optional[Callable[[dict], dict]] = None,
     reading_fn: Optional[Callable[..., dict]] = None,
@@ -355,6 +361,8 @@ def forge_cycle(
     block_runner = block_runner or _real_run_block
     reading_fn = reading_fn or _default_reading_fn
     out_base = Path(out_base) if out_base is not None else DEFAULT_FORGE_RUNS_DIR
+    proposed_claims_path = (Path(proposed_claims_path) if proposed_claims_path
+                             is not None else DEFAULT_PROPOSED_CLAIMS_PATH)
     cycle_dir = out_base / wall_id / cycle_id
     discards_path = cycle_dir / "discards.jsonl"
     arm = arms[arm_index]
@@ -378,6 +386,20 @@ def forge_cycle(
             date=date or time.strftime("%Y-%m-%d"))
         result["cycle_receipt_path"] = str(path)
         return result
+
+    # --- arm auditability: refused before any block launches -----------
+    # ``forge_gate(auditable=False)`` returns VOID before ``n_obs`` is
+    # consulted, so the null candidate's "must read VOID" check below
+    # cannot fail on an unauditable arm: the control is vacuous on
+    # exactly the arms it exists to catch. The registry owns the
+    # predicate (both halves, per ``is_auditable``), and the refusal
+    # lands here so no block is launched against an arm whose readings
+    # cannot be audited.
+    auditable = registry_mod.is_auditable(arm) == "AUDITABLE"
+    if not auditable:
+        result["cycle_verdict"] = CYCLE_VOID
+        result["stop_reason"] = "arm_unauditable"
+        return _finish()
 
     # --- null candidate: in-situ negative control ----------------------
     # Frozen before its pilot exactly like a designed proposal (spec
@@ -412,7 +434,6 @@ def forge_cycle(
         result["stop_reason"] = "null_block_aborted"
         return _finish()
 
-    auditable = bool(arm.activity_counter)
     null_reading = reading_fn(null_receipt, arm=arm, prop=null_prop,
                                out_dir=null_out)
     null_gate = forge_gate(null_prop, null_reading, null_reading,
@@ -587,7 +608,8 @@ def forge_cycle(
                 prop, arm, arm_index, gate, wall_id=wall_id,
                 cycle_id=cycle_id, cycle_dir=cycle_dir, commit=commit,
                 date=date or time.strftime("%Y-%m-%d"),
-                frozen_sha256=frozen_sha256)
+                frozen_sha256=frozen_sha256,
+                proposed_claims_path=proposed_claims_path)
             result["registration"] = registration
             result["cycle_verdict"] = CYCLE_VALIDATED
             result["stop_reason"] = f"proposal_{index}_validated"
@@ -610,23 +632,32 @@ def forge_cycle(
 def _register(prop: dict, arm, arm_index: int, gate: dict, *,
               wall_id: str, cycle_id: str, cycle_dir: Path, commit: str,
               date: str, frozen_sha256: str,
+              proposed_claims_path: Path = DEFAULT_PROPOSED_CLAIMS_PATH,
               render_entry_fn: Optional[Callable[[Mapping[str, Any]], str]] = None) -> dict:
     """Renders the FORGE ledger entry for a MECHANISM_VALIDATED
     proposal via piece (e) and writes it to
     ``runs/forge/<wall>/<cycle>/CLAIMS_ENTRY.md`` -- never to
     CLAIMS.md itself (spec Section 2e: landing is a separate commit
-    under the owner's name). A ``kind:"arm"`` proposal is additionally
-    recorded as an ``ARMS`` registry entry appendix
-    (``registration["arms_entry"]``) for the landing step to apply. A
-    ``kind:"knob"`` proposal's ``history`` addendum is written to a
-    receipt file, ``runs/forge/<wall>/<cycle>/knob_history_receipt.json``
-    (spec Section 3: "a knob proposal appends its setting to the
-    registry entry's history and the run's receipt") -- ``Arm`` is a
-    frozen dataclass (registry.py), so nothing in this process can
-    mutate ``arm.history`` in place; the receipt file, not an in-memory
+    under the owner's name). The same entry is also appended as one
+    row to ``proposed_claims_path`` (default
+    ``runs/engine/proposed_claims.jsonl``, spec Section 2e "Output
+    paths"), the queue the engine's own landing step reads
+    (``scripts/engine_driver.py``'s ``PROPOSED`` constant names the
+    same path). A ``kind:"arm"`` proposal is additionally recorded as
+    an ``ARMS`` registry entry appendix (``registration["arms_entry"]``)
+    for the landing step to apply. A ``kind:"knob"`` proposal's
+    ``history`` addendum is written to a receipt file,
+    ``runs/forge/<wall>/<cycle>/knob_history_receipt.json`` (spec
+    Section 3: "a knob proposal appends its setting to the registry
+    entry's history and the run's receipt") -- ``Arm`` is a frozen
+    dataclass (registry.py), so nothing in this process can mutate
+    ``arm.history`` in place; the receipt file, not an in-memory
     mutation, is what a later landing step reads to actually apply the
     addendum, the same division of labor as ``arms_entry`` below for a
-    validated ``kind:"arm"`` proposal.
+    validated ``kind:"arm"`` proposal. A ``kind:"knob"`` proposal never
+    reaches the ledger writer at all (returns before ``render_entry_fn``
+    below), so it never queues a row here either -- there is no
+    rendered entry for it to match.
     """
     registration: dict = {
         "kind": prop.get("kind"), "arm": arm.name, "gate": gate,
@@ -652,7 +683,7 @@ def _register(prop: dict, arm, arm_index: int, gate: dict, *,
     render_entry_fn = render_entry_fn or _real_render_entry
     telemetry = [wall_id, arm.activity_counter or "n/a",
                  prop.get("gate", {}).get("stage2", {}).get("metric", "n/a")]
-    entry_text = render_entry_fn({
+    entry_fields = {
         "status": "FORGE-VALIDATED-MECHANISM",
         "arm": arm.name, "flag": arm.flag, "commit": commit, "date": date,
         "detection": f"telemetry read for {wall_id}; {arm.name} selected "
@@ -670,11 +701,29 @@ def _register(prop: dict, arm, arm_index: int, gate: dict, *,
         "citable_as": f"{arm.name} MECHANISM_VALIDATED on {wall_id}; no "
                       f"clear may be attributed to it.",
         "addenda": [],
-    })
+    }
+    entry_text = render_entry_fn(entry_fields)
     cycle_dir.mkdir(parents=True, exist_ok=True)
     entry_path = cycle_dir / "CLAIMS_ENTRY.md"
     entry_path.write_text(entry_text)
     registration["entry_path"] = str(entry_path)
+
+    # Spec Section 2e "Output paths": the rendered entry also queues as
+    # one row here, alongside the CLAIMS_ENTRY.md file above -- the
+    # queue registration feeds (scripts/engine_driver.py's own
+    # PROPOSED constant names this same path). Landing into CLAIMS.md
+    # itself stays the separate human commit named above; this row is
+    # what puts the entry in front of that landing step at all.
+    proposed_claims_path.parent.mkdir(parents=True, exist_ok=True)
+    queue_row = dict(entry_fields)
+    queue_row.update({
+        "wall_id": wall_id, "cycle_id": cycle_id,
+        "arm_index": arm_index, "frozen_sha256": frozen_sha256,
+        "entry_path": str(entry_path),
+    })
+    with open(proposed_claims_path, "a") as f:
+        f.write(json.dumps(queue_row, sort_keys=True) + "\n")
+
     registration["arms_entry"] = {
         "name": arm.name, "history_addendum": {
             "wall_id": wall_id, "knobs": prop.get("knobs", {}),

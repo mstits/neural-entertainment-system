@@ -25,6 +25,12 @@ import json
 import re
 from typing import Any, Mapping, Optional, Sequence
 
+# The selector's certainty ordering, imported rather than re-implemented
+# so `wall_class_addressed` and `select_arm`'s `class_match:` reason code
+# can never rank the same bundle differently. src/forge/registry.py
+# imports nothing from this package, so this direction adds no cycle.
+from src.forge.registry import _classes_by_certainty
+
 #: The knob key both this module and src/forge/registry.py's
 #: ``_knob_matches`` treat as the primary, coarse-grained axis for
 #: redundancy comparisons -- an arm's top-level flag setting
@@ -160,10 +166,22 @@ def design_proposals(bundle: Mapping[str, Any], arm, arm_index: int,
     budget checks by construction -- those checks exist for a designer
     that drifts, not to make every proposal here fail on arrival.
     """
-    classes = [c.get("class") for c in bundle.get("mechanism_class", [])
-               if c.get("class")]
-    wall_class = classes[0] if classes else (arm.wall_classes[0]
-                                              if arm.wall_classes else "UNKNOWN")
+    # The class stamped into `wall_class_addressed` has to be the one
+    # that made this arm eligible in `registry.select_arm`, because the
+    # ledger entry quotes the field back as the grounds for the
+    # selection. The bundle's own order is not that class:
+    # `bundle._classify_receipt_shaped` appends SCRIPTED_RELEASE at
+    # certainty `candidate` before OBSERVABLE_DEFECT at
+    # `confirmed_by_receipt`, while the selector ranks by certainty and
+    # then filters on the arm's registered classes. So apply the
+    # selector's own ordering function (one source of truth for the
+    # ranking, not a second copy of _CERTAINTY_RANK) and then the arm's
+    # own filter. A one-class bundle is unmoved by both steps.
+    ranked = [cls for cls, _certainty in _classes_by_certainty(dict(bundle))]
+    wall_class = next(
+        (c for c in ranked if c in (arm.wall_classes or ())),
+        ranked[0] if ranked else (arm.wall_classes[0]
+                                  if arm.wall_classes else "UNKNOWN"))
 
     metric = arm.gate_fn.split(">=")[0] if arm.gate_fn else "activity"
     threshold = 8

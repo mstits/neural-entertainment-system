@@ -629,6 +629,89 @@ def test_knob_registration_writes_receipt_file(tmp_path):
     assert payload["history_entry"]["wall_id"] == "cv_hall"
 
 
+def test_arm_registration_appends_row_to_proposed_claims_queue(tmp_path):
+    """Spec Section 2e "Output paths": a rendered FORGE entry lands at
+    ``runs/forge/<wall>/<cycle>/CLAIMS_ENTRY.md`` "plus a row in
+    runs/engine/proposed_claims.jsonl" -- the queue
+    ``scripts/engine_driver.py``'s own ``PROPOSED`` constant names.
+    ``_register`` wrote only the entry file and never that row
+    (FORGE-FIX-25). Corrupt: drop the
+    ``with open(proposed_claims_path, "a")`` append in ``_register`` --
+    the queue file would not exist, failing the first assertion below.
+    """
+    prop = {
+        "kind": "arm", "arm_index": 0,
+        "knobs": {"--ortho-pin-secs": 120.0, "--ortho-bias": 0.30},
+        "gate": {"stage2": {"metric": "ortho_cols_improved",
+                             "threshold": 8}},
+        "inertness_mirror": FIXTURE_ARM.inertness_test,
+    }
+    gate = {"stage1": "ARMED", "stage2": "MECHANISM_VALIDATED",
+            "stage3": "PREMISE_STALE", "control_crossed": False,
+            "falsifier": False, "verdict": "MECHANISM_VALIDATED",
+            "reason": None}
+    cycle_dir = tmp_path / "runs" / "cv_hall" / "c1"
+    queue_path = tmp_path / "engine" / "proposed_claims.jsonl"
+
+    registration = loop_mod._register(
+        prop, FIXTURE_ARM, 0, gate, wall_id="cv_hall", cycle_id="c1",
+        cycle_dir=cycle_dir, commit="abc123", date="2026-09-02",
+        frozen_sha256="deadbeef", proposed_claims_path=queue_path)
+
+    assert queue_path.exists()
+    lines = queue_path.read_text().splitlines()
+    assert len(lines) == 1
+    row = json.loads(lines[0])
+    assert row["wall_id"] == "cv_hall"
+    assert row["cycle_id"] == "c1"
+    assert row["arm"] == "ortho"
+    assert row["arm_index"] == 0
+    assert row["frozen_sha256"] == "deadbeef"
+    assert row["status"] == "FORGE-VALIDATED-MECHANISM"
+    assert row["entry_path"] == registration["entry_path"]
+    assert row["citable_as"] == (
+        "ortho MECHANISM_VALIDATED on cv_hall; no clear may be "
+        "attributed to it.")
+
+    # A second validated registration on the same path appends, never
+    # overwrites: the queue is a log the engine's landing step drains,
+    # not a single-slot file.
+    loop_mod._register(
+        prop, FIXTURE_ARM, 0, gate, wall_id="cv_hall", cycle_id="c2",
+        cycle_dir=tmp_path / "runs" / "cv_hall" / "c2", commit="abc124",
+        date="2026-09-02", frozen_sha256="deadbeef2",
+        proposed_claims_path=queue_path)
+    lines = queue_path.read_text().splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[1])["cycle_id"] == "c2"
+
+
+def test_knob_registration_does_not_queue_a_proposed_claims_row(tmp_path):
+    """A ``kind:"knob"`` proposal returns from ``_register`` before the
+    ledger writer ever runs (no rendered entry exists for it to
+    match), so it must not create the queue file either. Corrupt: move
+    the queue-append above the knob branch's early return -- this test
+    would then find a queue file that should not exist.
+    """
+    runner = _counting_block_runner()
+
+    def reading_fn(receipt, *, arm, prop, out_dir):
+        if prop.get("is_null"):
+            return {"n_obs": 0, "metric_value": 0, "stage3_true": False}
+        return {"n_obs": 5, "metric_value": 20, "stage3_true": False}
+
+    queue_path = tmp_path / "engine" / "proposed_claims.jsonl"
+    result = loop_mod.forge_cycle(
+        "cv_hall", BUNDLE, [FIXTURE_ARM], 0, cycle_id="c11", budget=BUDGET,
+        cmd_prefix=["python3", "fixture.py"], out_base=tmp_path / "runs",
+        block_runner=runner, reading_fn=reading_fn, k=1,
+        proposed_claims_path=queue_path)
+
+    assert result["cycle_verdict"] == "MECHANISM_VALIDATED"
+    assert result["registration"]["kind"] == "knob"
+    assert not queue_path.exists()
+
+
 # ---------------------------------------------------------------------
 # The cycle receipt on disk (FORGE-FIX-1)
 # ---------------------------------------------------------------------
@@ -763,3 +846,104 @@ def test_cycle_result_keeps_every_block_receipt_field(tmp_path):
     pilot = result["proposals"][0]
     assert pilot["receipt"]["attended_hours"] == 0.5
     assert Path(pilot["receipt_path"]).exists()
+
+
+# ---------------------------------------------------------------------
+# FORGE-FIX-5: an unauditable arm is refused before any block launches
+# ---------------------------------------------------------------------
+
+#: An arm with no activity counter at all -- registry.is_auditable reads
+#: UNAUDITABLE, and forge_gate(auditable=False) returns VOID before
+#: n_obs is consulted, which is what makes the null control vacuous
+#: unless the cycle refuses first.
+FIXTURE_ARM_NO_COUNTER = Arm(
+    name="lock", kind="arm", flag="--lock", off_value="off",
+    knobs={"--lock-pin-secs": 120.0},
+    armed_signal="lock_armed()", activity_counter=None,
+    activity_kind="cumulative", gate_fn="lock_cols_improved>=8",
+    inertness_test=("tests/test_go_explore_solve.py::"
+                     "test_the_ortho_arm_stays_inert_at_the_shipped_cli_defaults"),
+    forge_entry="CLAIMS.md:199", status="K0-HALTED",
+    wall_classes=("KEY_BLIND",), history=(),
+)
+
+#: The registry's other half: a counter with no armed-evidence signal.
+FIXTURE_ARM_NO_SIGNAL = Arm(
+    name="lock", kind="arm", flag="--lock", off_value="off",
+    knobs={"--lock-pin-secs": 120.0},
+    armed_signal=None, activity_counter="lock_selections",
+    activity_kind="cumulative", gate_fn="lock_cols_improved>=8",
+    inertness_test=("tests/test_go_explore_solve.py::"
+                     "test_the_ortho_arm_stays_inert_at_the_shipped_cli_defaults"),
+    forge_entry="CLAIMS.md:199", status="K0-HALTED",
+    wall_classes=("KEY_BLIND",), history=(),
+)
+
+
+def test_gate_reads_unauditable_before_n_obs_is_consulted():
+    """auditable=False is a stage-1 VOID with reason UNAUDITABLE, taken
+    on a reading that would otherwise clear stage 2 outright. Corrupt:
+    drop `not auditable or` from the stage-1 condition at loop.py:95 --
+    the reading reads MECHANISM_VALIDATED (delta 90 >= threshold 5) and
+    reason None, failing both asserts.
+    """
+    proposal = _gate_proposal(threshold=5)
+    pilot = {"n_obs": 7, "metric_value": 100, "stage3_true": False}
+    control = {"n_obs": 7, "metric_value": 10, "stage3_true": False}
+
+    gate = loop_mod.forge_gate(proposal, pilot, control, auditable=False)
+
+    assert gate["verdict"] == "VOID"
+    assert gate["stage1"] == "VOID"
+    assert gate["reason"] == "UNAUDITABLE"
+
+
+def test_cycle_refuses_an_unauditable_arm_before_any_block_launches(tmp_path):
+    """An arm with no activity counter cannot be audited, so its null
+    control cannot fail: forge_gate returns VOID for it no matter what
+    the block reads, and the "null must read VOID" check passes
+    vacuously on exactly the arm where the control matters most. The
+    cycle must refuse up front instead. Corrupt: delete the
+    `arm_unauditable` refusal block in forge_cycle -- with a reading_fn
+    that always reports n_obs>0 (the anti-vacuity failure the null
+    exists to catch), the cycle walks past the null check and launches
+    blocks, so `runner.calls` is non-empty and `stop_reason` is not
+    `arm_unauditable`.
+    """
+    runner = _counting_block_runner()
+
+    def always_armed_reading(receipt, *, arm, prop, out_dir):
+        return {"n_obs": 5, "metric_value": 1, "stage3_true": False}
+
+    result = loop_mod.forge_cycle(
+        "cv_hall", BUNDLE, [FIXTURE_ARM_NO_COUNTER], 0, cycle_id="c1",
+        budget=BUDGET, cmd_prefix=["python3", "fixture.py"],
+        out_base=tmp_path, block_runner=runner,
+        reading_fn=always_armed_reading)
+
+    assert result["cycle_verdict"] == "VOID"
+    assert result["stop_reason"] == "arm_unauditable"
+    assert runner.calls == []  # no block launched at all
+    # The refusal is still a receipted cycle, not a bare return.
+    assert Path(result["cycle_receipt_path"]).exists()
+
+
+def test_cycle_refuses_an_arm_with_a_counter_but_no_armed_signal(tmp_path):
+    """The registry's predicate is both halves. forge_cycle read only
+    `bool(arm.activity_counter)`, so an arm the registry calls
+    UNAUDITABLE was piloted as auditable. Corrupt: put
+    `auditable = bool(arm.activity_counter)` back in place of the
+    registry call -- this arm reads auditable, no refusal fires, and
+    the cycle launches its null block.
+    """
+    runner = _counting_block_runner()
+    from src.forge import registry as registry_mod
+    assert registry_mod.is_auditable(FIXTURE_ARM_NO_SIGNAL) == "UNAUDITABLE"
+
+    result = loop_mod.forge_cycle(
+        "cv_hall", BUNDLE, [FIXTURE_ARM_NO_SIGNAL], 0, cycle_id="c1",
+        budget=BUDGET, cmd_prefix=["python3", "fixture.py"],
+        out_base=tmp_path, block_runner=runner)
+
+    assert result["stop_reason"] == "arm_unauditable"
+    assert runner.calls == []
