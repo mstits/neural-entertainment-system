@@ -1,5 +1,7 @@
 # Unified Learning Thesis — beating six NES games with one framework
 
+**RETIRED 2026-09-03** — superseded, G2 fired (DECIDE-1(b)); recovery-aimed 1-2 campaigns are no longer funded.
+
 Authored 2026-05-16. Source-of-truth for the project's learning-side
 work going forward. Every training-stack commit should reference a
 phase / milestone defined here, or it's noise.
