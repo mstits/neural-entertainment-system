@@ -5,11 +5,23 @@ A stranger's `pytest tests/` exited 2 at collection with zero tests run,
 while the same command was green here. The dependency was invisible
 precisely because every machine that could have noticed already had it.
 
-This file checks the requirements file against the imports instead of
-against the environment. It walks every import statement in tests/, drops
-the standard library and the in-tree modules, maps each remaining import
-name to the distribution that provides it, and asserts requirements.txt
-names that distribution.
+What this file asserts: every import statement under tests/, minus the
+standard library and the in-tree modules, resolves to a distribution that
+requirements.txt names. requirements.txt is read as text, so a package
+being installed here is not on its own enough to satisfy the check.
+
+What it borrows from the environment: the import-name to
+distribution-name mapping, which comes from `importlib.metadata`'s
+`packages_distributions()` and therefore from the installed metadata of
+the interpreter running the test. That is how `import PIL` is known to
+come from `pillow`, and `import yaml` from `PyYAML`. Where the module is
+not installed there is nothing to map and `_providers` falls back to the
+import name itself, which still fails an undeclared import but can also
+flag a declared one whose distribution name differs from its import name.
+So the verdict is driven by the requirements file and assisted by the
+environment, not independent of it: run under a bare interpreter, this
+file reports `PIL` and `yaml` as undeclared even though requirements.txt
+correctly names `pillow` and `PyYAML`.
 
 Four distributions are deliberately absent from requirements.txt and are
 exempt here, each paired with the file that does install it and with the
@@ -138,13 +150,19 @@ def test_every_third_party_import_in_tests_is_declared():
         providers = _providers(name)
         if providers & (declared | exempt):
             continue
-        undeclared[name] = (sorted(providers), sorted(users)[:3])
+        undeclared[name] = (sorted(providers), sorted(users))
 
     assert not undeclared, (
         "tests/ imports these, and requirements.txt declares none of them, so a "
         "fresh clone dies at collection while this machine stays green:\n"
+        # The user list is capped at three names, so the count is stated
+        # separately: reading the capped list as the whole set is how the
+        # commit that added this file came to report three importers of PIL
+        # under tests/parity when there are six.
         + "\n".join(
-            f"  import {name}  (from {'/'.join(provs)})  used by: {', '.join(users)}"
+            f"  import {name}  (from {'/'.join(provs)})"
+            f"  used by {len(users)} file(s): {', '.join(users[:3])}"
+            + (f" (+{len(users) - 3} more)" if len(users) > 3 else "")
             for name, (provs, users) in sorted(undeclared.items())
         )
         + "\nAdd each to requirements.txt with a bounded pin, or add it to EXEMPT "

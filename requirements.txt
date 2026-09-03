@@ -20,8 +20,8 @@ rich>=13.7.0,<16
 # Metrics and visualization
 matplotlib>=3.8.0,<4
 tensorboard>=2.15.0,<3
-# Pillow is imported by name (`from PIL import Image`) by tests/parity's
-# frame differ and by nine scripts/. It was never declared here and only
+# Pillow is imported by name (`from PIL import Image`) by six files under
+# tests/parity and by nine under scripts/. It was never declared here and only
 # ever arrived as a transitive dependency of matplotlib, so the parity
 # tooling breaks the day matplotlib stops pulling it. Declared directly.
 pillow>=10.0.0,<14
