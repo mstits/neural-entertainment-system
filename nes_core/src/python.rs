@@ -127,6 +127,14 @@ pub struct NESEnvironment {
     // poll — the receipted CV-vs-Mesen tape desync mechanism. Default
     // OFF: training/parity paths depend on the cycle-locked step.
     hw_frame_anchor: bool,
+    // Number of `reset()` calls (the Python-exposed one, which
+    // advances one full frame before returning). `hw_nmi_poll_timing`
+    // is read during that hidden frame, so a non-zero count means the
+    // frame already ran under whatever value the flag then had, and
+    // the setter refuses to change it. `reset_no_advance()` does NOT
+    // count: it renders no frame, so nothing was decided under the
+    // old value there.
+    reset_calls: u64,
     // Reusable RGB conversion buffer — Xrgb8888VideoSink writes into
     // this u32 array, then `step()` repacks it into a (240, 256, 3)
     // numpy uint8 array. Kept on the struct so we don't reallocate
@@ -223,6 +231,7 @@ impl NESEnvironment {
             pace_next_target: None,
             frame_cycle_target: None,
             hw_frame_anchor: false,
+            reset_calls: 0,
         };
         if let Some(p) = start_state_path {
             let p_basename = p
@@ -316,29 +325,7 @@ impl NESEnvironment {
             // mismatched-mapper State would otherwise unwind across the
             // PyO3 boundary and kill the interpreter; on failure the env
             // is left cold-reset rather than half-mutated.
-            self.restore_or_reset()?;
-            self.audio.drain();
-            self.done = false;
-            // Reset pacing so the first paced step doesn't sleep for the
-            // entire elapsed time since pacing was last active.
-            self.pace_next_target = None;
-            // Reset cycle target so the first post-reset advance_one_frame
-            // anchors to the post-reset cycle count rather than to the
-            // previous episode's accumulated drift.
-            self.frame_cycle_target = None;
-            // Step until first frame is rendered, so the caller gets a
-            // valid image rather than uninitialized buffer.
-            //
-            // Note on parity: this puts nes_core one emulated frame
-            // ahead of nes-py, whose `NESEnv.reset()` does NOT advance.
-            // Parity tests (`tests/parity/lockstep.py`) compensate by
-            // advancing nes-py an extra frame; removing this advance
-            // entirely breaks the GUI play-window (user sees a black
-            // frame and thinks the emulator is frozen) and has been
-            // empirically confirmed user-visible bad. Accept the 1-frame
-            // offset cost and compensate in parity tests instead.
-            self.advance_one_frame();
-            Ok(())
+            self.reset_machine()
         })?;
         Ok(self.frame_to_numpy(py))
     }
@@ -476,8 +463,33 @@ impl NESEnvironment {
     /// accounting. Set BEFORE calling reset. Default OFF — existing
     /// receipts and nes-py parity assume legacy boot accounting.
     /// Config, not state: survives save/load untouched.
-    fn set_hw_reset_alignment(&mut self, on: bool) {
+    ///
+    /// REFUSES a change once a power cycle has run, instead of
+    /// diverging in silence: `Nes::reset()` reads this flag to pick
+    /// the boot sequence, so setting it afterwards leaves the machine
+    /// on the lineage it was NOT configured for and every later frame
+    /// inherits that (measured: RAM diverges at frame 11, $006F/$01FE;
+    /// a 90-frame SMB save_state trajectory hashes differently). The
+    /// cached-start-state path is exempt by construction: there
+    /// `reset()` restores a snapshot and never power-cycles, so the
+    /// flag decided nothing and the counter stays at zero.
+    fn set_hw_reset_alignment(&mut self, on: bool) -> PyResult<()> {
+        if on != self.nes.hw_reset_alignment && self.nes.reset_generation > 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "set_hw_reset_alignment({on}) after {n} power cycle(s): the \
+                 boot sequence this flag selects already ran with \
+                 hw_reset_alignment={was}, so the machine is on the other \
+                 boot lineage and every later frame silently inherits it. \
+                 Set it BEFORE the first reset() (see apply_hw_flags in \
+                 scripts/go_explore_solve.py), or build a fresh \
+                 NESEnvironment. Re-applying the value it already has is \
+                 allowed.",
+                n = self.nes.reset_generation,
+                was = self.nes.hw_reset_alignment,
+            )));
+        }
         self.nes.hw_reset_alignment = on;
+        Ok(())
     }
 
     /// Hardware-true DMC DMA stall (3 cycles aligned vs legacy flat
@@ -501,8 +513,33 @@ impl NESEnvironment {
     /// (real 6502 second-to-last-cycle poll). Disables the ASM/bulk
     /// CPU fast paths while on. See the Cpu field doc for the CV
     /// frame-3792 receipt. Default OFF. Config, not state.
-    fn set_hw_nmi_poll_timing(&mut self, on: bool) {
+    ///
+    /// REFUSES a change once `reset()` has run, instead of diverging
+    /// in silence: `reset()` advances one full frame before returning
+    /// ("Step until first frame is rendered"), that frame crosses a
+    /// vblank/NMI edge, and the flag picks the NMI service instant it
+    /// takes. Setting it afterwards leaves that instant chosen under
+    /// the old value and the divergence compounds forward (measured on
+    /// SMB, 90 frames, both the plain-reset and the cached-start-state
+    /// path). `reset_no_advance()` renders no frame and does not arm
+    /// this guard.
+    fn set_hw_nmi_poll_timing(&mut self, on: bool) -> PyResult<()> {
+        if on != self.nes.cpu.hw_nmi_poll_timing && self.reset_calls > 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "set_hw_nmi_poll_timing({on}) after {n} reset(s): each \
+                 reset() advances a frame before returning, and those \
+                 frames took their NMI service instant with \
+                 hw_nmi_poll_timing={was}, so the state you are about to \
+                 step from was computed under the other timing model. Set \
+                 it BEFORE the first reset(), or build a fresh \
+                 NESEnvironment. Re-applying the value it already has is \
+                 allowed.",
+                n = self.reset_calls,
+                was = self.nes.cpu.hw_nmi_poll_timing,
+            )));
+        }
         self.nes.cpu.hw_nmi_poll_timing = on;
+        Ok(())
     }
 
     /// Hardware-true NMI-line sample phase: latch the CPU-visible NMI
@@ -933,6 +970,38 @@ impl NESEnvironment {
     /// byte-identical to the pre-existing path. Pure Rust — no `py` token —
     /// so it is safe to call inside `py.allow_threads`. On any failure the
     /// env is left cold-reset, never half-mutated (see the module doc).
+    /// The whole body of `reset()`, minus the numpy export: pure
+    /// Rust, no `py` token, so the ordering guards below are testable
+    /// without an embedded interpreter.
+    fn reset_machine(&mut self) -> PyResult<()> {
+        self.restore_or_reset()?;
+        self.audio.drain();
+        self.done = false;
+        // Reset pacing so the first paced step doesn't sleep for the
+        // entire elapsed time since pacing was last active.
+        self.pace_next_target = None;
+        // Reset cycle target so the first post-reset advance_one_frame
+        // anchors to the post-reset cycle count rather than to the
+        // previous episode's accumulated drift.
+        self.frame_cycle_target = None;
+        // Step until first frame is rendered, so the caller gets a
+        // valid image rather than uninitialized buffer.
+        //
+        // Note on parity: this puts nes_core one emulated frame
+        // ahead of nes-py, whose `NESEnv.reset()` does NOT advance.
+        // Parity tests (`tests/parity/lockstep.py`) compensate by
+        // advancing nes-py an extra frame; removing this advance
+        // entirely breaks the GUI play-window (user sees a black
+        // frame and thinks the emulator is frozen) and has been
+        // empirically confirmed user-visible bad. Accept the 1-frame
+        // offset cost and compensate in parity tests instead.
+        self.advance_one_frame();
+        // Counted AFTER the hidden frame: everything the frame decided
+        // under the current `hw_nmi_poll_timing` is now baked in.
+        self.reset_calls = self.reset_calls.saturating_add(1);
+        Ok(())
+    }
+
     fn restore_or_reset(&mut self) -> PyResult<()> {
         if let Some(snap) = &self.start_state_snapshot {
             let (state, oam_dma, odo) = crate::serialize::decode_state(snap).map_err(|e| {
@@ -1967,6 +2036,128 @@ mod env_coverage_tests {
         assert!(
             target <= t0 + step_dur + Duration::from_millis(500),
             "snap-forward target must stay within ~one step ahead (no debt carry)",
+        );
+    }
+
+    // ---- DO-31: the two order-dependent fidelity setters -------------
+    //
+    // Promoted from the M-7 probe (config-and-fidelity.md Part 2) and
+    // its DO-31 pre-flight. Measured on SMB, 90 idle frames, SHA-256
+    // over the per-frame save_state trajectory:
+    //
+    //   path                 set_hw_reset_alignment  set_hw_nmi_poll_timing
+    //   plain reset()        DIFFERENT               DIFFERENT
+    //   cached start state   SAME                    DIFFERENT
+    //
+    // so the two flags need two different arming conditions, and the
+    // cached-start-state path must stay open for the boot-alignment
+    // flag: there `Nes::reset()` never runs and the flag decides
+    // nothing.
+
+    // Documented order (hw flags, then reset) keeps working, and a
+    // second reset does not retro-arm the guard. Without this the
+    // guards could be vacuously "correct" by refusing everything.
+    #[test]
+    fn fidelity_setters_before_the_first_reset_are_accepted() {
+        // The guards raise PyErr, whose construction needs the
+        // interpreter the pool-test harness preloads.
+        pyo3::prepare_freethreaded_python();
+        let mut env = make_env("order_ok");
+        // Before the first reset both flags move freely, in both
+        // directions. (The synthetic NOP ROM is booted on the default
+        // timing model here; `pool_hw_reset_alignment_post_reset_raises`
+        // is the case that boots with a flag on.)
+        env.set_hw_reset_alignment(true)
+            .expect("pre-reset boot alignment is the documented order");
+        env.set_hw_reset_alignment(false)
+            .expect("pre-reset changes are free in both directions");
+        env.set_hw_nmi_poll_timing(true)
+            .expect("pre-reset NMI poll timing is the documented order");
+        env.set_hw_nmi_poll_timing(false)
+            .expect("pre-reset changes are free in both directions");
+        env.reset_machine().expect("reset after the flags");
+        // Re-applying the value already in force is a no-op, not a
+        // divergence: apply_hw_flags + reset_all runs more than once
+        // per solver run on the same machine.
+        env.set_hw_reset_alignment(false)
+            .expect("re-applying the current value must stay allowed");
+        env.set_hw_nmi_poll_timing(false)
+            .expect("re-applying the current value must stay allowed");
+        assert_eq!(env.reset_calls, 1, "the reset was counted");
+    }
+
+    // The probe's first DIFFERENT row: reset() has power cycled, so
+    // changing the boot-alignment flag now is refused instead of
+    // silently booting the other lineage.
+    #[test]
+    fn hw_reset_alignment_post_reset_raises() {
+        // The guards raise PyErr, whose construction needs the
+        // interpreter the pool-test harness preloads.
+        pyo3::prepare_freethreaded_python();
+        let mut env = make_env("align_post");
+        env.reset_machine().expect("plain reset");
+        assert!(
+            env.nes.reset_generation > 0,
+            "plain reset() must power cycle, or this test proves nothing",
+        );
+        let err = env
+            .set_hw_reset_alignment(true)
+            .expect_err("post-reset change must raise, not diverge in silence");
+        let msg = err.to_string();
+        assert!(msg.contains("set_hw_reset_alignment"), "message names the setter: {msg}");
+        assert!(
+            !env.nes.hw_reset_alignment,
+            "a refused setter must not have written the field",
+        );
+    }
+
+    // The probe's second DIFFERENT row: reset() advanced a frame, and
+    // that frame took its NMI service instant under the old value.
+    #[test]
+    fn hw_nmi_poll_timing_post_reset_raises() {
+        // The guards raise PyErr, whose construction needs the
+        // interpreter the pool-test harness preloads.
+        pyo3::prepare_freethreaded_python();
+        let mut env = make_env("nmi_post");
+        env.reset_machine().expect("plain reset");
+        assert_eq!(env.reset_calls, 1, "reset() counts one hidden frame advance");
+        let err = env
+            .set_hw_nmi_poll_timing(true)
+            .expect_err("post-reset change must raise, not diverge in silence");
+        assert!(
+            err.to_string().contains("set_hw_nmi_poll_timing"),
+            "message names the setter",
+        );
+        assert!(
+            !env.nes.cpu.hw_nmi_poll_timing,
+            "a refused setter must not have written the field",
+        );
+    }
+
+    // The DO-31 pre-flight, promoted: on the --root-state path
+    // `reset()` restores a snapshot and never calls `Nes::reset()`, so
+    // the boot-alignment flag decided nothing and the guard must stay
+    // out of the way. The NMI flag still raises there, because the
+    // hidden frame advance runs on both paths.
+    #[test]
+    fn hw_reset_alignment_stays_settable_on_the_cached_start_state_path() {
+        // The guards raise PyErr, whose construction needs the
+        // interpreter the pool-test harness preloads.
+        pyo3::prepare_freethreaded_python();
+        let mut env = make_env("cached_root");
+        let snap = crate::serialize::encode_state(&env.nes).expect("encode start state");
+        env.start_state_snapshot = Some(snap);
+        env.reset_machine().expect("cached reset");
+        assert_eq!(
+            env.nes.reset_generation, 0,
+            "the cached path restores instead of power cycling",
+        );
+        env.set_hw_reset_alignment(true)
+            .expect("no power cycle ran, so the flag decided nothing yet");
+        assert!(env.nes.hw_reset_alignment, "the setter still applies the value");
+        assert!(
+            env.set_hw_nmi_poll_timing(true).is_err(),
+            "the hidden frame advance runs on the cached path too",
         );
     }
 }

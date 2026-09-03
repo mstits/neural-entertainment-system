@@ -90,6 +90,15 @@ pub struct Nes {
     /// parity suites and all existing solver receipts assume legacy
     /// boot accounting.
     pub hw_reset_alignment: bool,
+    /// Number of `Nes::reset()` calls since construction (the
+    /// constructor's own reset does not count). `hw_reset_alignment`
+    /// is read by `reset()` itself to pick the boot sequence, so a
+    /// non-zero generation means the machine is already on a boot
+    /// lineage and changing that flag now would silently put later
+    /// frames on the other one. The PyO3 setter uses this to refuse.
+    /// Counter, not state: `apply_state` leaves it alone, so a
+    /// restored env keeps the count of power cycles it actually ran.
+    pub reset_generation: u64,
 
     /// Event-driven PPU catch-up (config, not savestate). When set, the
     /// per-cycle PPU advancement in `Nes::tick` and the ASM/bulk catch-up
@@ -309,6 +318,7 @@ impl Nes {
             trace: false,
             disable_asm_cpu: false,
             hw_reset_alignment: false,
+            reset_generation: 0,
             hw_event_ppu: false,
             ppu_read_dot_offset: 2,
             ppu_write_dot_offset: 2,
@@ -349,6 +359,11 @@ impl Nes {
         // See docs/proposals/archive/zelda_cave_stuck_investigation.md for why
         // this was once suspected as a cave-stuck contributor (it isn't).
         nes.reset();
+        // The constructor's reset is part of construction, not a
+        // caller power cycle: zero the counter so
+        // `reset_generation > 0` means exactly "a reset ran after the
+        // caller got the machine".
+        nes.reset_generation = 0;
 
         nes
     }
@@ -1233,6 +1248,10 @@ impl Nes {
     }
 
     pub fn reset(&mut self) {
+        // Bump first: `hw_reset_alignment` is consulted below, so from
+        // here on the machine carries a boot lineage that the flag
+        // picked, and the PyO3 setter must refuse to change it.
+        self.reset_generation = self.reset_generation.saturating_add(1);
         {
             let mut bus = SystemBus::new(
                 &mut self.ram,

@@ -118,6 +118,12 @@ struct Worker {
     // as every other hw flag. Default OFF: training/parity paths
     // depend on the cycle-locked step.
     hw_frame_anchor: bool,
+    /// Number of `Worker::reset()` calls. Mirrors
+    /// `NESEnvironment::reset_calls`: the reset advances a hidden
+    /// frame whose NMI service instant `hw_nmi_poll_timing` picks, so
+    /// the pool setter refuses to change that flag once this is
+    /// non-zero.
+    reset_calls: u64,
     /// Peak SMB world-x position seen during the most recent
     /// `step()` call. Computed inside the frame_skip loop so we
     /// capture transient peaks that a final-frame-only RAM read
@@ -157,6 +163,7 @@ impl Worker {
             gray_scratch: vec![0u8; FRAME_PIXELS],
             frame_cycle_target: None,
             hw_frame_anchor: false,
+            reset_calls: 0,
             last_max_x: 0,
             scratch: None,
         }
@@ -195,6 +202,8 @@ impl Worker {
         self.audio.clear();
         self.frame_cycle_target = None;
         self.advance_one_frame();
+        // Counted after the hidden frame, as in python.rs.
+        self.reset_calls = self.reset_calls.saturating_add(1);
     }
 
     fn advance_one_frame(&mut self) {
@@ -1409,13 +1418,35 @@ impl Pool {
     /// mirror is `NESEnvironment::set_hw_reset_alignment`; see the
     /// `Nes` field doc. Takes effect on each worker's next reset.
     /// Default OFF (legacy boot accounting).
-    fn set_hw_reset_alignment(&self, on: bool) {
+    /// REFUSES a change on a pool whose workers have already power
+    /// cycled: the single-env guard's reasoning applies per worker
+    /// (`NESEnvironment::set_hw_reset_alignment`). Checked across every
+    /// worker before any of them is written, so a refusal leaves the
+    /// pool uniform.
+    fn set_hw_reset_alignment(&self, on: bool) -> PyResult<()> {
         self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
+        for (idx, cell) in self.workers.iter().enumerate() {
+            let w = unsafe { worker_mut(cell) };
+            if on != w.nes.hw_reset_alignment && w.nes.reset_generation > 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "set_hw_reset_alignment({on}) after worker {idx} power \
+                     cycled {n} time(s) with hw_reset_alignment={was}: that \
+                     worker booted the other lineage and every later frame \
+                     inherits it. Apply hw flags to a freshly constructed \
+                     Pool, BEFORE reset_all() (apply_hw_flags in \
+                     scripts/go_explore_solve.py documents the order). \
+                     Re-applying the value it already has is allowed.",
+                    n = w.nes.reset_generation,
+                    was = w.nes.hw_reset_alignment,
+                )));
+            }
+        }
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
             w.nes.hw_reset_alignment = on;
         }
+        Ok(())
     }
 
     /// Hardware-true DMC DMA stall on every worker — single-env
@@ -1450,13 +1481,33 @@ impl Pool {
     /// Hardware-true NMI service timing on every worker — single-env
     /// mirror is `NESEnvironment::set_hw_nmi_poll_timing`; see the
     /// Cpu field doc. Disables ASM/bulk fast paths while on.
-    fn set_hw_nmi_poll_timing(&self, on: bool) {
+    /// REFUSES a change on a pool that has already been reset: the
+    /// single-env guard's reasoning applies per worker
+    /// (`NESEnvironment::set_hw_nmi_poll_timing`). Checked across every
+    /// worker before any of them is written.
+    fn set_hw_nmi_poll_timing(&self, on: bool) -> PyResult<()> {
         self.assert_no_parallel_dispatch();
         // SAFETY: as above — sequential from Python.
+        for (idx, cell) in self.workers.iter().enumerate() {
+            let w = unsafe { worker_mut(cell) };
+            if on != w.nes.cpu.hw_nmi_poll_timing && w.reset_calls > 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "set_hw_nmi_poll_timing({on}) after worker {idx} reset \
+                     {n} time(s) with hw_nmi_poll_timing={was}: each reset \
+                     advances a frame that took its NMI service instant \
+                     under the old value. Apply hw flags to a freshly \
+                     constructed Pool, BEFORE reset_all(). Re-applying the \
+                     value it already has is allowed.",
+                    n = w.reset_calls,
+                    was = w.nes.cpu.hw_nmi_poll_timing,
+                )));
+            }
+        }
         for cell in &self.workers {
             let w = unsafe { worker_mut(cell) };
             w.nes.cpu.hw_nmi_poll_timing = on;
         }
+        Ok(())
     }
 
     /// Hardware-true NMI-line sample phase (φ2 latch) on every worker
@@ -3599,14 +3650,34 @@ mod two_player_and_apu_tests {
 
     type Collected = Vec<(Vec<u8>, Vec<u8>, Vec<u8>, bool)>;
 
-    /// RAM byte the ROM wrote for pad 2's A button on worker `idx`.
-    fn p2_bit(collected: &Collected, idx: usize) -> u8 {
-        collected[idx].2[0x0200]
+    /// The A-button bit the ROM stored for one pad on worker `idx`.
+    ///
+    /// A `$4016`/`$4017` read returns the button in bit 0 with the
+    /// open-bus pattern `CONTROLLER_OPEN_BUS` ($40) in the high bits.
+    /// That is the contract `input.rs` implements and pins in its own
+    /// tests ("read: A pressed = $41", "pad 2 released = $40"), so the
+    /// port byte a game stores is $40 released and $41 pressed.
+    /// `POLL_BOTH_PADS` stores it unmasked, so decode it here the way a
+    /// game's `AND #$01` would, and assert the open-bus bits are intact
+    /// while we have the byte in hand.
+    fn port_bit(collected: &Collected, idx: usize, addr: usize, port: &str) -> u8 {
+        let byte = collected[idx].2[addr];
+        assert_eq!(
+            byte & !1,
+            crate::input::CONTROLLER_OPEN_BUS,
+            "worker {idx}: {port} read {byte:#04x}, not open-bus | button bit",
+        );
+        byte & 1
     }
 
-    /// RAM byte the ROM wrote for pad 1's A button on worker `idx`.
+    /// A-button bit the ROM wrote for pad 2 ($4017) on worker `idx`.
+    fn p2_bit(collected: &Collected, idx: usize) -> u8 {
+        port_bit(collected, idx, 0x0200, "$4017")
+    }
+
+    /// A-button bit the ROM wrote for pad 1 ($4016) on worker `idx`.
     fn p1_bit(collected: &Collected, idx: usize) -> u8 {
-        collected[idx].2[0x0201]
+        port_bit(collected, idx, 0x0201, "$4016")
     }
 
     /// THE default-inert proof. Same ROM, same pad-1 actions, run
@@ -4013,6 +4084,58 @@ mod pool_coverage_tests {
         let pool = Pool::new(path.clone(), n, 1, None).expect("Pool::new");
         let _ = std::fs::remove_file(&path);
         pool
+    }
+
+    // ---- DO-31 pool mirror -------------------------------------------
+    // Same two guards as `NESEnvironment`, per worker. `Worker::reset`
+    // is what `reset_all` runs on each worker, so driving it directly
+    // exercises the arming condition without an embedded interpreter.
+    #[test]
+    fn pool_hw_reset_alignment_post_reset_raises() {
+        // The guards raise PyErr, whose construction needs the
+        // interpreter the pool-test harness preloads.
+        pyo3::prepare_freethreaded_python();
+        let pool = pool_of(2, "do31_align");
+        pool.set_hw_reset_alignment(true)
+            .expect("pre-reset is the documented order");
+        for cell in &pool.workers {
+            unsafe { worker_mut(cell) }.reset();
+        }
+        pool.set_hw_reset_alignment(true)
+            .expect("re-applying the current value must stay allowed");
+        let err = pool
+            .set_hw_reset_alignment(false)
+            .expect_err("post-reset change must raise on the pool too");
+        assert!(err.to_string().contains("set_hw_reset_alignment"));
+        for cell in &pool.workers {
+            assert!(
+                unsafe { worker_mut(cell) }.nes.hw_reset_alignment,
+                "a refused broadcast must leave every worker on the old value",
+            );
+        }
+    }
+
+    #[test]
+    fn pool_hw_nmi_poll_timing_post_reset_raises() {
+        // The guards raise PyErr, whose construction needs the
+        // interpreter the pool-test harness preloads.
+        pyo3::prepare_freethreaded_python();
+        let pool = pool_of(2, "do31_nmi");
+        pool.set_hw_nmi_poll_timing(true)
+            .expect("pre-reset is the documented order");
+        // Only the second worker resets: the check must span the whole
+        // pool, not just worker 0.
+        unsafe { worker_mut(&pool.workers[1]) }.reset();
+        let err = pool
+            .set_hw_nmi_poll_timing(false)
+            .expect_err("post-reset change must raise on the pool too");
+        assert!(err.to_string().contains("worker 1"), "message names the worker");
+        for cell in &pool.workers {
+            assert!(
+                unsafe { worker_mut(cell) }.nes.cpu.hw_nmi_poll_timing,
+                "refusal is checked before any worker is written",
+            );
+        }
     }
 
     // A valid header but truncated body must surface a clean Err from the

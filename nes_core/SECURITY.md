@@ -32,8 +32,8 @@ The NES emulator pool is now 100% in-process via `nes_core.Pool`
 
 ## `unsafe` surface
 
-**156 lines match `unsafe` across 11 files** (`grep -rn unsafe src | wc -l`
-/ `grep -rln unsafe src | wc -l`, re-counted 2026-09-01). This section
+**162 lines match `unsafe` across 11 files** (`grep -rn unsafe src | wc -l`
+/ `grep -rln unsafe src | wc -l`, re-counted 2026-09-03). This section
 previously said "three call sites in the entire crate," which was
 accurate in 2026-04-21 but stopped being maintained as the NEON
 render kernels (`ppu_neon.rs`, `metal_render.rs`), the in-process
@@ -65,7 +65,7 @@ counts include comments that mention the word "unsafe" in prose (a
 few, mostly in `preprocess.rs`), not only live `unsafe` keywords,
 called out inline wherever that inflates the number.
 
-### 1. `src/pool.rs` - worker-pool concurrency + NEON pixel unpack (76)
+### 1. `src/pool.rs` - worker-pool concurrency + NEON pixel unpack (82)
 
 The in-process, rayon-parallel worker pool that replaced the old
 multiprocessing `ParallelPool`. The `CORRECTED` `step_all_native` ordering comment (`e9dafa8`, 2026-08-28) that previously held one of these matching lines was superseded by the `ParallelSectionGuard` widening fix (DO-25) and no longer exists in that form. Its unsafe surface has three shapes:
@@ -107,6 +107,12 @@ multiprocessing `ParallelPool`. The `CORRECTED` `step_all_native` ordering comme
   pointer, scalar tail handles the `< 16`-pixel remainder), fused
   straight from XRGB8888 into RGB/grayscale to skip an intermediate
   184 KB buffer per worker per step.
+- **6 `unsafe { worker_mut(...) }` call sites in `pool_coverage_tests`**
+  (added 2026-09-03 with the pool coverage tests). Test-only, inside
+  `#[cfg(test)]`, single-threaded: each takes a `&mut Worker` from a
+  pool the test itself owns and no other thread can observe, which is
+  the same uniqueness proof every production caller of `worker_mut`
+  carries. They add no production surface.
 
 Verdict: one audited concurrency contract (`worker_mut` + its
 callers) accounts for the bulk of the count; the NEON and
@@ -347,7 +353,7 @@ it's wired up. Flagged again under "What's NOT audited" below.
 Both hits are the `#![allow(unsafe_op_in_unsafe_fn)]` attribute and
 its explanatory comment at the top of the file, not a call site.
 Covered in the intro above; listed here only so the file-by-file
-total adds up to 156.
+total adds up to 162.
 
 ### 10. `src/python.rs` — NEON frame repack for PyO3 (1)
 
@@ -377,12 +383,12 @@ Verdict: test-only, not a production risk.
 
 ---
 
-**Summary:** 156 `unsafe`-matching lines across 11 files, up from the
-"three call sites" this section claimed as of 2026-04-21. Of the 156,
+**Summary:** 162 `unsafe`-matching lines across 11 files, up from the
+"three call sites" this section claimed as of 2026-04-21. Of the 162,
 roughly a dozen are comments rather than code (`preprocess.rs` ×3,
 `lib.rs` ×2, plus a few explanatory lines folded into the counts
-above), 8 are test-only (`cpu_asm.rs` ×6 in `mod tests`,
-`mapper1.rs`'s single site), and one file's entire 6-site surface
+above), 14 are test-only (`cpu_asm.rs` ×6 in `mod tests`,
+`pool.rs`'s `pool_coverage_tests` ×6, `mapper1.rs`'s single site), and one file's entire 6-site surface
 (`metal_render.rs`) sits behind a non-default feature nothing else
 enables. The rest is real, audited, mostly already commented in
 place: one worker-pool concurrency contract (`pool.rs`), one ASM FFI
