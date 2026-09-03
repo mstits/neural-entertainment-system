@@ -253,8 +253,41 @@ pub struct State {
     pub cycles: usize,
 }
 
+/// ROMs (PRG+CHR md5, the `Cartridge::md5` domain) that deadlock under
+/// the LaiNES-parity cycle-0 PPU-register read commit and need the
+/// hardware-true final-cycle read timing `Cpu::hw_mmio_read_timing`
+/// already implements.
+///
+/// The pattern that needs it is a `LDA $2002 / BPL` vblank spin that
+/// runs with vblank NMI ENABLED. Under cycle-0 commit the read is
+/// serviced at the instruction boundary, and "the flag is up at the
+/// boundary" is exactly the condition under which `cpu.nmi_pended` is
+/// already latched, so the NMI is always serviced first and its own
+/// `$2002` read drains the flag before the poll ever runs. The spin
+/// can then never observe a set flag, in any frame, at any phase: it
+/// is a structural deadlock, not a timing near-miss. Real hardware
+/// resolves the read on the instruction's LAST cycle, so a flag that
+/// comes up during cycles 1..3 of the `LDA` is seen by that read and
+/// the loop exits.
+///
+/// Scoped per ROM rather than switched on globally because the flag's
+/// own doc is explicit that the cycle-0 commit is what every banked
+/// trajectory (SMB campaign, curriculum states, chains) was recorded
+/// under. A ROM listed here is the only ROM whose timing moves.
+///
+///   * `c6c17bf1...` Jackal (USA), the spin is at $D0E0 inside the
+///     NMI handler ($C292), reached via the $D0D6 nametable upload.
+///     Without this the first NMI never returns, the handler's
+///     re-entrancy latch $1B stays 1, `$C2C4 STA $2001` is never
+///     reached again and PPUMASK stays $00 forever: one distinct
+///     framebuffer hash across 600 frames.
+const HW_STATUS_READ_TIMING_ROMS: &[&str] = &["c6c17bf18a51718859f9bd6aacb7ef58"];
+
 impl Nes {
     pub fn new(cartridge: Cartridge) -> Nes {
+        // Read before `cartridge` is moved into the mapper.
+        let needs_status_read_timing =
+            HW_STATUS_READ_TIMING_ROMS.contains(&cartridge.md5.as_str());
         let mut nes = Self {
             ram: Ram::new(),
             // `from_cartridge` returns a `Result` (mirrors
@@ -285,6 +318,13 @@ impl Nes {
             cached_asm_bulk_cycles: 1,
             cached_ppu_batchable: false,
         };
+        // Per-ROM hardware-true PPUSTATUS read timing, see
+        // `HW_STATUS_READ_TIMING_ROMS`. Config, not console state:
+        // `Cpu::reset` and `apply_state` both leave it alone, so a
+        // savestate round-trip keeps it.
+        if needs_status_read_timing {
+            nes.cpu.hw_mmio_read_timing = true;
+        }
         nes.cached_prg_asm_ptr = nes.mapper.prg_asm_ptr();
         nes.cached_asm_bulk_cycles = nes.mapper.asm_bulk_cycles();
         nes.cached_ppu_batchable = nes.ppu_batchable();
@@ -358,6 +398,16 @@ impl Nes {
             // and would take NMIs at the wrong boundary. Fidelity
             // lane trades speed for exactness.
             && !self.cpu.hw_nmi_poll_timing
+            // The final-cycle PPU-register read pin lives in the
+            // per-cycle `Cpu::tick` dispatch. The ASM/bulk batchers run
+            // a whole instruction between PPU catch-ups, so they commit
+            // the read at the batch boundary and the deferral never
+            // happens, `hw_mmio_read_timing` was silently inert on the
+            // shipped path unless something else (in practice
+            // `hw_nmi_poll_timing`, via --hw-all) had already forced the
+            // per-cycle path. Same trade as the two flags below: the
+            // fidelity lane pays speed for exactness.
+            && !self.cpu.hw_mmio_read_timing
             // φ2 NMI-line sampling needs the per-dot interleave in
             // Nes::tick: the ASM/bulk paths sample the line once at
             // batch end — coarser even than end-of-cycle — and cannot
