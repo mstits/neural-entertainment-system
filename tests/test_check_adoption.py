@@ -368,13 +368,20 @@ class TestIsQuarantinedAgainstRealRepo:
         as False.
         """
         ckpt_dir = REAL_REPO / "checkpoints"
-        clean = [
-            p for p in sorted(ckpt_dir.glob("*.pt"))
-            if not ca.is_quarantined(p)
-        ]
-        # Just needs at least one clean example to exist and be
-        # correctly classified -- proves no blanket regression.
-        candidates = [p for p in sorted(ckpt_dir.glob("*.pt"))][:20]
+        candidates = sorted(ckpt_dir.glob("*.pt"))[:20]
+        # The class gate above keys on checkpoints/bc_*/demos_quarantine.
+        # This body reads checkpoints/*.pt, a different path, and nothing
+        # under checkpoints/ is tracked, so a tree can carry the three
+        # quarantine directories and no top-level .pt at all. Ordinary
+        # housekeeping drains this glob on its own: the repo quarantines a
+        # top-level checkpoint by renaming it to *.pt.stale-pixel or
+        # *.pt.archived, which stops matching *.pt. With an empty glob the
+        # loop below never runs and this reports a pass having asserted
+        # nothing, even against an is_quarantined() that answers True for
+        # every path, which is the one regression this test exists to catch.
+        if not candidates:
+            pytest.skip(
+                "gitignored or machine-local inputs absent: checkpoints/*.pt")
         for p in candidates:
             rel = p.relative_to(REAL_REPO)
             expect_true = any(
