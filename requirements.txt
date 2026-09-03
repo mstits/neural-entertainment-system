@@ -20,6 +20,11 @@ rich>=13.7.0,<16
 # Metrics and visualization
 matplotlib>=3.8.0,<4
 tensorboard>=2.15.0,<3
+# Pillow is imported by name (`from PIL import Image`) by tests/parity's
+# frame differ and by nine scripts/. It was never declared here and only
+# ever arrived as a transitive dependency of matplotlib, so the parity
+# tooling breaks the day matplotlib stops pulling it. Declared directly.
+pillow>=10.0.0,<14
 
 # Checkpointing and serialization
 dill>=0.3.7,<1
@@ -32,5 +37,10 @@ pytest-cov>=4.1.0,<8
 # quality signal (`make test`) errors on an unrecognized argument.
 pytest-timeout>=2.1.0,<3
 pytest-qt>=4.2.0,<5
+# hypothesis backs the property tests in tests/test_properties.py. Missing
+# here until 2026-09-02, which made `pytest tests/` on a clean clone exit 2
+# at collection with ModuleNotFoundError and run zero tests, while the same
+# command stayed green on any machine that happened to have it installed.
+hypothesis>=6.100,<7
 ruff>=0.1.9,<1
 mypy>=1.7.0,<2
