@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import scripts.engine_driver as ed  # noqa: E402
+from tests.skip_gates import requires  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -854,6 +855,13 @@ def test_script_flags_survives_an_unparseable_script(tmp_path):
     assert ed.script_flags(p) == (set(), set())
 
 
+# validate_action checks that the action's input paths exist. Those two
+# inputs are gitignored (.gitignore:10, 71), so on a clean clone the
+# assertion below reports a missing dump instead of the validator verdict
+# it exists to pin. Gate on the ladder DIRECTORY so a machine that has it
+# still fails loudly when the states have gone.
+@requires("roms/Super Mario Bros. (World).nes",
+          "checkpoints/online_1_2/restart_states")
 def test_the_real_hazard_action_now_validates():
     """Regression on the live planner, not a synthetic script."""
     ok, why = ed.validate_action(ed.Action(
@@ -866,6 +874,9 @@ def test_the_real_hazard_action_now_validates():
     assert ok, why
 
 
+@requires("roms/Super Mario Bros. (World).nes",
+          "runs/ge_1_2_div_s1/solutions",
+          "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum")
 def test_the_real_hazard_collect_full_action_still_validates():
     """Regression on the second live hazard call site.
 

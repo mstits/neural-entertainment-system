@@ -14,8 +14,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.skip_gates import requires, requires_module
+
 REPO = Path(__file__).resolve().parents[2]
-BASELINE_ROM = REPO / "roms" / "Mario Bros. (World).nes"
+BASELINE_ROM_REL = "roms/Mario Bros. (World).nes"
+BASELINE_ROM = REPO / BASELINE_ROM_REL
 BASELINE_FRAME = 30
 
 
@@ -26,7 +29,12 @@ def _silence_gym_warning():
         yield
 
 
+# The dump is gitignored (.gitignore:71) and nes-py is quarantined to
+# requirements-legacy-bakeoff.txt. The assertion below that the ROM
+# exists stays live on a machine that HAS a roms/ tree.
 @pytest.mark.parity
+@requires(BASELINE_ROM_REL)
+@requires_module("nes_py")
 def test_laines_palette_matches_between_emulators():
     import nes_core
     import nes_py

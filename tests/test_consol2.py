@@ -35,6 +35,7 @@ from scripts.run_consol2 import (  # noqa: E402
     probe_boundaries, protocol_gap,
 )
 from scripts.run_online_campaign import probe_summary  # noqa: E402
+from tests.skip_gates import requires  # noqa: E402
 
 SPI = 92_160  # 1536 rollout_steps x 60 envs — unchanged from the campaign
 
@@ -358,7 +359,17 @@ def test_manifest_mirrors_config_and_cites_evidence():
 # ---- dry-run (live; config parse + checkpoint load + probe assembly) ----
 
 
+# --dry-run loads the pinned source checkpoint, sha256s it and assembles
+# the probe commands against the real ROM and restart ladders. All of
+# those live under gitignored trees (.gitignore:10, 71), so a clean clone
+# reports a subprocess that failed its own checks. Gate on the
+# DIRECTORIES, so a machine that has them still fails loudly when one
+# pinned file is gone.
 @pytest.mark.slow
+@requires("checkpoints/_preserved",
+          "checkpoints/online_1_2/restart_states",
+          "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum",
+          "roms/Super Mario Bros. (World).nes")
 def test_dry_run_passes_live():
     proc = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "run_consol2.py"),

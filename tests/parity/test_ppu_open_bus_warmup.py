@@ -21,11 +21,17 @@ import pytest
 
 import nes_core
 
+from tests.skip_gates import requires
+
 REPO = Path(__file__).resolve().parents[2]
-SMB_ROM = REPO / "roms" / "Super Mario Bros. (World).nes"
+SMB_ROM_REL = "roms/Super Mario Bros. (World).nes"
+SMB_ROM = REPO / SMB_ROM_REL
 
 
+# roms/* is gitignored (.gitignore:71), so a clean clone has no SMB dump
+# to cold-boot and the miss surfaces as a bare nes_core RuntimeError.
 @pytest.mark.parity
+@requires(SMB_ROM_REL)
 def test_ppustatus_returns_open_bus_during_warmup():
     """SMB cold-boot: instruction 7 (`LDA $2002` after `STA $2000 #$10`)
     must put 0x10 into A, not 0x00.

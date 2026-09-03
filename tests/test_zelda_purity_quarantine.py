@@ -37,8 +37,17 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.skip_gates import requires
+
 REPO = Path(__file__).resolve().parents[1]
 CONFIG_DIR = REPO / "configs"
+
+# Every profile in this family targets the same dump: legend_of_zelda.yaml
+# names it as `rom_path`, zelda_roomfp.yaml likewise, and zelda.yaml and
+# zelda_gui_tuned.yaml name it as `applies_to_rom` inside their quarantine
+# block. roms/* is gitignored (.gitignore:71), so a clean clone has none
+# of them, and neither the ROM nor the start states derived from it.
+ZELDA_ROM = "roms/Legend of Zelda, The (USA) (Rev A).nes"
 
 QUARANTINE_KEY = "quarantined_external_knowledge"
 
@@ -230,9 +239,15 @@ def test_standalone_profile_action_space_still_folds_to_bitmasks(path: Path) -> 
     action_space_to_bitmasks(_load(path)["action_space"])
 
 
+# Gate on the ROM, not on the start state itself: the start state IS
+# what this test asserts about, so gating on it would make the assertion
+# a tautology. A machine holding the Zelda dump still fails loudly when
+# the state blob beside it has not been produced or has been deleted.
 @pytest.mark.parametrize(
-    "path", [p for p in ZELDA_PROFILE_PATHS if _load(p).get("start_state_path")],
-    ids=lambda p: p.name,
+    "path", [
+        pytest.param(p, marks=requires(ZELDA_ROM), id=p.name)
+        for p in ZELDA_PROFILE_PATHS if _load(p).get("start_state_path")
+    ],
 )
 def test_declared_start_state_path_exists(path: Path) -> None:
     ssp = _load(path)["start_state_path"]

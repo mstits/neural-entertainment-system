@@ -38,6 +38,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
+from tests.skip_gates import requires  # noqa: E402
 from check_mechanism_receipt import (  # noqa: E402
     FIRED,
     INERT,
@@ -280,10 +281,18 @@ def test_json_output_is_machine_readable(tmp_path: Path, capsys) -> None:
 # ---------------------------------------------------------------------------
 
 V27 = REPO / "runs" / "v27_fresh_recovery"
+# The receipt directory itself is partly tracked, but the four per-seed
+# training logs check_run() reads are not (runs/ is gitignored,
+# .gitignore:93). Gating on the directory therefore gates nothing on a
+# clean clone: it exists, check_run finds no redo reading at all, and the
+# test dies on a bare StopIteration. Gate on the logs the readings come
+# from -- all four, because the observation count below is four seeds.
+V27_SEED_LOGS = tuple(
+    f"runs/v27_fresh_recovery/train_seed{i}.log" for i in range(4))
 ONLINE_1_2 = REPO / "checkpoints" / "mario_1_2_online_v2"
 
 
-@pytest.mark.skipif(not V27.exists(), reason="v27 receipts not present")
+@requires(*V27_SEED_LOGS)
 def test_real_v27_receipts_read_redo_as_inert() -> None:
     """The finding, reproduced from the artifacts in milliseconds.
 

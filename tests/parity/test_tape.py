@@ -9,17 +9,27 @@ import numpy as np
 import pytest
 
 from tests.parity.tape import Tape, TapeError
+from tests.skip_gates import requires
 
 REPO = Path(__file__).resolve().parents[2]
-SAMPLE_ROM = REPO / "roms" / "Mario Bros. (World).nes"
-SAMPLE_MD5 = hashlib.md5(SAMPLE_ROM.read_bytes()).hexdigest()
+ROM_REL = "roms/Mario Bros. (World).nes"
+SAMPLE_ROM = REPO / ROM_REL
+
+# Module scope, so the gate is reached: hashing the ROM at import time
+# raises FileNotFoundError during COLLECTION on a clean clone, which no
+# per-test decorator can catch. Read it inside the helper instead.
+pytestmark = requires(ROM_REL)
+
+
+def _sample_md5() -> str:
+    return hashlib.md5(SAMPLE_ROM.read_bytes()).hexdigest()
 
 
 def _valid_cross_tape(frames: int = 10, inputs: list[dict] | None = None) -> dict:
     return {
         "name": "test_cross",
         "rom": "roms/Mario Bros. (World).nes",
-        "rom_md5": SAMPLE_MD5,
+        "rom_md5": _sample_md5(),
         "frames": frames,
         "frame_skip": 1,
         "mode": "cross_emulator",
@@ -85,7 +95,7 @@ def test_md5_mismatch_raises_with_both_hashes(tmp_path):
     with pytest.raises(TapeError) as excinfo:
         Tape.load(p)
     msg = str(excinfo.value)
-    assert "0" * 32 in msg and SAMPLE_MD5 in msg
+    assert "0" * 32 in msg and _sample_md5() in msg
 
 
 @pytest.mark.parity

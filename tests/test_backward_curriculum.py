@@ -29,6 +29,8 @@ from src.training.backward_curriculum import (
 )
 from src.training.go_explore import start_window
 
+from tests.skip_gates import requires
+
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -765,7 +767,13 @@ def test_restart_site_composition_walks_the_cursor_home() -> None:
 # ---- the minted tapes (skipped when they have not been minted) ------
 
 
+# The last assertion in this test is that the config's start_state_path
+# is on disk. Both levels point into runs/live_show/smb_4_4_micro, which
+# runs/ keeps out of a clean clone (.gitignore:93). Gate on the
+# DIRECTORY, not on the state file the test asserts about, so a machine
+# that has the tree still fails loudly when that one state is missing.
 @pytest.mark.parametrize("level", ["1-1", "1-2"])
+@requires("runs/live_show/smb_4_4_micro")
 def test_backward_config_wires_the_curriculum_and_nothing_else(level) -> None:
     cfg = yaml.safe_load(
         (REPO / "configs" / f"mario_{level.replace('-', '_')}_backward.yaml")

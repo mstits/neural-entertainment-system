@@ -46,6 +46,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.night2_runner import (  # noqa: E402
     CONFIG as NIGHT2_CONFIG, CURED_SEED_ITER,
 )
+from tests.skip_gates import requires  # noqa: E402
 from scripts.soft_distill_cure import (  # noqa: E402
     CONFIG, argmax_report, build_gate_commands, install_cured,
     load_success_obs, soft_distill_cure, soft_distill_loss, write_cured_v3,
@@ -408,8 +409,18 @@ def test_gate_commands_are_night2s_with_cured_v3_swapped_in():
 # ---- dry-run (live; loads + CPU forwards, no rollouts) -----------------------
 
 
+# --dry-run loads the pinned source checkpoint, sha256s it and assembles
+# the probe commands against the real ROM and restart ladders. All of
+# those live under gitignored trees (.gitignore:10, 71), so a clean clone
+# reports a subprocess that failed its own checks. Gate on the
+# DIRECTORIES, so a machine that has them still fails loudly when one
+# pinned file is gone.
 @pytest.mark.slow
 @pytest.mark.timeout(600)
+@requires("checkpoints/_preserved",
+          "checkpoints/online_1_2/restart_states",
+          "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum",
+          "roms/Super Mario Bros. (World).nes")
 def test_dry_run_passes_live():
     proc = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "soft_distill_cure.py"),

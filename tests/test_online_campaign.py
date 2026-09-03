@@ -31,6 +31,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from tests.skip_gates import requires  # noqa: E402
 from scripts.run_online_campaign import (  # noqa: E402
     CONFIG, PHASES, KillMonitor, build_manifest, build_phase_profile,
     critic_cv, deep_merge, entropy_coef_at, probe_summary,
@@ -459,6 +460,12 @@ def test_preflight_rejects_unreadable_ladder(tmp_path, monkeypatch):
     assert not ok and "cannot read ladder" in " ".join(notes)
 
 
+# preflight_restart_ladders reads the 2-1 ladder off disk; checkpoints/
+# is gitignored (.gitignore:10), so a clean clone gets "cannot read
+# ladder index" rather than the preflight verdict this pins. Gate on the
+# ladder directory: its CONTENTS are what preflight judges, so a machine
+# that has it still fails loudly on a malformed ladder.
+@requires("checkpoints/online_2_1/restart_states")
 def test_shipped_2_1_config_passes_its_own_preflight():
     """The on-disk 2-1 pair, as it will actually launch."""
     mod = _load_controller()

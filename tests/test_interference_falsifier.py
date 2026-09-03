@@ -55,6 +55,33 @@ from scripts.interference_falsifier import (  # noqa: E402
     verify_reference_receipts, write_joint_checkpoint, write_pooled_pairs,
     write_success_pairs,
 )
+from tests.skip_gates import requires  # noqa: E402
+
+# The receipt files, specialist checkpoints and start states this
+# falsifier re-reads all live under gitignored trees (.gitignore:10, 71,
+# 93), so a clean clone carries none of them. Read the paths out of
+# CONFIG rather than restating them, so a CONFIG edit cannot leave a gate
+# pointing at a path nothing reads.
+def _reference_receipts(level: str) -> tuple[str, ...]:
+    rows = CONFIG["specialists"][level].get("reference_receipts", ())
+    return tuple(dict.fromkeys(
+        r["receipt"] for r in rows if r.get("receipt")))
+
+
+ALL_REFERENCE_RECEIPTS = tuple(dict.fromkeys(
+    r for level in CONFIG["levels"] for r in _reference_receipts(level)))
+
+# What a gate/collection command is assembled against. The specialist
+# checkpoints come from CONFIG; the rest are the shared inputs every leg
+# names. Directories where the file is what the test asserts about, so a
+# machine that HAS the trees still fails loudly on a deleted state.
+LIVE_GATE_INPUTS = tuple(
+    CONFIG["specialists"][level]["checkpoint"] for level in CONFIG["levels"]
+) + (
+    "roms/Super Mario Bros. (World).nes",
+    "runs/live_show/smb_4_4_micro/entrance_start.state",
+    "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum",
+)
 
 
 # ---- fixtures -----------------------------------------------------------
@@ -280,7 +307,10 @@ def test_no_unsourced_specialist_rate_constant_in_config():
     assert "0.76" not in json.dumps(scrubbed)
 
 
-@pytest.mark.parametrize("level", ["1-1", "1-2"])
+@pytest.mark.parametrize("level", [
+    pytest.param(lv, marks=requires(*_reference_receipts(lv)))
+    for lv in ("1-1", "1-2")
+])
 def test_reference_receipts_reverify_on_disk(level):
     """Every reference row CONFIG cites is re-read from its own file and
     must match on checkpoint, episode count and clear rate — and the
@@ -530,6 +560,7 @@ def test_verdict_carries_measured_controls_and_priors():
 # ---- step 3 wiring: the control legs must actually run -------------------
 
 
+@requires(*ALL_REFERENCE_RECEIPTS)
 def test_step3_runs_a_control_leg_and_a_joint_leg_per_level(tmp_path,
                                                             monkeypatch):
     """DEFECT 4 wiring. Four legs, one protocol: for each level the
@@ -597,6 +628,7 @@ def test_gate_command_1_2_is_strict_honest_from_stage_03():
     assert "stage_03.state" in joined
 
 
+@requires(*LIVE_GATE_INPUTS)
 def test_gate_command_paths_exist_for_both_levels():
     for level in CONFIG["levels"]:
         spec = CONFIG["specialists"][level]
@@ -607,6 +639,7 @@ def test_gate_command_paths_exist_for_both_levels():
                 assert Path(a).exists(), a
 
 
+@requires(*LIVE_GATE_INPUTS)
 def test_collection_reference_command_is_sampled_house_noise():
     for level in CONFIG["levels"]:
         spec = CONFIG["specialists"][level]
@@ -738,6 +771,7 @@ def test_steps_from_skip_to():
 
 @pytest.mark.slow
 @pytest.mark.timeout(600)
+@requires(*LIVE_GATE_INPUTS, *ALL_REFERENCE_RECEIPTS)
 def test_dry_run_passes_live():
     proc = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "interference_falsifier.py"),

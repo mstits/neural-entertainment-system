@@ -13,9 +13,17 @@ import numpy as np
 import pytest
 
 from tests.parity.drivers import NESCoreDriver, NESPyDriver
+from tests.skip_gates import requires, requires_module
 
 REPO = Path(__file__).resolve().parents[2]
-ROM = REPO / "roms" / "Mario Bros. (World).nes"
+ROM_REL = "roms/Mario Bros. (World).nes"
+ROM = REPO / ROM_REL
+
+# All three tests here drive BOTH wrappers on a real dump: they need the
+# gitignored ROM (.gitignore:71) and nes-py, which is deliberately
+# quarantined to requirements-legacy-bakeoff.txt and so is absent from a
+# default install.
+pytestmark = [requires(ROM_REL), requires_module("nes_py")]
 
 
 @pytest.fixture(autouse=True)

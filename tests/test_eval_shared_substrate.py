@@ -82,6 +82,7 @@ from scripts.eval_shared_substrate import (  # noqa: E402
     placeholder_table, run, run_level_leg, strict_clears_from_eval_json,
     write_manifest,
 )
+from tests.skip_gates import requires, requires_jsonl_record  # noqa: E402
 
 
 # ---- fixtures --------------------------------------------------------
@@ -170,6 +171,36 @@ def test_harness_own_eval_protocol_config():
     assert CONFIG["baseline_n_episodes"] == 400
 
 
+# Every gate below names inputs a clean clone does not carry: the
+# receipt files each provenance row cites (runs/, .gitignore:93), the SMB
+# dump (roms/*, .gitignore:71), and the checkpoint trees (.gitignore:10).
+# The gates read the paths out of CONFIG rather than restating them, so a
+# CONFIG edit cannot leave a gate pointing at a path nothing reads.
+def _receipts(level: str) -> tuple[str, ...]:
+    return tuple(CONFIG["baseline_provenance"][level]["receipts"])
+
+
+def _selector(level: str) -> dict:
+    return dict(CONFIG["baseline_provenance"][level]["receipt_selector"])
+
+
+# What the four eval legs are assembled against. Directories, not the
+# individual .pt/.state files, so a machine that HAS the trees still
+# fails loudly when one specific checkpoint has been deleted or renamed.
+LIVE_EVAL_INPUTS = (
+    "roms/Super Mario Bros. (World).nes",
+    "checkpoints/_preserved",
+    "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum",
+    "runs/live_show/smb_4_4_micro/entrance_start.state",
+)
+
+
+# Gated on the RECORD, not on the file: runs/interference/interference.jsonl
+# is a path the suite itself appends to (the falsifier's dry run writes
+# {"type": "dry_run"} rows there), so an existence gate stops firing as soon
+# as anything has written the file and the test then fails on the missing
+# probe record instead of skipping.
+@requires_jsonl_record(_receipts("1-1")[0], **_selector("1-1"))
 def test_baseline_provenance_1_1_matches_the_real_receipt():
     """1-1's banked 43/100 traces to ONE 100-episode eval-seed run
     (20260816), not the two-seed [7, 101] x 50 split CONFIG's own
@@ -192,6 +223,7 @@ def test_baseline_provenance_1_1_matches_the_real_receipt():
     assert prov["matches_two_seed_fifty_split"] is False
 
 
+@requires(*_receipts("1-2"))
 def test_baseline_provenance_1_2_does_not_match_the_harness_protocol():
     """1-2's banked 38/100 was measured under a DIFFERENT protocol than
     build_level_command assembles: eval_workers 1 (not 5), eval_rng
@@ -216,6 +248,8 @@ def test_baseline_provenance_1_2_does_not_match_the_harness_protocol():
     assert prov["matches_harness_protocol"] is False
 
 
+@requires_jsonl_record("runs/interference/interference.jsonl",
+                       type="probe", level="1-2", role="control")
 def test_baseline_provenance_1_2_reruns_higher_under_the_harness_protocol():
     """Independent confirmation that the 1-2 protocol mismatch is
     material, not academic: re-running the SAME 1-2 checkpoint under
@@ -238,7 +272,10 @@ def test_baseline_provenance_1_2_reruns_higher_under_the_harness_protocol():
 
 
 @pytest.mark.parametrize("level,receipt_dir", [
-    ("1-3", "runs/consol2_1_3_round2"), ("1-4", "runs/online_1_4"),
+    pytest.param("1-3", "runs/consol2_1_3_round2",
+                 marks=requires(*_receipts("1-3"))),
+    pytest.param("1-4", "runs/online_1_4",
+                 marks=requires(*_receipts("1-4"))),
 ])
 def test_baseline_provenance_matches_the_harness_protocol_exactly(
         level, receipt_dir):
@@ -323,6 +360,7 @@ def test_build_level_command_is_the_honest_protocol_shape():
     assert "--action-select" not in cmd
 
 
+@requires(*LIVE_EVAL_INPUTS)
 def test_build_level_command_argv_assembles_against_real_paths():
     """Every path-shaped arg (besides the fake --checkpoint) must exist
     on disk -- the same 'assembles against real paths' contract the
@@ -830,6 +868,7 @@ def test_eval_shared_substrate_source_acquires_the_pool_resource_lock():
 
 @pytest.mark.slow
 @pytest.mark.timeout(180)
+@requires(*LIVE_EVAL_INPUTS)
 def test_dry_run_passes_live(tmp_path):
     proc = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "eval_shared_substrate.py"),
@@ -853,6 +892,7 @@ def test_dry_run_passes_live(tmp_path):
 
 @pytest.mark.slow
 @pytest.mark.timeout(180)
+@requires(*LIVE_EVAL_INPUTS)
 def test_dry_run_never_calls_eval_game_subprocess(monkeypatch, tmp_path):
     """--dry-run must not itself shell out to eval_game.py (which would
     step the emulator) -- only assemble argv and check paths."""
@@ -871,6 +911,7 @@ def test_dry_run_never_calls_eval_game_subprocess(monkeypatch, tmp_path):
 
 @pytest.mark.slow
 @pytest.mark.timeout(180)
+@requires(*LIVE_EVAL_INPUTS)
 def test_dry_run_writes_the_manifest(tmp_path):
     manifest_path = tmp_path / "manifest.json"
     proc = subprocess.run(

@@ -53,6 +53,22 @@ from scripts.night2_runner import (  # noqa: E402
     write_cured_checkpoint, write_sil_pairs,
 )
 from scripts.run_consol2 import CONFIG as CONSOL2_CONFIG  # noqa: E402
+from tests.skip_gates import requires  # noqa: E402
+
+# The source checkpoint, the 1-2 entrance state and the SMB dump all live
+# under gitignored trees (.gitignore:10, 71, 93), so a clean clone has
+# none of them and the "every path-shaped arg exists" assertions below
+# fail on the input rather than on the protocol they are checking. Names
+# come from CONFIG where CONFIG has them.
+PROBE_INPUTS = (
+    CONFIG["source_checkpoint"],
+    "roms/Super Mario Bros. (World).nes",
+    "checkpoints/super_mario_bros_one_shot_tiles/smb_curriculum",
+)
+# The det leg additionally restarts from a rung state. Gate on the ladder
+# DIRECTORY, not on s_000559.state itself: a machine that has the ladder
+# must still fail loudly if that particular rung is gone.
+DET_INPUTS = PROBE_INPUTS + ("checkpoints/online_1_2/restart_states",)
 
 
 # ---- synthetic payload helpers -----------------------------------------
@@ -507,6 +523,7 @@ def test_gate_refuses_a_cured_checkpoint_substituted_after_step_2(tmp_path):
 # ---- eval command assembly ----------------------------------------------
 
 
+@requires(*PROBE_INPUTS)
 def test_honest_probe_command_matches_registered_protocol():
     cmd = build_honest_probe_command(
         checkpoint=ROOT / CONFIG["source_checkpoint"])
@@ -526,6 +543,7 @@ def test_honest_probe_command_matches_registered_protocol():
             assert Path(a).exists(), a
 
 
+@requires(*DET_INPUTS)
 def test_det_probe_command_is_zero_noise_from_the_rung():
     cmd = build_det_probe_command(
         checkpoint=ROOT / CONFIG["source_checkpoint"])
@@ -541,6 +559,7 @@ def test_det_probe_command_is_zero_noise_from_the_rung():
             assert Path(a).exists(), a
 
 
+@requires(*PROBE_INPUTS)
 def test_collection_reference_command_is_sampled_house_noise():
     cmd = build_collection_reference_command(
         checkpoint=ROOT / CONFIG["source_checkpoint"])
@@ -681,6 +700,7 @@ def test_steps_from_skip_to():
 
 @pytest.mark.slow
 @pytest.mark.timeout(600)
+@requires(*DET_INPUTS)
 def test_dry_run_passes_live():
     proc = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "night2_runner.py"),

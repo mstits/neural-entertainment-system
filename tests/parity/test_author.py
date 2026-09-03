@@ -8,9 +8,11 @@ import pytest
 
 from tests.parity.author import parse_script, ranges_to_tape_inputs, write_tape
 from tests.parity.run import run
+from tests.skip_gates import requires, requires_module
 
 REPO = Path(__file__).resolve().parents[2]
-ROM = REPO / "roms" / "Mario Bros. (World).nes"
+ROM_REL = "roms/Mario Bros. (World).nes"
+ROM = REPO / ROM_REL
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +57,13 @@ def test_ranges_to_tape_inputs_are_contiguous():
     ]
 
 
+# The two round-trip tests below author a tape against a real dump and
+# replay it. roms/* is gitignored (.gitignore:71); the cross_emulator
+# leg additionally drives nes-py, which requirements.txt does not
+# install. The parse_script tests above need neither and stay ungated.
 @pytest.mark.parity
+@requires(ROM_REL)
+@requires_module("nes_py")
 def test_authored_cross_emulator_tape_passes_run_py(tmp_path):
     # Author a 30-frame no-input tape → run via run.py → expect pass.
     out = tmp_path / "mario_idle.json"
@@ -69,6 +77,7 @@ def test_authored_cross_emulator_tape_passes_run_py(tmp_path):
 
 
 @pytest.mark.parity
+@requires(ROM_REL)
 def test_authored_golden_hash_tape_passes_run_py(tmp_path):
     # Author a golden-hash tape → immediately run it → hashes must match
     # (same build, no intervening code change).

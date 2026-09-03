@@ -22,8 +22,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.skip_gates import requires
+
 REPO = Path(__file__).resolve().parents[2]
-SMB = REPO / "roms" / "Super Mario Bros. (World).nes"
+SMB_REL = "roms/Super Mario Bros. (World).nes"
+SMB = REPO / SMB_REL
+
+# Every test in this file boots the SMB dump, which roms/* keeps out of a
+# clean clone (.gitignore:71). Ungated, the miss reaches the reader seven
+# times as `RuntimeError: failed to read ROM`, which reads as a broken
+# emulator rather than a missing input.
+pytestmark = requires(SMB_REL)
 
 
 @pytest.fixture(autouse=True)

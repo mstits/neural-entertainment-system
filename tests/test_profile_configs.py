@@ -20,6 +20,8 @@ import pytest
 import yaml
 
 
+from tests.skip_gates import requires
+
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
 
 
@@ -174,6 +176,12 @@ def test_override_only_profile_fails_boot_contract() -> None:
     )
 
 
+# Gate on the SMB dump, not on the start state: the start state IS what
+# the second assertion checks, so gating on it would make that assertion
+# a tautology. roms/* is gitignored (.gitignore:71), so a clean clone
+# skips; a machine holding the dump still fails loudly when the state
+# blob beside it has not been produced.
+@requires("roms/Super Mario Bros. (World).nes")
 def test_vanilla_ppo_profile_declares_existing_start_state() -> None:
     """Regression guard: the vanilla_ppo SMB profile MUST declare a
     start_state_path pointing to a real file.

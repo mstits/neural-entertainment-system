@@ -14,11 +14,20 @@ import pytest
 from tests.parity.diff import frame_hash
 from tests.parity.drivers import NESCoreDriver
 from tests.parity.run import run
+from tests.skip_gates import requires
 
 REPO = Path(__file__).resolve().parents[2]
 ROM_REL = "roms/Mario Bros. (World).nes"
 ROM_ABS = REPO / ROM_REL
-ROM_MD5 = hashlib.md5(ROM_ABS.read_bytes()).hexdigest()
+
+# Module scope, so the gate is reached: hashing the ROM at import time
+# raises FileNotFoundError during COLLECTION on a clean clone, which no
+# per-test decorator can catch. Read it inside the helper instead.
+pytestmark = requires(ROM_REL)
+
+
+def _rom_md5() -> str:
+    return hashlib.md5(ROM_ABS.read_bytes()).hexdigest()
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +42,7 @@ def _write_tape(tmp_path: Path, *, mode: str, frames: int, inputs: list[dict],
     tape = {
         "name": f"test_{mode}",
         "rom": ROM_REL,
-        "rom_md5": ROM_MD5,
+        "rom_md5": _rom_md5(),
         "frames": frames,
         "frame_skip": 1,
         "mode": mode,
